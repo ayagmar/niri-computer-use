@@ -11,4 +11,6 @@
 9. Do not leave dead code, commented-out code, or stale TODOs. `todo!` and `unimplemented!` are denied.
 10. Prefer types over comments. Use newtypes for IDs and coordinate spaces such as `ImagePx`, `LayoutPt`, `OutputLocalPt`, and `ProtocolPt` so they cannot be mixed accidentally.
 11. Make internal items `pub(crate)`.
-12. Follow the repository's commit and documentation conventions in the project plan.
+12. Commits use Conventional Commits: `type(scope): summary`, imperative, lowercase, at most 72 characters, no trailing period. One logical change per commit. Add a body only when the reason isn't obvious, in one or two plain sentences. No AI attribution, `Co-authored-by` lines, emoji or filler words.
+13. Docs describe what exists now. Don't write stubs, placeholder pages or promises. Update docs in the same commit as the behaviour they describe, and only include commands you have run. Keep user-facing prose plain and specific.
+14. Use the newest stable release that is at least 7 days old for every dependency, tool, action and toolchain. Check the publish date and record it in `docs/decisions.md`. A newer release is allowed only for a security fix, noted in the commit body. The exception is `niri-ipc`, which is pinned to the installed niri version (`=26.4.0` for niri 26.04).
