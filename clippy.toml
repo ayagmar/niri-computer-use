@@ -1,0 +1,17 @@
+cognitive-complexity-threshold = 15
+too-many-lines-threshold = 80
+too-many-arguments-threshold = 5
+excessive-nesting-threshold = 4
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-panic-in-tests = true
+allow-dbg-in-tests = false
+avoid-breaking-exported-api = false
+disallowed-methods = [
+  { path = "std::process::Command::new", reason = "spawn subprocesses through runner::spawn (deadline, process group, kill_on_drop)" },
+  { path = "tokio::process::Command::new", reason = "spawn subprocesses through runner::spawn (deadline, process group, kill_on_drop)" },
+  { path = "std::io::stdout", reason = "stdout is the MCP transport; never write to it outside rmcp" },
+  { path = "std::thread::sleep", reason = "blocks the async runtime; use tokio::time::sleep with a deadline" },
+  { path = "std::env::set_var", reason = "process-global mutation; pass env to the child command instead" },
+]
