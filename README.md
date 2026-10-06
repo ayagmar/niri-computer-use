@@ -1,5 +1,7 @@
 # niri-desktop-mcp
 
+[![CI](https://github.com/ayagmar/niri-desktop-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ayagmar/niri-desktop-mcp/actions/workflows/ci.yml)
+
 `niri-desktop-mcp` is a Rust project for an MCP server that can observe and operate a live niri desktop. Noctalia integration is optional.
 
 Status: **M0: research and test harness, no MCP tools yet.**
