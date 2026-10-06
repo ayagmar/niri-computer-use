@@ -2,16 +2,18 @@
 
 [![CI](https://github.com/ayagmar/niri-desktop-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ayagmar/niri-desktop-mcp/actions/workflows/ci.yml)
 
-`niri-desktop-mcp` is a Rust project for an MCP server that can observe and operate a live niri desktop. Noctalia integration is optional.
+An MCP server for AI agents to observe and drive a [niri](https://github.com/niri-wm/niri) Wayland desktop. Noctalia is optional.
 
-Status: **M0: research and test harness, no MCP tools yet.**
+**Status: early development.** No MCP tools yet. The current work is research and a nested test harness.
 
 ## Requirements
 
-Runtime work targets niri 26.04, wtype 0.4, wl-clipboard 2.x, a version of grim with `-s`, `-o`, and `-g`, and systemd-logind. Noctalia 5.2.1 is supported but optional.
+Targets niri 26.04. Building needs Rust 1.99.0 (pinned in `rust-toolchain.toml`, so rustup installs it for you) and Make.
 
-Building requires Rust 1.99.0 with rustfmt and Clippy, plus Make. Development checks also use cargo-deny, cargo-machete, typos, and ShellCheck. The nested harness will require wev and `dbus-run-session` when it is implemented.
+## Development
+
+See [docs/development.md](docs/development.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-Licensed under the MIT License. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
