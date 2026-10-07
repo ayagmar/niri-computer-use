@@ -1,4 +1,4 @@
-.PHONY: check lint coverage nested
+.PHONY: check lint coverage nested host-capture
 
 SCALE ?= 1
 
@@ -20,4 +20,8 @@ coverage:
 	cargo llvm-cov --all-targets --workspace
 
 nested:
+	cargo build --locked --manifest-path probes/vpointer/Cargo.toml
 	cargo run --locked -p harness -- run --scale $(SCALE)
+
+host-capture:
+	cargo run --locked -p harness -- host-capture $(OUTPUT)

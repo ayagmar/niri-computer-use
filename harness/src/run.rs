@@ -20,14 +20,11 @@ use crate::test_dir::TestDir;
 
 const VALIDATE_DEADLINE: Duration = Duration::from_secs(10);
 const NESTED_DEADLINE: Duration = Duration::from_secs(60);
+const PROBE: &str = "probes/vpointer/target/debug/vpointer";
 
 pub(crate) fn run(scale: Scale) -> Result<()> {
     let host = Host::from_env()?;
-    let seconds = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .context("read the clock")?
-        .as_secs();
-    let stamp = run_name(seconds, process::id());
+    let stamp = stamp()?;
     let artifacts = create_artifacts(&stamp)?;
     let mut log = Log::create(&artifacts.join("harness.log"), true)?;
     let test_dir = TestDir::create(&host.runtime_dir.join("niri-desktop-mcp-test"), &stamp)?;
@@ -45,12 +42,22 @@ pub(crate) fn run(scale: Scale) -> Result<()> {
     outcome
 }
 
+/// The name of this run's directories.
+pub(crate) fn stamp() -> Result<String> {
+    let seconds = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .context("read the clock")?
+        .as_secs();
+    Ok(run_name(seconds, process::id()))
+}
+
 /// Unix time plus the harness process ID, so runs started in the same second don't collide.
 fn run_name(seconds: u64, pid: u32) -> String {
     format!("{seconds}-{pid}")
 }
 
-fn create_artifacts(stamp: &str) -> Result<PathBuf> {
+/// `target/e2e/<stamp>` under the working directory.
+pub(crate) fn create_artifacts(stamp: &str) -> Result<PathBuf> {
     let base = env::current_dir().context("read the working directory")?;
     let base = base.join("target/e2e");
     fs::create_dir_all(&base).context(format!("create {}", base.display()))?;
@@ -120,6 +127,7 @@ fn preflight(host: &Host, test_dir: &TestDir, artifacts: &Path, scale: Scale) ->
 /// quits niri when it is done, which ends the bus session.
 fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, scale: Scale) -> Result<()> {
     let harness = env::current_exe().context("find the harness binary")?;
+    let probe = probe()?;
     let mut bus_config = OsString::from("--config-file=");
     bus_config.push(test_dir.dbus_config());
     let args = vec![
@@ -134,6 +142,7 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, scale: Scale) -
         test_dir.root().into(),
         artifacts.into(),
         scale.to_string().into(),
+        probe.into(),
     ];
     runner::run(&Invocation {
         program: "dbus-run-session",
@@ -150,6 +159,21 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, scale: Scale) -
         Ok(())
     } else {
         Err(Failure::new(format!("supervisor: {status}")))
+    }
+}
+
+/// The `vpointer` probe, built by `make nested`.
+fn probe() -> Result<PathBuf> {
+    let path = env::current_dir()
+        .context("read the working directory")?
+        .join(PROBE);
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(Failure::new(format!(
+            "{} is missing; build it with `make nested`",
+            path.display()
+        )))
     }
 }
 

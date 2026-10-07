@@ -1,6 +1,6 @@
 //! The only place the harness starts processes. Every child has a deadline. A child in its
-//! own process group has the whole group killed when it exits, times out or the harness is
-//! interrupted, so nothing it started outlives it unless it left the group. The child is
+//! own process group has the whole group killed when it exits, times out, is stopped or the
+//! harness is interrupted, so nothing it started outlives it unless it left the group. The child is
 //! not reaped until after that kill, so its process ID, and with it the group ID, can't
 //! have been reused.
 
@@ -8,9 +8,10 @@ use std::ffi::OsString;
 use std::fs::File;
 use std::io::{self, Read};
 use std::os::unix::process::CommandExt as _;
-use std::path::PathBuf;
-use std::process::{Command, Output, Stdio};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Output, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -70,11 +71,19 @@ enum Ending {
     Exited,
     TimedOut,
     Interrupted,
+    /// Killed by `Process::stop` before its deadline.
+    Stopped,
 }
 
 /// Runs a program to completion and requires exit status 0. Errors keep the exit status
 /// and stderr, or name the file the output went to.
 pub(crate) fn run(invocation: &Invocation<'_>) -> Result<Output> {
+    start(invocation)?.wait()
+}
+
+/// Starts a program and returns while it runs. The caller ends it with `wait` or `stop`,
+/// and dropping the handle stops it. A watchdog kills it at its deadline.
+pub(crate) fn start(invocation: &Invocation<'_>) -> Result<Process> {
     let program = invocation.program;
     if interrupt::requested() {
         return Err(Failure::new(format!(
@@ -87,36 +96,160 @@ pub(crate) fn run(invocation: &Invocation<'_>) -> Result<Output> {
     let pid = Pid::from_child(&child);
     let stdout = read_in_background(child.stdout.take());
     let stderr = read_in_background(child.stderr.take());
-    let exit = observe_exit(pid);
+    let reaped = Arc::new(Mutex::new(false));
+    Ok(Process {
+        program: program.to_owned(),
+        exit: observe_exit(pid),
+        watchdog: Some(watchdog(
+            pid,
+            invocation.group,
+            invocation.deadline,
+            Arc::clone(&reaped),
+        )),
+        reaped,
+        child,
+        pid,
+        group: invocation.group,
+        deadline: invocation.deadline,
+        end: Instant::now() + invocation.deadline,
+        log_file: match &invocation.output {
+            Sink::Capture => None,
+            Sink::File(path) => Some(path.clone()),
+        },
+        stdout,
+        stderr,
+        exited: false,
+        finished: false,
+    })
+}
 
-    let ending = wait_for_exit(&exit, invocation.deadline);
-    let exited = matches!(ending, Ok(Ending::Exited));
-    kill(pid, invocation.group, exited).context(format!("kill {program}"))?;
-    // An observer failure ends here, killed but not reaped: its one message is used up.
-    let ending = ending.context(format!("wait for {program}"))?;
-    if !exited {
-        confirm_exit(&exit).context(format!("stop {program}"))?;
+/// A started program, not yet reaped.
+#[derive(Debug)]
+pub(crate) struct Process {
+    program: String,
+    child: Child,
+    pid: Pid,
+    group: Group,
+    deadline: Duration,
+    end: Instant,
+    log_file: Option<PathBuf>,
+    exit: Receiver<io::Result<()>>,
+    /// Dropped once the child is reaped, which ends the watchdog.
+    watchdog: Option<Sender<()>>,
+    /// Set under the lock once the child is reaped. The watchdog only kills while it is
+    /// false, so it can't signal a process ID that has been reused.
+    reaped: Arc<Mutex<bool>>,
+    stdout: Option<Receiver<io::Result<Vec<u8>>>>,
+    stderr: Option<Receiver<io::Result<Vec<u8>>>>,
+    /// The observer's one message has been received.
+    exited: bool,
+    finished: bool,
+}
+
+impl Process {
+    /// Waits for the program to exit, until its deadline. `wait_for_exit` already tells an
+    /// exit before the deadline from a timeout.
+    pub(crate) fn wait(mut self) -> Result<Output> {
+        let ending = wait_for_exit(&self.exit, self.end);
+        self.exited = matches!(ending, Ok(Ending::Exited));
+        self.finish(ending)
     }
-    let status = child.wait().context(format!("reap {program}"))?;
-    let output_end = Instant::now() + OUTPUT_GRACE;
-    let stdout = collect(stdout, output_end).context(format!("read the output of {program}"));
-    let stderr = collect(stderr, output_end).context(format!("read the output of {program}"));
-    if ending == Ending::Exited && status.success() {
-        return Ok(Output {
-            status,
-            stdout: stdout?,
-            stderr: stderr?,
-        });
+
+    /// Kills a program that runs until it is told to stop. It fails if the program has
+    /// already failed, or if its deadline has passed.
+    pub(crate) fn stop(mut self) -> Result<Output> {
+        let ending = match self.exit.try_recv() {
+            Ok(waited) => waited.map(|()| Ending::Exited),
+            Err(TryRecvError::Empty) => Ok(Ending::Stopped),
+            Err(TryRecvError::Disconnected) => Err(io::Error::other("the exit observer stopped")),
+        };
+        self.exited = matches!(ending, Ok(Ending::Exited));
+        let ending = ending.map(|ending| self.late(ending));
+        self.finish(ending)
     }
-    let detail = detail(invocation, stderr);
-    Err(Failure::new(match ending {
-        Ending::Exited => format!("{program} failed with {status}{detail}"),
-        Ending::TimedOut => format!(
-            "{program} did not finish within {:?}{detail}",
-            invocation.deadline
-        ),
-        Ending::Interrupted => format!("interrupted while running {program}"),
-    }))
+
+    /// For `stop`: an ending seen at or after the deadline is a timeout, even an exit. The
+    /// watchdog may have caused it, and a result that late doesn't count.
+    fn late(&self, ending: Ending) -> Ending {
+        if ending != Ending::Interrupted && Instant::now() >= self.end {
+            Ending::TimedOut
+        } else {
+            ending
+        }
+    }
+
+    fn finish(&mut self, ending: io::Result<Ending>) -> Result<Output> {
+        self.finished = true;
+        let program = self.program.clone();
+        let mut reaped = self
+            .reaped
+            .lock()
+            .map_err(|_| Failure::new(format!("the watchdog of {program} panicked")))?;
+        kill(self.pid, self.group, self.exited).context(format!("kill {program}"))?;
+        // An observer failure ends here, killed but not reaped: its one message is used up.
+        let ending = ending.context(format!("wait for {program}"))?;
+        if !self.exited {
+            confirm_exit(&self.exit).context(format!("stop {program}"))?;
+        }
+        let status = self.child.wait().context(format!("reap {program}"))?;
+        *reaped = true;
+        drop(reaped);
+        self.watchdog = None;
+        let output_end = Instant::now() + OUTPUT_GRACE;
+        let stdout = collect(self.stdout.take(), output_end)
+            .context(format!("read the output of {program}"));
+        let stderr = collect(self.stderr.take(), output_end)
+            .context(format!("read the output of {program}"));
+        let failure = match ending {
+            Ending::Stopped => None,
+            Ending::Exited if status.success() => None,
+            Ending::Exited => Some(format!("{program} failed with {status}")),
+            Ending::TimedOut => Some(format!(
+                "{program} did not finish within {:?}",
+                self.deadline
+            )),
+            Ending::Interrupted => {
+                return Err(Failure::new(format!("interrupted while running {program}")));
+            }
+        };
+        match failure {
+            None => Ok(Output {
+                status,
+                stdout: stdout?,
+                stderr: stderr?,
+            }),
+            Some(failure) => Err(Failure::new(format!(
+                "{failure}{}",
+                detail(self.log_file.as_deref(), stderr)
+            ))),
+        }
+    }
+}
+
+impl Drop for Process {
+    /// Stops a program the caller didn't end, for example after an early return. There is
+    /// nowhere to report a failure to, and the caller already has its own error.
+    fn drop(&mut self) {
+        if !self.finished {
+            drop(self.finish(Ok(Ending::Stopped)));
+        }
+    }
+}
+
+/// Kills the child at its deadline unless it has been reaped by then. Ends early when the
+/// returned sender is dropped.
+fn watchdog(pid: Pid, group: Group, deadline: Duration, reaped: Arc<Mutex<bool>>) -> Sender<()> {
+    let (cancel, cancelled) = mpsc::channel();
+    thread::spawn(move || {
+        if cancelled.recv_timeout(deadline) == Err(RecvTimeoutError::Timeout)
+            && let Ok(reaped) = reaped.lock()
+            && !*reaped
+        {
+            // Nowhere to report a failure; `wait` or `stop` reports the timeout.
+            kill(pid, group, false).ok();
+        }
+    });
+    cancel
 }
 
 #[expect(
@@ -163,8 +296,7 @@ fn observe_exit(pid: Pid) -> Receiver<io::Result<()>> {
     receiver
 }
 
-fn wait_for_exit(exit: &Receiver<io::Result<()>>, deadline: Duration) -> io::Result<Ending> {
-    let end = Instant::now() + deadline;
+fn wait_for_exit(exit: &Receiver<io::Result<()>>, end: Instant) -> io::Result<Ending> {
     loop {
         if interrupt::requested() {
             return Ok(Ending::Interrupted);
@@ -239,8 +371,8 @@ fn collect(output: Option<Receiver<io::Result<Vec<u8>>>>, end: Instant) -> Resul
     )
 }
 
-fn detail(invocation: &Invocation<'_>, stderr: Result<Vec<u8>>) -> String {
-    if let Sink::File(path) = &invocation.output {
+fn detail(log_file: Option<&Path>, stderr: Result<Vec<u8>>) -> String {
+    if let Some(path) = log_file {
         return format!("; output in {}", path.display());
     }
     match stderr {
@@ -372,7 +504,7 @@ mod tests {
     fn observer_errors_are_not_reported_as_a_running_child() {
         let (sender, receiver) = mpsc::channel();
         sender.send(Err(io::Error::from(Errno::CHILD))).unwrap();
-        let waited = wait_for_exit(&receiver, Duration::from_secs(5));
+        let waited = wait_for_exit(&receiver, Instant::now() + Duration::from_secs(5));
         assert_eq!(
             waited.unwrap_err().raw_os_error(),
             Some(Errno::CHILD.raw_os_error())
@@ -381,6 +513,67 @@ mod tests {
         drop(sender);
         let message = confirm_exit(&receiver).unwrap_err().to_string();
         assert!(message.contains("exit observer stopped"), "{message}");
+    }
+
+    #[test]
+    fn stop_kills_a_running_program() {
+        let started = Instant::now();
+        let process = start(&invocation("sleep", &["30"], Duration::from_secs(5))).unwrap();
+        process.stop().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn stop_after_the_deadline_fails() {
+        let process = start(&invocation("sleep", &["30"], Duration::from_millis(100))).unwrap();
+        thread::park_timeout(Duration::from_millis(300));
+        let message = process.stop().unwrap_err().to_string();
+        assert!(message.contains("did not finish"), "{message}");
+    }
+
+    #[test]
+    fn stop_after_the_deadline_fails_even_if_the_program_is_gone() {
+        let process = start(&invocation("sleep", &["0.1"], Duration::from_millis(50))).unwrap();
+        thread::park_timeout(Duration::from_millis(400));
+        let message = process.stop().unwrap_err().to_string();
+        assert!(message.contains("did not finish"), "{message}");
+    }
+
+    #[test]
+    fn the_watchdog_kills_a_started_program_at_its_deadline() {
+        let mut call = invocation("sleep", &["30"], Duration::from_millis(200));
+        call.group = Group::Caller;
+        let mut process = start(&call).unwrap();
+        let exited = process.exit.recv_timeout(Duration::from_secs(3));
+        assert!(matches!(exited, Ok(Ok(()))), "{exited:?}");
+        // Hand the observer's one message back for `stop`.
+        let (sender, receiver) = mpsc::channel();
+        sender.send(Ok(())).unwrap();
+        process.exit = receiver;
+        assert!(
+            process
+                .stop()
+                .unwrap_err()
+                .to_string()
+                .contains("did not finish")
+        );
+    }
+
+    #[test]
+    fn stop_reports_a_program_that_already_failed() {
+        let call = invocation("sh", &["-c", "exit 3"], Duration::from_secs(5));
+        let process = start(&call).unwrap();
+        thread::park_timeout(Duration::from_millis(500));
+        let message = process.stop().unwrap_err().to_string();
+        assert!(message.contains("exit status: 3"), "{message}");
+    }
+
+    #[test]
+    fn dropping_a_process_kills_it() {
+        let process = start(&invocation("sleep", &["30"], Duration::from_secs(5))).unwrap();
+        let pid = process.pid.as_raw_nonzero().to_string();
+        drop(process);
+        assert!(dies_soon(&pid));
     }
 
     #[test]

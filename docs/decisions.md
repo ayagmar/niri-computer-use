@@ -103,3 +103,13 @@ These match the versions installed locally.
   | `windows-link` | 0.2.1 | 2025-10-06 |
   | `windows-sys` | 0.61.2 | 2025-10-06 |
 - The probe has its own `Cargo.lock`, committed, so its results can be reproduced.
+
+## 2026-10-07: pointer and capture steps in the supervisor
+
+- wev 1.1.0 never flushes stdout (no `fflush` or `setvbuf` in `wev.c`), and with stdout in a file, glibc buffers it in blocks. The supervisor runs `stdbuf -oL wev` (coreutils), so each event reaches `wev.log` as a line.
+- `wait_until` polls every 50 ms with `std::thread::sleep`, behind one `#[expect(clippy::disallowed_methods)]`. The ban exists so nothing blocks an async runtime, and the harness has none. Polling niri state and the `wev` log is how plan §13 describes `wait_until`. `thread::park_timeout` would avoid the lint without saying why.
+- Each probe call sends its own event time. niri passes it through to the client's `wl_pointer` events (a probe motion with time 4001 shows up in `wev.log` as `motion: time: 4001`), so each check reads only its own events.
+- C3 asks grim for a PPM, which is a short header followed by raw RGB, so the harness needs no image decoder. C15 reads the size from the PNG `IHDR` chunk or the JPEG start-of-frame segment, as plan §8 says the server will. Both take a few dozen lines, so neither needs a crate.
+- The runner can now start a process and stop it later, which `wev` needs. A watchdog thread kills the process at its deadline. It shares a lock with the code that reaps the child, and only kills while the child is unreaped, so it can't signal a reused process ID. Any ending seen at or after the deadline, including a clean exit, counts as a timeout. Dropping the handle kills the process.
+- `wait_until` ignores a value its condition returns after the deadline. A condition that asks niri can take that request's own 5-second deadline, so a wait can end up to 5 seconds late, but it then fails instead of passing.
+- C15 on a host output is a separate command, `harness host-capture`, run from your shell. The supervisor can only reach the nested niri.

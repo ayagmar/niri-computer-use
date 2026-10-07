@@ -1,18 +1,23 @@
 //! Nested niri test harness for niri-desktop-mcp. See `docs/development.md`.
 
+mod capture;
 mod config;
 mod environment;
 mod failure;
+mod image;
 mod interrupt;
 mod log;
 mod nested;
 mod niri;
+mod pointer;
 mod run;
 mod runner;
 mod scale;
+mod session;
 mod snapshot;
 mod supervise;
 mod test_dir;
+mod wev;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -23,7 +28,8 @@ use scale::Scale;
 use test_dir::TestDir;
 
 const USAGE: &str = "usage: harness run [--scale <scale>]
-       harness supervise <TEST_DIR> <ARTIFACTS> <scale>";
+       harness host-capture <output>
+       harness supervise <TEST_DIR> <ARTIFACTS> <scale> <vpointer>";
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -54,10 +60,15 @@ fn dispatch(args: &[OsString]) -> Result<()> {
             interrupt::install()?;
             run::run(scale)
         }
-        ["supervise", test_dir, artifacts, scale] => supervise::supervise(
+        ["host-capture", output] => {
+            interrupt::install()?;
+            capture::host(output)
+        }
+        ["supervise", test_dir, artifacts, scale, probe] => supervise::supervise(
             &TestDir::open(PathBuf::from(test_dir))?,
             Path::new(artifacts),
             scale.parse()?,
+            probe,
         ),
         _ => Err(Failure::new(USAGE)),
     }
