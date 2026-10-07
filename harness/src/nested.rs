@@ -1,8 +1,9 @@
-//! The nested endpoints: the niri, Wayland and D-Bus sockets the supervisor inherits. Each
-//! must resolve to a path under `TEST_DIR/run` before anything is sent to it.
+//! The nested endpoints: the niri, Wayland and D-Bus sockets the supervisor inherits, and
+//! the socket a nested Noctalia creates. Each must resolve to a path under `TEST_DIR/run`
+//! before anything is sent to it.
 
 use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -17,6 +18,8 @@ pub(crate) struct Nested {
     pub(crate) niri: PathBuf,
     pub(crate) wayland: PathBuf,
     pub(crate) dbus: PathBuf,
+    /// Where a Noctalia started in NESTED puts its IPC socket. It exists only while one runs.
+    noctalia: PathBuf,
     /// `DBUS_SYSTEM_BUS_ADDRESS`, `TEST_DIR/run/no-system-bus`. Nothing may exist there,
     /// so there is no system bus.
     pub(crate) system_bus: PathBuf,
@@ -44,10 +47,12 @@ impl Nested {
             )));
         }
         let address = variable("DBUS_SESSION_BUS_ADDRESS")?;
+        let display = variable("WAYLAND_DISPLAY")?;
         let nested = Self {
             niri: PathBuf::from(variable("NIRI_SOCKET")?),
-            wayland: runtime_dir.join(variable("WAYLAND_DISPLAY")?),
+            wayland: runtime_dir.join(&display),
             dbus: dbus_socket(&address.to_string_lossy())?,
+            noctalia: runtime_dir.join(noctalia_socket_name(&display)),
             system_bus: dbus_socket(&variable("DBUS_SYSTEM_BUS_ADDRESS")?.to_string_lossy())?,
         };
         if nested.system_bus != test_dir.system_bus() {
@@ -61,6 +66,7 @@ impl Nested {
             ("NIRI_SOCKET", &nested.niri),
             ("WAYLAND_DISPLAY", &nested.wayland),
             ("DBUS_SESSION_BUS_ADDRESS", &nested.dbus),
+            ("the Noctalia socket", &nested.noctalia),
         ] {
             if !is_under(path, &run) {
                 return Err(Failure::new(format!(
@@ -85,17 +91,23 @@ impl Nested {
             )));
         }
         for path in [&self.niri, &self.wayland, &self.dbus] {
-            let resolved = fs::canonicalize(path).context(format!("resolve {}", path.display()))?;
-            if !is_under(&resolved, run) {
-                return Err(Failure::new(format!(
-                    "{} resolves to {}, outside {}",
-                    path.display(),
-                    resolved.display(),
-                    run.display()
-                )));
-            }
+            resolve_under(path, run)?;
         }
         nothing_at(&self.system_bus)
+    }
+
+    /// The Noctalia socket once it exists, resolved like the other endpoints. `None` while
+    /// it doesn't exist.
+    pub(crate) fn noctalia_socket(&self, run: &Path) -> Result<Option<PathBuf>> {
+        let path = &self.noctalia;
+        let exists = path
+            .try_exists()
+            .context(format!("check {}", path.display()))?;
+        if !exists {
+            return Ok(None);
+        }
+        resolve_under(path, run)?;
+        Ok(Some(path.clone()))
     }
 }
 
@@ -110,6 +122,29 @@ pub(crate) fn nothing_at(path: &Path) -> Result<()> {
         ))),
         Err(error) => Err(Failure::new(format!("check {}: {error}", path.display()))),
     }
+}
+
+fn resolve_under(path: &Path, run: &Path) -> Result<()> {
+    let resolved = fs::canonicalize(path).context(format!("resolve {}", path.display()))?;
+    if is_under(&resolved, run) {
+        Ok(())
+    } else {
+        Err(Failure::new(format!(
+            "{} resolves to {}, outside {}",
+            path.display(),
+            resolved.display(),
+            run.display()
+        )))
+    }
+}
+
+/// `noctalia-$WAYLAND_DISPLAY.sock`, as Noctalia 5.2.1 builds it (`resolveSocketPath` in
+/// `src/ipc/ipc_service.cpp`).
+fn noctalia_socket_name(display: &OsStr) -> OsString {
+    let mut name = OsString::from("noctalia-");
+    name.push(display);
+    name.push(".sock");
+    name
 }
 
 /// The socket path of a single `unix:path=…` D-Bus address.
@@ -155,7 +190,11 @@ mod tests {
     #[test]
     fn accepts_endpoints_under_test_dir_run() {
         let test_dir = TestDir::open(PathBuf::from("/r/t")).unwrap();
-        check_with(&test_dir, &nested_env(&test_dir)).unwrap();
+        let nested = check_with(&test_dir, &nested_env(&test_dir)).unwrap();
+        assert_eq!(
+            nested.noctalia,
+            Path::new("/r/t/run/noctalia-wayland-1.sock")
+        );
     }
 
     #[test]
@@ -197,6 +236,7 @@ mod tests {
             niri: run.join("niri.sock"),
             wayland: run.join("wayland-1"),
             dbus: run.join("dbus-x"),
+            noctalia: run.join("noctalia-wayland-1.sock"),
             system_bus: run.join("no-system-bus"),
         };
         nested.resolve(&run).unwrap();
@@ -233,6 +273,7 @@ mod tests {
             niri: run.join("niri.sock"),
             wayland: run.join("wayland-1"),
             dbus: run.join("dbus-x"),
+            noctalia: run.join("noctalia-wayland-1.sock"),
             system_bus: test_dir.system_bus(),
         };
         nested.resolve(&run).unwrap();
@@ -241,6 +282,34 @@ mod tests {
         fs::remove_file(&nested.system_bus).unwrap();
         std::os::unix::fs::symlink("/run/dbus/system_bus_socket", &nested.system_bus).unwrap();
         assert!(nested.resolve(&run).is_err());
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn the_noctalia_socket_is_absent_until_created_and_must_resolve_under_run() {
+        let base = fs::canonicalize(env::temp_dir())
+            .unwrap()
+            .join(format!("harness-noctalia-{}", std::process::id()));
+        let test_dir = TestDir::create(&base, "t").unwrap();
+        let run = test_dir.run();
+        let mut nested = Nested {
+            niri: run.join("niri.sock"),
+            wayland: run.join("wayland-1"),
+            dbus: run.join("dbus-x"),
+            noctalia: run.join("noctalia-wayland-1.sock"),
+            system_bus: run.join("no-system-bus"),
+        };
+        assert_eq!(nested.noctalia_socket(&run).unwrap(), None);
+        fs::write(&nested.noctalia, "").unwrap();
+        assert_eq!(
+            nested.noctalia_socket(&run).unwrap(),
+            Some(run.join("noctalia-wayland-1.sock"))
+        );
+
+        fs::write(base.join("host.sock"), "").unwrap();
+        nested.noctalia = run.join("noctalia-alias.sock");
+        std::os::unix::fs::symlink(base.join("host.sock"), &nested.noctalia).unwrap();
+        assert!(nested.noctalia_socket(&run).is_err());
         fs::remove_dir_all(base).unwrap();
     }
 

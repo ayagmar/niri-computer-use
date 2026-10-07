@@ -20,9 +20,21 @@ use crate::test_dir::TestDir;
 
 const VALIDATE_DEADLINE: Duration = Duration::from_secs(10);
 const NESTED_DEADLINE: Duration = Duration::from_secs(60);
-const PROBE: &str = "probes/vpointer/target/debug/vpointer";
+const VPOINTER: &str = "probes/vpointer/target/debug/vpointer";
+const NOCTALIA_SOCKET: &str = "probes/noctalia-socket/target/debug/noctalia-socket";
+/// All `noctalia config validate` prints for a config without warnings. It exits 0 even
+/// when it warns, for example about an unknown key.
+const NOCTALIA_VALID: &str = "\u{2713} Config is valid\n";
 
-pub(crate) fn run(scale: Scale) -> Result<()> {
+/// What `harness run` was asked to do.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Options {
+    pub(crate) scale: Scale,
+    /// Start Noctalia in the nested session and run C13.
+    pub(crate) noctalia: bool,
+}
+
+pub(crate) fn run(options: Options) -> Result<()> {
     let host = Host::from_env()?;
     let stamp = stamp()?;
     let artifacts = create_artifacts(&stamp)?;
@@ -31,7 +43,7 @@ pub(crate) fn run(scale: Scale) -> Result<()> {
     log.line(&format!("TEST_DIR {}", test_dir.root().display()))?;
     log.line(&format!("artifacts {}", artifacts.display()))?;
 
-    let outcome = run_nested(&host, &test_dir, &artifacts, scale, &mut log);
+    let outcome = run_nested(&host, &test_dir, &artifacts, options, &mut log);
     let removed = fs::remove_dir_all(test_dir.root())
         .context(format!("remove {}", test_dir.root().display()));
     let outcome = outcome.and(removed);
@@ -70,14 +82,14 @@ fn run_nested(
     host: &Host,
     test_dir: &TestDir,
     artifacts: &Path,
-    scale: Scale,
+    options: Options,
     log: &mut Log,
 ) -> Result<()> {
-    let env = preflight(host, test_dir, artifacts, scale)?;
+    let env = preflight(host, test_dir, artifacts, options)?;
     log.line("stage 0, preflight: pass")?;
 
     let before = snapshot::take(host)?;
-    let nested = start_nested(&env, test_dir, artifacts, scale);
+    let nested = start_nested(&env, test_dir, artifacts, options);
     let after = snapshot::take(host);
     for line in fs::read_to_string(artifacts.join(supervise::LOG_FILE))
         .unwrap_or_default()
@@ -99,9 +111,10 @@ fn run_nested(
     }
 }
 
-/// Stage 0: generated configs, PARENT, containment, and `niri validate`.
-fn preflight(host: &Host, test_dir: &TestDir, artifacts: &Path, scale: Scale) -> Result<Env> {
-    let niri_config = config::niri(scale, &test_dir.bind_marker());
+/// Stage 0: generated configs, PARENT, containment, `niri validate`, and with Noctalia,
+/// `noctalia config validate`.
+fn preflight(host: &Host, test_dir: &TestDir, artifacts: &Path, options: Options) -> Result<Env> {
+    let niri_config = config::niri(options.scale, &test_dir.bind_marker());
     write(&test_dir.niri_config(), &niri_config)?;
     write(&artifacts.join("niri.kdl"), &niri_config)?;
     write(&test_dir.dbus_config(), &config::dbus(&test_dir.run()))?;
@@ -120,17 +133,48 @@ fn preflight(host: &Host, test_dir: &TestDir, artifacts: &Path, scale: Scale) ->
         group: Group::Own,
         deadline: VALIDATE_DEADLINE,
     })?;
+    if options.noctalia {
+        write_noctalia_config(&env, test_dir, artifacts)?;
+    }
     Ok(env)
+}
+
+fn write_noctalia_config(env: &Env, test_dir: &TestDir, artifacts: &Path) -> Result<()> {
+    let path = test_dir.noctalia_config();
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).context(format!("create {}", dir.display()))?;
+    }
+    write(&path, config::NOCTALIA)?;
+    write(&artifacts.join("noctalia.toml"), config::NOCTALIA)?;
+    let output = runner::run(&Invocation {
+        program: "noctalia",
+        args: vec!["config".into(), "validate".into(), path.into()],
+        env: ChildEnv::Exact(env),
+        output: Sink::Capture,
+        group: Group::Own,
+        deadline: VALIDATE_DEADLINE,
+    })?;
+    noctalia_valid(&output.stdout, &output.stderr)
+}
+
+fn noctalia_valid(stdout: &[u8], stderr: &[u8]) -> Result<()> {
+    if stdout == NOCTALIA_VALID.as_bytes() && stderr.is_empty() {
+        return Ok(());
+    }
+    Err(Failure::new(format!(
+        "noctalia config validate: {}{}",
+        String::from_utf8_lossy(stdout).trim_end(),
+        String::from_utf8_lossy(stderr).trim_end()
+    )))
 }
 
 /// Stages 1 and 2: `dbus-run-session -- niri -c … -- harness supervise …`. The supervisor
 /// quits niri when it is done, which ends the bus session.
-fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, scale: Scale) -> Result<()> {
+fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: Options) -> Result<()> {
     let harness = env::current_exe().context("find the harness binary")?;
-    let probe = probe()?;
     let mut bus_config = OsString::from("--config-file=");
     bus_config.push(test_dir.dbus_config());
-    let args = vec![
+    let mut args = vec![
         bus_config,
         "--".into(),
         "niri".into(),
@@ -141,9 +185,12 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, scale: Scale) -
         "supervise".into(),
         test_dir.root().into(),
         artifacts.into(),
-        scale.to_string().into(),
-        probe.into(),
+        options.scale.to_string().into(),
+        probe(VPOINTER)?.into(),
     ];
+    if options.noctalia {
+        args.push(probe(NOCTALIA_SOCKET)?.into());
+    }
     runner::run(&Invocation {
         program: "dbus-run-session",
         args,
@@ -162,11 +209,11 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, scale: Scale) -
     }
 }
 
-/// The `vpointer` probe, built by `make nested`.
-fn probe() -> Result<PathBuf> {
+/// A probe built by `make nested`.
+fn probe(relative: &str) -> Result<PathBuf> {
     let path = env::current_dir()
         .context("read the working directory")?
-        .join(PROBE);
+        .join(relative);
     if path.is_file() {
         Ok(path)
     } else {
@@ -189,5 +236,15 @@ mod tests {
     fn runs_in_the_same_second_get_different_names() {
         assert_ne!(run_name(1_791_334_343, 100), run_name(1_791_334_343, 101));
         assert_eq!(run_name(1_791_334_343, 100), "1791334343-100");
+    }
+
+    #[test]
+    fn noctalia_config_must_validate_without_warnings() {
+        noctalia_valid("\u{2713} Config is valid\n".as_bytes(), b"").unwrap();
+        let warned = "WARN  /t/config.toml:2:23: shell.setup_wizard_enable: unknown setting\n\n\
+                      \u{2713} Config is valid (1 warning(s))\n";
+        let error = noctalia_valid(warned.as_bytes(), b"").unwrap_err();
+        assert!(error.to_string().contains("unknown setting"), "{error}");
+        assert!(noctalia_valid(NOCTALIA_VALID.as_bytes(), b"note\n").is_err());
     }
 }

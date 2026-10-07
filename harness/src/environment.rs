@@ -88,7 +88,7 @@ pub(crate) fn parent(test_dir: &TestDir, host: &Host) -> Env {
         ("XDG_DATA_HOME", test_dir.data().into_os_string()),
         (
             "NOCTALIA_CONFIG_HOME",
-            test_dir.config().join("noctalia").into_os_string(),
+            test_dir.noctalia_config_home().into_os_string(),
         ),
         (
             "NOCTALIA_STATE_HOME",

@@ -50,6 +50,17 @@ binds {{
     )
 }
 
+/// The nested Noctalia's config. With a fresh state directory Noctalia 5.2.1 opens its
+/// setup wizard as a panel on startup (`application_ui.cpp`), and weather fetches from the
+/// network. The rest stays at the defaults. Its system-bus services, among them logind
+/// inhibitors and the Bluetooth and network agents, find no bus in NESTED.
+pub(crate) const NOCTALIA: &str = r"[shell]
+setup_wizard_enabled = false
+
+[weather]
+enabled = false
+";
+
 /// The private session bus config. It listens only inside `listen_dir` and has no service
 /// directories, so nothing on the host gets activated through it.
 pub(crate) fn dbus(listen_dir: &Path) -> String {
@@ -82,6 +93,12 @@ mod tests {
         assert!(config.contains("    scale 1.5\n"));
         assert!(config.contains(r#"spawn "touch" "/t/bind-fired";"#));
         assert!(!config.contains("spawn-at-startup"));
+    }
+
+    #[test]
+    fn noctalia_config_turns_off_the_wizard_and_weather() {
+        assert!(NOCTALIA.contains("[shell]\nsetup_wizard_enabled = false\n"));
+        assert!(NOCTALIA.contains("[weather]\nenabled = false\n"));
     }
 
     #[test]

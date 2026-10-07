@@ -21,7 +21,8 @@ coverage:
 
 nested:
 	cargo build --locked --manifest-path probes/vpointer/Cargo.toml
-	cargo run --locked -p harness -- run --scale $(SCALE)
+	cargo build --locked --manifest-path probes/noctalia-socket/Cargo.toml
+	cargo run --locked -p harness -- run --scale $(SCALE) $(if $(NOCTALIA),--noctalia)
 
 host-capture:
 	cargo run --locked -p harness -- host-capture $(OUTPUT)

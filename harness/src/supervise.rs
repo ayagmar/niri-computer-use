@@ -18,7 +18,7 @@ use crate::pointer::{self, Probe};
 use crate::scale::Scale;
 use crate::session::Session;
 use crate::test_dir::TestDir;
-use crate::{capture, keyboard};
+use crate::{capture, keyboard, noctalia};
 
 pub(crate) const STATUS_FILE: &str = "supervise.status";
 pub(crate) const LOG_FILE: &str = "supervise.log";
@@ -26,11 +26,18 @@ pub(crate) const LOG_FILE: &str = "supervise.log";
 const WEV_DEADLINE: Duration = Duration::from_secs(45);
 const WAIT: Duration = Duration::from_secs(5);
 
+/// The probes `harness run` passes on. `noctalia` is there only when C13 was requested.
+#[derive(Debug)]
+pub(crate) struct Probes<'a> {
+    pub(crate) vpointer: &'a str,
+    pub(crate) noctalia: Option<&'a str>,
+}
+
 pub(crate) fn supervise(
     test_dir: &TestDir,
     artifacts: &Path,
     scale: Scale,
-    probe: &str,
+    probes: &Probes<'_>,
 ) -> Result<()> {
     let mut log = Log::create(&artifacts.join(LOG_FILE), false)?;
     // Until `identify` passes, this may not be the nested niri, so nothing more is sent to
@@ -49,7 +56,7 @@ pub(crate) fn supervise(
     };
     let c2 = check_output(&output, scale, &mut log);
     let mut session = Session::new(test_dir, artifacts, log, niri);
-    let outcome = c2.and_then(|()| steps(&mut session, &output, probe));
+    let outcome = c2.and_then(|()| steps(&mut session, &output, probes));
     write_status(artifacts, outcome.as_ref())?;
     // Same connection as `identify`, so this reaches the niri that was identified.
     let quit = session.quit();
@@ -57,8 +64,9 @@ pub(crate) fn supervise(
     quit
 }
 
-/// Stage 4: the M0 checks against `wev`.
-fn steps(session: &mut Session<'_>, output: &LogicalOutput, probe: &str) -> Result<()> {
+/// Stage 4: the M0 checks against `wev`, then C13 if it was requested. Noctalia starts
+/// after `wev` is gone, so its bar can't move the window the other checks measure.
+fn steps(session: &mut Session<'_>, output: &LogicalOutput, probes: &Probes<'_>) -> Result<()> {
     session.screenshot("success-verify-niri.png")?;
     session.log("saved success-verify-niri.png")?;
     let wev_log = session.artifact("wev.log");
@@ -71,7 +79,7 @@ fn steps(session: &mut Session<'_>, output: &LogicalOutput, probe: &str) -> Resu
     pointer::run(
         session,
         &Probe {
-            path: probe,
+            path: probes.vpointer,
             output,
         },
         &wev_log,
@@ -79,7 +87,11 @@ fn steps(session: &mut Session<'_>, output: &LogicalOutput, probe: &str) -> Resu
     )?;
     keyboard::run(session, &wev_log)?;
     capture::nested_c15(session, output)?;
-    wev.stop().map(drop)
+    wev.stop()?;
+    match probes.noctalia {
+        Some(probe) => noctalia::c13(session, probe),
+        None => session.log("C13: skipped, Noctalia not requested (harness run --noctalia)"),
+    }
 }
 
 /// The window rule makes `wev` a 400x300 floating window at the top-left.

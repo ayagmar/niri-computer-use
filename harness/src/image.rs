@@ -108,16 +108,53 @@ const BACKGROUND_TOLERANCE: u8 = 8;
 
 /// The smallest rectangle holding every pixel that isn't the background colour.
 pub(crate) fn bounding_box(image: &Rgb<'_>, background: [u8; 3]) -> Option<Rect> {
+    let marked = pixels(image).map(|&pixel| !is_colour(pixel, background));
+    bounds(image.width, marked)
+}
+
+/// How many pixels are the background colour.
+pub(crate) fn count(image: &Rgb<'_>, background: [u8; 3]) -> usize {
+    pixels(image)
+        .filter(|&&pixel| is_colour(pixel, background))
+        .count()
+}
+
+fn is_colour(pixel: [u8; 3], colour: [u8; 3]) -> bool {
+    pixel
+        .iter()
+        .zip(colour)
+        .all(|(&value, expected)| value.abs_diff(expected) <= BACKGROUND_TOLERANCE)
+}
+
+/// Pixels that differ between two captures of the same size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Difference {
+    pub(crate) pixels: usize,
+    /// The smallest rectangle holding them.
+    pub(crate) area: Option<Rect>,
+}
+
+/// `None` if the images have different sizes.
+pub(crate) fn difference(before: &Rgb<'_>, after: &Rgb<'_>) -> Option<Difference> {
+    if (before.width, before.height) != (after.width, after.height) {
+        return None;
+    }
+    let changed = || pixels(before).zip(pixels(after)).map(|(a, b)| a != b);
+    Some(Difference {
+        pixels: changed().filter(|&changed| changed).count(),
+        area: bounds(before.width, changed()),
+    })
+}
+
+fn pixels<'a>(image: &Rgb<'a>) -> impl Iterator<Item = &'a [u8; 3]> {
+    image.pixels.as_chunks::<3>().0.iter()
+}
+
+/// The smallest rectangle holding every marked pixel, in row-major order.
+fn bounds(width: usize, marked: impl Iterator<Item = bool>) -> Option<Rect> {
     let mut found: Option<(usize, usize, usize, usize)> = None;
-    for (index, pixel) in image.pixels.as_chunks::<3>().0.iter().enumerate() {
-        let is_background = pixel
-            .iter()
-            .zip(background)
-            .all(|(&value, expected)| value.abs_diff(expected) <= BACKGROUND_TOLERANCE);
-        if is_background {
-            continue;
-        }
-        let (x, y) = (index % image.width, index / image.width);
+    for (index, _) in marked.enumerate().filter(|&(_, marked)| marked) {
+        let (x, y) = (index % width, index / width);
         found = Some(found.map_or((x, y, x, y), |(left, top, right, bottom)| {
             (left.min(x), top.min(y), right.max(x), bottom.max(y))
         }));
@@ -189,6 +226,40 @@ mod tests {
             bounding_box(&ppm(&empty).unwrap(), [0xFF, 0x00, 0xFF]),
             None
         );
+    }
+
+    #[test]
+    fn difference_counts_changed_pixels_and_bounds_them() {
+        let before = image(6, 5, &[]);
+        let after = image(6, 5, &[(1, 1), (4, 3)]);
+        let (before, after) = (ppm(&before).unwrap(), ppm(&after).unwrap());
+        assert_eq!(
+            difference(&before, &after),
+            Some(Difference {
+                pixels: 2,
+                area: Some(Rect {
+                    x: 1,
+                    y: 1,
+                    width: 4,
+                    height: 3,
+                }),
+            })
+        );
+        assert_eq!(
+            difference(&before, &before),
+            Some(Difference {
+                pixels: 0,
+                area: None,
+            })
+        );
+        let other = image(5, 6, &[]);
+        assert_eq!(difference(&before, &ppm(&other).unwrap()), None);
+    }
+
+    #[test]
+    fn counts_background_pixels() {
+        let bytes = image(6, 5, &[(1, 1), (4, 3)]);
+        assert_eq!(count(&ppm(&bytes).unwrap(), [0xFF, 0x00, 0xFF]), 28);
     }
 
     #[test]

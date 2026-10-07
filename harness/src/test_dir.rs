@@ -83,6 +83,17 @@ impl TestDir {
         self.root.join("data")
     }
 
+    /// `NOCTALIA_CONFIG_HOME` in PARENT.
+    pub(crate) fn noctalia_config_home(&self) -> PathBuf {
+        self.config().join("noctalia")
+    }
+
+    /// Noctalia reads every `*.toml` in `$NOCTALIA_CONFIG_HOME/noctalia/`
+    /// (`configDir` in Noctalia 5.2.1's `src/util/file_utils.h`).
+    pub(crate) fn noctalia_config(&self) -> PathBuf {
+        self.noctalia_config_home().join("noctalia/config.toml")
+    }
+
     /// `DBUS_SYSTEM_BUS_ADDRESS` in PARENT. Nothing may exist at its path, so a nested
     /// client that looks for the system bus fails instead of reaching the host's.
     pub(crate) fn system_bus_address(&self) -> OsString {

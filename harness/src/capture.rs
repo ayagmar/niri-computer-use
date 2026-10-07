@@ -16,7 +16,7 @@ use crate::run;
 use crate::runner::{self, ChildEnv, Group, Invocation, Sink};
 use crate::session::Session;
 
-const MAGENTA: [u8; 3] = [0xFF, 0x00, 0xFF];
+pub(crate) const MAGENTA: [u8; 3] = [0xFF, 0x00, 0xFF];
 /// C3's pass rule: each edge of the box within this many pixels.
 const C3_TOLERANCE: usize = 2;
 const RUNS: usize = 5;
@@ -29,8 +29,7 @@ pub(crate) fn c3(
     output: &LogicalOutput,
     window: &WindowLayout,
 ) -> Result<()> {
-    let args = ["-t", "ppm", "-o", "winit", "-"].map(OsString::from);
-    let ppm = session.run("grim", &args)?.stdout;
+    let ppm = nested_ppm(session)?;
     session.screenshot("success-c3.png")?;
     let image = image::ppm(&ppm).ok_or_else(|| Failure::new("grim wrote an unreadable PPM"))?;
     let expected = window_in_image(output, window)?;
@@ -49,6 +48,12 @@ pub(crate) fn c3(
     } else {
         Err(Failure::new("C3: wev is not where niri placed it"))
     }
+}
+
+/// A PPM of the nested output at its own scale.
+pub(crate) fn nested_ppm(session: &Session<'_>) -> Result<Vec<u8>> {
+    let args = ["-t", "ppm", "-o", "winit", "-"].map(OsString::from);
+    Ok(session.run("grim", &args)?.stdout)
 }
 
 /// The window's rectangle in an image of the whole output at the output's scale.
@@ -92,7 +97,7 @@ fn close(found: Rect, expected: Rect) -> bool {
     .all(|(a, b)| a.abs_diff(b) <= C3_TOLERANCE)
 }
 
-fn describe(rect: Rect) -> String {
+pub(crate) fn describe(rect: Rect) -> String {
     format!("{}x{} at ({}, {})", rect.width, rect.height, rect.x, rect.y)
 }
 

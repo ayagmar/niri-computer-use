@@ -95,6 +95,11 @@ impl<'a> Session<'a> {
         runner::start_with_stdin(&nested(program, args, Sink::Capture, deadline))
     }
 
+    /// The nested Noctalia's socket once it exists, checked like the other endpoints.
+    pub(crate) fn noctalia_socket(&self) -> Result<Option<PathBuf>> {
+        Nested::from_env(self.test_dir)?.noctalia_socket(&self.test_dir.run())
+    }
+
     pub(crate) fn bind_marker(&self) -> PathBuf {
         self.test_dir.bind_marker()
     }
