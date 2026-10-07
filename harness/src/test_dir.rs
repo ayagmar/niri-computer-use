@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fs::DirBuilder;
 use std::os::unix::fs::DirBuilderExt as _;
 use std::path::{Component, Path, PathBuf};
@@ -80,6 +81,18 @@ impl TestDir {
 
     pub(crate) fn data(&self) -> PathBuf {
         self.root.join("data")
+    }
+
+    /// `DBUS_SYSTEM_BUS_ADDRESS` in PARENT. Nothing may exist at its path, so a nested
+    /// client that looks for the system bus fails instead of reaching the host's.
+    pub(crate) fn system_bus_address(&self) -> OsString {
+        let mut address = OsString::from("unix:path=");
+        address.push(self.system_bus());
+        address
+    }
+
+    pub(crate) fn system_bus(&self) -> PathBuf {
+        self.run().join("no-system-bus")
     }
 
     pub(crate) fn niri_config(&self) -> PathBuf {

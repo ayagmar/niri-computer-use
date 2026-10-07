@@ -120,6 +120,10 @@ fn identify(nested: &Nested, niri: &mut Connection, log: &mut Log) -> Result<Log
         "DBUS_SESSION_BUS_ADDRESS socket={}",
         nested.dbus.display()
     ))?;
+    log.line(&format!(
+        "DBUS_SYSTEM_BUS_ADDRESS socket={} (no bus)",
+        nested.system_bus.display()
+    ))?;
 
     let Response::Version(version) = niri.request(&Request::Version)? else {
         return Err(Failure::new("niri answered Version with another response"));

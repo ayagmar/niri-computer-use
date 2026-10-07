@@ -8,6 +8,7 @@ use std::os::unix::fs::FileTypeExt as _;
 use std::path::{Component, Path, PathBuf};
 
 use crate::failure::{Context as _, Failure, Result};
+use crate::nested::nothing_at;
 use crate::test_dir::TestDir;
 
 pub(crate) type Env = BTreeMap<&'static str, OsString>;
@@ -18,6 +19,10 @@ const KEPT: [&str; 3] = ["HOME", "PATH", "LANG"];
 /// The one path that may point outside `TEST_DIR`: the host Wayland socket nested niri
 /// draws its window on.
 const HOST_SOCKET: &str = "WAYLAND_DISPLAY";
+
+/// Must be exactly `TestDir::system_bus_address`, with nothing at its path, so nested
+/// clients can't reach the host's system bus.
+const SYSTEM_BUS: &str = "DBUS_SYSTEM_BUS_ADDRESS";
 
 /// Every other path variable, all of which must resolve under `TEST_DIR`.
 const CONTAINED: [&str; 8] = [
@@ -94,6 +99,7 @@ pub(crate) fn parent(test_dir: &TestDir, host: &Host) -> Env {
             test_dir.data().join("noctalia").into_os_string(),
         ),
         (HOST_SOCKET, host.wayland_socket.clone().into_os_string()),
+        (SYSTEM_BUS, test_dir.system_bus_address()),
         ("HOME", host.home.clone()),
         ("PATH", host.path.clone()),
     ]);
@@ -104,7 +110,8 @@ pub(crate) fn parent(test_dir: &TestDir, host: &Host) -> Env {
 }
 
 /// Checks PARENT before anything is started: only known variables, every path variable
-/// under `TEST_DIR`, and an absolute host Wayland socket as the one exemption.
+/// and the system bus address under `TEST_DIR`, and an absolute host Wayland socket as the
+/// one exemption.
 pub(crate) fn check_containment(env: &Env, test_dir: &TestDir) -> Result<()> {
     let root = test_dir.root();
     let canonical = fs::canonicalize(root).context(format!("resolve {}", root.display()))?;
@@ -116,12 +123,13 @@ pub(crate) fn check_containment(env: &Env, test_dir: &TestDir) -> Result<()> {
         )));
     }
     for (&name, value) in env {
-        check_variable(name, Path::new(value), root)?;
+        check_variable(name, Path::new(value), test_dir)?;
     }
     Ok(())
 }
 
-fn check_variable(name: &str, value: &Path, root: &Path) -> Result<()> {
+fn check_variable(name: &str, value: &Path, test_dir: &TestDir) -> Result<()> {
+    let root = test_dir.root();
     if KEPT.contains(&name) {
         return Ok(());
     }
@@ -130,6 +138,17 @@ fn check_variable(name: &str, value: &Path, root: &Path) -> Result<()> {
             Ok(())
         } else {
             Err(Failure::new(format!("{name} must be an absolute path")))
+        };
+    }
+    if name == SYSTEM_BUS {
+        let expected = test_dir.system_bus_address();
+        return if value.as_os_str() == expected {
+            nothing_at(&test_dir.system_bus())
+        } else {
+            Err(Failure::new(format!(
+                "{name} must be {}",
+                expected.display()
+            )))
         };
     }
     if !CONTAINED.contains(&name) {
@@ -208,6 +227,23 @@ mod tests {
         let mut escaping = parent(&test_dir, &host());
         escaping.insert("XDG_CONFIG_HOME", OsString::from("/home/u/.config"));
         assert!(check_containment(&escaping, &test_dir).is_err());
+
+        let mut system_bus = parent(&test_dir, &host());
+        system_bus.insert(
+            SYSTEM_BUS,
+            OsString::from("unix:path=/run/dbus/system_bus_socket"),
+        );
+        assert!(check_containment(&system_bus, &test_dir).is_err());
+        system_bus.insert(
+            SYSTEM_BUS,
+            OsString::from(format!("unix:path={}/other", test_dir.run().display())),
+        );
+        assert!(check_containment(&system_bus, &test_dir).is_err());
+
+        let listening = parent(&test_dir, &host());
+        fs::write(test_dir.system_bus(), "").unwrap();
+        assert!(check_containment(&listening, &test_dir).is_err());
+        fs::remove_file(test_dir.system_bus()).unwrap();
 
         let mut relative = parent(&test_dir, &host());
         relative.insert(HOST_SOCKET, OsString::from("wayland-1"));

@@ -121,3 +121,9 @@ These match the versions installed locally.
 - `still_absent` checks for the full interval and once at its end. C5(b) watches keys and modifiers for two seconds while stdin is open, and C9 watches `bind-fired` for one second after the chord. Both passed at scale 1 and 1.5.
 - Keep the stdin gate, and keep the 100-character cap and three-second wtype deadline. The slowest of the ten C10 calls was 624.112 ms, below the 1500 ms decision threshold. Keeping wtype remains conditional on C6's human keymap-restoration check.
 - Sources: [wtype 0.4](https://raw.githubusercontent.com/atx/wtype/v0.4/main.c) and [wev 1.1.0](https://git.sr.ht/~sircmpwn/wev/blob/1.1.0/wev.c).
+
+## 2026-10-07: no system bus in the nested session
+
+- PARENT sets `DBUS_SYSTEM_BUS_ADDRESS` to `TEST_DIR/run/no-system-bus`, where nothing listens. A nested Noctalia on the real system bus registered itself as BlueZ's default pairing agent (`RequestDefaultAgent` in `bluetooth_agent.cpp`) and tried to register a NetworkManager secret agent. With its default lock screen settings it also takes a logind sleep-delay inhibitor, and sets the locked hint of the logind session it finds by its PID when it locks (`logind_service.cpp`, `application_ui.cpp`). That session is the host's wherever the harness runs inside the session scope. The config can turn off the lock screen parts but not the two agents, and all of them act on the host.
+- With no system bus, Noctalia logs `system dbus disabled` and runs without those services. The nested niri loses its read-only `login1` (lid switch) and `locale1` (keyboard layout) watchers and logs a warning for each. `X11 Layout` is unset on this machine, so the nested keymap doesn't change.
+- Containment and the supervisor's endpoint checks require exactly that address, and that nothing, not even a symlink, exists at its path. A path that merely lies under `TEST_DIR` could be a symlink to the host bus or a socket someone listens on.
