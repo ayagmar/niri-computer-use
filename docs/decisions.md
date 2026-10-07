@@ -68,3 +68,38 @@ These match the versions installed locally.
 - So the supervisor writes its log and status to files, and sends `Action::Quit` to the nested niri when it is done. It sends that only after `NIRI_SOCKET` resolves to a path under `TEST_DIR/run` and niri has reported `winit` as its only output. The host niri drives real outputs, so it can't pass the second check. If either check fails it sends nothing more, and the harness deadline kills the process group.
 - The supervisor keeps one niri connection from the version request through `Quit`. niri answers any number of requests on one connection (`src/ipc/server.rs`, `handle_client`), and `Quit` then reaches the niri that was identified even if the socket path changed in between. The plan's one-connection-per-request rule is for the MCP server's actions; the harness doesn't need it.
 - `harness supervise` takes the artifacts directory as an extra argument, so the supervisor can write there.
+
+## 2026-10-07: `vpointer` probe dependencies
+
+| Crate | Version | Published | Why |
+|---|---|---|---|
+| `wayland-client` | 0.31.15 | 2026-07-22 | Connects to the compositor, binds the seat and outputs, and reads `wl_output.name`. |
+| `wayland-protocols-wlr` | 0.3.12 | 2026-03-31 | The `zwlr_virtual_pointer_v1` bindings. Feature `client` only. |
+
+- With default features, `wayland-client` uses its pure-Rust backend. The system libwayland isn't needed: `ldd` on the probe lists only libc and libgcc_s. The `system` feature would switch to libwayland.
+- Every crate in `probes/vpointer/Cargo.lock` was checked against the version rule, transitive crates included. `libc` 0.2.190 (2026-10-02) and `cc` 1.6.0 (2026-10-03) were too new, so they are held at `libc` 0.2.189 (2026-07-21) and `cc` 1.5.1 (2026-09-25) with `cargo update --precise`. `cc` is a build dependency of `wayland-backend` and only compiles C when that crate's `log` feature is on, which it isn't.
+- The rest of the lock, with publish dates from crates.io. Each is the newest release at least 7 days old that its dependents allow. `downcast-rs`, `quick-xml` and `windows-link` have newer releases outside the ranges `wayland-backend` (`^1.2`), `wayland-scanner` (`^0.41`) and `windows-sys` (`^0.2.1`) accept.
+
+  | Crate | Version | Published |
+  |---|---|---|
+  | `bitflags` | 2.13.2 | 2026-09-10 |
+  | `downcast-rs` | 1.2.1 | 2024-04-07 |
+  | `errno` | 0.3.14 | 2025-09-09 |
+  | `find-msvc-tools` | 0.1.14 | 2026-09-25 |
+  | `linux-raw-sys` | 0.12.1 | 2025-12-23 |
+  | `memchr` | 2.8.3 | 2026-07-08 |
+  | `pkg-config` | 0.3.34 | 2026-08-14 |
+  | `proc-macro2` | 1.0.107 | 2026-07-19 |
+  | `quick-xml` | 0.41.0 | 2026-06-29 |
+  | `quote` | 1.0.47 | 2026-07-19 |
+  | `rustix` | 1.1.5 | 2026-09-16 |
+  | `shlex` | 2.0.1 | 2026-05-17 |
+  | `smallvec` | 1.16.2 | 2026-09-25 |
+  | `unicode-ident` | 1.0.26 | 2026-09-17 |
+  | `wayland-backend` | 0.3.17 | 2026-08-14 |
+  | `wayland-protocols` | 0.32.13 | 2026-06-19 |
+  | `wayland-scanner` | 0.31.11 | 2026-07-22 |
+  | `wayland-sys` | 0.31.11 | 2026-03-31 |
+  | `windows-link` | 0.2.1 | 2025-10-06 |
+  | `windows-sys` | 0.61.2 | 2025-10-06 |
+- The probe has its own `Cargo.lock`, committed, so its results can be reproduced.

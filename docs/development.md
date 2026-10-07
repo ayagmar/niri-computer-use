@@ -64,3 +64,13 @@ Each run keeps its files in `target/e2e/<unix time>-<pid>/`:
 | `supervise.log` | the nested environment and the checks the supervisor ran |
 | `supervise.status` | `pass`, or `fail: <reason>` |
 | `success-verify-niri.png` | the nested output |
+
+## Probes
+
+Probes are small standalone programs in `probes/`, outside the Cargo workspace, so `make check` doesn't cover them. Run their tests with Cargo:
+
+```sh
+cargo test --locked --manifest-path probes/vpointer/Cargo.toml
+```
+
+`vpointer` creates a virtual pointer bound to one output, sends one action and exits. Run it only through `make nested`: the supervisor passes it `winit`, and only after the endpoint and output checks. The probe itself only checks that the output it was given exists before it creates the pointer. For a motion it prints the `motion_absolute` arguments it encoded and where niri's own mapping puts them, and refuses to send one that lands more than 0.002 px from the target.
