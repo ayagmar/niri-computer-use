@@ -7,7 +7,8 @@ use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use crate::environment::Host;
-use crate::failure::{Context as _, Result};
+use crate::failure::{Context as _, Failure, Result};
+use crate::log::Log;
 use crate::runner::{self, ChildEnv, Group, Invocation, Sink};
 
 const DEADLINE: Duration = Duration::from_secs(5);
@@ -62,6 +63,22 @@ pub(crate) fn diff(before: &Snapshot, after: &Snapshot) -> Vec<String> {
     changes
 }
 
+/// C1: logs each change and the verdict, and fails if anything changed.
+pub(crate) fn report(log: &mut Log, before: &Snapshot, after: Result<Snapshot>) -> Result<()> {
+    let changes = diff(before, &after?);
+    for change in &changes {
+        log.line(&format!("  {change}"))?;
+    }
+    if changes.is_empty() {
+        log.line("C1, host snapshot: unchanged")
+    } else {
+        Err(Failure::new(format!(
+            "C1, host snapshot: {} changes",
+            changes.len()
+        )))
+    }
+}
+
 fn set_diff(place: &str, before: &BTreeSet<OsString>, after: &BTreeSet<OsString>) -> Vec<String> {
     let added = after
         .difference(before)
@@ -104,6 +121,27 @@ mod tests {
             x11_entries: BTreeSet::new(),
             dconf_modified: None,
         }
+    }
+
+    #[test]
+    fn report_logs_every_change_and_the_verdict() {
+        let path = std::env::temp_dir().join(format!("harness-c1-{}", std::process::id()));
+        let mut log = Log::create(&path, false).unwrap();
+        report(&mut log, &snapshot(), Ok(snapshot())).unwrap();
+        let mut after = snapshot();
+        after.dconf_modified = Some(SystemTime::UNIX_EPOCH);
+        let changed = report(&mut log, &snapshot(), Ok(after));
+        assert_eq!(
+            changed.unwrap_err().to_string(),
+            "C1, host snapshot: 1 changes"
+        );
+        let unreadable = report(&mut log, &snapshot(), Err(Failure::new("niri msg failed")));
+        assert_eq!(unreadable.unwrap_err().to_string(), "niri msg failed");
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "C1, host snapshot: unchanged\n  ~/.config/dconf/user modification time changed\n"
+        );
+        fs::remove_file(path).unwrap();
     }
 
     #[test]

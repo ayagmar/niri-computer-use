@@ -97,18 +97,12 @@ fn run_nested(
     {
         log.line(&format!("  {line}"))?;
     }
+    // Compared before the nested result is checked, so a failed run still reports what
+    // changed on the host.
+    let c1 = snapshot::report(log, &before, after);
     nested?;
     log.line("stages 1-2, nested niri and private bus: pass")?;
-
-    let changes = snapshot::diff(&before, &after?);
-    for change in &changes {
-        log.line(&format!("  {change}"))?;
-    }
-    if changes.is_empty() {
-        log.line("C1, host snapshot: unchanged")
-    } else {
-        Err(Failure::new("C1, host snapshot: changed"))
-    }
+    c1
 }
 
 /// Stage 0: generated configs, PARENT, containment, `niri validate`, and with Noctalia,
