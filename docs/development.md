@@ -25,7 +25,7 @@ make nested            # output scale 1
 make nested SCALE=1.5
 ```
 
-You'll need niri 26.04, `dbus-run-session` (from `dbus`), `grim`, `wev` and `stdbuf` (from coreutils). `make nested` builds the `vpointer` probe first. The nested niri window opens and closes within a second or two.
+You'll need niri 26.04, `dbus-run-session` (from `dbus`), `grim`, `wev`, `wtype` 0.4 and `stdbuf` (from coreutils). `make nested` builds the `vpointer` probe first. The nested niri window stays open while the checks run, then closes.
 
 The nested niri's window has the app-id `niri`. To keep it from moving your tiled layout or taking focus, add this rule to your own niri config:
 
@@ -55,13 +55,21 @@ What a run does:
    - captures the output with `grim` and checks that everything that isn't magenta is a box where niri placed `wev` (C3)
    - moves the pointer into `wev` with the `vpointer` probe and waits until `wev` logs `wl_pointer.enter` at that point, or that motion if the pointer was already inside, then moves it to five surface points and one image pixel, and checks where `wev` saw each motion (C4)
    - clicks, and scrolls one wheel notch, and checks what `wev` logged (C12)
+   - waits for `wev` to log `wl_keyboard.enter`, then checks 20 Ctrl+a calls and 20 stdin `Hello` calls (C5(a)); a failure stops the run before the remaining keyboard checks
+   - holds `wtype` stdin open for a full two seconds, checks that the child stays alive and sends no keys or modifiers, then closes it and checks exactly one Ctrl+a pair (C5(b))
+   - sends Ctrl+Shift+F12 through `wtype`, checks the decoded pair and modifiers, then watches for a full second that `bind-fired` stays absent (C9 virtual half; the physical control is unverified)
+   - types the committed 100-character corpus five times and compares the decoded text exactly, recording each duration and min/median/max (C10)
    - captures the output 20 times, PNG and JPEG at `-s 1` and `-s 0.5`, and checks each image's size (C15)
    - stops `wev` and tells the nested niri to quit on the connection it identified
 7. Takes the host snapshot again, reports any difference, and removes `TEST_DIR`.
 
 Every process the harness starts has a deadline, and a watchdog kills it when the deadline passes, even one like `wev` that runs in the background. Anything that ends after its deadline counts as timed out. `harness run` starts each process in its own process group and kills that group when the process exits, when the deadline passes, or when you press Ctrl+C. The supervisor's steps stay in the nested niri's group, so that kill covers them too. Before each one, the supervisor checks the nested endpoints again. Each wait polls every 50 ms until its deadline, ignores a result that arrives after it, and on timeout saves `failure-<step>.png`.
 
-Each probe call sends its own event time, and niri passes that time on to `wev`'s events. The checks only read events with their own time, so motion from your own mouse over the nested window isn't mistaken for the probe's.
+The runner can start a step with stdin held open. `feed` writes every byte and closes the pipe, within the child’s original deadline; a watchdog kills a child that stops reading. Keyboard checks use a three-second child deadline. `still_absent` polls for the full interval, including at its end, and saves a failure screenshot if an event appears.
+
+Keyboard checks read the complete key and modifier records, including continuation lines, after an offset taken before each call. They check ordered press/release pairs, matching keycodes and symbols, decoded text, and chord modifiers at the keys and after release. The corpus is `probes/keyboard/corpus.txt`: 100 Unicode scalar values, 104 UTF-8 bytes, with ASCII, `é`, `ß` and `→`, and no trailing newline. No separate stdin-gate probe is needed.
+
+Each pointer probe call sends its own event time, and niri passes that time on to `wev`'s events. The checks only read events with their own time, so motion from your own mouse over the nested window isn't mistaken for the probe's.
 
 Each run keeps its files in `target/e2e/<unix time>-<pid>/`:
 

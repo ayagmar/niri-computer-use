@@ -2,6 +2,8 @@
 //! 1.1.0's `wev.c`), for example
 //! `[        14:      wl_pointer] motion: time: 4001; x, y: 10.000000, 10.000000`.
 
+pub(crate) mod keyboard;
+
 /// One logged event: interface, event name and the rest of the line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Event<'a> {

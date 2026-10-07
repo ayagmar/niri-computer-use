@@ -10,7 +10,6 @@ use std::time::Duration;
 
 use niri_ipc::{LogicalOutput, Request, Response, Transform, WindowLayout};
 
-use crate::capture;
 use crate::failure::{Context as _, Failure, Result};
 use crate::log::Log;
 use crate::nested::Nested;
@@ -19,6 +18,7 @@ use crate::pointer::{self, Probe};
 use crate::scale::Scale;
 use crate::session::Session;
 use crate::test_dir::TestDir;
+use crate::{capture, keyboard};
 
 pub(crate) const STATUS_FILE: &str = "supervise.status";
 pub(crate) const LOG_FILE: &str = "supervise.log";
@@ -77,6 +77,7 @@ fn steps(session: &mut Session<'_>, output: &LogicalOutput, probe: &str) -> Resu
         &wev_log,
         &window,
     )?;
+    keyboard::run(session, &wev_log)?;
     capture::nested_c15(session, output)?;
     wev.stop().map(drop)
 }

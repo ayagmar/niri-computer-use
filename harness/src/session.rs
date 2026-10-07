@@ -1,7 +1,7 @@
 //! Test steps in the nested niri. A `Session` exists only after the supervisor has
 //! identified the nested niri on its connection. Every process a step starts goes through
 //! `run` or `start`, which re-check the nested endpoints first, and every wait goes through
-//! `wait_until`.
+//! `wait_until` or `still_absent`.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -82,6 +82,50 @@ impl<'a> Session<'a> {
     ) -> Result<Process> {
         Nested::from_env(self.test_dir)?;
         runner::start(&nested(program, args, Sink::File(log), deadline))
+    }
+
+    /// Starts a step with stdin held open and a deadline, capturing its output.
+    pub(crate) fn start_with_stdin(
+        &self,
+        program: &str,
+        args: &[OsString],
+        deadline: Duration,
+    ) -> Result<Process> {
+        Nested::from_env(self.test_dir)?;
+        runner::start_with_stdin(&nested(program, args, Sink::Capture, deadline))
+    }
+
+    pub(crate) fn bind_marker(&self) -> PathBuf {
+        self.test_dir.bind_marker()
+    }
+
+    /// Checks for the full interval, including at its end. Any observed event fails
+    /// and saves a failure screenshot. Unlike `wait_until`, absence cannot pass early.
+    pub(crate) fn still_absent(
+        &self,
+        step: &str,
+        interval: Duration,
+        mut present: impl FnMut() -> Result<bool>,
+    ) -> Result<()> {
+        let end = Instant::now() + interval;
+        loop {
+            if present()? {
+                return self.failed(step, "unexpected event during absence check");
+            }
+            let left = end.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Ok(());
+            }
+            pause(POLL.min(left));
+        }
+    }
+
+    fn failed<T>(&self, step: &str, failure: &str) -> Result<T> {
+        let name = format!("failure-{step}.png");
+        Err(Failure::new(match self.screenshot(&name) {
+            Ok(()) => format!("{step}: {failure}; see {name}"),
+            Err(screenshot) => format!("{step}: {failure}; no screenshot: {screenshot}"),
+        }))
     }
 
     /// Saves a PNG of the nested output in the artifacts directory.
@@ -236,6 +280,53 @@ mod tests {
     }
 
     #[test]
+    fn absence_waits_the_full_interval_and_checks_at_the_end() {
+        let dir = scratch("absent");
+        let test_dir = TestDir::open(PathBuf::from("/r/t")).unwrap();
+        let (session, _listener) = session(&test_dir, &dir);
+        let started = Instant::now();
+        let mut checks = 0;
+        session
+            .still_absent("step", Duration::from_millis(120), || {
+                checks += 1;
+                Ok(false)
+            })
+            .unwrap();
+        assert!(started.elapsed() >= Duration::from_millis(120));
+        assert!(checks >= 3);
+        let failure = session.still_absent("step", Duration::from_millis(100), || Ok(true));
+        assert!(
+            failure
+                .unwrap_err()
+                .to_string()
+                .contains("unexpected event")
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn absence_rejects_an_event_at_the_final_check_and_propagates_errors() {
+        let dir = scratch("absence-final");
+        let test_dir = TestDir::open(PathBuf::from("/r/t")).unwrap();
+        let (session, _listener) = session(&test_dir, &dir);
+        let started = Instant::now();
+        assert!(
+            session
+                .still_absent("step", Duration::from_millis(100), || {
+                    Ok(started.elapsed() >= Duration::from_millis(100))
+                })
+                .is_err()
+        );
+        let error = session
+            .still_absent("step", Duration::from_secs(1), || {
+                Err(Failure::new("read failed"))
+            })
+            .unwrap_err();
+        assert_eq!(error.to_string(), "read failed");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn nothing_starts_outside_the_nested_session() {
         let dir = scratch("outside");
         let test_dir = TestDir::open(PathBuf::from("/r/t")).unwrap();
@@ -244,6 +335,11 @@ mod tests {
         let started = session.start("true", &[], dir.join("out"), Duration::from_secs(5));
         assert!(started.is_err());
         assert!(!dir.join("out").exists());
+        assert!(
+            session
+                .start_with_stdin("true", &[], Duration::from_secs(1))
+                .is_err()
+        );
         fs::remove_dir_all(dir).unwrap();
     }
 }

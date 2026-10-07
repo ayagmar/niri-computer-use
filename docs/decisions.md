@@ -113,3 +113,11 @@ These match the versions installed locally.
 - The runner can now start a process and stop it later, which `wev` needs. A watchdog thread kills the process at its deadline. It shares a lock with the code that reaps the child, and only kills while the child is unreaped, so it can't signal a reused process ID. Any ending seen at or after the deadline, including a clean exit, counts as a timeout. Dropping the handle kills the process.
 - `wait_until` ignores a value its condition returns after the deadline. A condition that asks niri can take that request's own 5-second deadline, so a wait can end up to 5 seconds late, but it then fails instead of passing.
 - C15 on a host output is a separate command, `harness host-capture`, run from your shell. The supervisor can only reach the nested niri.
+
+## 2026-10-07: keyboard checks and the stdin gate
+
+- The existing runner holds and feeds stdin, so C5(b) needs no new probe or dependency. A writer runs on a thread and waits only until the child's original deadline; the existing watchdog bounds a child that doesn't read. All wtype children start through the checked nested `Session`.
+- Keyboard checks use byte offsets in the append-only `wev` log, because wtype 0.4 sends key time 0 (`main.c`, `type_keycode` and `run_key`). The parser includes the key and modifier continuation lines from wev 1.1.0 (`wev.c`, `wl_keyboard_key` and `wl_keyboard_modifiers`). A partial record waits for its final newline; a malformed complete record fails.
+- `still_absent` checks for the full interval and once at its end. C5(b) watches keys and modifiers for two seconds while stdin is open, and C9 watches `bind-fired` for one second after the chord. Both passed at scale 1 and 1.5.
+- Keep the stdin gate, and keep the 100-character cap and three-second wtype deadline. The slowest of the ten C10 calls was 624.112 ms, below the 1500 ms decision threshold. Keeping wtype remains conditional on C6's human keymap-restoration check.
+- Sources: [wtype 0.4](https://raw.githubusercontent.com/atx/wtype/v0.4/main.c) and [wev 1.1.0](https://git.sr.ht/~sircmpwn/wev/blob/1.1.0/wev.c).

@@ -6,10 +6,10 @@
 
 use std::ffi::OsString;
 use std::fs::File;
-use std::io::{self, Read};
+use std::io::{self, Read, Write as _};
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Child, ChildStdin, Command, Output, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -84,13 +84,22 @@ pub(crate) fn run(invocation: &Invocation<'_>) -> Result<Output> {
 /// Starts a program and returns while it runs. The caller ends it with `wait` or `stop`,
 /// and dropping the handle stops it. A watchdog kills it at its deadline.
 pub(crate) fn start(invocation: &Invocation<'_>) -> Result<Process> {
+    spawn(invocation, false)
+}
+
+/// Starts with stdin held open until `Process::feed` writes and closes it.
+pub(crate) fn start_with_stdin(invocation: &Invocation<'_>) -> Result<Process> {
+    spawn(invocation, true)
+}
+
+fn spawn(invocation: &Invocation<'_>, piped: bool) -> Result<Process> {
     let program = invocation.program;
     if interrupt::requested() {
         return Err(Failure::new(format!(
             "interrupted before starting {program}"
         )));
     }
-    let mut child = command(invocation)?
+    let mut child = command(invocation, piped)?
         .spawn()
         .context(format!("start {program}"))?;
     let pid = Pid::from_child(&child);
@@ -107,6 +116,7 @@ pub(crate) fn start(invocation: &Invocation<'_>) -> Result<Process> {
             Arc::clone(&reaped),
         )),
         reaped,
+        stdin: child.stdin.take(),
         child,
         pid,
         group: invocation.group,
@@ -128,6 +138,7 @@ pub(crate) fn start(invocation: &Invocation<'_>) -> Result<Process> {
 pub(crate) struct Process {
     program: String,
     child: Child,
+    stdin: Option<ChildStdin>,
     pid: Pid,
     group: Group,
     deadline: Duration,
@@ -147,6 +158,58 @@ pub(crate) struct Process {
 }
 
 impl Process {
+    /// Writes all bytes, then closes stdin, within the child's original deadline. The
+    /// watchdog also bounds a writer blocked by a child that never reads its pipe.
+    pub(crate) fn feed(&mut self, bytes: Vec<u8>) -> Result<()> {
+        let mut stdin = self
+            .stdin
+            .take()
+            .ok_or_else(|| Failure::new("stdin is not open"))?;
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            let written = stdin.write_all(&bytes);
+            drop(stdin);
+            sender.send(written)
+        });
+        let left = self.end.saturating_duration_since(Instant::now());
+        receiver
+            .recv_timeout(left)
+            .context(format!(
+                "write stdin of {} before its deadline",
+                self.program
+            ))?
+            .context(format!("write stdin of {}", self.program))?;
+        if Instant::now() >= self.end {
+            return Err(Failure::new(format!(
+                "{} stdin deadline passed",
+                self.program
+            )));
+        }
+        Ok(())
+    }
+
+    /// Checks that a held-stdin child is still alive without reaping it.
+    pub(crate) fn ensure_running(&mut self) -> Result<()> {
+        match self.exit.try_recv() {
+            Err(TryRecvError::Empty) if Instant::now() < self.end => Ok(()),
+            Ok(waited) => {
+                self.exited = waited.is_ok();
+                waited.context(format!("observe {}", self.program))?;
+                let output = self.finish(Ok(Ending::Exited))?;
+                Err(Failure::new(format!(
+                    "{} exited while stdin was held open with {}{}",
+                    self.program,
+                    output.status,
+                    detail(None, Ok(output.stderr))
+                )))
+            }
+            Err(error) => Err(Failure::new(format!(
+                "{} is not running: {error}",
+                self.program
+            ))),
+        }
+    }
+
     /// Waits for the program to exit, until its deadline. `wait_for_exit` already tells an
     /// exit before the deadline from a timeout.
     pub(crate) fn wait(mut self) -> Result<Output> {
@@ -186,6 +249,8 @@ impl Process {
             .lock()
             .map_err(|_| Failure::new(format!("the watchdog of {program} panicked")))?;
         kill(self.pid, self.group, self.exited).context(format!("kill {program}"))?;
+        // Do not release a held stdin gate before killing the child.
+        self.stdin = None;
         // An observer failure ends here, killed but not reaped: its one message is used up.
         let ending = ending.context(format!("wait for {program}"))?;
         if !self.exited {
@@ -256,9 +321,11 @@ fn watchdog(pid: Pid, group: Group, deadline: Duration, reaped: Arc<Mutex<bool>>
     clippy::disallowed_methods,
     reason = "this is the runner every other module goes through"
 )]
-fn command(invocation: &Invocation<'_>) -> Result<Command> {
+fn command(invocation: &Invocation<'_>, piped: bool) -> Result<Command> {
     let mut command = Command::new(invocation.program);
-    command.args(&invocation.args).stdin(Stdio::null());
+    command
+        .args(&invocation.args)
+        .stdin(if piped { Stdio::piped() } else { Stdio::null() });
     if matches!(invocation.group, Group::Own) {
         command.process_group(0);
     }
@@ -416,6 +483,86 @@ mod tests {
             thread::park_timeout(Duration::from_millis(20));
         }
         false
+    }
+
+    #[test]
+    fn stdin_writes_all_bytes_and_closes() {
+        let call = invocation("cat", &[], Duration::from_secs(5));
+        let mut process = start_with_stdin(&call).unwrap();
+        process.ensure_running().unwrap();
+        let bytes = vec![b'x'; 200_000];
+        process.feed(bytes.clone()).unwrap();
+        assert_eq!(process.wait().unwrap().stdout, bytes);
+    }
+
+    #[test]
+    fn stdin_can_be_held_then_closed_without_data() {
+        let call = invocation("cat", &[], Duration::from_secs(5));
+        let mut process = start_with_stdin(&call).unwrap();
+        thread::park_timeout(Duration::from_millis(100));
+        process.ensure_running().unwrap();
+        process.feed(Vec::new()).unwrap();
+        assert_eq!(process.wait().unwrap().stdout, Vec::<u8>::new());
+    }
+
+    #[test]
+    fn a_blocked_stdin_writer_has_a_deadline() {
+        let call = invocation("sleep", &["30"], Duration::from_millis(100));
+        let mut process = start_with_stdin(&call).unwrap();
+        let started = Instant::now();
+        assert!(process.feed(vec![b'x'; 200_000]).is_err());
+        assert!(process.wait().is_err());
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn an_early_exit_cannot_pass_a_stdin_gate() {
+        let call = invocation("true", &[], Duration::from_secs(5));
+        let mut process = start_with_stdin(&call).unwrap();
+        thread::park_timeout(Duration::from_millis(100));
+        assert!(process.ensure_running().is_err());
+        drop(process);
+    }
+
+    #[test]
+    fn a_gate_child_failure_keeps_status_and_stderr() {
+        let call = invocation(
+            "sh",
+            &["-c", "echo broke >&2; exit 3"],
+            Duration::from_secs(5),
+        );
+        let mut process = start_with_stdin(&call).unwrap();
+        thread::park_timeout(Duration::from_millis(100));
+        let message = process.ensure_running().unwrap_err().to_string();
+        assert!(message.contains("exit status: 3"), "{message}");
+        assert!(message.contains("broke"), "{message}");
+    }
+
+    #[test]
+    fn dropping_held_stdin_does_not_release_the_gated_command() {
+        let dir = std::env::temp_dir().join(format!("harness-held-drop-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.to_str().unwrap();
+        let call = invocation(
+            "sh",
+            &[
+                "-c",
+                "touch \"$1/ready\"; read -r ignored; touch \"$1/released\"",
+                "gate",
+                path,
+            ],
+            Duration::from_secs(5),
+        );
+        let mut process = start_with_stdin(&call).unwrap();
+        let end = Instant::now() + Duration::from_secs(2);
+        while !dir.join("ready").exists() && Instant::now() < end {
+            thread::park_timeout(Duration::from_millis(10));
+        }
+        assert!(dir.join("ready").exists());
+        process.ensure_running().unwrap();
+        drop(process);
+        assert!(!dir.join("released").exists());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

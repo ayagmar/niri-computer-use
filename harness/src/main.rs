@@ -6,6 +6,7 @@ mod environment;
 mod failure;
 mod image;
 mod interrupt;
+mod keyboard;
 mod log;
 mod nested;
 mod niri;
