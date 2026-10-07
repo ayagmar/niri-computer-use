@@ -125,7 +125,15 @@ fn drawn(session: &mut Session<'_>, closed: &[u8], open: bool) -> Result<()> {
         let now = image::ppm(&now).ok_or_else(|| Failure::new("grim wrote an unreadable PPM"))?;
         let difference = image::difference(&closed, &now)
             .ok_or_else(|| Failure::new("the nested output changed size"))?;
-        let shown = shown(difference.pixels, closed.width * closed.height);
+        let total = closed.width * closed.height;
+        if whole(difference.pixels, total) {
+            return Err(Failure::new(format!(
+                "C13 {what}: {} of {total} pixels differ from the baseline; a panel covers \
+                 far less, so the output was not what the baseline captured",
+                difference.pixels
+            )));
+        }
+        let shown = shown(difference.pixels, total);
         Ok((shown == open).then_some(difference))
     })?;
     session.log(&format!(
@@ -141,6 +149,12 @@ fn drawn(session: &mut Session<'_>, closed: &[u8], open: bool) -> Result<()> {
 /// the panel counts as gone, even if the bar's clock changed in between.
 const fn shown(changed: usize, total: usize) -> bool {
     changed * DRAWN_SHARE >= total
+}
+
+/// At least 90% of the pixels changed. The control center covered about 23% of the output
+/// at scale 1 and 53% at scale 1.5; a baseline taken before the wallpaper changes all of it.
+const fn whole(changed: usize, total: usize) -> bool {
+    changed * 10 >= total * 9
 }
 
 /// Sends `<verb> control-center`, requires Noctalia's `ok`, and waits for `activePanelId`
@@ -249,6 +263,15 @@ mod tests {
         assert!(shown(6912, total));
         assert!(!shown(6911, total));
         assert!(!shown(0, total));
+    }
+
+    #[test]
+    fn nearly_the_whole_output_changing_is_not_a_panel() {
+        let total = 960 * 720;
+        assert!(whole(total, total));
+        assert!(whole(622_080, total));
+        assert!(!whole(622_079, total));
+        assert!(!whole(370_450, total));
     }
 
     #[test]
