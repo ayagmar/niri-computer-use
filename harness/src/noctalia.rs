@@ -20,6 +20,9 @@ const STARTUP: Duration = Duration::from_secs(10);
 /// C13's pass rule: each panel change is seen within 2 s of sending it.
 const PANEL_WAIT: Duration = Duration::from_secs(2);
 const PANEL: &str = "control-center";
+/// For the capture checks, which aren't part of C13's rule. Noctalia can report a panel
+/// open well before it draws it: one run logged a 1.9 s rendering stall.
+const DRAWN_WAIT: Duration = Duration::from_secs(5);
 /// A drawn panel changes at least one in this many pixels of the capture taken before
 /// `panel-open`. The bar's clock changes far fewer.
 const DRAWN_SHARE: usize = 100;
@@ -120,7 +123,7 @@ fn drawn(session: &mut Session<'_>, closed: &[u8], open: bool) -> Result<()> {
     } else {
         ("c13-gone", "the panel gone")
     };
-    let difference = session.wait_until(step, what, PANEL_WAIT, |session| {
+    let difference = session.wait_until(step, what, DRAWN_WAIT, |session| {
         let now = capture::nested_ppm(session)?;
         let now = image::ppm(&now).ok_or_else(|| Failure::new("grim wrote an unreadable PPM"))?;
         let difference = image::difference(&closed, &now)
