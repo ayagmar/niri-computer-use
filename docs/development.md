@@ -27,6 +27,21 @@ make nested SCALE=1.5
 
 You'll need niri 26.04, `dbus-run-session` (from `dbus`) and `grim`. The nested niri window opens and closes within a second or two.
 
+The nested niri's window has the app-id `niri`. To keep it from moving your tiled layout or taking focus, add this rule to your own niri config:
+
+```kdl
+window-rule {
+    match app-id="^niri$"
+    open-floating true
+    open-focused false
+    default-column-width { fixed 960; }
+    default-window-height { fixed 720; }
+    default-floating-position x=16 y=16 relative-to="bottom-right"
+}
+```
+
+Later steps need the nested output to be at least 400x300 logical pixels at scale 1.5, which 960x720 gives.
+
 What a run does:
 
 1. Creates a fresh `TEST_DIR` at `$XDG_RUNTIME_DIR/niri-desktop-mcp-test/<unix time>-<pid>/`, mode 0700, with `run/`, `state/`, `cache/`, `config/` and `data/`. The `niri-desktop-mcp-test` directory itself stays after the run, empty.
