@@ -154,8 +154,8 @@ const fn shown(changed: usize, total: usize) -> bool {
     changed * DRAWN_SHARE >= total
 }
 
-/// At least 90% of the pixels changed. The control center covered about 23% of the output
-/// at scale 1 and 53% at scale 1.5; a baseline taken before the wallpaper changes all of it.
+/// At least 90% of the pixels changed. The control center changed 22–24% of the output at
+/// scale 1 and 50–67% at scale 1.5; a baseline taken before the wallpaper changes all of it.
 const fn whole(changed: usize, total: usize) -> bool {
     changed * 10 >= total * 9
 }

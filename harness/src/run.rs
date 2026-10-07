@@ -44,6 +44,9 @@ pub(crate) fn run(options: Options) -> Result<()> {
     log.line(&format!("artifacts {}", artifacts.display()))?;
 
     let outcome = run_nested(&host, &test_dir, &artifacts, options, &mut log);
+    // Checked even when the run failed: that is when a stray process is most likely.
+    let leftovers = no_leftovers(test_dir.root(), &mut log);
+    let outcome = outcome.and(leftovers);
     let removed = fs::remove_dir_all(test_dir.root())
         .context(format!("remove {}", test_dir.root().display()));
     let outcome = outcome.and(removed);
@@ -52,6 +55,55 @@ pub(crate) fn run(options: Options) -> Result<()> {
         Err(_) => "result: fail",
     })?;
     outcome
+}
+
+/// Fails if a process still running names `TEST_DIR` in its command line. Everything the
+/// run started should be gone once `dbus-run-session`'s group is killed, but a program can
+/// move a child into a group of its own. Such processes are reported, not killed.
+fn no_leftovers(root: &Path, log: &mut Log) -> Result<()> {
+    let found = leftovers(root)?;
+    for process in &found {
+        log.line(&format!("  still running: {process}"))?;
+    }
+    if found.is_empty() {
+        log.line("leftover processes: none")
+    } else {
+        Err(Failure::new(format!(
+            "{} processes naming TEST_DIR outlived the run",
+            found.len()
+        )))
+    }
+}
+
+fn leftovers(root: &Path) -> Result<Vec<String>> {
+    let mut found = Vec::new();
+    for entry in fs::read_dir("/proc").context("list /proc")? {
+        let entry = entry.context("list /proc")?;
+        let name = entry.file_name();
+        let Some(pid) = name
+            .to_str()
+            .filter(|name| name.bytes().all(|b| b.is_ascii_digit()))
+        else {
+            continue;
+        };
+        // A process can exit between the listing and this read.
+        let Ok(cmdline) = fs::read(entry.path().join("cmdline")) else {
+            continue;
+        };
+        if let Some(command) = naming(&cmdline, root) {
+            found.push(format!("{pid} {command}"));
+        }
+    }
+    Ok(found)
+}
+
+/// The command line, NUL-separated as in `/proc/<pid>/cmdline`, if it names `root`.
+fn naming(cmdline: &[u8], root: &Path) -> Option<String> {
+    let command = String::from_utf8_lossy(cmdline).replace('\0', " ");
+    let command = command.trim_end();
+    command
+        .contains(root.to_string_lossy().as_ref())
+        .then(|| command.to_owned())
 }
 
 /// The name of this run's directories.
@@ -230,6 +282,19 @@ mod tests {
     fn runs_in_the_same_second_get_different_names() {
         assert_ne!(run_name(1_791_334_343, 100), run_name(1_791_334_343, 101));
         assert_eq!(run_name(1_791_334_343, 100), "1791334343-100");
+    }
+
+    #[test]
+    fn a_command_line_naming_test_dir_is_a_leftover() {
+        let root = Path::new("/run/user/1000/niri-desktop-mcp-test/1-2");
+        let clone =
+            b"git\0clone\0https://github.com/x\0/run/user/1000/niri-desktop-mcp-test/1-2/state/x\0";
+        assert_eq!(
+            naming(clone, root).as_deref(),
+            Some("git clone https://github.com/x /run/user/1000/niri-desktop-mcp-test/1-2/state/x")
+        );
+        assert_eq!(naming(b"harness\0run\0--noctalia\0", root), None);
+        assert_eq!(naming(b"", root), None);
     }
 
     #[test]
