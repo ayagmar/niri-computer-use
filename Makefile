@@ -1,4 +1,6 @@
-.PHONY: check lint coverage
+.PHONY: check lint coverage nested
+
+SCALE ?= 1
 
 check:
 	cargo fmt --check
@@ -16,3 +18,6 @@ lint:
 
 coverage:
 	cargo llvm-cov --all-targets --workspace
+
+nested:
+	cargo run --locked -p harness -- run --scale $(SCALE)
