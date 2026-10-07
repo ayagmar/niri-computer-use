@@ -91,9 +91,12 @@ Probes are small standalone programs in `probes/`, outside the Cargo workspace, 
 
 ```sh
 cargo test --locked --manifest-path probes/vpointer/Cargo.toml
+cargo test --locked --manifest-path probes/noctalia-socket/Cargo.toml
 ```
 
 `vpointer` creates a virtual pointer bound to one output, sends one action and exits. Run it only through `make nested`: the supervisor passes it `winit`, and only after the endpoint and output checks. The probe itself only checks that the output it was given exists before it creates the pointer. For a motion it prints the `motion_absolute` arguments it encoded and where niri's own mapping puts them, and refuses to send one that lands more than 0.002 px from the target.
+
+`noctalia-socket` sends one command to a Noctalia IPC socket and prints the reply. It accepts only `status`, `panel-open control-center` and `panel-close control-center`, and sends `/`, the `\x1e` separator and that fixed command, the way Noctalia's own client frames a command. It writes the whole payload, shuts down its write half and reads the reply until Noctalia closes the connection, all within two seconds. A reply that starts with `error:`, an empty reply or an I/O error makes it exit with status 1 and the message on stderr. It sends to whatever socket it is given, so don't point it at your own Noctalia's socket.
 
 ## Host capture
 

@@ -127,3 +127,8 @@ These match the versions installed locally.
 - PARENT sets `DBUS_SYSTEM_BUS_ADDRESS` to `TEST_DIR/run/no-system-bus`, where nothing listens. A nested Noctalia on the real system bus registered itself as BlueZ's default pairing agent (`RequestDefaultAgent` in `bluetooth_agent.cpp`) and tried to register a NetworkManager secret agent. With its default lock screen settings it also takes a logind sleep-delay inhibitor, and sets the locked hint of the logind session it finds by its PID when it locks (`logind_service.cpp`, `application_ui.cpp`). That session is the host's wherever the harness runs inside the session scope. The config can turn off the lock screen parts but not the two agents, and all of them act on the host.
 - With no system bus, Noctalia logs `system dbus disabled` and runs without those services. The nested niri loses its read-only `login1` (lid switch) and `locale1` (keyboard layout) watchers and logs a warning for each. `X11 Layout` is unset on this machine, so the nested keymap doesn't change.
 - Containment and the supervisor's endpoint checks require exactly that address, and that nothing, not even a symlink, exists at its path. A path that merely lies under `TEST_DIR` could be a symlink to the host bus or a socket someone listens on.
+
+## 2026-10-07: `noctalia-socket` probe
+
+- The probe uses only the standard library: a `UnixStream` with read and write timeouts. It has no dependencies, and its `Cargo.lock` lists only itself.
+- It sends `/`, `\x1e` and one of three fixed commands. Noctalia 5.2.1 erases everything up to the first `\x1e` before it parses a command (`src/ipc/ipc_service.cpp`), so text from elsewhere must never reach the payload. The probe picks a constant by exact match and sends that constant, never its argument.
