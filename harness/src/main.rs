@@ -5,6 +5,7 @@ mod environment;
 mod failure;
 mod interrupt;
 mod log;
+mod nested;
 mod niri;
 mod run;
 mod runner;
