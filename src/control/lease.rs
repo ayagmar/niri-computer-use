@@ -98,8 +98,12 @@ impl Lease {
 impl Drop for Lease {
     fn drop(&mut self) {
         // Clear the record while still holding the lock, so no new holder's record is
-        // erased. Unlocking can't fail in a way that matters: closing the file unlocks.
-        write_record(&self.record, None).ok();
+        // erased. If `lease` was replaced, another server may hold the new file and own the
+        // record now, so leave it. Unlocking can't fail in a way that matters: closing the
+        // file unlocks.
+        if self.intact() {
+            write_record(&self.record, None).ok();
+        }
         self.file.unlock().ok();
     }
 }
@@ -162,7 +166,11 @@ mod tests {
         assert_eq!(holder(&runtime).unwrap().label, "second/2");
         std::fs::remove_file(runtime.path().join(LEASE)).unwrap();
         assert!(!second.intact());
+        // A third server takes the new file; the second's cleanup leaves its record alone.
+        let third = Lease::acquire(&runtime, "third/3").unwrap();
         drop(second);
+        assert_eq!(holder(&runtime).as_ref(), Some(third.holder()));
+        drop(third);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
