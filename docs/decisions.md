@@ -157,3 +157,9 @@ These match the versions installed locally.
 - Input: wtype 0.4 for the keyboard, behind the stdin gate, with the 100-character cap and three-second deadline. The pointer stays a native `zwlr_virtual_pointer_v1` bound to an output (plan §4), which `vpointer` exercises.
 - Screenshots: grim honours `-s` below 1 on niri, so `max_width` becomes a lower capture scale and the server needs no resize step. The default format is JPEG. The default `max_width` of 1280 stays provisional until M1's image delivery check.
 - Recovery: send the interrupted button's release from a fresh virtual pointer, keep the manual checks and interactive confirmation, and keep the input-dirty marker when recovery is uncertain. The evidence and its limits are in `docs/results/m0.md`.
+
+## 2026-10-08: niri-ipc's license
+
+- `niri-ipc` 26.4.0 is GPL-3.0-or-later, like niri. The license gate allowed only permissive licenses, and it hadn't checked the harness, because cargo-deny skips workspace crates with `publish = false`. The gate first failed when the server started to depend on `niri-ipc`.
+- The repository stays MIT. `deny.toml` allows GPL-3.0-or-later for `niri-ipc` alone; any other GPL crate still fails. MIT code can be combined into a GPL program, but a built binary includes `niri-ipc`, so a distributed binary follows GPL-3.0 terms. The README says so.
+- Considered: relicensing the project to GPL-3.0-or-later, which changes little for binaries but gives up MIT for code that doesn't need GPL, and dropping `niri-ipc` for hand-written copies of niri's types, which would have to track niri by hand and are derived from GPL source anyway.

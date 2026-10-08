@@ -14,7 +14,7 @@ Run `make check` before each commit. Enable the tracked hook with:
 git config core.hooksPath .githooks
 ```
 
-The dependency gate accepts MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Unicode-3.0, Zlib, and MPL-2.0 licenses. It rejects wildcard requirements, advisories, unmaintained crates, yanked crates, Git dependencies, and registries other than crates.io. Duplicate versions are warnings until an explicit skip list is needed.
+The dependency gate accepts MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Unicode-3.0, Zlib, and MPL-2.0 licenses. The one exception is GPL-3.0-or-later for `niri-ipc` (see [decisions](decisions.md)). It rejects wildcard requirements, advisories, unmaintained crates, yanked crates, Git dependencies, and registries other than crates.io. Duplicate versions are warnings until an explicit skip list is needed. cargo-deny doesn't check the `harness` crate's dependencies, because the harness isn't published.
 
 ## Nested harness
 

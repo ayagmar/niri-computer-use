@@ -16,6 +16,11 @@ allow = [
   "Zlib",
 ]
 confidence-threshold = 0.8
+# niri's IPC types. The repository stays MIT; a built binary includes this crate, so a
+# distributed binary follows GPL-3.0 terms. No other crate may bring in GPL code.
+exceptions = [
+  { crate = "niri-ipc", allow = ["GPL-3.0-or-later"] },
+]
 
 [bans]
 multiple-versions = "warn"

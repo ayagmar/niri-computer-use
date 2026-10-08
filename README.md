@@ -16,4 +16,4 @@ See [docs/development.md](docs/development.md) and [CONTRIBUTING.md](CONTRIBUTIN
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). Built binaries include [`niri-ipc`](https://crates.io/crates/niri-ipc), which is GPL-3.0-or-later, so a distributed binary follows GPL-3.0 terms.
