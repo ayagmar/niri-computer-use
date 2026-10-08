@@ -5,6 +5,8 @@ mod config;
 mod environment;
 mod failure;
 mod image;
+#[path = "../../src/image_header.rs"]
+mod image_header;
 mod interrupt;
 mod keyboard;
 mod log;
