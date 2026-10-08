@@ -163,3 +163,18 @@ async fn clipboard_text_over_one_mebibyte_is_an_upstream_error() {
     assert_eq!(name, "upstream_error");
     assert_eq!(detail, "wl-paste wrote more than 1048576 bytes");
 }
+
+#[tokio::test]
+async fn an_image_over_64_mebibytes_is_an_upstream_error() {
+    let fixture = Fixture::new("big-image");
+    let _niri = Niri::start(&fixture);
+    fixture.program("grim", "head -c 67108865 /dev/zero");
+    let mut server = Server::start(&fixture).await;
+    let (name, detail) = tool_error(
+        &server
+            .call("screenshot", json!({"target": "focused_output"}))
+            .await,
+    );
+    assert_eq!(name, "upstream_error");
+    assert_eq!(detail, "grim wrote more than 67108864 bytes");
+}

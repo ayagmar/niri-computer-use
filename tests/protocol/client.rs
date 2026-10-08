@@ -145,7 +145,10 @@ impl Server {
     pub(crate) async fn structured(&mut self, tool: &str) -> Value {
         let result = self.call(tool, json!({})).await;
         assert_eq!(result["isError"], false, "{tool}: {result}");
-        result["structuredContent"].clone()
+        let text: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(text, result["structuredContent"], "{tool}");
+        text
     }
 
     pub(crate) async fn tools(&mut self) -> Vec<Value> {
