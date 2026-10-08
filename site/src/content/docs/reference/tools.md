@@ -91,6 +91,7 @@ The result is an image block, then the metadata as text and as `structuredConten
 | `scale` | image pixels per logical pixel |
 | `width`, `height`, `mime_type` | the image, checked against its own header |
 | `captured_at_unix_ms`, `capture_ms` | when the capture started and how long it took |
+| `screenshot_ref` | an id such as `shot-4` for this capture while this server holds the lease, or null. The server keeps the last 64 of the current lease in memory and drops them all when the lease is taken or given up |
 
 `grim` gets five seconds and at most 64 MiB of output.
 

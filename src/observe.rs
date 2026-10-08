@@ -94,11 +94,16 @@ pub(crate) struct Metadata {
     pub(crate) mime_type: &'static str,
     pub(crate) captured_at_unix_ms: u128,
     pub(crate) capture_ms: u128,
+    /// What pointer tools take to aim at a pixel of this image; null unless this server
+    /// holds the lease.
+    pub(crate) screenshot_ref: Option<String>,
 }
 
 #[derive(Debug)]
 pub(crate) struct Screenshot {
     pub(crate) metadata: Metadata,
+    /// The captured output as niri described it.
+    pub(crate) geometry: LogicalOutput,
     pub(crate) image: Vec<u8>,
 }
 
@@ -145,6 +150,7 @@ pub(crate) async fn screenshot(
             capture_ms: started.elapsed().as_millis(),
             ..plan.metadata
         },
+        geometry: *output.logical,
         image: done.stdout,
     })
 }
@@ -263,6 +269,7 @@ fn plan(
             mime_type: format.mime(),
             captured_at_unix_ms: 0,
             capture_ms: 0,
+            screenshot_ref: None,
         },
     })
 }

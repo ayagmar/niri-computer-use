@@ -15,6 +15,7 @@
 | `policy.rs` | The policy file, its presets, the decision whether this server may take the lease or act, and which output setups the pointer may run on (pure, apart from reading the file). |
 | `status.rs` | Builds the readiness report shared by the tool and the subcommand. |
 | `observe.rs` | Screenshots: picks the output, plans grim's arguments and the image size they must produce, and checks the result. |
+| `refs.rs` | Screenshot refs: what each screenshot taken under the lease captured, kept per lease. |
 | `clipboard.rs` | Reads the clipboard's text with `wl-paste`. |
 | `noctalia.rs` | The only code that talks to Noctalia: its `status` over the IPC socket. |
 | `control.rs` | The lock state: logind's `LockedHint`, then Noctalia. |
@@ -63,6 +64,8 @@ Every program the server runs goes through `runner::run`: no stdin, stdout and s
 `screenshot` reads niri's outputs, picks the target (a named output, the focused output, or the one output a region lies inside), and runs `grim -t jpeg -q 80` or `grim -t png` with an explicit `-s` scale and `-o <output>` or `-g "x,y wxh"`. Without `max_width` the limit is 1280 image pixels. The scale is the output's own, lowered when the capture's logical width times that scale is wider than `max_width`.
 
 grim 1.5.0 sizes its image as `int width = logical width × scale`, which truncates (`render.c:145–146`). The server expects the same, and it nudges a lowered scale up by the smallest step until the truncated width is exactly `max_width`, because `max_width / width` can land just below it in floating point. A capture whose PNG or JPEG header disagrees with the expected size is an `upstream_error`. The metadata returns the output, its transform and layout origin, the captured rectangle in layout coordinates, the scale, the image size, and the capture time.
+
+While this server holds the lease, each screenshot, the evidence screenshots included, is also kept in memory as a ref, and the result names it in `screenshot_ref`, such as `shot-4`; without the lease it is null. A ref records the output as niri described it, the captured rectangle, the scale, the image size, when the capture started and the event stream's connection. The refs live beside the lease in the desk, which a screenshot updates without waiting for a running action: taking or giving up the lease, including through the stop flag, drops them all, and ids count up for the server's lifetime, so a ref from an earlier lease is unknown rather than reused. A lease keeps its last 64 refs.
 
 Downscaling happens in grim and costs time: on a 2560x1440 output, JPEG took about 14 ms at full size and about 100 ms at the default 1280 pixels.
 

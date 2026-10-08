@@ -148,6 +148,17 @@ impl EventStream {
         }
     }
 
+    /// The connection whose initialized state the stream holds, counted from 1; none while
+    /// it holds none.
+    pub(crate) fn connection(&self) -> Option<u64> {
+        match &*self.connection.borrow() {
+            Connection::Connected(replica) if replica.initialized() => Some(replica.connection),
+            Connection::Connected(_)
+            | Connection::Connecting { .. }
+            | Connection::SchemaIncompatible { .. } => None,
+        }
+    }
+
     /// The current desktop. Waits up to two seconds for niri's initial state, for
     /// example right after the server starts or reconnects.
     pub(crate) async fn desktop(&self) -> Result<DesktopState, ToolError> {
@@ -603,6 +614,7 @@ mod tests {
         );
         reconnecting(&events).await;
         assert_eq!(events.state(), StreamState::Disconnected);
+        assert_eq!(events.connection(), None);
         assert_eq!(
             events.desktop().await.unwrap_err(),
             ToolError::new(
@@ -651,6 +663,8 @@ mod tests {
         ]);
         assert!(events.desktop().await.is_ok());
         assert_eq!(events.state(), StreamState::Connected);
+        // Screenshot refs tell connections apart by this number.
+        assert_eq!(events.connection(), Some(3));
     }
 
     #[tokio::test(start_paused = true)]

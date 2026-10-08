@@ -17,7 +17,7 @@ use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::events::EventStream;
 use crate::niri::waiter::{View, Waited, Waiter};
 use crate::niri::{self, Unanswered};
-use crate::observe::{self, DEFAULT_MAX_WIDTH, Format, Metadata, Target};
+use crate::observe::{self, DEFAULT_MAX_WIDTH, Format, Metadata, Screenshot, Target};
 use crate::policy::Preset;
 
 /// How long an action waits for its effect.
@@ -123,9 +123,15 @@ impl Outcome {
 }
 
 /// Attaches a fresh screenshot of the focused output to an outcome in doubt (plan §6), so
-/// the agent sees the desktop without another call. A failed capture leaves the outcome as
-/// it is and says why.
-pub(crate) async fn with_evidence(socket: Option<&Path>, mut outcome: Outcome) -> Evidenced {
+/// the agent sees the desktop without another call. `capture` takes it the way the
+/// `screenshot` tool does. A failed capture leaves the outcome as it is and says why.
+pub(crate) async fn with_evidence<F>(
+    mut outcome: Outcome,
+    capture: impl FnOnce(observe::Request) -> F,
+) -> Evidenced
+where
+    F: Future<Output = Result<Screenshot, CallError>>,
+{
     if !outcome.in_doubt() {
         return Evidenced {
             outcome,
@@ -137,7 +143,7 @@ pub(crate) async fn with_evidence(socket: Option<&Path>, mut outcome: Outcome) -
         max_width: Some(DEFAULT_MAX_WIDTH),
         format: Format::Jpeg,
     };
-    let image = match observe::screenshot(socket, &request).await {
+    let image = match capture(request).await {
         Ok(shot) => {
             outcome.screenshot = Some(shot.metadata);
             Some(shot.image)

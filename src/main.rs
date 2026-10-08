@@ -11,6 +11,7 @@ mod niri;
 mod noctalia;
 mod observe;
 mod policy;
+mod refs;
 mod runner;
 mod status;
 #[cfg(test)]

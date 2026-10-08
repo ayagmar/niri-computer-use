@@ -8,6 +8,7 @@ use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::time::Instant;
 
 use crate::act::{self, Outcome};
 use crate::audit::{Audit, Call, Caller};
@@ -16,6 +17,7 @@ use crate::error::{CANCELLED, CallError, ToolError};
 use crate::niri::events::{EventStream, StreamState};
 use crate::observe::{DEFAULT_MAX_WIDTH, Format, Rect, Target};
 use crate::policy::{self, Loaded};
+use crate::refs::Shot;
 use crate::{Env, clipboard, niri, noctalia, observe, status};
 
 /// Optional arguments are described as their own type with their real default, without
@@ -341,13 +343,12 @@ impl Server {
     ) -> Result<CallToolResult, ErrorData> {
         // Targets, sizes and formats only: nothing in these arguments is content.
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
-        let socket = self.env.niri_socket.as_deref();
         self.audited(&context, "screenshot", logged, async {
             let request = match args.request() {
                 Ok(request) => request,
                 Err(message) => return Ok(invalid(&message)),
             };
-            match observe::screenshot(socket, &request).await {
+            match self.capture(request).await {
                 Ok(shot) => image(&shot),
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
                 Err(CallError::Tool(error)) => Ok(error.into_result()),
@@ -392,6 +393,20 @@ impl Server {
         }
     }
 
+    /// Takes a screenshot and, while this server holds the lease, keeps it as a ref that
+    /// the result names.
+    async fn capture(&self, request: observe::Request) -> Result<observe::Screenshot, CallError> {
+        let lease = self.desk.ref_lease();
+        let connection = self.events.as_ref().and_then(EventStream::connection);
+        let taken = Instant::now();
+        let mut shot = observe::screenshot(self.env.niri_socket.as_deref(), &request).await?;
+        if let (Some(lease), Some(connection)) = (lease, connection) {
+            let kept = Shot::of(&shot, taken, connection);
+            shot.metadata.screenshot_ref = self.desk.remember(lease, kept);
+        }
+        Ok(shot)
+    }
+
     /// Why this server may not take the lease or act now, from the readiness report.
     async fn refusal(&self) -> Option<ToolError> {
         let report = self.report().await;
@@ -407,11 +422,11 @@ impl Server {
         args: Value,
         work: impl Future<Output = Result<Outcome, CallError>>,
     ) -> Result<CallToolResult, ErrorData> {
-        let socket = self.env.niri_socket.as_deref();
         self.record(context, Call::action(tool), args, async {
             // Boxed, because the readiness report and the action's wait make large futures.
             let refusal = Box::pin(self.refusal());
-            let evidence = |outcome| Box::pin(act::with_evidence(socket, outcome));
+            let evidence =
+                |outcome| Box::pin(act::with_evidence(outcome, |request| self.capture(request)));
             match self.desk.act(refusal, Box::pin(work), evidence).await {
                 Ok(evidenced) => outcome(&evidenced),
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),

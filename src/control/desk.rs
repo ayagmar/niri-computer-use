@@ -3,7 +3,7 @@
 //! soon as the stop flag appears. It also gates every action, one at a time, and cancels
 //! the running one when the stop flag appears.
 
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, PoisonError, Weak};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -15,6 +15,7 @@ use super::runtime::RuntimeDir;
 use super::stop;
 use crate::Env;
 use crate::error::{CallError, ErrorName, ToolError};
+use crate::refs::{Refs, Shot};
 
 /// How often a held lease checks that its file is still the one at `lease`.
 const CHECK: Duration = Duration::from_secs(1);
@@ -36,11 +37,15 @@ struct Seat {
     /// The holder while the lease is held, which `status` reads without waiting for a
     /// running action. Changed only together with `lease`.
     holder: watch::Sender<Option<Holder>>,
+    /// The screenshot refs of the lease held, which a screenshot adds to without waiting
+    /// for a running action. Started and ended together with `lease`.
+    refs: std::sync::Mutex<Refs>,
 }
 
 impl Seat {
     fn put(&self, held: &mut Option<Lease>, lease: Lease) {
         self.holder.send_replace(Some(lease.holder().clone()));
+        self.refs().start();
         *held = Some(lease);
     }
 
@@ -48,7 +53,13 @@ impl Seat {
     fn take(&self, held: &mut Option<Lease>) -> bool {
         let had = held.take().is_some();
         self.holder.send_replace(None);
+        self.refs().end();
         had
+    }
+
+    /// No code panics while holding the lock, so a poisoned one still holds sound refs.
+    fn refs(&self) -> std::sync::MutexGuard<'_, Refs> {
+        self.refs.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -66,6 +77,7 @@ impl Desk {
         let seat = Arc::new(Seat {
             lease: Mutex::new(None),
             holder: watch::Sender::new(None),
+            refs: std::sync::Mutex::new(Refs::default()),
         });
         let runtime = RuntimeDir::of(env).map_err(|detail| {
             let name = if env.niri_socket.is_none() {
@@ -189,6 +201,18 @@ impl Desk {
     /// held it.
     pub(crate) async fn release(&self) -> bool {
         self.seat.take(&mut *self.seat.lease.lock().await)
+    }
+
+    /// The lease a screenshot starting now would issue its ref under, if this server holds
+    /// one. Doesn't wait for a running action.
+    pub(crate) fn ref_lease(&self) -> Option<u64> {
+        self.seat.refs().lease()
+    }
+
+    /// Keeps `shot` as a ref of `lease` and returns its id, unless that lease has ended
+    /// since the capture started.
+    pub(crate) fn remember(&self, lease: u64, shot: Shot) -> Option<String> {
+        self.seat.refs().insert(lease, shot)
     }
 
     /// Doesn't wait for a running action.

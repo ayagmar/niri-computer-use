@@ -107,6 +107,8 @@ fn outcome(result: &Value) -> Value {
             .unwrap();
         assert_eq!(screenshot["output"], "DP-1", "{screenshot}");
         assert_eq!(screenshot["width"], 1280, "{screenshot}");
+        let id = screenshot["screenshot_ref"].as_str().unwrap();
+        assert!(id.starts_with("shot-"), "{screenshot}");
     } else {
         assert_eq!(content.len(), 1, "{result}");
         assert_eq!(outcome.get("screenshot"), None, "{result}");
@@ -265,6 +267,26 @@ async fn focus_without_its_event_times_out() {
         outcome(&result),
         json!({"accepted": true, "observed": "timeout", "focused_window": 1})
     );
+}
+
+#[tokio::test]
+async fn screenshots_under_the_lease_are_refs_of_that_lease() {
+    let mut desk = Desk::start("act-refs", "").await;
+    let shot = json!({"target": "focused_output"});
+    let screenshot_ref = |result: Value| result["structuredContent"]["screenshot_ref"].clone();
+    let first = desk.server.call("screenshot", shot.clone()).await;
+    assert_eq!(screenshot_ref(first), "shot-1");
+    let evidence = desk.act("focus_window", json!({"id": 2}), |_, _| {}).await;
+    assert_eq!(
+        evidence["structuredContent"]["screenshot"]["screenshot_ref"],
+        "shot-2"
+    );
+    desk.server.structured("release_desktop").await;
+    let unleased = desk.server.call("screenshot", shot.clone()).await;
+    assert_eq!(screenshot_ref(unleased), Value::Null);
+    desk.server.structured("acquire_desktop").await;
+    let again = desk.server.call("screenshot", shot).await;
+    assert_eq!(screenshot_ref(again), "shot-3");
 }
 
 #[tokio::test]
