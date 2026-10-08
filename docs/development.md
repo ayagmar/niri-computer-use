@@ -151,6 +151,19 @@ Each run keeps its files in `target/e2e/<unix time>-<pid>/`:
 | `success-c13.png` | the nested output with Noctalia's control center open |
 | `failure-<step>.png` | the nested output when a wait timed out |
 
+## Nested control checks
+
+`make nested-control` runs M2's acceptance in a nested niri. It builds the server and the `vpointer` probe, starts the nested niri as `make nested` does, and starts Noctalia inside it, because a nested niri sets no logind lock hint and the lease needs a lock source that says unlocked. The supervisor then drives `target/debug/niri-computer-use` against the nested niri:
+
+1. Waits until a server's `status` shows Noctalia running and the screen unlocked.
+2. Starts server A, which takes the lease and keeps its stdin open for 25 seconds, and waits for its record in `lease.json`.
+3. Starts server B, whose `acquire_desktop` must fail with `lease_held` naming server A.
+4. Runs `recover`, which must refuse because a server holds the lease.
+5. Asks niri to `spawn` `niri-computer-use stop`, as the stop keybind does, and waits for the flag and for server A to give the lease up. Server B must then get `stopped`; after `resume` it must take the lease.
+6. Starts a child that ignores SIGTERM, writes an input-dirty marker naming it, and pipes `yes` into `recover`, which must end the child and clear the marker.
+
+Every server talks MCP over a shell pipeline (`printf` of the requests, then `sleep` to keep stdin open), and every flag and marker lives in `TEST_DIR`. The run has a 90-second deadline. Its files are in `target/e2e/<run>/`, with `server-a.log` holding server A's replies.
+
 ## Supervised sitting
 
 `make sitting` opens the nested output at scale 1.5 and runs C6, C7, C8 and C9. It starts a focused wev and a separate unfocused observer. Noctalia does not run in this mode. The automatic path keeps its existing deadlines; the sitting allows 30 minutes overall, 29 minutes for wev and two minutes for each human action or confirmation. All wtype and held-pointer children keep a three-second deadline.

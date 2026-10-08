@@ -306,3 +306,9 @@ These match the versions installed locally.
 ## 2026-10-08: an unknown lock state refuses the lease
 
 - Plan §9 reported `unknown` and allowed it. Since the lock state follows niri's own session, `unknown` has more causes: niri's environment can't be read, something else serves the socket, or niri wasn't started from a session, each without Noctalia running. The user chose to refuse: `acquire_desktop` returns `screen_locked` with a detail that says the state is unknown, so input only ever goes to a screen known to be unlocked. A desktop without logind's hint and without Noctalia can't be controlled until one of them answers.
+
+## 2026-10-08: M2's nested acceptance
+
+- The M2 exit criteria run in `make nested-control`: two servers competing for the lease, stop and resume, `recover` against a live owner and with a marker naming a delayed-exit child. The protocol tests check the same behaviour against fakes; the nested run adds a real niri (its version, its peer credentials), a real Noctalia as the lock source, and the stop sent through niri's `spawn` action, the path the stop keybind takes.
+- The nested run starts Noctalia because the lease now needs an unlocked answer: a nested niri isn't a session instance and sets no logind hint.
+- The harness has no interactive MCP client. Each server reads a `printf` of its requests followed by a `sleep` that keeps stdin open, so every process stays under the harness runner's deadlines and process groups.

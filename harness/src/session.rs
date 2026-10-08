@@ -95,6 +95,12 @@ impl<'a> Session<'a> {
         runner::start_with_stdin(&nested(program, args, Sink::Capture, deadline))
     }
 
+    /// The runtime directory `niri-computer-use` servers use for the nested niri.
+    pub(crate) fn control_dir(&self) -> Result<PathBuf> {
+        let nested = Nested::from_env(self.test_dir)?;
+        crate::control::runtime_dir(&self.test_dir.run(), &nested.niri)
+    }
+
     /// The nested Noctalia's socket once it exists, checked like the other endpoints.
     pub(crate) fn noctalia_socket(&self) -> Result<Option<PathBuf>> {
         Nested::from_env(self.test_dir)?.noctalia_socket(&self.test_dir.run())

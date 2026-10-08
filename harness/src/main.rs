@@ -2,6 +2,7 @@
 
 mod capture;
 mod config;
+mod control;
 mod environment;
 mod failure;
 mod image;
@@ -33,9 +34,9 @@ use scale::Scale;
 use supervise::Probes;
 use test_dir::TestDir;
 
-const USAGE: &str = "usage: harness run [--scale <scale>] [--noctalia | --sitting | --sitting-from-c8]
+const USAGE: &str = "usage: harness run [--scale <scale>] [--noctalia | --sitting | --sitting-from-c8 | --control]
        harness host-capture <output>
-       harness supervise <TEST_DIR> <ARTIFACTS> <scale> <vpointer> [<noctalia-socket> | --sitting | --sitting-from-c8]";
+       harness supervise <TEST_DIR> <ARTIFACTS> <scale> <vpointer> [<noctalia-socket> | --sitting | --sitting-from-c8 | --control <server>]";
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -79,8 +80,12 @@ fn dispatch(args: &[OsString]) -> Result<()> {
                 ["--sitting-from-c8"] => Some(sitting::Mode::FromC8),
                 _ => None,
             };
+            let control = match noctalia {
+                ["--control", server] => Some(*server),
+                _ => None,
+            };
             let noctalia = match noctalia {
-                [] | ["--sitting" | "--sitting-from-c8"] => None,
+                [] | ["--sitting" | "--sitting-from-c8"] | ["--control", _] => None,
                 [probe] if !probe.starts_with("--") => Some(*probe),
                 _ => return Err(Failure::new(USAGE)),
             };
@@ -92,6 +97,7 @@ fn dispatch(args: &[OsString]) -> Result<()> {
                     vpointer,
                     noctalia,
                     sitting,
+                    control,
                 },
             )
         }
@@ -105,6 +111,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
         scale: Scale::ONE,
         noctalia: false,
         sitting: None,
+        control: false,
     };
     let mut args = args.iter();
     while let Some(&arg) = args.next() {
@@ -115,11 +122,18 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
             "--noctalia" => options.noctalia = true,
             "--sitting" => options.sitting = Some(sitting::Mode::Full),
             "--sitting-from-c8" => options.sitting = Some(sitting::Mode::FromC8),
+            "--control" => options.control = true,
             _ => return Err(Failure::new(USAGE)),
         }
     }
-    if options.sitting.is_some() && options.noctalia {
-        return Err(Failure::new("--sitting and --noctalia cannot be combined"));
+    if usize::from(options.sitting.is_some())
+        + usize::from(options.noctalia)
+        + usize::from(options.control)
+        > 1
+    {
+        return Err(Failure::new(
+            "--sitting, --noctalia and --control cannot be combined",
+        ));
     }
     Ok(options)
 }

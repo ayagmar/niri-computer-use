@@ -22,6 +22,8 @@ const VALIDATE_DEADLINE: Duration = Duration::from_secs(10);
 const NESTED_DEADLINE: Duration = Duration::from_secs(60);
 const VPOINTER: &str = "probes/vpointer/target/debug/vpointer";
 const NOCTALIA_SOCKET: &str = "probes/noctalia-socket/target/debug/noctalia-socket";
+const SERVER: &str = "target/debug/niri-computer-use";
+const CONTROL_DEADLINE: Duration = Duration::from_secs(90);
 /// All `noctalia config validate` prints for a config without warnings. It exits 0 even
 /// when it warns, for example about an unknown key.
 const NOCTALIA_VALID: &str = "\u{2713} Config is valid\n";
@@ -33,6 +35,8 @@ pub(crate) struct Options {
     /// Start Noctalia in the nested session and run C13.
     pub(crate) noctalia: bool,
     pub(crate) sitting: Option<crate::sitting::Mode>,
+    /// Run M2's control checks with `niri-computer-use` and the nested Noctalia.
+    pub(crate) control: bool,
 }
 
 pub(crate) fn run(options: Options) -> Result<()> {
@@ -180,7 +184,7 @@ fn preflight(host: &Host, test_dir: &TestDir, artifacts: &Path, options: Options
         group: Group::Own,
         deadline: VALIDATE_DEADLINE,
     })?;
-    if options.noctalia {
+    if options.noctalia || options.control {
         write_noctalia_config(&env, test_dir, artifacts)?;
     }
     Ok(env)
@@ -239,6 +243,9 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: Option
         args.push(mode.flag().into());
     } else if options.noctalia {
         args.push(probe(NOCTALIA_SOCKET)?.into());
+    } else if options.control {
+        args.push("--control".into());
+        args.push(probe(SERVER)?.into());
     }
     runner::run(&Invocation {
         program: "dbus-run-session",
@@ -248,6 +255,8 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: Option
         group: Group::Own,
         deadline: if options.sitting.is_some() {
             crate::sitting::RUN_DEADLINE
+        } else if options.control {
+            CONTROL_DEADLINE
         } else {
             NESTED_DEADLINE
         },
