@@ -1,6 +1,6 @@
 # Architecture
 
-`niri-computer-use` is one binary. `serve` runs an MCP server over stdin and stdout, one process per agent session. `status` prints the readiness report and exits.
+`niri-computer-use` is one binary. `serve` runs an MCP server over stdin and stdout, one process per agent session. `status` prints the readiness report and exits. `stop` and `resume` set and clear the stop flag.
 
 ## Modules
 
@@ -15,6 +15,7 @@
 | `clipboard.rs` | Reads the clipboard's text with `wl-paste`. |
 | `noctalia.rs` | The only code that talks to Noctalia: its `status` over the IPC socket. |
 | `control.rs` | The lock state: logind's `LockedHint`, then Noctalia. |
+| `control/runtime.rs` | The per-instance runtime directory and its stop flag. |
 | `audit.rs` | The audit log. |
 | `runner.rs` | The only code that starts processes. |
 | `image_header.rs` | Reads a PNG's or JPEG's size from its header. The harness includes the same file. |
@@ -61,6 +62,10 @@ Downscaling happens in grim and costs time: on a 2560x1440 output, JPEG took abo
 Noctalia counts as installed when `noctalia` is an executable on `PATH` at startup. Only then does the server list `shell_status`, and `status` reports the same answer for the whole session, so the two never disagree. It counts as running when its socket, `$XDG_RUNTIME_DIR/noctalia-$WAYLAND_DISPLAY.sock`, answers `status` with a JSON object within two seconds. The server writes the whole fixed payload `/\x1estatus`, shuts down its write half and reads to the end, as Noctalia's own client does. It never sends text from a tool's arguments. Anything other than a JSON object is `noctalia_unavailable`, except an `error:` reply, which keeps Noctalia's text as `upstream_error`. `status` checks again on every call, so a Noctalia restart shows up.
 
 The lock state comes from `loginctl show-session $XDG_SESSION_ID -p LockedHint --value` and from Noctalia's `locked`, and locked wins: niri sets logind's hint only on its own session, so a server started from another session would otherwise report `unlocked` on a locked screen. Without either answer it is `unknown`. `status` reports the source and logind's error, if any. A session ID that isn't plain letters and digits is refused before `loginctl` runs, so it can't be read as an option.
+
+## Runtime directory and the stop flag
+
+Each niri instance has a runtime directory, `$XDG_RUNTIME_DIR/niri-computer-use/<instance>/`, where `<instance>` is the basename of `NIRI_SOCKET` without `.sock`, for example `niri.wayland-1.1487`. Servers for the same niri share it; a server for another niri, such as the nested harness, has its own. `niri-computer-use stop` creates the directory with mode `0700` and the empty file `stop` in it with mode `0600`; `status` reports `stop: true` while that file exists. `niri-computer-use resume` removes it, and refuses while `input-dirty` exists in the same directory. Both need `NIRI_SOCKET` and `XDG_RUNTIME_DIR`, which niri passes to the commands it spawns.
 
 ## Version rule
 

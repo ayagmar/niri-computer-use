@@ -193,6 +193,26 @@ fn command() -> Command {
     Command::new(env!("CARGO_BIN_EXE_niri-computer-use"))
 }
 
+/// Runs a human-only subcommand, such as `stop`, in the fixture's environment.
+pub(crate) async fn run(fixture: &Fixture, subcommand: &str) -> std::process::Output {
+    let spawning = SPAWNING.lock().unwrap_or_else(PoisonError::into_inner);
+    let child = command()
+        .arg(subcommand)
+        .env_clear()
+        .envs(fixture.env())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    drop(spawning);
+    tokio::time::timeout(WAIT, child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap()
+}
+
 /// One stdout line, which must be a JSON-RPC 2.0 message.
 fn json_rpc(line: &str) -> Value {
     let message: Value = serde_json::from_str(line)

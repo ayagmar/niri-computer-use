@@ -15,6 +15,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - `desktop_state` tool: windows, workspaces, focus, overview and keyboard layouts from niri's event stream. `status` reports whether the stream is connected.
 - The `niri-computer-use` skill in `skills/`, for agents using the read-only tools.
 - `make inspect` and `make inspect-check`: the server under the pinned MCP Inspector.
+- `niri-computer-use stop` and `resume`: set and clear a stop flag in the niri instance's runtime directory, `$XDG_RUNTIME_DIR/niri-computer-use/<instance>/`. `status` reports it as `stop`.
 
 ### Changed
 

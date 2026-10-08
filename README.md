@@ -19,11 +19,13 @@ cargo build --locked -p niri-computer-use
 target/debug/niri-computer-use status
 ```
 
+`niri-computer-use stop` sets a stop flag for the niri instance in `NIRI_SOCKET`, and `niri-computer-use resume` clears it; `status` reports it as `stop`.
+
 `niri-computer-use serve` speaks MCP over stdin and stdout. It reads `NIRI_SOCKET` from its environment to find niri. Every tool call is logged, without contents, to `$XDG_STATE_HOME/niri-computer-use/audit.jsonl` (by default `~/.local/state/niri-computer-use/audit.jsonl`).
 
 | Tool | What it returns |
 |---|---|
-| `status` | the niri instance, niri's version and whether this build supports it, whether niri's event stream is connected, the lock state, whether Noctalia is running, and which required programs are on `PATH` |
+| `status` | the niri instance, niri's version and whether this build supports it, whether niri's event stream is connected, the stop flag, the lock state, whether Noctalia is running, and which required programs are on `PATH` |
 | `desktop_state` | windows, workspaces, the focused window, whether the overview is open, and the keyboard layouts, as one snapshot |
 | `outputs` | niri's outputs: modes, logical position and size, scale and transform |
 | `screenshot` | an image of one output or of a region inside one output, with its geometry. JPEG, at most 1280 image pixels wide by default |

@@ -6,6 +6,7 @@ use serde::Serialize;
 
 use crate::Env;
 use crate::audit::{Audit, AuditStatus};
+use crate::control::runtime::RuntimeDir;
 use crate::control::{self, Lock};
 use crate::error::ToolError;
 use crate::niri::events::StreamState;
@@ -20,6 +21,8 @@ pub(crate) struct Status {
     /// The basename of `NIRI_SOCKET`, which names the compositor instance.
     instance: Option<String>,
     niri: Niri,
+    /// Whether the stop flag is set for this niri instance.
+    stop: bool,
     lock: Lock,
     noctalia: Presence,
     /// Why Noctalia counts as not running, when it's installed.
@@ -74,6 +77,7 @@ pub(crate) async fn collect(
             event_stream,
             error,
         },
+        stop: RuntimeDir::of(env).is_ok_and(|runtime| runtime.stopped()),
         lock,
         noctalia: presence,
         noctalia_error,
@@ -105,6 +109,7 @@ mod tests {
                     "event_stream": null,
                     "error": {"error": "niri_unavailable", "detail": "NIRI_SOCKET is not set"}
                 },
+                "stop": false,
                 "lock": {
                     "state": "unknown",
                     "source": "none",

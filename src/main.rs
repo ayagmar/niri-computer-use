@@ -22,7 +22,9 @@ use std::process::ExitCode;
 
 use rmcp::ServiceExt as _;
 
-const USAGE: &str = "usage: niri-computer-use serve | status";
+use crate::control::runtime::RuntimeDir;
+
+const USAGE: &str = "usage: niri-computer-use serve | status | stop | resume";
 
 /// What the server reads from its environment, once at startup. An empty variable
 /// counts as unset.
@@ -78,6 +80,10 @@ enum Command {
     Serve,
     /// Print the readiness report.
     Status,
+    /// Set the stop flag for this niri instance.
+    Stop,
+    /// Clear the stop flag.
+    Resume,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -92,6 +98,12 @@ async fn main() -> ExitCode {
             cli::print_json(&status::collect(&env, None, &audit, installed).await)
                 .map_err(|error| format!("print status: {error}"))
         }
+        Some(Command::Stop) => RuntimeDir::of(&env).and_then(|runtime| {
+            runtime.stop().map_err(|error| {
+                format!("set the stop flag in {}: {error}", runtime.path().display())
+            })
+        }),
+        Some(Command::Resume) => RuntimeDir::of(&env).and_then(|runtime| runtime.resume()),
         None => Err(USAGE.to_owned()),
     };
     match result {
@@ -107,6 +119,8 @@ fn command(args: &[OsString]) -> Option<Command> {
     match args {
         [only] if only == "serve" => Some(Command::Serve),
         [only] if only == "status" => Some(Command::Status),
+        [only] if only == "stop" => Some(Command::Stop),
+        [only] if only == "resume" => Some(Command::Resume),
         _ => None,
     }
 }
@@ -158,7 +172,9 @@ mod tests {
         let args = |list: &[&str]| list.iter().map(OsString::from).collect::<Vec<_>>();
         assert_eq!(command(&args(&["serve"])), Some(Command::Serve));
         assert_eq!(command(&args(&["status"])), Some(Command::Status));
-        for bad in [&[][..], &["stop"], &["serve", "status"], &["--help"]] {
+        assert_eq!(command(&args(&["stop"])), Some(Command::Stop));
+        assert_eq!(command(&args(&["resume"])), Some(Command::Resume));
+        for bad in [&[][..], &["recover"], &["serve", "status"], &["--help"]] {
             assert_eq!(command(&args(bad)), None, "{bad:?}");
         }
     }

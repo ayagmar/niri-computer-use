@@ -19,6 +19,8 @@ mod audit;
 #[cfg(test)]
 mod cancellation;
 #[cfg(test)]
+mod control;
+#[cfg(test)]
 mod errors;
 #[cfg(test)]
 mod events;

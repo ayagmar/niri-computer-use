@@ -1,8 +1,12 @@
-//! Lock state, for `status` now and for the action tools' lock gate later. The sources:
-//! logind's `LockedHint` for `XDG_SESSION_ID`, then Noctalia's `locked`, and locked wins.
+//! The control plane: the per-instance runtime directory with its stop flag, and the
+//! lock state, for `status` now and for the action tools' lock gate later. The lock
+//! state's sources are logind's `LockedHint` for `XDG_SESSION_ID`, then Noctalia's
+//! `locked`, and locked wins.
 //!
 //! niri sets logind's locked hint on lock and unlock when it runs as the session instance
 //! (`src/niri.rs` at v26.04), whichever `ext_session_lock` client locks the screen.
+
+pub(crate) mod runtime;
 
 use std::time::Duration;
 
