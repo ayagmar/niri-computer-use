@@ -90,6 +90,7 @@ check_status() {
     "${work}/status.json"
   check "status: the instance is NIRI_SOCKET's basename" \
     ".result.structuredContent.instance == \"${instance}\"" "${work}/status.json"
+  # Holds in a graphical session started by logind, where the check is meant to run.
   check "status: the lock state comes from logind" \
     '.result.structuredContent.lock.source == "logind"' "${work}/status.json"
   check "status: the audit log is writable" \
