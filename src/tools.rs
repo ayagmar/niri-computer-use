@@ -18,8 +18,10 @@ use crate::{Env, clipboard, niri, noctalia, observe, status};
 /// The default `max_width` (plan §4). Provisional until M1's image delivery check.
 const DEFAULT_MAX_WIDTH: u32 = 1280;
 
-/// Optional arguments are described as their own type, without `null`, because clients
-/// that map tool schemas onto a single-type dialect reject `["integer", "null"]`.
+/// Optional arguments are described as their own type with their real default, without
+/// `null`, because clients that map tool schemas onto a single-type dialect reject
+/// `["integer", "null"]`. The `schemars` attributes only shape the schema; serde still
+/// takes an absent field or `null` as `None`.
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct ScreenshotArgs {
@@ -27,18 +29,15 @@ struct ScreenshotArgs {
     target: String,
     /// Required with target `region`: a rectangle in layout coordinates that lies inside
     /// one output.
-    #[serde(default)]
-    #[schemars(with = "RegionArgs")]
+    #[schemars(with = "RegionArgs", default, skip_serializing_if = "Option::is_none")]
     region: Option<RegionArgs>,
     /// The widest image to return, in image pixels. The capture scale is lowered when the
     /// capture's logical width times the output's scale is wider. Defaults to 1280. To
     /// read small text, capture a small region around it, or raise `max_width`.
-    #[serde(default)]
-    #[schemars(with = "u32")]
+    #[schemars(with = "u32", default = "default_max_width")]
     max_width: Option<u32>,
     /// `jpeg` (the default) or `png`.
-    #[serde(default)]
-    #[schemars(with = "FormatArg")]
+    #[schemars(with = "FormatArg", default = "default_format")]
     format: Option<FormatArg>,
 }
 
@@ -57,6 +56,22 @@ struct RegionArgs {
 enum FormatArg {
     Png,
     Jpeg,
+}
+
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "schemars serializes the default as the field's type, `Option<u32>`"
+)]
+const fn default_max_width() -> Option<u32> {
+    Some(DEFAULT_MAX_WIDTH)
+}
+
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "schemars serializes the default as the field's type, `Option<FormatArg>`"
+)]
+const fn default_format() -> Option<FormatArg> {
+    Some(FormatArg::Jpeg)
 }
 
 impl ScreenshotArgs {
