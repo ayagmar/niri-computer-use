@@ -86,7 +86,7 @@ binds {
 }
 ```
 
-Use the path where `cargo install` put the binary. `allow-inhibiting=false` keeps the key working while an app inhibits shortcuts, and `allow-when-locked=true` on the lock screen. An agent can't press it: niri binds don't fire from virtual keyboards. `niri-computer-use resume` clears the stop; if `status` shows `input_dirty`, run `niri-computer-use recover` first, which ends any stuck input program and asks you to confirm that no key or button is held.
+Use the path where `cargo install` put the binary. `allow-inhibiting=false` keeps the key working while an app inhibits shortcuts, and `allow-when-locked=true` on the lock screen. An agent can't press it: niri binds don't fire from virtual keyboards. `niri-computer-use resume` clears the stop; if `status` shows `input_dirty`, run `niri-computer-use recover` first, which ends any stuck input program, releases any pointer button the marker names, and asks you to confirm that no key or button is held.
 
 The lease is also refused while the screen is locked, or while neither logind nor Noctalia can say that it isn't. Running niri with `niri --session`, which sets logind's lock hint, or running Noctalia gives the server that answer.
 

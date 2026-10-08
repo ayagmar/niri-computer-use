@@ -144,6 +144,28 @@ async fn a_reused_pid_is_never_killed() {
 }
 
 #[tokio::test]
+async fn a_pointer_marker_releases_its_buttons_without_asking_about_wtype() {
+    let fixture = Fixture::new("recover-pointer");
+    write_marker(
+        &fixture,
+        &json!({
+            "operation": "drag", "phase": "pending", "server_pid": 1, "since": "t",
+            "buttons": [272]
+        }),
+    );
+    // Without a niri to send the release to, the human is asked to release the button.
+    let out = answer(&fixture, "recover", "yes\n").await;
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(out.status.success(), "{stdout}");
+    assert!(!stdout.contains("wtype process"), "{stdout}");
+    assert!(
+        stdout.contains("pointer buttons [272] may be held, and their release couldn't be sent"),
+        "{stdout}"
+    );
+    assert!(!marker_exists(&fixture));
+}
+
+#[tokio::test]
 async fn nothing_to_recover_is_fine() {
     let fixture = Fixture::new("recover-none");
     let out = run(&fixture, "recover").await;

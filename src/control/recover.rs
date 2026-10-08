@@ -1,7 +1,8 @@
 //! `niri-computer-use recover`, the human-only way to clear the input-dirty marker
 //! (plan §11). It takes the lease so no server acts meanwhile, ends the input child the
-//! marker names, asks the human to check that nothing is held, and clears the marker only
-//! after an explicit `yes`. Anything uncertain leaves the marker in place.
+//! marker names, releases the pointer buttons it names, asks the human to check that
+//! nothing is held, and clears the marker only after an explicit `yes`. Anything uncertain
+//! leaves the marker in place.
 
 use std::path::Path;
 use std::time::Duration;
@@ -12,7 +13,8 @@ use super::lease::{Lease, Refused};
 use super::marker::{self, Found, Marker};
 use super::procs;
 use super::runtime::{INPUT_DIRTY, RuntimeDir};
-use crate::{Env, cli};
+use crate::niri::pointer::{Pointer, Step};
+use crate::{Env, cli, niri};
 
 const PROC: &str = "/proc";
 /// How long a killed process gets to exit.
@@ -44,17 +46,13 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
         Found::Marker(Marker {
             child: Some(child), ..
         }) => end_child(root, child.pid, child.start_time).await?,
+        // The pointer runs in the server itself: there is no child to end.
+        Found::Marker(Marker { buttons, .. }) if !buttons.is_empty() => {
+            release_buttons(env, buttons).await;
+        }
         Found::Marker(_) | Found::Unreadable { .. } => {
             end_wtype(root, getuid().as_raw(), cli::confirm).await?;
         }
-    }
-    if let Found::Marker(marker) = &found
-        && !marker.buttons.is_empty()
-    {
-        cli::say(&format!(
-            "The marker says pointer buttons {:?} may be held. This version can't send their release: press and release each of them once in an empty area.",
-            marker.buttons
-        ));
     }
     cli::say(MANUAL_CHECK);
     if !cli::confirm("Is all input released?") {
@@ -65,6 +63,41 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
     drop(lease);
     cli::say("Marker cleared. `niri-computer-use resume` clears the stop flag if it is set.");
     Ok(())
+}
+
+/// Sends the release of each of `buttons` from a fresh virtual pointer, which clears a
+/// button an ended pointer left pressed (M0, C8), or asks the human to.
+async fn release_buttons(env: &Env, buttons: &[u32]) {
+    match send_releases(env, buttons).await {
+        Ok(()) => cli::say(&format!(
+            "Sent the release of pointer buttons {buttons:?} from a fresh virtual pointer."
+        )),
+        Err(error) => cli::say(&format!(
+            "The marker says pointer buttons {buttons:?} may be held, and their release couldn't be sent ({error}): press and release each of them once in an empty area."
+        )),
+    }
+}
+
+async fn send_releases(env: &Env, buttons: &[u32]) -> Result<(), String> {
+    let socket = env.niri_socket.as_deref();
+    let outputs = niri::outputs(socket).await.map_err(|error| error.detail)?;
+    let output = outputs
+        .values()
+        .find(|output| output.logical.is_some())
+        .ok_or("niri has no enabled output")?;
+    let display = env
+        .wayland_socket()
+        .ok_or("WAYLAND_DISPLAY or XDG_RUNTIME_DIR is not set")?;
+    let pid = niri::pid(socket).await.map_err(|error| error.detail)?;
+    let mut pointer = Pointer::bind(&display, pid, &output.name)
+        .await
+        .map_err(|error| error.detail)?;
+    for &button in buttons {
+        pointer
+            .send(Step::Release(button))
+            .map_err(|error| error.detail)?;
+    }
+    pointer.sync().await.map_err(|error| error.detail)
 }
 
 /// Kills the child, with its process group when it leads one, if the child is still the
