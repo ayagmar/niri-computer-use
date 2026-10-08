@@ -11,7 +11,7 @@ use serde::Deserialize;
 use crate::error::CallError;
 use crate::niri::events::{EventStream, StreamState};
 use crate::observe::{Format, Rect, Target};
-use crate::{Env, clipboard, niri, observe, status};
+use crate::{Env, clipboard, niri, noctalia, observe, status};
 
 /// The default `max_width` (plan §4). Provisional until M1's image delivery check.
 const DEFAULT_MAX_WIDTH: u32 = 1280;
@@ -78,17 +78,23 @@ pub(crate) struct Server {
 
 #[tool_router]
 impl Server {
+    /// `shell_status` exists only when `noctalia` is on `PATH`, so the tool list stays
+    /// fixed for the session.
     pub(crate) fn new(env: Env, events: Option<EventStream>) -> Self {
+        let mut tool_router = Self::tool_router();
+        if !env.finds("noctalia") {
+            tool_router.remove_route("shell_status");
+        }
         Self {
             env,
             events,
-            tool_router: Self::tool_router(),
+            tool_router,
         }
     }
 
     /// Readiness report: the niri instance, niri's version and whether this server
-    /// supports it, whether niri's event stream is connected, and which required
-    /// programs are on PATH. Call this first.
+    /// supports it, whether niri's event stream is connected, the lock state, whether
+    /// Noctalia is running, and which required programs are on PATH. Call this first.
     #[tool(annotations(read_only_hint = true))]
     async fn status(
         &self,
@@ -166,6 +172,19 @@ impl Server {
         }
     }
 
+    /// Noctalia's status: whether its bar is visible, which panel is open, and whether
+    /// its lock screen is up. `noctalia_unavailable` when Noctalia isn't answering.
+    #[tool(annotations(read_only_hint = true))]
+    async fn shell_status(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        match unless_cancelled(context.ct.cancelled(), noctalia::status(&self.env)).await? {
+            Ok(status) => structured(&status),
+            Err(error) => Ok(error.into_result()),
+        }
+    }
+
     /// The clipboard's text, read with `wl-paste`. `text` is null, with a `reason`, when
     /// nothing is copied (`nothing_copied`) or nothing copied is text (`no_text`).
     #[tool(annotations(read_only_hint = true))]
@@ -196,7 +215,7 @@ fn invalid(message: &str) -> CallToolResult {
 #[tool_handler(
     router = self.tool_router,
     name = "niri-desktop-mcp",
-    instructions = "Read-only view of a niri desktop. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `clipboard_read` returns the clipboard's text. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
+    instructions = "Read-only view of a niri desktop. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `clipboard_read` returns the clipboard's text, and `shell_status`, when Noctalia is installed, its panel and lock state. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
 )]
 impl ServerHandler for Server {}
 
@@ -231,6 +250,7 @@ mod tests {
             Server::desktop_state_tool_attr(),
             Server::screenshot_tool_attr(),
             Server::clipboard_read_tool_attr(),
+            Server::shell_status_tool_attr(),
         ] {
             let annotations = tool.annotations.unwrap();
             assert_eq!(annotations.read_only_hint, Some(true), "{}", tool.name);
@@ -318,14 +338,30 @@ mod tests {
     }
 
     #[test]
-    fn the_server_names_itself_and_gives_instructions() {
-        let server = Server::new(
-            Env {
-                niri_socket: None,
-                path: None,
-            },
-            None,
+    fn shell_status_exists_only_with_noctalia_installed() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = crate::test_support::fresh_dir("noctalia");
+        let noctalia = dir.join("noctalia");
+        std::fs::write(&noctalia, "").unwrap();
+        std::fs::set_permissions(&noctalia, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let installed = Env {
+            path: Some(dir.clone().into_os_string()),
+            ..Env::default()
+        };
+        assert!(
+            Server::new(installed, None)
+                .tool_router
+                .has_route("shell_status")
         );
+        let absent = Server::new(Env::default(), None);
+        assert!(!absent.tool_router.has_route("shell_status"));
+        assert!(absent.tool_router.has_route("status"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_server_names_itself_and_gives_instructions() {
+        let server = Server::new(Env::default(), None);
         let info = server.get_info();
         assert_eq!(info.server_info.name, "niri-desktop-mcp");
         assert!(

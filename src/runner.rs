@@ -232,15 +232,7 @@ mod tests {
         /// `then` runs after the PID is written: `wait` keeps the shell, the group's leader,
         /// running; `exit 0` ends it while the `sleep` still holds stdout.
         fn new(name: &str, then: &str) -> Self {
-            let nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            let dir = std::env::temp_dir().join(format!(
-                "niri-desktop-mcp-{name}-{}-{nanos}",
-                std::process::id()
-            ));
-            std::fs::create_dir(&dir).unwrap();
+            let dir = crate::test_support::fresh_dir(name);
             let script = format!(
                 "sleep 30 & echo $! > '{}'; {then}",
                 dir.join("pid").display()

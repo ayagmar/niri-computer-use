@@ -13,6 +13,8 @@
 | `status.rs` | Builds the readiness report shared by the tool and the subcommand. |
 | `observe.rs` | Screenshots: picks the output, plans grim's arguments and the image size they must produce, and checks the result. |
 | `clipboard.rs` | Reads the clipboard's text with `wl-paste`. |
+| `noctalia.rs` | The only code that talks to Noctalia: its `status` over the IPC socket. |
+| `control.rs` | The lock state: logind's `LockedHint`, then Noctalia. |
 | `runner.rs` | The only code that starts processes. |
 | `image_header.rs` | Reads a PNG's or JPEG's size from its header. The harness includes the same file. |
 | `error.rs` | Tool failures with their stable names. |
@@ -50,6 +52,12 @@ Every program the server runs goes through `runner::run`: no stdin, stdout and s
 grim 1.5.0 sizes its image as `int width = logical width × scale`, which truncates (`render.c:145–146`). The server expects the same, and it nudges a lowered scale up by the smallest step until the truncated width is exactly `max_width`, because `max_width / width` can land just below it in floating point. A capture whose PNG or JPEG header disagrees with the expected size is an `upstream_error`. The metadata returns the output, its transform and layout origin, the captured rectangle in layout coordinates, the scale, the image size, and the capture time.
 
 Downscaling happens in grim and costs time: on a 2560x1440 output, JPEG took about 14 ms at full size and about 100 ms at the default 1280 pixels.
+
+## Noctalia and the lock state
+
+Noctalia counts as installed when `noctalia` is an executable on `PATH` at startup. Only then does the server list `shell_status`, so the tool list doesn't change during a session. It counts as running when its socket, `$XDG_RUNTIME_DIR/noctalia-$WAYLAND_DISPLAY.sock`, answers `status` with a JSON object within two seconds. The server writes the whole fixed payload `/\x1estatus`, shuts down its write half and reads to the end, as Noctalia's own client does. It never sends text from a tool's arguments. Anything other than a JSON object is `noctalia_unavailable`, except an `error:` reply, which keeps Noctalia's text as `upstream_error`. `status` checks again on every call, so a Noctalia restart shows up.
+
+The lock state comes from `loginctl show-session $XDG_SESSION_ID -p LockedHint --value`. If logind can't answer, it comes from Noctalia's `locked`, and otherwise it is `unknown`. `status` reports the source and logind's error, if any. A session ID that isn't plain letters and digits is refused before `loginctl` runs, so it can't be read as an option.
 
 ## Version rule
 

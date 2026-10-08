@@ -1,16 +1,15 @@
 //! The readiness report shared by the `status` tool and the `status` subcommand.
 
 use std::collections::BTreeMap;
-use std::ffi::OsStr;
-use std::os::unix::fs::PermissionsExt as _;
-use std::path::Path;
 
 use serde::Serialize;
 
 use crate::Env;
+use crate::control::{self, Lock};
 use crate::error::ToolError;
 use crate::niri::events::StreamState;
 use crate::niri::{self, version::Compat};
+use crate::noctalia::{self, Presence};
 
 /// Programs the server runs or will run, reported as found on `PATH` or not.
 const BINARIES: [&str; 5] = ["grim", "wtype", "wl-copy", "wl-paste", "loginctl"];
@@ -20,6 +19,10 @@ pub(crate) struct Status {
     /// The basename of `NIRI_SOCKET`, which names the compositor instance.
     instance: Option<String>,
     niri: Niri,
+    lock: Lock,
+    noctalia: Presence,
+    /// Why Noctalia counts as not running, when it's installed.
+    noctalia_error: Option<ToolError>,
     binaries: BTreeMap<&'static str, bool>,
 }
 
@@ -35,14 +38,27 @@ struct Niri {
 
 pub(crate) async fn collect(env: &Env, event_stream: Option<StreamState>) -> Status {
     let socket = env.niri_socket.as_deref();
-    let (version, error) = match niri::version(socket).await {
+    let installed = env.finds("noctalia");
+    let (version, noctalia) = tokio::join!(niri::version(socket), async {
+        if installed {
+            Some(noctalia::status(env).await)
+        } else {
+            None
+        }
+    });
+    let noctalia_status = noctalia.as_ref().and_then(|reply| reply.as_ref().ok());
+    let lock = control::lock(env.session_id.as_deref(), noctalia_status).await;
+    let (version, error) = match version {
         Ok(version) => (Some(version), None),
         Err(error) => (None, Some(error)),
     };
+    let (presence, noctalia_error) = match noctalia {
+        None => (Presence::NotInstalled, None),
+        Some(Ok(_)) => (Presence::Running, None),
+        Some(Err(failure)) => (Presence::NotRunning, Some(failure)),
+    };
     Status {
-        instance: socket
-            .and_then(Path::file_name)
-            .map(|name| name.to_string_lossy().into_owned()),
+        instance: env.instance(),
         niri: Niri {
             compat: version.as_deref().map(niri::version::compat),
             version,
@@ -50,68 +66,23 @@ pub(crate) async fn collect(env: &Env, event_stream: Option<StreamState>) -> Sta
             event_stream,
             error,
         },
+        lock,
+        noctalia: presence,
+        noctalia_error,
         binaries: BINARIES
             .into_iter()
-            .map(|name| (name, on_path(env.path.as_deref(), name)))
+            .map(|name| (name, env.finds(name)))
             .collect(),
     }
 }
 
-/// Whether `PATH` has an executable file called `name`.
-fn on_path(path: Option<&OsStr>, name: &str) -> bool {
-    path.into_iter().flat_map(std::env::split_paths).any(|dir| {
-        dir.join(name)
-            .metadata()
-            .is_ok_and(|file| file.is_file() && file.permissions().mode() & 0o111 != 0)
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::path::PathBuf;
-
     use super::*;
 
-    /// A directory this test creates itself, so it reads and removes nothing else.
-    fn fresh_dir(name: &str) -> PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!(
-            "niri-desktop-mcp-{name}-{}-{nanos}",
-            std::process::id()
-        ));
-        fs::create_dir(&dir).unwrap();
-        dir
-    }
-
-    #[test]
-    fn finds_only_executable_files_on_path() {
-        let dir = fresh_dir("path");
-        fs::create_dir_all(dir.join("dir-named-grim/grim")).unwrap();
-        fs::write(dir.join("wtype"), "").unwrap();
-        fs::set_permissions(dir.join("wtype"), fs::Permissions::from_mode(0o755)).unwrap();
-        fs::write(dir.join("loginctl"), "").unwrap();
-        fs::set_permissions(dir.join("loginctl"), fs::Permissions::from_mode(0o644)).unwrap();
-        let path = std::env::join_paths([dir.join("missing"), dir.clone()]).unwrap();
-
-        assert!(on_path(Some(&path), "wtype"));
-        assert!(!on_path(Some(&path), "loginctl"));
-        assert!(!on_path(Some(&path), "grim"));
-        assert!(!on_path(Some(&path), "wl-copy"));
-        assert!(!on_path(None, "wtype"));
-        fs::remove_dir_all(dir).unwrap();
-    }
-
     #[tokio::test]
-    async fn reports_an_unknown_niri_instead_of_failing() {
-        let env = Env {
-            niri_socket: None,
-            path: None,
-        };
-        let status = serde_json::to_value(collect(&env, None).await).unwrap();
+    async fn reports_what_it_can_without_failing() {
+        let status = serde_json::to_value(collect(&Env::default(), None).await).unwrap();
         assert_eq!(
             status,
             serde_json::json!({
@@ -123,6 +94,13 @@ mod tests {
                     "event_stream": null,
                     "error": {"error": "niri_unavailable", "detail": "NIRI_SOCKET is not set"}
                 },
+                "lock": {
+                    "state": "unknown",
+                    "source": "none",
+                    "logind_error": "XDG_SESSION_ID is not set"
+                },
+                "noctalia": "not_installed",
+                "noctalia_error": null,
                 "binaries": {
                     "grim": false, "loginctl": false, "wl-copy": false, "wl-paste": false, "wtype": false
                 }

@@ -210,3 +210,10 @@ These match the versions installed locally.
 - Arguments that don't fit the desktop (an unknown output, a region that crosses outputs, a malformed target) come back as a tool result with `isError` and plain text, not a new name in the stable error list. rmcp 3.5.0 already answers arguments that don't fit the schema that way (`handler/server/router/tool.rs`, `into_tool_argument_error`), so both kinds of argument mistake look the same to the model, which can then correct the call.
 - `clipboard_read` runs `wl-paste --no-newline --type text`. wl-paste 2.3.0 exits 1 both for an empty clipboard and when nothing copied is text (`src/wl-paste.c:222–245`, `:265–268`); the tool returns those as `text: null` with `reason` `nothing_copied` or `no_text`. Text is capped at 1 MiB and must be UTF-8.
 - The harness includes `src/image_header.rs` with `#[path]` instead of keeping its own copy. The server is a binary crate, so there is no library to depend on, and one header parser keeps the server and C15's checks in agreement.
+
+## 2026-10-08: Noctalia detection and the lock state
+
+- No new crate. The server's Noctalia client is async and sends one fixed payload, `/\x1estatus`, framed the way M0's `noctalia-socket` probe and Noctalia's own client frame it. Panel commands wait for the milestone that needs them.
+- `shell_status` is removed from the tool router at startup when `noctalia` isn't on `PATH` (plan §6.1), using rmcp's `ToolRouter::remove_route`. An installed Noctalia that isn't answering gives `noctalia_unavailable`, a new name in the stable list, as plan §6.2 defines it.
+- `status` reports Noctalia's failure detail as `noctalia_error` and logind's as `lock.logind_error`. Plan §6's shape allows added fields. niri's version and Noctalia's status are read concurrently, and the lock read follows because it may need Noctalia's reply, so `status` waits at most two deadlines, not three.
+- `XDG_SESSION_ID` is passed to `loginctl` as an argument, so a value that isn't plain letters and digits is refused instead of risking it being read as an option.

@@ -13,6 +13,8 @@ pub(crate) enum ErrorName {
     DeadlineExceeded,
     /// niri replied with an error, or with something this server can't read.
     UpstreamError,
+    /// Noctalia is installed but didn't answer `status` with a JSON object.
+    NoctaliaUnavailable,
 }
 
 /// A failure, serialized as `{"error": <name>, "detail": <upstream detail>}`.
