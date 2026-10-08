@@ -28,7 +28,7 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `niri.version` | niri's version string, such as `26.04 (8ed0da4)` |
 | `niri.ipc_crate` | the `niri-ipc` version this build uses, `26.4.0` |
 | `niri.compat` | `ok` when the major and minor versions match, `patch_warning` when only the patch differs, `read_only` otherwise |
-| `niri.event_stream` | `connected`, `disconnected`, or `schema_incompatible` after niri sent two events this build can't parse |
+| `niri.event_stream` | `connected`, `disconnected`, or `schema_incompatible` after niri sent two events this build can't parse; null from the `status` subcommand, which opens no stream |
 | `niri.error` | why niri's version couldn't be read, or null |
 | `lock.state` | `locked`, `unlocked` or `unknown` |
 | `lock.source` | `logind`, `noctalia` or `none`: the screen counts as locked when logind's `LockedHint` or Noctalia's `locked` says so |
@@ -52,7 +52,7 @@ Right after the server starts or reconnects, it waits up to two seconds for niri
 
 ## `outputs`
 
-No arguments. niri's outputs by connector name, such as `DP-1`, as niri reports them: make, model, modes, and under `logical` the position and size in layout coordinates, the scale and the transform. A disabled output has no `logical` field.
+No arguments. niri's outputs by connector name, such as `DP-1`, as niri reports them: make, model, modes, and under `logical` the position and size in layout coordinates, the scale and the transform. A disabled output has `logical: null`.
 
 ## `screenshot`
 
