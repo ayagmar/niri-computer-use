@@ -22,19 +22,19 @@ web | check) ;;
   ;;
 esac
 
-cargo build --locked -p niri-desktop-mcp
-server=$(realpath target/debug/niri-desktop-mcp)
+cargo build --locked -p niri-computer-use
+server=$(realpath target/debug/niri-computer-use)
 work=$(mktemp -d)
 trap 'rm -rf "${work}"' EXIT
 config="${work}/config.json"
 jq -n --arg command "${server}" --arg state "${work}/state" --argjson names "${SESSION_VARS}" \
-  '{mcpServers: {"niri-desktop": {command: $command, args: ["serve"], env:
+  '{mcpServers: {"niri-computer-use": {command: $command, args: ["serve"], env:
     ({XDG_STATE_HOME: $state} + ($ENV | with_entries(select(.key | IN($names[])))))}}}' \
   >"${config}"
 # Keeps the Inspector's own settings out of your home directory.
 export MCP_CLIENT_CONFIG_PATH="${work}/client.json"
 
-cli=(npx -y "${INSPECTOR}" --cli --config "${config}" --server niri-desktop --format json)
+cli=(npx -y "${INSPECTOR}" --cli --config "${config}" --server niri-computer-use --format json)
 
 failures=0
 
@@ -140,7 +140,7 @@ check_screenshots() {
 }
 
 check_audit() {
-  local log="${work}/state/niri-desktop-mcp/audit.jsonl"
+  local log="${work}/state/niri-computer-use/audit.jsonl"
   local calls
   calls=$(find "${work}" -maxdepth 1 -name '*.json' ! -name config.json ! -name tools.json \
     ! -name client.json | wc -l)

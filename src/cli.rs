@@ -17,5 +17,5 @@ pub(crate) fn print_json(value: &impl Serialize) -> serde_json::Result<()> {
     reason = "reports a failure to the human; stdout stays the MCP transport"
 )]
 pub(crate) fn print_error(message: &str) {
-    eprintln!("niri-desktop-mcp: {message}");
+    eprintln!("niri-computer-use: {message}");
 }

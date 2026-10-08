@@ -173,7 +173,7 @@ mod tests {
     async fn a_missing_socket_is_unavailable() {
         let env = Env {
             runtime_dir: Some(std::env::temp_dir().join(format!(
-                "niri-desktop-mcp-no-noctalia-{}",
+                "niri-computer-use-no-noctalia-{}",
                 std::process::id()
             ))),
             wayland_display: Some(OsString::from("wayland-1")),

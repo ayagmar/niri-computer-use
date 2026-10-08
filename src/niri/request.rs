@@ -172,7 +172,7 @@ mod tests {
     #[tokio::test]
     async fn a_missing_socket_is_unavailable() {
         let socket = std::env::temp_dir().join(format!(
-            "niri-desktop-mcp-missing-{}.sock",
+            "niri-computer-use-missing-{}.sock",
             std::process::id()
         ));
         let error = send(&socket, &Request::Version).await.unwrap_err();

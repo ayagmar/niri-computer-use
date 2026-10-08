@@ -1,5 +1,5 @@
 //! The audit log: one JSON line per tool call at
-//! `$XDG_STATE_HOME/niri-desktop-mcp/audit.jsonl`, in a `0700` directory and a `0600` file.
+//! `$XDG_STATE_HOME/niri-computer-use/audit.jsonl`, in a `0700` directory and a `0600` file.
 //! It records argument metadata and the outcome, never typed text, clipboard contents,
 //! screenshot data or window titles.
 
@@ -82,7 +82,7 @@ impl Audit {
             .is_none()
             .then(|| "neither XDG_STATE_HOME nor HOME is set".to_owned());
         Self {
-            path: state_dir.map(|dir| dir.join("niri-desktop-mcp").join("audit.jsonl")),
+            path: state_dir.map(|dir| dir.join("niri-computer-use").join("audit.jsonl")),
             last_error: Arc::new(Mutex::new(last_error)),
         }
     }
@@ -205,7 +205,7 @@ mod tests {
             &args,
             Some("niri_unavailable".to_owned()),
         ));
-        let path = dir.join("state/niri-desktop-mcp/audit.jsonl");
+        let path = dir.join("state/niri-computer-use/audit.jsonl");
         let lines: Vec<Value> = std::fs::read_to_string(&path)
             .unwrap()
             .lines()
@@ -233,7 +233,7 @@ mod tests {
     fn a_failed_write_is_kept_for_status() {
         let dir = crate::test_support::fresh_dir("audit-fail");
         // A file where the log's directory should be.
-        std::fs::write(dir.join("niri-desktop-mcp"), "").unwrap();
+        std::fs::write(dir.join("niri-computer-use"), "").unwrap();
         let audit = Audit::new(Some(dir.clone()));
         audit.write(&record("status", &Value::Null, None));
         assert!(audit.status().last_error.is_some());

@@ -297,7 +297,7 @@ fn invalid(message: &str) -> CallToolResult {
 )]
 #[tool_handler(
     router = self.tool_router,
-    name = "niri-desktop-mcp",
+    name = "niri-computer-use",
     instructions = "Read-only view of a niri desktop. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `clipboard_read` returns the clipboard's text, and `shell_status`, when Noctalia is installed, its panel and lock state. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
 )]
 impl ServerHandler for Server {}
@@ -446,7 +446,7 @@ mod tests {
     fn the_server_names_itself_and_gives_instructions() {
         let server = Server::new(Env::default(), None, Audit::new(None));
         let info = server.get_info();
-        assert_eq!(info.server_info.name, "niri-desktop-mcp");
+        assert_eq!(info.server_info.name, "niri-computer-use");
         assert!(
             info.instructions
                 .is_some_and(|text| text.contains("status"))

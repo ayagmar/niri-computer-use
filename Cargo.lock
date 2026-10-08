@@ -347,7 +347,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "niri-desktop-mcp"
+name = "niri-computer-use"
 version = "0.1.0"
 dependencies = [
  "base64",

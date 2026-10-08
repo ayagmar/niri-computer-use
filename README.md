@@ -1,6 +1,6 @@
-# niri-desktop-mcp
+# niri-computer-use
 
-[![CI](https://github.com/ayagmar/niri-desktop-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ayagmar/niri-desktop-mcp/actions/workflows/ci.yml)
+[![CI](https://github.com/ayagmar/niri-computer-use/actions/workflows/ci.yml/badge.svg)](https://github.com/ayagmar/niri-computer-use/actions/workflows/ci.yml)
 
 An MCP server for AI agents to observe and drive a [niri](https://github.com/niri-wm/niri) Wayland desktop. Noctalia is optional.
 
@@ -15,11 +15,11 @@ Targets niri 26.04. Building needs Rust 1.99.0 (pinned in `rust-toolchain.toml`,
 Build it and print the readiness report from a shell inside your niri session:
 
 ```sh
-cargo build --locked -p niri-desktop-mcp
-target/debug/niri-desktop-mcp status
+cargo build --locked -p niri-computer-use
+target/debug/niri-computer-use status
 ```
 
-`niri-desktop-mcp serve` speaks MCP over stdin and stdout. It reads `NIRI_SOCKET` from its environment to find niri. Every tool call is logged, without contents, to `$XDG_STATE_HOME/niri-desktop-mcp/audit.jsonl` (by default `~/.local/state/niri-desktop-mcp/audit.jsonl`).
+`niri-computer-use serve` speaks MCP over stdin and stdout. It reads `NIRI_SOCKET` from its environment to find niri. Every tool call is logged, without contents, to `$XDG_STATE_HOME/niri-computer-use/audit.jsonl` (by default `~/.local/state/niri-computer-use/audit.jsonl`).
 
 | Tool | What it returns |
 |---|---|

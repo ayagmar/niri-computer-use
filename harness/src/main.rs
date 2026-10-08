@@ -1,4 +1,4 @@
-//! Nested niri test harness for niri-desktop-mcp. See `docs/development.md`.
+//! Nested niri test harness for niri-computer-use. See `docs/development.md`.
 
 mod capture;
 mod config;

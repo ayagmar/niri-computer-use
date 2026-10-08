@@ -92,7 +92,7 @@ Later steps need the nested output to be at least 400x300 logical pixels at scal
 
 What a run does:
 
-1. Creates a fresh `TEST_DIR` at `$XDG_RUNTIME_DIR/niri-desktop-mcp-test/<unix time>-<pid>/`, mode 0700, with `run/`, `state/`, `cache/`, `config/` and `data/`. The `niri-desktop-mcp-test` directory itself stays after the run, empty.
+1. Creates a fresh `TEST_DIR` at `$XDG_RUNTIME_DIR/niri-computer-use-test/<unix time>-<pid>/`, mode 0700, with `run/`, `state/`, `cache/`, `config/` and `data/`. The `niri-computer-use-test` directory itself stays after the run, empty.
 2. Writes a niri config (no startup commands, animations, borders or Xwayland; a magenta background; a fixed 400x300 floating `wev`; one `Ctrl+Shift+F12` test bind) and checks it with `niri validate`.
 3. Builds the environment for the nested niri from scratch. The XDG and Noctalia directories point into `TEST_DIR`, `WAYLAND_DISPLAY` is the absolute path of your Wayland socket, and `HOME`, `PATH` and `LANG` are kept. `DBUS_SYSTEM_BUS_ADDRESS` points to `TEST_DIR/run/no-system-bus`, where nothing exists, so nothing in the nested session can reach your system bus. `NIRI_SOCKET`, `WAYLAND_SOCKET`, `DISPLAY`, `XDG_SESSION_ID` and `DBUS_SESSION_BUS_ADDRESS` are not set. The run stops if any other variable is present or a path points outside `TEST_DIR`.
    With `NOCTALIA=1` it also writes a Noctalia config that turns off the first-run setup wizard and weather and lists no plugin sources, and checks it with `noctalia config validate`. That command exits 0 even when it warns, for example about an unknown key, so the harness requires its plain "Config is valid" line.

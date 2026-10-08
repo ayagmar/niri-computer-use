@@ -245,3 +245,7 @@ These match the versions installed locally.
 
 - The Inspector starts a stdio server with a minimal environment. `NIRI_SOCKET`, `XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY` and `XDG_SESSION_ID` are not passed on, and `status` then reports `NIRI_SOCKET is not set`. `scripts/inspector.sh` passes those four on explicitly.
 - The Inspector's `--strict` schema check flagged `screenshot`'s `max_width`, typed `["integer", "null"]`, as less portable: clients that map tool schemas onto a single-type dialect may reject it. The optional `screenshot` arguments are now described as their own types and left out of `required`. The server still accepts `null` for them.
+
+## 2026-10-08: the name
+
+- The project is `niri-computer-use`: the crate, the binary, the MCP server's name, the skill, the audit log's directory and the GitHub repository. "Computer use" is the term agents and their users look for, and the milestones after M1 add input. The server name is the same everywhere, so clients register it as `niri-computer-use`. `docs/results/m0.md` keeps the commands as they were run, under the old name `niri-desktop-mcp`.

@@ -1,17 +1,17 @@
 ---
-name: niri-desktop
-description: "Look at a niri Wayland desktop through the niri-desktop MCP server: windows, workspaces, outputs, screenshots, the clipboard's text and Noctalia's panels. Read-only."
+name: niri-computer-use
+description: "Look at a niri Wayland desktop through the niri-computer-use MCP server: windows, workspaces, outputs, screenshots, the clipboard's text and Noctalia's panels. Read-only."
 license: MIT
-compatibility: Needs the niri-desktop MCP server (niri-desktop-mcp serve) registered in the agent, running inside a niri 26.04 session.
+compatibility: Needs the niri-computer-use MCP server (niri-computer-use serve) registered in the agent, running inside a niri 26.04 session.
 ---
 
 # niri desktop (read-only)
 
-The `niri-desktop` MCP server shows you the user's niri desktop. It can't act on it: there are no tools to click, type, focus or launch.
+The `niri-computer-use` MCP server shows you the user's niri desktop. It can't act on it: there are no tools to click, type, focus or launch.
 
 ## Rules
 
-1. Use only the `niri-desktop` MCP tools to inspect the desktop. Never run `grim`, `niri msg`, `noctalia msg` or `wl-paste` yourself.
+1. Use only the `niri-computer-use` MCP tools to inspect the desktop. Never run `grim`, `niri msg`, `noctalia msg` or `wl-paste` yourself.
 2. Start with `status`. Note whether Noctalia is running (`noctalia`), whether the screen is locked (`lock.state`), and whether niri's event stream is connected (`niri.event_stream`). If `niri.error` says `NIRI_SOCKET is not set`, the agent started the server without the niri session's environment. Tell the user instead of retrying.
 3. Prefer structured data to screenshots:
    - `desktop_state` for windows, workspaces, the focused window and the overview

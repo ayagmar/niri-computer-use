@@ -36,7 +36,7 @@ impl Fixture {
             .as_nanos();
         // In `/tmp` whatever `TMPDIR` says, because the sockets inside must fit the 108-byte
         // limit on Unix socket paths.
-        let dir = Path::new("/tmp").join(format!("ndm-{name}-{}-{nanos}", std::process::id()));
+        let dir = Path::new("/tmp").join(format!("ncu-{name}-{}-{nanos}", std::process::id()));
         std::fs::create_dir(&dir).unwrap();
         for sub in ["bin", "utils", "run", "state"] {
             std::fs::create_dir(dir.join(sub)).unwrap();
@@ -85,7 +85,7 @@ impl Fixture {
     }
 
     pub(crate) fn audit_log(&self) -> PathBuf {
-        self.dir.join("state/niri-desktop-mcp/audit.jsonl")
+        self.dir.join("state/niri-computer-use/audit.jsonl")
     }
 
     pub(crate) fn path(&self, name: &str) -> PathBuf {

@@ -10,7 +10,7 @@ pub(crate) fn fresh_dir(name: &str) -> PathBuf {
         .unwrap()
         .as_nanos();
     let dir = std::env::temp_dir().join(format!(
-        "niri-desktop-mcp-{name}-{}-{nanos}",
+        "niri-computer-use-{name}-{}-{nanos}",
         std::process::id()
     ));
     std::fs::create_dir(&dir).unwrap();

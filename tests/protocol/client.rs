@@ -190,7 +190,7 @@ impl Server {
     reason = "the test starts the server binary itself, outside the server's runner"
 )]
 fn command() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_niri-desktop-mcp"))
+    Command::new(env!("CARGO_BIN_EXE_niri-computer-use"))
 }
 
 /// One stdout line, which must be a JSON-RPC 2.0 message.

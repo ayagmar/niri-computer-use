@@ -70,7 +70,7 @@ async fn a_failed_write_shows_in_status_and_the_call_still_succeeds() {
     let fixture = Fixture::new("audit-fails");
     let _niri = Niri::start(&fixture);
     // A file where the log's directory should be.
-    std::fs::write(fixture.path("state/niri-desktop-mcp"), "").unwrap();
+    std::fs::write(fixture.path("state/niri-computer-use"), "").unwrap();
     let mut server = Server::start(&fixture).await;
     let outputs = server.structured("outputs").await;
     assert!(outputs.get("DP-1").is_some());

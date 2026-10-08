@@ -1,6 +1,6 @@
 # Architecture
 
-`niri-desktop-mcp` is one binary. `serve` runs an MCP server over stdin and stdout, one process per agent session. `status` prints the readiness report and exits.
+`niri-computer-use` is one binary. `serve` runs an MCP server over stdin and stdout, one process per agent session. `status` prints the readiness report and exits.
 
 ## Modules
 
@@ -42,7 +42,7 @@ On connect, niri sends its current state as a burst of events: workspaces, windo
 
 rmcp marks a request as cancelled when the client cancels it, but it keeps running the tool. Each tool therefore runs its work through one helper that races it against the request's cancellation and drops the work when cancellation wins. Dropping a niri request closes its connection; dropping a `desktop_state` call only stops that call's wait, and the shared event stream keeps running.
 
-The same helper writes one JSON line per call to `$XDG_STATE_HOME/niri-desktop-mcp/audit.jsonl`, or `~/.local/state/niri-desktop-mcp/audit.jsonl`, creating the directory, and any missing parent such as `~/.local/state`, with mode `0700` and the file with mode `0600`. Each line has the start time, the session (the MCP client's name and the server's PID), the niri instance, the tool, its argument metadata, the outcome and the duration. The outcome is read only from the result's error name: a stable name, `invalid_arguments`, `cancelled`, `internal` when the tool couldn't build its result, or null on success. Screenshot arguments are logged because they hold only targets, sizes and formats; no line ever holds an image, the clipboard's text or a window title. `accepted` and `observed` are null until action tools exist. A failed write doesn't fail the call; `status` reports the last one. Calls whose arguments rmcp rejects before the tool runs are not logged.
+The same helper writes one JSON line per call to `$XDG_STATE_HOME/niri-computer-use/audit.jsonl`, or `~/.local/state/niri-computer-use/audit.jsonl`, creating the directory, and any missing parent such as `~/.local/state`, with mode `0700` and the file with mode `0600`. Each line has the start time, the session (the MCP client's name and the server's PID), the niri instance, the tool, its argument metadata, the outcome and the duration. The outcome is read only from the result's error name: a stable name, `invalid_arguments`, `cancelled`, `internal` when the tool couldn't build its result, or null on success. Screenshot arguments are logged because they hold only targets, sizes and formats; no line ever holds an image, the clipboard's text or a window title. `accepted` and `observed` are null until action tools exist. A failed write doesn't fail the call; `status` reports the last one. Calls whose arguments rmcp rejects before the tool runs are not logged.
 
 ## Subprocesses
 

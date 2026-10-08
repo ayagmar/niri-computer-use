@@ -23,7 +23,7 @@ async fn the_handshake_negotiates_and_describes_the_server() {
     let response = server.initialize("2025-06-18").await;
     let result = &response["result"];
     assert_eq!(result["protocolVersion"], "2025-06-18");
-    assert_eq!(result["serverInfo"]["name"], "niri-desktop-mcp");
+    assert_eq!(result["serverInfo"]["name"], "niri-computer-use");
     assert!(result["capabilities"]["tools"].is_object(), "{result}");
     let instructions = result["instructions"].as_str().unwrap();
     assert!(

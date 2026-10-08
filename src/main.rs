@@ -1,4 +1,4 @@
-//! niri-desktop-mcp: an MCP server that lets AI agents observe a niri desktop.
+//! niri-computer-use: an MCP server that lets AI agents observe a niri desktop.
 
 mod audit;
 mod cli;
@@ -22,7 +22,7 @@ use std::process::ExitCode;
 
 use rmcp::ServiceExt as _;
 
-const USAGE: &str = "usage: niri-desktop-mcp serve | status";
+const USAGE: &str = "usage: niri-computer-use serve | status";
 
 /// What the server reads from its environment, once at startup. An empty variable
 /// counts as unset.

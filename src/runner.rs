@@ -214,7 +214,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_missing_program_keeps_the_os_error() {
-        let error = run("niri-desktop-mcp-no-such-program", &[], DEADLINE, 64)
+        let error = run("niri-computer-use-no-such-program", &[], DEADLINE, 64)
             .await
             .unwrap_err();
         assert_eq!(error.name, ErrorName::UpstreamError);
