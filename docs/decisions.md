@@ -179,3 +179,11 @@ These match the versions installed locally.
 - rmcp's `#[tool_handler]` generates an `async fn list_tools` with no `.await`, which Clippy's `unused_async_trait_impl` rejects. The handler impl carries one `#[expect]` for it. It is the first lint exception the rmcp macros have needed.
 - Each niri request uses a new connection, so a reply that arrives after its deadline can't be mistaken for the next reply. The harness keeps one connection instead, because it needs to reach the niri it identified.
 - With tokio in the build but its `process` feature off, Clippy warns that the `tokio::process::Command::new` entry in `clippy.toml` doesn't resolve. The warning doesn't fail the gate and goes away when the server starts its first subprocess.
+
+## 2026-10-08: niri event stream
+
+- No new crate. tokio's `sync` feature adds the `watch` channel between the reader task and the tools; the version is unchanged (1.53.1).
+- The server replays the stream with niri-ipc's `EventStreamState` instead of keeping its own copy of niri's state, so niri's own reducer decides what each event changes.
+- The state counts as initialized when the workspaces, windows and overview events have arrived. niri sends its whole state as one burst on connect (`EventStreamState::replicate` in niri-ipc 26.4.0), but it marks no end of the burst. The overview event comes after the workspaces, windows and keyboard layouts, which are what `desktop_state` returns.
+- One unparsable event reconnects; a second stops the stream until restart, as plan §7 says. The counter doesn't reset, so two bad events far apart also stop it. Ordinary disconnects reconnect after one second and don't count.
+- Matching niri's `Event` in the server uses `matches!` for the three initialization events. Everything else goes to niri-ipc's reducer, so the server has no `match` on `Event` that a niri-ipc bump would need to extend.

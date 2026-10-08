@@ -4,28 +4,37 @@ use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::CallToolResult;
 use rmcp::{ErrorData, ServerHandler, tool, tool_handler, tool_router};
 
+use crate::niri::events::{EventStream, StreamState};
 use crate::{Env, niri, status};
 
 #[derive(Debug, Clone)]
 pub(crate) struct Server {
     env: Env,
+    /// None without `NIRI_SOCKET`.
+    events: Option<EventStream>,
     tool_router: ToolRouter<Self>,
 }
 
 #[tool_router]
 impl Server {
-    pub(crate) fn new(env: Env) -> Self {
+    pub(crate) fn new(env: Env, events: Option<EventStream>) -> Self {
         Self {
             env,
+            events,
             tool_router: Self::tool_router(),
         }
     }
 
     /// Readiness report: the niri instance, niri's version and whether this server
-    /// supports it, and which required programs are on PATH. Call this first.
+    /// supports it, whether niri's event stream is connected, and which required
+    /// programs are on PATH. Call this first.
     #[tool(annotations(read_only_hint = true))]
     async fn status(&self) -> Result<CallToolResult, ErrorData> {
-        structured(&status::collect(&self.env).await)
+        let stream = self
+            .events
+            .as_ref()
+            .map_or(StreamState::Disconnected, EventStream::state);
+        structured(&status::collect(&self.env, Some(stream)).await)
     }
 
     /// niri's outputs (monitors) by connector name: modes, logical position and size,
@@ -34,6 +43,19 @@ impl Server {
     async fn outputs(&self) -> Result<CallToolResult, ErrorData> {
         match niri::outputs(self.env.niri_socket.as_deref()).await {
             Ok(outputs) => structured(&outputs),
+            Err(error) => Ok(error.into_result()),
+        }
+    }
+
+    /// The desktop right now, as one snapshot of niri's event stream: windows (id,
+    /// title, `app_id`, pid, workspace, floating, urgent, layout), workspaces, the focused
+    /// window id, whether the overview is open, and the keyboard layouts. The focused
+    /// window is null while keyboard focus is outside the window layout, for example on
+    /// a shell panel, the lock screen or the overview.
+    #[tool(annotations(read_only_hint = true))]
+    async fn desktop_state(&self) -> Result<CallToolResult, ErrorData> {
+        match niri::desktop(self.events.as_ref()).await {
+            Ok(desktop) => structured(&desktop),
             Err(error) => Ok(error.into_result()),
         }
     }
@@ -46,7 +68,7 @@ impl Server {
 #[tool_handler(
     router = self.tool_router,
     name = "niri-desktop-mcp",
-    instructions = "Read-only view of a niri desktop. Start with `status`, then use `outputs` for the monitor layout. Errors carry a stable `error` name and the upstream `detail`."
+    instructions = "Read-only view of a niri desktop. Start with `status`. Use `desktop_state` for windows and workspaces, and `outputs` for the monitor layout. Errors carry a stable `error` name and the upstream `detail`."
 )]
 impl ServerHandler for Server {}
 
@@ -62,7 +84,11 @@ mod tests {
 
     #[test]
     fn every_tool_is_marked_read_only() {
-        for tool in [Server::status_tool_attr(), Server::outputs_tool_attr()] {
+        for tool in [
+            Server::status_tool_attr(),
+            Server::outputs_tool_attr(),
+            Server::desktop_state_tool_attr(),
+        ] {
             let annotations = tool.annotations.unwrap();
             assert_eq!(annotations.read_only_hint, Some(true), "{}", tool.name);
             assert!(tool.description.is_some_and(|text| !text.is_empty()));
@@ -71,10 +97,13 @@ mod tests {
 
     #[test]
     fn the_server_names_itself_and_gives_instructions() {
-        let server = Server::new(Env {
-            niri_socket: None,
-            path: None,
-        });
+        let server = Server::new(
+            Env {
+                niri_socket: None,
+                path: None,
+            },
+            None,
+        );
         let info = server.get_info();
         assert_eq!(info.server_info.name, "niri-desktop-mcp");
         assert!(

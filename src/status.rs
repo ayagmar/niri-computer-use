@@ -9,6 +9,7 @@ use serde::Serialize;
 
 use crate::Env;
 use crate::error::ToolError;
+use crate::niri::events::StreamState;
 use crate::niri::{self, version::Compat};
 
 /// Programs the server runs or will run, reported as found on `PATH` or not.
@@ -27,10 +28,12 @@ struct Niri {
     version: Option<String>,
     ipc_crate: &'static str,
     compat: Option<Compat>,
+    /// Null in the `status` subcommand, which keeps no stream open.
+    event_stream: Option<StreamState>,
     error: Option<ToolError>,
 }
 
-pub(crate) async fn collect(env: &Env) -> Status {
+pub(crate) async fn collect(env: &Env, event_stream: Option<StreamState>) -> Status {
     let socket = env.niri_socket.as_deref();
     let (version, error) = match niri::version(socket).await {
         Ok(version) => (Some(version), None),
@@ -44,6 +47,7 @@ pub(crate) async fn collect(env: &Env) -> Status {
             compat: version.as_deref().map(niri::version::compat),
             version,
             ipc_crate: niri::version::IPC_CRATE,
+            event_stream,
             error,
         },
         binaries: BINARIES
@@ -94,7 +98,7 @@ mod tests {
             niri_socket: None,
             path: Some(OsString::new()),
         };
-        let status = serde_json::to_value(collect(&env).await).unwrap();
+        let status = serde_json::to_value(collect(&env, None).await).unwrap();
         assert_eq!(
             status,
             serde_json::json!({
@@ -103,6 +107,7 @@ mod tests {
                     "version": null,
                     "ipc_crate": "26.4.0",
                     "compat": null,
+                    "event_stream": null,
                     "error": {"error": "niri_unavailable", "detail": "NIRI_SOCKET is not set"}
                 },
                 "binaries": {

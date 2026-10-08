@@ -39,7 +39,7 @@ async fn main() -> ExitCode {
     };
     let result = match command(&args) {
         Some(Command::Serve) => serve(env).await,
-        Some(Command::Status) => cli::print_json(&status::collect(&env).await)
+        Some(Command::Status) => cli::print_json(&status::collect(&env, None).await)
             .map_err(|error| format!("print status: {error}")),
         None => Err(USAGE.to_owned()),
     };
@@ -66,7 +66,11 @@ fn command(args: &[OsString]) -> Option<Command> {
 }
 
 async fn serve(env: Env) -> Result<(), String> {
-    let service = tools::Server::new(env)
+    let events = env
+        .niri_socket
+        .clone()
+        .map(niri::events::EventStream::spawn);
+    let service = tools::Server::new(env, events)
         .serve(rmcp::transport::stdio())
         .await
         .map_err(|error| format!("start MCP session: {error}"))?;
