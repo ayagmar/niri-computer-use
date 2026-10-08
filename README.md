@@ -26,10 +26,10 @@ target/debug/niri-desktop-mcp status
 | `status` | the niri instance, niri's version and whether this build supports it, whether niri's event stream is connected, and which required programs are on `PATH` |
 | `desktop_state` | windows, workspaces, the focused window, whether the overview is open, and the keyboard layouts, as one snapshot |
 | `outputs` | niri's outputs: modes, logical position and size, scale and transform |
-| `screenshot` | an image of one output or of a region inside one output, with its geometry. JPEG at most 1280 pixels wide by default |
+| `screenshot` | an image of one output or of a region inside one output, with its geometry. JPEG, at most 1280 image pixels wide by default |
 | `clipboard_read` | the clipboard's text, or why there is none |
 
-Failures set `isError` and return `{"error": <name>, "detail": <upstream detail>}`. The names so far are `niri_unavailable`, `deadline_exceeded` and `upstream_error`. Arguments that don't fit the desktop, such as an unknown output, are MCP invalid-params errors.
+Failures set `isError` and return `{"error": <name>, "detail": <upstream detail>}`. The names so far are `niri_unavailable`, `deadline_exceeded` and `upstream_error`. A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and a plain-text message instead.
 
 ## Development
 

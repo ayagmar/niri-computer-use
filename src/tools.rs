@@ -24,9 +24,9 @@ struct ScreenshotArgs {
     /// Required with target `region`: a rectangle in layout coordinates that lies inside
     /// one output.
     region: Option<RegionArgs>,
-    /// The widest image to return, in pixels. The capture scale is lowered to fit.
-    /// Defaults to 1280. A region narrower than this keeps full detail, so to read small
-    /// text, capture a region around it.
+    /// The widest image to return, in image pixels. The capture scale is lowered when the
+    /// capture's logical width times the output's scale is wider. Defaults to 1280. To
+    /// read small text, capture a small region around it, or raise `max_width`.
     max_width: Option<u32>,
     /// `jpeg` (the default) or `png`.
     format: Option<FormatArg>,
@@ -147,7 +147,10 @@ impl Server {
         Parameters(args): Parameters<ScreenshotArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let request = args.request().map_err(invalid)?;
+        let request = match args.request() {
+            Ok(request) => request,
+            Err(message) => return Ok(invalid(&message)),
+        };
         let shot = observe::screenshot(self.env.niri_socket.as_deref(), &request);
         match unless_cancelled(context.ct.cancelled(), shot).await? {
             Ok(shot) => {
@@ -158,7 +161,7 @@ impl Server {
                     .insert(0, ContentBlock::image(image, shot.metadata.mime_type));
                 Ok(result)
             }
-            Err(CallError::InvalidArguments(message)) => Err(invalid(message)),
+            Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
             Err(CallError::Tool(error)) => Ok(error.into_result()),
         }
     }
@@ -177,8 +180,13 @@ impl Server {
     }
 }
 
-fn invalid(message: String) -> ErrorData {
-    ErrorData::invalid_params(message, None)
+/// Arguments that don't fit the desktop. rmcp reports arguments that don't fit the schema
+/// as a tool result with `isError` and plain text, so the model can correct the call; this
+/// gives both kinds of argument mistake that one shape.
+fn invalid(message: &str) -> CallToolResult {
+    CallToolResult::error(vec![ContentBlock::text(format!(
+        "invalid arguments: {message}"
+    ))])
 }
 
 #[expect(
@@ -188,7 +196,7 @@ fn invalid(message: String) -> ErrorData {
 #[tool_handler(
     router = self.tool_router,
     name = "niri-desktop-mcp",
-    instructions = "Read-only view of a niri desktop. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `clipboard_read` returns the clipboard's text. Errors carry a stable `error` name and the upstream `detail`."
+    instructions = "Read-only view of a niri desktop. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `clipboard_read` returns the clipboard's text. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
 )]
 impl ServerHandler for Server {}
 
@@ -259,6 +267,32 @@ mod tests {
             (request.format, request.max_width),
             (Format::Png, Some(640))
         );
+    }
+
+    #[test]
+    fn argument_mistakes_are_plain_text_tool_errors() {
+        let result = invalid("no enabled output named \"NOPE\"");
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(result.structured_content, None);
+        assert_eq!(
+            serde_json::to_value(&result.content).unwrap(),
+            serde_json::json!([{
+                "type": "text",
+                "text": "invalid arguments: no enabled output named \"NOPE\""
+            }])
+        );
+        // These fail in rmcp's own deserialization, which gives the same shape.
+        for bad in [
+            serde_json::json!({}),
+            serde_json::json!({"target": "focused_output", "format": "gif"}),
+            serde_json::json!({"target": "region", "region": {"x": 0}}),
+            serde_json::json!({"target": "focused_output", "max_width": -1}),
+        ] {
+            assert!(
+                serde_json::from_value::<ScreenshotArgs>(bad.clone()).is_err(),
+                "{bad}"
+            );
+        }
     }
 
     #[tokio::test]

@@ -45,7 +45,7 @@ Every program the server runs goes through `runner::run`: no stdin, stdout and s
 
 ## Screenshots
 
-`screenshot` reads niri's outputs, picks the target (a named output, the focused output, or the one output a region lies inside), and runs `grim -t jpeg -q 80` or `grim -t png` with an explicit `-s` scale and `-o <output>` or `-g "x,y wxh"`. Without `max_width` the limit is 1280 pixels. The scale is the output's own, lowered when the capture would be wider than `max_width`.
+`screenshot` reads niri's outputs, picks the target (a named output, the focused output, or the one output a region lies inside), and runs `grim -t jpeg -q 80` or `grim -t png` with an explicit `-s` scale and `-o <output>` or `-g "x,y wxh"`. Without `max_width` the limit is 1280 image pixels. The scale is the output's own, lowered when the capture's logical width times that scale is wider than `max_width`.
 
 grim 1.5.0 sizes its image as `int width = logical width × scale`, which truncates (`render.c:145–146`). The server expects the same, and it nudges a lowered scale up by the smallest step until the truncated width is exactly `max_width`, because `max_width / width` can land just below it in floating point. A capture whose PNG or JPEG header disagrees with the expected size is an `upstream_error`. The metadata returns the output, its transform and layout origin, the captured rectangle in layout coordinates, the scale, the image size, and the capture time.
 
@@ -57,4 +57,4 @@ Downscaling happens in grim and costs time: on a 2560x1440 output, JPEG took abo
 
 ## Errors
 
-A failed tool returns `isError: true` with `{"error": <name>, "detail": <text>}` as structured content. The names are a stable contract for agents. An error inside the readiness report, such as niri being unreachable, is reported in the report rather than failing the `status` call.
+A failed tool returns `isError: true` with `{"error": <name>, "detail": <text>}` as structured content. The names are a stable contract for agents. A mistake in the arguments is different: rmcp answers arguments that don't fit the schema with `isError` and a plain-text message, and the server answers arguments that don't fit the desktop, such as an unknown output, the same way. An error inside the readiness report, such as niri being unreachable, is reported in the report rather than failing the `status` call.

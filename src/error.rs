@@ -38,7 +38,7 @@ impl ToolError {
 }
 
 /// Why a tool call that takes arguments didn't succeed: the arguments don't fit the
-/// desktop, which MCP reports as invalid params, or a failure with a stable name.
+/// desktop, which the tool reports as plain text, or a failure with a stable name.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum CallError {
     InvalidArguments(String),
