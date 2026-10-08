@@ -6,6 +6,7 @@ use serde::Serialize;
 
 use crate::Env;
 use crate::audit::{Audit, AuditStatus};
+use crate::control::desk::LeaseStatus;
 use crate::control::runtime::RuntimeDir;
 use crate::control::{self, Lock};
 use crate::error::ToolError;
@@ -21,6 +22,7 @@ pub(crate) struct Status {
     /// The basename of `NIRI_SOCKET`, which names the compositor instance.
     instance: Option<String>,
     niri: Niri,
+    lease: LeaseStatus,
     /// Whether the stop flag is set for this niri instance.
     stop: bool,
     lock: Lock,
@@ -42,12 +44,14 @@ struct Niri {
 }
 
 /// `noctalia_installed` is decided by the caller: once at startup for the server, whose tool
-/// list depends on it, and on each run for the subcommand.
+/// list depends on it, and on each run for the subcommand. `lease` comes from the server's
+/// desk, or from the runtime directory in the subcommand.
 pub(crate) async fn collect(
     env: &Env,
     event_stream: Option<StreamState>,
     audit: &Audit,
     noctalia_installed: bool,
+    lease: LeaseStatus,
 ) -> Status {
     let socket = env.niri_socket.as_deref();
     let (version, noctalia) = tokio::join!(niri::version(socket), async {
@@ -77,7 +81,8 @@ pub(crate) async fn collect(
             event_stream,
             error,
         },
-        stop: RuntimeDir::of(env).is_ok_and(|runtime| runtime.stopped()),
+        lease,
+        stop: RuntimeDir::of(env).is_ok_and(|runtime| runtime.stopped().unwrap_or(true)),
         lock,
         noctalia: presence,
         noctalia_error,
@@ -92,12 +97,15 @@ pub(crate) async fn collect(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control::desk::status_without_desk;
 
     #[tokio::test]
     async fn reports_what_it_can_without_failing() {
-        let status =
-            serde_json::to_value(collect(&Env::default(), None, &Audit::new(None), false).await)
-                .unwrap();
+        let lease = status_without_desk(&Env::default());
+        let status = serde_json::to_value(
+            collect(&Env::default(), None, &Audit::new(None), false, lease).await,
+        )
+        .unwrap();
         assert_eq!(
             status,
             serde_json::json!({
@@ -109,6 +117,7 @@ mod tests {
                     "event_stream": null,
                     "error": {"error": "niri_unavailable", "detail": "NIRI_SOCKET is not set"}
                 },
+                "lease": {"held_by_me": false, "holder": null},
                 "stop": false,
                 "lock": {
                     "state": "unknown",

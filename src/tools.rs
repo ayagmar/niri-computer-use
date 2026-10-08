@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::audit::{Audit, Call, Caller};
+use crate::control::desk::Desk;
 use crate::error::{CANCELLED, CallError, ToolError};
 use crate::niri::events::{EventStream, StreamState};
 use crate::observe::{Format, Rect, Target};
@@ -99,6 +100,7 @@ pub(crate) struct Server {
     /// None without `NIRI_SOCKET`.
     events: Option<EventStream>,
     audit: Audit,
+    desk: Desk,
     /// Decided once, because the tool list depends on it.
     noctalia_installed: bool,
     tool_router: ToolRouter<Self>,
@@ -115,6 +117,7 @@ impl Server {
             tool_router.remove_route("shell_status");
         }
         Self {
+            desk: Desk::start(&env),
             env,
             events,
             audit,
@@ -136,14 +139,62 @@ impl Server {
             .events
             .as_ref()
             .map_or(StreamState::Disconnected, EventStream::state);
-        let report = status::collect(
-            &self.env,
-            Some(stream),
-            &self.audit,
-            self.noctalia_installed,
-        );
         self.audited(&context, "status", Value::Null, async {
+            let lease = self.desk.status().await;
+            let report = status::collect(
+                &self.env,
+                Some(stream),
+                &self.audit,
+                self.noctalia_installed,
+                lease,
+            );
             structured(&report.await)
+        })
+        .await
+    }
+
+    /// Takes the exclusive lease on this niri desktop, which later action tools will
+    /// require. Fails with `lease_held` naming the holder if another agent has it,
+    /// `stopped` while the user's stop flag is set, and `recovery_required` while input may
+    /// be stuck. Returns the holder; calling it again while holding the lease returns the
+    /// same holder.
+    #[tool(annotations(
+        read_only_hint = false,
+        destructive_hint = false,
+        idempotent_hint = true,
+        open_world_hint = false
+    ))]
+    async fn acquire_desktop(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let label = session(&context);
+        self.audited(&context, "acquire_desktop", Value::Null, async {
+            answer(
+                self.desk
+                    .acquire(&label)
+                    .await
+                    .map(|holder| serde_json::json!({ "holder": holder })),
+            )
+        })
+        .await
+    }
+
+    /// Gives the lease up. `released` says whether this server held it; the user's stop
+    /// flag also takes it back.
+    #[tool(annotations(
+        read_only_hint = false,
+        destructive_hint = false,
+        idempotent_hint = true,
+        open_world_hint = false
+    ))]
+    async fn release_desktop(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.audited(&context, "release_desktop", Value::Null, async {
+            let released = self.desk.release().await;
+            structured(&serde_json::json!({ "released": released }))
         })
         .await
     }
@@ -250,11 +301,7 @@ impl Server {
         let result = unless_cancelled(context.ct.cancelled(), work)
             .await
             .and_then(|result| result);
-        let client = context.peer.peer_info().map_or_else(
-            || "unknown".to_owned(),
-            |info| info.client_info.name.clone(),
-        );
-        let session = format!("{client}/{}", std::process::id());
+        let session = session(context);
         let instance = self.env.instance();
         let caller = Caller {
             session: &session,
@@ -263,6 +310,16 @@ impl Server {
         self.audit.finish(&call, caller, &args, &result);
         result
     }
+}
+
+/// The session label: the MCP client's name and this server's PID, such as
+/// `claude-code/4711`.
+fn session(context: &RequestContext<RoleServer>) -> String {
+    let client = context.peer.peer_info().map_or_else(
+        || "unknown".to_owned(),
+        |info| info.client_info.name.clone(),
+    );
+    format!("{client}/{}", std::process::id())
 }
 
 fn answer(result: Result<impl Serialize, ToolError>) -> Result<CallToolResult, ErrorData> {
@@ -326,7 +383,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_tool_is_marked_read_only() {
+    fn only_the_lease_tools_change_anything() {
+        for tool in [
+            Server::acquire_desktop_tool_attr(),
+            Server::release_desktop_tool_attr(),
+        ] {
+            let annotations = tool.annotations.unwrap();
+            assert_eq!(annotations.read_only_hint, Some(false), "{}", tool.name);
+            assert_eq!(annotations.destructive_hint, Some(false), "{}", tool.name);
+            assert_eq!(annotations.idempotent_hint, Some(true), "{}", tool.name);
+        }
         for tool in [
             Server::status_tool_attr(),
             Server::outputs_tool_attr(),

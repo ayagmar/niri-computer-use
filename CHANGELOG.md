@@ -16,6 +16,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - The `niri-computer-use` skill in `skills/`, for agents using the read-only tools.
 - `make inspect` and `make inspect-check`: the server under the pinned MCP Inspector.
 - `niri-computer-use stop` and `resume`: set and clear a stop flag in the niri instance's runtime directory, `$XDG_RUNTIME_DIR/niri-computer-use/<instance>/`. `status` reports it as `stop`.
+- `acquire_desktop` and `release_desktop`: one server at a time holds the lease on a niri instance, an exclusive `flock` in the runtime directory. The stop flag takes it back. `status` reports the holder. New error names `lease_held`, `stopped` and `recovery_required`.
 
 ### Changed
 

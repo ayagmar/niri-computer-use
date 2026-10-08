@@ -16,6 +16,9 @@
 | `noctalia.rs` | The only code that talks to Noctalia: its `status` over the IPC socket. |
 | `control.rs` | The lock state: logind's `LockedHint`, then Noctalia. |
 | `control/runtime.rs` | The per-instance runtime directory and its stop flag. |
+| `control/stop.rs` | Watches the runtime directory for the stop flag. |
+| `control/lease.rs` | The lease lock and the holder record. |
+| `control/desk.rs` | Whether this server holds the lease: takes it, gives it up, and lets the stop flag take it back. |
 | `audit.rs` | The audit log. |
 | `runner.rs` | The only code that starts processes. |
 | `image_header.rs` | Reads a PNG's or JPEG's size from its header. The harness includes the same file. |
@@ -66,6 +69,12 @@ The lock state comes from `loginctl show-session $XDG_SESSION_ID -p LockedHint -
 ## Runtime directory and the stop flag
 
 Each niri instance has a runtime directory, `$XDG_RUNTIME_DIR/niri-computer-use/<instance>/`, where `<instance>` is the basename of `NIRI_SOCKET` without `.sock`, for example `niri.wayland-1.1487`. Servers for the same niri share it; a server for another niri, such as the nested harness, has its own. `niri-computer-use stop` creates the directory with mode `0700` and the empty file `stop` in it with mode `0600`; `status` reports `stop: true` while that file exists. `niri-computer-use resume` removes it, and refuses while `input-dirty` exists in the same directory. Both need `NIRI_SOCKET`, which niri sets for the commands it spawns, and `XDG_RUNTIME_DIR`, which comes from the session.
+
+## The lease
+
+One server at a time holds the lease on a niri instance. It is an exclusive, non-blocking `flock` on `<runtime dir>/lease`, a file created once with mode `0600` and never removed, so every server locks the same file. The kernel releases the lock when the holder's file is closed, which includes the process dying. The holder writes its PID, label (the MCP client's name and its own PID) and the time to `lease.json` for other servers' `status`; it empties the file before unlocking, and a record whose PID no longer exists names nobody.
+
+`acquire_desktop` takes the lease only if the stop flag and the input-dirty marker are both absent. A runtime directory that can't be read counts as neither absent: the call fails rather than guess. A server watches its runtime directory with inotify from startup; whenever anything in it changes, it checks the stop flag again, and when the flag is set it gives the lease up. A directory that can't be read counts as stopped. If the watch can't be set up, `acquire_desktop` refuses, because a stop couldn't take the lease back. The lease's mutex is the action mutex: later action tools hold it while they run.
 
 ## Version rule
 

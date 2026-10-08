@@ -4,7 +4,7 @@
 
 An MCP server for AI agents to observe and drive a [niri](https://github.com/niri-wm/niri) Wayland desktop. Noctalia is optional.
 
-**Status: M1, read-only, complete.** The server runs over stdio and has five read-only tools, six when Noctalia is installed. It can't act on the desktop yet. M0's research and its nested test harness are recorded in [docs/results/m0.md](docs/results/m0.md), and M1's acceptance in [docs/results/m1.md](docs/results/m1.md).
+**Status: M1 complete, M2 in progress.** The server runs over stdio and has five read-only tools, six when Noctalia is installed, plus `acquire_desktop` and `release_desktop`, which take and give up the lease that the action tools will require. It can't act on the desktop yet. M0's research and its nested test harness are recorded in [docs/results/m0.md](docs/results/m0.md), and M1's acceptance in [docs/results/m1.md](docs/results/m1.md).
 
 ## Requirements
 
@@ -25,14 +25,16 @@ target/debug/niri-computer-use status
 
 | Tool | What it returns |
 |---|---|
-| `status` | the niri instance, niri's version and whether this build supports it, whether niri's event stream is connected, the stop flag, the lock state, whether Noctalia is running, and which required programs are on `PATH` |
+| `status` | the niri instance, niri's version and whether this build supports it, whether niri's event stream is connected, who holds the lease, the stop flag, the lock state, whether Noctalia is running, and which required programs are on `PATH` |
 | `desktop_state` | windows, workspaces, the focused window, whether the overview is open, and the keyboard layouts, as one snapshot |
 | `outputs` | niri's outputs: modes, logical position and size, scale and transform |
 | `screenshot` | an image of one output or of a region inside one output, with its geometry. JPEG, at most 1280 image pixels wide by default |
 | `clipboard_read` | the clipboard's text, or why there is none |
 | `shell_status` | Noctalia's status: bar, open panel and lock screen. Only listed when `noctalia` is on `PATH` |
+| `acquire_desktop` | takes the lease, so this agent is the one controlling this niri desktop; refused while another agent holds it, while the stop flag is set, or while input may be stuck |
+| `release_desktop` | gives the lease up; the stop flag also takes it back |
 
-Failures set `isError` and return `{"error": <name>, "detail": <upstream detail>}`. The names so far are `niri_unavailable`, `deadline_exceeded`, `upstream_error` and `noctalia_unavailable`. A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and a plain-text message instead.
+Failures set `isError` and return `{"error": <name>, "detail": <upstream detail>}`. The names so far are `niri_unavailable`, `deadline_exceeded`, `upstream_error`, `noctalia_unavailable`, `lease_held`, `stopped` and `recovery_required`. A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and a plain-text message instead.
 
 ## Install and register
 

@@ -44,7 +44,7 @@ async fn an_unknown_protocol_version_gets_the_newest_supported_one() {
 }
 
 #[tokio::test]
-async fn every_tool_is_read_only_and_only_screenshot_takes_arguments() {
+async fn only_the_lease_tools_change_anything_and_only_screenshot_takes_arguments() {
     let fixture = Fixture::new("tools");
     fixture.program("noctalia", "exit 0");
     let mut server = Server::start(&fixture).await;
@@ -52,9 +52,11 @@ async fn every_tool_is_read_only_and_only_screenshot_takes_arguments() {
     assert_eq!(
         names(&tools),
         [
+            "acquire_desktop",
             "clipboard_read",
             "desktop_state",
             "outputs",
+            "release_desktop",
             "screenshot",
             "shell_status",
             "status"
@@ -62,7 +64,12 @@ async fn every_tool_is_read_only_and_only_screenshot_takes_arguments() {
     );
     for tool in &tools {
         let name = tool["name"].as_str().unwrap();
-        assert_eq!(tool["annotations"]["readOnlyHint"], true, "{name}");
+        let lease = name.ends_with("_desktop");
+        assert_eq!(tool["annotations"]["readOnlyHint"], !lease, "{name}");
+        if lease {
+            assert_eq!(tool["annotations"]["destructiveHint"], false, "{name}");
+            assert_eq!(tool["annotations"]["idempotentHint"], true, "{name}");
+        }
         assert!(!tool["description"].as_str().unwrap().is_empty(), "{name}");
         assert_eq!(tool["inputSchema"]["type"], "object", "{name}");
         let properties = tool["inputSchema"]["properties"]
@@ -93,9 +100,11 @@ async fn without_noctalia_on_path_there_is_no_shell_status() {
     assert_eq!(
         names(&tools),
         [
+            "acquire_desktop",
             "clipboard_read",
             "desktop_state",
             "outputs",
+            "release_desktop",
             "screenshot",
             "status"
         ]

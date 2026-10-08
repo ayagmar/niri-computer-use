@@ -25,6 +25,8 @@ mod errors;
 #[cfg(test)]
 mod events;
 #[cfg(test)]
+mod lease;
+#[cfg(test)]
 mod lifecycle;
 #[cfg(test)]
 mod screenshot;

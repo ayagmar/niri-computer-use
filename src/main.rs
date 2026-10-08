@@ -95,7 +95,8 @@ async fn main() -> ExitCode {
         Some(Command::Status) => {
             let audit = audit::Audit::new(env.state_dir.clone());
             let installed = env.finds("noctalia");
-            cli::print_json(&status::collect(&env, None, &audit, installed).await)
+            let lease = control::desk::status_without_desk(&env);
+            cli::print_json(&status::collect(&env, None, &audit, installed, lease).await)
                 .map_err(|error| format!("print status: {error}"))
         }
         Some(Command::Stop) => RuntimeDir::of(&env).and_then(|runtime| {

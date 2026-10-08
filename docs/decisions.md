@@ -267,3 +267,12 @@ These match the versions installed locally.
 - `actions/setup-node` and `npm ci` instead of Astro's `withastro/action`, so CI and the deploy build the site with the same steps.
 - CI builds the site on every push and pull request (`ci.yml`, job `site`), so a broken page fails before the deploy does. There is no link checker yet; the internal links were checked by hand against the build.
 - The landing page has no demo. Plan §21.3 asks for a screenshot or recording of a real run, never a mock-up, and none has been taken for publication.
+
+## 2026-10-08: the lease and the stop watcher
+
+- No new crate. The lease lock is `std::fs::File::try_lock`, an `flock` on Linux, in the standard library since Rust 1.89. The stop watcher uses inotify through rustix's `fs` feature (same version, 1.1.5) and Tokio's `AsyncFd`, which the `net` feature already brings.
+- The watcher doesn't interpret event names: any change in the runtime directory makes it check whether `stop` exists. That avoids reasoning about event order, renames and coalesced events.
+- The flags fail closed (review finding): a runtime directory that can't be read counts as stopped for the watcher and refuses `acquire_desktop`, instead of reading as "no flag".
+- `lease.json` is display only. The holder empties it before unlocking, and readers ignore a record whose PID has no `/proc` entry, so a crashed holder doesn't show up as holding the lease.
+- `release_desktop` when not holding the lease succeeds with `released: false` rather than failing, so an agent whose lease the stop flag already took back isn't told it made a mistake.
+- Whether `acquire_desktop` also refuses while the screen is locked is decided with the gate in a later step; for now only the stop flag and the input-dirty marker refuse it.

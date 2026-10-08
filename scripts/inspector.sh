@@ -61,9 +61,9 @@ call() {
 }
 
 list_tools() {
-  local expected='["clipboard_read","desktop_state","outputs","screenshot","status"]'
+  local expected='["acquire_desktop","clipboard_read","desktop_state","outputs","release_desktop","screenshot","status"]'
   if command -v noctalia >/dev/null; then
-    expected='["clipboard_read","desktop_state","outputs","screenshot","shell_status","status"]'
+    expected='["acquire_desktop","clipboard_read","desktop_state","outputs","release_desktop","screenshot","shell_status","status"]'
   fi
   # --strict exits 6 on a schema portability error.
   local status=0
@@ -75,8 +75,11 @@ list_tools() {
   fi
   check "tools/list names the expected tools" \
     "[.result.tools[].name] | sort == ${expected}" "${work}/tools.json"
-  check "every tool is read-only" \
-    'all(.result.tools[]; .annotations.readOnlyHint == true)' "${work}/tools.json"
+  # The lease tools change the lease, not the desktop; the check doesn't call them, so it
+  # never takes the lease from an agent using this session.
+  check "every tool but the lease tools is read-only" \
+    'all(.result.tools[]; .annotations.readOnlyHint == (.name | endswith("_desktop") | not))' \
+    "${work}/tools.json"
   check "no schema portability findings" \
     '(.schemaFindings // []) | length == 0' "${work}/tools.json"
 }

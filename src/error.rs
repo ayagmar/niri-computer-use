@@ -18,6 +18,12 @@ pub(crate) enum ErrorName {
     UpstreamError,
     /// Noctalia is installed but didn't answer `status` with a JSON object.
     NoctaliaUnavailable,
+    /// Another server holds the lease.
+    LeaseHeld,
+    /// The stop flag is set.
+    Stopped,
+    /// The input-dirty marker says input may be stuck.
+    RecoveryRequired,
 }
 
 /// A failure, serialized as `{"error": <name>, "detail": <upstream detail>}`.

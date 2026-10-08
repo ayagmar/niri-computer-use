@@ -3,7 +3,7 @@ title: Tools reference
 description: Every tool niri-computer-use offers, with its arguments, results and errors.
 ---
 
-All tools are read-only and carry the `readOnlyHint` annotation. Each successful result has the data as `structuredContent` and the same JSON as text.
+All tools except `acquire_desktop` and `release_desktop` are read-only and carry the `readOnlyHint` annotation. The two lease tools change only the lease, never the desktop. Each successful result has the data as `structuredContent` and the same JSON as text.
 
 ## Errors
 
@@ -15,6 +15,9 @@ A failure sets `isError` and returns `{"error": <name>, "detail": <upstream deta
 | `deadline_exceeded` | niri or a program didn't answer in time: two seconds for niri and `wl-paste`, five for `grim` |
 | `upstream_error` | niri, a program or Noctalia answered with an error, or with something unreadable; `detail` keeps its message, exit status and stderr |
 | `noctalia_unavailable` | Noctalia is installed but didn't answer on its socket within two seconds |
+| `lease_held` | another agent's server holds the lease; `detail` names its PID, label and since when |
+| `stopped` | the stop flag is set; the user clears it with `niri-computer-use resume` |
+| `recovery_required` | input may be stuck; the user runs `niri-computer-use recover` |
 
 A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and one plain-text block starting `invalid arguments:`, without `structuredContent`, so the model can correct the call.
 
@@ -30,6 +33,8 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `niri.compat` | `ok` when the major and minor versions match, `patch_warning` when only the patch differs, `read_only` otherwise |
 | `niri.event_stream` | `connected`, `disconnected`, or `schema_incompatible` after niri sent two events this build can't parse; null from the `status` subcommand, which opens no stream |
 | `niri.error` | why niri's version couldn't be read, or null |
+| `lease.held_by_me` | whether this server holds the lease |
+| `lease.holder` | the holder's `pid`, `label` (client name and server PID, such as `claude-code/4711`) and `since`, or null |
 | `stop` | whether the stop flag is set for this niri instance (`niri-computer-use stop`, cleared by `niri-computer-use resume`) |
 | `lock.state` | `locked`, `unlocked` or `unknown` |
 | `lock.source` | `logind`, `noctalia` or `none`: the screen counts as locked when logind's `LockedHint` or Noctalia's `locked` says so |
@@ -86,3 +91,13 @@ No arguments. Runs `wl-paste --no-newline --type text` and returns `{"text": ...
 ## `shell_status`
 
 No arguments. Listed only when `noctalia` is on `PATH`. Noctalia's own status reply: `barVisible`, `panelOpen`, `activePanelId` and `locked`. `noctalia_unavailable` when Noctalia doesn't answer; an `error:` reply from Noctalia is an `upstream_error` with its text.
+
+## `acquire_desktop`
+
+No arguments. Takes the lease on this niri instance and returns `{"holder": {"pid", "label", "since"}}`. One server holds it at a time; the action tools of later versions require it. Calling it again while holding the lease returns the same holder.
+
+Refused with `lease_held` while another server holds it, `stopped` while the stop flag is set, and `recovery_required` while the input-dirty marker exists. If the runtime directory can't be read, it fails with `upstream_error` rather than assume neither flag is set.
+
+## `release_desktop`
+
+No arguments. Gives the lease up and returns `{"released": true}`, or `{"released": false}` if this server didn't hold it. The lease is also given up when the stop flag appears and when the server exits.

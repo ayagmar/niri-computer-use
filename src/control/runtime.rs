@@ -46,17 +46,29 @@ impl RuntimeDir {
         &self.path
     }
 
-    /// Whether the stop flag is set.
-    pub(crate) fn stopped(&self) -> bool {
-        self.path.join(STOP).exists()
-    }
-
-    /// Sets the stop flag, creating the directory with mode `0700` as needed.
-    pub(crate) fn stop(&self) -> io::Result<()> {
+    /// Creates the directory, and its parent, with mode `0700` as needed.
+    pub(crate) fn create(&self) -> io::Result<()> {
         DirBuilder::new()
             .recursive(true)
             .mode(0o700)
-            .create(&self.path)?;
+            .create(&self.path)
+    }
+
+    /// Whether the stop flag is set. An error means the directory can't be read, which a
+    /// caller that gates on the flag treats as set.
+    pub(crate) fn stopped(&self) -> io::Result<bool> {
+        self.path.join(STOP).try_exists()
+    }
+
+    /// Whether the input-dirty marker says input may be stuck. An error means the
+    /// directory can't be read.
+    pub(crate) fn input_dirty(&self) -> io::Result<bool> {
+        self.path.join(INPUT_DIRTY).try_exists()
+    }
+
+    /// Sets the stop flag, creating the directory as needed.
+    pub(crate) fn stop(&self) -> io::Result<()> {
+        self.create()?;
         OpenOptions::new()
             .write(true)
             .create(true)
@@ -68,7 +80,7 @@ impl RuntimeDir {
 
     /// Clears the stop flag, unless the input-dirty marker says input may be stuck.
     pub(crate) fn resume(&self) -> Result<(), String> {
-        if self.path.join(INPUT_DIRTY).exists() {
+        if self.input_dirty().unwrap_or(true) {
             return Err(
                 "input may be stuck (input-dirty is set); run `niri-computer-use recover` first"
                     .to_owned(),
@@ -132,16 +144,16 @@ mod tests {
     fn stop_sets_a_private_flag_and_resume_clears_it() {
         let dir = crate::test_support::fresh_dir("runtime");
         let runtime = RuntimeDir::of(&env(&dir)).unwrap();
-        assert!(!runtime.stopped());
+        assert!(!runtime.stopped().unwrap());
         runtime.stop().unwrap();
         runtime.stop().unwrap();
-        assert!(runtime.stopped());
+        assert!(runtime.stopped().unwrap());
         let mode = |path: &Path| path.metadata().unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(runtime.path()), 0o700);
         assert_eq!(mode(runtime.path().parent().unwrap()), 0o700);
         assert_eq!(mode(&runtime.path().join(STOP)), 0o600);
         runtime.resume().unwrap();
-        assert!(!runtime.stopped());
+        assert!(!runtime.stopped().unwrap());
         // Resuming twice, or before any stop, is fine.
         runtime.resume().unwrap();
         std::fs::remove_dir_all(dir).unwrap();
@@ -155,7 +167,7 @@ mod tests {
         std::fs::write(runtime.path().join(INPUT_DIRTY), "").unwrap();
         let error = runtime.resume().unwrap_err();
         assert!(error.contains("recover"), "{error}");
-        assert!(runtime.stopped());
+        assert!(runtime.stopped().unwrap());
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
