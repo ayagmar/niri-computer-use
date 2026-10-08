@@ -148,7 +148,7 @@ None of these outcomes is an error, and the server never retries an action. `tim
 |---|---|
 | `id` (required) | a workspace id from `desktop_state`, not its index |
 
-`observed` is `focused` once the workspace has focus, on whichever output it is, or `timeout`. Focus moving to one of the workspace's own windows is expected, not an interruption. If the workspace already has focus, nothing is sent: `observed` is `focused` with `accepted: false`. Sending it would let niri's `workspace-auto-back-and-forth` switch to the previous workspace.
+`observed` is `focused` once the workspace has focus, on whichever output it is, and keyboard focus is on one of its windows or on none, or `timeout`. Focus moving to one of the workspace's own windows is expected, not an interruption. If the workspace already has focus, nothing is sent: `observed` is `focused` with `accepted: false`. Sending it would let niri's `workspace-auto-back-and-forth` switch to the previous workspace.
 
 ## `launch`
 

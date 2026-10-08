@@ -348,12 +348,19 @@ fn window_focused(view: &View, id: u64, before: Option<u64>) -> Option<Observed>
     interrupted(view, before, |window| window.id == id)
 }
 
-/// Workspace `id` has focus. Focus moving to one of its windows is expected.
+/// Workspace `id` has focus, and keyboard focus is on one of its windows or on none. niri
+/// reports the workspace before the window focus that follows it, so the workspace alone
+/// would end the wait with focus still on the old workspace's window. Focus moving to one
+/// of its windows is expected.
 fn workspace_focused(view: &View, id: u64, before: Option<u64>) -> Option<Observed> {
-    if view.workspaces().get(&id).is_some_and(|ws| ws.is_focused) {
+    let on_it = |window: &Window| window.workspace_id == Some(id);
+    let window = view
+        .focused_window()
+        .and_then(|focused| view.windows().get(&focused));
+    if view.workspaces().get(&id).is_some_and(|ws| ws.is_focused) && window.is_none_or(on_it) {
         return Some(Observed::Focused);
     }
-    interrupted(view, before, |window| window.workspace_id == Some(id))
+    interrupted(view, before, on_it)
 }
 
 fn closed(view: &View, id: u64) -> Option<Observed> {
@@ -450,6 +457,12 @@ mod tests {
         );
         assert_eq!(
             workspace_focused(&windows(1), 1, None),
+            Some(Observed::Focused)
+        );
+        // Workspace 1 is focused, but focus is still on workspace 2's window.
+        assert_eq!(workspace_focused(&windows(3), 1, Some(3)), None);
+        assert_eq!(
+            workspace_focused(&windows(0), 1, Some(3)),
             Some(Observed::Focused)
         );
         assert_eq!(closed(&windows(1), 2), None);
