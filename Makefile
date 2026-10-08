@@ -1,4 +1,4 @@
-.PHONY: check lint coverage inspect inspect-check nested nested-control nested-actions sitting host-capture
+.PHONY: check lint coverage inspect inspect-check nested nested-control nested-actions nested-input sitting host-capture
 
 SCALE ?= 1
 
@@ -39,6 +39,11 @@ nested-actions:
 	cargo build --locked --manifest-path probes/vpointer/Cargo.toml
 	cargo build --locked -p niri-computer-use
 	cargo run --locked -p harness -- run --actions
+
+nested-input:
+	cargo build --locked --manifest-path probes/vpointer/Cargo.toml
+	cargo build --locked -p niri-computer-use
+	cargo run --locked -p harness -- run --scale $(SCALE) --input
 
 host-capture:
 	cargo run --locked -p harness -- host-capture $(OUTPUT)

@@ -67,6 +67,7 @@ pub(crate) fn supervise(
             match checks {
                 ServerChecks::Control => crate::control::run(&mut session, server),
                 ServerChecks::Actions => crate::actions::run(&mut session, server),
+                ServerChecks::Input => crate::input::run(&mut session, &output, server),
             }
         } else {
             steps(&mut session, &output, probes)
@@ -110,7 +111,7 @@ fn steps(session: &mut Session<'_>, output: &LogicalOutput, probes: &Probes<'_>)
 }
 
 /// The window rule makes `wev` a 400x300 floating window at the top-left.
-fn wait_for_wev(session: &mut Session<'_>) -> Result<WindowLayout> {
+pub(crate) fn wait_for_wev(session: &mut Session<'_>) -> Result<WindowLayout> {
     let layout = session.wait_until("wev-window", "a 400x300 floating wev", WAIT, |session| {
         let Response::Windows(windows) = session.request(&Request::Windows)? else {
             return Err(Failure::new("niri answered Windows with another response"));

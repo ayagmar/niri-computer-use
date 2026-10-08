@@ -96,29 +96,77 @@ pub(crate) struct Button {
 }
 
 pub(crate) fn button_trace(log: &str) -> crate::failure::Result<Vec<Button>> {
-    use crate::failure::Failure;
     pointer_events(log)
         .filter(|event| event.name == "button")
-        .map(|event| {
-            let number = |field| {
-                event
-                    .detail
-                    .split_once(field)
-                    .and_then(|(_, rest)| rest.split([';', ' ', ',']).next())
-                    .and_then(|value| value.parse::<u32>().ok())
-                    .ok_or_else(|| Failure::new(format!("invalid wev button: {}", event.detail)))
-            };
-            let state = number("state: ")?;
-            if state > 1 {
-                return Err(Failure::new(format!("invalid wev button state: {state}")));
-            }
-            Ok(Button {
-                time: time(event.detail)?,
-                code: number("button: ")?,
-                pressed: state == 1,
-            })
+        .map(button)
+        .collect()
+}
+
+fn button(event: Event<'_>) -> crate::failure::Result<Button> {
+    use crate::failure::Failure;
+    let number = |field| {
+        event
+            .detail
+            .split_once(field)
+            .and_then(|(_, rest)| rest.split([';', ' ', ',']).next())
+            .and_then(|value| value.parse::<u32>().ok())
+            .ok_or_else(|| Failure::new(format!("invalid wev button: {}", event.detail)))
+    };
+    let state = number("state: ")?;
+    if state > 1 {
+        return Err(Failure::new(format!("invalid wev button state: {state}")));
+    }
+    Ok(Button {
+        time: time(event.detail)?,
+        code: number("button: ")?,
+        pressed: state == 1,
+    })
+}
+
+/// What the pointer did, in log order.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Pointer {
+    /// It entered the surface or moved, to this surface-local position.
+    At(f64, f64),
+    Button {
+        code: u32,
+        pressed: bool,
+    },
+}
+
+/// The pointer's positions and buttons, in order. Other pointer events are left out.
+pub(crate) fn pointer_trace(log: &str) -> crate::failure::Result<Vec<Pointer>> {
+    pointer_events(log)
+        .filter_map(|event| match event.name {
+            "enter" | "motion" => event
+                .detail
+                .split_once("x, y: ")
+                .and_then(|(_, at)| position(at))
+                .map(|(x, y)| Ok(Pointer::At(x, y))),
+            "button" => Some(button(event).map(|button| Pointer::Button {
+                code: button.code,
+                pressed: button.pressed,
+            })),
+            _ => None,
         })
         .collect()
+}
+
+/// Every complete pointer frame that holds an `axis` event, without its `frame` event.
+pub(crate) fn axis_frames(log: &str) -> Vec<Vec<Event<'_>>> {
+    let mut frames = Vec::new();
+    let mut current = Vec::new();
+    for event in pointer_events(log) {
+        if event.name == "frame" {
+            let frame = std::mem::take(&mut current);
+            if frame.iter().any(|logged: &Event<'_>| logged.name == "axis") {
+                frames.push(frame);
+            }
+        } else {
+            current.push(event);
+        }
+    }
+    frames
 }
 
 /// The pointer events of the complete frame that holds the `axis` event sent with `time`.
@@ -243,6 +291,31 @@ mod tests {
         let names: Vec<&str> = frame.iter().map(|event| event.name).collect();
         assert_eq!(names, ["axis_source", "axis_value120", "axis"]);
         assert_eq!(axis_frame(LOG, 1), None);
+    }
+
+    #[test]
+    fn the_pointer_trace_keeps_positions_and_buttons_in_order() {
+        assert_eq!(
+            pointer_trace(LOG).unwrap(),
+            [
+                Pointer::At(100.0, 100.0),
+                Pointer::At(10.0, 9.996_094),
+                Pointer::Button {
+                    code: 272,
+                    pressed: true
+                },
+                Pointer::Button {
+                    code: 272,
+                    pressed: false
+                },
+            ]
+        );
+        let frames = axis_frames(LOG);
+        assert_eq!(frames.len(), 1);
+        let names: Vec<&str> = frames[0].iter().map(|event| event.name).collect();
+        assert_eq!(names, ["axis_source", "axis_value120", "axis"]);
+        let unfinished = LOG.trim_end().rsplit_once('\n').unwrap().0;
+        assert_eq!(axis_frames(unfinished).len(), 0);
     }
 
     #[test]

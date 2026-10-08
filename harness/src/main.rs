@@ -9,6 +9,7 @@ mod failure;
 mod image;
 #[path = "../../src/image_header.rs"]
 mod image_header;
+mod input;
 mod interrupt;
 mod keyboard;
 mod log;
@@ -37,10 +38,10 @@ use scale::Scale;
 use supervise::Probes;
 use test_dir::TestDir;
 
-const USAGE: &str = "usage: harness run [--scale <scale>] [--noctalia | --sitting | --sitting-from-c8 | --control | --actions]
+const USAGE: &str = "usage: harness run [--scale <scale>] [--noctalia | --sitting | --sitting-from-c8 | --control | --actions | --input]
        harness host-capture <output>
        harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--started <file>]
-       harness supervise <TEST_DIR> <ARTIFACTS> <scale> <vpointer> [<noctalia-socket> | --sitting | --sitting-from-c8 | --control <server> | --actions <server>]";
+       harness supervise <TEST_DIR> <ARTIFACTS> <scale> <vpointer> [<noctalia-socket> | --sitting | --sitting-from-c8 | --control <server> | --actions <server> | --input <server>]";
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -130,7 +131,9 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
             "--noctalia" => options.noctalia = true,
             "--sitting" => options.sitting = Some(sitting::Mode::Full),
             "--sitting-from-c8" => options.sitting = Some(sitting::Mode::FromC8),
-            "--control" | "--actions" => options.server = run::ServerChecks::from_flag(arg),
+            "--control" | "--actions" | "--input" => {
+                options.server = run::ServerChecks::from_flag(arg);
+            }
             _ => return Err(Failure::new(USAGE)),
         }
     }
@@ -140,7 +143,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
         > 1
     {
         return Err(Failure::new(
-            "--sitting, --noctalia, --control and --actions cannot be combined",
+            "--sitting, --noctalia, --control, --actions and --input cannot be combined",
         ));
     }
     Ok(options)

@@ -25,6 +25,7 @@ const NOCTALIA_SOCKET: &str = "probes/noctalia-socket/target/debug/noctalia-sock
 const SERVER: &str = "target/debug/niri-computer-use";
 const CONTROL_DEADLINE: Duration = Duration::from_secs(90);
 const ACTIONS_DEADLINE: Duration = Duration::from_secs(130);
+const INPUT_DEADLINE: Duration = Duration::from_secs(130);
 /// All `noctalia config validate` prints for a config without warnings. It exits 0 even
 /// when it warns, for example about an unknown key.
 const NOCTALIA_VALID: &str = "\u{2713} Config is valid\n";
@@ -47,6 +48,8 @@ pub(crate) enum ServerChecks {
     Control,
     /// M3: launch, focus and close.
     Actions,
+    /// M4: the pointer tools.
+    Input,
 }
 
 impl ServerChecks {
@@ -54,11 +57,12 @@ impl ServerChecks {
         match self {
             Self::Control => "--control",
             Self::Actions => "--actions",
+            Self::Input => "--input",
         }
     }
 
     pub(crate) fn from_flag(flag: &str) -> Option<Self> {
-        [Self::Control, Self::Actions]
+        [Self::Control, Self::Actions, Self::Input]
             .into_iter()
             .find(|checks| checks.flag() == flag)
     }
@@ -67,6 +71,7 @@ impl ServerChecks {
         match self {
             Self::Control => CONTROL_DEADLINE,
             Self::Actions => ACTIONS_DEADLINE,
+            Self::Input => INPUT_DEADLINE,
         }
     }
 }

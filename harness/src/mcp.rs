@@ -111,6 +111,41 @@ impl Client {
     }
 }
 
+/// Waits until the server sees niri, the nested Noctalia and an unlocked screen, and
+/// returns that status.
+pub(crate) fn ready(
+    session: &mut Session<'_>,
+    client: &mut Client,
+    step: &str,
+    deadline: Duration,
+) -> Result<Value> {
+    session.wait_until(
+        step,
+        "status with Noctalia running and the screen unlocked",
+        deadline,
+        |session| {
+            let status = structured(&client.call(session, "status", json!({}))?)?;
+            let ready = field(&status, "/noctalia") == "running"
+                && field(&status, "/lock/state") == "unlocked";
+            Ok(ready.then_some(status))
+        },
+    )
+}
+
+/// A successful call's structured content.
+pub(crate) fn structured(result: &Value) -> Result<Value> {
+    if field(result, "/isError") != false {
+        return Err(Failure::new(format!(
+            "expected a successful call; saw {result}"
+        )));
+    }
+    Ok(field(result, "/structuredContent").clone())
+}
+
+pub(crate) fn field<'a>(value: &'a Value, pointer: &str) -> &'a Value {
+    value.pointer(pointer).unwrap_or(&Value::Null)
+}
+
 /// The JSON-RPC response with `id` among the log's lines. Lines that aren't JSON, such as
 /// the server's own errors on stderr, are skipped.
 fn reply_in(log: &str, id: u64) -> Option<Value> {

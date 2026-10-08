@@ -14,7 +14,7 @@ use niri_ipc::{Action, Request};
 use serde_json::{Value, json};
 
 use crate::failure::{Context as _, Failure, Result};
-use crate::mcp::Client;
+use crate::mcp::{self, Client, field, structured};
 use crate::session::Session;
 
 /// Within what is left of the run's deadline.
@@ -93,17 +93,7 @@ fn write_policy(session: &Session<'_>) -> Result<()> {
 
 /// Waits until the server sees niri, the nested Noctalia and an unlocked screen.
 fn ready(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
-    let status = session.wait_until(
-        "m3-ready",
-        "status with Noctalia running and the screen unlocked",
-        READY,
-        |session| {
-            let status = structured(&client.call(session, "status", json!({}))?)?;
-            let ready = field(&status, "/noctalia") == "running"
-                && field(&status, "/lock/state") == "unlocked";
-            Ok(ready.then_some(status))
-        },
-    )?;
+    let status = mcp::ready(session, client, "m3-ready", READY)?;
     session.log(&format!(
         "M3 status: niri {}, lock {}, presets {}",
         field(&status, "/niri/compat"),
@@ -296,15 +286,6 @@ fn with_screenshot(result: &Value) -> Result<Value> {
     Ok(outcome)
 }
 
-fn structured(result: &Value) -> Result<Value> {
-    expect(
-        field(result, "/isError") == false,
-        "a successful call",
-        &result.to_string(),
-    )?;
-    Ok(field(result, "/structuredContent").clone())
-}
-
 /// The one id in an outcome's `windows`.
 fn only_window(outcome: &Value) -> Result<u64> {
     match field(outcome, "/windows").as_array().map(Vec::as_slice) {
@@ -349,10 +330,6 @@ fn expect_outcome(outcome: &Value, observed: &str, what: &str) -> Result<()> {
 }
 
 /// The value at a JSON pointer, or null.
-fn field<'a>(value: &'a Value, pointer: &str) -> &'a Value {
-    value.pointer(pointer).unwrap_or(&Value::Null)
-}
-
 fn expect(holds: bool, what: &str, seen: &str) -> Result<()> {
     if holds {
         Ok(())

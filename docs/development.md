@@ -189,6 +189,17 @@ One server holds the lease for the whole run. The supervisor keeps its stdin ope
 
 The run has a 130-second deadline. Its files are in `target/e2e/<run>/`, including `policy.toml`, the server's replies and Noctalia's log.
 
+## Nested input checks
+
+`make nested-input` runs M4's acceptance of the input tools in a nested niri, set up as `make nested-control` is, with the nested Noctalia as the lock source. `SCALE` sets the nested output's scale as for `make nested`; the plan's exit runs it at 1 and at 1.5. One server holds the lease for the whole run, and its replies are read back from `server-harness-m4.log`. `wev` starts after Noctalia, whose bar moves floating windows down when it appears, and the supervisor reads `wev`'s surface position from niri's window layout. Each check takes `wev`'s log length before the call and reads only what comes after, because the server's event times come from the monotonic clock and can't be chosen. Every expected position is worked out by the supervisor from the screenshot's metadata, independently of the server's mapping:
+
+1. Accuracy: a screenshot at the output's own scale (`max_width` 4000) and one at a lowered scale (`max_width` 700). For each of C4's five points on `wev`'s surface, the supervisor picks the image pixel that holds it and calls `pointer_move`; `wev` must log the pointer within ±0.05 px of that pixel's centre.
+2. `click` left once and right twice: exactly a press and a release of 272, then two of 273.
+3. `drag` from (50, 50) to (350, 250) on the surface: the press within ±0.05 px of the start, the release of the end, and motions while held.
+4. `scroll` two notches down, then one left: one wheel frame each, with `axis_value120` 240 and `axis` 30, then −120 and −15.
+
+The run has a 130-second deadline. Its files are in `target/e2e/<run>/`, including `wev.log`, the server's replies and Noctalia's log.
+
 ## Supervised sitting
 
 `make sitting` opens the nested output at scale 1.5 and runs C6, C7, C8 and C9. It starts a focused wev and a separate unfocused observer. Noctalia does not run in this mode. The automatic path keeps its existing deadlines; the sitting allows 30 minutes overall, 29 minutes for wev and two minutes for each human action or confirmation. All wtype and held-pointer children keep a three-second deadline.
