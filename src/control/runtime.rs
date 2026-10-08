@@ -31,6 +31,12 @@ impl RuntimeDir {
             .ok_or_else(|| format!("NIRI_SOCKET {} has no file name", socket.display()))?
             .to_string_lossy();
         let instance = name.strip_suffix(".sock").unwrap_or(&name);
+        if instance.is_empty() {
+            return Err(format!(
+                "NIRI_SOCKET {} has no instance name",
+                socket.display()
+            ));
+        }
         Ok(Self {
             path: runtime.join("niri-computer-use").join(instance),
         })
@@ -110,6 +116,15 @@ mod tests {
         assert_eq!(
             RuntimeDir::of(&Env::default()),
             Err("NIRI_SOCKET is not set".to_owned())
+        );
+        // Without a name, the flag would land in the directory every instance shares.
+        let nameless = Env {
+            niri_socket: Some(dir.join(".sock")),
+            ..env(dir)
+        };
+        assert_eq!(
+            RuntimeDir::of(&nameless),
+            Err("NIRI_SOCKET /r/.sock has no instance name".to_owned())
         );
     }
 

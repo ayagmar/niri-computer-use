@@ -65,7 +65,7 @@ The lock state comes from `loginctl show-session $XDG_SESSION_ID -p LockedHint -
 
 ## Runtime directory and the stop flag
 
-Each niri instance has a runtime directory, `$XDG_RUNTIME_DIR/niri-computer-use/<instance>/`, where `<instance>` is the basename of `NIRI_SOCKET` without `.sock`, for example `niri.wayland-1.1487`. Servers for the same niri share it; a server for another niri, such as the nested harness, has its own. `niri-computer-use stop` creates the directory with mode `0700` and the empty file `stop` in it with mode `0600`; `status` reports `stop: true` while that file exists. `niri-computer-use resume` removes it, and refuses while `input-dirty` exists in the same directory. Both need `NIRI_SOCKET` and `XDG_RUNTIME_DIR`, which niri passes to the commands it spawns.
+Each niri instance has a runtime directory, `$XDG_RUNTIME_DIR/niri-computer-use/<instance>/`, where `<instance>` is the basename of `NIRI_SOCKET` without `.sock`, for example `niri.wayland-1.1487`. Servers for the same niri share it; a server for another niri, such as the nested harness, has its own. `niri-computer-use stop` creates the directory with mode `0700` and the empty file `stop` in it with mode `0600`; `status` reports `stop: true` while that file exists. `niri-computer-use resume` removes it, and refuses while `input-dirty` exists in the same directory. Both need `NIRI_SOCKET`, which niri sets for the commands it spawns, and `XDG_RUNTIME_DIR`, which comes from the session.
 
 ## Version rule
 
