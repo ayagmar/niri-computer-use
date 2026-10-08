@@ -26,9 +26,10 @@ A failed connect, or a connection that closes before replying, is `niri_unavaila
 
 On connect, niri sends its current state as a burst of events: workspaces, windows, keyboard layouts (if any), overview, config and screencasts. The state counts as initialized once the workspaces, windows and overview events have arrived. `desktop_state` waits up to two seconds for that, for example right after the server starts.
 
-- If the connection ends, the state is dropped and the task reconnects after one second. Meanwhile `desktop_state` returns `niri_unavailable` with the last connection error, and `status` reports the stream as `disconnected`.
+- If the connection ends, the state is dropped and the task reconnects after one second. Meanwhile `desktop_state` returns the last connection's error under the same names a request uses: `niri_unavailable` for a failed connect or a closed connection, `upstream_error` for a refusal or an unreadable reply from niri, and `deadline_exceeded` when niri doesn't answer within two seconds. `status` reports the stream as `disconnected`.
 - If an event doesn't parse, the state is dropped and the task reconnects at once. A second unparsable event stops the stream until the server restarts: `status` reports `schema_incompatible`, and `desktop_state` returns `upstream_error` naming the event type. Ordinary disconnects don't count toward this.
 - The `status` subcommand keeps no stream open, so it reports `event_stream` as null.
+- The task stops, closing its connection, once the server drops its last handle on the stream.
 
 ## Version rule
 

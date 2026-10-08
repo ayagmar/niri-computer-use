@@ -4,7 +4,7 @@
 //! An ordinary disconnect drops the state and reconnects after a second. An event that
 //! doesn't parse also drops the state and reconnects at once; a second one stops the
 //! stream for good (`schema_incompatible`), because this build doesn't understand the
-//! running niri.
+//! running niri. The task ends, closing its connection, once no tool holds the stream.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -27,9 +27,14 @@ const PARSE_FAILURES: u32 = 2;
 /// The reader task's view of the stream.
 #[derive(Debug)]
 enum Connection {
-    Connecting { last_error: Option<String> },
+    /// Why the last connection ended, with the name a tool should report.
+    Connecting {
+        last_error: Option<ToolError>,
+    },
     Connected(Replica),
-    SchemaIncompatible { event: String },
+    SchemaIncompatible {
+        event: String,
+    },
 }
 
 /// niri's state as replayed from the stream, and which parts of niri's initial burst
@@ -131,12 +136,19 @@ impl EventStream {
                 ErrorName::DeadlineExceeded,
                 format!("niri's event stream sent no initial state within {deadline:?}"),
             )),
-            Connection::Connecting { last_error } => Err(ToolError::new(
-                ErrorName::NiriUnavailable,
-                last_error.as_ref().map_or_else(
-                    || "niri's event stream is connecting".to_owned(),
-                    |error| format!("niri's event stream is reconnecting after: {error}"),
+            Connection::Connecting {
+                last_error: Some(error),
+            } => Err(ToolError::new(
+                error.name,
+                format!(
+                    "niri's event stream is reconnecting after: {}",
+                    error.detail
                 ),
+            )),
+            // Still on the first connect or its reply, which have the same deadline.
+            Connection::Connecting { last_error: None } => Err(ToolError::new(
+                ErrorName::DeadlineExceeded,
+                format!("niri's event stream didn't connect within {deadline:?}"),
             )),
             Connection::SchemaIncompatible { event } => Err(ToolError::new(
                 ErrorName::UpstreamError,
@@ -168,7 +180,7 @@ fn snapshot(state: &EventStreamState) -> DesktopState {
 /// How one connection ended.
 #[derive(Debug, PartialEq, Eq)]
 enum Ended {
-    Disconnected(String),
+    Disconnected(ToolError),
     Unparsable(String),
 }
 
@@ -183,11 +195,10 @@ async fn run<S, F>(
     F: Future<Output = std::io::Result<S>>,
 {
     let mut parse_failures = 0;
-    while !sender.is_closed() {
-        let ended = match tokio::time::timeout(DEADLINE, connect()).await {
-            Ok(Ok(stream)) => read(stream, &sender).await,
-            Ok(Err(error)) => Ended::Disconnected(format!("connect: {error}")),
-            Err(_) => Ended::Disconnected(format!("connect: no answer within {DEADLINE:?}")),
+    loop {
+        let ended = tokio::select! {
+            () = sender.closed() => return,
+            ended = session(&mut connect, &sender) => ended,
         };
         match ended {
             Ended::Unparsable(event) => {
@@ -197,16 +208,41 @@ async fn run<S, F>(
                     return;
                 }
                 sender.send_replace(Connection::Connecting {
-                    last_error: Some(format!("unparsable event {event}")),
+                    last_error: Some(ToolError::new(
+                        ErrorName::UpstreamError,
+                        format!("unparsable event {event}"),
+                    )),
                 });
             }
             Ended::Disconnected(error) => {
                 sender.send_replace(Connection::Connecting {
                     last_error: Some(error),
                 });
-                tokio::time::sleep(reconnect_delay).await;
+                tokio::select! {
+                    () = sender.closed() => return,
+                    () = tokio::time::sleep(reconnect_delay) => {}
+                }
             }
         }
+    }
+}
+
+/// One connection, from connecting until it ends.
+async fn session<S, F>(connect: &mut impl FnMut() -> F, sender: &watch::Sender<Connection>) -> Ended
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+    F: Future<Output = std::io::Result<S>>,
+{
+    match tokio::time::timeout(DEADLINE, connect()).await {
+        Ok(Ok(stream)) => read(stream, sender).await,
+        Ok(Err(error)) => Ended::Disconnected(ToolError::new(
+            ErrorName::NiriUnavailable,
+            format!("connect: {error}"),
+        )),
+        Err(_) => Ended::Disconnected(ToolError::new(
+            ErrorName::DeadlineExceeded,
+            format!("connect: no answer within {DEADLINE:?}"),
+        )),
     }
 }
 
@@ -224,9 +260,9 @@ async fn read(
     loop {
         line.clear();
         match stream.read_line(&mut line).await {
-            Ok(0) => return Ended::Disconnected("niri closed the event stream".to_owned()),
+            Ok(0) => return Ended::Disconnected(unavailable("niri closed the event stream")),
             Ok(_) => {}
-            Err(error) => return Ended::Disconnected(format!("read event: {error}")),
+            Err(error) => return Ended::Disconnected(unavailable(format!("read event: {error}"))),
         }
         let event = match parse(&line) {
             Ok(event) => event,
@@ -240,33 +276,52 @@ async fn read(
     }
 }
 
-/// Sends `Request::EventStream` and reads niri's `Handled` reply within the deadline.
-async fn start(stream: &mut BufReader<impl AsyncRead + AsyncWrite + Unpin>) -> Result<(), String> {
+/// Sends `Request::EventStream` and reads niri's `Handled` reply within the deadline. The
+/// error names match the per-request client's.
+async fn start(
+    stream: &mut BufReader<impl AsyncRead + AsyncWrite + Unpin>,
+) -> Result<(), ToolError> {
+    let upstream = |detail: String| ToolError::new(ErrorName::UpstreamError, detail);
     let exchange = async {
-        let mut request = serde_json::to_vec(&Request::EventStream).map_err(|e| e.to_string())?;
+        let mut request = serde_json::to_vec(&Request::EventStream)
+            .map_err(|error| upstream(format!("encode the event stream request: {error}")))?;
         request.push(b'\n');
         stream
             .get_mut()
             .write_all(&request)
             .await
-            .map_err(|error| format!("request the event stream: {error}"))?;
+            .map_err(|error| unavailable(format!("request the event stream: {error}")))?;
         let mut reply = String::new();
-        stream
+        let read = stream
             .read_line(&mut reply)
             .await
-            .map_err(|error| format!("read the event stream reply: {error}"))?;
+            .map_err(|error| unavailable(format!("read the event stream reply: {error}")))?;
+        if read == 0 {
+            return Err(unavailable(
+                "niri closed the connection without an event stream reply",
+            ));
+        }
         match serde_json::from_str::<Reply>(&reply) {
             Ok(Ok(Response::Handled)) => Ok(()),
-            Ok(Err(message)) => Err(format!("niri replied: {message}")),
-            Ok(Ok(_)) => {
-                Err("niri answered the event stream request with another response".to_owned())
-            }
-            Err(error) => Err(format!("unreadable event stream reply: {error}")),
+            Ok(Err(message)) => Err(upstream(format!("niri replied: {message}"))),
+            Ok(Ok(_)) => Err(upstream(
+                "niri answered the event stream request with another response".to_owned(),
+            )),
+            Err(error) => Err(upstream(format!("unreadable event stream reply: {error}"))),
         }
     };
     tokio::time::timeout(DEADLINE, exchange)
         .await
-        .unwrap_or_else(|_| Err(format!("no event stream reply within {DEADLINE:?}")))
+        .unwrap_or_else(|_| {
+            Err(ToolError::new(
+                ErrorName::DeadlineExceeded,
+                format!("no event stream reply within {DEADLINE:?}"),
+            ))
+        })
+}
+
+fn unavailable(detail: impl Into<String>) -> ToolError {
+    ToolError::new(ErrorName::NiriUnavailable, detail)
 }
 
 /// Parses one event line. On failure, returns the event's type name: the single key of
@@ -286,7 +341,7 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
 
-    use tokio::io::{DuplexStream, duplex};
+    use tokio::io::{AsyncReadExt as _, DuplexStream, duplex};
 
     use super::*;
 
@@ -295,6 +350,11 @@ mod tests {
     const WINDOWS: &str = "{\"WindowsChanged\":{\"windows\":[{\"id\":9,\"title\":\"b\",\"app_id\":\"foot\",\"pid\":2,\"workspace_id\":1,\"is_focused\":false,\"is_floating\":true,\"is_urgent\":false,\"layout\":{\"pos_in_scrolling_layout\":null,\"tile_size\":[400.0,300.0],\"window_size\":[400,300],\"tile_pos_in_workspace_view\":[0.0,0.0],\"window_offset_in_tile\":[0.0,0.0]}},{\"id\":7,\"title\":\"a\",\"app_id\":\"firefox\",\"pid\":1,\"workspace_id\":1,\"is_focused\":true,\"is_floating\":false,\"is_urgent\":false,\"layout\":{\"pos_in_scrolling_layout\":[1,1],\"tile_size\":[800.0,600.0],\"window_size\":[800,600],\"tile_pos_in_workspace_view\":null,\"window_offset_in_tile\":[0.0,0.0]}}]}}\n";
     const LAYOUTS: &str = "{\"KeyboardLayoutsChanged\":{\"keyboard_layouts\":{\"names\":[\"English (US)\"],\"current_idx\":0}}}\n";
     const OVERVIEW: &str = "{\"OverviewOpenedOrClosed\":{\"is_open\":false}}\n";
+    const UNKNOWN: &str = "{\"NotARealEvent\":{}}\n";
+    /// Longer than any wait in these tests, so the task doesn't reconnect during one.
+    const NO_RETRY: Duration = Duration::from_secs(600);
+    /// Longer than the two-second handshake deadline. Paused time makes it instant.
+    const WAIT: Duration = Duration::from_secs(5);
 
     /// Connections the reader task gets, in order. With none left, connecting fails.
     fn connector(
@@ -312,19 +372,45 @@ mod tests {
         }
     }
 
-    /// A niri side that reads the request, then writes `lines` and closes if `close`.
-    fn niri(lines: Vec<&'static str>, close: bool) -> DuplexStream {
-        let (client, mut niri) = duplex(1 << 16);
-        tokio::spawn(async move {
+    /// The niri end of a connection, for tests that drive it step by step.
+    struct Niri(DuplexStream);
+
+    impl Niri {
+        fn pair() -> (DuplexStream, Self) {
+            let (client, niri) = duplex(1 << 16);
+            (client, Self(niri))
+        }
+
+        async fn expect_request(&mut self) {
             let mut request = String::new();
-            BufReader::new(&mut niri)
+            BufReader::new(&mut self.0)
                 .read_line(&mut request)
                 .await
                 .unwrap();
             assert_eq!(request, "\"EventStream\"\n");
+        }
+
+        async fn send(&mut self, lines: &[&str]) {
             for line in lines {
-                niri.write_all(line.as_bytes()).await.unwrap();
+                self.0.write_all(line.as_bytes()).await.unwrap();
             }
+        }
+
+        /// Whether the client closed its end within `WAIT`.
+        async fn closed(mut self) -> bool {
+            let mut rest = Vec::new();
+            tokio::time::timeout(WAIT, self.0.read_to_end(&mut rest))
+                .await
+                .is_ok()
+        }
+    }
+
+    /// A niri that reads the request, writes `lines`, then closes if `close`.
+    fn niri(lines: Vec<&'static str>, close: bool) -> DuplexStream {
+        let (client, mut niri) = Niri::pair();
+        tokio::spawn(async move {
+            niri.expect_request().await;
+            niri.send(&lines).await;
             if !close {
                 std::future::pending::<()>().await;
             }
@@ -340,6 +426,24 @@ mod tests {
         let (sender, connection) = watch::channel(Connection::Connecting { last_error: None });
         tokio::spawn(run(connector(streams), sender, delay));
         EventStream { connection }
+    }
+
+    async fn reconnecting(events: &EventStream) {
+        let mut connection = events.connection.clone();
+        tokio::time::timeout(
+            WAIT,
+            connection.wait_for(|current| {
+                matches!(
+                    current,
+                    Connection::Connecting {
+                        last_error: Some(_)
+                    }
+                )
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap();
     }
 
     #[test]
@@ -358,7 +462,7 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn the_initial_burst_gives_a_sorted_snapshot() {
         let events = stream(vec![niri(
             vec![HANDLED, WORKSPACES, WINDOWS, LAYOUTS, OVERVIEW],
@@ -381,47 +485,64 @@ mod tests {
         assert_eq!(ids("workspaces"), [1, 2]);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn later_events_update_the_snapshot() {
-        let focus_cleared = "{\"WindowFocusChanged\":{\"id\":null}}\n";
-        let closed = "{\"WindowClosed\":{\"id\":9}}\n";
-        let events = stream(vec![niri(
-            vec![
-                HANDLED,
-                WORKSPACES,
-                WINDOWS,
-                OVERVIEW,
-                focus_cleared,
-                closed,
-            ],
-            false,
-        )]);
+        let (client, mut niri) = Niri::pair();
+        let events = stream(vec![client]);
+        niri.expect_request().await;
+        niri.send(&[HANDLED, WORKSPACES, WINDOWS, OVERVIEW]).await;
+        assert_eq!(events.desktop().await.unwrap().focused_window, Some(7));
+        niri.send(&[
+            "{\"WindowFocusChanged\":{\"id\":null}}\n",
+            "{\"WindowClosed\":{\"id\":9}}\n",
+        ])
+        .await;
         let mut connection = events.connection.clone();
-        connection
-            .wait_for(|connection| match connection {
+        tokio::time::timeout(
+            WAIT,
+            connection.wait_for(|current| match current {
                 Connection::Connected(replica) => !replica.state.windows.windows.contains_key(&9),
                 Connection::Connecting { .. } | Connection::SchemaIncompatible { .. } => false,
-            })
-            .await
-            .unwrap();
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         let desktop = events.desktop().await.unwrap();
         assert_eq!(desktop.focused_window, None);
         assert_eq!(desktop.windows.len(), 1);
         assert_eq!(desktop.keyboard_layouts, None);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
+    async fn a_disconnect_drops_the_state_instead_of_serving_it_stale() {
+        let events = stream_retrying_after(
+            vec![niri(vec![HANDLED, WORKSPACES, WINDOWS, OVERVIEW], true)],
+            NO_RETRY,
+        );
+        reconnecting(&events).await;
+        assert_eq!(events.state(), StreamState::Disconnected);
+        assert_eq!(
+            events.desktop().await.unwrap_err(),
+            ToolError::new(
+                ErrorName::NiriUnavailable,
+                "niri's event stream is reconnecting after: niri closed the event stream"
+            )
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn one_unparsable_event_reconnects_and_a_second_stops_the_stream() {
-        let unknown = "{\"NotARealEvent\":{}}\n";
         let once = stream(vec![
-            niri(vec![HANDLED, WORKSPACES, unknown], false),
+            niri(vec![HANDLED, WORKSPACES, UNKNOWN], false),
             niri(vec![HANDLED, WORKSPACES, WINDOWS, OVERVIEW], false),
         ]);
         assert!(once.desktop().await.is_ok());
 
+        // The count lasts for the stream's lifetime, even across an initialized connection.
         let twice = stream(vec![
-            niri(vec![HANDLED, unknown], false),
-            niri(vec![HANDLED, unknown], false),
+            niri(vec![HANDLED, WORKSPACES, WINDOWS, OVERVIEW, UNKNOWN], false),
+            niri(vec![HANDLED, UNKNOWN], false),
             niri(vec![HANDLED, WORKSPACES, WINDOWS, OVERVIEW], false),
         ]);
         let error = twice.desktop().await.unwrap_err();
@@ -430,54 +551,95 @@ mod tests {
         assert_eq!(twice.state(), StreamState::SchemaIncompatible);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn ordinary_disconnects_reconnect_without_counting_as_parse_failures() {
-        let unknown = "{\"NotARealEvent\":{}}\n";
         let events = stream(vec![
             niri(vec![HANDLED, WORKSPACES], true),
-            niri(vec![HANDLED, unknown], false),
+            niri(vec![HANDLED, UNKNOWN], false),
             niri(vec![HANDLED, WORKSPACES, WINDOWS, OVERVIEW], false),
         ]);
         assert!(events.desktop().await.is_ok());
         assert_eq!(events.state(), StreamState::Connected);
     }
 
-    #[tokio::test]
-    async fn without_niri_the_snapshot_reports_the_last_connect_error() {
-        let events = stream(Vec::new());
-        let error = events
-            .desktop_within(Duration::from_millis(100))
-            .await
-            .unwrap_err();
+    #[tokio::test(start_paused = true)]
+    async fn handshake_failures_keep_their_error_names() {
+        let unreachable = stream(Vec::new());
         assert_eq!(
-            error,
+            unreachable.desktop().await.unwrap_err(),
             ToolError::new(
                 ErrorName::NiriUnavailable,
                 "niri's event stream is reconnecting after: connect: no niri"
             )
         );
-        assert_eq!(events.state(), StreamState::Disconnected);
+        assert_eq!(unreachable.state(), StreamState::Disconnected);
+
+        for (reply, name, detail) in [
+            (
+                "{\"Err\":\"no\"}\n",
+                ErrorName::UpstreamError,
+                "niri replied: no",
+            ),
+            (
+                "not json\n",
+                ErrorName::UpstreamError,
+                "unreadable event stream reply",
+            ),
+        ] {
+            let refused = stream_retrying_after(vec![niri(vec![reply], false)], NO_RETRY);
+            reconnecting(&refused).await;
+            let error = refused.desktop().await.unwrap_err();
+            assert_eq!(error.name, name, "{error:?}");
+            assert!(error.detail.contains(detail), "{error:?}");
+        }
+
+        // niri reads the request but never answers: the handshake's own deadline.
+        let silent = stream_retrying_after(vec![niri(Vec::new(), false)], NO_RETRY);
+        reconnecting(&silent).await;
+        let error = silent.desktop().await.unwrap_err();
+        assert_eq!(error.name, ErrorName::DeadlineExceeded, "{error:?}");
+        assert!(error.detail.contains("no event stream reply"), "{error:?}");
     }
 
-    #[tokio::test]
-    async fn a_refused_request_or_missing_initial_state_is_reported() {
-        // Retrying later than the wait ends keeps the refusal as the last error.
-        let refused = stream_retrying_after(
-            vec![niri(vec!["{\"Err\":\"no\"}\n"], false)],
-            Duration::from_secs(5),
-        );
-        let refusal = refused
-            .desktop_within(Duration::from_millis(100))
-            .await
-            .unwrap_err();
-        assert_eq!(refusal.name, ErrorName::NiriUnavailable);
-        assert!(refusal.detail.ends_with("niri replied: no"), "{refusal:?}");
-
+    #[tokio::test(start_paused = true)]
+    async fn a_snapshot_waits_for_the_initial_state_within_its_deadline() {
         let partial = stream(vec![niri(vec![HANDLED, WORKSPACES], false)]);
-        let timeout = partial
-            .desktop_within(Duration::from_millis(100))
-            .await
-            .unwrap_err();
-        assert_eq!(timeout.name, ErrorName::DeadlineExceeded);
+        assert_eq!(
+            partial
+                .desktop_within(Duration::from_millis(100))
+                .await
+                .unwrap_err()
+                .name,
+            ErrorName::DeadlineExceeded
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn dropping_a_waiting_snapshot_leaves_the_stream_running() {
+        let (client, mut niri) = Niri::pair();
+        let events = stream(vec![client]);
+        niri.expect_request().await;
+        niri.send(&[HANDLED, WORKSPACES]).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), events.desktop())
+                .await
+                .is_err()
+        );
+        niri.send(&[WINDOWS, OVERVIEW]).await;
+        assert!(events.desktop().await.is_ok());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_task_closes_the_connection_when_the_last_handle_goes() {
+        let (client, mut niri) = Niri::pair();
+        let events = stream(vec![client]);
+        niri.expect_request().await;
+        niri.send(&[HANDLED, WORKSPACES, WINDOWS, OVERVIEW]).await;
+        assert!(events.desktop().await.is_ok());
+        let copy = events.clone();
+        drop(events);
+        assert!(copy.desktop().await.is_ok());
+        drop(copy);
+        assert!(niri.closed().await);
     }
 }

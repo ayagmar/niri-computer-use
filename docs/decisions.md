@@ -187,3 +187,7 @@ These match the versions installed locally.
 - The state counts as initialized when the workspaces, windows and overview events have arrived. niri sends its whole state as one burst on connect (`EventStreamState::replicate` in niri-ipc 26.4.0), but it marks no end of the burst. The overview event comes after the workspaces, windows and keyboard layouts, which are what `desktop_state` returns.
 - One unparsable event reconnects; a second stops the stream until restart, as plan §7 says. The counter doesn't reset, so two bad events far apart also stop it. Ordinary disconnects reconnect after one second and don't count.
 - Matching niri's `Event` in the server uses `matches!` for the three initialization events. Everything else goes to niri-ipc's reducer, so the server has no `match` on `Event` that a niri-ipc bump would need to extend.
+
+## 2026-10-08: deterministic timing tests
+
+- tokio's `test-util` feature is a dev-dependency feature only (same version, 1.53.1). Tests that depend on deadlines and reconnect delays run on Tokio's paused clock, which moves on only when every task is waiting, so their outcome doesn't depend on how fast the machine is.
