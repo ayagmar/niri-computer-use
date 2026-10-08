@@ -228,6 +228,7 @@ These match the versions installed locally.
 
 - One line per call, opened in append mode and written with one `write_all`, so servers sharing the file don't interleave inside a line. The directory is created with mode `0700` and the file with `0600` (plan §12).
 - The session label is the MCP client's `clientInfo.name` and the server's PID, as plan §10 defines it; `unknown` when the client sent no initialization.
-- The outcome comes only from the result's error name, never from its content, so a result holding clipboard text or an image can't leak into the log. Outcomes beyond plan §6.2's names are `invalid_arguments` and `cancelled`.
+- The outcome comes only from the result's error name, never from its content, so a result holding clipboard text or an image can't leak into the log. Outcomes beyond plan §6.2's names are `invalid_arguments`, `cancelled`, and `internal` when the tool couldn't build its result.
 - A failed write doesn't fail the tool call, because the read-only tools have nothing to protect; `status` shows the last failure. The action tools may need a stricter rule.
 - rmcp rejects arguments that don't fit a tool's schema before the tool runs, so those calls aren't logged.
+- `screenshot`'s arguments are logged as given, `target` included, even when it names no output. They are the model's own identifiers, never desktop content, and serde_json escapes them.
