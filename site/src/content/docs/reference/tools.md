@@ -109,11 +109,11 @@ Refused with `lease_held` while another server holds it, `stopped` while the sto
 
 ## `release_desktop`
 
-No arguments. Gives the lease up and returns `{"released": true}`, or `{"released": false}` if this server didn't hold it. The lease is also given up when the stop flag appears and when the server exits.
+No arguments. Gives the lease up and returns `{"released": true}`, or `{"released": false}` if this server didn't hold it. While an action runs, it waits for that action to end, at worst about fifteen seconds. The lease is also given up when the stop flag appears and when the server exits.
 
 ## Action tools
 
-`focus_window`, `focus_workspace`, `launch` and `close_window` act on the desktop through niri's IPC. Before each action the server checks, in this order, the stop flag (`stopped`), the input-dirty marker (`recovery_required`), the lease (`lease_required`), then niri's version, the policy file and the lock state, as `acquire_desktop` does. One action runs at a time; a call made meanwhile waits for it. A stop during an action cancels it with `stopped`, and anything niri had already accepted may have taken effect.
+`focus_window`, `focus_workspace`, `launch` and `close_window` act on the desktop through niri's IPC. Before each action the server checks, in this order, the stop flag (`stopped`), the input-dirty marker (`recovery_required`), the lease (`lease_required`), then niri's version, the policy file and the lock state, as `acquire_desktop` does. One action runs at a time; an action or `release_desktop` called meanwhile waits for it. A stop during an action cancels it with `stopped`, and anything niri had already accepted may have taken effect. If the runtime directory is removed during an action, the action is cancelled with `upstream_error` and the server must be restarted. Cancelling the MCP request cancels the action and keeps the lease.
 
 An unknown window or workspace id is an argument mistake, and nothing is sent. Otherwise the result has these fields:
 
@@ -140,7 +140,7 @@ None of these outcomes is an error, and the server never retries an action. `tim
 |---|---|
 | `id` (required) | a window id from `desktop_state` |
 
-`observed` is `focused` once the window has keyboard focus, or `timeout`. Idempotent: focusing the focused window is seen at once.
+`observed` is `focused` once the window has keyboard focus, or `timeout`. If the window already has focus, nothing is sent: `observed` is `focused` with `accepted: false`.
 
 ## `focus_workspace`
 
@@ -148,7 +148,7 @@ None of these outcomes is an error, and the server never retries an action. `tim
 |---|---|
 | `id` (required) | a workspace id from `desktop_state`, not its index |
 
-`observed` is `focused` once the workspace has focus, on whichever output it is, or `timeout`. Focus moving to one of the workspace's own windows is expected, not an interruption.
+`observed` is `focused` once the workspace has focus, on whichever output it is, or `timeout`. Focus moving to one of the workspace's own windows is expected, not an interruption. If the workspace already has focus, nothing is sent: `observed` is `focused` with `accepted: false`. Sending it would let niri's `workspace-auto-back-and-forth` switch to the previous workspace.
 
 ## `launch`
 
@@ -157,7 +157,7 @@ None of these outcomes is an error, and the server never retries an action. `tim
 | `preset` (required) | a preset name from the policy file, listed in `status` as `policy.preset_names` |
 | `reuse` | default false; with true, focus the preset's existing window instead of starting another |
 
-niri starts the preset's fixed `argv`; the app keeps running after the server exits. `observed` counts the windows with the preset's `app_id` that weren't open before, including one that sets its `app_id` after it appears. Once the first appears the server keeps counting for half a second, then reports `one` or `ambiguous`, with the ids in `windows`. With no such window in five seconds it reports `none`. Focus moving to a new window, before it has its `app_id`, isn't an interruption.
+niri starts the preset's fixed `argv`; the app keeps running after the server exits. `observed` counts the windows with the preset's `app_id` that weren't open before, including one that sets its `app_id` after it appears. Once the first appears the server keeps counting for half a second, then reports `one` or `ambiguous`, with the ids in `windows`. With no such window in five seconds it reports `none`. Focus moving to a new window, before it has its `app_id`, isn't an interruption. A single-instance app hands a second start to its running process, which focuses the window it already has: `observed` is then `focused`, with that window in `windows`.
 
 With `reuse`: one existing matching window is focused, and `observed` is `focused` with its id in `windows`; several give `ambiguous` with their ids and `accepted: false`, and nothing is started; none starts the preset as usual.
 

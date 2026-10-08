@@ -23,7 +23,7 @@ The `niri-computer-use` MCP server shows you the user's niri desktop and, while 
 6. Take the lease with `acquire_desktop` only when the user asks you to act on the desktop, then look at it (`desktop_state`, and a fresh `screenshot` when pixels matter) before the first action. Give the lease back with `release_desktop` when you are done. Watching the desktop never needs it.
 7. Act in a loop: observe, one action, read `accepted` and `observed`, observe again. An action after which neither the structured state nor a new screenshot shows any change toward the goal is a no-progress attempt. After three in a row, stop and tell the user what you saw.
 8. Use the structured actions: `focus_window` and `focus_workspace` with ids from `desktop_state`, `launch` with a preset name, `close_window`. `launch` starts only the user's presets; if the app you need has none, ask the user to add one rather than looking for another way to start it.
-9. Prefer `launch` with `reuse: true` when one window of the app is enough.
+9. Use `launch` with `reuse: true` unless the user asked for another window of the app.
 10. An outcome that isn't the one you wanted is information, not a failure to retry. After `timeout`, `none`, `pending` or `uncertain`, look at the desktop before doing anything else: the result already has a fresh screenshot of the focused output, so look at that before taking another. Never repeat a `launch` or a `close_window` on your own: a second launch opens a second app, and a second close can answer the app's unsaved-changes dialog.
 11. `interrupted` means someone else moved focus while you waited. Stop and tell the user; don't continue the plan.
 12. If a tool returns `stopped`, `recovery_required`, `screen_locked`, `lease_held` or `read_only`, stop and tell the user, with the detail. Never try to clear a stop, recover, unlock or take the lease from another agent yourself: `resume` and `recover` are the user's commands, and you must not run them.
@@ -40,9 +40,9 @@ The `niri-computer-use` MCP server shows you the user's niri desktop and, while 
 | `shell_status` | none | Noctalia's `barVisible`, `panelOpen`, `activePanelId` and `locked` |
 | `acquire_desktop` | none | `holder`: your PID, label and since when; calling it again while you hold it returns the same holder |
 | `release_desktop` | none | `released`: whether you held it; the user's stop also takes it back |
-| `focus_window` | `id`: a window id | `observed`: `focused` or `timeout` |
-| `focus_workspace` | `id`: a workspace id, not its index | `observed`: `focused` or `timeout` |
-| `launch` | `preset`, optionally `reuse` | `observed`: `one`, `ambiguous` or `none`, with the new window ids in `windows`; with `reuse`, `focused` for one existing window, or `ambiguous` with several and nothing started |
+| `focus_window` | `id`: a window id | `observed`: `focused` or `timeout`; `accepted: false` when it already had focus |
+| `focus_workspace` | `id`: a workspace id, not its index | `observed`: `focused` or `timeout`; `accepted: false` when it already had focus |
+| `launch` | `preset`, optionally `reuse` | `observed`: `one`, `ambiguous` or `none`, with the new window ids in `windows`, or `focused` when a single-instance app showed the window it had; with `reuse`, `focused` for one existing window, or `ambiguous` with several and nothing started |
 | `close_window` | `id`: a window id | `observed`: `closed`, or `pending` when the window is still open after five seconds, for example behind an unsaved-changes dialog |
 
 Every action result also has `accepted` (true once niri took the request, false when nothing was sent, null when niri's reply was lost), `focused_window` when the observation ended, and possibly `interrupted` or `uncertain` as `observed` (rules 10 and 11). Each waits up to five seconds. With `timeout`, `pending`, `none`, `interrupted` or `uncertain`, the result also has an image of the focused output and its metadata in `screenshot`, or `screenshot_error` if it couldn't be taken.

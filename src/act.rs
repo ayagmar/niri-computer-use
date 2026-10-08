@@ -178,6 +178,16 @@ pub(crate) async fn focus_workspace(niri: Niri<'_>, id: u64) -> Result<Outcome, 
             "no workspace with id {id}; desktop_state lists them"
         )));
     }
+    // With `workspace-auto-back-and-forth`, niri answers a focus on the focused workspace
+    // by switching to the previous one, so nothing is sent.
+    if waiter
+        .view()
+        .workspaces()
+        .get(&id)
+        .is_some_and(|ws| ws.is_focused)
+    {
+        return Ok(unsent(Observed::Focused, waiter.view(), Vec::new()));
+    }
     let before = waiter.view().focused_window();
     let action = Action::FocusWorkspace {
         reference: WorkspaceReferenceArg::Id(id),
@@ -241,11 +251,7 @@ pub(crate) async fn launch(
             Reuse::Spawn => {}
             Reuse::Focus(id) => return focus(niri.socket, &mut waiter, id, vec![id]).await,
             Reuse::Ambiguous => {
-                return Ok(Outcome {
-                    accepted: Some(false),
-                    windows: existing,
-                    ..Outcome::seen(Observed::Ambiguous, waiter.view(), Vec::new())
-                });
+                return Ok(unsent(Observed::Ambiguous, waiter.view(), existing));
             }
         }
     }
@@ -260,8 +266,16 @@ pub(crate) async fn launch(
     let first = waiter
         .until(WAIT, |view| launched(view, app_id, &before, focused))
         .await;
-    if first != Waited::Done(Observed::One) {
-        return Ok(conclude(first, waiter.view(), Observed::None, Vec::new()));
+    match first {
+        Waited::Done(Observed::One) => {}
+        // A single-instance app answered by focusing the window it already had.
+        Waited::Done(Observed::Focused) => {
+            let windows = waiter.view().focused_window().into_iter().collect();
+            return Ok(Outcome::seen(Observed::Focused, waiter.view(), windows));
+        }
+        Waited::Done(_) | Waited::Timeout | Waited::Lost(_) => {
+            return Ok(conclude(first, waiter.view(), Observed::None, Vec::new()));
+        }
     }
     if let Waited::Lost(reason) = waiter.until(SETTLE, |_| None::<()>).await {
         return Ok(Outcome::uncertain(Some(true), Some(waiter.view()), reason));
@@ -283,6 +297,9 @@ async fn focus(
     windows: Vec<u64>,
 ) -> Result<Outcome, CallError> {
     let before = waiter.view().focused_window();
+    if before == Some(id) {
+        return Ok(unsent(Observed::Focused, waiter.view(), windows));
+    }
     if let Some(lost) = send(socket, Action::FocusWindow { id }).await? {
         return Ok(lost);
     }
@@ -290,6 +307,14 @@ async fn focus(
         .until(WAIT, |view| window_focused(view, id, before))
         .await;
     Ok(conclude(ended, waiter.view(), Observed::Timeout, windows))
+}
+
+/// An outcome reached without sending anything.
+fn unsent(observed: Observed, view: &View, windows: Vec<u64>) -> Outcome {
+    Outcome {
+        accepted: Some(false),
+        ..Outcome::seen(observed, view, windows)
+    }
 }
 
 /// Sends the action. A refusal is an error; a lost reply is the `uncertain` outcome.
@@ -335,8 +360,10 @@ fn closed(view: &View, id: u64) -> Option<Observed> {
     (!view.windows().contains_key(&id)).then_some(Observed::Closed)
 }
 
-/// A window that wasn't open `before` has `app_id`. A new window may take focus before it
-/// sets its `app_id`, so only focus on an older window interrupts.
+/// A window that wasn't open `before` has `app_id`: `One`. Focus moving to an older window
+/// with `app_id` is the app answering the launch with the window it had, as single-instance
+/// apps do: `Focused`. A new window may take focus before it sets its `app_id`, so only
+/// focus on an older window of another app interrupts.
 fn launched(
     view: &View,
     app_id: &str,
@@ -345,6 +372,10 @@ fn launched(
 ) -> Option<Observed> {
     if !matching(view, app_id, before).is_empty() {
         return Some(Observed::One);
+    }
+    let now = view.windows().get(&view.focused_window()?)?;
+    if Some(now.id) != focused && now.app_id.as_deref() == Some(app_id) {
+        return Some(Observed::Focused);
     }
     interrupted(view, focused, |window| !before.contains(&window.id))
 }
@@ -448,13 +479,23 @@ mod tests {
         ]);
         assert_eq!(launched(&pending, "foot", &before, Some(2)), None);
         let stolen = view(vec![
-            window(1, Some("foot"), 1, true),
-            window(2, Some("x"), 1, false),
+            window(1, Some("x"), 1, true),
+            window(2, Some("y"), 1, false),
         ]);
         assert_eq!(
             launched(&stolen, "foot", &before, Some(2)),
             Some(Observed::Interrupted)
         );
+        // A single-instance app focuses the window it already had.
+        let answered = view(vec![
+            window(1, Some("foot"), 1, true),
+            window(2, Some("x"), 1, false),
+        ]);
+        assert_eq!(
+            launched(&answered, "foot", &before, Some(2)),
+            Some(Observed::Focused)
+        );
+        assert_eq!(launched(&answered, "foot", &before, Some(1)), None);
     }
 
     #[tokio::test(start_paused = true)]

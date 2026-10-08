@@ -411,8 +411,8 @@ impl Server {
         self.record(context, Call::action(tool), args, async {
             // Boxed, because the readiness report and the action's wait make large futures.
             let refusal = Box::pin(self.refusal());
-            let work = Box::pin(async { Ok(act::with_evidence(socket, work.await?).await) });
-            match self.desk.act(refusal, work).await {
+            let evidence = |outcome| Box::pin(act::with_evidence(socket, outcome));
+            match self.desk.act(refusal, Box::pin(work), evidence).await {
                 Ok(evidenced) => outcome(&evidenced),
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
                 Err(CallError::Tool(error)) => Ok(error.into_result()),

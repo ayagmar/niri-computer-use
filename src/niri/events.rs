@@ -19,7 +19,7 @@ use tokio::io::{AsyncBufReadExt as _, AsyncRead, AsyncWrite, AsyncWriteExt as _,
 use tokio::net::UnixStream;
 use tokio::sync::{broadcast, watch};
 
-use super::waiter::{Update, View, Waiter};
+use super::waiter::{Numbers, Update, View, Waiter};
 use crate::error::{ErrorName, ToolError};
 
 /// For connecting, the request's reply, and a tool waiting for the initial state.
@@ -55,6 +55,8 @@ struct Replica {
     overview: bool,
     /// The number of the last event applied, counted across connections.
     seq: u64,
+    /// Which connection, counted from 1, this replica comes from.
+    connection: u64,
 }
 
 impl Replica {
@@ -163,10 +165,16 @@ impl EventStream {
         // Subscribed before the state is read, so no event falls between the two; the
         // waiter skips events the state already holds by their number.
         let updates = self.updates.subscribe();
-        let (view, seq) = self
-            .current(DEADLINE, |replica| (View::of(&replica.state), replica.seq))
+        let (view, numbers) = self
+            .current(DEADLINE, |replica| {
+                let numbers = Numbers {
+                    seq: replica.seq,
+                    connection: replica.connection,
+                };
+                (View::of(&replica.state), numbers)
+            })
             .await?;
-        Ok(Waiter::new(view, seq, updates))
+        Ok(Waiter::new(view, numbers, updates))
     }
 
     /// Reads the initialized replica, waiting up to `deadline` for it.
@@ -248,14 +256,14 @@ where
 {
     let sender = &senders.connection;
     let mut parse_failures = 0;
-    let mut seq = 0;
+    let mut numbers = Numbers::default();
     loop {
         let ended = tokio::select! {
             () = sender.closed() => return,
-            ended = session(&mut connect, &senders, &mut seq) => ended,
+            ended = session(&mut connect, &senders, &mut numbers) => ended,
         };
         // No waiter may go on from a replica that is gone. Nobody listening is fine.
-        senders.updates.send(Update::Reset).ok();
+        senders.updates.send(Update::Reset(numbers.connection)).ok();
         match ended {
             Ended::Unparsable(event) => {
                 parse_failures += 1;
@@ -284,13 +292,17 @@ where
 }
 
 /// One connection, from connecting until it ends.
-async fn session<S, F>(connect: &mut impl FnMut() -> F, senders: &Senders, seq: &mut u64) -> Ended
+async fn session<S, F>(
+    connect: &mut impl FnMut() -> F,
+    senders: &Senders,
+    numbers: &mut Numbers,
+) -> Ended
 where
     S: AsyncRead + AsyncWrite + Unpin,
     F: Future<Output = std::io::Result<S>>,
 {
     match tokio::time::timeout(DEADLINE, connect()).await {
-        Ok(Ok(stream)) => read(stream, senders, seq).await,
+        Ok(Ok(stream)) => read(stream, senders, numbers).await,
         Ok(Err(error)) => Ended::Disconnected(ToolError::new(
             ErrorName::NiriUnavailable,
             format!("connect: {error}"),
@@ -307,16 +319,18 @@ where
 async fn read(
     stream: impl AsyncRead + AsyncWrite + Unpin,
     senders: &Senders,
-    seq: &mut u64,
+    numbers: &mut Numbers,
 ) -> Ended {
     let mut stream = BufReader::new(stream);
     if let Err(error) = start(&mut stream).await {
         return Ended::Disconnected(error);
     }
+    numbers.connection += 1;
     senders
         .connection
         .send_replace(Connection::Connected(Replica {
-            seq: *seq,
+            seq: numbers.seq,
+            connection: numbers.connection,
             ..Replica::default()
         }));
     let mut line = String::new();
@@ -331,15 +345,16 @@ async fn read(
             Ok(event) => event,
             Err(name) => return Ended::Unparsable(name),
         };
-        *seq += 1;
+        numbers.seq += 1;
+        let seq = numbers.seq;
         senders.connection.send_modify(|connection| {
             if let Connection::Connected(replica) = connection {
-                replica.apply(*seq, event.clone());
+                replica.apply(seq, event.clone());
             }
         });
         senders
             .updates
-            .send(Update::Event(*seq, Box::new(event)))
+            .send(Update::Event(seq, Box::new(event)))
             .ok();
     }
 }

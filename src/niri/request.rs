@@ -85,15 +85,15 @@ async fn dispatch_within(
 ) -> Result<Response, Unanswered> {
     let deadline = tokio::time::Instant::now() + limit;
     let doing = format!("niri {request:?}");
-    let late = || {
+    let late = |what: &str| {
         ToolError::new(
             ErrorName::DeadlineExceeded,
-            format!("{doing}: no reply within {limit:?}"),
+            format!("{doing}: {what} within {limit:?}"),
         )
     };
     let stream = tokio::time::timeout_at(deadline, UnixStream::connect(socket))
         .await
-        .map_err(|_| Unanswered::Refused(late()))?
+        .map_err(|_| Unanswered::Refused(late("niri didn't accept the connection")))?
         .map_err(|error| {
             Unanswered::Refused(ToolError::new(
                 ErrorName::NiriUnavailable,
@@ -103,10 +103,10 @@ async fn dispatch_within(
     let mut stream = BufReader::new(stream);
     tokio::time::timeout_at(deadline, write(&mut stream, request))
         .await
-        .map_err(|_| Unanswered::Refused(late()))?
+        .map_err(|_| Unanswered::Refused(late("the request couldn't be sent")))?
         .map_err(Unanswered::Refused)?;
     match tokio::time::timeout_at(deadline, read(&mut stream, request)).await {
-        Err(_) => Err(Unanswered::Lost(late())),
+        Err(_) => Err(Unanswered::Lost(late("no reply"))),
         Ok(Err(error)) => Err(Unanswered::Lost(error)),
         Ok(Ok(Err(message))) => Err(Unanswered::Refused(ToolError::new(
             ErrorName::UpstreamError,

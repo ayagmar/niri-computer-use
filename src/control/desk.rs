@@ -120,12 +120,18 @@ impl Desk {
     /// Runs one action with the action mutex held. It runs only while neither the stop flag
     /// nor the input-dirty marker is set, this server holds the lease, and `refusal`, the
     /// policy's answer asked once those checks pass, has none. A stop that arrives while
-    /// `work` runs cancels it; the stop watcher then takes the lease back.
-    pub(crate) async fn act<T>(
+    /// `work` runs cancels it; the stop watcher then takes the lease back. `finish` turns
+    /// the work's result into the call's, still under the mutex but past the stop, so a
+    /// stop can't discard what the work already found.
+    pub(crate) async fn act<T, U, F>(
         &self,
         refusal: impl Future<Output = Option<ToolError>>,
         work: impl Future<Output = Result<T, CallError>>,
-    ) -> Result<T, CallError> {
+        finish: impl FnOnce(T) -> F,
+    ) -> Result<U, CallError>
+    where
+        F: Future<Output = U>,
+    {
         let runtime = self.runtime.as_ref().map_err(Clone::clone)?;
         let held = self.seat.lease.lock().await;
         let mut stopped = self.unblocked(runtime)?;
@@ -141,15 +147,15 @@ impl Desk {
         }
         let done = tokio::select! {
             biased;
-            _ = stopped.wait_for(|stopped| *stopped) => Err(ToolError::new(
-                ErrorName::Stopped,
-                "the user's stop flag cancelled this action; anything niri had already accepted may have taken effect",
-            )
-            .into()),
-            done = work => done,
+            _ = stopped.wait_for(|stopped| *stopped) => None,
+            done = work => Some(done),
         };
+        let Some(done) = done else {
+            return Err(cancelled(&stopped).into());
+        };
+        let finished = finish(done?).await;
         drop(held);
-        done
+        Ok(finished)
     }
 
     /// Checks that a stop can reach this server and that neither the stop flag nor the
@@ -161,10 +167,7 @@ impl Desk {
             .as_ref()
             .map_err(|detail| ToolError::new(ErrorName::UpstreamError, detail.clone()))?;
         if stopped.has_changed().is_err() {
-            return Err(ToolError::new(
-                ErrorName::UpstreamError,
-                "the stop watcher ended, because the runtime directory was removed or moved; restart the server",
-            ));
+            return Err(watcher_ended());
         }
         if *stopped.borrow() || runtime.stopped().map_err(|error| unreadable(&error))? {
             return Err(ToolError::new(
@@ -255,6 +258,27 @@ async fn give_up(seat: &Weak<Seat>) -> bool {
     };
     seat.take(&mut *seat.lease.lock().await);
     true
+}
+
+/// Why a running action was cancelled. A watcher that loses the runtime directory reports
+/// a stop and then ends, which on this single-threaded runtime happens before the action's
+/// task runs again.
+fn cancelled(stopped: &watch::Receiver<bool>) -> ToolError {
+    if stopped.has_changed().is_err() {
+        return watcher_ended();
+    }
+    ToolError::new(
+        ErrorName::Stopped,
+        "the user's stop flag cancelled this action; anything niri had already accepted may have taken effect",
+    )
+}
+
+/// A stop can't reach this server any more.
+fn watcher_ended() -> ToolError {
+    ToolError::new(
+        ErrorName::UpstreamError,
+        "the stop watcher ended, because the runtime directory was removed or moved; restart the server",
+    )
 }
 
 /// The runtime directory can't be read, so neither flag can be ruled out.
@@ -350,7 +374,7 @@ mod tests {
 
     /// An action whose work records that it ran and returns `value`.
     async fn act(desk: &Desk, refusal: Option<ToolError>) -> Result<u8, ErrorName> {
-        desk.act(async { refusal }, async { Ok(7) })
+        desk.act(async { refusal }, async { Ok(7) }, std::future::ready)
             .await
             .map_err(|error| match error {
                 CallError::Tool(error) => error.name,
@@ -383,11 +407,15 @@ mod tests {
         desk.acquire("me/1", None).await.unwrap();
         let (started, running) = tokio::sync::oneshot::channel::<()>();
         let (held, dropped) = tokio::sync::oneshot::channel::<()>();
-        let action = desk.act(async { None }, async move {
-            started.send(()).unwrap();
-            let _held = held;
-            std::future::pending::<Result<(), CallError>>().await
-        });
+        let action = desk.act(
+            async { None },
+            async move {
+                started.send(()).unwrap();
+                let _held = held;
+                std::future::pending::<Result<(), CallError>>().await
+            },
+            std::future::ready,
+        );
         let stop = async {
             running.await.unwrap();
             runtime.stop().unwrap();
@@ -407,6 +435,38 @@ mod tests {
         assert!(dropped.await.is_err());
         assert!(released(&desk).await);
         assert_eq!(act(&desk, None).await, Err(ErrorName::Stopped));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn losing_the_stop_watcher_mid_action_says_to_restart() {
+        let dir = crate::test_support::fresh_dir("desk-act-gone");
+        let desk = Desk::start(&env(&dir));
+        let runtime = RuntimeDir::of(&env(&dir)).unwrap();
+        desk.acquire("me/1", None).await.unwrap();
+        let (started, running) = tokio::sync::oneshot::channel::<()>();
+        let action = desk.act(
+            async { None },
+            async move {
+                started.send(()).unwrap();
+                std::future::pending::<Result<(), CallError>>().await
+            },
+            std::future::ready,
+        );
+        let remove = async {
+            running.await.unwrap();
+            std::fs::remove_dir_all(runtime.path()).unwrap();
+        };
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(action, remove)
+        })
+        .await
+        .unwrap();
+        let Err(CallError::Tool(error)) = result else {
+            panic!("{result:?}");
+        };
+        assert_eq!(error.name, ErrorName::UpstreamError);
+        assert!(error.detail.contains("restart the server"), "{error:?}");
         std::fs::remove_dir_all(dir).unwrap();
     }
 

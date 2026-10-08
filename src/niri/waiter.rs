@@ -19,8 +19,16 @@ use tokio::time::Instant;
 pub(crate) enum Update {
     /// An event, numbered across connections, after the replica applied it.
     Event(u64, Box<Event>),
-    /// The connection ended, and with it the replica.
-    Reset,
+    /// The connection with this number ended, and with it its replica.
+    Reset(u64),
+}
+
+/// Where the event stream is: the last event's number, counted across connections, and
+/// the connection's, counted from 1.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Numbers {
+    pub(crate) seq: u64,
+    pub(crate) connection: u64,
 }
 
 /// The windows and workspaces as one waiter sees them.
@@ -78,14 +86,22 @@ pub(crate) enum Waited<T> {
 #[derive(Debug)]
 pub(crate) struct Waiter {
     view: View,
-    /// The number of the last event in `view`.
-    seq: u64,
+    /// The last event in `view` and the connection it came from.
+    numbers: Numbers,
     updates: broadcast::Receiver<Update>,
 }
 
 impl Waiter {
-    pub(super) const fn new(view: View, seq: u64, updates: broadcast::Receiver<Update>) -> Self {
-        Self { view, seq, updates }
+    pub(super) const fn new(
+        view: View,
+        numbers: Numbers,
+        updates: broadcast::Receiver<Update>,
+    ) -> Self {
+        Self {
+            view,
+            numbers,
+            updates,
+        }
     }
 
     /// The state as of the last event applied.
@@ -127,15 +143,16 @@ impl Waiter {
                 }
             };
             match update {
-                Update::Reset => {
+                Update::Reset(connection) if connection == self.numbers.connection => {
                     return Err(Waited::Lost(
                         "niri's event stream disconnected while waiting".to_owned(),
                     ));
                 }
-                // Already in the view it started from.
-                Update::Event(seq, _) if seq <= self.seq => {}
+                // An earlier connection's end, or an event the view already holds.
+                Update::Reset(_) => {}
+                Update::Event(seq, _) if seq <= self.numbers.seq => {}
                 Update::Event(seq, event) => {
-                    self.seq = seq;
+                    self.numbers.seq = seq;
                     self.view.apply(*event);
                     return Ok(());
                 }
@@ -182,10 +199,12 @@ pub(crate) mod tests {
         view
     }
 
-    /// A waiter on `view` after event `seq`, and the task's end of its channel.
+    /// A waiter on `view` after event `seq` of connection 2, and the task's end of its
+    /// channel.
     pub(crate) fn waiter(view: View, seq: u64) -> (Waiter, broadcast::Sender<Update>) {
         let (sender, updates) = broadcast::channel(16);
-        (Waiter::new(view, seq, updates), sender)
+        let numbers = Numbers { seq, connection: 2 };
+        (Waiter::new(view, numbers, updates), sender)
     }
 
     fn focus(id: u64) -> Event {
@@ -229,7 +248,10 @@ pub(crate) mod tests {
     async fn ends_at_the_deadline_or_when_the_stream_is_lost() {
         let (mut waiter, sender) = waiter(view(Vec::new()), 0);
         assert_eq!(waiter.until(LIMIT, |_| None::<()>).await, Waited::Timeout);
-        sender.send(Update::Reset).unwrap();
+        // The end of the connection before the one the view came from changes nothing.
+        sender.send(Update::Reset(1)).unwrap();
+        assert_eq!(waiter.until(LIMIT, |_| None::<()>).await, Waited::Timeout);
+        sender.send(Update::Reset(2)).unwrap();
         assert!(matches!(
             waiter.until(LIMIT, |_| None::<()>).await,
             Waited::Lost(reason) if reason.contains("disconnected")

@@ -172,6 +172,23 @@ async fn focus_window_is_accepted_then_observed() {
 }
 
 #[tokio::test]
+async fn a_target_that_already_has_focus_sends_nothing() {
+    let mut desk = Desk::start("act-focused", "").await;
+    let window = desk.server.call("focus_window", json!({"id": 1})).await;
+    assert_eq!(
+        outcome(&window),
+        json!({"accepted": false, "observed": "focused", "focused_window": 1})
+    );
+    // niri's `workspace-auto-back-and-forth` would switch away from it.
+    let workspace = desk.server.call("focus_workspace", json!({"id": 1})).await;
+    assert_eq!(
+        outcome(&workspace),
+        json!({"accepted": false, "observed": "focused", "focused_window": 1})
+    );
+    assert!(!desk.niri.sent_action());
+}
+
+#[tokio::test]
 async fn focus_moving_elsewhere_during_the_wait_is_interrupted() {
     let mut desk = Desk::start("act-interrupt", "").await;
     let result = desk
@@ -183,6 +200,60 @@ async fn focus_moving_elsewhere_during_the_wait_is_interrupted() {
     assert_eq!(
         outcome(&result),
         json!({"accepted": true, "observed": "interrupted", "focused_window": 3})
+    );
+}
+
+#[tokio::test]
+async fn focus_leaving_the_target_workspace_or_a_launch_is_interrupted() {
+    let mut desk = Desk::start("act-interrupt-more", PRESETS).await;
+    let window = window_on(4, Some("d"), 2, false);
+    desk.stream
+        .send(&json!({"WindowOpenedOrChanged": {"window": window}}));
+    // A window on workspace 2 is where focus may go; window 3, on workspace 1, isn't.
+    let result = desk
+        .act("focus_workspace", json!({"id": 2}), |stream, _| {
+            focus_changed(stream, 4);
+            focus_changed(stream, 3);
+        })
+        .await;
+    assert_eq!(
+        outcome(&result),
+        json!({"accepted": true, "observed": "interrupted", "focused_window": 3})
+    );
+    let launch = desk
+        .act("launch", json!({"preset": "foot"}), |stream, _| {
+            focus_changed(stream, 2);
+        })
+        .await;
+    assert_eq!(
+        outcome(&launch),
+        json!({"accepted": true, "observed": "interrupted", "focused_window": 2})
+    );
+}
+
+#[tokio::test]
+async fn a_single_instance_app_answers_a_launch_with_its_window() {
+    let mut desk = Desk::start("act-single", PRESETS).await;
+    let existing = window_on(5, Some("foot"), 1, false);
+    desk.stream
+        .send(&json!({"WindowOpenedOrChanged": {"window": existing}}));
+    let mut answered = Value::Null;
+    // The new window may not have reached the server yet: ask until it has.
+    for _ in 0..50 {
+        let result = desk
+            .act("launch", json!({"preset": "foot"}), |stream, _| {
+                focus_changed(stream, 5);
+            })
+            .await;
+        if outcome(&result)["observed"] == "focused" {
+            answered = outcome(&result);
+            break;
+        }
+        focus_changed(&desk.stream, 1);
+    }
+    assert_eq!(
+        answered,
+        json!({"accepted": true, "observed": "focused", "focused_window": 5, "windows": [5]})
     );
 }
 
@@ -386,8 +457,8 @@ async fn reuse_spawns_for_none_focuses_one_and_starts_nothing_for_two() {
             ambiguous = outcome(&again);
             break;
         }
-        // Not yet: it focused window 7, which already had focus.
-        desk.niri.action().await;
+        // Not yet: window 7 already had focus, so nothing was sent.
+        assert_eq!(outcome(&again)["accepted"], false, "{again}");
     }
     assert_eq!(
         ambiguous,
