@@ -68,21 +68,34 @@ fn on_path(path: Option<&OsStr>, name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::OsString;
     use std::fs;
+    use std::path::PathBuf;
 
     use super::*;
 
+    /// A directory this test creates itself, so it reads and removes nothing else.
+    fn fresh_dir(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "niri-desktop-mcp-{name}-{}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir(&dir).unwrap();
+        dir
+    }
+
     #[test]
     fn finds_only_executable_files_on_path() {
-        let dir =
-            std::env::temp_dir().join(format!("niri-desktop-mcp-path-{}", std::process::id()));
+        let dir = fresh_dir("path");
         fs::create_dir_all(dir.join("dir-named-grim/grim")).unwrap();
         fs::write(dir.join("wtype"), "").unwrap();
         fs::set_permissions(dir.join("wtype"), fs::Permissions::from_mode(0o755)).unwrap();
         fs::write(dir.join("loginctl"), "").unwrap();
         fs::set_permissions(dir.join("loginctl"), fs::Permissions::from_mode(0o644)).unwrap();
-        let path = std::env::join_paths(["/nonexistent".into(), dir.clone()]).unwrap();
+        let path = std::env::join_paths([dir.join("missing"), dir.clone()]).unwrap();
 
         assert!(on_path(Some(&path), "wtype"));
         assert!(!on_path(Some(&path), "loginctl"));
@@ -96,7 +109,7 @@ mod tests {
     async fn reports_an_unknown_niri_instead_of_failing() {
         let env = Env {
             niri_socket: None,
-            path: Some(OsString::new()),
+            path: None,
         };
         let status = serde_json::to_value(collect(&env, None).await).unwrap();
         assert_eq!(
