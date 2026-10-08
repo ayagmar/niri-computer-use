@@ -75,12 +75,19 @@ pub(crate) async fn lock(
 /// The logind session niri sets its locked hint on: the `XDG_SESSION_ID` niri started
 /// with (`update_locked_hint` in niri v26.04 `src/niri.rs`). Asking about any other session,
 /// such as this server's own when it runs from SSH or a TTY, would read a hint niri never
-/// sets.
+/// sets. niri sets it only when started with `--session`; a plain `niri` inherits the
+/// variable but leaves the hint at `no` while locked.
 async fn niri_session(niri_socket: Option<&Path>) -> Result<String, String> {
     let pid = niri::pid(niri_socket)
         .await
         .map_err(|error| format!("find niri's process: {}", error.detail))?;
-    procs::environ_var(Path::new("/proc"), pid, "XDG_SESSION_ID")
+    let proc_root = Path::new("/proc");
+    let session_instance = procs::has_arg(proc_root, pid, "--session")
+        .map_err(|error| format!("read niri's command line (PID {pid}): {error}"))?;
+    if !session_instance {
+        return Err("niri runs without --session, so it sets no logind locked hint".to_owned());
+    }
+    procs::environ_var(proc_root, pid, "XDG_SESSION_ID")
         .map_err(|error| format!("read niri's environment (PID {pid}): {error}"))?
         .ok_or_else(|| "niri has no XDG_SESSION_ID, so it sets no logind locked hint".to_owned())
 }

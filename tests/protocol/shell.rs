@@ -121,6 +121,25 @@ async fn without_logind_noctalia_decides_and_otherwise_the_state_is_unknown() {
 }
 
 #[tokio::test]
+async fn a_niri_without_session_is_not_asked_about_through_logind() {
+    let fixture = Fixture::new("lock-plain");
+    // logind would say `no` even on a locked screen: a plain niri never sets the hint.
+    loginctl(&fixture, "no");
+    let _niri = NiriProcess::plain(&fixture, Some("c4")).await;
+    let mut server = Server::start(&fixture).await;
+    assert_eq!(
+        server.structured("status").await["lock"],
+        json!({
+            "state": "unknown", "source": "none", "session": null,
+            "logind_error": "niri runs without --session, so it sets no logind locked hint"
+        })
+    );
+    assert!(!fixture.path("loginctl.args").exists());
+    let (name, _) = tool_error(&server.call("acquire_desktop", json!({})).await);
+    assert_eq!(name, "screen_locked");
+}
+
+#[tokio::test]
 async fn the_clipboard_is_text_nothing_copied_or_no_text() {
     let fixture = Fixture::new("clipboard");
     let mut server = Server::start(&fixture).await;

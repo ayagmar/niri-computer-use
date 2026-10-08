@@ -1,8 +1,10 @@
-//! A fake niri in a process of its own, so its environment is exactly what a test chooses.
-//! The server asks logind about the session in niri's `XDG_SESSION_ID`, which it reads
-//! from `/proc/<niri pid>/environ`; the in-process fake niri would show the test runner's
-//! environment instead. The test binary runs itself with `--ignored --exact` to become
-//! this process.
+//! A fake niri in a process of its own, so its environment and command line are exactly
+//! what a test chooses. The server asks logind about the session in niri's
+//! `XDG_SESSION_ID`, which it reads from `/proc/<niri pid>/environ`, and only when niri's
+//! `/proc/<niri pid>/cmdline` has `--session`; the in-process fake niri would show the
+//! test runner's instead. The test binary runs itself with `--ignored --exact` to become
+//! this process. `--session` goes after `--`, where libtest takes it as one more test name
+//! filter, which matches no test.
 
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::os::unix::net::UnixListener;
@@ -21,12 +23,29 @@ pub(crate) struct NiriProcess {
 }
 
 impl NiriProcess {
-    /// Starts it on the fixture's `NIRI_SOCKET` with `XDG_SESSION_ID` set to `session`, or
-    /// unset for `None`.
+    /// Starts it as `niri --session` on the fixture's `NIRI_SOCKET` with `XDG_SESSION_ID`
+    /// set to `session`, or unset for `None`.
     pub(crate) async fn start(fixture: &Fixture, session: Option<&str>) -> Self {
+        Self::launch(fixture, session, &["--session"]).await
+    }
+
+    /// Starts it as a plain `niri`, which sets no logind locked hint.
+    pub(crate) async fn plain(fixture: &Fixture, session: Option<&str>) -> Self {
+        Self::launch(fixture, session, &[]).await
+    }
+
+    async fn launch(fixture: &Fixture, session: Option<&str>, niri_args: &[&str]) -> Self {
         let mut command = command();
         command
-            .args([NAME, "--exact", "--ignored", "--test-threads=1", "--quiet"])
+            .args([
+                "--exact",
+                "--ignored",
+                "--test-threads=1",
+                "--quiet",
+                "--",
+                NAME,
+            ])
+            .args(niri_args)
             .env_clear()
             .env(SOCKET, fixture.niri_socket())
             .stdin(Stdio::null())

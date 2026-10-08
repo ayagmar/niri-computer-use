@@ -64,6 +64,16 @@ pub(crate) fn environ_var(
         .map(|value| String::from_utf8_lossy(value).into_owned()))
 }
 
+/// Whether `pid` was started with `flag` among its arguments, after the program name, from
+/// `/proc/<pid>/cmdline`.
+pub(crate) fn has_arg(proc_root: &Path, pid: u32, flag: &str) -> std::io::Result<bool> {
+    let cmdline = std::fs::read(proc_root.join(pid.to_string()).join("cmdline"))?;
+    Ok(cmdline
+        .split(|&byte| byte == 0)
+        .skip(1)
+        .any(|arg| arg == flag.as_bytes()))
+}
+
 /// The PIDs of running processes named `name` whose real user is `uid`.
 pub(crate) fn named(proc_root: &Path, name: &str, uid: u32) -> Vec<u32> {
     let Ok(entries) = std::fs::read_dir(proc_root) else {
@@ -160,6 +170,27 @@ mod tests {
         );
         assert_eq!(environ_var(&root, 5, "B").unwrap(), None);
         assert!(environ_var(&root, 6, "A").is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn finds_a_flag_among_the_arguments_but_not_in_the_program_name() {
+        let root = crate::test_support::fresh_dir("procs-cmdline");
+        for (pid, cmdline) in [
+            (5, &b"niri\0--session\0"[..]),
+            (6, b"niri\0"),
+            (7, b"--session\0x\0"),
+            (8, b"niri\0--session=no\0"),
+        ] {
+            std::fs::create_dir(root.join(pid.to_string())).unwrap();
+            std::fs::write(root.join(format!("{pid}/cmdline")), cmdline).unwrap();
+        }
+        let session = |pid| has_arg(&root, pid, "--session").unwrap();
+        assert!(session(5));
+        assert!(!session(6));
+        assert!(!session(7));
+        assert!(!session(8));
+        assert!(has_arg(&root, 9, "--session").is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 

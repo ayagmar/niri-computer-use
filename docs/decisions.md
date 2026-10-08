@@ -312,3 +312,8 @@ These match the versions installed locally.
 - The M2 exit criteria run in `make nested-control`: two servers competing for the lease, stop and resume, `recover` against a live owner and with a marker naming a delayed-exit child. The protocol tests check the same behaviour against fakes; the nested run adds a real niri (its version, its peer credentials), a real Noctalia as the lock source, and the stop sent through niri's `spawn` action, the path the stop keybind takes.
 - The nested run starts Noctalia because the lease now needs an unlocked answer: a nested niri isn't a session instance and sets no logind hint.
 - The harness has no interactive MCP client. Each server reads a `printf` of its requests followed by a `sleep` that keeps stdin open, so every process stays under the harness runner's deadlines and process groups.
+
+## 2026-10-08: logind only for `niri --session`
+
+- niri v26.04 sets logind's `LockedHint` only when it runs as the session instance (`update_locked_hint` returns early unless `is_session_instance`, `src/niri.rs`), which `niri --session` turns on. A plain `niri` started inside a logind session inherits `XDG_SESSION_ID`, so logind kept answering `no` on a locked screen. The server now reads niri's `/proc/<pid>/cmdline` and asks logind only when `--session` is among the arguments; otherwise logind counts as not answering, Noctalia decides, and without Noctalia the state is `unknown`, which refuses the lease.
+- The protocol tests' fake niri is the test binary started with `--ignored --exact`. libtest rejects unknown options, so `--session` goes after `--`, where libtest reads it as one more test-name filter that matches no test. No separate fake-niri binary was needed.
