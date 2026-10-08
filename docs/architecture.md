@@ -11,6 +11,10 @@
 | `niri.rs`, `niri/request.rs`, `niri/events.rs` | The only code that talks to niri: one connection per request, and one long-lived event stream. |
 | `niri/version.rs` | The version rule (pure). |
 | `status.rs` | Builds the readiness report shared by the tool and the subcommand. |
+| `observe.rs` | Screenshots: picks the output, plans grim's arguments and the image size they must produce, and checks the result. |
+| `clipboard.rs` | Reads the clipboard's text with `wl-paste`. |
+| `runner.rs` | The only code that starts processes. |
+| `image_header.rs` | Reads a PNG's or JPEG's size from its header. The harness includes the same file. |
 | `error.rs` | Tool failures with their stable names. |
 | `cli.rs` | Terminal output for the subcommands. Nothing else may print, because stdout is the MCP transport. |
 
@@ -34,6 +38,18 @@ On connect, niri sends its current state as a burst of events: workspaces, windo
 ## Cancellation
 
 rmcp marks a request as cancelled when the client cancels it, but it keeps running the tool. Each tool therefore races its work against the request's cancellation and drops the work when cancellation wins. Dropping a niri request closes its connection; dropping a `desktop_state` call only stops that call's wait, and the shared event stream keeps running.
+
+## Subprocesses
+
+Every program the server runs goes through `runner::run`: no stdin, stdout and stderr collected, a deadline, and a process group of its own. If the call times out or is cancelled before the child has been reaped, the runner kills the whole group, so anything the child started dies with it. Until the child is reaped its process ID can't be reused, so the kill can't reach another group. A child that exits normally is left alone, together with anything it left running. Stdout over the caller's limit is an error, and an error keeps the exit status and up to 16 KiB of stderr.
+
+## Screenshots
+
+`screenshot` reads niri's outputs, picks the target (a named output, the focused output, or the one output a region lies inside), and runs `grim -t jpeg -q 80` or `grim -t png` with an explicit `-s` scale and `-o <output>` or `-g "x,y wxh"`. Without `max_width` the limit is 1280 pixels. The scale is the output's own, lowered when the capture would be wider than `max_width`.
+
+grim 1.5.0 sizes its image as `int width = logical width × scale`, which truncates (`render.c:145–146`). The server expects the same, and it nudges a lowered scale up by the smallest step until the truncated width is exactly `max_width`, because `max_width / width` can land just below it in floating point. A capture whose PNG or JPEG header disagrees with the expected size is an `upstream_error`. The metadata returns the output, its transform and layout origin, the captured rectangle in layout coordinates, the scale, the image size, and the capture time.
+
+Downscaling happens in grim and costs time: on a 2560x1440 output, JPEG took about 14 ms at full size and about 100 ms at the default 1280 pixels.
 
 ## Version rule
 

@@ -195,3 +195,18 @@ These match the versions installed locally.
 ## 2026-10-08: cancellation
 
 - rmcp 3.5.0 runs each request in its own task and only cancels the request's token when the client sends a cancellation (`service.rs`, the request branch of the serve loop); it doesn't stop the task. Each tool takes rmcp's `RequestContext` and races its work against that token, so a cancelled call drops its niri connection or wait at once instead of at its deadline.
+
+## 2026-10-08: screenshots, clipboard and the runner
+
+| Crate | Version | Published | Why |
+|---|---|---|---|
+| `base64` | 0.23.1 | 2026-08-04 | Encodes screenshot images for MCP image content. rmcp already depends on the same version. |
+| `rustix` | 1.1.5 | 2026-09-16 | Kills a child's process group on timeout or cancellation, without `unsafe`. Feature `process`. Same version as the harness. |
+
+- tokio gains the `process` feature (same version). No new package entered `Cargo.lock`.
+- grim truncates its image size (`render.c:145–146` at grim v1.5.0), where plan §8 says `round(logical × s)`. M0's C15 only used scales whose products are whole numbers, so it couldn't tell the two apart. The server expects truncation and nudges a lowered scale up to the next representable double until the width is exactly `max_width`; a unit test checks every width from 1281 to 3999 at four output scales.
+- `max_width` defaults to 1280 (plan §4, provisional until M1's image delivery check), so an omitted `max_width` on a 2560-pixel output gives a 1280-pixel image. A region narrower than that keeps full detail. On DP-1 that default made JPEG capture take about 100 ms instead of 14 ms.
+- Screenshot refs (plan §8) are not stored yet. Only the pointer tools use them, and they arrive with the input milestones; until then a stored ref would be dead code. The metadata returns everything a ref will hold.
+- Arguments that don't fit the desktop (an unknown output, a region that crosses outputs, a malformed target) are MCP invalid-params errors, not a new name in the stable error list.
+- `clipboard_read` runs `wl-paste --no-newline --type text`. wl-paste 2.3.0 exits 1 both for an empty clipboard and when nothing copied is text (`src/wl-paste.c:222–245`, `:265–268`); the tool returns those as `text: null` with `reason` `nothing_copied` or `no_text`. Text is capped at 1 MiB and must be UTF-8.
+- The harness includes `src/image_header.rs` with `#[path]` instead of keeping its own copy. The server is a binary crate, so there is no library to depend on, and one header parser keeps the server and C15's checks in agreement.

@@ -350,8 +350,10 @@ dependencies = [
 name = "niri-desktop-mcp"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "niri-ipc",
  "rmcp",
+ "rustix",
  "serde",
  "serde_json",
  "tokio",
@@ -673,6 +675,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys",

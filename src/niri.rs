@@ -28,6 +28,16 @@ pub(crate) async fn outputs(socket: Option<&Path>) -> Result<BTreeMap<String, Ou
     Ok(outputs.into_iter().collect())
 }
 
+/// The output with keyboard focus, if niri reports one.
+pub(crate) async fn focused_output(socket: Option<&Path>) -> Result<Option<Output>, ToolError> {
+    let Response::FocusedOutput(output) =
+        request::send(known(socket)?, &Request::FocusedOutput).await?
+    else {
+        return Err(unexpected("FocusedOutput"));
+    };
+    Ok(output)
+}
+
 /// One snapshot of niri's replayed state. There is no stream without `NIRI_SOCKET`.
 pub(crate) async fn desktop(events: Option<&EventStream>) -> Result<DesktopState, ToolError> {
     events.ok_or_else(not_set)?.desktop().await

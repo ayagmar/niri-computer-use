@@ -1,8 +1,12 @@
 //! niri-desktop-mcp: an MCP server that lets AI agents observe a niri desktop.
 
 mod cli;
+mod clipboard;
 mod error;
+mod image_header;
 mod niri;
+mod observe;
+mod runner;
 mod status;
 mod tools;
 

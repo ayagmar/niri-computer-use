@@ -1,12 +1,72 @@
 //! MCP tool definitions. Each tool only translates the call into a module call.
 
+use base64::Engine as _;
 use rmcp::handler::server::router::tool::ToolRouter;
-use rmcp::model::CallToolResult;
+use rmcp::handler::server::wrapper::Parameters;
+use rmcp::model::{CallToolResult, ContentBlock};
 use rmcp::service::RequestContext;
-use rmcp::{ErrorData, RoleServer, ServerHandler, tool, tool_handler, tool_router};
+use rmcp::{ErrorData, RoleServer, ServerHandler, schemars, tool, tool_handler, tool_router};
+use serde::Deserialize;
 
+use crate::error::CallError;
 use crate::niri::events::{EventStream, StreamState};
-use crate::{Env, niri, status};
+use crate::observe::{Format, Rect, Target};
+use crate::{Env, clipboard, niri, observe, status};
+
+/// The default `max_width` (plan §4). Provisional until M1's image delivery check.
+const DEFAULT_MAX_WIDTH: u32 = 1280;
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct ScreenshotArgs {
+    /// `focused_output`, `output:<name>` with a name from `outputs`, or `region`.
+    target: String,
+    /// Required with target `region`: a rectangle in layout coordinates that lies inside
+    /// one output.
+    region: Option<RegionArgs>,
+    /// The widest image to return, in pixels. The capture scale is lowered to fit.
+    /// Defaults to 1280. A region narrower than this keeps full detail, so to read small
+    /// text, capture a region around it.
+    max_width: Option<u32>,
+    /// `jpeg` (the default) or `png`.
+    format: Option<FormatArg>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct RegionArgs {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+#[serde(rename_all = "lowercase")]
+enum FormatArg {
+    Png,
+    Jpeg,
+}
+
+impl ScreenshotArgs {
+    fn request(self) -> Result<observe::Request, String> {
+        let region = self.region.map(|r| Rect {
+            x: r.x,
+            y: r.y,
+            width: r.width,
+            height: r.height,
+        });
+        Ok(observe::Request {
+            target: Target::parse(&self.target, region)?,
+            max_width: Some(self.max_width.unwrap_or(DEFAULT_MAX_WIDTH)),
+            format: match self.format {
+                Some(FormatArg::Png) => Format::Png,
+                Some(FormatArg::Jpeg) | None => Format::Jpeg,
+            },
+        })
+    }
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct Server {
@@ -76,6 +136,49 @@ impl Server {
             Err(error) => Ok(error.into_result()),
         }
     }
+
+    /// A screenshot of one output or of a region inside one output, as an image plus
+    /// metadata: the output, its transform and layout origin, the captured rectangle in
+    /// layout coordinates, and the scale from logical pixels to image pixels. Prefer
+    /// `desktop_state` when structured data answers the question.
+    #[tool(annotations(read_only_hint = true))]
+    async fn screenshot(
+        &self,
+        Parameters(args): Parameters<ScreenshotArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let request = args.request().map_err(invalid)?;
+        let shot = observe::screenshot(self.env.niri_socket.as_deref(), &request);
+        match unless_cancelled(context.ct.cancelled(), shot).await? {
+            Ok(shot) => {
+                let image = base64::engine::general_purpose::STANDARD.encode(&shot.image);
+                let mut result = structured(&shot.metadata)?;
+                result
+                    .content
+                    .insert(0, ContentBlock::image(image, shot.metadata.mime_type));
+                Ok(result)
+            }
+            Err(CallError::InvalidArguments(message)) => Err(invalid(message)),
+            Err(CallError::Tool(error)) => Ok(error.into_result()),
+        }
+    }
+
+    /// The clipboard's text, read with `wl-paste`. `text` is null, with a `reason`, when
+    /// nothing is copied (`nothing_copied`) or nothing copied is text (`no_text`).
+    #[tool(annotations(read_only_hint = true))]
+    async fn clipboard_read(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        match unless_cancelled(context.ct.cancelled(), clipboard::read_text()).await? {
+            Ok(clipboard) => structured(&clipboard),
+            Err(error) => Ok(error.into_result()),
+        }
+    }
+}
+
+fn invalid(message: String) -> ErrorData {
+    ErrorData::invalid_params(message, None)
 }
 
 #[expect(
@@ -85,7 +188,7 @@ impl Server {
 #[tool_handler(
     router = self.tool_router,
     name = "niri-desktop-mcp",
-    instructions = "Read-only view of a niri desktop. Start with `status`. Use `desktop_state` for windows and workspaces, and `outputs` for the monitor layout. Errors carry a stable `error` name and the upstream `detail`."
+    instructions = "Read-only view of a niri desktop. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `clipboard_read` returns the clipboard's text. Errors carry a stable `error` name and the upstream `detail`."
 )]
 impl ServerHandler for Server {}
 
@@ -118,11 +221,44 @@ mod tests {
             Server::status_tool_attr(),
             Server::outputs_tool_attr(),
             Server::desktop_state_tool_attr(),
+            Server::screenshot_tool_attr(),
+            Server::clipboard_read_tool_attr(),
         ] {
             let annotations = tool.annotations.unwrap();
             assert_eq!(annotations.read_only_hint, Some(true), "{}", tool.name);
             assert!(tool.description.is_some_and(|text| !text.is_empty()));
         }
+    }
+
+    #[test]
+    fn screenshot_arguments_default_to_jpeg_at_1280_pixels() {
+        let args: ScreenshotArgs = serde_json::from_value(serde_json::json!({
+            "target": "region",
+            "region": {"x": 1, "y": 2, "width": 3, "height": 4}
+        }))
+        .unwrap();
+        assert_eq!(
+            args.request(),
+            Ok(observe::Request {
+                target: Target::Region(Rect {
+                    x: 1,
+                    y: 2,
+                    width: 3,
+                    height: 4
+                }),
+                max_width: Some(1280),
+                format: Format::Jpeg,
+            })
+        );
+        let png: ScreenshotArgs = serde_json::from_value(
+            serde_json::json!({"target": "focused_output", "format": "png", "max_width": 640}),
+        )
+        .unwrap();
+        let request = png.request().unwrap();
+        assert_eq!(
+            (request.format, request.max_width),
+            (Format::Png, Some(640))
+        );
     }
 
     #[tokio::test]

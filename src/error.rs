@@ -37,6 +37,20 @@ impl ToolError {
     }
 }
 
+/// Why a tool call that takes arguments didn't succeed: the arguments don't fit the
+/// desktop, which MCP reports as invalid params, or a failure with a stable name.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum CallError {
+    InvalidArguments(String),
+    Tool(ToolError),
+}
+
+impl From<ToolError> for CallError {
+    fn from(error: ToolError) -> Self {
+        Self::Tool(error)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
