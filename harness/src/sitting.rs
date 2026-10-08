@@ -519,6 +519,27 @@ mod tests {
     }
 
     #[test]
+    fn shift_is_held_until_the_last_modifiers_record_clears_it() {
+        let mods = |mask: &str| {
+            format!(
+                "[ 1: wl_keyboard] modifiers: serial: 1; group: 0\n                      depressed: {mask}\n                      latched: 00000000\n                      locked: 00000000\n"
+            )
+        };
+        let shift = mods("00000001: Shift ");
+        assert!(Held::Shift.in_log(&shift).unwrap());
+        assert!(
+            !Held::Shift
+                .in_log(&format!("{shift}{}", mods("00000000")))
+                .unwrap()
+        );
+        assert!(!Held::Shift.in_log(&mods("00000004: Control ")).unwrap());
+        assert!(!Held::Shift.in_log("").unwrap());
+        // wev starts a fresh xkb state for each keymap (`wev.c:335–339`).
+        let keymap = "[ 1: wl_keyboard] keymap: format: 1 (xkb v1), size: 35572\n";
+        assert!(!Held::Shift.in_log(&format!("{shift}{keymap}")).unwrap());
+    }
+
+    #[test]
     fn physical_click_requires_an_ordered_non_probe_pair() {
         let event = |time, pressed| wev::Button {
             time,
