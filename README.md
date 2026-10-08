@@ -4,7 +4,7 @@
 
 An MCP server for AI agents to observe and drive a [niri](https://github.com/niri-wm/niri) Wayland desktop. Noctalia is optional.
 
-**Status: M2 complete, M3 in progress.** The server runs over stdio and has five read-only tools, six when Noctalia is installed, plus `acquire_desktop` and `release_desktop`, which take and give up the lease, and four tools that act through niri's IPC while the lease is held: focus a window or a workspace, launch a preset, close a window. It can't send keyboard or pointer input yet. M0's research is recorded in [docs/results/m0.md](docs/results/m0.md), M1's acceptance in [docs/results/m1.md](docs/results/m1.md) and M2's in [docs/results/m2.md](docs/results/m2.md).
+**Status: M3 complete.** The server runs over stdio and has five read-only tools, six when Noctalia is installed, plus `acquire_desktop` and `release_desktop`, which take and give up the lease, and four tools that act through niri's IPC while the lease is held: focus a window or a workspace, launch a preset, close a window. It can't send keyboard or pointer input yet. M0's research is recorded in [docs/results/m0.md](docs/results/m0.md), M1's acceptance in [docs/results/m1.md](docs/results/m1.md), M2's in [docs/results/m2.md](docs/results/m2.md) and M3's in [docs/results/m3.md](docs/results/m3.md).
 
 ## Requirements
 

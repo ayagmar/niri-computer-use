@@ -13,7 +13,7 @@ A failure sets `isError` and returns `{"error": <name>, "detail": <upstream deta
 |---|---|
 | `niri_unavailable` | niri's socket is missing, refused the connection, or closed it |
 | `deadline_exceeded` | niri or a program didn't answer in time: two seconds for niri and `wl-paste`, five for `grim` |
-| `upstream_error` | niri, a program or Noctalia answered with an error, or with something unreadable; `detail` keeps its message, exit status and stderr |
+| `upstream_error` | niri, a program or Noctalia answered with an error, or with something unreadable; `detail` keeps its message, exit status and stderr. Also when the server's runtime directory was removed, which cancels a running action; the server must then be restarted |
 | `noctalia_unavailable` | Noctalia is installed but didn't answer on its socket within two seconds |
 | `lease_held` | another agent's server holds the lease; `detail` names its PID, label and since when |
 | `lease_required` | an action tool was called without holding the lease |
@@ -113,7 +113,7 @@ No arguments. Gives the lease up and returns `{"released": true}`, or `{"release
 
 ## Action tools
 
-`focus_window`, `focus_workspace`, `launch` and `close_window` act on the desktop through niri's IPC. Before each action the server checks, in this order, the stop flag (`stopped`), the input-dirty marker (`recovery_required`), the lease (`lease_required`), then niri's version, the policy file and the lock state, as `acquire_desktop` does. One action runs at a time; an action or `release_desktop` called meanwhile waits for it. A stop during an action cancels it with `stopped`, and anything niri had already accepted may have taken effect. If the runtime directory is removed during an action, the action is cancelled with `upstream_error` and the server must be restarted. Cancelling the MCP request cancels the action and keeps the lease.
+`focus_window`, `focus_workspace`, `launch` and `close_window` act on the desktop through niri's IPC. Before each action the server checks, in this order, the stop flag (`stopped`), the input-dirty marker (`recovery_required`), the lease (`lease_required`), then niri's version, the policy file and the lock state, as `acquire_desktop` does. One action runs at a time; an action or `release_desktop` called meanwhile waits for it. A stop during an action cancels it with `stopped`, and anything niri had already accepted may have taken effect. Cancelling the MCP request cancels the action and keeps the lease.
 
 An unknown window or workspace id is an argument mistake, and nothing is sent. Otherwise the result has these fields:
 
