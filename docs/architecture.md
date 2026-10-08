@@ -88,7 +88,7 @@ Removing the runtime directory or the `lease` file while a server holds the leas
 `niri-computer-use recover` is the only way to clear it, and only a human runs it:
 
 1. It takes the lease, so no server can act meanwhile. If a server holds the lease, it refuses and names that server.
-2. With a `child` in the marker, it checks that the PID still has the recorded start time, so a reused PID is never touched, then kills the child's process group and waits up to five seconds for it to exit. Without one, it lists the user's running `wtype` processes and ends them only if the human types `yes`.
+2. With a `child` in the marker, it checks that the PID still has the recorded start time, so a reused PID is never touched, then kills the child's process group, or the child alone if it doesn't lead one, and waits up to five seconds for it to exit. Without one, it lists the user's running `wtype` processes and ends them only if the human types `yes`, and only those that are still the processes it listed.
 3. If the marker names pointer buttons, it asks the human to press and release each one, because this version has no virtual pointer to release them.
 4. It prints the manual check (press and release Shift, Ctrl, Alt and Super, click once, check the application) and clears the marker only after the human types `yes`. Anything else, including end of input or a child that didn't exit, leaves the marker in place.
 

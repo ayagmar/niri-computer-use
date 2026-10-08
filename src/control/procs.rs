@@ -9,6 +9,8 @@ use std::path::Path;
 pub(crate) struct Stat {
     /// `R`, `S`, `Z` and so on.
     pub(crate) state: char,
+    /// The process group.
+    pub(crate) group: u32,
     /// Field 22, in clock ticks since boot. With the PID it names one process for good.
     pub(crate) start_time: u64,
 }
@@ -25,9 +27,15 @@ pub(crate) fn parse_stat(text: &str) -> Option<Stat> {
     let (_, rest) = text.rsplit_once(") ")?;
     let mut fields = rest.split(' ');
     let state = fields.next()?.chars().next()?;
-    // `rest` starts at field 3 (state); the start time is field 22.
-    let start_time = fields.nth(18)?.parse().ok()?;
-    Some(Stat { state, start_time })
+    // `rest` starts at field 3 (state). Field 4 is the parent, 5 the process group, and
+    // 22 the start time.
+    let group = fields.nth(1)?.parse().ok()?;
+    let start_time = fields.nth(16)?.parse().ok()?;
+    Some(Stat {
+        state,
+        group,
+        start_time,
+    })
 }
 
 /// The process `pid` under `proc_root`, if it exists.
@@ -99,6 +107,7 @@ mod tests {
             parse_stat(STAT),
             Some(Stat {
                 state: 'S',
+                group: 4711,
                 start_time: 98765
             })
         );
