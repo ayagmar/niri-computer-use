@@ -348,16 +348,17 @@ fn window_focused(view: &View, id: u64, before: Option<u64>) -> Option<Observed>
     interrupted(view, before, |window| window.id == id)
 }
 
-/// Workspace `id` has focus, and keyboard focus is on one of its windows or on none. niri
-/// reports the workspace before the window focus that follows it, so the workspace alone
-/// would end the wait with focus still on the old workspace's window. Focus moving to one
-/// of its windows is expected.
+/// Workspace `id` has focus, and so does its active window, or nothing when it has none.
+/// niri reports the workspace and the window focus that follows it as separate events, in
+/// either order, so the workspace alone could end the wait with focus still on the old
+/// workspace's window, or on nothing. Focus moving to one of its windows is expected.
 fn workspace_focused(view: &View, id: u64, before: Option<u64>) -> Option<Observed> {
     let on_it = |window: &Window| window.workspace_id == Some(id);
-    let window = view
-        .focused_window()
-        .and_then(|focused| view.windows().get(&focused));
-    if view.workspaces().get(&id).is_some_and(|ws| ws.is_focused) && window.is_none_or(on_it) {
+    let settled = view
+        .workspaces()
+        .get(&id)
+        .is_some_and(|ws| ws.is_focused && view.focused_window() == ws.active_window_id);
+    if settled {
         return Some(Observed::Focused);
     }
     interrupted(view, before, on_it)
@@ -420,7 +421,7 @@ mod tests {
 
     use super::*;
     use crate::niri::waiter::Update;
-    use crate::niri::waiter::tests::{view, waiter, window};
+    use crate::niri::waiter::tests::{view, view_on, waiter, window, workspace};
 
     #[test]
     fn reuse_spawns_for_none_focuses_one_and_refuses_to_pick_among_several() {
@@ -455,18 +456,33 @@ mod tests {
             workspace_focused(&windows(2), 2, Some(1)),
             Some(Observed::Interrupted)
         );
-        assert_eq!(
-            workspace_focused(&windows(1), 1, None),
-            Some(Observed::Focused)
-        );
-        // Workspace 1 is focused, but focus is still on workspace 2's window.
-        assert_eq!(workspace_focused(&windows(3), 1, Some(3)), None);
-        assert_eq!(
-            workspace_focused(&windows(0), 1, Some(3)),
-            Some(Observed::Focused)
-        );
         assert_eq!(closed(&windows(1), 2), None);
         assert_eq!(closed(&windows(1), 7), Some(Observed::Closed));
+    }
+
+    #[test]
+    fn a_workspace_is_focused_once_its_active_window_has_focus() {
+        // Workspace 1 holds window 1, its active window; workspace 2 is empty.
+        let state = |focused_workspace: u64, focused_window: u64| {
+            let mut one = workspace(1, focused_workspace == 1);
+            one.active_window_id = Some(1);
+            view_on(
+                vec![one, workspace(2, focused_workspace == 2)],
+                vec![window(1, Some("a"), 1, focused_window == 1)],
+            )
+        };
+        assert_eq!(
+            workspace_focused(&state(1, 1), 1, None),
+            Some(Observed::Focused)
+        );
+        // Back on workspace 1 before niri has focused its window.
+        assert_eq!(workspace_focused(&state(1, 0), 1, None), None);
+        assert_eq!(
+            workspace_focused(&state(2, 0), 2, Some(1)),
+            Some(Observed::Focused)
+        );
+        // On workspace 2 before niri has moved focus off workspace 1's window.
+        assert_eq!(workspace_focused(&state(2, 1), 2, Some(1)), None);
     }
 
     #[test]

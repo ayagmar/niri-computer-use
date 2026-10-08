@@ -191,10 +191,12 @@ pub(crate) mod tests {
 
     /// A view of `windows` on workspaces 1 (focused) and 2.
     pub(crate) fn view(windows: Vec<Window>) -> View {
+        view_on(vec![workspace(1, true), workspace(2, false)], windows)
+    }
+
+    pub(crate) fn view_on(workspaces: Vec<Workspace>, windows: Vec<Window>) -> View {
         let mut view = View::default();
-        view.apply(Event::WorkspacesChanged {
-            workspaces: vec![workspace(1, true), workspace(2, false)],
-        });
+        view.apply(Event::WorkspacesChanged { workspaces });
         view.apply(Event::WindowsChanged { windows });
         view
     }
