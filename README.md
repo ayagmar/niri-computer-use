@@ -32,6 +32,32 @@ target/debug/niri-computer-use status
 
 Failures set `isError` and return `{"error": <name>, "detail": <upstream detail>}`. The names so far are `niri_unavailable`, `deadline_exceeded`, `upstream_error` and `noctalia_unavailable`. A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and a plain-text message instead.
 
+## Install and register
+
+Install the binary, then register it in each agent from a shell inside your niri session:
+
+```sh
+cargo install --locked --path .
+claude mcp add --scope user niri-computer-use -- ~/.cargo/bin/niri-computer-use serve
+pi mcp add niri-computer-use --exposure direct -- ~/.cargo/bin/niri-computer-use serve
+codex mcp add niri-computer-use -- ~/.cargo/bin/niri-computer-use serve
+```
+
+Claude Code and Pi pass their environment on to the server, so it finds niri. Codex passes only a short list of variables, so add this line to the `[mcp_servers.niri-computer-use]` section that `codex mcp add` writes to `~/.codex/config.toml`:
+
+```toml
+env_vars = ["NIRI_SOCKET", "XDG_RUNTIME_DIR", "WAYLAND_DISPLAY", "XDG_SESSION_ID"]
+```
+
+Without it, `status` reports `NIRI_SOCKET is not set`.
+
+The skill in [`skills/niri-computer-use`](skills/niri-computer-use/SKILL.md) tells an agent how to use the tools. Link it into the agent's skills directory, for example:
+
+```sh
+ln -s ~/projects/niri-computer-use/skills/niri-computer-use ~/.claude/skills/niri-computer-use
+ln -s ~/projects/niri-computer-use/skills/niri-computer-use ~/.agents/skills/niri-computer-use
+```
+
 ## Development
 
 See [docs/development.md](docs/development.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
