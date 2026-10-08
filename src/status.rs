@@ -7,6 +7,7 @@ use serde::Serialize;
 use crate::Env;
 use crate::audit::{Audit, AuditStatus};
 use crate::control::desk::LeaseStatus;
+use crate::control::marker::{self, Found};
 use crate::control::runtime::RuntimeDir;
 use crate::control::{self, Lock};
 use crate::error::ToolError;
@@ -25,6 +26,8 @@ pub(crate) struct Status {
     lease: LeaseStatus,
     /// Whether the stop flag is set for this niri instance.
     stop: bool,
+    /// The input-dirty marker, if there is one.
+    input_dirty: Option<Found>,
     lock: Lock,
     noctalia: Presence,
     /// Why Noctalia counts as not running, when it's installed.
@@ -82,6 +85,9 @@ pub(crate) async fn collect(
             error,
         },
         lease,
+        input_dirty: RuntimeDir::of(env)
+            .ok()
+            .and_then(|runtime| marker::read(&runtime)),
         stop: RuntimeDir::of(env).is_ok_and(|runtime| runtime.stopped().unwrap_or(true)),
         lock,
         noctalia: presence,
@@ -119,6 +125,7 @@ mod tests {
                 },
                 "lease": {"held_by_me": false, "holder": null},
                 "stop": false,
+                "input_dirty": null,
                 "lock": {
                     "state": "unknown",
                     "source": "none",

@@ -9,6 +9,7 @@ use serde::Serialize;
 use tokio::sync::{Mutex, watch};
 
 use super::lease::{self, Holder, Lease, Refused};
+use super::marker;
 use super::runtime::RuntimeDir;
 use super::stop;
 use crate::Env;
@@ -90,9 +91,10 @@ impl Desk {
             ));
         }
         if runtime.input_dirty().map_err(|error| unreadable(&error))? {
+            let marker = marker::read(runtime).map_or_else(String::new, |found| found.summary());
             return Err(ToolError::new(
                 ErrorName::RecoveryRequired,
-                "input may be stuck; the user runs `niri-computer-use recover`",
+                format!("input may be stuck ({marker}); the user runs `niri-computer-use recover`"),
             ));
         }
         let lease = Lease::acquire(runtime, label).map_err(refused)?;

@@ -195,18 +195,30 @@ fn command() -> Command {
 
 /// Runs a human-only subcommand, such as `stop`, in the fixture's environment.
 pub(crate) async fn run(fixture: &Fixture, subcommand: &str) -> std::process::Output {
+    answer(fixture, subcommand, "").await
+}
+
+/// Runs a subcommand with `input` as the human's answers on stdin.
+pub(crate) async fn answer(
+    fixture: &Fixture,
+    subcommand: &str,
+    input: &str,
+) -> std::process::Output {
     let spawning = SPAWNING.lock().unwrap_or_else(PoisonError::into_inner);
-    let child = command()
+    let mut child = command()
         .arg(subcommand)
         .env_clear()
         .envs(fixture.env())
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .unwrap();
     drop(spawning);
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(input.as_bytes()).await.unwrap();
+    drop(stdin);
     tokio::time::timeout(WAIT, child.wait_with_output())
         .await
         .unwrap()

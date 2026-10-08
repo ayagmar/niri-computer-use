@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use crate::Env;
 
 const STOP: &str = "stop";
-const INPUT_DIRTY: &str = "input-dirty";
+pub(crate) const INPUT_DIRTY: &str = "input-dirty";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RuntimeDir {

@@ -24,7 +24,7 @@ use rmcp::ServiceExt as _;
 
 use crate::control::runtime::RuntimeDir;
 
-const USAGE: &str = "usage: niri-computer-use serve | status | stop | resume";
+const USAGE: &str = "usage: niri-computer-use serve | status | stop | resume | recover";
 
 /// What the server reads from its environment, once at startup. An empty variable
 /// counts as unset.
@@ -84,6 +84,8 @@ enum Command {
     Stop,
     /// Clear the stop flag.
     Resume,
+    /// Clear the input-dirty marker after ending the input child and asking the human.
+    Recover,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -105,6 +107,7 @@ async fn main() -> ExitCode {
             })
         }),
         Some(Command::Resume) => RuntimeDir::of(&env).and_then(|runtime| runtime.resume()),
+        Some(Command::Recover) => control::recover::run(&env).await,
         None => Err(USAGE.to_owned()),
     };
     match result {
@@ -122,6 +125,7 @@ fn command(args: &[OsString]) -> Option<Command> {
         [only] if only == "status" => Some(Command::Status),
         [only] if only == "stop" => Some(Command::Stop),
         [only] if only == "resume" => Some(Command::Resume),
+        [only] if only == "recover" => Some(Command::Recover),
         _ => None,
     }
 }
@@ -175,7 +179,8 @@ mod tests {
         assert_eq!(command(&args(&["status"])), Some(Command::Status));
         assert_eq!(command(&args(&["stop"])), Some(Command::Stop));
         assert_eq!(command(&args(&["resume"])), Some(Command::Resume));
-        for bad in [&[][..], &["recover"], &["serve", "status"], &["--help"]] {
+        assert_eq!(command(&args(&["recover"])), Some(Command::Recover));
+        for bad in [&[][..], &["stop", "now"], &["serve", "status"], &["--help"]] {
             assert_eq!(command(&args(bad)), None, "{bad:?}");
         }
     }

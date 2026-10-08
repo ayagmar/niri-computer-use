@@ -278,3 +278,10 @@ These match the versions installed locally.
 - The release task reads the latest flag on every change (level-triggered), so a resume followed quickly by a stop can't be missed, and `acquire_desktop` checks both the watcher's view and the file.
 - `release_desktop` when not holding the lease succeeds with `released: false` rather than failing, so an agent whose lease the stop flag already took back isn't told it made a mistake.
 - Whether `acquire_desktop` also refuses while the screen is locked is decided with the gate in a later step; for now only the stop flag and the input-dirty marker refuse it.
+
+## 2026-10-08: the input-dirty marker and `recover`
+
+- No new crate. `/proc` is read directly: the start time (field 22 of `stat`, counted from the last `)` because the command name may contain one) pins a PID to one process, and `comm` plus the real UID find the user's `wtype` processes.
+- Only the reader of the marker exists in M2. The input tools that write it arrive in M3 and M4; until then the tests write it as a fixture. A marker that can't be parsed blocks like any other, so a malformed file can never unblock input.
+- Plan §11 step 3 has `recover` send the release of a pressed pointer button from a fresh virtual pointer. The pointer module arrives in M4, so this version asks the human to press and release the buttons the marker names instead, and the manual check already asks for a click. The automatic release is added with the pointer.
+- The plan's M2 exit lists `recover` against a live owner and with a marker naming a delayed-exit child as nested tests. Neither touches niri, so they run as protocol tests against the binary with a fixture runtime directory: the child is a `sh` that ignores SIGTERM in a process group of its own, and a marker whose start time doesn't match proves a reused PID is never killed. The `pending` path, which scans the user's real `/proc` for `wtype`, is unit-tested against a fake `/proc` only, so no test can end a real process.

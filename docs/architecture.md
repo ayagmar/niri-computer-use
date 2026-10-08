@@ -1,6 +1,6 @@
 # Architecture
 
-`niri-computer-use` is one binary. `serve` runs an MCP server over stdin and stdout, one process per agent session. `status` prints the readiness report and exits. `stop` and `resume` set and clear the stop flag.
+`niri-computer-use` is one binary. `serve` runs an MCP server over stdin and stdout, one process per agent session. `status` prints the readiness report and exits. `stop` and `resume` set and clear the stop flag, and `recover` clears the input-dirty marker.
 
 ## Modules
 
@@ -18,6 +18,9 @@
 | `control/runtime.rs` | The per-instance runtime directory and its stop flag. |
 | `control/stop.rs` | Watches the runtime directory for the stop flag. |
 | `control/lease.rs` | The lease lock and the holder record. |
+| `control/marker.rs` | Reads the input-dirty marker. |
+| `control/recover.rs` | The `recover` subcommand. |
+| `control/procs.rs` | Process state from `/proc`: start times and the user's `wtype` processes. |
 | `control/desk.rs` | Whether this server holds the lease: takes it, gives it up, and lets the stop flag take it back. |
 | `audit.rs` | The audit log. |
 | `runner.rs` | The only code that starts processes. |
@@ -77,6 +80,17 @@ One server at a time holds the lease on a niri instance. It is an exclusive, non
 `acquire_desktop` takes the lease only if the stop flag and the input-dirty marker are both absent. A runtime directory that can't be read counts as neither absent: the call fails rather than guess. A server watches its runtime directory with inotify from startup; whenever anything in it changes, it checks the stop flag again, and when the flag is set it gives the lease up. A directory that can't be read counts as stopped. If the watch can't be set up, `acquire_desktop` refuses, because a stop couldn't take the lease back.
 
 Removing the runtime directory or the `lease` file while a server holds the lease would let another server lock a new file, and would leave the holder watching a directory nobody can reach. So the watcher checks, on every event and once a second, that the directory's path still names the inode it watches; when it doesn't, the watcher reports the flag as set and ends, the holder gives the lease up, and `acquire_desktop` refuses from then on with a detail that says to restart the server. Separately, the holder checks once a second that `lease` still names the file it locked, and gives the lease up if not. The once-a-second checks exist because the kernel delays a directory's own deletion event while a file inside it is open, as the held lease is. The lease's mutex is the action mutex: later action tools hold it while they run.
+
+## The input-dirty marker and `recover`
+
+`<runtime dir>/input-dirty` says input may be stuck. It is one JSON object: the `operation`, the `phase` (`pending` before the input child starts, `running` once its PID is known), the writing server's PID, the time, the `child`'s PID and `/proc` start time, and any pointer `buttons` pressed. While the file exists, whatever it holds, `acquire_desktop` refuses with `recovery_required`, `resume` refuses, and `status` reports it as `input_dirty`; a file that can't be read or parsed blocks the same way. No tool writes it yet; the input tools will, before they send any input.
+
+`niri-computer-use recover` is the only way to clear it, and only a human runs it:
+
+1. It takes the lease, so no server can act meanwhile. If a server holds the lease, it refuses and names that server.
+2. With a `child` in the marker, it checks that the PID still has the recorded start time, so a reused PID is never touched, then kills the child's process group and waits up to five seconds for it to exit. Without one, it lists the user's running `wtype` processes and ends them only if the human types `yes`.
+3. If the marker names pointer buttons, it asks the human to press and release each one, because this version has no virtual pointer to release them.
+4. It prints the manual check (press and release Shift, Ctrl, Alt and Super, click once, check the application) and clears the marker only after the human types `yes`. Anything else, including end of input or a child that didn't exit, leaves the marker in place.
 
 ## Version rule
 

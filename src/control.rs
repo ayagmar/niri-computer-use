@@ -1,13 +1,16 @@
 //! The control plane: the per-instance runtime directory with its stop flag, the lease
-//! and its watcher, and the lock state, for `status` now and for the action tools' lock gate later. The lock
-//! state's sources are logind's `LockedHint` for `XDG_SESSION_ID`, then Noctalia's
-//! `locked`, and locked wins.
+//! and its watcher, the input-dirty marker and `recover`, and the lock state, for `status`
+//! now and for the action tools' lock gate later. The lock state's sources are logind's
+//! `LockedHint` for `XDG_SESSION_ID`, then Noctalia's `locked`, and locked wins.
 //!
 //! niri sets logind's locked hint on lock and unlock when it runs as the session instance
 //! (`src/niri.rs` at v26.04), whichever `ext_session_lock` client locks the screen.
 
 pub(crate) mod desk;
 pub(crate) mod lease;
+pub(crate) mod marker;
+mod procs;
+pub(crate) mod recover;
 pub(crate) mod runtime;
 pub(crate) mod stop;
 

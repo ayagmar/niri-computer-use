@@ -19,7 +19,7 @@ cargo build --locked -p niri-computer-use
 target/debug/niri-computer-use status
 ```
 
-`niri-computer-use stop` sets a stop flag for the niri instance in `NIRI_SOCKET`, and `niri-computer-use resume` clears it; `status` reports it as `stop`.
+`niri-computer-use stop` sets a stop flag for the niri instance in `NIRI_SOCKET`, and `niri-computer-use resume` clears it; `status` reports it as `stop`. `niri-computer-use recover` clears the input-dirty marker, which says input may be stuck: it ends the input child the marker names, asks you to check that no key or button is held, and clears the marker only after you type `yes`.
 
 `niri-computer-use serve` speaks MCP over stdin and stdout. It reads `NIRI_SOCKET` from its environment to find niri. Every tool call is logged, without contents, to `$XDG_STATE_HOME/niri-computer-use/audit.jsonl` (by default `~/.local/state/niri-computer-use/audit.jsonl`).
 

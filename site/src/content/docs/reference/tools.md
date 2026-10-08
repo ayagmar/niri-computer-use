@@ -17,7 +17,7 @@ A failure sets `isError` and returns `{"error": <name>, "detail": <upstream deta
 | `noctalia_unavailable` | Noctalia is installed but didn't answer on its socket within two seconds |
 | `lease_held` | another agent's server holds the lease; `detail` names its PID, label and since when |
 | `stopped` | the stop flag is set; the user clears it with `niri-computer-use resume` |
-| `recovery_required` | input may be stuck; the user runs `niri-computer-use recover` |
+| `recovery_required` | input may be stuck; `detail` names the marker's operation and phase, and the user runs `niri-computer-use recover` |
 
 A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and one plain-text block starting `invalid arguments:`, without `structuredContent`, so the model can correct the call.
 
@@ -35,6 +35,7 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `niri.error` | why niri's version couldn't be read, or null |
 | `lease.held_by_me` | whether this server holds the lease |
 | `lease.holder` | the holder's `pid`, `label` (client name and server PID, such as `claude-code/4711`) and `since`, or null |
+| `input_dirty` | the input-dirty marker, or null: its `operation`, `phase` (`pending` or `running`), `server_pid`, `since`, and the input `child` once known; `{"error": …}` if the marker can't be read |
 | `stop` | whether the stop flag is set for this niri instance (`niri-computer-use stop`, cleared by `niri-computer-use resume`) |
 | `lock.state` | `locked`, `unlocked` or `unknown` |
 | `lock.source` | `logind`, `noctalia` or `none`: the screen counts as locked when logind's `LockedHint` or Noctalia's `locked` says so |

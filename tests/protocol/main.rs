@@ -29,6 +29,8 @@ mod lease;
 #[cfg(test)]
 mod lifecycle;
 #[cfg(test)]
+mod recover;
+#[cfg(test)]
 mod screenshot;
 #[cfg(test)]
 mod shell;
