@@ -217,3 +217,15 @@ These match the versions installed locally.
 - `shell_status` is removed from the tool router at startup when `noctalia` isn't on `PATH` (plan §6.1), using rmcp's `ToolRouter::remove_route`. An installed Noctalia that isn't answering gives `noctalia_unavailable`, a new name in the stable list, as plan §6.2 defines it.
 - `status` reports Noctalia's failure detail as `noctalia_error` and logind's as `lock.logind_error`. Plan §6's shape allows added fields. niri's version and Noctalia's status are read concurrently, and the lock read follows because it may need Noctalia's reply, so `status` waits at most two deadlines, not three.
 - `XDG_SESSION_ID` is passed to `loginctl` as an argument, so a value that isn't plain letters and digits is refused instead of risking it being read as an option.
+
+## 2026-10-08: the audit log
+
+| Crate | Version | Published | Why |
+|---|---|---|---|
+| `chrono` | 0.4.45 | 2026-06-04 | RFC 3339 timestamps with milliseconds in UTC. rmcp already depends on this version with the `now` feature, which is the only one the server enables, so no package was added to `Cargo.lock`. |
+
+- One line per call, opened in append mode and written with one `write_all`, so servers sharing the file don't interleave inside a line. The directory is created with mode `0700` and the file with `0600` (plan §12).
+- The session label is the MCP client's `clientInfo.name` and the server's PID, as plan §10 defines it; `unknown` when the client sent no initialization.
+- The outcome comes only from the result's error name, never from its content, so a result holding clipboard text or an image can't leak into the log. Outcomes beyond plan §6.2's names are `invalid_arguments` and `cancelled`.
+- A failed write doesn't fail the tool call, because the read-only tools have nothing to protect; `status` shows the last failure. The action tools may need a stricter rule.
+- rmcp rejects arguments that don't fit a tool's schema before the tool runs, so those calls aren't logged.

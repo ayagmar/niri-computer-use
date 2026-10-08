@@ -79,6 +79,7 @@ panic = "unwind"
 
 [dependencies]
 base64 = "0.23.1"
+chrono = { version = "0.4.45", default-features = false, features = ["now"] }
 niri-ipc = "=26.4.0"
 rmcp = { version = "3.5.0", features = ["transport-io"] }
 rustix = { version = "1.1.5", features = ["process"] }

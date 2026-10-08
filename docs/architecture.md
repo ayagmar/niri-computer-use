@@ -15,6 +15,7 @@
 | `clipboard.rs` | Reads the clipboard's text with `wl-paste`. |
 | `noctalia.rs` | The only code that talks to Noctalia: its `status` over the IPC socket. |
 | `control.rs` | The lock state: logind's `LockedHint`, then Noctalia. |
+| `audit.rs` | The audit log. |
 | `runner.rs` | The only code that starts processes. |
 | `image_header.rs` | Reads a PNG's or JPEG's size from its header. The harness includes the same file. |
 | `error.rs` | Tool failures with their stable names. |
@@ -37,9 +38,11 @@ On connect, niri sends its current state as a burst of events: workspaces, windo
 - The `status` subcommand keeps no stream open, so it reports `event_stream` as null.
 - The task stops, closing its connection, once the server drops its last handle on the stream.
 
-## Cancellation
+## Cancellation and the audit log
 
-rmcp marks a request as cancelled when the client cancels it, but it keeps running the tool. Each tool therefore races its work against the request's cancellation and drops the work when cancellation wins. Dropping a niri request closes its connection; dropping a `desktop_state` call only stops that call's wait, and the shared event stream keeps running.
+rmcp marks a request as cancelled when the client cancels it, but it keeps running the tool. Each tool therefore runs its work through one helper that races it against the request's cancellation and drops the work when cancellation wins. Dropping a niri request closes its connection; dropping a `desktop_state` call only stops that call's wait, and the shared event stream keeps running.
+
+The same helper writes one JSON line per call to `$XDG_STATE_HOME/niri-desktop-mcp/audit.jsonl`, or `~/.local/state/niri-desktop-mcp/audit.jsonl`, creating the directory with mode `0700` and the file with mode `0600`. Each line has the start time, the session (the MCP client's name and the server's PID), the niri instance, the tool, its argument metadata, the outcome and the duration. The outcome is read only from the result's error name: a stable name, `invalid_arguments`, `cancelled`, or null on success. Screenshot arguments are logged because they hold only targets, sizes and formats; no line ever holds an image, the clipboard's text or a window title. `accepted` and `observed` are null until action tools exist. A failed write doesn't fail the call; `status` reports the last one. Calls whose arguments rmcp rejects before the tool runs are not logged.
 
 ## Subprocesses
 

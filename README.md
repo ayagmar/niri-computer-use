@@ -19,7 +19,7 @@ cargo build --locked -p niri-desktop-mcp
 target/debug/niri-desktop-mcp status
 ```
 
-`niri-desktop-mcp serve` speaks MCP over stdin and stdout. It reads `NIRI_SOCKET` from its environment to find niri.
+`niri-desktop-mcp serve` speaks MCP over stdin and stdout. It reads `NIRI_SOCKET` from its environment to find niri. Every tool call is logged, without contents, to `$XDG_STATE_HOME/niri-desktop-mcp/audit.jsonl` (by default `~/.local/state/niri-desktop-mcp/audit.jsonl`).
 
 | Tool | What it returns |
 |---|---|

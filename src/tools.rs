@@ -6,9 +6,11 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock};
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler, schemars, tool, tool_handler, tool_router};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-use crate::error::CallError;
+use crate::audit::{Audit, Call, Caller};
+use crate::error::{CANCELLED, CallError, ToolError};
 use crate::niri::events::{EventStream, StreamState};
 use crate::observe::{Format, Rect, Target};
 use crate::{Env, clipboard, niri, noctalia, observe, status};
@@ -16,7 +18,7 @@ use crate::{Env, clipboard, niri, noctalia, observe, status};
 /// The default `max_width` (plan §4). Provisional until M1's image delivery check.
 const DEFAULT_MAX_WIDTH: u32 = 1280;
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct ScreenshotArgs {
     /// `focused_output`, `output:<name>` with a name from `outputs`, or `region`.
@@ -32,7 +34,7 @@ struct ScreenshotArgs {
     format: Option<FormatArg>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct RegionArgs {
     x: i32,
@@ -41,7 +43,7 @@ struct RegionArgs {
     height: u32,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 #[serde(rename_all = "lowercase")]
 enum FormatArg {
@@ -73,6 +75,7 @@ pub(crate) struct Server {
     env: Env,
     /// None without `NIRI_SOCKET`.
     events: Option<EventStream>,
+    audit: Audit,
     tool_router: ToolRouter<Self>,
 }
 
@@ -80,7 +83,7 @@ pub(crate) struct Server {
 impl Server {
     /// `shell_status` exists only when `noctalia` is on `PATH`, so the tool list stays
     /// fixed for the session.
-    pub(crate) fn new(env: Env, events: Option<EventStream>) -> Self {
+    pub(crate) fn new(env: Env, events: Option<EventStream>, audit: Audit) -> Self {
         let mut tool_router = Self::tool_router();
         if !env.finds("noctalia") {
             tool_router.remove_route("shell_status");
@@ -88,13 +91,15 @@ impl Server {
         Self {
             env,
             events,
+            audit,
             tool_router,
         }
     }
 
     /// Readiness report: the niri instance, niri's version and whether this server
     /// supports it, whether niri's event stream is connected, the lock state, whether
-    /// Noctalia is running, and which required programs are on PATH. Call this first.
+    /// Noctalia is running, the audit log, and which required programs are on PATH. Call
+    /// this first.
     #[tool(annotations(read_only_hint = true))]
     async fn status(
         &self,
@@ -104,12 +109,11 @@ impl Server {
             .events
             .as_ref()
             .map_or(StreamState::Disconnected, EventStream::state);
-        let report = unless_cancelled(
-            context.ct.cancelled(),
-            status::collect(&self.env, Some(stream)),
-        )
-        .await?;
-        structured(&report)
+        let report = status::collect(&self.env, Some(stream), &self.audit);
+        self.audited(&context, "status", Value::Null, async {
+            structured(&report.await)
+        })
+        .await
     }
 
     /// niri's outputs (monitors) by connector name: modes, logical position and size,
@@ -120,10 +124,10 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let outputs = niri::outputs(self.env.niri_socket.as_deref());
-        match unless_cancelled(context.ct.cancelled(), outputs).await? {
-            Ok(outputs) => structured(&outputs),
-            Err(error) => Ok(error.into_result()),
-        }
+        self.audited(&context, "outputs", Value::Null, async {
+            answer(outputs.await)
+        })
+        .await
     }
 
     /// The desktop right now, as one snapshot of niri's event stream: windows (id,
@@ -137,10 +141,10 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let desktop = niri::desktop(self.events.as_ref());
-        match unless_cancelled(context.ct.cancelled(), desktop).await? {
-            Ok(desktop) => structured(&desktop),
-            Err(error) => Ok(error.into_result()),
-        }
+        self.audited(&context, "desktop_state", Value::Null, async {
+            answer(desktop.await)
+        })
+        .await
     }
 
     /// A screenshot of one output or of a region inside one output, as an image plus
@@ -153,23 +157,21 @@ impl Server {
         Parameters(args): Parameters<ScreenshotArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let request = match args.request() {
-            Ok(request) => request,
-            Err(message) => return Ok(invalid(&message)),
-        };
-        let shot = observe::screenshot(self.env.niri_socket.as_deref(), &request);
-        match unless_cancelled(context.ct.cancelled(), shot).await? {
-            Ok(shot) => {
-                let image = base64::engine::general_purpose::STANDARD.encode(&shot.image);
-                let mut result = structured(&shot.metadata)?;
-                result
-                    .content
-                    .insert(0, ContentBlock::image(image, shot.metadata.mime_type));
-                Ok(result)
+        // Targets, sizes and formats only: nothing in these arguments is content.
+        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        let socket = self.env.niri_socket.as_deref();
+        self.audited(&context, "screenshot", logged, async {
+            let request = match args.request() {
+                Ok(request) => request,
+                Err(message) => return Ok(invalid(&message)),
+            };
+            match observe::screenshot(socket, &request).await {
+                Ok(shot) => image(&shot),
+                Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
+                Err(CallError::Tool(error)) => Ok(error.into_result()),
             }
-            Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
-            Err(CallError::Tool(error)) => Ok(error.into_result()),
-        }
+        })
+        .await
     }
 
     /// Noctalia's status: whether its bar is visible, which panel is open, and whether
@@ -179,10 +181,11 @@ impl Server {
         &self,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        match unless_cancelled(context.ct.cancelled(), noctalia::status(&self.env)).await? {
-            Ok(status) => structured(&status),
-            Err(error) => Ok(error.into_result()),
-        }
+        let status = noctalia::status(&self.env);
+        self.audited(&context, "shell_status", Value::Null, async {
+            answer(status.await)
+        })
+        .await
     }
 
     /// The clipboard's text, read with `wl-paste`. `text` is null, with a `reason`, when
@@ -192,11 +195,59 @@ impl Server {
         &self,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        match unless_cancelled(context.ct.cancelled(), clipboard::read_text()).await? {
-            Ok(clipboard) => structured(&clipboard),
-            Err(error) => Ok(error.into_result()),
-        }
+        self.audited(&context, "clipboard_read", Value::Null, async {
+            answer(clipboard::read_text().await)
+        })
+        .await
     }
+}
+
+impl Server {
+    /// Runs one tool's work until it finishes or the client cancels the request, then
+    /// writes the call to the audit log. rmcp only cancels the request's token and keeps
+    /// running the handler, so cancelling drops `work`, and with it any connection, wait or
+    /// child process it holds.
+    async fn audited(
+        &self,
+        context: &RequestContext<RoleServer>,
+        tool: &str,
+        args: Value,
+        work: impl Future<Output = Result<CallToolResult, ErrorData>>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = Call::start(tool);
+        let result = unless_cancelled(context.ct.cancelled(), work)
+            .await
+            .and_then(|result| result);
+        let client = context.peer.peer_info().map_or_else(
+            || "unknown".to_owned(),
+            |info| info.client_info.name.clone(),
+        );
+        let session = format!("{client}/{}", std::process::id());
+        let instance = self.env.instance();
+        let caller = Caller {
+            session: &session,
+            instance: instance.as_deref(),
+        };
+        self.audit.finish(&call, caller, &args, &result);
+        result
+    }
+}
+
+fn answer(result: Result<impl Serialize, ToolError>) -> Result<CallToolResult, ErrorData> {
+    match result {
+        Ok(value) => structured(&value),
+        Err(error) => Ok(error.into_result()),
+    }
+}
+
+/// The image first, then the metadata as structured content and its text.
+fn image(shot: &observe::Screenshot) -> Result<CallToolResult, ErrorData> {
+    let data = base64::engine::general_purpose::STANDARD.encode(&shot.image);
+    let mut result = structured(&shot.metadata)?;
+    result
+        .content
+        .insert(0, ContentBlock::image(data, shot.metadata.mime_type));
+    Ok(result)
 }
 
 /// Arguments that don't fit the desktop. rmcp reports arguments that don't fit the schema
@@ -227,12 +278,12 @@ async fn unless_cancelled<T>(
     work: impl Future<Output = T>,
 ) -> Result<T, ErrorData> {
     tokio::select! {
-        () = cancelled => Err(ErrorData::internal_error("the client cancelled the request", None)),
+        () = cancelled => Err(ErrorData::internal_error(CANCELLED, None)),
         done = work => Ok(done),
     }
 }
 
-fn structured(value: &impl serde::Serialize) -> Result<CallToolResult, ErrorData> {
+fn structured(value: &impl Serialize) -> Result<CallToolResult, ErrorData> {
     let value = serde_json::to_value(value)
         .map_err(|error| ErrorData::internal_error(error.to_string(), None))?;
     Ok(CallToolResult::structured(value))
@@ -349,11 +400,11 @@ mod tests {
             ..Env::default()
         };
         assert!(
-            Server::new(installed, None)
+            Server::new(installed, None, Audit::new(None))
                 .tool_router
                 .has_route("shell_status")
         );
-        let absent = Server::new(Env::default(), None);
+        let absent = Server::new(Env::default(), None, Audit::new(None));
         assert!(!absent.tool_router.has_route("shell_status"));
         assert!(absent.tool_router.has_route("status"));
         std::fs::remove_dir_all(dir).unwrap();
@@ -361,7 +412,7 @@ mod tests {
 
     #[test]
     fn the_server_names_itself_and_gives_instructions() {
-        let server = Server::new(Env::default(), None);
+        let server = Server::new(Env::default(), None, Audit::new(None));
         let info = server.get_info();
         assert_eq!(info.server_info.name, "niri-desktop-mcp");
         assert!(

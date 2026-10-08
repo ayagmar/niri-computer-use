@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 
 use crate::Env;
+use crate::audit::{Audit, AuditStatus};
 use crate::control::{self, Lock};
 use crate::error::ToolError;
 use crate::niri::events::StreamState;
@@ -23,6 +24,7 @@ pub(crate) struct Status {
     noctalia: Presence,
     /// Why Noctalia counts as not running, when it's installed.
     noctalia_error: Option<ToolError>,
+    audit: AuditStatus,
     binaries: BTreeMap<&'static str, bool>,
 }
 
@@ -36,7 +38,7 @@ struct Niri {
     error: Option<ToolError>,
 }
 
-pub(crate) async fn collect(env: &Env, event_stream: Option<StreamState>) -> Status {
+pub(crate) async fn collect(env: &Env, event_stream: Option<StreamState>, audit: &Audit) -> Status {
     let socket = env.niri_socket.as_deref();
     let installed = env.finds("noctalia");
     let (version, noctalia) = tokio::join!(niri::version(socket), async {
@@ -69,6 +71,7 @@ pub(crate) async fn collect(env: &Env, event_stream: Option<StreamState>) -> Sta
         lock,
         noctalia: presence,
         noctalia_error,
+        audit: audit.status(),
         binaries: BINARIES
             .into_iter()
             .map(|name| (name, env.finds(name)))
@@ -82,7 +85,8 @@ mod tests {
 
     #[tokio::test]
     async fn reports_what_it_can_without_failing() {
-        let status = serde_json::to_value(collect(&Env::default(), None).await).unwrap();
+        let status =
+            serde_json::to_value(collect(&Env::default(), None, &Audit::new(None)).await).unwrap();
         assert_eq!(
             status,
             serde_json::json!({
@@ -101,6 +105,7 @@ mod tests {
                 },
                 "noctalia": "not_installed",
                 "noctalia_error": null,
+                "audit": {"path": null, "last_error": "neither XDG_STATE_HOME nor HOME is set"},
                 "binaries": {
                     "grim": false, "loginctl": false, "wl-copy": false, "wl-paste": false, "wtype": false
                 }

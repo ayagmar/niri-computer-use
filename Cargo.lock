@@ -351,6 +351,7 @@ name = "niri-desktop-mcp"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "chrono",
  "niri-ipc",
  "rmcp",
  "rustix",

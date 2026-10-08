@@ -1,5 +1,6 @@
 //! niri-desktop-mcp: an MCP server that lets AI agents observe a niri desktop.
 
+mod audit;
 mod cli;
 mod clipboard;
 mod control;
@@ -34,6 +35,8 @@ pub(crate) struct Env {
     pub(crate) wayland_display: Option<OsString>,
     /// The logind session, for the lock state.
     pub(crate) session_id: Option<String>,
+    /// `$XDG_STATE_HOME`, or `$HOME/.local/state`, for the audit log.
+    pub(crate) state_dir: Option<PathBuf>,
 }
 
 impl Env {
@@ -45,6 +48,9 @@ impl Env {
             runtime_dir: var("XDG_RUNTIME_DIR").map(PathBuf::from),
             wayland_display: var("WAYLAND_DISPLAY"),
             session_id: var("XDG_SESSION_ID").map(|id| id.to_string_lossy().into_owned()),
+            state_dir: var("XDG_STATE_HOME")
+                .map(PathBuf::from)
+                .or_else(|| var("HOME").map(|home| PathBuf::from(home).join(".local/state"))),
         }
     }
 
@@ -80,8 +86,11 @@ async fn main() -> ExitCode {
     let env = Env::read();
     let result = match command(&args) {
         Some(Command::Serve) => serve(env).await,
-        Some(Command::Status) => cli::print_json(&status::collect(&env, None).await)
-            .map_err(|error| format!("print status: {error}")),
+        Some(Command::Status) => {
+            let audit = audit::Audit::new(env.state_dir.clone());
+            cli::print_json(&status::collect(&env, None, &audit).await)
+                .map_err(|error| format!("print status: {error}"))
+        }
         None => Err(USAGE.to_owned()),
     };
     match result {
@@ -106,7 +115,8 @@ async fn serve(env: Env) -> Result<(), String> {
         .niri_socket
         .clone()
         .map(niri::events::EventStream::spawn);
-    let service = tools::Server::new(env, events)
+    let audit = audit::Audit::new(env.state_dir.clone());
+    let service = tools::Server::new(env, events, audit)
         .serve(rmcp::transport::stdio())
         .await
         .map_err(|error| format!("start MCP session: {error}"))?;

@@ -3,6 +3,9 @@
 use rmcp::model::CallToolResult;
 use serde::Serialize;
 
+/// The message of the internal error a cancelled call ends with. rmcp drops the response.
+pub(crate) const CANCELLED: &str = "the client cancelled the request";
+
 /// The error names this server returns so far. The names are a stable contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
