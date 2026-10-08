@@ -4,7 +4,7 @@
 
 An MCP server for AI agents to observe and drive a [niri](https://github.com/niri-wm/niri) Wayland desktop. Noctalia is optional.
 
-**Status: early development.** No MCP tools yet. The current work is research and a nested test harness.
+**Status: M0 (research) is done.** It produced a test harness that runs a nested niri, and optionally Noctalia, in a window on your desktop, a virtual pointer probe, a Noctalia IPC probe, and the results in [docs/results/m0.md](docs/results/m0.md). No MCP tools exist yet.
 
 ## Requirements
 
