@@ -3,14 +3,17 @@
 pub(crate) mod events;
 mod request;
 pub(crate) mod version;
+pub(crate) mod waiter;
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use niri_ipc::{Output, Request, Response};
+use niri_ipc::{Action, Output, Request, Response};
 
 use crate::error::{ErrorName, ToolError};
 use events::{DesktopState, EventStream};
+pub(crate) use request::Unanswered;
+use waiter::Waiter;
 
 /// niri's version string, such as `26.04 (8ed0da4)`.
 pub(crate) async fn version(socket: Option<&Path>) -> Result<String, ToolError> {
@@ -46,6 +49,20 @@ pub(crate) async fn focused_output(socket: Option<&Path>) -> Result<Option<Outpu
 /// One snapshot of niri's replayed state. There is no stream without `NIRI_SOCKET`.
 pub(crate) async fn desktop(events: Option<&EventStream>) -> Result<DesktopState, ToolError> {
     events.ok_or_else(not_set)?.desktop().await
+}
+
+/// Registers a waiter on niri's event stream, before an action is dispatched.
+pub(crate) async fn waiter(events: Option<&EventStream>) -> Result<Waiter, ToolError> {
+    events.ok_or_else(not_set)?.waiter().await
+}
+
+/// Asks niri to carry out `action`. niri replies once it has.
+pub(crate) async fn act(socket: Option<&Path>, action: Action) -> Result<(), Unanswered> {
+    let socket = known(socket).map_err(Unanswered::Refused)?;
+    let Response::Handled = request::dispatch(socket, &Request::Action(action)).await? else {
+        return Err(Unanswered::Lost(unexpected("Action")));
+    };
+    Ok(())
 }
 
 fn known(socket: Option<&Path>) -> Result<&Path, ToolError> {

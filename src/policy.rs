@@ -113,6 +113,8 @@ pub(crate) enum Loaded {
 pub(crate) struct PolicyStatus {
     state: &'static str,
     presets: usize,
+    /// What `launch` takes.
+    preset_names: Vec<String>,
     denied_app_ids: usize,
     error: Option<String>,
 }
@@ -134,6 +136,24 @@ impl Loaded {
         }
     }
 
+    /// The preset `launch` names, or `unknown_preset`.
+    pub(crate) fn preset(&self, name: &str) -> Result<&Preset, ToolError> {
+        let presets = match self {
+            Self::Valid(policy) => policy.presets.as_slice(),
+            Self::Missing | Self::Invalid(_) => &[],
+        };
+        presets
+            .iter()
+            .find(|preset| preset.name == name)
+            .ok_or_else(|| {
+                let names: Vec<&str> = presets.iter().map(|preset| preset.name.as_str()).collect();
+                ToolError::new(
+                    ErrorName::UnknownPreset,
+                    format!("no preset named {name:?}; the policy file has {names:?}"),
+                )
+            })
+    }
+
     pub(crate) fn status(&self) -> PolicyStatus {
         let (state, policy, error) = match self {
             Self::Missing => ("missing", None, None),
@@ -143,6 +163,13 @@ impl Loaded {
         PolicyStatus {
             state,
             presets: policy.map_or(0, |policy| policy.presets.len()),
+            preset_names: policy.map_or_else(Vec::new, |policy| {
+                policy
+                    .presets
+                    .iter()
+                    .map(|preset| preset.name.clone())
+                    .collect()
+            }),
             denied_app_ids: policy.map_or(0, |policy| policy.deny_input_app_ids.len()),
             error,
         }
@@ -193,7 +220,8 @@ fn check(preset: &Preset) -> Result<(), String> {
     Ok(())
 }
 
-/// What the lease decision looks at, gathered when `acquire_desktop` is called.
+/// What the control decision looks at, gathered when `acquire_desktop` or an action tool
+/// is called.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Facts<'a> {
     /// The version rule's answer; none when niri's version couldn't be read.
@@ -205,11 +233,11 @@ pub(crate) struct Facts<'a> {
     pub(crate) lock: LockState,
 }
 
-/// Why a server may not take the lease now, checked after the stop flag and the
-/// input-dirty marker: niri unreachable, then read-only (niri's version, its event schema,
+/// Why a server may not take the lease or act now, checked after the stop flag, the
+/// input-dirty marker and, for actions, the lease: niri unreachable, then read-only (niri's version, its event schema,
 /// or the policy file), then a screen that is locked or whose lock state is unknown. Input
 /// only ever goes to a screen known to be unlocked.
-pub(crate) fn refuse_lease(facts: Facts<'_>) -> Option<ToolError> {
+pub(crate) fn refuse_control(facts: Facts<'_>) -> Option<ToolError> {
     let read_only = |reason: String| Some(ToolError::new(ErrorName::ReadOnly, reason));
     if let Some(error) = facts.niri_error {
         return Some(error.clone());
@@ -321,6 +349,7 @@ app_id = "foot"
             (status.state, status.presets, status.denied_app_ids),
             ("loaded", 2, 1)
         );
+        assert_eq!(status.preset_names, ["firefox", "terminal"]);
         let invalid = Loaded::from_read(Some((path, Ok("nonsense".to_owned())))).status();
         assert_eq!(invalid.state, "invalid");
         assert!(invalid.error.unwrap().starts_with("/c/policy.toml: "));
@@ -330,6 +359,22 @@ app_id = "foot"
             matches!(unreadable, Loaded::Invalid(error) if error.starts_with("read /c/policy.toml"))
         );
         assert_eq!(Loaded::from_read(None).status().state, "invalid");
+    }
+
+    #[test]
+    fn launch_names_a_preset_from_the_file() {
+        let loaded = Loaded::Valid(parse(EXAMPLE).unwrap());
+        assert_eq!(loaded.preset("terminal").unwrap().app_id, "foot");
+        let unknown = loaded.preset("Firefox").unwrap_err();
+        assert_eq!(unknown.name, ErrorName::UnknownPreset);
+        assert_eq!(
+            unknown.detail,
+            "no preset named \"Firefox\"; the policy file has [\"firefox\", \"terminal\"]"
+        );
+        assert_eq!(
+            Loaded::Missing.preset("firefox").unwrap_err().detail,
+            "no preset named \"firefox\"; the policy file has []"
+        );
     }
 
     #[test]
@@ -343,7 +388,7 @@ app_id = "foot"
             policy: &Loaded::Missing,
             lock: LockState::Unlocked,
         };
-        let name = |facts| refuse_lease(facts).map(|error| error.name);
+        let name = |facts| refuse_control(facts).map(|error| error.name);
         assert_eq!(name(ok), None);
         assert_eq!(
             name(Facts {

@@ -78,7 +78,7 @@ The agent calls `status`, takes a screenshot, and, if the text is small, a regio
 
 ## The stop key and the lease
 
-One agent at a time holds the lease on your desktop (`acquire_desktop`); the tools that will act on the desktop require it. Bind `niri-computer-use stop` to a key in your niri config to take it back at any moment:
+One agent at a time holds the lease on your desktop (`acquire_desktop`); the tools that act on the desktop require it. Bind `niri-computer-use stop` to a key in your niri config to cancel the running action and take the lease back at any moment:
 
 ```kdl
 binds {
@@ -89,6 +89,19 @@ binds {
 Use the path where `cargo install` put the binary. `allow-inhibiting=false` keeps the key working while an app inhibits shortcuts, and `allow-when-locked=true` on the lock screen. An agent can't press it: niri binds don't fire from virtual keyboards. `niri-computer-use resume` clears the stop; if `status` shows `input_dirty`, run `niri-computer-use recover` first, which ends any stuck input program and asks you to confirm that no key or button is held.
 
 The lease is also refused while the screen is locked, or while neither logind nor Noctalia can say that it isn't. Running niri with `niri --session`, which sets logind's lock hint, or running Noctalia gives the server that answer.
+
+## Launch presets
+
+`launch` starts only apps you list in `~/.config/niri-computer-use/policy.toml`, or `$XDG_CONFIG_HOME/niri-computer-use/policy.toml`, each with a fixed command. For example:
+
+```toml
+[[preset]]
+name = "firefox"
+argv = ["firefox"]
+app_id = "firefox"
+```
+
+The agent passes the `name`; niri starts `argv`, and the server watches for new windows with that `app_id`. A preset can't start a shell, an interpreter or another program that runs any command it is given, nor a terminal with arguments. The server reads the file when it starts, so restart the agent's session after changing it. `status` lists the names under `policy.preset_names`.
 
 ## The audit log
 

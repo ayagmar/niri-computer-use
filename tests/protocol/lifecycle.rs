@@ -43,8 +43,22 @@ async fn an_unknown_protocol_version_gets_the_newest_supported_one() {
     assert_eq!(response["result"]["protocolVersion"], "2025-11-25");
 }
 
+/// `[readOnlyHint, destructiveHint, idempotentHint]` and the required arguments of each
+/// tool, by name.
+fn expected(name: &str) -> (Value, Value) {
+    let read_only = (json!([true, null, null]), json!(null));
+    match name {
+        "acquire_desktop" | "release_desktop" => (json!([false, false, true]), json!(null)),
+        "focus_window" | "focus_workspace" => (json!([false, false, true]), json!(["id"])),
+        "close_window" => (json!([false, true, false]), json!(["id"])),
+        "launch" => (json!([false, false, false]), json!(["preset"])),
+        "screenshot" => (json!([true, null, null]), json!(["target"])),
+        _ => read_only,
+    }
+}
+
 #[tokio::test]
-async fn only_the_lease_tools_change_anything_and_only_screenshot_takes_arguments() {
+async fn the_tools_say_what_they_change_and_what_they_take() {
     let fixture = Fixture::new("tools");
     fixture.program("noctalia", "exit 0");
     let mut server = Server::start(&fixture).await;
@@ -54,7 +68,11 @@ async fn only_the_lease_tools_change_anything_and_only_screenshot_takes_argument
         [
             "acquire_desktop",
             "clipboard_read",
+            "close_window",
             "desktop_state",
+            "focus_window",
+            "focus_workspace",
+            "launch",
             "outputs",
             "release_desktop",
             "screenshot",
@@ -64,30 +82,40 @@ async fn only_the_lease_tools_change_anything_and_only_screenshot_takes_argument
     );
     for tool in &tools {
         let name = tool["name"].as_str().unwrap();
-        let lease = name.ends_with("_desktop");
-        assert_eq!(tool["annotations"]["readOnlyHint"], !lease, "{name}");
-        if lease {
-            assert_eq!(tool["annotations"]["destructiveHint"], false, "{name}");
-            assert_eq!(tool["annotations"]["idempotentHint"], true, "{name}");
-        }
+        let annotations = &tool["annotations"];
+        let hints = json!([
+            annotations["readOnlyHint"],
+            annotations["destructiveHint"],
+            annotations["idempotentHint"]
+        ]);
+        let (want_hints, required) = expected(name);
+        assert_eq!(hints, want_hints, "{name}");
+        assert_eq!(tool["inputSchema"]["required"], required, "{name}");
         assert!(!tool["description"].as_str().unwrap().is_empty(), "{name}");
         assert_eq!(tool["inputSchema"]["type"], "object", "{name}");
+        // Optional arguments are absent or a value, never typed as nullable, and advertise
+        // their real defaults.
+        let schema = tool["inputSchema"].to_string();
+        assert!(!schema.contains("\"null\""), "{schema}");
         let properties = tool["inputSchema"]["properties"]
             .as_object()
             .map_or(0, serde_json::Map::len);
-        if name == "screenshot" {
-            assert_eq!(tool["inputSchema"]["required"], json!(["target"]));
-            assert_eq!(properties, 4, "{tool}");
-            // Optional arguments are absent or a value, never typed as nullable, and
-            // advertise their real defaults.
-            let schema = tool["inputSchema"].to_string();
-            assert!(!schema.contains("\"null\""), "{schema}");
-            let fields = &tool["inputSchema"]["properties"];
-            assert_eq!(fields["max_width"]["default"], 1280);
-            assert_eq!(fields["format"]["default"], "jpeg");
-            assert_eq!(fields["region"].get("default"), None);
-        } else {
-            assert_eq!(properties, 0, "{tool}");
+        let fields = &tool["inputSchema"]["properties"];
+        match name {
+            "screenshot" => {
+                assert_eq!(properties, 4, "{tool}");
+                assert_eq!(fields["max_width"]["default"], 1280);
+                assert_eq!(fields["format"]["default"], "jpeg");
+                assert_eq!(fields["region"].get("default"), None);
+            }
+            "launch" => {
+                assert_eq!(properties, 2, "{tool}");
+                assert_eq!(fields["reuse"]["default"], false);
+            }
+            "focus_window" | "focus_workspace" | "close_window" => {
+                assert_eq!(properties, 1, "{tool}");
+            }
+            _ => assert_eq!(properties, 0, "{tool}"),
         }
     }
 }
@@ -102,7 +130,11 @@ async fn without_noctalia_on_path_there_is_no_shell_status() {
         [
             "acquire_desktop",
             "clipboard_read",
+            "close_window",
             "desktop_state",
+            "focus_window",
+            "focus_workspace",
+            "launch",
             "outputs",
             "release_desktop",
             "screenshot",

@@ -1,6 +1,7 @@
 //! The desk: whether this server controls the niri instance. It owns the lease, takes it
 //! only when neither the stop flag nor the input-dirty marker is set, and gives it up as
-//! soon as the stop flag appears.
+//! soon as the stop flag appears. It also gates every action, one at a time, and cancels
+//! the running one when the stop flag appears.
 
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -13,7 +14,7 @@ use super::marker;
 use super::runtime::RuntimeDir;
 use super::stop;
 use crate::Env;
-use crate::error::{ErrorName, ToolError};
+use crate::error::{CallError, ErrorName, ToolError};
 
 /// How often a held lease checks that its file is still the one at `lease`.
 const CHECK: Duration = Duration::from_secs(1);
@@ -105,6 +106,55 @@ impl Desk {
         if let Some(lease) = held.as_ref() {
             return Ok(lease.holder().clone());
         }
+        self.unblocked(runtime)?;
+        if let Some(refusal) = refusal {
+            return Err(refusal);
+        }
+        let lease = Lease::acquire(runtime, label).map_err(refused)?;
+        let holder = lease.holder().clone();
+        self.seat.put(&mut held, lease);
+        drop(held);
+        Ok(holder)
+    }
+
+    /// Runs one action with the action mutex held. It runs only while neither the stop flag
+    /// nor the input-dirty marker is set, this server holds the lease, and `refusal`, the
+    /// policy's answer asked once those checks pass, has none. A stop that arrives while
+    /// `work` runs cancels it; the stop watcher then takes the lease back.
+    pub(crate) async fn act<T>(
+        &self,
+        refusal: impl Future<Output = Option<ToolError>>,
+        work: impl Future<Output = Result<T, CallError>>,
+    ) -> Result<T, CallError> {
+        let runtime = self.runtime.as_ref().map_err(Clone::clone)?;
+        let held = self.seat.lease.lock().await;
+        let mut stopped = self.unblocked(runtime)?;
+        if held.is_none() {
+            return Err(ToolError::new(
+                ErrorName::LeaseRequired,
+                "this server doesn't hold the lease; call acquire_desktop first",
+            )
+            .into());
+        }
+        if let Some(refusal) = refusal.await {
+            return Err(refusal.into());
+        }
+        let done = tokio::select! {
+            biased;
+            _ = stopped.wait_for(|stopped| *stopped) => Err(ToolError::new(
+                ErrorName::Stopped,
+                "the user's stop flag cancelled this action; anything niri had already accepted may have taken effect",
+            )
+            .into()),
+            done = work => done,
+        };
+        drop(held);
+        done
+    }
+
+    /// Checks that a stop can reach this server and that neither the stop flag nor the
+    /// input-dirty marker is set. Returns the watcher's view of the flag.
+    fn unblocked(&self, runtime: &RuntimeDir) -> Result<watch::Receiver<bool>, ToolError> {
         // Without a live watcher a stop couldn't take the lease back.
         let stopped = self
             .stopped
@@ -129,14 +179,7 @@ impl Desk {
                 format!("input may be stuck ({marker}); the user runs `niri-computer-use recover`"),
             ));
         }
-        if let Some(refusal) = refusal {
-            return Err(refusal);
-        }
-        let lease = Lease::acquire(runtime, label).map_err(refused)?;
-        let holder = lease.holder().clone();
-        self.seat.put(&mut held, lease);
-        drop(held);
-        Ok(holder)
+        Ok(stopped.clone())
     }
 
     /// Gives the lease up, once any running action has ended. Returns whether this server
@@ -302,6 +345,68 @@ mod tests {
         drop(action);
         assert!(desk.release().await);
         assert!(!desk.status().held_by_me);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// An action whose work records that it ran and returns `value`.
+    async fn act(desk: &Desk, refusal: Option<ToolError>) -> Result<u8, ErrorName> {
+        desk.act(async { refusal }, async { Ok(7) })
+            .await
+            .map_err(|error| match error {
+                CallError::Tool(error) => error.name,
+                CallError::InvalidArguments(message) => panic!("{message}"),
+            })
+    }
+
+    #[tokio::test]
+    async fn an_action_needs_the_lease_and_a_clear_gate() {
+        let dir = crate::test_support::fresh_dir("desk-act");
+        let desk = Desk::start(&env(&dir));
+        let runtime = RuntimeDir::of(&env(&dir)).unwrap();
+        assert_eq!(act(&desk, None).await, Err(ErrorName::LeaseRequired));
+        desk.acquire("me/1", None).await.unwrap();
+        assert_eq!(act(&desk, None).await, Ok(7));
+        let locked = ToolError::new(ErrorName::ScreenLocked, "locked");
+        assert_eq!(act(&desk, Some(locked)).await, Err(ErrorName::ScreenLocked));
+        // The marker comes before the lease and the policy, so an agent is told to stop.
+        std::fs::write(runtime.path().join("input-dirty"), "").unwrap();
+        desk.release().await;
+        assert_eq!(act(&desk, None).await, Err(ErrorName::RecoveryRequired));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_stop_cancels_the_running_action_then_takes_the_lease_back() {
+        let dir = crate::test_support::fresh_dir("desk-act-stop");
+        let desk = Desk::start(&env(&dir));
+        let runtime = RuntimeDir::of(&env(&dir)).unwrap();
+        desk.acquire("me/1", None).await.unwrap();
+        let (started, running) = tokio::sync::oneshot::channel::<()>();
+        let (held, dropped) = tokio::sync::oneshot::channel::<()>();
+        let action = desk.act(async { None }, async move {
+            started.send(()).unwrap();
+            let _held = held;
+            std::future::pending::<Result<(), CallError>>().await
+        });
+        let stop = async {
+            running.await.unwrap();
+            runtime.stop().unwrap();
+        };
+        let (result, ()) =
+            tokio::time::timeout(Duration::from_secs(5), async { tokio::join!(action, stop) })
+                .await
+                .unwrap();
+        assert!(matches!(
+            result,
+            Err(CallError::Tool(ToolError {
+                name: ErrorName::Stopped,
+                ..
+            }))
+        ));
+        // The work was dropped, and with it its sender.
+        assert!(dropped.await.is_err());
+        assert!(released(&desk).await);
+        assert_eq!(act(&desk, None).await, Err(ErrorName::Stopped));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

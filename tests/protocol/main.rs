@@ -15,6 +15,8 @@ mod niri;
 mod noctalia;
 
 #[cfg(test)]
+mod act;
+#[cfg(test)]
 mod audit;
 #[cfg(test)]
 mod cancellation;

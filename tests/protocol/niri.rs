@@ -1,12 +1,13 @@
 //! A fake niri on the fixture's socket. Single requests are answered from a shared
 //! configuration; each event stream is handed to the test, which writes its events line by
-//! line and closes it by dropping it.
+//! line and closes it by dropping it. Actions are answered `Handled`, or held unanswered,
+//! and handed to the test, which sends the events the action would cause.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use niri_ipc::{LogicalOutput, Output, Reply, Request, Response, Transform};
+use niri_ipc::{Action, LogicalOutput, Output, Reply, Request, Response, Transform};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
@@ -22,6 +23,8 @@ struct Config {
     focused: Option<String>,
     /// Read requests but never answer them.
     silent: bool,
+    /// Read actions but never answer them.
+    hold_actions: bool,
 }
 
 #[derive(Debug)]
@@ -32,6 +35,7 @@ pub(crate) struct Niri {
     abandoned: mpsc::UnboundedReceiver<()>,
     /// One message per request the fake received but doesn't answer.
     held: mpsc::UnboundedReceiver<()>,
+    actions: mpsc::UnboundedReceiver<Action>,
 }
 
 /// An event stream the server opened. Dropping it closes the connection.
@@ -48,6 +52,7 @@ struct Channels {
     streams: mpsc::UnboundedSender<Stream>,
     abandoned: mpsc::UnboundedSender<()>,
     held: mpsc::UnboundedSender<()>,
+    actions: mpsc::UnboundedSender<Action>,
 }
 
 impl Niri {
@@ -58,15 +63,18 @@ impl Niri {
             outputs: vec![output("DP-1", Some((0, 0, 2560, 1440, 1.0)))],
             focused: Some("DP-1".to_owned()),
             silent: false,
+            hold_actions: false,
         }));
         let (streams_to, streams) = mpsc::unbounded_channel();
         let (abandoned_to, abandoned) = mpsc::unbounded_channel();
         let (held_to, held) = mpsc::unbounded_channel();
+        let (actions_to, actions) = mpsc::unbounded_channel();
         let channels = Channels {
             config: Arc::clone(&config),
             streams: streams_to,
             abandoned: abandoned_to,
             held: held_to,
+            actions: actions_to,
         };
         tokio::spawn(async move {
             while let Ok((connection, _)) = listener.accept().await {
@@ -78,7 +86,25 @@ impl Niri {
             streams,
             abandoned,
             held,
+            actions,
         }
+    }
+
+    pub(crate) fn hold_actions(&self, hold: bool) {
+        self.config.lock().unwrap().hold_actions = hold;
+    }
+
+    /// The next action the server sent, within `WAIT`.
+    pub(crate) async fn action(&mut self) -> Action {
+        tokio::time::timeout(WAIT, self.actions.recv())
+            .await
+            .expect("the server sent no action")
+            .unwrap()
+    }
+
+    /// Whether the server has sent an action the test hasn't taken yet.
+    pub(crate) fn sent_action(&mut self) -> bool {
+        self.actions.try_recv().is_ok()
     }
 
     pub(crate) fn set_outputs(&self, outputs: Vec<Output>, focused: Option<&str>) {
@@ -140,10 +166,32 @@ impl Stream {
         self.send(&json!({"OverviewOpenedOrClosed": {"is_open": false}}));
     }
 
+    /// Workspaces 1 to `count` on `DP-1`, with 1 focused.
+    pub(crate) fn workspaces(&self, count: u64) {
+        let workspaces: Vec<Value> = (1..=count)
+            .map(|id| {
+                json!({
+                    "id": id, "idx": id, "name": null, "output": "DP-1", "is_urgent": false,
+                    "is_active": id == 1, "is_focused": id == 1, "active_window_id": null
+                })
+            })
+            .collect();
+        self.send(&json!({"WorkspacesChanged": {"workspaces": workspaces}}));
+    }
+
     /// Whether the server closed this stream within `limit`.
     pub(crate) async fn closed_within(&mut self, limit: Duration) -> bool {
         tokio::time::timeout(limit, &mut self.closed).await.is_ok()
     }
+}
+
+/// A window with `app_id` on `workspace`, as niri's event stream describes it.
+pub(crate) fn window_on(id: u64, app_id: Option<&str>, workspace: u64, focused: bool) -> Value {
+    let mut window = window(id, "t");
+    window["app_id"] = json!(app_id);
+    window["workspace_id"] = json!(workspace);
+    window["is_focused"] = json!(focused);
+    window
 }
 
 /// A window as niri's event stream describes it.
@@ -198,7 +246,12 @@ async fn serve(connection: UnixStream, channels: Channels) {
     }
     let answer = {
         let config = channels.config.lock().unwrap();
-        (!config.silent).then(|| answer(&config, &request))
+        if let Request::Action(action) = &request {
+            channels.actions.send(action.clone()).ok();
+            (!config.hold_actions).then_some(Ok(Response::Handled))
+        } else {
+            (!config.silent).then(|| answer(&config, &request))
+        }
     };
     if let Some(answer) = answer {
         reply(&mut write, &answer).await;

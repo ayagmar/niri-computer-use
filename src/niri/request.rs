@@ -14,6 +14,16 @@ use crate::error::{ErrorName, ToolError};
 
 const DEADLINE: Duration = Duration::from_secs(2);
 
+/// Why a request that changes something got no answer to act on.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Unanswered {
+    /// Nothing changed: niri wasn't reached, the request wasn't sent whole, or niri
+    /// refused it.
+    Refused(ToolError),
+    /// Sent whole, but the reply was lost or unreadable: niri may have carried it out.
+    Lost(ToolError),
+}
+
 /// Sends one request on a new connection and returns niri's response, all within two
 /// seconds.
 pub(crate) async fn send(socket: &Path, request: &Request) -> Result<Response, ToolError> {
@@ -62,6 +72,50 @@ pub(crate) async fn peer_pid(socket: &Path) -> Result<u32, ToolError> {
         .ok_or_else(|| ToolError::new(ErrorName::UpstreamError, "niri's socket gave no PID"))
 }
 
+/// Sends one request that changes something, on a new connection, within two seconds,
+/// and says whether niri can have carried it out when there is no answer.
+pub(crate) async fn dispatch(socket: &Path, request: &Request) -> Result<Response, Unanswered> {
+    dispatch_within(DEADLINE, socket, request).await
+}
+
+async fn dispatch_within(
+    limit: Duration,
+    socket: &Path,
+    request: &Request,
+) -> Result<Response, Unanswered> {
+    let deadline = tokio::time::Instant::now() + limit;
+    let doing = format!("niri {request:?}");
+    let late = || {
+        ToolError::new(
+            ErrorName::DeadlineExceeded,
+            format!("{doing}: no reply within {limit:?}"),
+        )
+    };
+    let stream = tokio::time::timeout_at(deadline, UnixStream::connect(socket))
+        .await
+        .map_err(|_| Unanswered::Refused(late()))?
+        .map_err(|error| {
+            Unanswered::Refused(ToolError::new(
+                ErrorName::NiriUnavailable,
+                format!("connect to {}: {error}", socket.display()),
+            ))
+        })?;
+    let mut stream = BufReader::new(stream);
+    tokio::time::timeout_at(deadline, write(&mut stream, request))
+        .await
+        .map_err(|_| Unanswered::Refused(late()))?
+        .map_err(Unanswered::Refused)?;
+    match tokio::time::timeout_at(deadline, read(&mut stream, request)).await {
+        Err(_) => Err(Unanswered::Lost(late())),
+        Ok(Err(error)) => Err(Unanswered::Lost(error)),
+        Ok(Ok(Err(message))) => Err(Unanswered::Refused(ToolError::new(
+            ErrorName::UpstreamError,
+            format!("{doing}: niri replied: {message}"),
+        ))),
+        Ok(Ok(Ok(response))) => Ok(response),
+    }
+}
+
 async fn within(
     deadline: Duration,
     request: &Request,
@@ -83,32 +137,52 @@ async fn exchange(
     stream: impl AsyncRead + AsyncWrite + Unpin,
     request: &Request,
 ) -> Result<Response, ToolError> {
+    let mut stream = BufReader::new(stream);
+    write(&mut stream, request).await?;
+    read(&mut stream, request).await?.map_err(|message| {
+        ToolError::new(
+            ErrorName::UpstreamError,
+            format!("niri {request:?}: niri replied: {message}"),
+        )
+    })
+}
+
+async fn write(
+    stream: &mut BufReader<impl AsyncRead + AsyncWrite + Unpin>,
+    request: &Request,
+) -> Result<(), ToolError> {
     let doing = format!("niri {request:?}");
-    let broken = |error: std::io::Error| {
-        ToolError::new(ErrorName::NiriUnavailable, format!("{doing}: {error}"))
-    };
     let mut line = serde_json::to_vec(request)
         .map_err(|error| ToolError::new(ErrorName::UpstreamError, format!("{doing}: {error}")))?;
     line.push(b'\n');
-    let mut stream = BufReader::new(stream);
-    stream.get_mut().write_all(&line).await.map_err(broken)?;
+    stream
+        .get_mut()
+        .write_all(&line)
+        .await
+        .map_err(|error| ToolError::new(ErrorName::NiriUnavailable, format!("{doing}: {error}")))
+}
+
+/// niri's reply line: its response, or the message it refused the request with.
+async fn read(
+    stream: &mut BufReader<impl AsyncRead + AsyncWrite + Unpin>,
+    request: &Request,
+) -> Result<Reply, ToolError> {
+    let doing = format!("niri {request:?}");
     let mut reply = String::new();
-    if stream.read_line(&mut reply).await.map_err(broken)? == 0 {
+    let read = stream
+        .read_line(&mut reply)
+        .await
+        .map_err(|error| ToolError::new(ErrorName::NiriUnavailable, format!("{doing}: {error}")))?;
+    if read == 0 {
         return Err(ToolError::new(
             ErrorName::NiriUnavailable,
             format!("{doing}: niri closed the connection without a reply"),
         ));
     }
-    let reply: Reply = serde_json::from_str(&reply).map_err(|error| {
+    serde_json::from_str(&reply).map_err(|error| {
         ToolError::new(
             ErrorName::UpstreamError,
             format!("{doing}: unreadable reply: {error}"),
-        )
-    })?;
-    reply.map_err(|message| {
-        ToolError::new(
-            ErrorName::UpstreamError,
-            format!("{doing}: niri replied: {message}"),
         )
     })
 }
@@ -200,6 +274,92 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(received, b"\"Version\"\n");
+    }
+
+    /// A niri on a socket of its own that reads one request per connection and then
+    /// writes `reply`, or closes without a reply for `None`, or holds the connection for
+    /// `Some("")`.
+    fn niri(name: &str, reply: Option<&'static str>) -> std::path::PathBuf {
+        let dir = Path::new("/tmp").join(format!(
+            "ncu-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let socket = dir.join("niri.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        tokio::spawn(async move {
+            while let Ok((connection, _)) = listener.accept().await {
+                tokio::spawn(answer(connection, reply));
+            }
+        });
+        socket
+    }
+
+    async fn answer(connection: UnixStream, reply: Option<&'static str>) {
+        let mut connection = BufReader::new(connection);
+        let mut line = String::new();
+        connection.read_line(&mut line).await.unwrap();
+        match reply {
+            None => {}
+            Some("") => std::future::pending::<()>().await,
+            Some(reply) => connection.write_all(reply.as_bytes()).await.unwrap(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_dispatch_says_whether_niri_can_have_carried_it_out() {
+        let focus = Request::Action(niri_ipc::Action::FocusWindow { id: 3 });
+        let limit = Duration::from_millis(200);
+        let handled = niri("handled", Some("{\"Ok\":\"Handled\"}\n"));
+        assert!(matches!(
+            dispatch_within(limit, &handled, &focus).await,
+            Ok(Response::Handled)
+        ));
+        let refused = niri("refused", Some("{\"Err\":\"no\"}\n"));
+        let Err(Unanswered::Refused(error)) = dispatch_within(limit, &refused, &focus).await else {
+            panic!("niri's refusal isn't Refused");
+        };
+        assert_eq!(error.name, ErrorName::UpstreamError);
+        assert!(error.detail.ends_with("niri replied: no"), "{error:?}");
+        let missing = handled.with_file_name("missing.sock");
+        assert!(matches!(
+            dispatch_within(limit, &missing, &focus).await,
+            Err(Unanswered::Refused(ToolError {
+                name: ErrorName::NiriUnavailable,
+                ..
+            }))
+        ));
+        let closed = niri("closed", None);
+        assert!(matches!(
+            dispatch_within(limit, &closed, &focus).await,
+            Err(Unanswered::Lost(ToolError {
+                name: ErrorName::NiriUnavailable,
+                ..
+            }))
+        ));
+        let silent = niri("silent", Some(""));
+        assert!(matches!(
+            dispatch_within(limit, &silent, &focus).await,
+            Err(Unanswered::Lost(ToolError {
+                name: ErrorName::DeadlineExceeded,
+                ..
+            }))
+        ));
+        let garbled = niri("garbled", Some("not json\n"));
+        assert!(matches!(
+            dispatch_within(limit, &garbled, &focus).await,
+            Err(Unanswered::Lost(ToolError {
+                name: ErrorName::UpstreamError,
+                ..
+            }))
+        ));
+        for socket in [handled, refused, closed, silent, garbled] {
+            std::fs::remove_dir_all(socket.parent().unwrap()).unwrap();
+        }
     }
 
     #[tokio::test]

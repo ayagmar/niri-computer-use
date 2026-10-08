@@ -3,7 +3,7 @@ title: Tools reference
 description: Every tool niri-computer-use offers, with its arguments, results and errors.
 ---
 
-All tools except `acquire_desktop` and `release_desktop` are read-only and carry the `readOnlyHint` annotation. The two lease tools change only the lease, never the desktop. Each successful result has the data as `structuredContent` and the same JSON as text.
+The perception tools are read-only and carry the `readOnlyHint` annotation. The two lease tools change only the lease, never the desktop. The four action tools change the desktop through niri's IPC and need the lease; `close_window` carries `destructiveHint`. Each successful result has the data as `structuredContent` and the same JSON as text.
 
 ## Errors
 
@@ -16,10 +16,12 @@ A failure sets `isError` and returns `{"error": <name>, "detail": <upstream deta
 | `upstream_error` | niri, a program or Noctalia answered with an error, or with something unreadable; `detail` keeps its message, exit status and stderr |
 | `noctalia_unavailable` | Noctalia is installed but didn't answer on its socket within two seconds |
 | `lease_held` | another agent's server holds the lease; `detail` names its PID, label and since when |
-| `stopped` | the stop flag is set; the user clears it with `niri-computer-use resume` |
+| `lease_required` | an action tool was called without holding the lease |
+| `stopped` | the stop flag is set, or was set while an action ran and cancelled it; the user clears it with `niri-computer-use resume` |
 | `read_only` | this build doesn't support the running niri, niri sent events it can't parse, or the policy file is invalid |
 | `screen_locked` | the screen is locked, or neither logind nor Noctalia can say whether it is |
 | `recovery_required` | input may be stuck; `detail` names the marker's operation and phase, and the user runs `niri-computer-use recover` |
+| `unknown_preset` | `launch` named a preset the policy file doesn't have; `detail` lists the names it has |
 
 A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and one plain-text block starting `invalid arguments:`, without `structuredContent`, so the model can correct the call.
 
@@ -47,6 +49,7 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `noctalia_error` | why Noctalia counts as not running, or null |
 | `policy.state` | `loaded`, `missing` (valid: no presets, no denied apps) or `invalid` |
 | `policy.presets`, `policy.denied_app_ids`, `policy.error` | how many presets and denied apps the policy file has, and why it is invalid |
+| `policy.preset_names` | the preset names `launch` takes |
 | `audit.path`, `audit.last_error` | the audit log and the last failure to write it |
 | `binaries` | whether `grim`, `wl-paste`, `wl-copy`, `wtype` and `loginctl` are on `PATH` |
 
@@ -100,10 +103,66 @@ No arguments. Listed only when `noctalia` is on `PATH`. Noctalia's own status re
 
 ## `acquire_desktop`
 
-No arguments. Takes the lease on this niri instance and returns `{"holder": {"pid", "label", "since"}}`. One server holds it at a time; the action tools of later versions require it. Calling it again while holding the lease returns the same holder.
+No arguments. Takes the lease on this niri instance and returns `{"holder": {"pid", "label", "since"}}`. One server holds it at a time; the action tools require it. Calling it again while holding the lease returns the same holder.
 
 Refused with `lease_held` while another server holds it, `stopped` while the stop flag is set, `recovery_required` while the input-dirty marker exists, the niri error when niri's version can't be read, `read_only` when this build doesn't support the running niri, niri sent events it can't parse, or the policy file is invalid, and `screen_locked` while the screen is locked or its lock state is unknown. If the runtime directory can't be read, it fails with `upstream_error` rather than assume neither flag is set.
 
 ## `release_desktop`
 
 No arguments. Gives the lease up and returns `{"released": true}`, or `{"released": false}` if this server didn't hold it. The lease is also given up when the stop flag appears and when the server exits.
+
+## Action tools
+
+`focus_window`, `focus_workspace`, `launch` and `close_window` act on the desktop through niri's IPC. Before each action the server checks, in this order, the stop flag (`stopped`), the input-dirty marker (`recovery_required`), the lease (`lease_required`), then niri's version, the policy file and the lock state, as `acquire_desktop` does. One action runs at a time; a call made meanwhile waits for it. A stop during an action cancels it with `stopped`, and anything niri had already accepted may have taken effect.
+
+An unknown window or workspace id is an argument mistake, and nothing is sent. Otherwise the result has these fields:
+
+| Field | Value |
+|---|---|
+| `accepted` | true once niri acknowledged the request; false when nothing was sent; null when the request was sent but niri's reply was lost |
+| `observed` | what niri's event stream showed afterwards; the values are listed under each tool |
+| `focused_window` | the window with keyboard focus when the observation ended, or null when focus isn't on a window or the reply was lost |
+| `windows` | the windows the outcome is about, when there are any |
+| `detail` | why the outcome is `uncertain` |
+
+Every action waits up to five seconds for its effect. Two outcomes can end any of them:
+
+- `interrupted`: focus moved to a window that was neither focused before nor the expected target, so someone else is using the desktop. `focused_window` says where focus went.
+- `uncertain`: niri's reply or event stream was lost, so the action may or may not have happened. `accepted` is null when the reply was lost.
+
+None of these outcomes is an error, and the server never retries an action.
+
+## `focus_window`
+
+| Argument | Value |
+|---|---|
+| `id` (required) | a window id from `desktop_state` |
+
+`observed` is `focused` once the window has keyboard focus, or `timeout`. Idempotent: focusing the focused window is seen at once.
+
+## `focus_workspace`
+
+| Argument | Value |
+|---|---|
+| `id` (required) | a workspace id from `desktop_state`, not its index |
+
+`observed` is `focused` once the workspace has focus, on whichever output it is, or `timeout`. Focus moving to one of the workspace's own windows is expected, not an interruption.
+
+## `launch`
+
+| Argument | Value |
+|---|---|
+| `preset` (required) | a preset name from the policy file, listed in `status` as `policy.preset_names` |
+| `reuse` | default false; with true, focus the preset's existing window instead of starting another |
+
+niri starts the preset's fixed `argv`; the app keeps running after the server exits. `observed` counts the windows with the preset's `app_id` that weren't open before, including one that sets its `app_id` after it appears. Once the first appears the server keeps counting for half a second, then reports `one` or `ambiguous`, with the ids in `windows`. With no such window in five seconds it reports `none`. Focus moving to a new window, before it has its `app_id`, isn't an interruption.
+
+With `reuse`: one existing matching window is focused, and `observed` is `focused` with its id in `windows`; several give `ambiguous` with their ids and `accepted: false`, and nothing is started; none starts the preset as usual.
+
+## `close_window`
+
+| Argument | Value |
+|---|---|
+| `id` (required) | a window id from `desktop_state` |
+
+Asks the window to close, as its close button would. `observed` is `closed` once niri reports it gone, or `pending` if it is still open after five seconds, for example behind an unsaved-changes dialog. Nothing forces it closed. `windows` holds the id.

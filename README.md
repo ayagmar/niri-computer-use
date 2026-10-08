@@ -4,7 +4,7 @@
 
 An MCP server for AI agents to observe and drive a [niri](https://github.com/niri-wm/niri) Wayland desktop. Noctalia is optional.
 
-**Status: M2 complete.** The server runs over stdio and has five read-only tools, six when Noctalia is installed, plus `acquire_desktop` and `release_desktop`, which take and give up the lease that the action tools will require. It can't act on the desktop yet. M0's research is recorded in [docs/results/m0.md](docs/results/m0.md), M1's acceptance in [docs/results/m1.md](docs/results/m1.md) and M2's in [docs/results/m2.md](docs/results/m2.md).
+**Status: M2 complete, M3 in progress.** The server runs over stdio and has five read-only tools, six when Noctalia is installed, plus `acquire_desktop` and `release_desktop`, which take and give up the lease, and four tools that act through niri's IPC while the lease is held: focus a window or a workspace, launch a preset, close a window. It can't send keyboard or pointer input yet. M0's research is recorded in [docs/results/m0.md](docs/results/m0.md), M1's acceptance in [docs/results/m1.md](docs/results/m1.md) and M2's in [docs/results/m2.md](docs/results/m2.md).
 
 ## Requirements
 
@@ -33,8 +33,14 @@ target/debug/niri-computer-use status
 | `shell_status` | Noctalia's status: bar, open panel and lock screen. Only listed when `noctalia` is on `PATH` |
 | `acquire_desktop` | takes the lease, so this agent is the one controlling this niri desktop; refused while another agent holds it, while the stop flag is set, while input may be stuck, while the screen is locked or its lock state is unknown, or when this build doesn't support the running niri or the policy file is invalid |
 | `release_desktop` | gives the lease up; the stop flag also takes it back |
+| `focus_window` | focuses a window by id; says whether niri accepted it and whether focus was seen to arrive |
+| `focus_workspace` | focuses a workspace by id, likewise |
+| `launch` | starts a preset from the policy file and reports the new windows with its `app_id`; with `reuse`, focuses its one existing window instead |
+| `close_window` | asks a window to close and reports `closed`, or `pending` if it is still open after five seconds, for example behind an unsaved-changes dialog |
 
-Failures set `isError` and return `{"error": <name>, "detail": <upstream detail>}`. The names so far are `niri_unavailable`, `deadline_exceeded`, `upstream_error`, `noctalia_unavailable`, `lease_held`, `stopped`, `recovery_required`, `read_only` and `screen_locked`. A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and a plain-text message instead.
+The four action tools require the lease and check the stop flag, the input-dirty marker and the lock state again before each action; a stop cancels the running one. Each result has `accepted`, whether niri took the request, and `observed`, what niri's event stream showed afterwards, including `interrupted` when focus went elsewhere during the wait and `uncertain` when niri's reply was lost. Nothing is retried.
+
+Failures set `isError` and return `{"error": <name>, "detail": <upstream detail>}`. The names so far are `niri_unavailable`, `deadline_exceeded`, `upstream_error`, `noctalia_unavailable`, `lease_held`, `lease_required`, `stopped`, `recovery_required`, `read_only`, `screen_locked` and `unknown_preset`. A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and a plain-text message instead.
 
 ## Policy file
 
@@ -49,7 +55,7 @@ argv = ["firefox"]
 app_id = "firefox"
 ```
 
-A preset may not start a shell, an interpreter, `env`, `sudo` or another program that runs any command it is given, nor a terminal with arguments, not even `--app-id`, because terminals run trailing arguments as a command; a desktop file started with `gtk-launch` gives a terminal its own `app_id`. These rules catch common mistakes; they are a guardrail, not a boundary, since a wrapper script gets past any list. If the file breaks a rule or doesn't parse, `status` reports it as `invalid` and `acquire_desktop` refuses with `read_only` until it is fixed and the server restarted. No tool uses the presets or the deny list yet.
+A preset may not start a shell, an interpreter, `env`, `sudo` or another program that runs any command it is given, nor a terminal with arguments, not even `--app-id`, because terminals run trailing arguments as a command; a desktop file started with `gtk-launch` gives a terminal its own `app_id`. These rules catch common mistakes; they are a guardrail, not a boundary, since a wrapper script gets past any list. If the file breaks a rule or doesn't parse, `status` reports it as `invalid` and `acquire_desktop` and the action tools refuse with `read_only` until it is fixed and the server restarted. `launch` takes a preset's `name` and starts its `argv` through niri; `status` lists the names. Nothing uses the deny list until the input tools exist.
 
 ## Install and register
 

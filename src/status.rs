@@ -166,7 +166,10 @@ mod tests {
                 "noctalia": "not_installed",
                 "noctalia_error": null,
                 "audit": {"path": null, "last_error": "neither XDG_STATE_HOME nor HOME is set"},
-                "policy": {"state": "missing", "presets": 0, "denied_app_ids": 0, "error": null},
+                "policy": {
+                    "state": "missing", "presets": 0, "preset_names": [], "denied_app_ids": 0,
+                    "error": null
+                },
                 "binaries": {
                     "grim": false, "loginctl": false, "wl-copy": false, "wl-paste": false, "wtype": false
                 }

@@ -1,5 +1,6 @@
 //! niri-computer-use: an MCP server that lets AI agents observe a niri desktop.
 
+mod act;
 mod audit;
 mod cli;
 mod clipboard;

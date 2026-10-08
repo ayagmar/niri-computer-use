@@ -5,6 +5,9 @@
 //! doesn't parse also drops the state and reconnects at once; a second one stops the
 //! stream for good (`schema_incompatible`), because this build doesn't understand the
 //! running niri. The task ends, closing its connection, once no tool holds the stream.
+//!
+//! Besides the replica, the task passes every event it applies, numbered, to the action
+//! tools' waiters (`waiter.rs`), and tells them when a connection ends.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -14,8 +17,9 @@ use niri_ipc::{Event, KeyboardLayouts, Reply, Request, Response, Window, Workspa
 use serde::Serialize;
 use tokio::io::{AsyncBufReadExt as _, AsyncRead, AsyncWrite, AsyncWriteExt as _, BufReader};
 use tokio::net::UnixStream;
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
 
+use super::waiter::{Update, View, Waiter};
 use crate::error::{ErrorName, ToolError};
 
 /// For connecting, the request's reply, and a tool waiting for the initial state.
@@ -23,6 +27,9 @@ const DEADLINE: Duration = Duration::from_secs(2);
 const RECONNECT_DELAY: Duration = Duration::from_secs(1);
 /// Parse failures before the stream stops. Ordinary disconnects don't count.
 const PARSE_FAILURES: u32 = 2;
+/// Events a waiter may fall behind by before it gives up. niri itself drops readers 64
+/// events behind.
+const UPDATES: usize = 256;
 
 /// The reader task's view of the stream.
 #[derive(Debug)]
@@ -46,14 +53,17 @@ struct Replica {
     workspaces: bool,
     windows: bool,
     overview: bool,
+    /// The number of the last event applied, counted across connections.
+    seq: u64,
 }
 
 impl Replica {
-    fn apply(&mut self, event: Event) {
+    fn apply(&mut self, seq: u64, event: Event) {
         self.workspaces |= matches!(event, Event::WorkspacesChanged { .. });
         self.windows |= matches!(event, Event::WindowsChanged { .. });
         self.overview |= matches!(event, Event::OverviewOpenedOrClosed { .. });
         self.state.apply(event);
+        self.seq = seq;
     }
 
     const fn initialized(&self) -> bool {
@@ -88,21 +98,44 @@ pub(crate) struct DesktopState {
 #[derive(Debug, Clone)]
 pub(crate) struct EventStream {
     connection: watch::Receiver<Connection>,
+    updates: broadcast::Sender<Update>,
+}
+
+/// The reader task's ends of the channels.
+#[derive(Debug)]
+struct Senders {
+    connection: watch::Sender<Connection>,
+    updates: broadcast::Sender<Update>,
 }
 
 impl EventStream {
     /// Starts the reader task on the current Tokio runtime.
     pub(crate) fn spawn(socket: PathBuf) -> Self {
-        let (sender, connection) = watch::channel(Connection::Connecting { last_error: None });
-        tokio::spawn(run(
+        Self::start(
             move || {
                 let socket = socket.clone();
                 async move { UnixStream::connect(&socket).await }
             },
-            sender,
             RECONNECT_DELAY,
-        ));
-        Self { connection }
+        )
+    }
+
+    fn start<S, F>(connect: impl FnMut() -> F + Send + 'static, reconnect_delay: Duration) -> Self
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        F: Future<Output = std::io::Result<S>> + Send + 'static,
+    {
+        let (sender, connection) = watch::channel(Connection::Connecting { last_error: None });
+        let (updates, _) = broadcast::channel(UPDATES);
+        let senders = Senders {
+            connection: sender,
+            updates: updates.clone(),
+        };
+        tokio::spawn(run(connect, senders, reconnect_delay));
+        Self {
+            connection,
+            updates,
+        }
     }
 
     pub(crate) fn state(&self) -> StreamState {
@@ -120,6 +153,28 @@ impl EventStream {
     }
 
     async fn desktop_within(&self, deadline: Duration) -> Result<DesktopState, ToolError> {
+        self.current(deadline, |replica| snapshot(&replica.state))
+            .await
+    }
+
+    /// Registers a waiter for an action: from now on it sees every event niri sends, on top
+    /// of the current state. Waits up to two seconds for niri's initial state.
+    pub(crate) async fn waiter(&self) -> Result<Waiter, ToolError> {
+        // Subscribed before the state is read, so no event falls between the two; the
+        // waiter skips events the state already holds by their number.
+        let updates = self.updates.subscribe();
+        let (view, seq) = self
+            .current(DEADLINE, |replica| (View::of(&replica.state), replica.seq))
+            .await?;
+        Ok(Waiter::new(view, seq, updates))
+    }
+
+    /// Reads the initialized replica, waiting up to `deadline` for it.
+    async fn current<T>(
+        &self,
+        deadline: Duration,
+        read: impl FnOnce(&Replica) -> T,
+    ) -> Result<T, ToolError> {
         let mut connection = self.connection.clone();
         let settled = |current: &Connection| match current {
             Connection::Connected(replica) => replica.initialized(),
@@ -131,7 +186,7 @@ impl EventStream {
         drop(tokio::time::timeout(deadline, connection.wait_for(settled)).await);
         let current = connection.borrow();
         match &*current {
-            Connection::Connected(replica) if replica.initialized() => Ok(snapshot(&replica.state)),
+            Connection::Connected(replica) if replica.initialized() => Ok(read(replica)),
             Connection::Connected(_) => Err(ToolError::new(
                 ErrorName::DeadlineExceeded,
                 format!("niri's event stream sent no initial state within {deadline:?}"),
@@ -186,20 +241,21 @@ enum Ended {
 
 /// Connects, reads until the connection ends, and reconnects, until a second
 /// unparsable event or until no tool holds the stream any more.
-async fn run<S, F>(
-    mut connect: impl FnMut() -> F,
-    sender: watch::Sender<Connection>,
-    reconnect_delay: Duration,
-) where
+async fn run<S, F>(mut connect: impl FnMut() -> F, senders: Senders, reconnect_delay: Duration)
+where
     S: AsyncRead + AsyncWrite + Unpin,
     F: Future<Output = std::io::Result<S>>,
 {
+    let sender = &senders.connection;
     let mut parse_failures = 0;
+    let mut seq = 0;
     loop {
         let ended = tokio::select! {
             () = sender.closed() => return,
-            ended = session(&mut connect, &sender) => ended,
+            ended = session(&mut connect, &senders, &mut seq) => ended,
         };
+        // No waiter may go on from a replica that is gone. Nobody listening is fine.
+        senders.updates.send(Update::Reset).ok();
         match ended {
             Ended::Unparsable(event) => {
                 parse_failures += 1;
@@ -228,13 +284,13 @@ async fn run<S, F>(
 }
 
 /// One connection, from connecting until it ends.
-async fn session<S, F>(connect: &mut impl FnMut() -> F, sender: &watch::Sender<Connection>) -> Ended
+async fn session<S, F>(connect: &mut impl FnMut() -> F, senders: &Senders, seq: &mut u64) -> Ended
 where
     S: AsyncRead + AsyncWrite + Unpin,
     F: Future<Output = std::io::Result<S>>,
 {
     match tokio::time::timeout(DEADLINE, connect()).await {
-        Ok(Ok(stream)) => read(stream, sender).await,
+        Ok(Ok(stream)) => read(stream, senders, seq).await,
         Ok(Err(error)) => Ended::Disconnected(ToolError::new(
             ErrorName::NiriUnavailable,
             format!("connect: {error}"),
@@ -246,16 +302,23 @@ where
     }
 }
 
-/// Requests the event stream on `stream` and applies every event to a fresh replica.
+/// Requests the event stream on `stream` and applies every event to a fresh replica, then
+/// passes it on to the waiters with its number.
 async fn read(
     stream: impl AsyncRead + AsyncWrite + Unpin,
-    sender: &watch::Sender<Connection>,
+    senders: &Senders,
+    seq: &mut u64,
 ) -> Ended {
     let mut stream = BufReader::new(stream);
     if let Err(error) = start(&mut stream).await {
         return Ended::Disconnected(error);
     }
-    sender.send_replace(Connection::Connected(Replica::default()));
+    senders
+        .connection
+        .send_replace(Connection::Connected(Replica {
+            seq: *seq,
+            ..Replica::default()
+        }));
     let mut line = String::new();
     loop {
         line.clear();
@@ -268,11 +331,16 @@ async fn read(
             Ok(event) => event,
             Err(name) => return Ended::Unparsable(name),
         };
-        sender.send_modify(|connection| {
+        *seq += 1;
+        senders.connection.send_modify(|connection| {
             if let Connection::Connected(replica) = connection {
-                replica.apply(event);
+                replica.apply(*seq, event.clone());
             }
         });
+        senders
+            .updates
+            .send(Update::Event(*seq, Box::new(event)))
+            .ok();
     }
 }
 
@@ -423,9 +491,7 @@ mod tests {
     }
 
     fn stream_retrying_after(streams: Vec<DuplexStream>, delay: Duration) -> EventStream {
-        let (sender, connection) = watch::channel(Connection::Connecting { last_error: None });
-        tokio::spawn(run(connector(streams), sender, delay));
-        EventStream { connection }
+        EventStream::start(connector(streams), delay)
     }
 
     async fn reconnecting(events: &EventStream) {

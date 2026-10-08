@@ -9,6 +9,7 @@ use rmcp::{ErrorData, RoleServer, ServerHandler, schemars, tool, tool_handler, t
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::act::{self, Outcome};
 use crate::audit::{Audit, Call, Caller};
 use crate::control::desk::Desk;
 use crate::error::{CANCELLED, CallError, ToolError};
@@ -95,6 +96,31 @@ impl ScreenshotArgs {
     }
 }
 
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct WindowArgs {
+    /// A window id from `desktop_state`.
+    id: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct WorkspaceArgs {
+    /// A workspace id from `desktop_state`, not its index.
+    id: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct LaunchArgs {
+    /// A preset name from the policy file; `status` lists them as `policy.preset_names`.
+    preset: String,
+    /// With true, focus the preset's one existing window instead of starting another, and
+    /// start nothing if several exist. Defaults to false.
+    #[serde(default)]
+    reuse: bool,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Server {
     env: Env,
@@ -163,8 +189,7 @@ impl Server {
     ) -> Result<CallToolResult, ErrorData> {
         let label = session(&context);
         self.audited(&context, "acquire_desktop", Value::Null, async {
-            let report = self.report().await;
-            let refusal = policy::refuse_lease(report.facts(&self.policy));
+            let refusal = self.refusal().await;
             answer(
                 self.desk
                     .acquire(&label, refusal)
@@ -192,6 +217,88 @@ impl Server {
             structured(&serde_json::json!({ "released": released }))
         })
         .await
+    }
+
+    /// Focuses a window. `accepted` says whether niri took the request; `observed` is
+    /// `focused` once the window has keyboard focus, `timeout` if it didn't get it within
+    /// five seconds, `interrupted` if focus went to another window meanwhile, or
+    /// `uncertain` if niri's reply or event stream was lost. Requires the lease.
+    #[tool(annotations(
+        read_only_hint = false,
+        destructive_hint = false,
+        idempotent_hint = true,
+        open_world_hint = false
+    ))]
+    async fn focus_window(
+        &self,
+        Parameters(args): Parameters<WindowArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let logged = serde_json::json!({ "id": args.id });
+        let work = act::focus_window(self.niri(), args.id);
+        self.act(&context, "focus_window", logged, work).await
+    }
+
+    /// Focuses a workspace by its id, on whichever output it is. Results as for
+    /// `focus_window`; focus moving to one of the workspace's own windows is expected.
+    /// Requires the lease.
+    #[tool(annotations(
+        read_only_hint = false,
+        destructive_hint = false,
+        idempotent_hint = true,
+        open_world_hint = false
+    ))]
+    async fn focus_workspace(
+        &self,
+        Parameters(args): Parameters<WorkspaceArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let logged = serde_json::json!({ "id": args.id });
+        let work = act::focus_workspace(self.niri(), args.id);
+        self.act(&context, "focus_workspace", logged, work).await
+    }
+
+    /// Starts an app from a policy preset, whose command is fixed by the user. `observed`
+    /// counts the new windows with the preset's `app_id`: `one` with its id in `windows`,
+    /// `ambiguous` with several, or `none` within five seconds. With `reuse`, one existing
+    /// window is focused instead (`focused`), and several give `ambiguous` without starting
+    /// anything. Never call it again because a window didn't show up; look first. Requires
+    /// the lease.
+    #[tool(annotations(
+        read_only_hint = false,
+        destructive_hint = false,
+        idempotent_hint = false,
+        open_world_hint = false
+    ))]
+    async fn launch(
+        &self,
+        Parameters(args): Parameters<LaunchArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        let niri = self.niri();
+        let preset = self.policy.preset(&args.preset);
+        let work = async move { act::launch(niri, preset?, args.reuse).await };
+        self.act(&context, "launch", logged, work).await
+    }
+
+    /// Asks a window to close, as its close button would. `observed` is `closed`, or
+    /// `pending` if it is still open after five seconds, for example behind an
+    /// unsaved-changes dialog; nothing forces it. Requires the lease.
+    #[tool(annotations(
+        read_only_hint = false,
+        destructive_hint = true,
+        idempotent_hint = false,
+        open_world_hint = false
+    ))]
+    async fn close_window(
+        &self,
+        Parameters(args): Parameters<WindowArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let logged = serde_json::json!({ "id": args.id });
+        let work = act::close_window(self.niri(), args.id);
+        self.act(&context, "close_window", logged, work).await
     }
 
     /// niri's outputs (monitors) by connector name: modes, logical position and size,
@@ -281,6 +388,40 @@ impl Server {
 }
 
 impl Server {
+    fn niri(&self) -> act::Niri<'_> {
+        act::Niri {
+            socket: self.env.niri_socket.as_deref(),
+            events: self.events.as_ref(),
+        }
+    }
+
+    /// Why this server may not take the lease or act now, from the readiness report.
+    async fn refusal(&self) -> Option<ToolError> {
+        let report = self.report().await;
+        policy::refuse_control(report.facts(&self.policy))
+    }
+
+    /// Runs one action through the desk's gate and logs it with what was accepted and
+    /// observed.
+    async fn act(
+        &self,
+        context: &RequestContext<RoleServer>,
+        tool: &str,
+        args: Value,
+        work: impl Future<Output = Result<Outcome, CallError>>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.record(context, Call::action(tool), args, async {
+            // Boxed, because the readiness report and the action's wait make large futures.
+            let refusal = Box::pin(self.refusal());
+            match self.desk.act(refusal, Box::pin(work)).await {
+                Ok(outcome) => structured(&outcome),
+                Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
+                Err(CallError::Tool(error)) => Ok(error.into_result()),
+            }
+        })
+        .await
+    }
+
     /// The readiness report, as `status` returns it.
     async fn report(&self) -> status::Status {
         let event_stream = self
@@ -308,7 +449,16 @@ impl Server {
         args: Value,
         work: impl Future<Output = Result<CallToolResult, ErrorData>>,
     ) -> Result<CallToolResult, ErrorData> {
-        let call = Call::start(tool);
+        self.record(context, Call::start(tool), args, work).await
+    }
+
+    async fn record(
+        &self,
+        context: &RequestContext<RoleServer>,
+        call: Call<'_>,
+        args: Value,
+        work: impl Future<Output = Result<CallToolResult, ErrorData>>,
+    ) -> Result<CallToolResult, ErrorData> {
         let result = unless_cancelled(context.ct.cancelled(), work)
             .await
             .and_then(|result| result);
@@ -366,7 +516,7 @@ fn invalid(message: &str) -> CallToolResult {
 #[tool_handler(
     router = self.tool_router,
     name = "niri-computer-use",
-    instructions = "Read-only view of a niri desktop. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `clipboard_read` returns the clipboard's text, and `shell_status`, when Noctalia is installed, its panel and lock state. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
+    instructions = "View and act on a niri desktop; follow the `niri-computer-use` skill. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `clipboard_read` returns the clipboard's text, and `shell_status`, when Noctalia is installed, its panel and lock state. To act, call `acquire_desktop`, then one action at a time (`focus_window`, `focus_workspace`, `launch`, `close_window`), reading `accepted` and `observed` before the next; never retry an action on your own, and call `release_desktop` when done. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
 )]
 impl ServerHandler for Server {}
 
@@ -394,15 +544,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_the_lease_tools_change_anything() {
-        for tool in [
-            Server::acquire_desktop_tool_attr(),
-            Server::release_desktop_tool_attr(),
-        ] {
+    fn only_close_window_is_destructive_and_only_actions_change_anything() {
+        let hints = |tool: rmcp::model::Tool| {
             let annotations = tool.annotations.unwrap();
-            assert_eq!(annotations.read_only_hint, Some(false), "{}", tool.name);
-            assert_eq!(annotations.destructive_hint, Some(false), "{}", tool.name);
-            assert_eq!(annotations.idempotent_hint, Some(true), "{}", tool.name);
+            (
+                annotations.read_only_hint,
+                annotations.destructive_hint,
+                annotations.idempotent_hint,
+            )
+        };
+        let (no, yes) = (Some(false), Some(true));
+        for (tool, expected) in [
+            (Server::acquire_desktop_tool_attr(), (no, no, yes)),
+            (Server::release_desktop_tool_attr(), (no, no, yes)),
+            (Server::focus_window_tool_attr(), (no, no, yes)),
+            (Server::focus_workspace_tool_attr(), (no, no, yes)),
+            (Server::launch_tool_attr(), (no, no, no)),
+            (Server::close_window_tool_attr(), (no, yes, no)),
+        ] {
+            let name = tool.name.clone();
+            assert_eq!(hints(tool), expected, "{name}");
         }
         for tool in [
             Server::status_tool_attr(),

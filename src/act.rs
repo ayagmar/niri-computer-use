@@ -1,0 +1,473 @@
+//! The action tools' work: each checks its arguments against niri's state, dispatches one
+//! niri action, and watches the event stream for the effect (plan §6, §7). A result
+//! separates whether niri accepted the action from what was observed. Nothing is retried.
+//!
+//! The waiter is registered before the action is sent, so no event is missed between the
+//! two. While waiting, focus moving to a window that was neither focused before nor the
+//! expected target ends the wait as `interrupted`: someone else is using the desktop.
+
+use std::collections::BTreeSet;
+use std::path::Path;
+use std::time::Duration;
+
+use niri_ipc::{Action, Window, WorkspaceReferenceArg};
+use serde::Serialize;
+
+use crate::error::CallError;
+use crate::niri::events::EventStream;
+use crate::niri::waiter::{View, Waited, Waiter};
+use crate::niri::{self, Unanswered};
+use crate::policy::Preset;
+
+/// How long an action waits for its effect.
+const WAIT: Duration = Duration::from_secs(5);
+/// How long `launch` keeps counting matching windows after the first one appears, since an
+/// app may open several.
+const SETTLE: Duration = Duration::from_millis(500);
+
+/// What was observed after an action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Observed {
+    /// The window or workspace has focus.
+    Focused,
+    Closed,
+    /// The window is still open when the wait ends, for example behind an unsaved-changes
+    /// dialog.
+    Pending,
+    /// `launch`: no matching window appeared.
+    None,
+    /// `launch`: exactly one matching window appeared.
+    One,
+    /// `launch`: several matching windows appeared, or, with `reuse`, several already
+    /// existed.
+    Ambiguous,
+    /// The effect wasn't seen in time.
+    Timeout,
+    /// Focus moved to a window that was neither focused before nor the target.
+    Interrupted,
+    /// The request's reply, or the event stream, was lost: the action may or may not have
+    /// happened.
+    Uncertain,
+}
+
+/// An action's result.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct Outcome {
+    /// True once niri acknowledged the request; false when nothing was sent; null when the
+    /// request was sent but its reply was lost.
+    pub(crate) accepted: Option<bool>,
+    pub(crate) observed: Observed,
+    /// The window with keyboard focus when the observation ended; null when focus isn't on
+    /// a window, or when the reply was lost before observing.
+    pub(crate) focused_window: Option<u64>,
+    /// The windows the outcome is about: the one launched or reused, or the candidates.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) windows: Vec<u64>,
+    /// Why the outcome is uncertain.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) detail: Option<String>,
+}
+
+impl Outcome {
+    fn seen(observed: Observed, view: &View, windows: Vec<u64>) -> Self {
+        Self {
+            accepted: Some(true),
+            observed,
+            focused_window: view.focused_window(),
+            windows,
+            detail: None,
+        }
+    }
+
+    fn uncertain(accepted: Option<bool>, view: Option<&View>, detail: String) -> Self {
+        Self {
+            accepted,
+            observed: Observed::Uncertain,
+            focused_window: view.and_then(View::focused_window),
+            windows: Vec::new(),
+            detail: Some(detail),
+        }
+    }
+}
+
+/// Where actions go and where their effects are watched.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Niri<'a> {
+    pub(crate) socket: Option<&'a Path>,
+    pub(crate) events: Option<&'a EventStream>,
+}
+
+pub(crate) async fn focus_window(niri: Niri<'_>, id: u64) -> Result<Outcome, CallError> {
+    let mut waiter = niri::waiter(niri.events).await?;
+    if !waiter.view().windows().contains_key(&id) {
+        return Err(no_window(id));
+    }
+    focus(niri.socket, &mut waiter, id, Vec::new()).await
+}
+
+/// `id` is a workspace id from `desktop_state`.
+pub(crate) async fn focus_workspace(niri: Niri<'_>, id: u64) -> Result<Outcome, CallError> {
+    let mut waiter = niri::waiter(niri.events).await?;
+    if !waiter.view().workspaces().contains_key(&id) {
+        return Err(CallError::InvalidArguments(format!(
+            "no workspace with id {id}; desktop_state lists them"
+        )));
+    }
+    let before = waiter.view().focused_window();
+    let action = Action::FocusWorkspace {
+        reference: WorkspaceReferenceArg::Id(id),
+    };
+    if let Some(lost) = send(niri.socket, action).await? {
+        return Ok(lost);
+    }
+    let ended = waiter
+        .until(WAIT, |view| workspace_focused(view, id, before))
+        .await;
+    Ok(conclude(
+        ended,
+        waiter.view(),
+        Observed::Timeout,
+        Vec::new(),
+    ))
+}
+
+/// Asks the window to close, as its close button would. An app may ask first, so a window
+/// still open at the end of the wait is `pending`; nothing escalates.
+pub(crate) async fn close_window(niri: Niri<'_>, id: u64) -> Result<Outcome, CallError> {
+    let mut waiter = niri::waiter(niri.events).await?;
+    if !waiter.view().windows().contains_key(&id) {
+        return Err(no_window(id));
+    }
+    if let Some(lost) = send(niri.socket, Action::CloseWindow { id: Some(id) }).await? {
+        return Ok(lost);
+    }
+    let ended = waiter.until(WAIT, |view| closed(view, id)).await;
+    Ok(conclude(ended, waiter.view(), Observed::Pending, vec![id]))
+}
+
+/// What `launch` does with `reuse` given the windows that already match the preset.
+#[derive(Debug, PartialEq, Eq)]
+enum Reuse {
+    Spawn,
+    Focus(u64),
+    Ambiguous,
+}
+
+const fn reuse(existing: &[u64]) -> Reuse {
+    match existing {
+        [] => Reuse::Spawn,
+        [one] => Reuse::Focus(*one),
+        _ => Reuse::Ambiguous,
+    }
+}
+
+/// Starts the preset's fixed argv through niri, or with `reuse` focuses its one existing
+/// window, and reports the windows that match its `app_id`.
+pub(crate) async fn launch(
+    niri: Niri<'_>,
+    preset: &Preset,
+    reuse_existing: bool,
+) -> Result<Outcome, CallError> {
+    let mut waiter = niri::waiter(niri.events).await?;
+    let app_id = preset.app_id.as_str();
+    if reuse_existing {
+        let existing = matching(waiter.view(), app_id, &BTreeSet::new());
+        match reuse(&existing) {
+            Reuse::Spawn => {}
+            Reuse::Focus(id) => return focus(niri.socket, &mut waiter, id, vec![id]).await,
+            Reuse::Ambiguous => {
+                return Ok(Outcome {
+                    accepted: Some(false),
+                    observed: Observed::Ambiguous,
+                    focused_window: waiter.view().focused_window(),
+                    windows: existing,
+                    detail: None,
+                });
+            }
+        }
+    }
+    let before: BTreeSet<u64> = waiter.view().windows().keys().copied().collect();
+    let focused = waiter.view().focused_window();
+    let action = Action::Spawn {
+        command: preset.argv.clone(),
+    };
+    if let Some(lost) = send(niri.socket, action).await? {
+        return Ok(lost);
+    }
+    let first = waiter
+        .until(WAIT, |view| launched(view, app_id, &before, focused))
+        .await;
+    if first != Waited::Done(Observed::One) {
+        return Ok(conclude(first, waiter.view(), Observed::None, Vec::new()));
+    }
+    if let Waited::Lost(reason) = waiter.until(SETTLE, |_| None::<()>).await {
+        return Ok(Outcome::uncertain(Some(true), Some(waiter.view()), reason));
+    }
+    let launched = matching(waiter.view(), app_id, &before);
+    let observed = if launched.len() == 1 {
+        Observed::One
+    } else {
+        Observed::Ambiguous
+    };
+    Ok(Outcome::seen(observed, waiter.view(), launched))
+}
+
+/// Focuses `id` and waits until it has focus.
+async fn focus(
+    socket: Option<&Path>,
+    waiter: &mut Waiter,
+    id: u64,
+    windows: Vec<u64>,
+) -> Result<Outcome, CallError> {
+    let before = waiter.view().focused_window();
+    if let Some(lost) = send(socket, Action::FocusWindow { id }).await? {
+        return Ok(lost);
+    }
+    let ended = waiter
+        .until(WAIT, |view| window_focused(view, id, before))
+        .await;
+    Ok(conclude(ended, waiter.view(), Observed::Timeout, windows))
+}
+
+/// Sends the action. A refusal is an error; a lost reply is the `uncertain` outcome.
+async fn send(socket: Option<&Path>, action: Action) -> Result<Option<Outcome>, CallError> {
+    match niri::act(socket, action).await {
+        Ok(()) => Ok(None),
+        Err(Unanswered::Refused(error)) => Err(error.into()),
+        Err(Unanswered::Lost(error)) => Ok(Some(Outcome::uncertain(None, None, error.detail))),
+    }
+}
+
+/// The outcome of a wait that ended `waited`, reporting `on_timeout` if it timed out.
+fn conclude(
+    waited: Waited<Observed>,
+    view: &View,
+    on_timeout: Observed,
+    windows: Vec<u64>,
+) -> Outcome {
+    match waited {
+        Waited::Done(observed) => Outcome::seen(observed, view, windows),
+        Waited::Timeout => Outcome::seen(on_timeout, view, windows),
+        Waited::Lost(reason) => Outcome::uncertain(Some(true), Some(view), reason),
+    }
+}
+
+/// Window `id` has focus. `before` had focus when the wait began.
+fn window_focused(view: &View, id: u64, before: Option<u64>) -> Option<Observed> {
+    if view.focused_window() == Some(id) {
+        return Some(Observed::Focused);
+    }
+    interrupted(view, before, |window| window.id == id)
+}
+
+/// Workspace `id` has focus. Focus moving to one of its windows is expected.
+fn workspace_focused(view: &View, id: u64, before: Option<u64>) -> Option<Observed> {
+    if view.workspaces().get(&id).is_some_and(|ws| ws.is_focused) {
+        return Some(Observed::Focused);
+    }
+    interrupted(view, before, |window| window.workspace_id == Some(id))
+}
+
+fn closed(view: &View, id: u64) -> Option<Observed> {
+    (!view.windows().contains_key(&id)).then_some(Observed::Closed)
+}
+
+/// A window that wasn't open `before` has `app_id`. A new window may take focus before it
+/// sets its `app_id`, so only focus on an older window interrupts.
+fn launched(
+    view: &View,
+    app_id: &str,
+    before: &BTreeSet<u64>,
+    focused: Option<u64>,
+) -> Option<Observed> {
+    if !matching(view, app_id, before).is_empty() {
+        return Some(Observed::One);
+    }
+    interrupted(view, focused, |window| !before.contains(&window.id))
+}
+
+/// `Interrupted` when focus is on a window that wasn't focused before and isn't `expected`.
+fn interrupted(
+    view: &View,
+    before: Option<u64>,
+    expected: impl Fn(&Window) -> bool,
+) -> Option<Observed> {
+    let focused = view.windows().get(&view.focused_window()?)?;
+    (Some(focused.id) != before && !expected(focused)).then_some(Observed::Interrupted)
+}
+
+/// The windows with `app_id` that aren't in `except`, by id.
+fn matching(view: &View, app_id: &str, except: &BTreeSet<u64>) -> Vec<u64> {
+    let mut ids: Vec<u64> = view
+        .windows()
+        .values()
+        .filter(|window| window.app_id.as_deref() == Some(app_id))
+        .map(|window| window.id)
+        .filter(|id| !except.contains(id))
+        .collect();
+    ids.sort_unstable();
+    ids
+}
+
+fn no_window(id: u64) -> CallError {
+    CallError::InvalidArguments(format!("no window with id {id}; desktop_state lists them"))
+}
+
+#[cfg(test)]
+mod tests {
+    use niri_ipc::Event;
+
+    use super::*;
+    use crate::niri::waiter::Update;
+    use crate::niri::waiter::tests::{view, waiter, window};
+
+    #[test]
+    fn reuse_spawns_for_none_focuses_one_and_refuses_to_pick_among_several() {
+        assert_eq!(reuse(&[]), Reuse::Spawn);
+        assert_eq!(reuse(&[4]), Reuse::Focus(4));
+        assert_eq!(reuse(&[4, 9]), Reuse::Ambiguous);
+    }
+
+    #[test]
+    fn focus_on_the_target_is_seen_and_on_another_window_interrupts() {
+        let windows = |focused: u64| {
+            view(vec![
+                window(1, Some("a"), 1, focused == 1),
+                window(2, Some("b"), 1, focused == 2),
+                window(3, Some("c"), 2, focused == 3),
+            ])
+        };
+        assert_eq!(
+            window_focused(&windows(2), 2, Some(1)),
+            Some(Observed::Focused)
+        );
+        assert_eq!(window_focused(&windows(1), 2, Some(1)), None);
+        assert_eq!(
+            window_focused(&windows(3), 2, Some(1)),
+            Some(Observed::Interrupted)
+        );
+        // Focus off every window, as on a shell panel, isn't someone else's window.
+        assert_eq!(window_focused(&windows(0), 2, Some(1)), None);
+        // A workspace's own windows are where focus is expected to go.
+        assert_eq!(workspace_focused(&windows(3), 2, Some(1)), None);
+        assert_eq!(
+            workspace_focused(&windows(2), 2, Some(1)),
+            Some(Observed::Interrupted)
+        );
+        assert_eq!(
+            workspace_focused(&windows(1), 1, None),
+            Some(Observed::Focused)
+        );
+        assert_eq!(closed(&windows(1), 2), None);
+        assert_eq!(closed(&windows(1), 7), Some(Observed::Closed));
+    }
+
+    #[test]
+    fn a_launch_counts_only_new_windows_with_the_app_id() {
+        let before = BTreeSet::from([1, 2]);
+        let current = view(vec![
+            window(1, Some("foot"), 1, false),
+            window(2, Some("x"), 1, false),
+            window(9, Some("foot"), 1, true),
+            window(5, Some("foot"), 1, false),
+            window(6, None, 1, false),
+        ]);
+        assert_eq!(matching(&current, "foot", &before), [5, 9]);
+        assert_eq!(
+            launched(&current, "foot", &before, Some(2)),
+            Some(Observed::One)
+        );
+        // A new window without its app_id yet may take focus; an old one interrupts.
+        let pending = view(vec![
+            window(1, Some("foot"), 1, false),
+            window(2, Some("x"), 1, false),
+            window(6, None, 1, true),
+        ]);
+        assert_eq!(launched(&pending, "foot", &before, Some(2)), None);
+        let stolen = view(vec![
+            window(1, Some("foot"), 1, true),
+            window(2, Some("x"), 1, false),
+        ]);
+        assert_eq!(
+            launched(&stolen, "foot", &before, Some(2)),
+            Some(Observed::Interrupted)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_late_app_id_and_focus_passing_through_an_intruder_are_seen() {
+        let before = BTreeSet::from([1]);
+        let (mut launch, opened) = waiter(view(vec![window(1, Some("x"), 1, true)]), 0);
+        for (seq, window) in [
+            (1, window(6, None, 1, true)),
+            (2, window(6, Some("foot"), 1, true)),
+        ] {
+            opened
+                .send(Update::Event(
+                    seq,
+                    Box::new(Event::WindowOpenedOrChanged { window }),
+                ))
+                .unwrap();
+        }
+        let mut checks = 0;
+        let seen = launch
+            .until(WAIT, |view| {
+                checks += 1;
+                launched(view, "foot", &before, Some(1))
+            })
+            .await;
+        assert_eq!((seen, checks), (Waited::Done(Observed::One), 3));
+
+        let windows = vec![
+            window(1, Some("a"), 1, true),
+            window(2, Some("b"), 1, false),
+            window(3, Some("c"), 1, false),
+        ];
+        let (mut focus, focuses) = waiter(view(windows), 0);
+        for (seq, id) in [(1, 3), (2, 2)] {
+            focuses
+                .send(Update::Event(
+                    seq,
+                    Box::new(Event::WindowFocusChanged { id: Some(id) }),
+                ))
+                .unwrap();
+        }
+        assert_eq!(
+            focus
+                .until(WAIT, |view| window_focused(view, 2, Some(1)))
+                .await,
+            Waited::Done(Observed::Interrupted)
+        );
+        assert_eq!(focus.view().focused_window(), Some(3));
+    }
+
+    #[test]
+    fn outcomes_say_what_was_accepted_and_observed() {
+        let current = view(vec![window(4, Some("a"), 1, true)]);
+        assert_eq!(
+            serde_json::to_value(conclude(
+                Waited::Timeout,
+                &current,
+                Observed::Pending,
+                vec![4]
+            ))
+            .unwrap(),
+            serde_json::json!({
+                "accepted": true, "observed": "pending", "focused_window": 4, "windows": [4]
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(conclude(
+                Waited::Lost("gone".to_owned()),
+                &current,
+                Observed::Timeout,
+                Vec::new()
+            ))
+            .unwrap(),
+            serde_json::json!({
+                "accepted": true, "observed": "uncertain", "focused_window": 4, "detail": "gone"
+            })
+        );
+    }
+}

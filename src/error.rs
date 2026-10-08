@@ -20,14 +20,18 @@ pub(crate) enum ErrorName {
     NoctaliaUnavailable,
     /// Another server holds the lease.
     LeaseHeld,
+    /// An action tool was called without holding the lease.
+    LeaseRequired,
     /// The stop flag is set.
     Stopped,
     /// The input-dirty marker says input may be stuck.
     RecoveryRequired,
     /// niri's version, its event schema or the policy file rules out acting.
     ReadOnly,
-    /// The screen is locked.
+    /// The screen is locked, or its lock state is unknown.
     ScreenLocked,
+    /// `launch` named a preset the policy file doesn't have.
+    UnknownPreset,
 }
 
 /// A failure, serialized as `{"error": <name>, "detail": <upstream detail>}`.

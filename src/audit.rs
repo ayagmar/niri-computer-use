@@ -35,17 +35,19 @@ struct Record<'a> {
     tool: &'a str,
     /// Metadata only: sizes, targets and IDs, never contents.
     args: &'a Value,
-    /// For action tools, which don't exist yet; null for read-only tools.
+    /// For action tools, from their result; null for read-only tools and for failures.
     accepted: Option<bool>,
     observed: Option<&'a str>,
     error: Option<String>,
     duration_ms: u128,
 }
 
-/// A tool call in progress: which tool, and when it started.
+/// A tool call in progress: which tool, whether it acts on the desktop, and when it
+/// started.
 #[derive(Debug)]
 pub(crate) struct Call<'a> {
     tool: &'a str,
+    action: bool,
     ts: String,
     started: Instant,
 }
@@ -54,8 +56,17 @@ impl<'a> Call<'a> {
     pub(crate) fn start(tool: &'a str) -> Self {
         Self {
             tool,
+            action: false,
             ts: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
             started: Instant::now(),
+        }
+    }
+
+    /// An action tool's call, whose result says what was accepted and observed.
+    pub(crate) fn action(tool: &'a str) -> Self {
+        Self {
+            action: true,
+            ..Self::start(tool)
         }
     }
 }
@@ -102,14 +113,19 @@ impl Audit {
         args: &Value,
         result: &Result<CallToolResult, ErrorData>,
     ) {
+        let (accepted, observed) = if call.action {
+            effect(result)
+        } else {
+            (None, None)
+        };
         self.write(&Record {
             ts: &call.ts,
             session: caller.session,
             instance: caller.instance,
             tool: call.tool,
             args,
-            accepted: None,
-            observed: None,
+            accepted,
+            observed,
             error: outcome(result),
             duration_ms: call.started.elapsed().as_millis(),
         });
@@ -169,6 +185,23 @@ fn outcome(result: &Result<CallToolResult, ErrorData>) -> Option<String> {
         .and_then(|content| content.get("error"))
         .and_then(Value::as_str);
     Some(name.unwrap_or("invalid_arguments").to_owned())
+}
+
+/// An action's `accepted` and `observed` fields, which hold only booleans and outcome
+/// names. Failures have neither.
+fn effect(result: &Result<CallToolResult, ErrorData>) -> (Option<bool>, Option<&str>) {
+    let Some(content) = result
+        .as_ref()
+        .ok()
+        .filter(|result| result.is_error != Some(true))
+        .and_then(|result| result.structured_content.as_ref())
+    else {
+        return (None, None);
+    };
+    (
+        content.get("accepted").and_then(Value::as_bool),
+        content.get("observed").and_then(Value::as_str),
+    )
 }
 
 #[cfg(test)]
@@ -258,5 +291,46 @@ mod tests {
         assert_eq!(outcome(&Err(other)).as_deref(), Some("internal"));
         let ts = Call::start("status").ts;
         assert!(ts.ends_with('Z') && ts.len() == 24, "{ts}");
+    }
+
+    #[test]
+    fn actions_log_what_was_accepted_and_observed() {
+        let dir = crate::test_support::fresh_dir("audit-action");
+        let audit = Audit::new(Some(dir.clone()));
+        let caller = Caller {
+            session: "smoke/1",
+            instance: None,
+        };
+        let args = serde_json::json!({"id": 4});
+        let done = CallToolResult::structured(serde_json::json!({
+            "accepted": true, "observed": "focused", "focused_window": 4
+        }));
+        audit.finish(
+            &Call::action("focus_window"),
+            caller,
+            &args,
+            &Ok(done.clone()),
+        );
+        audit.finish(&Call::start("shell_status"), caller, &args, &Ok(done));
+        let refused = ToolError::new(ErrorName::LeaseRequired, "no").into_result();
+        audit.finish(&Call::action("focus_window"), caller, &args, &Ok(refused));
+        let lines: Vec<Value> = std::fs::read_to_string(dir.join("niri-computer-use/audit.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let effects: Vec<Value> = lines
+            .iter()
+            .map(|line| serde_json::json!([line["accepted"], line["observed"], line["error"]]))
+            .collect();
+        assert_eq!(
+            effects,
+            [
+                serde_json::json!([true, "focused", null]),
+                serde_json::json!([null, null, null]),
+                serde_json::json!([null, null, "lease_required"]),
+            ]
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
