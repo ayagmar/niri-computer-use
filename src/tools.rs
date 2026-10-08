@@ -291,7 +291,7 @@ impl Server {
             event_stream: Some(event_stream),
             audit: &self.audit,
             noctalia_installed: self.noctalia_installed,
-            lease: self.desk.status().await,
+            lease: self.desk.status(),
             policy: &self.policy,
         };
         status::collect(&self.env, sources).await

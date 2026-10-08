@@ -22,10 +22,33 @@ const CHECK: Duration = Duration::from_secs(1);
 pub(crate) struct Desk {
     /// Why there is no runtime directory, when there isn't one.
     runtime: Result<RuntimeDir, ToolError>,
-    /// Also the action mutex: an action holds it while it runs.
-    lease: Arc<Mutex<Option<Lease>>>,
+    seat: Arc<Seat>,
     /// The stop watcher's view of the flag, or why the flag can't be watched.
     stopped: Result<watch::Receiver<bool>, String>,
+}
+
+/// The lease this server holds, if any.
+#[derive(Debug)]
+struct Seat {
+    /// Also the action mutex: an action holds it while it runs.
+    lease: Mutex<Option<Lease>>,
+    /// The holder while the lease is held, which `status` reads without waiting for a
+    /// running action. Changed only together with `lease`.
+    holder: watch::Sender<Option<Holder>>,
+}
+
+impl Seat {
+    fn put(&self, held: &mut Option<Lease>, lease: Lease) {
+        self.holder.send_replace(Some(lease.holder().clone()));
+        *held = Some(lease);
+    }
+
+    /// Gives the lease up. Returns whether it was held.
+    fn take(&self, held: &mut Option<Lease>) -> bool {
+        let had = held.take().is_some();
+        self.holder.send_replace(None);
+        had
+    }
 }
 
 /// What `status` reports about the lease.
@@ -39,7 +62,10 @@ impl Desk {
     /// Starts watching the stop flag on the current Tokio runtime, when `env` names a niri
     /// instance.
     pub(crate) fn start(env: &Env) -> Self {
-        let lease = Arc::new(Mutex::new(None));
+        let seat = Arc::new(Seat {
+            lease: Mutex::new(None),
+            holder: watch::Sender::new(None),
+        });
         let runtime = RuntimeDir::of(env).map_err(|detail| {
             let name = if env.niri_socket.is_none() {
                 ErrorName::NiriUnavailable
@@ -50,7 +76,7 @@ impl Desk {
         });
         let stopped = match &runtime {
             Ok(runtime) => stop::watch(runtime.clone())
-                .inspect(|stopped| release_on_stop(stopped.clone(), Arc::downgrade(&lease)))
+                .inspect(|stopped| release_on_stop(stopped.clone(), Arc::downgrade(&seat)))
                 .map_err(|error| {
                     format!(
                         "watch {} for the stop flag: {error}",
@@ -61,7 +87,7 @@ impl Desk {
         };
         Self {
             runtime,
-            lease,
+            seat,
             stopped,
         }
     }
@@ -75,7 +101,7 @@ impl Desk {
         refusal: Option<ToolError>,
     ) -> Result<Holder, ToolError> {
         let runtime = self.runtime.as_ref().map_err(Clone::clone)?;
-        let mut held = self.lease.lock().await;
+        let mut held = self.seat.lease.lock().await;
         if let Some(lease) = held.as_ref() {
             return Ok(lease.holder().clone());
         }
@@ -108,24 +134,23 @@ impl Desk {
         }
         let lease = Lease::acquire(runtime, label).map_err(refused)?;
         let holder = lease.holder().clone();
-        *held = Some(lease);
+        self.seat.put(&mut held, lease);
         drop(held);
         Ok(holder)
     }
 
-    /// Gives the lease up. Returns whether this server held it.
+    /// Gives the lease up, once any running action has ended. Returns whether this server
+    /// held it.
     pub(crate) async fn release(&self) -> bool {
-        self.lease.lock().await.take().is_some()
+        self.seat.take(&mut *self.seat.lease.lock().await)
     }
 
-    pub(crate) async fn status(&self) -> LeaseStatus {
-        let held = self.lease.lock().await;
+    /// Doesn't wait for a running action.
+    pub(crate) fn status(&self) -> LeaseStatus {
+        let mine = self.seat.holder.borrow().clone();
         LeaseStatus {
-            held_by_me: held.is_some(),
-            holder: held
-                .as_ref()
-                .map(|lease| lease.holder().clone())
-                .or_else(|| self.runtime.as_ref().ok().and_then(lease::holder)),
+            held_by_me: mine.is_some(),
+            holder: mine.or_else(|| self.runtime.as_ref().ok().and_then(lease::holder)),
         }
     }
 }
@@ -143,23 +168,23 @@ pub(crate) fn status_without_desk(env: &Env) -> LeaseStatus {
 /// Drops the lease whenever the flag is seen set, and when the watcher ends, until the desk
 /// is gone. It reads the latest value on every change, so a stop is never lost between a
 /// resume and the next stop.
-fn release_on_stop(stopped: watch::Receiver<bool>, lease: Weak<Mutex<Option<Lease>>>) {
-    tokio::spawn(release_loop(stopped, lease));
+fn release_on_stop(stopped: watch::Receiver<bool>, seat: Weak<Seat>) {
+    tokio::spawn(release_loop(stopped, seat));
 }
 
-async fn release_loop(mut stopped: watch::Receiver<bool>, lease: Weak<Mutex<Option<Lease>>>) {
+async fn release_loop(mut stopped: watch::Receiver<bool>, seat: Weak<Seat>) {
     let mut check = tokio::time::interval(CHECK);
     check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
-        if *stopped.borrow_and_update() && !give_up(&lease).await {
+        if *stopped.borrow_and_update() && !give_up(&seat).await {
             return;
         }
         tokio::select! {
             changed = stopped.changed() => if changed.is_err() {
-                give_up(&lease).await;
+                give_up(&seat).await;
                 return;
             },
-            _ = check.tick() => if !give_up_if_moved(&lease).await {
+            _ = check.tick() => if !give_up_if_moved(&seat).await {
                 return;
             },
         }
@@ -168,23 +193,24 @@ async fn release_loop(mut stopped: watch::Receiver<bool>, lease: Weak<Mutex<Opti
 
 /// Drops the lease if its file was removed or replaced. Returns false once the desk is
 /// gone.
-async fn give_up_if_moved(lease: &Weak<Mutex<Option<Lease>>>) -> bool {
-    let Some(lease) = lease.upgrade() else {
+async fn give_up_if_moved(seat: &Weak<Seat>) -> bool {
+    let Some(seat) = seat.upgrade() else {
         return false;
     };
-    let mut held = lease.lock().await;
+    let mut held = seat.lease.lock().await;
     if held.as_ref().is_some_and(|held| !held.intact()) {
-        held.take();
+        seat.take(&mut held);
     }
+    drop(held);
     true
 }
 
 /// Drops the lease if it is held. Returns false once the desk is gone.
-async fn give_up(lease: &Weak<Mutex<Option<Lease>>>) -> bool {
-    let Some(lease) = lease.upgrade() else {
+async fn give_up(seat: &Weak<Seat>) -> bool {
+    let Some(seat) = seat.upgrade() else {
         return false;
     };
-    lease.lock().await.take();
+    seat.take(&mut *seat.lease.lock().await);
     true
 }
 
@@ -230,7 +256,7 @@ mod tests {
     /// Whether the desk gives the lease up within five seconds.
     async fn released(desk: &Desk) -> bool {
         for _ in 0..500 {
-            if !desk.status().await.held_by_me {
+            if !desk.status().held_by_me {
                 return true;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -245,9 +271,9 @@ mod tests {
         let other = Desk::start(&env(&dir));
         let holder = desk.acquire("me/1", None).await.unwrap();
         assert_eq!(desk.acquire("me/1", None).await.unwrap(), holder);
-        let status = desk.status().await;
+        let status = desk.status();
         assert!(status.held_by_me);
-        assert_eq!(other.status().await.holder, Some(holder.clone()));
+        assert_eq!(other.status().holder, Some(holder.clone()));
         let refused = other.acquire("other/2", None).await.unwrap_err();
         assert_eq!(refused.name, ErrorName::LeaseHeld);
         assert!(refused.detail.contains("(me/1)"), "{}", refused.detail);
@@ -257,6 +283,25 @@ mod tests {
             other.acquire("other/2", None).await.unwrap().label,
             "other/2"
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn status_reports_the_lease_while_an_action_holds_the_mutex() {
+        let dir = crate::test_support::fresh_dir("desk-busy");
+        let desk = Desk::start(&env(&dir));
+        let holder = desk.acquire("me/1", None).await.unwrap();
+        let action = desk.seat.lease.lock().await;
+        assert_eq!(
+            desk.status(),
+            LeaseStatus {
+                held_by_me: true,
+                holder: Some(holder)
+            }
+        );
+        drop(action);
+        assert!(desk.release().await);
+        assert!(!desk.status().held_by_me);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -336,7 +381,7 @@ mod tests {
         assert_eq!(error.name, ErrorName::NiriUnavailable);
         assert_eq!(error.detail, "NIRI_SOCKET is not set");
         assert_eq!(
-            desk.status().await,
+            desk.status(),
             LeaseStatus {
                 held_by_me: false,
                 holder: None
