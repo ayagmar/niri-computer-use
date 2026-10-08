@@ -1,5 +1,5 @@
-//! Lock state, for `status` now and for the action tools' lock gate later. The sources, in
-//! order: logind's `LockedHint` for `XDG_SESSION_ID`, then Noctalia's `locked`.
+//! Lock state, for `status` now and for the action tools' lock gate later. The sources:
+//! logind's `LockedHint` for `XDG_SESSION_ID`, then Noctalia's `locked`, and locked wins.
 //!
 //! niri sets logind's locked hint on lock and unlock when it runs as the session instance
 //! (`src/niri.rs` at v26.04), whichever `ext_session_lock` client locks the screen.
@@ -67,38 +67,25 @@ async fn locked_hint(id: &str) -> Result<bool, String> {
     }
 }
 
+/// Locked if either source says so. niri sets logind's hint only on its own session, so a
+/// server started from another session (SSH, a TTY, a scrubbed environment) reads a hint
+/// that stays `no` while the screen is locked; Noctalia's `locked` still catches that.
 fn decide(logind: Result<bool, String>, noctalia: Option<&Map<String, Value>>) -> Lock {
-    let state = |locked: bool| {
-        if locked {
-            LockState::Locked
-        } else {
-            LockState::Unlocked
-        }
-    };
-    let logind_error = match logind {
-        Ok(locked) => {
-            return Lock {
-                state: state(locked),
-                source: LockSource::Logind,
-                logind_error: None,
-            };
-        }
-        Err(error) => Some(error),
-    };
-    match noctalia
+    let noctalia = noctalia
         .and_then(|status| status.get("locked"))
-        .and_then(Value::as_bool)
-    {
-        Some(locked) => Lock {
-            state: state(locked),
-            source: LockSource::Noctalia,
-            logind_error,
-        },
-        None => Lock {
-            state: LockState::Unknown,
-            source: LockSource::None,
-            logind_error,
-        },
+        .and_then(Value::as_bool);
+    let lock = |state, source, logind_error| Lock {
+        state,
+        source,
+        logind_error,
+    };
+    match (logind, noctalia) {
+        (Ok(true), _) => lock(LockState::Locked, LockSource::Logind, None),
+        (Ok(false), Some(true)) => lock(LockState::Locked, LockSource::Noctalia, None),
+        (Ok(false), _) => lock(LockState::Unlocked, LockSource::Logind, None),
+        (Err(error), Some(true)) => lock(LockState::Locked, LockSource::Noctalia, Some(error)),
+        (Err(error), Some(false)) => lock(LockState::Unlocked, LockSource::Noctalia, Some(error)),
+        (Err(error), None) => lock(LockState::Unknown, LockSource::None, Some(error)),
     }
 }
 
@@ -113,9 +100,25 @@ mod tests {
     }
 
     #[test]
+    fn either_source_saying_locked_wins() {
+        let locked = noctalia(Value::Bool(true));
+        let other_session = decide(Ok(false), Some(&locked));
+        assert_eq!(
+            (other_session.state, other_session.source),
+            (LockState::Locked, LockSource::Noctalia)
+        );
+        let unlocked = noctalia(Value::Bool(false));
+        let logind = decide(Ok(true), Some(&unlocked));
+        assert_eq!(
+            (logind.state, logind.source),
+            (LockState::Locked, LockSource::Logind)
+        );
+    }
+
+    #[test]
     fn logind_comes_first_then_noctalia_then_unknown() {
         let locked = noctalia(Value::Bool(true));
-        let logind = decide(Ok(false), Some(&locked));
+        let logind = decide(Ok(false), Some(&noctalia(Value::Bool(false))));
         assert_eq!(
             (logind.state, logind.source),
             (LockState::Unlocked, LockSource::Logind)

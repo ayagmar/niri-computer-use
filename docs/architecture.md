@@ -60,7 +60,7 @@ Downscaling happens in grim and costs time: on a 2560x1440 output, JPEG took abo
 
 Noctalia counts as installed when `noctalia` is an executable on `PATH` at startup. Only then does the server list `shell_status`, so the tool list doesn't change during a session. It counts as running when its socket, `$XDG_RUNTIME_DIR/noctalia-$WAYLAND_DISPLAY.sock`, answers `status` with a JSON object within two seconds. The server writes the whole fixed payload `/\x1estatus`, shuts down its write half and reads to the end, as Noctalia's own client does. It never sends text from a tool's arguments. Anything other than a JSON object is `noctalia_unavailable`, except an `error:` reply, which keeps Noctalia's text as `upstream_error`. `status` checks again on every call, so a Noctalia restart shows up.
 
-The lock state comes from `loginctl show-session $XDG_SESSION_ID -p LockedHint --value`. If logind can't answer, it comes from Noctalia's `locked`, and otherwise it is `unknown`. `status` reports the source and logind's error, if any. A session ID that isn't plain letters and digits is refused before `loginctl` runs, so it can't be read as an option.
+The lock state comes from `loginctl show-session $XDG_SESSION_ID -p LockedHint --value` and from Noctalia's `locked`, and locked wins: niri sets logind's hint only on its own session, so a server started from another session would otherwise report `unlocked` on a locked screen. Without either answer it is `unknown`. `status` reports the source and logind's error, if any. A session ID that isn't plain letters and digits is refused before `loginctl` runs, so it can't be read as an option.
 
 ## Version rule
 

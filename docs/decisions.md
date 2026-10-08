@@ -217,6 +217,7 @@ These match the versions installed locally.
 - `shell_status` is removed from the tool router at startup when `noctalia` isn't on `PATH` (plan §6.1), using rmcp's `ToolRouter::remove_route`. An installed Noctalia that isn't answering gives `noctalia_unavailable`, a new name in the stable list, as plan §6.2 defines it.
 - `status` reports Noctalia's failure detail as `noctalia_error` and logind's as `lock.logind_error`. Plan §6's shape allows added fields. niri's version and Noctalia's status are read concurrently, and the lock read follows because it may need Noctalia's reply, so `status` waits at most two deadlines, not three.
 - `XDG_SESSION_ID` is passed to `loginctl` as an argument, so a value that isn't plain letters and digits is refused instead of risking it being read as an option.
+- Locked wins between the two sources (review finding). niri sets logind's locked hint only on its own session (`src/niri.rs` at v26.04), so a server started from an SSH login, a TTY or an environment without the graphical session's ID reads a hint that never changes. Plan §9 ordered the sources but didn't say what to do when they disagree. Checking that the session is the graphical one is left for the action tools' lock gate.
 
 ## 2026-10-08: the audit log
 
