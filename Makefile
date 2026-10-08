@@ -1,4 +1,4 @@
-.PHONY: check lint coverage nested sitting host-capture
+.PHONY: check lint coverage inspect inspect-check nested sitting host-capture
 
 SCALE ?= 1
 
@@ -18,6 +18,12 @@ lint:
 
 coverage:
 	cargo llvm-cov --all-targets --workspace
+
+inspect:
+	scripts/inspector.sh web
+
+inspect-check:
+	scripts/inspector.sh check
 
 nested:
 	cargo build --locked --manifest-path probes/vpointer/Cargo.toml

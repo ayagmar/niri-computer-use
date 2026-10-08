@@ -236,3 +236,11 @@ These match the versions installed locally.
 ## 2026-10-08: protocol tests
 
 - The protocol tests write JSON-RPC by hand instead of using rmcp's client, so they see every byte the server writes to stdout and send each cancellation at the moment they choose. No crate was added.
+
+## 2026-10-08: the MCP Inspector
+
+| Tool | Version | Published | Why |
+|---|---|---|---|
+| `@modelcontextprotocol/inspector` | 2.9.0 | 2026-09-30 | The pinned Inspector for `make inspect` and `make inspect-check` (plan §13). 2.10.0 was published on 2026-10-07, too recently for the version rule. It runs through `npx`, so nothing is added to the repository. |
+
+- The Inspector starts a stdio server with a minimal environment. `NIRI_SOCKET`, `XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY` and `XDG_SESSION_ID` are not passed on, and `status` then reports `NIRI_SOCKET is not set`. `scripts/inspector.sh` passes those four on explicitly.
