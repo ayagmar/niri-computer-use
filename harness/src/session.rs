@@ -95,6 +95,22 @@ impl<'a> Session<'a> {
         runner::start_with_stdin(&nested(program, args, Sink::Capture, deadline))
     }
 
+    /// Starts a program with stdin held open for `Process::send`, its output in `log`.
+    pub(crate) fn serve(
+        &self,
+        program: &str,
+        args: &[OsString],
+        log: PathBuf,
+        deadline: Duration,
+    ) -> Result<Process> {
+        Nested::from_env(self.test_dir)?;
+        runner::start_with_stdin(&nested(program, args, Sink::File(log), deadline))
+    }
+
+    pub(crate) const fn test_dir(&self) -> &TestDir {
+        self.test_dir
+    }
+
     /// The runtime directory `niri-computer-use` servers use for the nested niri.
     pub(crate) fn control_dir(&self) -> Result<PathBuf> {
         let nested = Nested::from_env(self.test_dir)?;

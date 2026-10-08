@@ -164,6 +164,31 @@ Each run keeps its files in `target/e2e/<unix time>-<pid>/`:
 
 Every server talks MCP over a shell pipeline (`printf` of the requests, then `sleep` to keep stdin open), and every flag and marker lives in `TEST_DIR`. The run has a 90-second deadline. Its files are in `target/e2e/<run>/`, with `server-a.log` holding server A's replies.
 
+## Nested action checks
+
+`make nested-actions` runs M3's acceptance in a nested niri, set up as `make nested-control` is, with the nested Noctalia as the lock source. Before the server starts, the supervisor writes a policy file to `TEST_DIR/config/niri-computer-use/policy.toml` whose presets all start `harness window`, a fixture app in the harness, with a different `app_id` each:
+
+| Preset | Fixture |
+|---|---|
+| `late` | sets its `app_id` 400 ms after its window is mapped |
+| `two` | maps two windows |
+| `reuse`, `plain` | one ordinary window |
+| `keep` | ignores close requests, as an app asking about unsaved changes does |
+| `slow` | writes a marker file at once and maps its window 2.5 seconds later |
+
+`harness window` checks that its environment is the nested one before it connects, maps black 320x240 toplevels through `xdg_wm_base`, and exits when its windows close, when niri goes away, or after 90 seconds. niri starts it from the preset with niri's own environment, so it never reaches the host compositor.
+
+One server holds the lease for the whole run. The supervisor keeps its stdin open and reads its replies back from `server-harness-m3.log`. Through it, the run checks:
+
+1. `launch late` gives `one`, and `desktop_state` shows the window with its late `app_id`.
+2. `launch two` gives `ambiguous` with two windows.
+3. `launch reuse` with `reuse: true` gives `one`; after `focus_window` on another window, the same call gives `focused` on that window and starts nothing; after a second plain launch, it gives `ambiguous` with `accepted: false`, and still nothing new starts.
+4. `focus_window`, then `focus_workspace` to another workspace and back, each `focused`.
+5. `close_window` on a `plain` window gives `closed`; on a `keep` window, `pending` with a screenshot of the output in the result.
+6. `launch slow`, and as soon as the marker appears the supervisor focuses the `late` window through its own niri connection: the launch gives `interrupted` naming that window, with a screenshot.
+
+The run has a 130-second deadline. Its files are in `target/e2e/<run>/`, including `policy.toml`, the server's replies and Noctalia's log.
+
 ## Supervised sitting
 
 `make sitting` opens the nested output at scale 1.5 and runs C6, C7, C8 and C9. It starts a focused wev and a separate unfocused observer. Noctalia does not run in this mode. The automatic path keeps its existing deadlines; the sitting allows 30 minutes overall, 29 minutes for wev and two minutes for each human action or confirmation. All wtype and held-pointer children keep a three-second deadline.

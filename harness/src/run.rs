@@ -24,6 +24,7 @@ const VPOINTER: &str = "probes/vpointer/target/debug/vpointer";
 const NOCTALIA_SOCKET: &str = "probes/noctalia-socket/target/debug/noctalia-socket";
 const SERVER: &str = "target/debug/niri-computer-use";
 const CONTROL_DEADLINE: Duration = Duration::from_secs(90);
+const ACTIONS_DEADLINE: Duration = Duration::from_secs(130);
 /// All `noctalia config validate` prints for a config without warnings. It exits 0 even
 /// when it warns, for example about an unknown key.
 const NOCTALIA_VALID: &str = "\u{2713} Config is valid\n";
@@ -35,8 +36,39 @@ pub(crate) struct Options {
     /// Start Noctalia in the nested session and run C13.
     pub(crate) noctalia: bool,
     pub(crate) sitting: Option<crate::sitting::Mode>,
-    /// Run M2's control checks with `niri-computer-use` and the nested Noctalia.
-    pub(crate) control: bool,
+    /// Run checks with `niri-computer-use` and the nested Noctalia.
+    pub(crate) server: Option<ServerChecks>,
+}
+
+/// The checks that run `niri-computer-use` servers against the nested niri.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ServerChecks {
+    /// M2: the lease, stop, resume and recover.
+    Control,
+    /// M3: launch, focus and close.
+    Actions,
+}
+
+impl ServerChecks {
+    pub(crate) const fn flag(self) -> &'static str {
+        match self {
+            Self::Control => "--control",
+            Self::Actions => "--actions",
+        }
+    }
+
+    pub(crate) fn from_flag(flag: &str) -> Option<Self> {
+        [Self::Control, Self::Actions]
+            .into_iter()
+            .find(|checks| checks.flag() == flag)
+    }
+
+    const fn deadline(self) -> Duration {
+        match self {
+            Self::Control => CONTROL_DEADLINE,
+            Self::Actions => ACTIONS_DEADLINE,
+        }
+    }
 }
 
 pub(crate) fn run(options: Options) -> Result<()> {
@@ -184,7 +216,7 @@ fn preflight(host: &Host, test_dir: &TestDir, artifacts: &Path, options: Options
         group: Group::Own,
         deadline: VALIDATE_DEADLINE,
     })?;
-    if options.noctalia || options.control {
+    if options.noctalia || options.server.is_some() {
         write_noctalia_config(&env, test_dir, artifacts)?;
     }
     Ok(env)
@@ -243,8 +275,8 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: Option
         args.push(mode.flag().into());
     } else if options.noctalia {
         args.push(probe(NOCTALIA_SOCKET)?.into());
-    } else if options.control {
-        args.push("--control".into());
+    } else if let Some(checks) = options.server {
+        args.push(checks.flag().into());
         args.push(probe(SERVER)?.into());
     }
     runner::run(&Invocation {
@@ -253,12 +285,10 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: Option
         env: ChildEnv::Exact(env),
         output: Sink::File(artifacts.join("niri.log")),
         group: Group::Own,
-        deadline: if options.sitting.is_some() {
-            crate::sitting::RUN_DEADLINE
-        } else if options.control {
-            CONTROL_DEADLINE
-        } else {
-            NESTED_DEADLINE
+        deadline: match (options.sitting, options.server) {
+            (Some(_), _) => crate::sitting::RUN_DEADLINE,
+            (None, Some(checks)) => checks.deadline(),
+            (None, None) => NESTED_DEADLINE,
         },
     })?;
     let status_path = artifacts.join(supervise::STATUS_FILE);

@@ -15,6 +15,7 @@ use crate::log::Log;
 use crate::nested::Nested;
 use crate::niri::Connection;
 use crate::pointer::{self, Probe};
+use crate::run::ServerChecks;
 use crate::scale::Scale;
 use crate::session::Session;
 use crate::test_dir::TestDir;
@@ -32,8 +33,8 @@ pub(crate) struct Probes<'a> {
     pub(crate) vpointer: &'a str,
     pub(crate) noctalia: Option<&'a str>,
     pub(crate) sitting: Option<crate::sitting::Mode>,
-    /// The `niri-computer-use` binary, for M2's control checks.
-    pub(crate) control: Option<&'a str>,
+    /// Which server checks to run, with the `niri-computer-use` binary.
+    pub(crate) server: Option<(ServerChecks, &'a str)>,
 }
 
 pub(crate) fn supervise(
@@ -62,8 +63,11 @@ pub(crate) fn supervise(
     let outcome = c2.and_then(|()| {
         if let Some(mode) = probes.sitting {
             crate::sitting::run(&mut session, &output, probes.vpointer, mode)
-        } else if let Some(server) = probes.control {
-            crate::control::run(&mut session, server)
+        } else if let Some((checks, server)) = probes.server {
+            match checks {
+                ServerChecks::Control => crate::control::run(&mut session, server),
+                ServerChecks::Actions => crate::actions::run(&mut session, server),
+            }
         } else {
             steps(&mut session, &output, probes)
         }

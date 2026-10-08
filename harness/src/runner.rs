@@ -161,30 +161,35 @@ impl Process {
     /// Writes all bytes, then closes stdin, within the child's original deadline. The
     /// watchdog also bounds a writer blocked by a child that never reads its pipe.
     pub(crate) fn feed(&mut self, bytes: Vec<u8>) -> Result<()> {
-        let mut stdin = self
-            .stdin
-            .take()
-            .ok_or_else(|| Failure::new("stdin is not open"))?;
-        let (sender, receiver) = mpsc::channel();
-        thread::spawn(move || {
-            let written = stdin.write_all(&bytes);
-            drop(stdin);
-            sender.send(written)
-        });
-        let left = self.end.saturating_duration_since(Instant::now());
-        receiver
-            .recv_timeout(left)
-            .context(format!(
-                "write stdin of {} before its deadline",
-                self.program
-            ))?
-            .context(format!("write stdin of {}", self.program))?;
+        self.send(bytes)?;
+        self.stdin = None;
         if Instant::now() >= self.end {
             return Err(Failure::new(format!(
                 "{} stdin deadline passed",
                 self.program
             )));
         }
+        Ok(())
+    }
+
+    /// Writes all bytes and keeps stdin open, within the child's original deadline.
+    pub(crate) fn send(&mut self, bytes: Vec<u8>) -> Result<()> {
+        let mut stdin = self
+            .stdin
+            .take()
+            .ok_or_else(|| Failure::new("stdin is not open"))?;
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            let written = stdin.write_all(&bytes).and_then(|()| stdin.flush());
+            sender.send((written, stdin))
+        });
+        let left = self.end.saturating_duration_since(Instant::now());
+        let (written, open) = receiver.recv_timeout(left).context(format!(
+            "write stdin of {} before its deadline",
+            self.program
+        ))?;
+        written.context(format!("write stdin of {}", self.program))?;
+        self.stdin = Some(open);
         Ok(())
     }
 

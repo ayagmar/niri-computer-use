@@ -341,3 +341,17 @@ These match the versions installed locally.
 - It is taken after the stop race but before the action mutex is released: a stop during the capture no longer throws away the outcome the server already observed, such as `pending` (review finding), and no other action of this server can change the desktop between the observation and the picture. A stop during the capture waits for it, at most grim's five seconds, before the lease is given back. It is the focused output at the default 1280 pixels wide, as JPEG, through the same code as the `screenshot` tool.
 - The image comes after the outcome's text in the result's content, so a client that reads only the first block still gets the outcome. Its metadata is the `screenshot` field. A failed capture adds `screenshot_error` with the error's name and detail and leaves the outcome as it is; an output niri can't name as focused counts as an `upstream_error` there.
 - The `screenshot_ref` that plan §6 mentions arrives with the pointer tools in M4, like the ref store.
+
+## 2026-10-08: M3's nested acceptance
+
+| Crate | Version | Published | Why |
+|---|---|---|---|
+| `wayland-client` | 0.31.15 | 2026-07-22 | The harness's fixture app, `harness window`, connects to the nested niri and maps toplevels. Same version the `vpointer` probe uses. |
+| `wayland-protocols` | 0.32.13 | 2026-06-19 | The `xdg_wm_base` bindings for those toplevels. Feature `client` only. |
+
+- `rustix` (same version, 1.1.5) gains the harness features `fs`, for the fixture's `memfd` buffer, and `event`, for polling its connection with a deadline.
+- The crates the two pull into `Cargo.lock` are the ones already vetted for the probe, each the newest release at least 7 days old that its dependents allow, rechecked on crates.io today: `wayland-backend` 0.3.17 (2026-08-14), `wayland-scanner` 0.31.11 (2026-07-22), `wayland-sys` 0.31.11 (2026-03-31), `smallvec` 1.16.2 (2026-09-25), `pkg-config` 0.3.34 (2026-08-14), `quick-xml` 0.41.0 (2026-06-29) and `downcast-rs` 1.2.1 (2024-04-07). `quick-xml` 0.42.0 and `downcast-rs` 2.x are outside the ranges `wayland-scanner` and `wayland-backend` accept. They are dev-only: the server binary doesn't depend on them.
+- A fixture app of our own instead of installed apps: the checks need an `app_id` set after mapping, two windows from one start, a window that ignores close requests, and a start delayed long enough to move focus during the wait. No app on the machine does all of these, and none would be reproducible elsewhere. The fixture's buffer is never written, so it needs no `mmap`.
+- The fixture is the harness binary itself, started by niri from presets whose program is its absolute path. The policy rules allow it: `harness` is neither a command runner nor a terminal. It checks its environment is the nested one before connecting, exits when niri goes away, and has its own 90-second deadline, so the run's leftover check stays clean.
+- The harness talks MCP to one long-running server instead of the one-shot `printf` pipelines of M2's checks, because the lease has to stay with one server across many calls and the `interrupted` check moves focus while a call is in flight. The runner's `Process::send` writes to a held stdin without closing it, within the process's deadline, and replies are read back from the server's log file.
+

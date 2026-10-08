@@ -1,5 +1,6 @@
 //! Nested niri test harness for niri-computer-use. See `docs/development.md`.
 
+mod actions;
 mod capture;
 mod config;
 mod control;
@@ -11,6 +12,7 @@ mod image_header;
 mod interrupt;
 mod keyboard;
 mod log;
+mod mcp;
 mod nested;
 mod niri;
 mod noctalia;
@@ -24,6 +26,7 @@ mod snapshot;
 mod supervise;
 mod test_dir;
 mod wev;
+mod window;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -34,9 +37,10 @@ use scale::Scale;
 use supervise::Probes;
 use test_dir::TestDir;
 
-const USAGE: &str = "usage: harness run [--scale <scale>] [--noctalia | --sitting | --sitting-from-c8 | --control]
+const USAGE: &str = "usage: harness run [--scale <scale>] [--noctalia | --sitting | --sitting-from-c8 | --control | --actions]
        harness host-capture <output>
-       harness supervise <TEST_DIR> <ARTIFACTS> <scale> <vpointer> [<noctalia-socket> | --sitting | --sitting-from-c8 | --control <server>]";
+       harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--started <file>]
+       harness supervise <TEST_DIR> <ARTIFACTS> <scale> <vpointer> [<noctalia-socket> | --sitting | --sitting-from-c8 | --control <server> | --actions <server>]";
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -63,6 +67,7 @@ fn dispatch(args: &[OsString]) -> Result<()> {
             interrupt::install()?;
             run::run(options)
         }
+        ["window", options @ ..] => window::run(&window::Options::parse(options)?),
         ["host-capture", output] => {
             interrupt::install()?;
             capture::host(output)
@@ -80,12 +85,15 @@ fn dispatch(args: &[OsString]) -> Result<()> {
                 ["--sitting-from-c8"] => Some(sitting::Mode::FromC8),
                 _ => None,
             };
-            let control = match noctalia {
-                ["--control", server] => Some(*server),
+            let server = match noctalia {
+                [flag, server] => {
+                    run::ServerChecks::from_flag(flag).map(|checks| (checks, *server))
+                }
                 _ => None,
             };
             let noctalia = match noctalia {
-                [] | ["--sitting" | "--sitting-from-c8"] | ["--control", _] => None,
+                [] | ["--sitting" | "--sitting-from-c8"] => None,
+                [_, _] if server.is_some() => None,
                 [probe] if !probe.starts_with("--") => Some(*probe),
                 _ => return Err(Failure::new(USAGE)),
             };
@@ -97,7 +105,7 @@ fn dispatch(args: &[OsString]) -> Result<()> {
                     vpointer,
                     noctalia,
                     sitting,
-                    control,
+                    server,
                 },
             )
         }
@@ -111,7 +119,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
         scale: Scale::ONE,
         noctalia: false,
         sitting: None,
-        control: false,
+        server: None,
     };
     let mut args = args.iter();
     while let Some(&arg) = args.next() {
@@ -122,17 +130,17 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
             "--noctalia" => options.noctalia = true,
             "--sitting" => options.sitting = Some(sitting::Mode::Full),
             "--sitting-from-c8" => options.sitting = Some(sitting::Mode::FromC8),
-            "--control" => options.control = true,
+            "--control" | "--actions" => options.server = run::ServerChecks::from_flag(arg),
             _ => return Err(Failure::new(USAGE)),
         }
     }
     if usize::from(options.sitting.is_some())
         + usize::from(options.noctalia)
-        + usize::from(options.control)
+        + usize::from(options.server.is_some())
         > 1
     {
         return Err(Failure::new(
-            "--sitting, --noctalia and --control cannot be combined",
+            "--sitting, --noctalia, --control and --actions cannot be combined",
         ));
     }
     Ok(options)
