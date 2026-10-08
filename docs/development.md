@@ -72,7 +72,7 @@ npm ci
 npm run build
 ```
 
-The pages are Markdown files in `site/src/content/docs/`, and the build goes to `site/dist/`. `.github/workflows/pages.yml` builds it and deploys it to GitHub Pages on every push to `main` that touches `site/`.
+The pages are Markdown files in `site/src/content/docs/`, and the build goes to `site/dist/`. CI builds it on every push and pull request. `.github/workflows/pages.yml` deploys it to GitHub Pages on every push to `main` that touches `site/`.
 
 ## Nested harness
 
