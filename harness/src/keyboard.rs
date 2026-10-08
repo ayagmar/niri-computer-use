@@ -10,7 +10,7 @@ use crate::session::Session;
 use crate::wev::keyboard::{self, Modifiers, Trace};
 
 const WAIT: Duration = Duration::from_secs(5);
-const WTYPE_DEADLINE: Duration = Duration::from_secs(3);
+pub(crate) const WTYPE_DEADLINE: Duration = Duration::from_secs(3);
 const CORPUS: &str = include_str!("../../probes/keyboard/corpus.txt");
 const CTRL_A: &[&str] = &["-M", "ctrl", "-k", "a", "-m", "ctrl"];
 const ROUTING: &[&str] = &[
@@ -26,29 +26,34 @@ pub(crate) fn run(session: &mut Session<'_>, log: &Path) -> Result<()> {
     c5a(session, log)?;
     c5b(session, log)?;
     c9(session, log)?;
+    session.log("C9 physical positive control: unverified in automatic mode")?;
     c10(session, log)
 }
 
-fn read(path: &Path) -> Result<String> {
+pub(crate) fn read(path: &Path) -> Result<String> {
     fs::read_to_string(path).context(format!("read {}", path.display()))
 }
 
-fn offset(path: &Path) -> Result<usize> {
+pub(crate) fn offset(path: &Path) -> Result<usize> {
     Ok(read(path)?.len())
 }
 
-fn since(path: &Path, offset: usize) -> Result<String> {
+pub(crate) fn since(path: &Path, offset: usize) -> Result<String> {
     let log = read(path)?;
     log.get(offset..)
         .map(str::to_owned)
         .ok_or_else(|| Failure::new("wev log shrank or offset split UTF-8"))
 }
 
-fn args(args: &[&str]) -> Vec<OsString> {
+pub(crate) fn args(args: &[&str]) -> Vec<OsString> {
     args.iter().map(OsString::from).collect()
 }
 
-fn send(session: &Session<'_>, arguments: &[&str], text: Option<&str>) -> Result<Duration> {
+pub(crate) fn send(
+    session: &Session<'_>,
+    arguments: &[&str],
+    text: Option<&str>,
+) -> Result<Duration> {
     let started = Instant::now();
     let mut process = session.start_with_stdin("wtype", &args(arguments), WTYPE_DEADLINE)?;
     let fed = process.feed(text.unwrap_or_default().as_bytes().to_vec());
@@ -64,7 +69,7 @@ fn send(session: &Session<'_>, arguments: &[&str], text: Option<&str>) -> Result
 }
 
 /// Wait for the final release and, for chords, the final all-zero modifiers record.
-fn observed(
+pub(crate) fn observed(
     session: &mut Session<'_>,
     log: &Path,
     start: usize,
@@ -125,7 +130,7 @@ fn pairs(trace: &Trace<'_>, count: usize) -> Result<()> {
     Ok(())
 }
 
-fn text(trace: &Trace<'_>, expected: &str) -> Result<()> {
+pub(crate) fn text(trace: &Trace<'_>, expected: &str) -> Result<()> {
     pairs(trace, expected.chars().count())?;
     let decoded: String = trace
         .keys
@@ -191,7 +196,7 @@ fn c5b(session: &mut Session<'_>, log: &Path) -> Result<()> {
     session.log("C5(b): after EOF exactly one Ctrl+a pair, final modifiers 0: pass")
 }
 
-fn c9(session: &mut Session<'_>, log: &Path) -> Result<()> {
+pub(crate) fn c9(session: &mut Session<'_>, log: &Path) -> Result<()> {
     let marker = session.bind_marker();
     if marker.try_exists().context("check bind-fired")? {
         return Err(Failure::new("C9: bind-fired existed before virtual input"));
@@ -204,7 +209,7 @@ fn c9(session: &mut Session<'_>, log: &Path) -> Result<()> {
         marker.try_exists().context("check bind-fired")
     })?;
     chord(&keyboard::trace(&since(log, start)?)?, "F12", 5, 1)?;
-    session.log("C9 virtual half: exactly one F12 pair with Control+Shift, final modifiers 0; bind-fired absent for 1 s: pass; physical control unverified")
+    session.log("C9 virtual half: exactly one F12 pair with Control+Shift, final modifiers 0; bind-fired absent for 1 s: pass")
 }
 
 fn c10(session: &mut Session<'_>, log: &Path) -> Result<()> {
@@ -258,8 +263,11 @@ mod tests {
             ..Modifiers::default()
         };
         Trace {
+            keymaps: Vec::new(),
+            entered: false,
             keys: vec![
                 Key {
+                    time: 0,
                     code: 9,
                     pressed: true,
                     symbol,
@@ -267,6 +275,7 @@ mod tests {
                     modifiers: Some(modifiers),
                 },
                 Key {
+                    time: 0,
                     code: 9,
                     pressed: false,
                     symbol,

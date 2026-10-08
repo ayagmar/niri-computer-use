@@ -87,7 +87,21 @@ pub(crate) struct Probe<'a> {
 }
 
 impl Probe<'_> {
-    fn send(&self, session: &mut Session<'_>, time: u32, action: &[String]) -> Result<()> {
+    pub(crate) fn send(
+        &self,
+        session: &mut Session<'_>,
+        time: u32,
+        action: &[String],
+    ) -> Result<()> {
+        let args = self.args(time, action)?;
+        let sent = session.run(self.path, &args)?;
+        for line in String::from_utf8_lossy(&sent.stdout).lines() {
+            session.log(&format!("  vpointer: {line}"))?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn args(&self, time: u32, action: &[String]) -> Result<Vec<OsString>> {
         let output = self.output;
         let geometry = format!(
             "{},{},{},{}",
@@ -100,11 +114,7 @@ impl Probe<'_> {
             time.to_string().into(),
         ];
         args.extend(action.iter().map(OsString::from));
-        let sent = session.run(self.path, &args)?;
-        for line in String::from_utf8_lossy(&sent.stdout).lines() {
-            session.log(&format!("  vpointer: {line}"))?;
-        }
-        Ok(())
+        Ok(args)
     }
 }
 
@@ -128,6 +138,21 @@ pub(crate) fn run(
     c4(session, probe, wev_log, surface)?;
     click(session, probe, wev_log)?;
     c12(session, probe, wev_log)
+}
+
+/// Shared pointer entry for automatic and supervised checks.
+pub(crate) fn enter_window(
+    session: &mut Session<'_>,
+    probe: &Probe<'_>,
+    wev_log: &Path,
+    window: &WindowLayout,
+) -> Result<()> {
+    enter(
+        session,
+        probe,
+        wev_log,
+        surface_origin(probe.output, window)?,
+    )
 }
 
 /// The layout position of `wev`'s surface. Borders are off, so it is the tile position
@@ -170,17 +195,20 @@ fn enter(
     )?;
     let seen = session.wait_until("pointer-enter", "the pointer in wev", WAIT, |_| {
         let log = read(wev_log)?;
-        let entered = wev::enters(&log)
-            .into_iter()
-            .any(|at| SurfacePt::from(at).distance(ENTER_POINT) <= TOLERANCE);
-        let moved = wev::motion(&log, ENTER_TIME).is_some();
-        Ok(match (entered, moved) {
-            (true, _) => Some("wl_pointer.enter at the probe's point"),
-            (false, true) => Some("the probe's motion; the pointer was already inside"),
-            (false, false) => None,
-        })
+        Ok(entry_observation(&log))
     })?;
     session.log(&format!("pointer: wev logged {seen}"))
+}
+
+fn entry_observation(log: &str) -> Option<&'static str> {
+    let entered = wev::enters(log)
+        .into_iter()
+        .any(|at| SurfacePt::from(at).distance(ENTER_POINT) <= TOLERANCE);
+    match (entered, wev::motion(log, ENTER_TIME).is_some()) {
+        (true, _) => Some("wl_pointer.enter at the probe's point"),
+        (false, true) => Some("the probe's motion; the pointer was already inside"),
+        (false, false) => None,
+    }
 }
 
 /// C4: each surface point, then one image pixel, must arrive within ±0.05 px.
@@ -301,6 +329,27 @@ fn c12_passes(frame: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn entry_accepts_enter_without_a_motion_event() {
+        let enter =
+            "[ 15: wl_pointer] enter: serial: 3997; surface: 3, x, y: 100.000000, 100.000000\n";
+        assert_eq!(
+            entry_observation(enter),
+            Some("wl_pointer.enter at the probe's point")
+        );
+        assert_eq!(
+            entry_observation(&enter.replace("100.000000", "200.000000")),
+            None
+        );
+        assert_eq!(
+            entry_observation(
+                "[ 15: wl_pointer] motion: time: 4000; x, y: 100.000000, 100.000000\n"
+            ),
+            Some("the probe's motion; the pointer was already inside")
+        );
+        assert_eq!(entry_observation(""), None);
+    }
 
     #[test]
     fn surface_origin_adds_output_tile_and_offset() {

@@ -32,6 +32,7 @@ pub(crate) struct Options {
     pub(crate) scale: Scale,
     /// Start Noctalia in the nested session and run C13.
     pub(crate) noctalia: bool,
+    pub(crate) sitting: Option<crate::sitting::Mode>,
 }
 
 pub(crate) fn run(options: Options) -> Result<()> {
@@ -234,7 +235,9 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: Option
         options.scale.to_string().into(),
         probe(VPOINTER)?.into(),
     ];
-    if options.noctalia {
+    if let Some(mode) = options.sitting {
+        args.push(mode.flag().into());
+    } else if options.noctalia {
         args.push(probe(NOCTALIA_SOCKET)?.into());
     }
     runner::run(&Invocation {
@@ -243,7 +246,11 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: Option
         env: ChildEnv::Exact(env),
         output: Sink::File(artifacts.join("niri.log")),
         group: Group::Own,
-        deadline: NESTED_DEADLINE,
+        deadline: if options.sitting.is_some() {
+            crate::sitting::RUN_DEADLINE
+        } else {
+            NESTED_DEADLINE
+        },
     })?;
     let status_path = artifacts.join(supervise::STATUS_FILE);
     let status = fs::read_to_string(&status_path)

@@ -13,6 +13,7 @@ pub(crate) struct Modifiers {
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Key<'a> {
+    pub(crate) time: u32,
     pub(crate) code: u32,
     pub(crate) pressed: bool,
     pub(crate) symbol: &'a str,
@@ -22,9 +23,18 @@ pub(crate) struct Key<'a> {
 
 #[derive(Debug, Default)]
 pub(crate) struct Trace<'a> {
+    pub(crate) keymaps: Vec<Keymap>,
     pub(crate) keys: Vec<Key<'a>>,
     pub(crate) modifiers: Option<Modifiers>,
     pub(crate) focused: bool,
+    pub(crate) entered: bool,
+}
+
+/// The identity available in wev's keymap record (not a content hash).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Keymap {
+    pub(crate) format: u32,
+    pub(crate) size: u32,
 }
 
 pub(crate) fn has_input(log: &str) -> bool {
@@ -44,9 +54,18 @@ pub(crate) fn trace(log: &str) -> Result<Trace<'_>> {
             continue;
         };
         match event.name {
-            "enter" => trace.focused = true,
+            "enter" => {
+                trace.focused = true;
+                trace.entered = true;
+            }
             "leave" => trace.focused = false,
-            "keymap" => trace.modifiers = Some(Modifiers::default()),
+            "keymap" => {
+                trace.keymaps.push(Keymap {
+                    format: number(event.detail, "format: ")?,
+                    size: number(event.detail, "size: ")?,
+                });
+                trace.modifiers = Some(Modifiers::default());
+            }
             "key" => {
                 let Some(next) = lines.peek().copied() else {
                     break;
@@ -89,6 +108,7 @@ fn key<'a>(detail: &str, continuation: &'a str, modifiers: Option<Modifiers>) ->
         .and_then(|(_, text)| text.strip_suffix('\''));
     match (symbol, text, state) {
         (Some(symbol), Some(text), 0 | 1) => Ok(Key {
+            time: super::time(detail)?,
             code: number(detail, "key: ")?,
             pressed: state == 1,
             symbol,
@@ -134,6 +154,30 @@ mod tests {
     const KEY: &str = "[ 1: wl_keyboard] key: serial: 1; time: 0; key: 9; state: 1 (pressed)\n                      sym: a            (97), utf8: 'é'\n";
 
     #[test]
+    fn keyboard_accepts_signed_wev_timestamps() {
+        let log = KEY.replace("time: 0", "time: -2147483648");
+        assert_eq!(trace(&log).unwrap().keys[0].time, 1_u32 << 31);
+        assert!(trace(&KEY.replace("time: 0", "time: -2147483649")).is_err());
+    }
+
+    #[test]
+    fn keymaps_require_complete_valid_records_and_keep_order() {
+        let first = "[ 1: wl_keyboard] keymap: format: 1 (xkb v1), size: 64434\n";
+        let second = "[ 1: wl_keyboard] keymap: format: 1 (xkb v1), size: 500\n";
+        let log = format!("{first}{second}{first}");
+        let seen = trace(&log).unwrap();
+        assert_eq!(seen.keymaps.len(), 3);
+        assert_eq!(seen.keymaps[0], seen.keymaps[2]);
+        assert_ne!(seen.keymaps[0], seen.keymaps[1]);
+        assert_eq!(trace(first.trim_end()).unwrap().keymaps, []);
+        assert!(trace(&first.replace("64434", "bad")).is_err());
+        assert!(trace("[ 1: wl_keyboard] keymap: format: 1\n").is_err());
+        let physical_log = KEY.replace("time: 0", "time: 1234");
+        let physical = trace(&physical_log).unwrap();
+        assert_eq!(physical.keys[0].time, 1234);
+    }
+
+    #[test]
     fn keys_keep_the_preceding_modifiers_and_unicode() {
         let log = format!("{MODS}{KEY}");
         let seen = trace(&log).unwrap();
@@ -172,6 +216,12 @@ mod tests {
         );
         let seen = trace(&log).unwrap();
         assert!(seen.focused);
+        assert!(seen.entered);
+        let unfocused =
+            trace("[ 1: wl_keyboard] enter: serial: 1\n[ 1: wl_keyboard] leave: serial: 2\n")
+                .unwrap();
+        assert!(unfocused.entered);
+        assert!(!unfocused.focused);
         assert_eq!(seen.keys[0].modifiers, Some(Modifiers::default()));
         assert!(
             !trace(&format!("{log}[ 1: wl_keyboard] leave: serial: 2\n"))

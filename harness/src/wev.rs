@@ -61,12 +61,63 @@ pub(crate) fn motion(log: &str, time: u32) -> Option<(f64, f64)> {
         .find_map(|event| position(event.detail.strip_prefix(&prefix)?))
 }
 
+/// wev 1.1.0 prints Wayland's uint32 timestamps with `%d`.
+pub(crate) fn time(detail: &str) -> crate::failure::Result<u32> {
+    let value = detail
+        .split_once("time: ")
+        .and_then(|(_, rest)| rest.split([';', ' ', ',']).next());
+    value
+        .and_then(|value| {
+            value.parse::<u32>().ok().or_else(|| {
+                value
+                    .parse::<i32>()
+                    .ok()
+                    .map(|signed| u32::from_ne_bytes(signed.to_ne_bytes()))
+            })
+        })
+        .ok_or_else(|| crate::failure::Failure::new(format!("invalid wev time: {detail}")))
+}
+
 /// What follows `button: ` in each `button` event sent with `time`, in order.
 pub(crate) fn buttons(log: &str, time: u32) -> Vec<&str> {
     let marker = format!("; time: {time}; button: ");
     pointer_events(log)
         .filter(|event| event.name == "button")
         .filter_map(|event| Some(event.detail.split_once(&marker)?.1))
+        .collect()
+}
+
+/// A complete button record, including its time, for the interrupted-pointer checks.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Button {
+    pub(crate) time: u32,
+    pub(crate) code: u32,
+    pub(crate) pressed: bool,
+}
+
+pub(crate) fn button_trace(log: &str) -> crate::failure::Result<Vec<Button>> {
+    use crate::failure::Failure;
+    pointer_events(log)
+        .filter(|event| event.name == "button")
+        .map(|event| {
+            let number = |field| {
+                event
+                    .detail
+                    .split_once(field)
+                    .and_then(|(_, rest)| rest.split([';', ' ', ',']).next())
+                    .and_then(|value| value.parse::<u32>().ok())
+                    .ok_or_else(|| Failure::new(format!("invalid wev button: {}", event.detail)))
+            };
+            let state = number("state: ")?;
+            if state > 1 {
+                return Err(Failure::new(format!("invalid wev button state: {state}")));
+            }
+            Ok(Button {
+                time: time(event.detail)?,
+                code: number("button: ")?,
+                pressed: state == 1,
+            })
+        })
         .collect()
 }
 
@@ -108,6 +159,29 @@ mod tests {
 ";
 
     #[test]
+    fn signed_timestamp_printing_preserves_wayland_bits() {
+        for (printed, expected) in [
+            ("0", 0),
+            ("2147483647", 2_147_483_647),
+            ("-2147483648", 1_u32 << 31),
+            ("-1", u32::MAX),
+            ("4294967295", u32::MAX),
+        ] {
+            assert_eq!(
+                time(&format!("serial: 1; time: {printed}; button: 272")).unwrap(),
+                expected
+            );
+        }
+        for bad in ["-2147483649", "4294967296", "bad", ""] {
+            assert!(time(&format!("time: {bad};")).is_err());
+        }
+        let buttons =
+            button_trace("[ 1: wl_pointer] button: time: -1; button: 272, state: 1 (pressed)\n")
+                .unwrap();
+        assert_eq!(buttons[0].time, u32::MAX);
+    }
+
+    #[test]
     fn parses_events_and_skips_continuation_lines() {
         let events: Vec<Event<'_>> = LOG.lines().filter_map(parse).collect();
         assert_eq!(events.len(), 13);
@@ -135,6 +209,32 @@ mod tests {
             ]
         );
         assert_eq!(buttons(LOG, 9000), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn button_trace_keeps_state_time_and_rejects_malformed_records() {
+        let seen = button_trace(LOG).unwrap();
+        assert_eq!(
+            seen,
+            [
+                Button {
+                    time: 8000,
+                    code: 272,
+                    pressed: true
+                },
+                Button {
+                    time: 8000,
+                    code: 272,
+                    pressed: false
+                }
+            ]
+        );
+        assert!(button_trace(&LOG.replace("state: 1", "state: 2")).is_err());
+        assert!(button_trace("[ 1: wl_pointer] button: time: 1; button: bad, state: 0\n").is_err());
+        assert_eq!(
+            button_trace("[ 1: wl_pointer] button: time: 1; button: 272, state: 0").unwrap(),
+            []
+        );
     }
 
     #[test]

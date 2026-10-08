@@ -93,6 +93,29 @@ Each run keeps its files in `target/e2e/<unix time>-<pid>/`:
 | `success-c13.png` | the nested output with Noctalia's control center open |
 | `failure-<step>.png` | the nested output when a wait timed out |
 
+## Supervised sitting
+
+`make sitting` opens the nested output at scale 1.5 and runs C6, C7, C8 and C9. It starts a focused wev and a separate unfocused observer. Noctalia does not run in this mode. The automatic path keeps its existing deadlines; the sitting allows 30 minutes overall, 29 minutes for wev and two minutes for each human action or confirmation. All wtype and held-pointer children keep a three-second deadline.
+
+The supervising agent must confirm that you are present before starting. Follow one cue at a time from `supervise.log`:
+
+1. Click the checkerboard in the nested window at bottom-right. Do not press a key yet. Confirm the click and that you see the checkerboard.
+2. When cued, click the checkerboard and press and release physical `x` once. Confirm what you did and saw.
+3. When cued, click the checkerboard and press and release physical `a` once. Confirm what you did and saw.
+4. When cued, click the checkerboard and press and release Shift once. Confirm what you did and saw.
+5. When cued, physically left-click once inside the checkerboard and release the button. Confirm what you did and saw.
+6. When cued, click the checkerboard, hold Ctrl and Shift, press and release F12 once, then release Shift and Ctrl. Confirm the chord, release of all keys and what you saw.
+
+wev shows a checkerboard, not typed text. The supervisor checks raw events and requires the human's confirmation separately. Only after that confirmation, the supervising agent creates `target/e2e/<run>/confirm-N.txt` containing one line beginning `confirmed: ` followed by the human's statement. A missing confirmation times out; a malformed statement fails. Never create these files in advance or infer a human confirmation from logs.
+
+To finish only C8 and C9 after an interrupted sitting, with the virtual-pointer probe already built:
+
+```sh
+cargo run --locked -p harness -- run --scale 1.5 --sitting-from-c8
+```
+
+This opens a fresh nested session, requires presence and the initial click again, skips C6 and C7 explicitly, and uses cues 5 and 6 for the remaining actions. Retain the earlier run's evidence. Additional artifacts are `wev-unfocused.log`, `confirm-N.txt`, `sitting-ready.png`, `success-c8.png` and `success-c9.png`. C14 is a separate host read; the sitting never locks the host.
+
 ## Probes
 
 Probes are small standalone programs in `probes/`, outside the Cargo workspace, so `make check` doesn't cover them. Run their tests with Cargo:
@@ -102,7 +125,7 @@ cargo test --locked --manifest-path probes/vpointer/Cargo.toml
 cargo test --locked --manifest-path probes/noctalia-socket/Cargo.toml
 ```
 
-`vpointer` creates a virtual pointer bound to one output, sends one action and exits. Run it only through `make nested`: the supervisor passes it `winit`, and only after the endpoint and output checks. The probe itself only checks that the output it was given exists before it creates the pointer. For a motion it prints the `motion_absolute` arguments it encoded and where niri's own mapping puts them, and refuses to send one that lands more than 0.002 px from the target.
+`vpointer` creates a virtual pointer bound to one output. Most actions exit after sending; `hold <button>` sends only a press and keeps the device alive for SIGKILL, failing if not killed within three seconds. `release <button>` sends only a release from a fresh device. Run it only through the nested harness: the supervisor passes it `winit`, and only after the endpoint and output checks. The probe itself only checks that the output it was given exists before it creates the pointer. For a motion it prints the `motion_absolute` arguments it encoded and where niri's own mapping puts them, and refuses to send one that lands more than 0.002 px from the target.
 
 `noctalia-socket` sends one command to a Noctalia IPC socket and prints the reply. It accepts only `status`, `panel-open control-center` and `panel-close control-center`, and sends `/`, the `\x1e` separator and that fixed command, the way Noctalia's own client frames a command. It writes the whole payload, shuts down its write half and reads the reply until Noctalia closes the connection, all within two seconds. A reply that starts with `error:`, an empty reply or an I/O error makes it exit with status 1 and the message on stderr. It sends to whatever socket it is given, so run it only through `make nested NOCTALIA=1`, which passes the nested Noctalia's socket after checking that it is under `TEST_DIR/run`.
 

@@ -1,4 +1,5 @@
-//! M0 probe: one virtual pointer, bound to one output, sends one action and exits.
+//! M0 probe: one virtual pointer, bound to one output, sends one action.
+//! The hold action keeps the device alive until killed or its three-second deadline.
 //!
 //! The pointer is only created once the named output is found, so run against a
 //! compositor without that output (the host has no `winit`), it sends no input.
@@ -8,6 +9,7 @@ mod coords;
 use std::env;
 use std::error::Error;
 use std::process::ExitCode;
+use std::time::{Duration, Instant};
 
 use coords::{Capture, ImagePx, LayoutPt, Output, ProtocolPt, Transform};
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
@@ -24,7 +26,9 @@ actions:
   motion-layout <x> <y>                                   a layout point
   motion-image <px> <py> <origin x> <origin y> <scale>    an image pixel's centre
   click <button>                                          press, then release
-  scroll                                                  one wheel notch down";
+  scroll                                                  one wheel notch down
+  hold <button>                                           press and hold for up to 3 seconds
+  release <button>                                        release only";
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -32,6 +36,8 @@ type Result<T> = std::result::Result<T, Box<dyn Error>>;
 enum Action {
     Motion(ProtocolPt),
     Click(u32),
+    Hold(u32),
+    Release(u32),
     Scroll,
 }
 
@@ -118,6 +124,8 @@ fn parse_action(action: &[String], output: &Output) -> Result<Action> {
             motion(coords::image_to_layout(pixel, capture), output)
         }
         [kind, button] if kind == "click" => Ok(Action::Click(button.parse()?)),
+        [kind, button] if kind == "hold" => Ok(Action::Hold(button.parse()?)),
+        [kind, button] if kind == "release" => Ok(Action::Release(button.parse()?)),
         [kind] if kind == "scroll" => Ok(Action::Scroll),
         _ => Err(USAGE.into()),
     }
@@ -174,6 +182,14 @@ fn send(output_name: &str, time: u32, action: &Action) -> Result<()> {
 
     let pointer = manager.create_virtual_pointer_with_output(Some(&seat), Some(output), &qh, ());
     dispatch(&pointer, time, action);
+    if matches!(action, Action::Hold(_)) {
+        queue.roundtrip(&mut state)?;
+        let end = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < end {
+            std::thread::sleep(end.saturating_duration_since(Instant::now()));
+        }
+        return Err("held pointer was not killed within 3 seconds".into());
+    }
     pointer.destroy();
     // niri has handled every request once this round trip returns.
     queue.roundtrip(&mut state)?;
@@ -199,6 +215,16 @@ fn dispatch(pointer: &ZwlrVirtualPointerV1, time: u32, action: &Action) {
             pointer.button(time, button, ButtonState::Released);
             pointer.frame();
             println!("sent button {button} pressed, frame, released, frame");
+        }
+        Action::Hold(button) => {
+            pointer.button(time, button, ButtonState::Pressed);
+            pointer.frame();
+            println!("sent button {button} pressed, frame; holding device");
+        }
+        Action::Release(button) => {
+            pointer.button(time, button, ButtonState::Released);
+            pointer.frame();
+            println!("sent button {button} released, frame");
         }
         Action::Scroll => {
             // niri creates the axis frame in `axis_discrete`; `axis_source` only changes an
@@ -279,6 +305,27 @@ mod tests {
             parse_action(&args("scroll"), &NESTED).unwrap(),
             Action::Scroll
         ));
+    }
+
+    #[test]
+    fn hold_and_release_parse_without_an_implicit_click() {
+        assert!(matches!(
+            parse_action(&args("hold 272"), &NESTED).unwrap(),
+            Action::Hold(272)
+        ));
+        assert!(matches!(
+            parse_action(&args("release 272"), &NESTED).unwrap(),
+            Action::Release(272)
+        ));
+        for bad in [
+            "hold",
+            "hold -1",
+            "hold 272 extra",
+            "release",
+            "release bad",
+        ] {
+            assert!(parse_action(&args(bad), &NESTED).is_err(), "{bad}");
+        }
     }
 
     #[test]

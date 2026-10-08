@@ -31,6 +31,7 @@ const WAIT: Duration = Duration::from_secs(5);
 pub(crate) struct Probes<'a> {
     pub(crate) vpointer: &'a str,
     pub(crate) noctalia: Option<&'a str>,
+    pub(crate) sitting: Option<crate::sitting::Mode>,
 }
 
 pub(crate) fn supervise(
@@ -56,7 +57,13 @@ pub(crate) fn supervise(
     };
     let c2 = check_output(&output, scale, &mut log);
     let mut session = Session::new(test_dir, artifacts, log, niri);
-    let outcome = c2.and_then(|()| steps(&mut session, &output, probes));
+    let outcome = c2.and_then(|()| {
+        if let Some(mode) = probes.sitting {
+            crate::sitting::run(&mut session, &output, probes.vpointer, mode)
+        } else {
+            steps(&mut session, &output, probes)
+        }
+    });
     write_status(artifacts, outcome.as_ref())?;
     // Same connection as `identify`, so this reaches the niri that was identified.
     let quit = session.quit();

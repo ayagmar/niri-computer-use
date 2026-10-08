@@ -1,4 +1,4 @@
-.PHONY: check lint coverage nested host-capture
+.PHONY: check lint coverage nested sitting host-capture
 
 SCALE ?= 1
 
@@ -26,3 +26,7 @@ nested:
 
 host-capture:
 	cargo run --locked -p harness -- host-capture $(OUTPUT)
+
+sitting:
+	cargo build --locked --manifest-path probes/vpointer/Cargo.toml
+	cargo run --locked -p harness -- run --scale 1.5 --sitting
