@@ -1,5 +1,6 @@
 //! The policy file, `$XDG_CONFIG_HOME/niri-computer-use/policy.toml`, and the decisions it
-//! feeds: launch presets, the app deny list, and whether a server may take the lease.
+//! feeds: launch presets, the app deny list, whether a server may take the lease, and
+//! which output setups the pointer tools may run on.
 //! Everything here is pure; the caller reads the file. The preset rules catch common
 //! mistakes. They are a guardrail, not a boundary: a wrapper script or a symlink with
 //! another name gets past any list.
@@ -7,6 +8,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use niri_ipc::{Output, Transform};
 use serde::{Deserialize, Serialize};
 
 use crate::control::LockState;
@@ -273,6 +275,29 @@ pub(crate) fn refuse_control(facts: Facts<'_>) -> Option<ToolError> {
     }
 }
 
+/// Whether the pointer tools may run on these outputs (plan §8): exactly one enabled
+/// output, either a monitor with transform `Normal` or nested niri's `winit` window, which
+/// niri always shows `Flipped180`. Those are the setups live tests cover; anything else,
+/// including a monitor really rotated to `Flipped180`, is `untested_output_config`.
+pub(crate) fn pointer_support<'a>(
+    outputs: impl IntoIterator<Item = &'a Output>,
+) -> Result<(), ToolError> {
+    let enabled: Vec<(&str, Transform)> = outputs
+        .into_iter()
+        .filter_map(|output| Some((output.name.as_str(), output.logical?.transform)))
+        .collect();
+    match enabled.as_slice() {
+        [("winit", Transform::Flipped180)] => Ok(()),
+        [(name, Transform::Normal)] if *name != "winit" => Ok(()),
+        _ => Err(ToolError::new(
+            ErrorName::UntestedOutputConfig,
+            format!(
+                "the pointer runs only with one enabled output, a monitor at transform Normal or nested niri's winit window; enabled outputs and transforms: {enabled:?}"
+            ),
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,6 +473,49 @@ app_id = "foot"
                 ..ok
             }),
             Some(ErrorName::ScreenLocked)
+        );
+    }
+
+    fn output(name: &str, transform: Option<Transform>) -> Output {
+        serde_json::from_value(serde_json::json!({
+            "name": name, "make": "", "model": "", "serial": null, "physical_size": null,
+            "modes": [], "current_mode": null, "is_custom_mode": false,
+            "vrr_supported": false, "vrr_enabled": false,
+            "logical": transform.map(|transform| serde_json::json!({
+                "x": 0, "y": 0, "width": 960, "height": 720, "scale": 1.0,
+                "transform": transform
+            }))
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn the_pointer_runs_on_one_tested_output() {
+        let supported = |outputs: &[Output]| pointer_support(outputs).map_err(|error| error.name);
+        let monitor = output("DP-1", Some(Transform::Normal));
+        let nested = output("winit", Some(Transform::Flipped180));
+        let off = output("HDMI-A-1", None);
+        assert_eq!(supported(std::slice::from_ref(&monitor)), Ok(()));
+        assert_eq!(supported(std::slice::from_ref(&nested)), Ok(()));
+        // A disabled output doesn't count.
+        assert_eq!(supported(&[monitor.clone(), off]), Ok(()));
+        let untested = Err(ErrorName::UntestedOutputConfig);
+        assert_eq!(supported(&[]), untested);
+        assert_eq!(supported(&[monitor, nested]), untested);
+        assert_eq!(
+            supported(&[output("DP-1", Some(Transform::Flipped180))]),
+            untested
+        );
+        assert_eq!(supported(&[output("DP-1", Some(Transform::_90))]), untested);
+        assert_eq!(
+            supported(&[output("winit", Some(Transform::Normal))]),
+            untested
+        );
+        let error = pointer_support(&[output("eDP-1", Some(Transform::_270))]).unwrap_err();
+        assert!(
+            error.detail.ends_with(r#"[("eDP-1", _270)]"#),
+            "{}",
+            error.detail
         );
     }
 }

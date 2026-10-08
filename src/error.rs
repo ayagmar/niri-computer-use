@@ -32,6 +32,8 @@ pub(crate) enum ErrorName {
     ScreenLocked,
     /// `launch` named a preset the policy file doesn't have.
     UnknownPreset,
+    /// A pointer tool on an output setup no live test covers.
+    UntestedOutputConfig,
 }
 
 /// A failure, serialized as `{"error": <name>, "detail": <upstream detail>}`.

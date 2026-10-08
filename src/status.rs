@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use niri_ipc::Output;
 use serde::Serialize;
 
 use crate::Env;
@@ -14,7 +15,7 @@ use crate::error::ToolError;
 use crate::niri::events::StreamState;
 use crate::niri::{self, version::Compat};
 use crate::noctalia::{self, Presence};
-use crate::policy::{Facts, Loaded, PolicyStatus};
+use crate::policy::{self, Facts, Loaded, PolicyStatus};
 
 /// Programs the server runs or will run, reported as found on `PATH` or not.
 const BINARIES: [&str; 5] = ["grim", "wtype", "wl-copy", "wl-paste", "loginctl"];
@@ -30,6 +31,7 @@ pub(crate) struct Status {
     /// The input-dirty marker, if there is one.
     input_dirty: Option<Found>,
     lock: Lock,
+    outputs: OutputSupport,
     noctalia: Presence,
     /// Why Noctalia counts as not running, when it's installed.
     noctalia_error: Option<ToolError>,
@@ -51,6 +53,24 @@ pub(crate) struct Sources<'a> {
     pub(crate) policy: &'a Loaded,
 }
 
+/// Whether the pointer tools may run on niri's outputs right now.
+#[derive(Debug, Serialize)]
+struct OutputSupport {
+    pointer_supported: bool,
+    /// Why not, when they may not.
+    reason: Option<String>,
+}
+
+impl OutputSupport {
+    fn of(outputs: Result<BTreeMap<String, Output>, ToolError>) -> Self {
+        let checked = outputs.and_then(|outputs| policy::pointer_support(outputs.values()));
+        Self {
+            pointer_supported: checked.is_ok(),
+            reason: checked.err().map(|error| error.detail),
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct Niri {
     version: Option<String>,
@@ -70,13 +90,14 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         policy,
     } = sources;
     let socket = env.niri_socket.as_deref();
-    let (version, noctalia) = tokio::join!(niri::version(socket), async {
-        if noctalia_installed {
-            Some(noctalia::status(env).await)
-        } else {
-            None
-        }
-    });
+    let (version, outputs, noctalia) =
+        tokio::join!(niri::version(socket), niri::outputs(socket), async {
+            if noctalia_installed {
+                Some(noctalia::status(env).await)
+            } else {
+                None
+            }
+        });
     let noctalia_status = noctalia.as_ref().and_then(|reply| reply.as_ref().ok());
     let lock = control::lock(env.niri_socket.as_deref(), noctalia_status).await;
     let (version, error) = match version {
@@ -103,6 +124,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
             .and_then(|runtime| marker::read(&runtime)),
         stop: RuntimeDir::of(env).is_ok_and(|runtime| runtime.stopped().unwrap_or(true)),
         lock,
+        outputs: OutputSupport::of(outputs),
         noctalia: presence,
         noctalia_error,
         audit: audit.status(),
@@ -163,6 +185,7 @@ mod tests {
                     "session": null,
                     "logind_error": "find niri's process: NIRI_SOCKET is not set"
                 },
+                "outputs": {"pointer_supported": false, "reason": "NIRI_SOCKET is not set"},
                 "noctalia": "not_installed",
                 "noctalia_error": null,
                 "audit": {"path": null, "last_error": "neither XDG_STATE_HOME nor HOME is set"},

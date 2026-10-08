@@ -12,7 +12,7 @@
 | `niri/waiter.rs` | Waiters: how an action watches the event stream, event by event, for its effect. |
 | `act.rs` | The action tools' work: check the arguments against niri's state, dispatch one niri action, observe its effect. |
 | `niri/version.rs` | The version rule (pure). |
-| `policy.rs` | The policy file, its presets, and the decision whether this server may take the lease or act (pure, apart from reading the file). |
+| `policy.rs` | The policy file, its presets, the decision whether this server may take the lease or act, and which output setups the pointer may run on (pure, apart from reading the file). |
 | `status.rs` | Builds the readiness report shared by the tool and the subcommand. |
 | `observe.rs` | Screenshots: picks the output, plans grim's arguments and the image size they must produce, and checks the result. |
 | `clipboard.rs` | Reads the clipboard's text with `wl-paste`. |
