@@ -37,7 +37,7 @@ pub(crate) struct Lock {
     logind_error: Option<String>,
 }
 
-/// Asks logind, and falls back to `noctalia`'s status reply when logind can't answer.
+/// Asks logind and reads `noctalia`'s status reply; locked wins.
 pub(crate) async fn lock(session_id: Option<&str>, noctalia: Option<&Map<String, Value>>) -> Lock {
     let logind = match session_id {
         Some(id) => locked_hint(id).await,
@@ -129,6 +129,14 @@ mod tests {
             (LockState::Locked, LockSource::Noctalia)
         );
         assert_eq!(fallback.logind_error.as_deref(), Some("no session"));
+        let noctalia_unlocked = decide(
+            Err("no session".to_owned()),
+            Some(&noctalia(Value::Bool(false))),
+        );
+        assert_eq!(
+            (noctalia_unlocked.state, noctalia_unlocked.source),
+            (LockState::Unlocked, LockSource::Noctalia)
+        );
         for status in [None, Some(&noctalia(Value::Null))] {
             let unknown = decide(Err("no session".to_owned()), status);
             assert_eq!(
