@@ -172,7 +172,8 @@ fn reuses(session: &mut Session<'_>, client: &mut Client, other: u64) -> Result<
     session.log(&format!("M3: reuse with two windows: {both}"))
 }
 
-/// `focus_window` and `focus_workspace` are seen to take effect.
+/// `focus_window` and `focus_workspace` are seen to take effect, with keyboard focus where
+/// niri puts it.
 fn focuses(session: &mut Session<'_>, client: &mut Client, id: u64) -> Result<()> {
     focus(session, client, id)?;
     let state = structured(&client.call(session, "desktop_state", json!({}))?)?;
@@ -194,10 +195,21 @@ fn focuses(session: &mut Session<'_>, client: &mut Client, id: u64) -> Result<()
             Value::Array(workspaces)
         )));
     };
+    // The fixtures all open on the focused workspace, so the other one is empty.
     let away = act(session, client, "focus_workspace", json!({"id": other}))?;
     expect_outcome(&away, "focused", "focus_workspace")?;
+    expect(
+        field(&away, "/focused_window").is_null(),
+        "no window focused on the empty workspace",
+        &away.to_string(),
+    )?;
     let back = act(session, client, "focus_workspace", json!({"id": focused}))?;
     expect_outcome(&back, "focused", "focus_workspace back")?;
+    expect(
+        field(&back, "/focused_window") == id,
+        "focus back on the window it left",
+        &back.to_string(),
+    )?;
     session.log(&format!(
         "M3: focus_workspace {other} and back: {away}, {back}"
     ))

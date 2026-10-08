@@ -183,7 +183,7 @@ One server holds the lease for the whole run. The supervisor keeps its stdin ope
 1. `launch late` gives `one`, and `desktop_state` shows the window with its late `app_id`.
 2. `launch two` gives `ambiguous` with two windows.
 3. `launch reuse` with `reuse: true` gives `one`; after `focus_window` on another window, the same call gives `focused` on that window and starts nothing; after a second plain launch, it gives `ambiguous` with `accepted: false`, and still nothing new starts.
-4. `focus_window`, then `focus_workspace` to another workspace and back, each `focused`.
+4. `focus_window`, then `focus_workspace` to the empty workspace, with no window focused, and back, with focus on the window it left, each `focused`.
 5. `close_window` on a `plain` window gives `closed`; on a `keep` window, `pending` with a screenshot of the output in the result.
 6. `launch slow`, and as soon as the marker appears the supervisor focuses the `late` window through its own niri connection: the launch gives `interrupted` naming that window, with a screenshot.
 
