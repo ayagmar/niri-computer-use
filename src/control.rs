@@ -14,12 +14,13 @@ pub(crate) mod recover;
 pub(crate) mod runtime;
 pub(crate) mod stop;
 
+use std::path::Path;
 use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use crate::runner;
+use crate::{niri, runner};
 
 const LOGINCTL_DEADLINE: Duration = Duration::from_secs(2);
 
@@ -43,17 +44,39 @@ pub(crate) enum LockSource {
 pub(crate) struct Lock {
     state: LockState,
     source: LockSource,
+    /// The logind session asked: the one niri runs in.
+    session: Option<String>,
     /// Why logind couldn't answer, when it couldn't.
     logind_error: Option<String>,
 }
 
-/// Asks logind and reads `noctalia`'s status reply; locked wins.
-pub(crate) async fn lock(session_id: Option<&str>, noctalia: Option<&Map<String, Value>>) -> Lock {
-    let logind = match session_id {
-        Some(id) => locked_hint(id).await,
-        None => Err("XDG_SESSION_ID is not set".to_owned()),
+/// Asks logind about niri's session and reads `noctalia`'s status reply; locked wins.
+pub(crate) async fn lock(
+    niri_socket: Option<&Path>,
+    noctalia: Option<&Map<String, Value>>,
+) -> Lock {
+    let session = niri_session(niri_socket).await;
+    let logind = match &session {
+        Ok(id) => locked_hint(id).await,
+        Err(error) => Err(error.clone()),
     };
-    decide(logind, noctalia)
+    Lock {
+        session: session.ok(),
+        ..decide(logind, noctalia)
+    }
+}
+
+/// The logind session niri sets its locked hint on: the `XDG_SESSION_ID` niri started
+/// with (`update_locked_hint` in niri v26.04 `src/niri.rs`). Asking about any other session,
+/// such as this server's own when it runs from SSH or a TTY, would read a hint niri never
+/// sets.
+async fn niri_session(niri_socket: Option<&Path>) -> Result<String, String> {
+    let pid = niri::pid(niri_socket)
+        .await
+        .map_err(|error| format!("find niri's process: {}", error.detail))?;
+    procs::environ_var(Path::new("/proc"), pid, "XDG_SESSION_ID")
+        .map_err(|error| format!("read niri's environment (PID {pid}): {error}"))?
+        .ok_or_else(|| "niri has no XDG_SESSION_ID, so it sets no logind locked hint".to_owned())
 }
 
 /// `loginctl show-session <id> -p LockedHint --value`, which prints `yes` or `no`.
@@ -77,9 +100,8 @@ async fn locked_hint(id: &str) -> Result<bool, String> {
     }
 }
 
-/// Locked if either source says so. niri sets logind's hint only on its own session, so a
-/// server started from another session (SSH, a TTY, a scrubbed environment) reads a hint
-/// that stays `no` while the screen is locked; Noctalia's `locked` still catches that.
+/// Locked if either source says so. niri sets logind's hint only while it runs, and only
+/// from a session; Noctalia's `locked` also covers its own lock screen.
 fn decide(logind: Result<bool, String>, noctalia: Option<&Map<String, Value>>) -> Lock {
     let noctalia = noctalia
         .and_then(|status| status.get("locked"))
@@ -87,6 +109,7 @@ fn decide(logind: Result<bool, String>, noctalia: Option<&Map<String, Value>>) -
     let lock = |state, source, logind_error| Lock {
         state,
         source,
+        session: None,
         logind_error,
     };
     match (logind, noctalia) {

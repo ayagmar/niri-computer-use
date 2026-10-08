@@ -33,4 +33,6 @@ mod recover;
 #[cfg(test)]
 mod screenshot;
 #[cfg(test)]
+mod session;
+#[cfg(test)]
 mod shell;

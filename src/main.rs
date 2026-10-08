@@ -35,8 +35,6 @@ pub(crate) struct Env {
     pub(crate) path: Option<OsString>,
     pub(crate) runtime_dir: Option<PathBuf>,
     pub(crate) wayland_display: Option<OsString>,
-    /// The logind session, for the lock state.
-    pub(crate) session_id: Option<String>,
     /// `$XDG_STATE_HOME`, or `$HOME/.local/state`, for the audit log.
     pub(crate) state_dir: Option<PathBuf>,
 }
@@ -49,7 +47,6 @@ impl Env {
             path: var("PATH"),
             runtime_dir: var("XDG_RUNTIME_DIR").map(PathBuf::from),
             wayland_display: var("WAYLAND_DISPLAY"),
-            session_id: var("XDG_SESSION_ID").map(|id| id.to_string_lossy().into_owned()),
             state_dir: var("XDG_STATE_HOME")
                 .map(PathBuf::from)
                 .or_else(|| var("HOME").map(|home| PathBuf::from(home).join(".local/state"))),

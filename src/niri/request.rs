@@ -29,6 +29,39 @@ pub(crate) async fn send(socket: &Path, request: &Request) -> Result<Response, T
     .await
 }
 
+/// The PID of the process listening on niri's socket, from the connection's peer
+/// credentials. Nothing is sent; niri sees the connection close.
+pub(crate) async fn peer_pid(socket: &Path) -> Result<u32, ToolError> {
+    let connect = UnixStream::connect(socket);
+    let stream = tokio::time::timeout(DEADLINE, connect)
+        .await
+        .map_err(|_| {
+            ToolError::new(
+                ErrorName::DeadlineExceeded,
+                format!(
+                    "connect to {}: no answer within {DEADLINE:?}",
+                    socket.display()
+                ),
+            )
+        })?
+        .map_err(|error| {
+            ToolError::new(
+                ErrorName::NiriUnavailable,
+                format!("connect to {}: {error}", socket.display()),
+            )
+        })?;
+    let credentials = stream.peer_cred().map_err(|error| {
+        ToolError::new(
+            ErrorName::UpstreamError,
+            format!("read niri's credentials: {error}"),
+        )
+    })?;
+    credentials
+        .pid()
+        .and_then(|pid| u32::try_from(pid).ok())
+        .ok_or_else(|| ToolError::new(ErrorName::UpstreamError, "niri's socket gave no PID"))
+}
+
 async fn within(
     deadline: Duration,
     request: &Request,

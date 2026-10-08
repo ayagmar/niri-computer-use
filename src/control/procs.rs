@@ -41,6 +41,21 @@ pub(crate) fn alive_as(proc_root: &Path, pid: u32, start_time: u64) -> bool {
     stat(proc_root, pid).is_some_and(|stat| stat.start_time == start_time && !stat.exited())
 }
 
+/// The value of `name` in the environment `pid` started with, from
+/// `/proc/<pid>/environ`. `Ok(None)` when the process has no such variable.
+pub(crate) fn environ_var(
+    proc_root: &Path,
+    pid: u32,
+    name: &str,
+) -> std::io::Result<Option<String>> {
+    let environ = std::fs::read(proc_root.join(pid.to_string()).join("environ"))?;
+    let prefix = format!("{name}=");
+    Ok(environ
+        .split(|&byte| byte == 0)
+        .find_map(|entry| entry.strip_prefix(prefix.as_bytes()))
+        .map(|value| String::from_utf8_lossy(value).into_owned()))
+}
+
 /// The PIDs of running processes named `name` whose real user is `uid`.
 pub(crate) fn named(proc_root: &Path, name: &str, uid: u32) -> Vec<u32> {
     let Ok(entries) = std::fs::read_dir(proc_root) else {
@@ -118,6 +133,24 @@ mod tests {
         assert!(!alive_as(&root, 10, 98766));
         assert!(!alive_as(&root, 13, 98765));
         assert!(!alive_as(&root, 99, 98765));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reads_one_variable_from_an_environ() {
+        let root = crate::test_support::fresh_dir("procs-environ");
+        std::fs::create_dir(root.join("5")).unwrap();
+        std::fs::write(
+            root.join("5/environ"),
+            b"A=1\0XDG_SESSION_ID=3\0XDG_SESSION_IDX=9\0",
+        )
+        .unwrap();
+        assert_eq!(
+            environ_var(&root, 5, "XDG_SESSION_ID").unwrap().as_deref(),
+            Some("3")
+        );
+        assert_eq!(environ_var(&root, 5, "B").unwrap(), None);
+        assert!(environ_var(&root, 6, "A").is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 

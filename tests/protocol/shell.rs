@@ -4,8 +4,9 @@
 use serde_json::{Value, json};
 
 use crate::client::{Server, tool_error};
-use crate::fixture::{Fixture, SESSION};
+use crate::fixture::Fixture;
 use crate::noctalia::{self, LOCKED, UNLOCKED};
+use crate::session::NiriProcess;
 
 /// A loginctl that records its arguments and prints `hint`.
 fn loginctl(fixture: &Fixture, hint: &str) {
@@ -50,6 +51,7 @@ async fn noctalia_absent_from_path_is_not_installed() {
     loginctl(&fixture, "no");
     // A Noctalia socket alone doesn't count: the tool list depends on `PATH`.
     noctalia::start(&fixture, UNLOCKED);
+    let _niri = NiriProcess::start(&fixture, Some("c4")).await;
     let mut server = Server::start(&fixture).await;
     let status = server.structured("status").await;
     assert_eq!(status["noctalia"], "not_installed");
@@ -57,30 +59,32 @@ async fn noctalia_absent_from_path_is_not_installed() {
     assert_eq!(status["lock"]["source"], "logind");
 }
 
-/// The `lock` block of `status` for one environment.
-async fn lock(fixture: &Fixture) -> Value {
+/// The `lock` block of `status`, with niri running in the session `session`.
+async fn lock(fixture: &Fixture, session: Option<&str>) -> Value {
+    let _niri = NiriProcess::start(fixture, session).await;
     let mut server = Server::start(fixture).await;
     server.structured("status").await["lock"].clone()
 }
 
 #[tokio::test]
-async fn logind_answers_first_and_locked_wins() {
+async fn logind_is_asked_about_niris_session_and_locked_wins() {
     let fixture = Fixture::new("lock-logind");
     fixture.program("noctalia", "exit 0");
     noctalia::start(&fixture, LOCKED);
     loginctl(&fixture, "yes");
     assert_eq!(
-        lock(&fixture).await,
-        json!({"state": "locked", "source": "logind", "logind_error": null})
+        lock(&fixture, Some("c4")).await,
+        json!({"state": "locked", "source": "logind", "session": "c4", "logind_error": null})
     );
+    // The server's own XDG_SESSION_ID plays no part.
     assert_eq!(
         fixture.args("loginctl"),
-        ["show-session", SESSION, "-p", "LockedHint", "--value"]
+        ["show-session", "c4", "-p", "LockedHint", "--value"]
     );
     loginctl(&fixture, "no");
     assert_eq!(
-        lock(&fixture).await,
-        json!({"state": "locked", "source": "noctalia", "logind_error": null})
+        lock(&fixture, Some("c4")).await,
+        json!({"state": "locked", "source": "noctalia", "session": "c4", "logind_error": null})
     );
 }
 
@@ -89,26 +93,27 @@ async fn without_logind_noctalia_decides_and_otherwise_the_state_is_unknown() {
     let mut fixture = Fixture::new("lock-fallback");
     fixture.program("noctalia", "exit 0");
     noctalia::start(&fixture, UNLOCKED);
-    fixture.unset("XDG_SESSION_ID");
+    loginctl(&fixture, "yes");
     assert_eq!(
-        lock(&fixture).await,
-        json!({"state": "unlocked", "source": "noctalia", "logind_error": "XDG_SESSION_ID is not set"})
+        lock(&fixture, None).await,
+        json!({
+            "state": "unlocked", "source": "noctalia", "session": null,
+            "logind_error": "niri has no XDG_SESSION_ID, so it sets no logind locked hint"
+        })
     );
-    fixture.set("XDG_SESSION_ID", "-H");
-    let invalid = lock(&fixture).await;
+    let invalid = lock(&fixture, Some("-H")).await;
     assert_eq!(invalid["state"], "unlocked");
     assert_eq!(
         invalid["logind_error"],
         "XDG_SESSION_ID \"-H\" isn't a logind session ID"
     );
-    fixture.set("XDG_SESSION_ID", SESSION);
     fixture.program(
         "loginctl",
         "echo 'Failed to get session: No such session' >&2; exit 1",
     );
     // Noctalia's socket is named after the display, so this one has no Noctalia.
     fixture.set("WAYLAND_DISPLAY", "wayland-none");
-    let unknown = lock(&fixture).await;
+    let unknown = lock(&fixture, Some("c4")).await;
     assert_eq!(unknown["state"], "unknown");
     assert_eq!(unknown["source"], "none");
     let error = unknown["logind_error"].as_str().unwrap();

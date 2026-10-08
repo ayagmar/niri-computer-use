@@ -20,6 +20,11 @@ pub(crate) async fn version(socket: Option<&Path>) -> Result<String, ToolError> 
     Ok(version)
 }
 
+/// The process ID of the niri listening on the socket.
+pub(crate) async fn pid(socket: Option<&Path>) -> Result<u32, ToolError> {
+    request::peer_pid(known(socket)?).await
+}
+
 /// niri's outputs by connector name, in name order.
 pub(crate) async fn outputs(socket: Option<&Path>) -> Result<BTreeMap<String, Output>, ToolError> {
     let Response::Outputs(outputs) = request::send(known(socket)?, &Request::Outputs).await? else {

@@ -65,7 +65,7 @@ pub(crate) async fn collect(
         }
     });
     let noctalia_status = noctalia.as_ref().and_then(|reply| reply.as_ref().ok());
-    let lock = control::lock(env.session_id.as_deref(), noctalia_status).await;
+    let lock = control::lock(env.niri_socket.as_deref(), noctalia_status).await;
     let (version, error) = match version {
         Ok(version) => (Some(version), None),
         Err(error) => (None, Some(error)),
@@ -129,7 +129,8 @@ mod tests {
                 "lock": {
                     "state": "unknown",
                     "source": "none",
-                    "logind_error": "XDG_SESSION_ID is not set"
+                    "session": null,
+                    "logind_error": "find niri's process: NIRI_SOCKET is not set"
                 },
                 "noctalia": "not_installed",
                 "noctalia_error": null,

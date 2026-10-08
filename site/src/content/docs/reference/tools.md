@@ -35,10 +35,11 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `niri.error` | why niri's version couldn't be read, or null |
 | `lease.held_by_me` | whether this server holds the lease |
 | `lease.holder` | the holder's `pid`, `label` (client name and server PID, such as `claude-code/4711`) and `since`, or null |
-| `input_dirty` | the input-dirty marker, or null: its `operation`, `phase` (`pending` or `running`), `server_pid`, `since`, and the input `child` once known; `{"error": …}` if the marker can't be read |
+| `input_dirty` | the input-dirty marker, or null: its `operation`, `phase` (`pending` or `running`), `server_pid`, `since`, the input `child` once known, and any pointer `buttons` pressed; `{"error": …}` if the marker can't be read |
 | `stop` | whether the stop flag is set for this niri instance (`niri-computer-use stop`, cleared by `niri-computer-use resume`) |
 | `lock.state` | `locked`, `unlocked` or `unknown` |
 | `lock.source` | `logind`, `noctalia` or `none`: the screen counts as locked when logind's `LockedHint` or Noctalia's `locked` says so |
+| `lock.session` | the logind session asked: the one in niri's own `XDG_SESSION_ID`, which is where niri sets the hint |
 | `lock.logind_error` | why logind couldn't answer, or null |
 | `noctalia` | `running`, `not_running` or `not_installed` |
 | `noctalia_error` | why Noctalia counts as not running, or null |
