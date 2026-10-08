@@ -88,8 +88,13 @@ async fn niri_session(niri_socket: Option<&Path>) -> Result<String, String> {
 /// `loginctl show-session <id> -p LockedHint --value`, which prints `yes` or `no`.
 async fn locked_hint(id: &str) -> Result<bool, String> {
     // logind session IDs are short alphanumeric names such as `3` or `c2`. Anything else
-    // could be read as an option.
-    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+    // could be read as an option, and `self` and `auto` name the caller's session, not
+    // niri's.
+    if id.is_empty()
+        || id == "self"
+        || id == "auto"
+        || !id.chars().all(|c| c.is_ascii_alphanumeric())
+    {
         return Err(format!("XDG_SESSION_ID {id:?} isn't a logind session ID"));
     }
     let args = ["show-session", id, "-p", "LockedHint", "--value"].map(str::to_owned);
@@ -187,7 +192,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_session_id_that_could_be_an_option_is_refused() {
-        for id in ["", "--help", "3 4", "c2;x"] {
+        for id in ["", "--help", "3 4", "c2;x", "self", "auto"] {
             let error = locked_hint(id).await.unwrap_err();
             assert!(
                 error.contains("isn't a logind session ID"),
