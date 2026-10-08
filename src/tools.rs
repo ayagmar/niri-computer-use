@@ -14,12 +14,9 @@ use crate::audit::{Audit, Call, Caller};
 use crate::control::desk::Desk;
 use crate::error::{CANCELLED, CallError, ToolError};
 use crate::niri::events::{EventStream, StreamState};
-use crate::observe::{Format, Rect, Target};
+use crate::observe::{DEFAULT_MAX_WIDTH, Format, Rect, Target};
 use crate::policy::{self, Loaded};
 use crate::{Env, clipboard, niri, noctalia, observe, status};
-
-/// The default `max_width` (plan §4). Provisional until M1's image delivery check.
-const DEFAULT_MAX_WIDTH: u32 = 1280;
 
 /// Optional arguments are described as their own type with their real default, without
 /// `null`, because clients that map tool schemas onto a single-type dialect reject
@@ -401,8 +398,8 @@ impl Server {
         policy::refuse_control(report.facts(&self.policy))
     }
 
-    /// Runs one action through the desk's gate and logs it with what was accepted and
-    /// observed.
+    /// Runs one action through the desk's gate, with a screenshot when its outcome is in
+    /// doubt, and logs it with what was accepted and observed.
     async fn act(
         &self,
         context: &RequestContext<RoleServer>,
@@ -410,11 +407,13 @@ impl Server {
         args: Value,
         work: impl Future<Output = Result<Outcome, CallError>>,
     ) -> Result<CallToolResult, ErrorData> {
+        let socket = self.env.niri_socket.as_deref();
         self.record(context, Call::action(tool), args, async {
             // Boxed, because the readiness report and the action's wait make large futures.
             let refusal = Box::pin(self.refusal());
-            match self.desk.act(refusal, Box::pin(work)).await {
-                Ok(outcome) => structured(&outcome),
+            let work = Box::pin(async { Ok(act::with_evidence(socket, work.await?).await) });
+            match self.desk.act(refusal, work).await {
+                Ok(evidenced) => outcome(&evidenced),
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
                 Err(CallError::Tool(error)) => Ok(error.into_result()),
             }
@@ -497,6 +496,18 @@ fn image(shot: &observe::Screenshot) -> Result<CallToolResult, ErrorData> {
     result
         .content
         .insert(0, ContentBlock::image(data, shot.metadata.mime_type));
+    Ok(result)
+}
+
+/// An action's outcome as structured content and its text, then its screenshot, if any.
+fn outcome(evidenced: &act::Evidenced) -> Result<CallToolResult, ErrorData> {
+    let mut result = structured(&evidenced.outcome)?;
+    if let (Some(image), Some(metadata)) = (&evidenced.image, &evidenced.outcome.screenshot) {
+        let data = base64::engine::general_purpose::STANDARD.encode(image);
+        result
+            .content
+            .push(ContentBlock::image(data, metadata.mime_type));
+    }
     Ok(result)
 }
 

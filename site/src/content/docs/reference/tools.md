@@ -124,13 +124,15 @@ An unknown window or workspace id is an argument mistake, and nothing is sent. O
 | `focused_window` | the window with keyboard focus when the observation ended, or null when focus isn't on a window or the reply was lost |
 | `windows` | the windows the outcome is about, when there are any |
 | `detail` | why the outcome is `uncertain` |
+| `screenshot` | with an outcome in doubt, the metadata of a fresh screenshot of the focused output, as `screenshot` returns it; the image follows the text in the result's content |
+| `screenshot_error` | with an outcome in doubt, `{"error", "detail"}` saying why there is no screenshot |
 
 Every action waits up to five seconds for its effect. Two outcomes can end any of them:
 
 - `interrupted`: focus moved to a window that was neither focused before nor the expected target, so someone else is using the desktop. `focused_window` says where focus went.
 - `uncertain`: niri's reply or event stream was lost, so the action may or may not have happened. `accepted` is null when the reply was lost.
 
-None of these outcomes is an error, and the server never retries an action.
+None of these outcomes is an error, and the server never retries an action. `timeout`, `pending`, `none`, `interrupted` and `uncertain` are outcomes in doubt: the result comes with a fresh screenshot of the focused output, 1280 pixels wide, so the agent can see the desktop without another call.
 
 ## `focus_window`
 

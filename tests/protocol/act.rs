@@ -5,12 +5,13 @@ use niri_ipc::{Action, WorkspaceReferenceArg};
 use serde_json::{Value, json};
 
 use crate::client::{Server, mistake, run, tool_error};
-use crate::fixture::Fixture;
+use crate::fixture::{Fixture, jpeg};
 use crate::niri::{Niri, Stream, window_on};
 use crate::noctalia::{self, LOCKED, UNLOCKED};
 
 /// A server holding the lease on a fake niri, with windows 1 (focused, `a`), 2 (`b`) and
-/// 3 (`c`) on workspace 1 of two, and Noctalia saying the screen is unlocked.
+/// 3 (`c`) on workspace 1 of two, Noctalia saying the screen is unlocked, and a grim that
+/// captures the focused 2560x1440 output at the default 1280 pixels wide.
 struct Desk {
     fixture: Fixture,
     niri: Niri,
@@ -25,6 +26,7 @@ impl Desk {
         std::fs::create_dir_all(fixture.path("config/niri-computer-use")).unwrap();
         std::fs::write(fixture.path("config/niri-computer-use/policy.toml"), policy).unwrap();
         fixture.program("noctalia", "exit 0");
+        fixture.grim(&jpeg(1280, 720, b"evidence"));
         let noctalia = noctalia::start(&fixture, UNLOCKED);
         let mut niri = Niri::start(&fixture);
         let mut server = Server::start(&fixture).await;
@@ -86,9 +88,30 @@ argv = ["foot"]
 app_id = "foot"
 "#;
 
+/// The outcome, after checking that an outcome in doubt comes with a screenshot of the
+/// focused output, the image after the text, and that no other outcome does. The
+/// screenshot's metadata is left out of what it returns.
 fn outcome(result: &Value) -> Value {
     assert_eq!(result["isError"], false, "{result}");
-    result["structuredContent"].clone()
+    let mut outcome = result["structuredContent"].clone();
+    let content = result["content"].as_array().unwrap();
+    let doubt = ["timeout", "pending", "none", "interrupted", "uncertain"];
+    if doubt.contains(&outcome["observed"].as_str().unwrap()) {
+        assert_eq!(content.len(), 2, "{result}");
+        assert_eq!(content[1]["type"], "image", "{result}");
+        assert_eq!(content[1]["mimeType"], "image/jpeg", "{result}");
+        let screenshot = outcome
+            .as_object_mut()
+            .unwrap()
+            .remove("screenshot")
+            .unwrap();
+        assert_eq!(screenshot["output"], "DP-1", "{screenshot}");
+        assert_eq!(screenshot["width"], 1280, "{screenshot}");
+    } else {
+        assert_eq!(content.len(), 1, "{result}");
+        assert_eq!(outcome.get("screenshot"), None, "{result}");
+    }
+    outcome
 }
 
 fn focus_changed(stream: &Stream, id: u64) {
@@ -170,6 +193,25 @@ async fn focus_without_its_event_times_out() {
     assert_eq!(
         outcome(&result),
         json!({"accepted": true, "observed": "timeout", "focused_window": 1})
+    );
+}
+
+#[tokio::test]
+async fn a_failed_capture_keeps_the_outcome_and_says_why() {
+    let mut desk = Desk::start("act-no-shot", "").await;
+    desk.fixture
+        .program("grim", "echo 'compositor gone' >&2; exit 1");
+    let result = desk.act("focus_window", json!({"id": 2}), |_, _| {}).await;
+    assert_eq!(result["isError"], false, "{result}");
+    assert_eq!(result["content"].as_array().unwrap().len(), 1, "{result}");
+    let outcome = &result["structuredContent"];
+    assert_eq!(outcome["observed"], "timeout");
+    assert_eq!(outcome["screenshot_error"]["error"], "upstream_error");
+    let detail = outcome["screenshot_error"]["detail"].as_str().unwrap();
+    assert!(detail.contains("compositor gone"), "{detail}");
+    assert_eq!(
+        desk.audited(),
+        [json!(["focus_window", {"id": 2}, true, "timeout", null])]
     );
 }
 

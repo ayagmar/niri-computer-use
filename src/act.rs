@@ -13,10 +13,11 @@ use std::time::Duration;
 use niri_ipc::{Action, Window, WorkspaceReferenceArg};
 use serde::Serialize;
 
-use crate::error::CallError;
+use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::events::EventStream;
 use crate::niri::waiter::{View, Waited, Waiter};
 use crate::niri::{self, Unanswered};
+use crate::observe::{self, DEFAULT_MAX_WIDTH, Format, Metadata, Target};
 use crate::policy::Preset;
 
 /// How long an action waits for its effect.
@@ -52,7 +53,7 @@ pub(crate) enum Observed {
 }
 
 /// An action's result.
-#[derive(Debug, PartialEq, Eq, Serialize)]
+#[derive(Debug, PartialEq, Serialize)]
 pub(crate) struct Outcome {
     /// True once niri acknowledged the request; false when nothing was sent; null when the
     /// request was sent but its reply was lost.
@@ -67,6 +68,20 @@ pub(crate) struct Outcome {
     /// Why the outcome is uncertain.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) detail: Option<String>,
+    /// For an outcome in doubt, the metadata of the focused output's screenshot that comes
+    /// with the result.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) screenshot: Option<Metadata>,
+    /// For an outcome in doubt, why there is no screenshot.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) screenshot_error: Option<ToolError>,
+}
+
+/// An outcome, with the image of its screenshot when it has one.
+#[derive(Debug)]
+pub(crate) struct Evidenced {
+    pub(crate) outcome: Outcome,
+    pub(crate) image: Option<Vec<u8>>,
 }
 
 impl Outcome {
@@ -77,6 +92,8 @@ impl Outcome {
             focused_window: view.focused_window(),
             windows,
             detail: None,
+            screenshot: None,
+            screenshot_error: None,
         }
     }
 
@@ -87,8 +104,55 @@ impl Outcome {
             focused_window: view.and_then(View::focused_window),
             windows: Vec::new(),
             detail: Some(detail),
+            screenshot: None,
+            screenshot_error: None,
         }
     }
+
+    /// Outcomes after which the agent can't tell what the desktop looks like.
+    const fn in_doubt(&self) -> bool {
+        match self.observed {
+            Observed::Timeout
+            | Observed::Pending
+            | Observed::None
+            | Observed::Interrupted
+            | Observed::Uncertain => true,
+            Observed::Focused | Observed::Closed | Observed::One | Observed::Ambiguous => false,
+        }
+    }
+}
+
+/// Attaches a fresh screenshot of the focused output to an outcome in doubt (plan §6), so
+/// the agent sees the desktop without another call. A failed capture leaves the outcome as
+/// it is and says why.
+pub(crate) async fn with_evidence(socket: Option<&Path>, mut outcome: Outcome) -> Evidenced {
+    if !outcome.in_doubt() {
+        return Evidenced {
+            outcome,
+            image: None,
+        };
+    }
+    let request = observe::Request {
+        target: Target::FocusedOutput,
+        max_width: Some(DEFAULT_MAX_WIDTH),
+        format: Format::Jpeg,
+    };
+    let image = match observe::screenshot(socket, &request).await {
+        Ok(shot) => {
+            outcome.screenshot = Some(shot.metadata);
+            Some(shot.image)
+        }
+        Err(CallError::Tool(error)) => {
+            outcome.screenshot_error = Some(error);
+            None
+        }
+        // No focused output, for example.
+        Err(CallError::InvalidArguments(message)) => {
+            outcome.screenshot_error = Some(ToolError::new(ErrorName::UpstreamError, message));
+            None
+        }
+    };
+    Evidenced { outcome, image }
 }
 
 /// Where actions go and where their effects are watched.
@@ -179,10 +243,8 @@ pub(crate) async fn launch(
             Reuse::Ambiguous => {
                 return Ok(Outcome {
                     accepted: Some(false),
-                    observed: Observed::Ambiguous,
-                    focused_window: waiter.view().focused_window(),
                     windows: existing,
-                    detail: None,
+                    ..Outcome::seen(Observed::Ambiguous, waiter.view(), Vec::new())
                 });
             }
         }

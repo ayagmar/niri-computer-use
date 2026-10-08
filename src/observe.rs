@@ -18,6 +18,8 @@ const GRIM_DEADLINE: Duration = Duration::from_secs(5);
 /// Far above a 4K PNG of busy content.
 const MAX_IMAGE: u64 = 64 * 1024 * 1024;
 const JPEG_QUALITY: &str = "80";
+/// The widest image returned unless the caller asks otherwise (plan §6).
+pub(crate) const DEFAULT_MAX_WIDTH: u32 = 1280;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum Format {

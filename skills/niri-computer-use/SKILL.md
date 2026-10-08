@@ -24,7 +24,7 @@ The `niri-computer-use` MCP server shows you the user's niri desktop and, while 
 7. Act in a loop: observe, one action, read `accepted` and `observed`, observe again. An action after which neither the structured state nor a new screenshot shows any change toward the goal is a no-progress attempt. After three in a row, stop and tell the user what you saw.
 8. Use the structured actions: `focus_window` and `focus_workspace` with ids from `desktop_state`, `launch` with a preset name, `close_window`. `launch` starts only the user's presets; if the app you need has none, ask the user to add one rather than looking for another way to start it.
 9. Prefer `launch` with `reuse: true` when one window of the app is enough.
-10. An outcome that isn't the one you wanted is information, not a failure to retry. After `timeout`, `none`, `pending` or `uncertain`, look at the desktop before doing anything else, and never repeat a `launch` or a `close_window` on your own: a second launch opens a second app, and a second close can answer the app's unsaved-changes dialog.
+10. An outcome that isn't the one you wanted is information, not a failure to retry. After `timeout`, `none`, `pending` or `uncertain`, look at the desktop before doing anything else: the result already has a fresh screenshot of the focused output, so look at that before taking another. Never repeat a `launch` or a `close_window` on your own: a second launch opens a second app, and a second close can answer the app's unsaved-changes dialog.
 11. `interrupted` means someone else moved focus while you waited. Stop and tell the user; don't continue the plan.
 12. If a tool returns `stopped`, `recovery_required`, `screen_locked`, `lease_held` or `read_only`, stop and tell the user, with the detail. Never try to clear a stop, recover, unlock or take the lease from another agent yourself: `resume` and `recover` are the user's commands, and you must not run them.
 
@@ -45,7 +45,7 @@ The `niri-computer-use` MCP server shows you the user's niri desktop and, while 
 | `launch` | `preset`, optionally `reuse` | `observed`: `one`, `ambiguous` or `none`, with the new window ids in `windows`; with `reuse`, `focused` for one existing window, or `ambiguous` with several and nothing started |
 | `close_window` | `id`: a window id | `observed`: `closed`, or `pending` when the window is still open after five seconds, for example behind an unsaved-changes dialog |
 
-Every action result also has `accepted` (true once niri took the request, false when nothing was sent, null when niri's reply was lost), `focused_window` when the observation ended, and possibly `interrupted` or `uncertain` as `observed` (rules 10 and 11). Each waits up to five seconds.
+Every action result also has `accepted` (true once niri took the request, false when nothing was sent, null when niri's reply was lost), `focused_window` when the observation ended, and possibly `interrupted` or `uncertain` as `observed` (rules 10 and 11). Each waits up to five seconds. With `timeout`, `pending`, `none`, `interrupted` or `uncertain`, the result also has an image of the focused output and its metadata in `screenshot`, or `screenshot_error` if it couldn't be taken.
 
 `screenshot` targets:
 

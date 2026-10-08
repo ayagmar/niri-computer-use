@@ -334,3 +334,10 @@ These match the versions installed locally.
 - `status.policy.preset_names` lists the preset names, because `launch` takes a name and an agent has no other way to learn them. The field is added beside the existing ones, as plan §6 allows.
 - The audit log reads `accepted` and `observed` only from action tools' successful results, so a read-only tool whose content happens to have such a field, such as Noctalia's status, never fills them.
 - The protocol tests run the actions against the in-process fake niri, which answers actions `Handled` or holds them, and hands each one to the test; the test then sends the events niri would. The lock state comes from a fake Noctalia whose reply the test can switch, since the in-process fake niri doesn't run as `niri --session`.
+
+## 2026-10-08: a screenshot with outcomes in doubt
+
+- Plan §6 attaches a fresh screenshot to an action result whose observation is a timeout, `pending`, `uncertain` or `interrupted`. `launch`'s `none` is a timeout under another name, so it gets one too. `one`, `ambiguous`, `focused` and `closed` don't.
+- It is taken inside the action, before the action mutex is released, so a stop cancels it like the rest of the action and no other action can change the desktop between the observation and the picture. It is the focused output at the default 1280 pixels wide, as JPEG, through the same code as the `screenshot` tool.
+- The image comes after the outcome's text in the result's content, so a client that reads only the first block still gets the outcome. Its metadata is the `screenshot` field. A failed capture adds `screenshot_error` with the error's name and detail and leaves the outcome as it is; an output niri can't name as focused counts as an `upstream_error` there.
+- The `screenshot_ref` that plan §6 mentions arrives with the pointer tools in M4, like the ref store.

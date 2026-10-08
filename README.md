@@ -38,7 +38,7 @@ target/debug/niri-computer-use status
 | `launch` | starts a preset from the policy file and reports the new windows with its `app_id`; with `reuse`, focuses its one existing window instead |
 | `close_window` | asks a window to close and reports `closed`, or `pending` if it is still open after five seconds, for example behind an unsaved-changes dialog |
 
-The four action tools require the lease and check the stop flag, the input-dirty marker and the lock state again before each action; a stop cancels the running one. Each result has `accepted`, whether niri took the request, and `observed`, what niri's event stream showed afterwards, including `interrupted` when focus went elsewhere during the wait and `uncertain` when niri's reply was lost. Nothing is retried.
+The four action tools require the lease and check the stop flag, the input-dirty marker and the lock state again before each action; a stop cancels the running one. Each result has `accepted`, whether niri took the request, and `observed`, what niri's event stream showed afterwards, including `interrupted` when focus went elsewhere during the wait and `uncertain` when niri's reply was lost. An outcome in doubt comes with a fresh screenshot of the focused output. Nothing is retried.
 
 Failures set `isError` and return `{"error": <name>, "detail": <upstream detail>}`. The names so far are `niri_unavailable`, `deadline_exceeded`, `upstream_error`, `noctalia_unavailable`, `lease_held`, `lease_required`, `stopped`, `recovery_required`, `read_only`, `screen_locked` and `unknown_preset`. A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and a plain-text message instead.
 
