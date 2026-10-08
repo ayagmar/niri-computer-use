@@ -305,7 +305,7 @@ These match the versions installed locally.
 
 ## 2026-10-08: an unknown lock state refuses the lease
 
-- Plan §9 reported `unknown` and allowed it. Since the lock state follows niri's own session, `unknown` has more causes: niri's environment can't be read, something else serves the socket, or niri wasn't started from a session, each without Noctalia running. The user chose to refuse: `acquire_desktop` returns `screen_locked` with a detail that says the state is unknown, so input only ever goes to a screen known to be unlocked. A desktop without logind's hint and without Noctalia can't be controlled until one of them answers.
+- Plan §9 reported `unknown` and allowed it. Since the lock state follows niri's own session, `unknown` has more causes: niri's environment can't be read, something else serves the socket, or niri wasn't started from a session, each without Noctalia running. The user chose to refuse: `acquire_desktop` returns `screen_locked` with a detail that says the state is unknown, so input only ever goes to a screen that a source niri actually updates says is unlocked. One case still reads a confident wrong answer: a plain `niri`, not `niri --session`, started inside a logind session inherits `XDG_SESSION_ID` but never sets the hint, so logind keeps saying `no`; reading `--session` from niri's command line closes it, and is planned before input arrives in M4. A desktop without logind's hint and without Noctalia can't be controlled until one of them answers.
 
 ## 2026-10-08: M2's nested acceptance
 

@@ -2,7 +2,7 @@
 //! nested Noctalia as the lock source. Two servers compete for the lease, `recover` refuses
 //! a live owner, a stop sent through niri's `spawn` action (as the stop keybind sends it)
 //! takes the lease back, `resume` gives it out again, and `recover` ends a marker's
-//! delayed-exit child. Every server, flag and marker lives under `TEST_DIR`.
+//! child. Paths are single-quoted in the shell scripts; none of them holds a quote. Every server, flag and marker lives under `TEST_DIR`.
 
 use std::ffi::OsString;
 use std::fs;
@@ -34,11 +34,11 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
     )?;
     ready(session, server)?;
     let control = session.control_dir()?;
-    let holder = holds(session, server, &control)?;
+    let mut holder = holds(session, server, &control)?;
     competes(session, server)?;
     let recover = shell(
         session,
-        &format!("{server} recover < /dev/null 2>&1; echo exit=$?"),
+        &format!("'{server}' recover < /dev/null 2>&1; echo exit=$?"),
     )?;
     expect(
         recover.contains("a server holds the lease") && recover.contains("exit=1"),
@@ -46,7 +46,7 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
         &recover,
     )?;
     session.log("M2: recover refused while server A held the lease")?;
-    stops(session, server, &control)?;
+    stops(session, server, &control, &mut holder)?;
     // A gave the lease up but runs until its stdin closes.
     holder.stop()?;
     recovers(session, server, &control)?;
@@ -60,7 +60,11 @@ fn ready(session: &mut Session<'_>, server: &str) -> Result<()> {
         "status with Noctalia running and the screen unlocked",
         READY,
         |session| {
-            let status = one_shot(session, server, "harness-ready", "status")?;
+            // A `status` that waits on a Noctalia still starting can miss the reply window;
+            // that is not ready yet, not a failure.
+            let Ok(status) = one_shot(session, server, "harness-ready", "status") else {
+                return Ok(None);
+            };
             let ready = field(&status, "/noctalia") == "running"
                 && field(&status, "/lock/state") == "unlocked";
             Ok(ready.then_some(status))
@@ -81,7 +85,7 @@ fn holds(
     control: &Path,
 ) -> Result<crate::runner::Process> {
     let script = format!(
-        "({}; sleep {HOLD}) | {server} serve",
+        "({}; sleep {HOLD}) | '{server}' serve",
         printf(&requests("harness-a", "acquire_desktop"))
     );
     let args = ["-c".into(), OsString::from(script)];
@@ -118,7 +122,12 @@ fn competes(session: &mut Session<'_>, server: &str) -> Result<()> {
 }
 
 /// The stop flag, set by a command niri spawns, takes A's lease and refuses B until resume.
-fn stops(session: &mut Session<'_>, server: &str, control: &Path) -> Result<()> {
+fn stops(
+    session: &mut Session<'_>,
+    server: &str,
+    control: &Path,
+    holder: &mut crate::runner::Process,
+) -> Result<()> {
     session.request(&Request::Action(Action::Spawn {
         command: vec![server.to_owned(), "stop".to_owned()],
     }))?;
@@ -129,6 +138,9 @@ fn stops(session: &mut Session<'_>, server: &str, control: &Path) -> Result<()> 
         "the stop flag set and the lease given up",
         WAIT,
         |_| {
+            // Server A also empties the record when it exits, so it must still be running
+            // for the release to be the stop's doing.
+            holder.ensure_running()?;
             let released = fs::read_to_string(&record).is_ok_and(|text| text.is_empty());
             Ok((flag.exists() && released).then_some(()))
         },
@@ -141,7 +153,7 @@ fn stops(session: &mut Session<'_>, server: &str, control: &Path) -> Result<()> 
         "server B refused while stopped",
         &refused.to_string(),
     )?;
-    shell(session, &format!("{server} resume"))?;
+    shell(session, &format!("'{server}' resume"))?;
     let taken = one_shot(session, server, "harness-b", "acquire_desktop")?;
     expect(
         field(&taken, "/holder/label")
@@ -153,13 +165,12 @@ fn stops(session: &mut Session<'_>, server: &str, control: &Path) -> Result<()> 
     session.log("M2: after resume, server B took the lease")
 }
 
-/// A marker naming a child that ignores SIGTERM: `recover` ends it and clears the marker.
+/// A marker naming a running child: `recover` ends it and clears the marker. The child
+/// shares the supervisor's process group, so `recover` ends it alone; the unit tests cover
+/// the group kill.
 fn recovers(session: &mut Session<'_>, server: &str, control: &Path) -> Result<()> {
     let pid_file = control.join("child.pid");
-    let script = format!(
-        "echo $$ > {}; trap '' TERM; exec sleep 60",
-        pid_file.display()
-    );
+    let script = format!("echo $$ > '{}'; exec sleep 60", pid_file.display());
     let args = ["-c".into(), OsString::from(script)];
     let child = session.start("sh", &args, session.artifact("child.log"), HOLDER_DEADLINE)?;
     let pid = session.wait_until("m2-child", "the child's PID", WAIT, |_| {
@@ -177,7 +188,7 @@ fn recovers(session: &mut Session<'_>, server: &str, control: &Path) -> Result<(
     fs::write(&path, marker.to_string()).context(format!("write {}", path.display()))?;
     let output = shell(
         session,
-        &format!("echo yes | {server} recover 2>&1; echo exit=$?"),
+        &format!("echo yes | '{server}' recover 2>&1; echo exit=$?"),
     )?;
     expect(output.contains("exit=0"), "recover with a marker", &output)?;
     session.wait_until("m2-recover", "the child ended", WAIT, |_| {
@@ -195,7 +206,7 @@ fn recovers(session: &mut Session<'_>, server: &str, control: &Path) -> Result<(
 /// One server for one call: initialize, the tool, and a few seconds for the replies.
 fn one_shot(session: &Session<'_>, server: &str, client: &str, tool: &str) -> Result<Value> {
     let script = format!(
-        "({}; sleep {ANSWER}) | {server} serve",
+        "({}; sleep {ANSWER}) | '{server}' serve",
         printf(&requests(client, tool))
     );
     let output = shell(session, &script)?;

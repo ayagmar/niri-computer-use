@@ -160,7 +160,7 @@ Each run keeps its files in `target/e2e/<unix time>-<pid>/`:
 3. Starts server B, whose `acquire_desktop` must fail with `lease_held` naming server A.
 4. Runs `recover`, which must refuse because a server holds the lease.
 5. Asks niri to `spawn` `niri-computer-use stop`, as the stop keybind does, and waits for the flag and for server A to give the lease up. Server B must then get `stopped`; after `resume` it must take the lease.
-6. Starts a child that ignores SIGTERM, writes an input-dirty marker naming it, and pipes `yes` into `recover`, which must end the child and clear the marker.
+6. Starts a child that runs until it is killed, writes an input-dirty marker naming it, and pipes `yes` into `recover`, which must end the child and clear the marker.
 
 Every server talks MCP over a shell pipeline (`printf` of the requests, then `sleep` to keep stdin open), and every flag and marker lives in `TEST_DIR`. The run has a 90-second deadline. Its files are in `target/e2e/<run>/`, with `server-a.log` holding server A's replies.
 
