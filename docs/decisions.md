@@ -232,3 +232,7 @@ These match the versions installed locally.
 - A failed write doesn't fail the tool call, because the read-only tools have nothing to protect; `status` shows the last failure. The action tools may need a stricter rule.
 - rmcp rejects arguments that don't fit a tool's schema before the tool runs, so those calls aren't logged.
 - `screenshot`'s arguments are logged as given, `target` included, even when it names no output. They are the model's own identifiers, never desktop content, and serde_json escapes them.
+
+## 2026-10-08: protocol tests
+
+- The protocol tests write JSON-RPC by hand instead of using rmcp's client, so they see every byte the server writes to stdout and send each cancellation at the moment they choose. No crate was added.

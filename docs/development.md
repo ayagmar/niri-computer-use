@@ -16,6 +16,39 @@ git config core.hooksPath .githooks
 
 The dependency gate accepts MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Unicode-3.0, Zlib, and MPL-2.0 licenses. The one exception is GPL-3.0-or-later for `niri-ipc` (see [decisions](decisions.md)). It rejects wildcard requirements, advisories, unmaintained crates, yanked crates, Git dependencies, and registries other than crates.io. Duplicate versions are warnings until an explicit skip list is needed. cargo-deny doesn't check the `harness` crate's dependencies, because the harness isn't published.
 
+## Protocol tests
+
+`tests/protocol/` starts the server binary and speaks MCP to it over stdin and stdout, as a client would. `make check` runs it, and so does:
+
+```sh
+cargo test --locked --test protocol
+```
+
+Each test gets a directory of its own under the system temp directory and starts the server with only six variables set, all pointing into it:
+
+- `PATH` holds fake `grim`, `wl-paste`, `loginctl` and `noctalia` scripts and nothing else.
+- `NIRI_SOCKET` is a fake niri that answers `Version`, `Outputs` and `FocusedOutput` and lets the test write each event stream line by line.
+- `XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY` lead to a fake Noctalia socket when the test starts one.
+- `XDG_SESSION_ID` is `7`, for the fake `loginctl`.
+- `XDG_STATE_HOME` keeps the audit log inside the directory.
+
+Nothing reaches your desktop, clipboard, session or audit log.
+
+The tests check:
+
+- the handshake, version negotiation, the server's instructions, and requests before `initialize`
+- the tool list with and without `noctalia` on `PATH`, with each tool's schema and read-only annotation
+- that every line on stdout is a JSON-RPC message
+- both error shapes: argument mistakes as plain text, and execution failures with their stable name and upstream detail
+- screenshots: the image block, its metadata, and grim's arguments for each target, format and scale
+- cancellation of a running `grim`, `wl-paste` or niri request: the process group is killed or the connection closed, no response is sent, the audit log says `cancelled`, and the session keeps working
+- deadlines, and calls running at the same time
+- event-stream reconnects that never serve the previous desktop, and the malformed-event rule
+- Noctalia running, stopped and absent, the lock state's sources, and the clipboard's three outcomes
+- the audit log's lines, modes and contents, and a failed write showing in `status`
+
+The `grim` deadline test takes five seconds, the length of that deadline.
+
 ## Nested harness
 
 The `harness` binary starts a nested niri in a window on your desktop and checks that its sockets, its session bus and its config are separate from your real session. Run it from the repository root:
