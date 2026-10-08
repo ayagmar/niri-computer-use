@@ -71,6 +71,9 @@ async fn every_tool_is_read_only_and_only_screenshot_takes_arguments() {
         if name == "screenshot" {
             assert_eq!(tool["inputSchema"]["required"], json!(["target"]));
             assert_eq!(properties, 4, "{tool}");
+            // Optional arguments are absent or a value, never typed as nullable.
+            let schema = tool["inputSchema"].to_string();
+            assert!(!schema.contains("\"null\""), "{schema}");
         } else {
             assert_eq!(properties, 0, "{tool}");
         }

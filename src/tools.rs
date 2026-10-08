@@ -18,6 +18,8 @@ use crate::{Env, clipboard, niri, noctalia, observe, status};
 /// The default `max_width` (plan §4). Provisional until M1's image delivery check.
 const DEFAULT_MAX_WIDTH: u32 = 1280;
 
+/// Optional arguments are described as their own type, without `null`, because clients
+/// that map tool schemas onto a single-type dialect reject `["integer", "null"]`.
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct ScreenshotArgs {
@@ -25,12 +27,18 @@ struct ScreenshotArgs {
     target: String,
     /// Required with target `region`: a rectangle in layout coordinates that lies inside
     /// one output.
+    #[serde(default)]
+    #[schemars(with = "RegionArgs")]
     region: Option<RegionArgs>,
     /// The widest image to return, in image pixels. The capture scale is lowered when the
     /// capture's logical width times the output's scale is wider. Defaults to 1280. To
     /// read small text, capture a small region around it, or raise `max_width`.
+    #[serde(default)]
+    #[schemars(with = "u32")]
     max_width: Option<u32>,
     /// `jpeg` (the default) or `png`.
+    #[serde(default)]
+    #[schemars(with = "FormatArg")]
     format: Option<FormatArg>,
 }
 

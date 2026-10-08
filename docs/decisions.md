@@ -244,3 +244,4 @@ These match the versions installed locally.
 | `@modelcontextprotocol/inspector` | 2.9.0 | 2026-09-30 | The pinned Inspector for `make inspect` and `make inspect-check` (plan §13). 2.10.0 was published on 2026-10-07, too recently for the version rule. It runs through `npx`, so nothing is added to the repository. |
 
 - The Inspector starts a stdio server with a minimal environment. `NIRI_SOCKET`, `XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY` and `XDG_SESSION_ID` are not passed on, and `status` then reports `NIRI_SOCKET is not set`. `scripts/inspector.sh` passes those four on explicitly.
+- The Inspector's `--strict` schema check flagged `screenshot`'s `max_width`, typed `["integer", "null"]`, as less portable: clients that map tool schemas onto a single-type dialect may reject it. The optional `screenshot` arguments are now described as their own types and left out of `required`. The server still accepts `null` for them.
