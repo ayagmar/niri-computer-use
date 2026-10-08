@@ -10,6 +10,7 @@
 | `tools.rs` | The rmcp tool definitions. Each tool turns the call into one module call and the result into MCP content. |
 | `niri.rs`, `niri/request.rs`, `niri/events.rs` | The only code that talks to niri: one connection per request, and one long-lived event stream. |
 | `niri/version.rs` | The version rule (pure). |
+| `policy.rs` | The policy file and the lease decision (pure, apart from reading the file). |
 | `status.rs` | Builds the readiness report shared by the tool and the subcommand. |
 | `observe.rs` | Screenshots: picks the output, plans grim's arguments and the image size they must produce, and checks the result. |
 | `clipboard.rs` | Reads the clipboard's text with `wl-paste`. |
@@ -80,6 +81,12 @@ One server at a time holds the lease on a niri instance. It is an exclusive, non
 `acquire_desktop` takes the lease only if the stop flag and the input-dirty marker are both absent. A runtime directory that can't be read counts as neither absent: the call fails rather than guess. A server watches its runtime directory with inotify from startup; whenever anything in it changes, it checks the stop flag again, and when the flag is set it gives the lease up. A directory that can't be read counts as stopped. If the watch can't be set up, `acquire_desktop` refuses, because a stop couldn't take the lease back.
 
 Removing the runtime directory or the `lease` file while a server holds the lease would let another server lock a new file, and would leave the holder watching a directory nobody can reach. So the watcher checks, on every event and once a second, that the directory's path still names the inode it watches; when it doesn't, the watcher reports the flag as set and ends, the holder gives the lease up, and `acquire_desktop` refuses from then on with a detail that says to restart the server. Separately, the holder checks once a second that `lease` still names the file it locked, and gives the lease up if not. The once-a-second checks exist because the kernel delays a directory's own deletion event while a file inside it is open, as the held lease is. The lease's mutex is the action mutex: later action tools hold it while they run.
+
+## The policy file and the lease decision
+
+`$XDG_CONFIG_HOME/niri-computer-use/policy.toml`, or `~/.config/niri-computer-use/policy.toml`, is read once at startup. It lists `deny_input_app_ids` and `[[preset]]`s, each with a `name`, a fixed `argv` and an `app_id`; unknown keys are errors. A preset whose program runs any command it is given (a shell, an interpreter, `env`, `sudo`, `setsid`, `busybox`, `uwsm` and similar, matched by file name with any version suffix removed, or `flatpak` with `--command`) is refused, and so is a terminal with arguments, because terminals run their trailing arguments as a command. Two presets with one name, an empty name, `app_id` or `argv` are refused too. A missing file is valid; a file that can't be read or breaks a rule makes the policy `invalid`, and so does a missing `XDG_CONFIG_HOME` and `HOME`, because then nobody can tell whether a file exists.
+
+`acquire_desktop` asks `policy::refuse_lease` after the stop flag and the input-dirty marker, using the same report `status` builds: niri's version error first, then `read_only` for an unsupported niri version, events this build can't parse, or an invalid policy, then `screen_locked`. An unknown lock state is allowed, as plan §9 says. Nothing uses the presets or the deny list yet; the action tools will.
 
 ## The input-dirty marker and `recover`
 

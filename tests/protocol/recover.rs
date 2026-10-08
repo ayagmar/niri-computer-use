@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 
 use crate::client::{Server, answer, run, tool_error};
 use crate::fixture::{Fixture, eventually, exited};
+use crate::niri::Niri;
 
 const DIR: &str = "run/niri-computer-use/niri.test";
 
@@ -59,6 +60,7 @@ fn running(pid: u32, start_time: u64) -> Value {
 #[tokio::test]
 async fn recover_refuses_while_a_server_holds_the_lease() {
     let fixture = Fixture::new("recover-live");
+    let _niri = Niri::start(&fixture);
     let mut server = Server::start(&fixture).await;
     server.structured("acquire_desktop").await;
     write_marker(
@@ -75,6 +77,7 @@ async fn recover_refuses_while_a_server_holds_the_lease() {
 #[tokio::test]
 async fn recover_ends_the_child_and_clears_the_marker_once_confirmed() {
     let fixture = Fixture::new("recover-child");
+    let _niri = Niri::start(&fixture);
     let (_child, pid, start_time) = stubborn_child();
     write_marker(&fixture, &running(pid, start_time));
     let mut server = Server::start(&fixture).await;

@@ -67,7 +67,13 @@ impl Desk {
     }
 
     /// Takes the lease for `label`, or returns the holder if this server has it already.
-    pub(crate) async fn acquire(&self, label: &str) -> Result<Holder, ToolError> {
+    /// `refusal` is the policy's answer for the moment, checked after the stop flag and the
+    /// input-dirty marker.
+    pub(crate) async fn acquire(
+        &self,
+        label: &str,
+        refusal: Option<ToolError>,
+    ) -> Result<Holder, ToolError> {
         let runtime = self.runtime.as_ref().map_err(Clone::clone)?;
         let mut held = self.lease.lock().await;
         if let Some(lease) = held.as_ref() {
@@ -96,6 +102,9 @@ impl Desk {
                 ErrorName::RecoveryRequired,
                 format!("input may be stuck ({marker}); the user runs `niri-computer-use recover`"),
             ));
+        }
+        if let Some(refusal) = refusal {
+            return Err(refusal);
         }
         let lease = Lease::acquire(runtime, label).map_err(refused)?;
         let holder = lease.holder().clone();
@@ -234,17 +243,20 @@ mod tests {
         let dir = crate::test_support::fresh_dir("desk");
         let desk = Desk::start(&env(&dir));
         let other = Desk::start(&env(&dir));
-        let holder = desk.acquire("me/1").await.unwrap();
-        assert_eq!(desk.acquire("me/1").await.unwrap(), holder);
+        let holder = desk.acquire("me/1", None).await.unwrap();
+        assert_eq!(desk.acquire("me/1", None).await.unwrap(), holder);
         let status = desk.status().await;
         assert!(status.held_by_me);
         assert_eq!(other.status().await.holder, Some(holder.clone()));
-        let refused = other.acquire("other/2").await.unwrap_err();
+        let refused = other.acquire("other/2", None).await.unwrap_err();
         assert_eq!(refused.name, ErrorName::LeaseHeld);
         assert!(refused.detail.contains("(me/1)"), "{}", refused.detail);
         assert!(desk.release().await);
         assert!(!desk.release().await);
-        assert_eq!(other.acquire("other/2").await.unwrap().label, "other/2");
+        assert_eq!(
+            other.acquire("other/2", None).await.unwrap().label,
+            "other/2"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -253,12 +265,12 @@ mod tests {
         let dir = crate::test_support::fresh_dir("desk-stop");
         let desk = Desk::start(&env(&dir));
         let runtime = RuntimeDir::of(&env(&dir)).unwrap();
-        desk.acquire("me/1").await.unwrap();
+        desk.acquire("me/1", None).await.unwrap();
         runtime.stop().unwrap();
         assert!(released(&desk).await);
         assert_eq!(lease::holder(&runtime), None);
         assert_eq!(
-            desk.acquire("me/1").await.unwrap_err().name,
+            desk.acquire("me/1", None).await.unwrap_err().name,
             ErrorName::Stopped
         );
         runtime.resume().unwrap();
@@ -270,11 +282,11 @@ mod tests {
             .unwrap();
         std::fs::write(runtime.path().join("input-dirty"), "").unwrap();
         assert_eq!(
-            desk.acquire("me/1").await.unwrap_err().name,
+            desk.acquire("me/1", None).await.unwrap_err().name,
             ErrorName::RecoveryRequired
         );
         std::fs::remove_file(runtime.path().join("input-dirty")).unwrap();
-        desk.acquire("me/1").await.unwrap();
+        desk.acquire("me/1", None).await.unwrap();
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -283,11 +295,11 @@ mod tests {
         let dir = crate::test_support::fresh_dir("desk-removed");
         let desk = Desk::start(&env(&dir));
         let runtime = RuntimeDir::of(&env(&dir)).unwrap();
-        desk.acquire("me/1").await.unwrap();
+        desk.acquire("me/1", None).await.unwrap();
         std::fs::remove_dir_all(runtime.path()).unwrap();
         assert!(released(&desk).await);
         // A new directory has a new lock file, which no stop could reach for this server.
-        let error = desk.acquire("me/1").await.unwrap_err();
+        let error = desk.acquire("me/1", None).await.unwrap_err();
         assert_eq!(error.name, ErrorName::UpstreamError);
         assert!(
             error.detail.contains("restart the server"),
@@ -306,7 +318,7 @@ mod tests {
         let desk = Desk::start(&env(&dir));
         let mode = |bits| std::fs::Permissions::from_mode(bits);
         std::fs::set_permissions(runtime.path(), mode(0o000)).unwrap();
-        let error = desk.acquire("me/1").await.unwrap_err();
+        let error = desk.acquire("me/1", None).await.unwrap_err();
         std::fs::set_permissions(runtime.path(), mode(0o700)).unwrap();
         assert_eq!(error.name, ErrorName::UpstreamError);
         assert!(
@@ -320,7 +332,7 @@ mod tests {
     #[tokio::test]
     async fn without_a_niri_instance_there_is_nothing_to_take() {
         let desk = Desk::start(&Env::default());
-        let error = desk.acquire("me/1").await.unwrap_err();
+        let error = desk.acquire("me/1", None).await.unwrap_err();
         assert_eq!(error.name, ErrorName::NiriUnavailable);
         assert_eq!(error.detail, "NIRI_SOCKET is not set");
         assert_eq!(

@@ -9,6 +9,7 @@ mod image_header;
 mod niri;
 mod noctalia;
 mod observe;
+mod policy;
 mod runner;
 mod status;
 #[cfg(test)]
@@ -37,6 +38,8 @@ pub(crate) struct Env {
     pub(crate) wayland_display: Option<OsString>,
     /// `$XDG_STATE_HOME`, or `$HOME/.local/state`, for the audit log.
     pub(crate) state_dir: Option<PathBuf>,
+    /// `$XDG_CONFIG_HOME`, or `$HOME/.config`, for the policy file.
+    pub(crate) config_dir: Option<PathBuf>,
 }
 
 impl Env {
@@ -50,7 +53,22 @@ impl Env {
             state_dir: var("XDG_STATE_HOME")
                 .map(PathBuf::from)
                 .or_else(|| var("HOME").map(|home| PathBuf::from(home).join(".local/state"))),
+            config_dir: var("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .or_else(|| var("HOME").map(|home| PathBuf::from(home).join(".config"))),
         }
+    }
+
+    /// The policy file, `<config dir>/niri-computer-use/policy.toml`, read and checked.
+    pub(crate) fn policy(&self) -> policy::Loaded {
+        let path = self
+            .config_dir
+            .as_ref()
+            .map(|dir| dir.join("niri-computer-use").join("policy.toml"));
+        let read = path
+            .as_deref()
+            .map(|path| (path, std::fs::read_to_string(path)));
+        policy::Loaded::from_read(read)
     }
 
     /// The basename of `NIRI_SOCKET`, which names the compositor instance.
@@ -93,9 +111,15 @@ async fn main() -> ExitCode {
         Some(Command::Serve) => serve(env).await,
         Some(Command::Status) => {
             let audit = audit::Audit::new(env.state_dir.clone());
-            let installed = env.finds("noctalia");
-            let lease = control::desk::status_without_desk(&env);
-            cli::print_json(&status::collect(&env, None, &audit, installed, lease).await)
+            let policy = env.policy();
+            let sources = status::Sources {
+                event_stream: None,
+                audit: &audit,
+                noctalia_installed: env.finds("noctalia"),
+                lease: control::desk::status_without_desk(&env),
+                policy: &policy,
+            };
+            cli::print_json(&status::collect(&env, sources).await)
                 .map_err(|error| format!("print status: {error}"))
         }
         Some(Command::Stop) => RuntimeDir::of(&env).and_then(|runtime| {

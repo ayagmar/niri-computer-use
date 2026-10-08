@@ -14,6 +14,7 @@ use crate::control::desk::Desk;
 use crate::error::{CANCELLED, CallError, ToolError};
 use crate::niri::events::{EventStream, StreamState};
 use crate::observe::{Format, Rect, Target};
+use crate::policy::{self, Loaded};
 use crate::{Env, clipboard, niri, noctalia, observe, status};
 
 /// The default `max_width` (plan §4). Provisional until M1's image delivery check.
@@ -101,6 +102,8 @@ pub(crate) struct Server {
     events: Option<EventStream>,
     audit: Audit,
     desk: Desk,
+    /// Read once at startup.
+    policy: Loaded,
     /// Decided once, because the tool list depends on it.
     noctalia_installed: bool,
     tool_router: ToolRouter<Self>,
@@ -118,6 +121,7 @@ impl Server {
         }
         Self {
             desk: Desk::start(&env),
+            policy: env.policy(),
             env,
             events,
             audit,
@@ -135,28 +139,17 @@ impl Server {
         &self,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let stream = self
-            .events
-            .as_ref()
-            .map_or(StreamState::Disconnected, EventStream::state);
         self.audited(&context, "status", Value::Null, async {
-            let lease = self.desk.status().await;
-            let report = status::collect(
-                &self.env,
-                Some(stream),
-                &self.audit,
-                self.noctalia_installed,
-                lease,
-            );
-            structured(&report.await)
+            structured(&self.report().await)
         })
         .await
     }
 
     /// Takes the exclusive lease on this niri desktop, which later action tools will
     /// require. Fails with `lease_held` naming the holder if another agent has it,
-    /// `stopped` while the user's stop flag is set, and `recovery_required` while input may
-    /// be stuck. Returns the holder; calling it again while holding the lease returns the
+    /// `stopped` while the user's stop flag is set, `recovery_required` while input may be
+    /// stuck, `read_only` when this build doesn't support the running niri or the policy
+    /// file is invalid, and `screen_locked` while the screen is locked. Returns the holder; calling it again while holding the lease returns the
     /// same holder.
     #[tool(annotations(
         read_only_hint = false,
@@ -170,9 +163,11 @@ impl Server {
     ) -> Result<CallToolResult, ErrorData> {
         let label = session(&context);
         self.audited(&context, "acquire_desktop", Value::Null, async {
+            let report = self.report().await;
+            let refusal = policy::refuse_lease(report.facts(&self.policy));
             answer(
                 self.desk
-                    .acquire(&label)
+                    .acquire(&label, refusal)
                     .await
                     .map(|holder| serde_json::json!({ "holder": holder })),
             )
@@ -286,6 +281,22 @@ impl Server {
 }
 
 impl Server {
+    /// The readiness report, as `status` returns it.
+    async fn report(&self) -> status::Status {
+        let event_stream = self
+            .events
+            .as_ref()
+            .map_or(StreamState::Disconnected, EventStream::state);
+        let sources = status::Sources {
+            event_stream: Some(event_stream),
+            audit: &self.audit,
+            noctalia_installed: self.noctalia_installed,
+            lease: self.desk.status().await,
+            policy: &self.policy,
+        };
+        status::collect(&self.env, sources).await
+    }
+
     /// Runs one tool's work until it finishes or the client cancels the request, then
     /// writes the call to the audit log. rmcp only cancels the request's token and keeps
     /// running the handler, so cancelling drops `work`, and with it any connection, wait or

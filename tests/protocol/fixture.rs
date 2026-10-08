@@ -38,7 +38,7 @@ impl Fixture {
         // limit on Unix socket paths.
         let dir = Path::new("/tmp").join(format!("ncu-{name}-{}-{nanos}", std::process::id()));
         std::fs::create_dir(&dir).unwrap();
-        for sub in ["bin", "utils", "run", "state"] {
+        for sub in ["bin", "utils", "run", "state", "config"] {
             std::fs::create_dir(dir.join(sub)).unwrap();
         }
         for utility in UTILITIES {
@@ -54,6 +54,7 @@ impl Fixture {
             ("WAYLAND_DISPLAY", DISPLAY.into()),
             ("XDG_SESSION_ID", SESSION.into()),
             ("XDG_STATE_HOME", dir.join("state").into_os_string()),
+            ("XDG_CONFIG_HOME", dir.join("config").into_os_string()),
         ]);
         let fixture = Self { dir, env };
         let longest = fixture.noctalia_socket().as_os_str().len();

@@ -25,16 +25,31 @@ target/debug/niri-computer-use status
 
 | Tool | What it returns |
 |---|---|
-| `status` | the niri instance, niri's version and whether this build supports it, whether niri's event stream is connected, who holds the lease, the stop flag, the lock state, whether Noctalia is running, and which required programs are on `PATH` |
+| `status` | the niri instance, niri's version and whether this build supports it, whether niri's event stream is connected, who holds the lease, the stop flag, the policy file, the lock state, whether Noctalia is running, and which required programs are on `PATH` |
 | `desktop_state` | windows, workspaces, the focused window, whether the overview is open, and the keyboard layouts, as one snapshot |
 | `outputs` | niri's outputs: modes, logical position and size, scale and transform |
 | `screenshot` | an image of one output or of a region inside one output, with its geometry. JPEG, at most 1280 image pixels wide by default |
 | `clipboard_read` | the clipboard's text, or why there is none |
 | `shell_status` | Noctalia's status: bar, open panel and lock screen. Only listed when `noctalia` is on `PATH` |
-| `acquire_desktop` | takes the lease, so this agent is the one controlling this niri desktop; refused while another agent holds it, while the stop flag is set, or while input may be stuck |
+| `acquire_desktop` | takes the lease, so this agent is the one controlling this niri desktop; refused while another agent holds it, while the stop flag is set, while input may be stuck, while the screen is locked, or when this build doesn't support the running niri or the policy file is invalid |
 | `release_desktop` | gives the lease up; the stop flag also takes it back |
 
-Failures set `isError` and return `{"error": <name>, "detail": <upstream detail>}`. The names so far are `niri_unavailable`, `deadline_exceeded`, `upstream_error`, `noctalia_unavailable`, `lease_held`, `stopped` and `recovery_required`. A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and a plain-text message instead.
+Failures set `isError` and return `{"error": <name>, "detail": <upstream detail>}`. The names so far are `niri_unavailable`, `deadline_exceeded`, `upstream_error`, `noctalia_unavailable`, `lease_held`, `stopped`, `recovery_required`, `read_only` and `screen_locked`. A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and a plain-text message instead.
+
+## Policy file
+
+`$XDG_CONFIG_HOME/niri-computer-use/policy.toml` (by default `~/.config/niri-computer-use/policy.toml`) is read once when the server starts. Without it there are no launch presets and no denied apps, which is valid. For example:
+
+```toml
+deny_input_app_ids = ["org.keepassxc.KeePassXC"]
+
+[[preset]]
+name = "firefox"
+argv = ["firefox"]
+app_id = "firefox"
+```
+
+A preset may not start a shell, an interpreter, `env`, `sudo` or another program that runs any command it is given, nor a terminal with arguments, not even `--app-id`, because terminals run trailing arguments as a command; a desktop file started with `gtk-launch` gives a terminal its own `app_id`. These rules catch common mistakes; they are a guardrail, not a boundary, since a wrapper script gets past any list. If the file breaks a rule or doesn't parse, `status` reports it as `invalid` and `acquire_desktop` refuses with `read_only` until it is fixed and the server restarted. No tool uses the presets or the deny list yet.
 
 ## Install and register
 

@@ -7,10 +7,13 @@ use serde_json::{Value, json};
 
 use crate::client::{CLIENT, Server, run, tool_error};
 use crate::fixture::Fixture;
+use crate::niri::Niri;
+use crate::session::NiriProcess;
 
 #[tokio::test]
 async fn one_server_holds_the_lease_and_the_other_is_told_who() {
     let fixture = Fixture::new("lease");
+    let _niri = Niri::start(&fixture);
     let mut first = Server::start(&fixture).await;
     let mut second = Server::start(&fixture).await;
     let label = format!("{CLIENT}/{}", first.pid);
@@ -69,6 +72,7 @@ async fn one_server_holds_the_lease_and_the_other_is_told_who() {
 #[tokio::test]
 async fn a_server_that_exits_gives_the_lease_up() {
     let fixture = Fixture::new("lease-exit");
+    let _niri = Niri::start(&fixture);
     let mut first = Server::start(&fixture).await;
     first.structured("acquire_desktop").await;
     let (status, _, _) = first.stop().await;
@@ -84,6 +88,7 @@ async fn a_server_that_exits_gives_the_lease_up() {
 #[tokio::test]
 async fn the_stop_flag_takes_the_lease_back_and_refuses_it_until_resume() {
     let fixture = Fixture::new("lease-stop");
+    let _niri = Niri::start(&fixture);
     let mut server = Server::start(&fixture).await;
     server.structured("acquire_desktop").await;
     assert!(run(&fixture, "stop").await.status.success());
@@ -114,4 +119,35 @@ async fn the_lease_is_refused_while_input_may_be_stuck() {
     .unwrap();
     let (name, _) = tool_error(&server.call("acquire_desktop", json!({})).await);
     assert_eq!(name, "recovery_required");
+}
+
+#[tokio::test]
+async fn an_invalid_policy_file_makes_the_server_read_only() {
+    let fixture = Fixture::new("lease-policy");
+    let _niri = Niri::start(&fixture);
+    std::fs::create_dir_all(fixture.path("config/niri-computer-use")).unwrap();
+    std::fs::write(
+        fixture.path("config/niri-computer-use/policy.toml"),
+        "[[preset]]\nname = \"shell\"\nargv = [\"bash\"]\napp_id = \"x\"\n",
+    )
+    .unwrap();
+    let mut server = Server::start(&fixture).await;
+    let policy = &server.structured("status").await["policy"];
+    assert_eq!(policy["state"], "invalid");
+    assert!(policy["error"].as_str().unwrap().contains("starts bash"));
+    let (name, detail) = tool_error(&server.call("acquire_desktop", json!({})).await);
+    assert_eq!(name, "read_only");
+    assert!(detail.contains("policy file is invalid"), "{detail}");
+}
+
+#[tokio::test]
+async fn a_locked_screen_refuses_the_lease() {
+    let fixture = Fixture::new("lease-locked");
+    fixture.program("loginctl", "echo yes");
+    let _niri = NiriProcess::start(&fixture, Some("c4")).await;
+    let mut server = Server::start(&fixture).await;
+    let (name, _) = tool_error(&server.call("acquire_desktop", json!({})).await);
+    assert_eq!(name, "screen_locked");
+    fixture.program("loginctl", "echo no");
+    server.structured("acquire_desktop").await;
 }

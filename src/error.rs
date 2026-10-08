@@ -24,6 +24,10 @@ pub(crate) enum ErrorName {
     Stopped,
     /// The input-dirty marker says input may be stuck.
     RecoveryRequired,
+    /// niri's version, its event schema or the policy file rules out acting.
+    ReadOnly,
+    /// The screen is locked.
+    ScreenLocked,
 }
 
 /// A failure, serialized as `{"error": <name>, "detail": <upstream detail>}`.

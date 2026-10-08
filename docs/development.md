@@ -24,13 +24,13 @@ The dependency gate accepts MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Un
 cargo test --locked --test protocol
 ```
 
-Each test gets a directory of its own under `/tmp`, whatever `TMPDIR` says, because the fake sockets inside it must fit the 108-byte limit on Unix socket paths. It starts the server with only six variables set, all pointing into it:
+Each test gets a directory of its own under `/tmp`, whatever `TMPDIR` says, because the fake sockets inside it must fit the 108-byte limit on Unix socket paths. It starts the server with only seven variables set, all pointing into it:
 
 - `PATH` holds fake `grim`, `wl-paste`, `loginctl` and `noctalia` scripts and nothing else.
 - `NIRI_SOCKET` is a fake niri that answers `Version`, `Outputs` and `FocusedOutput` and lets the test write each event stream line by line.
 - `XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY` lead to a fake Noctalia socket when the test starts one.
-- `XDG_SESSION_ID` is `7`, for the fake `loginctl`.
-- `XDG_STATE_HOME` keeps the audit log inside the directory.
+- `XDG_SESSION_ID` is `7`. The server ignores it: the lock state asks logind about niri's own session, which the lock tests set by running the fake niri as a process of its own (`tests/protocol/session.rs`).
+- `XDG_STATE_HOME` keeps the audit log inside the directory, and `XDG_CONFIG_HOME` the policy file.
 
 Nothing reaches your desktop, clipboard, session or audit log.
 

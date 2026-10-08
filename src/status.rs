@@ -14,6 +14,7 @@ use crate::error::ToolError;
 use crate::niri::events::StreamState;
 use crate::niri::{self, version::Compat};
 use crate::noctalia::{self, Presence};
+use crate::policy::{Facts, Loaded, PolicyStatus};
 
 /// Programs the server runs or will run, reported as found on `PATH` or not.
 const BINARIES: [&str; 5] = ["grim", "wtype", "wl-copy", "wl-paste", "loginctl"];
@@ -33,7 +34,21 @@ pub(crate) struct Status {
     /// Why Noctalia counts as not running, when it's installed.
     noctalia_error: Option<ToolError>,
     audit: AuditStatus,
+    policy: PolicyStatus,
     binaries: BTreeMap<&'static str, bool>,
+}
+
+/// What the caller knows that `status` reports: the event stream's state (none in the
+/// subcommand, which opens no stream), whether Noctalia is installed (decided once at
+/// startup for the server, whose tool list depends on it), the lease (from the server's
+/// desk, or from the runtime directory in the subcommand), and the policy file as loaded.
+#[derive(Debug)]
+pub(crate) struct Sources<'a> {
+    pub(crate) event_stream: Option<StreamState>,
+    pub(crate) audit: &'a Audit,
+    pub(crate) noctalia_installed: bool,
+    pub(crate) lease: LeaseStatus,
+    pub(crate) policy: &'a Loaded,
 }
 
 #[derive(Debug, Serialize)]
@@ -46,16 +61,14 @@ struct Niri {
     error: Option<ToolError>,
 }
 
-/// `noctalia_installed` is decided by the caller: once at startup for the server, whose tool
-/// list depends on it, and on each run for the subcommand. `lease` comes from the server's
-/// desk, or from the runtime directory in the subcommand.
-pub(crate) async fn collect(
-    env: &Env,
-    event_stream: Option<StreamState>,
-    audit: &Audit,
-    noctalia_installed: bool,
-    lease: LeaseStatus,
-) -> Status {
+pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
+    let Sources {
+        event_stream,
+        audit,
+        noctalia_installed,
+        lease,
+        policy,
+    } = sources;
     let socket = env.niri_socket.as_deref();
     let (version, noctalia) = tokio::join!(niri::version(socket), async {
         if noctalia_installed {
@@ -93,10 +106,24 @@ pub(crate) async fn collect(
         noctalia: presence,
         noctalia_error,
         audit: audit.status(),
+        policy: policy.status(),
         binaries: BINARIES
             .into_iter()
             .map(|name| (name, env.finds(name)))
             .collect(),
+    }
+}
+
+impl Status {
+    /// What the lease decision needs from this report.
+    pub(crate) const fn facts<'a>(&'a self, policy: &'a Loaded) -> Facts<'a> {
+        Facts {
+            compat: self.niri.compat,
+            niri_error: self.niri.error.as_ref(),
+            event_stream: self.niri.event_stream,
+            policy,
+            lock: self.lock.state(),
+        }
     }
 }
 
@@ -107,11 +134,15 @@ mod tests {
 
     #[tokio::test]
     async fn reports_what_it_can_without_failing() {
-        let lease = status_without_desk(&Env::default());
-        let status = serde_json::to_value(
-            collect(&Env::default(), None, &Audit::new(None), false, lease).await,
-        )
-        .unwrap();
+        let audit = Audit::new(None);
+        let sources = Sources {
+            event_stream: None,
+            audit: &audit,
+            noctalia_installed: false,
+            lease: status_without_desk(&Env::default()),
+            policy: &Loaded::Missing,
+        };
+        let status = serde_json::to_value(collect(&Env::default(), sources).await).unwrap();
         assert_eq!(
             status,
             serde_json::json!({
@@ -135,6 +166,7 @@ mod tests {
                 "noctalia": "not_installed",
                 "noctalia_error": null,
                 "audit": {"path": null, "last_error": "neither XDG_STATE_HOME nor HOME is set"},
+                "policy": {"state": "missing", "presets": 0, "denied_app_ids": 0, "error": null},
                 "binaries": {
                     "grim": false, "loginctl": false, "wl-copy": false, "wl-paste": false, "wtype": false
                 }

@@ -17,6 +17,8 @@ A failure sets `isError` and returns `{"error": <name>, "detail": <upstream deta
 | `noctalia_unavailable` | Noctalia is installed but didn't answer on its socket within two seconds |
 | `lease_held` | another agent's server holds the lease; `detail` names its PID, label and since when |
 | `stopped` | the stop flag is set; the user clears it with `niri-computer-use resume` |
+| `read_only` | this build doesn't support the running niri, niri sent events it can't parse, or the policy file is invalid |
+| `screen_locked` | the screen is locked |
 | `recovery_required` | input may be stuck; `detail` names the marker's operation and phase, and the user runs `niri-computer-use recover` |
 
 A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and one plain-text block starting `invalid arguments:`, without `structuredContent`, so the model can correct the call.
@@ -43,6 +45,8 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `lock.logind_error` | why logind couldn't answer, or null |
 | `noctalia` | `running`, `not_running` or `not_installed` |
 | `noctalia_error` | why Noctalia counts as not running, or null |
+| `policy.state` | `loaded`, `missing` (valid: no presets, no denied apps) or `invalid` |
+| `policy.presets`, `policy.denied_app_ids`, `policy.error` | how many presets and denied apps the policy file has, and why it is invalid |
 | `audit.path`, `audit.last_error` | the audit log and the last failure to write it |
 | `binaries` | whether `grim`, `wl-paste`, `wl-copy`, `wtype` and `loginctl` are on `PATH` |
 
@@ -98,7 +102,7 @@ No arguments. Listed only when `noctalia` is on `PATH`. Noctalia's own status re
 
 No arguments. Takes the lease on this niri instance and returns `{"holder": {"pid", "label", "since"}}`. One server holds it at a time; the action tools of later versions require it. Calling it again while holding the lease returns the same holder.
 
-Refused with `lease_held` while another server holds it, `stopped` while the stop flag is set, and `recovery_required` while the input-dirty marker exists. If the runtime directory can't be read, it fails with `upstream_error` rather than assume neither flag is set.
+Refused with `lease_held` while another server holds it, `stopped` while the stop flag is set, `recovery_required` while the input-dirty marker exists, the niri error when niri's version can't be read, `read_only` when this build doesn't support the running niri, niri sent events it can't parse, or the policy file is invalid, and `screen_locked` while the screen is locked. An unknown lock state doesn't refuse it. If the runtime directory can't be read, it fails with `upstream_error` rather than assume neither flag is set.
 
 ## `release_desktop`
 

@@ -50,6 +50,12 @@ pub(crate) struct Lock {
     logind_error: Option<String>,
 }
 
+impl Lock {
+    pub(crate) const fn state(&self) -> LockState {
+        self.state
+    }
+}
+
 /// Asks logind about niri's session and reads `noctalia`'s status reply; locked wins.
 pub(crate) async fn lock(
     niri_socket: Option<&Path>,
