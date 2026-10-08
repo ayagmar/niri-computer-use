@@ -163,3 +163,19 @@ These match the versions installed locally.
 - `niri-ipc` 26.4.0 is GPL-3.0-or-later, like niri. The license gate allowed only permissive licenses, and it hadn't checked the harness, because cargo-deny skips workspace crates with `publish = false`. The gate first failed when the server started to depend on `niri-ipc`.
 - The repository stays MIT. `deny.toml` allows GPL-3.0-or-later for `niri-ipc` alone; any other GPL crate still fails. MIT code can be combined into a GPL program, but a built binary includes `niri-ipc`, so a distributed binary follows GPL-3.0 terms. The README says so.
 - Considered: relicensing the project to GPL-3.0-or-later, which changes little for binaries but gives up MIT for code that doesn't need GPL, and dropping `niri-ipc` for hand-written copies of niri's types, which would have to track niri by hand and are derived from GPL source anyway.
+
+## 2026-10-08: MCP server dependencies
+
+| Crate | Version | Published | Why |
+|---|---|---|---|
+| `rmcp` | 3.5.0 | 2026-09-28 | The official Rust MCP SDK. Default features (`server`, `macros`, `base64`) plus `transport-io` for stdio. 3.5.1 (2026-10-05) is too new. |
+| `tokio` | 1.53.1 | 2026-07-20 | rmcp's runtime. Features `rt`, `macros`, `net` (niri's Unix socket), `time` (deadlines) and `io-util`. 1.53.2 (2026-10-03) is too new. |
+| `serde` | 1.0.229 | 2026-07-18 | `derive` for the status report and error bodies. |
+| `serde_json` | 1.0.151 | 2026-07-20 | Same version as the harness. |
+| `niri-ipc` | `=26.4.0` | 2026-04-25 | Pinned to the installed niri, as the version rule's exception requires. |
+
+- Every crate rmcp and tokio added to `Cargo.lock` was checked against the version rule. `cc` 1.6.0 (2026-10-03), `mio` 1.2.4 (2026-10-03) and `uuid` 1.27.0 (2026-10-02) were too new, so they are held at `cc` 1.5.1, `mio` 1.2.3 and `uuid` 1.26.1 with `cargo update --precise`. The other new crates were published on or before 2026-10-01.
+- The runtime is Tokio's current-thread flavour. The server handles one client over stdio, and one thread keeps the order of its work easy to follow.
+- rmcp's `#[tool_handler]` generates an `async fn list_tools` with no `.await`, which Clippy's `unused_async_trait_impl` rejects. The handler impl carries one `#[expect]` for it. It is the first lint exception the rmcp macros have needed.
+- Each niri request uses a new connection, so a reply that arrives after its deadline can't be mistaken for the next reply. The harness keeps one connection instead, because it needs to reach the niri it identified.
+- With tokio in the build but its `process` feature off, Clippy warns that the `tokio::process::Command::new` entry in `clippy.toml` doesn't resolve. The warning doesn't fail the gate and goes away when the server starts its first subprocess.

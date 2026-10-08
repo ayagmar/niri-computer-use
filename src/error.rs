@@ -1,0 +1,57 @@
+//! Tool failures with the stable error names agents rely on.
+
+use rmcp::model::CallToolResult;
+use serde::Serialize;
+
+/// The error names this server returns so far. The names are a stable contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ErrorName {
+    /// niri's socket is unknown or couldn't be reached.
+    NiriUnavailable,
+    /// A request or wait passed its deadline.
+    DeadlineExceeded,
+    /// niri replied with an error, or with something this server can't read.
+    UpstreamError,
+}
+
+/// A failure, serialized as `{"error": <name>, "detail": <upstream detail>}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct ToolError {
+    #[serde(rename = "error")]
+    pub(crate) name: ErrorName,
+    pub(crate) detail: String,
+}
+
+impl ToolError {
+    pub(crate) fn new(name: ErrorName, detail: impl Into<String>) -> Self {
+        Self {
+            name,
+            detail: detail.into(),
+        }
+    }
+
+    /// The MCP form: `isError: true`, with the error as structured content.
+    pub(crate) fn into_result(self) -> CallToolResult {
+        CallToolResult::structured_error(serde_json::json!(self))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serializes_with_the_stable_name_and_detail() {
+        let error = ToolError::new(ErrorName::NiriUnavailable, "NIRI_SOCKET is not set");
+        let result = error.into_result();
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result.structured_content,
+            Some(serde_json::json!({
+                "error": "niri_unavailable",
+                "detail": "NIRI_SOCKET is not set"
+            }))
+        );
+    }
+}
