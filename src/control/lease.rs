@@ -7,7 +7,7 @@
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Write as _};
-use std::os::unix::fs::OpenOptionsExt as _;
+use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::path::Path;
 
 use chrono::{SecondsFormat, Utc};
@@ -32,6 +32,7 @@ pub(crate) struct Holder {
 pub(crate) struct Lease {
     file: File,
     holder: Holder,
+    path: std::path::PathBuf,
     record: std::path::PathBuf,
 }
 
@@ -75,12 +76,22 @@ impl Lease {
         Ok(Self {
             file,
             holder,
+            path,
             record,
         })
     }
 
     pub(crate) const fn holder(&self) -> &Holder {
         &self.holder
+    }
+
+    /// Whether `lease` still names the locked file. If it was removed or replaced, another
+    /// server could lock the new file, so this lease no longer excludes anyone.
+    pub(crate) fn intact(&self) -> bool {
+        match (self.file.metadata(), std::fs::metadata(&self.path)) {
+            (Ok(locked), Ok(named)) => locked.dev() == named.dev() && locked.ino() == named.ino(),
+            _ => false,
+        }
     }
 }
 
@@ -144,10 +155,13 @@ mod tests {
             Lease::acquire(&runtime, "second/2").unwrap_err(),
             Refused::Held(Some(first.holder().clone()))
         );
+        assert!(first.intact());
         drop(first);
         assert_eq!(holder(&runtime), None);
         let second = Lease::acquire(&runtime, "second/2").unwrap();
         assert_eq!(holder(&runtime).unwrap().label, "second/2");
+        std::fs::remove_file(runtime.path().join(LEASE)).unwrap();
+        assert!(!second.intact());
         drop(second);
         std::fs::remove_dir_all(dir).unwrap();
     }
