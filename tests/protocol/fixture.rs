@@ -34,8 +34,9 @@ impl Fixture {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        // Short, because a Unix socket path is limited to 108 bytes.
-        let dir = std::env::temp_dir().join(format!("ndm-{name}-{}-{nanos}", std::process::id()));
+        // In `/tmp` whatever `TMPDIR` says, because the sockets inside must fit the 108-byte
+        // limit on Unix socket paths.
+        let dir = Path::new("/tmp").join(format!("ndm-{name}-{}-{nanos}", std::process::id()));
         std::fs::create_dir(&dir).unwrap();
         for sub in ["bin", "utils", "run", "state"] {
             std::fs::create_dir(dir.join(sub)).unwrap();
@@ -54,7 +55,13 @@ impl Fixture {
             ("XDG_SESSION_ID", SESSION.into()),
             ("XDG_STATE_HOME", dir.join("state").into_os_string()),
         ]);
-        Self { dir, env }
+        let fixture = Self { dir, env };
+        let longest = fixture.noctalia_socket().as_os_str().len();
+        assert!(
+            longest < 108,
+            "fixture name {name:?} makes socket paths too long"
+        );
+        fixture
     }
 
     pub(crate) fn env(&self) -> &BTreeMap<&'static str, OsString> {

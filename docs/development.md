@@ -24,7 +24,7 @@ The dependency gate accepts MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Un
 cargo test --locked --test protocol
 ```
 
-Each test gets a directory of its own under the system temp directory and starts the server with only six variables set, all pointing into it:
+Each test gets a directory of its own under `/tmp`, whatever `TMPDIR` says, because the fake sockets inside it must fit the 108-byte limit on Unix socket paths. It starts the server with only six variables set, all pointing into it:
 
 - `PATH` holds fake `grim`, `wl-paste`, `loginctl` and `noctalia` scripts and nothing else.
 - `NIRI_SOCKET` is a fake niri that answers `Version`, `Outputs` and `FocusedOutput` and lets the test write each event stream line by line.
