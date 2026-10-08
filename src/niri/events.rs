@@ -383,9 +383,9 @@ mod tests {
 
         async fn expect_request(&mut self) {
             let mut request = String::new();
-            BufReader::new(&mut self.0)
-                .read_line(&mut request)
+            tokio::time::timeout(WAIT, BufReader::new(&mut self.0).read_line(&mut request))
                 .await
+                .unwrap()
                 .unwrap();
             assert_eq!(request, "\"EventStream\"\n");
         }
@@ -539,12 +539,22 @@ mod tests {
         ]);
         assert!(once.desktop().await.is_ok());
 
-        // The count lasts for the stream's lifetime, even across an initialized connection.
-        let twice = stream(vec![
-            niri(vec![HANDLED, WORKSPACES, WINDOWS, OVERVIEW, UNKNOWN], false),
-            niri(vec![HANDLED, UNKNOWN], false),
-            niri(vec![HANDLED, WORKSPACES, WINDOWS, OVERVIEW], false),
-        ]);
+        // The count lasts for the stream's lifetime: a healthy connection between the two
+        // failures doesn't reset it.
+        let (client, mut second) = Niri::pair();
+        let twice = stream(vec![niri(vec![HANDLED, UNKNOWN], false), client]);
+        second.expect_request().await;
+        second.send(&[HANDLED, WORKSPACES, WINDOWS, OVERVIEW]).await;
+        assert!(twice.desktop().await.is_ok());
+        second.send(&[UNKNOWN]).await;
+        let mut connection = twice.connection.clone();
+        tokio::time::timeout(
+            WAIT,
+            connection.wait_for(|current| matches!(current, Connection::SchemaIncompatible { .. })),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         let error = twice.desktop().await.unwrap_err();
         assert_eq!(error.name, ErrorName::UpstreamError);
         assert!(error.detail.contains("(NotARealEvent)"), "{error:?}");
