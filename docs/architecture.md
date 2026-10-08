@@ -8,12 +8,15 @@
 |---|---|
 | `main.rs` | Reads `NIRI_SOCKET` and `PATH` once, picks the subcommand, and starts the server on a single-threaded Tokio runtime. |
 | `tools.rs` | The rmcp tool definitions. Each tool turns the call into one module call and the result into MCP content. |
-| `niri.rs`, `niri/request.rs`, `niri/events.rs` | The only code that talks to niri: one connection per request, and one long-lived event stream. |
+| `niri.rs`, `niri/request.rs`, `niri/events.rs` | The only code that talks to niri: one connection per request, one long-lived event stream, and the virtual pointer's Wayland connection. |
+| `niri/pointer.rs` | The virtual pointer: its own Wayland connection to niri, bound to one output. |
 | `niri/waiter.rs` | Waiters: how an action watches the event stream, event by event, for its effect. |
 | `act.rs` | The action tools' work: check the arguments against niri's state, dispatch one niri action, observe its effect. |
 | `niri/version.rs` | The version rule (pure). |
 | `policy.rs` | The policy file, its presets, the decision whether this server may take the lease or act, and which output setups the pointer may run on (pure, apart from reading the file). |
 | `status.rs` | Builds the readiness report shared by the tool and the subcommand. |
+| `input.rs` | The pointer tools' work: the checks before input, the steps of each gesture, and the marker around a button press. |
+| `coords.rs` | The coordinate contract (pure): image pixel to `motion_absolute`, checked against niri's own mapping. |
 | `observe.rs` | Screenshots: picks the output, plans grim's arguments and the image size they must produce, and checks the result. |
 | `refs.rs` | Screenshot refs: what each screenshot taken under the lease captured, kept per lease. |
 | `clipboard.rs` | Reads the clipboard's text with `wl-paste`. |
@@ -22,7 +25,7 @@
 | `control/runtime.rs` | The per-instance runtime directory and its stop flag. |
 | `control/stop.rs` | Watches the runtime directory for the stop flag. |
 | `control/lease.rs` | The lease lock and the holder record. |
-| `control/marker.rs` | Reads the input-dirty marker. |
+| `control/marker.rs` | Reads and writes the input-dirty marker. |
 | `control/recover.rs` | The `recover` subcommand. |
 | `control/procs.rs` | Process state from `/proc`: start times and the user's `wtype` processes. |
 | `control/desk.rs` | Whether this server holds the lease: takes it, gives it up, and lets the stop flag take it back. Gates every action and cancels it on a stop. |
@@ -112,11 +115,21 @@ An outcome in doubt, `timeout`, `pending`, `none`, `interrupted` or `uncertain`,
 - `close_window` asks the window to close, as its close button would, and observes `closed` when niri reports it gone, or `pending` when it is still open after five seconds, for example behind an unsaved-changes dialog. Nothing escalates.
 - `launch` looks up the preset by name (`unknown_preset` otherwise) and asks niri to spawn its fixed argv; niri runs it detached, so the app outlives the server. It counts the windows with the preset's `app_id` that weren't open before, including a window whose `app_id` arrives later. After the first appears it keeps counting for another half second, because an app may open several, then reports `one` or `ambiguous` with their ids in `windows`; with none in five seconds it reports `none`. Focus moving to a window that was already open and has the preset's `app_id` means a single-instance app answered with the window it had: `focused`, with that window in `windows`. With `reuse`, one existing matching window is focused instead (`focused`), several give `ambiguous` with `accepted: false` and nothing started, and none launches as usual.
 
+## Pointer input
+
+`pointer_move`, `click`, `drag` and `scroll` run through `Desk::act` like the other actions. The work, in `input.rs`, then checks the arguments, looks the ref up, refuses with `app_denied` when the focused window's `app_id` is on the policy's deny list (`policy::refuse_input`), requests niri's outputs and refuses with `untested_output_config` unless `policy::pointer_support` accepts them, and maps every pixel through the ref (`refs::Shot::aim`). A ref is refused past 60 seconds, when the event stream's connection differs from the one at capture, when its output's logical geometry, scale or transform differs from niri's answer just now, and for a pixel outside the image.
+
+The mapping is in `coords.rs`, with a type for each space: `ImagePx` (a pixel, which targets its centre) → `LayoutPt` (divide by the capture scale, add the captured rectangle's origin) → `OutputLocalPt` (subtract the output's origin) → the output's untransformed space (the inverse of niri's transform, written out per transform) → `ProtocolPt`, the `motion_absolute` arguments with extents of the untransformed logical size times 1000, clamped inside the output. Each encoded point is pushed back through a port of niri's forward formula (`compute_absolute_location` at v26.04) and refused if it would land more than 0.002 logical pixels away, which only a point off the output does.
+
+`niri/pointer.rs` opens a Wayland connection of its own to `$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY` (or the absolute `WAYLAND_DISPLAY`) for each gesture. It refuses unless the socket's peer is the PID that serves `NIRI_SOCKET`, so input can't go to another compositor. It binds the seat, `zwlr_virtual_pointer_manager_v1` version 2 and every `wl_output` version 4, and creates a virtual pointer bound to the screenshot's output by its name. Its socket is watched through Tokio's `AsyncFd`, so round trips never block the server's single thread, and each has a two-second deadline. Every step is one frame, flushed at once: a motion, a press, a release, or a wheel turn as `axis_discrete(15 × notches, notches)` → `axis_source(wheel)` → `frame`, the order niri needs (C12). Event times are milliseconds on the monotonic clock. After the last step a `wl_display.sync` round trip confirms niri has handled everything; only then is the result `sent`. A failure after the first step is `uncertain` with `accepted: null`, because some input may have arrived.
+
+The pointer counts a press as held as soon as it is sent and a release only once it reached the socket. Dropping it, which a stop or a cancelled request does to a running gesture, sends a release for every button still held, then destroys the device; niri releases nothing on its own (C8). `click` and `drag` wrap the pointer with the input-dirty marker, which comes off only after those releases were sent.
+
 ## The input-dirty marker and `recover`
 
-`<runtime dir>/input-dirty` says input may be stuck. It is one JSON object: the `operation`, the `phase` (`pending` before the input child starts, `running` once its PID is known), the writing server's PID, the time, the `child`'s PID and `/proc` start time, and any pointer `buttons` pressed. While the file exists, whatever it holds, `acquire_desktop` refuses with `recovery_required`, `resume` refuses, and `status` reports it as `input_dirty`; a file that can't be read or parsed blocks the same way. No tool writes it yet; the input tools will, before they send any input.
+`<runtime dir>/input-dirty` says input may be stuck. It is one JSON object: the `operation`, the `phase` (`pending` before the input child starts, `running` once its PID is known), the writing server's PID, the time, the `child`'s PID and `/proc` start time, and any pointer `buttons` pressed. While the file exists, whatever it holds, `acquire_desktop` and every action refuse with `recovery_required`, `resume` refuses, and `status` reports it as `input_dirty`; a file that can't be read or parsed blocks the same way. The server writes it whole to `input-dirty.new` with mode `0600` and renames it into place, so a reader never sees half of it.
 
-`niri-computer-use recover` is the only way to clear it, and only a human runs it:
+`click` and `drag` write it, `pending` with the button, before they send anything, and remove it once their release has been handled; a gesture dropped midway removes it only after its release reached the socket (see Pointer input). Otherwise `niri-computer-use recover` is the only way to clear it, and only a human runs it:
 
 1. It takes the lease, so no server can act meanwhile. If a server holds the lease, it refuses and names that server.
 2. With a `child` in the marker, it checks that the PID still has the recorded start time, so a reused PID is never touched, then kills the child's process group, or the child alone if it doesn't lead one, and waits up to five seconds for it to exit. Without one, it lists the user's running `wtype` processes and ends them only if the human types `yes`, and only those that are still the processes it listed.

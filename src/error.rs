@@ -34,6 +34,11 @@ pub(crate) enum ErrorName {
     UnknownPreset,
     /// A pointer tool on an output setup no live test covers.
     UntestedOutputConfig,
+    /// Input to a window whose `app_id` the policy denies.
+    AppDenied,
+    /// A screenshot ref that is unknown, expired, for a changed output, or a pixel outside
+    /// its image.
+    RefInvalid,
 }
 
 /// A failure, serialized as `{"error": <name>, "detail": <upstream detail>}`.

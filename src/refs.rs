@@ -3,15 +3,20 @@
 //! to one lease: taking or giving up the lease drops them all, and an id is never issued
 //! twice by one server, so a ref from an earlier lease is simply unknown.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
+use std::time::Duration;
 
-use niri_ipc::LogicalOutput;
+use niri_ipc::{LogicalOutput, Output};
 use tokio::time::Instant;
 
+use crate::coords::{self, Capture, ImagePx, LayoutPt, ProtocolPt};
+use crate::error::{ErrorName, ToolError};
 use crate::observe::{Rect, Screenshot};
 
 /// How many refs a lease keeps; older ones are dropped first.
 const KEPT: usize = 64;
+/// How long a ref stays usable (plan §6).
+const MAX_AGE: Duration = Duration::from_secs(60);
 
 /// One screenshot, as a pointer tool needs it.
 #[derive(Debug, Clone, PartialEq)]
@@ -47,6 +52,69 @@ impl Shot {
             connection,
         }
     }
+}
+
+impl Shot {
+    /// Where pixel `pixel` of this image is now, as a `motion_absolute` on the captured
+    /// output, provided the ref is fresh, the output is unchanged in `outputs`, the event
+    /// stream is still on the capture's `connection`, and the pixel is inside the image.
+    pub(crate) fn aim(
+        &self,
+        pixel: ImagePx,
+        now: Instant,
+        outputs: &BTreeMap<String, Output>,
+        connection: Option<u64>,
+    ) -> Result<ProtocolPt, ToolError> {
+        let age = now.saturating_duration_since(self.taken);
+        if age > MAX_AGE {
+            return Err(invalid(
+                "expired",
+                &format!("the screenshot is {} s old; take a new one", age.as_secs()),
+            ));
+        }
+        if connection != Some(self.connection) {
+            return Err(invalid(
+                "unknown_ref",
+                "niri's event stream reconnected since the screenshot; take a new one",
+            ));
+        }
+        let now_geometry = outputs.get(&self.output).and_then(|output| output.logical);
+        if now_geometry != Some(self.geometry) {
+            return Err(invalid(
+                "output_changed",
+                &format!(
+                    "output {} was {:?} at the screenshot and is {now_geometry:?} now; take a new one",
+                    self.output, self.geometry
+                ),
+            ));
+        }
+        let off = || {
+            invalid(
+                "out_of_bounds",
+                &format!(
+                    "pixel ({}, {}) is outside the {}x{} image",
+                    pixel.x, pixel.y, self.width, self.height
+                ),
+            )
+        };
+        if pixel.x >= self.width || pixel.y >= self.height {
+            return Err(off());
+        }
+        let capture = Capture {
+            origin: LayoutPt {
+                x: f64::from(self.captured.x),
+                y: f64::from(self.captured.y),
+            },
+            scale: self.scale,
+        };
+        coords::checked_encode(coords::image_to_layout(pixel, capture), &self.geometry)
+            .map_err(|_| off())
+    }
+}
+
+/// `ref_invalid`, with the reason first.
+pub(crate) fn invalid(reason: &str, detail: &str) -> ToolError {
+    ToolError::new(ErrorName::RefInvalid, format!("{reason}: {detail}"))
 }
 
 /// The refs of the current lease.
@@ -91,6 +159,23 @@ impl Refs {
         self.shots.push_back((self.issued, shot));
         Some(format!("shot-{}", self.issued))
     }
+
+    /// The ref named `id`, if the current lease kept it.
+    pub(crate) fn get(&self, id: &str) -> Result<Shot, ToolError> {
+        let wanted = id.strip_prefix("shot-").and_then(|n| n.parse::<u64>().ok());
+        self.shots
+            .iter()
+            .find(|(issued, _)| Some(*issued) == wanted)
+            .map(|(_, shot)| shot.clone())
+            .ok_or_else(|| {
+                invalid(
+                    "unknown_ref",
+                    &format!(
+                        "{id:?} isn't a screenshot of this lease; take a screenshot after acquire_desktop"
+                    ),
+                )
+            })
+    }
 }
 
 #[cfg(test)]
@@ -124,6 +209,68 @@ mod tests {
         }
     }
 
+    fn outputs(geometry: LogicalOutput) -> BTreeMap<String, Output> {
+        let output = serde_json::from_value(serde_json::json!({
+            "name": "winit", "make": "", "model": "", "serial": null, "physical_size": null,
+            "modes": [], "current_mode": null, "is_custom_mode": false,
+            "vrr_supported": false, "vrr_enabled": false, "logical": geometry
+        }))
+        .unwrap();
+        BTreeMap::from([("winit".to_owned(), output)])
+    }
+
+    fn reason(result: Result<ProtocolPt, ToolError>) -> String {
+        let error = result.unwrap_err();
+        assert_eq!(error.name, ErrorName::RefInvalid);
+        error.detail.split(':').next().unwrap().to_owned()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_ref_aims_only_while_fresh_unchanged_and_inside_its_image() {
+        let shot = shot();
+        let now = outputs(shot.geometry);
+        let centre = ImagePx { x: 720, y: 540 };
+        // The image's centre at scale 1.5 is the output's, mirrored vertically by
+        // Flipped180 into the untransformed space: (480, 360) either way.
+        assert_eq!(
+            shot.aim(centre, Instant::now(), &now, Some(1)),
+            Ok(ProtocolPt {
+                x: 480_333,
+                y: 359_667,
+                x_extent: 960_000,
+                y_extent: 720_000
+            })
+        );
+        let later = Instant::now() + MAX_AGE + Duration::from_secs(1);
+        assert_eq!(reason(shot.aim(centre, later, &now, Some(1))), "expired");
+        assert_eq!(
+            reason(shot.aim(centre, Instant::now(), &now, Some(2))),
+            "unknown_ref"
+        );
+        let moved = outputs(LogicalOutput {
+            scale: 1.0,
+            ..shot.geometry
+        });
+        assert_eq!(
+            reason(shot.aim(centre, Instant::now(), &moved, Some(1))),
+            "output_changed"
+        );
+        assert_eq!(
+            reason(shot.aim(centre, Instant::now(), &BTreeMap::new(), Some(1))),
+            "output_changed"
+        );
+        for pixel in [ImagePx { x: 1440, y: 0 }, ImagePx { x: 0, y: 1080 }] {
+            assert_eq!(
+                reason(shot.aim(pixel, Instant::now(), &now, Some(1))),
+                "out_of_bounds"
+            );
+        }
+        assert!(
+            shot.aim(ImagePx { x: 1439, y: 1079 }, Instant::now(), &now, Some(1))
+                .is_ok()
+        );
+    }
+
     #[tokio::test]
     async fn refs_belong_to_one_lease_and_ids_are_never_reused() {
         let mut refs = Refs::default();
@@ -141,6 +288,18 @@ mod tests {
         assert_eq!(refs.insert(first, shot()), None);
         assert_eq!(refs.insert(second, shot()).as_deref(), Some("shot-2"));
         assert_eq!(refs.shots.len(), 1);
+        assert!(refs.get("shot-2").is_ok());
+        for unknown in ["shot-1", "shot-9", "2", "shot-x"] {
+            assert_eq!(
+                reason(refs.get(unknown).map(|_| ProtocolPt {
+                    x: 0,
+                    y: 0,
+                    x_extent: 1,
+                    y_extent: 1
+                })),
+                "unknown_ref"
+            );
+        }
         for _ in 0..KEPT {
             refs.insert(second, shot());
         }

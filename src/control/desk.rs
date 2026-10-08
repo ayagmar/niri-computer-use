@@ -215,6 +215,16 @@ impl Desk {
         self.seat.refs().insert(lease, shot)
     }
 
+    /// The runtime directory, where input writes its marker.
+    pub(crate) fn runtime(&self) -> Result<&RuntimeDir, ToolError> {
+        self.runtime.as_ref().map_err(Clone::clone)
+    }
+
+    /// The ref named `id` of the lease held.
+    pub(crate) fn shot(&self, id: &str) -> Result<Shot, ToolError> {
+        self.seat.refs().get(id)
+    }
+
     /// Doesn't wait for a running action.
     pub(crate) fn status(&self) -> LeaseStatus {
         let mine = self.seat.holder.borrow().clone();

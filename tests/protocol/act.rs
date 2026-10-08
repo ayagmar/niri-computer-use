@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use crate::client::{Server, mistake, run, tool_error};
 use crate::fixture::{Fixture, jpeg};
-use crate::niri::{Niri, Stream, window_on};
+use crate::niri::{Niri, Stream, output, window_on};
 use crate::noctalia::{self, LOCKED, UNLOCKED};
 
 /// A server holding the lease on a fake niri, with windows 1 (focused, `a`), 2 (`b`) and
@@ -67,7 +67,10 @@ impl Desk {
         self.fixture
             .audit_lines()
             .into_iter()
-            .filter(|line| !["status", "acquire_desktop"].contains(&line["tool"].as_str().unwrap()))
+            .filter(|line| {
+                !["status", "acquire_desktop", "screenshot"]
+                    .contains(&line["tool"].as_str().unwrap())
+            })
             .map(|line| {
                 json!([
                     line["tool"],
@@ -515,4 +518,103 @@ async fn a_stop_cancels_the_running_action_and_takes_the_lease_back() {
     assert!(released, "the stop didn't take the lease back");
     let (after, _) = tool_error(&desk.server.call("focus_window", json!({"id": 2})).await);
     assert_eq!(after, "stopped");
+}
+
+/// A `ref_invalid`'s name and its reason, the detail's first word.
+fn reason(result: &Value) -> (&'static str, String) {
+    let (name, detail) = tool_error(result);
+    assert_eq!(name, "ref_invalid", "{detail}");
+    let reason = detail.split(':').next().unwrap().to_owned();
+    ("ref_invalid", reason)
+}
+
+/// Takes a screenshot under the lease and returns its ref.
+async fn screenshot_ref(desk: &mut Desk) -> String {
+    let shot = desk
+        .server
+        .call("screenshot", json!({"target": "focused_output"}))
+        .await;
+    shot["structuredContent"]["screenshot_ref"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+#[tokio::test]
+async fn input_to_a_denied_app_is_refused() {
+    let mut desk = Desk::start("act-denied", r#"deny_input_app_ids = ["a"]"#).await;
+    let id = screenshot_ref(&mut desk).await;
+    let click = desk
+        .server
+        .call("click", json!({"screenshot_ref": id, "x": 10, "y": 10}))
+        .await;
+    let (name, detail) = tool_error(&click);
+    assert_eq!(name, "app_denied");
+    assert!(detail.contains("\"a\""), "{detail}");
+}
+
+#[tokio::test]
+async fn pointer_tools_check_the_ref_the_outputs_and_their_arguments_first() {
+    let mut desk = Desk::start("act-pointer", "").await;
+    let at = |id: &str, x: u32| json!({"screenshot_ref": id, "x": x, "y": 10});
+    let unknown = desk.server.call("pointer_move", at("shot-9", 10)).await;
+    assert_eq!(reason(&unknown), ("ref_invalid", "unknown_ref".to_owned()));
+
+    let id = screenshot_ref(&mut desk).await;
+    let outside = desk.server.call("pointer_move", at(&id, 1280)).await;
+    assert_eq!(
+        reason(&outside),
+        ("ref_invalid", "out_of_bounds".to_owned())
+    );
+
+    let mut quadruple = at(&id, 10);
+    quadruple["count"] = json!(4);
+    let mistaken = desk.server.call("click", quadruple).await;
+    assert!(mistake(&mistaken).contains("`count`"));
+
+    // The fixture's Wayland display has no socket: everything checked, nothing sent.
+    let click = desk.server.call("click", at(&id, 10)).await;
+    let (name, detail) = tool_error(&click);
+    assert_eq!(name, "upstream_error");
+    assert!(detail.starts_with("connect to"), "{detail}");
+    let marker = desk
+        .fixture
+        .path("run/niri-computer-use/niri.test/input-dirty");
+    assert!(!marker.exists());
+
+    let scaled = output("DP-1", Some((0, 0, 2560, 1440, 2.0)));
+    desk.niri.set_outputs(vec![scaled.clone()], Some("DP-1"));
+    let changed = desk.server.call("pointer_move", at(&id, 10)).await;
+    assert_eq!(
+        reason(&changed),
+        ("ref_invalid", "output_changed".to_owned())
+    );
+
+    let clicked = |count: u8| {
+        let mut args = at(&id, 10);
+        args["button"] = json!("left");
+        args["count"] = json!(count);
+        args
+    };
+    let second = output("HDMI-A-1", Some((2560, 0, 1920, 1080, 1.0)));
+    desk.niri.set_outputs(vec![scaled, second], Some("DP-1"));
+    let two = desk.server.call("pointer_move", at(&id, 10)).await;
+    assert_eq!(tool_error(&two).0, "untested_output_config");
+    assert_eq!(
+        desk.audited(),
+        [
+            json!(["pointer_move", at("shot-9", 10), null, null, "ref_invalid"]),
+            json!(["pointer_move", at(&id, 1280), null, null, "ref_invalid"]),
+            json!(["click", clicked(4), null, null, "invalid_arguments"]),
+            json!(["click", clicked(1), null, null, "upstream_error"]),
+            json!(["pointer_move", at(&id, 10), null, null, "ref_invalid"]),
+            json!([
+                "pointer_move",
+                at(&id, 10),
+                null,
+                null,
+                "untested_output_config"
+            ]),
+        ]
+    );
 }

@@ -22,6 +22,9 @@ A failure sets `isError` and returns `{"error": <name>, "detail": <upstream deta
 | `screen_locked` | the screen is locked, or neither logind nor Noctalia can say whether it is |
 | `recovery_required` | input may be stuck; `detail` names the marker's operation and phase, and the user runs `niri-computer-use recover` |
 | `unknown_preset` | `launch` named a preset the policy file doesn't have; `detail` lists the names it has |
+| `ref_invalid` | a pointer tool's `screenshot_ref` can't be used; `detail` starts with the reason: `unknown_ref` (not a screenshot of this lease, or niri's event stream reconnected since), `expired` (over 60 seconds old), `output_changed` (the output moved, resized, changed scale or transform, or is gone) or `out_of_bounds` (the pixel is outside the image) |
+| `untested_output_config` | a pointer tool while niri's outputs are a setup no live test covers; `detail` lists the enabled outputs and their transforms |
+| `app_denied` | input while the focused window's `app_id` is on the policy file's `deny_input_app_ids` |
 
 A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and one plain-text block starting `invalid arguments:`, without `structuredContent`, so the model can correct the call.
 
@@ -115,7 +118,7 @@ No arguments. Gives the lease up and returns `{"released": true}`, or `{"release
 
 ## Action tools
 
-`focus_window`, `focus_workspace`, `launch` and `close_window` act on the desktop through niri's IPC. Before each action the server checks, in this order, the stop flag (`stopped`), the input-dirty marker (`recovery_required`), the lease (`lease_required`), then niri's version, the policy file and the lock state, as `acquire_desktop` does. One action runs at a time; an action or `release_desktop` called meanwhile waits for it. A stop during an action cancels it with `stopped`, and anything niri had already accepted may have taken effect. Cancelling the MCP request cancels the action and keeps the lease.
+`focus_window`, `focus_workspace`, `launch` and `close_window` act on the desktop through niri's IPC, and the pointer tools send input. Before each action the server checks, in this order, the stop flag (`stopped`), the input-dirty marker (`recovery_required`), the lease (`lease_required`), then niri's version, the policy file and the lock state, as `acquire_desktop` does. One action runs at a time; an action or `release_desktop` called meanwhile waits for it. A stop during an action cancels it with `stopped`, and anything niri had already accepted may have taken effect. Cancelling the MCP request cancels the action and keeps the lease.
 
 An unknown window or workspace id is an argument mistake, and nothing is sent. Otherwise the result has these fields:
 
@@ -170,3 +173,56 @@ With `reuse`: one existing matching window is focused, and `observed` is `focuse
 | `id` (required) | a window id from `desktop_state` |
 
 Asks the window to close, as its close button would. `observed` is `closed` once niri reports it gone, or `pending` if it is still open after five seconds, for example behind an unsaved-changes dialog. Nothing forces it closed. `windows` holds the id.
+
+## Pointer tools
+
+`pointer_move`, `click`, `drag` and `scroll` aim at pixels of a screenshot: each takes the `screenshot_ref` of a screenshot this server took under the current lease, and pixel coordinates in that image, counted from its top-left corner. A pixel targets its centre. They run through the same gate as the other action tools. Then, before sending anything, the server checks:
+
+1. the arguments: `count` from 1 to 3, at least one scroll axis, at most 10 notches each way (otherwise an argument mistake)
+2. the ref: `ref_invalid` with `unknown_ref` if it isn't a screenshot of this lease
+3. the focused window: `app_denied` if its `app_id` is on the policy's deny list
+4. niri's outputs, read again right then: `untested_output_config` unless there is one enabled output, a monitor at transform `Normal` or nested niri's `winit` window
+5. each pixel through the ref: `ref_invalid` with `expired` past 60 seconds, `unknown_ref` if niri's event stream reconnected since the screenshot, `output_changed` if its output moved, resized, changed scale or transform, or is gone, and `out_of_bounds` for a pixel outside the image
+
+The input goes through a virtual pointer bound to the screenshot's output, on a Wayland connection of its own to the display in `WAYLAND_DISPLAY`. The server first checks that the process serving that display is the niri at `NIRI_SOCKET`, and fails with `upstream_error` otherwise. The result has `accepted: true` and `observed: sent` once niri has handled the input, with `focused_window` as niri's event stream showed it just after. What the input did is for the next screenshot to show. If the Wayland connection breaks or niri stops answering after something was sent, `observed` is `uncertain` with `accepted` null and a `detail`, and the result comes with a screenshot.
+
+`click` and `drag` write the input-dirty marker before they send anything, and remove it once niri has handled the button's release. If the call is cancelled midway, by a stop or by the client, the server releases the button on the way out and then removes the marker. If the release can't be sent, the marker stays, and every action refuses with `recovery_required` until the user runs `niri-computer-use recover`.
+
+### `pointer_move`
+
+| Argument | Value |
+|---|---|
+| `screenshot_ref` (required) | from a screenshot under this lease |
+| `x`, `y` (required) | the pixel in that image |
+
+Moves the pointer there, to hover.
+
+### `click`
+
+| Argument | Value |
+|---|---|
+| `screenshot_ref`, `x`, `y` (required) | as for `pointer_move` |
+| `button` | `left` (default), `right` or `middle` |
+| `count` | 1 (default) to 3; 2 is a double click |
+
+Moves to the pixel, then presses and releases the button `count` times.
+
+### `drag`
+
+| Argument | Value |
+|---|---|
+| `screenshot_ref` (required) | from a screenshot under this lease |
+| `from`, `to` (required) | `{"x", "y"}` pixels in that image |
+| `button` | `left` (default), `right` or `middle` |
+
+Moves to `from`, waits 50 ms, presses the button, waits 50 ms, moves to `to` in ten even steps 20 ms apart, and releases the button there.
+
+### `scroll`
+
+| Argument | Value |
+|---|---|
+| `screenshot_ref`, `x`, `y` (required) | as for `pointer_move` |
+| `notches_y` | wheel notches down, negative for up; default 0 |
+| `notches_x` | wheel notches right, negative for left; default 0 |
+
+Moves to the pixel and turns the wheel by whole notches, the vertical axis first: for each axis, one frame of `axis_discrete` with 15 per notch, as niri's own wheel uses, then `axis_source` wheel. Apps scroll by their own amount per notch.

@@ -275,6 +275,26 @@ pub(crate) fn refuse_control(facts: Facts<'_>) -> Option<ToolError> {
     }
 }
 
+/// `app_denied` when the window with keyboard focus belongs to an app the policy file
+/// denies input to (plan §9). Its `app_id` is the client's own claim, and a click can land
+/// on another window, so this is a guardrail, not a boundary.
+pub(crate) fn refuse_input(policy: &Loaded, focused_app_id: Option<&str>) -> Option<ToolError> {
+    let Loaded::Valid(policy) = policy else {
+        return None;
+    };
+    let app_id = focused_app_id?;
+    policy
+        .deny_input_app_ids
+        .iter()
+        .any(|denied| denied == app_id)
+        .then(|| {
+            ToolError::new(
+                ErrorName::AppDenied,
+                format!("the focused window's app_id {app_id:?} is on the policy's deny list"),
+            )
+        })
+}
+
 /// Whether the pointer tools may run on these outputs (plan §8): exactly one enabled
 /// output, either a monitor with transform `Normal` or nested niri's `winit` window, which
 /// niri always shows `Flipped180`. Those are the setups live tests cover; anything else,
@@ -473,6 +493,24 @@ app_id = "foot"
                 ..ok
             }),
             Some(ErrorName::ScreenLocked)
+        );
+    }
+
+    #[test]
+    fn input_to_a_denied_app_is_refused() {
+        let policy = Loaded::Valid(parse(EXAMPLE).unwrap());
+        let refused = refuse_input(&policy, Some("org.keepassxc.KeePassXC")).unwrap();
+        assert_eq!(refused.name, ErrorName::AppDenied);
+        assert!(
+            refused.detail.contains("org.keepassxc.KeePassXC"),
+            "{}",
+            refused.detail
+        );
+        assert_eq!(refuse_input(&policy, Some("firefox")), None);
+        assert_eq!(refuse_input(&policy, None), None);
+        assert_eq!(
+            refuse_input(&Loaded::Missing, Some("org.keepassxc.KeePassXC")),
+            None
         );
     }
 

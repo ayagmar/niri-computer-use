@@ -13,7 +13,9 @@ use tokio::time::Instant;
 use crate::act::{self, Outcome};
 use crate::audit::{Audit, Call, Caller};
 use crate::control::desk::Desk;
+use crate::coords::ImagePx;
 use crate::error::{CANCELLED, CallError, ToolError};
+use crate::input::{self, Button, Gesture, Input};
 use crate::niri::events::{EventStream, StreamState};
 use crate::observe::{DEFAULT_MAX_WIDTH, Format, Rect, Target};
 use crate::policy::{self, Loaded};
@@ -118,6 +120,106 @@ struct LaunchArgs {
     /// start nothing if several exist. Defaults to false.
     #[serde(default)]
     reuse: bool,
+}
+
+/// A pixel of a screenshot, counted from its top-left corner.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct PixelArgs {
+    x: u32,
+    y: u32,
+}
+
+impl From<PixelArgs> for ImagePx {
+    fn from(pixel: PixelArgs) -> Self {
+        Self {
+            x: pixel.x,
+            y: pixel.y,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct PointArgs {
+    /// The `screenshot_ref` of a screenshot taken under this lease, at most a minute old.
+    screenshot_ref: String,
+    /// The pixel's column in that image, from its left edge.
+    x: u32,
+    /// The pixel's row in that image, from its top edge.
+    y: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+#[serde(rename_all = "lowercase")]
+enum ButtonArg {
+    #[default]
+    Left,
+    Right,
+    Middle,
+}
+
+impl From<ButtonArg> for Button {
+    fn from(button: ButtonArg) -> Self {
+        match button {
+            ButtonArg::Left => Self::Left,
+            ButtonArg::Right => Self::Right,
+            ButtonArg::Middle => Self::Middle,
+        }
+    }
+}
+
+const fn one() -> u8 {
+    1
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct ClickArgs {
+    /// The `screenshot_ref` of a screenshot taken under this lease, at most a minute old.
+    screenshot_ref: String,
+    /// The pixel's column in that image, from its left edge.
+    x: u32,
+    /// The pixel's row in that image, from its top edge.
+    y: u32,
+    /// `left` (the default), `right` or `middle`.
+    #[serde(default)]
+    button: ButtonArg,
+    /// 1 (the default) to 3: 2 is a double click.
+    #[serde(default = "one")]
+    count: u8,
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct DragArgs {
+    /// The `screenshot_ref` of a screenshot taken under this lease, at most a minute old.
+    screenshot_ref: String,
+    /// Where to press, as a pixel of that image.
+    from: PixelArgs,
+    /// Where to release, as a pixel of the same image.
+    to: PixelArgs,
+    /// `left` (the default), `right` or `middle`.
+    #[serde(default)]
+    button: ButtonArg,
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct ScrollArgs {
+    /// The `screenshot_ref` of a screenshot taken under this lease, at most a minute old.
+    screenshot_ref: String,
+    /// The pixel's column in that image, from its left edge.
+    x: u32,
+    /// The pixel's row in that image, from its top edge.
+    y: u32,
+    /// Wheel notches to the right (negative: left), at most 10. Defaults to 0.
+    #[serde(default)]
+    notches_x: i32,
+    /// Wheel notches down (negative: up), at most 10. Defaults to 0.
+    #[serde(default)]
+    notches_y: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -300,6 +402,108 @@ impl Server {
         self.act(&context, "close_window", logged, work).await
     }
 
+    /// Moves the pointer onto a pixel of a screenshot, to hover. `observed` is `sent` once
+    /// niri has handled the motion; take a screenshot to see what it did. Requires the lease
+    /// and a `screenshot_ref` taken under it; fails with `ref_invalid` if the ref is unknown,
+    /// over a minute old, its output changed, or the pixel is outside its image, and with
+    /// `app_denied` while the focused window's app is on the policy's deny list.
+    #[tool(annotations(
+        read_only_hint = false,
+        destructive_hint = false,
+        idempotent_hint = true,
+        open_world_hint = false
+    ))]
+    async fn pointer_move(
+        &self,
+        Parameters(args): Parameters<PointArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        let gesture = Gesture::Move(ImagePx {
+            x: args.x,
+            y: args.y,
+        });
+        let id = args.screenshot_ref;
+        self.point(&context, logged, id, gesture).await
+    }
+
+    /// Clicks a pixel of a screenshot: moves there, then presses and releases the button
+    /// `count` times. Results and failures as for `pointer_move`. A click can change focus
+    /// or do anything the app does on a click; take a screenshot before the next action.
+    #[tool(annotations(
+        read_only_hint = false,
+        destructive_hint = true,
+        idempotent_hint = false,
+        open_world_hint = false
+    ))]
+    async fn click(
+        &self,
+        Parameters(args): Parameters<ClickArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        let gesture = Gesture::Click {
+            at: ImagePx {
+                x: args.x,
+                y: args.y,
+            },
+            button: args.button.into(),
+            count: args.count,
+        };
+        let id = args.screenshot_ref;
+        self.point(&context, logged, id, gesture).await
+    }
+
+    /// Drags from one pixel of a screenshot to another: presses the button at `from`,
+    /// moves to `to` in ten steps over about a quarter of a second, and releases it there.
+    /// Results and failures as for `pointer_move`.
+    #[tool(annotations(
+        read_only_hint = false,
+        destructive_hint = true,
+        idempotent_hint = false,
+        open_world_hint = false
+    ))]
+    async fn drag(
+        &self,
+        Parameters(args): Parameters<DragArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        let gesture = Gesture::Drag {
+            from: args.from.into(),
+            to: args.to.into(),
+            button: args.button.into(),
+        };
+        let id = args.screenshot_ref;
+        self.point(&context, logged, id, gesture).await
+    }
+
+    /// Scrolls with the mouse wheel over a pixel of a screenshot, by whole notches, as a
+    /// wheel does. Results and failures as for `pointer_move`.
+    #[tool(annotations(
+        read_only_hint = false,
+        destructive_hint = false,
+        idempotent_hint = false,
+        open_world_hint = false
+    ))]
+    async fn scroll(
+        &self,
+        Parameters(args): Parameters<ScrollArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        let gesture = Gesture::Scroll {
+            at: ImagePx {
+                x: args.x,
+                y: args.y,
+            },
+            notches_x: args.notches_x,
+            notches_y: args.notches_y,
+        };
+        let id = args.screenshot_ref;
+        self.point(&context, logged, id, gesture).await
+    }
+
     /// niri's outputs (monitors) by connector name: modes, logical position and size,
     /// scale and transform, as niri reports them.
     #[tool(annotations(read_only_hint = true))]
@@ -391,6 +595,28 @@ impl Server {
             socket: self.env.niri_socket.as_deref(),
             events: self.events.as_ref(),
         }
+    }
+
+    /// Runs a pointer gesture through the action gate, aimed through the ref named `id`,
+    /// which is looked up only once the gate has passed.
+    async fn point(
+        &self,
+        context: &RequestContext<RoleServer>,
+        logged: Value,
+        id: String,
+        gesture: Gesture,
+    ) -> Result<CallToolResult, ErrorData> {
+        let display = self.env.wayland_socket();
+        let work = async {
+            let input = Input {
+                niri: self.niri(),
+                display: display.as_deref(),
+                runtime: self.desk.runtime()?,
+                policy: &self.policy,
+            };
+            input::point(input, self.desk.shot(&id), gesture).await
+        };
+        self.act(context, gesture.tool(), logged, work).await
     }
 
     /// Takes a screenshot and, while this server holds the lease, keeps it as a ref that

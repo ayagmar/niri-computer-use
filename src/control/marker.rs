@@ -1,11 +1,16 @@
 //! The input-dirty marker, `<runtime dir>/input-dirty`: written before any input is
 //! dispatched and removed only once the input is known to be released (plan §11). While
-//! it exists, no server takes the lease and `resume` refuses; only `recover` clears it.
-//! This module reads it; the input tools that write it come later.
+//! it exists, no server takes the lease and `resume` refuses; only `recover` and the input
+//! that wrote it clear it.
 
+use std::io::Write as _;
+use std::os::unix::fs::OpenOptionsExt as _;
+use std::path::PathBuf;
+
+use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::runtime::RuntimeDir;
+use super::runtime::{INPUT_DIRTY, RuntimeDir};
 
 /// The marker's content, one JSON object.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +47,56 @@ pub(crate) struct Child {
     pub(crate) start_time: u64,
 }
 
+impl Marker {
+    /// A `pending` marker for `operation`, written by this server now.
+    pub(crate) fn pending(operation: &str, buttons: Vec<u32>) -> Self {
+        Self {
+            operation: operation.to_owned(),
+            phase: Phase::Pending,
+            server_pid: std::process::id(),
+            since: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+            child: None,
+            buttons,
+        }
+    }
+}
+
+/// The marker this server wrote. Dropping it leaves the file in place: only `clear`
+/// removes it, once the input is known to be released.
+#[derive(Debug)]
+pub(crate) struct Written {
+    path: PathBuf,
+    marker: Marker,
+}
+
+impl Written {
+    /// Writes `marker`, replacing the file whole, so a reader never sees half of it.
+    pub(crate) fn write(runtime: &RuntimeDir, marker: Marker) -> std::io::Result<Self> {
+        let written = Self {
+            path: runtime.path().join(INPUT_DIRTY),
+            marker,
+        };
+        written.save()?;
+        Ok(written)
+    }
+
+    pub(crate) fn clear(self) -> std::io::Result<()> {
+        std::fs::remove_file(&self.path)
+    }
+
+    fn save(&self) -> std::io::Result<()> {
+        let staged = self.path.with_extension("new");
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&staged)?;
+        file.write_all(&serde_json::to_vec(&self.marker).map_err(std::io::Error::other)?)?;
+        std::fs::rename(&staged, &self.path)
+    }
+}
+
 /// What `status` and `recover` find.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
@@ -55,7 +110,7 @@ pub(crate) enum Found {
 
 /// The marker, `None` when there is none.
 pub(crate) fn read(runtime: &RuntimeDir) -> Option<Found> {
-    let path = runtime.path().join(super::runtime::INPUT_DIRTY);
+    let path = runtime.path().join(INPUT_DIRTY);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
@@ -111,7 +166,7 @@ mod tests {
         let runtime = runtime(&dir);
         runtime.create().unwrap();
         assert_eq!(read(&runtime), None);
-        let path = runtime.path().join(super::super::runtime::INPUT_DIRTY);
+        let path = runtime.path().join(INPUT_DIRTY);
         std::fs::write(
             &path,
             r#"{"operation":"type_text","phase":"pending","server_pid":7,"since":"2026-10-08T00:00:00.000Z"}"#,
@@ -143,6 +198,31 @@ mod tests {
         assert_eq!(running.buttons, [272]);
         std::fs::write(&path, r#"{"operation":"x","surprise":1}"#).unwrap();
         assert!(matches!(read(&runtime), Some(Found::Unreadable { .. })));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_written_marker_is_read_back_until_cleared() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = crate::test_support::fresh_dir("marker-write");
+        let runtime = runtime(&dir);
+        runtime.create().unwrap();
+        let written = Written::write(&runtime, Marker::pending("click", vec![272])).unwrap();
+        let Some(Found::Marker(pending)) = read(&runtime) else {
+            panic!("no marker")
+        };
+        assert_eq!(
+            (pending.phase, pending.server_pid, pending.buttons),
+            (Phase::Pending, std::process::id(), vec![272])
+        );
+        let path = runtime.path().join(INPUT_DIRTY);
+        assert_eq!(path.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+        // Dropping it leaves the marker; only clearing removes it.
+        written.clear().unwrap();
+        assert_eq!(read(&runtime), None);
+        drop(Written::write(&runtime, Marker::pending("drag", Vec::new())).unwrap());
+        assert!(read(&runtime).is_some());
+        assert_eq!(std::fs::read_dir(runtime.path()).unwrap().count(), 1);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

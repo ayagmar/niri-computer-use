@@ -53,6 +53,22 @@ fn expected(name: &str) -> (Value, Value) {
         "close_window" => (json!([false, true, false]), json!(["id"])),
         "launch" => (json!([false, false, false]), json!(["preset"])),
         "screenshot" => (json!([true, null, null]), json!(["target"])),
+        "pointer_move" => (
+            json!([false, false, true]),
+            json!(["screenshot_ref", "x", "y"]),
+        ),
+        "click" => (
+            json!([false, true, false]),
+            json!(["screenshot_ref", "x", "y"]),
+        ),
+        "drag" => (
+            json!([false, true, false]),
+            json!(["screenshot_ref", "from", "to"]),
+        ),
+        "scroll" => (
+            json!([false, false, false]),
+            json!(["screenshot_ref", "x", "y"]),
+        ),
         _ => read_only,
     }
 }
@@ -67,15 +83,19 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
         names(&tools),
         [
             "acquire_desktop",
+            "click",
             "clipboard_read",
             "close_window",
             "desktop_state",
+            "drag",
             "focus_window",
             "focus_workspace",
             "launch",
             "outputs",
+            "pointer_move",
             "release_desktop",
             "screenshot",
+            "scroll",
             "shell_status",
             "status"
         ]
@@ -115,6 +135,20 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
             "focus_window" | "focus_workspace" | "close_window" => {
                 assert_eq!(properties, 1, "{tool}");
             }
+            "pointer_move" => assert_eq!(properties, 3, "{tool}"),
+            "click" => {
+                assert_eq!(properties, 5, "{tool}");
+                assert_eq!(fields["button"]["default"], "left");
+                assert_eq!(fields["count"]["default"], 1);
+            }
+            "drag" => {
+                assert_eq!(properties, 4, "{tool}");
+                assert_eq!(fields["button"]["default"], "left");
+            }
+            "scroll" => {
+                assert_eq!(properties, 5, "{tool}");
+                assert_eq!(fields["notches_y"]["default"], 0);
+            }
             _ => assert_eq!(properties, 0, "{tool}"),
         }
     }
@@ -129,15 +163,19 @@ async fn without_noctalia_on_path_there_is_no_shell_status() {
         names(&tools),
         [
             "acquire_desktop",
+            "click",
             "clipboard_read",
             "close_window",
             "desktop_state",
+            "drag",
             "focus_window",
             "focus_workspace",
             "launch",
             "outputs",
+            "pointer_move",
             "release_desktop",
             "screenshot",
+            "scroll",
             "status"
         ]
     );

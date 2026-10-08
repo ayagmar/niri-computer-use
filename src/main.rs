@@ -5,8 +5,10 @@ mod audit;
 mod cli;
 mod clipboard;
 mod control;
+mod coords;
 mod error;
 mod image_header;
+mod input;
 mod niri;
 mod noctalia;
 mod observe;
@@ -79,6 +81,16 @@ impl Env {
             .as_deref()
             .and_then(std::path::Path::file_name)
             .map(|name| name.to_string_lossy().into_owned())
+    }
+
+    /// The Wayland display's socket: `WAYLAND_DISPLAY`, under `XDG_RUNTIME_DIR` unless it
+    /// is an absolute path.
+    pub(crate) fn wayland_socket(&self) -> Option<PathBuf> {
+        let display = std::path::Path::new(self.wayland_display.as_ref()?);
+        if display.is_absolute() {
+            return Some(display.to_path_buf());
+        }
+        Some(self.runtime_dir.as_ref()?.join(display))
     }
 
     /// Whether `PATH` has an executable file called `program`.
@@ -193,6 +205,25 @@ mod tests {
         assert!(!env.finds("wl-copy"));
         assert!(!Env::default().finds("wtype"));
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_wayland_socket_is_under_the_runtime_directory_unless_absolute() {
+        let env = |display: &str, runtime: Option<&str>| Env {
+            wayland_display: Some(display.into()),
+            runtime_dir: runtime.map(PathBuf::from),
+            ..Env::default()
+        };
+        assert_eq!(
+            env("wayland-1", Some("/run/user/1000")).wayland_socket(),
+            Some(PathBuf::from("/run/user/1000/wayland-1"))
+        );
+        assert_eq!(
+            env("/tmp/w/wayland-9", None).wayland_socket(),
+            Some(PathBuf::from("/tmp/w/wayland-9"))
+        );
+        assert_eq!(env("wayland-1", None).wayland_socket(), None);
+        assert_eq!(Env::default().wayland_socket(), None);
     }
 
     #[test]

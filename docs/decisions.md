@@ -355,3 +355,20 @@ These match the versions installed locally.
 - The fixture is the harness binary itself, started by niri from presets whose program is its absolute path. The policy rules allow it: `harness` is neither a command runner nor a terminal. It checks its environment is the nested one before connecting, exits when niri goes away, and has its own 90-second deadline, so the run's leftover check stays clean.
 - The harness talks MCP to one long-running server instead of the one-shot `printf` pipelines of M2's checks, because the lease has to stay with one server across many calls and the `interrupted` check moves focus while a call is in flight. The runner's `Process::send` writes to a held stdin without closing it, within the process's deadline, and replies are read back from the server's log file.
 
+
+## 2026-10-08: the pointer tools
+
+| Crate | Version | Published | Why |
+|---|---|---|---|
+| `wayland-client` | 0.31.15 | 2026-07-22 | The virtual pointer's Wayland connection to niri. The harness already uses it; newest release, rechecked on crates.io today. |
+| `wayland-protocols-wlr` | 0.3.12 | 2026-03-31 | The `zwlr_virtual_pointer_v1` bindings, as in the `vpointer` probe. Feature `client` only. Newest release. |
+
+- The only new crate in `Cargo.lock` is `wayland-protocols-wlr`; everything it pulls in was vetted for the harness. `rustix` gains the `time` feature for the monotonic clock, and Tokio's `net` feature, already on, provides `AsyncFd`.
+- The pointer lives under `niri/`: its Wayland connection talks to niri too. It connects to the display itself rather than through `connect_to_env`, which reads the process environment that `main` already read once, and it checks the socket's peer PID against the one serving `NIRI_SOCKET`, so a stale or foreign `WAYLAND_DISPLAY` can't receive input meant for this niri.
+- The pointer is async: `AsyncFd` watches a copy of the connection's socket, and each round trip uses `prepare_read`, a readiness wait with a deadline, and `dispatch_pending`. A blocking round trip would stall the single-threaded server, including the stop watcher.
+- One pointer per gesture, created after every check passed and destroyed at its end. A long-lived device would need its own cleanup on release, stop and output changes, and buys nothing at one action per observation.
+- `observed` for input is `sent`: niri handled the input (a `wl_display.sync` round trip after the last step), and nothing more is claimed. Plan §6 called this `verified: false`; an outcome name keeps the audit log's `observed` field meaningful without a second field. A failure after the first step is `uncertain` with `accepted: null`, as for a lost niri reply.
+- Only `click` and `drag` write the input-dirty marker. A motion or a wheel turn leaves nothing held, and the marker would block every server for nothing if the server died between writing and removing it. The pointer's marker stays `pending`: there is no child process for `running` to name, and its `buttons` field says what to release.
+- Plan §6 lists refusals; the order here is: arguments, unknown ref, the deny list, untested outputs, then the ref against the outputs just requested (expired, reconnected stream, changed output, out of bounds). A disconnect of the event stream drops every ref (plan §7); the ref keeps the connection number from capture and is refused as `unknown_ref` when it differs, instead of a store cleared from the stream task.
+- `click` takes `count` from 1 to 3 with no pause between clicks, so a double click arrives within any app's double-click time. `drag` waits 50 ms before and after the press and moves in ten steps 20 ms apart, so toolkits that start a drag after a motion threshold see one. `scroll` takes at most 10 notches per axis per call, so a mistaken argument can't scroll a page away.
+- The live setups (plan §8) are both enabled in code: the nested `winit` output, which the nested acceptance tests, and one monitor at `Normal`, which the supervised real-session run tests before M4 ends.

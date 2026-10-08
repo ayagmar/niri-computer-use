@@ -50,6 +50,8 @@ pub(crate) enum Observed {
     /// The request's reply, or the event stream, was lost: the action may or may not have
     /// happened.
     Uncertain,
+    /// Input tools: niri handled the input. What it did is for the next screenshot to show.
+    Sent,
 }
 
 /// An action's result.
@@ -85,7 +87,7 @@ pub(crate) struct Evidenced {
 }
 
 impl Outcome {
-    fn seen(observed: Observed, view: &View, windows: Vec<u64>) -> Self {
+    pub(crate) fn seen(observed: Observed, view: &View, windows: Vec<u64>) -> Self {
         Self {
             accepted: Some(true),
             observed,
@@ -97,7 +99,7 @@ impl Outcome {
         }
     }
 
-    fn uncertain(accepted: Option<bool>, view: Option<&View>, detail: String) -> Self {
+    pub(crate) fn uncertain(accepted: Option<bool>, view: Option<&View>, detail: String) -> Self {
         Self {
             accepted,
             observed: Observed::Uncertain,
@@ -117,7 +119,11 @@ impl Outcome {
             | Observed::None
             | Observed::Interrupted
             | Observed::Uncertain => true,
-            Observed::Focused | Observed::Closed | Observed::One | Observed::Ambiguous => false,
+            Observed::Focused
+            | Observed::Closed
+            | Observed::One
+            | Observed::Ambiguous
+            | Observed::Sent => false,
         }
     }
 }
