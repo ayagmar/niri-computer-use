@@ -161,9 +161,9 @@ fn reuses(session: &mut Session<'_>, client: &mut Client, other: u64) -> Result<
     let second = act(session, client, "launch", json!({"preset": "reuse"}))?;
     expect_outcome(&second, "one", "a second reuse window")?;
     let both = act(session, client, "launch", reuse)?;
-    expect_outcome(&both, "ambiguous", "reuse with two windows")?;
     expect(
-        field(&both, "/accepted") == false
+        field(&both, "/observed") == "ambiguous"
+            && field(&both, "/accepted") == false
             && field(&both, "/windows").as_array().map(Vec::len) == Some(2)
             && count(session, client, "reuse")? == 2,
         "reuse with two windows started nothing",
@@ -338,10 +338,12 @@ fn windows(state: &Value) -> impl Iterator<Item = &Value> {
     field(state, "/windows").as_array().into_iter().flatten()
 }
 
+/// `observed`, after an action niri accepted, so a check can't pass through an outcome
+/// reached without sending anything.
 fn expect_outcome(outcome: &Value, observed: &str, what: &str) -> Result<()> {
     expect(
-        field(outcome, "/observed") == observed,
-        &format!("{what}: observed {observed}"),
+        field(outcome, "/observed") == observed && field(outcome, "/accepted") == true,
+        &format!("{what}: accepted and observed {observed}"),
         &outcome.to_string(),
     )
 }

@@ -12,9 +12,9 @@ use crate::failure::{Context as _, Failure, Result};
 use crate::runner::Process;
 use crate::session::Session;
 
-/// Longer than the slowest action: five seconds of waiting, half a second of settling, a
-/// two-second request deadline, and a screenshot.
-const REPLY: Duration = Duration::from_secs(15);
+/// Longer than the slowest action, about fifteen seconds: the readiness report, five
+/// seconds of waiting, half a second of settling, and a screenshot.
+const REPLY: Duration = Duration::from_secs(20);
 
 #[derive(Debug)]
 pub(crate) struct Client {

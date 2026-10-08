@@ -312,8 +312,10 @@ async fn focus_workspace_waits_for_the_workspace() {
                 ),
                 "{action:?}"
             );
-            stream.send(&json!({"WindowFocusChanged": {"id": null}}));
+            // niri reports the workspace first; focus is still on window 1 until the
+            // next event moves it off, as workspace 2 is empty.
             stream.send(&json!({"WorkspaceActivated": {"id": 2, "focused": true}}));
+            stream.send(&json!({"WindowFocusChanged": {"id": null}}));
         })
         .await;
     assert_eq!(
