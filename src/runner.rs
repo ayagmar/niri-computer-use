@@ -12,7 +12,8 @@ use tokio::process::{Child, Command};
 
 use crate::error::{ErrorName, ToolError};
 
-/// How much stderr an error keeps.
+/// How much stderr an error keeps. The rest is read and discarded, so a verbose child
+/// never sees its stderr closed.
 const MAX_STDERR: u64 = 16 * 1024;
 
 #[derive(Debug)]
@@ -94,12 +95,13 @@ impl Running {
         Self { child, group }
     }
 
-    /// Reads both pipes to the end, then reaps the child. The pipes close once the child
-    /// and anything it started that kept them have exited.
+    /// Reads both pipes, then reaps the child. Stderr is read to the end; stdout until the
+    /// end or one byte past its limit. The pipes close once the child and anything it
+    /// started that kept them have exited.
     async fn finish(&mut self, program: &str, max_stdout: u64) -> Result<Finished, ToolError> {
         let (stdout, stderr) = tokio::join!(
             read_limited(self.child.stdout.take(), max_stdout + 1),
-            read_limited(self.child.stderr.take(), MAX_STDERR),
+            read_keeping(self.child.stderr.take(), MAX_STDERR),
         );
         let broken = |error: std::io::Error| {
             ToolError::new(ErrorName::UpstreamError, format!("{program}: {error}"))
@@ -129,6 +131,16 @@ impl Drop for Running {
             kill_process_group(group, Signal::KILL).ok();
         }
     }
+}
+
+/// Keeps the first `keep` bytes and discards the rest, reading to the end.
+async fn read_keeping(pipe: Option<impl AsyncRead + Unpin>, keep: u64) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    if let Some(mut pipe) = pipe {
+        (&mut pipe).take(keep).read_to_end(&mut bytes).await?;
+        tokio::io::copy(&mut pipe, &mut tokio::io::sink()).await?;
+    }
+    Ok(bytes)
 }
 
 async fn read_limited(
@@ -174,6 +186,21 @@ mod tests {
         );
     }
 
+    /// A child that writes far more stderr than is kept still runs to its own exit.
+    #[tokio::test]
+    async fn long_stderr_is_drained_and_truncated() {
+        for (code, status) in [("0", Some(0)), ("4", Some(4))] {
+            let script = format!("yes e | head -c 200000 >&2 && printf ok; exit {code}");
+            let done = run("sh", &args(&["-c", &script]), DEADLINE, 64)
+                .await
+                .unwrap();
+            assert_eq!(done.status.code(), status);
+            assert_eq!(done.stdout, b"ok");
+            assert_eq!(done.stderr.len(), 16 * 1024);
+            assert!(done.stderr.starts_with("e\ne\n"));
+        }
+    }
+
     #[tokio::test]
     async fn too_much_stdout_is_an_error() {
         let error = run("sh", &args(&["-c", "printf 12345"]), DEADLINE, 4)
@@ -195,14 +222,16 @@ mod tests {
     }
 
     /// A shell whose background `sleep` writes its PID to a file, so a test can check that
-    /// the grandchild died with its group.
+    /// the grandchild died with its group. The `sleep` keeps the shell's stdout open.
     struct Grandchild {
         dir: std::path::PathBuf,
         args: Vec<String>,
     }
 
     impl Grandchild {
-        fn new(name: &str) -> Self {
+        /// `then` runs after the PID is written: `wait` keeps the shell, the group's leader,
+        /// running; `exit 0` ends it while the `sleep` still holds stdout.
+        fn new(name: &str, then: &str) -> Self {
             let nanos = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -212,19 +241,40 @@ mod tests {
                 std::process::id()
             ));
             std::fs::create_dir(&dir).unwrap();
-            let script = format!("sleep 30 & echo $! > '{}'; wait", dir.join("pid").display());
+            let script = format!(
+                "sleep 30 & echo $! > '{}'; {then}",
+                dir.join("pid").display()
+            );
             Self {
                 args: args(&["-c", &script]),
                 dir,
             }
         }
 
+        /// The grandchild's PID, once the shell has written all of it.
+        async fn pid(&self) -> String {
+            tokio::time::timeout(DEADLINE, until_written(&self.dir.join("pid")))
+                .await
+                .expect("the shell never started its grandchild")
+        }
+
         async fn assert_dead(self) {
-            let pid = std::fs::read_to_string(self.dir.join("pid")).unwrap();
-            let stat = format!("/proc/{}/stat", pid.trim());
+            let stat = format!("/proc/{}/stat", self.pid().await);
             let gone = tokio::time::timeout(DEADLINE, until_dead(&stat)).await;
             std::fs::remove_dir_all(&self.dir).unwrap();
             assert!(gone.is_ok(), "the grandchild outlived its group");
+        }
+    }
+
+    async fn until_written(file: &std::path::Path) -> String {
+        loop {
+            if let Some(pid) = std::fs::read_to_string(file)
+                .ok()
+                .filter(|text| text.ends_with('\n'))
+            {
+                return pid.trim().to_owned();
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
 
@@ -245,8 +295,20 @@ mod tests {
 
     #[tokio::test]
     async fn a_timeout_kills_the_whole_group() {
-        let grandchild = Grandchild::new("timeout");
-        let error = run("sh", &grandchild.args, Duration::from_millis(300), 64)
+        let grandchild = Grandchild::new("timeout", "wait");
+        let error = run("sh", &grandchild.args, Duration::from_secs(1), 64)
+            .await
+            .unwrap_err();
+        assert_eq!(error.name, ErrorName::DeadlineExceeded);
+        grandchild.assert_dead().await;
+    }
+
+    /// The leader has exited, but the result isn't served while a descendant holds a pipe,
+    /// and the leader stays unreaped, so its group can still be killed.
+    #[tokio::test]
+    async fn an_exited_leader_with_a_descendant_holding_stdout_times_out() {
+        let grandchild = Grandchild::new("leader", "exit 0");
+        let error = run("sh", &grandchild.args, Duration::from_secs(1), 64)
             .await
             .unwrap_err();
         assert_eq!(error.name, ErrorName::DeadlineExceeded);
@@ -255,13 +317,14 @@ mod tests {
 
     #[tokio::test]
     async fn dropping_a_call_kills_the_whole_group() {
-        let grandchild = Grandchild::new("drop");
-        let call = run("sh", &grandchild.args, DEADLINE, 64);
-        assert!(
-            tokio::time::timeout(Duration::from_millis(300), call)
-                .await
-                .is_err()
-        );
+        let grandchild = Grandchild::new("drop", "wait");
+        let args = grandchild.args.clone();
+        let mut call = Box::pin(run("sh", &args, DEADLINE, 64));
+        tokio::select! {
+            _ = &mut call => panic!("the call finished before it was dropped"),
+            _ = grandchild.pid() => {}
+        }
+        drop(call);
         grandchild.assert_dead().await;
     }
 }
