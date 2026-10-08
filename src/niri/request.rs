@@ -132,7 +132,7 @@ mod tests {
         assert!(error.detail.contains("without a reply"), "{error:?}");
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_silent_niri_hits_the_deadline() {
         let (client, _niri): (DuplexStream, DuplexStream) = duplex(4096);
         let result = within(
@@ -148,6 +148,25 @@ mod tests {
                 "niri Version: no reply within 50ms"
             )
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn dropping_a_request_closes_its_connection() {
+        let (client, mut niri) = duplex(4096);
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(50),
+                exchange(client, &Request::Version)
+            )
+            .await
+            .is_err()
+        );
+        let mut received = Vec::new();
+        tokio::time::timeout(Duration::from_secs(1), niri.read_to_end(&mut received))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(received, b"\"Version\"\n");
     }
 
     #[tokio::test]

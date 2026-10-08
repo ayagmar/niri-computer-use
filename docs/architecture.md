@@ -31,6 +31,10 @@ On connect, niri sends its current state as a burst of events: workspaces, windo
 - The `status` subcommand keeps no stream open, so it reports `event_stream` as null.
 - The task stops, closing its connection, once the server drops its last handle on the stream.
 
+## Cancellation
+
+rmcp marks a request as cancelled when the client cancels it, but it keeps running the tool. Each tool therefore races its work against the request's cancellation and drops the work when cancellation wins. Dropping a niri request closes its connection; dropping a `desktop_state` call only stops that call's wait, and the shared event stream keeps running.
+
 ## Version rule
 
 `niri-ipc` is pinned to `=26.4.0`. `status` compares niri's version reply, for example `26.04 (8ed0da4)`, with that pin: equal major and minor is `ok`, a different patch is `patch_warning`, and anything else, including a version that doesn't parse, is `read_only`.

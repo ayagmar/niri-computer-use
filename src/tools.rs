@@ -2,7 +2,8 @@
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::CallToolResult;
-use rmcp::{ErrorData, ServerHandler, tool, tool_handler, tool_router};
+use rmcp::service::RequestContext;
+use rmcp::{ErrorData, RoleServer, ServerHandler, tool, tool_handler, tool_router};
 
 use crate::niri::events::{EventStream, StreamState};
 use crate::{Env, niri, status};
@@ -29,19 +30,31 @@ impl Server {
     /// supports it, whether niri's event stream is connected, and which required
     /// programs are on PATH. Call this first.
     #[tool(annotations(read_only_hint = true))]
-    async fn status(&self) -> Result<CallToolResult, ErrorData> {
+    async fn status(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
         let stream = self
             .events
             .as_ref()
             .map_or(StreamState::Disconnected, EventStream::state);
-        structured(&status::collect(&self.env, Some(stream)).await)
+        let report = unless_cancelled(
+            context.ct.cancelled(),
+            status::collect(&self.env, Some(stream)),
+        )
+        .await?;
+        structured(&report)
     }
 
     /// niri's outputs (monitors) by connector name: modes, logical position and size,
     /// scale and transform, as niri reports them.
     #[tool(annotations(read_only_hint = true))]
-    async fn outputs(&self) -> Result<CallToolResult, ErrorData> {
-        match niri::outputs(self.env.niri_socket.as_deref()).await {
+    async fn outputs(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let outputs = niri::outputs(self.env.niri_socket.as_deref());
+        match unless_cancelled(context.ct.cancelled(), outputs).await? {
             Ok(outputs) => structured(&outputs),
             Err(error) => Ok(error.into_result()),
         }
@@ -53,8 +66,12 @@ impl Server {
     /// window is null while keyboard focus is outside the window layout, for example on
     /// a shell panel, the lock screen or the overview.
     #[tool(annotations(read_only_hint = true))]
-    async fn desktop_state(&self) -> Result<CallToolResult, ErrorData> {
-        match niri::desktop(self.events.as_ref()).await {
+    async fn desktop_state(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let desktop = niri::desktop(self.events.as_ref());
+        match unless_cancelled(context.ct.cancelled(), desktop).await? {
             Ok(desktop) => structured(&desktop),
             Err(error) => Ok(error.into_result()),
         }
@@ -71,6 +88,19 @@ impl Server {
     instructions = "Read-only view of a niri desktop. Start with `status`. Use `desktop_state` for windows and workspaces, and `outputs` for the monitor layout. Errors carry a stable `error` name and the upstream `detail`."
 )]
 impl ServerHandler for Server {}
+
+/// Runs `work` until it finishes or the client cancels the request. rmcp only cancels the
+/// request's token and keeps running the handler, so this drops `work`, and with it any
+/// niri connection or wait it holds.
+async fn unless_cancelled<T>(
+    cancelled: impl Future<Output = ()>,
+    work: impl Future<Output = T>,
+) -> Result<T, ErrorData> {
+    tokio::select! {
+        () = cancelled => Err(ErrorData::internal_error("the client cancelled the request", None)),
+        done = work => Ok(done),
+    }
+}
 
 fn structured(value: &impl serde::Serialize) -> Result<CallToolResult, ErrorData> {
     let value = serde_json::to_value(value)
@@ -93,6 +123,28 @@ mod tests {
             assert_eq!(annotations.read_only_hint, Some(true), "{}", tool.name);
             assert!(tool.description.is_some_and(|text| !text.is_empty()));
         }
+    }
+
+    #[tokio::test]
+    async fn cancelling_drops_the_work() {
+        let (sender, receiver) = tokio::sync::oneshot::channel::<()>();
+        let work = async move {
+            let _held = sender;
+            std::future::pending::<()>().await;
+        };
+        assert!(
+            unless_cancelled(std::future::ready(()), work)
+                .await
+                .is_err()
+        );
+        // The work was dropped, so its sender is gone.
+        assert!(receiver.await.is_err());
+        assert_eq!(
+            unless_cancelled(std::future::pending(), std::future::ready(7))
+                .await
+                .unwrap(),
+            7
+        );
     }
 
     #[test]

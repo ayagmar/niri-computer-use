@@ -191,3 +191,7 @@ These match the versions installed locally.
 ## 2026-10-08: deterministic timing tests
 
 - tokio's `test-util` feature is a dev-dependency feature only (same version, 1.53.1). Tests that depend on deadlines and reconnect delays run on Tokio's paused clock, which moves on only when every task is waiting, so their outcome doesn't depend on how fast the machine is.
+
+## 2026-10-08: cancellation
+
+- rmcp 3.5.0 runs each request in its own task and only cancels the request's token when the client sends a cancellation (`service.rs`, the request branch of the serve loop); it doesn't stop the task. Each tool takes rmcp's `RequestContext` and races its work against that token, so a cancelled call drops its niri connection or wait at once instead of at its deadline.
