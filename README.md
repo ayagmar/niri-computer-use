@@ -4,7 +4,7 @@
 
 An MCP server for AI agents to observe and drive a [niri](https://github.com/niri-wm/niri) Wayland desktop. Noctalia is optional.
 
-**Status: M1 complete, M2 in progress.** The server runs over stdio and has five read-only tools, six when Noctalia is installed, plus `acquire_desktop` and `release_desktop`, which take and give up the lease that the action tools will require. It can't act on the desktop yet. M0's research and its nested test harness are recorded in [docs/results/m0.md](docs/results/m0.md), and M1's acceptance in [docs/results/m1.md](docs/results/m1.md).
+**Status: M2 complete.** The server runs over stdio and has five read-only tools, six when Noctalia is installed, plus `acquire_desktop` and `release_desktop`, which take and give up the lease that the action tools will require. It can't act on the desktop yet. M0's research is recorded in [docs/results/m0.md](docs/results/m0.md), M1's acceptance in [docs/results/m1.md](docs/results/m1.md) and M2's in [docs/results/m2.md](docs/results/m2.md).
 
 ## Requirements
 
@@ -76,6 +76,18 @@ The skill in [`skills/niri-computer-use`](skills/niri-computer-use/SKILL.md) tel
 ln -s ~/projects/niri-computer-use/skills/niri-computer-use ~/.claude/skills/niri-computer-use
 ln -s ~/projects/niri-computer-use/skills/niri-computer-use ~/.agents/skills/niri-computer-use
 ```
+
+## Stop key
+
+Bind `niri-computer-use stop` in your niri config, so you can take the lease back from an agent with one key, even while an app inhibits shortcuts or the screen is locked. niri passes `NIRI_SOCKET` to what it spawns, so the stop reaches that niri instance:
+
+```kdl
+binds {
+    Mod+Shift+Escape allow-inhibiting=false allow-when-locked=true hotkey-overlay-title="Stop the AI Agent (niri-computer-use)" { spawn "/home/you/.cargo/bin/niri-computer-use" "stop"; }
+}
+```
+
+Use the path where `cargo install` put the binary. An agent can't press this key: niri binds don't fire from virtual keyboards. After a stop, `niri-computer-use resume` lets agents take the lease again; if `status` shows `input_dirty`, run `niri-computer-use recover` first.
 
 ## Development
 

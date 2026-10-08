@@ -76,6 +76,20 @@ Open a terminal showing a word, then ask the agent:
 
 The agent calls `status`, takes a screenshot, and, if the text is small, a region screenshot around it.
 
+## The stop key and the lease
+
+One agent at a time holds the lease on your desktop (`acquire_desktop`); the tools that will act on the desktop require it. Bind `niri-computer-use stop` to a key in your niri config to take it back at any moment:
+
+```kdl
+binds {
+    Mod+Shift+Escape allow-inhibiting=false allow-when-locked=true hotkey-overlay-title="Stop the AI Agent (niri-computer-use)" { spawn "/home/you/.cargo/bin/niri-computer-use" "stop"; }
+}
+```
+
+Use the path where `cargo install` put the binary. `allow-inhibiting=false` keeps the key working while an app inhibits shortcuts, and `allow-when-locked=true` on the lock screen. An agent can't press it: niri binds don't fire from virtual keyboards. `niri-computer-use resume` clears the stop; if `status` shows `input_dirty`, run `niri-computer-use recover` first, which ends any stuck input program and asks you to confirm that no key or button is held.
+
+The lease is also refused while the screen is locked, or while neither logind nor Noctalia can say that it isn't. Running niri with `niri --session`, which sets logind's lock hint, or running Noctalia gives the server that answer.
+
 ## The audit log
 
 Every call is appended to `~/.local/state/niri-computer-use/audit.jsonl`, or `$XDG_STATE_HOME/niri-computer-use/audit.jsonl`: the time, the client, the tool, its arguments and the outcome. The directory is `0700` and the file `0600`. Clipboard text, window titles and images are never written to it.

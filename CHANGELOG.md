@@ -18,6 +18,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `niri-computer-use stop` and `resume`: set and clear a stop flag in the niri instance's runtime directory, `$XDG_RUNTIME_DIR/niri-computer-use/<instance>/`. `status` reports it as `stop`.
 - `acquire_desktop` and `release_desktop`: one server at a time holds the lease on a niri instance, an exclusive `flock` in the runtime directory. The stop flag takes it back. `status` reports the holder. New error names `lease_held`, `stopped` and `recovery_required`.
 - The policy file, `$XDG_CONFIG_HOME/niri-computer-use/policy.toml`: launch presets and an app deny list, checked at startup and reported by `status`. `acquire_desktop` refuses with `read_only` while it is invalid or niri's version isn't supported, and with `screen_locked` while the screen is locked or its lock state is unknown.
+- The `niri-computer-use` skill covers the lease tools and tells agents to leave stops, recovery and locks to the user.
+- `make nested-control`: M2's acceptance in a nested niri, with the nested Noctalia as the lock source.
 - `niri-computer-use recover`: clears the input-dirty marker after ending the input child it names and asking the human to confirm that no input is held. `status` reports the marker as `input_dirty`.
 
 ### Changed
