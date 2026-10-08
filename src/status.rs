@@ -38,11 +38,17 @@ struct Niri {
     error: Option<ToolError>,
 }
 
-pub(crate) async fn collect(env: &Env, event_stream: Option<StreamState>, audit: &Audit) -> Status {
+/// `noctalia_installed` is decided by the caller: once at startup for the server, whose tool
+/// list depends on it, and on each run for the subcommand.
+pub(crate) async fn collect(
+    env: &Env,
+    event_stream: Option<StreamState>,
+    audit: &Audit,
+    noctalia_installed: bool,
+) -> Status {
     let socket = env.niri_socket.as_deref();
-    let installed = env.finds("noctalia");
     let (version, noctalia) = tokio::join!(niri::version(socket), async {
-        if installed {
+        if noctalia_installed {
             Some(noctalia::status(env).await)
         } else {
             None
@@ -86,7 +92,8 @@ mod tests {
     #[tokio::test]
     async fn reports_what_it_can_without_failing() {
         let status =
-            serde_json::to_value(collect(&Env::default(), None, &Audit::new(None)).await).unwrap();
+            serde_json::to_value(collect(&Env::default(), None, &Audit::new(None), false).await)
+                .unwrap();
         assert_eq!(
             status,
             serde_json::json!({

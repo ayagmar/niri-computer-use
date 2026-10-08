@@ -76,6 +76,8 @@ pub(crate) struct Server {
     /// None without `NIRI_SOCKET`.
     events: Option<EventStream>,
     audit: Audit,
+    /// Decided once, because the tool list depends on it.
+    noctalia_installed: bool,
     tool_router: ToolRouter<Self>,
 }
 
@@ -85,13 +87,15 @@ impl Server {
     /// fixed for the session.
     pub(crate) fn new(env: Env, events: Option<EventStream>, audit: Audit) -> Self {
         let mut tool_router = Self::tool_router();
-        if !env.finds("noctalia") {
+        let noctalia_installed = env.finds("noctalia");
+        if !noctalia_installed {
             tool_router.remove_route("shell_status");
         }
         Self {
             env,
             events,
             audit,
+            noctalia_installed,
             tool_router,
         }
     }
@@ -109,7 +113,12 @@ impl Server {
             .events
             .as_ref()
             .map_or(StreamState::Disconnected, EventStream::state);
-        let report = status::collect(&self.env, Some(stream), &self.audit);
+        let report = status::collect(
+            &self.env,
+            Some(stream),
+            &self.audit,
+            self.noctalia_installed,
+        );
         self.audited(&context, "status", Value::Null, async {
             structured(&report.await)
         })

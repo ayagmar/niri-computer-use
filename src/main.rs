@@ -88,7 +88,8 @@ async fn main() -> ExitCode {
         Some(Command::Serve) => serve(env).await,
         Some(Command::Status) => {
             let audit = audit::Audit::new(env.state_dir.clone());
-            cli::print_json(&status::collect(&env, None, &audit).await)
+            let installed = env.finds("noctalia");
+            cli::print_json(&status::collect(&env, None, &audit, installed).await)
                 .map_err(|error| format!("print status: {error}"))
         }
         None => Err(USAGE.to_owned()),
