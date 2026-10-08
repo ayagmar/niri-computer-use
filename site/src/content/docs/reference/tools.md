@@ -18,7 +18,7 @@ A failure sets `isError` and returns `{"error": <name>, "detail": <upstream deta
 | `lease_held` | another agent's server holds the lease; `detail` names its PID, label and since when |
 | `stopped` | the stop flag is set; the user clears it with `niri-computer-use resume` |
 | `read_only` | this build doesn't support the running niri, niri sent events it can't parse, or the policy file is invalid |
-| `screen_locked` | the screen is locked |
+| `screen_locked` | the screen is locked, or neither logind nor Noctalia can say whether it is |
 | `recovery_required` | input may be stuck; `detail` names the marker's operation and phase, and the user runs `niri-computer-use recover` |
 
 A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and one plain-text block starting `invalid arguments:`, without `structuredContent`, so the model can correct the call.
@@ -102,7 +102,7 @@ No arguments. Listed only when `noctalia` is on `PATH`. Noctalia's own status re
 
 No arguments. Takes the lease on this niri instance and returns `{"holder": {"pid", "label", "since"}}`. One server holds it at a time; the action tools of later versions require it. Calling it again while holding the lease returns the same holder.
 
-Refused with `lease_held` while another server holds it, `stopped` while the stop flag is set, `recovery_required` while the input-dirty marker exists, the niri error when niri's version can't be read, `read_only` when this build doesn't support the running niri, niri sent events it can't parse, or the policy file is invalid, and `screen_locked` while the screen is locked. An unknown lock state doesn't refuse it. If the runtime directory can't be read, it fails with `upstream_error` rather than assume neither flag is set.
+Refused with `lease_held` while another server holds it, `stopped` while the stop flag is set, `recovery_required` while the input-dirty marker exists, the niri error when niri's version can't be read, `read_only` when this build doesn't support the running niri, niri sent events it can't parse, or the policy file is invalid, and `screen_locked` while the screen is locked or its lock state is unknown. If the runtime directory can't be read, it fails with `upstream_error` rather than assume neither flag is set.
 
 ## `release_desktop`
 

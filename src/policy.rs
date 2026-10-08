@@ -207,7 +207,8 @@ pub(crate) struct Facts<'a> {
 
 /// Why a server may not take the lease now, checked after the stop flag and the
 /// input-dirty marker: niri unreachable, then read-only (niri's version, its event schema,
-/// or the policy file), then a locked screen. An unknown lock state is allowed (plan §9).
+/// or the policy file), then a screen that is locked or whose lock state is unknown. Input
+/// only ever goes to a screen known to be unlocked.
 pub(crate) fn refuse_lease(facts: Facts<'_>) -> Option<ToolError> {
     let read_only = |reason: String| Some(ToolError::new(ErrorName::ReadOnly, reason));
     if let Some(error) = facts.niri_error {
@@ -231,8 +232,17 @@ pub(crate) fn refuse_lease(facts: Facts<'_>) -> Option<ToolError> {
     if let Loaded::Invalid(error) = facts.policy {
         return read_only(format!("the policy file is invalid: {error}"));
     }
-    (facts.lock == LockState::Locked)
-        .then(|| ToolError::new(ErrorName::ScreenLocked, "the screen is locked"))
+    match facts.lock {
+        LockState::Unlocked => None,
+        LockState::Locked => Some(ToolError::new(
+            ErrorName::ScreenLocked,
+            "the screen is locked",
+        )),
+        LockState::Unknown => Some(ToolError::new(
+            ErrorName::ScreenLocked,
+            "the lock state is unknown: neither logind nor Noctalia answered (see status.lock)",
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -347,7 +357,7 @@ app_id = "foot"
                 lock: LockState::Unknown,
                 ..ok
             }),
-            None
+            Some(ErrorName::ScreenLocked)
         );
         assert_eq!(
             name(Facts {

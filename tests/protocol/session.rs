@@ -42,6 +42,13 @@ impl NiriProcess {
         assert!(eventually(Duration::from_secs(10), || socket.exists()).await);
         Self { _process: child }
     }
+
+    /// A fake niri in session `c4`, with a `loginctl` that says it is unlocked, as the
+    /// lease needs.
+    pub(crate) async fn unlocked(fixture: &Fixture) -> Self {
+        fixture.program("loginctl", "echo no");
+        Self::start(fixture, Some("c4")).await
+    }
 }
 
 #[expect(

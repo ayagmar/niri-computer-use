@@ -31,7 +31,7 @@ target/debug/niri-computer-use status
 | `screenshot` | an image of one output or of a region inside one output, with its geometry. JPEG, at most 1280 image pixels wide by default |
 | `clipboard_read` | the clipboard's text, or why there is none |
 | `shell_status` | Noctalia's status: bar, open panel and lock screen. Only listed when `noctalia` is on `PATH` |
-| `acquire_desktop` | takes the lease, so this agent is the one controlling this niri desktop; refused while another agent holds it, while the stop flag is set, while input may be stuck, while the screen is locked, or when this build doesn't support the running niri or the policy file is invalid |
+| `acquire_desktop` | takes the lease, so this agent is the one controlling this niri desktop; refused while another agent holds it, while the stop flag is set, while input may be stuck, while the screen is locked or its lock state is unknown, or when this build doesn't support the running niri or the policy file is invalid |
 | `release_desktop` | gives the lease up; the stop flag also takes it back |
 
 Failures set `isError` and return `{"error": <name>, "detail": <upstream detail>}`. The names so far are `niri_unavailable`, `deadline_exceeded`, `upstream_error`, `noctalia_unavailable`, `lease_held`, `stopped`, `recovery_required`, `read_only` and `screen_locked`. A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and a plain-text message instead.

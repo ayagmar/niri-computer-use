@@ -13,7 +13,7 @@ use crate::session::NiriProcess;
 #[tokio::test]
 async fn one_server_holds_the_lease_and_the_other_is_told_who() {
     let fixture = Fixture::new("lease");
-    let _niri = Niri::start(&fixture);
+    let _niri = NiriProcess::unlocked(&fixture).await;
     let mut first = Server::start(&fixture).await;
     let mut second = Server::start(&fixture).await;
     let label = format!("{CLIENT}/{}", first.pid);
@@ -72,7 +72,7 @@ async fn one_server_holds_the_lease_and_the_other_is_told_who() {
 #[tokio::test]
 async fn a_server_that_exits_gives_the_lease_up() {
     let fixture = Fixture::new("lease-exit");
-    let _niri = Niri::start(&fixture);
+    let _niri = NiriProcess::unlocked(&fixture).await;
     let mut first = Server::start(&fixture).await;
     first.structured("acquire_desktop").await;
     let (status, _, _) = first.stop().await;
@@ -88,7 +88,7 @@ async fn a_server_that_exits_gives_the_lease_up() {
 #[tokio::test]
 async fn the_stop_flag_takes_the_lease_back_and_refuses_it_until_resume() {
     let fixture = Fixture::new("lease-stop");
-    let _niri = Niri::start(&fixture);
+    let _niri = NiriProcess::unlocked(&fixture).await;
     let mut server = Server::start(&fixture).await;
     server.structured("acquire_desktop").await;
     assert!(run(&fixture, "stop").await.status.success());
@@ -150,4 +150,19 @@ async fn a_locked_screen_refuses_the_lease() {
     assert_eq!(name, "screen_locked");
     fixture.program("loginctl", "echo no");
     server.structured("acquire_desktop").await;
+}
+
+#[tokio::test]
+async fn an_unknown_lock_state_refuses_the_lease() {
+    let fixture = Fixture::new("lease-unknown");
+    fixture.program("loginctl", "echo 'Failed to get session' >&2; exit 1");
+    let _niri = NiriProcess::start(&fixture, Some("c4")).await;
+    let mut server = Server::start(&fixture).await;
+    assert_eq!(
+        server.structured("status").await["lock"]["state"],
+        "unknown"
+    );
+    let (name, detail) = tool_error(&server.call("acquire_desktop", json!({})).await);
+    assert_eq!(name, "screen_locked");
+    assert!(detail.contains("unknown"), "{detail}");
 }
