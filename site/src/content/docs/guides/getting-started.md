@@ -1,0 +1,81 @@
+---
+title: Getting started
+description: Install niri-computer-use, register it in Claude Code, Pi or Codex, and run a first session.
+---
+
+## Requirements
+
+- niri 26.04
+- Rust 1.99.0 through rustup; the repository pins it in `rust-toolchain.toml`
+- `grim` for screenshots, `wl-paste` from wl-clipboard for the clipboard, and `loginctl` from systemd for the lock state
+- Noctalia 5.2 is optional. Without it, the `shell_status` tool isn't listed.
+
+## Install
+
+```sh
+git clone https://github.com/ayagmar/niri-computer-use.git
+cargo install --locked --path niri-computer-use
+```
+
+Check it from a shell inside your niri session:
+
+```sh
+~/.cargo/bin/niri-computer-use status
+```
+
+`niri.compat` should be `ok` and `niri.version` your niri's version. The report is described under [`status`](../../reference/tools/#status).
+
+## Register
+
+The server reads `NIRI_SOCKET` and the session's other variables from its environment, so register it from a shell inside your niri session.
+
+### Claude Code
+
+```sh
+claude mcp add --scope user niri-computer-use -- ~/.cargo/bin/niri-computer-use serve
+```
+
+### Pi
+
+```sh
+pi mcp add niri-computer-use --exposure direct -- ~/.cargo/bin/niri-computer-use serve
+```
+
+`--exposure direct` gives the model the tools themselves, so a screenshot reaches it as an image.
+
+### Codex
+
+```sh
+codex mcp add niri-computer-use -- ~/.cargo/bin/niri-computer-use serve
+```
+
+Codex passes only a short list of variables to MCP servers. Add this line to the `[mcp_servers.niri-computer-use]` section that the command wrote to `~/.codex/config.toml`:
+
+```toml
+env_vars = ["NIRI_SOCKET", "XDG_RUNTIME_DIR", "WAYLAND_DISPLAY", "XDG_SESSION_ID"]
+```
+
+Without it, `status` reports `NIRI_SOCKET is not set`.
+
+## The skill
+
+The repository's `skills/niri-computer-use/SKILL.md` tells an agent how to use the tools: start with `status`, prefer structured data to screenshots, and take a region screenshot for small text. Link it into your agent's skills directory:
+
+```sh
+ln -s ~/projects/niri-computer-use/skills/niri-computer-use ~/.claude/skills/niri-computer-use
+ln -s ~/projects/niri-computer-use/skills/niri-computer-use ~/.agents/skills/niri-computer-use
+```
+
+Use the path where you cloned the repository.
+
+## A first session
+
+Open a terminal showing a word, then ask the agent:
+
+> Use the niri-computer-use tools: call status, then take a screenshot of the focused output and tell me the word in the terminal.
+
+The agent calls `status`, takes a screenshot, and, if the text is small, a region screenshot around it.
+
+## The audit log
+
+Every call is appended to `~/.local/state/niri-computer-use/audit.jsonl`, or `$XDG_STATE_HOME/niri-computer-use/audit.jsonl`: the time, the client, the tool, its arguments and the outcome. The directory is `0700` and the file `0600`. Clipboard text, window titles and images are never written to it.

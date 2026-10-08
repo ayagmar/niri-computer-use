@@ -249,3 +249,17 @@ These match the versions installed locally.
 ## 2026-10-08: the name
 
 - The project is `niri-computer-use`: the crate, the binary, the MCP server's name, the skill, the audit log's directory and the GitHub repository. "Computer use" is the term agents and their users look for, and the milestones after M1 add input. The server name is the same everywhere, so clients register it as `niri-computer-use`. `docs/results/m0.md` keeps the commands as they were run, under the old name `niri-desktop-mcp`.
+
+## 2026-10-08: the docs site
+
+| Package or action | Version | Published | Why |
+|---|---|---|---|
+| `astro` | 7.3.5 | 2026-09-24 | The site generator Starlight runs on (plan §21.3). 7.3.6 and 7.3.7 are too new for the version rule. |
+| `@astrojs/starlight` | 0.42.5 | 2026-10-01 | Documentation theme with navigation and search. |
+| `actions/setup-node` | v7.0.0 | 2026-07-14 | Node.js for the Pages build. v7.1.0 was published on 2026-10-08, so the major tag isn't used. |
+| `actions/upload-pages-artifact` | v5 (5.0.0) | 2026-04-10 | Uploads the built site. |
+| `actions/deploy-pages` | v5 (5.0.1) | 2026-09-01 | Deploys it to GitHub Pages. |
+
+- `site/package-lock.json` was created with `npm install --before=2026-10-01T09:30:00Z`, so every transitive package also follows the version rule. Dependabot watches `site/` with the same seven-day cooldown.
+- `npm audit` reports two advisories in the build tooling. `http-cache-semantics` 4.2.0, through Astro, can leak cached responses between users of a server's HTTP cache (GHSA-ch52-4w7c-c8xp); the static build serves nobody, and the fix, 4.3.0, came out on 2026-10-04. `postcss-selector-parser` 6.1.4, through Starlight's code-block styling, has quadratic parsing on crafted selectors (GHSA-rj75-hqrm-r3gf), and only our own CSS goes through it; no 6.x release fixes it. Neither is overridden.
+- The site is plain Markdown pages in `site/src/content/docs/`, built to `site/dist/` and deployed by `.github/workflows/pages.yml` on pushes to `main` that touch `site/`.

@@ -62,6 +62,18 @@ The Inspector starts the server with a minimal environment, so the script passes
 
 `make inspect-check` lists the tools with `--strict`, which also reports schema portability problems. It then calls each tool on your desktop: `status`, `outputs`, `desktop_state`, `clipboard_read`, `shell_status` when `noctalia` is on `PATH`, and three screenshots. It prints one line per check and never prints the image data, the clipboard text or window titles. Finally it checks the audit log in the temporary directory: one line per call, mode `0600`, in a `0700` directory.
 
+## Docs site
+
+The user documentation is an Astro and Starlight site in `site/`. Build it with Node.js 22.12 or newer:
+
+```sh
+cd site
+npm ci
+npm run build
+```
+
+The pages are Markdown files in `site/src/content/docs/`, and the build goes to `site/dist/`. `.github/workflows/pages.yml` builds it and deploys it to GitHub Pages on every push to `main` that touches `site/`.
+
 ## Nested harness
 
 The `harness` binary starts a nested niri in a window on your desktop and checks that its sockets, its session bus and its config are separate from your real session. Run it from the repository root:
