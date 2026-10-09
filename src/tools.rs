@@ -871,7 +871,8 @@ impl Server {
     /// metadata: the output, its transform and layout origin, the captured rectangle in
     /// layout coordinates, and the scale from logical pixels to image pixels, plus a
     /// `screenshot_ref` for the pointer tools while you hold the lease. It waits for an
-    /// action still running to finish first, so call it after the action's result, not
+    /// action still running to finish and excludes this server's next action during
+    /// capture, not external input or redraws. Call it after the action's result, not
     /// alongside it; better, pass `screenshot: true` to the action itself. Prefer
     /// `desktop_state` when structured data answers the question.
     #[tool(annotations(read_only_hint = true))]
@@ -887,8 +888,7 @@ impl Server {
                 Ok(request) => request,
                 Err(message) => return Ok(invalid(&message)),
             };
-            self.desk.settled().await;
-            match self.capture(request).await {
+            match self.desk.observe(self.capture(request)).await {
                 Ok(shot) => image(&shot),
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
                 Err(CallError::Tool(error)) => Ok(error.into_result()),
@@ -1103,15 +1103,18 @@ impl Server {
     ) -> Result<(wait::Report, Option<observe::Screenshot>), CallError> {
         let capture = || self.capture(observe::Request::focused());
         if *until == wait::Until::ScreenStable {
-            self.desk.settled().await;
-            let (report, last) = wait::screen(capture, limit).await?;
+            let (report, last) = self.desk.observe(wait::screen(capture, limit)).await?;
             return Ok((report, screenshot.then_some(last)));
         }
         let report = wait::window(self.events.as_ref(), until, limit).await?;
         if !screenshot {
             return Ok((report, None));
         }
-        match settle::screenshot(capture, settle::LIMIT).await {
+        match self
+            .desk
+            .observe(settle::screenshot(capture, settle::LIMIT))
+            .await
+        {
             Ok(shot) => Ok((report, Some(shot))),
             Err(CallError::Tool(error)) => Ok((
                 wait::Report {

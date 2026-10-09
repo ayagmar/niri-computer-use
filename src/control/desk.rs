@@ -218,10 +218,14 @@ impl Desk {
         self.seat.take(&mut *self.seat.lease.lock().await)
     }
 
-    /// Waits until no action is running, so a screenshot taken next shows the screen after
-    /// it rather than from before it landed.
-    pub(crate) async fn settled(&self) {
-        drop(self.seat.lease.lock().await);
+    /// Serializes an observation with this server's actions and lease changes. It needs
+    /// no lease and does not freeze external input or redraws. Action-return captures
+    /// already hold the mutex and must not call this again.
+    pub(crate) async fn observe<T>(&self, capture: impl Future<Output = T>) -> T {
+        let held = self.seat.lease.lock().await;
+        let result = capture.await;
+        drop(held);
+        result
     }
 
     /// The window that had keyboard focus when this server took the lease it holds.
@@ -429,6 +433,33 @@ mod tests {
         drop(action);
         assert!(desk.release().await);
         assert!(!desk.status().held_by_me);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn release_waits_for_capture_and_a_cancelled_capture_unlocks_the_desk() {
+        let dir = crate::test_support::fresh_dir("desk-observe");
+        let desk = Desk::start(&env(&dir));
+        desk.acquire("me/1", None, None).await.unwrap();
+        let (started, running) = tokio::sync::oneshot::channel();
+        let capture_desk = desk.clone();
+        let work = async move {
+            started.send(()).unwrap();
+            std::future::pending::<()>().await;
+        };
+        let capture = tokio::spawn(async move { capture_desk.observe(work).await });
+        running.await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), desk.release())
+                .await
+                .is_err()
+        );
+        assert!(desk.status().held_by_me);
+        capture.abort();
+        assert!(capture.await.unwrap_err().is_cancelled());
+        assert!(desk.release().await);
+        // Observation is still available without a lease.
+        assert_eq!(desk.observe(async { 7 }).await, 7);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

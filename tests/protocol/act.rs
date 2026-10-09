@@ -952,6 +952,87 @@ async fn a_screenshot_waits_for_the_running_action() {
 }
 
 #[tokio::test]
+async fn captures_exclude_the_next_action_until_completion_or_cancellation() {
+    use std::time::Duration;
+
+    for (tool, args) in [
+        ("screenshot", json!({"target": "focused_output"})),
+        (
+            "wait_for",
+            json!({"until": "screen_stable", "screenshot": true}),
+        ),
+        (
+            "wait_for",
+            json!({"until": {"window": {"app_id": "a"}}, "screenshot": true}),
+        ),
+    ] {
+        let mut desk = Desk::start("shot-exclusive", "").await;
+        desk.fixture.program(
+            "grim",
+            r#"
+            : > "$DIR/grim.started"
+            while [ ! -e "$DIR/grim.go" ]; do sleep 0.02; done
+            cat "$DIR/grim.out"
+        "#,
+        );
+        let capture = desk.server.start_call(tool, args).await;
+        assert!(
+            crate::fixture::eventually(Duration::from_secs(2), || desk
+                .fixture
+                .path("grim.started")
+                .exists())
+            .await
+        );
+        let action = desk
+            .server
+            .start_call("focus_window", json!({"id": 2}))
+            .await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), desk.niri.action())
+                .await
+                .is_err(),
+            "action ran inside {tool} capture"
+        );
+        std::fs::write(desk.fixture.path("grim.go"), "").unwrap();
+        assert_eq!(
+            desk.server.response(capture).await["result"]["isError"],
+            false
+        );
+        assert!(matches!(
+            desk.niri.action().await,
+            Action::FocusWindow { id: 2 }
+        ));
+        focus_changed(&desk.stream, 2);
+        assert_eq!(
+            desk.server.response(action).await["result"]["isError"],
+            false
+        );
+    }
+
+    let mut desk = Desk::start("shot-cancel", "").await;
+    desk.fixture
+        .program("grim", r#": > "$DIR/grim.started"; exec sleep 30"#);
+    let capture = desk
+        .server
+        .start_call("screenshot", json!({"target": "focused_output"}))
+        .await;
+    assert!(
+        crate::fixture::eventually(Duration::from_secs(2), || desk
+            .fixture
+            .path("grim.started")
+            .exists())
+        .await
+    );
+    desk.server.cancel(capture).await;
+    let result = desk
+        .act("focus_window", json!({"id": 2}), |stream, _| {
+            focus_changed(stream, 2);
+        })
+        .await;
+    assert_eq!(result["isError"], false);
+}
+
+#[tokio::test]
 async fn a_wtype_that_fails_by_itself_clears_the_marker_and_one_killed_leaves_it() {
     let mut desk = Desk::start("act-wtype-fail", "").await;
     let type_x = json!({"text": "x", "expect": "none"});
