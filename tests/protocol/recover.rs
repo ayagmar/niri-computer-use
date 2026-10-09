@@ -150,7 +150,7 @@ async fn a_pointer_marker_releases_its_buttons_without_asking_about_wtype() {
         &fixture,
         &json!({
             "operation": "drag", "phase": "pending", "server_pid": 1, "since": "t",
-            "buttons": [272]
+            "buttons": [272], "output": "DP-1"
         }),
     );
     // Without a niri to send the release to, the human is asked to release the button.

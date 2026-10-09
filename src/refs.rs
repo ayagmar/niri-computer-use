@@ -107,8 +107,17 @@ impl Shot {
             },
             scale: self.scale,
         };
-        coords::checked_encode(coords::image_to_layout(pixel, capture), &self.geometry)
-            .map_err(|_| off())
+        coords::checked_encode(coords::image_to_layout(pixel, capture), &self.geometry).map_err(
+            |distance| {
+                invalid(
+                    "out_of_bounds",
+                    &format!(
+                        "pixel ({}, {}) maps {distance:.3} px off output {}",
+                        pixel.x, pixel.y, self.output
+                    ),
+                )
+            },
+        )
     }
 }
 

@@ -385,3 +385,12 @@ These match the versions installed locally.
 - `observed` is `sent`, as for the pointer tools (2026-10-08), plus `focus`: `matched` or `unchecked`.
 - `key` and `type_text` carry `destructiveHint`, like `click` and `drag`: a keystroke can delete or send anything. Plan §6 names only `close_window`; the hint tells clients the truth about input.
 
+## 2026-10-09: M4 pointer review
+
+- A pointer failure before any step reached niri's socket is now an error, not `uncertain`: nothing can have happened (review finding).
+- A marker that can't be removed after a gesture niri handled is an `upstream_error` saying so, not `uncertain` (review finding).
+- A gesture dropped midway sends its releases, then a spawned task waits for niri's `wl_display.sync` reply before removing the marker. `Drop` can't wait, and a flush only puts the release in the socket buffer (review finding). Until the task finishes, other servers see `recovery_required` for a moment, which errs on the safe side.
+- The pointer marker records its output, and `recover` binds its fresh pointer there when that output is still enabled (review finding). niri ignores the bound output for a button, so this only makes the record exact.
+- No protocol test drives a successful gesture: the fake niri has no Wayland display, and a fake Wayland compositor would test our own fake. The nested run checks the marker after each click and drag, and the stop checks cover the release on drop.
+- `click`, `drag`, `key` and `type_text` carry `destructiveHint`; plan §6 names only `close_window`, but a click or a keystroke can delete or send anything.
+

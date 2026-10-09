@@ -93,6 +93,8 @@ pub(crate) struct Pointer {
     device: ZwlrVirtualPointerV1,
     /// Buttons pressed and not released yet.
     pressed: Vec<u32>,
+    /// Whether any step has reached the socket.
+    sent: bool,
 }
 
 impl Pointer {
@@ -134,6 +136,7 @@ impl Pointer {
             readable,
             device,
             pressed: Vec::new(),
+            sent: false,
         })
     }
 
@@ -158,6 +161,7 @@ impl Pointer {
             .queue
             .flush()
             .map_err(|error| upstream(&format!("send to niri's Wayland display: {error}")));
+        self.sent |= flushed.is_ok();
         // A press counts as held even if it may not have reached niri; a release counts
         // only once it has reached the socket.
         match step {
@@ -168,6 +172,11 @@ impl Pointer {
             Step::Release(_) | Step::Motion(_) | Step::Wheel(..) => {}
         }
         flushed
+    }
+
+    /// Whether any step has reached niri's socket, so that niri may have acted on it.
+    pub(crate) const fn sent(&self) -> bool {
+        self.sent
     }
 
     /// Waits until niri has handled everything sent so far.

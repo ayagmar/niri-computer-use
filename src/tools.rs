@@ -189,6 +189,7 @@ struct ClickArgs {
     button: ButtonArg,
     /// 1 (the default) to 3: 2 is a double click.
     #[serde(default = "one")]
+    #[schemars(range(min = 1, max = 3))]
     count: u8,
 }
 
@@ -217,9 +218,11 @@ struct ScrollArgs {
     y: u32,
     /// Wheel notches to the right (negative: left), at most 10. Defaults to 0.
     #[serde(default)]
+    #[schemars(range(min = -10, max = 10))]
     notches_x: i32,
     /// Wheel notches down (negative: up), at most 10. Defaults to 0.
     #[serde(default)]
+    #[schemars(range(min = -10, max = 10))]
     notches_y: i32,
 }
 

@@ -47,8 +47,10 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
             child: Some(child), ..
         }) => end_child(root, child.pid, child.start_time).await?,
         // The pointer runs in the server itself: there is no child to end.
-        Found::Marker(Marker { buttons, .. }) if !buttons.is_empty() => {
-            release_buttons(env, buttons).await;
+        Found::Marker(Marker {
+            buttons, output, ..
+        }) if !buttons.is_empty() => {
+            release_buttons(env, buttons, output.as_deref()).await;
         }
         Found::Marker(_) | Found::Unreadable { .. } => {
             end_wtype(root, getuid().as_raw(), cli::confirm).await?;
@@ -67,8 +69,8 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
 
 /// Sends the release of each of `buttons` from a fresh virtual pointer, which clears a
 /// button an ended pointer left pressed (M0, C8), or asks the human to.
-async fn release_buttons(env: &Env, buttons: &[u32]) {
-    match send_releases(env, buttons).await {
+async fn release_buttons(env: &Env, buttons: &[u32], output: Option<&str>) {
+    match send_releases(env, buttons, output).await {
         Ok(()) => cli::say(&format!(
             "Sent the release of pointer buttons {buttons:?} from a fresh virtual pointer."
         )),
@@ -78,12 +80,16 @@ async fn release_buttons(env: &Env, buttons: &[u32]) {
     }
 }
 
-async fn send_releases(env: &Env, buttons: &[u32]) -> Result<(), String> {
+/// Binds the pointer to the marker's output if it is still enabled, else to the first
+/// enabled one: a release needs no position.
+async fn send_releases(env: &Env, buttons: &[u32], marked: Option<&str>) -> Result<(), String> {
     let socket = env.niri_socket.as_deref();
     let outputs = niri::outputs(socket).await.map_err(|error| error.detail)?;
-    let output = outputs
-        .values()
-        .find(|output| output.logical.is_some())
+    let mut enabled = outputs.values().filter(|output| output.logical.is_some());
+    let output = enabled
+        .clone()
+        .find(|output| Some(output.name.as_str()) == marked)
+        .or_else(|| enabled.next())
         .ok_or("niri has no enabled output")?;
     let display = env
         .wayland_socket()

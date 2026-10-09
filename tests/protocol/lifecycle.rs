@@ -121,41 +121,60 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
         // their real defaults.
         let schema = tool["inputSchema"].to_string();
         assert!(!schema.contains("\"null\""), "{schema}");
-        let properties = tool["inputSchema"]["properties"]
-            .as_object()
-            .map_or(0, serde_json::Map::len);
-        let fields = &tool["inputSchema"]["properties"];
-        match name {
-            "screenshot" => {
-                assert_eq!(properties, 4, "{tool}");
-                assert_eq!(fields["max_width"]["default"], 1280);
-                assert_eq!(fields["format"]["default"], "jpeg");
-                assert_eq!(fields["region"].get("default"), None);
-            }
-            "launch" => {
-                assert_eq!(properties, 2, "{tool}");
-                assert_eq!(fields["reuse"]["default"], false);
-            }
-            "focus_window" | "focus_workspace" | "close_window" => {
-                assert_eq!(properties, 1, "{tool}");
-            }
-            "pointer_move" => assert_eq!(properties, 3, "{tool}"),
-            "key" | "type_text" => assert_eq!(properties, 2, "{tool}"),
-            "click" => {
-                assert_eq!(properties, 5, "{tool}");
-                assert_eq!(fields["button"]["default"], "left");
-                assert_eq!(fields["count"]["default"], 1);
-            }
-            "drag" => {
-                assert_eq!(properties, 4, "{tool}");
-                assert_eq!(fields["button"]["default"], "left");
-            }
-            "scroll" => {
-                assert_eq!(properties, 5, "{tool}");
-                assert_eq!(fields["notches_y"]["default"], 0);
-            }
-            _ => assert_eq!(properties, 0, "{tool}"),
-        }
+        properties_and_defaults(name, tool);
+    }
+}
+
+/// How many arguments each tool takes; tools not listed take none.
+const PROPERTIES: [(&str, usize); 11] = [
+    ("screenshot", 4),
+    ("launch", 2),
+    ("focus_window", 1),
+    ("focus_workspace", 1),
+    ("close_window", 1),
+    ("pointer_move", 3),
+    ("click", 5),
+    ("drag", 4),
+    ("scroll", 5),
+    ("key", 2),
+    ("type_text", 2),
+];
+
+/// `(tool, JSON pointer into its properties, expected value)`: advertised defaults and
+/// bounds. Null means the field has no default.
+fn advertised() -> [(&'static str, &'static str, Value); 10] {
+    [
+        ("screenshot", "/max_width/default", json!(1280)),
+        ("screenshot", "/format/default", json!("jpeg")),
+        ("screenshot", "/region/default", Value::Null),
+        ("launch", "/reuse/default", json!(false)),
+        ("click", "/button/default", json!("left")),
+        ("click", "/count/default", json!(1)),
+        ("click", "/count/minimum", json!(1)),
+        ("click", "/count/maximum", json!(3)),
+        ("drag", "/button/default", json!("left")),
+        ("scroll", "/notches_y/default", json!(0)),
+    ]
+}
+
+/// How many arguments `tool` takes, and the defaults it advertises.
+fn properties_and_defaults(name: &str, tool: &Value) {
+    let fields = &tool["inputSchema"]["properties"];
+    let properties = fields.as_object().map_or(0, serde_json::Map::len);
+    let expected = PROPERTIES
+        .iter()
+        .find(|(listed, _)| *listed == name)
+        .map_or(0, |(_, count)| *count);
+    assert_eq!(properties, expected, "{tool}");
+    for (_, pointer, value) in advertised()
+        .into_iter()
+        .filter(|(listed, ..)| *listed == name)
+    {
+        assert_eq!(
+            fields.pointer(pointer).unwrap_or(&Value::Null),
+            &value,
+            "{name}{pointer}"
+        );
     }
 }
 

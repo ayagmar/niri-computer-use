@@ -239,10 +239,15 @@ pub(crate) async fn point(
         )
     })?;
     let pointer = Pointer::bind(display, niri::pid(socket).await?, &shot.output).await?;
-    let device = Device::new(pointer, input.runtime, gesture)?;
-    if let Err(lost) = device.run(plan(gesture, &aimed)).await {
-        return Ok(Outcome::uncertain(None, Some(waiter.view()), lost.detail));
+    let mut device = Device::new(pointer, input.runtime, gesture, &shot.output)?;
+    if let Err(error) = device.run(plan(gesture, &aimed)).await {
+        // Nothing reached niri: an error like any other before input.
+        if !device.sent() {
+            return Err(error.into());
+        }
+        return Ok(Outcome::uncertain(None, Some(waiter.view()), error.detail));
     }
+    device.finish()?;
     // The events the input caused so far, such as a click's focus change.
     waiter.until(Duration::ZERO, |_| None::<()>).await;
     Ok(Outcome::seen(Observed::Sent, waiter.view(), Vec::new()))
@@ -257,24 +262,30 @@ fn focused_app_id(view: &View) -> Option<&str> {
 }
 
 /// The pointer, with the input-dirty marker while a gesture may press a button. Dropping
-/// it releases whatever is still pressed and removes the marker once those releases are
-/// sent.
+/// it midway, as a stop or a cancelled request does, releases whatever is still pressed
+/// and removes the marker only once niri has handled those releases.
 #[derive(Debug)]
 struct Device {
-    pointer: Pointer,
+    /// Always there until the device is dropped.
+    pointer: Option<Pointer>,
     marker: Option<Written>,
 }
 
 impl Device {
-    /// Writes the marker first if `gesture` presses a button.
-    fn new(pointer: Pointer, runtime: &RuntimeDir, gesture: Gesture) -> Result<Self, ToolError> {
+    /// Writes the marker first if `gesture` presses a button, naming the output the
+    /// pointer is bound to, which `recover` binds its release to.
+    fn new(
+        pointer: Pointer,
+        runtime: &RuntimeDir,
+        gesture: Gesture,
+        output: &str,
+    ) -> Result<Self, ToolError> {
         let marker = gesture
             .button()
             .map(|button| {
-                Written::write(
-                    runtime,
-                    Marker::pending(gesture.tool(), vec![button.code()]),
-                )
+                let mut marker = Marker::pending(gesture.tool(), vec![button.code()]);
+                marker.output = Some(output.to_owned());
+                Written::write(runtime, marker)
             })
             .transpose()
             .map_err(|error| {
@@ -283,39 +294,68 @@ impl Device {
                     format!("write the input-dirty marker: {error}"),
                 )
             })?;
-        Ok(Self { pointer, marker })
+        Ok(Self {
+            pointer: Some(pointer),
+            marker,
+        })
     }
 
-    /// Sends the planned steps, waits until niri has handled them, then removes the
-    /// marker.
-    async fn run(mut self, steps: Vec<Planned>) -> Result<(), ToolError> {
+    fn pointer(&mut self) -> Result<&mut Pointer, ToolError> {
+        self.pointer
+            .as_mut()
+            .ok_or_else(|| ToolError::new(ErrorName::UpstreamError, "the pointer is gone"))
+    }
+
+    fn sent(&self) -> bool {
+        self.pointer.as_ref().is_some_and(Pointer::sent)
+    }
+
+    /// Sends the planned steps and waits until niri has handled them.
+    async fn run(&mut self, steps: Vec<Planned>) -> Result<(), ToolError> {
         for planned in steps {
             match planned {
-                Planned::Send(step) => self.pointer.send(step)?,
+                Planned::Send(step) => self.pointer()?.send(step)?,
                 Planned::Pause(pause) => tokio::time::sleep(pause).await,
             }
         }
-        self.pointer.sync().await?;
-        if let Some(marker) = self.marker.take() {
-            marker.clear().map_err(|error| {
-                ToolError::new(
-                    ErrorName::UpstreamError,
-                    format!("remove the input-dirty marker: {error}"),
-                )
-            })?;
-        }
-        Ok(())
+        self.pointer()?.sync().await
+    }
+
+    /// Removes the marker after a gesture niri has handled whole.
+    fn finish(mut self) -> Result<(), ToolError> {
+        let Some(marker) = self.marker.take() else {
+            return Ok(());
+        };
+        marker.clear().map_err(|error| {
+            ToolError::new(
+                ErrorName::UpstreamError,
+                format!(
+                    "niri handled the input, but the input-dirty marker couldn't be removed ({error}); actions refuse until the user runs `niri-computer-use recover`"
+                ),
+            )
+        })
     }
 }
 
 impl Drop for Device {
     fn drop(&mut self) {
-        if let Some(marker) = self.marker.take()
-            && self.pointer.release_all()
-        {
-            // If it can't be removed, it stays, and blocks input until `recover`.
-            marker.clear().ok();
+        let (Some(marker), Some(pointer)) = (self.marker.take(), self.pointer.take()) else {
+            return;
+        };
+        // The release is sent now; waiting for niri to handle it needs the runtime, so a
+        // task of its own does that and then removes the marker. Without a runtime, the
+        // pointer's own drop still sends the release, and the marker stays.
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(release(pointer, marker));
         }
+    }
+}
+
+/// Releases what `pointer` still holds and removes `marker` once niri has handled it. If
+/// the marker can't be removed, it stays, and blocks input until `recover`.
+async fn release(mut pointer: Pointer, marker: Written) {
+    if pointer.release_all() && pointer.sync().await.is_ok() {
+        marker.clear().ok();
     }
 }
 

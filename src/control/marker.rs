@@ -28,6 +28,9 @@ pub(crate) struct Marker {
     /// Pointer buttons pressed and not yet released, as evdev codes such as 272.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) buttons: Vec<u32>,
+    /// The output the pointer that pressed them is bound to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) output: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,6 +60,7 @@ impl Marker {
             since: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
             child: None,
             buttons,
+            output: None,
         }
     }
 }
