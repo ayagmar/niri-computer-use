@@ -13,6 +13,9 @@ mod fixture;
 mod niri;
 #[cfg(test)]
 mod noctalia;
+#[cfg(test)]
+#[path = "../../src/test_support/output_mode.rs"]
+mod output_mode;
 
 #[cfg(test)]
 mod act;

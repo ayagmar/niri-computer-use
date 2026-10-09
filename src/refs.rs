@@ -242,9 +242,14 @@ mod tests {
     }
 
     fn outputs(geometry: LogicalOutput) -> BTreeMap<String, Output> {
+        let mode = crate::test_support::output_mode::from_logical(
+            geometry.width,
+            geometry.height,
+            geometry.scale,
+        );
         let output = serde_json::from_value(serde_json::json!({
             "name": "winit", "make": "", "model": "", "serial": null, "physical_size": null,
-            "modes": [{"width": format!("{:.0}", f64::from(geometry.width) * geometry.scale).parse::<u16>().unwrap(), "height": format!("{:.0}", f64::from(geometry.height) * geometry.scale).parse::<u16>().unwrap(), "refresh_rate": 60000, "is_preferred": true}], "current_mode": 0, "is_custom_mode": false,
+            "modes": [mode], "current_mode": 0, "is_custom_mode": false,
             "vrr_supported": false, "vrr_enabled": false, "logical": geometry
         }))
         .unwrap();

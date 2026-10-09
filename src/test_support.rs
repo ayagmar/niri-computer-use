@@ -1,5 +1,7 @@
 //! Helpers shared by unit tests.
 
+pub(crate) mod output_mode;
+
 use std::path::PathBuf;
 
 /// A directory the calling test creates itself, so the test reads and removes nothing

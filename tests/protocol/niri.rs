@@ -216,12 +216,7 @@ pub(crate) fn output(name: &str, logical: Option<(i32, i32, u32, u32, f64)>) -> 
         serial: None,
         physical_size: None,
         modes: logical
-            .map(|(_, _, w, h, scale)| niri_ipc::Mode {
-                width: format!("{:.0}", f64::from(w) * scale).parse().unwrap(),
-                height: format!("{:.0}", f64::from(h) * scale).parse().unwrap(),
-                refresh_rate: 60000,
-                is_preferred: true,
-            })
+            .map(|(_, _, w, h, scale)| crate::output_mode::from_logical(w, h, scale))
             .into_iter()
             .collect(),
         current_mode: logical.map(|_| 0),
