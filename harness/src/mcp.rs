@@ -104,6 +104,10 @@ impl Client {
             .collect())
     }
 
+    pub(crate) fn cancel(&mut self, id: u64) -> Result<()> {
+        self.write(&json!({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": id, "reason": "nested cancellation test"}}))
+    }
+
     pub(crate) fn stop(self) -> Result<()> {
         self.process.stop().map(drop)
     }

@@ -2,8 +2,8 @@
 //! Destruction does not release input in niri; callers must acknowledge explicit releases.
 
 use std::fs::File;
-use std::io::Read as _;
 use std::os::fd::{AsFd as _, OwnedFd};
+use std::os::unix::fs::FileExt as _;
 use std::path::Path;
 
 use tokio::io::{Interest, unix::AsyncFd};
@@ -66,18 +66,18 @@ impl Keyboard {
             Instant::now() + DEADLINE,
         )
         .await?;
-        let find = |name: &str| {
+        let find = |name: &str, minimum: u32| {
             state
                 .globals
                 .iter()
-                .find(|(_, interface, version)| interface == name && *version >= 1)
+                .find(|(_, interface, version)| interface == name && *version >= minimum)
                 .map(|(id, ..)| *id)
                 .ok_or_else(|| upstream(&format!("niri offers no {name}")))
         };
-        let seat = registry.bind::<WlSeat, _, _>(find("wl_seat")?, 1, &handle, ());
+        let seat = registry.bind::<WlSeat, _, _>(find("wl_seat", 7)?, 7, &handle, ());
         seat.get_keyboard(&handle, ());
         let manager = registry.bind::<ZwpVirtualKeyboardManagerV1, _, _>(
-            find("zwp_virtual_keyboard_manager_v1")?,
+            find("zwp_virtual_keyboard_manager_v1", 1)?,
             1,
             &handle,
             (),
@@ -198,17 +198,15 @@ fn read_map(fd: OwnedFd, size: u32) -> Result<(File, String, u32), String> {
             "keyboard keymap size {size} is outside 1..={MAX_MAP}"
         ));
     }
-    let mut file = File::from(fd);
+    let file = File::from(fd);
     let metadata = file
         .metadata()
         .map_err(|error| format!("inspect keyboard keymap: {error}"))?;
     if !metadata.is_file() || metadata.len() < u64::from(size) {
         return Err("keyboard keymap is not a sufficiently large regular file".into());
     }
-    let mut bytes = Vec::new();
-    (&mut file)
-        .take(u64::from(size))
-        .read_to_end(&mut bytes)
+    let mut bytes = vec![0; usize::try_from(size).map_err(|error| error.to_string())?];
+    file.read_exact_at(&mut bytes, 0)
         .map_err(|error| format!("read keyboard keymap: {error}"))?;
     if bytes.len() != usize::try_from(size).map_err(|error| error.to_string())?
         || bytes.pop() != Some(0)
@@ -285,6 +283,6 @@ impl Dispatch<WlCallback, ()> for State {
     }
 }
 
-delegate_noop!(State: WlSeat);
+delegate_noop!(State: ignore WlSeat);
 delegate_noop!(State: ZwpVirtualKeyboardManagerV1);
 delegate_noop!(State: ZwpVirtualKeyboardV1);

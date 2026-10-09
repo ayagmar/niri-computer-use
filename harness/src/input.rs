@@ -6,6 +6,7 @@
 
 mod activation;
 mod crash;
+mod native;
 mod scrolling;
 mod stop;
 
@@ -69,6 +70,7 @@ pub(crate) fn run(session: &mut Session<'_>, output: &LogicalOutput, server: &st
     clicks(session, &mut client, &wev)?;
     drag(session, &mut client, &wev)?;
     scroll(session, &mut client, &wev)?;
+    native::run(session, &mut client, &wev, server)?;
     keys(session, &mut client, &wev)?;
     stop::run(session, &mut client, &wev, server)?;
     structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
