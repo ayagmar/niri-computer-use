@@ -203,6 +203,12 @@ impl Desk {
         self.seat.take(&mut *self.seat.lease.lock().await)
     }
 
+    /// Waits until no action is running, so a screenshot taken next shows the screen after
+    /// it rather than from before it landed.
+    pub(crate) async fn settled(&self) {
+        drop(self.seat.lease.lock().await);
+    }
+
     /// The lease a screenshot starting now would issue its ref under, if this server holds
     /// one. Doesn't wait for a running action.
     pub(crate) fn ref_lease(&self) -> Option<u64> {

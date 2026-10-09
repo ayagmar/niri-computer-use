@@ -647,8 +647,10 @@ impl Server {
 
     /// A screenshot of one output or of a region inside one output, as an image plus
     /// metadata: the output, its transform and layout origin, the captured rectangle in
-    /// layout coordinates, and the scale from logical pixels to image pixels. Prefer
-    /// `desktop_state` when structured data answers the question.
+    /// layout coordinates, and the scale from logical pixels to image pixels, plus a
+    /// `screenshot_ref` for the pointer tools while you hold the lease. It waits for an
+    /// action still running to finish first, so call it after the action's result, not
+    /// alongside it. Prefer `desktop_state` when structured data answers the question.
     #[tool(annotations(read_only_hint = true))]
     async fn screenshot(
         &self,
@@ -662,6 +664,7 @@ impl Server {
                 Ok(request) => request,
                 Err(message) => return Ok(invalid(&message)),
             };
+            self.desk.settled().await;
             match self.capture(request).await {
                 Ok(shot) => image(&shot),
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),

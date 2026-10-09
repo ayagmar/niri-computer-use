@@ -87,6 +87,8 @@ No arguments. niri's outputs by connector name, such as `DP-1`, as niri reports 
 
 The capture uses the output's own scale, lowered when the captured width times that scale is wider than `max_width`. For small text, take a region around it.
 
+While one of this server's actions is running, `screenshot` waits for it to end before capturing, so a screenshot sent alongside an action shows the screen after it.
+
 The result is an image block, then the metadata as text and as `structuredContent`:
 
 | Field | Value |

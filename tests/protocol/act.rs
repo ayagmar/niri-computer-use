@@ -852,6 +852,36 @@ async fn focus_moving_during_a_part_stops_the_rest_of_the_text() {
 }
 
 #[tokio::test]
+async fn a_screenshot_waits_for_the_running_action() {
+    let mut desk = Desk::start("act-settled", "").await;
+    counting_wtype(
+        &desk.fixture,
+        "while [ ! -e \"$DIR/go\" ]; do sleep 0.05; done; : > \"$DIR/wtype.done\"",
+    );
+    desk.fixture.program(
+        "grim",
+        r#"if [ -e "$DIR/wtype.done" ]; then echo after; else echo during; fi > "$DIR/grim.when"; cat "$DIR/grim.out""#,
+    );
+    let typing = desk
+        .server
+        .start_call("type_text", json!({"text": "x", "expect": "none"}))
+        .await;
+    while !desk.fixture.path("wtype.calls").exists() {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let shot = desk
+        .server
+        .start_call("screenshot", json!({"target": "focused_output"}))
+        .await;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    std::fs::write(desk.fixture.path("go"), "").unwrap();
+    desk.server.response(typing).await;
+    desk.server.response(shot).await;
+    let when = std::fs::read_to_string(desk.fixture.path("grim.when")).unwrap();
+    assert_eq!(when.trim(), "after");
+}
+
+#[tokio::test]
 async fn a_wtype_that_fails_by_itself_clears_the_marker_and_one_killed_leaves_it() {
     let mut desk = Desk::start("act-wtype-fail", "").await;
     let type_x = json!({"text": "x", "expect": "none"});
