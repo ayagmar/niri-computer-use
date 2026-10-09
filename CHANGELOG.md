@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
+- Optional GTK 4 button-activation acceptance in `make nested-input`: 100 actual activations with observed-counter latency percentiles.
+
 - `niri-computer-use serve`: an MCP server over stdio with two read-only tools, `status` and `outputs`.
 - `niri-computer-use status`: prints the same readiness report as the `status` tool.
 - `screenshot` tool: one output or a region inside one output, through grim, as JPEG or PNG with its geometry and scale.
@@ -34,6 +36,9 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
+- Automatic nested suites run inside isolated headless cage by default, without host snapshots. `VISIBLE=1` or `--visible` keeps the human path; sittings remain visible.
+- Safety documentation explicitly distinguishes focus-based app denial from pointer-target isolation, and sensitive read-only observations from private data.
+
 - `key` takes `keys`, a list of up to 16 combinations pressed in order, instead of one `combo`, and stops with `interrupted` and a `pressed` count if focus moves.
 - `release_desktop` requires `restore_focus`.
 - `type_text` takes up to 1000 characters and types them in parts of 100, stopping with `interrupted` and a `typed` count if focus moves between parts.
@@ -41,3 +46,10 @@ All notable changes to this project are documented here. The format follows [Kee
 - The tool descriptions and the server's instructions carry the rules agents most often broke: no screenshot alongside an action, no Enter after text that didn't fully go out, apps only through presets, focus back to the user's window when done.
 - The `niri-computer-use` skill is rewritten: a description that says when to load it, a shorter workflow with reasons and examples, and the tool and error tables moved to `references/`.
 - The project is renamed from `niri-desktop-mcp` to `niri-computer-use`, including the binary, the MCP server's name and the audit log's directory.
+
+### Fixed
+
+- Standalone screenshots and `wait_for` capture sequences hold the action mutex throughout capture, excluding subsequent server actions and lease changes.
+- Settled capture budgets include the initial delay and capture work. A timed-out later capture returns the last completed sample unsettled; no completed sample gives `deadline_exceeded`.
+- Fractional-scale pointer motion uses niri's ceiled physical-mode space rather than truncated IPC dimensions. Unknown or changed pointer geometry refuses input.
+- C15's nested capture assertions use grim's truncated image size instead of rounding odd dimensions.
