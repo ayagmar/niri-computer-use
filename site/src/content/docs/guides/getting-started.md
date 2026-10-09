@@ -8,7 +8,7 @@ description: Install niri-computer-use, register it in Claude Code, Pi or Codex,
 - niri 26.04
 - Rust 1.99.0 through rustup; the repository pins it in `rust-toolchain.toml`
 - `grim` for screenshots, `wl-paste` from wl-clipboard for the clipboard, and `loginctl` from systemd for the lock state
-- Noctalia 5.2 is optional. Without it, the `shell_status` tool isn't listed.
+- Noctalia 5.2 is optional. Without it, the `shell_status`, `shell_open` and `shell_close` tools aren't listed.
 
 ## Install
 

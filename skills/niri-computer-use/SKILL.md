@@ -1,13 +1,13 @@
 ---
 name: niri-computer-use
-description: "See and act on a niri Wayland desktop through the niri-computer-use MCP server: windows, workspaces, outputs, screenshots, the clipboard's text and Noctalia's panels; with the lease, focus windows and workspaces, launch preset apps, close windows, click, drag, scroll and type."
+description: "See and act on a niri Wayland desktop through the niri-computer-use MCP server: windows, workspaces, outputs, screenshots, the clipboard's text and Noctalia's panels; with the lease, focus windows and workspaces, launch preset apps, close windows, open and close Noctalia's panels, click, drag, scroll and type."
 license: MIT
 compatibility: Needs the niri-computer-use MCP server (niri-computer-use serve) registered in the agent, running inside a niri 26.04 session.
 ---
 
 # niri desktop
 
-The `niri-computer-use` MCP server shows you the user's niri desktop and, while you hold its lease, lets you focus windows and workspaces, start apps from the user's presets, close windows, use the pointer on pixels of a screenshot, and type into the focused app. One agent at a time holds the lease, and the user can take it back at any moment with a stop key.
+The `niri-computer-use` MCP server shows you the user's niri desktop and, while you hold its lease, lets you focus windows and workspaces, start apps from the user's presets, close windows, open and close a few Noctalia panels, use the pointer on pixels of a screenshot, and type into the focused app. One agent at a time holds the lease, and the user can take it back at any moment with a stop key.
 
 ## Rules
 
@@ -22,7 +22,7 @@ The `niri-computer-use` MCP server shows you the user's niri desktop and, while 
 5. Report what you observed separately from what you infer.
 6. Take the lease with `acquire_desktop` only when the user asks you to act on the desktop, then look at it (`desktop_state`, and a fresh `screenshot` when pixels matter) before the first action. Give the lease back with `release_desktop` when you are done. Watching the desktop never needs it.
 7. Act in a loop: observe, one action, read `accepted` and `observed`, observe again. An action after which neither the structured state nor a new screenshot shows any change toward the goal is a no-progress attempt. After three in a row, stop and tell the user what you saw.
-8. Prefer the structured actions to input: `focus_window` and `focus_workspace` with ids from `desktop_state`, `launch` with a preset name, `close_window`. `launch` starts only the user's presets; if the app you need has none, ask the user to add one rather than looking for another way to start it. Use the pointer and keyboard tools for what happens inside an app. `key` is for the app's own shortcuts only: niri's keybinds don't fire from it, so desktop actions always use the structured tools.
+8. Prefer the structured actions to input: `focus_window` and `focus_workspace` with ids from `desktop_state`, `launch` with a preset name, `close_window`, and `shell_open` and `shell_close` for Noctalia's `control-center`, `wallpaper` and `tray-drawer`. `launch` starts only the user's presets; if the app you need has none, ask the user to add one rather than looking for another way to start it. Use the pointer and keyboard tools for what happens inside an app. `key` is for the app's own shortcuts only: niri's keybinds don't fire from it, so desktop actions always use the structured tools. Noctalia's launcher, session menu and other panels are not available: start apps with `launch`, and never reach those panels with the pointer or the keyboard either.
 9. Use `launch` with `reuse: true` unless the user asked for another window of the app.
 10. An outcome that isn't the one you wanted is information, not a failure to retry. After `timeout`, `none`, `pending` or `uncertain`, look at the desktop before doing anything else: the result already has a fresh screenshot of the focused output, so look at that before taking another. Never repeat a `launch` or a `close_window` on your own: a second launch opens a second app, and a second close can answer the app's unsaved-changes dialog.
 11. `interrupted` means someone else moved focus while you waited. Stop and tell the user; don't continue the plan.
@@ -47,6 +47,8 @@ The `niri-computer-use` MCP server shows you the user's niri desktop and, while 
 | `focus_workspace` | `id`: a workspace id, not its index | `observed`: `focused` or `timeout`; `accepted: false` when it already had focus |
 | `launch` | `preset`, optionally `reuse` | `observed`: `one`, `ambiguous` or `none`, with the new window ids in `windows`, or `focused` when a single-instance app showed the window it had; with `reuse`, `focused` for one existing window, or `ambiguous` with several and nothing started |
 | `close_window` | `id`: a window id | `observed`: `closed`, or `pending` when the window is still open after five seconds, for example behind an unsaved-changes dialog |
+| `shell_open` | `panel`: `control-center`, `wallpaper` or `tray-drawer` | `observed`: `opened` or `timeout` within two seconds; `shell.active_panel`; `accepted: false` when it was already open. Listed only with Noctalia |
+| `shell_close` | `panel`, as for `shell_open` | `observed`: `closed` or `timeout`; `accepted: false` when it wasn't open |
 | `pointer_move` | `screenshot_ref`, `x`, `y` | `observed`: `sent`; moves the pointer there, to hover |
 | `click` | `screenshot_ref`, `x`, `y`, optionally `button` (`left`, `right`, `middle`) and `count` (1 to 3) | `observed`: `sent` |
 | `drag` | `screenshot_ref`, `from: {x, y}`, `to: {x, y}`, optionally `button` | `observed`: `sent`; presses at `from`, moves, releases at `to` |
@@ -56,7 +58,9 @@ The `niri-computer-use` MCP server shows you the user's niri desktop and, while 
 
 `sent` means niri received the input; it says nothing about what the app did with it, so take a screenshot to see. `screenshot` returns a `screenshot_ref` while you hold the lease. A pixel targets its centre.
 
-Every action result also has `accepted` (true once niri took the request, false when nothing was sent, null when niri's reply was lost), `focused_window` when the observation ended, and possibly `interrupted` or `uncertain` as `observed` (rules 10 and 11). Each waits up to five seconds. With `timeout`, `pending`, `none`, `interrupted` or `uncertain`, the result also has an image of the focused output and its metadata in `screenshot`, or `screenshot_error` if it couldn't be taken.
+An open panel holds keyboard focus, so `focused_window` is null while it is open; to type into it, use `expect: "none"` after a screenshot shows it ready. Close the panel with `shell_close` when you are done with it.
+
+Every action result also has `accepted` (true once niri or Noctalia took the request, false when nothing was sent, null when niri's reply was lost), `focused_window` when the observation ended, and possibly `interrupted` or `uncertain` as `observed` (rules 10 and 11). Each waits up to five seconds. With `timeout`, `pending`, `none`, `interrupted` or `uncertain`, the result also has an image of the focused output and its metadata in `screenshot`, or `screenshot_error` if it couldn't be taken.
 
 `screenshot` targets:
 
@@ -75,6 +79,7 @@ Every action result also has `accepted` (true once niri took the request, false 
 - `ref_invalid`: the detail starts with `unknown_ref`, `expired`, `output_changed` or `out_of_bounds`. Take a new screenshot and aim again from it; for `out_of_bounds`, use a pixel inside that image.
 - `focus_mismatch`: the window you named in `expect` doesn't have keyboard focus. Look at `desktop_state` and a screenshot, focus the right window with `focus_window` if that is what you meant, then type.
 - `text_too_long`: split the text into calls of at most 100 characters.
+- `panel_not_allowed`: only `control-center`, `wallpaper` and `tray-drawer` can be opened. Don't try to reach another panel some other way.
 - `app_denied`: the user denied input to the focused app. Stop and tell the user (rule 12).
 - `untested_output_config`: the pointer only runs on one monitor at transform `Normal` (or nested niri). Stop and tell the user (rule 12).
 - `acquire_desktop` and every action refuse with `stopped` (the user pressed the stop key or ran `niri-computer-use stop`; it also cancels a running action), `recovery_required` (input may be stuck), `screen_locked` (locked, or nobody can say it isn't) or `read_only` (unsupported niri, events this build can't parse, or an invalid policy file); `acquire_desktop` also refuses with `lease_held` (another agent has it). Rule 12 applies to all of them.
