@@ -931,7 +931,7 @@ async fn a_lost_panel_reply_is_uncertain_with_a_screenshot() {
         outcome(&lost),
         json!({
             "accepted": null, "observed": "uncertain", "focused_window": 1,
-            "detail": "Noctalia replied: "
+            "detail": "Noctalia closed the connection without a reply"
         })
     );
 }

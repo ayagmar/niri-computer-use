@@ -124,10 +124,12 @@ fn acknowledged(reply: &[u8]) -> Result<(), Unanswered> {
     if text == "ok\n" {
         return Ok(());
     }
-    let error = ToolError::new(
-        ErrorName::UpstreamError,
-        format!("Noctalia replied: {}", text.trim_end()),
-    );
+    let detail = if text.is_empty() {
+        "Noctalia closed the connection without a reply".to_owned()
+    } else {
+        format!("Noctalia replied: {}", text.trim_end())
+    };
+    let error = ToolError::new(ErrorName::UpstreamError, detail);
     if text.starts_with("error:") {
         return Err(Unanswered::Refused(error));
     }
