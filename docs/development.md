@@ -227,9 +227,9 @@ The run has a 130-second deadline. Its files are in `target/e2e/<run>/`, includi
 make nested-eval SCENARIO=compose-message SKILL=skills/niri-computer-use MODEL=sonnet
 ```
 
-`SKILL=none` runs without a skill. The scenarios are `compose-message`, `key-screenshots`, `click-elsewhere`, `stopped` and `no-preset`. The harness starts Noctalia, sets up the scenario's windows (`wev` or a `notes` preset window), copies the skill into `TEST_DIR/agent/.claude/skills/`, and runs `claude -p` there with only the nested server and the `Skill` and `Read` tools. It then grades the nested server's audit log: for example, no screenshot that overlaps an action, Enter pressed once and only after all the text went out, focus back on the user's window, and no more calls after a `stopped` refusal.
+`SKILL=none` runs without a skill. The scenarios are `compose-message`, `key-screenshots`, `click-elsewhere`, `stopped`, `no-preset`, `dialog-midway` (a window takes focus as soon as the agent takes the lease) and `errand` (launch, send, close, and back to the user's window). The harness starts Noctalia, sets up the scenario's windows (`wev`, a `notes` preset window or a `home` window), copies the skill into `TEST_DIR/agent/.claude/skills/`, and runs `claude -p` there with only the nested server and the `Skill` and `Read` tools. It then grades the nested server's audit log, the fixtures' logs and the transcript: for example, no screenshot that overlaps an action, no action sent in the same turn as another desktop call, Enter pressed once and only after all the text went out, focus back on the user's window, and no more calls after a `stopped` refusal.
 
-The run's files are in `target/e2e/<run>/`: `transcript.jsonl` (the agent's stream), `audit.jsonl`, `answer.md` (its final answer), and `grading.json` and `timing.json` in the skill-creator's format. The run has a 15-minute deadline. Claude Code also keeps its usual transcript under `~/.claude/projects/`.
+The run's files are in `target/e2e/<run>/`: `transcript.jsonl` (the agent's stream), `audit.jsonl`, `answer.md` (its final answer), and `grading.json` and `timing.json` (with the number of calls and agent turns) in the skill-creator's format. The run has a 15-minute deadline. Claude Code also keeps its usual transcript under `~/.claude/projects/`.
 
 ## Real-session pointer check
 
