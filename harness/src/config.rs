@@ -5,7 +5,8 @@ use std::path::Path;
 use crate::scale::Scale;
 
 /// The nested niri config. No startup commands, animations, borders or Xwayland, a solid
-/// magenta background, a fixed 400x300 floating `wev`, and one test bind.
+/// magenta background, a fixed 400x300 floating `wev`, a fixed 560x360 floating `kitty`
+/// for the scroll check, and one test bind.
 pub(crate) fn niri(scale: Scale, bind_marker: &Path) -> String {
     let marker = bind_marker.display();
     format!(
@@ -41,6 +42,14 @@ window-rule {{
     default-floating-position x=0 y=0 relative-to="top-left"
     default-column-width {{ fixed 400; }}
     default-window-height {{ fixed 300; }}
+}}
+
+window-rule {{
+    match app-id="^kitty$"
+    open-floating true
+    default-floating-position x=0 y=0 relative-to="top-left"
+    default-column-width {{ fixed 560; }}
+    default-window-height {{ fixed 360; }}
 }}
 
 binds {{

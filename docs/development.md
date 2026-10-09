@@ -204,8 +204,9 @@ The run has a 130-second deadline. Its files are in `target/e2e/<run>/`, includi
 9. Stop mid-typing: a 100-character `type_text`, and a stop once `wev` logs its first key. The call must end `stopped`, and `wev` must still decode the whole text, because a `wtype` already typing finishes; then the marker must be gone, and the lease is taken again after `resume`.
 10. The two-server crash, after the main server gives the lease up: server A takes the lease and starts a 100-character `type_text`; once `wev` logs its first key, the supervisor kills A's process group. `wtype` runs in a group of its own, so it types the whole text. A new server B must get `recovery_required` from `acquire_desktop`; `recover` with `yes` must say the child has already exited and clear the marker, and B must then take the lease.
 11. The same with a drag: once `wev` logs the press, A is killed. The button must stay down for half a second, since niri releases nothing when a pointer goes, B must get `recovery_required`, and `recover` must send the release from a fresh pointer, which `wev` logs, before B takes the lease.
+12. Scrolling a real client: after `wev` is gone, the supervisor starts `kitty --config NONE --hold` running `seq 1 500`, with `wheel_scroll_multiplier=5` and its remote control socket in `TEST_DIR`. The nested niri config floats kitty at 560x360 in the top-left corner, because niri reports no position for tiled windows. `scroll` over kitty's middle, two notches up, must move the first line on kitty's screen (read with `kitty @ get-text`) up by exactly ten lines, and one notch down must move it back by five.
 
-The run has a 180-second deadline. Its files are in `target/e2e/<run>/`, including `wev.log`, each server's replies and Noctalia's log.
+The run has a 180-second deadline. Its files are in `target/e2e/<run>/`, including `wev.log`, each server's replies, and Noctalia's and kitty's logs. Besides the tools of `make nested`, it needs `kitty`.
 
 ## Supervised sitting
 

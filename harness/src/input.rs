@@ -5,6 +5,7 @@
 //! server's mapping. Everything the run creates lives under `TEST_DIR`.
 
 mod crash;
+mod scrolling;
 mod stop;
 
 use std::ffi::OsString;
@@ -71,8 +72,10 @@ pub(crate) fn run(session: &mut Session<'_>, output: &LogicalOutput, server: &st
     stop::run(session, &mut client, &wev, server)?;
     structured(&client.call(session, "release_desktop", json!({}))?)?;
     crash::run(session, &wev, server)?;
-    client.stop()?;
+    // wev floats over the tiled kitty, so it goes first.
     process.stop()?;
+    scrolling::run(session, &mut client)?;
+    client.stop()?;
     noctalia.stop().map(drop)
 }
 
