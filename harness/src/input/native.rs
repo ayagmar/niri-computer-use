@@ -31,16 +31,22 @@ pub(super) fn run(
     )?;
     structured(&native.call(session, "acquire_desktop", json!({}))?)?;
     normal(session, &mut native, wev)?;
+    let window = super::wev_window(session, &mut native)?;
+    super::mismatch(session, &mut native, wev, window)?;
+    super::routing(session, &mut native, wev, window)?;
     missing(session, &mut native, wev)?;
     measure(session, &mut native, wev, "native")?;
+    super::exposure::run(session, &mut native, wev, "native")?;
     interruption(session, &mut native, wev, server, false)?;
     interruption(session, &mut native, wev, server, true)?;
     super::native_gestures::normal(session, &mut native, wev)?;
     super::native_gestures::interrupt(session, &mut native, wev, server, false)?;
     super::native_gestures::interrupt(session, &mut native, wev, server, true)?;
     super::native_gestures::crash(session, native, wev, server)?;
+    super::native_gestures::typing_crash(session, wev, server)?;
     structured(&owner.call(session, "acquire_desktop", json!({}))?)?;
-    measure(session, owner, wev, "wtype")
+    measure(session, owner, wev, "wtype")?;
+    super::exposure::run(session, owner, wev, "wtype")
 }
 
 fn normal(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>) -> Result<()> {
@@ -146,6 +152,12 @@ fn interruption(
     } else {
         session.run(server, &["stop".into()])?;
     }
+    let ack_log = keyboard::since(wev.log, offset)?;
+    let at_ack = trace(&ack_log)?
+        .keys
+        .iter()
+        .filter(|key| key.pressed)
+        .count();
     if !cancel {
         let result = client.result(session, id)?;
         if field(&result, "/structuredContent/error") != "stopped" {
@@ -162,6 +174,20 @@ fn interruption(
         )));
     }
     keyboard::text(&observed, &"A".repeat(count))?;
+    if !cancel && count.saturating_sub(at_ack) > 1 {
+        return Err(Failure::new(
+            "M7 native sent more than one character after stop command acknowledgement",
+        ));
+    }
+    session.log(&format!(
+        "M7 native post-{}-observation characters: {}",
+        if cancel {
+            "cancel-notification"
+        } else {
+            "stop-command-ack"
+        },
+        count.saturating_sub(at_ack)
+    ))?;
     session.still_absent("m7-interrupted", Duration::from_millis(100), || {
         Ok(keyboard::since(wev.log, offset)?.len() != seen.len())
     })?;

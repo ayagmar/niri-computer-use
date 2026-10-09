@@ -165,6 +165,12 @@ pub(super) fn crash(
     client.start_call("drag", args)?;
     pressed(session, wev, offset)?;
     client.stop()?;
+    recover(session, wev, server, offset)?;
+    held_at_pointer(&keyboard::since(wev.log, offset)?, "button:")?;
+    session.log("M7 SIGKILL during held drag: marker blocked B; recover released button and modifiers; B acquired. No automatic crash release claim.")
+}
+
+fn recover(session: &mut Session<'_>, wev: &Wev<'_>, server: &str, offset: usize) -> Result<()> {
     let mut next = Client::start(session, server, "harness-m7-recover", SERVER_DEADLINE)?;
     let refused = next.call(session, "acquire_desktop", json!({}))?;
     if field(&refused, "/structuredContent/error") != "recovery_required" {
@@ -189,9 +195,55 @@ pub(super) fn crash(
         WAIT,
         |_| Ok(released(&keyboard::since(wev.log, offset)?).ok().map(drop)),
     )?;
-    held_at_pointer(&keyboard::since(wev.log, offset)?, "button:")?;
     structured(&next.call(session, "acquire_desktop", json!({}))?)?;
     structured(&next.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
-    next.stop()?;
-    session.log("M7 SIGKILL during held drag: marker blocked B; recover released button and modifiers; B acquired. No automatic crash release claim.")
+    next.stop()
+}
+
+pub(super) fn typing_crash(session: &mut Session<'_>, wev: &Wev<'_>, server: &str) -> Result<()> {
+    let mut client = Client::start_command(
+        session,
+        "env",
+        &[
+            "NIRI_COMPUTER_USE_KEYBOARD=native".into(),
+            server.into(),
+            "serve".into(),
+        ],
+        "harness-m7-killed-typing",
+        SERVER_DEADLINE,
+    )?;
+    structured(&client.call(session, "acquire_desktop", json!({}))?)?;
+    let offset = wev.offset()?;
+    client.start_call(
+        "type_text",
+        json!({"text": "A".repeat(1000), "expect": {"app_id": "wev"}}),
+    )?;
+    session.wait_until("m7-kill-key", "the first native key press", WAIT, |_| {
+        Ok(trace(&keyboard::since(wev.log, offset)?)?
+            .keys
+            .iter()
+            .any(|key| key.pressed)
+            .then_some(()))
+    })?;
+    client.stop()?;
+    let before_recover = keyboard::since(wev.log, offset)?;
+    let first = trace(&before_recover)?
+        .keys
+        .into_iter()
+        .find(|key| key.pressed)
+        .ok_or_else(|| Failure::new("M7 kill lacked an observed press"))?;
+    let recovery_offset = wev.offset()?;
+    recover(session, wev, server, offset)?;
+    let after = keyboard::since(wev.log, recovery_offset)?;
+    let observed = trace(&after)?;
+    if !observed
+        .keys
+        .iter()
+        .any(|key| key.code == first.code && !key.pressed)
+    {
+        return Err(Failure::new(
+            "M7 recover didn't release the original native code",
+        ));
+    }
+    session.log(&format!("M7 SIGKILL during native typing: original wev code {}, balanced final key state, zero modifiers, recovery gate retained until recover", first.code))
 }

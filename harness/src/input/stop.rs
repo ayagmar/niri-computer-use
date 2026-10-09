@@ -108,6 +108,12 @@ fn mid_typing(
             Ok((!wev::keyboard::trace(&seen)?.keys.is_empty()).then_some(()))
         })?;
         stop(session, server)?;
+        let ack_log = keyboard::since(wev.log, offset)?;
+        let at_ack = wev::keyboard::trace(&ack_log)?
+            .keys
+            .iter()
+            .filter(|key| key.pressed)
+            .count();
         let result = client.result(session, id)?;
         let stopped = field(&result, "/structuredContent/error") == "stopped";
         let seen = keyboard::observed(session, wev.log, offset, text.chars().count(), false)?;
@@ -116,7 +122,7 @@ fn mid_typing(
         resume(session, client, server)?;
         if stopped {
             return session.log(&format!(
-                "M4 stop mid-typing (attempt {attempt}): stopped, wtype typed all 100 characters, marker gone, lease taken again"
+                "M4 stop mid-typing (attempt {attempt}): stopped, wtype typed all 100 characters ({} after stop-command acknowledgement observation), marker gone, lease taken again", text.chars().count().saturating_sub(at_ack)
             ));
         }
         session.log(&format!(

@@ -6,6 +6,7 @@
 
 mod activation;
 mod crash;
+mod exposure;
 mod native;
 mod native_gestures;
 mod scrolling;
