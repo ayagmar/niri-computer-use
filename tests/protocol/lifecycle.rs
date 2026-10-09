@@ -139,9 +139,9 @@ const PROPERTIES: [(&str, usize); 15] = [
     ("focus_workspace", 2),
     ("close_window", 2),
     ("pointer_move", 4),
-    ("click", 6),
-    ("drag", 5),
-    ("scroll", 6),
+    ("click", 7),
+    ("drag", 6),
+    ("scroll", 7),
     ("key", 3),
     ("type_text", 4),
     ("shell_open", 2),
@@ -152,7 +152,7 @@ const PROPERTIES: [(&str, usize); 15] = [
 
 /// `(tool, JSON pointer into its properties, expected value)`: advertised defaults and
 /// bounds. Null means the field has no default.
-fn advertised() -> [(&'static str, &'static str, Value); 14] {
+fn advertised() -> [(&'static str, &'static str, Value); 17] {
     [
         ("screenshot", "/max_width/default", json!(1280)),
         ("screenshot", "/format/default", json!("jpeg")),
@@ -163,6 +163,9 @@ fn advertised() -> [(&'static str, &'static str, Value); 14] {
         ("click", "/count/minimum", json!(1)),
         ("click", "/count/maximum", json!(3)),
         ("drag", "/button/default", json!("left")),
+        ("click", "/keys/maxItems", json!(5)),
+        ("drag", "/keys/maxItems", json!(5)),
+        ("scroll", "/keys/maxItems", json!(5)),
         ("scroll", "/notches_y/default", json!(0)),
         ("key", "/keys/minItems", json!(1)),
         ("key", "/keys/maxItems", json!(16)),

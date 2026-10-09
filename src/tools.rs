@@ -293,6 +293,10 @@ const fn one() -> u8 {
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct ClickArgs {
+    /// Modifiers held through the gesture: shift, ctrl, alt, altgr, super. Native backend only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 5))]
+    keys: Vec<String>,
     /// The `screenshot_ref` of a screenshot taken under this lease, at most a minute old.
     screenshot_ref: String,
     /// The pixel's column in that image, from its left edge.
@@ -316,6 +320,10 @@ struct ClickArgs {
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct DragArgs {
+    /// Modifiers held through the gesture: shift, ctrl, alt, altgr, super. Native backend only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 5))]
+    keys: Vec<String>,
     /// The `screenshot_ref` of a screenshot taken under this lease, at most a minute old.
     screenshot_ref: String,
     /// Where to press, as a pixel of that image.
@@ -335,6 +343,10 @@ struct DragArgs {
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct ScrollArgs {
+    /// Modifiers held through the gesture: shift, ctrl, alt, altgr, super. Native backend only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 5))]
+    keys: Vec<String>,
     /// The `screenshot_ref` of a screenshot taken under this lease, at most a minute old.
     screenshot_ref: String,
     /// The pixel's column in that image, from its left edge.
@@ -680,6 +692,7 @@ impl Server {
         let aim = Aim {
             id: args.screenshot_ref,
             shoot: args.screenshot,
+            keys: Vec::new(),
         };
         self.point(&context, logged, aim, gesture).await
     }
@@ -710,6 +723,7 @@ impl Server {
         let aim = Aim {
             id: args.screenshot_ref,
             shoot: args.screenshot,
+            keys: args.keys,
         };
         self.point(&context, logged, aim, gesture).await
     }
@@ -737,6 +751,7 @@ impl Server {
         let aim = Aim {
             id: args.screenshot_ref,
             shoot: args.screenshot,
+            keys: args.keys,
         };
         self.point(&context, logged, aim, gesture).await
     }
@@ -766,6 +781,7 @@ impl Server {
         let aim = Aim {
             id: args.screenshot_ref,
             shoot: args.screenshot,
+            keys: args.keys,
         };
         self.point(&context, logged, aim, gesture).await
     }
@@ -1047,7 +1063,7 @@ impl Server {
                 policy: &self.policy,
                 keyboard: self.env.keyboard.as_deref(),
             };
-            pointer::point(input, self.desk.shot(&aim.id), gesture).await
+            pointer::point(input, self.desk.shot(&aim.id), gesture, &aim.keys).await
         };
         self.act(
             context,
@@ -1311,6 +1327,7 @@ struct Asked<'a> {
 struct Aim {
     id: String,
     shoot: bool,
+    keys: Vec<String>,
 }
 
 /// A keyboard tool's call: what to type, where, and whether it asked for a screenshot

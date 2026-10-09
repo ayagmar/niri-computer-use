@@ -721,6 +721,26 @@ async fn keyboard_tools_check_their_text_focus_and_app_before_typing() {
 }
 
 #[tokio::test]
+async fn held_pointer_keys_validate_before_any_input() {
+    let mut desk = Desk::start_backend("held-invalid", "", "native").await;
+    let id = screenshot_ref(&mut desk).await;
+    let result = desk
+        .server
+        .call(
+            "click",
+            json!({"screenshot_ref": id, "x": 10, "y": 10, "keys": ["hyper"]}),
+        )
+        .await;
+    assert!(mistake(&result).contains("unknown modifier"));
+    assert!(
+        !desk
+            .fixture
+            .path("run/niri-computer-use/niri.test/input-dirty")
+            .exists()
+    );
+}
+
+#[tokio::test]
 async fn native_selection_never_falls_back_to_wtype() {
     let mut desk = Desk::start_backend("native-no-fallback", "", "native").await;
     fake_wtype(&desk.fixture, "cat >/dev/null");

@@ -17,15 +17,7 @@ pub(crate) struct Key {
 }
 
 pub(super) fn resolve(map: &str, group: u32, typing: &Typing) -> Result<Vec<Key>, CallError> {
-    let context =
-        xkb::Context::new(xkb::CONTEXT_NO_DEFAULT_INCLUDES | xkb::CONTEXT_NO_ENVIRONMENT_NAMES);
-    let keymap = xkb::Keymap::new_from_string(
-        &context,
-        map.to_owned(),
-        xkb::KEYMAP_FORMAT_TEXT_V1,
-        xkb::KEYMAP_COMPILE_NO_FLAGS,
-    )
-    .ok_or_else(|| refused("the compositor supplied an invalid XKB keymap"))?;
+    let keymap = compile(map)?;
     if group >= keymap.num_layouts() {
         return Err(refused(
             "the active layout is absent from the compositor keymap",
@@ -66,7 +58,13 @@ fn combo_key(map: &xkb::Keymap, group: u32, combo: &str) -> Result<Key, CallErro
         group,
         xkb::keysym_from_name(keysym_name, xkb::KEYSYM_NO_FLAGS),
     )?;
-    for modifier in modifiers {
+    key.modifiers |= modifier_mask(map, &modifiers)?;
+    Ok(key)
+}
+
+fn modifier_mask(map: &xkb::Keymap, modifiers: &[&str]) -> Result<u32, CallError> {
+    let mut mask = 0;
+    for &modifier in modifiers {
         let name = match modifier {
             "shift" => xkb::MOD_NAME_SHIFT,
             "ctrl" => xkb::MOD_NAME_CTRL,
@@ -78,9 +76,25 @@ fn combo_key(map: &xkb::Keymap, group: u32, combo: &str) -> Result<Key, CallErro
         let bit = 1_u32
             .checked_shl(map.mod_get_index(name))
             .ok_or_else(|| refused("modifier absent from compositor keymap"))?;
-        key.modifiers |= bit;
+        mask |= bit;
     }
-    Ok(key)
+    Ok(mask)
+}
+
+pub(super) fn held_mask(map: &str, modifiers: &[&str]) -> Result<u32, CallError> {
+    modifier_mask(&compile(map)?, modifiers)
+}
+
+fn compile(map: &str) -> Result<xkb::Keymap, CallError> {
+    let context =
+        xkb::Context::new(xkb::CONTEXT_NO_DEFAULT_INCLUDES | xkb::CONTEXT_NO_ENVIRONMENT_NAMES);
+    xkb::Keymap::new_from_string(
+        &context,
+        map.to_owned(),
+        xkb::KEYMAP_FORMAT_TEXT_V1,
+        xkb::KEYMAP_COMPILE_NO_FLAGS,
+    )
+    .ok_or_else(|| refused("the compositor supplied an invalid XKB keymap"))
 }
 
 fn find(map: &xkb::Keymap, group: u32, sym: xkb::Keysym) -> Result<Key, CallError> {

@@ -35,8 +35,10 @@ pub(super) fn run(
     measure(session, &mut native, wev, "native")?;
     interruption(session, &mut native, wev, server, false)?;
     interruption(session, &mut native, wev, server, true)?;
-    structured(&native.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
-    native.stop()?;
+    super::native_gestures::normal(session, &mut native, wev)?;
+    super::native_gestures::interrupt(session, &mut native, wev, server, false)?;
+    super::native_gestures::interrupt(session, &mut native, wev, server, true)?;
+    super::native_gestures::crash(session, native, wev, server)?;
     structured(&owner.call(session, "acquire_desktop", json!({}))?)?;
     measure(session, owner, wev, "wtype")
 }

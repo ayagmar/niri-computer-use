@@ -2,6 +2,7 @@
 //! `keyboard`. Both refuse input to an app on the policy's deny list, and both write the
 //! input-dirty marker before anything that could leave input held.
 
+mod held;
 pub(crate) mod keyboard;
 mod keymap;
 mod native;

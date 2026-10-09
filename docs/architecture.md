@@ -170,6 +170,14 @@ Every action takes `screenshot`. `Desk::act` passes the outcome and a capture to
 3. If the marker names pointer buttons and no child, it doesn't look for `wtype` processes: the pointer runs inside the server, which is gone or no longer holds the lease. It sends the release of each button from a fresh virtual pointer bound to the output the marker names, or niri's first enabled output if that one is gone, the way C8 cleared a button a killed pointer left pressed. If that can't be sent, it asks the human to press and release each button instead.
 4. It prints the manual check (press and release Shift, Ctrl, Alt and Super, click once, check the application) and clears the marker only after the human types `yes`. Anything else, including end of input or a child that didn't exit, leaves the marker in place.
 
+## Experimental native keyboard
+
+`NIRI_COMPUTER_USE_KEYBOARD=native` selects `input/native.rs`; unset or `wtype` keeps the stdin-gated default. `niri/keyboard.rs` binds a version-7 seat (sealed, NUL-terminated keymaps), reads the keymap by offset rather than the inherited file cursor, and forwards the same map to `zwp_virtual_keyboard_v1`. The shared Wayland transport checks niri's peer PID and bounds every round trip to two seconds. libxkbcommon resolves direct symbols against the active layout; missing symbols refuse before input. Compose text and physical modifier preservation are not supported.
+
+Native sends and acknowledges one complete key pair at a time, with focus/layout and stop checked before each pair. Stop/cancel explicitly release any tracked key and zero modifiers; marker removal waits for acknowledgement. The marker's optional `keyboard` field records conservative evdev `codes` and `group`, never text. Recover validates them, sends releases from a fresh keyboard and still requires interactive confirmation. SIGKILL needs recover; it is not an automatic-release path.
+
+Native `keys` on click/drag/scroll holds modifier masks across the gesture. One marker includes both keyboard and pointer state. Normal completion acknowledges both; cancellation sends both releases immediately and acknowledges them in a cleanup task before clearing. A failure leaves the marker blocking input. No clipboard-preserving paste path exists yet.
+
 ## Version rule
 
 `niri-ipc` is pinned to `=26.4.0`. `status` compares niri's version reply, for example `26.04 (8ed0da4)`, with that pin: equal major and minor is `ok`, a different patch is `patch_warning`, and anything else, including a version that doesn't parse, is `read_only`.

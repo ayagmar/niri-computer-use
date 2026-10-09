@@ -7,6 +7,7 @@
 mod activation;
 mod crash;
 mod native;
+mod native_gestures;
 mod scrolling;
 mod stop;
 

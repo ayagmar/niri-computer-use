@@ -12,7 +12,10 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
-use super::{Input, focused_app_id};
+use super::{
+    Input, focused_app_id,
+    held::{self, Held},
+};
 use crate::act::{Observed, Outcome};
 use crate::control::marker::{Marker, Written};
 use crate::control::runtime::RuntimeDir;
@@ -201,8 +204,10 @@ pub(crate) async fn point(
     input: Input<'_>,
     shot: Result<Shot, ToolError>,
     gesture: Gesture,
+    keys: &[String],
 ) -> Result<Outcome, CallError> {
     gesture.check()?;
+    held::check(keys)?;
     let shot = shot?;
     let mut waiter = niri::waiter(input.niri.events).await?;
     if let Some(refused) = policy::refuse_input(input.policy, focused_app_id(waiter.view())) {
@@ -227,8 +232,9 @@ pub(crate) async fn point(
             "WAYLAND_DISPLAY or XDG_RUNTIME_DIR is not set",
         )
     })?;
+    let held = Held::prepare(input, waiter.view(), keys).await?;
     let pointer = Pointer::bind(display, niri::pid(socket).await?, &shot.output).await?;
-    let mut device = Device::new(pointer, input.runtime, gesture, &shot.output)?;
+    let mut device = Device::new(pointer, input.runtime, gesture, &shot.output, held)?;
     if let Err(error) = device.run(plan(gesture, &aimed)).await {
         // Nothing reached niri: an error like any other before input.
         if !device.sent() {
@@ -252,6 +258,7 @@ struct Device {
     /// Always there until the device is dropped.
     pointer: Option<Pointer>,
     marker: Option<Written>,
+    held: Option<Held>,
 }
 
 impl Device {
@@ -262,12 +269,14 @@ impl Device {
         runtime: &RuntimeDir,
         gesture: Gesture,
         output: &str,
+        held: Option<Held>,
     ) -> Result<Self, ToolError> {
-        let marker = gesture
-            .button()
-            .map(|button| {
-                let mut marker = Marker::pending(gesture.tool(), vec![button.code()]);
+        let marker = (gesture.button().is_some() || held.is_some())
+            .then(|| {
+                let buttons = gesture.button().into_iter().map(Button::code).collect();
+                let mut marker = Marker::pending(gesture.tool(), buttons);
                 marker.output = Some(output.to_owned());
+                marker.keyboard = held.as_ref().map(Held::marker);
                 Written::write(runtime, marker)
             })
             .transpose()
@@ -280,6 +289,7 @@ impl Device {
         Ok(Self {
             pointer: Some(pointer),
             marker,
+            held,
         })
     }
 
@@ -295,13 +305,20 @@ impl Device {
 
     /// Sends the planned steps and waits until niri has handled them.
     async fn run(&mut self, steps: Vec<Planned>) -> Result<(), ToolError> {
+        if let Some(held) = &mut self.held {
+            held.begin().await?;
+        }
         for planned in steps {
             match planned {
                 Planned::Send(step) => self.pointer()?.send(step)?,
                 Planned::Pause(pause) => tokio::time::sleep(pause).await,
             }
         }
-        self.pointer()?.sync().await
+        self.pointer()?.sync().await?;
+        if let Some(held) = &mut self.held {
+            held.released().await?;
+        }
+        Ok(())
     }
 
     /// Removes the marker after a gesture niri has handled whole.
@@ -322,25 +339,36 @@ impl Device {
 
 impl Drop for Device {
     fn drop(&mut self) {
-        let (Some(marker), Some(pointer)) = (self.marker.take(), self.pointer.take()) else {
+        let (Some(marker), Some(mut pointer)) = (self.marker.take(), self.pointer.take()) else {
             return;
         };
         // The release is sent now; waiting for niri to handle it needs the runtime, so a
         // task of its own does that and then removes the marker. Without a runtime, the
         // pointer's own drop still sends the release, and the marker stays.
-        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-            runtime.spawn(release(pointer, marker));
+        let mut held = self.held.take();
+        let keyboard_released = held.as_mut().is_none_or(Held::release_now);
+        let pointer_released = pointer.release_all();
+        if keyboard_released
+            && pointer_released
+            && let Ok(runtime) = tokio::runtime::Handle::try_current()
+        {
+            runtime.spawn(release(pointer, held, marker));
         }
     }
 }
 
 /// Releases what `pointer` still holds and removes `marker` once niri has handled it. If
 /// the marker can't be removed, it stays, and blocks input until `recover`.
-async fn release(mut pointer: Pointer, marker: Written) {
-    // Nothing pressed, as when the gesture failed before its press: nothing to wait for.
-    if !pointer.holding() || (pointer.release_all() && pointer.sync().await.is_ok()) {
-        marker.clear().ok();
+async fn release(mut pointer: Pointer, mut held: Option<Held>, marker: Written) {
+    if pointer.sync().await.is_err() {
+        return;
     }
+    if let Some(held) = &mut held
+        && held.released().await.is_err()
+    {
+        return;
+    }
+    marker.clear().ok();
 }
 
 #[cfg(test)]
