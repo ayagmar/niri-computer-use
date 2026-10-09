@@ -165,6 +165,7 @@ async fn outcome(
         focused_window,
         windows: Vec::new(),
         focus: None,
+        typed: None,
         shell,
         detail: None,
         screenshot: None,

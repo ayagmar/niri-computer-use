@@ -626,12 +626,12 @@ async fn keyboard_tools_check_their_text_focus_and_app_before_typing() {
         .server
         .call(
             "type_text",
-            json!({"text": "→".repeat(101), "expect": "none"}),
+            json!({"text": "→".repeat(1001), "expect": "none"}),
         )
         .await;
     let (name, detail) = tool_error(&long);
     assert_eq!(name, "text_too_long");
-    assert!(detail.starts_with("101 characters"), "{detail}");
+    assert!(detail.starts_with("1001 characters"), "{detail}");
 
     let combo = desk
         .server
@@ -671,7 +671,7 @@ async fn keyboard_tools_check_their_text_focus_and_app_before_typing() {
     assert_eq!(
         desk.audited(),
         [
-            json!(["type_text", {"text_len": 101, "expect": "none"}, null, null, "text_too_long"]),
+            json!(["type_text", {"text_len": 1001, "expect": "none"}, null, null, "text_too_long"]),
             json!(["key", {"combo": "hyper+a", "expect": "none"}, null, null, "invalid_arguments"]),
             json!(["key", {"combo": "ctrl+s", "expect": {"window_id": 2}}, null, null, "focus_mismatch"]),
             json!(["type_text", {"text_len": 6, "expect": {"app_id": "b"}}, null, null, "app_denied"]),
@@ -784,6 +784,71 @@ async fn type_text_feeds_wtype_behind_the_gate_and_clears_the_marker() {
         ]
     );
     assert_eq!(read("wtype.in"), "");
+}
+
+/// A fake wtype that appends stdin to `wtype.in` and one `x` per call to `wtype.calls`,
+/// then runs `then`.
+fn counting_wtype(fixture: &Fixture, then: &str) {
+    fixture.program(
+        "wtype",
+        &format!("cat >> \"$DIR/wtype.in\"\nprintf x >> \"$DIR/wtype.calls\"\n{then}"),
+    );
+}
+
+#[tokio::test]
+async fn long_text_is_typed_in_parts_of_a_hundred_characters() {
+    let mut desk = Desk::start("act-wtype-parts", "").await;
+    counting_wtype(&desk.fixture, "exit 0");
+    let text = "é→x".repeat(83) + "y";
+    let typed = desk
+        .server
+        .call(
+            "type_text",
+            json!({"text": text, "expect": {"app_id": "a"}}),
+        )
+        .await;
+    assert_eq!(
+        outcome(&typed),
+        json!({"accepted": true, "observed": "sent", "focused_window": 1, "focus": "matched"})
+    );
+    let read = |name: &str| std::fs::read_to_string(desk.fixture.path(name)).unwrap();
+    assert_eq!(read("wtype.in"), text);
+    assert_eq!(read("wtype.calls"), "xxx");
+    assert_eq!(
+        desk.audited(),
+        [json!(["type_text", {"text_len": 250, "expect": {"app_id": "a"}}, true, "sent", null])]
+    );
+}
+
+#[tokio::test]
+async fn focus_moving_during_a_part_stops_the_rest_of_the_text() {
+    let mut desk = Desk::start("act-wtype-moved", "").await;
+    // The first part waits for the test to move focus before it exits.
+    counting_wtype(
+        &desk.fixture,
+        "if [ ! -e \"$DIR/first\" ]; then : > \"$DIR/first\"; while [ ! -e \"$DIR/go\" ]; do sleep 0.05; done; fi",
+    );
+    let id = desk
+        .server
+        .start_call(
+            "type_text",
+            json!({"text": "a".repeat(250), "expect": {"window_id": 1}}),
+        )
+        .await;
+    while !desk.fixture.path("first").exists() {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    focus_changed(&desk.stream, 2);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    std::fs::write(desk.fixture.path("go"), "").unwrap();
+    let result = desk.server.response(id).await["result"].clone();
+    assert_eq!(
+        outcome(&result),
+        json!({"accepted": true, "observed": "interrupted", "focused_window": 2, "focus": "matched", "typed": 100})
+    );
+    let read = |name: &str| std::fs::read_to_string(desk.fixture.path(name)).unwrap();
+    assert_eq!(read("wtype.in"), "a".repeat(100));
+    assert_eq!(read("wtype.calls"), "x");
 }
 
 #[tokio::test]

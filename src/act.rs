@@ -76,6 +76,10 @@ pub(crate) struct Outcome {
     /// Keyboard tools: whether `expect` was checked.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) focus: Option<Focus>,
+    /// `type_text`: the characters sent before it stopped early; absent when it typed all
+    /// of the text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) typed: Option<usize>,
     /// Shell tools: Noctalia's open panel when the observation ended.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) shell: Option<shell::Shell>,
@@ -106,6 +110,7 @@ impl Outcome {
             focused_window: view.focused_window(),
             windows,
             focus: None,
+            typed: None,
             shell: None,
             detail: None,
             screenshot: None,
@@ -120,6 +125,7 @@ impl Outcome {
             focused_window: view.and_then(View::focused_window),
             windows: Vec::new(),
             focus: None,
+            typed: None,
             shell: None,
             detail: Some(detail),
             screenshot: None,

@@ -134,7 +134,7 @@ The pointer counts a press as held as soon as it is sent and a release only once
 
 ## Keyboard input
 
-`key` and `type_text` run through `Desk::act`. The work, in `input/keyboard.rs`, refuses text over 100 Unicode scalar values (`text_too_long`), reads the combination into wtype's arguments, checks `expect` against the waiter's focused window (`focus_mismatch`) and the deny list (`app_denied`), then makes one `wtype` call:
+`key` and `type_text` run through `Desk::act`. The work, in `input/keyboard.rs`, refuses text over 1000 Unicode scalar values (`text_too_long`), reads the combination into wtype's arguments, checks `expect` against the waiter's focused window (`focus_mismatch`) and the deny list (`app_denied`), then makes one `wtype` call for `key`, and one per part of 100 scalar values for `type_text`:
 
 1. It writes the input-dirty marker, `pending`, naming the tool.
 2. `runner::gated` starts `wtype -` (with `-M <modifier> -k <key> -m <modifier>` after it for `key`) with stdin as a pipe, in a process group of its own. wtype runs its arguments in order, so it waits at `-` before sending anything (C5).
@@ -143,7 +143,7 @@ The pointer counts a press as held as soon as it is sent and a release only once
 
 The task holds wtype, so a stop or a cancelled request, which drops the tool's work, doesn't end a wtype that is already typing: it finishes, and the marker comes off, within its deadline (plan §11). If the server exits, the runtime drops the task and wtype's group is killed, and the marker stays.
 
-The waiter was registered before wtype started, so after wtype exits, the work applies every event niri has sent since: if focus was on another window at any point, the result is `interrupted`, otherwise `sent`, with `focus` saying whether `expect` was checked. If the event stream was lost meanwhile, it is `uncertain` with `accepted: true`: the keys were typed, but where focus went is unknown. The pointer tools report a stream lost after their input the same way.
+The waiter was registered before wtype started, so after each wtype exits, the work applies every event niri has sent since: if focus was on another window at any point, the result is `interrupted`, otherwise the next part goes out, and after the last one the result is `sent`, with `focus` saying whether `expect` was checked. If the event stream was lost meanwhile, it is `uncertain` with `accepted: true`: the keys were typed, but where focus went is unknown. A result that ends before the last part carries `typed`, the scalar values sent, and a part that fails prefixes its error's detail with the same count, so the agent knows not to press Enter on half a message. The pointer tools report a stream lost after their input the same way.
 
 ## The input-dirty marker and `recover`
 

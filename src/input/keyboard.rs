@@ -1,5 +1,5 @@
-//! The keyboard tools' work (plan §6, §11): `key` and `type_text`, each one `wtype` call
-//! behind the stdin gate. `wtype -` waits at its open stdin before it sends anything, so
+//! The keyboard tools' work (plan §6, §11): `key` as one `wtype` call and `type_text` as
+//! one per part of at most 100 characters, each behind the stdin gate. `wtype -` waits at its open stdin before it sends anything, so
 //! the input-dirty marker names its PID before any key goes out.
 //!
 //! The call runs in a task of its own: a stop or a cancelled request drops the tool's
@@ -26,8 +26,10 @@ use super::Input;
 /// Plan §6: about 0.4 s of wtype's sleeps at the 100-character cap, and C10's slowest
 /// run of the corpus at well under half of this.
 const WTYPE_DEADLINE: Duration = Duration::from_secs(3);
-/// Counted in Unicode scalar values, as wtype batches them.
-const MAX_TEXT: usize = 100;
+/// One `wtype` call's text, counted in Unicode scalar values, as wtype batches them.
+const MAX_PART: usize = 100;
+/// Ten parts, each with its own deadline: under fifteen seconds at C10's slowest rate.
+const MAX_TEXT: usize = 1000;
 /// wtype prints nothing on success.
 const MAX_STDOUT: u64 = 64 * 1024;
 /// wtype decodes stdin with the locale's `mbstowcs`; outside a UTF-8 locale it stops at
@@ -117,11 +119,32 @@ impl Typing {
         if length > MAX_TEXT {
             return Err(ToolError::new(
                 ErrorName::TextTooLong,
-                format!("{length} characters; at most {MAX_TEXT} per call, so split the text"),
+                format!("{length} characters; at most {MAX_TEXT} per call, so split the text; nothing was typed"),
             )
             .into());
         }
         Ok(())
+    }
+
+    /// What each `wtype` call types: a key whole, text in parts of at most `MAX_PART`
+    /// characters.
+    fn parts(&self) -> Vec<Self> {
+        let Self::Text(text) = self else {
+            return vec![self.clone()];
+        };
+        let chars: Vec<char> = text.chars().collect();
+        chars
+            .chunks(MAX_PART)
+            .map(|part| Self::Text(part.iter().collect()))
+            .collect()
+    }
+
+    /// Characters a text sends; a key counts as one.
+    fn len(&self) -> usize {
+        match self {
+            Self::Key(_) => 1,
+            Self::Text(text) => text.chars().count(),
+        }
     }
 }
 
@@ -180,8 +203,9 @@ fn check_expect(expect: &Expect, view: &View) -> Result<Focus, ToolError> {
     ))
 }
 
-/// Types `typing` with one `wtype` call. `observed` is `sent` once wtype has exited, or
-/// `interrupted` when focus moved off the window that had it at any point meanwhile.
+/// Types `typing`, one `wtype` call per part. `observed` is `sent` once every part was
+/// typed, or `interrupted` when focus moved off the window that had it; then the parts
+/// after that one aren't typed, and `typed` says how many characters were sent.
 pub(crate) async fn type_input(
     input: Input<'_>,
     typing: Typing,
@@ -196,22 +220,50 @@ pub(crate) async fn type_input(
         return Err(refused.into());
     }
     let before = waiter.view().focused_window();
-    run_wtype(input.runtime, &typing, args).await?;
-    let moved = waiter
-        .until(Duration::ZERO, |view| {
-            (view.focused_window() != before).then_some(())
-        })
-        .await;
-    let outcome = match moved {
-        Waited::Done(()) => Outcome::seen(Observed::Interrupted, waiter.view(), Vec::new()),
-        Waited::Timeout => Outcome::seen(Observed::Sent, waiter.view(), Vec::new()),
-        // wtype typed, but where focus went meanwhile is unknown.
-        Waited::Lost(reason) => Outcome::uncertain(Some(true), Some(waiter.view()), reason),
-    };
-    Ok(Outcome {
+    let total = typing.len();
+    let mut typed = 0;
+    for part in typing.parts() {
+        run_wtype(input.runtime, &part, args.clone())
+            .await
+            .map_err(|error| partly(error, typed, total))?;
+        typed += part.len();
+        let moved = waiter
+            .until(Duration::ZERO, |view| {
+                (view.focused_window() != before).then_some(())
+            })
+            .await;
+        let outcome = match moved {
+            Waited::Timeout => continue,
+            Waited::Done(()) => Outcome::seen(Observed::Interrupted, waiter.view(), Vec::new()),
+            // wtype typed, but where focus went meanwhile is unknown.
+            Waited::Lost(reason) => Outcome::uncertain(Some(true), Some(waiter.view()), reason),
+        };
+        return Ok(ended(outcome, focus, typed, total));
+    }
+    let sent = Outcome::seen(Observed::Sent, waiter.view(), Vec::new());
+    Ok(ended(sent, focus, typed, total))
+}
+
+fn ended(outcome: Outcome, focus: Focus, typed: usize, total: usize) -> Outcome {
+    Outcome {
         focus: Some(focus),
+        typed: (typed < total).then_some(typed),
         ..outcome
-    })
+    }
+}
+
+/// A part's failure, saying how much of the text went out before it.
+fn partly(error: ToolError, typed: usize, total: usize) -> ToolError {
+    if typed == 0 {
+        return error;
+    }
+    ToolError::new(
+        error.name,
+        format!(
+            "typed {typed} of {total} characters before this: {}",
+            error.detail
+        ),
+    )
 }
 
 /// Writes the marker, starts wtype behind the gate, records its PID, then feeds it in a
@@ -357,20 +409,33 @@ mod tests {
     #[test]
     fn text_is_capped_in_scalar_values() {
         let text = |text: &str| Typing::Text(text.to_owned()).check_length();
-        assert!(text(&"é".repeat(100)).is_ok());
-        let long = text(&"→".repeat(101)).unwrap_err();
+        assert!(text(&"é".repeat(1000)).is_ok());
+        let long = text(&"→".repeat(1001)).unwrap_err();
         let CallError::Tool(error) = long else {
             panic!("{long:?}")
         };
         assert_eq!(error.name, ErrorName::TextTooLong);
         assert!(
-            error.detail.starts_with("101 characters"),
+            error.detail.starts_with("1001 characters"),
             "{}",
             error.detail
         );
         assert!(matches!(text(""), Err(CallError::InvalidArguments(_))));
         assert_eq!(Typing::Text("é".to_owned()).stdin(), "é".as_bytes());
         assert_eq!(Typing::Key("a".to_owned()).stdin(), b"");
+    }
+
+    #[test]
+    fn long_text_goes_out_in_parts_of_a_hundred_characters() {
+        let parts = Typing::Text("é".repeat(250)).parts();
+        let lengths: Vec<usize> = parts.iter().map(Typing::len).collect();
+        assert_eq!(lengths, [100, 100, 50]);
+        let joined: String = parts
+            .iter()
+            .map(|part| String::from_utf8(part.stdin()).unwrap())
+            .collect();
+        assert_eq!(joined, "é".repeat(250));
+        assert_eq!(Typing::Key("ctrl+s".to_owned()).parts().len(), 1);
     }
 
     #[test]

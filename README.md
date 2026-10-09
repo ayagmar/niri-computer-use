@@ -38,7 +38,7 @@ target/debug/niri-computer-use status
 | `launch` | starts a preset from the policy file and reports the new windows with its `app_id`; with `reuse`, focuses its one existing window instead |
 | `close_window` | asks a window to close and reports `closed`, or `pending` if it is still open after five seconds, for example behind an unsaved-changes dialog |
 | `pointer_move`, `click`, `drag`, `scroll` | move, click, drag or turn the wheel at pixels of a screenshot taken under the lease, through a virtual pointer bound to that screenshot's output |
-| `key`, `type_text` | press a key combination or type up to 100 characters into the focused app with `wtype`, after checking that focus is where the agent expects |
+| `key`, `type_text` | press a key combination or type up to 1000 characters into the focused app with `wtype`, 100 per call, after checking that focus is where the agent expects |
 | `shell_open`, `shell_close` | open or close a Noctalia panel, only `control-center`, `wallpaper` or `tray-drawer`, and report whether Noctalia shows it open. Only listed when `noctalia` is on `PATH` |
 
 The action, input and shell tools require the lease and check the stop flag, the input-dirty marker and the lock state again before each action; a stop cancels the running one. Each result has `accepted`, whether niri or Noctalia took the request, and `observed`, what niri's event stream or Noctalia's status showed afterwards, including `interrupted` when focus went elsewhere during the wait and `uncertain` when the reply was lost; for input, `sent` once niri handled it. An outcome in doubt comes with a fresh screenshot of the focused output. Nothing is retried.

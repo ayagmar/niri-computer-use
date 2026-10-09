@@ -586,9 +586,13 @@ impl Server {
             .await
     }
 
-    /// Types text into the focused app, at most 100 characters per call. `expect`, the
-    /// results and the refusals are as for `key`; text over the limit is refused with
-    /// `text_too_long`. The text is never logged. Requires the lease.
+    /// Types text into the focused app, up to 1000 characters, sent in parts of 100.
+    /// `expect`, the results and the refusals are as for `key`. If focus moves during a
+    /// part, the rest isn't typed: `observed` is `interrupted` and `typed` counts the
+    /// characters sent. A failed call's detail says how much was typed before it; text
+    /// over the limit is refused with `text_too_long` and nothing is typed. Don't press
+    /// Enter to send text until every part went out. The text is never logged. Requires
+    /// the lease.
     #[tool(annotations(
         read_only_hint = false,
         destructive_hint = true,

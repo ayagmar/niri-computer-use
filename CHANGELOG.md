@@ -29,4 +29,5 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
+- `type_text` takes up to 1000 characters and types them in parts of 100, stopping with `interrupted` and a `typed` count if focus moves between parts.
 - The project is renamed from `niri-desktop-mcp` to `niri-computer-use`, including the binary, the MCP server's name and the audit log's directory.

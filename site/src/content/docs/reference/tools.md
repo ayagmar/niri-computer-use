@@ -26,7 +26,7 @@ A failure sets `isError` and returns `{"error": <name>, "detail": <upstream deta
 | `untested_output_config` | a pointer tool while niri's outputs are a setup no live test covers; `detail` lists the enabled outputs and their transforms |
 | `app_denied` | input while the focused window's `app_id` is on the policy file's `deny_input_app_ids` |
 | `focus_mismatch` | a keyboard tool's `expect` doesn't match the window with keyboard focus; `detail` says what has focus |
-| `text_too_long` | `type_text` with over 100 characters; `detail` gives the length |
+| `text_too_long` | `type_text` with over 1000 characters; `detail` gives the length and says nothing was typed |
 | `panel_not_allowed` | `shell_open` or `shell_close` named a panel other than `control-center`, `wallpaper` or `tray-drawer` |
 
 A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and one plain-text block starting `invalid arguments:`, without `structuredContent`, so the model can correct the call.
@@ -242,9 +242,9 @@ Moves to the pixel and turns the wheel by whole notches, the vertical axis first
 
 ## Keyboard tools
 
-`key` and `type_text` type into the app with keyboard focus through one `wtype` call each. The keys go to the app, not to niri: niri's own keybinds don't fire from them. They run through the same gate as the other action tools, then check, before anything is typed:
+`key` types into the app with keyboard focus through one `wtype` call, and `type_text` through one `wtype` call per part of 100 characters. The keys go to the app, not to niri: niri's own keybinds don't fire from them. They run through the same gate as the other action tools, then check, before anything is typed:
 
-1. the arguments: `type_text` refuses over 100 characters, counted as Unicode scalar values, with `text_too_long`, and an empty text or a combination it can't read is an argument mistake
+1. the arguments: `type_text` refuses over 1000 characters, counted as Unicode scalar values, with `text_too_long`, and an empty text or a combination it can't read is an argument mistake
 2. `expect` against the window with keyboard focus: `focus_mismatch` when it doesn't match. A lock screen, the overview or a shell panel leaves no window focused, so only `"none"` types there
 3. the focused window: `app_denied` if its `app_id` is on the policy's deny list
 
@@ -273,5 +273,7 @@ Presses the modifiers, presses and releases the key, then releases the modifiers
 
 | Argument | Value |
 |---|---|
-| `text` (required) | 1 to 100 characters |
+| `text` (required) | 1 to 1000 characters |
 | `expect` (required) | see above |
+
+The text goes out in parts of 100 characters, one `wtype` call each, and after each part the server checks that keyboard focus is still on the window it started on. If focus moved, the rest isn't typed: `observed` is `interrupted` and `typed` gives the number of characters sent. A part that fails ends the call with that error, its `detail` starting with how many characters were typed before it. A result without `typed` means the whole text went out.
