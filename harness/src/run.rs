@@ -36,6 +36,8 @@ const NOCTALIA_VALID: &str = "\u{2713} Config is valid\n";
 #[derive(Debug, Clone)]
 pub(crate) struct Options {
     pub(crate) scale: Scale,
+    /// Draw on the host only for an explicitly requested human sitting.
+    pub(crate) visible: bool,
     /// Start Noctalia in the nested session and run C13 through `niri-computer-use`.
     pub(crate) noctalia: bool,
     /// Run the supervised sitting (C6, C7, C9) at the human's pace.
@@ -188,12 +190,30 @@ fn run_nested(
     options: &Options,
     log: &mut Log,
 ) -> Result<()> {
-    let env = preflight(host, test_dir, artifacts, options)?;
+    let display = if options.visible {
+        host.visible_socket()?
+    } else {
+        test_dir.root().join("cage/wayland-0")
+    };
+    let env = preflight(host, test_dir, artifacts, options, &display)?;
     log.line("stage 0, preflight: pass")?;
-
-    let before = snapshot::take(host)?;
+    let cage = if options.visible {
+        None
+    } else {
+        Some(crate::headless::Headless::start(
+            test_dir.root(),
+            &env,
+            artifacts,
+            deadline(options) + VALIDATE_DEADLINE,
+        )?)
+    };
+    if cage.is_some() {
+        log.line("headless cage: isolated; host snapshots skipped")?;
+    }
+    let before = options.visible.then(|| snapshot::take(host)).transpose()?;
     let nested = start_nested(&env, test_dir, artifacts, options);
-    let after = snapshot::take(host);
+    let after = options.visible.then(|| snapshot::take(host));
+    let cleanup = cage.map_or(Ok(()), crate::headless::Headless::stop);
     for line in fs::read_to_string(artifacts.join(supervise::LOG_FILE))
         .unwrap_or_default()
         .lines()
@@ -202,7 +222,11 @@ fn run_nested(
     }
     // Compared before the nested result is checked, so a failed run still reports what
     // changed on the host.
-    let c1 = snapshot::report(log, &before, after);
+    let c1 = match (before, after) {
+        (Some(before), Some(after)) => snapshot::report(log, &before, after),
+        _ => Ok(()),
+    };
+    cleanup?;
     nested?;
     log.line("stages 1-2, nested niri and private bus: pass")?;
     c1
@@ -210,13 +234,19 @@ fn run_nested(
 
 /// Stage 0: generated configs, PARENT, containment, `niri validate`, and with Noctalia,
 /// `noctalia config validate`.
-fn preflight(host: &Host, test_dir: &TestDir, artifacts: &Path, options: &Options) -> Result<Env> {
+fn preflight(
+    host: &Host,
+    test_dir: &TestDir,
+    artifacts: &Path,
+    options: &Options,
+    display: &Path,
+) -> Result<Env> {
     let niri_config = config::niri(options.scale, &test_dir.bind_marker());
     write(&test_dir.niri_config(), &niri_config)?;
     write(&artifacts.join("niri.kdl"), &niri_config)?;
     write(&test_dir.dbus_config(), &config::dbus(&test_dir.run()))?;
 
-    let env = environment::parent(test_dir, host);
+    let env = environment::parent(test_dir, host, display);
     environment::check_containment(&env, test_dir)?;
     runner::run(&Invocation {
         program: "niri",
@@ -304,12 +334,7 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: &Optio
         env: ChildEnv::Exact(env),
         output: Sink::File(artifacts.join("niri.log")),
         group: Group::Own,
-        deadline: match (options.sitting, options.server, &options.eval) {
-            (true, _, _) => crate::sitting::RUN_DEADLINE,
-            (false, Some(checks), _) => checks.deadline(),
-            (false, None, Some(_)) => EVAL_DEADLINE,
-            (false, None, None) => NESTED_DEADLINE,
-        },
+        deadline: deadline(options),
     })?;
     let status_path = artifacts.join(supervise::STATUS_FILE);
     let status = fs::read_to_string(&status_path)
@@ -318,6 +343,15 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: &Optio
         Ok(())
     } else {
         Err(Failure::new(format!("supervisor: {status}")))
+    }
+}
+
+const fn deadline(options: &Options) -> Duration {
+    match (options.sitting, options.server, &options.eval) {
+        (true, _, _) => crate::sitting::RUN_DEADLINE,
+        (false, Some(checks), _) => checks.deadline(),
+        (false, None, Some(_)) => EVAL_DEADLINE,
+        (false, None, None) => NESTED_DEADLINE,
     }
 }
 

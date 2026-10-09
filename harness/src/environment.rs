@@ -40,7 +40,6 @@ const CONTAINED: [&str; 8] = [
 #[derive(Debug)]
 pub(crate) struct Host {
     pub(crate) runtime_dir: PathBuf,
-    pub(crate) wayland_socket: PathBuf,
     home: OsString,
     path: OsString,
     lang: Option<OsString>,
@@ -49,23 +48,24 @@ pub(crate) struct Host {
 impl Host {
     pub(crate) fn from_env() -> Result<Self> {
         let runtime_dir = PathBuf::from(required("XDG_RUNTIME_DIR")?);
-        let wayland_socket = runtime_dir.join(required("WAYLAND_DISPLAY")?);
-        let file_type = fs::metadata(&wayland_socket)
-            .context(format!("host Wayland socket {}", wayland_socket.display()))?
-            .file_type();
-        if !file_type.is_socket() {
-            return Err(Failure::new(format!(
-                "host Wayland socket {} is not a socket",
-                wayland_socket.display()
-            )));
-        }
         Ok(Self {
             runtime_dir,
-            wayland_socket,
             home: required("HOME")?,
             path: required("PATH")?,
             lang: env::var_os("LANG"),
         })
+    }
+
+    pub(crate) fn visible_socket(&self) -> Result<PathBuf> {
+        let socket = self.runtime_dir.join(required("WAYLAND_DISPLAY")?);
+        if !fs::metadata(&socket)
+            .context(format!("host Wayland socket {}", socket.display()))?
+            .file_type()
+            .is_socket()
+        {
+            return Err(Failure::new("host Wayland display is not a socket"));
+        }
+        Ok(socket)
     }
 
     pub(crate) fn home(&self) -> &Path {
@@ -79,7 +79,7 @@ fn required(name: &str) -> Result<OsString> {
 
 /// Builds PARENT. `NIRI_SOCKET`, `WAYLAND_SOCKET`, `DISPLAY`, `XDG_SESSION_ID` and
 /// `DBUS_SESSION_BUS_ADDRESS` are left out, as is everything else not listed here.
-pub(crate) fn parent(test_dir: &TestDir, host: &Host) -> Env {
+pub(crate) fn parent(test_dir: &TestDir, host: &Host, display: &Path) -> Env {
     let mut env = Env::from([
         ("XDG_RUNTIME_DIR", test_dir.run().into_os_string()),
         ("XDG_STATE_HOME", test_dir.state().into_os_string()),
@@ -98,7 +98,7 @@ pub(crate) fn parent(test_dir: &TestDir, host: &Host) -> Env {
             "NOCTALIA_DATA_HOME",
             test_dir.data().join("noctalia").into_os_string(),
         ),
-        (HOST_SOCKET, host.wayland_socket.clone().into_os_string()),
+        (HOST_SOCKET, display.as_os_str().to_owned()),
         (SYSTEM_BUS, test_dir.system_bus_address()),
         ("HOME", host.home.clone()),
         ("PATH", host.path.clone()),
@@ -183,7 +183,6 @@ mod tests {
     fn host() -> Host {
         Host {
             runtime_dir: PathBuf::from("/run/user/1000"),
-            wayland_socket: PathBuf::from("/run/user/1000/wayland-1"),
             home: OsString::from("/home/u"),
             path: OsString::from("/usr/bin"),
             lang: Some(OsString::from("C.UTF-8")),
@@ -200,7 +199,7 @@ mod tests {
     #[test]
     fn parent_leaves_out_host_endpoints() {
         let (test_dir, base) = test_dir("parent");
-        let env = parent(&test_dir, &host());
+        let env = parent(&test_dir, &host(), Path::new("/fake/wayland-1"));
         for name in [
             "NIRI_SOCKET",
             "WAYLAND_SOCKET",
@@ -217,18 +216,18 @@ mod tests {
     #[test]
     fn containment_rejects_unknown_and_escaping_variables() {
         let (test_dir, base) = test_dir("containment");
-        let mut stray = parent(&test_dir, &host());
+        let mut stray = parent(&test_dir, &host(), Path::new("/fake/wayland-1"));
         stray.insert(
             "NIRI_SOCKET",
             test_dir.run().join("niri.sock").into_os_string(),
         );
         assert!(check_containment(&stray, &test_dir).is_err());
 
-        let mut escaping = parent(&test_dir, &host());
+        let mut escaping = parent(&test_dir, &host(), Path::new("/fake/wayland-1"));
         escaping.insert("XDG_CONFIG_HOME", OsString::from("/home/u/.config"));
         assert!(check_containment(&escaping, &test_dir).is_err());
 
-        let mut system_bus = parent(&test_dir, &host());
+        let mut system_bus = parent(&test_dir, &host(), Path::new("/fake/wayland-1"));
         system_bus.insert(
             SYSTEM_BUS,
             OsString::from("unix:path=/run/dbus/system_bus_socket"),
@@ -240,12 +239,12 @@ mod tests {
         );
         assert!(check_containment(&system_bus, &test_dir).is_err());
 
-        let listening = parent(&test_dir, &host());
+        let listening = parent(&test_dir, &host(), Path::new("/fake/wayland-1"));
         fs::write(test_dir.system_bus(), "").unwrap();
         assert!(check_containment(&listening, &test_dir).is_err());
         fs::remove_file(test_dir.system_bus()).unwrap();
 
-        let mut relative = parent(&test_dir, &host());
+        let mut relative = parent(&test_dir, &host(), Path::new("/fake/wayland-1"));
         relative.insert(HOST_SOCKET, OsString::from("wayland-1"));
         assert!(check_containment(&relative, &test_dir).is_err());
         fs::remove_dir_all(base).unwrap();

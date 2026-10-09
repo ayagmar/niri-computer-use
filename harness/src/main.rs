@@ -7,6 +7,7 @@ mod control;
 mod environment;
 mod eval;
 mod failure;
+mod headless;
 mod image;
 #[path = "../../src/image_header.rs"]
 mod image_header;
@@ -39,7 +40,7 @@ use scale::Scale;
 use supervise::Probes;
 use test_dir::TestDir;
 
-const USAGE: &str = "usage: harness run [--scale <scale>] [--noctalia | --sitting | --control | --actions | --input | --shell | --eval <scenario> --skill <dir|none> --model <model>]
+const USAGE: &str = "usage: harness run [--visible] [--scale <scale>] [--noctalia | --sitting | --control | --actions | --input | --shell | --eval <scenario> --skill <dir|none> --model <model>]
        harness host-capture <output>
        harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--started <file>]
        harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --eval <server> <scenario> <skill|none> <model>]";
@@ -110,6 +111,7 @@ fn dispatch(args: &[OsString]) -> Result<()> {
 fn run_options(args: &[&str]) -> Result<run::Options> {
     let mut options = run::Options {
         scale: Scale::ONE,
+        visible: false,
         noctalia: false,
         sitting: false,
         server: None,
@@ -122,6 +124,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
             "--scale" => {
                 options.scale = args.next().ok_or_else(|| Failure::new(USAGE))?.parse()?;
             }
+            "--visible" => options.visible = true,
             "--noctalia" => options.noctalia = true,
             "--sitting" => options.sitting = true,
             "--control" | "--actions" | "--input" | "--shell" => {
@@ -148,6 +151,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
             "--sitting, --noctalia, --control, --actions, --input, --shell and --eval cannot be combined",
         ));
     }
+    options.visible |= options.sitting;
     Ok(options)
 }
 
@@ -177,6 +181,21 @@ fn eval_options(scenario: &str, skill: &str, model: &str) -> Result<eval::Option
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_runs_are_headless_unless_visibility_is_explicit() {
+        for args in [
+            &[][..],
+            &["--input"],
+            &["--actions"],
+            &["--shell"],
+            &["--control"],
+        ] {
+            assert!(!run_options(args).unwrap().visible);
+        }
+        assert!(run_options(&["--visible", "--input"]).unwrap().visible);
+        assert!(run_options(&["--sitting"]).unwrap().visible);
+    }
 
     #[test]
     fn supervise_takes_one_flag_and_the_server() {

@@ -1,6 +1,7 @@
 .PHONY: check lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-eval sitting host-capture
 
 SCALE ?= 1
+NESTED_FLAGS = $(if $(VISIBLE),--visible)
 
 check:
 	cargo fmt --check
@@ -27,28 +28,28 @@ inspect-check:
 
 nested:
 	cargo build --locked -p niri-computer-use
-	cargo run --locked -p harness -- run --scale $(SCALE) $(if $(NOCTALIA),--noctalia)
+	cargo run --locked -p harness -- run $(NESTED_FLAGS) --scale $(SCALE) $(if $(NOCTALIA),--noctalia)
 
 nested-control:
 	cargo build --locked -p niri-computer-use
-	cargo run --locked -p harness -- run --control
+	cargo run --locked -p harness -- run $(NESTED_FLAGS) --control
 
 nested-actions:
 	cargo build --locked -p niri-computer-use
-	cargo run --locked -p harness -- run --actions
+	cargo run --locked -p harness -- run $(NESTED_FLAGS) --actions
 
 nested-input:
 	cargo build --locked -p niri-computer-use
-	cargo run --locked -p harness -- run --scale $(SCALE) --input
+	cargo run --locked -p harness -- run $(NESTED_FLAGS) --scale $(SCALE) --input
 
 nested-shell:
 	cargo build --locked -p niri-computer-use
-	cargo run --locked -p harness -- run --shell
+	cargo run --locked -p harness -- run $(NESTED_FLAGS) --shell
 
 # One skill eval in the nested niri: make nested-eval SCENARIO=compose-message SKILL=skills/niri-computer-use MODEL=sonnet
 nested-eval:
 	cargo build --locked -p niri-computer-use
-	cargo run --locked -p harness -- run --eval $(SCENARIO) --skill $(SKILL) --model $(MODEL)
+	cargo run --locked -p harness -- run $(NESTED_FLAGS) --eval $(SCENARIO) --skill $(SKILL) --model $(MODEL)
 
 host-capture:
 	cargo run --locked -p harness -- host-capture $(OUTPUT)
