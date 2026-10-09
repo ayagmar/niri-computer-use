@@ -15,7 +15,8 @@
 | `niri/version.rs` | The version rule (pure). |
 | `policy.rs` | The policy file, its presets, the decision whether this server may take the lease or act, and which output setups the pointer may run on (pure, apart from reading the file). |
 | `status.rs` | Builds the readiness report shared by the tool and the subcommand. |
-| `input.rs` | The pointer tools' work: the checks before input, the steps of each gesture, and the marker around a button press. |
+| `input.rs` | What the input tools share: their context and the focused window's `app_id`. |
+| `input/pointer.rs` | The pointer tools' work: the checks before input, the steps of each gesture, and the marker around a button press. |
 | `input/keyboard.rs` | `key` and `type_text`: the `expect` check and one gated `wtype` call with the marker's two phases. |
 | `coords.rs` | The coordinate contract (pure): image pixel to `motion_absolute`, checked against niri's own mapping. |
 | `observe.rs` | Screenshots: picks the output, plans grim's arguments and the image size they must produce, and checks the result. |
@@ -118,7 +119,7 @@ An outcome in doubt, `timeout`, `pending`, `none`, `interrupted` or `uncertain`,
 
 ## Pointer input
 
-`pointer_move`, `click`, `drag` and `scroll` run through `Desk::act` like the other actions. The work, in `input.rs`, then checks the arguments, looks the ref up, refuses with `app_denied` when the focused window's `app_id` is on the policy's deny list (`policy::refuse_input`), requests niri's outputs and refuses with `untested_output_config` unless `policy::pointer_support` accepts them, and maps every pixel through the ref (`refs::Shot::aim`). A ref is refused past 60 seconds, when the event stream's connection differs from the one at capture, when its output's logical geometry, scale or transform differs from niri's answer just now, and for a pixel outside the image.
+`pointer_move`, `click`, `drag` and `scroll` run through `Desk::act` like the other actions. The work, in `input/pointer.rs`, then checks the arguments, looks the ref up, refuses with `app_denied` when the focused window's `app_id` is on the policy's deny list (`policy::refuse_input`), requests niri's outputs and refuses with `untested_output_config` unless `policy::pointer_support` accepts them, and maps every pixel through the ref (`refs::Shot::aim`). A ref is refused past 60 seconds, when the event stream's connection differs from the one at capture, when its output's logical geometry, scale or transform differs from niri's answer just now, and for a pixel outside the image.
 
 The mapping is in `coords.rs`, with a type for each space: `ImagePx` (a pixel, which targets its centre) → `LayoutPt` (divide by the capture scale, add the captured rectangle's origin) → `OutputLocalPt` (subtract the output's origin) → the output's untransformed space (the inverse of niri's transform, written out per transform) → `ProtocolPt`, the `motion_absolute` arguments with extents of the untransformed logical size times 1000, clamped inside the output. Each encoded point is pushed back through a port of niri's forward formula (`compute_absolute_location` at v26.04) and refused if it would land more than 0.002 logical pixels away, which only a point off the output does.
 

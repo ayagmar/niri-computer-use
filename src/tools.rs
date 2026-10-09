@@ -15,8 +15,9 @@ use crate::audit::{Audit, Call, Caller};
 use crate::control::desk::Desk;
 use crate::coords::ImagePx;
 use crate::error::{CANCELLED, CallError, ToolError};
+use crate::input::Input;
 use crate::input::keyboard::{self, Expect, Typing};
-use crate::input::{self, Button, Gesture, Input};
+use crate::input::pointer::{self, Button, Gesture};
 use crate::niri::events::{EventStream, StreamState};
 use crate::observe::{DEFAULT_MAX_WIDTH, Format, Rect, Target};
 use crate::policy::{self, Loaded};
@@ -710,7 +711,7 @@ impl Server {
                 runtime: self.desk.runtime()?,
                 policy: &self.policy,
             };
-            input::point(input, self.desk.shot(&id), gesture).await
+            pointer::point(input, self.desk.shot(&id), gesture).await
         };
         self.act(context, gesture.tool(), logged, work).await
     }
