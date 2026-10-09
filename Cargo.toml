@@ -1,7 +1,6 @@
 [workspace]
 members = ["harness"]
 default-members = [".", "harness"]
-exclude = ["probes"]
 resolver = "3"
 
 [workspace.package]

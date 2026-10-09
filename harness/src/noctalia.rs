@@ -1,25 +1,29 @@
-//! C13: Noctalia in the nested session, driven by the `noctalia-socket` probe. Noctalia
-//! starts from the session, so it inherits NESTED and reads the config `harness run`
-//! generated. Every command goes to its socket under `TEST_DIR/run`, and the probe can only
-//! send `status`, `panel-open control-center` and `panel-close control-center`.
+//! Noctalia in the nested session, driven through `niri-computer-use`'s shell tools. C13
+//! (`make nested NOCTALIA=1`) opens and closes the control center; `make nested-shell`
+//! (`shell.rs`) runs the same cycle for every allowlisted panel. Noctalia starts from the
+//! session, so it inherits NESTED and reads the config `harness run` generated, and the
+//! server, also in NESTED, finds its socket under `TEST_DIR/run`.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use serde_json::Value;
+use serde_json::json;
 
-use crate::failure::{Context as _, Failure, Result};
+use crate::failure::{Failure, Result};
+use crate::mcp::{self, Client, field, structured};
+use crate::runner::Process;
 use crate::session::Session;
 use crate::{capture, image};
 
 /// Within what is left of the 60 s deadline `harness run` gives the nested run.
 const NOCTALIA_DEADLINE: Duration = Duration::from_secs(30);
+const SERVER_DEADLINE: Duration = Duration::from_secs(25);
 /// Noctalia binds its socket near the end of startup, after its UI (`Application::run`).
 const STARTUP: Duration = Duration::from_secs(10);
-/// C13's pass rule: each panel change is seen within 2 s of sending it.
-const PANEL_WAIT: Duration = Duration::from_secs(2);
 const PANEL: &str = "control-center";
+/// What the OCR check looks for in the open control center: the title of its first tab
+/// (`control-center.tabs.home` in Noctalia's English strings).
+const CONTROL_CENTER_WORD: &str = "Home";
 /// For the capture checks, which aren't part of C13's rule. Noctalia can report a panel
 /// open well before it draws it: one run logged a 1.9 s rendering stall.
 const DRAWN_WAIT: Duration = Duration::from_secs(5);
@@ -27,63 +31,143 @@ const DRAWN_WAIT: Duration = Duration::from_secs(5);
 /// `panel-open`. The bar's clock changes far fewer.
 const DRAWN_SHARE: usize = 100;
 
-pub(crate) fn c13(session: &mut Session<'_>, probe: &str) -> Result<()> {
-    let log = session.artifact("noctalia.log");
-    let noctalia = session.start("noctalia", &[], log, NOCTALIA_DEADLINE)?;
-    let (socket, status) = first_status(session, probe)?;
-    session.log(&format!("C13: Noctalia socket {}", socket.display()))?;
-    session.log(&format!("C13 status reply: {status:?}"))?;
-    if let Some(panel) = active_panel(&status)? {
-        return Err(Failure::new(format!(
-            "C13: panel {panel:?} was open before panel-open"
-        )));
-    }
+pub(crate) fn c13(session: &mut Session<'_>, server: &str) -> Result<()> {
+    let noctalia = start(session, NOCTALIA_DEADLINE)?;
+    let mut client = Client::start(session, server, "harness-c13", SERVER_DEADLINE)?;
+    let status = mcp::ready(session, &mut client, "c13-ready", STARTUP)?;
+    session.log(&format!(
+        "C13: Noctalia {}, lock {}",
+        field(&status, "/noctalia"),
+        field(&status, "/lock")
+    ))?;
+    no_panel_open(session, &mut client)?;
+    structured(&client.call(session, "acquire_desktop", json!({}))?)?;
     let closed = settled(session)?;
-    change_panel(session, probe, "panel-open", Some(PANEL))?;
-    drawn(session, &closed, true)?;
-    session.screenshot("success-c13.png")?;
-    session.log("saved success-c13.png")?;
-    change_panel(session, probe, "panel-close", None)?;
-    drawn(session, &closed, false)?;
+    cycle(session, &mut client, PANEL, Some(&closed))?;
+    structured(&client.call(session, "release_desktop", json!({}))?)?;
+    client.stop()?;
     noctalia.stop().map(drop)
 }
 
-/// Waits for the socket and a reply to `status` on it. Noctalia binds the socket before it
-/// listens (`IpcService::start`), so a connect in between is refused. Until the deadline a
-/// failed `status` counts as not ready yet, and a timeout reports the last failure.
-fn first_status(session: &mut Session<'_>, probe: &str) -> Result<(PathBuf, String)> {
-    let mut last = None;
-    let ready = session.wait_until(
-        "noctalia-ready",
-        "a status reply on the nested Noctalia's socket",
-        STARTUP,
-        |session| {
-            let Some(socket) = session.noctalia_socket()? else {
-                return Ok(None);
-            };
-            match send(session, probe, "status") {
-                Ok(status) => Ok(Some((socket, status))),
-                Err(failure) => {
-                    last = Some(failure);
-                    Ok(None)
-                }
-            }
-        },
-    );
-    ready.map_err(|failure| match last {
-        Some(last) => Failure::new(format!("{failure}; last status failure: {last}")),
-        None => failure,
-    })
+/// Starts the nested Noctalia, which runs until it is stopped or `deadline` passes.
+pub(crate) fn start(session: &Session<'_>, deadline: Duration) -> Result<Process> {
+    session.start("noctalia", &[], session.artifact("noctalia.log"), deadline)
+}
+
+/// `shell_status` reports no open panel.
+pub(crate) fn no_panel_open(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
+    let status = structured(&client.call(session, "shell_status", json!({}))?)?;
+    if !field(&status, "/activePanelId").is_null() {
+        return Err(Failure::new(format!(
+            "expected no open panel; shell_status says {status}"
+        )));
+    }
+    session.log(&format!("shell_status, no panel open: {status}"))
+}
+
+/// Opens `panel` with `shell_open` and closes it with `shell_close`, each seen in
+/// `activePanelId` within the server's two seconds. With `closed`, a capture with no panel
+/// open, it also checks the panel is drawn and then gone.
+pub(crate) fn cycle(
+    session: &mut Session<'_>,
+    client: &mut Client,
+    panel: &str,
+    closed: Option<&[u8]>,
+) -> Result<()> {
+    change(session, client, "shell_open", panel, Some(panel))?;
+    if let Some(closed) = closed {
+        drawn(session, closed, panel, true)?;
+    }
+    let shot = format!("success-{panel}.png");
+    session.screenshot(&shot)?;
+    session.log(&format!("saved {shot}"))?;
+    if panel == PANEL {
+        ocr(session, CONTROL_CENTER_WORD)?;
+    }
+    change(session, client, "shell_close", panel, None)?;
+    match closed {
+        Some(closed) => drawn(session, closed, panel, false),
+        None => session.log(&format!("{panel}: no pixel check")),
+    }
+}
+
+/// Calls `tool` on `panel` and requires that Noctalia accepted it and the server saw
+/// `activePanelId` become `expected`. The server finds Noctalia's socket from NESTED, so
+/// first the socket must resolve under `TEST_DIR/run`: a panel command never reaches the
+/// host's Noctalia.
+fn change(
+    session: &mut Session<'_>,
+    client: &mut Client,
+    tool: &str,
+    panel: &str,
+    expected: Option<&str>,
+) -> Result<()> {
+    let observed = if expected.is_some() {
+        "opened"
+    } else {
+        "closed"
+    };
+    session
+        .noctalia_socket()?
+        .ok_or_else(|| Failure::new("the nested Noctalia's socket is gone"))?;
+    let sent = Instant::now();
+    let outcome = structured(&client.call(session, tool, json!({"panel": panel}))?)?;
+    let seen = field(&outcome, "/accepted") == true
+        && field(&outcome, "/observed") == observed
+        && field(&outcome, "/shell/active_panel").as_str() == expected;
+    if !seen {
+        return Err(Failure::new(format!(
+            "{tool} {panel}: expected accepted and {observed}; saw {outcome}"
+        )));
+    }
+    session.log(&format!(
+        "{tool} {panel}: {observed} in {:.0} ms: {outcome}",
+        sent.elapsed().as_secs_f64() * 1000.0
+    ))
+}
+
+/// Dev-only, and only with `tesseract` on `PATH`: reads the nested output at twice its
+/// scale and requires `word` among the words found. Only whether it was found is logged.
+fn ocr(session: &mut Session<'_>, word: &str) -> Result<()> {
+    if !on_path("tesseract") {
+        return session.log("OCR: skipped, tesseract is not on PATH");
+    }
+    let image = session.test_dir().root().join("ocr.png");
+    let capture = ["-s", "2", "-o", "winit"].map(OsString::from);
+    let mut args = capture.to_vec();
+    args.push(image.clone().into());
+    session.run("grim", &args)?;
+    let read = [
+        image.into_os_string(),
+        "stdout".into(),
+        "--psm".into(),
+        "11".into(),
+    ];
+    let text = session.run("tesseract", &read)?.stdout;
+    let found = String::from_utf8_lossy(&text)
+        .split_whitespace()
+        .any(|found| found == word);
+    if !found {
+        return Err(Failure::new(format!(
+            "OCR: {word:?} isn't among the words tesseract read"
+        )));
+    }
+    session.log(&format!("OCR: found {word:?}"))
+}
+
+fn on_path(program: &str) -> bool {
+    std::env::var_os("PATH")
+        .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
 }
 
 /// The capture the panel checks compare with. Noctalia answers `status` before it has
 /// drawn its wallpaper, so this waits until less than half the output is still the nested
 /// niri's magenta and fewer than 1% of the pixels changed since the previous capture.
-fn settled(session: &mut Session<'_>) -> Result<Vec<u8>> {
+pub(crate) fn settled(session: &mut Session<'_>) -> Result<Vec<u8>> {
     let started = Instant::now();
     let mut previous: Option<Vec<u8>> = None;
     let baseline = session.wait_until(
-        "c13-settled",
+        "noctalia-settled",
         "Noctalia's wallpaper drawn and the output still",
         STARTUP,
         |session| {
@@ -98,7 +182,7 @@ fn settled(session: &mut Session<'_>) -> Result<Vec<u8>> {
         },
     )?;
     session.log(&format!(
-        "C13 baseline settled after {:.0} ms",
+        "Noctalia's baseline settled after {:.0} ms",
         started.elapsed().as_secs_f64() * 1000.0
     ))?;
     Ok(baseline)
@@ -114,16 +198,16 @@ fn still(previous: &[u8], now: &[u8]) -> Result<bool> {
     Ok(image::count(&now, capture::MAGENTA) * 2 < total && !shown(difference.pixels, total))
 }
 
-/// Not part of C13's pass rule: waits until the panel is drawn (`open`) or gone again,
-/// compared with `closed`, a capture taken before `panel-open`.
-fn drawn(session: &mut Session<'_>, closed: &[u8], open: bool) -> Result<()> {
+/// Not part of C13's pass rule: waits until `panel` is drawn (`open`) or gone again,
+/// compared with `closed`, a capture taken with no panel open.
+fn drawn(session: &mut Session<'_>, closed: &[u8], panel: &str, open: bool) -> Result<()> {
     let closed = image::ppm(closed).ok_or_else(|| Failure::new("grim wrote an unreadable PPM"))?;
     let (step, what) = if open {
-        ("c13-drawn", "the panel drawn")
+        (format!("{panel}-drawn"), format!("{panel} drawn"))
     } else {
-        ("c13-gone", "the panel gone")
+        (format!("{panel}-gone"), format!("{panel} gone"))
     };
-    let difference = session.wait_until(step, what, DRAWN_WAIT, |session| {
+    let difference = session.wait_until(&step, &what, DRAWN_WAIT, |session| {
         let now = capture::nested_ppm(session)?;
         let now = image::ppm(&now).ok_or_else(|| Failure::new("grim wrote an unreadable PPM"))?;
         let difference = image::difference(&closed, &now)
@@ -131,8 +215,8 @@ fn drawn(session: &mut Session<'_>, closed: &[u8], open: bool) -> Result<()> {
         let total = closed.width * closed.height;
         if whole(difference.pixels, total) {
             return Err(Failure::new(format!(
-                "C13 {what}: {} of {total} pixels differ from the baseline; a panel covers \
-                 far less, so the output was not what the baseline captured",
+                "{what}: {} of {total} pixels differ from the baseline; a panel covers far \
+                 less, so the output was not what the baseline captured",
                 difference.pixels
             )));
         }
@@ -140,7 +224,7 @@ fn drawn(session: &mut Session<'_>, closed: &[u8], open: bool) -> Result<()> {
         Ok((shown == open).then_some(difference))
     })?;
     session.log(&format!(
-        "C13 {what}: {} pixels differ from the capture before panel-open, in {}",
+        "{what}: {} pixels differ from the capture with no panel open, in {}",
         difference.pixels,
         difference
             .area
@@ -160,71 +244,9 @@ const fn whole(changed: usize, total: usize) -> bool {
     changed * 10 >= total * 9
 }
 
-/// Sends `<verb> control-center`, requires Noctalia's `ok`, and waits for `activePanelId`
-/// to become `expected` within 2 s of sending.
-fn change_panel(
-    session: &mut Session<'_>,
-    probe: &str,
-    verb: &str,
-    expected: Option<&str>,
-) -> Result<()> {
-    let command = format!("{verb} {PANEL}");
-    let sent = Instant::now();
-    let reply = send(session, probe, &command)?;
-    if reply != "ok\n" {
-        return Err(Failure::new(format!(
-            "C13 {command}: expected \"ok\\n\", got {reply:?}"
-        )));
-    }
-    let step = format!("c13-{verb}");
-    let what = format!("activePanelId {expected:?}");
-    let left = PANEL_WAIT.saturating_sub(sent.elapsed());
-    let status = session.wait_until(&step, &what, left, |session| {
-        let status = send(session, probe, "status")?;
-        Ok((active_panel(&status)?.as_deref() == expected).then_some(status))
-    })?;
-    session.log(&format!(
-        "C13 {command}: activePanelId {expected:?} after {:.0} ms: pass; status reply: {status:?}",
-        sent.elapsed().as_secs_f64() * 1000.0
-    ))
-}
-
-/// Runs the probe on the nested Noctalia's socket. A Noctalia `error:` reply or an I/O
-/// error fails the probe, and the runner keeps its stderr.
-fn send(session: &Session<'_>, probe: &str, command: &str) -> Result<String> {
-    let socket = session
-        .noctalia_socket()?
-        .ok_or_else(|| Failure::new("the nested Noctalia's socket is gone"))?;
-    let output = session.run(probe, &[socket.into_os_string(), OsString::from(command)])?;
-    String::from_utf8(output.stdout).context(format!("Noctalia's reply to {command}"))
-}
-
-/// `activePanelId` from a `status` reply: the panel id, or `None` for JSON null. Anything
-/// else fails, the way plan §4 says the server must treat a reply that does not parse.
-fn active_panel(status: &str) -> Result<Option<String>> {
-    let value: Value =
-        serde_json::from_str(status).context(format!("Noctalia status {status:?}"))?;
-    match value.get("activePanelId") {
-        Some(Value::Null) => Ok(None),
-        Some(Value::String(panel)) => Ok(Some(panel.clone())),
-        Some(Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_)) | None => {
-            Err(Failure::new(format!(
-                "Noctalia status has no activePanelId string or null: {status:?}"
-            )))
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The shape of Noctalia 5.2.1's reply (`application_ipc.cpp`, the `status` handler).
-    fn status(active: &str) -> String {
-        format!(
-            "{{\n  \"barVisible\": true,\n  \"panelOpen\": true,\n  \"activePanelId\": {active},\n  \"locked\": false\n}}\n"
-        )
-    }
 
     fn ppm(width: usize, height: usize, pixel: impl Fn(usize) -> [u8; 3]) -> Vec<u8> {
         let mut bytes = format!("P6\n{width} {height}\n255\n").into_bytes();
@@ -275,30 +297,5 @@ mod tests {
         assert!(whole(622_080, total));
         assert!(!whole(622_079, total));
         assert!(!whole(370_450, total));
-    }
-
-    #[test]
-    fn reads_the_active_panel_or_null() {
-        assert_eq!(
-            active_panel(&status("\"control-center\""))
-                .unwrap()
-                .as_deref(),
-            Some("control-center")
-        );
-        assert_eq!(active_panel(&status("null")).unwrap(), None);
-    }
-
-    #[test]
-    fn a_status_that_does_not_parse_or_lacks_the_panel_fails() {
-        for reply in [
-            String::new(),
-            "ok\n".to_owned(),
-            "{\"panelOpen\": false}\n".to_owned(),
-            status("1"),
-            status("false"),
-            "{\"activePanelId\": \"control-center\"".to_owned(),
-        ] {
-            assert!(active_panel(&reply).is_err(), "{reply:?}");
-        }
     }
 }

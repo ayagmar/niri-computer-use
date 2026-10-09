@@ -26,9 +26,10 @@ pub(crate) const LOG_FILE: &str = "supervise.log";
 const WEV_DEADLINE: Duration = Duration::from_secs(45);
 const WAIT: Duration = Duration::from_secs(5);
 
-/// The probes `harness run` passes on. `noctalia` is there only when C13 was requested.
+/// What `harness run` passes on.
 #[derive(Debug)]
 pub(crate) struct Probes<'a> {
+    /// The `niri-computer-use` binary, only when C13 was requested.
     pub(crate) noctalia: Option<&'a str>,
     pub(crate) sitting: bool,
     /// Which server checks to run, with the `niri-computer-use` binary.
@@ -66,6 +67,7 @@ pub(crate) fn supervise(
                 ServerChecks::Control => crate::control::run(&mut session, server),
                 ServerChecks::Actions => crate::actions::run(&mut session, server),
                 ServerChecks::Input => crate::input::run(&mut session, &output, server),
+                ServerChecks::Shell => crate::shell::run(&mut session, server),
             }
         } else {
             steps(&mut session, &output, probes)
@@ -95,7 +97,7 @@ fn steps(session: &mut Session<'_>, output: &LogicalOutput, probes: &Probes<'_>)
     capture::nested_c15(session, output)?;
     wev.stop()?;
     match probes.noctalia {
-        Some(probe) => noctalia::c13(session, probe),
+        Some(server) => noctalia::c13(session, server),
         None => session.log("C13: skipped, Noctalia not requested (harness run --noctalia)"),
     }
 }

@@ -421,3 +421,11 @@ These match the versions installed locally.
 - Results carry `shell.active_panel`, absent when a lost reply leaves it unknown, and `focused_window` from niri's event stream, which an open panel leaves null.
 - They have no `interrupted`: Noctalia sends no events, and plan §6 defines `interrupted` by window focus.
 - They take the lock gate like every action, before Noctalia is asked. Where only Noctalia can say whether the screen is locked, as in the nested session, a stopped Noctalia makes the lock state unknown, so they answer `screen_locked`, and `shell_status` answers `noctalia_unavailable`.
+
+## 2026-10-09: C13 through the server, and M5's nested acceptance
+
+- `make nested NOCTALIA=1` drives C13 through `shell_status`, `shell_open` and `shell_close`, so the `noctalia-socket` probe is deleted, and with it `probes/` (plan revision 19). C13's rule, `activePanelId` seen within two seconds of each command, is now the server's own wait; the capture checks stay in the harness. Before each panel call the harness still checks that Noctalia's socket resolves under `TEST_DIR/run`, which it used to check before handing the socket to the probe.
+- The nested Noctalia's wallpaper directory is an empty `TEST_DIR/data/wallpapers`. With the default, the wallpaper panel lists the pictures directory of the host user, whose `HOME` the nested session keeps, and its screenshot would land in the run's artifacts.
+- `make nested-shell` is M5's acceptance: the three panels, the refused ones, the Noctalia lock source, Noctalia stopped and Noctalia absent from `PATH`. The absent case runs a second server under `env PATH=<empty directory>`, since `PATH` decides the tool list.
+- The tray drawer gets no pixel check: with no tray items it is one icon wide (`TrayDrawerPanel::preferredWidth` in 5.2.1), under the 1% a drawn panel must change, while the bar's clock alone can change a few hundred pixels.
+- The OCR helper looks for `Home`, the control center's title on open (`control-center.tabs.home`, `control_center_panel.cpp`), in English, which is the `LANG` the harness keeps from the host here. tesseract isn't installed on the development machine, so only the skipped path has run so far.

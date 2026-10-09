@@ -66,9 +66,15 @@ binds {{
 /// (`ensureEnabledMaterialized` in `plugin_manager.cpp`), in a process group of its own that
 /// outlives the run (`process.cpp`). An explicit empty `source` array leaves no sources:
 /// the defaults only apply when the array is absent (`config_service.cpp`).
+/// Its wallpaper panel lists `wallpapers`, an empty directory in `TEST_DIR`, instead of
+/// the host's pictures directory.
 /// The rest stays at the defaults. Its system-bus services, among them logind
 /// inhibitors and the Bluetooth and network agents, find no bus in NESTED.
-pub(crate) const NOCTALIA: &str = r"[shell]
+pub(crate) fn noctalia(wallpapers: &Path) -> String {
+    // A JSON string is a valid TOML basic string.
+    let wallpapers = serde_json::Value::from(wallpapers.to_string_lossy());
+    format!(
+        "[shell]
 setup_wizard_enabled = false
 
 [weather]
@@ -76,7 +82,12 @@ enabled = false
 
 [plugins]
 source = []
-";
+
+[wallpaper]
+directory = {wallpapers}
+"
+    )
+}
 
 /// The private session bus config. It listens only inside `listen_dir` and has no service
 /// directories, so nothing on the host gets activated through it.
@@ -114,9 +125,11 @@ mod tests {
 
     #[test]
     fn noctalia_config_turns_off_the_wizard_weather_and_plugin_sources() {
-        assert!(NOCTALIA.contains("[shell]\nsetup_wizard_enabled = false\n"));
-        assert!(NOCTALIA.contains("[weather]\nenabled = false\n"));
-        assert!(NOCTALIA.contains("[plugins]\nsource = []\n"));
+        let config = noctalia(Path::new("/t/data/wallpapers"));
+        assert!(config.contains("[shell]\nsetup_wizard_enabled = false\n"));
+        assert!(config.contains("[weather]\nenabled = false\n"));
+        assert!(config.contains("[plugins]\nsource = []\n"));
+        assert!(config.contains("[wallpaper]\ndirectory = \"/t/data/wallpapers\"\n"));
     }
 
     #[test]

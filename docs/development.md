@@ -85,7 +85,7 @@ make nested NOCTALIA=1            # also start Noctalia in the nested session (C
 make nested NOCTALIA=1 SCALE=1.5
 ```
 
-You'll need niri 26.04, `dbus-run-session` (from `dbus`), `grim`, `wev`, `wtype` 0.4 and `stdbuf` (from coreutils), and Noctalia 5.2.1 for `NOCTALIA=1`. `make nested` builds the `noctalia-socket` probe first. The nested niri window stays open while the checks run, then closes.
+You'll need niri 26.04, `dbus-run-session` (from `dbus`), `grim`, `wev`, `wtype` 0.4 and `stdbuf` (from coreutils), and Noctalia 5.2.1 for `NOCTALIA=1`. `make nested` builds the server first, which `NOCTALIA=1` drives. With `tesseract` on `PATH`, `NOCTALIA=1` also reads the open control center's text (see below); without it, that check is skipped with a notice. The nested niri window stays open while the checks run, then closes.
 
 The nested niri's window has the app-id `niri`. To keep it from moving your tiled layout or taking focus, add this rule to your own niri config:
 
@@ -107,7 +107,7 @@ What a run does:
 1. Creates a fresh `TEST_DIR` at `$XDG_RUNTIME_DIR/niri-computer-use-test/<unix time>-<pid>/`, mode 0700, with `run/`, `state/`, `cache/`, `config/` and `data/`. The `niri-computer-use-test` directory itself stays after the run, empty.
 2. Writes a niri config (no startup commands, animations, borders or Xwayland; a magenta background; a fixed 400x300 floating `wev`; one `Ctrl+Shift+F12` test bind) and checks it with `niri validate`.
 3. Builds the environment for the nested niri from scratch. The XDG and Noctalia directories point into `TEST_DIR`, `WAYLAND_DISPLAY` is the absolute path of your Wayland socket, and `HOME`, `PATH` and `LANG` are kept. `DBUS_SYSTEM_BUS_ADDRESS` points to `TEST_DIR/run/no-system-bus`, where nothing exists, so nothing in the nested session can reach your system bus. `NIRI_SOCKET`, `WAYLAND_SOCKET`, `DISPLAY`, `XDG_SESSION_ID` and `DBUS_SESSION_BUS_ADDRESS` are not set. The run stops if any other variable is present or a path points outside `TEST_DIR`.
-   With `NOCTALIA=1` it also writes a Noctalia config that turns off the first-run setup wizard and weather and lists no plugin sources, and checks it with `noctalia config validate`. That command exits 0 even when it warns, for example about an unknown key, so the harness requires its plain "Config is valid" line.
+   With `NOCTALIA=1` it also writes a Noctalia config that turns off the first-run setup wizard and weather, lists no plugin sources, and points the wallpaper directory at an empty `TEST_DIR/data/wallpapers`, so the wallpaper panel never lists your pictures, and checks it with `noctalia config validate`. That command exits 0 even when it warns, for example about an unknown key, so the harness requires its plain "Config is valid" line.
 4. Records a host snapshot: `niri msg --json outputs`, `noctalia msg status`, the entries of `$XDG_RUNTIME_DIR` and `/tmp/.X11-unix`, and the modification time of `~/.config/dconf/user`.
 5. Runs `dbus-run-session --config-file=… -- niri -c … -- harness supervise …`. The private bus listens only in `TEST_DIR/run` and activates no services.
 6. The supervisor runs inside the nested niri. It checks that `NIRI_SOCKET`, the Wayland socket and the D-Bus socket resolve, following symlinks, to paths under `TEST_DIR/run`, that the Noctalia socket path is under it too, and that the system bus address is still `TEST_DIR/run/no-system-bus` with nothing there, not even a symlink. Over one connection, it asks niri for its version and outputs and requires `winit` to be the only output. If the endpoints resolve elsewhere or niri reports any other output, the supervisor sends nothing more to that niri, starts nothing, and a 60-second deadline kills the whole process group instead. Otherwise it:
@@ -120,7 +120,7 @@ What a run does:
    - types the committed 100-character corpus five times and compares the decoded text exactly, recording each duration and min/median/max (C10)
    - captures the output 20 times, PNG and JPEG at `-s 1` and `-s 0.5`, and checks each image's size (C15)
    - stops `wev`
-   - with `NOCTALIA=1`, starts Noctalia, waits for its socket at `TEST_DIR/run/noctalia-<nested display>.sock`, and sends `status`, `panel-open control-center` and `panel-close control-center` through the `noctalia-socket` probe. It retries the first `status` until Noctalia answers or ten seconds pass, then requires no open panel at the start, an `ok` reply to each panel command, and `activePanelId` to become `control-center` and then null, each within two seconds of sending. Before the open it waits until Noctalia has drawn its wallpaper (less than half the output is still magenta) and fewer than 1% of the pixels changed since the previous capture, and keeps that capture. It then waits up to five seconds until the open panel changes at least 1% of the output's pixels compared with it, and fails at once if 90% or more changed, which means the baseline was wrong, saves a screenshot, and after the close waits until fewer than 1% of the pixels differ from the capture taken before the open (C13). Without `NOCTALIA=1` it logs that C13 was skipped. Noctalia starts after the `wev` checks because its bar reserves space at the top of the output, which would move `wev`.
+   - with `NOCTALIA=1`, starts Noctalia and `target/debug/niri-computer-use`, and drives C13 through the server's tools. It waits up to ten seconds for `status` to show Noctalia running and the screen unlocked, requires `shell_status` to show no open panel, and takes the lease. `shell_open control-center` must then be accepted and observed `opened`, and `shell_close control-center` observed `closed`: the server polls `activePanelId` for two seconds after Noctalia's `ok`, so each change was seen within two seconds of sending. Before each call the supervisor checks that Noctalia's socket at `TEST_DIR/run/noctalia-<nested display>.sock` resolves under `TEST_DIR/run`, so a panel command can't reach your Noctalia. Before the open it waits until Noctalia has drawn its background (less than half the output is still magenta) and fewer than 1% of the pixels changed since the previous capture, and keeps that capture. It then waits up to five seconds until the open panel changes at least 1% of the output's pixels compared with it, and fails at once if 90% or more changed, which means the baseline was wrong, saves a screenshot, and after the close waits until fewer than 1% of the pixels differ from the capture taken before the open (C13). With `tesseract` on `PATH`, while the control center is open it also captures the output at twice its scale, runs `tesseract --psm 11` on it, and requires the word `Home`, the title of the control center's first tab in Noctalia's English strings; only whether the word was found is logged. This is a dev-only check, not a tool. Without `NOCTALIA=1` it logs that C13 was skipped. Noctalia starts after the `wev` checks because its bar reserves space at the top of the output, which would move `wev`.
    - tells the nested niri to quit on the connection it identified
 7. Takes the host snapshot again and reports any difference, even when the nested run failed. Then it lists every running process whose command line names `TEST_DIR`, fails the run if there is one, and removes `TEST_DIR`. Everything the run started should be gone by then, but a program can move a child into a process group of its own, out of reach of the group kill. The harness reports such processes and doesn't kill them.
 
@@ -139,14 +139,15 @@ Each run keeps its files in `target/e2e/<unix time>-<pid>/`:
 | `harness.log` | the terminal output |
 | `niri.kdl` | the generated niri config |
 | `niri.log` | output of `dbus-run-session` and the nested niri |
-| `supervise.log` | the nested environment, each check and its result, and what the probe sent |
+| `supervise.log` | the nested environment, each check and its result, and the server's results |
 | `supervise.status` | `pass`, or `fail: <reason>` |
 | `wev.log` | everything `wev` printed |
 | `noctalia.toml` | the generated Noctalia config, with `NOCTALIA=1` |
 | `noctalia.log` | everything Noctalia printed, with `NOCTALIA=1` |
 | `success-verify-niri.png` | the nested output before `wev` starts |
 | `success-c3.png` | the nested output with `wev` |
-| `success-c13.png` | the nested output with Noctalia's control center open |
+| `server-harness-c13.log` | the server's replies, with `NOCTALIA=1` |
+| `success-control-center.png` | the nested output with Noctalia's control center open |
 | `failure-<step>.png` | the nested output when a wait timed out |
 
 ## Nested control checks
@@ -206,6 +207,18 @@ The run has a 130-second deadline. Its files are in `target/e2e/<run>/`, includi
 
 The run has a 180-second deadline. Its files are in `target/e2e/<run>/`, including `wev.log`, each server's replies, and Noctalia's and kitty's logs. Besides the tools of `make nested`, it needs `kitty`.
 
+## Nested shell checks
+
+`make nested-shell` runs M5's acceptance of the Noctalia integration in a nested niri, with Noctalia started as for `make nested-control`. One server holds the lease, and its replies are read back from `server-harness-m5.log`. The nested niri runs without `--session`, so logind can't answer for it. The run checks:
+
+1. `status` shows Noctalia running and the lock state `unlocked` with `source: noctalia` and logind's reason for not answering.
+2. For `control-center`, `wallpaper` and `tray-drawer` in turn, the open and close cycle of C13 above, each panel drawn and then gone. With no tray items in the nested session the tray drawer is one icon wide, under the 1% a drawn panel must change, so for it only `activePanelId` is checked.
+3. `shell_open` and `shell_close` on `session`, `launcher`, `polkit`, `clipboard`, `setup-wizard`, `test` and a panel Noctalia doesn't have all give `panel_not_allowed`, and `shell_status` still shows no open panel.
+4. With Noctalia stopped, `status` reports it `not_running` and the lock state `unknown`, `shell_status` gives `noctalia_unavailable`, and `shell_open` gives `screen_locked`, because no source can say the screen is unlocked.
+5. A second server started with `PATH` set to an empty directory lists no `shell_*` tools and reports Noctalia as `not_installed`.
+
+The run has a 130-second deadline. Its files are in `target/e2e/<run>/`, including a `success-<panel>.png` for each panel.
+
 ## Real-session pointer check
 
 `scripts/real-pointer-check.py` is M4's supervised accuracy run on a real monitor. It sends real pointer motion to your session, so run it only yourself, at the machine, with your hands off the mouse:
@@ -231,16 +244,6 @@ The supervising agent must confirm that you are present before starting. Follow 
 wev shows a checkerboard, not typed text. The supervisor checks raw events and requires the human's confirmation separately. Only after that confirmation, the supervising agent creates `target/e2e/<run>/confirm-N.txt` containing one line beginning `confirmed: ` followed by the human's statement. A missing confirmation times out; a malformed statement fails. Never create these files in advance or infer a human confirmation from logs.
 
 Its artifacts include `wev-unfocused.log`, `confirm-N.txt`, `sitting-ready.png` and `success-c9.png`. C8, the interrupted pointer, needed the `vpointer` probe, and M4 deleted it: its evidence stays in `docs/results/m0.md`, and its automatic half, a button left pressed by a killed pointer and released from a fresh one, runs in `make nested-input`'s crash check. C14 is a separate host read; the sitting never locks the host.
-
-## Probes
-
-Probes are small standalone programs in `probes/`, outside the Cargo workspace, kept until the server's own code replaces them. One is left, so `make check` doesn't cover it. Run its tests with Cargo:
-
-```sh
-cargo test --locked --manifest-path probes/noctalia-socket/Cargo.toml
-```
-
-`noctalia-socket` sends one command to a Noctalia IPC socket and prints the reply. It accepts only `status`, `panel-open control-center` and `panel-close control-center`, and sends `/`, the `\x1e` separator and that fixed command, the way Noctalia's own client frames a command. It writes the whole payload, shuts down its write half and reads the reply until Noctalia closes the connection, all within two seconds. A reply that starts with `error:`, an empty reply or an I/O error makes it exit with status 1 and the message on stderr. It sends to whatever socket it is given, so run it only through `make nested NOCTALIA=1`, which passes the nested Noctalia's socket after checking that it is under `TEST_DIR/run`.
 
 ## Host capture
 

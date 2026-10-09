@@ -2,6 +2,7 @@
 //! stays open for one request after another. The server's output goes to a log file, one
 //! JSON-RPC message per line, and the client reads replies back from there.
 
+use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -32,8 +33,20 @@ impl Client {
         name: &str,
         deadline: Duration,
     ) -> Result<Self> {
+        Self::start_command(session, server, &["serve".into()], name, deadline)
+    }
+
+    /// As `start`, with the server started by `program` and `args`, such as `env` to
+    /// change its environment.
+    pub(crate) fn start_command(
+        session: &mut Session<'_>,
+        program: &str,
+        args: &[OsString],
+        name: &str,
+        deadline: Duration,
+    ) -> Result<Self> {
         let log = session.artifact(&format!("server-{name}.log"));
-        let process = session.serve(server, &["serve".into()], log.clone(), deadline)?;
+        let process = session.serve(program, args, log.clone(), deadline)?;
         let mut client = Self {
             process,
             log,
@@ -77,6 +90,18 @@ impl Client {
             .get("result")
             .cloned()
             .ok_or_else(|| Failure::new(format!("request {id} failed: {reply}")))
+    }
+
+    /// The names of the tools the server lists.
+    pub(crate) fn tools(&mut self, session: &mut Session<'_>) -> Result<Vec<String>> {
+        let id = self.request("tools/list", json!({}))?;
+        let result = self.result(session, id)?;
+        Ok(field(&result, "/tools")
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|tool| tool.get("name")?.as_str().map(str::to_owned))
+            .collect())
     }
 
     pub(crate) fn stop(self) -> Result<()> {

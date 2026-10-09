@@ -1,4 +1,4 @@
-.PHONY: check lint coverage inspect inspect-check nested nested-control nested-actions nested-input sitting host-capture
+.PHONY: check lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell sitting host-capture
 
 SCALE ?= 1
 
@@ -26,7 +26,7 @@ inspect-check:
 	scripts/inspector.sh check
 
 nested:
-	cargo build --locked --manifest-path probes/noctalia-socket/Cargo.toml
+	cargo build --locked -p niri-computer-use
 	cargo run --locked -p harness -- run --scale $(SCALE) $(if $(NOCTALIA),--noctalia)
 
 nested-control:
@@ -40,6 +40,10 @@ nested-actions:
 nested-input:
 	cargo build --locked -p niri-computer-use
 	cargo run --locked -p harness -- run --scale $(SCALE) --input
+
+nested-shell:
+	cargo build --locked -p niri-computer-use
+	cargo run --locked -p harness -- run --shell
 
 host-capture:
 	cargo run --locked -p harness -- host-capture $(OUTPUT)

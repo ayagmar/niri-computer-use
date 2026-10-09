@@ -21,6 +21,7 @@ mod run;
 mod runner;
 mod scale;
 mod session;
+mod shell;
 mod sitting;
 mod snapshot;
 mod supervise;
@@ -37,10 +38,10 @@ use scale::Scale;
 use supervise::Probes;
 use test_dir::TestDir;
 
-const USAGE: &str = "usage: harness run [--scale <scale>] [--noctalia | --sitting | --control | --actions | --input]
+const USAGE: &str = "usage: harness run [--scale <scale>] [--noctalia | --sitting | --control | --actions | --input | --shell]
        harness host-capture <output>
        harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--started <file>]
-       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [<noctalia-socket> | --sitting | --control <server> | --actions <server> | --input <server>]";
+       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server>]";
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -72,29 +73,28 @@ fn dispatch(args: &[OsString]) -> Result<()> {
             interrupt::install()?;
             capture::host(output)
         }
-        ["supervise", test_dir, artifacts, scale, noctalia @ ..] => {
-            let sitting = noctalia == ["--sitting"];
-            let server = match noctalia {
+        ["supervise", test_dir, artifacts, scale, rest @ ..] => {
+            let mut probes = Probes {
+                noctalia: None,
+                sitting: false,
+                server: None,
+            };
+            match rest {
+                [] => {}
+                ["--sitting"] => probes.sitting = true,
+                ["--noctalia", server] => probes.noctalia = Some(*server),
                 [flag, server] => {
-                    run::ServerChecks::from_flag(flag).map(|checks| (checks, *server))
+                    let checks =
+                        run::ServerChecks::from_flag(flag).ok_or_else(|| Failure::new(USAGE))?;
+                    probes.server = Some((checks, *server));
                 }
-                _ => None,
-            };
-            let noctalia = match noctalia {
-                [] | ["--sitting"] => None,
-                [_, _] if server.is_some() => None,
-                [probe] if !probe.starts_with("--") => Some(*probe),
                 _ => return Err(Failure::new(USAGE)),
-            };
+            }
             supervise::supervise(
                 &TestDir::open(PathBuf::from(test_dir))?,
                 Path::new(artifacts),
                 scale.parse()?,
-                &Probes {
-                    noctalia,
-                    sitting,
-                    server,
-                },
+                &probes,
             )
         }
         _ => Err(Failure::new(USAGE)),
@@ -117,7 +117,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
             }
             "--noctalia" => options.noctalia = true,
             "--sitting" => options.sitting = true,
-            "--control" | "--actions" | "--input" => {
+            "--control" | "--actions" | "--input" | "--shell" => {
                 options.server = run::ServerChecks::from_flag(arg);
             }
             _ => return Err(Failure::new(USAGE)),
@@ -129,7 +129,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
         > 1
     {
         return Err(Failure::new(
-            "--sitting, --noctalia, --control, --actions and --input cannot be combined",
+            "--sitting, --noctalia, --control, --actions, --input and --shell cannot be combined",
         ));
     }
     Ok(options)
@@ -140,9 +140,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn supervise_takes_at_most_one_noctalia_probe() {
-        let args = ["supervise", "/r/t", "/a", "1", "one", "two"].map(OsString::from);
-        assert_eq!(dispatch(&args).unwrap_err().to_string(), USAGE);
+    fn supervise_takes_one_flag_and_the_server() {
+        for rest in [
+            &["one", "two"][..],
+            &["--noctalia"],
+            &["--noctalia", "/s", "x"],
+            &["/s"],
+        ] {
+            let args = ["supervise", "/r/t", "/a", "1"]
+                .iter()
+                .chain(rest)
+                .map(OsString::from)
+                .collect::<Vec<_>>();
+            assert_eq!(dispatch(&args).unwrap_err().to_string(), USAGE, "{rest:?}");
+        }
     }
 
     #[test]

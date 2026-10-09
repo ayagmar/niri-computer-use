@@ -20,11 +20,11 @@ use crate::test_dir::TestDir;
 
 const VALIDATE_DEADLINE: Duration = Duration::from_secs(10);
 const NESTED_DEADLINE: Duration = Duration::from_secs(60);
-const NOCTALIA_SOCKET: &str = "probes/noctalia-socket/target/debug/noctalia-socket";
 const SERVER: &str = "target/debug/niri-computer-use";
 const CONTROL_DEADLINE: Duration = Duration::from_secs(90);
 const ACTIONS_DEADLINE: Duration = Duration::from_secs(130);
 const INPUT_DEADLINE: Duration = Duration::from_secs(180);
+const SHELL_DEADLINE: Duration = Duration::from_secs(130);
 /// All `noctalia config validate` prints for a config without warnings. It exits 0 even
 /// when it warns, for example about an unknown key.
 const NOCTALIA_VALID: &str = "\u{2713} Config is valid\n";
@@ -33,7 +33,7 @@ const NOCTALIA_VALID: &str = "\u{2713} Config is valid\n";
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Options {
     pub(crate) scale: Scale,
-    /// Start Noctalia in the nested session and run C13.
+    /// Start Noctalia in the nested session and run C13 through `niri-computer-use`.
     pub(crate) noctalia: bool,
     /// Run the supervised sitting (C6, C7, C9) at the human's pace.
     pub(crate) sitting: bool,
@@ -50,6 +50,8 @@ pub(crate) enum ServerChecks {
     Actions,
     /// M4: the pointer tools.
     Input,
+    /// M5: the shell tools and the Noctalia lock source.
+    Shell,
 }
 
 impl ServerChecks {
@@ -58,11 +60,12 @@ impl ServerChecks {
             Self::Control => "--control",
             Self::Actions => "--actions",
             Self::Input => "--input",
+            Self::Shell => "--shell",
         }
     }
 
     pub(crate) fn from_flag(flag: &str) -> Option<Self> {
-        [Self::Control, Self::Actions, Self::Input]
+        [Self::Control, Self::Actions, Self::Input, Self::Shell]
             .into_iter()
             .find(|checks| checks.flag() == flag)
     }
@@ -72,6 +75,7 @@ impl ServerChecks {
             Self::Control => CONTROL_DEADLINE,
             Self::Actions => ACTIONS_DEADLINE,
             Self::Input => INPUT_DEADLINE,
+            Self::Shell => SHELL_DEADLINE,
         }
     }
 }
@@ -232,8 +236,11 @@ fn write_noctalia_config(env: &Env, test_dir: &TestDir, artifacts: &Path) -> Res
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).context(format!("create {}", dir.display()))?;
     }
-    write(&path, config::NOCTALIA)?;
-    write(&artifacts.join("noctalia.toml"), config::NOCTALIA)?;
+    let wallpapers = test_dir.data().join("wallpapers");
+    fs::create_dir_all(&wallpapers).context(format!("create {}", wallpapers.display()))?;
+    let config = config::noctalia(&wallpapers);
+    write(&path, &config)?;
+    write(&artifacts.join("noctalia.toml"), &config)?;
     let output = runner::run(&Invocation {
         program: "noctalia",
         args: vec!["config".into(), "validate".into(), path.into()],
@@ -278,10 +285,11 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: Option
     if options.sitting {
         args.push("--sitting".into());
     } else if options.noctalia {
-        args.push(probe(NOCTALIA_SOCKET)?.into());
+        args.push("--noctalia".into());
+        args.push(server()?.into());
     } else if let Some(checks) = options.server {
         args.push(checks.flag().into());
-        args.push(probe(SERVER)?.into());
+        args.push(server()?.into());
     }
     runner::run(&Invocation {
         program: "dbus-run-session",
@@ -305,16 +313,16 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: Option
     }
 }
 
-/// A probe built by `make nested`.
-fn probe(relative: &str) -> Result<PathBuf> {
+/// The `niri-computer-use` binary the make targets build.
+fn server() -> Result<PathBuf> {
     let path = env::current_dir()
         .context("read the working directory")?
-        .join(relative);
+        .join(SERVER);
     if path.is_file() {
         Ok(path)
     } else {
         Err(Failure::new(format!(
-            "{} is missing; build it with `make nested`",
+            "{} is missing; build it with `cargo build -p niri-computer-use`",
             path.display()
         )))
     }
