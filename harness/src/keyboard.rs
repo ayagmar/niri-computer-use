@@ -90,7 +90,7 @@ pub(crate) fn observed(
     )
 }
 
-fn chord(trace: &Trace<'_>, symbol: &str, mask: u32, count: usize) -> Result<()> {
+pub(crate) fn chord(trace: &Trace<'_>, symbol: &str, mask: u32, count: usize) -> Result<()> {
     pairs(trace, count)?;
     let expected = Modifiers {
         depressed: mask,

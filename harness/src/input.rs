@@ -13,6 +13,7 @@ use niri_ipc::{LogicalOutput, WindowLayout};
 use serde_json::{Value, json};
 
 use crate::failure::{Context as _, Failure, Result};
+use crate::keyboard;
 use crate::mcp::{self, Client, field, structured};
 use crate::session::Session;
 use crate::wev::{self, Pointer};
@@ -63,6 +64,7 @@ pub(crate) fn run(session: &mut Session<'_>, output: &LogicalOutput, server: &st
     clicks(session, &mut client, &wev)?;
     drag(session, &mut client, &wev)?;
     scroll(session, &mut client, &wev)?;
+    keys(session, &mut client, &wev)?;
     structured(&client.call(session, "release_desktop", json!({}))?)?;
     client.stop()?;
     process.stop()?;
@@ -372,6 +374,101 @@ fn scroll(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>) -> Resu
         }
     }
     Ok(())
+}
+
+/// Text and a chord into `wev` through the keyboard tools, a refused `expect` that types
+/// nothing, and key routing: Ctrl+Shift+F12 reaches `wev` while niri's bind for it, which
+/// touches `bind-fired`, doesn't fire.
+fn keys(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>) -> Result<()> {
+    let id = wev_window(session, client)?;
+    type_into_wev(session, client, wev)?;
+    mismatch(session, client, wev, id)?;
+    routing(session, client, wev, id)
+}
+
+fn type_into_wev(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>) -> Result<()> {
+    let text = "Hello, wörld →";
+    let start = wev.offset()?;
+    let typed = send_keys(
+        session,
+        client,
+        "type_text",
+        json!({"text": text, "expect": {"app_id": "wev"}}),
+    )?;
+    let seen = keyboard::observed(session, wev.log, start, text.chars().count(), false)?;
+    keyboard::text(&wev::keyboard::trace(&seen)?, text)?;
+    session.log(&format!("M4 type_text: wev decoded {text:?}; {typed}"))
+}
+
+fn mismatch(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>, id: u64) -> Result<()> {
+    let refused = client.call(
+        session,
+        "type_text",
+        json!({"text": "x", "expect": {"window_id": id + 1000}}),
+    )?;
+    if field(&refused, "/structuredContent/error") != "focus_mismatch" {
+        return Err(Failure::new(format!(
+            "M4: expected focus_mismatch, saw {refused}"
+        )));
+    }
+    let after = wev.offset()?;
+    session.still_absent("m4-mismatch", Duration::from_secs(1), || {
+        Ok(wev::keyboard::has_input(&keyboard::since(wev.log, after)?))
+    })?;
+    session.log("M4 focus_mismatch: refused, nothing typed for 1 s")
+}
+
+fn routing(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>, id: u64) -> Result<()> {
+    let marker = session.bind_marker();
+    if marker.try_exists().context("check bind-fired")? {
+        return Err(Failure::new("M4: bind-fired existed before the key"));
+    }
+    let start = wev.offset()?;
+    let routed = send_keys(
+        session,
+        client,
+        "key",
+        json!({"combo": "ctrl+shift+F12", "expect": {"window_id": id}}),
+    )?;
+    let seen = keyboard::observed(session, wev.log, start, 1, true)?;
+    keyboard::chord(&wev::keyboard::trace(&seen)?, "F12", 5, 1)?;
+    session.still_absent("m4-routing", Duration::from_secs(1), || {
+        marker.try_exists().context("check bind-fired")
+    })?;
+    session.log(&format!(
+        "M4 key routing: one F12 with Control+Shift in wev, niri's bind didn't fire; {routed}"
+    ))
+}
+
+/// Calls a keyboard tool and requires `observed: sent` with `focus: matched`.
+fn send_keys(
+    session: &mut Session<'_>,
+    client: &mut Client,
+    tool: &str,
+    arguments: Value,
+) -> Result<Value> {
+    let outcome = send(session, client, tool, arguments)?;
+    if field(&outcome, "/focus") != "matched" {
+        return Err(Failure::new(format!(
+            "M4: {tool} didn't match focus: {outcome}"
+        )));
+    }
+    Ok(outcome)
+}
+
+/// `wev`'s window id, once it has keyboard focus.
+fn wev_window(session: &mut Session<'_>, client: &mut Client) -> Result<u64> {
+    session.wait_until("m4-focus", "wev focused", WAIT, |session| {
+        let desktop = structured(&client.call(session, "desktop_state", json!({}))?)?;
+        let focused = field(&desktop, "/focused_window").as_u64();
+        let wev = field(&desktop, "/windows")
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|window| field(window, "/app_id") == "wev")
+            .and_then(|window| field(window, "/id").as_u64());
+        Ok(wev.filter(|id| Some(*id) == focused))
+    })
 }
 
 fn wheel_frame(frame: &[String], axis: &str, value120: i32, value: &str) -> bool {
