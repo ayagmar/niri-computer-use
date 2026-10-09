@@ -11,8 +11,8 @@ use crate::mcp::{Client, field, structured};
 use crate::session::Session;
 use crate::wev::{self, Pointer};
 
-/// A stop has to land while the drag runs, about a third of a second; a stop that lands
-/// after it proves nothing, so the check tries again.
+/// A stop has to land while the drag or the typing runs, a few tenths of a second; a stop
+/// that lands after it proves nothing, so each check tries again.
 const ATTEMPTS: usize = 3;
 const TEXT: &str = "abcdefghij";
 
@@ -88,7 +88,8 @@ fn released_and_clear(session: &mut Session<'_>, wev: &Wev<'_>, offset: usize) -
 }
 
 /// A stop while `wtype` types: the call says `stopped`, and `wtype` still types the whole
-/// text, then removes the marker.
+/// text, then removes the marker. wtype types 100 characters in about 0.4 s, so a stop
+/// that lands after it proves nothing, and the check tries again.
 fn mid_typing(
     session: &mut Session<'_>,
     client: &mut Client,
@@ -96,27 +97,35 @@ fn mid_typing(
     server: &str,
 ) -> Result<()> {
     let text = TEXT.repeat(10);
-    let offset = wev.offset()?;
-    let id = client.start_call(
-        "type_text",
-        json!({"text": text, "expect": {"app_id": "wev"}}),
-    )?;
-    session.wait_until("m4-typing", "the first key in wev", WAIT, |_| {
-        let seen = keyboard::since(wev.log, offset)?;
-        Ok((!wev::keyboard::trace(&seen)?.keys.is_empty()).then_some(()))
-    })?;
-    stop(session, server)?;
-    let result = client.result(session, id)?;
-    if field(&result, "/structuredContent/error") != "stopped" {
-        return Err(Failure::new(format!(
-            "M4 stop mid-typing: expected stopped, saw {result}"
-        )));
+    for attempt in 1..=ATTEMPTS {
+        let offset = wev.offset()?;
+        let id = client.start_call(
+            "type_text",
+            json!({"text": text, "expect": {"app_id": "wev"}}),
+        )?;
+        session.wait_until("m4-typing", "the first key in wev", WAIT, |_| {
+            let seen = keyboard::since(wev.log, offset)?;
+            Ok((!wev::keyboard::trace(&seen)?.keys.is_empty()).then_some(()))
+        })?;
+        stop(session, server)?;
+        let result = client.result(session, id)?;
+        let stopped = field(&result, "/structuredContent/error") == "stopped";
+        let seen = keyboard::observed(session, wev.log, offset, text.chars().count(), false)?;
+        keyboard::text(&wev::keyboard::trace(&seen)?, &text)?;
+        marker_gone(session)?;
+        resume(session, client, server)?;
+        if stopped {
+            return session.log(&format!(
+                "M4 stop mid-typing (attempt {attempt}): stopped, wtype typed all 100 characters, marker gone, lease taken again"
+            ));
+        }
+        session.log(&format!(
+            "M4 stop mid-typing attempt {attempt}: the typing finished first: {result}"
+        ))?;
     }
-    let seen = keyboard::observed(session, wev.log, offset, text.chars().count(), false)?;
-    keyboard::text(&wev::keyboard::trace(&seen)?, &text)?;
-    marker_gone(session)?;
-    resume(session, client, server)?;
-    session.log("M4 stop mid-typing: stopped, wtype typed all 100 characters, marker gone, lease taken again")
+    Err(Failure::new(format!(
+        "M4 stop mid-typing: no stop landed during the typing in {ATTEMPTS} attempts"
+    )))
 }
 
 fn stop(session: &Session<'_>, server: &str) -> Result<()> {
