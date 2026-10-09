@@ -360,7 +360,8 @@ impl Server {
     }
 
     /// Gives the lease up. `released` says whether this server held it; the user's stop
-    /// flag also takes it back.
+    /// flag also takes it back. Before calling it, put focus back on the window the user
+    /// was on with `focus_window`, unless the task was to leave another window in front.
     #[tool(annotations(
         read_only_hint = false,
         destructive_hint = false,
@@ -421,8 +422,9 @@ impl Server {
     /// counts the new windows with the preset's `app_id`: `one` with its id in `windows`,
     /// `ambiguous` with several, or `none` within five seconds. With `reuse`, one existing
     /// window is focused instead (`focused`), and several give `ambiguous` without starting
-    /// anything. Never call it again because a window didn't show up; look first. Requires
-    /// the lease.
+    /// anything. Never call it again because a window didn't show up; look first. With no
+    /// preset for the app, ask the user to add one rather than starting it another way.
+    /// Requires the lease.
     #[tool(annotations(
         read_only_hint = false,
         destructive_hint = false,
@@ -949,7 +951,7 @@ fn invalid(message: &str) -> CallToolResult {
 #[tool_handler(
     router = self.tool_router,
     name = "niri-computer-use",
-    instructions = "View and act on a niri desktop; follow the `niri-computer-use` skill. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `clipboard_read` returns the clipboard's text, and `shell_status`, when Noctalia is installed, its panel and lock state. To act, call `acquire_desktop`, then one action at a time (`focus_window`, `focus_workspace`, `launch`, `close_window`, with Noctalia `shell_open` and `shell_close`, and for input `pointer_move`, `click`, `drag` and `scroll` with a fresh `screenshot_ref`, or `key` and `type_text` with `expect`), reading `accepted` and `observed` before the next; never retry an action on your own, and call `release_desktop` when done. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
+    instructions = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `clipboard_read` returns the clipboard's text, and `shell_status`, when Noctalia is installed, its panel and lock state. To act, call `acquire_desktop`, then one action at a time (`focus_window`, `focus_workspace`, `launch`, `close_window`, with Noctalia `shell_open` and `shell_close`, and for input `pointer_move`, `click`, `drag` and `scroll` with a fresh `screenshot_ref`, or `key` and `type_text` with `expect`), reading `accepted` and `observed` before the next call; never send a screenshot alongside an action. Never retry an action on your own, never press Enter after a `type_text` that failed or stopped early, and start apps only through `launch` presets. When done, put focus back on the user's window and call `release_desktop`. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
 )]
 impl ServerHandler for Server {}
 
