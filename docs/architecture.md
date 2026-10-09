@@ -153,7 +153,7 @@ Every action takes `screenshot`. `Desk::act` passes the outcome and a capture to
 
 ## Waiting
 
-`wait_for` changes nothing. Its window-condition wait does not take the action mutex, but its optional final settled screenshot holds it throughout capture. A window condition registers a waiter on the event stream and checks the condition in `wait::met`, a pure function of the waiter's view, after every event, up to `timeout_ms`. `screen_stable` holds the action mutex while running `settle` with `timeout_ms` as its limit, excluding this server's actions during that sequence. Stop and release wait for a capture already running to end; each capture has a runner deadline.
+`wait_for` changes nothing. Its window-condition wait does not take the action mutex. Both `screen_stable` and the optional final settled screenshot after a window condition hold the mutex only for each individual capture, releasing it between samples. Actions, release and stop's lease takeback can therefore run between captures rather than waiting for the whole visual-settlement timeout. A window condition registers a waiter on the event stream and checks the condition in `wait::met`, a pure function of the waiter's view, after every event, up to `timeout_ms`. `screen_stable` runs `settle` with `timeout_ms` as its budget, including time queued for individual captures. Stop and release may still wait for one capture already running to end; each capture has a runner deadline. Action-return screenshots remain inside the action mutex throughout their sequence.
 
 ## Giving focus back
 

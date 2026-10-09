@@ -67,7 +67,7 @@ Read-only does not mean private: screenshots, window titles and clipboard text c
 
 Focus and stop are checked between `wtype` calls. An in-flight call may finish up to 100 characters within its three-second deadline after focus changes or stop arrives. `typed` counts completed helper strokes, not characters confirmed in the intended application. No later part or submission is sent once interruption is detected; do not retry uncertain input automatically.
 
-A settled screenshot means two sampled images matched, not that an application is ready. Its budget includes the initial delay and capture work, but not time queued behind another server action. A timed-out later capture returns the last completed image with `settled: false`; with no completed image it returns `deadline_exceeded`.
+A settled screenshot means two sampled images matched, not that an application is ready. Its budget includes the initial delay and capture work. For action-return screenshots it starts under the action mutex; for `wait_for` it also includes time queued for individual captures. Read-only wait captures hold the mutex per image, not between samples, so actions, release and stop's lease takeback do not wait for the entire visual-settlement timeout. A timed-out later capture returns the last completed image with `settled: false`; with no completed image it returns `deadline_exceeded`.
 
 ## Install and register
 

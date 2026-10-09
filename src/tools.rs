@@ -1096,27 +1096,24 @@ impl Server {
     }
 
     /// Waits for `until`, then with `shoot` adds a screenshot taken once the screen stopped
-    /// changing. Waiting for the screen first lets a running action of this server end.
+    /// changing. Each capture serializes with actions, without holding the mutex between
+    /// samples or while waiting for a window condition.
     async fn wait(
         &self,
         until: &wait::Until,
         limit: std::time::Duration,
         screenshot: bool,
     ) -> Result<(wait::Report, Option<observe::Screenshot>), CallError> {
-        let capture = || self.capture(observe::Request::focused());
+        let capture = || self.desk.observe(self.capture(observe::Request::focused()));
         if *until == wait::Until::ScreenStable {
-            let (report, last) = self.desk.observe(wait::screen(capture, limit)).await?;
+            let (report, last) = wait::screen(capture, limit).await?;
             return Ok((report, screenshot.then_some(last)));
         }
         let report = wait::window(self.events.as_ref(), until, limit).await?;
         if !screenshot {
             return Ok((report, None));
         }
-        match self
-            .desk
-            .observe(settle::screenshot(capture, settle::LIMIT))
-            .await
-        {
+        match settle::screenshot(capture, settle::LIMIT).await {
             Ok(shot) => Ok((report, Some(shot))),
             Err(CallError::Tool(error)) => Ok((
                 wait::Report {

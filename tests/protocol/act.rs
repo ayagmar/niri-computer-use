@@ -1026,10 +1026,6 @@ async fn captures_exclude_the_next_action_until_completion_or_cancellation() {
             "action ran inside {tool} capture"
         );
         std::fs::write(desk.fixture.path("grim.go"), "").unwrap();
-        assert_eq!(
-            desk.server.response(capture).await["result"]["isError"],
-            false
-        );
         assert!(matches!(
             desk.niri.action().await,
             Action::FocusWindow { id: 2 }
@@ -1037,6 +1033,10 @@ async fn captures_exclude_the_next_action_until_completion_or_cancellation() {
         focus_changed(&desk.stream, 2);
         assert_eq!(
             desk.server.response(action).await["result"]["isError"],
+            false
+        );
+        assert_eq!(
+            desk.server.response(capture).await["result"]["isError"],
             false
         );
     }
@@ -1062,6 +1062,62 @@ async fn captures_exclude_the_next_action_until_completion_or_cancellation() {
         })
         .await;
     assert_eq!(result["isError"], false);
+}
+
+#[tokio::test]
+async fn unsettled_read_only_waits_allow_actions_and_release_between_captures() {
+    use std::time::Duration;
+
+    for until in [json!("screen_stable"), json!({"window": {"app_id": "a"}})] {
+        let mut desk = Desk::start("wait-yields-seat", "").await;
+        desk.fixture.program(
+            "grim",
+            r#"
+            n=$(cat "$DIR/grim.n" 2>/dev/null)x
+            printf %s "$n" > "$DIR/grim.n"
+            cat "$DIR/grim.out"
+            printf %s "$n"
+        "#,
+        );
+        let waiting = desk
+            .server
+            .start_call(
+                "wait_for",
+                json!({"until": until, "timeout_ms": 5000, "screenshot": true}),
+            )
+            .await;
+        assert!(
+            crate::fixture::eventually(Duration::from_secs(2), || desk
+                .fixture
+                .path("grim.n")
+                .exists())
+            .await
+        );
+        let action = desk
+            .server
+            .start_call("focus_window", json!({"id": 2}))
+            .await;
+        let sent = tokio::time::timeout(Duration::from_millis(500), desk.niri.action())
+            .await
+            .expect("visual settlement blocked the action for more than one capture");
+        assert!(matches!(sent, Action::FocusWindow { id: 2 }));
+        focus_changed(&desk.stream, 2);
+        let focused = desk.server.response(action).await;
+        assert_eq!(focused["result"]["isError"], false);
+        let released = tokio::time::timeout(
+            Duration::from_millis(500),
+            desk.server
+                .call("release_desktop", json!({"restore_focus": false})),
+        )
+        .await
+        .expect("visual settlement blocked release");
+        assert_eq!(released["structuredContent"]["released"], true);
+        assert!(
+            !desk.server.answered().contains(&waiting),
+            "the wait ended before action/release completed"
+        );
+        desk.server.cancel(waiting).await;
+    }
 }
 
 #[tokio::test]
