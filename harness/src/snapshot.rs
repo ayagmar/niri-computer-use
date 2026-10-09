@@ -35,6 +35,19 @@ pub(crate) fn take(host: &Host) -> Result<Snapshot> {
     })
 }
 
+/// C1 around the complete nested lifecycle, including an unsuccessful run's cleanup.
+/// The callbacks let tests observe only disposable fake host state.
+pub(crate) fn checked(
+    log: &mut Log,
+    mut take: impl FnMut() -> Result<Snapshot>,
+    run: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    let before = take()?;
+    let nested = run();
+    let c1 = report(log, &before, take());
+    nested.and(c1)
+}
+
 /// One line per field that changed.
 pub(crate) fn diff(before: &Snapshot, after: &Snapshot) -> Vec<String> {
     let mut changes = Vec::new();
@@ -140,6 +153,45 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
             "C1, host snapshot: unchanged\n  ~/.config/dconf/user modification time changed\n"
+        );
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn every_run_checks_c1_even_when_the_nested_session_fails() {
+        use std::cell::Cell;
+
+        let path =
+            std::env::temp_dir().join(format!("harness-c1-lifecycle-{}", std::process::id()));
+        let mut log = Log::create(&path, false).unwrap();
+        for nested_fails in [false, true] {
+            let reads = Cell::new(0);
+            let changed = Cell::new(false);
+            let take = || {
+                reads.set(reads.get() + 1);
+                let mut state = snapshot();
+                state.dconf_modified = changed.get().then_some(SystemTime::UNIX_EPOCH);
+                Ok(state)
+            };
+            let outcome = if nested_fails {
+                Err(Failure::new("nested failed"))
+            } else {
+                Ok(())
+            };
+            let run = || {
+                changed.set(true);
+                outcome
+            };
+            let result = checked(&mut log, take, run);
+            assert_eq!(reads.get(), 2, "a headless run skipped a C1 read");
+            assert!(result.is_err(), "changed host state passed C1");
+        }
+        assert_eq!(
+            fs::read_to_string(&path)
+                .unwrap()
+                .matches("modification time changed")
+                .count(),
+            2
         );
         fs::remove_file(path).unwrap();
     }

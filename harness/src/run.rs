@@ -197,39 +197,39 @@ fn run_nested(
     };
     let env = preflight(host, test_dir, artifacts, options, &display)?;
     log.line("stage 0, preflight: pass")?;
-    let cage = if options.visible {
-        None
-    } else {
-        Some(crate::headless::Headless::start(
-            test_dir.root(),
-            &env,
-            artifacts,
-            deadline(options) + VALIDATE_DEADLINE,
-        )?)
-    };
-    if cage.is_some() {
-        log.line("headless cage: isolated; host snapshots skipped")?;
+    if !options.visible {
+        log.line("headless cage: isolated; C1 host snapshots enabled")?;
     }
-    let before = options.visible.then(|| snapshot::take(host)).transpose()?;
-    let nested = start_nested(&env, test_dir, artifacts, options);
-    let after = options.visible.then(|| snapshot::take(host));
-    let cleanup = cage.map_or(Ok(()), crate::headless::Headless::stop);
+    let nested = snapshot::checked(
+        log,
+        || snapshot::take(host),
+        || run_session(&env, test_dir, artifacts, options),
+    );
     for line in fs::read_to_string(artifacts.join(supervise::LOG_FILE))
         .unwrap_or_default()
         .lines()
     {
         log.line(&format!("  {line}"))?;
     }
-    // Compared before the nested result is checked, so a failed run still reports what
-    // changed on the host.
-    let c1 = match (before, after) {
-        (Some(before), Some(after)) => snapshot::report(log, &before, after),
-        _ => Ok(()),
-    };
-    cleanup?;
     nested?;
-    log.line("stages 1-2, nested niri and private bus: pass")?;
-    c1
+    log.line("stages 1-2, nested niri and private bus: pass")
+}
+
+/// The headless parent is part of the lifecycle C1 observes, including cleanup.
+fn run_session(env: &Env, test_dir: &TestDir, artifacts: &Path, options: &Options) -> Result<()> {
+    let cage = if options.visible {
+        None
+    } else {
+        Some(crate::headless::Headless::start(
+            test_dir.root(),
+            env,
+            artifacts,
+            deadline(options) + VALIDATE_DEADLINE,
+        )?)
+    };
+    let nested = start_nested(env, test_dir, artifacts, options);
+    let cleanup = cage.map_or(Ok(()), crate::headless::Headless::stop);
+    cleanup.and(nested)
 }
 
 /// Stage 0: generated configs, PARENT, containment, `niri validate`, and with Noctalia,
