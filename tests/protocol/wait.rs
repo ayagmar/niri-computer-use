@@ -128,6 +128,41 @@ async fn conditions_that_cant_be_met_are_argument_mistakes() {
 }
 
 #[tokio::test]
+async fn a_slow_capture_respects_the_screen_wait_budget() {
+    let (fixture, _niri, _stream, mut server) = start("wait-slow-frame").await;
+    fixture.program("grim", "exec sleep 30");
+    let first_start = std::time::Instant::now();
+    let failed = server
+        .call(
+            "wait_for",
+            json!({"until": "screen_stable", "timeout_ms": 200}),
+        )
+        .await;
+    assert_eq!(crate::client::tool_error(&failed).0, "deadline_exceeded");
+    assert!(first_start.elapsed() < std::time::Duration::from_secs(1));
+
+    fixture.program(
+        "grim",
+        r#"
+        if [ -e "$DIR/frame.taken" ]; then exec sleep 30; fi
+        : > "$DIR/frame.taken"
+        cat "$DIR/grim.out"
+    "#,
+    );
+    let start = std::time::Instant::now();
+    let result = server
+        .call(
+            "wait_for",
+            json!({"until": "screen_stable", "timeout_ms": 200, "screenshot": true}),
+        )
+        .await;
+    assert_eq!(result["isError"], false);
+    assert_eq!(result["structuredContent"]["observed"], "timeout");
+    assert_eq!(result["structuredContent"]["screenshot"]["settled"], false);
+    assert!(start.elapsed() < std::time::Duration::from_secs(1));
+}
+
+#[tokio::test]
 async fn a_still_screen_is_met_with_its_screenshot() {
     let (_fixture, _niri, _stream, mut server) = start("wait-screen").await;
     let result = server

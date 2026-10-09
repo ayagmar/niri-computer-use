@@ -7,13 +7,13 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
-use crate::error::CallError;
+use crate::error::{CallError, ErrorName, ToolError};
 use crate::observe::Screenshot;
 
 /// A first redraw after input usually lands within a few frames.
 const FIRST: Duration = Duration::from_millis(50);
-/// Several frames at 60 Hz: a screen unchanged over this long has stopped redrawing for
-/// the input, not just between two frames of it.
+/// Several frames at 60 Hz between capture starts. Equal samples do not prove semantic
+/// readiness or exclude an animation that changes between samples.
 const GAP: Duration = Duration::from_millis(100);
 /// How long a screenshot asked for with an action waits for the screen to stop changing.
 pub(crate) const LIMIT: Duration = Duration::from_millis(1500);
@@ -25,9 +25,9 @@ pub(crate) struct Settled<T> {
     pub(crate) stable: bool,
 }
 
-/// Captures until two captures in a row are the same, or `limit` has passed since the
-/// first; then the last one is the result, `stable` or not. Something that keeps moving,
-/// such as a spinner or a video, never settles, so the limit bounds the wait.
+/// Captures until two consecutive samples match, within a wall-clock budget including
+/// the initial delay and capture work. On timeout, returns the last completed sample
+/// unsettled, or a deadline error if none completed. Dropping a capture cancels its runner.
 pub(crate) async fn settle<T, E, F>(
     mut capture: impl FnMut() -> F,
     same: impl Fn(&T, &T) -> bool,
@@ -35,15 +35,32 @@ pub(crate) async fn settle<T, E, F>(
 ) -> Result<Settled<T>, E>
 where
     F: Future<Output = Result<T, E>>,
+    E: From<ToolError>,
 {
-    tokio::time::sleep(FIRST).await;
     let deadline = Instant::now() + limit;
+    tokio::time::sleep_until((Instant::now() + FIRST).min(deadline)).await;
+    if Instant::now() >= deadline {
+        return Err(no_sample().into());
+    }
     let mut started = Instant::now();
-    let mut last = capture().await?;
+    let mut last = tokio::time::timeout_at(deadline, Box::pin(capture()))
+        .await
+        .map_err(|_| E::from(no_sample()))??;
+    if Instant::now() >= deadline {
+        return Err(no_sample().into());
+    }
     loop {
-        tokio::time::sleep_until(started + GAP).await;
+        tokio::time::sleep_until((started + GAP).min(deadline)).await;
+        if Instant::now() >= deadline {
+            break;
+        }
         started = Instant::now();
-        let next = capture().await?;
+        let next = tokio::time::timeout_at(deadline, Box::pin(capture())).await;
+        let Ok(next) = next else { break };
+        if Instant::now() >= deadline {
+            break;
+        }
+        let next = next?;
         if same(&last, &next) {
             return Ok(Settled {
                 last: next,
@@ -51,13 +68,18 @@ where
             });
         }
         last = next;
-        if Instant::now() >= deadline {
-            return Ok(Settled {
-                last,
-                stable: false,
-            });
-        }
     }
+    Ok(Settled {
+        last,
+        stable: false,
+    })
+}
+
+fn no_sample() -> ToolError {
+    ToolError::new(
+        ErrorName::DeadlineExceeded,
+        "screenshot settle deadline exceeded before any capture completed",
+    )
 }
 
 /// The last of the screenshots `settle` took, its metadata saying whether the screen had
@@ -82,6 +104,11 @@ mod tests {
 
     use super::*;
 
+    async fn frame_after(delay: Duration) -> Result<u8, ToolError> {
+        tokio::time::sleep(delay).await;
+        Ok(1)
+    }
+
     /// Captures that return `frames` in order, and the times they were taken, from the
     /// start of the test.
     async fn run(frames: &[u8], limit: Duration) -> (Settled<u8>, Vec<u128>) {
@@ -91,7 +118,7 @@ mod tests {
         let settled = settle(
             || {
                 taken.lock().unwrap().push(start.elapsed().as_millis());
-                std::future::ready(Ok::<_, ()>(frames.next().unwrap()))
+                std::future::ready(Ok::<_, ToolError>(frames.next().unwrap()))
             },
             |a, b| a == b,
             limit,
@@ -120,19 +147,72 @@ mod tests {
         let frames: Vec<u8> = (0..100).collect();
         let (settled, taken) = run(&frames, Duration::from_millis(450)).await;
         assert!(!settled.stable);
-        assert_eq!(taken.last(), Some(&550));
-        assert_eq!(settled.last, 5);
+        assert_eq!(taken, [50, 150, 250, 350]);
+        assert_eq!(settled.last, 3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_slow_later_capture_returns_the_last_complete_frame_at_the_deadline() {
+        let start = Instant::now();
+        let mut delays = [Duration::ZERO, Duration::from_secs(5)].into_iter();
+        let result = settle(
+            || frame_after(delays.next().unwrap()),
+            |a, b| a == b,
+            Duration::from_millis(450),
+        )
+        .await
+        .unwrap();
+        assert_eq!(start.elapsed(), Duration::from_millis(450));
+        assert_eq!(
+            result,
+            Settled {
+                last: 1,
+                stable: false
+            }
+        );
+        assert_eq!(delays.len(), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_slow_first_capture_fails_without_claiming_a_frame_was_observed() {
+        let start = Instant::now();
+        let result = settle(
+            || async {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                Ok::<_, ToolError>(1_u8)
+            },
+            |a, b| a == b,
+            Duration::from_millis(450),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(result.name, ErrorName::DeadlineExceeded);
+        assert_eq!(start.elapsed(), Duration::from_millis(450));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_capture_finishing_exactly_at_the_deadline_is_not_a_stable_sample() {
+        let mut delays = [Duration::ZERO, Duration::from_millis(300)].into_iter();
+        let result = settle(
+            || frame_after(delays.next().unwrap()),
+            |a, b| a == b,
+            Duration::from_millis(450),
+        )
+        .await
+        .unwrap();
+        assert!(!result.stable);
     }
 
     #[tokio::test(start_paused = true)]
     async fn a_failed_capture_ends_the_wait_with_its_error() {
-        let mut captures = [Ok(1), Err("grim died")].into_iter();
+        let error = ToolError::new(ErrorName::UpstreamError, "grim died");
+        let mut captures = [Ok(1), Err(error.clone())].into_iter();
         let failed = settle(
             || std::future::ready(captures.next().unwrap()),
             |a: &u8, b: &u8| a == b,
             Duration::from_secs(1),
         )
         .await;
-        assert_eq!(failed, Err("grim died"));
+        assert_eq!(failed, Err(error));
     }
 }
