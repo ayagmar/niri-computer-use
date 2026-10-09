@@ -39,40 +39,31 @@ where
 {
     let deadline = Instant::now() + limit;
     tokio::time::sleep_until((Instant::now() + FIRST).min(deadline)).await;
-    if Instant::now() >= deadline {
-        return Err(no_sample().into());
-    }
     let mut started = Instant::now();
     let mut last = tokio::time::timeout_at(deadline, Box::pin(capture()))
         .await
         .map_err(|_| E::from(no_sample()))??;
-    if Instant::now() >= deadline {
-        return Err(no_sample().into());
-    }
+    let mut stable = false;
     loop {
-        tokio::time::sleep_until((started + GAP).min(deadline)).await;
-        if Instant::now() >= deadline {
-            break;
-        }
-        started = Instant::now();
-        let next = tokio::time::timeout_at(deadline, Box::pin(capture())).await;
-        let Ok(next) = next else { break };
-        if Instant::now() >= deadline {
-            break;
-        }
-        let next = next?;
-        if same(&last, &next) {
+        let expired = Instant::now() >= deadline;
+        if stable || expired {
             return Ok(Settled {
-                last: next,
-                stable: true,
+                last,
+                stable: stable && !expired,
             });
         }
-        last = next;
+        tokio::select! {
+            biased;
+            () = tokio::time::sleep_until(deadline) => continue,
+            () = tokio::time::sleep_until(started + GAP) => {},
+        }
+        started = Instant::now();
+        if let Ok(next) = tokio::time::timeout_at(deadline, Box::pin(capture())).await {
+            let next = next?;
+            stable = same(&last, &next);
+            last = next;
+        }
     }
-    Ok(Settled {
-        last,
-        stable: false,
-    })
 }
 
 fn no_sample() -> ToolError {
@@ -201,6 +192,52 @@ mod tests {
         .await
         .unwrap();
         assert!(!result.stable);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_first_capture_completed_at_the_deadline_is_kept_unsettled() {
+        let result = settle(
+            || frame_after(Duration::from_millis(400)),
+            |a, b| a == b,
+            Duration::from_millis(450),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            result,
+            Settled {
+                last: 1,
+                stable: false
+            }
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_first_capture_completed_after_the_deadline_is_kept_unsettled() {
+        let (started, running) = tokio::sync::oneshot::channel();
+        let capture = async move {
+            started.send(()).unwrap();
+            frame_after(Duration::from_millis(400)).await
+        };
+        let mut capture = Some(capture);
+        let waiting = tokio::spawn(async move {
+            settle(
+                || capture.take().unwrap(),
+                |a, b| a == b,
+                Duration::from_millis(450),
+            )
+            .await
+        });
+        running.await.unwrap();
+        // Simulate the runtime resuming after both the capture and deadline timers fired.
+        tokio::time::advance(Duration::from_millis(500)).await;
+        assert_eq!(
+            waiting.await.unwrap().unwrap(),
+            Settled {
+                last: 1,
+                stable: false
+            }
+        );
     }
 
     #[tokio::test(start_paused = true)]
