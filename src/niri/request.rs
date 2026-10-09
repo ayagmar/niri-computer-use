@@ -10,19 +10,9 @@ use niri_ipc::{Reply, Request, Response};
 use tokio::io::{AsyncBufReadExt as _, AsyncRead, AsyncWrite, AsyncWriteExt as _, BufReader};
 use tokio::net::UnixStream;
 
-use crate::error::{ErrorName, ToolError};
+use crate::error::{ErrorName, ToolError, Unanswered};
 
 const DEADLINE: Duration = Duration::from_secs(2);
-
-/// Why a request that changes something got no answer to act on.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Unanswered {
-    /// Nothing changed: niri wasn't reached, the request wasn't sent whole, or niri
-    /// refused it.
-    Refused(ToolError),
-    /// Sent whole, but the reply was lost or unreadable: niri may have carried it out.
-    Lost(ToolError),
-}
 
 /// Sends one request on a new connection and returns niri's response, all within two
 /// seconds.

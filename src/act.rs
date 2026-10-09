@@ -13,13 +13,15 @@ use std::time::Duration;
 use niri_ipc::{Action, Window, WorkspaceReferenceArg};
 use serde::Serialize;
 
-use crate::error::{CallError, ErrorName, ToolError};
+use crate::error::{CallError, ErrorName, ToolError, Unanswered};
 use crate::input::keyboard::Focus;
+use crate::niri;
 use crate::niri::events::EventStream;
 use crate::niri::waiter::{View, Waited, Waiter};
-use crate::niri::{self, Unanswered};
 use crate::observe::{self, DEFAULT_MAX_WIDTH, Format, Metadata, Screenshot, Target};
 use crate::policy::Preset;
+
+pub(crate) mod shell;
 
 /// How long an action waits for its effect.
 const WAIT: Duration = Duration::from_secs(5);
@@ -33,7 +35,10 @@ const SETTLE: Duration = Duration::from_millis(500);
 pub(crate) enum Observed {
     /// The window or workspace has focus.
     Focused,
+    /// The window closed, or the Noctalia panel is no longer the open one.
     Closed,
+    /// The Noctalia panel is the open one.
+    Opened,
     /// The window is still open when the wait ends, for example behind an unsaved-changes
     /// dialog.
     Pending,
@@ -71,6 +76,9 @@ pub(crate) struct Outcome {
     /// Keyboard tools: whether `expect` was checked.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) focus: Option<Focus>,
+    /// Shell tools: Noctalia's open panel when the observation ended.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) shell: Option<shell::Shell>,
     /// Why the outcome is uncertain.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) detail: Option<String>,
@@ -98,6 +106,7 @@ impl Outcome {
             focused_window: view.focused_window(),
             windows,
             focus: None,
+            shell: None,
             detail: None,
             screenshot: None,
             screenshot_error: None,
@@ -111,6 +120,7 @@ impl Outcome {
             focused_window: view.and_then(View::focused_window),
             windows: Vec::new(),
             focus: None,
+            shell: None,
             detail: Some(detail),
             screenshot: None,
             screenshot_error: None,
@@ -127,6 +137,7 @@ impl Outcome {
             | Observed::Uncertain => true,
             Observed::Focused
             | Observed::Closed
+            | Observed::Opened
             | Observed::One
             | Observed::Ambiguous
             | Observed::Sent => false,

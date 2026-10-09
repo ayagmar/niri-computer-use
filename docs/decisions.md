@@ -410,3 +410,14 @@ These match the versions installed locally.
 - The protocol tests drive the keyboard path through a fake `wtype` on the fixture's `PATH`: its arguments, its stdin and locale, the marker in its `running` phase while it runs, and the marker kept after a kill or the deadline (review finding).
 - A pixel inside the image that maps off the output stays `out_of_bounds`, with the distance in the detail, rather than a reason of its own: `observe` only captures rectangles inside one output, so it can't happen today, and the agent's remedy is the same.
 
+## 2026-10-09: the shell tools
+
+- No new crate. `shell_open` and `shell_close` use the server's Noctalia client from M1, which now sends three kinds of command: `status`, `panel-open <id>` and `panel-close <id>`.
+- The panel allowlist is `policy::Panel`, an enum of the three panels plan §6.1 allows. Plan §6.1 asks the payload builder to reject `\x1e` and newlines; with commands built only from the enum's fixed words there is nothing to reject, so a unit test checks every payload instead.
+- `panel` is a plain string in the schema, so a refused panel reaches the server and comes back as `panel_not_allowed`, the stable name plan §6.2 promises, rather than as a schema mistake. The check runs after the action gate, as `launch` checks its preset.
+- `Unanswered`, the refused-or-lost split for niri requests, moves to `error.rs` and also describes a panel command: a failed connect or Noctalia's `error:` reply is an error, and a reply lost after the connect is `uncertain` with `accepted: null`, because Noctalia carries the command out before it replies (`PanelManager::registerIpc` in 5.2.1).
+- The tools read `status` before sending, which is plan §6.1's "checked before every Noctalia-backed call", and send nothing when the panel is already open, or already not open, reporting `accepted: false` as the focus tools do.
+- `opened` is a new `observed` value; `closed` now also means a panel closed. `shell_close` counts another panel being open as closed, since `activePanelId` names only one.
+- Results carry `shell.active_panel`, absent when a lost reply leaves it unknown, and `focused_window` from niri's event stream, which an open panel leaves null.
+- They have no `interrupted`: Noctalia sends no events, and plan §6 defines `interrupted` by window focus.
+- They take the lock gate like every action, before Noctalia is asked. Where only Noctalia can say whether the screen is locked, as in the nested session, a stopped Noctalia makes the lock state unknown, so they answer `screen_locked`, and `shell_status` answers `noctalia_unavailable`.

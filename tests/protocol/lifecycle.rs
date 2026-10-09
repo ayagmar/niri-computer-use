@@ -70,6 +70,7 @@ fn expected(name: &str) -> (Value, Value) {
             json!(["screenshot_ref", "x", "y"]),
         ),
         "key" => (json!([false, true, false]), json!(["combo", "expect"])),
+        "shell_open" | "shell_close" => (json!([false, false, true]), json!(["panel"])),
         "type_text" => (json!([false, true, false]), json!(["text", "expect"])),
         _ => read_only,
     }
@@ -99,6 +100,8 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
             "release_desktop",
             "screenshot",
             "scroll",
+            "shell_close",
+            "shell_open",
             "shell_status",
             "status",
             "type_text"
@@ -126,7 +129,7 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
 }
 
 /// How many arguments each tool takes; tools not listed take none.
-const PROPERTIES: [(&str, usize); 11] = [
+const PROPERTIES: [(&str, usize); 13] = [
     ("screenshot", 4),
     ("launch", 2),
     ("focus_window", 1),
@@ -138,6 +141,8 @@ const PROPERTIES: [(&str, usize); 11] = [
     ("scroll", 5),
     ("key", 2),
     ("type_text", 2),
+    ("shell_open", 1),
+    ("shell_close", 1),
 ];
 
 /// `(tool, JSON pointer into its properties, expected value)`: advertised defaults and
@@ -179,7 +184,7 @@ fn properties_and_defaults(name: &str, tool: &Value) {
 }
 
 #[tokio::test]
-async fn without_noctalia_on_path_there_is_no_shell_status() {
+async fn without_noctalia_on_path_there_are_no_shell_tools() {
     let fixture = Fixture::new("no-shell");
     let mut server = Server::start(&fixture).await;
     let tools = server.tools().await;
@@ -205,10 +210,14 @@ async fn without_noctalia_on_path_there_is_no_shell_status() {
             "type_text"
         ]
     );
-    let id = server.start_call("shell_status", json!({})).await;
-    let response = server.response(id).await;
-    assert!(response["error"]["code"].is_i64(), "{response}");
-    assert_eq!(response.get("result"), None);
+    for tool in ["shell_status", "shell_open", "shell_close"] {
+        let id = server
+            .start_call(tool, json!({"panel": "control-center"}))
+            .await;
+        let response = server.response(id).await;
+        assert!(response["error"]["code"].is_i64(), "{response}");
+        assert_eq!(response.get("result"), None);
+    }
 }
 
 #[tokio::test]

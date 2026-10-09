@@ -820,3 +820,101 @@ async fn a_wtype_past_its_deadline_is_killed_and_leaves_the_marker() {
     assert!(detail.contains("keys may be held"), "{detail}");
     assert!(desk.fixture.path(MARKER).exists());
 }
+
+#[tokio::test]
+async fn shell_open_and_close_watch_noctalias_active_panel() {
+    let mut desk = Desk::start("act-shell", "").await;
+    let opened = desk
+        .server
+        .call("shell_open", json!({"panel": "control-center"}))
+        .await;
+    assert_eq!(
+        outcome(&opened),
+        json!({
+            "accepted": true, "observed": "opened", "focused_window": 1,
+            "shell": {"active_panel": "control-center"}
+        })
+    );
+    // Already open: nothing is sent.
+    let again = desk
+        .server
+        .call("shell_open", json!({"panel": "control-center"}))
+        .await;
+    assert_eq!(outcome(&again)["accepted"], false);
+    let closed = desk
+        .server
+        .call("shell_close", json!({"panel": "control-center"}))
+        .await;
+    assert_eq!(
+        outcome(&closed),
+        json!({
+            "accepted": true, "observed": "closed", "focused_window": 1,
+            "shell": {"active_panel": null}
+        })
+    );
+    assert_eq!(
+        desk.noctalia.panel_commands(),
+        ["panel-open control-center", "panel-close control-center"]
+    );
+    assert_eq!(
+        desk.audited(),
+        [
+            json!(["shell_open", {"panel": "control-center"}, true, "opened", null]),
+            json!(["shell_open", {"panel": "control-center"}, false, "opened", null]),
+            json!(["shell_close", {"panel": "control-center"}, true, "closed", null]),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn panels_outside_the_allowlist_are_refused_without_asking_noctalia() {
+    let mut desk = Desk::start("act-shell-refused", "").await;
+    for panel in ["launcher", "session", "polkit", "clipboard", "nope"] {
+        for tool in ["shell_open", "shell_close"] {
+            let refused = desk.server.call(tool, json!({"panel": panel})).await;
+            let (name, detail) = tool_error(&refused);
+            assert_eq!(name, "panel_not_allowed", "{tool} {panel}");
+            assert!(detail.contains(panel), "{detail}");
+        }
+    }
+    assert_eq!(desk.noctalia.panel_commands(), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn a_panel_that_never_opens_times_out_with_a_screenshot() {
+    let mut desk = Desk::start("act-shell-timeout", "").await;
+    desk.noctalia.panels_follow(false);
+    let started = std::time::Instant::now();
+    let stuck = desk
+        .server
+        .call("shell_open", json!({"panel": "wallpaper"}))
+        .await;
+    assert_eq!(
+        outcome(&stuck),
+        json!({
+            "accepted": true, "observed": "timeout", "focused_window": 1,
+            "shell": {"active_panel": null}
+        })
+    );
+    assert!(started.elapsed() >= std::time::Duration::from_secs(2));
+    assert_eq!(desk.noctalia.panel_commands(), ["panel-open wallpaper"]);
+}
+
+#[tokio::test]
+async fn shell_tools_need_the_lease_and_an_unlocked_screen() {
+    let mut desk = Desk::start("act-shell-gate", "").await;
+    desk.noctalia.set(LOCKED);
+    let locked = desk
+        .server
+        .call("shell_open", json!({"panel": "control-center"}))
+        .await;
+    assert_eq!(tool_error(&locked).0, "screen_locked");
+    desk.noctalia.set(UNLOCKED);
+    desk.server.structured("release_desktop").await;
+    let unheld = desk
+        .server
+        .call("shell_close", json!({"panel": "control-center"}))
+        .await;
+    assert_eq!(tool_error(&unheld).0, "lease_required");
+    assert_eq!(desk.noctalia.panel_commands(), Vec::<String>::new());
+}

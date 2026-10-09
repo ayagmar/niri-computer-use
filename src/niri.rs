@@ -11,9 +11,8 @@ use std::path::Path;
 
 use niri_ipc::{Action, Output, Request, Response};
 
-use crate::error::{ErrorName, ToolError};
+use crate::error::{ErrorName, ToolError, Unanswered};
 use events::{DesktopState, EventStream};
-pub(crate) use request::Unanswered;
 use waiter::Waiter;
 
 /// niri's version string, such as `26.04 (8ed0da4)`.

@@ -3,7 +3,7 @@ title: Tools reference
 description: Every tool niri-computer-use offers, with its arguments, results and errors.
 ---
 
-The perception tools are read-only and carry the `readOnlyHint` annotation. The two lease tools change only the lease, never the desktop. The four action tools change the desktop through niri's IPC and need the lease; `close_window` carries `destructiveHint`. Each successful result has the data as `structuredContent` and the same JSON as text.
+The perception tools are read-only and carry the `readOnlyHint` annotation. The two lease tools change only the lease, never the desktop. The four action tools change the desktop through niri's IPC and need the lease; `close_window` carries `destructiveHint`. `shell_open` and `shell_close` change which Noctalia panel is open and need the lease too. Each successful result has the data as `structuredContent` and the same JSON as text.
 
 ## Errors
 
@@ -27,6 +27,7 @@ A failure sets `isError` and returns `{"error": <name>, "detail": <upstream deta
 | `app_denied` | input while the focused window's `app_id` is on the policy file's `deny_input_app_ids` |
 | `focus_mismatch` | a keyboard tool's `expect` doesn't match the window with keyboard focus; `detail` says what has focus |
 | `text_too_long` | `type_text` with over 100 characters; `detail` gives the length |
+| `panel_not_allowed` | `shell_open` or `shell_close` named a panel other than `control-center`, `wallpaper` or `tray-drawer` |
 
 A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and one plain-text block starting `invalid arguments:`, without `structuredContent`, so the model can correct the call.
 
@@ -107,6 +108,16 @@ No arguments. Runs `wl-paste --no-newline --type text` and returns `{"text": ...
 ## `shell_status`
 
 No arguments. Listed only when `noctalia` is on `PATH`. Noctalia's own status reply: `barVisible`, `panelOpen`, `activePanelId` and `locked`. `noctalia_unavailable` when Noctalia doesn't answer; an `error:` reply from Noctalia is an `upstream_error` with its text.
+
+## `shell_open` and `shell_close`
+
+| Argument | Value |
+|---|---|
+| `panel` (required) | `control-center`, `wallpaper` or `tray-drawer` |
+
+Listed only when `noctalia` is on `PATH`. They need the lease and pass the same checks as the action tools below. Any other panel, such as the session menu or the launcher, is refused with `panel_not_allowed`, and nothing is sent. `noctalia_unavailable` when Noctalia doesn't answer `status`, and Noctalia's `error:` reply is an `upstream_error`.
+
+The tool sends `panel-open` or `panel-close`, then reads Noctalia's `status` every 100 ms for up to two seconds. `observed` is `opened` once `activePanelId` is the panel, `closed` once it isn't, `timeout` if neither happens in time, or `uncertain` if Noctalia's reply or a later `status` was lost. When the panel is already open, or already isn't, nothing is sent and `accepted` is false. The result has the action tools' fields, plus `shell.active_panel`, the open panel when the observation ended, or null; it is absent when that is unknown. An open panel holds keyboard focus, so `focused_window` is null while it is open; type into it with `expect: "none"`.
 
 ## `acquire_desktop`
 

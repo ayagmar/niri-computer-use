@@ -124,6 +124,13 @@ struct LaunchArgs {
     reuse: bool,
 }
 
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct PanelArgs {
+    /// A Noctalia panel: `control-center`, `wallpaper` or `tray-drawer`.
+    panel: String,
+}
+
 /// A pixel of a screenshot, counted from its top-left corner.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
@@ -287,13 +294,15 @@ pub(crate) struct Server {
 
 #[tool_router]
 impl Server {
-    /// `shell_status` exists only when `noctalia` is on `PATH`, so the tool list stays
-    /// fixed for the session.
+    /// The `shell_*` tools exist only when `noctalia` is on `PATH`, so the tool list
+    /// stays fixed for the session.
     pub(crate) fn new(env: Env, events: Option<EventStream>, audit: Audit) -> Self {
         let mut tool_router = Self::tool_router();
         let noctalia_installed = env.finds("noctalia");
         if !noctalia_installed {
-            tool_router.remove_route("shell_status");
+            for tool in SHELL_TOOLS {
+                tool_router.remove_route(tool);
+            }
         }
         Self {
             desk: Desk::start(&env),
@@ -672,6 +681,49 @@ impl Server {
         .await
     }
 
+    /// Opens a Noctalia panel: `control-center`, `wallpaper` or `tray-drawer`; any other
+    /// panel is refused with `panel_not_allowed`. `observed` is `opened` once Noctalia
+    /// reports it open, `timeout` if it doesn't within two seconds, or `uncertain` if
+    /// Noctalia's reply was lost; `shell.active_panel` is the panel open at the end. An
+    /// open panel holds keyboard focus, so type into it with `expect: "none"`. Fails with
+    /// `noctalia_unavailable` when Noctalia isn't answering. Requires the lease.
+    #[tool(annotations(
+        read_only_hint = false,
+        destructive_hint = false,
+        idempotent_hint = true,
+        open_world_hint = false
+    ))]
+    async fn shell_open(
+        &self,
+        Parameters(args): Parameters<PanelArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        let (env, niri) = (&self.env, self.niri());
+        let work = async move { act::shell::open(env, niri, policy::panel(&args.panel)?).await };
+        self.act(&context, "shell_open", logged, work).await
+    }
+
+    /// Closes a Noctalia panel opened with `shell_open`. `observed` is `closed` once
+    /// Noctalia no longer reports it open; otherwise as for `shell_open`. Requires the
+    /// lease.
+    #[tool(annotations(
+        read_only_hint = false,
+        destructive_hint = false,
+        idempotent_hint = true,
+        open_world_hint = false
+    ))]
+    async fn shell_close(
+        &self,
+        Parameters(args): Parameters<PanelArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        let (env, niri) = (&self.env, self.niri());
+        let work = async move { act::shell::close(env, niri, policy::panel(&args.panel)?).await };
+        self.act(&context, "shell_close", logged, work).await
+    }
+
     /// The clipboard's text, read with `wl-paste`. `text` is null, with a `reason`, when
     /// nothing is copied (`nothing_copied`) or nothing copied is text (`no_text`).
     #[tool(annotations(read_only_hint = true))]
@@ -832,6 +884,9 @@ impl Server {
     }
 }
 
+/// The tools that exist only with Noctalia installed.
+const SHELL_TOOLS: [&str; 3] = ["shell_status", "shell_open", "shell_close"];
+
 /// The session label: the MCP client's name and this server's PID, such as
 /// `claude-code/4711`.
 fn session(context: &RequestContext<RoleServer>) -> String {
@@ -887,7 +942,7 @@ fn invalid(message: &str) -> CallToolResult {
 #[tool_handler(
     router = self.tool_router,
     name = "niri-computer-use",
-    instructions = "View and act on a niri desktop; follow the `niri-computer-use` skill. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `clipboard_read` returns the clipboard's text, and `shell_status`, when Noctalia is installed, its panel and lock state. To act, call `acquire_desktop`, then one action at a time (`focus_window`, `focus_workspace`, `launch`, `close_window`, and for input `pointer_move`, `click`, `drag` and `scroll` with a fresh `screenshot_ref`, or `key` and `type_text` with `expect`), reading `accepted` and `observed` before the next; never retry an action on your own, and call `release_desktop` when done. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
+    instructions = "View and act on a niri desktop; follow the `niri-computer-use` skill. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `clipboard_read` returns the clipboard's text, and `shell_status`, when Noctalia is installed, its panel and lock state. To act, call `acquire_desktop`, then one action at a time (`focus_window`, `focus_workspace`, `launch`, `close_window`, with Noctalia `shell_open` and `shell_close`, and for input `pointer_move`, `click`, `drag` and `scroll` with a fresh `screenshot_ref`, or `key` and `type_text` with `expect`), reading `accepted` and `observed` before the next; never retry an action on your own, and call `release_desktop` when done. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
 )]
 impl ServerHandler for Server {}
 
@@ -932,6 +987,8 @@ mod tests {
             (Server::focus_workspace_tool_attr(), (no, no, yes)),
             (Server::launch_tool_attr(), (no, no, no)),
             (Server::close_window_tool_attr(), (no, yes, no)),
+            (Server::shell_open_tool_attr(), (no, no, yes)),
+            (Server::shell_close_tool_attr(), (no, no, yes)),
         ] {
             let name = tool.name.clone();
             assert_eq!(hints(tool), expected, "{name}");
@@ -1030,7 +1087,7 @@ mod tests {
     }
 
     #[test]
-    fn shell_status_exists_only_with_noctalia_installed() {
+    fn the_shell_tools_exist_only_with_noctalia_installed() {
         use std::os::unix::fs::PermissionsExt as _;
         let dir = crate::test_support::fresh_dir("noctalia");
         let noctalia = dir.join("noctalia");
@@ -1040,13 +1097,12 @@ mod tests {
             path: Some(dir.clone().into_os_string()),
             ..Env::default()
         };
-        assert!(
-            Server::new(installed, None, Audit::new(None))
-                .tool_router
-                .has_route("shell_status")
-        );
+        let installed = Server::new(installed, None, Audit::new(None));
         let absent = Server::new(Env::default(), None, Audit::new(None));
-        assert!(!absent.tool_router.has_route("shell_status"));
+        for tool in SHELL_TOOLS {
+            assert!(installed.tool_router.has_route(tool), "{tool}");
+            assert!(!absent.tool_router.has_route(tool), "{tool}");
+        }
         assert!(absent.tool_router.has_route("status"));
         std::fs::remove_dir_all(dir).unwrap();
     }

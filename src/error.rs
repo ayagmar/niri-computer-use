@@ -43,6 +43,8 @@ pub(crate) enum ErrorName {
     /// A screenshot ref that is unknown, expired, for a changed output, or a pixel outside
     /// its image.
     RefInvalid,
+    /// `shell_open` or `shell_close` named a panel outside the allowlist.
+    PanelNotAllowed,
 }
 
 /// A failure, serialized as `{"error": <name>, "detail": <upstream detail>}`.
@@ -65,6 +67,16 @@ impl ToolError {
     pub(crate) fn into_result(self) -> CallToolResult {
         CallToolResult::structured_error(serde_json::json!(self))
     }
+}
+
+/// Why a request that changes something, to niri or Noctalia, got no answer to act on.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Unanswered {
+    /// Nothing changed: the peer wasn't reached, the request wasn't sent whole, or the peer
+    /// refused it.
+    Refused(ToolError),
+    /// Sent whole, but the reply was lost or unreadable: the peer may have carried it out.
+    Lost(ToolError),
 }
 
 /// Why a tool call that takes arguments didn't succeed: the arguments don't fit the

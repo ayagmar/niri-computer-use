@@ -1,6 +1,7 @@
 //! The policy file, `$XDG_CONFIG_HOME/niri-computer-use/policy.toml`, and the decisions it
 //! feeds: launch presets, the app deny list, whether a server may take the lease, and
-//! which output setups the pointer tools may run on.
+//! which output setups the pointer tools may run on. Also the Noctalia panels the shell
+//! tools may open, which no file changes.
 //! Everything here is pure; the caller reads the file. The preset rules catch common
 //! mistakes. They are a guardrail, not a boundary: a wrapper script or a symlink with
 //! another name gets past any list.
@@ -295,6 +296,47 @@ pub(crate) fn refuse_input(policy: &Loaded, focused_app_id: Option<&str>) -> Opt
         })
 }
 
+/// The Noctalia panels `shell_open` and `shell_close` may name (plan §6.1). Never the
+/// session menu, which powers off; the launcher, which runs whatever is typed into it;
+/// polkit's authentication prompt; the clipboard history, which may hold secrets; the
+/// setup wizard; or Noctalia's test panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Panel {
+    ControlCenter,
+    Wallpaper,
+    TrayDrawer,
+}
+
+impl Panel {
+    const ALL: [Self; 3] = [Self::ControlCenter, Self::Wallpaper, Self::TrayDrawer];
+
+    /// Noctalia's id for the panel.
+    pub(crate) const fn id(self) -> &'static str {
+        match self {
+            Self::ControlCenter => "control-center",
+            Self::Wallpaper => "wallpaper",
+            Self::TrayDrawer => "tray-drawer",
+        }
+    }
+}
+
+/// The allowlisted panel with Noctalia's id `name`, or `panel_not_allowed`.
+pub(crate) fn panel(name: &str) -> Result<Panel, ToolError> {
+    Panel::ALL
+        .into_iter()
+        .find(|panel| panel.id() == name)
+        .ok_or_else(|| {
+            let allowed: Vec<&str> = Panel::ALL.into_iter().map(Panel::id).collect();
+            ToolError::new(
+                ErrorName::PanelNotAllowed,
+                format!(
+                    "panel {name:?} isn't allowed; the shell tools take only {}",
+                    allowed.join(", ")
+                ),
+            )
+        })
+}
+
 /// Whether the pointer tools may run on these outputs (plan §8): exactly one enabled
 /// output, either a monitor with transform `Normal` or nested niri's `winit` window, which
 /// niri always shows `Flipped180`. Those are the setups live tests cover; anything else,
@@ -555,5 +597,31 @@ app_id = "foot"
             "{}",
             error.detail
         );
+    }
+
+    #[test]
+    fn only_the_allowlisted_panels_can_be_named() {
+        for allowed in ["control-center", "wallpaper", "tray-drawer"] {
+            assert_eq!(panel(allowed).map(Panel::id), Ok(allowed));
+        }
+        for refused in [
+            "session",
+            "launcher",
+            "polkit",
+            "clipboard",
+            "setup-wizard",
+            "test",
+            "Control-Center",
+            "control-center audio",
+            "",
+        ] {
+            let error = panel(refused).unwrap_err();
+            assert_eq!(error.name, ErrorName::PanelNotAllowed, "{refused:?}");
+            assert!(
+                error
+                    .detail
+                    .contains("control-center, wallpaper, tray-drawer")
+            );
+        }
     }
 }

@@ -3,7 +3,8 @@
 //! Noctalia 5.2.1's client writes `<cwd>\x1e<command>`, shuts down its write half and
 //! reads the reply until EOF (`src/ipc/ipc_client.cpp`). The service erases everything up
 //! to the first `\x1e` before parsing (`src/ipc/ipc_service.cpp`), so the server only
-//! ever sends fixed payloads, never text from a tool's arguments. M1 sends one: `status`.
+//! ever sends fixed payloads, never text from a tool's arguments: `status`, and
+//! `panel-open` or `panel-close` with an allowlisted panel.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -13,13 +14,34 @@ use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::net::UnixStream;
 
 use crate::Env;
-use crate::error::{ErrorName, ToolError};
+use crate::error::{ErrorName, ToolError, Unanswered};
+use crate::policy::Panel;
 
 const DEADLINE: Duration = Duration::from_secs(2);
-/// `/` as the caller's directory, the separator, and the command.
-const STATUS: &[u8] = b"/\x1estatus";
+/// `/` as the caller's directory and the separator, before the command.
+const CWD_PREFIX: &[u8] = b"/\x1e";
 /// A `status` reply is a few hundred bytes.
 const MAX_REPLY: u64 = 64 * 1024;
+
+/// Every command the server sends. Each is built from fixed words, so none can carry a
+/// separator or a newline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Command {
+    Status,
+    PanelOpen(Panel),
+    PanelClose(Panel),
+}
+
+impl Command {
+    fn payload(self) -> Vec<u8> {
+        let command = match self {
+            Self::Status => "status".to_owned(),
+            Self::PanelOpen(panel) => format!("panel-open {}", panel.id()),
+            Self::PanelClose(panel) => format!("panel-close {}", panel.id()),
+        };
+        [CWD_PREFIX, command.as_bytes()].concat()
+    }
+}
 
 /// Whether Noctalia is installed and answering, for `status`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -51,24 +73,81 @@ pub(crate) async fn status(env: &Env) -> Result<Map<String, Value>, ToolError> {
     let socket = socket(env).ok_or_else(|| {
         unavailable("WAYLAND_DISPLAY or XDG_RUNTIME_DIR doesn't name a Noctalia socket")
     })?;
-    let reply = tokio::time::timeout(DEADLINE, request(&socket))
+    let reply = tokio::time::timeout(DEADLINE, request(&socket, Command::Status))
         .await
         .unwrap_or_else(|_| Err(format!("no reply within {DEADLINE:?}")))
         .map_err(|error| unavailable(format!("{}: {error}", socket.display())))?;
     interpret(&reply)
 }
 
-async fn request(socket: &Path) -> Result<Vec<u8>, String> {
+/// `activePanelId` from a `status` reply: the open panel's id, or `None`. A reply without
+/// it isn't the status this server knows.
+pub(crate) fn active_panel(status: &Map<String, Value>) -> Result<Option<String>, ToolError> {
+    match status.get("activePanelId") {
+        Some(Value::Null) => Ok(None),
+        Some(Value::String(panel)) => Ok(Some(panel.clone())),
+        _ => Err(unavailable(format!(
+            "Noctalia's status has no activePanelId string or null: {}",
+            Value::Object(status.clone())
+        ))),
+    }
+}
+
+/// Sends `panel-open` or `panel-close` and requires Noctalia's `ok`. Noctalia carries the
+/// command out before it replies (`PanelManager::registerIpc`), so a lost reply leaves the
+/// panel's state unknown.
+pub(crate) async fn change_panel(env: &Env, command: Command) -> Result<(), Unanswered> {
+    let socket = socket(env).ok_or_else(|| {
+        Unanswered::Refused(unavailable(
+            "WAYLAND_DISPLAY or XDG_RUNTIME_DIR doesn't name a Noctalia socket",
+        ))
+    })?;
+    let lost = |error: String| ToolError::new(ErrorName::UpstreamError, error);
+    let reply = tokio::time::timeout(DEADLINE, async {
+        let stream = UnixStream::connect(&socket).await.map_err(|error| {
+            Unanswered::Refused(unavailable(format!(
+                "{}: connect: {error}",
+                socket.display()
+            )))
+        })?;
+        exchange(stream, command)
+            .await
+            .map_err(|error| Unanswered::Lost(lost(format!("{}: {error}", socket.display()))))
+    })
+    .await
+    .map_err(|_| Unanswered::Lost(lost(format!("no reply from Noctalia within {DEADLINE:?}"))))??;
+    acknowledged(&reply)
+}
+
+fn acknowledged(reply: &[u8]) -> Result<(), Unanswered> {
+    let text = String::from_utf8_lossy(reply);
+    if text == "ok\n" {
+        return Ok(());
+    }
+    let error = ToolError::new(
+        ErrorName::UpstreamError,
+        format!("Noctalia replied: {}", text.trim_end()),
+    );
+    if text.starts_with("error:") {
+        return Err(Unanswered::Refused(error));
+    }
+    Err(Unanswered::Lost(error))
+}
+
+async fn request(socket: &Path, command: Command) -> Result<Vec<u8>, String> {
     let stream = UnixStream::connect(socket)
         .await
         .map_err(|error| format!("connect: {error}"))?;
-    exchange(stream).await
+    exchange(stream, command).await
 }
 
 /// Writes the whole payload, shuts down the write half, and reads until EOF.
-async fn exchange(mut stream: impl AsyncRead + AsyncWrite + Unpin) -> Result<Vec<u8>, String> {
+async fn exchange(
+    mut stream: impl AsyncRead + AsyncWrite + Unpin,
+    command: Command,
+) -> Result<Vec<u8>, String> {
     stream
-        .write_all(STATUS)
+        .write_all(&command.payload())
         .await
         .map_err(|error| format!("write: {error}"))?;
     stream
@@ -146,8 +225,80 @@ mod tests {
             noctalia.write_all(b"{\"locked\":false}").await.unwrap();
             request
         });
-        assert_eq!(exchange(client).await.unwrap(), b"{\"locked\":false}");
+        assert_eq!(
+            exchange(client, Command::Status).await.unwrap(),
+            b"{\"locked\":false}"
+        );
         assert_eq!(fake.await.unwrap(), b"/\x1estatus");
+    }
+
+    #[test]
+    fn every_payload_is_one_fixed_command_after_the_separator() {
+        assert_eq!(
+            Command::PanelOpen(Panel::ControlCenter).payload(),
+            b"/\x1epanel-open control-center"
+        );
+        assert_eq!(
+            Command::PanelClose(Panel::TrayDrawer).payload(),
+            b"/\x1epanel-close tray-drawer"
+        );
+        let panels = [Panel::ControlCenter, Panel::Wallpaper, Panel::TrayDrawer];
+        let commands = panels
+            .into_iter()
+            .flat_map(|panel| [Command::PanelOpen(panel), Command::PanelClose(panel)])
+            .chain([Command::Status]);
+        for command in commands {
+            let payload = command.payload();
+            let rest = payload.strip_prefix(b"/\x1e").unwrap();
+            assert!(
+                !rest
+                    .iter()
+                    .any(|byte| matches!(byte, b'\x1e' | b'\n' | b'\r')),
+                "{command:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_panel_change_needs_noctalias_ok() {
+        assert_eq!(acknowledged(b"ok\n"), Ok(()));
+        // Noctalia names the panels it has when it doesn't know one.
+        let Err(Unanswered::Refused(error)) =
+            acknowledged(b"error: unknown panel \"x\" (available: a, b)\n")
+        else {
+            panic!("an error reply is a refusal");
+        };
+        assert_eq!(
+            error.detail,
+            "Noctalia replied: error: unknown panel \"x\" (available: a, b)"
+        );
+        // Something that is neither may have followed the change.
+        for odd in [&b""[..], b"ok", b"{}"] {
+            assert!(
+                matches!(acknowledged(odd), Err(Unanswered::Lost(_))),
+                "{odd:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_active_panel_is_an_id_or_null() {
+        let status = |active: Value| {
+            let mut status = Map::new();
+            status.insert("activePanelId".to_owned(), active);
+            status
+        };
+        assert_eq!(
+            active_panel(&status(Value::from("wallpaper"))),
+            Ok(Some("wallpaper".to_owned()))
+        );
+        assert_eq!(active_panel(&status(Value::Null)), Ok(None));
+        for bad in [status(Value::Bool(false)), Map::new()] {
+            assert_eq!(
+                active_panel(&bad).unwrap_err().name,
+                ErrorName::NoctaliaUnavailable
+            );
+        }
     }
 
     #[test]
