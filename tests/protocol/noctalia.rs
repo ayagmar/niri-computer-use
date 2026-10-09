@@ -14,8 +14,10 @@ use crate::fixture::Fixture;
 struct State {
     status: &'static str,
     active_panel: Option<String>,
-    /// Whether panel commands change the open panel, or only answer `ok`.
+    /// Whether panel commands change the open panel, or only answer.
     panels_follow: bool,
+    /// The answer to a panel command.
+    panel_reply: &'static str,
     /// Every command received, after the `/\x1e` prefix.
     commands: Vec<String>,
 }
@@ -28,13 +30,13 @@ impl State {
                 if self.panels_follow {
                     self.active_panel = Some(panel.to_owned());
                 }
-                "ok\n".to_owned()
+                self.panel_reply.to_owned()
             }
             Some(("panel-close", panel)) => {
                 if self.panels_follow && self.active_panel.as_deref() == Some(panel) {
                     self.active_panel = None;
                 }
-                "ok\n".to_owned()
+                self.panel_reply.to_owned()
             }
             _ => format!("error: unknown command {command:?}\n"),
         }
@@ -54,6 +56,12 @@ impl Reply {
     /// With false, panel commands are answered `ok` and change nothing.
     pub(crate) fn panels_follow(&self, follow: bool) {
         self.0.lock().unwrap().panels_follow = follow;
+    }
+
+    /// What panel commands are answered with from now on, `ok\n` at first. The empty
+    /// reply is a connection closed without one.
+    pub(crate) fn panel_reply(&self, reply: &'static str) {
+        self.0.lock().unwrap().panel_reply = reply;
     }
 
     /// The panel commands received so far.
@@ -83,6 +91,7 @@ pub(crate) fn start(fixture: &Fixture, reply: &'static str) -> Reply {
         status: reply,
         active_panel: None,
         panels_follow: true,
+        panel_reply: "ok\n",
         commands: Vec::new(),
     })));
     let state = current.clone();

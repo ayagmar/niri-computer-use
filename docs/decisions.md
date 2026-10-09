@@ -418,7 +418,7 @@ These match the versions installed locally.
 - `Unanswered`, the refused-or-lost split for niri requests, moves to `error.rs` and also describes a panel command: a failed connect or Noctalia's `error:` reply is an error, and a reply lost after the connect is `uncertain` with `accepted: null`, because Noctalia carries the command out before it replies (`PanelManager::registerIpc` in 5.2.1).
 - The tools read `status` before sending, which is plan §6.1's "checked before every Noctalia-backed call", and send nothing when the panel is already open, or already not open, reporting `accepted: false` as the focus tools do.
 - `opened` is a new `observed` value; `closed` now also means a panel closed. `shell_close` counts another panel being open as closed, since `activePanelId` names only one.
-- Results carry `shell.active_panel`, absent when a lost reply leaves it unknown, and `focused_window` from niri's event stream, which an open panel leaves null.
+- Results carry `shell.active_panel`, absent when it is unknown: after a lost reply, or a timeout before any `status` read answered, and `focused_window` from niri's event stream, which an open panel leaves null.
 - They have no `interrupted`: Noctalia sends no events, and plan §6 defines `interrupted` by window focus.
 - They take the lock gate like every action, before Noctalia is asked. Where only Noctalia can say whether the screen is locked, as in the nested session, a stopped Noctalia makes the lock state unknown, so they answer `screen_locked`, and `shell_status` answers `noctalia_unavailable`.
 

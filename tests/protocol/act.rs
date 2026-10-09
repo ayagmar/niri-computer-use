@@ -918,3 +918,46 @@ async fn shell_tools_need_the_lease_and_an_unlocked_screen() {
     assert_eq!(tool_error(&unheld).0, "lease_required");
     assert_eq!(desk.noctalia.panel_commands(), Vec::<String>::new());
 }
+
+#[tokio::test]
+async fn a_lost_panel_reply_is_uncertain_with_a_screenshot() {
+    let mut desk = Desk::start("act-shell-lost", "").await;
+    desk.noctalia.panel_reply("");
+    let lost = desk
+        .server
+        .call("shell_open", json!({"panel": "control-center"}))
+        .await;
+    assert_eq!(
+        outcome(&lost),
+        json!({
+            "accepted": null, "observed": "uncertain", "focused_window": 1,
+            "detail": "Noctalia replied: "
+        })
+    );
+}
+
+#[tokio::test]
+async fn only_one_panel_is_open_at_a_time() {
+    let mut desk = Desk::start("act-shell-other", "").await;
+    let open = |panel: &str| json!({"panel": panel});
+    outcome(&desk.server.call("shell_open", open("wallpaper")).await);
+    // Opening another panel replaces it.
+    let replaced = desk.server.call("shell_open", open("tray-drawer")).await;
+    assert_eq!(
+        outcome(&replaced)["shell"],
+        json!({"active_panel": "tray-drawer"})
+    );
+    // Closing a panel that another one replaced sends nothing.
+    let closed = desk.server.call("shell_close", open("wallpaper")).await;
+    assert_eq!(
+        outcome(&closed),
+        json!({
+            "accepted": false, "observed": "closed", "focused_window": 1,
+            "shell": {"active_panel": "tray-drawer"}
+        })
+    );
+    assert_eq!(
+        desk.noctalia.panel_commands(),
+        ["panel-open wallpaper", "panel-open tray-drawer"]
+    );
+}

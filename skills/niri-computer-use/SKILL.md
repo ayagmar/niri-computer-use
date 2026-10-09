@@ -60,7 +60,7 @@ The `niri-computer-use` MCP server shows you the user's niri desktop and, while 
 
 An open panel holds keyboard focus, so `focused_window` is null while it is open; to type into it, use `expect: "none"` after a screenshot shows it ready. Close the panel with `shell_close` when you are done with it.
 
-Every action result also has `accepted` (true once niri or Noctalia took the request, false when nothing was sent, null when niri's reply was lost), `focused_window` when the observation ended, and possibly `interrupted` or `uncertain` as `observed` (rules 10 and 11). Each waits up to five seconds. With `timeout`, `pending`, `none`, `interrupted` or `uncertain`, the result also has an image of the focused output and its metadata in `screenshot`, or `screenshot_error` if it couldn't be taken.
+Every action result also has `accepted` (true once niri or Noctalia took the request, false when nothing was sent, null when the reply was lost), `focused_window` when the observation ended, and possibly `interrupted` or `uncertain` as `observed` (rules 10 and 11). Each waits up to five seconds, the shell tools two. With `timeout`, `pending`, `none`, `interrupted` or `uncertain`, the result also has an image of the focused output and its metadata in `screenshot`, or `screenshot_error` if it couldn't be taken.
 
 `screenshot` targets:
 

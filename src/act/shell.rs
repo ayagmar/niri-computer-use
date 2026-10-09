@@ -98,7 +98,8 @@ struct Watched {
 }
 
 /// Reads the active panel every 100 ms until `done` holds (`observed`), a read fails
-/// (`uncertain`), or two seconds pass (`timeout`).
+/// (`uncertain`), or two seconds pass (`timeout`). A timeout before any read answered
+/// leaves the open panel unknown.
 async fn watch<F>(
     mut read: impl FnMut() -> F + Send,
     done: impl Fn(Option<&str>) -> bool + Send + Sync,
@@ -110,11 +111,16 @@ where
     let mut last = None;
     let polled = tokio::time::timeout(WAIT, async {
         let mut poll = tokio::time::interval(POLL);
+        poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             poll.tick().await;
             match read().await {
                 Ok(active) if done(active.as_deref()) => return Ok(active),
-                Ok(active) => last = active,
+                Ok(active) => {
+                    last = Some(Shell {
+                        active_panel: active,
+                    });
+                }
                 Err(error) => return Err(error),
             }
         }
@@ -135,7 +141,7 @@ where
         },
         Err(_) => Watched {
             observed: Observed::Timeout,
-            shell: Some(Shell { active_panel: last }),
+            shell: last,
             detail: None,
         },
     }
@@ -237,6 +243,20 @@ mod tests {
             }
         );
         assert_eq!(started.elapsed(), WAIT);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_timeout_without_any_answer_leaves_the_panel_unknown() {
+        let stalled = || std::future::pending::<Result<Option<String>, ToolError>>();
+        let seen = watch(stalled, opened, Observed::Opened).await;
+        assert_eq!(
+            seen,
+            Watched {
+                observed: Observed::Timeout,
+                shell: None,
+                detail: None
+            }
+        );
     }
 
     #[tokio::test(start_paused = true)]
