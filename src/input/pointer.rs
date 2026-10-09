@@ -20,6 +20,7 @@ use crate::coords::{ImagePx, ProtocolPt};
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri;
 use crate::niri::pointer::{Axis, Pointer, Step};
+use crate::niri::waiter::Waited;
 use crate::policy;
 use crate::refs::Shot;
 
@@ -237,7 +238,9 @@ pub(crate) async fn point(
     }
     device.finish()?;
     // The events the input caused so far, such as a click's focus change.
-    waiter.until(Duration::ZERO, |_| None::<()>).await;
+    if let Waited::Lost(reason) = waiter.until(Duration::ZERO, |_| None::<()>).await {
+        return Ok(Outcome::uncertain(Some(true), Some(waiter.view()), reason));
+    }
     Ok(Outcome::seen(Observed::Sent, waiter.view(), Vec::new()))
 }
 
@@ -334,7 +337,8 @@ impl Drop for Device {
 /// Releases what `pointer` still holds and removes `marker` once niri has handled it. If
 /// the marker can't be removed, it stays, and blocks input until `recover`.
 async fn release(mut pointer: Pointer, marker: Written) {
-    if pointer.release_all() && pointer.sync().await.is_ok() {
+    // Nothing pressed, as when the gesture failed before its press: nothing to wait for.
+    if !pointer.holding() || (pointer.release_all() && pointer.sync().await.is_ok()) {
         marker.clear().ok();
     }
 }

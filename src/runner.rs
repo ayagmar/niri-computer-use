@@ -1,7 +1,8 @@
 //! The only place the server starts processes. Each child runs in a process group of its
-//! own with a deadline, with no stdin or with stdin held until the caller feeds it. If the call times out or is cancelled before the child has been
-//! reaped, the whole group is killed. A child that is still unreaped keeps its process ID,
-//! and with it the group ID, from being reused, so the kill can't reach another group.
+//! own with a deadline, with no stdin or with stdin held until the caller feeds it. If
+//! the call times out or is cancelled before the child has been reaped, the whole group
+//! is killed. A child that is still unreaped keeps its process ID, and with it the group
+//! ID, from being reused, so the kill can't reach another group.
 
 use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
@@ -89,10 +90,12 @@ pub(crate) struct Gated {
 pub(crate) fn gated(
     program: &str,
     args: &[String],
+    env: &[(&str, &str)],
     deadline: Duration,
 ) -> Result<Gated, ToolError> {
     let mut child = command(program)
         .args(args)
+        .envs(env.iter().copied())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -131,12 +134,16 @@ impl Gated {
         let program = self.program.clone();
         let deadline = self.deadline;
         let run = async {
-            self.stdin.write_all(input).await.map_err(|error| {
-                ToolError::new(
-                    ErrorName::UpstreamError,
-                    format!("write to {program}: {error}"),
-                )
-            })?;
+            match self.stdin.write_all(input).await {
+                // The child exited without reading; its exit status says why.
+                Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+                written => written.map_err(|error| {
+                    ToolError::new(
+                        ErrorName::UpstreamError,
+                        format!("write to {program}: {error}"),
+                    )
+                })?,
+            }
             drop(self.stdin);
             self.running.finish(&program, max_stdout).await
         };
@@ -370,7 +377,7 @@ mod tests {
         let dir = crate::test_support::fresh_dir("gated");
         let seen = dir.join("seen");
         let script = format!("cat > '{}'; printf done", seen.display());
-        let gated = gated("sh", &args(&["-c", &script]), DEADLINE).unwrap();
+        let gated = gated("sh", &args(&["-c", &script]), &[], DEADLINE).unwrap();
         assert!(gated.pid().is_some());
         tokio::time::sleep(Duration::from_millis(100)).await;
         // `cat` waits at the open pipe, so nothing is written yet.
@@ -382,9 +389,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_gated_child_that_exits_unread_reports_its_own_exit() {
+        let script = "echo 'no display' >&2; exit 1";
+        let gated = gated(
+            "sh",
+            &args(&["-c", script]),
+            &[("LC_ALL", "C.UTF-8")],
+            DEADLINE,
+        )
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        // A large write meets the closed pipe.
+        let done = gated.feed(&vec![b'x'; 1 << 20], 64).await.unwrap();
+        assert_eq!(done.status.code(), Some(1));
+        assert_eq!(done.stderr.trim(), "no display");
+    }
+
+    #[tokio::test]
     async fn a_gated_child_past_its_deadline_is_killed_with_its_group() {
         let grandchild = Grandchild::new("gated-timeout", "wait");
-        let gated = gated("sh", &grandchild.args, Duration::from_secs(1)).unwrap();
+        let gated = gated("sh", &grandchild.args, &[], Duration::from_secs(1)).unwrap();
         let error = gated.feed(b"", 64).await.unwrap_err();
         assert_eq!(error.name, ErrorName::DeadlineExceeded);
         grandchild.assert_dead().await;

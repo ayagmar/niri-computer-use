@@ -651,13 +651,15 @@ async fn keyboard_tools_check_their_text_focus_and_app_before_typing() {
     assert!(seen.contains("window 1"), "{seen}");
 
     focus_changed(&desk.stream, 2);
+    let mut focused = Value::Null;
     for _ in 0..100 {
-        let desktop = desk.server.structured("desktop_state").await;
-        if desktop["focused_window"] == 2 {
+        focused = desk.server.structured("desktop_state").await["focused_window"].clone();
+        if focused == 2 {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
+    assert_eq!(focused, 2);
     let denied = desk
         .server
         .call(
@@ -717,4 +719,104 @@ async fn input_tools_refuse_on_a_locked_screen_before_anything_else() {
         .fixture
         .path("run/niri-computer-use/niri.test/input-dirty");
     assert!(!marker.exists());
+}
+
+const MARKER: &str = "run/niri-computer-use/niri.test/input-dirty";
+
+/// A fake wtype that records its arguments, its locale, all of stdin, and the marker as it
+/// stands once stdin is closed, then runs `then`.
+fn fake_wtype(fixture: &Fixture, then: &str) {
+    fixture.program(
+        "wtype",
+        &format!(
+            "printf '%s\\n' \"$@\" > \"$DIR/wtype.args\"\nprintf '%s' \"$LC_ALL\" > \"$DIR/wtype.locale\"\ncat > \"$DIR/wtype.in\"\ncat \"$DIR/{MARKER}\" > \"$DIR/wtype.marker\"\n{then}"
+        ),
+    );
+}
+
+#[tokio::test]
+async fn type_text_feeds_wtype_behind_the_gate_and_clears_the_marker() {
+    let mut desk = Desk::start("act-wtype", "").await;
+    fake_wtype(&desk.fixture, "exit 0");
+    let typed = desk
+        .server
+        .call(
+            "type_text",
+            json!({"text": "héllo → x", "expect": {"app_id": "a"}}),
+        )
+        .await;
+    assert_eq!(
+        outcome(&typed),
+        json!({"accepted": true, "observed": "sent", "focused_window": 1, "focus": "matched"})
+    );
+    assert_eq!(desk.fixture.args("wtype"), ["-"]);
+    let read = |name: &str| std::fs::read_to_string(desk.fixture.path(name)).unwrap();
+    assert_eq!(read("wtype.in"), "héllo → x");
+    assert_eq!(read("wtype.locale"), "C.UTF-8");
+    // While wtype ran, the marker named it.
+    let marker: Value = serde_json::from_str(&read("wtype.marker")).unwrap();
+    assert_eq!(
+        (&marker["operation"], &marker["phase"]),
+        (&json!("type_text"), &json!("running"))
+    );
+    assert!(marker["child"]["pid"].as_u64().is_some(), "{marker}");
+    assert!(!desk.fixture.path(MARKER).exists());
+    // The audit log has the length, never the text.
+    let audit = std::fs::read_to_string(desk.fixture.audit_log()).unwrap();
+    assert!(!audit.contains("héllo"), "{audit}");
+    assert_eq!(
+        desk.audited(),
+        [json!(["type_text", {"text_len": 9, "expect": {"app_id": "a"}}, true, "sent", null])]
+    );
+
+    let key = desk
+        .server
+        .call(
+            "key",
+            json!({"combo": "ctrl+shift+t", "expect": {"window_id": 1}}),
+        )
+        .await;
+    assert_eq!(outcome(&key)["observed"], "sent");
+    assert_eq!(
+        desk.fixture.args("wtype"),
+        [
+            "-", "-M", "ctrl", "-M", "shift", "-k", "t", "-m", "shift", "-m", "ctrl"
+        ]
+    );
+    assert_eq!(read("wtype.in"), "");
+}
+
+#[tokio::test]
+async fn a_wtype_that_fails_by_itself_clears_the_marker_and_one_killed_leaves_it() {
+    let mut desk = Desk::start("act-wtype-fail", "").await;
+    let type_x = json!({"text": "x", "expect": "none"});
+    fake_wtype(&desk.fixture, "echo 'unknown key' >&2; exit 1");
+    let failed = desk.server.call("type_text", type_x.clone()).await;
+    let (name, detail) = tool_error(&failed);
+    assert_eq!(name, "upstream_error");
+    assert!(detail.contains("unknown key"), "{detail}");
+    assert!(!desk.fixture.path(MARKER).exists());
+
+    fake_wtype(&desk.fixture, "kill -KILL $$");
+    let killed = desk.server.call("type_text", type_x.clone()).await;
+    let (killed_name, killed_detail) = tool_error(&killed);
+    assert_eq!(killed_name, "upstream_error");
+    assert!(killed_detail.contains("marker stays"), "{killed_detail}");
+    assert!(desk.fixture.path(MARKER).exists());
+    let blocked = desk.server.call("type_text", type_x).await;
+    assert_eq!(tool_error(&blocked).0, "recovery_required");
+}
+
+#[tokio::test]
+async fn a_wtype_past_its_deadline_is_killed_and_leaves_the_marker() {
+    let mut desk = Desk::start("act-wtype-slow", "").await;
+    fake_wtype(&desk.fixture, "exec sleep 10");
+    let slow = desk
+        .server
+        .call("type_text", json!({"text": "x", "expect": "none"}))
+        .await;
+    let (name, detail) = tool_error(&slow);
+    assert_eq!(name, "deadline_exceeded");
+    assert!(detail.contains("keys may be held"), "{detail}");
+    assert!(desk.fixture.path(MARKER).exists());
 }

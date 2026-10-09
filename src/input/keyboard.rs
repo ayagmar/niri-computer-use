@@ -30,6 +30,9 @@ const WTYPE_DEADLINE: Duration = Duration::from_secs(3);
 const MAX_TEXT: usize = 100;
 /// wtype prints nothing on success.
 const MAX_STDOUT: u64 = 64 * 1024;
+/// wtype decodes stdin with the locale's `mbstowcs`; outside a UTF-8 locale it stops at
+/// the first character beyond ASCII and still exits 0. glibc always has `C.UTF-8`.
+const UTF8: [(&str, &str); 1] = [("LC_ALL", "C.UTF-8")];
 
 /// What focus must be before typing.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,9 +169,14 @@ fn check_expect(expect: &Expect, view: &View) -> Result<Focus, ToolError> {
         || "no window has keyboard focus".to_owned(),
         |window| format!("window {} with app_id {:?}", window.id, window.app_id),
     );
+    let expected = match expect {
+        Expect::Window(id) => format!("window_id {id}"),
+        Expect::App(app_id) => format!("app_id {app_id:?}"),
+        Expect::Unchecked => "nothing".to_owned(),
+    };
     Err(ToolError::new(
         ErrorName::FocusMismatch,
-        format!("expected {expect:?}; {actual}"),
+        format!("expected {expected}; {actual}"),
     ))
 }
 
@@ -194,13 +202,15 @@ pub(crate) async fn type_input(
             (view.focused_window() != before).then_some(())
         })
         .await;
-    let observed = match moved {
-        Waited::Done(()) => Observed::Interrupted,
-        Waited::Timeout | Waited::Lost(_) => Observed::Sent,
+    let outcome = match moved {
+        Waited::Done(()) => Outcome::seen(Observed::Interrupted, waiter.view(), Vec::new()),
+        Waited::Timeout => Outcome::seen(Observed::Sent, waiter.view(), Vec::new()),
+        // wtype typed, but where focus went meanwhile is unknown.
+        Waited::Lost(reason) => Outcome::uncertain(Some(true), Some(waiter.view()), reason),
     };
     Ok(Outcome {
         focus: Some(focus),
-        ..Outcome::seen(observed, waiter.view(), Vec::new())
+        ..outcome
     })
 }
 
@@ -213,13 +223,10 @@ async fn run_wtype(
 ) -> Result<(), ToolError> {
     let mut marker = Written::write(runtime, Marker::pending(typing.tool(), Vec::new()))
         .map_err(|error| marker_error("write", &error))?;
-    let gated = match runner::gated("wtype", &args, WTYPE_DEADLINE) {
+    let gated = match runner::gated("wtype", &args, &UTF8, WTYPE_DEADLINE) {
         Ok(gated) => gated,
-        Err(error) => {
-            // Nothing started, so nothing was typed.
-            marker.clear().ok();
-            return Err(error);
-        }
+        // Nothing started, so nothing was typed.
+        Err(error) => return Err(cleared(marker, error)),
     };
     let child = gated.pid().and_then(|pid| {
         let stat = procs::stat(Path::new("/proc"), pid)?;
@@ -241,8 +248,10 @@ async fn run_wtype(
     if let Err(detail) = recorded {
         // Still waiting at the gate: killing it now types nothing.
         drop(gated);
-        marker.clear().ok();
-        return Err(ToolError::new(ErrorName::UpstreamError, detail));
+        return Err(cleared(
+            marker,
+            ToolError::new(ErrorName::UpstreamError, detail),
+        ));
     }
     let stdin = typing.stdin();
     let typed = tokio::spawn(async move { finish(gated.feed(&stdin, MAX_STDOUT).await, marker) });
@@ -285,6 +294,21 @@ fn finish(fed: Result<Finished, ToolError>, marker: Written) -> Result<(), ToolE
         Ok(())
     } else {
         Err(finished.failure("wtype"))
+    }
+}
+
+/// `error`, after removing the marker of a call that typed nothing; a marker that can't
+/// be removed is added to the detail, since it blocks the next action.
+fn cleared(marker: Written, error: ToolError) -> ToolError {
+    match marker.clear() {
+        Ok(()) => error,
+        Err(clear) => ToolError::new(
+            error.name,
+            format!(
+                "{}; the input-dirty marker couldn't be removed ({clear}), so actions refuse until the user runs `niri-computer-use recover`",
+                error.detail
+            ),
+        ),
     }
 }
 

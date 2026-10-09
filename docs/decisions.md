@@ -400,3 +400,13 @@ These match the versions installed locally.
 - C8, the interrupted pointer in `make sitting`, needed the probe's `hold`, so the sitting runs C6, C7 and C9, and `--sitting-from-c8`, which only resumed C8 and C9, is gone. C8's automatic half, a button left down by a killed pointer and cleared by a fresh pointer's release, now runs against the real server in `make nested-input`'s crash check; its human half was recorded in M0.
 - `noctalia-socket` stays until M5: it drives C13's panel commands, and the server's replacement for those, `shell_open` and `shell_close`, arrives in M5. A plan correction (revision 19) moves its deletion there.
 - The C10 corpus is a test fixture, not a probe; it moves to `harness/corpus.txt`.
+
+## 2026-10-09: M4 keyboard review
+
+- wtype runs with `LC_ALL=C.UTF-8`. It decodes stdin with `setlocale(LC_CTYPE, "")` and `mbstowcs`, and in a non-UTF-8 locale it stops at the first byte above ASCII, types what it had and exits 0, so a server started with a trimmed environment would report `sent` for half a text (review finding). glibc has `C.UTF-8` built in.
+- A broken pipe on wtype's stdin means wtype exited before reading, which with `-` first means before typing anything; the runner ignores that write error and reports wtype's exit status and stderr, and the marker comes off (review finding).
+- A gesture that failed before its press, and was dropped, removes its marker at once instead of waiting for a sync on a connection that may be gone (review finding).
+- When the event stream is lost after input was sent, the result is `uncertain` with `accepted: true`, as for the action tools, rather than `sent` with a stale focus (review finding).
+- The protocol tests drive the keyboard path through a fake `wtype` on the fixture's `PATH`: its arguments, its stdin and locale, the marker in its `running` phase while it runs, and the marker kept after a kill or the deadline (review finding).
+- A pixel inside the image that maps off the output stays `out_of_bounds`, with the distance in the detail, rather than a reason of its own: `observe` only captures rectangles inside one output, so it can't happen today, and the agent's remedy is the same.
+

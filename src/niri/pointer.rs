@@ -192,6 +192,11 @@ impl Pointer {
         .await
     }
 
+    /// Whether a button counts as pressed: sent, and its release not yet sent.
+    pub(crate) const fn holding(&self) -> bool {
+        !self.pressed.is_empty()
+    }
+
     /// Releases every button still pressed. Returns whether the releases reached the
     /// socket.
     pub(crate) fn release_all(&mut self) -> bool {
