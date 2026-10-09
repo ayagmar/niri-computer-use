@@ -4,6 +4,8 @@
 //! the screenshot's metadata and `wev`'s place in niri's layout, independently of the
 //! server's mapping. Everything the run creates lives under `TEST_DIR`.
 
+mod stop;
+
 use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
@@ -65,6 +67,7 @@ pub(crate) fn run(session: &mut Session<'_>, output: &LogicalOutput, server: &st
     drag(session, &mut client, &wev)?;
     scroll(session, &mut client, &wev)?;
     keys(session, &mut client, &wev)?;
+    stop::run(session, &mut client, &wev, server)?;
     structured(&client.call(session, "release_desktop", json!({}))?)?;
     client.stop()?;
     process.stop()?;
@@ -273,7 +276,8 @@ fn clicks(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>) -> Resu
             )));
         }
     }
-    Ok(())
+    // Each click wrote the input-dirty marker and removed it after its release.
+    stop::marker_gone(session)
 }
 
 /// A drag presses at its start, moves, and releases at its end.
@@ -304,7 +308,7 @@ fn drag(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>) -> Result
     if moves < 2 {
         return Err(Failure::new("M4 drag: the pointer didn't move while held"));
     }
-    Ok(())
+    stop::marker_gone(session)
 }
 
 /// A surface-local point.
