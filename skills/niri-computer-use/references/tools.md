@@ -19,6 +19,9 @@
 | `screenshot` | `target`, and optionally `region`, `max_width`, `format` | an image, then metadata: output, captured rectangle in layout coordinates, scale, image size, and `screenshot_ref` while you hold the lease |
 | `clipboard_read` | none | `text`, or `text: null` with `reason` `nothing_copied` or `no_text` |
 | `shell_status` | none | Noctalia's `barVisible`, `panelOpen`, `activePanelId` and `locked`. Listed only when Noctalia is installed |
+| `wait_for` | `until`, optionally `timeout_ms` (100 to 30000, default 10000) and `screenshot` | `observed`: `met` with the matching `windows`, `timeout`, or `uncertain`; `focused_window`; `waited_ms` |
+
+`until` is one of `{"window": {"app_id": …, "title": …}}` (a window with that `app_id` and a title containing that text; either one may be left out), `{"closed": <window id>}`, `{"title": {"window_id": …, "contains": …}}`, or `"screen_stable"` (two captures of the focused output 100 ms apart are the same).
 
 If `status` shows `niri.error` "NIRI_SOCKET is not set", the agent started the server without the niri session's environment. Tell the user rather than retrying.
 
@@ -26,8 +29,8 @@ If `status` shows `niri.error` "NIRI_SOCKET is not set", the agent started the s
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `acquire_desktop` | none | `holder`: your PID, label and since when; calling it again while you hold it returns the same holder |
-| `release_desktop` | none | `released`: whether you held it. The user's stop also takes it back |
+| `acquire_desktop` | none | `holder`: your PID, label and since when, and `users_window`, the window that had focus; calling it again while you hold it returns the same |
+| `release_desktop` | `restore_focus` | `released`: whether you held it, and `users_window`. With `restore_focus: true`, focus first goes back to `users_window` and `restored` is that action's result, `observed: closed` if the window is gone. The user's stop also takes the lease back |
 
 Watching the desktop never needs the lease.
 
@@ -54,10 +57,10 @@ An open panel holds keyboard focus, so `focused_window` is null while it is open
 | `click` | `screenshot_ref`, `x`, `y`, optionally `button` (`left`, `right`, `middle`) and `count` (1 to 3) | `sent` |
 | `drag` | `screenshot_ref`, `from: {x, y}`, `to: {x, y}`, optionally `button` | `sent`; presses at `from`, moves, releases at `to` |
 | `scroll` | `screenshot_ref`, `x`, `y`, `notches_y` (positive is down) and/or `notches_x` (positive is right), at most 10 each | `sent` |
-| `key` | `combo` such as `ctrl+s`, `ctrl+shift+t`, `Return` or `alt+F4`, and `expect` | `sent` or `interrupted`; `focus`: `matched` or `unchecked` |
-| `type_text` | `text` (1 to 1000 characters) and `expect` | as for `key`; sent in parts of 100, and if focus moves during a part the rest isn't typed: `interrupted`, with `typed` counting the characters sent |
+| `key` | `keys`, 1 to 16 combinations such as `["ctrl+s"]` or `["Down", "Down", "Return"]`, and `expect` | `sent` or `interrupted`; `focus`: `matched` or `unchecked`; if focus moves after a key the rest aren't pressed and `pressed` counts the ones that were |
+| `type_text` | `text` (1 to 1000 characters), `expect`, optionally `submit` | as for `key`; sent in parts of 100, and if focus moves during a part the rest isn't typed: `interrupted`, with `typed` counting the characters sent. With `submit: true`, Enter is pressed after the whole text and `submitted` says whether it was |
 
-`combo` uses keysym names (`a`, `Return`, `Escape`, `F5`, `slash`, `Page_Down`) and the modifiers `shift`, `ctrl`, `alt`, `altgr` and `super`.
+A combination uses keysym names (`a`, `Return`, `Escape`, `F5`, `slash`, `Page_Down`) and the modifiers `shift`, `ctrl`, `alt`, `altgr` and `super`.
 
 Pixel coordinates are in the screenshot named by `screenshot_ref`, and a pixel targets its centre. A ref is good for 60 seconds and for the lease it was taken under.
 
@@ -66,9 +69,11 @@ Pixel coordinates are in the screenshot named by `screenshot_ref`, and a pixel t
 - `accepted`: true once niri or Noctalia took the request, false when nothing was sent (already in that state), null when the reply was lost.
 - `observed`: what the server saw by the end of its wait, as in the tables above, or `interrupted` (someone else moved focus) or `uncertain`.
 - `focused_window` when the observation ended.
-- `typed`, for `type_text` that stopped early: the characters sent.
+- `typed`, for `type_text` that stopped early: the characters sent; `pressed` likewise for `key`; `submitted` with `submit`.
 
-Each action waits up to five seconds, the shell tools two. With `timeout`, `pending`, `none`, `interrupted` or `uncertain`, the result also has an image of the focused output with its metadata in `screenshot`, or `screenshot_error` if it couldn't be taken.
+Every action takes `screenshot: true`: the result then has an image of the focused output taken once the screen stopped changing (`settled` in its metadata says whether it did within 1.5 seconds), and its `screenshot_ref` works for the pointer tools.
+
+Each action waits up to five seconds, the shell tools two. With `timeout`, `pending`, `none`, `interrupted` or `uncertain`, the result has an image of the focused output with its metadata in `screenshot` even without asking, or `screenshot_error` if it couldn't be taken.
 
 ## Screenshot targets
 

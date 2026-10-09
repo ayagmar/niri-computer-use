@@ -18,8 +18,9 @@ use crate::input::keyboard::Focus;
 use crate::niri;
 use crate::niri::events::EventStream;
 use crate::niri::waiter::{View, Waited, Waiter};
-use crate::observe::{self, DEFAULT_MAX_WIDTH, Format, Metadata, Screenshot, Target};
+use crate::observe::{self, Metadata, Screenshot};
 use crate::policy::Preset;
+use crate::settle;
 
 pub(crate) mod shell;
 
@@ -80,14 +81,21 @@ pub(crate) struct Outcome {
     /// of the text.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) typed: Option<usize>,
+    /// `key`: the combinations pressed before it stopped early; absent when it pressed all
+    /// of them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) pressed: Option<usize>,
+    /// `type_text` with `submit`: whether `Return` was pressed after the text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) submitted: Option<bool>,
     /// Shell tools: Noctalia's open panel when the observation ended.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) shell: Option<shell::Shell>,
     /// Why the outcome is uncertain.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) detail: Option<String>,
-    /// For an outcome in doubt, the metadata of the focused output's screenshot that comes
-    /// with the result.
+    /// The metadata of the focused output's screenshot that comes with the result: one asked
+    /// for with `screenshot`, or one for an outcome in doubt.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) screenshot: Option<Metadata>,
     /// For an outcome in doubt, why there is no screenshot.
@@ -111,6 +119,8 @@ impl Outcome {
             windows,
             focus: None,
             typed: None,
+            pressed: None,
+            submitted: None,
             shell: None,
             detail: None,
             screenshot: None,
@@ -126,6 +136,8 @@ impl Outcome {
             windows: Vec::new(),
             focus: None,
             typed: None,
+            pressed: None,
+            submitted: None,
             shell: None,
             detail: Some(detail),
             screenshot: None,
@@ -151,28 +163,30 @@ impl Outcome {
     }
 }
 
-/// Attaches a fresh screenshot of the focused output to an outcome in doubt (plan §6), so
-/// the agent sees the desktop without another call. `capture` takes it the way the
-/// `screenshot` tool does. A failed capture leaves the outcome as it is and says why.
+/// Attaches a fresh screenshot of the focused output to an outcome when the agent `asked`
+/// for one, taken once the screen stopped changing, or to an outcome in doubt (plan §6), at
+/// once, so the agent sees the desktop without another call. `capture` takes it the way
+/// the `screenshot` tool does. A failed capture leaves the outcome as it is and says why.
 pub(crate) async fn with_evidence<F>(
     mut outcome: Outcome,
-    capture: impl FnOnce(observe::Request) -> F,
+    asked: bool,
+    capture: impl Fn(observe::Request) -> F + Sync,
 ) -> Evidenced
 where
-    F: Future<Output = Result<Screenshot, CallError>>,
+    F: Future<Output = Result<Screenshot, CallError>> + Send,
 {
-    if !outcome.in_doubt() {
+    if !asked && !outcome.in_doubt() {
         return Evidenced {
             outcome,
             image: None,
         };
     }
-    let request = observe::Request {
-        target: Target::FocusedOutput,
-        max_width: Some(DEFAULT_MAX_WIDTH),
-        format: Format::Jpeg,
+    let taken = if asked {
+        settle::screenshot(|| capture(observe::Request::focused()), settle::LIMIT).await
+    } else {
+        capture(observe::Request::focused()).await
     };
-    let image = match capture(request).await {
+    let image = match taken {
         Ok(shot) => {
             outcome.screenshot = Some(shot.metadata);
             Some(shot.image)
@@ -203,6 +217,16 @@ pub(crate) async fn focus_window(niri: Niri<'_>, id: u64) -> Result<Outcome, Cal
         return Err(no_window(id));
     }
     focus(niri.socket, &mut waiter, id, Vec::new()).await
+}
+
+/// Gives focus back to the user's window `id` before the lease is released: `closed`, with
+/// nothing sent, if the window is gone.
+pub(crate) async fn refocus(niri: Niri<'_>, id: u64) -> Result<Outcome, CallError> {
+    let mut waiter = niri::waiter(niri.events).await?;
+    if !waiter.view().windows().contains_key(&id) {
+        return Ok(unsent(Observed::Closed, waiter.view(), vec![id]));
+    }
+    focus(niri.socket, &mut waiter, id, vec![id]).await
 }
 
 /// `id` is a workspace id from `desktop_state`.

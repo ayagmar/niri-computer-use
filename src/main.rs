@@ -15,10 +15,12 @@ mod observe;
 mod policy;
 mod refs;
 mod runner;
+mod settle;
 mod status;
 #[cfg(test)]
 mod test_support;
 mod tools;
+mod wait;
 
 use std::ffi::OsString;
 use std::os::unix::fs::PermissionsExt as _;

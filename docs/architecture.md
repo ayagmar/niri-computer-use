@@ -18,7 +18,9 @@
 | `status.rs` | Builds the readiness report shared by the tool and the subcommand. |
 | `input.rs` | What the input tools share: their context and the focused window's `app_id`. |
 | `input/pointer.rs` | The pointer tools' work: the checks before input, the steps of each gesture, and the marker around a button press. |
-| `input/keyboard.rs` | `key` and `type_text`: the `expect` check and one gated `wtype` call with the marker's two phases. |
+| `input/keyboard.rs` | `key` and `type_text`: the `expect` check, then one gated `wtype` call per key or part of text, with the marker's two phases, stopping when focus moves. |
+| `settle.rs` | Waits for the screen to stop changing: captures until two in a row are the same image. |
+| `wait.rs` | `wait_for`'s work: a window condition on the event stream, or a still screen. |
 | `coords.rs` | The coordinate contract (pure): image pixel to `motion_absolute`, checked against niri's own mapping. |
 | `observe.rs` | Screenshots: picks the output, plans grim's arguments and the image size they must produce, and checks the result. |
 | `refs.rs` | Screenshot refs: what each screenshot taken under the lease captured, kept per lease. |
@@ -134,7 +136,7 @@ The pointer counts a press as held as soon as it is sent and a release only once
 
 ## Keyboard input
 
-`key` and `type_text` run through `Desk::act`. The work, in `input/keyboard.rs`, refuses text over 1000 Unicode scalar values (`text_too_long`), reads the combination into wtype's arguments, checks `expect` against the waiter's focused window (`focus_mismatch`) and the deny list (`app_denied`), then makes one `wtype` call for `key`, and one per part of 100 scalar values for `type_text`:
+`key` and `type_text` run through `Desk::act`. The work, in `input/keyboard.rs`, refuses text over 1000 Unicode scalar values (`text_too_long`), reads every combination into wtype's arguments before anything is pressed, checks `expect` against the waiter's focused window (`focus_mismatch`) and the deny list (`app_denied`), then makes one `wtype` call per combination for `key`, and one per part of 100 scalar values, plus one for `Return` with `submit`, for `type_text`. Each call goes:
 
 1. It writes the input-dirty marker, `pending`, naming the tool.
 2. `runner::gated` starts `wtype -` (with `-M <modifier> -k <key> -m <modifier>` after it for `key`) with stdin as a pipe, in a process group of its own. wtype runs its arguments in order, so it waits at `-` before sending anything (C5).
@@ -143,7 +145,19 @@ The pointer counts a press as held as soon as it is sent and a release only once
 
 The task holds wtype, so a stop or a cancelled request, which drops the tool's work, doesn't end a wtype that is already typing: it finishes, and the marker comes off, within its deadline (plan §11). If the server exits, the runtime drops the task and wtype's group is killed, and the marker stays.
 
-The waiter was registered before wtype started, so after each wtype exits, the work applies every event niri has sent since: if focus was on another window at any point, the result is `interrupted`, otherwise the next part goes out, and after the last one the result is `sent`, with `focus` saying whether `expect` was checked. If the event stream was lost meanwhile, it is `uncertain` with `accepted: true`: the keys were typed, but where focus went is unknown. A result that ends before the last part carries `typed`, the scalar values sent, and a part that fails prefixes its error's detail with the same count, so the agent knows not to press Enter on half a message. The pointer tools report a stream lost after their input the same way.
+The waiter was registered before wtype started, so after each wtype exits, the work applies every event niri has sent since: if focus was on another window at any point, the result is `interrupted`, otherwise the next call goes out, and after the last one the result is `sent`, with `focus` saying whether `expect` was checked. So `submit`'s `Return` goes out only after all of the text did, and `submitted` says whether it was. If the event stream was lost meanwhile, it is `uncertain` with `accepted: true`: the keys were typed, but where focus went is unknown. A result that ends before the last part carries `typed`, the scalar values sent, or for `key` `pressed`, the combinations pressed, and a call that fails prefixes its error's detail with the same count, so the agent knows not to press Enter on half a message. The pointer tools report a stream lost after their input the same way.
+
+## Screenshots after an action
+
+Every action takes `screenshot`. `Desk::act` passes the outcome and a capture to `act::with_evidence` while it still holds the action mutex, so no other action can start before the image is taken. With `screenshot: true`, the image comes from `settle::screenshot`: a first look 50 ms after the action, then a capture at least 100 ms after the previous one until two in a row are the same bytes, for at most 1.5 seconds. An app redraws at its own pace after niri handles the input, so an image taken right away can show the screen from before; two identical captures 100 ms apart mean it stopped redrawing. A screen that keeps moving, such as a video, ends at the limit with `settled: false`. Without `screenshot`, an outcome in doubt still gets one capture at once.
+
+## Waiting
+
+`wait_for` changes nothing and doesn't take the action mutex. A window condition registers a waiter on the event stream and checks the condition in `wait::met`, a pure function of the waiter's view, after every event, up to `timeout_ms`. `screen_stable` first waits for a running action to end, then runs `settle` with `timeout_ms` as its limit.
+
+## Giving focus back
+
+`acquire_desktop` reads the focused window from the event stream and keeps it with the lease as `users_window`; a new lease forgets it. `release_desktop` with `restore_focus` runs `act::refocus` through `Desk::act`, so it passes the same checks as any action before it focuses that window, then gives the lease up whatever the outcome. A window that closed meanwhile is reported as `closed`, and nothing is sent.
 
 ## The input-dirty marker and `recover`
 

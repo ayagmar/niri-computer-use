@@ -78,6 +78,17 @@ pub(crate) struct Request {
     pub(crate) format: Format,
 }
 
+impl Request {
+    /// The focused output as a JPEG at the default width, as results carry it.
+    pub(crate) const fn focused() -> Self {
+        Self {
+            target: Target::FocusedOutput,
+            max_width: Some(DEFAULT_MAX_WIDTH),
+            format: Format::Jpeg,
+        }
+    }
+}
+
 /// What a capture shows and how its pixels map back to the layout.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct Metadata {
@@ -97,6 +108,10 @@ pub(crate) struct Metadata {
     /// What pointer tools take to aim at a pixel of this image; null unless this server
     /// holds the lease.
     pub(crate) screenshot_ref: Option<String>,
+    /// For a screenshot that waited for the screen to stop changing: whether it did within
+    /// the wait.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) settled: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -270,6 +285,7 @@ fn plan(
             captured_at_unix_ms: 0,
             capture_ms: 0,
             screenshot_ref: None,
+            settled: None,
         },
     })
 }

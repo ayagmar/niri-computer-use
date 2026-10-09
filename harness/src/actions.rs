@@ -45,7 +45,7 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
     focuses(session, &mut client, late)?;
     closes(session, &mut client)?;
     interrupted(session, &mut client, late)?;
-    structured(&client.call(session, "release_desktop", json!({}))?)?;
+    structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     client.stop()?;
     noctalia.stop().map(drop)
 }

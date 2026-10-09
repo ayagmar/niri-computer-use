@@ -166,6 +166,8 @@ async fn outcome(
         windows: Vec::new(),
         focus: None,
         typed: None,
+        pressed: None,
+        submitted: None,
         shell,
         detail: None,
         screenshot: None,

@@ -48,7 +48,9 @@ async fn an_unknown_protocol_version_gets_the_newest_supported_one() {
 fn expected(name: &str) -> (Value, Value) {
     let read_only = (json!([true, null, null]), json!(null));
     match name {
-        "acquire_desktop" | "release_desktop" => (json!([false, false, true]), json!(null)),
+        "acquire_desktop" => (json!([false, false, true]), json!(null)),
+        "release_desktop" => (json!([false, false, true]), json!(["restore_focus"])),
+        "wait_for" => (json!([true, null, null]), json!(["until"])),
         "focus_window" | "focus_workspace" => (json!([false, false, true]), json!(["id"])),
         "close_window" => (json!([false, true, false]), json!(["id"])),
         "launch" => (json!([false, false, false]), json!(["preset"])),
@@ -69,7 +71,7 @@ fn expected(name: &str) -> (Value, Value) {
             json!([false, false, false]),
             json!(["screenshot_ref", "x", "y"]),
         ),
-        "key" => (json!([false, true, false]), json!(["combo", "expect"])),
+        "key" => (json!([false, true, false]), json!(["keys", "expect"])),
         "shell_open" | "shell_close" => (json!([false, false, true]), json!(["panel"])),
         "type_text" => (json!([false, true, false]), json!(["text", "expect"])),
         _ => read_only,
@@ -104,7 +106,8 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
             "shell_open",
             "shell_status",
             "status",
-            "type_text"
+            "type_text",
+            "wait_for"
         ]
     );
     for tool in &tools {
@@ -129,25 +132,27 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
 }
 
 /// How many arguments each tool takes; tools not listed take none.
-const PROPERTIES: [(&str, usize); 13] = [
+const PROPERTIES: [(&str, usize); 15] = [
     ("screenshot", 4),
-    ("launch", 2),
-    ("focus_window", 1),
-    ("focus_workspace", 1),
-    ("close_window", 1),
-    ("pointer_move", 3),
-    ("click", 5),
-    ("drag", 4),
-    ("scroll", 5),
-    ("key", 2),
-    ("type_text", 2),
-    ("shell_open", 1),
-    ("shell_close", 1),
+    ("launch", 3),
+    ("focus_window", 2),
+    ("focus_workspace", 2),
+    ("close_window", 2),
+    ("pointer_move", 4),
+    ("click", 6),
+    ("drag", 5),
+    ("scroll", 6),
+    ("key", 3),
+    ("type_text", 4),
+    ("shell_open", 2),
+    ("shell_close", 2),
+    ("release_desktop", 1),
+    ("wait_for", 3),
 ];
 
 /// `(tool, JSON pointer into its properties, expected value)`: advertised defaults and
 /// bounds. Null means the field has no default.
-fn advertised() -> [(&'static str, &'static str, Value); 10] {
+fn advertised() -> [(&'static str, &'static str, Value); 14] {
     [
         ("screenshot", "/max_width/default", json!(1280)),
         ("screenshot", "/format/default", json!("jpeg")),
@@ -159,6 +164,10 @@ fn advertised() -> [(&'static str, &'static str, Value); 10] {
         ("click", "/count/maximum", json!(3)),
         ("drag", "/button/default", json!("left")),
         ("scroll", "/notches_y/default", json!(0)),
+        ("key", "/keys/minItems", json!(1)),
+        ("key", "/keys/maxItems", json!(16)),
+        ("type_text", "/submit/default", json!(false)),
+        ("wait_for", "/timeout_ms/default", json!(10000)),
     ]
 }
 
@@ -207,7 +216,8 @@ async fn without_noctalia_on_path_there_are_no_shell_tools() {
             "screenshot",
             "scroll",
             "status",
-            "type_text"
+            "type_text",
+            "wait_for"
         ]
     );
     for tool in ["shell_status", "shell_open", "shell_close"] {

@@ -52,7 +52,7 @@ fn recover(session: &mut Session<'_>, b: &mut Client, server: &str, said: &str) 
     }
     stop::marker_gone(session)?;
     structured(&b.call(session, "acquire_desktop", json!({}))?)?;
-    structured(&b.call(session, "release_desktop", json!({}))?).map(drop)
+    structured(&b.call(session, "release_desktop", json!({"restore_focus": false}))?).map(drop)
 }
 
 fn mid_typing(session: &mut Session<'_>, wev: &Wev<'_>, server: &str) -> Result<()> {

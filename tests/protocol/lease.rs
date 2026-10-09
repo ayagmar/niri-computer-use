@@ -38,12 +38,16 @@ async fn one_server_holds_the_lease_and_the_other_is_told_who() {
     );
 
     assert_eq!(
-        first.structured("release_desktop").await,
-        json!({"released": true})
+        first
+            .structured_with("release_desktop", json!({"restore_focus": false}))
+            .await,
+        json!({"released": true, "users_window": null})
     );
     assert_eq!(
-        first.structured("release_desktop").await,
-        json!({"released": false})
+        first
+            .structured_with("release_desktop", json!({"restore_focus": false}))
+            .await,
+        json!({"released": false, "users_window": null})
     );
     let taken = second.structured("acquire_desktop").await;
     assert_eq!(

@@ -38,3 +38,5 @@ mod screenshot;
 mod session;
 #[cfg(test)]
 mod shell;
+#[cfg(test)]
+mod wait;

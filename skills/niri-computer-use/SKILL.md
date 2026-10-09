@@ -18,18 +18,18 @@ Start with `status`: it says whether the screen is locked, whether Noctalia runs
 - `desktop_state` for windows (ids, `app_id`, title), workspaces, the focused window
 - `outputs` for monitors, `shell_status` for Noctalia's panels, `clipboard_read` for copied text
 
-Take a `screenshot` when you need pixels. For small text, take a `region` screenshot around it rather than guessing from a downscaled full screen. Report what you saw separately from what you infer.
+Take a `screenshot` when you need pixels. To wait for something, a window opening or closing, a title changing, or a page that stops loading, call `wait_for` rather than taking screenshots until it happens. For small text, take a `region` screenshot around it rather than guessing from a downscaled full screen. Report what you saw separately from what you infer.
 
 ## Acting
 
 Acting needs the lease. Take it with `acquire_desktop` only when the user asked you to act, then work in a loop:
 
 1. Look: `desktop_state`, and a fresh `screenshot` when pixels matter.
-2. Do one action.
+2. Do one action. When you need to see what it did, pass `screenshot: true`: the result then comes with a screenshot taken once the screen stopped changing, and its `screenshot_ref` serves your next click.
 3. Read its result: `accepted` says whether niri or Noctalia took the request, `observed` what happened. `sent` only means the input arrived; it says nothing about what the app did with it.
 4. Look again before the next action.
 
-Wait for each call's result before the next call. A screenshot sent alongside an action can be taken before the action lands and show you the old screen, and an action sent alongside another can land on whatever the first one changed.
+Wait for each call's result before the next call. A screenshot sent alongside an action can be taken before the app has redrawn and show you the old screen, and an action sent alongside another can land on whatever the first one changed. `screenshot: true` on the action is both faster and right.
 
 Prefer structured actions to input, because they can't land on the wrong thing: `focus_window` and `focus_workspace` with ids from `desktop_state`, `launch` with a preset name, `close_window`, `shell_open` and `shell_close`. Use the pointer and keyboard for what happens inside an app.
 
@@ -39,14 +39,16 @@ When three actions in a row change nothing toward the goal, stop and tell the us
 
 - Pointer tools aim at pixels of a screenshot: pass that screenshot's `screenshot_ref` and the pixel. Use your latest screenshot, and take a new one after anything that may have moved the screen. A `ref_invalid` error means exactly that.
 - Keyboard tools take `expect`, the window you mean to type into: `{"window_id": …}` or `{"app_id": "…"}`. The server refuses with `focus_mismatch` rather than typing into another window. Use `"none"` only for a Noctalia panel or dialog that holds the keyboard, after a screenshot shows it's ready.
-- `key` sends the app's own shortcuts. niri's keybinds don't fire from it, so don't try to switch windows or start apps with keys.
+- `key` takes a list of combinations, such as `["ctrl+l"]` or `["Down", "Down", "Return"]`, and presses them in order, stopping if focus moves; `pressed` then says how many went out. It sends the app's own shortcuts. niri's keybinds don't fire from it, so don't try to switch windows or start apps with keys.
 - Never type a password or other secret unless the user gave it to you for that.
 
 ### Typing text, then sending it
 
 `type_text` takes up to 1000 characters in one call and sends them in parts of 100, checking between parts that focus stayed on your window. If focus moves, it stops: `observed` is `interrupted` and `typed` says how many characters went out. A failed call's `detail` says the same.
 
-Pressing Enter sends whatever is in the box. So press it only after a `type_text` that came back `sent` without a `typed` field. Otherwise look at a screenshot and finish or fix the text first: a half-typed message that gets sent can't be taken back.
+To send a message, pass `submit: true`. The server presses Enter only once every character went out, and `submitted` says whether it did. Don't press Enter yourself after a call that stopped early: Enter sends whatever is in the box, and a half-typed message that gets sent can't be taken back. Look at the screenshot that comes with the result, then finish or fix the text first.
+
+A window can open in the middle of your work, a dialog or a notification that takes focus. Your `expect` makes the server stop rather than type into it. Don't close a window you didn't open; tell the user about it, and if your task can go on, focus your window again and continue.
 
 ## Outcomes that need care
 
@@ -62,7 +64,7 @@ If the app the user wants has no launch preset (`status` lists `policy.preset_na
 
 ## Giving the desktop back
 
-When you are done, put focus back on the window the user was on (note `focused_window` from `desktop_state` before you start), close any shell panel you opened, and call `release_desktop`. The user is often away from the screen while you work and comes back to whatever you left focused.
+`acquire_desktop` returns `users_window`, the window the user was on. When you are done, close any shell panel you opened and call `release_desktop` with `restore_focus: true`: focus goes back to that window, and `restored` says how it went. Pass false only when the task was to leave another window in front. The user is often away from the screen while you work and comes back to whatever you left focused.
 
 ## Examples
 
@@ -70,25 +72,20 @@ Sending a message to the chat window 42:
 
 ```
 desktop_state                         → focused_window 42, app_id "chat"
-acquire_desktop
-type_text {text: <the message>, expect: {window_id: 42}}  → sent, no `typed`
-screenshot                            → the whole message is in the box
-key {combo: "Return", expect: {window_id: 42}}            → sent
-screenshot                            → the message was sent
-release_desktop
+acquire_desktop                       → users_window 42
+type_text {text: <the message>, expect: {window_id: 42}, submit: true, screenshot: true}
+                                      → sent, submitted: true; the image shows it sent
+release_desktop {restore_focus: true}
 ```
 
 Clicking a button in another window and coming back:
 
 ```
 desktop_state             → the user is on window 42; the target is window 7
-acquire_desktop
-focus_window {id: 7}      → focused
-screenshot                → shot-3, the button at (412, 230)
-click {screenshot_ref: "shot-3", x: 412, y: 230}  → sent
-screenshot                → the click had its effect
-focus_window {id: 42}     → focused
-release_desktop
+acquire_desktop           → users_window 42
+focus_window {id: 7, screenshot: true}            → focused; shot-3, the button at (412, 230)
+click {screenshot_ref: "shot-3", x: 412, y: 230, screenshot: true}  → sent; the click had its effect
+release_desktop {restore_focus: true}             → restored: focused
 ```
 
 ## Reference

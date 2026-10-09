@@ -64,7 +64,7 @@ pub(super) fn run(session: &mut Session<'_>, client: &mut Client) -> Result<()> 
             "M4 scroll kitty {notches} notches: line {top} at the top, from {start}"
         ))?;
     }
-    structured(&client.call(session, "release_desktop", json!({}))?)?;
+    structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     kitty.stop().map(drop)
 }
 

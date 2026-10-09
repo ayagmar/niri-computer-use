@@ -130,7 +130,9 @@ async fn actions_need_the_lease_and_check_the_lock_each_time() {
     let (name, _) = tool_error(&desk.server.call("focus_window", json!({"id": 2})).await);
     assert_eq!(name, "screen_locked");
     desk.noctalia.set(UNLOCKED);
-    desk.server.structured("release_desktop").await;
+    desk.server
+        .structured_with("release_desktop", json!({"restore_focus": false}))
+        .await;
     let (unheld, detail) = tool_error(&desk.server.call("focus_window", json!({"id": 2})).await);
     assert_eq!(unheld, "lease_required");
     assert!(detail.contains("acquire_desktop"), "{detail}");
@@ -139,7 +141,7 @@ async fn actions_need_the_lease_and_check_the_lock_each_time() {
         desk.audited(),
         [
             json!(["focus_window", {"id": 2}, null, null, "screen_locked"]),
-            json!(["release_desktop", null, null, null, null]),
+            json!(["release_desktop", {"restore_focus": false}, null, null, null]),
             json!(["focus_window", {"id": 2}, null, null, "lease_required"]),
         ]
     );
@@ -284,7 +286,9 @@ async fn screenshots_under_the_lease_are_refs_of_that_lease() {
         evidence["structuredContent"]["screenshot"]["screenshot_ref"],
         "shot-2"
     );
-    desk.server.structured("release_desktop").await;
+    desk.server
+        .structured_with("release_desktop", json!({"restore_focus": false}))
+        .await;
     let unleased = desk.server.call("screenshot", shot.clone()).await;
     assert_eq!(screenshot_ref(unleased), Value::Null);
     desk.server.structured("acquire_desktop").await;
@@ -635,7 +639,7 @@ async fn keyboard_tools_check_their_text_focus_and_app_before_typing() {
 
     let combo = desk
         .server
-        .call("key", json!({"combo": "hyper+a", "expect": "none"}))
+        .call("key", json!({"keys": ["hyper+a"], "expect": "none"}))
         .await;
     assert!(mistake(&combo).contains("unknown modifier"));
 
@@ -643,7 +647,7 @@ async fn keyboard_tools_check_their_text_focus_and_app_before_typing() {
         .server
         .call(
             "key",
-            json!({"combo": "ctrl+s", "expect": {"window_id": 2}}),
+            json!({"keys": ["ctrl+s"], "expect": {"window_id": 2}}),
         )
         .await;
     let (mismatch, seen) = tool_error(&elsewhere);
@@ -672,8 +676,8 @@ async fn keyboard_tools_check_their_text_focus_and_app_before_typing() {
         desk.audited(),
         [
             json!(["type_text", {"text_len": 1001, "expect": "none"}, null, null, "text_too_long"]),
-            json!(["key", {"combo": "hyper+a", "expect": "none"}, null, null, "invalid_arguments"]),
-            json!(["key", {"combo": "ctrl+s", "expect": {"window_id": 2}}, null, null, "focus_mismatch"]),
+            json!(["key", {"keys": ["hyper+a"], "expect": "none"}, null, null, "invalid_arguments"]),
+            json!(["key", {"keys": ["ctrl+s"], "expect": {"window_id": 2}}, null, null, "focus_mismatch"]),
             json!(["type_text", {"text_len": 6, "expect": {"app_id": "b"}}, null, null, "app_denied"]),
         ]
     );
@@ -709,7 +713,7 @@ async fn input_tools_refuse_on_a_locked_screen_before_anything_else() {
             "scroll",
             json!({"screenshot_ref": id, "x": 10, "y": 10, "notches_y": 1}),
         ),
-        ("key", json!({"combo": "ctrl+s", "expect": "none"})),
+        ("key", json!({"keys": ["ctrl+s"], "expect": "none"})),
         ("type_text", json!({"text": "x", "expect": "none"})),
     ] {
         let refused = desk.server.call(tool, arguments).await;
@@ -773,7 +777,7 @@ async fn type_text_feeds_wtype_behind_the_gate_and_clears_the_marker() {
         .server
         .call(
             "key",
-            json!({"combo": "ctrl+shift+t", "expect": {"window_id": 1}}),
+            json!({"keys": ["ctrl+shift+t"], "expect": {"window_id": 1}}),
         )
         .await;
     assert_eq!(outcome(&key)["observed"], "sent");
@@ -786,19 +790,46 @@ async fn type_text_feeds_wtype_behind_the_gate_and_clears_the_marker() {
     assert_eq!(read("wtype.in"), "");
 }
 
-/// A fake wtype that appends stdin to `wtype.in` and one `x` per call to `wtype.calls`,
-/// then runs `then`.
-fn counting_wtype(fixture: &Fixture, then: &str) {
+/// A fake wtype that appends stdin to `wtype.in` and its arguments, one line per call, to
+/// `wtype.calls`, then runs `then`.
+fn recording_wtype(fixture: &Fixture, then: &str) {
     fixture.program(
         "wtype",
-        &format!("cat >> \"$DIR/wtype.in\"\nprintf x >> \"$DIR/wtype.calls\"\n{then}"),
+        &format!("cat >> \"$DIR/wtype.in\"\necho \"$*\" >> \"$DIR/wtype.calls\"\n{then}"),
     );
+}
+
+/// The arguments of each `wtype` call so far.
+fn wtype_calls(fixture: &Fixture) -> Vec<String> {
+    std::fs::read_to_string(fixture.path("wtype.calls"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A wtype whose first call waits until the test creates `go`, so the test can move focus
+/// while it types.
+const FIRST_CALL_WAITS: &str = "if [ ! -e \"$DIR/first\" ]; then : > \"$DIR/first\"; while [ ! -e \"$DIR/go\" ]; do sleep 0.05; done; fi";
+
+/// Starts `tool`, moves focus to window 2 while wtype's first call runs, and returns the
+/// result.
+async fn focus_moved_during_the_first_call(desk: &mut Desk, tool: &str, arguments: Value) -> Value {
+    recording_wtype(&desk.fixture, FIRST_CALL_WAITS);
+    let id = desk.server.start_call(tool, arguments).await;
+    while !desk.fixture.path("first").exists() {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    focus_changed(&desk.stream, 2);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    std::fs::write(desk.fixture.path("go"), "").unwrap();
+    desk.server.response(id).await["result"].clone()
 }
 
 #[tokio::test]
 async fn long_text_is_typed_in_parts_of_a_hundred_characters() {
     let mut desk = Desk::start("act-wtype-parts", "").await;
-    counting_wtype(&desk.fixture, "exit 0");
+    recording_wtype(&desk.fixture, "exit 0");
     let text = "é→x".repeat(83) + "y";
     let typed = desk
         .server
@@ -813,7 +844,7 @@ async fn long_text_is_typed_in_parts_of_a_hundred_characters() {
     );
     let read = |name: &str| std::fs::read_to_string(desk.fixture.path(name)).unwrap();
     assert_eq!(read("wtype.in"), text);
-    assert_eq!(read("wtype.calls"), "xxx");
+    assert_eq!(wtype_calls(&desk.fixture), ["-", "-", "-"]);
     assert_eq!(
         desk.audited(),
         [json!(["type_text", {"text_len": 250, "expect": {"app_id": "a"}}, true, "sent", null])]
@@ -821,40 +852,79 @@ async fn long_text_is_typed_in_parts_of_a_hundred_characters() {
 }
 
 #[tokio::test]
-async fn focus_moving_during_a_part_stops_the_rest_of_the_text() {
+async fn focus_moving_during_a_part_stops_the_rest_of_the_text_and_its_return() {
     let mut desk = Desk::start("act-wtype-moved", "").await;
-    // The first part waits for the test to move focus before it exits.
-    counting_wtype(
-        &desk.fixture,
-        "if [ ! -e \"$DIR/first\" ]; then : > \"$DIR/first\"; while [ ! -e \"$DIR/go\" ]; do sleep 0.05; done; fi",
-    );
-    let id = desk
-        .server
-        .start_call(
-            "type_text",
-            json!({"text": "a".repeat(250), "expect": {"window_id": 1}}),
-        )
-        .await;
-    while !desk.fixture.path("first").exists() {
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
-    focus_changed(&desk.stream, 2);
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    std::fs::write(desk.fixture.path("go"), "").unwrap();
-    let result = desk.server.response(id).await["result"].clone();
+    let text = json!({"text": "a".repeat(250), "expect": {"window_id": 1}, "submit": true});
+    let result = focus_moved_during_the_first_call(&mut desk, "type_text", text).await;
     assert_eq!(
         outcome(&result),
-        json!({"accepted": true, "observed": "interrupted", "focused_window": 2, "focus": "matched", "typed": 100})
+        json!({
+            "accepted": true, "observed": "interrupted", "focused_window": 2, "focus": "matched",
+            "typed": 100, "submitted": false
+        })
     );
     let read = |name: &str| std::fs::read_to_string(desk.fixture.path(name)).unwrap();
     assert_eq!(read("wtype.in"), "a".repeat(100));
-    assert_eq!(read("wtype.calls"), "x");
+    assert_eq!(wtype_calls(&desk.fixture), ["-"]);
+}
+
+#[tokio::test]
+async fn submit_presses_return_once_all_of_the_text_went_out() {
+    let mut desk = Desk::start("act-submit", "").await;
+    recording_wtype(&desk.fixture, "exit 0");
+    let message = json!({"text": "a".repeat(150), "expect": {"window_id": 1}, "submit": true});
+    let sent = desk.server.call("type_text", message).await;
+    assert_eq!(
+        outcome(&sent),
+        json!({
+            "accepted": true, "observed": "sent", "focused_window": 1, "focus": "matched",
+            "submitted": true
+        })
+    );
+    assert_eq!(wtype_calls(&desk.fixture), ["-", "-", "- -k Return"]);
+    assert_eq!(
+        desk.audited(),
+        [
+            json!(["type_text", {"text_len": 150, "expect": {"window_id": 1}, "submit": true}, true, "sent", null])
+        ]
+    );
+}
+
+#[tokio::test]
+async fn key_presses_each_combination_in_order() {
+    let mut desk = Desk::start("act-keys", "").await;
+    recording_wtype(&desk.fixture, "exit 0");
+    let keys = json!({"keys": ["ctrl+l", "Down", "Return"], "expect": {"app_id": "a"}});
+    let pressed = desk.server.call("key", keys).await;
+    assert_eq!(
+        outcome(&pressed),
+        json!({"accepted": true, "observed": "sent", "focused_window": 1, "focus": "matched"})
+    );
+    assert_eq!(
+        wtype_calls(&desk.fixture),
+        ["- -M ctrl -k l -m ctrl", "- -k Down", "- -k Return"]
+    );
+}
+
+#[tokio::test]
+async fn focus_moving_stops_the_rest_of_the_keys() {
+    let mut desk = Desk::start("act-keys-moved", "").await;
+    let keys = json!({"keys": ["Down", "Down", "Return"], "expect": {"window_id": 1}});
+    let result = focus_moved_during_the_first_call(&mut desk, "key", keys).await;
+    assert_eq!(
+        outcome(&result),
+        json!({
+            "accepted": true, "observed": "interrupted", "focused_window": 2, "focus": "matched",
+            "pressed": 1
+        })
+    );
+    assert_eq!(wtype_calls(&desk.fixture), ["- -k Down"]);
 }
 
 #[tokio::test]
 async fn a_screenshot_waits_for_the_running_action() {
     let mut desk = Desk::start("act-settled", "").await;
-    counting_wtype(
+    recording_wtype(
         &desk.fixture,
         "while [ ! -e \"$DIR/go\" ]; do sleep 0.05; done; : > \"$DIR/wtype.done\"",
     );
@@ -1005,7 +1075,9 @@ async fn shell_tools_need_the_lease_and_an_unlocked_screen() {
         .await;
     assert_eq!(tool_error(&locked).0, "screen_locked");
     desk.noctalia.set(UNLOCKED);
-    desk.server.structured("release_desktop").await;
+    desk.server
+        .structured_with("release_desktop", json!({"restore_focus": false}))
+        .await;
     let unheld = desk
         .server
         .call("shell_close", json!({"panel": "control-center"}))
@@ -1055,4 +1127,98 @@ async fn only_one_panel_is_open_at_a_time() {
         desk.noctalia.panel_commands(),
         ["panel-open wallpaper", "panel-open tray-drawer"]
     );
+}
+
+#[tokio::test]
+async fn an_action_asked_for_a_screenshot_returns_the_screen_once_it_stopped_changing() {
+    let mut desk = Desk::start("act-shot-after", "").await;
+    let shown = |result: &Value| {
+        let content = result["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2, "{result}");
+        assert_eq!(content[1]["type"], "image", "{result}");
+        assert_eq!(
+            result["structuredContent"]["observed"], "focused",
+            "{result}"
+        );
+        result["structuredContent"]["screenshot"]["settled"].clone()
+    };
+    let still = desk
+        .act(
+            "focus_window",
+            json!({"id": 2, "screenshot": true}),
+            |stream, _| {
+                focus_changed(stream, 2);
+            },
+        )
+        .await;
+    assert_eq!(shown(&still), true);
+
+    // A screen that changes between every two captures never settles; the wait ends.
+    desk.fixture.program(
+        "grim",
+        r#"n=$(cat "$DIR/grim.n" 2>/dev/null)x; printf %s "$n" > "$DIR/grim.n"; cat "$DIR/grim.out"; printf %s "$n""#,
+    );
+    let started = std::time::Instant::now();
+    let moving = desk
+        .act(
+            "focus_window",
+            json!({"id": 1, "screenshot": true}),
+            |stream, _| {
+                focus_changed(stream, 1);
+            },
+        )
+        .await;
+    assert_eq!(shown(&moving), false);
+    let waited = started.elapsed();
+    assert!((1500..4000).contains(&waited.as_millis()), "{waited:?}");
+}
+
+#[tokio::test]
+async fn release_desktop_can_give_focus_back_to_the_users_window() {
+    let mut desk = Desk::start("act-restore", "").await;
+    let release = |restore: bool| json!({ "restore_focus": restore });
+    // Take the lease again once the desktop shows window 1 focused.
+    desk.server
+        .structured_with("release_desktop", release(false))
+        .await;
+    while desk.server.structured("desktop_state").await["focused_window"] != 1 {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let acquired = desk.server.structured("acquire_desktop").await;
+    assert_eq!(acquired["users_window"], 1, "{acquired}");
+    desk.act("focus_window", json!({"id": 3}), |stream, _| {
+        focus_changed(stream, 3);
+    })
+    .await;
+    let restored = desk
+        .act("release_desktop", release(true), |stream, action| {
+            assert!(
+                matches!(action, Action::FocusWindow { id: 1 }),
+                "{action:?}"
+            );
+            focus_changed(stream, 1);
+        })
+        .await;
+    assert_eq!(
+        restored["structuredContent"],
+        json!({
+            "users_window": 1, "released": true,
+            "restored": {"accepted": true, "observed": "focused", "focused_window": 1, "windows": [1]}
+        })
+    );
+
+    // The user's window closed meanwhile: nothing is sent.
+    desk.server.structured("acquire_desktop").await;
+    desk.stream.send(&json!({"WindowClosed": {"id": 1}}));
+    focus_changed(&desk.stream, 2);
+    while desk.server.structured("desktop_state").await["focused_window"] != 2 {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let gone = desk
+        .server
+        .structured_with("release_desktop", release(true))
+        .await;
+    assert_eq!(gone["restored"]["observed"], "closed", "{gone}");
+    assert_eq!(gone["restored"]["accepted"], false, "{gone}");
+    assert!(!desk.niri.sent_action());
 }

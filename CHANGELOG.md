@@ -26,11 +26,17 @@ All notable changes to this project are documented here. The format follows [Kee
 - `niri-computer-use recover`: clears the input-dirty marker after ending the input child it names and asking the human to confirm that no input is held. `status` reports the marker as `input_dirty`.
 - `shell_open` and `shell_close`, present when Noctalia is installed: open or close the Noctalia panels `control-center`, `wallpaper` and `tray-drawer`, then poll Noctalia's `activePanelId` every 100 ms for up to two seconds, reporting `opened`, `closed`, `timeout` or `uncertain`. Every other panel is refused with the new error name `panel_not_allowed`. They need the lease and pass the same gate as the other actions.
 - `make nested-eval`: runs an agent (`claude -p`) with a skill against one scenario in a nested niri and grades it from the audit log.
+- `screenshot: true` on every action: the result comes with a screenshot taken once the screen stopped changing, with `settled` in its metadata.
+- `wait_for` tool: waits until a window appears, closes or changes its title, or the screen stops changing.
+- `type_text`'s `submit`: presses Enter only once all of the text went out, and reports `submitted`.
+- `acquire_desktop` returns `users_window`, and `release_desktop` takes `restore_focus` to give focus back to it.
 
 ### Changed
 
+- `key` takes `keys`, a list of up to 16 combinations pressed in order, instead of one `combo`, and stops with `interrupted` and a `pressed` count if focus moves.
+- `release_desktop` requires `restore_focus`.
 - `type_text` takes up to 1000 characters and types them in parts of 100, stopping with `interrupted` and a `typed` count if focus moves between parts.
 - `screenshot` waits for a running action of the same server before capturing.
-- The tool descriptions and the server's instructions carry the rules agents most often broke: no screenshot alongside an action, no Enter after text that didn't fully go out, apps only through presets, focus back before `release_desktop`.
+- The tool descriptions and the server's instructions carry the rules agents most often broke: no screenshot alongside an action, no Enter after text that didn't fully go out, apps only through presets, focus back to the user's window when done.
 - The `niri-computer-use` skill is rewritten: a description that says when to load it, a shorter workflow with reasons and examples, and the tool and error tables moved to `references/`.
 - The project is renamed from `niri-desktop-mcp` to `niri-computer-use`, including the binary, the MCP server's name and the audit log's directory.

@@ -70,7 +70,7 @@ pub(crate) fn run(session: &mut Session<'_>, output: &LogicalOutput, server: &st
     scroll(session, &mut client, &wev)?;
     keys(session, &mut client, &wev)?;
     stop::run(session, &mut client, &wev, server)?;
-    structured(&client.call(session, "release_desktop", json!({}))?)?;
+    structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     crash::run(session, &wev, server)?;
     // wev floats over the tiled kitty, so it goes first.
     process.stop()?;
@@ -437,7 +437,7 @@ fn routing(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>, id: u6
         session,
         client,
         "key",
-        json!({"combo": "ctrl+shift+F12", "expect": {"window_id": id}}),
+        json!({"keys": ["ctrl+shift+F12"], "expect": {"window_id": id}}),
     )?;
     let seen = keyboard::observed(session, wev.log, start, 1, true)?;
     keyboard::chord(&wev::keyboard::trace(&seen)?, "F12", 5, 1)?;

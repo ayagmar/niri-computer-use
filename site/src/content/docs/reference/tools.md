@@ -3,7 +3,7 @@ title: Tools reference
 description: Every tool niri-computer-use offers, with its arguments, results and errors.
 ---
 
-The perception tools are read-only and carry the `readOnlyHint` annotation. The two lease tools change only the lease, never the desktop. The four action tools change the desktop through niri's IPC and need the lease; `close_window` carries `destructiveHint`. `shell_open` and `shell_close` change which Noctalia panel is open and need the lease too. Each successful result has the data as `structuredContent` and the same JSON as text.
+The perception tools are read-only and carry the `readOnlyHint` annotation. The two lease tools change the lease; `release_desktop` can also give focus back to the user's window, through the same checks as an action. `wait_for` is read-only too. The four action tools change the desktop through niri's IPC and need the lease; `close_window` carries `destructiveHint`. `shell_open` and `shell_close` change which Noctalia panel is open and need the lease too. Each successful result has the data as `structuredContent` and the same JSON as text.
 
 ## Errors
 
@@ -100,6 +100,7 @@ The result is an image block, then the metadata as text and as `structuredConten
 | `width`, `height`, `mime_type` | the image, checked against its own header |
 | `captured_at_unix_ms`, `capture_ms` | when the capture started and how long it took |
 | `screenshot_ref` | an id such as `shot-4` for this capture while this server holds the lease, or null. The server keeps the last 64 of the current lease in memory and drops them all when the lease is taken or given up |
+| `settled` | only on a screenshot that waited for the screen to stop changing (an action's `screenshot: true`, or `wait_for`'s `screen_stable`): true when the last two captures were the same image, false when the screen still changed at the limit |
 
 `grim` gets five seconds and at most 64 MiB of output.
 
@@ -123,17 +124,23 @@ The tool sends `panel-open` or `panel-close`, then reads Noctalia's `status` eve
 
 ## `acquire_desktop`
 
-No arguments. Takes the lease on this niri instance and returns `{"holder": {"pid", "label", "since"}}`. One server holds it at a time; the action tools require it. Calling it again while holding the lease returns the same holder.
+No arguments. Takes the lease on this niri instance and returns `{"holder": {"pid", "label", "since"}, "users_window": <id>}`. `users_window` is the window that had keyboard focus when the lease was taken, or null; `release_desktop` can give focus back to it. One server holds it at a time; the action tools require it. Calling it again while holding the lease returns the same holder and window.
 
 Refused with `lease_held` while another server holds it, `stopped` while the stop flag is set, `recovery_required` while the input-dirty marker exists, the niri error when niri's version can't be read, `read_only` when this build doesn't support the running niri, niri sent events it can't parse, or the policy file is invalid, and `screen_locked` while the screen is locked or its lock state is unknown. If the runtime directory can't be read, it fails with `upstream_error` rather than assume neither flag is set.
 
 ## `release_desktop`
 
-No arguments. Gives the lease up and returns `{"released": true}`, or `{"released": false}` if this server didn't hold it. While an action runs, it waits for that action to end, at worst about fifteen seconds. The lease is also given up when the stop flag appears and when the server exits.
+| Argument | Value |
+|---|---|
+| `restore_focus` (required) | true to give keyboard focus back to `users_window` before giving the lease up |
+
+Returns `{"users_window": <id>, "released": true}`, or `released: false` if this server didn't hold it. With `restore_focus` and a `users_window`, it first focuses that window as `focus_window` would, through the same checks, and adds `restored`: that action's result, with `observed: closed` and `accepted: false` if the window is gone, or `{"error", "detail"}` if the action was refused. The lease is given up either way. While an action runs, it waits for that action to end, at worst about fifteen seconds. The lease is also given up when the stop flag appears and when the server exits.
 
 ## Action tools
 
 `focus_window`, `focus_workspace`, `launch` and `close_window` act on the desktop through niri's IPC, and the pointer and keyboard tools send input. Before each action the server checks, in this order, the stop flag (`stopped`), the input-dirty marker (`recovery_required`), the lease (`lease_required`), then niri's version, the policy file and the lock state, as `acquire_desktop` does. One action runs at a time; an action or `release_desktop` called meanwhile waits for it. A stop during an action cancels it with `stopped`, and anything niri had already accepted may have taken effect. Cancelling the MCP request cancels the action and keeps the lease.
+
+Every action tool also takes `screenshot`, default false. With true, the result comes with a screenshot of the focused output taken once the screen stopped changing: the server looks 50 ms after the action, then captures every 100 ms until two captures in a row are the same image, for at most 1.5 seconds, and `settled` in its metadata says whether they were. The screenshot is taken before the next action can start, so it shows this action's result, and its `screenshot_ref` serves the pointer tools.
 
 An unknown window or workspace id is an argument mistake, and nothing is sent. Otherwise the result has these fields:
 
@@ -144,8 +151,8 @@ An unknown window or workspace id is an argument mistake, and nothing is sent. O
 | `focused_window` | the window with keyboard focus when the observation ended, or null when focus isn't on a window or the reply was lost |
 | `windows` | the windows the outcome is about, when there are any |
 | `detail` | why the outcome is `uncertain` |
-| `screenshot` | with an outcome in doubt, the metadata of a fresh screenshot of the focused output, as `screenshot` returns it; the image follows the text in the result's content |
-| `screenshot_error` | with an outcome in doubt, `{"error", "detail"}` saying why there is no screenshot |
+| `screenshot` | with `screenshot: true` or an outcome in doubt, the metadata of a screenshot of the focused output, as `screenshot` returns it; the image follows the text in the result's content |
+| `screenshot_error` | `{"error", "detail"}` saying why that screenshot couldn't be taken |
 
 Every action waits up to five seconds for its effect. Two outcomes can end any of them:
 
@@ -244,9 +251,9 @@ Moves to the pixel and turns the wheel by whole notches, the vertical axis first
 
 ## Keyboard tools
 
-`key` types into the app with keyboard focus through one `wtype` call, and `type_text` through one `wtype` call per part of 100 characters. The keys go to the app, not to niri: niri's own keybinds don't fire from them. They run through the same gate as the other action tools, then check, before anything is typed:
+`key` presses each of its combinations with one `wtype` call, and `type_text` types with one `wtype` call per part of 100 characters, plus one for `Return` with `submit`. The keys go to the app, not to niri: niri's own keybinds don't fire from them. They run through the same gate as the other action tools, then check, before anything is typed:
 
-1. the arguments: `type_text` refuses over 1000 characters, counted as Unicode scalar values, with `text_too_long`, and an empty text or a combination it can't read is an argument mistake
+1. the arguments: `type_text` refuses over 1000 characters, counted as Unicode scalar values, with `text_too_long`, and an empty text, an empty list of keys, more than 16 keys, or any combination it can't read is an argument mistake
 2. `expect` against the window with keyboard focus: `focus_mismatch` when it doesn't match. A lock screen, the overview or a shell panel leaves no window focused, so only `"none"` types there
 3. the focused window: `app_denied` if its `app_id` is on the policy's deny list
 
@@ -258,7 +265,7 @@ Moves to the pixel and turns the wheel by whole notches, the vertical axis first
 | `{"app_id": "<app_id>"}` | the focused window must have that `app_id` |
 | `"none"` | no check, for example to type into a shell panel or a dialog that holds focus outside the windows |
 
-The result has `accepted: true`, `focus` (`matched`, or `unchecked` for `"none"`), and `observed`: `sent` once `wtype` has exited, or `interrupted` if keyboard focus moved off the window that had it at any time during the call; an interrupted result comes with a screenshot. If niri's event stream was lost meanwhile, `observed` is `uncertain` with `accepted: true`: the keys went out, but where focus went is unknown. What the keys did is for the next screenshot to show.
+After each `wtype` call the server checks that keyboard focus is still on the window it started on, and if it moved, sends nothing more. The result has `accepted: true`, `focus` (`matched`, or `unchecked` for `"none"`), and `observed`: `sent` once the last `wtype` has exited, or `interrupted` if keyboard focus moved off the window that had it at any time during the call; an interrupted result comes with a screenshot. If niri's event stream was lost meanwhile, `observed` is `uncertain` with `accepted: true`: the keys went out, but where focus went is unknown. What the keys did is for the next screenshot to show.
 
 Before `wtype` starts, the server writes the input-dirty marker (`pending`), and once `wtype` runs it adds its PID and start time (`running`). `wtype` starts with `-`, so it waits at its stdin until the server has recorded it. The server removes the marker when `wtype` exits by itself. A stop or a cancelled request ends the call with `stopped` or a cancellation, but a `wtype` already running keeps typing and then removes the marker. A `wtype` still running three seconds after it started is killed with its process group, and one killed by a signal, the same way: the marker stays and every action refuses with `recovery_required` until the user runs `niri-computer-use recover`. The text is never logged: the audit log has `text_len`.
 
@@ -266,10 +273,11 @@ Before `wtype` starts, the server writes the input-dirty marker (`pending`), and
 
 | Argument | Value |
 |---|---|
-| `combo` (required) | modifiers and one key joined by `+`, such as `ctrl+s`, `ctrl+shift+t`, `alt+F4` or `Return`. The key is an XKB keysym name (`a`, `Return`, `Escape`, `F5`, `slash`, `Page_Down`); the modifiers are `shift`, `ctrl`, `alt`, `altgr` and `super` |
+| `keys` (required) | 1 to 16 combinations, pressed in order. Each is modifiers and one key joined by `+`, such as `ctrl+s`, `ctrl+shift+t`, `alt+F4` or `Return`. The key is an XKB keysym name (`a`, `Return`, `Escape`, `F5`, `slash`, `Page_Down`); the modifiers are `shift`, `ctrl`, `alt`, `altgr` and `super` |
 | `expect` (required) | see above |
+| `screenshot` | see Action tools |
 
-Presses the modifiers, presses and releases the key, then releases the modifiers in reverse order.
+For each combination, presses the modifiers, presses and releases the key, then releases the modifiers in reverse order. If focus moves after one, the rest aren't pressed: `observed` is `interrupted` and `pressed` gives the number that were. A combination that fails ends the call with that error, its `detail` starting with how many were pressed before it.
 
 ### `type_text`
 
@@ -277,5 +285,19 @@ Presses the modifiers, presses and releases the key, then releases the modifiers
 |---|---|
 | `text` (required) | 1 to 1000 characters |
 | `expect` (required) | see above |
+| `submit` | default false; with true, `Return` is pressed once all of the text went out |
+| `screenshot` | see Action tools |
 
-The text goes out in parts of 100 characters, one `wtype` call each, and after each part the server checks that keyboard focus is still on the window it started on. If focus moved, the rest isn't typed: `observed` is `interrupted` and `typed` gives the number of characters sent. A part that fails ends the call with that error, its `detail` starting with how many characters were typed before it. A result without `typed` means the whole text went out.
+The text goes out in parts of 100 characters. If focus moved after a part, the rest isn't typed: `observed` is `interrupted` and `typed` gives the number of characters sent. A part that fails ends the call with that error, its `detail` starting with how many characters were typed before it. A result without `typed` means the whole text went out. With `submit`, the result has `submitted`: true once `Return` was pressed, false when the text stopped early and `Return` wasn't pressed.
+
+## `wait_for`
+
+| Argument | Value |
+|---|---|
+| `until` (required) | `{"window": {"app_id", "title"}}`: a window with that `app_id` and a title containing that text, either one optional but not both; `{"closed": <id>}`: that window is gone; `{"title": {"window_id", "contains"}}`: that window's title contains the text; or `"screen_stable"`: the focused output stopped changing |
+| `timeout_ms` | 100 to 30000; default 10000 |
+| `screenshot` | with true, the result comes with a screenshot of the focused output: for `screen_stable` its last capture, otherwise one taken as for an action's `screenshot: true` once the wait ended |
+
+Read-only, and needs no lease. The window conditions follow niri's event stream; a condition that is already true ends the wait at once. `screen_stable` first waits for a running action of this server to end, then captures the focused output every 100 ms until two captures in a row are the same image. A `title` condition on a window that doesn't exist, an empty `contains`, or a `window` without `app_id` and `title` is an argument mistake.
+
+The result has `observed`: `met`, `timeout`, or `uncertain` with a `detail` if niri's event stream was lost; `windows`, the ids that met the condition; `focused_window` for the window conditions; and `waited_ms`. Window titles are never logged: the audit log keeps their length.

@@ -38,7 +38,7 @@ pub(crate) enum ErrorName {
     AppDenied,
     /// A keyboard tool's `expect` doesn't match the focused window.
     FocusMismatch,
-    /// `type_text` over 100 characters.
+    /// `type_text` over 1000 characters.
     TextTooLong,
     /// A screenshot ref that is unknown, expired, for a changed output, or a pixel outside
     /// its image.

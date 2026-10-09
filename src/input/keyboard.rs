@@ -1,6 +1,8 @@
-//! The keyboard tools' work (plan §6, §11): `key` as one `wtype` call and `type_text` as
-//! one per part of at most 100 characters, each behind the stdin gate. `wtype -` waits at its open stdin before it sends anything, so
-//! the input-dirty marker names its PID before any key goes out.
+//! The keyboard tools' work (plan §6, §11): one `wtype` call per stroke, each behind the
+//! stdin gate. A stroke is one of `key`'s combinations, or a part of at most 100 characters
+//! of `type_text`'s text, or the `Return` that submits it. Focus is checked after every
+//! stroke, and the rest isn't typed once it moved. `wtype -` waits at its open stdin before
+//! it sends anything, so the input-dirty marker names its PID before any key goes out.
 //!
 //! The call runs in a task of its own: a stop or a cancelled request drops the tool's
 //! work, but a `wtype` already typing finishes within its deadline and then removes the
@@ -28,6 +30,8 @@ use super::Input;
 const WTYPE_DEADLINE: Duration = Duration::from_secs(3);
 /// One `wtype` call's text, counted in Unicode scalar values, as wtype batches them.
 const MAX_PART: usize = 100;
+/// `key`'s combinations per call.
+pub(crate) const MAX_KEYS: usize = 16;
 /// Ten parts, each with its own deadline: under fifteen seconds at C10's slowest rate.
 const MAX_TEXT: usize = 1000;
 /// wtype prints nothing on success.
@@ -55,7 +59,16 @@ pub(crate) enum Focus {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Typing {
-    /// A combination such as `ctrl+shift+t`: modifiers, then one key's keysym name.
+    /// Combinations such as `ctrl+shift+t`, pressed in order: modifiers, then one key's
+    /// keysym name.
+    Keys(Vec<String>),
+    /// Text, then `Return` once all of it went out when `submit` is set.
+    Text { text: String, submit: bool },
+}
+
+/// What one `wtype` call types.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Stroke {
     Key(String),
     Text(String),
 }
@@ -75,11 +88,71 @@ const MODIFIERS: [(&str, &str); 8] = [
 impl Typing {
     pub(crate) const fn tool(&self) -> &'static str {
         match self {
-            Self::Key(_) => "key",
-            Self::Text(_) => "type_text",
+            Self::Keys(_) => "key",
+            Self::Text { .. } => "type_text",
         }
     }
 
+    /// Refuses what can't be typed whole before anything is: an empty text or key list,
+    /// text over `MAX_TEXT`, more than `MAX_KEYS` keys, or a combination wtype can't press.
+    fn check(&self) -> Result<(), CallError> {
+        match self {
+            Self::Keys(keys) => check_keys(keys),
+            Self::Text { text, .. } => check_text(text),
+        }
+    }
+
+    /// The `wtype` calls, in order: each key, or the text in parts of at most `MAX_PART`
+    /// characters and then `Return` to submit it.
+    fn strokes(&self) -> Vec<Stroke> {
+        match self {
+            Self::Keys(keys) => keys.iter().cloned().map(Stroke::Key).collect(),
+            Self::Text { text, submit } => {
+                let chars: Vec<char> = text.chars().collect();
+                let mut strokes: Vec<Stroke> = chars
+                    .chunks(MAX_PART)
+                    .map(|part| Stroke::Text(part.iter().collect()))
+                    .collect();
+                if *submit {
+                    strokes.push(Stroke::Key("Return".to_owned()));
+                }
+                strokes
+            }
+        }
+    }
+}
+
+fn check_keys(keys: &[String]) -> Result<(), CallError> {
+    if keys.is_empty() || keys.len() > MAX_KEYS {
+        return Err(CallError::InvalidArguments(format!(
+            "`keys` takes 1 to {MAX_KEYS} combinations, not {}",
+            keys.len()
+        )));
+    }
+    for combo in keys {
+        parse_combo(combo).map_err(CallError::InvalidArguments)?;
+    }
+    Ok(())
+}
+
+fn check_text(text: &str) -> Result<(), CallError> {
+    let length = text.chars().count();
+    if length == 0 {
+        return Err(CallError::InvalidArguments(
+            "`text` must not be empty".to_owned(),
+        ));
+    }
+    if length > MAX_TEXT {
+        return Err(ToolError::new(
+            ErrorName::TextTooLong,
+            format!("{length} characters; at most {MAX_TEXT} per call, so split the text; nothing was typed"),
+        )
+        .into());
+    }
+    Ok(())
+}
+
+impl Stroke {
     /// wtype's arguments: `-` first, so it waits for stdin before anything else, then
     /// for a key the modifiers pressed, the key, and the modifiers released in reverse.
     fn args(&self) -> Result<Vec<String>, CallError> {
@@ -105,45 +178,38 @@ impl Typing {
             Self::Text(text) => text.as_bytes().to_vec(),
         }
     }
+}
 
-    fn check_length(&self) -> Result<(), CallError> {
-        let Self::Text(text) = self else {
-            return Ok(());
-        };
-        let length = text.chars().count();
-        if length == 0 {
-            return Err(CallError::InvalidArguments(
-                "`text` must not be empty".to_owned(),
-            ));
+/// How much of a call went out.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct Sent {
+    chars: usize,
+    keys: usize,
+}
+
+impl Sent {
+    fn add(&mut self, stroke: &Stroke) {
+        match stroke {
+            Stroke::Key(_) => self.keys += 1,
+            Stroke::Text(text) => self.chars += text.chars().count(),
         }
-        if length > MAX_TEXT {
-            return Err(ToolError::new(
-                ErrorName::TextTooLong,
-                format!("{length} characters; at most {MAX_TEXT} per call, so split the text; nothing was typed"),
-            )
-            .into());
-        }
-        Ok(())
     }
 
-    /// What each `wtype` call types: a key whole, text in parts of at most `MAX_PART`
-    /// characters.
-    fn parts(&self) -> Vec<Self> {
-        let Self::Text(text) = self else {
-            return vec![self.clone()];
-        };
-        let chars: Vec<char> = text.chars().collect();
-        chars
-            .chunks(MAX_PART)
-            .map(|part| Self::Text(part.iter().collect()))
-            .collect()
+    const fn nothing(self) -> bool {
+        self.chars == 0 && self.keys == 0
     }
 
-    /// Characters a text sends; a key counts as one.
-    fn len(&self) -> usize {
-        match self {
-            Self::Key(_) => 1,
-            Self::Text(text) => text.chars().count(),
+    /// What went out, as the detail of a failure partway says it.
+    fn describe(self, typing: &Typing) -> String {
+        match typing {
+            Typing::Keys(keys) => format!("pressed {} of {} keys", self.keys, keys.len()),
+            Typing::Text { text, .. } => {
+                format!(
+                    "typed {} of {} characters",
+                    self.chars,
+                    text.chars().count()
+                )
+            }
         }
     }
 }
@@ -203,16 +269,15 @@ fn check_expect(expect: &Expect, view: &View) -> Result<Focus, ToolError> {
     ))
 }
 
-/// Types `typing`, one `wtype` call per part. `observed` is `sent` once every part was
-/// typed, or `interrupted` when focus moved off the window that had it; then the parts
-/// after that one aren't typed, and `typed` says how many characters were sent.
+/// Types `typing`, one `wtype` call per stroke. `observed` is `sent` once every stroke
+/// went out, or `interrupted` when focus moved off the window that had it; then the
+/// strokes after that one aren't typed, and the outcome says how much was.
 pub(crate) async fn type_input(
     input: Input<'_>,
     typing: Typing,
     expect: Expect,
 ) -> Result<Outcome, CallError> {
-    typing.check_length()?;
-    let args = typing.args()?;
+    typing.check()?;
     let mut waiter = niri::waiter(input.niri.events).await?;
     let focus = check_expect(&expect, waiter.view())?;
     if let Some(refused) = policy::refuse_input(input.policy, super::focused_app_id(waiter.view()))
@@ -220,13 +285,17 @@ pub(crate) async fn type_input(
         return Err(refused.into());
     }
     let before = waiter.view().focused_window();
-    let total = typing.len();
-    let mut typed = 0;
-    for part in typing.parts() {
-        run_wtype(input.runtime, &part, args.clone())
-            .await
-            .map_err(|error| partly(error, typed, total))?;
-        typed += part.len();
+    let mut sent = Sent::default();
+    for stroke in typing.strokes() {
+        run_wtype(
+            input.runtime,
+            typing.tool(),
+            &stroke.args()?,
+            stroke.stdin(),
+        )
+        .await
+        .map_err(|error| partly(error, &typing, sent))?;
+        sent.add(&stroke);
         let moved = waiter
             .until(Duration::ZERO, |view| {
                 (view.focused_window() != before).then_some(())
@@ -238,31 +307,40 @@ pub(crate) async fn type_input(
             // wtype typed, but where focus went meanwhile is unknown.
             Waited::Lost(reason) => Outcome::uncertain(Some(true), Some(waiter.view()), reason),
         };
-        return Ok(ended(outcome, focus, typed, total));
+        return Ok(ended(outcome, focus, &typing, sent));
     }
-    let sent = Outcome::seen(Observed::Sent, waiter.view(), Vec::new());
-    Ok(ended(sent, focus, typed, total))
+    let done = Outcome::seen(Observed::Sent, waiter.view(), Vec::new());
+    Ok(ended(done, focus, &typing, sent))
 }
 
-fn ended(outcome: Outcome, focus: Focus, typed: usize, total: usize) -> Outcome {
+/// The outcome with what went out: for a call that stopped early, how many characters or
+/// keys; for `submit`, whether `Return` was pressed.
+fn ended(outcome: Outcome, focus: Focus, typing: &Typing, sent: Sent) -> Outcome {
+    let (typed, pressed, submitted) = match typing {
+        Typing::Keys(keys) => (None, (sent.keys < keys.len()).then_some(sent.keys), None),
+        Typing::Text { text, submit } => {
+            let total = text.chars().count();
+            let submitted = submit.then_some(sent.keys == 1);
+            ((sent.chars < total).then_some(sent.chars), None, submitted)
+        }
+    };
     Outcome {
         focus: Some(focus),
-        typed: (typed < total).then_some(typed),
+        typed,
+        pressed,
+        submitted,
         ..outcome
     }
 }
 
-/// A part's failure, saying how much of the text went out before it.
-fn partly(error: ToolError, typed: usize, total: usize) -> ToolError {
-    if typed == 0 {
+/// A stroke's failure, saying how much went out before it.
+fn partly(error: ToolError, typing: &Typing, sent: Sent) -> ToolError {
+    if sent.nothing() {
         return error;
     }
     ToolError::new(
         error.name,
-        format!(
-            "typed {typed} of {total} characters before this: {}",
-            error.detail
-        ),
+        format!("{} before this: {}", sent.describe(typing), error.detail),
     )
 }
 
@@ -270,12 +348,13 @@ fn partly(error: ToolError, typed: usize, total: usize) -> ToolError {
 /// task that outlives this call if the call is dropped.
 async fn run_wtype(
     runtime: &RuntimeDir,
-    typing: &Typing,
-    args: Vec<String>,
+    tool: &str,
+    args: &[String],
+    stdin: Vec<u8>,
 ) -> Result<(), ToolError> {
-    let mut marker = Written::write(runtime, Marker::pending(typing.tool(), Vec::new()))
+    let mut marker = Written::write(runtime, Marker::pending(tool, Vec::new()))
         .map_err(|error| marker_error("write", &error))?;
-    let gated = match runner::gated("wtype", &args, &UTF8, WTYPE_DEADLINE) {
+    let gated = match runner::gated("wtype", args, &UTF8, WTYPE_DEADLINE) {
         Ok(gated) => gated,
         // Nothing started, so nothing was typed.
         Err(error) => return Err(cleared(marker, error)),
@@ -305,7 +384,6 @@ async fn run_wtype(
             ToolError::new(ErrorName::UpstreamError, detail),
         ));
     }
-    let stdin = typing.stdin();
     let typed = tokio::spawn(async move { finish(gated.feed(&stdin, MAX_STDOUT).await, marker) });
     typed.await.map_err(|error| {
         ToolError::new(
@@ -376,23 +454,32 @@ mod tests {
     use super::*;
     use crate::niri::waiter::tests::{view, window};
 
+    fn text(text: &str, submit: bool) -> Typing {
+        Typing::Text {
+            text: text.to_owned(),
+            submit,
+        }
+    }
+
+    fn keys(keys: &[&str]) -> Typing {
+        Typing::Keys(keys.iter().map(|&key| key.to_owned()).collect())
+    }
+
     #[test]
     fn a_combo_presses_modifiers_around_its_key() {
+        let args = |combo: &str| Stroke::Key(combo.to_owned()).args().unwrap();
         assert_eq!(
-            Typing::Key("ctrl+shift+t".to_owned()).args().unwrap(),
+            args("ctrl+shift+t"),
             [
                 "-", "-M", "ctrl", "-M", "shift", "-k", "t", "-m", "shift", "-m", "ctrl"
             ]
         );
         assert_eq!(
-            Typing::Key("Super+Return".to_owned()).args().unwrap(),
+            args("Super+Return"),
             ["-", "-M", "logo", "-k", "Return", "-m", "logo"]
         );
-        assert_eq!(
-            Typing::Key("F12".to_owned()).args().unwrap(),
-            ["-", "-k", "F12"]
-        );
-        assert_eq!(Typing::Text("hi".to_owned()).args().unwrap(), ["-"]);
+        assert_eq!(args("F12"), ["-", "-k", "F12"]);
+        assert_eq!(Stroke::Text("hi".to_owned()).args().unwrap(), ["-"]);
         for bad in [
             "",
             "ctrl+",
@@ -402,15 +489,33 @@ mod tests {
             "a b",
             "ctrl+control+a",
         ] {
-            assert!(Typing::Key(bad.to_owned()).args().is_err(), "{bad}");
+            assert!(keys(&[bad]).check().is_err(), "{bad}");
         }
     }
 
     #[test]
+    fn one_bad_combination_refuses_the_whole_list_before_anything_is_pressed() {
+        assert!(keys(&["ctrl+l", "Return"]).check().is_ok());
+        assert!(matches!(
+            keys(&["ctrl+l", "hyper+a"]).check(),
+            Err(CallError::InvalidArguments(message)) if message.contains("unknown modifier")
+        ));
+        assert!(keys(&[]).check().is_err());
+        assert!(keys(&["a"; MAX_KEYS]).check().is_ok());
+        assert!(keys(&["a"; MAX_KEYS + 1]).check().is_err());
+        assert_eq!(
+            keys(&["ctrl+l", "Return"]).strokes(),
+            [
+                Stroke::Key("ctrl+l".to_owned()),
+                Stroke::Key("Return".to_owned())
+            ]
+        );
+    }
+
+    #[test]
     fn text_is_capped_in_scalar_values() {
-        let text = |text: &str| Typing::Text(text.to_owned()).check_length();
-        assert!(text(&"é".repeat(1000)).is_ok());
-        let long = text(&"→".repeat(1001)).unwrap_err();
+        assert!(text(&"é".repeat(1000), false).check().is_ok());
+        let long = text(&"→".repeat(1001), false).check().unwrap_err();
         let CallError::Tool(error) = long else {
             panic!("{long:?}")
         };
@@ -420,22 +525,68 @@ mod tests {
             "{}",
             error.detail
         );
-        assert!(matches!(text(""), Err(CallError::InvalidArguments(_))));
-        assert_eq!(Typing::Text("é".to_owned()).stdin(), "é".as_bytes());
-        assert_eq!(Typing::Key("a".to_owned()).stdin(), b"");
+        assert!(matches!(
+            text("", true).check(),
+            Err(CallError::InvalidArguments(_))
+        ));
+        assert_eq!(Stroke::Text("é".to_owned()).stdin(), "é".as_bytes());
+        assert_eq!(Stroke::Key("a".to_owned()).stdin(), b"");
     }
 
     #[test]
-    fn long_text_goes_out_in_parts_of_a_hundred_characters() {
-        let parts = Typing::Text("é".repeat(250)).parts();
-        let lengths: Vec<usize> = parts.iter().map(Typing::len).collect();
+    fn long_text_goes_out_in_parts_of_a_hundred_characters_then_return_to_submit() {
+        let parts = text(&"é".repeat(250), false).strokes();
+        let lengths: Vec<usize> = parts
+            .iter()
+            .map(|stroke| match stroke {
+                Stroke::Text(part) => part.chars().count(),
+                Stroke::Key(key) => panic!("{key}"),
+            })
+            .collect();
         assert_eq!(lengths, [100, 100, 50]);
         let joined: String = parts
             .iter()
             .map(|part| String::from_utf8(part.stdin()).unwrap())
             .collect();
         assert_eq!(joined, "é".repeat(250));
-        assert_eq!(Typing::Key("ctrl+s".to_owned()).parts().len(), 1);
+        assert_eq!(
+            text("hi", true).strokes(),
+            [
+                Stroke::Text("hi".to_owned()),
+                Stroke::Key("Return".to_owned())
+            ]
+        );
+    }
+
+    #[test]
+    fn the_outcome_says_how_much_went_out_and_whether_it_was_submitted() {
+        let current = view(vec![window(1, Some("a"), 1, true)]);
+        let report = |typing: &Typing, chars, keys| {
+            let outcome = Outcome::seen(Observed::Interrupted, &current, Vec::new());
+            let ended = ended(outcome, Focus::Matched, typing, Sent { chars, keys });
+            (ended.typed, ended.pressed, ended.submitted)
+        };
+        let message = text(&"x".repeat(250), true);
+        assert_eq!(report(&message, 100, 0), (Some(100), None, Some(false)));
+        // Every character went out, but focus moved before `Return`.
+        assert_eq!(report(&message, 250, 0), (None, None, Some(false)));
+        assert_eq!(report(&message, 250, 1), (None, None, Some(true)));
+        assert_eq!(report(&text("x", false), 1, 0), (None, None, None));
+        let list = keys(&["Down", "Down", "Return"]);
+        assert_eq!(report(&list, 0, 2), (None, Some(2), None));
+        assert_eq!(report(&list, 0, 3), (None, None, None));
+        let failed = partly(
+            ToolError::new(ErrorName::UpstreamError, "wtype exited 1"),
+            &message,
+            Sent {
+                chars: 200,
+                keys: 0,
+            },
+        );
+        assert_eq!(
+            failed.detail,
+            "typed 200 of 250 characters before this: wtype exited 1"
+        );
     }
 
     #[test]

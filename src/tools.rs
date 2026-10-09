@@ -14,7 +14,7 @@ use crate::act::{self, Outcome};
 use crate::audit::{Audit, Call, Caller};
 use crate::control::desk::Desk;
 use crate::coords::ImagePx;
-use crate::error::{CANCELLED, CallError, ToolError};
+use crate::error::{CANCELLED, CallError, ErrorName, ToolError};
 use crate::input::Input;
 use crate::input::keyboard::{self, Expect, Typing};
 use crate::input::pointer::{self, Button, Gesture};
@@ -22,7 +22,7 @@ use crate::niri::events::{EventStream, StreamState};
 use crate::observe::{DEFAULT_MAX_WIDTH, Format, Rect, Target};
 use crate::policy::{self, Loaded};
 use crate::refs::Shot;
-use crate::{Env, clipboard, niri, noctalia, observe, status};
+use crate::{Env, clipboard, niri, noctalia, observe, settle, status, wait};
 
 /// Optional arguments are described as their own type with their real default, without
 /// `null`, because clients that map tool schemas onto a single-type dialect reject
@@ -104,6 +104,93 @@ impl ScreenshotArgs {
 struct WindowArgs {
     /// A window id from `desktop_state`.
     id: u64,
+    /// With true, the result also has a screenshot of the focused output, taken once the
+    /// screen stopped changing, so no separate `screenshot` call is needed. Defaults to
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    screenshot: bool,
+}
+
+/// What `wait_for` waits for.
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+#[serde(rename_all = "snake_case")]
+enum UntilArg {
+    /// `{"window": {"app_id": "<app_id>", "title": "<text>"}}`: a window with that `app_id`
+    /// and a title containing that text exists; give either or both.
+    Window(WindowMatchArg),
+    /// `{"closed": <id>}`: the window with that id from `desktop_state` is gone.
+    Closed(u64),
+    /// `{"title": {"window_id": <id>, "contains": "<text>"}}`: that window's title contains
+    /// the text.
+    Title(TitleArg),
+    /// `"screen_stable"`: the focused output stopped changing.
+    ScreenStable,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct WindowMatchArg {
+    #[schemars(with = "String", default)]
+    app_id: Option<String>,
+    /// Text the title contains.
+    #[schemars(with = "String", default)]
+    title: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct TitleArg {
+    window_id: u64,
+    contains: String,
+}
+
+impl From<UntilArg> for wait::Until {
+    fn from(until: UntilArg) -> Self {
+        match until {
+            UntilArg::Window(window) => Self::Window {
+                app_id: window.app_id,
+                title: window.title,
+            },
+            UntilArg::Closed(id) => Self::Closed(id),
+            UntilArg::Title(title) => Self::Title {
+                window_id: title.window_id,
+                contains: title.contains,
+            },
+            UntilArg::ScreenStable => Self::ScreenStable,
+        }
+    }
+}
+
+const fn default_timeout_ms() -> u32 {
+    10_000
+}
+
+/// The longest `wait_for`.
+const MAX_WAIT_MS: u32 = 30_000;
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct WaitForArgs {
+    until: UntilArg,
+    /// How long to wait, in milliseconds: 100 to 30000. Defaults to 10000.
+    #[serde(default = "default_timeout_ms")]
+    #[schemars(range(min = 100, max = 30_000))]
+    timeout_ms: u32,
+    /// With true, the result also has a screenshot of the focused output, taken once the
+    /// screen stopped changing, so no separate `screenshot` call is needed. Defaults to
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    screenshot: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct ReleaseArgs {
+    /// true to give keyboard focus back to `users_window`, the window that had it when you
+    /// took the lease, before releasing; false to leave focus where your task put it, such
+    /// as on an app the user asked you to open.
+    restore_focus: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -111,6 +198,11 @@ struct WindowArgs {
 struct WorkspaceArgs {
     /// A workspace id from `desktop_state`, not its index.
     id: u64,
+    /// With true, the result also has a screenshot of the focused output, taken once the
+    /// screen stopped changing, so no separate `screenshot` call is needed. Defaults to
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    screenshot: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -122,6 +214,11 @@ struct LaunchArgs {
     /// start nothing if several exist. Defaults to false.
     #[serde(default)]
     reuse: bool,
+    /// With true, the result also has a screenshot of the focused output, taken once the
+    /// screen stopped changing, so no separate `screenshot` call is needed. Defaults to
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    screenshot: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -129,6 +226,11 @@ struct LaunchArgs {
 struct PanelArgs {
     /// A Noctalia panel: `control-center`, `wallpaper` or `tray-drawer`.
     panel: String,
+    /// With true, the result also has a screenshot of the focused output, taken once the
+    /// screen stopped changing, so no separate `screenshot` call is needed. Defaults to
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    screenshot: bool,
 }
 
 /// A pixel of a screenshot, counted from its top-left corner.
@@ -157,6 +259,11 @@ struct PointArgs {
     x: u32,
     /// The pixel's row in that image, from its top edge.
     y: u32,
+    /// With true, the result also has a screenshot of the focused output, taken once the
+    /// screen stopped changing, so no separate `screenshot` call is needed. Defaults to
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    screenshot: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, schemars::JsonSchema)]
@@ -199,6 +306,11 @@ struct ClickArgs {
     #[serde(default = "one")]
     #[schemars(range(min = 1, max = 3))]
     count: u8,
+    /// With true, the result also has a screenshot of the focused output, taken once the
+    /// screen stopped changing, so no separate `screenshot` call is needed. Defaults to
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    screenshot: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -213,6 +325,11 @@ struct DragArgs {
     /// `left` (the default), `right` or `middle`.
     #[serde(default)]
     button: ButtonArg,
+    /// With true, the result also has a screenshot of the focused output, taken once the
+    /// screen stopped changing, so no separate `screenshot` call is needed. Defaults to
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    screenshot: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -232,6 +349,11 @@ struct ScrollArgs {
     #[serde(default)]
     #[schemars(range(min = -10, max = 10))]
     notches_y: i32,
+    /// With true, the result also has a screenshot of the focused output, taken once the
+    /// screen stopped changing, so no separate `screenshot` call is needed. Defaults to
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    screenshot: bool,
 }
 
 /// Where keyboard focus must be before typing.
@@ -261,21 +383,37 @@ impl From<ExpectArg> for Expect {
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct KeyArgs {
-    /// Modifiers and one key joined by `+`, such as `ctrl+shift+t`, `Return` or `alt+F4`.
-    /// The key is an XKB keysym name (`a`, `Return`, `Escape`, `F5`, `slash`, `Page_Down`);
-    /// the modifiers are `shift`, `ctrl`, `alt`, `altgr` and `super`.
-    combo: String,
+    /// 1 to 16 combinations, pressed in order, such as `["ctrl+l"]` or `["Down", "Down",
+    /// "Return"]`. Each is modifiers and one key joined by `+`, such as `ctrl+shift+t`,
+    /// `Return` or `alt+F4`. The key is an XKB keysym name (`a`, `Return`, `Escape`, `F5`,
+    /// `slash`, `Page_Down`); the modifiers are `shift`, `ctrl`, `alt`, `altgr` and `super`.
+    #[schemars(length(min = 1, max = 16))]
+    keys: Vec<String>,
     /// Where keyboard focus must be; checked before typing.
     expect: ExpectArg,
+    /// With true, the result also has a screenshot of the focused output, taken once the
+    /// screen stopped changing, so no separate `screenshot` call is needed. Defaults to
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    screenshot: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct TypeTextArgs {
-    /// At most 100 characters; split longer text over several calls.
+    /// 1 to 1000 characters.
     text: String,
     /// Where keyboard focus must be; checked before typing.
     expect: ExpectArg,
+    /// With true, press `Return` after the text, but only if all of it went out and focus
+    /// stayed. Defaults to false.
+    #[serde(default)]
+    submit: bool,
+    /// With true, the result also has a screenshot of the focused output, taken once the
+    /// screen stopped changing, so no separate `screenshot` call is needed. Defaults to
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    screenshot: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -334,8 +472,9 @@ impl Server {
     /// require. Fails with `lease_held` naming the holder if another agent has it,
     /// `stopped` while the user's stop flag is set, `recovery_required` while input may be
     /// stuck, `read_only` when this build doesn't support the running niri or the policy
-    /// file is invalid, and `screen_locked` while the screen is locked. Returns the holder; calling it again while holding the lease returns the
-    /// same holder.
+    /// file is invalid, and `screen_locked` while the screen is locked. Returns the holder
+    /// and `users_window`, the window that had keyboard focus, which `release_desktop` can
+    /// give focus back to; calling it again while holding the lease returns the same.
     #[tool(annotations(
         read_only_hint = false,
         destructive_hint = false,
@@ -349,19 +488,26 @@ impl Server {
         let label = session(&context);
         self.audited(&context, "acquire_desktop", Value::Null, async {
             let refusal = self.refusal().await;
-            answer(
-                self.desk
-                    .acquire(&label, refusal)
-                    .await
-                    .map(|holder| serde_json::json!({ "holder": holder })),
-            )
+            let focused = niri::waiter(self.events.as_ref())
+                .await
+                .ok()
+                .and_then(|waiter| waiter.view().focused_window());
+            let acquired = self.desk.acquire(&label, refusal, focused).await;
+            answer(acquired.map(|holder| {
+                serde_json::json!({
+                    "holder": holder,
+                    "users_window": self.desk.users_window(),
+                })
+            }))
         })
         .await
     }
 
     /// Gives the lease up. `released` says whether this server held it; the user's stop
-    /// flag also takes it back. Before calling it, put focus back on the window the user
-    /// was on with `focus_window`, unless the task was to leave another window in front.
+    /// flag also takes it back. With `restore_focus`, keyboard focus first goes back to
+    /// `users_window`, the window the user was on when you took the lease, and `restored`
+    /// says how that went (`focused`, `closed` if the window is gone, or an error). Restore
+    /// focus unless the task was to leave another window in front.
     #[tool(annotations(
         read_only_hint = false,
         destructive_hint = false,
@@ -370,11 +516,21 @@ impl Server {
     ))]
     async fn release_desktop(
         &self,
+        Parameters(args): Parameters<ReleaseArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.audited(&context, "release_desktop", Value::Null, async {
-            let released = self.desk.release().await;
-            structured(&serde_json::json!({ "released": released }))
+        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        self.audited(&context, "release_desktop", logged, async {
+            let users_window = self.desk.users_window();
+            let restored = match (args.restore_focus, users_window) {
+                (true, Some(id)) => Some(self.restore(id).await),
+                _ => None,
+            };
+            structured(&Release {
+                users_window,
+                restored,
+                released: self.desk.release().await,
+            })
         })
         .await
     }
@@ -394,9 +550,18 @@ impl Server {
         Parameters(args): Parameters<WindowArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let logged = serde_json::json!({ "id": args.id });
+        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
         let work = act::focus_window(self.niri(), args.id);
-        self.act(&context, "focus_window", logged, work).await
+        self.act(
+            &context,
+            Asked {
+                tool: "focus_window",
+                logged,
+                shoot: args.screenshot,
+            },
+            work,
+        )
+        .await
     }
 
     /// Focuses a workspace by its id, on whichever output it is. Results as for
@@ -413,9 +578,18 @@ impl Server {
         Parameters(args): Parameters<WorkspaceArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let logged = serde_json::json!({ "id": args.id });
+        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
         let work = act::focus_workspace(self.niri(), args.id);
-        self.act(&context, "focus_workspace", logged, work).await
+        self.act(
+            &context,
+            Asked {
+                tool: "focus_workspace",
+                logged,
+                shoot: args.screenshot,
+            },
+            work,
+        )
+        .await
     }
 
     /// Starts an app from a policy preset, whose command is fixed by the user. `observed`
@@ -439,8 +613,18 @@ impl Server {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
         let niri = self.niri();
         let preset = self.policy.preset(&args.preset);
-        let work = async move { act::launch(niri, preset?, args.reuse).await };
-        self.act(&context, "launch", logged, work).await
+        let (reuse, shoot) = (args.reuse, args.screenshot);
+        let work = async move { act::launch(niri, preset?, reuse).await };
+        self.act(
+            &context,
+            Asked {
+                tool: "launch",
+                logged,
+                shoot,
+            },
+            work,
+        )
+        .await
     }
 
     /// Asks a window to close, as its close button would. `observed` is `closed`, or
@@ -457,9 +641,18 @@ impl Server {
         Parameters(args): Parameters<WindowArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let logged = serde_json::json!({ "id": args.id });
+        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
         let work = act::close_window(self.niri(), args.id);
-        self.act(&context, "close_window", logged, work).await
+        self.act(
+            &context,
+            Asked {
+                tool: "close_window",
+                logged,
+                shoot: args.screenshot,
+            },
+            work,
+        )
+        .await
     }
 
     /// Moves the pointer onto a pixel of a screenshot, to hover. `observed` is `sent` once
@@ -483,8 +676,11 @@ impl Server {
             x: args.x,
             y: args.y,
         });
-        let id = args.screenshot_ref;
-        self.point(&context, logged, id, gesture).await
+        let aim = Aim {
+            id: args.screenshot_ref,
+            shoot: args.screenshot,
+        };
+        self.point(&context, logged, aim, gesture).await
     }
 
     /// Clicks a pixel of a screenshot: moves there, then presses and releases the button
@@ -510,8 +706,11 @@ impl Server {
             button: args.button.into(),
             count: args.count,
         };
-        let id = args.screenshot_ref;
-        self.point(&context, logged, id, gesture).await
+        let aim = Aim {
+            id: args.screenshot_ref,
+            shoot: args.screenshot,
+        };
+        self.point(&context, logged, aim, gesture).await
     }
 
     /// Drags from one pixel of a screenshot to another: presses the button at `from`,
@@ -534,8 +733,11 @@ impl Server {
             to: args.to.into(),
             button: args.button.into(),
         };
-        let id = args.screenshot_ref;
-        self.point(&context, logged, id, gesture).await
+        let aim = Aim {
+            id: args.screenshot_ref,
+            shoot: args.screenshot,
+        };
+        self.point(&context, logged, aim, gesture).await
     }
 
     /// Scrolls with the mouse wheel over a pixel of a screenshot, by whole notches, as a
@@ -560,17 +762,21 @@ impl Server {
             notches_x: args.notches_x,
             notches_y: args.notches_y,
         };
-        let id = args.screenshot_ref;
-        self.point(&context, logged, id, gesture).await
+        let aim = Aim {
+            id: args.screenshot_ref,
+            shoot: args.screenshot,
+        };
+        self.point(&context, logged, aim, gesture).await
     }
 
-    /// Presses a key combination in the focused app, as one press and release with its
-    /// modifiers held, such as `ctrl+s`. It goes to the app, not to niri: niri's own
-    /// keybinds don't fire from it. `expect` names the window or app that must have
-    /// keyboard focus (`focus_mismatch` otherwise), or `"none"` to skip the check.
-    /// `observed` is `sent`, or `interrupted` if focus moved meanwhile; take a screenshot to
-    /// see what the key did. Refused with `app_denied` for an app on the policy's deny
-    /// list. Requires the lease.
+    /// Presses key combinations in the focused app, in order, each as one press and
+    /// release with its modifiers held, such as `["ctrl+l"]` or `["Down", "Down",
+    /// "Return"]`. They go to the app, not to niri: niri's own keybinds don't fire from
+    /// them. `expect` names the window or app that must have keyboard focus
+    /// (`focus_mismatch` otherwise), or `"none"` to skip the check. `observed` is `sent`, or
+    /// `interrupted` if focus moved; then the keys after that aren't pressed and `pressed`
+    /// counts the ones that were. Pass `screenshot: true` to see what the keys did.
+    /// Refused with `app_denied` for an app on the policy's deny list. Requires the lease.
     #[tool(annotations(
         read_only_hint = false,
         destructive_hint = true,
@@ -583,18 +789,23 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
-        let typing = Typing::Key(args.combo);
-        self.type_input(&context, logged, typing, args.expect.into())
-            .await
+        let typing = Typing::Keys(args.keys);
+        let keying = Keying {
+            typing,
+            expect: args.expect.into(),
+            shoot: args.screenshot,
+        };
+        self.type_input(&context, logged, keying).await
     }
 
     /// Types text into the focused app, up to 1000 characters, sent in parts of 100.
     /// `expect`, the results and the refusals are as for `key`. If focus moves during a
     /// part, the rest isn't typed: `observed` is `interrupted` and `typed` counts the
     /// characters sent. A failed call's detail says how much was typed before it; text
-    /// over the limit is refused with `text_too_long` and nothing is typed. Don't press
-    /// Enter to send text until every part went out. The text is never logged. Requires
-    /// the lease.
+    /// over the limit is refused with `text_too_long` and nothing is typed. To send a
+    /// message, pass `submit: true`: `Return` is pressed only once all of the text went out,
+    /// and `submitted` says whether it was; never press Enter yourself after a call that
+    /// stopped early. The text is never logged. Requires the lease.
     #[tool(annotations(
         read_only_hint = false,
         destructive_hint = true,
@@ -607,13 +818,22 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         // The length, never the text.
-        let logged = serde_json::json!({
+        let mut logged = serde_json::json!({
             "text_len": args.text.chars().count(),
             "expect": args.expect,
         });
-        let typing = Typing::Text(args.text);
-        self.type_input(&context, logged, typing, args.expect.into())
-            .await
+        flag(&mut logged, "submit", args.submit);
+        flag(&mut logged, "screenshot", args.screenshot);
+        let typing = Typing::Text {
+            text: args.text,
+            submit: args.submit,
+        };
+        let keying = Keying {
+            typing,
+            expect: args.expect.into(),
+            shoot: args.screenshot,
+        };
+        self.type_input(&context, logged, keying).await
     }
 
     /// niri's outputs (monitors) by connector name: modes, logical position and size,
@@ -652,7 +872,8 @@ impl Server {
     /// layout coordinates, and the scale from logical pixels to image pixels, plus a
     /// `screenshot_ref` for the pointer tools while you hold the lease. It waits for an
     /// action still running to finish first, so call it after the action's result, not
-    /// alongside it. Prefer `desktop_state` when structured data answers the question.
+    /// alongside it; better, pass `screenshot: true` to the action itself. Prefer
+    /// `desktop_state` when structured data answers the question.
     #[tool(annotations(read_only_hint = true))]
     async fn screenshot(
         &self,
@@ -669,6 +890,37 @@ impl Server {
             self.desk.settled().await;
             match self.capture(request).await {
                 Ok(shot) => image(&shot),
+                Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
+                Err(CallError::Tool(error)) => Ok(error.into_result()),
+            }
+        })
+        .await
+    }
+
+    /// Waits until something happens on the desktop, instead of polling with screenshots:
+    /// a window appears (`window`, by `app_id` and title text), a window closes
+    /// (`closed`), a window's title contains some text (`title`), or the focused output
+    /// stops changing (`screen_stable`). A condition already true returns at once.
+    /// `observed` is `met`, with the matching `windows`, `timeout`, or `uncertain` if
+    /// niri's event stream was lost. Changes nothing and needs no lease.
+    #[tool(annotations(read_only_hint = true))]
+    async fn wait_for(
+        &self,
+        Parameters(args): Parameters<WaitForArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let logged = waited_for(&args);
+        self.audited(&context, "wait_for", logged, async {
+            if !(100..=MAX_WAIT_MS).contains(&args.timeout_ms) {
+                return Ok(invalid("`timeout_ms` must be 100 to 30000"));
+            }
+            let limit = std::time::Duration::from_millis(args.timeout_ms.into());
+            let until = wait::Until::from(args.until);
+            if let Err(message) = until.check() {
+                return Ok(invalid(&message));
+            }
+            match self.wait(&until, limit, args.screenshot).await {
+                Ok(waited) => waited_result(waited),
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
                 Err(CallError::Tool(error)) => Ok(error.into_result()),
             }
@@ -709,8 +961,18 @@ impl Server {
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
         let (env, niri) = (&self.env, self.niri());
+        let shoot = args.screenshot;
         let work = async move { act::shell::open(env, niri, policy::panel(&args.panel)?).await };
-        self.act(&context, "shell_open", logged, work).await
+        self.act(
+            &context,
+            Asked {
+                tool: "shell_open",
+                logged,
+                shoot,
+            },
+            work,
+        )
+        .await
     }
 
     /// Closes a Noctalia panel opened with `shell_open`. `observed` is `closed` once
@@ -729,8 +991,18 @@ impl Server {
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
         let (env, niri) = (&self.env, self.niri());
+        let shoot = args.screenshot;
         let work = async move { act::shell::close(env, niri, policy::panel(&args.panel)?).await };
-        self.act(&context, "shell_close", logged, work).await
+        self.act(
+            &context,
+            Asked {
+                tool: "shell_close",
+                logged,
+                shoot,
+            },
+            work,
+        )
+        .await
     }
 
     /// The clipboard's text, read with `wl-paste`. `text` is null, with a `reason`, when
@@ -755,13 +1027,13 @@ impl Server {
         }
     }
 
-    /// Runs a pointer gesture through the action gate, aimed through the ref named `id`,
+    /// Runs a pointer gesture through the action gate, aimed through the ref `aim` names,
     /// which is looked up only once the gate has passed.
     async fn point(
         &self,
         context: &RequestContext<RoleServer>,
         logged: Value,
-        id: String,
+        aim: Aim,
         gesture: Gesture,
     ) -> Result<CallToolResult, ErrorData> {
         let display = self.env.wayland_socket();
@@ -772,20 +1044,33 @@ impl Server {
                 runtime: self.desk.runtime()?,
                 policy: &self.policy,
             };
-            pointer::point(input, self.desk.shot(&id), gesture).await
+            pointer::point(input, self.desk.shot(&aim.id), gesture).await
         };
-        self.act(context, gesture.tool(), logged, work).await
+        self.act(
+            context,
+            Asked {
+                tool: gesture.tool(),
+                logged,
+                shoot: aim.shoot,
+            },
+            work,
+        )
+        .await
     }
 
-    /// Runs one `wtype` call through the action gate.
+    /// Runs a keyboard tool's `wtype` calls through the action gate.
     async fn type_input(
         &self,
         context: &RequestContext<RoleServer>,
         logged: Value,
-        typing: Typing,
-        expect: Expect,
+        keying: Keying,
     ) -> Result<CallToolResult, ErrorData> {
         let display = self.env.wayland_socket();
+        let Keying {
+            typing,
+            expect,
+            shoot,
+        } = keying;
         let tool = typing.tool();
         let work = async {
             let input = Input {
@@ -796,7 +1081,61 @@ impl Server {
             };
             keyboard::type_input(input, typing, expect).await
         };
-        self.act(context, tool, logged, work).await
+        self.act(
+            context,
+            Asked {
+                tool,
+                logged,
+                shoot,
+            },
+            work,
+        )
+        .await
+    }
+
+    /// Waits for `until`, then with `shoot` adds a screenshot taken once the screen stopped
+    /// changing. Waiting for the screen first lets a running action of this server end.
+    async fn wait(
+        &self,
+        until: &wait::Until,
+        limit: std::time::Duration,
+        screenshot: bool,
+    ) -> Result<(wait::Report, Option<observe::Screenshot>), CallError> {
+        let capture = || self.capture(observe::Request::focused());
+        if *until == wait::Until::ScreenStable {
+            self.desk.settled().await;
+            let (report, last) = wait::screen(capture, limit).await?;
+            return Ok((report, screenshot.then_some(last)));
+        }
+        let report = wait::window(self.events.as_ref(), until, limit).await?;
+        if !screenshot {
+            return Ok((report, None));
+        }
+        match settle::screenshot(capture, settle::LIMIT).await {
+            Ok(shot) => Ok((report, Some(shot))),
+            Err(CallError::Tool(error)) => Ok((
+                wait::Report {
+                    screenshot_error: Some(error),
+                    ..report
+                },
+                None,
+            )),
+            Err(mistake @ CallError::InvalidArguments(_)) => Err(mistake),
+        }
+    }
+
+    /// Focuses the user's window `id` through the action gate, as the outcome or the error.
+    async fn restore(&self, id: u64) -> Value {
+        let refusal = Box::pin(self.refusal());
+        let work = Box::pin(act::refocus(self.niri(), id));
+        let restored = match self.desk.act(refusal, work, std::future::ready).await {
+            Ok(outcome) => serde_json::to_value(outcome),
+            Err(CallError::Tool(error)) => serde_json::to_value(error),
+            Err(CallError::InvalidArguments(message)) => {
+                serde_json::to_value(ToolError::new(ErrorName::UpstreamError, message))
+            }
+        };
+        restored.unwrap_or(Value::Null)
     }
 
     /// Takes a screenshot and, while this server holds the lease, keeps it as a ref that
@@ -819,20 +1158,23 @@ impl Server {
         policy::refuse_control(report.facts(&self.policy))
     }
 
-    /// Runs one action through the desk's gate, with a screenshot when its outcome is in
-    /// doubt, and logs it with what was accepted and observed.
+    /// Runs one action through the desk's gate, with a screenshot when `shoot` asks for
+    /// one or its outcome is in doubt, and logs it with what was accepted and observed.
     async fn act(
         &self,
         context: &RequestContext<RoleServer>,
-        tool: &str,
-        args: Value,
+        asked: Asked<'_>,
         work: impl Future<Output = Result<Outcome, CallError>>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.record(context, Call::action(tool), args, async {
+        let Asked {
+            tool,
+            logged,
+            shoot,
+        } = asked;
+        self.record(context, Call::action(tool), logged, async {
             // Boxed, because the readiness report and the action's wait make large futures.
             let refusal = Box::pin(self.refusal());
-            let evidence =
-                |outcome| Box::pin(act::with_evidence(outcome, |request| self.capture(request)));
+            let evidence = |outcome| Box::pin(self.evidence(outcome, shoot));
             match self.desk.act(refusal, Box::pin(work), evidence).await {
                 Ok(evidenced) => outcome(&evidenced),
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
@@ -840,6 +1182,11 @@ impl Server {
             }
         })
         .await
+    }
+
+    /// The outcome with the screenshot `shoot` asks for, or the one an outcome in doubt gets.
+    async fn evidence(&self, outcome: Outcome, shoot: bool) -> act::Evidenced {
+        act::with_evidence(outcome, shoot, |request| self.capture(request)).await
     }
 
     /// The readiness report, as `status` returns it.
@@ -891,6 +1238,83 @@ impl Server {
         self.audit.finish(&call, caller, &args, &result);
         result
     }
+}
+
+/// `wait_for`'s arguments for the audit log: lengths of the text to match, never the text,
+/// since titles can hold anything.
+fn waited_for(args: &WaitForArgs) -> Value {
+    let until = match &args.until {
+        UntilArg::Window(window) => serde_json::json!({"window": {
+            "app_id": window.app_id,
+            "title_len": window.title.as_ref().map(|title| title.chars().count()),
+        }}),
+        UntilArg::Closed(id) => serde_json::json!({ "closed": id }),
+        UntilArg::Title(title) => serde_json::json!({"title": {
+            "window_id": title.window_id,
+            "contains_len": title.contains.chars().count(),
+        }}),
+        UntilArg::ScreenStable => serde_json::json!("screen_stable"),
+    };
+    let mut logged = serde_json::json!({ "until": until, "timeout_ms": args.timeout_ms });
+    flag(&mut logged, "screenshot", args.screenshot);
+    logged
+}
+
+/// Adds `name: true` to logged arguments when `set`; a flag left false isn't logged.
+fn flag(logged: &mut Value, name: &str, set: bool) {
+    if let (true, Some(fields)) = (set, logged.as_object_mut()) {
+        fields.insert(name.to_owned(), Value::Bool(true));
+    }
+}
+
+/// `wait_for`'s report as structured content and its text, then its screenshot, if any.
+fn waited_result(
+    (mut report, shot): (wait::Report, Option<observe::Screenshot>),
+) -> Result<CallToolResult, ErrorData> {
+    let Some(shot) = shot else {
+        return structured(&report);
+    };
+    report.screenshot = Some(shot.metadata);
+    let mut result = structured(&report)?;
+    let data = base64::engine::general_purpose::STANDARD.encode(&shot.image);
+    let mime = report
+        .screenshot
+        .as_ref()
+        .map_or("image/jpeg", |m| m.mime_type);
+    result.content.push(ContentBlock::image(data, mime));
+    Ok(result)
+}
+
+/// A pointer tool's screenshot ref, and whether it asked for a screenshot after.
+/// What `release_desktop` returns.
+#[derive(Serialize)]
+struct Release {
+    users_window: Option<u64>,
+    /// How giving focus back went, when it was asked for and there was a window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    restored: Option<Value>,
+    released: bool,
+}
+
+/// An action call as the agent made it: the tool, its arguments as the audit log keeps
+/// them, and whether it asked for a screenshot of the result.
+struct Asked<'a> {
+    tool: &'a str,
+    logged: Value,
+    shoot: bool,
+}
+
+struct Aim {
+    id: String,
+    shoot: bool,
+}
+
+/// A keyboard tool's call: what to type, where, and whether it asked for a screenshot
+/// after.
+struct Keying {
+    typing: Typing,
+    expect: Expect,
+    shoot: bool,
 }
 
 /// The tools that exist only with Noctalia installed.
@@ -951,7 +1375,7 @@ fn invalid(message: &str) -> CallToolResult {
 #[tool_handler(
     router = self.tool_router,
     name = "niri-computer-use",
-    instructions = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `clipboard_read` returns the clipboard's text, and `shell_status`, when Noctalia is installed, its panel and lock state. To act, call `acquire_desktop`, then one action at a time (`focus_window`, `focus_workspace`, `launch`, `close_window`, with Noctalia `shell_open` and `shell_close`, and for input `pointer_move`, `click`, `drag` and `scroll` with a fresh `screenshot_ref`, or `key` and `type_text` with `expect`), reading `accepted` and `observed` before the next call; never send a screenshot alongside an action. Never retry an action on your own, never press Enter after a `type_text` that failed or stopped early, and start apps only through `launch` presets. When done, put focus back on the user's window and call `release_desktop`. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
+    instructions = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `clipboard_read` returns the clipboard's text, and `shell_status`, when Noctalia is installed, its panel and lock state. To act, call `acquire_desktop`, then one action at a time (`focus_window`, `focus_workspace`, `launch`, `close_window`, with Noctalia `shell_open` and `shell_close`, and for input `pointer_move`, `click`, `drag` and `scroll` with a fresh `screenshot_ref`, or `key` and `type_text` with `expect`), reading `accepted` and `observed` before the next call. To see an action's result, pass it `screenshot: true` rather than sending a `screenshot` alongside it, and use `wait_for` rather than repeated screenshots to wait for a window or for the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter, and start apps only through `launch` presets. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
 )]
 impl ServerHandler for Server {}
 

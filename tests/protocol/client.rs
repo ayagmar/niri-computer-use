@@ -143,7 +143,12 @@ impl Server {
 
     /// A successful tool's structured content.
     pub(crate) async fn structured(&mut self, tool: &str) -> Value {
-        let result = self.call(tool, json!({})).await;
+        self.structured_with(tool, json!({})).await
+    }
+
+    /// A successful tool's structured content, called with `arguments`.
+    pub(crate) async fn structured_with(&mut self, tool: &str, arguments: Value) -> Value {
+        let result = self.call(tool, arguments).await;
         assert_eq!(result["isError"], false, "{tool}: {result}");
         let text: Value =
             serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();

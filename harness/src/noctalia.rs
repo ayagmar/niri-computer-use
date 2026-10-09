@@ -46,7 +46,7 @@ pub(crate) fn c13(session: &mut Session<'_>, server: &str) -> Result<()> {
     structured(&client.call(session, "acquire_desktop", json!({}))?)?;
     let closed = settled(session)?;
     cycle(session, &mut client, PANEL, Some(&closed))?;
-    structured(&client.call(session, "release_desktop", json!({}))?)?;
+    structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     client.stop()?;
     noctalia.stop().map(drop)
 }
