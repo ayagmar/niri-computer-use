@@ -558,6 +558,38 @@ async fn input_to_a_denied_app_is_refused() {
 }
 
 #[tokio::test]
+async fn denial_is_focus_based_and_unchecked_expect_does_not_bypass_it() {
+    let mut desk = Desk::start("deny-focus-only", r#"deny_input_app_ids = ["b"]"#).await;
+    let id = screenshot_ref(&mut desk).await;
+    // b is visible, but a is focused. Policy does not hit-test these coordinates.
+    // With no fake Wayland server the call reaches connect, not an app_denied refusal.
+    let click = desk
+        .server
+        .call("click", json!({"screenshot_ref": id, "x": 10, "y": 10}))
+        .await;
+    let (name, detail) = tool_error(&click);
+    assert_eq!(name, "upstream_error");
+    assert!(detail.starts_with("connect to"), "{detail}");
+    fake_wtype(&desk.fixture, "cat >/dev/null");
+    let allowed = desk
+        .server
+        .call("type_text", json!({"text": "x", "expect": "none"}))
+        .await;
+    assert_eq!(allowed["isError"], false);
+    let focused = desk
+        .act("focus_window", json!({"id": 2}), |stream, _| {
+            focus_changed(stream, 2);
+        })
+        .await;
+    assert_eq!(focused["isError"], false);
+    let denied = desk
+        .server
+        .call("type_text", json!({"text": "x", "expect": "none"}))
+        .await;
+    assert_eq!(tool_error(&denied).0, "app_denied");
+}
+
+#[tokio::test]
 async fn pointer_tools_check_the_ref_the_outputs_and_their_arguments_first() {
     let mut desk = Desk::start("act-pointer", "").await;
     let at = |id: &str, x: u32| json!({"screenshot_ref": id, "x": x, "y": 10});

@@ -659,7 +659,8 @@ impl Server {
     /// niri has handled the motion; take a screenshot to see what it did. Requires the lease
     /// and a `screenshot_ref` taken under it; fails with `ref_invalid` if the ref is unknown,
     /// over a minute old, its output changed, or the pixel is outside its image, and with
-    /// `app_denied` while the focused window's app is on the policy's deny list.
+    /// `app_denied` while the focused window's app is on the policy's deny list. This is
+    /// focus-based and best-effort: it does not check the app under the pointer.
     #[tool(annotations(
         read_only_hint = false,
         destructive_hint = false,
@@ -776,7 +777,8 @@ impl Server {
     /// (`focus_mismatch` otherwise), or `"none"` to skip the check. `observed` is `sent`, or
     /// `interrupted` if focus moved; then the keys after that aren't pressed and `pressed`
     /// counts the ones that were. Pass `screenshot: true` to see what the keys did.
-    /// Refused with `app_denied` for an app on the policy's deny list. Requires the lease.
+    /// Refused with `app_denied` while the focused app is on the policy's deny list,
+    /// even with `expect: "none"`. Requires the lease.
     #[tool(annotations(
         read_only_hint = false,
         destructive_hint = true,

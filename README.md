@@ -59,7 +59,15 @@ argv = ["firefox"]
 app_id = "firefox"
 ```
 
-A preset may not start a shell, an interpreter, `env`, `sudo` or another program that runs any command it is given, nor a terminal with arguments, not even `--app-id`, because terminals run trailing arguments as a command; a desktop file started with `gtk-launch` gives a terminal its own `app_id`. These rules catch common mistakes; they are a guardrail, not a boundary, since a wrapper script gets past any list. If the file breaks a rule or doesn't parse, `status` reports it as `invalid` and `acquire_desktop` and the action tools refuse with `read_only` until it is fixed and the server restarted. `launch` takes a preset's `name` and starts its `argv` through niri; `status` lists the names. The input tools refuse with `app_denied` while the focused window's `app_id` is on `deny_input_app_ids`.
+A preset may not start a shell, an interpreter, `env`, `sudo` or another program that runs any command it is given, nor a terminal with arguments, not even `--app-id`, because terminals run trailing arguments as a command; a desktop file started with `gtk-launch` gives a terminal its own `app_id`. These rules catch common mistakes; they are a guardrail, not a boundary, since a wrapper script gets past any list. If the file breaks a rule or doesn't parse, `status` reports it as `invalid` and `acquire_desktop` and the action tools refuse with `read_only` until it is fixed and the server restarted. `launch` takes a preset's `name` and starts its `argv` through niri; `status` lists the names. The input tools refuse with `app_denied` while the focused window's `app_id` is on `deny_input_app_ids`, even with `expect: "none"`. This is a focus-based, best-effort guardrail, not target isolation: a pointer can hit a different, denied window while an allowed app has focus, and app IDs are self-reported. For high-assurance restrictions, use a separate desktop containing only approved applications.
+
+## Observation and input limits
+
+Read-only does not mean private: screenshots, window titles and clipboard text can expose secrets to the connected MCP client without a control lease, including while the host is locked. Only connect trusted clients. The audit log excludes those contents; it does not prevent the client from seeing them.
+
+Focus and stop are checked between `wtype` calls. An in-flight call may finish up to 100 characters within its three-second deadline after focus changes or stop arrives. `typed` counts completed helper strokes, not characters confirmed in the intended application. No later part or submission is sent once interruption is detected; do not retry uncertain input automatically.
+
+A settled screenshot means two sampled images matched, not that an application is ready. Its budget includes the initial delay and capture work, but not time queued behind another server action. A timed-out later capture returns the last completed image with `settled: false`; with no completed image it returns `deadline_exceeded`.
 
 ## Install and register
 
