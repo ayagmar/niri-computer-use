@@ -32,7 +32,7 @@ const DEADLINE: Duration = Duration::from_secs(90);
 const WIDTH: i32 = 320;
 const HEIGHT: i32 = 240;
 
-pub(crate) const USAGE: &str = "usage: harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--started <file>]";
+pub(crate) const USAGE: &str = "usage: harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--started <file>] [--deadline <ms>]";
 
 /// What the fixture does.
 #[derive(Debug, PartialEq, Eq)]
@@ -49,6 +49,8 @@ pub(crate) struct Options {
     pub(crate) keep_open: bool,
     /// A file to create as soon as the fixture starts, before its delay.
     pub(crate) started: Option<PathBuf>,
+    /// How long the fixture runs at most.
+    pub(crate) deadline: Duration,
 }
 
 impl Options {
@@ -64,6 +66,7 @@ impl Options {
             late: None,
             keep_open: false,
             started: None,
+            deadline: DEADLINE,
         };
         let millis = |value: Option<&&str>| -> Result<Duration> {
             let value = value.ok_or_else(|| Failure::new(USAGE))?;
@@ -79,6 +82,7 @@ impl Options {
                 "--delay" => options.delay = millis(rest.next())?,
                 "--late" => options.late = Some(millis(rest.next())?),
                 "--keep-open" => options.keep_open = true,
+                "--deadline" => options.deadline = millis(rest.next())?,
                 "--started" => {
                     let value = rest.next().ok_or_else(|| Failure::new(USAGE))?;
                     options.started = Some(PathBuf::from(value));
@@ -104,7 +108,7 @@ struct State {
 }
 
 pub(crate) fn run(options: &Options) -> Result<()> {
-    let end = Instant::now() + DEADLINE;
+    let end = Instant::now() + options.deadline;
     if let Some(started) = &options.started {
         std::fs::write(started, "").context(format!("write {}", started.display()))?;
     }
@@ -306,6 +310,7 @@ mod tests {
                 late: None,
                 keep_open: false,
                 started: None,
+                deadline: DEADLINE,
             }
         );
         let all = Options::parse(&[
@@ -320,6 +325,8 @@ mod tests {
             "--keep-open",
             "--started",
             "/t/s",
+            "--deadline",
+            "600000",
         ])
         .unwrap();
         assert_eq!(all.count, 2);
@@ -327,6 +334,7 @@ mod tests {
         assert_eq!(all.late, Some(Duration::from_millis(300)));
         assert!(all.keep_open);
         assert_eq!(all.started, Some(PathBuf::from("/t/s")));
+        assert_eq!(all.deadline, Duration::from_mins(10));
         for bad in [
             &["/t"][..],
             &["/t", ""],

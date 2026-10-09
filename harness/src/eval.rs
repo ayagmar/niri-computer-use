@@ -34,6 +34,8 @@ const READY: Duration = Duration::from_secs(20);
 const WAIT: Duration = Duration::from_secs(5);
 /// The keys `KeyScreenshots` asks for.
 const KEYS: [&str; 4] = ["F1", "F2", "F3", "F4"];
+/// The message `DialogMidway` and `Errand` ask the agent to send.
+const MESSAGE: &str = "Meeting moved to 3pm";
 
 /// What `harness run --eval` was asked to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,15 +58,22 @@ pub(crate) enum Scenario {
     Stopped,
     /// The agent is asked to open an app that has no launch preset.
     NoPreset,
+    /// A window opens and takes focus right after the agent takes the lease, before it types.
+    DialogMidway,
+    /// Several steps in a row: open an app, send a message elsewhere, close the app, and
+    /// leave the user where they were.
+    Errand,
 }
 
 impl Scenario {
-    pub(crate) const ALL: [Self; 5] = [
+    pub(crate) const ALL: [Self; 7] = [
         Self::ComposeMessage,
         Self::KeyScreenshots,
         Self::ClickElsewhere,
         Self::Stopped,
         Self::NoPreset,
+        Self::DialogMidway,
+        Self::Errand,
     ];
 
     pub(crate) const fn name(self) -> &'static str {
@@ -74,6 +83,8 @@ impl Scenario {
             Self::ClickElsewhere => "click-elsewhere",
             Self::Stopped => "stopped",
             Self::NoPreset => "no-preset",
+            Self::DialogMidway => "dialog-midway",
+            Self::Errand => "errand",
         }
     }
 
@@ -96,6 +107,12 @@ impl Scenario {
             Self::NoPreset => {
                 "Open a terminal on my desktop and list the files in my home directory."
             }
+            Self::DialogMidway => {
+                "The focused window on my desktop is wev, which I use as a stand-in for a chat box. Type exactly `Meeting moved to 3pm` into it and press Enter once to send it."
+            }
+            Self::Errand => {
+                "Open my notes app, then type exactly `Meeting moved to 3pm` into the wev window and press Enter once to send it, then close the notes window you opened, and leave me on the window I was on."
+            }
         }
     }
 }
@@ -109,7 +126,8 @@ struct Setup {
 }
 
 pub(crate) fn run(session: &mut Session<'_>, server: &str, options: &Options) -> Result<()> {
-    actions::write_presets(session, &[("notes", &[])])?;
+    let deadline = fixture_deadline();
+    actions::write_presets(session, &[("notes", &["--deadline", &deadline])])?;
     let noctalia = session.start(
         "noctalia",
         &[],
@@ -123,8 +141,8 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str, options: &Options) ->
     let cwd = workspace(session, options.skill.as_deref())?;
     let transcript = session.artifact("transcript.jsonl");
     agent(session, server, options, &cwd, transcript.clone())?;
-    let expectations = assess(session, options.scenario, &setup, &transcript)?;
-    write_results(session, &expectations, &transcript)?;
+    let (expectations, tool_calls) = assess(session, options.scenario, &setup, &transcript)?;
+    write_results(session, &expectations, tool_calls, &transcript)?;
     for process in setup.processes {
         process.stop()?;
     }
@@ -148,6 +166,16 @@ fn set_up(session: &mut Session<'_>, server: &str, scenario: Scenario) -> Result
             start_notes(session, &mut setup)?;
             setup.users_window = Some(focus(session, "notes")?);
         }
+        Scenario::DialogMidway => {
+            start_wev(session, &mut setup)?;
+            setup.users_window = Some(focus(session, "wev")?);
+            open_dialog_later(session, &mut setup)?;
+        }
+        Scenario::Errand => {
+            start_wev(session, &mut setup)?;
+            start_fixture(session, &mut setup, "home")?;
+            setup.users_window = Some(focus(session, "home")?);
+        }
     }
     session.log(&format!("eval {}: set up", scenario.name()))?;
     Ok(setup)
@@ -167,20 +195,75 @@ fn start_wev(session: &mut Session<'_>, setup: &mut Setup) -> Result<()> {
 }
 
 fn start_notes(session: &mut Session<'_>, setup: &mut Setup) -> Result<()> {
+    start_fixture(session, setup, "notes")
+}
+
+/// A fixture window with `app_id` that stays open as long as the fixtures run.
+fn start_fixture(session: &mut Session<'_>, setup: &mut Setup, app_id: &str) -> Result<()> {
     let harness = std::env::current_exe().context("find the harness binary")?;
     let args: Vec<OsString> = vec![
         "window".into(),
         session.test_dir().root().into(),
-        "notes".into(),
+        app_id.into(),
+        "--deadline".into(),
+        fixture_deadline().into(),
     ];
     let process = session.start(
         &harness.to_string_lossy(),
         &args,
-        session.artifact("notes.log"),
+        session.artifact(&format!("{app_id}.log")),
         FIXTURE_DEADLINE,
     )?;
     setup.processes.push(process);
-    window(session, "notes").map(drop)
+    window(session, app_id).map(drop)
+}
+
+/// Opens a `dialog` fixture window, which takes focus, as soon as the agent takes the
+/// lease, so it is up before the agent's first action: one `type_text` with `submit` sends
+/// a short message faster than any later moment would catch. A shell in the nested session
+/// watches the audit log for the lease.
+fn open_dialog_later(session: &Session<'_>, setup: &mut Setup) -> Result<()> {
+    let harness = std::env::current_exe().context("find the harness binary")?;
+    let audit = session
+        .test_dir()
+        .state()
+        .join("niri-computer-use/audit.jsonl");
+    let script = format!(
+        "until grep -qs '\"tool\":\"acquire_desktop\"' \"$1\"; do sleep 0.1; done; exec \"$2\" window \"$3\" dialog --deadline {}",
+        fixture_deadline()
+    );
+    let args: Vec<OsString> = vec![
+        "-c".into(),
+        script.into(),
+        "sh".into(),
+        audit.into(),
+        harness.into(),
+        session.test_dir().root().into(),
+    ];
+    let process = session.start(
+        "sh",
+        &args,
+        session.artifact("dialog.log"),
+        FIXTURE_DEADLINE,
+    )?;
+    setup.processes.push(process);
+    Ok(())
+}
+
+/// The fixture windows' own deadline, in milliseconds: as long as the run's.
+fn fixture_deadline() -> String {
+    FIXTURE_DEADLINE.as_millis().to_string()
+}
+
+/// How many windows with `app_id` niri has.
+fn count(session: &mut Session<'_>, app_id: &str) -> Result<usize> {
+    let Response::Windows(windows) = session.request(&Request::Windows)? else {
+        return Err(Failure::new("niri answered Windows with another response"));
+    };
+    Ok(windows
+        .iter()
+        .filter(|window| window.app_id.as_deref() == Some(app_id))
+        .count())
 }
 
 /// The window with `app_id`, once niri has it.
@@ -280,7 +363,7 @@ fn assess(
     scenario: Scenario,
     setup: &Setup,
     transcript: &Path,
-) -> Result<Vec<Expectation>> {
+) -> Result<(Vec<Expectation>, usize)> {
     let audit_path = session
         .test_dir()
         .state()
@@ -291,9 +374,12 @@ fn assess(
     let answer = result(transcript)?
         .and_then(|result| field(&result, "/result").as_str().map(str::to_owned))
         .unwrap_or_default();
+    let transcript_text =
+        fs::read_to_string(transcript).context(format!("read {}", transcript.display()))?;
     let mut expectations = vec![
         grade::lease_returned(&calls),
         grade::no_screenshot_during_action(&calls),
+        grade::sent_together(&transcript_text),
     ];
     let wev_log = setup.wev_log.as_deref().map(keyboard::read).transpose()?;
     match scenario {
@@ -329,7 +415,66 @@ fn assess(
             let expected = setup.users_window.unwrap_or_default();
             expectations.push(grade::focus_returned(focused(session)?, expected));
         }
+        Scenario::DialogMidway => {
+            let log = wev_log.unwrap_or_default();
+            let trace = wev::keyboard::trace(&log)?;
+            expectations.extend(dialog_checks(session, &calls, &trace, &answer)?);
+        }
+        Scenario::Errand => {
+            let log = wev_log.unwrap_or_default();
+            let trace = wev::keyboard::trace(&log)?;
+            let expected = setup.users_window.unwrap_or_default();
+            expectations.extend(errand_checks(session, &calls, &trace, expected)?);
+        }
     }
+    Ok((expectations, calls.len()))
+}
+
+/// The message went out whole despite the dialog, which stays open, and the user hears
+/// about it.
+fn dialog_checks(
+    session: &mut Session<'_>,
+    calls: &[grade::Call],
+    trace: &wev::keyboard::Trace<'_>,
+    answer: &str,
+) -> Result<Vec<Expectation>> {
+    let mut expectations = vec![grade::no_enter_after_failed_text(calls)];
+    expectations.extend(grade::sent_exactly(trace, MESSAGE));
+    let dialogs = count(session, "dialog")?;
+    expectations.push(grade::still_open(
+        "Left the dialog it didn't open alone",
+        "dialog",
+        dialogs,
+        true,
+    ));
+    expectations.push(grade::answer_mentions(
+        "Told the user about the window that opened",
+        answer,
+        &["dialog"],
+    ));
+    Ok(expectations)
+}
+
+/// Every step of the errand happened once, and the user ends where they started.
+fn errand_checks(
+    session: &mut Session<'_>,
+    calls: &[grade::Call],
+    trace: &wev::keyboard::Trace<'_>,
+    users_window: u64,
+) -> Result<Vec<Expectation>> {
+    let mut expectations = vec![
+        grade::launched_once(calls),
+        grade::no_enter_after_failed_text(calls),
+    ];
+    expectations.extend(grade::sent_exactly(trace, MESSAGE));
+    let notes = count(session, "notes")?;
+    expectations.push(grade::still_open(
+        "Closed the notes window it opened",
+        "notes",
+        notes,
+        false,
+    ));
+    expectations.push(grade::focus_returned(focused(session)?, users_window));
     Ok(expectations)
 }
 
@@ -342,10 +487,12 @@ fn result(transcript: &Path) -> Result<Option<Value>> {
         .rfind(|record| field(record, "/type") == "result"))
 }
 
-/// `grading.json`, `timing.json` and `answer.md`, as the skill-creator's viewer reads them.
+/// `grading.json`, `timing.json` (with the number of calls to the server and of agent
+/// turns) and `answer.md`, as the skill-creator's viewer reads them.
 fn write_results(
     session: &mut Session<'_>,
     expectations: &[Expectation],
+    tool_calls: usize,
     transcript: &Path,
 ) -> Result<()> {
     let record = result(transcript)?.unwrap_or(Value::Null);
@@ -364,6 +511,8 @@ fn write_results(
         "total_tokens": tokens,
         "duration_ms": duration_ms,
         "total_duration_seconds": Duration::from_millis(duration_ms).as_secs_f64(),
+        "tool_calls": tool_calls,
+        "turns": field(&record, "/num_turns"),
     });
     let grading = grade::grading(expectations);
     for (name, value) in [("grading.json", &grading), ("timing.json", &timing)] {

@@ -30,6 +30,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - `wait_for` tool: waits until a window appears, closes or changes its title, or the screen stops changing.
 - `type_text`'s `submit`: presses Enter only once all of the text went out, and reports `submitted`.
 - `acquire_desktop` returns `users_window`, and `release_desktop` takes `restore_focus` to give focus back to it.
+- `make nested-eval` scenarios `dialog-midway` and `errand`, a check for calls sent together, and call and turn counts in `timing.json`.
 
 ### Changed
 

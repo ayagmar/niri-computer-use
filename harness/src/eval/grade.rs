@@ -11,16 +11,20 @@ use crate::wev::Pointer;
 use crate::wev::keyboard::Trace;
 
 /// Tools that only read; every other tool acts on the desktop.
-const READS: [&str; 8] = [
+const READS: [&str; 9] = [
     "status",
     "desktop_state",
     "outputs",
     "screenshot",
     "clipboard_read",
     "shell_status",
+    "wait_for",
     "acquire_desktop",
     "release_desktop",
 ];
+
+/// How Claude Code names the server's tools.
+const PREFIX: &str = "mcp__niri-computer-use__";
 
 /// Audit timestamps and durations are whole milliseconds, so two calls one after the
 /// other can appear to share a millisecond.
@@ -42,14 +46,28 @@ pub(crate) struct Call {
     pub(crate) error: Option<String>,
     /// `type_text`'s length in characters; the audit log never keeps the text.
     pub(crate) text_len: Option<usize>,
-    /// `key`'s combo.
-    pub(crate) combo: Option<String>,
+    /// `key`'s combinations.
+    pub(crate) keys: Vec<String>,
+    /// What an action observed, such as `sent` or `interrupted`.
+    pub(crate) observed: Option<String>,
 }
 
 impl Call {
     fn acts(&self) -> bool {
-        !READS.contains(&self.tool.as_str())
+        acts(&self.tool)
     }
+
+    /// A `type_text` that didn't type all of its text: refused, or stopped early because
+    /// focus moved or niri's event stream was lost.
+    fn typed_short(&self) -> bool {
+        self.tool == "type_text"
+            && (self.error.is_some()
+                || matches!(self.observed.as_deref(), Some("interrupted" | "uncertain")))
+    }
+}
+
+fn acts(tool: &str) -> bool {
+    !READS.contains(&tool)
 }
 
 /// The agent's calls, in the order they finished. Calls from `harness-*` clients, such as
@@ -88,7 +106,15 @@ fn call(record: &Value) -> Result<Call> {
         text_len: field(record, "/args/text_len")
             .as_u64()
             .and_then(|len| usize::try_from(len).ok()),
-        combo: field(record, "/args/combo").as_str().map(str::to_owned),
+        keys: field(record, "/args/keys")
+            .as_array()
+            .map(|keys| {
+                keys.iter()
+                    .filter_map(|key| key.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        observed: field(record, "/observed").as_str().map(str::to_owned),
     })
 }
 
@@ -188,22 +214,61 @@ pub(crate) fn no_screenshot_during_action(calls: &[Call]) -> Expectation {
     }
 }
 
-/// A `type_text` that failed typed nothing, so Enter sends a message with a gap in it
-/// unless a later `type_text` succeeded first.
+/// A `type_text` that failed or stopped early left part of its text out, so Enter sends a
+/// message with a gap in it unless a later `type_text` went through first.
 pub(crate) fn no_enter_after_failed_text(calls: &[Call]) -> Expectation {
     let mut failed = false;
     let mut premature = 0;
     for call in calls {
         match call.tool.as_str() {
-            "type_text" => failed = call.error.is_some(),
-            "key" if failed && call.combo.as_deref().is_some_and(is_enter) => premature += 1,
+            "type_text" => failed = call.typed_short(),
+            "key" if failed && call.keys.iter().any(|key| is_enter(key)) => premature += 1,
             _ => {}
         }
     }
     Expectation {
-        text: "Never pressed Enter right after a type_text that failed",
+        text: "Never pressed Enter right after a type_text that failed or stopped early",
         passed: premature == 0,
-        evidence: format!("{premature} Enter presses right after a failed type_text"),
+        evidence: format!("{premature} Enter presses right after a short type_text"),
+    }
+}
+
+/// Calls the agent sent in one turn run in no order the agent controls: a screenshot
+/// sent with an action may run first, and two actions may land on each other's effects.
+/// Reads sent together, such as `status` with `desktop_state`, are fine.
+pub(crate) fn sent_together(transcript: &str) -> Expectation {
+    let mut turns: Vec<(String, Vec<String>)> = Vec::new();
+    for record in transcript
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|record| field(record, "/type") == "assistant")
+    {
+        let id = field(&record, "/message/id").as_str().unwrap_or_default();
+        let tools = field(&record, "/message/content")
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|block| field(block, "/type") == "tool_use")
+            .filter_map(|block| field(block, "/name").as_str()?.strip_prefix(PREFIX))
+            .map(str::to_owned);
+        match turns.last_mut() {
+            Some((last, seen)) if last == id => seen.extend(tools),
+            _ => turns.push((id.to_owned(), tools.collect())),
+        }
+    }
+    let mixed: Vec<String> = turns
+        .iter()
+        .filter(|(_, tools)| tools.len() > 1 && tools.iter().any(|tool| acts(tool)))
+        .map(|(_, tools)| tools.join("+"))
+        .collect();
+    Expectation {
+        text: "Never sent an action in the same turn as another desktop call",
+        passed: mixed.is_empty(),
+        evidence: if mixed.is_empty() {
+            "every action went alone".to_owned()
+        } else {
+            format!("sent together: {}", mixed.join(", "))
+        },
     }
 }
 
@@ -243,6 +308,59 @@ pub(crate) fn typed_then_sent(trace: &Trace<'_>, calls: &[Call]) -> [Expectation
             evidence: format!("{enters} Enter presses; last key Enter: {last_is_enter}"),
         },
     ]
+}
+
+/// Exactly `message` reached the window before its one Enter, the last key.
+pub(crate) fn sent_exactly(trace: &Trace<'_>, message: &str) -> [Expectation; 2] {
+    let pressed: Vec<_> = trace.keys.iter().filter(|key| key.pressed).collect();
+    let first_enter = pressed.iter().position(|key| key.symbol == "Return");
+    let before: String = pressed
+        .iter()
+        .take(first_enter.unwrap_or(pressed.len()))
+        .map(|key| key.text)
+        .collect();
+    let enters = pressed.iter().filter(|key| key.symbol == "Return").count();
+    let last_is_enter = pressed.last().is_some_and(|key| key.symbol == "Return");
+    let wanted = message.chars().count();
+    let got = before.chars().count();
+    [
+        Expectation {
+            text: "The window got exactly the message before Enter",
+            passed: before == message,
+            evidence: if before == message {
+                format!("all {wanted} characters, in order")
+            } else {
+                format!("{got} characters before the first Enter, wanted {wanted}; they differ")
+            },
+        },
+        Expectation {
+            text: "Pressed Enter exactly once, as the last key",
+            passed: enters == 1 && last_is_enter,
+            evidence: format!("{enters} Enter presses; last key Enter: {last_is_enter}"),
+        },
+    ]
+}
+
+/// A second launch opens a second window.
+pub(crate) fn launched_once(calls: &[Call]) -> Expectation {
+    let launched = calls
+        .iter()
+        .filter(|call| call.tool == "launch" && call.error.is_none())
+        .count();
+    Expectation {
+        text: "Launched the app exactly once",
+        passed: launched == 1,
+        evidence: format!("{launched} launches went through"),
+    }
+}
+
+/// Whether windows with `app_id` are still open at the end, as `open` says they should be.
+pub(crate) fn still_open(text: &'static str, app_id: &str, left: usize, open: bool) -> Expectation {
+    Expectation {
+        text,
+        passed: (left > 0) == open,
+        evidence: format!("{left} windows with app_id {app_id:?} open at the end"),
+    }
 }
 
 /// Each of `keys`, pressed once, in order.
@@ -358,6 +476,7 @@ pub(crate) fn grading(expectations: &[Expectation]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wev::keyboard::Key;
 
     fn at(tool: &str, start_ms: i64, end_ms: i64, error: Option<&str>) -> Call {
         Call {
@@ -366,13 +485,14 @@ mod tests {
             end_ms,
             error: error.map(str::to_owned),
             text_len: None,
-            combo: None,
+            keys: Vec::new(),
+            observed: None,
         }
     }
 
     fn enter() -> Call {
         Call {
-            combo: Some("Return".to_owned()),
+            keys: vec!["Return".to_owned()],
             ..at("key", 0, 1, None)
         }
     }
@@ -420,6 +540,68 @@ mod tests {
             enter(),
         ];
         assert!(no_enter_after_failed_text(&retried).passed);
+        let interrupted = [
+            Call {
+                observed: Some("interrupted".to_owned()),
+                ..at("type_text", 0, 1, None)
+            },
+            enter(),
+        ];
+        assert!(!no_enter_after_failed_text(&interrupted).passed);
+    }
+
+    #[test]
+    fn an_action_sent_with_another_desktop_call_in_one_turn_is_caught() {
+        let turn = |id: &str, tools: &[&str]| {
+            let content: Vec<Value> = tools
+                .iter()
+                .map(|tool| json!({"type": "tool_use", "name": format!("{PREFIX}{tool}")}))
+                .collect();
+            json!({"type": "assistant", "message": {"id": id, "content": content}}).to_string()
+        };
+        let reads = [turn("a", &["status", "desktop_state"]), turn("b", &["key"])];
+        assert!(sent_together(&reads.join("\n")).passed);
+        // Claude Code streams each block of one message as its own record.
+        let raced = [turn("c", &["key"]), turn("c", &["screenshot"])];
+        let caught = sent_together(&raced.join("\n"));
+        assert!(!caught.passed);
+        assert_eq!(caught.evidence, "sent together: key+screenshot");
+    }
+
+    #[test]
+    fn only_the_whole_message_followed_by_one_last_enter_counts_as_sent() {
+        let key = |symbol: &'static str, text: &'static str| Key {
+            time: 0,
+            code: 0,
+            pressed: true,
+            symbol,
+            text,
+            modifiers: None,
+        };
+        let trace = |keys: Vec<Key<'static>>| Trace {
+            keys,
+            ..Trace::default()
+        };
+        let passed = |keys| sent_exactly(&trace(keys), "hi").map(|e| e.passed);
+        assert_eq!(
+            passed(vec![key("h", "h"), key("i", "i"), key("Return", "\r")]),
+            [true, true]
+        );
+        // The dialog took the first character.
+        assert_eq!(
+            passed(vec![key("i", "i"), key("Return", "\r")]),
+            [false, true]
+        );
+        // Sent half, then typed the rest and sent again.
+        assert_eq!(
+            passed(vec![
+                key("h", "h"),
+                key("Return", "\r"),
+                key("i", "i"),
+                key("Return", "\r"),
+            ]),
+            [false, false]
+        );
     }
 
     #[test]
