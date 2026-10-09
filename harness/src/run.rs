@@ -20,7 +20,6 @@ use crate::test_dir::TestDir;
 
 const VALIDATE_DEADLINE: Duration = Duration::from_secs(10);
 const NESTED_DEADLINE: Duration = Duration::from_secs(60);
-const VPOINTER: &str = "probes/vpointer/target/debug/vpointer";
 const NOCTALIA_SOCKET: &str = "probes/noctalia-socket/target/debug/noctalia-socket";
 const SERVER: &str = "target/debug/niri-computer-use";
 const CONTROL_DEADLINE: Duration = Duration::from_secs(90);
@@ -36,7 +35,8 @@ pub(crate) struct Options {
     pub(crate) scale: Scale,
     /// Start Noctalia in the nested session and run C13.
     pub(crate) noctalia: bool,
-    pub(crate) sitting: Option<crate::sitting::Mode>,
+    /// Run the supervised sitting (C6, C7, C9) at the human's pace.
+    pub(crate) sitting: bool,
     /// Run checks with `niri-computer-use` and the nested Noctalia.
     pub(crate) server: Option<ServerChecks>,
 }
@@ -274,10 +274,9 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: Option
         test_dir.root().into(),
         artifacts.into(),
         options.scale.to_string().into(),
-        probe(VPOINTER)?.into(),
     ];
-    if let Some(mode) = options.sitting {
-        args.push(mode.flag().into());
+    if options.sitting {
+        args.push("--sitting".into());
     } else if options.noctalia {
         args.push(probe(NOCTALIA_SOCKET)?.into());
     } else if let Some(checks) = options.server {
@@ -291,9 +290,9 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: Option
         output: Sink::File(artifacts.join("niri.log")),
         group: Group::Own,
         deadline: match (options.sitting, options.server) {
-            (Some(_), _) => crate::sitting::RUN_DEADLINE,
-            (None, Some(checks)) => checks.deadline(),
-            (None, None) => NESTED_DEADLINE,
+            (true, _) => crate::sitting::RUN_DEADLINE,
+            (false, Some(checks)) => checks.deadline(),
+            (false, None) => NESTED_DEADLINE,
         },
     })?;
     let status_path = artifacts.join(supervise::STATUS_FILE);

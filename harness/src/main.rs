@@ -17,7 +17,6 @@ mod mcp;
 mod nested;
 mod niri;
 mod noctalia;
-mod pointer;
 mod run;
 mod runner;
 mod scale;
@@ -38,10 +37,10 @@ use scale::Scale;
 use supervise::Probes;
 use test_dir::TestDir;
 
-const USAGE: &str = "usage: harness run [--scale <scale>] [--noctalia | --sitting | --sitting-from-c8 | --control | --actions | --input]
+const USAGE: &str = "usage: harness run [--scale <scale>] [--noctalia | --sitting | --control | --actions | --input]
        harness host-capture <output>
        harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--started <file>]
-       harness supervise <TEST_DIR> <ARTIFACTS> <scale> <vpointer> [<noctalia-socket> | --sitting | --sitting-from-c8 | --control <server> | --actions <server> | --input <server>]";
+       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [<noctalia-socket> | --sitting | --control <server> | --actions <server> | --input <server>]";
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -73,19 +72,8 @@ fn dispatch(args: &[OsString]) -> Result<()> {
             interrupt::install()?;
             capture::host(output)
         }
-        [
-            "supervise",
-            test_dir,
-            artifacts,
-            scale,
-            vpointer,
-            noctalia @ ..,
-        ] => {
-            let sitting = match noctalia {
-                ["--sitting"] => Some(sitting::Mode::Full),
-                ["--sitting-from-c8"] => Some(sitting::Mode::FromC8),
-                _ => None,
-            };
+        ["supervise", test_dir, artifacts, scale, noctalia @ ..] => {
+            let sitting = noctalia == ["--sitting"];
             let server = match noctalia {
                 [flag, server] => {
                     run::ServerChecks::from_flag(flag).map(|checks| (checks, *server))
@@ -93,7 +81,7 @@ fn dispatch(args: &[OsString]) -> Result<()> {
                 _ => None,
             };
             let noctalia = match noctalia {
-                [] | ["--sitting" | "--sitting-from-c8"] => None,
+                [] | ["--sitting"] => None,
                 [_, _] if server.is_some() => None,
                 [probe] if !probe.starts_with("--") => Some(*probe),
                 _ => return Err(Failure::new(USAGE)),
@@ -103,7 +91,6 @@ fn dispatch(args: &[OsString]) -> Result<()> {
                 Path::new(artifacts),
                 scale.parse()?,
                 &Probes {
-                    vpointer,
                     noctalia,
                     sitting,
                     server,
@@ -119,7 +106,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
     let mut options = run::Options {
         scale: Scale::ONE,
         noctalia: false,
-        sitting: None,
+        sitting: false,
         server: None,
     };
     let mut args = args.iter();
@@ -129,15 +116,14 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
                 options.scale = args.next().ok_or_else(|| Failure::new(USAGE))?.parse()?;
             }
             "--noctalia" => options.noctalia = true,
-            "--sitting" => options.sitting = Some(sitting::Mode::Full),
-            "--sitting-from-c8" => options.sitting = Some(sitting::Mode::FromC8),
+            "--sitting" => options.sitting = true,
             "--control" | "--actions" | "--input" => {
                 options.server = run::ServerChecks::from_flag(arg);
             }
             _ => return Err(Failure::new(USAGE)),
         }
     }
-    if usize::from(options.sitting.is_some())
+    if usize::from(options.sitting)
         + usize::from(options.noctalia)
         + usize::from(options.server.is_some())
         > 1
@@ -155,25 +141,20 @@ mod tests {
 
     #[test]
     fn supervise_takes_at_most_one_noctalia_probe() {
-        let args = ["supervise", "/r/t", "/a", "1", "vpointer", "one", "two"].map(OsString::from);
+        let args = ["supervise", "/r/t", "/a", "1", "one", "two"].map(OsString::from);
         assert_eq!(dispatch(&args).unwrap_err().to_string(), USAGE);
     }
 
     #[test]
     fn sitting_is_explicit_and_cannot_start_noctalia() {
-        assert_eq!(run_options(&[]).unwrap().sitting, None);
-        assert_eq!(
+        assert!(!run_options(&[]).unwrap().sitting);
+        assert!(
             run_options(&["--sitting", "--scale", "1.5"])
                 .unwrap()
-                .sitting,
-            Some(sitting::Mode::Full)
-        );
-        assert_eq!(
-            run_options(&["--sitting-from-c8"]).unwrap().sitting,
-            Some(sitting::Mode::FromC8)
+                .sitting
         );
         assert!(run_options(&["--sitting", "--noctalia"]).is_err());
-        assert!(run_options(&["--sitting-from-c8", "--noctalia"]).is_err());
+        assert!(run_options(&["--sitting-from-c8"]).is_err());
     }
 
     #[test]

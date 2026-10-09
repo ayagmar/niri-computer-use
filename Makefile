@@ -26,22 +26,18 @@ inspect-check:
 	scripts/inspector.sh check
 
 nested:
-	cargo build --locked --manifest-path probes/vpointer/Cargo.toml
 	cargo build --locked --manifest-path probes/noctalia-socket/Cargo.toml
 	cargo run --locked -p harness -- run --scale $(SCALE) $(if $(NOCTALIA),--noctalia)
 
 nested-control:
-	cargo build --locked --manifest-path probes/vpointer/Cargo.toml
 	cargo build --locked -p niri-computer-use
 	cargo run --locked -p harness -- run --control
 
 nested-actions:
-	cargo build --locked --manifest-path probes/vpointer/Cargo.toml
 	cargo build --locked -p niri-computer-use
 	cargo run --locked -p harness -- run --actions
 
 nested-input:
-	cargo build --locked --manifest-path probes/vpointer/Cargo.toml
 	cargo build --locked -p niri-computer-use
 	cargo run --locked -p harness -- run --scale $(SCALE) --input
 
@@ -49,5 +45,4 @@ host-capture:
 	cargo run --locked -p harness -- host-capture $(OUTPUT)
 
 sitting:
-	cargo build --locked --manifest-path probes/vpointer/Cargo.toml
 	cargo run --locked -p harness -- run --scale 1.5 --sitting

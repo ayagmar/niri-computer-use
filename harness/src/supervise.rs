@@ -14,7 +14,6 @@ use crate::failure::{Context as _, Failure, Result};
 use crate::log::Log;
 use crate::nested::Nested;
 use crate::niri::Connection;
-use crate::pointer::{self, Probe};
 use crate::run::ServerChecks;
 use crate::scale::Scale;
 use crate::session::Session;
@@ -30,9 +29,8 @@ const WAIT: Duration = Duration::from_secs(5);
 /// The probes `harness run` passes on. `noctalia` is there only when C13 was requested.
 #[derive(Debug)]
 pub(crate) struct Probes<'a> {
-    pub(crate) vpointer: &'a str,
     pub(crate) noctalia: Option<&'a str>,
-    pub(crate) sitting: Option<crate::sitting::Mode>,
+    pub(crate) sitting: bool,
     /// Which server checks to run, with the `niri-computer-use` binary.
     pub(crate) server: Option<(ServerChecks, &'a str)>,
 }
@@ -61,8 +59,8 @@ pub(crate) fn supervise(
     let c2 = check_output(&output, scale, &mut log);
     let mut session = Session::new(test_dir, artifacts, log, niri);
     let outcome = c2.and_then(|()| {
-        if let Some(mode) = probes.sitting {
-            crate::sitting::run(&mut session, &output, probes.vpointer, mode)
+        if probes.sitting {
+            crate::sitting::run(&mut session)
         } else if let Some((checks, server)) = probes.server {
             match checks {
                 ServerChecks::Control => crate::control::run(&mut session, server),
@@ -80,7 +78,8 @@ pub(crate) fn supervise(
     quit
 }
 
-/// Stage 4: the M0 checks against `wev`, then C13 if it was requested. Noctalia starts
+/// Stage 4: the M0 checks against `wev`, then C13 if it was requested. The pointer's
+/// checks run through the server in `make nested-input`. Noctalia starts
 /// after `wev` is gone, so its bar can't move the window the other checks measure.
 fn steps(session: &mut Session<'_>, output: &LogicalOutput, probes: &Probes<'_>) -> Result<()> {
     session.screenshot("success-verify-niri.png")?;
@@ -92,15 +91,6 @@ fn steps(session: &mut Session<'_>, output: &LogicalOutput, probes: &Probes<'_>)
     let wev = session.start("stdbuf", &args, wev_log.clone(), WEV_DEADLINE)?;
     let window = wait_for_wev(session)?;
     capture::c3(session, output, &window)?;
-    pointer::run(
-        session,
-        &Probe {
-            path: probes.vpointer,
-            output,
-        },
-        &wev_log,
-        &window,
-    )?;
     keyboard::run(session, &wev_log)?;
     capture::nested_c15(session, output)?;
     wev.stop()?;

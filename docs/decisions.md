@@ -394,3 +394,9 @@ These match the versions installed locally.
 - No protocol test drives a successful gesture: the fake niri has no Wayland display, and a fake Wayland compositor would test our own fake. The nested run checks the marker after each click and drag, and the stop checks cover the release on drop.
 - `click`, `drag`, `key` and `type_text` carry `destructiveHint`; plan §6 names only `close_window`, but a click or a keystroke can delete or send anything.
 
+## 2026-10-09: the `vpointer` probe is gone
+
+- Plan §14 deletes the probes once real code replaces them, by the end of M4. The server's pointer replaces `vpointer`: its mapping is `coords.rs`, and `make nested-input` checks accuracy, clicks, a drag and the wheel's frames through the server, at scale 1 and 1.5. `make nested` no longer runs C4, the probe's click and C12; their M0 results stay in `docs/results/m0.md`.
+- C8, the interrupted pointer in `make sitting`, needed the probe's `hold`, so the sitting runs C6, C7 and C9, and `--sitting-from-c8`, which only resumed C8 and C9, is gone. C8's automatic half, a button left down by a killed pointer and cleared by a fresh pointer's release, now runs against the real server in `make nested-input`'s crash check; its human half was recorded in M0.
+- `noctalia-socket` stays until M5: it drives C13's panel commands, and the server's replacement for those, `shell_open` and `shell_close`, arrives in M5. A plan correction (revision 19) moves its deletion there.
+- The C10 corpus is a test fixture, not a probe; it moves to `harness/corpus.txt`.
