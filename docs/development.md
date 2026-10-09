@@ -206,6 +206,16 @@ The run has a 130-second deadline. Its files are in `target/e2e/<run>/`, includi
 
 The run has a 180-second deadline. Its files are in `target/e2e/<run>/`, including `wev.log`, each server's replies, and Noctalia's and kitty's logs. Besides the tools of `make nested`, it needs `kitty`.
 
+## Real-session pointer check
+
+`scripts/real-pointer-check.py` is M4's supervised accuracy run on a real monitor. It sends real pointer motion to your session, so run it only yourself, at the machine, with your hands off the mouse:
+
+```sh
+python3 -I scripts/real-pointer-check.py target/debug/niri-computer-use /tmp/ncu-m4-real-1
+```
+
+It opens `wev` on the focused workspace, floats it at 400x300 at (200, 200) through niri IPC, and with the server's `pointer_move` moves the pointer to five points on `wev`'s surface, from a screenshot of DP-1 at its own scale and one 1280 pixels wide. It sends no click, key or scroll. Each motion must land within ±0.05 px of the pixel's centre; `run.log` in the directory you name says where each one did. It expects one monitor named DP-1 at transform `Normal`.
+
 ## Supervised sitting
 
 `make sitting` opens the nested output at scale 1.5 and runs C6, C7 and C9. It starts a focused wev and a separate unfocused observer. Noctalia does not run in this mode. The automatic path keeps its existing deadlines; the sitting allows 30 minutes overall, 29 minutes for wev and two minutes for each human action or confirmation. All wtype children keep a three-second deadline.
