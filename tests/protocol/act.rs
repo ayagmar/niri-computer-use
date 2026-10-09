@@ -695,3 +695,26 @@ async fn a_wtype_that_fails_to_start_leaves_no_marker() {
         .path("run/niri-computer-use/niri.test/input-dirty");
     assert!(!marker.exists());
 }
+
+#[tokio::test]
+async fn input_tools_refuse_on_a_locked_screen_before_anything_else() {
+    let mut desk = Desk::start("act-locked", "").await;
+    let id = screenshot_ref(&mut desk).await;
+    desk.noctalia.set(LOCKED);
+    for (tool, arguments) in [
+        ("click", json!({"screenshot_ref": id, "x": 10, "y": 10})),
+        (
+            "scroll",
+            json!({"screenshot_ref": id, "x": 10, "y": 10, "notches_y": 1}),
+        ),
+        ("key", json!({"combo": "ctrl+s", "expect": "none"})),
+        ("type_text", json!({"text": "x", "expect": "none"})),
+    ] {
+        let refused = desk.server.call(tool, arguments).await;
+        assert_eq!(tool_error(&refused).0, "screen_locked", "{tool}");
+    }
+    let marker = desk
+        .fixture
+        .path("run/niri-computer-use/niri.test/input-dirty");
+    assert!(!marker.exists());
+}
