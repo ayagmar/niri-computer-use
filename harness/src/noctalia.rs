@@ -21,6 +21,8 @@ const SERVER_DEADLINE: Duration = Duration::from_secs(25);
 /// Noctalia binds its socket near the end of startup, after its UI (`Application::run`).
 const STARTUP: Duration = Duration::from_secs(10);
 const PANEL: &str = "control-center";
+/// C13's pass rule: each panel change is seen within 2 s of sending it.
+const PANEL_WAIT: Duration = Duration::from_secs(2);
 /// What the OCR check looks for in the open control center: the title of its first tab
 /// (`control-center.tabs.home` in Noctalia's English strings).
 const CONTROL_CENTER_WORD: &str = "Home";
@@ -120,9 +122,17 @@ fn change(
             "{tool} {panel}: expected accepted and {observed}; saw {outcome}"
         )));
     }
+    // The server's own wait starts after Noctalia's reply, so the rule is checked here,
+    // from before the call.
+    let elapsed = sent.elapsed();
+    if elapsed > PANEL_WAIT {
+        return Err(Failure::new(format!(
+            "{tool} {panel}: {observed} only after {elapsed:?}, over {PANEL_WAIT:?}"
+        )));
+    }
     session.log(&format!(
         "{tool} {panel}: {observed} in {:.0} ms: {outcome}",
-        sent.elapsed().as_secs_f64() * 1000.0
+        elapsed.as_secs_f64() * 1000.0
     ))
 }
 
