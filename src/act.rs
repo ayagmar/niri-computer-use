@@ -14,6 +14,7 @@ use niri_ipc::{Action, Window, WorkspaceReferenceArg};
 use serde::Serialize;
 
 use crate::error::{CallError, ErrorName, ToolError};
+use crate::input::keyboard::Focus;
 use crate::niri::events::EventStream;
 use crate::niri::waiter::{View, Waited, Waiter};
 use crate::niri::{self, Unanswered};
@@ -67,6 +68,9 @@ pub(crate) struct Outcome {
     /// The windows the outcome is about: the one launched or reused, or the candidates.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) windows: Vec<u64>,
+    /// Keyboard tools: whether `expect` was checked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) focus: Option<Focus>,
     /// Why the outcome is uncertain.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) detail: Option<String>,
@@ -93,6 +97,7 @@ impl Outcome {
             observed,
             focused_window: view.focused_window(),
             windows,
+            focus: None,
             detail: None,
             screenshot: None,
             screenshot_error: None,
@@ -105,6 +110,7 @@ impl Outcome {
             observed: Observed::Uncertain,
             focused_window: view.and_then(View::focused_window),
             windows: Vec::new(),
+            focus: None,
             detail: Some(detail),
             screenshot: None,
             screenshot_error: None,

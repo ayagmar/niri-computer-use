@@ -16,6 +16,7 @@
 | `policy.rs` | The policy file, its presets, the decision whether this server may take the lease or act, and which output setups the pointer may run on (pure, apart from reading the file). |
 | `status.rs` | Builds the readiness report shared by the tool and the subcommand. |
 | `input.rs` | The pointer tools' work: the checks before input, the steps of each gesture, and the marker around a button press. |
+| `input/keyboard.rs` | `key` and `type_text`: the `expect` check and one gated `wtype` call with the marker's two phases. |
 | `coords.rs` | The coordinate contract (pure): image pixel to `motion_absolute`, checked against niri's own mapping. |
 | `observe.rs` | Screenshots: picks the output, plans grim's arguments and the image size they must produce, and checks the result. |
 | `refs.rs` | Screenshot refs: what each screenshot taken under the lease captured, kept per lease. |
@@ -60,7 +61,7 @@ The same helper writes one JSON line per call to `$XDG_STATE_HOME/niri-computer-
 
 ## Subprocesses
 
-Every program the server runs goes through `runner::run`: no stdin, stdout and stderr collected, a deadline, and a process group of its own. Stderr is read to the end, keeping the first 16 KiB, so a verbose child never finds it closed. The call ends only when both pipes close, so a descendant that keeps one open holds it until the deadline. If the call times out or is cancelled before the child has been reaped, the runner kills the whole group, so anything the child started dies with it. Until the child is reaped its process ID can't be reused, so the kill can't reach another group. A child that exits normally is left alone, together with anything it left running. Stdout over the caller's limit is an error, and an error keeps the exit status and the kept stderr. After a kill, Tokio reaps the child in the background, so a zombie can briefly remain.
+Every program the server runs goes through the runner. `runner::gated` starts a child with stdin held open until the caller feeds it, with one deadline from start to reaping, for `wtype`. `runner::run` gives no stdin, stdout and stderr collected, a deadline, and a process group of its own. Stderr is read to the end, keeping the first 16 KiB, so a verbose child never finds it closed. The call ends only when both pipes close, so a descendant that keeps one open holds it until the deadline. If the call times out or is cancelled before the child has been reaped, the runner kills the whole group, so anything the child started dies with it. Until the child is reaped its process ID can't be reused, so the kill can't reach another group. A child that exits normally is left alone, together with anything it left running. Stdout over the caller's limit is an error, and an error keeps the exit status and the kept stderr. After a kill, Tokio reaps the child in the background, so a zombie can briefly remain.
 
 ## Screenshots
 
@@ -125,11 +126,24 @@ The mapping is in `coords.rs`, with a type for each space: `ImagePx` (a pixel, w
 
 The pointer counts a press as held as soon as it is sent and a release only once it reached the socket. Dropping it, which a stop or a cancelled request does to a running gesture, sends a release for every button still held, then destroys the device; niri releases nothing on its own (C8). `click` and `drag` wrap the pointer with the input-dirty marker, which comes off only after those releases were sent.
 
+## Keyboard input
+
+`key` and `type_text` run through `Desk::act`. The work, in `input/keyboard.rs`, refuses text over 100 Unicode scalar values (`text_too_long`), reads the combination into wtype's arguments, checks `expect` against the waiter's focused window (`focus_mismatch`) and the deny list (`app_denied`), then makes one `wtype` call:
+
+1. It writes the input-dirty marker, `pending`, naming the tool.
+2. `runner::gated` starts `wtype -` (with `-M <modifier> -k <key> -m <modifier>` after it for `key`) with stdin as a pipe, in a process group of its own. wtype runs its arguments in order, so it waits at `-` before sending anything (C5).
+3. The marker becomes `running`, with wtype's PID and its start time from `/proc/<pid>/stat`. If that fails, wtype is killed while it still waits, and the marker is removed, because nothing was typed.
+4. A task of its own writes the text, or nothing for `key`, closes stdin and waits for wtype to exit, within three seconds of its start. When wtype exits by itself the task removes the marker; a non-zero exit is an `upstream_error` with wtype's stderr. Past the deadline the runner kills wtype's group, and a wtype killed by a signal is treated the same way: the marker stays.
+
+The task holds wtype, so a stop or a cancelled request, which drops the tool's work, doesn't end a wtype that is already typing: it finishes, and the marker comes off, within its deadline (plan §11). If the server exits, the runtime drops the task and wtype's group is killed, and the marker stays.
+
+The waiter was registered before wtype started, so after wtype exits, the work applies every event niri has sent since: if focus was on another window at any point, the result is `interrupted`, otherwise `sent`, with `focus` saying whether `expect` was checked.
+
 ## The input-dirty marker and `recover`
 
 `<runtime dir>/input-dirty` says input may be stuck. It is one JSON object: the `operation`, the `phase` (`pending` before the input child starts, `running` once its PID is known), the writing server's PID, the time, the `child`'s PID and `/proc` start time, and any pointer `buttons` pressed. While the file exists, whatever it holds, `acquire_desktop` and every action refuse with `recovery_required`, `resume` refuses, and `status` reports it as `input_dirty`; a file that can't be read or parsed blocks the same way. The server writes it whole to `input-dirty.new` with mode `0600` and renames it into place, so a reader never sees half of it.
 
-`click` and `drag` write it, `pending` with the button, before they send anything, and remove it once their release has been handled; a gesture dropped midway removes it only after its release reached the socket (see Pointer input). Otherwise `niri-computer-use recover` is the only way to clear it, and only a human runs it:
+`key` and `type_text` write it before `wtype` starts and remove it when `wtype` has exited by itself (see Keyboard input). `click` and `drag` write it, `pending` with the button, before they send anything, and remove it once their release has been handled; a gesture dropped midway removes it only after its release reached the socket (see Pointer input). Otherwise `niri-computer-use recover` is the only way to clear it, and only a human runs it:
 
 1. It takes the lease, so no server can act meanwhile. If a server holds the lease, it refuses and names that server.
 2. With a `child` in the marker, it checks that the PID still has the recorded start time, so a reused PID is never touched, then kills the child's process group, or the child alone if it doesn't lead one, and waits up to five seconds for it to exit. Without one, it lists the user's running `wtype` processes and ends them only if the human types `yes`, and only those that are still the processes it listed.

@@ -68,7 +68,7 @@ impl Desk {
             .audit_lines()
             .into_iter()
             .filter(|line| {
-                !["status", "acquire_desktop", "screenshot"]
+                !["status", "acquire_desktop", "screenshot", "desktop_state"]
                     .contains(&line["tool"].as_str().unwrap())
             })
             .map(|line| {
@@ -617,4 +617,81 @@ async fn pointer_tools_check_the_ref_the_outputs_and_their_arguments_first() {
             ]),
         ]
     );
+}
+
+#[tokio::test]
+async fn keyboard_tools_check_their_text_focus_and_app_before_typing() {
+    let mut desk = Desk::start("act-keys", r#"deny_input_app_ids = ["b"]"#).await;
+    let long = desk
+        .server
+        .call(
+            "type_text",
+            json!({"text": "→".repeat(101), "expect": "none"}),
+        )
+        .await;
+    let (name, detail) = tool_error(&long);
+    assert_eq!(name, "text_too_long");
+    assert!(detail.starts_with("101 characters"), "{detail}");
+
+    let combo = desk
+        .server
+        .call("key", json!({"combo": "hyper+a", "expect": "none"}))
+        .await;
+    assert!(mistake(&combo).contains("unknown modifier"));
+
+    let elsewhere = desk
+        .server
+        .call(
+            "key",
+            json!({"combo": "ctrl+s", "expect": {"window_id": 2}}),
+        )
+        .await;
+    let (mismatch, seen) = tool_error(&elsewhere);
+    assert_eq!(mismatch, "focus_mismatch");
+    assert!(seen.contains("window 1"), "{seen}");
+
+    focus_changed(&desk.stream, 2);
+    for _ in 0..100 {
+        let desktop = desk.server.structured("desktop_state").await;
+        if desktop["focused_window"] == 2 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let denied = desk
+        .server
+        .call(
+            "type_text",
+            json!({"text": "secret", "expect": {"app_id": "b"}}),
+        )
+        .await;
+    assert_eq!(tool_error(&denied).0, "app_denied");
+    assert_eq!(
+        desk.audited(),
+        [
+            json!(["type_text", {"text_len": 101, "expect": "none"}, null, null, "text_too_long"]),
+            json!(["key", {"combo": "hyper+a", "expect": "none"}, null, null, "invalid_arguments"]),
+            json!(["key", {"combo": "ctrl+s", "expect": {"window_id": 2}}, null, null, "focus_mismatch"]),
+            json!(["type_text", {"text_len": 6, "expect": {"app_id": "b"}}, null, null, "app_denied"]),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_wtype_that_fails_to_start_leaves_no_marker() {
+    let mut desk = Desk::start("act-no-wtype", "").await;
+    let typed = desk
+        .server
+        .call(
+            "type_text",
+            json!({"text": "hi", "expect": {"app_id": "a"}}),
+        )
+        .await;
+    let (name, detail) = tool_error(&typed);
+    assert_eq!(name, "upstream_error");
+    assert!(detail.starts_with("start wtype"), "{detail}");
+    let marker = desk
+        .fixture
+        .path("run/niri-computer-use/niri.test/input-dirty");
+    assert!(!marker.exists());
 }

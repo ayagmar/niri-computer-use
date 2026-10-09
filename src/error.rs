@@ -36,6 +36,10 @@ pub(crate) enum ErrorName {
     UntestedOutputConfig,
     /// Input to a window whose `app_id` the policy denies.
     AppDenied,
+    /// A keyboard tool's `expect` doesn't match the focused window.
+    FocusMismatch,
+    /// `type_text` over 100 characters.
+    TextTooLong,
     /// A screenshot ref that is unknown, expired, for a changed output, or a pixel outside
     /// its image.
     RefInvalid,

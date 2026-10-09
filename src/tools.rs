@@ -15,6 +15,7 @@ use crate::audit::{Audit, Call, Caller};
 use crate::control::desk::Desk;
 use crate::coords::ImagePx;
 use crate::error::{CANCELLED, CallError, ToolError};
+use crate::input::keyboard::{self, Expect, Typing};
 use crate::input::{self, Button, Gesture, Input};
 use crate::niri::events::{EventStream, StreamState};
 use crate::observe::{DEFAULT_MAX_WIDTH, Format, Rect, Target};
@@ -220,6 +221,50 @@ struct ScrollArgs {
     /// Wheel notches down (negative: up), at most 10. Defaults to 0.
     #[serde(default)]
     notches_y: i32,
+}
+
+/// Where keyboard focus must be before typing.
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+#[serde(rename_all = "snake_case")]
+enum ExpectArg {
+    /// `{"window_id": <id>}`: that window, from `desktop_state`, must have focus.
+    WindowId(u64),
+    /// `{"app_id": "<app_id>"}`: the focused window must have that `app_id`.
+    AppId(String),
+    /// `"none"`: don't check, for example to type into a shell panel or a dialog that
+    /// holds keyboard focus outside the windows.
+    None,
+}
+
+impl From<ExpectArg> for Expect {
+    fn from(expect: ExpectArg) -> Self {
+        match expect {
+            ExpectArg::WindowId(id) => Self::Window(id),
+            ExpectArg::AppId(app_id) => Self::App(app_id),
+            ExpectArg::None => Self::Unchecked,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct KeyArgs {
+    /// Modifiers and one key joined by `+`, such as `ctrl+shift+t`, `Return` or `alt+F4`.
+    /// The key is an XKB keysym name (`a`, `Return`, `Escape`, `F5`, `slash`, `Page_Down`);
+    /// the modifiers are `shift`, `ctrl`, `alt`, `altgr` and `super`.
+    combo: String,
+    /// Where keyboard focus must be; checked before typing.
+    expect: ExpectArg,
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct TypeTextArgs {
+    /// At most 100 characters; split longer text over several calls.
+    text: String,
+    /// Where keyboard focus must be; checked before typing.
+    expect: ExpectArg,
 }
 
 #[derive(Debug, Clone)]
@@ -504,6 +549,54 @@ impl Server {
         self.point(&context, logged, id, gesture).await
     }
 
+    /// Presses a key combination in the focused app, as one press and release with its
+    /// modifiers held, such as `ctrl+s`. It goes to the app, not to niri: niri's own
+    /// keybinds don't fire from it. `expect` names the window or app that must have
+    /// keyboard focus (`focus_mismatch` otherwise), or `"none"` to skip the check.
+    /// `observed` is `sent`, or `interrupted` if focus moved meanwhile; take a screenshot to
+    /// see what the key did. Refused with `app_denied` for an app on the policy's deny
+    /// list. Requires the lease.
+    #[tool(annotations(
+        read_only_hint = false,
+        destructive_hint = true,
+        idempotent_hint = false,
+        open_world_hint = false
+    ))]
+    async fn key(
+        &self,
+        Parameters(args): Parameters<KeyArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        let typing = Typing::Key(args.combo);
+        self.type_input(&context, logged, typing, args.expect.into())
+            .await
+    }
+
+    /// Types text into the focused app, at most 100 characters per call. `expect`, the
+    /// results and the refusals are as for `key`; text over the limit is refused with
+    /// `text_too_long`. The text is never logged. Requires the lease.
+    #[tool(annotations(
+        read_only_hint = false,
+        destructive_hint = true,
+        idempotent_hint = false,
+        open_world_hint = false
+    ))]
+    async fn type_text(
+        &self,
+        Parameters(args): Parameters<TypeTextArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        // The length, never the text.
+        let logged = serde_json::json!({
+            "text_len": args.text.chars().count(),
+            "expect": args.expect,
+        });
+        let typing = Typing::Text(args.text);
+        self.type_input(&context, logged, typing, args.expect.into())
+            .await
+    }
+
     /// niri's outputs (monitors) by connector name: modes, logical position and size,
     /// scale and transform, as niri reports them.
     #[tool(annotations(read_only_hint = true))]
@@ -617,6 +710,28 @@ impl Server {
             input::point(input, self.desk.shot(&id), gesture).await
         };
         self.act(context, gesture.tool(), logged, work).await
+    }
+
+    /// Runs one `wtype` call through the action gate.
+    async fn type_input(
+        &self,
+        context: &RequestContext<RoleServer>,
+        logged: Value,
+        typing: Typing,
+        expect: Expect,
+    ) -> Result<CallToolResult, ErrorData> {
+        let display = self.env.wayland_socket();
+        let tool = typing.tool();
+        let work = async {
+            let input = Input {
+                niri: self.niri(),
+                display: display.as_deref(),
+                runtime: self.desk.runtime()?,
+                policy: &self.policy,
+            };
+            keyboard::type_input(input, typing, expect).await
+        };
+        self.act(context, tool, logged, work).await
     }
 
     /// Takes a screenshot and, while this server holds the lease, keeps it as a ref that

@@ -9,7 +9,7 @@
 pub(crate) mod desk;
 pub(crate) mod lease;
 pub(crate) mod marker;
-mod procs;
+pub(crate) mod procs;
 pub(crate) mod recover;
 pub(crate) mod runtime;
 pub(crate) mod stop;

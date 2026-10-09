@@ -373,3 +373,15 @@ These match the versions installed locally.
 - `click` takes `count` from 1 to 3 with no pause between clicks, so a double click arrives within any app's double-click time. `drag` waits 50 ms before and after the press and moves in ten steps 20 ms apart, so toolkits that start a drag after a motion threshold see one. `scroll` takes at most 10 notches per axis per call, so a mistaken argument can't scroll a page away.
 - The live setups (plan §8) are both enabled in code: the nested `winit` output, which the nested acceptance tests, and one monitor at `Normal`, which the supervised real-session run tests before M4 ends.
 - `recover` sends the release of the marker's buttons from a fresh virtual pointer (plan §11 step 3), bound to niri's first enabled output: a release needs no position. C8 verified this for the left button (272); the right and middle buttons are released the same way but remain runtime-unverified. A marker with buttons and no child skips the `wtype` scan, which only fits a keyboard marker. If the release can't be sent, the human is asked to press and release the buttons, as before, and the confirmation is still required either way.
+
+## 2026-10-09: the keyboard tools
+
+- No new crate. `runner::gated` starts a child with a held stdin pipe; `wtype` is the only user.
+- `expect` is required and takes `{"window_id": …}`, `{"app_id": …}` or the string `"none"`, plan §6's `{window_id}`, `{app_id}` and `{none}` written as JSON an agent can't leave out by accident.
+- `combo` is modifiers and one keysym name joined by `+`. The key must be letters, digits and `_`, which every XKB keysym name is, so a symbol like `/` is spelled `slash` and nothing can be read as a wtype option. `super`, `logo` and `win` all mean wtype's `logo`.
+- The wtype call runs in a spawned task that owns the child and the marker. Plan §11 lets a running wtype finish within its deadline rather than killing it on a stop; the action gate drops the tool's work on a stop or cancel, so the child can't live in that work. The task removes the marker when wtype exits by itself, whatever its exit code: wtype checks its arguments and connects before it types, and it releases each key it presses. A wtype ended by a signal, or killed at the deadline, leaves the marker.
+- If wtype's PID or start time can't be recorded, wtype is killed while it still waits at the gate and the marker is removed: nothing could have been typed.
+- `interrupted` for the keyboard tools means focus left the window that had it at any event between the check and wtype's exit, as the plan's before-and-after comparison, but without missing a focus change that came back.
+- `observed` is `sent`, as for the pointer tools (2026-10-08), plus `focus`: `matched` or `unchecked`.
+- `key` and `type_text` carry `destructiveHint`, like `click` and `drag`: a keystroke can delete or send anything. Plan §6 names only `close_window`; the hint tells clients the truth about input.
+

@@ -80,6 +80,12 @@ impl Written {
         Ok(written)
     }
 
+    /// Changes the marker and writes it again.
+    pub(crate) fn update(&mut self, change: impl FnOnce(&mut Marker)) -> std::io::Result<()> {
+        change(&mut self.marker);
+        self.save()
+    }
+
     pub(crate) fn clear(self) -> std::io::Result<()> {
         std::fs::remove_file(&self.path)
     }
@@ -202,12 +208,12 @@ mod tests {
     }
 
     #[test]
-    fn a_written_marker_is_read_back_until_cleared() {
+    fn a_written_marker_is_read_back_through_each_change_until_cleared() {
         use std::os::unix::fs::PermissionsExt as _;
         let dir = crate::test_support::fresh_dir("marker-write");
         let runtime = runtime(&dir);
         runtime.create().unwrap();
-        let written = Written::write(&runtime, Marker::pending("click", vec![272])).unwrap();
+        let mut written = Written::write(&runtime, Marker::pending("click", vec![272])).unwrap();
         let Some(Found::Marker(pending)) = read(&runtime) else {
             panic!("no marker")
         };
@@ -217,6 +223,23 @@ mod tests {
         );
         let path = runtime.path().join(INPUT_DIRTY);
         assert_eq!(path.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+        let child = Child {
+            pid: 9,
+            start_time: 5,
+        };
+        written
+            .update(|marker| {
+                marker.phase = Phase::Running;
+                marker.child = Some(child);
+            })
+            .unwrap();
+        let Some(Found::Marker(running)) = read(&runtime) else {
+            panic!("no marker")
+        };
+        assert_eq!(
+            (running.phase, running.child),
+            (Phase::Running, Some(child))
+        );
         // Dropping it leaves the marker; only clearing removes it.
         written.clear().unwrap();
         assert_eq!(read(&runtime), None);

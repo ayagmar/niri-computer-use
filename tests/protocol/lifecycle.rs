@@ -69,6 +69,8 @@ fn expected(name: &str) -> (Value, Value) {
             json!([false, false, false]),
             json!(["screenshot_ref", "x", "y"]),
         ),
+        "key" => (json!([false, true, false]), json!(["combo", "expect"])),
+        "type_text" => (json!([false, true, false]), json!(["text", "expect"])),
         _ => read_only,
     }
 }
@@ -90,6 +92,7 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
             "drag",
             "focus_window",
             "focus_workspace",
+            "key",
             "launch",
             "outputs",
             "pointer_move",
@@ -97,7 +100,8 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
             "screenshot",
             "scroll",
             "shell_status",
-            "status"
+            "status",
+            "type_text"
         ]
     );
     for tool in &tools {
@@ -136,6 +140,7 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
                 assert_eq!(properties, 1, "{tool}");
             }
             "pointer_move" => assert_eq!(properties, 3, "{tool}"),
+            "key" | "type_text" => assert_eq!(properties, 2, "{tool}"),
             "click" => {
                 assert_eq!(properties, 5, "{tool}");
                 assert_eq!(fields["button"]["default"], "left");
@@ -170,13 +175,15 @@ async fn without_noctalia_on_path_there_is_no_shell_status() {
             "drag",
             "focus_window",
             "focus_workspace",
+            "key",
             "launch",
             "outputs",
             "pointer_move",
             "release_desktop",
             "screenshot",
             "scroll",
-            "status"
+            "status",
+            "type_text"
         ]
     );
     let id = server.start_call("shell_status", json!({})).await;
@@ -189,7 +196,7 @@ async fn without_noctalia_on_path_there_is_no_shell_status() {
 async fn an_unknown_tool_is_a_protocol_error() {
     let fixture = Fixture::new("unknown");
     let mut server = Server::start(&fixture).await;
-    let id = server.start_call("type_text", json!({"text": "x"})).await;
+    let id = server.start_call("paste", json!({"text": "x"})).await;
     let response = server.response(id).await;
     assert!(response["error"]["code"].is_i64(), "{response}");
     assert_eq!(fixture.audit_lines(), Vec::<Value>::new());

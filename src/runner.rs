@@ -1,5 +1,5 @@
 //! The only place the server starts processes. Each child runs in a process group of its
-//! own with a deadline. If the call times out or is cancelled before the child has been
+//! own with a deadline, with no stdin or with stdin held until the caller feeds it. If the call times out or is cancelled before the child has been
 //! reaped, the whole group is killed. A child that is still unreaped keeps its process ID,
 //! and with it the group ID, from being reused, so the kill can't reach another group.
 
@@ -7,8 +7,9 @@ use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
 
 use rustix::process::{Pid, Signal, kill_process_group};
-use tokio::io::{AsyncRead, AsyncReadExt as _};
-use tokio::process::{Child, Command};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::process::{Child, ChildStdin, Command};
+use tokio::time::Instant;
 
 use crate::error::{ErrorName, ToolError};
 
@@ -69,6 +70,85 @@ pub(crate) async fn run(
                 format!("{program} didn't finish within {deadline:?}"),
             ))
         })
+}
+
+/// A child started with its stdin held open: it may not read anything until `feed`, so
+/// its PID can be recorded before it acts (plan §11, the stdin gate). Dropping it before
+/// it has been reaped kills its process group.
+#[derive(Debug)]
+pub(crate) struct Gated {
+    program: String,
+    running: Running,
+    stdin: ChildStdin,
+    /// Counted from the start, so the gate's wait counts too.
+    deadline: Instant,
+}
+
+/// Starts `program` with `args` and stdin as a pipe that stays open until `feed`.
+/// `deadline` covers the whole run, from now until the child is reaped.
+pub(crate) fn gated(
+    program: &str,
+    args: &[String],
+    deadline: Duration,
+) -> Result<Gated, ToolError> {
+    let mut child = command(program)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0)
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|error| {
+            ToolError::new(
+                ErrorName::UpstreamError,
+                format!("start {program}: {error}"),
+            )
+        })?;
+    let stdin = child.stdin.take().ok_or_else(|| {
+        ToolError::new(ErrorName::UpstreamError, format!("{program} has no stdin"))
+    })?;
+    Ok(Gated {
+        program: program.to_owned(),
+        running: Running::new(child),
+        stdin,
+        deadline: Instant::now() + deadline,
+    })
+}
+
+impl Gated {
+    pub(crate) fn pid(&self) -> Option<u32> {
+        self.running.child.id()
+    }
+
+    /// Writes `input` to the child's stdin, closes it, and collects the child's output,
+    /// all before the deadline. Past it, the child's group is killed.
+    pub(crate) async fn feed(
+        mut self,
+        input: &[u8],
+        max_stdout: u64,
+    ) -> Result<Finished, ToolError> {
+        let program = self.program.clone();
+        let deadline = self.deadline;
+        let run = async {
+            self.stdin.write_all(input).await.map_err(|error| {
+                ToolError::new(
+                    ErrorName::UpstreamError,
+                    format!("write to {program}: {error}"),
+                )
+            })?;
+            drop(self.stdin);
+            self.running.finish(&program, max_stdout).await
+        };
+        tokio::time::timeout_at(deadline, run)
+            .await
+            .unwrap_or_else(|_| {
+                Err(ToolError::new(
+                    ErrorName::DeadlineExceeded,
+                    format!("{program} didn't finish within its deadline"),
+                ))
+            })
+    }
 }
 
 #[expect(
@@ -283,6 +363,31 @@ mod tests {
         };
         line.rsplit_once(") ")
             .is_some_and(|(_, rest)| !rest.starts_with('Z'))
+    }
+
+    #[tokio::test]
+    async fn a_gated_child_reads_nothing_until_fed() {
+        let dir = crate::test_support::fresh_dir("gated");
+        let seen = dir.join("seen");
+        let script = format!("cat > '{}'; printf done", seen.display());
+        let gated = gated("sh", &args(&["-c", &script]), DEADLINE).unwrap();
+        assert!(gated.pid().is_some());
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        // `cat` waits at the open pipe, so nothing is written yet.
+        assert_eq!(std::fs::read_to_string(&seen).unwrap(), "");
+        let done = gated.feed(b"typed", 64).await.unwrap();
+        assert_eq!(done.stdout, b"done");
+        assert_eq!(std::fs::read_to_string(&seen).unwrap(), "typed");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_gated_child_past_its_deadline_is_killed_with_its_group() {
+        let grandchild = Grandchild::new("gated-timeout", "wait");
+        let gated = gated("sh", &grandchild.args, Duration::from_secs(1)).unwrap();
+        let error = gated.feed(b"", 64).await.unwrap_err();
+        assert_eq!(error.name, ErrorName::DeadlineExceeded);
+        grandchild.assert_dead().await;
     }
 
     #[tokio::test]

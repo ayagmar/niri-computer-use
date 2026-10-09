@@ -25,6 +25,8 @@ A failure sets `isError` and returns `{"error": <name>, "detail": <upstream deta
 | `ref_invalid` | a pointer tool's `screenshot_ref` can't be used; `detail` starts with the reason: `unknown_ref` (not a screenshot of this lease, or niri's event stream reconnected since), `expired` (over 60 seconds old), `output_changed` (the output moved, resized, changed scale or transform, or is gone) or `out_of_bounds` (the pixel is outside the image) |
 | `untested_output_config` | a pointer tool while niri's outputs are a setup no live test covers; `detail` lists the enabled outputs and their transforms |
 | `app_denied` | input while the focused window's `app_id` is on the policy file's `deny_input_app_ids` |
+| `focus_mismatch` | a keyboard tool's `expect` doesn't match the window with keyboard focus; `detail` says what has focus |
+| `text_too_long` | `type_text` with over 100 characters; `detail` gives the length |
 
 A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and one plain-text block starting `invalid arguments:`, without `structuredContent`, so the model can correct the call.
 
@@ -118,7 +120,7 @@ No arguments. Gives the lease up and returns `{"released": true}`, or `{"release
 
 ## Action tools
 
-`focus_window`, `focus_workspace`, `launch` and `close_window` act on the desktop through niri's IPC, and the pointer tools send input. Before each action the server checks, in this order, the stop flag (`stopped`), the input-dirty marker (`recovery_required`), the lease (`lease_required`), then niri's version, the policy file and the lock state, as `acquire_desktop` does. One action runs at a time; an action or `release_desktop` called meanwhile waits for it. A stop during an action cancels it with `stopped`, and anything niri had already accepted may have taken effect. Cancelling the MCP request cancels the action and keeps the lease.
+`focus_window`, `focus_workspace`, `launch` and `close_window` act on the desktop through niri's IPC, and the pointer and keyboard tools send input. Before each action the server checks, in this order, the stop flag (`stopped`), the input-dirty marker (`recovery_required`), the lease (`lease_required`), then niri's version, the policy file and the lock state, as `acquire_desktop` does. One action runs at a time; an action or `release_desktop` called meanwhile waits for it. A stop during an action cancels it with `stopped`, and anything niri had already accepted may have taken effect. Cancelling the MCP request cancels the action and keeps the lease.
 
 An unknown window or workspace id is an argument mistake, and nothing is sent. Otherwise the result has these fields:
 
@@ -226,3 +228,39 @@ Moves to `from`, waits 50 ms, presses the button, waits 50 ms, moves to `to` in 
 | `notches_x` | wheel notches right, negative for left; default 0 |
 
 Moves to the pixel and turns the wheel by whole notches, the vertical axis first: for each axis, one frame of `axis_discrete` with 15 per notch, as niri's own wheel uses, then `axis_source` wheel. Apps scroll by their own amount per notch.
+
+## Keyboard tools
+
+`key` and `type_text` type into the app with keyboard focus through one `wtype` call each. The keys go to the app, not to niri: niri's own keybinds don't fire from them. They run through the same gate as the other action tools, then check, before anything is typed:
+
+1. the arguments: `type_text` refuses over 100 characters, counted as Unicode scalar values, with `text_too_long`, and an empty text or a combination it can't read is an argument mistake
+2. `expect` against the window with keyboard focus: `focus_mismatch` when it doesn't match. A lock screen, the overview or a shell panel leaves no window focused, so only `"none"` types there
+3. the focused window: `app_denied` if its `app_id` is on the policy's deny list
+
+`expect` is required, so the agent says where it means to type:
+
+| `expect` | Means |
+|---|---|
+| `{"window_id": <id>}` | that window, from `desktop_state`, must have keyboard focus |
+| `{"app_id": "<app_id>"}` | the focused window must have that `app_id` |
+| `"none"` | no check, for example to type into a shell panel or a dialog that holds focus outside the windows |
+
+The result has `accepted: true`, `focus` (`matched`, or `unchecked` for `"none"`), and `observed`: `sent` once `wtype` has exited, or `interrupted` if keyboard focus moved off the window that had it at any time during the call; an interrupted result comes with a screenshot. What the keys did is for the next screenshot to show.
+
+Before `wtype` starts, the server writes the input-dirty marker (`pending`), and once `wtype` runs it adds its PID and start time (`running`). `wtype` starts with `-`, so it waits at its stdin until the server has recorded it. The server removes the marker when `wtype` exits by itself. A stop or a cancelled request ends the call with `stopped` or a cancellation, but a `wtype` already running keeps typing and then removes the marker. A `wtype` still running three seconds after it started is killed with its process group, and one killed by a signal, the same way: the marker stays and every action refuses with `recovery_required` until the user runs `niri-computer-use recover`. The text is never logged: the audit log has `text_len`.
+
+### `key`
+
+| Argument | Value |
+|---|---|
+| `combo` (required) | modifiers and one key joined by `+`, such as `ctrl+s`, `ctrl+shift+t`, `alt+F4` or `Return`. The key is an XKB keysym name (`a`, `Return`, `Escape`, `F5`, `slash`, `Page_Down`); the modifiers are `shift`, `ctrl`, `alt`, `altgr` and `super` |
+| `expect` (required) | see above |
+
+Presses the modifiers, presses and releases the key, then releases the modifiers in reverse order.
+
+### `type_text`
+
+| Argument | Value |
+|---|---|
+| `text` (required) | 1 to 100 characters |
+| `expect` (required) | see above |

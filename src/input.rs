@@ -8,6 +8,8 @@
 //! ends, or, when it is dropped midway by a stop or a cancelled request, by the release
 //! sent on the way out.
 
+pub(crate) mod keyboard;
+
 use std::path::Path;
 use std::time::Duration;
 
@@ -19,7 +21,7 @@ use crate::control::runtime::RuntimeDir;
 use crate::coords::{ImagePx, ProtocolPt};
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::pointer::{Axis, Pointer, Step};
-use crate::niri::{self, waiter::Waiter};
+use crate::niri::{self, waiter::View};
 use crate::policy::{self, Loaded};
 use crate::refs::Shot;
 
@@ -214,8 +216,7 @@ pub(crate) async fn point(
     gesture.check()?;
     let shot = shot?;
     let mut waiter = niri::waiter(input.niri.events).await?;
-    let focused_app = focused_app_id(&waiter);
-    if let Some(refused) = policy::refuse_input(input.policy, focused_app.as_deref()) {
+    if let Some(refused) = policy::refuse_input(input.policy, focused_app_id(waiter.view())) {
         return Err(refused.into());
     }
     let socket = input.niri.socket;
@@ -247,9 +248,12 @@ pub(crate) async fn point(
     Ok(Outcome::seen(Observed::Sent, waiter.view(), Vec::new()))
 }
 
-fn focused_app_id(waiter: &Waiter) -> Option<String> {
-    let view = waiter.view();
-    view.windows().get(&view.focused_window()?)?.app_id.clone()
+/// The `app_id` of the window with keyboard focus, if it has one.
+fn focused_app_id(view: &View) -> Option<&str> {
+    view.windows()
+        .get(&view.focused_window()?)?
+        .app_id
+        .as_deref()
 }
 
 /// The pointer, with the input-dirty marker while a gesture may press a button. Dropping
