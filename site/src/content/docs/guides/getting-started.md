@@ -59,7 +59,7 @@ Without it, `status` reports `NIRI_SOCKET is not set`.
 
 ## The skill
 
-The repository's `skills/niri-computer-use/SKILL.md` tells an agent how to use the tools: start with `status`, prefer structured data to screenshots, and take a region screenshot for small text. Link it into your agent's skills directory:
+The repository's `skills/niri-computer-use/SKILL.md` tells an agent how to use the tools: start with `status`, prefer structured data to screenshots, take a region screenshot for small text, aim the pointer through the latest screenshot's ref, and say where it means to type. Link it into your agent's skills directory:
 
 ```sh
 ln -s ~/projects/niri-computer-use/skills/niri-computer-use ~/.claude/skills/niri-computer-use
@@ -102,6 +102,20 @@ app_id = "firefox"
 ```
 
 The agent passes the `name`; niri starts `argv`, and the server watches for new windows with that `app_id`. A preset can't start a shell, an interpreter or another program that runs any command it is given, nor a terminal with arguments. The server reads the file when it starts, so restart the agent's session after changing it. `status` lists the names under `policy.preset_names`.
+
+## Denying input to an app
+
+The same file can list apps the pointer and keyboard tools must leave alone, by `app_id`:
+
+```toml
+deny_input_app_ids = ["org.keepassxc.KeePassXC"]
+```
+
+While the focused window has one of these `app_id`s, `click`, `drag`, `scroll`, `pointer_move`, `key` and `type_text` refuse with `app_denied`. An app sets its own `app_id`, and a click can land on a window that isn't focused, so this guards against mistakes; it isn't a security boundary.
+
+## Input
+
+The pointer tools aim at pixels of a screenshot the agent took under its lease, and run only with one monitor at transform `Normal`; `status` reports this as `outputs.pointer_supported`. The keyboard tools type into the focused app through `wtype`, which must be on `PATH`, and only after checking that focus is on the window or app the agent names. Neither reaches niri's own keybinds, so an agent can't press your stop key. Typed text is never logged: the audit log keeps its length.
 
 ## The audit log
 

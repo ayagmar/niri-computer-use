@@ -4,7 +4,7 @@
 
 An MCP server for AI agents to observe and drive a [niri](https://github.com/niri-wm/niri) Wayland desktop. Noctalia is optional.
 
-**Status: M3 complete.** The server runs over stdio and has five read-only tools, six when Noctalia is installed, plus `acquire_desktop` and `release_desktop`, which take and give up the lease, and four tools that act through niri's IPC while the lease is held: focus a window or a workspace, launch a preset, close a window. It can't send keyboard or pointer input yet. M0's research is recorded in [docs/results/m0.md](docs/results/m0.md), M1's acceptance in [docs/results/m1.md](docs/results/m1.md), M2's in [docs/results/m2.md](docs/results/m2.md) and M3's in [docs/results/m3.md](docs/results/m3.md).
+**Status: M4 in progress.** The server runs over stdio and has five read-only tools, six when Noctalia is installed, plus `acquire_desktop` and `release_desktop`, which take and give up the lease, four tools that act through niri's IPC while the lease is held (focus a window or a workspace, launch a preset, close a window), and six input tools: the pointer tools `pointer_move`, `click`, `drag` and `scroll`, aimed at pixels of a screenshot, and the keyboard tools `key` and `type_text`. Their nested acceptance passes; the supervised check on a real monitor is still to come. M0's research is recorded in [docs/results/m0.md](docs/results/m0.md), M1's acceptance in [docs/results/m1.md](docs/results/m1.md), M2's in [docs/results/m2.md](docs/results/m2.md) and M3's in [docs/results/m3.md](docs/results/m3.md).
 
 ## Requirements
 
@@ -19,7 +19,7 @@ cargo build --locked -p niri-computer-use
 target/debug/niri-computer-use status
 ```
 
-`niri-computer-use stop` sets a stop flag for the niri instance in `NIRI_SOCKET`, and `niri-computer-use resume` clears it; `status` reports it as `stop`. `niri-computer-use recover` clears the input-dirty marker, which says input may be stuck: it ends the input child the marker names, asks you to check that no key or button is held, and clears the marker only after you type `yes`.
+`niri-computer-use stop` sets a stop flag for the niri instance in `NIRI_SOCKET`, and `niri-computer-use resume` clears it; `status` reports it as `stop`. `niri-computer-use recover` clears the input-dirty marker, which says input may be stuck: it ends the input child the marker names, releases any pointer button it names, asks you to check that no key or button is held, and clears the marker only after you type `yes`.
 
 `niri-computer-use serve` speaks MCP over stdin and stdout. It reads `NIRI_SOCKET` from its environment to find niri. Every tool call is logged, without contents, to `$XDG_STATE_HOME/niri-computer-use/audit.jsonl` (by default `~/.local/state/niri-computer-use/audit.jsonl`).
 
@@ -37,10 +37,12 @@ target/debug/niri-computer-use status
 | `focus_workspace` | focuses a workspace by id, likewise |
 | `launch` | starts a preset from the policy file and reports the new windows with its `app_id`; with `reuse`, focuses its one existing window instead |
 | `close_window` | asks a window to close and reports `closed`, or `pending` if it is still open after five seconds, for example behind an unsaved-changes dialog |
+| `pointer_move`, `click`, `drag`, `scroll` | move, click, drag or turn the wheel at pixels of a screenshot taken under the lease, through a virtual pointer bound to that screenshot's output |
+| `key`, `type_text` | press a key combination or type up to 100 characters into the focused app with `wtype`, after checking that focus is where the agent expects |
 
-The four action tools require the lease and check the stop flag, the input-dirty marker and the lock state again before each action; a stop cancels the running one. Each result has `accepted`, whether niri took the request, and `observed`, what niri's event stream showed afterwards, including `interrupted` when focus went elsewhere during the wait and `uncertain` when niri's reply was lost. An outcome in doubt comes with a fresh screenshot of the focused output. Nothing is retried.
+The action and input tools require the lease and check the stop flag, the input-dirty marker and the lock state again before each action; a stop cancels the running one. Each result has `accepted`, whether niri took the request, and `observed`, what niri's event stream showed afterwards, including `interrupted` when focus went elsewhere during the wait and `uncertain` when niri's reply was lost; for input, `sent` once niri handled it. An outcome in doubt comes with a fresh screenshot of the focused output. Nothing is retried.
 
-Failures set `isError` and return `{"error": <name>, "detail": <upstream detail>}`. The names so far are `niri_unavailable`, `deadline_exceeded`, `upstream_error`, `noctalia_unavailable`, `lease_held`, `lease_required`, `stopped`, `recovery_required`, `read_only`, `screen_locked` and `unknown_preset`. A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and a plain-text message instead.
+Failures set `isError` and return `{"error": <name>, "detail": <upstream detail>}`. The names so far are `niri_unavailable`, `deadline_exceeded`, `upstream_error`, `noctalia_unavailable`, `lease_held`, `lease_required`, `stopped`, `recovery_required`, `read_only`, `screen_locked`, `unknown_preset`, `ref_invalid`, `untested_output_config`, `app_denied`, `focus_mismatch` and `text_too_long`. A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and a plain-text message instead.
 
 ## Policy file
 
@@ -55,7 +57,7 @@ argv = ["firefox"]
 app_id = "firefox"
 ```
 
-A preset may not start a shell, an interpreter, `env`, `sudo` or another program that runs any command it is given, nor a terminal with arguments, not even `--app-id`, because terminals run trailing arguments as a command; a desktop file started with `gtk-launch` gives a terminal its own `app_id`. These rules catch common mistakes; they are a guardrail, not a boundary, since a wrapper script gets past any list. If the file breaks a rule or doesn't parse, `status` reports it as `invalid` and `acquire_desktop` and the action tools refuse with `read_only` until it is fixed and the server restarted. `launch` takes a preset's `name` and starts its `argv` through niri; `status` lists the names. Nothing uses the deny list until the input tools exist.
+A preset may not start a shell, an interpreter, `env`, `sudo` or another program that runs any command it is given, nor a terminal with arguments, not even `--app-id`, because terminals run trailing arguments as a command; a desktop file started with `gtk-launch` gives a terminal its own `app_id`. These rules catch common mistakes; they are a guardrail, not a boundary, since a wrapper script gets past any list. If the file breaks a rule or doesn't parse, `status` reports it as `invalid` and `acquire_desktop` and the action tools refuse with `read_only` until it is fixed and the server restarted. `launch` takes a preset's `name` and starts its `argv` through niri; `status` lists the names. The input tools refuse with `app_denied` while the focused window's `app_id` is on `deny_input_app_ids`.
 
 ## Install and register
 
