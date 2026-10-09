@@ -4,6 +4,7 @@
 //! the screenshot's metadata and `wev`'s place in niri's layout, independently of the
 //! server's mapping. Everything the run creates lives under `TEST_DIR`.
 
+mod activation;
 mod crash;
 mod scrolling;
 mod stop;
@@ -75,6 +76,7 @@ pub(crate) fn run(session: &mut Session<'_>, output: &LogicalOutput, server: &st
     // wev floats over the tiled kitty, so it goes first.
     process.stop()?;
     scrolling::run(session, &mut client)?;
+    activation::run(session, &mut client)?;
     client.stop()?;
     noctalia.stop().map(drop)
 }

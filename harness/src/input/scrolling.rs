@@ -82,7 +82,7 @@ fn kitty_centre(session: &mut Session<'_>, client: &mut Client) -> Result<(f64, 
 }
 
 /// The window's middle in the layout, on nested niri's only output at the origin.
-fn centre(window: &Value) -> Option<(f64, f64)> {
+pub(super) fn centre(window: &Value) -> Option<(f64, f64)> {
     let layout = field(window, "/layout");
     let x = field(layout, "/tile_pos_in_workspace_view/0").as_f64()?;
     let y = field(layout, "/tile_pos_in_workspace_view/1").as_f64()?;

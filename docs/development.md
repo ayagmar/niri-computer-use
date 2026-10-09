@@ -205,7 +205,9 @@ The run has a 130-second deadline. Its files are in `target/e2e/<run>/`, includi
 11. The same with a drag: once `wev` logs the press, A is killed. The button must stay down for half a second, since niri releases nothing when a pointer goes, B must get `recovery_required`, and `recover` must send the release from a fresh pointer, which `wev` logs, before B takes the lease.
 12. Scrolling a real client: after `wev` is gone, the supervisor starts `kitty --config NONE --hold` running `seq 1 500`, with `wheel_scroll_multiplier=5` and its remote control socket in `TEST_DIR`. The nested niri config floats kitty at 560x360 in the top-left corner, because niri reports no position for tiled windows. `scroll` over kitty's middle, two notches up, must move the first line on kitty's screen (read with `kitty @ get-text`) up by exactly ten lines, and one notch down must move it back by five.
 
-The run has a 180-second deadline. Its files are in `target/e2e/<run>/`, including `wev.log`, each server's replies, and Noctalia's and kitty's logs. Besides the tools of `make nested`, it needs `kitty`.
+13. With Python 3, PyGObject and GTK 4 available, starts a real GTK button in the nested session, clicks it 100 times and requires its `clicked` callback's counter to advance exactly once after each call. This asserts application activation, not only Wayland delivery. Logs nearest-rank p50/p95/p99 for tool start to observed counter (including harness observation delay). Missing GTK is an explicit skip; Qt, browser, drag/drop and hover-menu activation are not covered by this fixture.
+
+The run has a 180-second deadline. Its files are in `target/e2e/<run>/`, including `wev.log`, each server's replies, and Noctalia's, kitty's and the optional GTK fixture's logs. Besides the tools of `make nested`, it needs `kitty`.
 
 ## Nested shell checks
 
