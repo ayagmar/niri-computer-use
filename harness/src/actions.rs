@@ -50,9 +50,27 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
     noctalia.stop().map(drop)
 }
 
-/// The presets, each starting this harness as a fixture window. The server reads the
-/// file once, when it starts.
+/// The presets, each starting this harness as a fixture window.
 fn write_policy(session: &Session<'_>) -> Result<()> {
+    let started = session.test_dir().root().join("slow-started");
+    let started = started.to_string_lossy();
+    write_presets(
+        session,
+        &[
+            ("late", &["--late", "400"]),
+            ("two", &["--count", "2"]),
+            ("reuse", &[]),
+            ("plain", &[]),
+            ("keep", &["--keep-open"]),
+            ("slow", &["--delay", SLOW_DELAY, "--started", &started]),
+        ],
+    )
+}
+
+/// Writes the policy file with one preset per entry, each starting this harness as a
+/// fixture window with that `app_id` and the extra arguments. The server reads the file
+/// once, when it starts.
+pub(crate) fn write_presets(session: &Session<'_>, presets: &[(&str, &[&str])]) -> Result<()> {
     let harness = std::env::current_exe().context("find the harness binary")?;
     let harness = harness
         .to_str()
@@ -61,21 +79,11 @@ fn write_policy(session: &Session<'_>) -> Result<()> {
     let test_dir = test_dir
         .to_str()
         .ok_or_else(|| Failure::new("TEST_DIR isn't UTF-8"))?;
-    let started = session.test_dir().root().join("slow-started");
-    let started = started.to_string_lossy();
-    let presets: [(&str, Vec<&str>); 6] = [
-        ("late", vec!["--late", "400"]),
-        ("two", vec!["--count", "2"]),
-        ("reuse", vec![]),
-        ("plain", vec![]),
-        ("keep", vec!["--keep-open"]),
-        ("slow", vec!["--delay", SLOW_DELAY, "--started", &started]),
-    ];
     let entries = presets
-        .into_iter()
+        .iter()
         .map(|(name, extra)| {
             let mut argv = vec![harness, "window", test_dir, name];
-            argv.extend(extra);
+            argv.extend_from_slice(extra);
             // JSON strings are valid TOML basic strings.
             let argv = serde_json::to_string(&argv).context("encode a preset")?;
             Ok(format!(

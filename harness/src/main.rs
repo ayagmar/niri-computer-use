@@ -5,6 +5,7 @@ mod capture;
 mod config;
 mod control;
 mod environment;
+mod eval;
 mod failure;
 mod image;
 #[path = "../../src/image_header.rs"]
@@ -38,10 +39,10 @@ use scale::Scale;
 use supervise::Probes;
 use test_dir::TestDir;
 
-const USAGE: &str = "usage: harness run [--scale <scale>] [--noctalia | --sitting | --control | --actions | --input | --shell]
+const USAGE: &str = "usage: harness run [--scale <scale>] [--noctalia | --sitting | --control | --actions | --input | --shell | --eval <scenario> --skill <dir|none> --model <model>]
        harness host-capture <output>
        harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--started <file>]
-       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server>]";
+       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --eval <server> <scenario> <skill|none> <model>]";
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -66,7 +67,7 @@ fn dispatch(args: &[OsString]) -> Result<()> {
         ["run", options @ ..] => {
             let options = run_options(options)?;
             interrupt::install()?;
-            run::run(options)
+            run::run(&options)
         }
         ["window", options @ ..] => window::run(&window::Options::parse(options)?),
         ["host-capture", output] => {
@@ -78,9 +79,13 @@ fn dispatch(args: &[OsString]) -> Result<()> {
                 noctalia: None,
                 sitting: false,
                 server: None,
+                eval: None,
             };
             match rest {
                 [] => {}
+                ["--eval", server, scenario, skill, model] => {
+                    probes.eval = Some((eval_options(scenario, skill, model)?, *server));
+                }
                 ["--sitting"] => probes.sitting = true,
                 ["--noctalia", server] => probes.noctalia = Some(*server),
                 [flag, server] => {
@@ -108,7 +113,9 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
         noctalia: false,
         sitting: false,
         server: None,
+        eval: None,
     };
+    let (mut scenario, mut skill, mut model) = (None, None, None);
     let mut args = args.iter();
     while let Some(&arg) = args.next() {
         match arg {
@@ -120,19 +127,51 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
             "--control" | "--actions" | "--input" | "--shell" => {
                 options.server = run::ServerChecks::from_flag(arg);
             }
+            "--eval" => scenario = Some(*args.next().ok_or_else(|| Failure::new(USAGE))?),
+            "--skill" => skill = Some(*args.next().ok_or_else(|| Failure::new(USAGE))?),
+            "--model" => model = Some(*args.next().ok_or_else(|| Failure::new(USAGE))?),
             _ => return Err(Failure::new(USAGE)),
         }
     }
+    options.eval = match (scenario, skill, model) {
+        (None, None, None) => None,
+        (Some(scenario), Some(skill), Some(model)) => Some(eval_options(scenario, skill, model)?),
+        _ => return Err(Failure::new("--eval needs --skill and --model")),
+    };
     if usize::from(options.sitting)
         + usize::from(options.noctalia)
         + usize::from(options.server.is_some())
+        + usize::from(options.eval.is_some())
         > 1
     {
         return Err(Failure::new(
-            "--sitting, --noctalia, --control, --actions, --input and --shell cannot be combined",
+            "--sitting, --noctalia, --control, --actions, --input, --shell and --eval cannot be combined",
         ));
     }
     Ok(options)
+}
+
+/// A known scenario, an existing skill directory (made absolute) or `none`, and a model.
+fn eval_options(scenario: &str, skill: &str, model: &str) -> Result<eval::Options> {
+    let scenario = eval::Scenario::from_name(scenario).ok_or_else(|| {
+        let names: Vec<_> = eval::Scenario::ALL.iter().map(|s| s.name()).collect();
+        Failure::new(format!(
+            "unknown scenario {scenario:?}; one of {}",
+            names.join(", ")
+        ))
+    })?;
+    let skill = match skill {
+        "none" => None,
+        path => Some(
+            std::fs::canonicalize(path)
+                .map_err(|error| Failure::new(format!("skill directory {path}: {error}")))?,
+        ),
+    };
+    Ok(eval::Options {
+        scenario,
+        skill,
+        model: model.to_owned(),
+    })
 }
 
 #[cfg(test)]

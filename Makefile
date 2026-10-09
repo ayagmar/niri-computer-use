@@ -1,4 +1,4 @@
-.PHONY: check lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell sitting host-capture
+.PHONY: check lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-eval sitting host-capture
 
 SCALE ?= 1
 
@@ -44,6 +44,11 @@ nested-input:
 nested-shell:
 	cargo build --locked -p niri-computer-use
 	cargo run --locked -p harness -- run --shell
+
+# One skill eval in the nested niri: make nested-eval SCENARIO=compose-message SKILL=skills/niri-computer-use MODEL=sonnet
+nested-eval:
+	cargo build --locked -p niri-computer-use
+	cargo run --locked -p harness -- run --eval $(SCENARIO) --skill $(SKILL) --model $(MODEL)
 
 host-capture:
 	cargo run --locked -p harness -- host-capture $(OUTPUT)

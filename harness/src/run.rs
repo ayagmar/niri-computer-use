@@ -10,6 +10,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::config;
 use crate::environment::{self, Env, Host};
+use crate::eval;
 use crate::failure::{Context as _, Failure, Result};
 use crate::log::Log;
 use crate::runner::{self, ChildEnv, Group, Invocation, Sink};
@@ -25,12 +26,14 @@ const CONTROL_DEADLINE: Duration = Duration::from_secs(90);
 const ACTIONS_DEADLINE: Duration = Duration::from_secs(130);
 const INPUT_DEADLINE: Duration = Duration::from_secs(180);
 const SHELL_DEADLINE: Duration = Duration::from_secs(130);
+/// The agent's twelve minutes, with the fixtures and Noctalia around it.
+const EVAL_DEADLINE: Duration = Duration::from_mins(15);
 /// All `noctalia config validate` prints for a config without warnings. It exits 0 even
 /// when it warns, for example about an unknown key.
 const NOCTALIA_VALID: &str = "\u{2713} Config is valid\n";
 
 /// What `harness run` was asked to do.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct Options {
     pub(crate) scale: Scale,
     /// Start Noctalia in the nested session and run C13 through `niri-computer-use`.
@@ -39,6 +42,8 @@ pub(crate) struct Options {
     pub(crate) sitting: bool,
     /// Run checks with `niri-computer-use` and the nested Noctalia.
     pub(crate) server: Option<ServerChecks>,
+    /// Run one skill eval: an agent doing one task through `niri-computer-use`.
+    pub(crate) eval: Option<eval::Options>,
 }
 
 /// The checks that run `niri-computer-use` servers against the nested niri.
@@ -80,7 +85,7 @@ impl ServerChecks {
     }
 }
 
-pub(crate) fn run(options: Options) -> Result<()> {
+pub(crate) fn run(options: &Options) -> Result<()> {
     let host = Host::from_env()?;
     let stamp = stamp()?;
     let artifacts = create_artifacts(&stamp)?;
@@ -180,7 +185,7 @@ fn run_nested(
     host: &Host,
     test_dir: &TestDir,
     artifacts: &Path,
-    options: Options,
+    options: &Options,
     log: &mut Log,
 ) -> Result<()> {
     let env = preflight(host, test_dir, artifacts, options)?;
@@ -205,7 +210,7 @@ fn run_nested(
 
 /// Stage 0: generated configs, PARENT, containment, `niri validate`, and with Noctalia,
 /// `noctalia config validate`.
-fn preflight(host: &Host, test_dir: &TestDir, artifacts: &Path, options: Options) -> Result<Env> {
+fn preflight(host: &Host, test_dir: &TestDir, artifacts: &Path, options: &Options) -> Result<Env> {
     let niri_config = config::niri(options.scale, &test_dir.bind_marker());
     write(&test_dir.niri_config(), &niri_config)?;
     write(&artifacts.join("niri.kdl"), &niri_config)?;
@@ -225,7 +230,7 @@ fn preflight(host: &Host, test_dir: &TestDir, artifacts: &Path, options: Options
         group: Group::Own,
         deadline: VALIDATE_DEADLINE,
     })?;
-    if options.noctalia || options.server.is_some() {
+    if options.noctalia || options.server.is_some() || options.eval.is_some() {
         write_noctalia_config(&env, test_dir, artifacts)?;
     }
     Ok(env)
@@ -265,7 +270,7 @@ fn noctalia_valid(stdout: &[u8], stderr: &[u8]) -> Result<()> {
 
 /// Stages 1 and 2: `dbus-run-session -- niri -c … -- harness supervise …`. The supervisor
 /// quits niri when it is done, which ends the bus session.
-fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: Options) -> Result<()> {
+fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: &Options) -> Result<()> {
     let harness = env::current_exe().context("find the harness binary")?;
     let mut bus_config = OsString::from("--config-file=");
     bus_config.push(test_dir.dbus_config());
@@ -290,6 +295,8 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: Option
     } else if let Some(checks) = options.server {
         args.push(checks.flag().into());
         args.push(server()?.into());
+    } else if let Some(eval) = &options.eval {
+        args.extend(eval_args(eval)?);
     }
     runner::run(&Invocation {
         program: "dbus-run-session",
@@ -297,10 +304,11 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: Option
         env: ChildEnv::Exact(env),
         output: Sink::File(artifacts.join("niri.log")),
         group: Group::Own,
-        deadline: match (options.sitting, options.server) {
-            (true, _) => crate::sitting::RUN_DEADLINE,
-            (false, Some(checks)) => checks.deadline(),
-            (false, None) => NESTED_DEADLINE,
+        deadline: match (options.sitting, options.server, &options.eval) {
+            (true, _, _) => crate::sitting::RUN_DEADLINE,
+            (false, Some(checks), _) => checks.deadline(),
+            (false, None, Some(_)) => EVAL_DEADLINE,
+            (false, None, None) => NESTED_DEADLINE,
         },
     })?;
     let status_path = artifacts.join(supervise::STATUS_FILE);
@@ -311,6 +319,21 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: Option
     } else {
         Err(Failure::new(format!("supervisor: {status}")))
     }
+}
+
+/// `--eval <server> <scenario> <skill directory | none> <model>` for the supervisor.
+fn eval_args(eval: &eval::Options) -> Result<Vec<OsString>> {
+    let skill = eval.skill.as_ref().map_or_else(
+        || OsString::from("none"),
+        |skill| skill.clone().into_os_string(),
+    );
+    Ok(vec![
+        "--eval".into(),
+        server()?.into(),
+        eval.scenario.name().into(),
+        skill,
+        eval.model.clone().into(),
+    ])
 }
 
 /// The `niri-computer-use` binary the make targets build.

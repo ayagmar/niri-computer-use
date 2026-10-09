@@ -25,6 +25,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - `status.policy.preset_names`: the names `launch` takes.
 - `niri-computer-use recover`: clears the input-dirty marker after ending the input child it names and asking the human to confirm that no input is held. `status` reports the marker as `input_dirty`.
 - `shell_open` and `shell_close`, present when Noctalia is installed: open or close the Noctalia panels `control-center`, `wallpaper` and `tray-drawer`, then poll Noctalia's `activePanelId` every 100 ms for up to two seconds, reporting `opened`, `closed`, `timeout` or `uncertain`. Every other panel is refused with the new error name `panel_not_allowed`. They need the lease and pass the same gate as the other actions.
+- `make nested-eval`: runs an agent (`claude -p`) with a skill against one scenario in a nested niri and grades it from the audit log.
 
 ### Changed
 

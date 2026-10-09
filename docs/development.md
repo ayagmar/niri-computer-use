@@ -219,6 +219,18 @@ The run has a 180-second deadline. Its files are in `target/e2e/<run>/`, includi
 
 The run has a 130-second deadline. Its files are in `target/e2e/<run>/`, including a `success-<panel>.png` for each panel.
 
+## Skill evals
+
+`make nested-eval` runs an agent against one scenario in a nested niri and grades what it did. It needs `claude` on `PATH` and logged in, and it spends tokens:
+
+```sh
+make nested-eval SCENARIO=compose-message SKILL=skills/niri-computer-use MODEL=sonnet
+```
+
+`SKILL=none` runs without a skill. The scenarios are `compose-message`, `key-screenshots`, `click-elsewhere`, `stopped` and `no-preset`. The harness starts Noctalia, sets up the scenario's windows (`wev` or a `notes` preset window), copies the skill into `TEST_DIR/agent/.claude/skills/`, and runs `claude -p` there with only the nested server and the `Skill` and `Read` tools. It then grades the nested server's audit log: for example, no screenshot that overlaps an action, Enter pressed once and only after all the text went out, focus back on the user's window, and no more calls after a `stopped` refusal.
+
+The run's files are in `target/e2e/<run>/`: `transcript.jsonl` (the agent's stream), `audit.jsonl`, `answer.md` (its final answer), and `grading.json` and `timing.json` in the skill-creator's format. The run has a 15-minute deadline. Claude Code also keeps its usual transcript under `~/.claude/projects/`.
+
 ## Real-session pointer check
 
 `scripts/real-pointer-check.py` is M4's supervised accuracy run on a real monitor. It sends real pointer motion to your session, so run it only yourself, at the machine, with your hands off the mouse:
