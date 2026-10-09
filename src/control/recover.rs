@@ -44,6 +44,17 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
     let root = Path::new(PROC);
     match &found {
         Found::Marker(Marker {
+            keyboard: Some(keyboard),
+            buttons,
+            output,
+            ..
+        }) => {
+            release_keyboard(env, keyboard).await?;
+            if !buttons.is_empty() {
+                release_buttons(env, buttons, output.as_deref()).await;
+            }
+        }
+        Found::Marker(Marker {
             child: Some(child), ..
         }) => end_child(root, child.pid, child.start_time).await?,
         // The pointer runs in the server itself: there is no child to end.
@@ -64,6 +75,32 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
     std::fs::remove_file(&path).map_err(|error| format!("remove {}: {error}", path.display()))?;
     drop(lease);
     cli::say("Marker cleared. `niri-computer-use resume` clears the stop flag if it is set.");
+    Ok(())
+}
+
+async fn release_keyboard(env: &Env, marked: &marker::Native) -> Result<(), String> {
+    if marked.codes.len() > 1000
+        || marked.codes.iter().any(|code| *code > 767)
+        || marked.group >= 32
+    {
+        return Err("invalid native keycodes or layout in the marker; the marker stays".into());
+    }
+    let display = env
+        .wayland_socket()
+        .ok_or("WAYLAND_DISPLAY or XDG_RUNTIME_DIR is not set")?;
+    let pid = niri::pid(env.niri_socket.as_deref())
+        .await
+        .map_err(|error| error.detail)?;
+    let mut keyboard = niri::keyboard::Keyboard::bind(&display, pid)
+        .await
+        .map_err(|error| error.detail)?;
+    keyboard
+        .release(&marked.codes, marked.group)
+        .await
+        .map_err(|error| error.detail)?;
+    cli::say(
+        "Sent native key releases and zero synthetic modifiers from a fresh virtual keyboard.",
+    );
     Ok(())
 }
 

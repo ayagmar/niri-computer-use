@@ -22,7 +22,12 @@ struct Desk {
 
 impl Desk {
     async fn start(name: &str, policy: &str) -> Self {
-        let fixture = Fixture::new(name);
+        Self::start_backend(name, policy, "wtype").await
+    }
+
+    async fn start_backend(name: &str, policy: &str, backend: &str) -> Self {
+        let mut fixture = Fixture::new(name);
+        fixture.set("NIRI_COMPUTER_USE_KEYBOARD", backend);
         std::fs::create_dir_all(fixture.path("config/niri-computer-use")).unwrap();
         std::fs::write(fixture.path("config/niri-computer-use/policy.toml"), policy).unwrap();
         fixture.program("noctalia", "exit 0");
@@ -713,6 +718,40 @@ async fn keyboard_tools_check_their_text_focus_and_app_before_typing() {
             json!(["type_text", {"text_len": 6, "expect": {"app_id": "b"}}, null, null, "app_denied"]),
         ]
     );
+}
+
+#[tokio::test]
+async fn native_selection_never_falls_back_to_wtype() {
+    let mut desk = Desk::start_backend("native-no-fallback", "", "native").await;
+    fake_wtype(&desk.fixture, "cat >/dev/null");
+    let result = desk
+        .server
+        .call("type_text", json!({"text": "hi", "expect": "none"}))
+        .await;
+    let (name, detail) = tool_error(&result);
+    assert_eq!(name, "upstream_error");
+    assert!(detail.starts_with("connect to"), "{detail}");
+    assert!(!desk.fixture.path("wtype.args").exists());
+    assert!(
+        !desk
+            .fixture
+            .path("run/niri-computer-use/niri.test/input-dirty")
+            .exists()
+    );
+}
+
+#[tokio::test]
+async fn invalid_keyboard_selection_refuses_input() {
+    let mut desk = Desk::start_backend("native-invalid", "", "typo").await;
+    fake_wtype(&desk.fixture, "cat >/dev/null");
+    let result = desk
+        .server
+        .call("type_text", json!({"text": "hi", "expect": "none"}))
+        .await;
+    let (name, detail) = tool_error(&result);
+    assert_eq!(name, "refused");
+    assert!(detail.contains("NIRI_COMPUTER_USE_KEYBOARD"), "{detail}");
+    assert!(!desk.fixture.path("wtype.args").exists());
 }
 
 #[tokio::test]

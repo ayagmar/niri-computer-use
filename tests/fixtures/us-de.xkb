@@ -1,0 +1,32 @@
+// Controlled fixture: two layouts and direct Unicode symbols; no system includes.
+xkb_keymap {
+  xkb_keycodes "test" {
+    minimum = 8; maximum = 64;
+    <Y> = 29; <Z> = 52; <U> = 48; <ENTER> = 36;
+    <LFSH> = 50; <LCTL> = 37; <LALT> = 64;
+  };
+  xkb_types "test" {
+    type "ONE_LEVEL" { modifiers = none; map[None] = Level1; };
+    type "TWO_LEVEL" {
+      modifiers = Shift; map[None] = Level1; map[Shift] = Level2;
+    };
+  };
+  xkb_compatibility "test" {
+    interpret Shift_L { action = SetMods(modifiers=Shift); };
+    interpret Control_L { action = SetMods(modifiers=Control); };
+    interpret Alt_L { action = SetMods(modifiers=Mod1); };
+  };
+  xkb_symbols "test" {
+    name[Group1] = "test us"; name[Group2] = "test de";
+    key <Y> { type[Group1]="TWO_LEVEL", symbols[Group1]=[y,Y], type[Group2]="TWO_LEVEL", symbols[Group2]=[z,Z] };
+    key <Z> { type[Group1]="TWO_LEVEL", symbols[Group1]=[z,Z], type[Group2]="TWO_LEVEL", symbols[Group2]=[y,Y] };
+    key <U> { type[Group1]="TWO_LEVEL", symbols[Group1]=[a,A], type[Group2]="TWO_LEVEL", symbols[Group2]=[adiaeresis,EuroSign] };
+    key <ENTER> { [Return] };
+    key <LFSH> { [Shift_L] };
+    key <LCTL> { [Control_L] };
+    key <LALT> { [Alt_L] };
+    modifier_map Shift { <LFSH> };
+    modifier_map Control { <LCTL> };
+    modifier_map Mod1 { <LALT> };
+  };
+};

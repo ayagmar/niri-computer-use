@@ -46,6 +46,8 @@ pub(crate) struct Env {
     pub(crate) state_dir: Option<PathBuf>,
     /// `$XDG_CONFIG_HOME`, or `$HOME/.config`, for the policy file.
     pub(crate) config_dir: Option<PathBuf>,
+    /// Explicit experimental backend selection; absent means wtype.
+    pub(crate) keyboard: Option<OsString>,
 }
 
 impl Env {
@@ -56,6 +58,7 @@ impl Env {
             path: var("PATH"),
             runtime_dir: var("XDG_RUNTIME_DIR").map(PathBuf::from),
             wayland_display: var("WAYLAND_DISPLAY"),
+            keyboard: var("NIRI_COMPUTER_USE_KEYBOARD"),
             state_dir: var("XDG_STATE_HOME")
                 .map(PathBuf::from)
                 .or_else(|| var("HOME").map(|home| PathBuf::from(home).join(".local/state"))),

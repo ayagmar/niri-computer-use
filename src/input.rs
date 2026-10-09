@@ -3,6 +3,8 @@
 //! input-dirty marker before anything that could leave input held.
 
 pub(crate) mod keyboard;
+mod keymap;
+mod native;
 pub(crate) mod pointer;
 
 use std::path::Path;
@@ -20,6 +22,7 @@ pub(crate) struct Input<'a> {
     pub(crate) display: Option<&'a Path>,
     pub(crate) runtime: &'a RuntimeDir,
     pub(crate) policy: &'a Loaded,
+    pub(crate) keyboard: Option<&'a std::ffi::OsStr>,
 }
 
 /// The `app_id` of the window with keyboard focus, if it has one.

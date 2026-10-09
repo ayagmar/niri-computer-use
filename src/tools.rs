@@ -1045,6 +1045,7 @@ impl Server {
                 display: display.as_deref(),
                 runtime: self.desk.runtime()?,
                 policy: &self.policy,
+                keyboard: self.env.keyboard.as_deref(),
             };
             pointer::point(input, self.desk.shot(&aim.id), gesture).await
         };
@@ -1080,6 +1081,7 @@ impl Server {
                 display: display.as_deref(),
                 runtime: self.desk.runtime()?,
                 policy: &self.policy,
+                keyboard: self.env.keyboard.as_deref(),
             };
             keyboard::type_input(input, typing, expect).await
         };

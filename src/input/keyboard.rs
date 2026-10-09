@@ -182,9 +182,9 @@ impl Stroke {
 
 /// How much of a call went out.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-struct Sent {
-    chars: usize,
-    keys: usize,
+pub(super) struct Sent {
+    pub(super) chars: usize,
+    pub(super) keys: usize,
 }
 
 impl Sent {
@@ -215,7 +215,7 @@ impl Sent {
 }
 
 /// `ctrl+shift+t` → wtype's modifier names and the key's keysym name.
-fn parse_combo(combo: &str) -> Result<(Vec<&'static str>, &str), String> {
+pub(super) fn parse_combo(combo: &str) -> Result<(Vec<&'static str>, &str), String> {
     let mut parts: Vec<&str> = combo.split('+').collect();
     let key = parts.pop().unwrap_or_default();
     let keysym = !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
@@ -242,7 +242,7 @@ fn parse_combo(combo: &str) -> Result<(Vec<&'static str>, &str), String> {
 }
 
 /// Checks `expect` against the window with keyboard focus.
-fn check_expect(expect: &Expect, view: &View) -> Result<Focus, ToolError> {
+pub(super) fn check_expect(expect: &Expect, view: &View) -> Result<Focus, ToolError> {
     let focused = view.focused_window().and_then(|id| view.windows().get(&id));
     let matched = match expect {
         Expect::Unchecked => return Ok(Focus::Unchecked),
@@ -278,6 +278,18 @@ pub(crate) async fn type_input(
     expect: Expect,
 ) -> Result<Outcome, CallError> {
     typing.check()?;
+    match input.keyboard.and_then(std::ffi::OsStr::to_str) {
+        Some("native") => return super::native::type_input(input, typing, expect).await,
+        None if input.keyboard.is_none() => {}
+        Some("wtype") => {}
+        _ => {
+            return Err(ToolError::new(
+                ErrorName::Refused,
+                "NIRI_COMPUTER_USE_KEYBOARD must be wtype or native",
+            )
+            .into());
+        }
+    }
     let mut waiter = niri::waiter(input.niri.events).await?;
     let focus = check_expect(&expect, waiter.view())?;
     if let Some(refused) = policy::refuse_input(input.policy, super::focused_app_id(waiter.view()))
@@ -315,7 +327,7 @@ pub(crate) async fn type_input(
 
 /// The outcome with what went out: for a call that stopped early, how many characters or
 /// keys; for `submit`, whether `Return` was pressed.
-fn ended(outcome: Outcome, focus: Focus, typing: &Typing, sent: Sent) -> Outcome {
+pub(super) fn ended(outcome: Outcome, focus: Focus, typing: &Typing, sent: Sent) -> Outcome {
     let (typed, pressed, submitted) = match typing {
         Typing::Keys(keys) => (None, (sent.keys < keys.len()).then_some(sent.keys), None),
         Typing::Text { text, submit } => {

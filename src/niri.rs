@@ -1,10 +1,12 @@
 //! The only module that talks to niri.
 
 pub(crate) mod events;
+pub(crate) mod keyboard;
 pub(crate) mod pointer;
 mod request;
 pub(crate) mod version;
 pub(crate) mod waiter;
+mod wayland;
 
 use std::collections::BTreeMap;
 use std::path::Path;

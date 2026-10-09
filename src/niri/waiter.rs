@@ -9,7 +9,10 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use niri_ipc::state::{EventStreamState, EventStreamStatePart as _, WindowsState, WorkspacesState};
+use niri_ipc::state::{
+    EventStreamState, EventStreamStatePart as _, KeyboardLayoutsState, WindowsState,
+    WorkspacesState,
+};
 use niri_ipc::{Event, Window, Workspace};
 use tokio::sync::broadcast;
 use tokio::time::Instant;
@@ -36,6 +39,7 @@ pub(crate) struct Numbers {
 pub(crate) struct View {
     windows: WindowsState,
     workspaces: WorkspacesState,
+    keyboard_layouts: KeyboardLayoutsState,
 }
 
 impl View {
@@ -47,13 +51,25 @@ impl View {
             workspaces: WorkspacesState {
                 workspaces: state.workspaces.workspaces.clone(),
             },
+            keyboard_layouts: KeyboardLayoutsState {
+                keyboard_layouts: state.keyboard_layouts.keyboard_layouts.clone(),
+            },
         }
     }
 
     fn apply(&mut self, event: Event) {
-        if let Some(event) = self.workspaces.apply(event) {
-            self.windows.apply(event);
+        if let Some(event) = self.workspaces.apply(event)
+            && let Some(event) = self.windows.apply(event)
+        {
+            self.keyboard_layouts.apply(event);
         }
+    }
+
+    pub(crate) fn keyboard_group(&self) -> Option<u32> {
+        self.keyboard_layouts
+            .keyboard_layouts
+            .as_ref()
+            .map(|layouts| u32::from(layouts.current_idx))
     }
 
     pub(crate) const fn windows(&self) -> &HashMap<u64, Window> {

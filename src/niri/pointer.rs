@@ -10,9 +10,7 @@ use std::time::Duration;
 use rustix::time::{ClockId, clock_gettime};
 use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
-use tokio::net::UnixStream;
 use tokio::time::Instant;
-use wayland_client::backend::WaylandError;
 use wayland_client::protocol::wl_callback::{self, WlCallback};
 use wayland_client::protocol::wl_output::{self, WlOutput};
 use wayland_client::protocol::wl_pointer::{self, AxisSource, ButtonState};
@@ -22,6 +20,7 @@ use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, delegate_noo
 use wayland_protocols_wlr::virtual_pointer::v1::client::zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1;
 use wayland_protocols_wlr::virtual_pointer::v1::client::zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1;
 
+use super::wayland::{Synced, connect, roundtrip};
 use crate::coords::ProtocolPt;
 use crate::error::{ErrorName, ToolError};
 
@@ -106,7 +105,7 @@ impl Pointer {
         output: &str,
     ) -> Result<Self, ToolError> {
         let deadline = Instant::now() + DEADLINE;
-        let connection = connect(display, niri_pid, deadline).await?;
+        let connection = connect(display, niri_pid).await?;
         let fd = connection
             .backend()
             .poll_fd()
@@ -217,40 +216,6 @@ impl Drop for Pointer {
     }
 }
 
-/// Connects to `display` and checks that the process serving it is niri.
-async fn connect(
-    display: &Path,
-    niri_pid: u32,
-    deadline: Instant,
-) -> Result<Connection, ToolError> {
-    let stream = tokio::time::timeout_at(deadline, UnixStream::connect(display))
-        .await
-        .map_err(|_| {
-            ToolError::new(
-                ErrorName::DeadlineExceeded,
-                format!(
-                    "connect to {}: no answer within {DEADLINE:?}",
-                    display.display()
-                ),
-            )
-        })?
-        .map_err(|error| upstream(&format!("connect to {}: {error}", display.display())))?;
-    let peer = stream
-        .peer_cred()
-        .map_err(|error| upstream(&format!("read the Wayland display's credentials: {error}")))?
-        .pid();
-    if peer != i32::try_from(niri_pid).ok() {
-        return Err(upstream(&format!(
-            "the Wayland display {} is served by PID {peer:?}, not niri's PID {niri_pid}",
-            display.display()
-        )));
-    }
-    let stream = stream
-        .into_std()
-        .map_err(|error| upstream(&format!("use the Wayland socket: {error}")))?;
-    Connection::from_socket(stream).map_err(|error| upstream(&format!("start Wayland: {error}")))
-}
-
 /// Binds the seat, the virtual pointer manager (version 2, which binds a pointer to an
 /// output) and every output that reports its name (version 4).
 fn bind_globals(
@@ -281,45 +246,12 @@ fn bind_globals(
     Ok((seat, manager))
 }
 
-/// Asks for a callback and dispatches events until it arrives or `deadline` passes.
-async fn roundtrip(
-    connection: &Connection,
-    queue: &mut EventQueue<State>,
-    state: &mut State,
-    readable: &AsyncFd<OwnedFd>,
-    deadline: Instant,
-) -> Result<(), ToolError> {
-    state.synced = false;
-    connection.display().sync(&queue.handle(), ());
-    let broken =
-        |error: &dyn std::fmt::Display| upstream(&format!("niri's Wayland display: {error}"));
-    queue.flush().map_err(|error| broken(&error))?;
-    loop {
-        queue
-            .dispatch_pending(state)
-            .map_err(|error| broken(&error))?;
-        if state.synced {
-            return Ok(());
-        }
-        let Some(guard) = queue.prepare_read() else {
-            continue;
-        };
-        let mut ready = tokio::time::timeout_at(deadline, readable.readable())
-            .await
-            .map_err(|_| {
-                ToolError::new(
-                    ErrorName::DeadlineExceeded,
-                    format!("niri's Wayland display didn't answer within {DEADLINE:?}"),
-                )
-            })?
-            .map_err(|error| broken(&error))?;
-        match guard.read() {
-            Ok(_) => {}
-            Err(WaylandError::Io(error)) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                ready.clear_ready();
-            }
-            Err(error) => return Err(broken(&error)),
-        }
+impl Synced for State {
+    fn synced(&self) -> bool {
+        self.synced
+    }
+    fn reset(&mut self) {
+        self.synced = false;
     }
 }
 

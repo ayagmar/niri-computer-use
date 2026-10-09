@@ -10,6 +10,8 @@ pub(crate) const CANCELLED: &str = "the client cancelled the request";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ErrorName {
+    /// Requested input cannot be sent safely by the selected backend.
+    Refused,
     /// niri's socket is unknown or couldn't be reached.
     NiriUnavailable,
     /// A request or wait passed its deadline.

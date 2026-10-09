@@ -166,6 +166,46 @@ async fn a_pointer_marker_releases_its_buttons_without_asking_about_wtype() {
 }
 
 #[tokio::test]
+async fn failed_native_release_keeps_the_marker_even_after_a_yes() {
+    let fixture = Fixture::new("recover-native");
+    write_marker(
+        &fixture,
+        &json!({
+            "operation": "type_text", "phase": "pending", "server_pid": 1, "since": "t",
+            "keyboard": {"codes": [30], "group": 0}
+        }),
+    );
+    let out = answer(&fixture, "recover", "yes\n").await;
+    assert!(!out.status.success());
+    assert!(marker_exists(&fixture));
+    assert!(
+        !String::from_utf8(out.stdout)
+            .unwrap()
+            .contains("wtype process")
+    );
+}
+
+#[tokio::test]
+async fn native_recovery_refuses_invalid_protocol_codes() {
+    let fixture = Fixture::new("recover-native-code");
+    write_marker(
+        &fixture,
+        &json!({
+            "operation": "key", "phase": "pending", "server_pid": 1, "since": "t",
+            "keyboard": {"codes": [u32::MAX], "group": 0}
+        }),
+    );
+    let out = answer(&fixture, "recover", "yes\n").await;
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8(out.stderr)
+            .unwrap()
+            .contains("invalid native keycodes")
+    );
+    assert!(marker_exists(&fixture));
+}
+
+#[tokio::test]
 async fn nothing_to_recover_is_fine() {
     let fixture = Fixture::new("recover-none");
     let out = run(&fixture, "recover").await;

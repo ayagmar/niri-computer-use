@@ -465,3 +465,17 @@ These match the versions installed locally.
 
 - The review explicitly authorizes read-only host metadata snapshots in headless mode. C1 now brackets the whole cage/nested lifecycle, including failure cleanup, in both modes. It reads niri outputs, host Noctalia `status` only, runtime/X11 entry names and dconf mtime. It never reads host pixels, clipboard contents or window titles and never sends input or other Noctalia commands.
 - These metadata checks request no input lease and do not unlock the desktop; the headless control suite passed with C1 reporting unchanged host state. C1 is conservative while the host is in use: unrelated output, lock/panel, socket or dconf changes can fail the run, and a diff does not attribute causation to the harness. This limitation is preferable to silently disabling the backstop. Snapshot reads keep their runner deadlines; tests use disposable fake snapshots, not the real host.
+
+## 2026-10-09: experimental native keyboard
+
+| Crate | Version | Published | Why |
+|---|---|---|---|
+| `wayland-protocols-misc` | 0.3.12 | 2026-03-31 | Upstream zwp_virtual_keyboard_v1 bindings; client only, compatible with existing wayland-client 0.31.15. |
+| `xkbcommon` | 0.9.0 | 2025-08-09 | Safe libxkbcommon API for resolving the compositor's expanded XKB map. Default features disabled; uses installed libxkbcommon, not a generated layout. |
+| `xkeysym` (transitive) | 0.2.1 | 2024-06-07 | Keysym/keycode types required by xkbcommon 0.9.0. |
+
+- Verified latest stable versions and publish dates from crates.io API on 2026-10-09; all are older than seven days. No other dependency changed. xkbcommon requires libxkbcommon at build/runtime; pkg-config reported installed 1.13.2. No package installation.
+- `NIRI_COMPUTER_USE_KEYBOARD=native` is experimental and explicit. Absent or `wtype` selects the existing gated wtype path. Invalid selection refuses input. No automatic fallback. Native preflights the entire request against the active layout, sends complete press/release pairs and checks focus/layout and stop before each key, with a bounded Wayland round trip per pair.
+- A character absent as a direct symbol refuses the request before typing. Compose/dead-key text and arbitrary Unicode are not implemented; plain US cannot type the existing UTF-8 corpus. This blocks default promotion. Physical modifier state is not available to an unfocused wl_keyboard subscriber: native cannot yet promise preservation of physical modifiers. It must only be used in an isolated session without physical input.
+- Normal, stop and cancellation explicitly release synthetic state; marker removal requires an acknowledgement. SIGKILL cannot run cleanup: a native marker records conservative evdev release codes and layout (never text); recover sends those releases and zero modifiers from a fresh keyboard and still requires human confirmation. Immediate crash release is not guaranteed, and remains a promotion blocker. wtype's existing recovery behavior is unchanged.
+- Keymap unit tests use a committed, expanded, controlled XKB fixture with no environment names or system includes, not the host's layout configuration. Shared peer checking and deadline-bound Wayland dispatch live in niri/ for both native devices.

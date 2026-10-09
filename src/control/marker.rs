@@ -31,6 +31,16 @@ pub(crate) struct Marker {
     /// The output the pointer that pressed them is bound to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) output: Option<String>,
+    /// Native protocol evdev keycodes that may need release, never typed text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) keyboard: Option<Native>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Native {
+    pub(crate) codes: Vec<u32>,
+    pub(crate) group: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,6 +71,7 @@ impl Marker {
             child: None,
             buttons,
             output: None,
+            keyboard: None,
         }
     }
 }
