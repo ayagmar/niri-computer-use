@@ -4,6 +4,7 @@
 //! the screenshot's metadata and `wev`'s place in niri's layout, independently of the
 //! server's mapping. Everything the run creates lives under `TEST_DIR`.
 
+mod crash;
 mod stop;
 
 use std::ffi::OsString;
@@ -21,9 +22,9 @@ use crate::session::Session;
 use crate::wev::{self, Pointer};
 
 /// Within what is left of the run's deadline.
-const NOCTALIA_DEADLINE: Duration = Duration::from_secs(110);
-const SERVER_DEADLINE: Duration = Duration::from_secs(100);
-const WEV_DEADLINE: Duration = Duration::from_secs(100);
+const NOCTALIA_DEADLINE: Duration = Duration::from_secs(160);
+const SERVER_DEADLINE: Duration = Duration::from_secs(150);
+const WEV_DEADLINE: Duration = Duration::from_secs(150);
 const READY: Duration = Duration::from_secs(20);
 const WAIT: Duration = Duration::from_secs(5);
 /// C4's pass rule, in logical pixels, including `wev`'s `wl_fixed` rounding.
@@ -69,6 +70,7 @@ pub(crate) fn run(session: &mut Session<'_>, output: &LogicalOutput, server: &st
     keys(session, &mut client, &wev)?;
     stop::run(session, &mut client, &wev, server)?;
     structured(&client.call(session, "release_desktop", json!({}))?)?;
+    crash::run(session, &wev, server)?;
     client.stop()?;
     process.stop()?;
     noctalia.stop().map(drop)

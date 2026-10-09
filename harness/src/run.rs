@@ -25,7 +25,7 @@ const NOCTALIA_SOCKET: &str = "probes/noctalia-socket/target/debug/noctalia-sock
 const SERVER: &str = "target/debug/niri-computer-use";
 const CONTROL_DEADLINE: Duration = Duration::from_secs(90);
 const ACTIONS_DEADLINE: Duration = Duration::from_secs(130);
-const INPUT_DEADLINE: Duration = Duration::from_secs(130);
+const INPUT_DEADLINE: Duration = Duration::from_secs(180);
 /// All `noctalia config validate` prints for a config without warnings. It exits 0 even
 /// when it warns, for example about an unknown key.
 const NOCTALIA_VALID: &str = "\u{2713} Config is valid\n";
