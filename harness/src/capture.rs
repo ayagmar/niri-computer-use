@@ -284,7 +284,7 @@ fn host_run(program: &str, args: Vec<OsString>) -> Result<Output> {
 }
 
 /// Captures `name` five times per format and scale, interleaved, and reports each case.
-/// Fails if any image has a size other than round(logical size × scale).
+/// Fails if any image has a size other than trunc(logical size × scale), as grim writes.
 fn c15(
     name: &str,
     output: &LogicalOutput,
@@ -321,7 +321,7 @@ fn c15(
 }
 
 fn scaled(logical: u32, factor: f64) -> Result<u32> {
-    let pixels = to_pixels(f64::from(logical) * factor)?;
+    let pixels = to_pixels((f64::from(logical) * factor).floor())?;
     u32::try_from(pixels).context("image size")
 }
 
@@ -473,6 +473,28 @@ mod tests {
             ),
             "{message}"
         );
+    }
+
+    #[test]
+    fn c15_accepts_grims_truncated_half_size_on_an_odd_width_output() {
+        let lines = c15("o", &output(853, 480, 1.5), |args| {
+            let size = if args.iter().any(|arg| arg == "0.5") {
+                (426_u16, 240_u16)
+            } else {
+                (853, 480)
+            };
+            let mut image = header(args, Some(size));
+            if args.iter().any(|arg| arg == "png") {
+                let bytes = [
+                    u32::from(size.0).to_be_bytes(),
+                    u32::from(size.1).to_be_bytes(),
+                ]
+                .concat();
+                image.get_mut(16..24).unwrap().copy_from_slice(&bytes);
+            }
+            Ok(written(image))
+        });
+        assert!(lines.is_ok(), "{lines:?}");
     }
 
     #[test]
