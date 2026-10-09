@@ -215,8 +215,16 @@ pub(crate) fn output(name: &str, logical: Option<(i32, i32, u32, u32, f64)>) -> 
         model: "Fake".to_owned(),
         serial: None,
         physical_size: None,
-        modes: Vec::new(),
-        current_mode: None,
+        modes: logical
+            .map(|(_, _, w, h, scale)| niri_ipc::Mode {
+                width: format!("{:.0}", f64::from(w) * scale).parse().unwrap(),
+                height: format!("{:.0}", f64::from(h) * scale).parse().unwrap(),
+                refresh_rate: 60000,
+                is_preferred: true,
+            })
+            .into_iter()
+            .collect(),
+        current_mode: logical.map(|_| 0),
         is_custom_mode: false,
         vrr_supported: false,
         vrr_enabled: false,

@@ -6,7 +6,39 @@
 //! v26.04), and every encoded request is pushed back through a port of that forward
 //! formula: a request that wouldn't land on its target is never sent.
 
-use niri_ipc::{LogicalOutput, Transform};
+use niri_ipc::{LogicalOutput, Output, Transform};
+
+/// niri's pointer space comes from Smithay's `Space::output_geometry` (ff5fa7df):
+/// transformed physical mode / fractional scale, ceiled, not IPC's truncated size.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "validated positive sizes bounded by u32::MAX / K, which also fits Smithay's i32 space"
+)]
+pub(crate) fn motion_geometry(output: &Output) -> Option<LogicalOutput> {
+    let mut geometry = output.logical?;
+    let mode = output.modes.get(output.current_mode?)?;
+    if !geometry.scale.is_finite() || geometry.scale <= 0.0 {
+        return None;
+    }
+    let (w, h) = match geometry.transform {
+        Transform::_90 | Transform::_270 | Transform::Flipped90 | Transform::Flipped270 => {
+            (mode.height, mode.width)
+        }
+        Transform::Normal | Transform::_180 | Transform::Flipped | Transform::Flipped180 => {
+            (mode.width, mode.height)
+        }
+    };
+    let width = (f64::from(w) / geometry.scale).ceil();
+    let height = (f64::from(h) / geometry.scale).ceil();
+    let max = f64::from(u32::MAX) / K;
+    if width < 1.0 || height < 1.0 || width > max || height > max {
+        return None;
+    }
+    geometry.width = width as u32;
+    geometry.height = height as u32;
+    Some(geometry)
+}
 
 /// `motion_absolute` resolution: an extent is the untransformed logical size times `K`.
 const K: f64 = 1000.0;

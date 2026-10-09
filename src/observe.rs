@@ -119,6 +119,8 @@ pub(crate) struct Screenshot {
     pub(crate) metadata: Metadata,
     /// The captured output as niri described it.
     pub(crate) geometry: LogicalOutput,
+    /// Pointer space from the physical mode, which can differ from IPC geometry.
+    pub(crate) motion_geometry: Option<LogicalOutput>,
     pub(crate) image: Vec<u8>,
 }
 
@@ -159,6 +161,9 @@ pub(crate) async fn screenshot(
         )
         .into());
     }
+    let motion_geometry = outputs
+        .get(&plan.metadata.output)
+        .and_then(crate::coords::motion_geometry);
     Ok(Screenshot {
         metadata: Metadata {
             captured_at_unix_ms: captured_at,
@@ -166,6 +171,7 @@ pub(crate) async fn screenshot(
             ..plan.metadata
         },
         geometry: *output.logical,
+        motion_geometry,
         image: done.stdout,
     })
 }
