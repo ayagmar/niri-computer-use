@@ -18,6 +18,7 @@ export default defineConfig({
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/ayagmar/niri-computer-use' },
 			],
+			customCss: ['./src/styles/theme.css'],
 			sidebar: groups.map(({ label, directory }) => ({ label, items: [{ autogenerate: { directory } }] })),
 		}),
 	],

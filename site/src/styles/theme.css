@@ -1,0 +1,71 @@
+/* A restrained theme: system fonts, one teal accent, quieter grays. */
+
+:root {
+	--sl-font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Noto Sans', 'Cantarell', sans-serif;
+	--sl-font-mono: ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'DejaVu Sans Mono', monospace;
+
+	--sl-color-accent-low: #10302d;
+	--sl-color-accent: #2aa198;
+	--sl-color-accent-high: #a7e3dc;
+
+	--sl-color-white: #f2f4f5;
+	--sl-color-gray-1: #e0e4e6;
+	--sl-color-gray-2: #b9c0c4;
+	--sl-color-gray-3: #8a9399;
+	--sl-color-gray-4: #555e64;
+	--sl-color-gray-5: #353c41;
+	--sl-color-gray-6: #22282c;
+	--sl-color-black: #151a1d;
+
+	--sl-content-width: 46rem;
+}
+
+:root[data-theme='light'] {
+	--sl-color-accent-low: #d3efeb;
+	--sl-color-accent: #0e756d;
+	--sl-color-accent-high: #0a3d39;
+
+	--sl-color-white: #151a1d;
+	--sl-color-gray-1: #22282c;
+	--sl-color-gray-2: #353c41;
+	--sl-color-gray-3: #555e64;
+	--sl-color-gray-4: #8a9399;
+	--sl-color-gray-5: #c4cbcf;
+	--sl-color-gray-6: #eef1f2;
+	--sl-color-gray-7: #f7f9f9;
+	--sl-color-black: #ffffff;
+}
+
+/* Headings a little tighter and heavier than Starlight's defaults. */
+.sl-markdown-content :is(h2, h3) {
+	letter-spacing: -0.01em;
+}
+
+/* Code in headings, as on the error reference: no chip, a little smaller. */
+.sl-markdown-content :is(h2, h3) code {
+	background: none;
+	padding: 0;
+	font-size: 0.85em;
+}
+
+/* Reference tables: keep code in the first column on one line. */
+.sl-markdown-content table td:first-child code {
+	white-space: nowrap;
+}
+
+/* The landing page: a narrower reading column. */
+[data-has-hero] .hero {
+	padding-block: 2.5rem 1.5rem;
+}
+
+/* Stills from nested runs. */
+.sl-markdown-content img {
+	border: 1px solid var(--sl-color-gray-5);
+	border-radius: 0.5rem;
+	box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 0.25);
+}
+
+[data-has-hero] .sl-markdown-content {
+	max-width: 46rem;
+	margin-inline: auto;
+}
