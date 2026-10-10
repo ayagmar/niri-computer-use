@@ -587,7 +587,7 @@ impl Server {
                 tool_router.remove_route(tool);
             }
         }
-        if !engine.noctalia_installed() || !engine.unrestricted() {
+        if !engine.noctalia_installed() || !session.settings().unrestricted.enabled() {
             tool_router.remove_route("noctalia");
         }
         if !engine.has_a11y() {
@@ -610,7 +610,7 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         self.audited(&context, "status", Value::Null, async {
-            structured(&self.engine.status().await)
+            structured(&self.engine.status(&self.session).await)
         })
         .await
     }
@@ -634,7 +634,7 @@ impl Server {
     ) -> Result<CallToolResult, ErrorData> {
         let label = self.label(&context);
         self.audited(&context, "acquire_desktop", Value::Null, async {
-            let acquired = self.engine.acquire(&label).await;
+            let acquired = self.engine.acquire(&self.session, &label).await;
             answer(acquired.map(|(holder, users_window)| {
                 serde_json::json!({
                     "holder": holder,
@@ -663,7 +663,7 @@ impl Server {
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
         self.audited(&context, "release_desktop", logged, async {
-            structured(&self.engine.release(args.restore_focus).await)
+            structured(&self.engine.release(&self.session, args.restore_focus).await)
         })
         .await
     }
@@ -745,7 +745,7 @@ impl Server {
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
         let niri = self.engine.niri();
-        let preset = self.engine.policy().preset(&args.preset);
+        let preset = self.session.settings().policy.preset(&args.preset);
         let (reuse, shoot) = (args.reuse, args.screenshot);
         let work = async move { act::launch(niri, preset?, reuse).await };
         self.act(
@@ -816,7 +816,7 @@ impl Server {
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
         let niri = self.engine.niri();
-        let unrestricted = self.engine.unrestricted();
+        let unrestricted = self.session.settings().unrestricted.enabled();
         let shoot = args.screenshot;
         let work = async move {
             let action = serde_json::from_value(Value::Object(args.action)).map_err(|error| {
@@ -1055,7 +1055,7 @@ impl Server {
         flag(&mut logged, "screenshot", args.screenshot);
         let expect = args.expect.into();
         let work = async {
-            let input = self.engine.input()?;
+            let input = self.engine.input(&self.session)?;
             paste::paste(input, &args.text, args.keys.combo(), expect).await
         };
         let asked = Asked {
@@ -1123,7 +1123,7 @@ impl Server {
                 Ok(ask) => ask,
                 Err(message) => return Ok(invalid(&message)),
             };
-            match self.engine.elements(&ask).await {
+            match self.engine.elements(&self.session, &ask).await {
                 Ok(listing) => structured(&listing),
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
                 Err(CallError::Tool(error)) => Ok(error.into_result()),
@@ -1157,7 +1157,7 @@ impl Server {
                 .as_deref()
                 .map(|path| {
                     let home = self.engine.env().home.as_deref();
-                    self.engine.policy().save_target(home, path)
+                    self.session.settings().policy.save_target(home, path)
                 })
                 .transpose();
             let save = match save {
@@ -1352,7 +1352,7 @@ impl Server {
     ) -> Result<CallToolResult, ErrorData> {
         let tool = gesture.as_ref().map_or("pointer", Gesture::tool);
         let work = async {
-            let input = self.engine.input()?;
+            let input = self.engine.input(&self.session)?;
             let shot = self.engine.shot(&aim.id);
             let element = |id: &str| self.engine.element(id);
             pointer::point(input, shot, gesture?, &aim.keys, element).await
@@ -1383,7 +1383,7 @@ impl Server {
         } = keying;
         let tool = typing.tool();
         let work = async {
-            let input = self.engine.input()?;
+            let input = self.engine.input(&self.session)?;
             keyboard::type_input(input, typing, expect).await
         };
         self.act(
@@ -1414,7 +1414,7 @@ impl Server {
         // Boxed, because the readiness report, the action's work and its wait make large
         // futures.
         Box::pin(self.record(context, Call::action(tool), logged, async {
-            match self.engine.act(shoot, work).await {
+            match self.engine.act(&self.session, shoot, work).await {
                 Ok(evidenced) => outcome(&evidenced),
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
                 Err(CallError::Tool(error)) => Ok(error.into_result()),
@@ -1614,6 +1614,7 @@ mod tests {
     use crate::a11y::Presence;
     use crate::audit::Audit;
     use crate::error::ErrorName;
+    use crate::session::{Settings, Vars};
 
     #[test]
     fn only_close_window_is_destructive_and_only_actions_change_anything() {
@@ -1750,16 +1751,21 @@ mod tests {
         assert!(args(None, 501).ask().is_err());
     }
 
-    /// A server for `env`, without niri or an accessibility bus.
-    fn server(env: Env) -> Server {
+    /// An engine for `env`, without niri or an accessibility bus.
+    fn engine(env: Env) -> Arc<Engine> {
         let events = Err(ToolError::new(ErrorName::NiriUnavailable, "no niri"));
         let absent = Presence {
             available: false,
             address: None,
             reason: Some("no session bus".to_owned()),
         };
-        let engine = Engine::new(env, events, Audit::new(None), absent);
-        Server::new(Arc::new(engine), Session::local())
+        Arc::new(Engine::new(env, events, Audit::new(None), absent))
+    }
+
+    /// A server of `engine` for a session with `vars`.
+    fn server(engine: &Arc<Engine>, vars: Vars) -> Server {
+        let settings = Settings::read(engine.env(), vars);
+        Server::new(Arc::clone(engine), Session::local(settings))
     }
 
     #[test]
@@ -1769,32 +1775,37 @@ mod tests {
         let noctalia = dir.join("noctalia");
         std::fs::write(&noctalia, "").unwrap();
         std::fs::set_permissions(&noctalia, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let installed = Env {
+        let installed = engine(Env {
             path: Some(dir.clone().into_os_string()),
             ..Env::default()
-        };
-        let installed = server(installed);
-        let missing = server(Env::default());
+        });
+        let missing = server(&engine(Env::default()), Vars::default());
+        let restricted = server(&installed, Vars::default());
         for tool in SHELL_TOOLS {
-            assert!(installed.tool_router.has_route(tool), "{tool}");
+            assert!(restricted.tool_router.has_route(tool), "{tool}");
             assert!(!missing.tool_router.has_route(tool), "{tool}");
         }
         assert!(missing.tool_router.has_route("status"));
-        // The passthrough also needs unrestricted.
-        assert!(!installed.tool_router.has_route("noctalia"));
-        let unrestricted = Env {
-            path: Some(dir.clone().into_os_string()),
+        // The passthrough also needs unrestricted, which one session's variable turns on
+        // for that session alone.
+        let unrestricted = Vars {
             unrestricted: Some("1".into()),
-            ..Env::default()
+            ..Vars::default()
         };
-        let unrestricted = server(unrestricted);
+        let unrestricted = server(&installed, unrestricted);
         assert!(unrestricted.tool_router.has_route("noctalia"));
+        assert!(!restricted.tool_router.has_route("noctalia"));
+        assert!(
+            !server(&installed, Vars::default())
+                .tool_router
+                .has_route("noctalia")
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn the_server_names_itself_and_gives_instructions() {
-        let server = server(Env::default());
+        let server = server(&engine(Env::default()), Vars::default());
         let info = server.get_info();
         assert_eq!(info.server_info.name, "niri-computer-use");
         assert!(

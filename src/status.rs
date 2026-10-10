@@ -14,7 +14,7 @@ use crate::error::ToolError;
 use crate::niri::events::StreamState;
 use crate::niri::{self, version::Compat};
 use crate::noctalia::{self, Presence};
-use crate::policy::{self, Facts, Loaded, PolicyStatus, UnrestrictedStatus};
+use crate::policy::{self, Facts, Loaded, PolicyStatus, Unrestricted, UnrestrictedStatus};
 use crate::{Env, a11y, discover};
 
 /// Programs the server runs, reported as found on `PATH` or not.
@@ -63,6 +63,7 @@ pub(crate) struct Sources<'a> {
     pub(crate) noctalia_installed: bool,
     pub(crate) lease: LeaseStatus,
     pub(crate) policy: &'a Loaded,
+    pub(crate) unrestricted: &'a Unrestricted,
     /// Decided once at startup for the server, whose tool list depends on it.
     pub(crate) accessibility: &'a a11y::Presence,
 }
@@ -102,6 +103,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         noctalia_installed,
         lease,
         policy,
+        unrestricted,
         accessibility,
     } = sources;
     let socket = &env.niri_socket;
@@ -148,7 +150,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         accessibility: accessibility.clone(),
         audit: audit.status(),
         policy: policy.status(),
-        unrestricted: env.unrestricted(policy).status(),
+        unrestricted: unrestricted.status(),
         binaries: BINARIES
             .into_iter()
             .map(|name| (name, env.finds(name)))
@@ -183,6 +185,10 @@ mod tests {
             noctalia_installed: false,
             lease: status_without_desk(&Env::default()),
             policy: &Loaded::Missing,
+            unrestricted: &Unrestricted {
+                policy: false,
+                env: Ok(false),
+            },
             accessibility: &a11y::detect(None).await,
         };
         let status = serde_json::to_value(collect(&Env::default(), sources).await).unwrap();

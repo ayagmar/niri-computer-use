@@ -17,8 +17,9 @@ use crate::error::{CallError, ErrorName, ToolError};
 use crate::input::Input;
 use crate::niri::events::{EventStream, StreamState};
 use crate::observe;
-use crate::policy::{self, Loaded, SaveTarget};
+use crate::policy::{self, SaveTarget};
 use crate::refs::Shot;
+use crate::session::Session;
 use crate::{Env, clipboard, elements, niri, noctalia, runner, settle, status, wait};
 
 #[derive(Debug)]
@@ -28,8 +29,6 @@ pub(crate) struct Engine {
     events: Result<EventStream, ToolError>,
     audit: Audit,
     desk: Desk,
-    /// Read once at startup.
-    policy: Loaded,
     /// Decided once, because the tool list depends on it.
     noctalia_installed: bool,
     /// Whether there is an accessibility bus, decided once at startup for the same reason.
@@ -83,7 +82,6 @@ impl Engine {
         let a11y = accessibility.address.clone().map(A11y::new);
         Self {
             desk: Desk::start(&env),
-            policy: env.policy(),
             noctalia_installed: env.finds("noctalia"),
             env,
             events,
@@ -102,21 +100,12 @@ impl Engine {
         &self.audit
     }
 
-    pub(crate) const fn policy(&self) -> &Loaded {
-        &self.policy
-    }
-
     pub(crate) const fn noctalia_installed(&self) -> bool {
         self.noctalia_installed
     }
 
     pub(crate) const fn has_a11y(&self) -> bool {
         self.a11y.is_some()
-    }
-
-    /// Whether `unrestricted` is on.
-    pub(crate) fn unrestricted(&self) -> bool {
-        self.env.unrestricted(&self.policy).enabled()
     }
 
     pub(crate) const fn niri(&self) -> act::Niri<'_> {
@@ -126,14 +115,15 @@ impl Engine {
         }
     }
 
-    /// What the input tools work with.
-    pub(crate) fn input(&self) -> Result<Input<'_>, ToolError> {
+    /// What the input tools work with, for `session`.
+    pub(crate) fn input<'a>(&'a self, session: &'a Session) -> Result<Input<'a>, ToolError> {
+        let settings = session.settings();
         Ok(Input {
             niri: self.niri(),
             display: &self.env.display,
             runtime: self.desk.runtime()?,
-            policy: &self.policy,
-            keyboard: self.env.keyboard.as_deref(),
+            policy: &settings.policy,
+            keyboard: settings.keyboard.as_deref(),
             a11y: self.a11y.as_ref(),
         })
     }
@@ -148,8 +138,9 @@ impl Engine {
         self.desk.element(id)
     }
 
-    /// The readiness report, as `status` returns it.
-    pub(crate) async fn status(&self) -> status::Status {
+    /// The readiness report, as `status` returns it to `session`.
+    pub(crate) async fn status(&self, session: &Session) -> status::Status {
+        let settings = session.settings();
         let event_stream = self
             .events
             .as_ref()
@@ -159,16 +150,21 @@ impl Engine {
             audit: &self.audit,
             noctalia_installed: self.noctalia_installed,
             lease: self.desk.status(),
-            policy: &self.policy,
+            policy: &settings.policy,
+            unrestricted: &settings.unrestricted,
             accessibility: &self.accessibility,
         };
         status::collect(&self.env, sources).await
     }
 
-    /// Takes the lease for `label`. Returns the holder and the window that had keyboard
-    /// focus, which `release` can give focus back to.
-    pub(crate) async fn acquire(&self, label: &str) -> Result<(Holder, Option<u64>), ToolError> {
-        let refusal = self.refusal().await;
+    /// Takes the lease for `session`, labelled `label`. Returns the holder and the window
+    /// that had keyboard focus, which `release` can give focus back to.
+    pub(crate) async fn acquire(
+        &self,
+        session: &Session,
+        label: &str,
+    ) -> Result<(Holder, Option<u64>), ToolError> {
+        let refusal = self.refusal(session).await;
         let focused = niri::waiter(self.events.as_ref())
             .await
             .ok()
@@ -179,10 +175,10 @@ impl Engine {
 
     /// Gives the lease up, with `restore_focus` first giving focus back to the user's
     /// window through the action gate.
-    pub(crate) async fn release(&self, restore_focus: bool) -> Release {
+    pub(crate) async fn release(&self, session: &Session, restore_focus: bool) -> Release {
         let users_window = self.desk.users_window();
         let restored = match (restore_focus, users_window) {
-            (true, Some(id)) => Some(self.restore(id).await),
+            (true, Some(id)) => Some(self.restore(session, id).await),
             _ => None,
         };
         Release {
@@ -196,12 +192,13 @@ impl Engine {
     /// or its outcome is in doubt.
     pub(crate) async fn act(
         &self,
+        session: &Session,
         shoot: bool,
         work: impl Future<Output = Result<Outcome, CallError>>,
     ) -> Result<act::Evidenced, CallError> {
         // Boxed, because the readiness report, the action's work and its wait make large
         // futures.
-        let refusal = Box::pin(self.refusal());
+        let refusal = Box::pin(self.refusal(session));
         let evidence = |outcome| Box::pin(self.evidence(outcome, shoot));
         self.desk.act(refusal, Box::pin(work), evidence).await
     }
@@ -220,6 +217,7 @@ impl Engine {
     /// held.
     pub(crate) async fn elements(
         &self,
+        session: &Session,
         ask: &elements::Ask,
     ) -> Result<elements::Listing, CallError> {
         let Some(a11y) = &self.a11y else {
@@ -233,7 +231,7 @@ impl Engine {
         Box::pin(elements::list(
             &self.env.niri_socket,
             a11y,
-            &self.policy,
+            &session.settings().policy,
             ask,
             remember,
         ))
@@ -292,8 +290,8 @@ impl Engine {
     }
 
     /// Focuses the user's window `id` through the action gate, as the outcome or the error.
-    async fn restore(&self, id: u64) -> Value {
-        let refusal = Box::pin(self.refusal());
+    async fn restore(&self, session: &Session, id: u64) -> Value {
+        let refusal = Box::pin(self.refusal(session));
         let work = Box::pin(act::refocus(self.niri(), id));
         let restored = match self.desk.act(refusal, work, std::future::ready).await {
             Ok(outcome) => serde_json::to_value(outcome),
@@ -339,10 +337,10 @@ impl Engine {
         Ok(shot)
     }
 
-    /// Why the lease may not be taken or an action run now, from the readiness report.
-    async fn refusal(&self) -> Option<ToolError> {
-        let report = self.status().await;
-        policy::refuse_control(report.facts(&self.policy))
+    /// Why `session` may not take the lease or act now, from the readiness report.
+    async fn refusal(&self, session: &Session) -> Option<ToolError> {
+        let report = self.status(session).await;
+        policy::refuse_control(report.facts(&session.settings().policy))
     }
 
     /// The outcome with the screenshot `shoot` asks for, or the one an outcome in doubt gets.
