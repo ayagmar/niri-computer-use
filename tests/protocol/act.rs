@@ -990,7 +990,8 @@ fn wtype_calls(fixture: &Fixture) -> Vec<String> {
 
 /// A wtype whose first call waits until the test creates `go`, so the test can move focus
 /// while it types.
-const FIRST_CALL_WAITS: &str = "if [ ! -e \"$DIR/first\" ]; then : > \"$DIR/first\"; while [ ! -e \"$DIR/go\" ]; do sleep 0.05; done; fi";
+const FIRST_CALL_WAITS: &str =
+    "if [ ! -e \"$DIR/first\" ]; then : > \"$DIR/first\"; await_file go; fi";
 
 /// Starts `tool`, moves focus to window 2 while wtype's first call runs, and returns the
 /// result.
@@ -1104,10 +1105,7 @@ async fn focus_moving_stops_the_rest_of_the_keys() {
 #[tokio::test]
 async fn a_screenshot_waits_for_the_running_action() {
     let mut desk = Desk::start("act-settled", "").await;
-    recording_wtype(
-        &desk.fixture,
-        "while [ ! -e \"$DIR/go\" ]; do sleep 0.05; done; : > \"$DIR/wtype.done\"",
-    );
+    recording_wtype(&desk.fixture, "await_file go; : > \"$DIR/wtype.done\"");
     desk.fixture.program(
         "grim",
         r#"if [ -e "$DIR/wtype.done" ]; then echo after; else echo during; fi > "$DIR/grim.when"; cat "$DIR/grim.out""#,
@@ -1151,7 +1149,7 @@ async fn captures_exclude_the_next_action_until_completion_or_cancellation() {
             "grim",
             r#"
             : > "$DIR/grim.started"
-            while [ ! -e "$DIR/grim.go" ]; do sleep 0.02; done
+            await_file grim.go
             cat "$DIR/grim.out"
         "#,
         );

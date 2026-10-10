@@ -15,6 +15,16 @@ const UTILITIES: [&str; 4] = ["cat", "head", "sleep", "tr"];
 
 pub(crate) const DISPLAY: &str = "wayland-test";
 
+/// The fake programs' bounded wait for a file the test creates: 500 polls of 20 ms.
+const AWAIT_FILE: &str = r#"await_file() {
+    polls=0
+    while [ ! -e "$DIR/$1" ]; do
+        if [ ! -d "$DIR" ] || [ "$polls" -ge 500 ]; then exit 1; fi
+        polls=$((polls + 1))
+        sleep 0.02
+    done
+}"#;
+
 /// Held while writing a fake program and while starting a server. A child forked during a
 /// write would inherit the open file until it execs, and running the program meanwhile
 /// fails with "Text file busy".
@@ -95,9 +105,11 @@ impl Fixture {
 
     /// A fake program on the server's `PATH`: a shell script that sees the test directory
     /// as `$DIR`. Programs record their arguments in `<name>.args` when they need to.
+    /// `await_file <name>` waits for `$DIR/<name>`, and exits the program after ten seconds
+    /// or once the test directory is gone: a `SIGKILL`ed server leaves its children running.
     pub(crate) fn program(&self, name: &str, body: &str) {
         let script = format!(
-            "#!/bin/sh\nPATH='{}'\nDIR='{}'\n{body}\n",
+            "#!/bin/sh\nPATH='{}'\nDIR='{}'\n{AWAIT_FILE}\n{body}\n",
             self.dir.join("utils").display(),
             self.dir.display()
         );
@@ -206,4 +218,42 @@ pub(crate) fn png(width: u32, height: u32) -> Vec<u8> {
     bytes.extend(height.to_be_bytes());
     bytes.extend([8, 2, 0, 0, 0, 0, 0, 0, 0]);
     bytes
+}
+
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the test runs a fake program itself, as the server's runner would"
+)]
+fn fake(fixture: &Fixture, name: &str) -> tokio::process::Child {
+    let _spawning = SPAWNING.lock().unwrap_or_else(PoisonError::into_inner);
+    tokio::process::Command::new(fixture.path(&format!("bin/{name}")))
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap()
+}
+
+/// The exit code of a fake program waiting for `go` once the test creates it, or once the
+/// test directory is removed instead.
+async fn await_file_exit(remove_dir: bool) -> Option<i32> {
+    let fixture = Fixture::new("await-file");
+    fixture.program("waiter", "await_file go");
+    let mut child = fake(&fixture, "waiter");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(child.try_wait().unwrap().is_none(), "returned before go");
+    if remove_dir {
+        drop(fixture);
+    } else {
+        std::fs::write(fixture.path("go"), "").unwrap();
+    }
+    let status = tokio::time::timeout(Duration::from_secs(2), child.wait())
+        .await
+        .expect("still waiting")
+        .unwrap();
+    status.code()
+}
+
+#[tokio::test]
+async fn a_fake_program_waits_for_its_file_but_not_past_its_test_directory() {
+    assert_eq!(await_file_exit(false).await, Some(0));
+    assert_eq!(await_file_exit(true).await, Some(1));
 }
