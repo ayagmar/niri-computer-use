@@ -154,6 +154,12 @@ impl Client {
             .ok_or_else(|| Failure::new(format!("request {id} failed: {reply}")))
     }
 
+    /// The reply to `id`, if the server has sent one by now.
+    pub(crate) fn replied(&self, id: u64) -> Result<Option<Value>> {
+        let text = fs::read_to_string(&self.log).context(format!("read {}", self.log.display()))?;
+        Ok(reply_in(&text, id))
+    }
+
     /// The names of the tools the server lists.
     pub(crate) fn tools(&mut self, session: &mut Session<'_>) -> Result<Vec<String>> {
         let id = self.request("tools/list", json!({}))?;

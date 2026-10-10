@@ -63,7 +63,7 @@ Without a marker it prints `No input-dirty marker: nothing to recover.` and exit
 
 - a running input program, such as `wtype`: ends it, if it is still that process
 - held pointer buttons: sends their release from a fresh virtual pointer, or, if it can't, asks you to press and release each of them
-- native keys: sends their release and zero modifiers from a fresh virtual keyboard, which also makes niri send the compositor's keymap again
+- native keys: sends their release and zero modifiers from a fresh virtual keyboard, which also makes niri send the compositor's keymap again. The modifiers go out in the layout niri has active; if niri doesn't say which that is, they go out in the layout the call started in, and `recover` says the focused application may show another layout until the next key
 - none of these: lists your running `wtype` processes, if any, and asks before ending them
 
 Then it asks you to check by hand:

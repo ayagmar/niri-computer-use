@@ -36,6 +36,8 @@ pub(crate) struct Niri {
     /// One message per request the fake received but doesn't answer.
     held: mpsc::UnboundedReceiver<()>,
     actions: mpsc::UnboundedReceiver<Action>,
+    /// The process ID of every connection's peer, in order.
+    peers: Arc<Mutex<Vec<i32>>>,
 }
 
 /// An event stream the server opened. Dropping it closes the connection.
@@ -83,18 +85,21 @@ impl Niri {
             held: held_to,
             actions: actions_to,
         };
-        tokio::spawn(async move {
-            while let Ok((connection, _)) = listener.accept().await {
-                tokio::spawn(serve(connection, channels.clone()));
-            }
-        });
+        let peers = Arc::new(Mutex::new(Vec::new()));
+        tokio::spawn(accept(listener, channels, Arc::clone(&peers)));
         Self {
             config,
             streams,
             abandoned,
             held,
             actions,
+            peers,
         }
+    }
+
+    /// Whether process `pid` has connected.
+    pub(crate) fn connected_from(&self, pid: i32) -> bool {
+        self.peers.lock().unwrap().contains(&pid)
     }
 
     pub(crate) fn hold_actions(&self, hold: bool) {
@@ -151,6 +156,16 @@ impl Niri {
         tokio::time::timeout(limit, self.abandoned.recv())
             .await
             .is_ok_and(|message| message.is_some())
+    }
+}
+
+/// Serves each connection to `listener`, noting its peer's process ID in `peers`.
+async fn accept(listener: UnixListener, channels: Channels, peers: Arc<Mutex<Vec<i32>>>) {
+    while let Ok((connection, _)) = listener.accept().await {
+        if let Some(pid) = connection.peer_cred().ok().and_then(|cred| cred.pid()) {
+            peers.lock().unwrap().push(pid);
+        }
+        tokio::spawn(serve(connection, channels.clone()));
     }
 }
 

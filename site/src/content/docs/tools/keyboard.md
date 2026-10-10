@@ -74,4 +74,5 @@ What changes with native:
 - `key` combinations still refuse keysyms the layout lacks.
 - `click`, `drag` and `scroll` can hold modifiers with `keys`.
 - If the server is killed mid-call, its crash guardian releases the keys and sends the compositor's keymap back.
+- A call that ends, is cancelled or is cleaned up after a crash leaves the focused application in the layout niri has active, also when you switched layouts during the call.
 

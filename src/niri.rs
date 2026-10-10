@@ -110,6 +110,17 @@ pub(crate) async fn outputs(socket: &Socket) -> Result<BTreeMap<String, Output>,
     Ok(outputs.into_iter().collect())
 }
 
+/// The keyboard layout niri has active right now, as an index into its layouts: the one
+/// the user's own keys type in. A virtual keyboard's group doesn't move it.
+pub(crate) async fn keyboard_group(socket: &Socket) -> Result<u32, ToolError> {
+    let Response::KeyboardLayouts(layouts) =
+        request::send(known(socket)?, &Request::KeyboardLayouts).await?
+    else {
+        return Err(unexpected("KeyboardLayouts"));
+    };
+    Ok(u32::from(layouts.current_idx))
+}
+
 /// niri's windows, as it reports them right now.
 pub(crate) async fn windows(socket: &Socket) -> Result<Vec<Window>, ToolError> {
     let Response::Windows(windows) = request::send(known(socket)?, &Request::Windows).await? else {

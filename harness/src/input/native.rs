@@ -45,8 +45,14 @@ pub(super) fn run(
     super::native_gestures::interrupt(session, &mut native, wev, server, false)?;
     super::native_gestures::interrupt(session, &mut native, wev, server, true)?;
     super::native_gestures::crash(session, native, wev, server)?;
-    super::native_gestures::typing_crash(session, wev, server, ("A", "typing"), |_| Ok(()))?;
+    let crash = super::native_gestures::Crash {
+        text: "A",
+        name: "typing",
+        switch_to: None,
+    };
+    super::native_gestures::typing_crash(session, wev, server, crash, |_| Ok(()))?;
     super::native_unicode::crash(session, wev, server)?;
+    super::native_unicode::layout_crash(session, wev, server)?;
     pacer.stop()?;
     super::guardian::reconnect(session, owner)?;
     structured(&owner.call(session, "acquire_desktop", json!({}))?)?;

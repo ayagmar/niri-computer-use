@@ -15,7 +15,8 @@ async fn serving(server: &mut Server) -> (u32, i32) {
     (serving, guardian(serving))
 }
 
-fn guardian(server: u32) -> i32 {
+/// The crash guardian of `server`: its one child, running `guard <its PID>`.
+pub(crate) fn guardian(server: u32) -> i32 {
     let children =
         std::fs::read_to_string(format!("/proc/{server}/task/{server}/children")).unwrap();
     let pid: i32 = children.split_whitespace().next().unwrap().parse().unwrap();

@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## Unreleased
 
+### Upgrading
+
+- Before upgrading, end every running `niri-computer-use` process, servers, bridges and shared engines alike, then start your clients again. `pgrep -a '^niri-computer-u'` lists them. Older builds keep their runtime directory under `XDG_RUNTIME_DIR` rather than beside niri's socket, so an old and a new server on one niri share neither the lease nor the stop flag, and they don't take the input-dirty marker's lock.
+
 ### Added
 
 - Optional GTK 4 button-activation acceptance in `make nested-input`: 100 actual activations with observed-counter latency percentiles.
@@ -66,7 +70,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - With `unrestricted` on and no preset for an app, the skill and the tool text have agents start it with `niri_action`'s `Spawn` and wait for its window, instead of asking for a preset.
 - The runtime directory that holds the lease, the stop flag and the input-dirty marker is `niri-computer-use/<instance>/` beside niri's socket with every symlink resolved, no longer under `XDG_RUNTIME_DIR`. A socket that doesn't resolve to the user's own leaves the server with no runtime directory rather than one picked another way.
 - `stop` and `resume` find niri's socket without connecting to it, so the stop key works while niri hangs.
-- A client that stops reading its server's output loses its session and the lease: once 32 lines wait for it, or one has waited 30 seconds, the bridge exits.
+- A client that stops reading its server's output loses its session and the lease: once 32 lines wait for it, or one has waited 30 seconds, the bridge exits. So does a client that sends more than 32 MiB the shared engine hasn't taken yet, so its closed stdin can't go unseen behind that input.
 
 ### Fixed
 
@@ -76,11 +80,11 @@ All notable changes to this project are documented here. The format follows [Kee
 - C15's nested capture assertions use grim's truncated image size instead of rounding odd dimensions.
 - `close_window` and `niri_action`'s `CloseWindow` refuse with `app_denied` to close a window whose app is on the policy's deny list, named or focused.
 - The audit log no longer keeps text an agent passes to `niri_action` or `noctalia`, such as a `Spawn` command or a notification body: it logs the action's name, field names, numbers and booleans with every string as its length in bytes, and only Noctalia's argument count and byte lengths.
-- Another session's `acquire_desktop` refuses with `lease_held` at once, instead of waiting for the owner's running action; the lease is checked again before it is granted.
+- Another session's `acquire_desktop` refuses with `lease_held` at once, instead of waiting for the owner's running action. After its readiness check it looks again at whether the session has ended, the stop flag and the input-dirty marker before granting the lease.
 - A stopped, cancelled or disconnected `paste` no longer restores the clipboard before a key already on its way arrives. If the server dies once the key may be on its way, the keeper keeps the pasted text and reports `clipboard: kept` rather than risk pasting the saved clipboard.
 - `paste` sends its key only once the keeper has answered that it still holds the text. A server delayed past the keeper's ten-second wait could paste the user's restored clipboard instead; now the call fails, says nothing was pasted, and the clipboard stays restored.
 - Servers for one niri share its lease and stop flag whatever `XDG_RUNTIME_DIR` or `NIRI_SOCKET` spelling their clients pass.
 - Every change to the input-dirty marker takes one lock, so an older call's cleanup can't remove a newer call's marker.
 - A marker left by a cleanup that failed, such as a `wtype` killed by a signal, now sends the user to `recover` instead of saying the input is still finishing; that answer is kept for input the server is still finishing.
-- The native keyboard restores the compositor's latest keymap in the layout niri last reported, not the map and layout from the start of the call.
+- The native keyboard restores the compositor's latest keymap, not the map from the start of the call, with zero modifiers in the layout niri has active: at the end of a call, after a cancelled one, and from the crash guardian and `recover`, which used the layout the marker recorded at the call's start. If niri doesn't answer, a call uses the layout niri last reported to it, and the guardian and `recover` the marker's, saying so.
 - The 16 MiB line limit applies to every line a read ends, not only the last.
