@@ -244,10 +244,19 @@ fn command(args: &[OsString]) -> Option<Command> {
 
 async fn serve(env: Env, given: session::Given) -> Result<(), String> {
     let session = session::Session::local(session::Settings::new(given));
-    let engine = engine::Engine::start(env).await?;
-    let server = tools::Server::new(std::sync::Arc::new(engine), session);
+    let engine = std::sync::Arc::new(engine::Engine::start(env).await?);
+    let (stdin, gone) = session::Incoming::new(tokio::io::stdin());
+    // Without this, rmcp lets a running call finish, for up to 5 s, after the client's end.
+    tokio::spawn({
+        let (engine, session) = (std::sync::Arc::clone(&engine), session.clone());
+        async move {
+            gone.await.ok();
+            engine.end_session(&session).await;
+        }
+    });
+    let server = tools::Server::new(engine, session);
     let service = server
-        .serve(rmcp::transport::stdio())
+        .serve((stdin, tokio::io::stdout()))
         .await
         .map_err(|error| format!("start MCP session: {error}"))?;
     service

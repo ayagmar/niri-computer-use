@@ -1595,6 +1595,46 @@ async fn release_desktop_can_give_focus_back_to_the_users_window() {
 }
 
 #[tokio::test]
+async fn a_client_that_goes_mid_action_frees_the_lease_at_once() {
+    use std::time::{Duration, Instant};
+
+    let mut desk = Desk::start("act-client-gone", "").await;
+    desk.fixture.program(
+        "grim",
+        r#": > "$DIR/grim.started"; await_file grim.go; cat "$DIR/grim.out""#,
+    );
+    desk.server
+        .start_call("focus_window", json!({"id": 2, "screenshot": true}))
+        .await;
+    assert!(matches!(
+        desk.niri.action().await,
+        Action::FocusWindow { id: 2 }
+    ));
+    focus_changed(&desk.stream, 2);
+    // The action's work is done and its evidence waits on grim.
+    assert!(
+        crate::fixture::eventually(Duration::from_secs(2), || desk
+            .fixture
+            .path("grim.started")
+            .exists())
+        .await
+    );
+    let went = Instant::now();
+    desk.server.stop().await;
+    assert!(
+        went.elapsed() < Duration::from_millis(500),
+        "{:?}",
+        went.elapsed()
+    );
+    let mut next = Server::start(&desk.fixture).await;
+    let stream = desk.niri.stream().await;
+    stream.workspaces(2);
+    stream.send(&json!({"WindowsChanged": {"windows": [window_on(2, Some("b"), 1, true)]}}));
+    let taken = next.structured("acquire_desktop").await;
+    assert_eq!(taken["holder"]["pid"], next.pid);
+}
+
+#[tokio::test]
 async fn niri_action_reports_the_window_as_niri_shows_it_after() {
     let mut desk = Desk::start("act-niri-action", "").await;
     let fullscreen = json!({"action": {"FullscreenWindow": {"id": 2}}});

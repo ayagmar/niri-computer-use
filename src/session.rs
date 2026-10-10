@@ -2,7 +2,12 @@
 
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
+
+use tokio::io::{AsyncRead, ReadBuf};
+use tokio::sync::oneshot;
 
 use crate::policy::{self, Loaded, Unrestricted};
 
@@ -103,6 +108,56 @@ impl Session {
     /// started, such as `claude-code/4711`.
     pub(crate) fn label(&self, client: &str) -> String {
         format!("{client}/{}", self.pid)
+    }
+}
+
+/// A client's input, which says when the client has gone: at its end, on a read error, or
+/// when the transport drops it.
+#[derive(Debug)]
+pub(crate) struct Incoming<R> {
+    input: R,
+    gone: Option<oneshot::Sender<()>>,
+}
+
+impl<R> Incoming<R> {
+    /// `input`, and what completes once the client has gone.
+    pub(crate) fn new(input: R) -> (Self, oneshot::Receiver<()>) {
+        let (gone, went) = oneshot::channel();
+        let incoming = Self {
+            input,
+            gone: Some(gone),
+        };
+        (incoming, went)
+    }
+
+    fn gone(&mut self) {
+        if let Some(gone) = self.gone.take() {
+            gone.send(()).ok();
+        }
+    }
+}
+
+impl<R: AsyncRead + Unpin> AsyncRead for Incoming<R> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let room = buf.remaining();
+        let read = Pin::new(&mut self.input).poll_read(context, buf);
+        match &read {
+            // Nothing read into room for something is the end.
+            Poll::Ready(Ok(())) if room > 0 && buf.remaining() == room => self.gone(),
+            Poll::Ready(Err(_)) => self.gone(),
+            Poll::Ready(Ok(())) | Poll::Pending => {}
+        }
+        read
+    }
+}
+
+impl<R> Drop for Incoming<R> {
+    fn drop(&mut self) {
+        self.gone();
     }
 }
 

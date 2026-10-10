@@ -195,6 +195,12 @@ impl Engine {
         }
     }
 
+    /// Ends `session` once its client has gone: drops its running action and gives its
+    /// lease up, without giving focus back.
+    pub(crate) async fn end_session(&self, session: &Session) {
+        self.desk.end_session(session.id()).await;
+    }
+
     /// Runs one action through the desk's gate, with a screenshot when `shoot` asks for one
     /// or its outcome is in doubt.
     pub(crate) async fn act(
@@ -220,7 +226,8 @@ impl Engine {
         request: observe::Request,
         save: Option<SaveTarget>,
     ) -> Result<observe::Screenshot, CallError> {
-        let capture = self.capture_saving(session, request, save);
+        // Boxed, because a saved capture makes a large future.
+        let capture = Box::pin(self.capture_saving(session, request, save));
         self.desk.observe(session.id(), capture).await
     }
 

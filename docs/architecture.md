@@ -45,7 +45,7 @@
 | `control/marker.rs` | Reads and writes the input-dirty marker. |
 | `control/recover.rs` | The `recover` subcommand. |
 | `control/procs.rs` | Process state from `/proc`: start times and the user's `wtype` processes. |
-| `control/desk.rs` | Whether this server holds the lease: takes it, gives it up, and lets the stop flag take it back. Gates every action and cancels it on a stop. |
+| `control/desk.rs` | Whether this server holds the lease: takes it, gives it up, and lets the stop flag take it back. Gates every action and cancels it on a stop or when its session ends. |
 | `audit.rs` | The audit log. |
 | `runner.rs` | The only code that starts processes. |
 | `image_header.rs` | Reads a PNG's or JPEG's size from its header. The harness includes the same file. |
@@ -132,6 +132,8 @@ One server at a time holds the lease on a niri instance. It is an exclusive, non
 `acquire_desktop` takes the lease only if the stop flag and the input-dirty marker are both absent. A runtime directory that can't be read counts as neither absent: the call fails rather than guess. A server watches its runtime directory with inotify from startup; whenever anything in it changes, it checks the stop flag again, and when the flag is set it gives the lease up. A directory that can't be read counts as stopped. If the watch can't be set up, `acquire_desktop` refuses, because a stop couldn't take the lease back.
 
 Removing the runtime directory or the `lease` file while a server holds the lease would let another server lock a new file, and would leave the holder watching a directory nobody can reach. So the watcher checks, on every event and once a second, that the directory's path still names the inode it watches; when it doesn't, the watcher reports the flag as set and ends, the holder gives the lease up, and `acquire_desktop` refuses from then on with a detail that says to restart the server. Separately, the holder checks once a second that `lease` still names the file it locked, and gives the lease up if not. That check waits for the action mutex, so a running action checks for itself, without the mutex it already holds: once right before its work starts, after the readiness report, and every 100 ms while the work runs (see Actions). The once-a-second checks exist because the kernel delays a directory's own deletion event while a file inside it is open, as the held lease is. The lease's mutex is the action mutex: an action holds it while it runs. `status` reads a copy of the holder kept beside the lease, so it never waits for a running action. Inside a server, the lease belongs to the session that took it, and so do its refs and `users_window`: another session's `acquire_desktop` gets `lease_held`, its actions `lease_required` without waiting for the owner's running action, and its `release_desktop` releases nothing. A `serve` process has one session.
+
+A session ends when its client closes the server's stdin, or reading it fails. The desk then drops the session's running action in whatever phase it is, the readiness check, the work or its evidence screenshot, along with a capture of the session waiting on or holding the action mutex, and gives its lease up the way a stop does, without giving focus back. An ended session can't take the lease again. Without this, rmcp would let a running call go on for up to five seconds after the client has gone, with the lease held.
 
 ## The policy file and the lease decision
 

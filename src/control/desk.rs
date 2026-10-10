@@ -3,8 +3,10 @@
 //! input-dirty marker is set, and gives it up as soon as the stop flag appears. The lease,
 //! its refs and the window to give focus back to belong to the session that took it: no
 //! other session can act, release, or use them. It also gates every action, one at a time,
-//! and cancels the running one when the stop flag appears.
+//! and cancels the running one when the stop flag appears. A session that ends gives the
+//! lease up at once: its running action is dropped in whatever phase it is.
 
+use std::collections::BTreeSet;
 use std::sync::{Arc, PoisonError, Weak};
 use std::time::Duration;
 
@@ -47,6 +49,9 @@ struct Seat {
     /// The refs of the lease held, which a screenshot adds to without waiting for a running
     /// action. Started and ended together with `lease`.
     refs: std::sync::Mutex<Refs>,
+    /// The sessions that have ended. Never shrinks: one id for each client the server has
+    /// had, so an action still on its way in can't take the lease again.
+    ended: watch::Sender<BTreeSet<SessionId>>,
 }
 
 /// The lease, held for one session.
@@ -84,6 +89,29 @@ impl Seat {
         had
     }
 
+    /// Gives the lease up once any running action has ended, if `whose` holds it, or
+    /// whoever does for `None`. Returns whether it was given up.
+    async fn give_up(&self, whose: Option<SessionId>) -> bool {
+        let mut held = self.lease.lock().await;
+        let owned = held
+            .as_ref()
+            .is_some_and(|grant| whose.is_none_or(|session| grant.owner == session));
+        let released = owned && self.take(&mut held);
+        drop(held);
+        released
+    }
+
+    /// Returns once `session` has ended.
+    async fn ended(&self, session: SessionId) {
+        let mut ended = self.ended.subscribe();
+        // The sender lives as long as `self`, so the wait can't fail.
+        let _ended = ended.wait_for(|ended| ended.contains(&session)).await;
+    }
+
+    fn has_ended(&self, session: SessionId) -> bool {
+        self.ended.borrow().contains(&session)
+    }
+
     /// The owner, if it is `session`.
     fn owned_by(&self, session: SessionId) -> Option<Owner> {
         self.owner
@@ -114,6 +142,7 @@ impl Desk {
             lease: Mutex::new(None),
             owner: watch::Sender::new(None),
             refs: std::sync::Mutex::new(Refs::default()),
+            ended: watch::Sender::new(BTreeSet::new()),
         });
         let runtime = RuntimeDir::of(env).map_err(|detail| {
             let name = if env.niri_socket.path().is_err() {
@@ -154,6 +183,10 @@ impl Desk {
     ) -> Result<Holder, ToolError> {
         let runtime = self.runtime.as_ref().map_err(Clone::clone)?;
         let mut held = self.seat.lease.lock().await;
+        // Checked under the mutex, so `end_session` either sees this grant or refuses it.
+        if self.seat.has_ended(session) {
+            return Err(session_ended());
+        }
         if let Some(grant) = held.as_ref().filter(|grant| grant.owner == session) {
             return Ok(grant.lease.holder().clone());
         }
@@ -184,7 +217,8 @@ impl Desk {
     /// while `work` runs cancels it; the stop watcher then takes the lease back. A lease
     /// file removed or replaced meanwhile cancels it too, and the lease is given up at once.
     /// `finish` turns the work's result into the call's, still under the mutex but past the
-    /// stop, so a stop can't discard what the work already found.
+    /// stop, so a stop can't discard what the work already found. The session ending drops
+    /// the action in any phase: waiting for the mutex, `refusal`, `work` or `finish`.
     pub(crate) async fn act<T, U, F>(
         &self,
         session: SessionId,
@@ -196,11 +230,30 @@ impl Desk {
         F: Future<Output = U>,
     {
         let runtime = self.runtime.as_ref().map_err(Clone::clone)?;
-        // The same checks, in the same order, as under the mutex below.
+        // The same checks, in the same order, as under the mutex.
         self.unblocked(runtime)?;
         if self.seat.owned_by(session).is_none() {
             return Err(lease_required().into());
         }
+        tokio::select! {
+            biased;
+            () = self.seat.ended(session) => Err(session_ended().into()),
+            result = self.gated(session, refusal, work, finish) => result,
+        }
+    }
+
+    /// `act` under the action mutex.
+    async fn gated<T, U, F>(
+        &self,
+        session: SessionId,
+        refusal: impl Future<Output = Option<ToolError>>,
+        work: impl Future<Output = Result<T, CallError>>,
+        finish: impl FnOnce(T) -> F,
+    ) -> Result<U, CallError>
+    where
+        F: Future<Output = U>,
+    {
+        let runtime = self.runtime.as_ref().map_err(Clone::clone)?;
         let mut held = self.seat.lease.lock().await;
         let mut stopped = self.unblocked(runtime)?;
         let Some(grant) = held.as_ref().filter(|grant| grant.owner == session) else {
@@ -266,29 +319,43 @@ impl Desk {
     /// Gives `session`'s lease up, once any running action has ended. Returns whether
     /// `session` held it; another session's lease stays.
     pub(crate) async fn release(&self, session: SessionId) -> bool {
-        let mut held = self.seat.lease.lock().await;
-        let owned = held.as_ref().is_some_and(|grant| grant.owner == session);
-        let released = owned && self.seat.take(&mut held);
-        drop(held);
-        released
+        self.seat.give_up(Some(session)).await
+    }
+
+    /// Ends `session` for good: drops its running action or observation, whatever phase it
+    /// is in, and gives its lease up the way a stop does, without giving focus back, since
+    /// no one is left to have asked for that. It can't take the lease again.
+    pub(crate) async fn end_session(&self, session: SessionId) {
+        self.seat.ended.send_modify(|ended| {
+            ended.insert(session);
+        });
+        self.seat.give_up(Some(session)).await;
     }
 
     /// Serializes an observation of `session` with this server's actions and lease changes
     /// while `session` holds the lease, so a ref issued for it matches the desktop its
     /// actions left. It needs no lease and does not freeze external input or redraws.
-    /// Action-return captures already hold the mutex and must not call this again.
+    /// Action-return captures already hold the mutex and must not call this again. The
+    /// session ending drops an observation that holds the mutex.
     pub(crate) async fn observe<T>(
         &self,
         session: SessionId,
-        capture: impl Future<Output = T>,
-    ) -> T {
+        capture: impl Future<Output = Result<T, CallError>>,
+    ) -> Result<T, CallError> {
         if self.seat.owned_by(session).is_none() {
             return capture.await;
         }
-        let held = self.seat.lease.lock().await;
-        let result = capture.await;
-        drop(held);
-        result
+        let serialized = async {
+            let held = self.seat.lease.lock().await;
+            let result = capture.await;
+            drop(held);
+            result
+        };
+        tokio::select! {
+            biased;
+            () = self.seat.ended(session) => Err(session_ended().into()),
+            result = serialized => result,
+        }
     }
 
     /// The window that had keyboard focus when `session` took the lease it holds.
@@ -438,8 +505,15 @@ async fn give_up(seat: &Weak<Seat>) -> bool {
     let Some(seat) = seat.upgrade() else {
         return false;
     };
-    seat.take(&mut *seat.lease.lock().await);
+    seat.give_up(None).await;
     true
+}
+
+fn session_ended() -> ToolError {
+    ToolError::new(
+        ErrorName::LeaseRequired,
+        "this session ended, so its action was dropped and its lease given up",
+    )
 }
 
 fn lease_required() -> ToolError {
@@ -577,7 +651,7 @@ mod tests {
         let capture_desk = desk.clone();
         let work = async move {
             started.send(()).unwrap();
-            std::future::pending::<()>().await;
+            std::future::pending::<Result<(), CallError>>().await
         };
         let capture = tokio::spawn(async move { capture_desk.observe(ME, work).await });
         running.await.unwrap();
@@ -591,7 +665,7 @@ mod tests {
         assert!(capture.await.unwrap_err().is_cancelled());
         assert!(desk.release(ME).await);
         // Observation is still available without a lease.
-        assert_eq!(desk.observe(ME, async { 7 }).await, 7);
+        assert_eq!(desk.observe(ME, async { Ok(7) }).await.unwrap(), 7);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -961,12 +1035,103 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// A phase of an action.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Phase {
+        Refusal,
+        Work,
+        Finish,
+    }
+
+    #[tokio::test]
+    async fn ending_a_session_drops_its_action_in_any_phase_and_frees_the_lease() {
+        for stalled in [Phase::Refusal, Phase::Work, Phase::Finish] {
+            let dir = crate::test_support::fresh_dir("desk-ended");
+            let desk = Desk::start(&env(&dir));
+            desk.acquire(ME, "me/1", None, None).await.unwrap();
+            // Another session ending leaves the lease alone.
+            desk.end_session(SessionId(3)).await;
+            assert!(desk.status(ME).held_by_me);
+            let error = end_while_stalled(&desk, stalled).await;
+            assert_eq!(error.name, ErrorName::LeaseRequired);
+            assert!(error.detail.contains("session ended"), "{error:?}");
+            assert_eq!(desk.status(OTHER).holder, None);
+            // The ended session can't take it again; another can.
+            let refused = desk.acquire(ME, "me/1", None, None).await.unwrap_err();
+            assert_eq!(refused.name, ErrorName::LeaseRequired);
+            desk.acquire(OTHER, "other/2", None, None).await.unwrap();
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    /// Waits forever, once `started` is told, if it `stalls`.
+    async fn stall(stalls: bool, started: &tokio::sync::Notify) {
+        if stalls {
+            started.notify_one();
+            std::future::pending::<()>().await;
+        }
+    }
+
+    /// Ends `ME` while its action waits forever in `stalled`, and returns the action's
+    /// error, failing unless both end within a second.
+    async fn end_while_stalled(desk: &Desk, stalled: Phase) -> ToolError {
+        let started = tokio::sync::Notify::new();
+        let stall = |phase| stall(phase == stalled, &started);
+        let refusal = async {
+            stall(Phase::Refusal).await;
+            None
+        };
+        let work = async {
+            stall(Phase::Work).await;
+            Ok(())
+        };
+        let action = desk.act(ME, refusal, work, |()| stall(Phase::Finish));
+        let end = async {
+            started.notified().await;
+            desk.end_session(ME).await;
+        };
+        let (result, ()) =
+            tokio::time::timeout(Duration::from_secs(1), async { tokio::join!(action, end) })
+                .await
+                .unwrap_or_else(|_| panic!("stalled in {stalled:?}"));
+        match result {
+            Err(CallError::Tool(error)) => error,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn ending_a_session_drops_its_observation_and_frees_the_lease() {
+        let dir = crate::test_support::fresh_dir("desk-ended-observe");
+        let desk = Desk::start(&env(&dir));
+        desk.acquire(ME, "me/1", None, None).await.unwrap();
+        let started = tokio::sync::Notify::new();
+        let capture = async {
+            started.notify_one();
+            std::future::pending::<Result<(), CallError>>().await
+        };
+        let end = async {
+            started.notified().await;
+            desk.end_session(ME).await;
+        };
+        let observation = desk.observe(ME, capture);
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(observation, end)
+        })
+        .await
+        .unwrap();
+        assert!(result.is_err());
+        assert_eq!(desk.status(OTHER).holder, None);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     /// An observation of `session` that returns 7, if it ran within 50 ms.
     async fn observed(desk: &Desk, session: SessionId) -> Option<u8> {
-        let observation = desk.observe(session, async { 7 });
+        let observation = desk.observe(session, async { Ok(7) });
         tokio::time::timeout(Duration::from_millis(50), observation)
             .await
             .ok()
+            .map(Result::unwrap)
     }
 
     #[tokio::test]
