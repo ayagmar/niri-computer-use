@@ -6,10 +6,10 @@ sidebar:
 ---
 
 ```text
-niri-computer-use serve | status | stop | resume | recover | engine | guard <server-pid> | paste-keeper
+niri-computer-use serve | status | stop | resume | recover | engine | guard <server-pid> | paste-keeper | --version
 ```
 
-Each takes exactly one subcommand and no options. Anything else prints that usage line to stderr and exits 1. Every subcommand works on the niri instance in `NIRI_SOCKET`, or, without it, the one running niri of yours the server [finds](../../start/clients/#session-variables). A niri bind passes `NIRI_SOCKET` on.
+It takes exactly one subcommand, or `--version`, and no other options. Anything else prints that usage line to stderr and exits 1. Every subcommand works on the niri instance in `NIRI_SOCKET`, or, without it, the one running niri of yours the server [finds](../../start/clients/#session-variables). A niri bind passes `NIRI_SOCKET` on.
 
 ## `serve`
 
@@ -80,6 +80,14 @@ Marker cleared. `niri-computer-use resume` clears the stop flag if it is set.
 ```
 
 Any other answer exits 1 with `not confirmed; the marker stays`.
+
+## `--version`
+
+```sh
+niri-computer-use --version
+```
+
+Prints `niri-computer-use` and the version, such as `niri-computer-use 0.1.0`, and exits 0. It reads nothing from the session.
 
 ## Internal subcommands
 

@@ -58,3 +58,18 @@ async fn stop_without_a_niri_instance_fails_and_says_why() {
         )
     );
 }
+
+#[tokio::test]
+async fn version_prints_the_version_and_succeeds() {
+    let fixture = Fixture::new("version");
+    let version = run(&fixture, "--version").await;
+    assert!(version.status.success(), "{version:?}");
+    assert_eq!(
+        String::from_utf8(version.stdout).unwrap(),
+        format!("niri-computer-use {}\n", env!("CARGO_PKG_VERSION"))
+    );
+    let unknown = run(&fixture, "--help-me").await;
+    assert!(!unknown.status.success());
+    let usage = String::from_utf8(unknown.stderr).unwrap();
+    assert!(usage.contains("usage: niri-computer-use serve"), "{usage}");
+}
