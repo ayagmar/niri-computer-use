@@ -727,3 +727,8 @@ These match the versions installed locally.
 - It refuses rather than saving again: a client that keeps copying could hold it in a loop, and the agent can type the text instead or try again.
 - A copy niri handles between that round trip and the take is still overwritten, as one between the last check and the restore is: data-control has no request that sets the selection only if it is still the one seen.
 - The nested keeper checks cover it with `harness clipboard --hold`, an owner that answers no read until another client copies. The selection code talks to niri's Wayland socket, and the repository has no fake Wayland server to drive it in `make check`.
+
+## 2026-10-10: a dead server's marker goes straight to recover
+
+- The refusal for a marker another server wrote said that server's input may still be finishing, and to try once more, even when that server had died and its crash guardian had sent the releases (review finding, fix round 5). Now that wording needs the marker's `server_pid` running, as `/proc/<pid>/stat` tells, and no `released` note; any other gets the `recover` wording at once.
+- The marker records no start time for its server, so a PID reused since that server died reads as running and costs one retry, as before. Recording it would change the marker's format, which every server and `recover` read with unknown fields refused, for a wording only. No dependency was added.
