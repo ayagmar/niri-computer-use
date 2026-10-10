@@ -8,9 +8,12 @@ use std::time::Duration;
 
 use tokio::sync::watch;
 
-/// How long the server waits for them at its end. Each has a shorter deadline of its own:
-/// three seconds for wtype, two for niri to handle a release.
-const LIMIT: Duration = Duration::from_secs(5);
+/// How long the server waits for them at its end: the longest any of them takes. That is a
+/// native paste's: two seconds each for niri to handle the release and to send the keymap
+/// back, five for the keeper's report, and half a second for the marker's lock. A wtype
+/// paste takes at most three seconds for wtype, which include the keeper's admission, five
+/// for the report and the lock's half second; other input, at most four and a half.
+const LIMIT: Duration = Duration::from_secs(10);
 
 static PENDING: LazyLock<watch::Sender<usize>> = LazyLock::new(|| watch::Sender::new(0));
 

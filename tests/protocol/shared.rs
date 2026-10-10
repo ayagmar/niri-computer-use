@@ -548,6 +548,39 @@ async fn a_client_killed_mid_key_frees_the_lease_while_others_keep_working() {
 }
 
 #[tokio::test]
+async fn the_engine_keeps_serving_past_its_last_client_until_a_dropped_keys_cleanup_ends() {
+    let fixture = shared("shared-cleanup-idle");
+    let mut desktop = Desktop::new(&fixture);
+    fixture.program("wtype", r#"echo >> "$DIR/wtype.calls"; await_file go"#);
+    let mut typing = Server::start(&fixture).await;
+    let _stream = desktop.stream().await;
+    let engine = engine(&fixture).await;
+    typing.structured("acquire_desktop").await;
+    typing
+        .start_call("key", json!({"keys": ["Down"], "expect": "none"}))
+        .await;
+    assert!(eventually(WAIT, || fixture.path("wtype.calls").exists()).await);
+    typing.stop().await;
+    // Past the engine's two-second idle grace, inside wtype's three-second deadline.
+    tokio::time::sleep(Duration::from_millis(2200)).await;
+    // The engine still serves, and its marker still holds the next client back.
+    let mut next = Server::start(&fixture).await;
+    let status = next.structured("status").await;
+    assert_eq!(status["engine"]["pid"], engine, "{status}");
+    let (name, detail) = tool_error(&next.call("acquire_desktop", json!({})).await);
+    assert_eq!(name, "recovery_required");
+    assert!(detail.contains("still finishing"), "{detail}");
+    std::fs::write(fixture.path("go"), "").unwrap();
+    let marker = fixture.runtime_dir().join("input-dirty");
+    assert!(eventually(WAIT, || !marker.exists()).await);
+    next.stop().await;
+    assert!(
+        eventually(Duration::from_secs(4), || exited(engine)).await,
+        "the engine stayed once idle"
+    );
+}
+
+#[tokio::test]
 async fn a_marker_a_killed_wtype_left_sends_every_client_to_recover() {
     let fixture = shared("shared-wtype-killed");
     let mut desktop = Desktop::new(&fixture);
