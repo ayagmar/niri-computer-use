@@ -67,7 +67,7 @@
 4. After the hello the connection carries MCP, and the session's settings come only from its hello. A session ends when its connection ends or fails, or when it sends a line over 16 MiB.
 5. Once it has had no connection, no lease held and no input cleanup pending for two seconds, it closes and removes `engine.sock`, still holding the lock, and exits. When its stop watcher ends, because the runtime directory was removed or replaced, it ends every session and exits at once.
 
-The engine's stderr is `engine.log`. Its session ids count up from 1 for its lifetime; a session's ended flag lives with the session, so the engine keeps nothing for a session after its connection is gone.
+`status` reports under `engine` the serving process's PID, its mode (`standalone` or `shared`), how many sessions it serves and, for a standalone server whose client asked for shared mode, why it fell back. The engine's stderr is `engine.log`. Its session ids count up from 1 for its lifetime; a session's ended flag lives with the session, so the engine keeps nothing for a session after its connection is gone.
 
 ### The bridge
 

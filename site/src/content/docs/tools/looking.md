@@ -15,6 +15,9 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 |---|---|
 | `instance` | the basename of niri's socket, which names the niri instance |
 | `discovery.runtime_dir`, `discovery.niri_socket`, `discovery.wayland_display` | where each came from: `{"source": "environment"}`, `{"source": "discovered"}`, or `{"source": "missing", "detail": …}` with why (see [Session variables](../../start/clients/#session-variables)) |
+| `engine.pid`, `engine.mode` | the process serving this client, and how: `standalone` serves one client over stdin and stdout, `shared` is the instance's [shared engine](../../concepts/configuration/#shared); `engine` is null from the `status` subcommand |
+| `engine.sessions` | how many clients that process serves, this one included |
+| `engine.fallback` | why a client that asked for shared mode is served standalone, or null |
 | `display_error` | null when the Wayland display is niri's right now, checked on every call; otherwise why input, screenshots and clipboard reads are refused, such as [`session_mismatch`](../../reference/errors/#session_mismatch) |
 | `discovery.warning` | null, or why the given variables might not fit together, such as `NIRI_SOCKET` outside `XDG_RUNTIME_DIR` |
 | `niri.version` | niri's version string, such as `26.04 (8ed0da4)` |

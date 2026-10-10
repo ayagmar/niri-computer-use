@@ -85,6 +85,18 @@ fn hold_engine_lock(fixture: &Fixture) -> File {
 }
 
 #[tokio::test]
+async fn a_server_without_shared_mode_serves_its_one_client_itself() {
+    let fixture = Fixture::new("standalone");
+    let _niri = Niri::start(&fixture);
+    let mut server = Server::start(&fixture).await;
+    assert_eq!(
+        server.structured("status").await["engine"],
+        json!({"pid": server.pid, "mode": "standalone", "sessions": 1, "fallback": null})
+    );
+    assert_eq!(engines(&fixture), Vec::<i32>::new());
+}
+
+#[tokio::test]
 async fn ten_clients_share_one_engine_and_its_lease() {
     let fixture = shared("shared-ten");
     let _niri = NiriProcess::unlocked(&fixture).await;
@@ -98,6 +110,12 @@ async fn ten_clients_share_one_engine_and_its_lease() {
     }
     let engine = engine(&fixture).await;
     assert_eq!(guardians(engine), 1);
+    for server in &mut servers {
+        assert_eq!(
+            server.structured("status").await["engine"],
+            json!({"pid": engine, "mode": "shared", "sessions": 10, "fallback": null})
+        );
+    }
     let (first, rest) = servers.split_first_mut().unwrap();
     let second = &mut rest[0];
     let label = format!("{CLIENT}/{}", first.pid);
@@ -231,7 +249,16 @@ async fn without_an_engine_in_time_the_client_is_served_standalone() {
         "{:?}",
         started.elapsed()
     );
-    assert_eq!(server.call("status", json!({})).await["isError"], false);
+    let reported = server.structured("status").await["engine"].clone();
+    assert_eq!(reported["pid"], server.pid);
+    assert_eq!(reported["mode"], "standalone");
+    assert!(
+        reported["fallback"]
+            .as_str()
+            .unwrap()
+            .starts_with("no shared engine answered within 5 s"),
+        "{reported}"
+    );
     // Engines started meanwhile all leave.
     assert!(eventually(WAIT, || engines(&fixture).is_empty()).await);
     let (_, _, stderr) = server.stop().await;

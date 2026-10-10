@@ -46,6 +46,9 @@ pub(crate) struct Engine {
     sessions: Mutex<BTreeMap<SessionId, Session>>,
     /// The last session id given out.
     last_session: AtomicU64,
+    mode: status::Mode,
+    /// Why a standalone engine's client isn't served by the shared engine it asked for.
+    fallback: Option<String>,
     /// Lives as long as the engine; see `control::guard`.
     _guardian: Option<runner::Watcher>,
 }
@@ -63,7 +66,11 @@ pub(crate) struct Release {
 impl Engine {
     /// Starts the crash guardian before anything else, then niri's event stream, and looks
     /// for the accessibility bus.
-    pub(crate) async fn start(env: Env) -> Result<Self, String> {
+    pub(crate) async fn start(
+        env: Env,
+        mode: status::Mode,
+        fallback: Option<String>,
+    ) -> Result<Self, String> {
         // `/proc/self/exe` still runs this binary when its file has been replaced since.
         let guardian = runner::watcher(
             "/proc/self/exe",
@@ -79,11 +86,13 @@ impl Engine {
         let accessibility = a11y::detect(env.session_bus.as_deref()).await;
         Ok(Self {
             _guardian: Some(guardian),
+            mode,
+            fallback,
             ..Self::new(env, events, audit, accessibility)
         })
     }
 
-    /// An engine without a crash guardian, from resources already made.
+    /// A standalone engine without a crash guardian, from resources already made.
     pub(crate) fn new(
         env: Env,
         events: Result<EventStream, ToolError>,
@@ -101,6 +110,8 @@ impl Engine {
             a11y,
             sessions: Mutex::new(BTreeMap::new()),
             last_session: AtomicU64::new(0),
+            mode: status::Mode::Standalone,
+            fallback: None,
             _guardian: None,
         }
     }
@@ -200,7 +211,14 @@ impl Engine {
             .events
             .as_ref()
             .map_or(StreamState::Disconnected, EventStream::state);
+        let engine = status::EngineStatus {
+            pid: std::process::id(),
+            mode: self.mode,
+            sessions: self.sessions().len(),
+            fallback: self.fallback.clone(),
+        };
         let sources = status::Sources {
+            engine: Some(engine),
             event_stream: Some(event_stream),
             audit: &self.audit,
             noctalia_installed: self.noctalia_installed,

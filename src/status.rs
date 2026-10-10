@@ -27,6 +27,8 @@ pub(crate) struct Status {
     /// Where the runtime directory, niri's socket and the display came from: the
     /// environment, or discovery, or why neither.
     discovery: discover::Sources,
+    /// The engine serving this session; null from the `status` subcommand.
+    engine: Option<EngineStatus>,
     /// Why input, screenshots and clipboard reads would be refused now: the Wayland display
     /// isn't niri's, or couldn't be checked. Null when it is niri's. Checked afresh for each
     /// report.
@@ -58,6 +60,8 @@ pub(crate) struct Status {
 /// desk, or from the runtime directory in the subcommand), and the policy file as loaded.
 #[derive(Debug)]
 pub(crate) struct Sources<'a> {
+    /// The engine serving the session; none for the `status` subcommand.
+    pub(crate) engine: Option<EngineStatus>,
     pub(crate) event_stream: Option<StreamState>,
     pub(crate) audit: &'a Audit,
     pub(crate) noctalia_installed: bool,
@@ -66,6 +70,27 @@ pub(crate) struct Sources<'a> {
     pub(crate) unrestricted: &'a Unrestricted,
     /// Decided once at startup for the server, whose tool list depends on it.
     pub(crate) accessibility: &'a a11y::Presence,
+}
+
+/// The engine that serves the session asking.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct EngineStatus {
+    pub(crate) pid: u32,
+    pub(crate) mode: Mode,
+    /// The sessions it serves, this one included.
+    pub(crate) sessions: usize,
+    /// Why a client that asked for shared mode is served standalone.
+    pub(crate) fallback: Option<String>,
+}
+
+/// How a server serves its clients.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Mode {
+    /// One client, over stdin and stdout.
+    Standalone,
+    /// Every client of the niri instance, over the instance socket.
+    Shared,
 }
 
 /// Whether the pointer tools may run on niri's outputs right now.
@@ -98,6 +123,7 @@ struct Niri {
 
 pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
     let Sources {
+        engine,
         event_stream,
         audit,
         noctalia_installed,
@@ -130,6 +156,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
     Status {
         instance: env.instance(),
         discovery: env.discovery.clone(),
+        engine,
         display_error,
         niri: Niri {
             compat: version.as_deref().map(niri::version::compat),
@@ -180,6 +207,7 @@ mod tests {
     async fn reports_what_it_can_without_failing() {
         let audit = Audit::new(None);
         let sources = Sources {
+            engine: None,
             event_stream: None,
             audit: &audit,
             noctalia_installed: false,
@@ -202,6 +230,7 @@ mod tests {
                     "wayland_display": {"source": "missing", "detail": "WAYLAND_DISPLAY is not set"},
                     "warning": null
                 },
+                "engine": null,
                 "display_error": {
                     "error": "upstream_error",
                     "detail": "WAYLAND_DISPLAY is not set"

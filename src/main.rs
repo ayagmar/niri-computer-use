@@ -200,6 +200,7 @@ async fn main() -> ExitCode {
             let settings = session::Settings::new(given);
             let accessibility = a11y::detect(env.session_bus.as_deref()).await;
             let sources = status::Sources {
+                engine: None,
                 event_stream: None,
                 audit: &audit,
                 noctalia_installed: env.finds("noctalia"),
@@ -260,12 +261,15 @@ async fn serve(env: Env, given: session::Given) -> Result<(), String> {
         Ok(false) => Ok(None),
         Err(note) => Err(note),
     };
-    match reached {
+    let fallback = match reached {
         Ok(Some((target, link))) => return bridge::run(target, link).await,
-        Ok(None) => {}
-        Err(reason) => cli::print_error(&format!("serving this client standalone: {reason}")),
-    }
-    standalone(env, settings).await
+        Ok(None) => None,
+        Err(reason) => {
+            cli::print_error(&format!("serving this client standalone: {reason}"));
+            Some(reason)
+        }
+    };
+    standalone(env, settings, fallback).await
 }
 
 async fn reach_engine(
@@ -277,8 +281,15 @@ async fn reach_engine(
     Ok((target, link))
 }
 
-async fn standalone(env: Env, settings: session::Settings) -> Result<(), String> {
-    let engine = std::sync::Arc::new(engine::Engine::start(env).await?);
+/// Serves the one client on stdin and stdout. `fallback` says why it isn't served by the
+/// shared engine it asked for.
+async fn standalone(
+    env: Env,
+    settings: session::Settings,
+    fallback: Option<String>,
+) -> Result<(), String> {
+    let engine = engine::Engine::start(env, status::Mode::Standalone, fallback).await?;
+    let engine = std::sync::Arc::new(engine);
     let session = engine.open_session(std::process::id(), settings);
     let served =
         engine::host::serve_session(&engine, session, tokio::io::stdin(), tokio::io::stdout())

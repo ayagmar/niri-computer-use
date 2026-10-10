@@ -21,6 +21,7 @@ use super::Engine;
 use super::hello::{self, Own, Refusal, Reply};
 use crate::control::runtime::RuntimeDir;
 use crate::session::{Incoming, Session, Settings};
+use crate::status::Mode;
 use crate::{Env, cli, control, tools};
 
 const LOCK: &str = "engine.lock";
@@ -57,7 +58,7 @@ pub(crate) async fn run(env: Env) -> Result<(), String> {
             .to_path_buf(),
         wayland_socket: env.display.path().ok().map(std::path::Path::to_path_buf),
     };
-    let engine = Arc::new(Engine::start(env).await?);
+    let engine = Arc::new(Engine::start(env, Mode::Shared, None).await?);
     let served = accept(&listener, &engine, &Arc::new(own)).await;
     drop(listener);
     std::fs::remove_file(runtime.path().join(SOCKET)).ok();
