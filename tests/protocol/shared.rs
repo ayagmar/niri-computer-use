@@ -162,25 +162,34 @@ async fn ten_clients_share_one_engine_and_its_lease() {
 
 #[tokio::test]
 async fn unrestricted_is_the_clients_own_in_shared_mode() {
+    // The engine takes the environment of the client that starts it, so each kind of
+    // client starts one.
+    unrestricted_per_client(true).await;
+    unrestricted_per_client(false).await;
+}
+
+/// A client with `NIRI_COMPUTER_USE_UNRESTRICTED` as `first` starts the engine, then one
+/// with the opposite joins; each must see its own setting in `status` and the tool list.
+async fn unrestricted_per_client(first: bool) {
     let mut fixture = shared("shared-unrestricted");
     let _niri = Niri::start(&fixture);
-    fixture.set("NIRI_COMPUTER_USE_UNRESTRICTED", "1");
-    let mut on = Server::start(&fixture).await;
-    fixture.unset("NIRI_COMPUTER_USE_UNRESTRICTED");
-    let mut off = Server::start(&fixture).await;
+    fixture.program("noctalia", "exit 0");
+    let mut servers = Vec::new();
+    for unrestricted in [first, !first] {
+        fixture.unset("NIRI_COMPUTER_USE_UNRESTRICTED");
+        if unrestricted {
+            fixture.set("NIRI_COMPUTER_USE_UNRESTRICTED", "1");
+        }
+        servers.push((Server::start(&fixture).await, unrestricted));
+    }
     engine(&fixture).await;
-    assert_eq!(
-        off.structured("status").await["unrestricted"]["enabled"],
-        false
-    );
-    assert_eq!(
-        on.structured("status").await["unrestricted"]["enabled"],
-        true
-    );
-    assert_eq!(
-        off.structured("status").await["unrestricted"]["enabled"],
-        false
-    );
+    for (server, unrestricted) in &mut servers {
+        let status = server.structured("status").await;
+        assert_eq!(status["unrestricted"]["enabled"], *unrestricted);
+        let tools = server.tools().await;
+        let noctalia = tools.iter().any(|tool| tool["name"] == "noctalia");
+        assert_eq!(noctalia, *unrestricted, "first unrestricted: {first}");
+    }
 }
 
 #[tokio::test]
