@@ -1,5 +1,7 @@
 //! MCP tool definitions. Each tool only translates the call into a module call.
 
+use std::sync::Arc;
+
 use base64::Engine as _;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -8,23 +10,20 @@ use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::time::Instant;
 
-use crate::a11y::{self, A11y, Presence, model};
+use crate::a11y::model;
 use crate::act::{self, Outcome};
-use crate::audit::{Audit, Call, Caller};
-use crate::control::desk::Desk;
+use crate::audit::{Call, Caller};
 use crate::coords::ImagePx;
-use crate::error::{CANCELLED, CallError, ErrorName, ToolError};
-use crate::input::Input;
+use crate::engine::Engine;
+use crate::error::{CANCELLED, CallError, ToolError};
 use crate::input::keyboard::{self, Expect, Typing};
 use crate::input::paste;
 use crate::input::pointer::{self, Button, Gesture, Spot};
-use crate::niri::events::{EventStream, StreamState};
 use crate::observe::{DEFAULT_MAX_WIDTH, Format, Rect, Target};
-use crate::policy::{self, Loaded, SaveTarget};
-use crate::refs::Shot;
-use crate::{Env, clipboard, elements, niri, noctalia, observe, settle, status, wait};
+use crate::policy;
+use crate::session::Session;
+use crate::{elements, observe, wait};
 
 /// Optional arguments are described as their own type with their real default, without
 /// `null`, because clients that map tool schemas onto a single-type dialect reject
@@ -571,19 +570,8 @@ struct PasteArgs {
 
 #[derive(Debug, Clone)]
 pub(crate) struct Server {
-    env: Env,
-    /// Without niri's socket, the socket's error.
-    events: Result<EventStream, ToolError>,
-    audit: Audit,
-    desk: Desk,
-    /// Read once at startup.
-    policy: Loaded,
-    /// Decided once, because the tool list depends on it.
-    noctalia_installed: bool,
-    /// Whether there is an accessibility bus, decided once at startup for the same reason.
-    accessibility: Presence,
-    /// The accessibility bus, when there is one.
-    a11y: Option<A11y>,
+    engine: Arc<Engine>,
+    session: Session,
     tool_router: ToolRouter<Self>,
 }
 
@@ -592,36 +580,22 @@ impl Server {
     /// The `shell_*` tools exist only when `noctalia` is on `PATH`, `noctalia` only when
     /// `unrestricted` is on as well, and `elements` only with an accessibility bus, so the
     /// tool list stays fixed for the session.
-    pub(crate) fn new(
-        env: Env,
-        events: Result<EventStream, ToolError>,
-        audit: Audit,
-        accessibility: Presence,
-    ) -> Self {
+    pub(crate) fn new(engine: Arc<Engine>, session: Session) -> Self {
         let mut tool_router = Self::tool_router();
-        let policy = env.policy();
-        let noctalia_installed = env.finds("noctalia");
-        if !noctalia_installed {
+        if !engine.noctalia_installed() {
             for tool in SHELL_TOOLS {
                 tool_router.remove_route(tool);
             }
         }
-        if !noctalia_installed || !env.unrestricted(&policy).enabled() {
+        if !engine.noctalia_installed() || !engine.unrestricted() {
             tool_router.remove_route("noctalia");
         }
-        let a11y = accessibility.address.clone().map(A11y::new);
-        if a11y.is_none() {
+        if !engine.has_a11y() {
             tool_router.remove_route("elements");
         }
         Self {
-            desk: Desk::start(&env),
-            policy,
-            env,
-            events,
-            audit,
-            noctalia_installed,
-            accessibility,
-            a11y,
+            engine,
+            session,
             tool_router,
         }
     }
@@ -636,7 +610,7 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         self.audited(&context, "status", Value::Null, async {
-            structured(&self.report().await)
+            structured(&self.engine.status().await)
         })
         .await
     }
@@ -658,18 +632,13 @@ impl Server {
         &self,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let label = session(&context);
+        let label = self.label(&context);
         self.audited(&context, "acquire_desktop", Value::Null, async {
-            let refusal = self.refusal().await;
-            let focused = niri::waiter(self.events.as_ref())
-                .await
-                .ok()
-                .and_then(|waiter| waiter.view().focused_window());
-            let acquired = self.desk.acquire(&label, refusal, focused).await;
-            answer(acquired.map(|holder| {
+            let acquired = self.engine.acquire(&label).await;
+            answer(acquired.map(|(holder, users_window)| {
                 serde_json::json!({
                     "holder": holder,
-                    "users_window": self.desk.users_window(),
+                    "users_window": users_window,
                 })
             }))
         })
@@ -694,16 +663,7 @@ impl Server {
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
         self.audited(&context, "release_desktop", logged, async {
-            let users_window = self.desk.users_window();
-            let restored = match (args.restore_focus, users_window) {
-                (true, Some(id)) => Some(self.restore(id).await),
-                _ => None,
-            };
-            structured(&Release {
-                users_window,
-                restored,
-                released: self.desk.release().await,
-            })
+            structured(&self.engine.release(args.restore_focus).await)
         })
         .await
     }
@@ -724,7 +684,7 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
-        let work = act::focus_window(self.niri(), args.id);
+        let work = act::focus_window(self.engine.niri(), args.id);
         self.act(
             &context,
             Asked {
@@ -752,7 +712,7 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
-        let work = act::focus_workspace(self.niri(), args.id);
+        let work = act::focus_workspace(self.engine.niri(), args.id);
         self.act(
             &context,
             Asked {
@@ -784,8 +744,8 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
-        let niri = self.niri();
-        let preset = self.policy.preset(&args.preset);
+        let niri = self.engine.niri();
+        let preset = self.engine.policy().preset(&args.preset);
         let (reuse, shoot) = (args.reuse, args.screenshot);
         let work = async move { act::launch(niri, preset?, reuse).await };
         self.act(
@@ -815,7 +775,7 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
-        let work = act::close_window(self.niri(), args.id);
+        let work = act::close_window(self.engine.niri(), args.id);
         self.act(
             &context,
             Asked {
@@ -855,8 +815,8 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
-        let niri = self.niri();
-        let unrestricted = self.env.unrestricted(&self.policy).enabled();
+        let niri = self.engine.niri();
+        let unrestricted = self.engine.unrestricted();
         let shoot = args.screenshot;
         let work = async move {
             let action = serde_json::from_value(Value::Object(args.action)).map_err(|error| {
@@ -1095,14 +1055,7 @@ impl Server {
         flag(&mut logged, "screenshot", args.screenshot);
         let expect = args.expect.into();
         let work = async {
-            let input = Input {
-                niri: self.niri(),
-                display: &self.env.display,
-                runtime: self.desk.runtime()?,
-                policy: &self.policy,
-                keyboard: self.env.keyboard.as_deref(),
-                a11y: self.a11y.as_ref(),
-            };
+            let input = self.engine.input()?;
             paste::paste(input, &args.text, args.keys.combo(), expect).await
         };
         let asked = Asked {
@@ -1120,9 +1073,8 @@ impl Server {
         &self,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let outputs = niri::outputs(&self.env.niri_socket);
         self.audited(&context, "outputs", Value::Null, async {
-            answer(outputs.await)
+            answer(self.engine.outputs().await)
         })
         .await
     }
@@ -1137,9 +1089,8 @@ impl Server {
         &self,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let desktop = niri::desktop(self.events.as_ref());
         self.audited(&context, "desktop_state", Value::Null, async {
-            answer(desktop.await)
+            answer(self.engine.desktop().await)
         })
         .await
     }
@@ -1172,17 +1123,7 @@ impl Server {
                 Ok(ask) => ask,
                 Err(message) => return Ok(invalid(&message)),
             };
-            let Some(a11y) = &self.a11y else {
-                let error =
-                    a11y::not_accessible("this session has no accessibility bus".to_owned());
-                return Ok(error.into_result());
-            };
-            let lease = self.desk.ref_lease();
-            let remember =
-                |element| lease.and_then(|lease| self.desk.remember_element(lease, element));
-            let socket = &self.env.niri_socket;
-            // Boxed, because the walk's calls make a large future.
-            match Box::pin(elements::list(socket, a11y, &self.policy, &ask, remember)).await {
+            match self.engine.elements(&ask).await {
                 Ok(listing) => structured(&listing),
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
                 Err(CallError::Tool(error)) => Ok(error.into_result()),
@@ -1214,7 +1155,10 @@ impl Server {
             let save = args
                 .save_path
                 .as_deref()
-                .map(|path| self.policy.save_target(self.env.home.as_deref(), path))
+                .map(|path| {
+                    let home = self.engine.env().home.as_deref();
+                    self.engine.policy().save_target(home, path)
+                })
                 .transpose();
             let save = match save {
                 Ok(save) => save,
@@ -1225,7 +1169,7 @@ impl Server {
                 Ok(request) => request,
                 Err(message) => return Ok(invalid(&message)),
             };
-            match self.desk.observe(self.capture_saving(request, save)).await {
+            match self.engine.screenshot(request, save).await {
                 Ok(shot) => image(&shot),
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
                 Err(CallError::Tool(error)) => Ok(error.into_result()),
@@ -1256,7 +1200,7 @@ impl Server {
             if let Err(message) = until.check() {
                 return Ok(invalid(&message));
             }
-            match self.wait(&until, limit, args.screenshot).await {
+            match self.engine.wait(&until, limit, args.screenshot).await {
                 Ok(waited) => waited_result(waited),
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
                 Err(CallError::Tool(error)) => Ok(error.into_result()),
@@ -1272,9 +1216,8 @@ impl Server {
         &self,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let status = noctalia::status(&self.env);
         self.audited(&context, "shell_status", Value::Null, async {
-            answer(status.await)
+            answer(self.engine.shell_status().await)
         })
         .await
     }
@@ -1297,7 +1240,7 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
-        let (env, niri) = (&self.env, self.niri());
+        let (env, niri) = (self.engine.env(), self.engine.niri());
         let shoot = args.screenshot;
         let work = async move { act::shell::open(env, niri, policy::panel(&args.panel)?).await };
         self.act(
@@ -1327,7 +1270,7 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
-        let (env, niri) = (&self.env, self.niri());
+        let (env, niri) = (self.engine.env(), self.engine.niri());
         let shoot = args.screenshot;
         let work = async move { act::shell::close(env, niri, policy::panel(&args.panel)?).await };
         self.act(
@@ -1361,7 +1304,7 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
-        let (env, niri) = (&self.env, self.niri());
+        let (env, niri) = (self.engine.env(), self.engine.niri());
         let shoot = args.screenshot;
         let work = async move {
             if !(1..=64).contains(&args.args.len()) {
@@ -1391,20 +1334,13 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         self.audited(&context, "clipboard_read", Value::Null, async {
-            answer(clipboard::read_text(&self.env.niri_socket, &self.env.display).await)
+            answer(self.engine.clipboard().await)
         })
         .await
     }
 }
 
 impl Server {
-    const fn niri(&self) -> act::Niri<'_> {
-        act::Niri {
-            socket: &self.env.niri_socket,
-            events: self.events.as_ref(),
-        }
-    }
-
     /// Runs a pointer gesture through the action gate, aimed through the ref `aim` names,
     /// which is looked up only once the gate has passed, like the element refs it names.
     async fn point(
@@ -1416,16 +1352,9 @@ impl Server {
     ) -> Result<CallToolResult, ErrorData> {
         let tool = gesture.as_ref().map_or("pointer", Gesture::tool);
         let work = async {
-            let input = Input {
-                niri: self.niri(),
-                display: &self.env.display,
-                runtime: self.desk.runtime()?,
-                policy: &self.policy,
-                keyboard: self.env.keyboard.as_deref(),
-                a11y: self.a11y.as_ref(),
-            };
-            let shot = self.desk.shot(&aim.id);
-            let element = |id: &str| self.desk.element(id);
+            let input = self.engine.input()?;
+            let shot = self.engine.shot(&aim.id);
+            let element = |id: &str| self.engine.element(id);
             pointer::point(input, shot, gesture?, &aim.keys, element).await
         };
         self.act(
@@ -1454,14 +1383,7 @@ impl Server {
         } = keying;
         let tool = typing.tool();
         let work = async {
-            let input = Input {
-                niri: self.niri(),
-                display: &self.env.display,
-                runtime: self.desk.runtime()?,
-                policy: &self.policy,
-                keyboard: self.env.keyboard.as_deref(),
-                a11y: self.a11y.as_ref(),
-            };
+            let input = self.engine.input()?;
             keyboard::type_input(input, typing, expect).await
         };
         self.act(
@@ -1474,91 +1396,6 @@ impl Server {
             work,
         )
         .await
-    }
-
-    /// Waits for `until`, then with `shoot` adds a screenshot taken once the screen stopped
-    /// changing. Each capture serializes with actions, without holding the mutex between
-    /// samples or while waiting for a window condition.
-    async fn wait(
-        &self,
-        until: &wait::Until,
-        limit: std::time::Duration,
-        screenshot: bool,
-    ) -> Result<(wait::Report, Option<observe::Screenshot>), CallError> {
-        let capture = || self.desk.observe(self.capture(observe::Request::focused()));
-        if *until == wait::Until::ScreenStable {
-            let (report, last) = wait::screen(capture, limit).await?;
-            return Ok((report, screenshot.then_some(last)));
-        }
-        let report = wait::window(self.events.as_ref(), until, limit).await?;
-        if !screenshot {
-            return Ok((report, None));
-        }
-        match settle::screenshot(capture, settle::LIMIT).await {
-            Ok(shot) => Ok((report, Some(shot))),
-            Err(CallError::Tool(error)) => Ok((
-                wait::Report {
-                    screenshot_error: Some(error),
-                    ..report
-                },
-                None,
-            )),
-            Err(mistake @ CallError::InvalidArguments(_)) => Err(mistake),
-        }
-    }
-
-    /// Focuses the user's window `id` through the action gate, as the outcome or the error.
-    async fn restore(&self, id: u64) -> Value {
-        let refusal = Box::pin(self.refusal());
-        let work = Box::pin(act::refocus(self.niri(), id));
-        let restored = match self.desk.act(refusal, work, std::future::ready).await {
-            Ok(outcome) => serde_json::to_value(outcome),
-            Err(CallError::Tool(error)) => serde_json::to_value(error),
-            Err(CallError::InvalidArguments(message)) => {
-                serde_json::to_value(ToolError::new(ErrorName::UpstreamError, message))
-            }
-        };
-        restored.unwrap_or(Value::Null)
-    }
-
-    /// Takes a screenshot and, while this server holds the lease, keeps it as a ref that
-    /// the result names.
-    async fn capture(&self, request: observe::Request) -> Result<observe::Screenshot, CallError> {
-        let lease = self.desk.ref_lease();
-        let connection = self.events.as_ref().ok().and_then(EventStream::connection);
-        let taken = Instant::now();
-        let mut shot =
-            observe::screenshot(&self.env.niri_socket, &self.env.display, &request).await?;
-        if let (Some(lease), Some(connection)) = (lease, connection) {
-            let kept = Shot::of(&shot, taken, connection);
-            shot.metadata.screenshot_ref = self.desk.remember(lease, kept);
-        }
-        Ok(shot)
-    }
-
-    /// With `save`, first writes a full-resolution PNG of the target there; then captures
-    /// the screenshot to return, which says where the PNG went.
-    async fn capture_saving(
-        &self,
-        request: observe::Request,
-        save: Option<SaveTarget>,
-    ) -> Result<observe::Screenshot, CallError> {
-        let saved = match &save {
-            Some(save) => {
-                let (socket, display) = (&self.env.niri_socket, &self.env.display);
-                Some(observe::save(socket, display, &request.target, save).await?)
-            }
-            None => None,
-        };
-        let mut shot = self.capture(request).await?;
-        shot.metadata.saved = saved;
-        Ok(shot)
-    }
-
-    /// Why this server may not take the lease or act now, from the readiness report.
-    async fn refusal(&self) -> Option<ToolError> {
-        let report = self.report().await;
-        policy::refuse_control(report.facts(&self.policy))
     }
 
     /// Runs one action through the desk's gate, with a screenshot when `shoot` asks for
@@ -1577,37 +1414,13 @@ impl Server {
         // Boxed, because the readiness report, the action's work and its wait make large
         // futures.
         Box::pin(self.record(context, Call::action(tool), logged, async {
-            let refusal = Box::pin(self.refusal());
-            let evidence = |outcome| Box::pin(self.evidence(outcome, shoot));
-            match self.desk.act(refusal, Box::pin(work), evidence).await {
+            match self.engine.act(shoot, work).await {
                 Ok(evidenced) => outcome(&evidenced),
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
                 Err(CallError::Tool(error)) => Ok(error.into_result()),
             }
         }))
         .await
-    }
-
-    /// The outcome with the screenshot `shoot` asks for, or the one an outcome in doubt gets.
-    async fn evidence(&self, outcome: Outcome, shoot: bool) -> act::Evidenced {
-        act::with_evidence(outcome, shoot, |request| self.capture(request)).await
-    }
-
-    /// The readiness report, as `status` returns it.
-    async fn report(&self) -> status::Status {
-        let event_stream = self
-            .events
-            .as_ref()
-            .map_or(StreamState::Disconnected, EventStream::state);
-        let sources = status::Sources {
-            event_stream: Some(event_stream),
-            audit: &self.audit,
-            noctalia_installed: self.noctalia_installed,
-            lease: self.desk.status(),
-            policy: &self.policy,
-            accessibility: &self.accessibility,
-        };
-        status::collect(&self.env, sources).await
     }
 
     /// Runs one tool's work until it finishes or the client cancels the request, then
@@ -1634,14 +1447,23 @@ impl Server {
         let result = unless_cancelled(context.ct.cancelled(), work)
             .await
             .and_then(|result| result);
-        let session = session(context);
-        let instance = self.env.instance();
+        let session = self.label(context);
+        let instance = self.engine.env().instance();
         let caller = Caller {
             session: &session,
             instance: instance.as_deref(),
         };
-        self.audit.finish(&call, caller, &args, &result);
+        self.engine.audit().finish(&call, caller, &args, &result);
         result
+    }
+
+    /// The session label: the MCP client's name and the process it started.
+    fn label(&self, context: &RequestContext<RoleServer>) -> String {
+        let client = context.peer.peer_info().map_or_else(
+            || "unknown".to_owned(),
+            |info| info.client_info.name.clone(),
+        );
+        self.session.label(&client)
     }
 }
 
@@ -1690,17 +1512,6 @@ fn waited_result(
     Ok(result)
 }
 
-/// A pointer tool's screenshot ref, and whether it asked for a screenshot after.
-/// What `release_desktop` returns.
-#[derive(Serialize)]
-struct Release {
-    users_window: Option<u64>,
-    /// How giving focus back went, when it was asked for and there was a window.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    restored: Option<Value>,
-    released: bool,
-}
-
 /// An action call as the agent made it: the tool, its arguments as the audit log keeps
 /// them, and whether it asked for a screenshot of the result.
 struct Asked<'a> {
@@ -1709,6 +1520,8 @@ struct Asked<'a> {
     shoot: bool,
 }
 
+/// A pointer tool's screenshot ref, whether it asked for a screenshot after, and the
+/// modifiers it holds.
 struct Aim {
     id: String,
     shoot: bool,
@@ -1725,16 +1538,6 @@ struct Keying {
 
 /// The tools that exist only with Noctalia installed.
 const SHELL_TOOLS: [&str; 3] = ["shell_status", "shell_open", "shell_close"];
-
-/// The session label: the MCP client's name and this server's PID, such as
-/// `claude-code/4711`.
-fn session(context: &RequestContext<RoleServer>) -> String {
-    let client = context.peer.peer_info().map_or_else(
-        || "unknown".to_owned(),
-        |info| info.client_info.name.clone(),
-    );
-    format!("{client}/{}", std::process::id())
-}
 
 fn answer(result: Result<impl Serialize, ToolError>) -> Result<CallToolResult, ErrorData> {
     match result {
@@ -1807,6 +1610,10 @@ fn structured(value: &impl Serialize) -> Result<CallToolResult, ErrorData> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Env;
+    use crate::a11y::Presence;
+    use crate::audit::Audit;
+    use crate::error::ErrorName;
 
     #[test]
     fn only_close_window_is_destructive_and_only_actions_change_anything() {
@@ -1943,16 +1750,16 @@ mod tests {
         assert!(args(None, 501).ask().is_err());
     }
 
-    fn no_events() -> Result<EventStream, ToolError> {
-        Err(ToolError::new(ErrorName::NiriUnavailable, "no niri"))
-    }
-
-    fn absent() -> Presence {
-        Presence {
+    /// A server for `env`, without niri or an accessibility bus.
+    fn server(env: Env) -> Server {
+        let events = Err(ToolError::new(ErrorName::NiriUnavailable, "no niri"));
+        let absent = Presence {
             available: false,
             address: None,
             reason: Some("no session bus".to_owned()),
-        }
+        };
+        let engine = Engine::new(env, events, Audit::new(None), absent);
+        Server::new(Arc::new(engine), Session::local())
     }
 
     #[test]
@@ -1966,8 +1773,8 @@ mod tests {
             path: Some(dir.clone().into_os_string()),
             ..Env::default()
         };
-        let installed = Server::new(installed, no_events(), Audit::new(None), absent());
-        let missing = Server::new(Env::default(), no_events(), Audit::new(None), absent());
+        let installed = server(installed);
+        let missing = server(Env::default());
         for tool in SHELL_TOOLS {
             assert!(installed.tool_router.has_route(tool), "{tool}");
             assert!(!missing.tool_router.has_route(tool), "{tool}");
@@ -1980,14 +1787,14 @@ mod tests {
             unrestricted: Some("1".into()),
             ..Env::default()
         };
-        let unrestricted = Server::new(unrestricted, no_events(), Audit::new(None), absent());
+        let unrestricted = server(unrestricted);
         assert!(unrestricted.tool_router.has_route("noctalia"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn the_server_names_itself_and_gives_instructions() {
-        let server = Server::new(Env::default(), no_events(), Audit::new(None), absent());
+        let server = server(Env::default());
         let info = server.get_info();
         assert_eq!(info.server_info.name, "niri-computer-use");
         assert!(

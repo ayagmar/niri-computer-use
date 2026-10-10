@@ -8,7 +8,9 @@
 |---|---|
 | `main.rs` | Reads the environment once, with what `discover.rs` finds for the session variables it lacks, picks the subcommand, and starts the server on a single-threaded Tokio runtime. |
 | `discover.rs` | Finds `XDG_RUNTIME_DIR`, `NIRI_SOCKET` and `WAYLAND_DISPLAY` when the environment lacks them: parsing niri's socket names and choosing among them are pure, and the reads take their roots as parameters. |
-| `tools.rs` | The rmcp tool definitions. Each tool turns the call into one module call and the result into MCP content. |
+| `tools.rs` | The rmcp tool definitions. Each tool turns the call into one engine or module call and the result into MCP content, and logs it. |
+| `engine.rs` | What the server's sessions share, apart from MCP: the crash guardian, the event stream, the accessibility bus, the audit log and the desk, and the work each tool runs through them: the readiness check, the action gate and its evidence, captures and their refs, waits, and giving focus back. |
+| `session.rs` | One client of the engine: its label in the audit log and the lease record. |
 | `niri.rs`, `niri/request.rs`, `niri/events.rs` | The only code that talks to niri: one connection per request, one long-lived event stream, and the virtual pointer's Wayland connection. |
 | `niri/pointer.rs` | The virtual pointer: its own Wayland connection to niri, bound to one output. |
 | `niri/selection.rs` | The clipboard through wlr data-control on its own Wayland connection to niri: saving every type of the selection, taking it with a source, and the reads of that source. |

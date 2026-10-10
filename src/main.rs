@@ -9,6 +9,7 @@ mod control;
 mod coords;
 mod discover;
 mod elements;
+mod engine;
 mod error;
 mod image_header;
 mod input;
@@ -19,6 +20,7 @@ mod policy;
 mod refs;
 mod runner;
 mod save;
+mod session;
 mod settle;
 mod status;
 #[cfg(test)]
@@ -274,21 +276,9 @@ fn command(args: &[OsString]) -> Option<Command> {
 }
 
 async fn serve(env: Env) -> Result<(), String> {
-    // Lives until the server exits; see `control::guard`. `/proc/self/exe` still runs this
-    // binary when its file has been replaced since.
-    let _guardian = runner::watcher(
-        "/proc/self/exe",
-        &["guard".to_owned(), std::process::id().to_string()],
-    )
-    .map_err(|error| format!("start the crash guardian: {}", error.detail))?;
-    let events = env
-        .niri_socket
-        .path()
-        .map(|socket| niri::events::EventStream::spawn(socket.to_path_buf()))
-        .map_err(Clone::clone);
-    let audit = audit::Audit::new(env.state_dir.clone());
-    let accessibility = a11y::detect(env.session_bus.as_deref()).await;
-    let service = tools::Server::new(env, events, audit, accessibility)
+    let engine = engine::Engine::start(env).await?;
+    let server = tools::Server::new(std::sync::Arc::new(engine), session::Session::local());
+    let service = server
         .serve(rmcp::transport::stdio())
         .await
         .map_err(|error| format!("start MCP session: {error}"))?;

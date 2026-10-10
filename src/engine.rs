@@ -1,0 +1,352 @@
+//! The desktop engine: what a niri instance's clients share, apart from any transport. It
+//! owns the crash guardian, the event stream, the accessibility bus, the audit log and the
+//! desk, and runs each tool's work through them: the readiness check, the action gate with
+//! its evidence, captures and their refs, waits, and giving focus back. `tools.rs` turns
+//! MCP calls into calls here and the results into MCP content.
+
+use serde::Serialize;
+use serde_json::Value;
+use tokio::time::Instant;
+
+use crate::a11y::{self, A11y, Presence};
+use crate::act::{self, Outcome};
+use crate::audit::Audit;
+use crate::control::desk::Desk;
+use crate::control::lease::Holder;
+use crate::error::{CallError, ErrorName, ToolError};
+use crate::input::Input;
+use crate::niri::events::{EventStream, StreamState};
+use crate::observe;
+use crate::policy::{self, Loaded, SaveTarget};
+use crate::refs::Shot;
+use crate::{Env, clipboard, elements, niri, noctalia, runner, settle, status, wait};
+
+#[derive(Debug)]
+pub(crate) struct Engine {
+    env: Env,
+    /// Without niri's socket, the socket's error.
+    events: Result<EventStream, ToolError>,
+    audit: Audit,
+    desk: Desk,
+    /// Read once at startup.
+    policy: Loaded,
+    /// Decided once, because the tool list depends on it.
+    noctalia_installed: bool,
+    /// Whether there is an accessibility bus, decided once at startup for the same reason.
+    accessibility: Presence,
+    /// The accessibility bus, when there is one.
+    a11y: Option<A11y>,
+    /// Lives as long as the engine; see `control::guard`.
+    _guardian: Option<runner::Watcher>,
+}
+
+/// What `release_desktop` returns.
+#[derive(Debug, Serialize)]
+pub(crate) struct Release {
+    pub(crate) users_window: Option<u64>,
+    /// How giving focus back went, when it was asked for and there was a window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) restored: Option<Value>,
+    pub(crate) released: bool,
+}
+
+impl Engine {
+    /// Starts the crash guardian before anything else, then niri's event stream, and looks
+    /// for the accessibility bus.
+    pub(crate) async fn start(env: Env) -> Result<Self, String> {
+        // `/proc/self/exe` still runs this binary when its file has been replaced since.
+        let guardian = runner::watcher(
+            "/proc/self/exe",
+            &["guard".to_owned(), std::process::id().to_string()],
+        )
+        .map_err(|error| format!("start the crash guardian: {}", error.detail))?;
+        let events = env
+            .niri_socket
+            .path()
+            .map(|socket| EventStream::spawn(socket.to_path_buf()))
+            .map_err(Clone::clone);
+        let audit = Audit::new(env.state_dir.clone());
+        let accessibility = a11y::detect(env.session_bus.as_deref()).await;
+        Ok(Self {
+            _guardian: Some(guardian),
+            ..Self::new(env, events, audit, accessibility)
+        })
+    }
+
+    /// An engine without a crash guardian, from resources already made.
+    pub(crate) fn new(
+        env: Env,
+        events: Result<EventStream, ToolError>,
+        audit: Audit,
+        accessibility: Presence,
+    ) -> Self {
+        let a11y = accessibility.address.clone().map(A11y::new);
+        Self {
+            desk: Desk::start(&env),
+            policy: env.policy(),
+            noctalia_installed: env.finds("noctalia"),
+            env,
+            events,
+            audit,
+            accessibility,
+            a11y,
+            _guardian: None,
+        }
+    }
+
+    pub(crate) const fn env(&self) -> &Env {
+        &self.env
+    }
+
+    pub(crate) const fn audit(&self) -> &Audit {
+        &self.audit
+    }
+
+    pub(crate) const fn policy(&self) -> &Loaded {
+        &self.policy
+    }
+
+    pub(crate) const fn noctalia_installed(&self) -> bool {
+        self.noctalia_installed
+    }
+
+    pub(crate) const fn has_a11y(&self) -> bool {
+        self.a11y.is_some()
+    }
+
+    /// Whether `unrestricted` is on.
+    pub(crate) fn unrestricted(&self) -> bool {
+        self.env.unrestricted(&self.policy).enabled()
+    }
+
+    pub(crate) const fn niri(&self) -> act::Niri<'_> {
+        act::Niri {
+            socket: &self.env.niri_socket,
+            events: self.events.as_ref(),
+        }
+    }
+
+    /// What the input tools work with.
+    pub(crate) fn input(&self) -> Result<Input<'_>, ToolError> {
+        Ok(Input {
+            niri: self.niri(),
+            display: &self.env.display,
+            runtime: self.desk.runtime()?,
+            policy: &self.policy,
+            keyboard: self.env.keyboard.as_deref(),
+            a11y: self.a11y.as_ref(),
+        })
+    }
+
+    /// The screenshot ref named `id` of the lease held.
+    pub(crate) fn shot(&self, id: &str) -> Result<Shot, ToolError> {
+        self.desk.shot(id)
+    }
+
+    /// The element ref named `id` of the lease held.
+    pub(crate) fn element(&self, id: &str) -> Result<a11y::ElementRef, ToolError> {
+        self.desk.element(id)
+    }
+
+    /// The readiness report, as `status` returns it.
+    pub(crate) async fn status(&self) -> status::Status {
+        let event_stream = self
+            .events
+            .as_ref()
+            .map_or(StreamState::Disconnected, EventStream::state);
+        let sources = status::Sources {
+            event_stream: Some(event_stream),
+            audit: &self.audit,
+            noctalia_installed: self.noctalia_installed,
+            lease: self.desk.status(),
+            policy: &self.policy,
+            accessibility: &self.accessibility,
+        };
+        status::collect(&self.env, sources).await
+    }
+
+    /// Takes the lease for `label`. Returns the holder and the window that had keyboard
+    /// focus, which `release` can give focus back to.
+    pub(crate) async fn acquire(&self, label: &str) -> Result<(Holder, Option<u64>), ToolError> {
+        let refusal = self.refusal().await;
+        let focused = niri::waiter(self.events.as_ref())
+            .await
+            .ok()
+            .and_then(|waiter| waiter.view().focused_window());
+        let holder = self.desk.acquire(label, refusal, focused).await?;
+        Ok((holder, self.desk.users_window()))
+    }
+
+    /// Gives the lease up, with `restore_focus` first giving focus back to the user's
+    /// window through the action gate.
+    pub(crate) async fn release(&self, restore_focus: bool) -> Release {
+        let users_window = self.desk.users_window();
+        let restored = match (restore_focus, users_window) {
+            (true, Some(id)) => Some(self.restore(id).await),
+            _ => None,
+        };
+        Release {
+            users_window,
+            restored,
+            released: self.desk.release().await,
+        }
+    }
+
+    /// Runs one action through the desk's gate, with a screenshot when `shoot` asks for one
+    /// or its outcome is in doubt.
+    pub(crate) async fn act(
+        &self,
+        shoot: bool,
+        work: impl Future<Output = Result<Outcome, CallError>>,
+    ) -> Result<act::Evidenced, CallError> {
+        // Boxed, because the readiness report, the action's work and its wait make large
+        // futures.
+        let refusal = Box::pin(self.refusal());
+        let evidence = |outcome| Box::pin(self.evidence(outcome, shoot));
+        self.desk.act(refusal, Box::pin(work), evidence).await
+    }
+
+    /// A screenshot, serialized with this engine's actions. With `save`, a full-resolution
+    /// PNG of the target is written there first.
+    pub(crate) async fn screenshot(
+        &self,
+        request: observe::Request,
+        save: Option<SaveTarget>,
+    ) -> Result<observe::Screenshot, CallError> {
+        self.desk.observe(self.capture_saving(request, save)).await
+    }
+
+    /// The accessible elements `ask` names, each kept as an element ref while the lease is
+    /// held.
+    pub(crate) async fn elements(
+        &self,
+        ask: &elements::Ask,
+    ) -> Result<elements::Listing, CallError> {
+        let Some(a11y) = &self.a11y else {
+            return Err(
+                a11y::not_accessible("this session has no accessibility bus".to_owned()).into(),
+            );
+        };
+        let lease = self.desk.ref_lease();
+        let remember = |element| lease.and_then(|lease| self.desk.remember_element(lease, element));
+        // Boxed, because the walk's calls make a large future.
+        Box::pin(elements::list(
+            &self.env.niri_socket,
+            a11y,
+            &self.policy,
+            ask,
+            remember,
+        ))
+        .await
+    }
+
+    /// niri's outputs.
+    pub(crate) async fn outputs(&self) -> Result<impl Serialize, ToolError> {
+        niri::outputs(&self.env.niri_socket).await
+    }
+
+    /// One snapshot of the event stream.
+    pub(crate) async fn desktop(&self) -> Result<impl Serialize, ToolError> {
+        niri::desktop(self.events.as_ref()).await
+    }
+
+    /// Noctalia's status.
+    pub(crate) async fn shell_status(&self) -> Result<impl Serialize, ToolError> {
+        noctalia::status(&self.env).await
+    }
+
+    /// The clipboard's text.
+    pub(crate) async fn clipboard(&self) -> Result<impl Serialize, ToolError> {
+        clipboard::read_text(&self.env.niri_socket, &self.env.display).await
+    }
+
+    /// Waits for `until`, then with `screenshot` adds one taken once the screen stopped
+    /// changing. Each capture serializes with actions, without holding the mutex between
+    /// samples or while waiting for a window condition.
+    pub(crate) async fn wait(
+        &self,
+        until: &wait::Until,
+        limit: std::time::Duration,
+        screenshot: bool,
+    ) -> Result<(wait::Report, Option<observe::Screenshot>), CallError> {
+        let capture = || self.desk.observe(self.capture(observe::Request::focused()));
+        if *until == wait::Until::ScreenStable {
+            let (report, last) = wait::screen(capture, limit).await?;
+            return Ok((report, screenshot.then_some(last)));
+        }
+        let report = wait::window(self.events.as_ref(), until, limit).await?;
+        if !screenshot {
+            return Ok((report, None));
+        }
+        match settle::screenshot(capture, settle::LIMIT).await {
+            Ok(shot) => Ok((report, Some(shot))),
+            Err(CallError::Tool(error)) => Ok((
+                wait::Report {
+                    screenshot_error: Some(error),
+                    ..report
+                },
+                None,
+            )),
+            Err(mistake @ CallError::InvalidArguments(_)) => Err(mistake),
+        }
+    }
+
+    /// Focuses the user's window `id` through the action gate, as the outcome or the error.
+    async fn restore(&self, id: u64) -> Value {
+        let refusal = Box::pin(self.refusal());
+        let work = Box::pin(act::refocus(self.niri(), id));
+        let restored = match self.desk.act(refusal, work, std::future::ready).await {
+            Ok(outcome) => serde_json::to_value(outcome),
+            Err(CallError::Tool(error)) => serde_json::to_value(error),
+            Err(CallError::InvalidArguments(message)) => {
+                serde_json::to_value(ToolError::new(ErrorName::UpstreamError, message))
+            }
+        };
+        restored.unwrap_or(Value::Null)
+    }
+
+    /// Takes a screenshot and, while this engine holds the lease, keeps it as a ref that
+    /// the result names.
+    async fn capture(&self, request: observe::Request) -> Result<observe::Screenshot, CallError> {
+        let lease = self.desk.ref_lease();
+        let connection = self.events.as_ref().ok().and_then(EventStream::connection);
+        let taken = Instant::now();
+        let mut shot =
+            observe::screenshot(&self.env.niri_socket, &self.env.display, &request).await?;
+        if let (Some(lease), Some(connection)) = (lease, connection) {
+            let kept = Shot::of(&shot, taken, connection);
+            shot.metadata.screenshot_ref = self.desk.remember(lease, kept);
+        }
+        Ok(shot)
+    }
+
+    /// With `save`, first writes a full-resolution PNG of the target there; then captures
+    /// the screenshot to return, which says where the PNG went.
+    async fn capture_saving(
+        &self,
+        request: observe::Request,
+        save: Option<SaveTarget>,
+    ) -> Result<observe::Screenshot, CallError> {
+        let saved = match &save {
+            Some(save) => {
+                let (socket, display) = (&self.env.niri_socket, &self.env.display);
+                Some(observe::save(socket, display, &request.target, save).await?)
+            }
+            None => None,
+        };
+        let mut shot = self.capture(request).await?;
+        shot.metadata.saved = saved;
+        Ok(shot)
+    }
+
+    /// Why the lease may not be taken or an action run now, from the readiness report.
+    async fn refusal(&self) -> Option<ToolError> {
+        let report = self.status().await;
+        policy::refuse_control(report.facts(&self.policy))
+    }
+
+    /// The outcome with the screenshot `shoot` asks for, or the one an outcome in doubt gets.
+    async fn evidence(&self, outcome: Outcome, shoot: bool) -> act::Evidenced {
+        act::with_evidence(outcome, shoot, |request| self.capture(request)).await
+    }
+}
