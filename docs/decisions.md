@@ -638,3 +638,8 @@ These match the versions installed locally.
 - The socket is resolved once per process and connections use the resolved path, so a symlink retargeted later can't move a running server to another niri or another lease.
 - Resolution fails closed: a socket that doesn't resolve, isn't the user's, or lies in a directory that isn't the user's with mode `0700` leaves the process with no runtime directory. Picking `/run/user/<euid>` or the unresolved path instead could split the lease again.
 - A restarted niri gets a new directory with its new socket name. What the old instance left there, including an input-dirty marker, stays for a human: once the old socket is gone nothing resolves to it, so `recover` can't reach it. No dependency was added.
+
+## 2026-10-10: stop and resume don't connect to niri
+
+- `stop` and `resume` parse the command before discovery and find niri's socket without connecting (review finding): a socket counts when niri names it, it belongs to the user and its PID is a running `niri`. A hung niri accepts no connection, so the connect check made the stop key fail exactly when it was needed.
+- This is weaker than the connect check, which tells a live socket from one a crashed niri left whose PID was reused. It is accepted only for these two commands, which set or clear a flag; serving, `recover` and the guardian still connect. Several candidates are still refused, and `resume` still refuses while the input-dirty marker exists.

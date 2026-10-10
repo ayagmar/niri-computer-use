@@ -62,15 +62,21 @@ pub(crate) struct Env {
 }
 
 impl Env {
-    async fn read() -> Self {
-        Self::from_vars(|name| std::env::var_os(name), &discover::Roots::host()).await
+    async fn read(probe: discover::Probe) -> Self {
+        Self::from_vars(
+            |name| std::env::var_os(name),
+            &discover::Roots::host(),
+            probe,
+        )
+        .await
     }
 
     /// The environment `var` reads, with what it lacks of the session discovered under
-    /// `roots`. An empty variable counts as unset.
+    /// `roots` the way `probe` says. An empty variable counts as unset.
     async fn from_vars(
         var: impl Fn(&str) -> Option<OsString> + Sync,
         roots: &discover::Roots<'_>,
+        probe: discover::Probe,
     ) -> Self {
         let var = |name| var(name).filter(|value| !value.is_empty());
         let given = discover::Given {
@@ -78,7 +84,7 @@ impl Env {
             niri_socket: var("NIRI_SOCKET").map(PathBuf::from),
             wayland_display: var("WAYLAND_DISPLAY"),
         };
-        let session = discover::session(given, roots).await;
+        let session = discover::session(given, roots, probe).await;
         // Connections go to the resolved socket, so a symlink retargeted later doesn't move
         // them to another niri.
         let niri_socket = match (session.instance.socket(), session.niri_socket) {
@@ -199,10 +205,16 @@ enum Command {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
-    let env = Env::read().await;
+    let command = command(&args);
+    // The flag commands must work while niri hangs, and pick only where a flag goes.
+    let probe = match command {
+        Some(Command::Stop | Command::Resume) => discover::Probe::Offline,
+        _ => discover::Probe::Connect,
+    };
+    let env = Env::read(probe).await;
     let given = session::Given::read(|name| std::env::var_os(name));
     runner::pass_on(env.session_vars());
-    let result = match command(&args) {
+    let result = match command {
         Some(Command::Serve) => serve(env, given).await,
         Some(Command::Status) => {
             let audit = audit::Audit::new(env.state_dir.clone());
@@ -370,7 +382,7 @@ mod tests {
             proc: &root.join("proc"),
             euid,
         };
-        let env = Env::from_vars(|_| None, &roots).await;
+        let env = Env::from_vars(|_| None, &roots, discover::Probe::Connect).await;
         let mut bus = OsString::from("unix:path=");
         bus.push(runtime.join("bus"));
         assert_eq!(env.session_bus, Some(bus));
@@ -378,6 +390,7 @@ mod tests {
         let given = Env::from_vars(
             |name| (name == "DBUS_SESSION_BUS_ADDRESS").then(|| "unix:path=/b".into()),
             &roots,
+            discover::Probe::Connect,
         )
         .await;
         assert_eq!(given.session_bus, Some("unix:path=/b".into()));
@@ -416,11 +429,13 @@ mod tests {
                 _ => None,
             },
             &roots,
+            discover::Probe::Connect,
         )
         .await;
         let partial = Env::from_vars(
             |name| (name == "NIRI_SOCKET").then(|| socket.clone().into()),
             &roots,
+            discover::Probe::Connect,
         )
         .await;
         let aliased = Env::from_vars(
@@ -430,6 +445,7 @@ mod tests {
                 _ => None,
             },
             &roots,
+            discover::Probe::Connect,
         )
         .await;
         let (full, partial, aliased) = (

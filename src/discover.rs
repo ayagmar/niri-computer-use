@@ -9,7 +9,8 @@
 //!   `0700`. Either must belong to the user and have mode `0700`;
 //! - niri's socket is `niri.<display>.<pid>.sock` in niri's runtime directory
 //!   (`IpcServer::start` in niri v26.04 `src/ipc/server.rs`), and it counts only while
-//!   process `<pid>` is a running niri that accepts a connection on it;
+//!   process `<pid>` is a running niri that accepts a connection on it, or, for `stop` and
+//!   `resume`, only while `<pid>` is a running niri (see [`Probe`]);
 //! - the Wayland display is that `<display>`, a socket in the runtime directory.
 //!
 //! Parsing a socket's name and choosing among the sockets are pure. The reads take their
@@ -100,8 +101,20 @@ pub(crate) struct Session {
 /// How long a socket found in the runtime directory may take to accept a connection.
 const CONNECT_DEADLINE: Duration = Duration::from_millis(500);
 
+/// How discovery tells a running niri's socket from one a crashed niri left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Probe {
+    /// niri's PID must accept a connection on it, within 500 ms.
+    Connect,
+    /// Its PID must be a running niri; nothing connects, and the display isn't looked
+    /// for. For `stop` and `resume`, which only set or clear a flag and must work while
+    /// niri hangs. A socket a crashed niri left, whose PID now belongs to another niri,
+    /// passes too, so this never picks where input goes.
+    Offline,
+}
+
 /// Fills in what `given` lacks, and resolves niri's socket once.
-pub(crate) async fn session(given: Given, roots: &Roots<'_>) -> Session {
+pub(crate) async fn session(given: Given, roots: &Roots<'_>, probe: Probe) -> Session {
     let given_instance = given
         .niri_socket
         .as_deref()
@@ -118,14 +131,15 @@ pub(crate) async fn session(given: Given, roots: &Roots<'_>) -> Session {
         (Ok(socket), Source::Environment)
     } else {
         let display = given.wayland_display.as_deref();
-        found(niri_socket(runtime_dir.as_deref(), display, roots).await)
+        found(niri_socket(runtime_dir.as_deref(), display, roots, probe).await)
     };
     let instance = given_instance.unwrap_or_else(|| match &niri_socket {
         Ok(socket) => Instance::resolve(socket, roots.euid),
         Err(why) => Instance::unknown(why.clone()),
     });
-    let (wayland_display, wayland_source) = pick(given.wayland_display, || {
-        wayland_display(&instance, runtime_dir.as_deref())
+    let (wayland_display, wayland_source) = pick(given.wayland_display, || match probe {
+        Probe::Connect => wayland_display(&instance, runtime_dir.as_deref()),
+        Probe::Offline => Err("WAYLAND_DISPLAY is not set and isn't looked for".to_owned()),
     });
     Session {
         runtime_dir,
@@ -235,19 +249,21 @@ async fn niri_socket(
     dir: Option<&Path>,
     display: Option<&OsStr>,
     roots: &Roots<'_>,
+    probe: Probe,
 ) -> Result<PathBuf, String> {
     let dir =
         dir.ok_or("NIRI_SOCKET is not set and there is no runtime directory to look for it in")?;
-    let mut found = niri_sockets(dir, roots).await?;
+    let mut found = niri_sockets(dir, roots, probe).await?;
     found.retain(|socket| display.is_none_or(|display| serves(socket, display, dir)));
     choose(dir, &found, display)
 }
 
 /// The sockets in `dir` named the way niri names its own, owned by `roots.euid`, whose
-/// PID is a running process called `niri` that listens on them, in name order. A socket a
-/// crashed niri left stays behind, and its PID may since belong to another niri; it accepts
-/// no connection, so it doesn't count. Nothing is deleted.
-async fn niri_sockets(dir: &Path, roots: &Roots<'_>) -> Result<Vec<PathBuf>, String> {
+/// PID is a running process called `niri` that listens on them, as `probe` tells, in name
+/// order. A socket a crashed niri left stays behind, and its PID may since belong to
+/// another niri; it accepts no connection, so it doesn't count when `probe` connects.
+/// Nothing is deleted.
+async fn niri_sockets(dir: &Path, roots: &Roots<'_>, probe: Probe) -> Result<Vec<PathBuf>, String> {
     let entries = std::fs::read_dir(dir).map_err(|error| {
         format!(
             "NIRI_SOCKET is not set and {} can't be listed: {error}",
@@ -266,7 +282,8 @@ async fn niri_sockets(dir: &Path, roots: &Roots<'_>) -> Result<Vec<PathBuf>, Str
         .collect();
     let mut found = Vec::new();
     for (socket, pid) in named {
-        if niri::listener_pid(&socket, CONNECT_DEADLINE).await == Ok(pid) {
+        if probe == Probe::Offline || niri::listener_pid(&socket, CONNECT_DEADLINE).await == Ok(pid)
+        {
             found.push(socket);
         }
     }
@@ -441,13 +458,17 @@ mod tests {
         }
 
         async fn session(&self, given: Given) -> Session {
+            self.probe(given, Probe::Connect).await
+        }
+
+        async fn probe(&self, given: Given, probe: Probe) -> Session {
             let (run_user, proc) = self.roots();
             let roots = Roots {
                 run_user: &run_user,
                 proc: &proc,
                 euid: self.euid,
             };
-            session(given, &roots).await
+            session(given, &roots, probe).await
         }
     }
 
@@ -644,11 +665,16 @@ mod tests {
             ..roots
         };
         assert_eq!(
-            niri_sockets(&host.runtime(), &roots).await.unwrap().len(),
+            niri_sockets(&host.runtime(), &roots, Probe::Connect)
+                .await
+                .unwrap()
+                .len(),
             1
         );
         assert_eq!(
-            niri_sockets(&host.runtime(), &other).await.unwrap(),
+            niri_sockets(&host.runtime(), &other, Probe::Connect)
+                .await
+                .unwrap(),
             Vec::<PathBuf>::new()
         );
     }
@@ -681,6 +707,43 @@ mod tests {
                 warning: None,
             }
         );
+    }
+
+    /// `stop` and `resume` against a niri that accepts no connection, as a hung one may not.
+    #[tokio::test]
+    async fn offline_discovery_takes_a_running_niris_socket_without_connecting() {
+        let mut host = Host::new("discover-offline");
+        host.socket("wayland-1");
+        host.process(41, "niri", 'S');
+        let hung = host.stale("niri.wayland-1.41.sock").await;
+        let offline = host.probe(Given::default(), Probe::Offline).await;
+        assert_eq!(offline.niri_socket, Ok(hung.clone()));
+        assert!(offline.instance.socket().is_ok(), "{:?}", offline.instance);
+        let display = missing(&offline.sources.wayland_display);
+        assert!(display.ends_with("isn't looked for"), "{display}");
+        let connected = host.session(Given::default()).await;
+        assert!(
+            connected.niri_socket.is_err(),
+            "{:?}",
+            connected.niri_socket
+        );
+
+        // A socket whose PID isn't a running niri doesn't count.
+        host.stale("niri.wayland-2.42.sock").await;
+        let skipped = host.probe(Given::default(), Probe::Offline).await;
+        assert_eq!(skipped.niri_socket, Ok(hung));
+        // Two running niri instances are never chosen between, unless the display says.
+        host.process(43, "niri", 'S');
+        let other = host.stale("niri.wayland-3.43.sock").await;
+        let ambiguous = host.probe(Given::default(), Probe::Offline).await;
+        let error = ambiguous.niri_socket.unwrap_err();
+        assert!(error.contains("2 running niri instances"), "{error}");
+        let on_display = Given {
+            wayland_display: Some("wayland-3".into()),
+            ..Given::default()
+        };
+        let chosen = host.probe(on_display, Probe::Offline).await;
+        assert_eq!(chosen.niri_socket, Ok(other));
     }
 
     #[tokio::test]

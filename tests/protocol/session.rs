@@ -9,7 +9,7 @@
 //! It answers `Version` itself, or relays every connection to the in-process fake niri, so
 //! a test has the whole fake while niri's socket is served by a process of its own. Started
 //! through a link called `niri`, it can also serve a Wayland display, as discovery expects
-//! of a running niri.
+//! of a running niri, or stop listening and keep running, like a niri too hung to accept.
 
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::net::Shutdown;
@@ -25,6 +25,8 @@ const SOCKET: &str = "NCU_FAKE_NIRI_SOCKET";
 const RELAY: &str = "NCU_FAKE_NIRI_RELAY";
 /// A display socket it listens on too, accepting nothing.
 const DISPLAY_SOCKET: &str = "NCU_FAKE_NIRI_DISPLAY";
+/// Set: it closes its socket once bound, leaving the file, and runs until killed.
+const HUNG: &str = "NCU_FAKE_NIRI_HUNG";
 const NAME: &str = "session::fake_niri_process";
 
 /// A running fake niri. Dropping it kills the process.
@@ -124,6 +126,19 @@ impl NiriProcess {
         (process, name)
     }
 
+    /// A process called `niri` whose socket, `run/niri.<display>.<pid>.sock`, refuses every
+    /// connection. Returns the socket.
+    pub(crate) async fn hung(fixture: &Fixture, display: &str) -> (Self, PathBuf) {
+        let program = fixture.path("niri");
+        if !program.exists() {
+            std::os::unix::fs::symlink(std::env::current_exe().unwrap(), &program).unwrap();
+        }
+        let listen = fixture.path(&format!("run/niri.{display}.<pid>.sock"));
+        let mut command = command(&program);
+        command.env(SOCKET, &listen).env(HUNG, "1");
+        Self::spawn(command, &listen, None, &[]).await
+    }
+
     /// A fake niri in session `c4`, with a `loginctl` that says it is unlocked, as the
     /// lease needs.
     pub(crate) async fn unlocked(fixture: &Fixture) -> Self {
@@ -155,6 +170,12 @@ fn fake_niri_process() {
         std::env::var_os(DISPLAY_SOCKET).map(|display| UnixListener::bind(display).unwrap());
     let path = path.replace("<pid>", &std::process::id().to_string());
     let listener = UnixListener::bind(path).unwrap();
+    if std::env::var_os(HUNG).is_some() {
+        drop(listener);
+        loop {
+            std::thread::park();
+        }
+    }
     let relay = std::env::var_os(RELAY);
     for connection in listener.incoming() {
         let Ok(connection) = connection else { continue };
