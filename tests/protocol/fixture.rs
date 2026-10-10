@@ -4,11 +4,14 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
+
+use crate::client::WAIT;
 
 /// Programs the fake programs may use. They run with their own `PATH`, so the server's
 /// `PATH` holds nothing but the fakes.
@@ -41,6 +44,9 @@ pub(crate) const SESSION: &str = "7";
 pub(crate) struct Fixture {
     pub(crate) dir: PathBuf,
     env: BTreeMap<&'static str, OsString>,
+    /// The servers started here. Each must have exited before the directory is removed,
+    /// or its audit log could create the directory again.
+    servers: Mutex<Vec<u32>>,
     /// The Wayland display, served by the test's process like the fake niri, so the server
     /// takes it as niri's. Nothing speaks Wayland on it.
     _display: UnixListener,
@@ -79,6 +85,7 @@ impl Fixture {
         let mut fixture = Self {
             dir,
             env,
+            servers: Mutex::new(Vec::new()),
             _display: display,
         };
         if shared_mode() {
@@ -94,6 +101,14 @@ impl Fixture {
 
     pub(crate) fn env(&self) -> &BTreeMap<&'static str, OsString> {
         &self.env
+    }
+
+    /// Notes a server started on this fixture, which must exit before the fixture drops.
+    pub(crate) fn started(&self, server: u32) {
+        self.servers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(server);
     }
 
     pub(crate) fn set(&mut self, name: &'static str, value: impl Into<OsString>) {
@@ -174,20 +189,26 @@ impl Fixture {
 }
 
 impl Drop for Fixture {
-    /// Removes the directory, retrying for up to a second: a shared engine, which outlives
-    /// the test's servers, may write in it meanwhile.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "drop can't await, and blocks only while an engine still writes in the directory"
-    )]
+    /// Removes the directory once nothing started for it runs any more. A shared engine
+    /// outlives its bridges for its idle grace, and it or its guardian could otherwise
+    /// write in the directory after the removal and create it again.
     fn drop(&mut self) {
-        for _ in 0..50 {
-            match std::fs::remove_dir_all(&self.dir) {
-                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-                _ => return,
-            }
+        let servers = self
+            .servers
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner);
+        let running: Vec<u32> = servers
+            .iter()
+            .copied()
+            .filter(|pid| !exited(i32::try_from(*pid).unwrap()))
+            .collect();
+        end_processes(&self.dir);
+        std::fs::remove_dir_all(&self.dir).ok();
+        if !std::thread::panicking() {
+            assert!(
+                running.is_empty(),
+                "servers {running:?} outlived their fixture; drop them before it"
+            );
         }
     }
 }
@@ -227,6 +248,43 @@ pub(crate) async fn pid_in(file: &Path) -> i32 {
         .trim()
         .parse()
         .unwrap()
+}
+
+/// Kills every process that has `dir` in its environment, such as a shared engine in
+/// its idle grace and its guardian, and waits until none is left, for at most `WAIT`.
+fn end_processes(dir: &Path) {
+    let end = Instant::now() + WAIT;
+    loop {
+        let left = processes_naming(dir);
+        if left.is_empty() || Instant::now() > end {
+            return;
+        }
+        for pid in left {
+            if let Some(pid) = rustix::process::Pid::from_raw(pid) {
+                // It may have exited since the listing.
+                rustix::process::kill_process(pid, rustix::process::Signal::KILL).ok();
+            }
+        }
+        std::thread::yield_now();
+    }
+}
+
+/// The running processes of ours whose environment mentions `dir`.
+fn processes_naming(dir: &Path) -> Vec<i32> {
+    let needle = dir.as_os_str().as_bytes();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_str()?.parse().ok())
+        .filter(|pid| !exited(*pid))
+        .filter(|pid| {
+            // Another user's processes can't be read, and a process can exit meanwhile.
+            std::fs::read(format!("/proc/{pid}/environ"))
+                .is_ok_and(|environ| environ.windows(needle.len()).any(|part| part == needle))
+        })
+        .collect()
 }
 
 /// Sends `SIGKILL` to `pid`.

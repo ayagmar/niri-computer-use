@@ -14,12 +14,15 @@ use crate::noctalia::{self, LOCKED, UNLOCKED};
 /// A server holding the lease on a fake niri, with windows 1 (focused, `a`), 2 (`b`) and
 /// 3 (`c`) on workspace 1 of two, Noctalia saying the screen is unlocked, and a grim that
 /// captures the focused 2560x1440 output at the default 1280 pixels wide.
+///
+/// Fields drop in this order: the server first, so it can't react to niri or Noctalia
+/// going away, and the fixture last.
 struct Desk {
-    fixture: Fixture,
+    server: Server,
     niri: Niri,
     stream: Stream,
-    server: Server,
     noctalia: noctalia::Reply,
+    fixture: Fixture,
 }
 
 impl Desk {
@@ -56,11 +59,11 @@ impl Desk {
         stream.send(&json!({"OverviewOpenedOrClosed": {"is_open": false}}));
         server.structured("acquire_desktop").await;
         Self {
-            fixture,
+            server,
             niri,
             stream,
-            server,
             noctalia,
+            fixture,
         }
     }
 
