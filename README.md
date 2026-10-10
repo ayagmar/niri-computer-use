@@ -6,7 +6,7 @@ An MCP server for AI agents to observe and drive a [niri](https://github.com/nir
 
 Documentation: **https://ayagmar.github.io/niri-computer-use/**, also as plain Markdown for agents ([llms.txt](https://ayagmar.github.io/niri-computer-use/llms.txt)).
 
-**Status: early development.** Up to 25 tools over stdio: reading the desktop, screenshots, accessible elements, and, under a lease, focus, launch, close, niri actions, pointer, keyboard, paste, three Noctalia panels and, with `unrestricted`, any Noctalia command. The native keyboard backend is experimental and off by default. Acceptance evidence for each milestone is in [docs/results/](docs/results/).
+**Status: early development.** Up to 27 tools over stdio: reading the desktop, screenshots, accessible elements, and, under a lease, focus, launch, close, niri actions, pointer, keyboard, paste, accessible element actions, three Noctalia panels and, with `unrestricted`, any Noctalia command. The native keyboard backend is experimental and off by default. Acceptance evidence for each milestone is in [docs/results/](docs/results/).
 
 ## Install
 

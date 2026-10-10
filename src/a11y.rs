@@ -36,6 +36,8 @@ const ROOT: &str = "/org/a11y/atspi/accessible/root";
 const ACCESSIBLE: &str = "org.a11y.atspi.Accessible";
 const COMPONENT: &str = "org.a11y.atspi.Component";
 const ACTION: &str = "org.a11y.atspi.Action";
+const EDITABLE_TEXT: &str = "org.a11y.atspi.EditableText";
+const TEXT: &str = "org.a11y.atspi.Text";
 /// `ATSPI_COORD_TYPE_WINDOW`: relative to the toolkit's window.
 const WINDOW_COORDS: u32 = 1;
 /// D-Bus errors that mean the object or its application is gone.
@@ -411,7 +413,7 @@ impl Request {
     /// What a kept element is now: its role, states and extents, and its frame's extents,
     /// read together.
     pub(crate) async fn probe(&self, element: &ElementRef) -> Result<Probe, Failed> {
-        let at = (element.bus.as_str(), element.path.as_str());
+        let at = element.at();
         let (role, states, extents, frame) = tokio::join!(
             self.call::<_, u32>(at, (ACCESSIBLE, "GetRole"), &()),
             self.call::<_, Vec<u32>>(at, (ACCESSIBLE, "GetState"), &()),
@@ -423,6 +425,63 @@ impl Request {
             states: States::from_words(&states?),
             extents: extents?,
             frame: frame?,
+        })
+    }
+
+    /// The kept element's role and states now.
+    pub(crate) async fn state(&self, element: &ElementRef) -> Result<(u32, States), Failed> {
+        let at = element.at();
+        let (role, states) = tokio::join!(
+            self.call::<_, u32>(at, (ACCESSIBLE, "GetRole"), &()),
+            self.call::<_, Vec<u32>>(at, (ACCESSIBLE, "GetState"), &()),
+        );
+        Ok((role?, States::from_words(&states?)))
+    }
+
+    /// The names of the element's actions now, in index order.
+    pub(crate) async fn actions(&self, element: &ElementRef) -> Result<Vec<String>, Failed> {
+        let actions: Vec<(String, String, String)> =
+            self.call(element.at(), (ACTION, "GetActions"), &()).await?;
+        Ok(actions.into_iter().map(|(name, _, _)| name).collect())
+    }
+
+    /// Whether the element has an `EditableText` interface.
+    pub(crate) async fn editable_text(&self, element: &ElementRef) -> Result<bool, Failed> {
+        let interfaces: Vec<String> = self
+            .call(element.at(), (ACCESSIBLE, "GetInterfaces"), &())
+            .await?;
+        Ok(interfaces
+            .iter()
+            .any(|interface| interface == EDITABLE_TEXT))
+    }
+
+    /// Asks the application to do the element's action at `index`. The answer only says
+    /// whether it took the request: the app does the action afterwards, on its own time.
+    pub(crate) async fn do_action(&self, element: &ElementRef, index: i32) -> Result<bool, Failed> {
+        self.call(element.at(), (ACTION, "DoAction"), &(index,))
+            .await
+    }
+
+    /// Replaces the element's whole text with `text`.
+    pub(crate) async fn set_text(&self, element: &ElementRef, text: &str) -> Result<bool, Failed> {
+        self.call(element.at(), (EDITABLE_TEXT, "SetTextContents"), &(text,))
+            .await
+    }
+
+    /// How many characters the element's text has now.
+    pub(crate) async fn character_count(&self, element: &ElementRef) -> Result<i32, Failed> {
+        let value: OwnedValue = self
+            .call(
+                element.at(),
+                ("org.freedesktop.DBus.Properties", "Get"),
+                &(TEXT, "CharacterCount"),
+            )
+            .await?;
+        i32::try_from(value).map_err(|error| {
+            Failed::Error(ToolError::new(
+                ErrorName::UpstreamError,
+                format!("{TEXT}.CharacterCount on {}: {error}", element.bus),
+            ))
         })
     }
 }
@@ -461,6 +520,13 @@ pub(crate) struct ElementRef {
     /// The path of the frame that is the window, for the frame guard.
     pub(crate) frame: String,
     pub(crate) kept: Kept,
+}
+
+impl ElementRef {
+    /// Where the element is on the bus.
+    fn at(&self) -> (&str, &str) {
+        (&self.bus, &self.path)
+    }
 }
 
 /// A call on an object that may be gone: `None` once it is.

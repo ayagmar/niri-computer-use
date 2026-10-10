@@ -16,6 +16,7 @@ use crate::a11y::model;
 use crate::act::{self, Outcome};
 use crate::audit::{self, Call, Caller};
 use crate::coords::ImagePx;
+use crate::elements::actions;
 use crate::engine::Engine;
 use crate::error::{CANCELLED, CallError, ToolError};
 use crate::input::keyboard::{self, Expect, Typing};
@@ -569,6 +570,43 @@ struct PasteArgs {
     screenshot: bool,
 }
 
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct ActivateElementArgs {
+    /// An `element_ref` from `elements`, listed under this lease.
+    element: String,
+    /// One of the element's `actions` from `elements`. Defaults to the first of them that
+    /// is `click`, `press`, `activate` or `toggle`.
+    #[schemars(with = "String", default, skip_serializing_if = "Option::is_none")]
+    action: Option<String>,
+    /// The element's window, which must have keyboard focus: `{"window_id"}` or
+    /// `{"app_id"}`. `"none"` is refused.
+    expect: ExpectArg,
+    /// With true, the result also has a screenshot of the focused output, taken once the
+    /// screen stopped changing, so no separate `screenshot` call is needed. Defaults to
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    screenshot: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct SetElementTextArgs {
+    /// An `element_ref` from `elements`, listed under this lease: an editable text field.
+    element: String,
+    /// The field's new text, which replaces all of it, up to 64 KiB of UTF-8. Empty clears
+    /// the field.
+    text: String,
+    /// The element's window, which must have keyboard focus: `{"window_id"}` or
+    /// `{"app_id"}`. `"none"` is refused.
+    expect: ExpectArg,
+    /// With true, the result also has a screenshot of the focused output, taken once the
+    /// screen stopped changing, so no separate `screenshot` call is needed. Defaults to
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    screenshot: bool,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Server {
     engine: Arc<Engine>,
@@ -579,8 +617,8 @@ pub(crate) struct Server {
 #[tool_router]
 impl Server {
     /// The `shell_*` tools exist only when `noctalia` is on `PATH`, `noctalia` only when
-    /// `unrestricted` is on as well, and `elements` only with an accessibility bus, so the
-    /// tool list stays fixed for the session.
+    /// `unrestricted` is on as well, and the element tools only with an accessibility bus,
+    /// so the tool list stays fixed for the session.
     pub(crate) fn new(engine: Arc<Engine>, session: Session) -> Self {
         let mut tool_router = Self::tool_router();
         if !engine.noctalia_installed() {
@@ -592,7 +630,9 @@ impl Server {
             tool_router.remove_route("noctalia");
         }
         if !engine.has_a11y() {
-            tool_router.remove_route("elements");
+            for tool in ELEMENT_TOOLS {
+                tool_router.remove_route(tool);
+            }
         }
         Self {
             engine,
@@ -1078,6 +1118,95 @@ impl Server {
         };
         let asked = Asked {
             tool: "paste",
+            logged,
+            shoot: args.screenshot,
+        };
+        self.act(&context, asked, work).await
+    }
+
+    /// Does one of an accessible element's own actions, as a screen reader would, without
+    /// the pointer: `element` is an `element_ref` from `elements` and `action` one of its
+    /// `actions` (by default its first of `click`, `press`, `activate` or `toggle`). Works
+    /// where a click can't aim, as with `frame_size_mismatch`. The element's window must
+    /// have keyboard focus and `expect` must name it, or the call fails with
+    /// `focus_mismatch` and nothing is sent; `focus_window` it first. Refused with
+    /// `app_denied` for a denied app, `element_stale` once the element or its window is
+    /// gone or changed, and `element_unmappable` while it isn't showing. The app's answer
+    /// only means it took the request, so the element is looked at again a moment later:
+    /// `observed` is `present` (with `element.states_set` and `states_cleared`), `gone`
+    /// (it or its window went away, as when a button closes its dialog) or `unknown`
+    /// (`detail` says why). An app that declines gives `upstream_error`. Take a screenshot
+    /// to see the effect; never repeat an activation on your own. Requires the lease.
+    #[tool(annotations(
+        read_only_hint = false,
+        destructive_hint = true,
+        idempotent_hint = false,
+        open_world_hint = false
+    ))]
+    async fn activate_element(
+        &self,
+        Parameters(args): Parameters<ActivateElementArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let kept = self.engine.element(&self.session, &args.element).ok();
+        let expect = serde_json::to_value(&args.expect).unwrap_or(Value::Null);
+        let mut logged = actions::logged(
+            &args.element,
+            kept.as_ref(),
+            args.action.as_deref(),
+            None,
+            &expect,
+        );
+        flag(&mut logged, "screenshot", args.screenshot);
+        let work = async {
+            let input = self.engine.input(&self.session)?;
+            let element = self.engine.element(&self.session, &args.element)?;
+            let focus = args.expect.into();
+            actions::activate(input, &element, args.action.as_deref(), focus).await
+        };
+        let asked = Asked {
+            tool: "activate_element",
+            logged,
+            shoot: args.screenshot,
+        };
+        self.act(&context, asked, work).await
+    }
+
+    /// Replaces all of an editable text field's text, through the accessibility bus
+    /// instead of key events: `element` is an `element_ref` from `elements` whose states
+    /// include `editable`. Up to 64 KiB of UTF-8; empty clears the field. No key events
+    /// reach the app, so use `type_text` where keys matter, such as for autocompletion or
+    /// to submit. Focus, `expect` and the refusals are as for `activate_element`; a
+    /// password field is refused with `secret_field`, text over the limit with
+    /// `text_too_long`, and an element without editable text is an argument mistake.
+    /// `observed` is `matched` when the field then holds as many characters as were set,
+    /// `differs` when it holds another number (`element.characters`), as an app that
+    /// filters input does, or `unknown`. The text is never logged or returned. Requires
+    /// the lease.
+    #[tool(annotations(
+        read_only_hint = false,
+        destructive_hint = true,
+        idempotent_hint = true,
+        open_world_hint = false
+    ))]
+    async fn set_element_text(
+        &self,
+        Parameters(args): Parameters<SetElementTextArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let kept = self.engine.element(&self.session, &args.element).ok();
+        let expect = serde_json::to_value(&args.expect).unwrap_or(Value::Null);
+        // The length, never the text.
+        let text_len = Some(args.text.chars().count());
+        let mut logged = actions::logged(&args.element, kept.as_ref(), None, text_len, &expect);
+        flag(&mut logged, "screenshot", args.screenshot);
+        let work = async {
+            let input = self.engine.input(&self.session)?;
+            let element = self.engine.element(&self.session, &args.element)?;
+            actions::set_text(input, &element, &args.text, args.expect.into()).await
+        };
+        let asked = Asked {
+            tool: "set_element_text",
             logged,
             shoot: args.screenshot,
         };
@@ -1572,6 +1701,7 @@ struct Keying {
 
 /// The tools that exist only with Noctalia installed.
 const SHELL_TOOLS: [&str; 3] = ["shell_status", "shell_open", "shell_close"];
+const ELEMENT_TOOLS: [&str; 3] = ["elements", "activate_element", "set_element_text"];
 
 fn answer(result: Result<impl Serialize, ToolError>) -> Result<CallToolResult, ErrorData> {
     match result {
@@ -1618,7 +1748,7 @@ fn invalid(message: &str) -> CallToolResult {
 #[tool_handler(
     router = self.tool_router,
     name = "niri-computer-use",
-    instructions = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `elements`, when listed, gives one window's accessible elements and where they are. `clipboard_read` returns the clipboard's text, and `shell_status`, when Noctalia is installed, its panel and lock state. To act, call `acquire_desktop`, then one action at a time (`focus_window`, `focus_workspace`, `launch`, `close_window`, `niri_action` for window layout such as fullscreen, floating and widths, with Noctalia `shell_open` and `shell_close`, and for input `pointer_move`, `click`, `drag` and `scroll` with a fresh `screenshot_ref`, or `key`, `type_text` and `paste` with `expect`), reading `accepted` and `observed` before the next call. To see an action's result, pass it `screenshot: true` rather than sending a `screenshot` alongside it, and use `wait_for` rather than repeated screenshots to wait for a window or for the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter, and start apps through `launch` presets; with no preset for the app, use `niri_action` `Spawn` with the program's argv (never a shell or `SpawnSh`) when `status.unrestricted.enabled` is true, then find its window with `wait_for` or `desktop_state` (its `app_id` may differ from the program's name) and never repeat the `Spawn`; otherwise ask the user to add a preset. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
+    instructions = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `elements`, when listed, gives one window's accessible elements and where they are, and `activate_element` and `set_element_text` press them and fill them in without the pointer once their window has focus. `clipboard_read` returns the clipboard's text, and `shell_status`, when Noctalia is installed, its panel and lock state. To act, call `acquire_desktop`, then one action at a time (`focus_window`, `focus_workspace`, `launch`, `close_window`, `niri_action` for window layout such as fullscreen, floating and widths, with Noctalia `shell_open` and `shell_close`, and for input `pointer_move`, `click`, `drag` and `scroll` with a fresh `screenshot_ref`, or `key`, `type_text` and `paste` with `expect`), reading `accepted` and `observed` before the next call. To see an action's result, pass it `screenshot: true` rather than sending a `screenshot` alongside it, and use `wait_for` rather than repeated screenshots to wait for a window or for the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter, and start apps through `launch` presets; with no preset for the app, use `niri_action` `Spawn` with the program's argv (never a shell or `SpawnSh`) when `status.unrestricted.enabled` is true, then find its window with `wait_for` or `desktop_state` (its `app_id` may differ from the program's name) and never repeat the `Spawn`; otherwise ask the user to add a preset. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
 )]
 impl ServerHandler for Server {}
 
@@ -1677,6 +1807,8 @@ mod tests {
             (Server::key_tool_attr(), (no, yes, no)),
             (Server::type_text_tool_attr(), (no, yes, no)),
             (Server::paste_tool_attr(), (no, yes, no)),
+            (Server::activate_element_tool_attr(), (no, yes, no)),
+            (Server::set_element_text_tool_attr(), (no, yes, yes)),
             (Server::shell_open_tool_attr(), (no, no, yes)),
             (Server::shell_close_tool_attr(), (no, no, yes)),
             (Server::noctalia_tool_attr(), (no, yes, no)),

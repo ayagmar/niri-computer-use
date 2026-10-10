@@ -240,10 +240,13 @@ async fn without_noctalia_on_path_there_are_no_shell_tools() {
 }
 
 #[tokio::test]
-async fn without_an_accessibility_bus_there_is_no_elements_tool_and_status_says_why() {
+async fn without_an_accessibility_bus_there_are_no_element_tools_and_status_says_why() {
     let fixture = Fixture::new("no-a11y");
     let mut server = Server::start(&fixture).await;
-    assert!(!names(&server.tools().await).contains(&"elements"));
+    let tools = server.tools().await;
+    for tool in ["elements", "activate_element", "set_element_text"] {
+        assert!(!names(&tools).contains(&tool), "{tool}");
+    }
     // Clients such as Codex forward XDG_RUNTIME_DIR but not DBUS_SESSION_BUS_ADDRESS, so
     // the server looks for the user bus in the runtime directory, which has none here.
     let accessibility = server.structured("status").await["accessibility"].clone();

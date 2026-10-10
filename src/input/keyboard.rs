@@ -244,7 +244,7 @@ pub(super) fn parse_combo(combo: &str) -> Result<(Vec<&'static str>, &str), Stri
 }
 
 /// Checks `expect` against the window with keyboard focus.
-pub(super) fn check_expect(expect: &Expect, view: &View) -> Result<Focus, ToolError> {
+pub(crate) fn check_expect(expect: &Expect, view: &View) -> Result<Focus, ToolError> {
     let focused = view.focused_window().and_then(|id| view.windows().get(&id));
     let matched = match expect {
         Expect::Unchecked => return Ok(Focus::Unchecked),

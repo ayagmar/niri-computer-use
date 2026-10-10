@@ -47,13 +47,13 @@ niri-computer-use: a server holds the lease: PID … (…); end that agent or it
 
 If they are listed but fail with `noctalia_unavailable`, Noctalia isn't running: `status` shows `noctalia: not_running` and a `noctalia_error` such as `…/noctalia-wayland-1.sock: connect: No such file or directory`. Start Noctalia. While it isn't running, the lock state depends on logind alone, so without `niri --session` the lease is refused.
 
-## `elements` isn't listed
+## `elements` and the element actions aren't listed
 
 The server found no accessibility bus when it started; `status` shows why under `accessibility.reason`. The server uses `DBUS_SESSION_BUS_ADDRESS`, or else the user bus at `$XDG_RUNTIME_DIR/bus`. Check that at-spi2-core is installed, then restart the agent's session.
 
 ## `elements` lists elements without a `layout_box`
 
-With `unmappable: frame_size_mismatch`, the app draws its own title bar and its coordinates can't be matched to niri's window. GTK 3 and Qt apps do this; with server-side decorations they work. Aim at screenshot pixels for that window. A click on such an element is refused with `element_unmappable` rather than land in the wrong place.
+With `unmappable: frame_size_mismatch`, the app draws its own title bar and its coordinates can't be matched to niri's window. GTK 3 and Qt apps do this; with server-side decorations they work. Aim at screenshot pixels for that window, or use `activate_element` and `set_element_text`, which don't need a box. A click on such an element is refused with `element_unmappable` rather than land in the wrong place.
 
 ## `elements` fails with `deadline_exceeded`
 

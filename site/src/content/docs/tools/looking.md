@@ -37,7 +37,7 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `outputs.pointer_supported`, `outputs.reason` | whether niri's outputs are a setup the virtual pointer is tested on (one enabled output: a monitor at transform `Normal`, or nested niri's `winit` window), and why not |
 | `noctalia` | `running`, `not_running` or `not_installed` |
 | `noctalia_error` | why Noctalia counts as not running, or null |
-| `accessibility.available`, `accessibility.address`, `accessibility.reason` | whether the session has an accessibility bus, its address, and why not; `elements` is listed only when it has one |
+| `accessibility.available`, `accessibility.address`, `accessibility.reason` | whether the session has an accessibility bus, its address, and why not; `elements`, `activate_element` and `set_element_text` are listed only when it has one |
 | `policy.state` | `loaded`, `missing` (valid: no presets, no denied apps) or `invalid` |
 | `policy.presets`, `policy.denied_app_ids`, `policy.error` | how many presets and denied apps the policy file has, and why it is invalid |
 | `policy.preset_names` | the preset names `launch` takes |

@@ -76,7 +76,7 @@ list_tools() {
     expected="${expected} + [\"shell_close\",\"shell_open\",\"shell_status\"]"
   fi
   if jq -e '.result.structuredContent.accessibility.available' "${work}/status.json" >/dev/null; then
-    expected="${expected} + [\"elements\"]"
+    expected="${expected} + [\"activate_element\",\"elements\",\"set_element_text\"]"
   fi
   # --strict exits 6 on a schema portability error.
   local status=0

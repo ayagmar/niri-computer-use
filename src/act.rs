@@ -12,6 +12,7 @@ use std::time::Duration;
 use niri_ipc::{Action, Window, WorkspaceReferenceArg};
 use serde::Serialize;
 
+use crate::elements::actions::Acted;
 use crate::error::{CallError, ErrorName, ToolError, Unanswered};
 use crate::input::keyboard::Focus;
 use crate::input::paste::Pasted;
@@ -65,6 +66,18 @@ pub(crate) enum Observed {
     Changed,
     /// `niri_action`: niri reported no change in the window within a second.
     Unchanged,
+    /// `activate_element`: the element is still there a moment later.
+    Present,
+    /// `activate_element`: the element or its window went away, as when a button closes
+    /// its dialog.
+    Gone,
+    /// Element actions: the element couldn't be read afterwards; `detail` says why.
+    Unknown,
+    /// `set_element_text`: the element holds as many characters as were set.
+    Matched,
+    /// `set_element_text`: the element holds another number of characters, as when an app
+    /// filters what it is given.
+    Differs,
 }
 
 /// An action's result.
@@ -106,6 +119,9 @@ pub(crate) struct Outcome {
     /// `paste`: whether the text was read, and what became of the clipboard.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) paste: Option<Pasted>,
+    /// Element actions: the element's role and what the action did to it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) element: Option<Acted>,
     /// Why the outcome is uncertain.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) detail: Option<String>,
@@ -140,6 +156,7 @@ impl Outcome {
             noctalia: None,
             window: None,
             paste: None,
+            element: None,
             detail: None,
             screenshot: None,
             screenshot_error: None,
@@ -160,6 +177,7 @@ impl Outcome {
             noctalia: None,
             window: None,
             paste: None,
+            element: None,
             detail: Some(detail),
             screenshot: None,
             screenshot_error: None,
@@ -173,7 +191,8 @@ impl Outcome {
             | Observed::Pending
             | Observed::None
             | Observed::Interrupted
-            | Observed::Uncertain => true,
+            | Observed::Uncertain
+            | Observed::Unknown => true,
             Observed::Focused
             | Observed::Closed
             | Observed::Opened
@@ -181,7 +200,11 @@ impl Outcome {
             | Observed::Ambiguous
             | Observed::Sent
             | Observed::Changed
-            | Observed::Unchanged => false,
+            | Observed::Unchanged
+            | Observed::Present
+            | Observed::Gone
+            | Observed::Matched
+            | Observed::Differs => false,
         }
     }
 }

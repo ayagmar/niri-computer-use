@@ -1,15 +1,15 @@
 ---
 title: Elements and accessibility
-description: List a window's buttons, fields and menu items through the accessibility bus, and aim the pointer at them.
+description: List a window's buttons, fields and menu items through the accessibility bus, aim the pointer at them, or activate them and set their text directly.
 sidebar:
   order: 6
 ---
 
-Many apps describe their widgets to screen readers over the accessibility bus (AT-SPI): each button, field or menu item with its role, name, states and actions. `elements` reads that description for one window, so an agent can find "the Save button" by name instead of guessing pixels, and aim the pointer at it.
+Many apps describe their widgets to screen readers over the accessibility bus (AT-SPI): each button, field or menu item with its role, name, states and actions. `elements` reads that description for one window, so an agent can find "the Save button" by name instead of guessing pixels, and aim the pointer at it, or press it and fill in fields through the bus with `activate_element` and `set_element_text`.
 
 ## When it is listed
 
-`elements` is listed only when the session has an accessibility bus. The server asks the session bus, at `DBUS_SESSION_BUS_ADDRESS` or else `$XDG_RUNTIME_DIR/bus` (with the runtime directory [found](../../start/clients/#session-variables) when the client didn't pass it), for the accessibility bus's address once at startup. `status` reports the answer under `accessibility`: `available`, the bus's `address`, and the `reason` when there is none. Most desktops start the bus with at-spi2-core.
+`elements`, `activate_element` and `set_element_text` are listed only when the session has an accessibility bus. The server asks the session bus, at `DBUS_SESSION_BUS_ADDRESS` or else `$XDG_RUNTIME_DIR/bus` (with the runtime directory [found](../../start/clients/#session-variables) when the client didn't pass it), for the accessibility bus's address once at startup. `status` reports the answer under `accessibility`: `available`, the bus's `address`, and the `reason` when there is none. Most desktops start the bus with at-spi2-core.
 
 ## `elements`
 
@@ -35,7 +35,7 @@ Each element:
 
 | Field | Value |
 |---|---|
-| `element_ref` | an id such as `elem-5e1a90c2-2`, for the pointer tools' `element`, while this server holds the lease; null without it |
+| `element_ref` | an id such as `elem-5e1a90c2-2`, for the pointer tools' `element` and the element actions, while this server holds the lease; null without it |
 | `role`, `name` | the role, and the name the app gives it |
 | `states`, `actions` | AT-SPI states, such as `focused`, `checked` or `editable`, and the names of the actions the app offers for it |
 | `layout_box` | the element's box in layout coordinates, from niri's window geometry and the app's coordinates inside the window, or null |
@@ -65,6 +65,44 @@ Just before sending, the server asks the app for the element again and checks th
 
 The server checks the element, not what is drawn over it: a panel or popup covering the element still gets the click.
 
+## Acting on an element
+
+`activate_element` and `set_element_text` act through the accessibility bus, the way a screen reader does: no pointer moves and no key is pressed. Both need the lease and pass the same checks before every action as the other tools: the stop flag, the input-dirty marker and the lock state. On top of those:
+
+- the element's window must have keyboard focus, and `expect`, `{"window_id": …}` or `{"app_id": "…"}`, must name it, or the call fails with `focus_mismatch` and nothing is sent. `"none"` is refused. A Noctalia panel holds keyboard focus with no window focused, so an element under an open panel is refused too;
+- the deny list applies to the element's window (`app_denied`);
+- the element is checked again just before: its window still exists for the same process, the element answers with the same role, and it is showing (`element_stale` or `element_unmappable` with `not_showing` otherwise).
+
+They don't need a screenshot, and they work on elements with no `layout_box`, such as in GTK 3 and Qt windows with client-side decorations. The result's `element` has the element's `role` and never its name or text; the audit log keeps the role, the action and the text's length.
+
+### `activate_element`
+
+| Argument | Value |
+|---|---|
+| `element` (required) | an `element_ref` listed under this lease |
+| `expect` (required) | the element's window |
+| `action` | one of the element's `actions`; default: its first of `click`, `press`, `activate` or `toggle`, in any case |
+| `screenshot` | with `true`, a screenshot taken once the screen stopped changing |
+
+An app's answer only says it took the request, so 300 ms later the server looks at the element again. GTK buttons show an activation as a 250 ms press before they act; the wait ends at once if the window closes. `observed` is:
+
+- `present`: the element is still there; `element.states_set` and `element.states_cleared` name the states that changed, such as `checked`;
+- `gone`: the element or its window went away, as when a button closes its dialog;
+- `unknown`: it couldn't be read, with the reason in `detail`, and a screenshot comes with the result.
+
+`element.action` is the action taken. An action name the element didn't list, or no default action, is an argument mistake that lists its actions. An app that declines answers `upstream_error`.
+
+### `set_element_text`
+
+| Argument | Value |
+|---|---|
+| `element` (required) | an `element_ref` listed under this lease: an editable field, with `editable` in its `states` |
+| `text` (required) | the new text, up to 64 KiB of UTF-8, which replaces all of it; empty clears the field |
+| `expect` (required) | the element's window |
+| `screenshot` | with `true`, a screenshot taken once the screen stopped changing |
+
+The field's whole text is replaced with no key events, so the app's autocompletion and Enter don't happen; use `type_text` for those. Afterwards the server asks the field how many characters it holds: `observed` is `matched` when that equals the text's, `differs` when it doesn't, with the count as `element.characters`, as when an app filters what it is given or caps its length (a GTK entry keeps at most 65534 bytes), and `unknown` when it couldn't be read. A password field, an element with the role `password_text`, is refused with `secret_field`, and text over 64 KiB with `text_too_long`. An element without editable text is an argument mistake.
+
 ## Which apps work
 
-Tested in a nested niri: GTK 4 apps, and GTK 3 and Qt 6 apps with server-side decorations. Not yet tested: Firefox, Chromium and Electron apps, libadwaita apps, and Qt apps that don't set `QT_LINUX_ACCESSIBILITY_ALWAYS_ON`. The server matches an app to its window by process ID, which doesn't support apps whose accessibility connection goes through a sandbox proxy, so such an app fails with `not_accessible`. Flatpak is outside the tested scope. Large trees, such as a browser page or an office document, can take longer than the three seconds; the listing then has what was read, with `capped_reason: budget_exhausted`, and `role`, `name_contains` or a small `limit` help. When `elements` gives nothing useful, aim at screenshot pixels instead.
+Tested in a nested niri: GTK 4 apps, and GTK 3 and Qt 6 apps with server-side decorations; the element actions in all three with either kind of decorations. Not yet tested: Firefox, Chromium and Electron apps, libadwaita apps, and Qt apps that don't set `QT_LINUX_ACCESSIBILITY_ALWAYS_ON`. The server matches an app to its window by process ID, which doesn't support apps whose accessibility connection goes through a sandbox proxy, so such an app fails with `not_accessible`. Flatpak is outside the tested scope. Large trees, such as a browser page or an office document, can take longer than the three seconds; the listing then has what was read, with `capped_reason: budget_exhausted`, and `role`, `name_contains` or a small `limit` help. When `elements` gives nothing useful, aim at screenshot pixels instead.

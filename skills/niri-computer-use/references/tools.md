@@ -6,6 +6,7 @@
 - The lease
 - Structured actions
 - Pointer and keyboard
+- Element actions
 - Fields every action result has
 - Screenshot targets
 
@@ -76,16 +77,27 @@ Pixel coordinates are in the screenshot named by `screenshot_ref`, and a pixel t
 
 `element` takes an `element_ref` from `elements` listed under this lease and aims at the element's centre. The server checks the element again just before: still there, the same role, showing, and its centre inside the screenshot named by `screenshot_ref`. `element_stale` or `element_unmappable` means nothing was sent. `scroll` takes pixels only.
 
+## Element actions
+
+Listed with `elements`, when the session has an accessibility bus. Both need the lease, and the element's window must have keyboard focus: `expect` names it as `{"window_id": …}` or `{"app_id": "…"}`, and `"none"` is refused. They send no input event, so no `screenshot_ref` is needed, and they work on elements with no `layout_box`.
+
+| Tool | Arguments | `observed` |
+|---|---|---|
+| `activate_element` | `element`, `expect`, optionally `action`: one of the element's `actions`; by default its first of `click`, `press`, `activate` or `toggle` | 300 ms after the app took it: `present`, with `element.states_set` and `element.states_cleared` when states changed (`checked`, say); `gone` when the element or its window went away, as when a button closes its dialog; or `unknown`, with `detail` |
+| `set_element_text` | `element` (an editable field: `editable` among its `states`), `text` (up to 64 KiB, replacing all of it; empty clears it), `expect` | `matched` when the field then holds as many characters as were set; `differs` when it holds another number, `element.characters`, as when the app filters or caps input; or `unknown`, with `detail` |
+
+`element.role` is the element's role and `element.action` the action taken. Neither tool returns or logs a name or the text. Before acting the server checks the element again: still there, the same role, showing (`element_stale` or `element_unmappable` otherwise, and nothing was sent). A password field is refused with `secret_field`. An app that declines answers `upstream_error`: take a screenshot before doing anything else. `set_element_text` sends no key events, so autocompletion and Enter don't happen: use `type_text` for those.
+
 ## Fields every action result has
 
 - `accepted`: true once niri or Noctalia took the request, false when nothing was sent (already in that state), null when the reply was lost.
 - `observed`: what the server saw by the end of its wait, as in the tables above, or `interrupted` (someone else moved focus) or `uncertain`.
 - `focused_window` when the observation ended.
-- `typed`, for `type_text` that stopped early: the characters sent; `pressed` likewise for `key`; `submitted` with `submit`; `paste` for `paste`; `window` for `niri_action`; `noctalia` for `noctalia`.
+- `typed`, for `type_text` that stopped early: the characters sent; `pressed` likewise for `key`; `submitted` with `submit`; `paste` for `paste`; `window` for `niri_action`; `noctalia` for `noctalia`; `element` for the element actions.
 
 Every action takes `screenshot: true`: the result then has an image of the focused output taken once the screen stopped changing (`settled` in its metadata says whether it did within 1.5 seconds), and its `screenshot_ref` works for the pointer tools.
 
-Each action waits up to five seconds, the shell tools two, and `niri_action` one second for its window to change. With `timeout`, `pending`, `none`, `interrupted` or `uncertain`, the result has an image of the focused output with its metadata in `screenshot` even without asking, or `screenshot_error` if it couldn't be taken.
+Each action waits up to five seconds, the shell tools two, and `niri_action` one second for its window to change. With `timeout`, `pending`, `none`, `interrupted`, `uncertain` or `unknown`, the result has an image of the focused output with its metadata in `screenshot` even without asking, or `screenshot_error` if it couldn't be taken.
 
 ## Screenshot targets
 

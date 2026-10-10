@@ -503,6 +503,7 @@ mod tests {
                 role: 43,
                 window: 3,
                 pid: 4711,
+                actions: Vec::new(),
             },
         };
         let stale = |refs: &Refs, id: &str| refs.element(id).unwrap_err().name;

@@ -51,7 +51,7 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 ### `app_denied`
 
-**Cause:** the window with keyboard focus belongs to an app on `deny_input_app_ids`, or for `elements`, the window asked about does, or for `close_window` and `niri_action`'s `CloseWindow`, the window it would close does.
+**Cause:** the window with keyboard focus belongs to an app on `deny_input_app_ids`, or for `elements`, the window asked about does, or for `activate_element` and `set_element_text`, the element's window does, or for `close_window` and `niri_action`'s `CloseWindow`, the window it would close does.
 
 **What to do:** nothing, if you meant it. Otherwise remove the app from the [policy file](../../concepts/configuration/#deny_input_app_ids) and restart the agent's session.
 
@@ -89,13 +89,13 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 ### `focus_mismatch`
 
-**Cause:** a keyboard tool's `expect` doesn't match the window with keyboard focus. The `detail` says what has focus. Often a dialog or notification took focus. Nothing was typed.
+**Cause:** a keyboard tool's `expect` doesn't match the window with keyboard focus, or for `activate_element` and `set_element_text`, the element's window doesn't have keyboard focus or `expect` doesn't name it. The `detail` says what has focus. Often a dialog or notification took focus; an open Noctalia panel leaves no window focused. Nothing was typed or sent.
 
 **What to do:** look at `desktop_state` and a screenshot, focus the intended window with `focus_window` if that is what was meant, then type again.
 
 ### `text_too_long`
 
-**Cause:** `type_text` with over 1000 characters, or `paste` with over 1 MiB. Nothing was typed.
+**Cause:** `type_text` with over 1000 characters, `paste` with over 1 MiB, or `set_element_text` with over 64 KiB of UTF-8. Nothing was typed or set.
 
 **What to do:** split the text into calls of at most 1000 characters, or use `paste`.
 
@@ -139,7 +139,13 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 **Cause:** the element is still there but can't be aimed at now. The `detail` starts with `frame_size_mismatch` (the app's coordinates for this window can't be trusted), `not_showing`, `empty` or `outside_screenshot` (its centre is outside the screenshot the pointer aims through).
 
-**What to do:** for `frame_size_mismatch`, aim at a screenshot pixel instead. For `not_showing`, bring it into view first; for `outside_screenshot`, take a screenshot that shows it.
+**What to do:** for `frame_size_mismatch`, aim at a screenshot pixel or use `activate_element` instead. For `not_showing`, bring it into view first; for `outside_screenshot`, take a screenshot that shows it.
+
+### `secret_field`
+
+**Cause:** `set_element_text` was aimed at a password field: an element whose role is `password_text`, as GTK 4's password entry, GTK 3's and Qt's entries that hide their text, and fields for a password or PIN are. Its text is never set, and nothing was sent.
+
+**What to do:** have the user type it.
 
 ### `unrestricted_required`
 
@@ -165,7 +171,7 @@ These mean niri, a program or Noctalia didn't answer as expected. Report the nam
 
 ### `upstream_error`
 
-**Cause:** niri, a program or Noctalia answered with an error or with something unreadable; the `detail` keeps its message, exit status and stderr. Also when the server's runtime directory was removed while it ran, which cancels a running action.
+**Cause:** niri, a program, Noctalia or an app on the accessibility bus answered with an error or with something unreadable; the `detail` keeps its message, exit status and stderr. For `activate_element` and `set_element_text`, also when the app refused the action or the text. Also when the server's runtime directory was removed while it ran, which cancels a running action.
 
 **What to do:** read the `detail`. After a removed runtime directory, restart the agent's session.
 

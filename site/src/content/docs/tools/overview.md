@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-The server offers up to 25 tools. `shell_status`, `shell_open` and `shell_close` are listed only when Noctalia is installed, `noctalia` only when Noctalia is installed and [`unrestricted`](../../concepts/configuration/#unrestricted) is on, and `elements` only when the session has an accessibility bus, so a session without Noctalia or an accessibility bus has 20.
+The server offers up to 27 tools. `shell_status`, `shell_open` and `shell_close` are listed only when Noctalia is installed, `noctalia` only when Noctalia is installed and [`unrestricted`](../../concepts/configuration/#unrestricted) is on, and `elements`, `activate_element` and `set_element_text` only when the session has an accessibility bus, so a session without Noctalia or an accessibility bus has 20.
 
 ## Every tool
 
@@ -33,11 +33,13 @@ The server offers up to 25 tools. `shell_status`, `shell_open` and `shell_close`
 | `key` | yes | presses up to 16 key combinations | [Keyboard](../keyboard/#key) |
 | `type_text` | yes | types up to 1000 characters, optionally pressing Enter | [Keyboard](../keyboard/#type_text) |
 | `paste` | yes | pastes up to 1 MiB through the clipboard, then restores it | [Keyboard](../keyboard/#paste) |
+| `activate_element` | yes | does an accessible element's own action, such as pressing a button | [Elements](../elements/#activate_element) |
+| `set_element_text` | yes | replaces an editable field's text through the accessibility bus | [Elements](../elements/#set_element_text) |
 | `shell_open` | yes | opens one of three Noctalia panels | [Noctalia](../../concepts/noctalia/#panels) |
 | `shell_close` | yes | closes it | [Noctalia](../../concepts/noctalia/#panels) |
 | `noctalia` | yes | sends any Noctalia command; only with `unrestricted` | [Noctalia](../../concepts/noctalia/#any-command) |
 
-The reading tools carry MCP's `readOnlyHint`, and `close_window`, `niri_action`, `click`, `drag`, `key`, `type_text`, `paste` and `noctalia` carry `destructiveHint`.
+The reading tools carry MCP's `readOnlyHint`, and `close_window`, `niri_action`, `click`, `drag`, `key`, `type_text`, `paste`, `activate_element`, `set_element_text` and `noctalia` carry `destructiveHint`.
 
 ## Results
 

@@ -211,6 +211,7 @@ pub(crate) fn is_role(name: &str) -> bool {
 /// An AT-SPI state, by its bit in the state set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum State {
+    Editable = 7,
     Showing = 25,
     Visible = 30,
 }
@@ -237,6 +238,14 @@ impl States {
             .filter(|(bit, _)| self.0 & (1 << bit) != 0)
             .map(|(_, name)| *name)
             .collect()
+    }
+
+    /// The names of the states set now but not `before`, then of those cleared since.
+    pub(crate) fn changes(self, before: Self) -> (Vec<&'static str>, Vec<&'static str>) {
+        (
+            Self(self.0 & !before.0).names(),
+            Self(before.0 & !self.0).names(),
+        )
     }
 }
 
@@ -438,6 +447,8 @@ pub(crate) struct Kept {
     pub(crate) role: u32,
     pub(crate) window: u64,
     pub(crate) pid: i32,
+    /// The action names it listed, which `activate_element` chooses from.
+    pub(crate) actions: Vec<String>,
 }
 
 /// The element and its window as they are now.
@@ -645,6 +656,12 @@ mod tests {
             ["enabled", "showing", "visible", "read_only"]
         );
         assert_eq!(States::from_words(&[]), States::default());
+        let pressed = States::from_words(&[(1 << 8) | (1 << 20) | (1 << 30)]);
+        assert_eq!(
+            pressed.changes(states),
+            (vec!["pressed"], vec!["showing", "read_only"])
+        );
+        assert_eq!(states.changes(states), (vec![], vec![]));
     }
 
     #[test]
@@ -653,6 +670,7 @@ mod tests {
             role: 43,
             window: 3,
             pid: 4711,
+            actions: Vec::new(),
         };
         let shown = placement(
             extents(40, 70, 320, 34),

@@ -1,7 +1,9 @@
 //! `elements`' work, and aiming a pointer tool at an element it listed. niri says where
 //! the window is, right when asked; the accessibility bus says what is in it and where
 //! relative to the window (see `a11y::model`). Names are the app's data: they are
-//! returned, never logged.
+//! returned, never logged. `actions` acts on a listed element without the pointer.
+
+pub(crate) mod actions;
 
 use niri_ipc::Window;
 use serde::Serialize;
@@ -129,6 +131,7 @@ pub(crate) async fn list(
                 role: node.role,
                 window: window.id,
                 pid,
+                actions: node.actions.clone(),
             },
         });
         elements.push(Listed {

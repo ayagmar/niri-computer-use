@@ -194,6 +194,7 @@ async fn outcome(
         noctalia: None,
         window: None,
         paste: None,
+        element: None,
         detail: None,
         screenshot: None,
         screenshot_error: None,

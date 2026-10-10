@@ -556,6 +556,20 @@ pub(crate) fn refuse_window(
     denied(policy, app_id?, &format!("window {window}"))
 }
 
+/// `secret_field` for an element that is a password field, whose text is never written:
+/// its role is `password_text`. That is the one mark GTK 4 (`GtkPasswordEntry`, or an entry
+/// whose input purpose is a password or PIN), GTK 3 (an entry that hides its text) and Qt
+/// (a field in password echo mode) give one; no AT-SPI state says it. A field that only
+/// hides its text in GTK 4 is a plain `text` on the bus and can't be told apart.
+pub(crate) fn refuse_secret_field(role: &str) -> Option<ToolError> {
+    (role == "password_text").then(|| {
+        ToolError::new(
+            ErrorName::SecretField,
+            "the element is a password field; its text is never set, and nothing was sent",
+        )
+    })
+}
+
 fn denied(policy: &Loaded, app_id: &str, whose: &str) -> Option<ToolError> {
     let Loaded::Valid(policy) = policy else {
         return None;
@@ -1194,6 +1208,15 @@ app_id = "foot"
         );
         assert_eq!(refuse_window(&policy, 7, Some("firefox")), None);
         assert_eq!(refuse_window(&policy, 7, None), None);
+    }
+
+    #[test]
+    fn a_password_fields_text_is_never_set() {
+        let refused = refuse_secret_field("password_text").unwrap();
+        assert_eq!(refused.name, ErrorName::SecretField);
+        for role in ["text", "entry", "terminal", "document_text"] {
+            assert_eq!(refuse_secret_field(role), None, "{role}");
+        }
     }
 
     fn output(name: &str, transform: Option<Transform>) -> Output {

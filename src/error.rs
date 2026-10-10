@@ -19,7 +19,8 @@ pub(crate) enum ErrorName {
     SessionMismatch,
     /// A request or wait passed its deadline.
     DeadlineExceeded,
-    /// niri replied with an error, or with something this server can't read.
+    /// niri, or an application on the accessibility bus, replied with an error or
+    /// refused the request, or replied with something this server can't read.
     UpstreamError,
     /// Noctalia is installed but didn't answer `status` with a JSON object.
     NoctaliaUnavailable,
@@ -64,6 +65,8 @@ pub(crate) enum ErrorName {
     ElementStale,
     /// An element ref that is still there but can't be aimed at now: see `Unmappable`.
     ElementUnmappable,
+    /// `set_element_text` on a password field: it is never written.
+    SecretField,
     /// A gated `niri_action` while the policy's `unrestricted` is off.
     UnrestrictedRequired,
     /// The shared engine ended while the call was in flight, or since the last call.
