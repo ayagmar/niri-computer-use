@@ -5,6 +5,7 @@
 //! reaches a new engine on the next request, and answers `engine_unavailable` while it
 //! can't.
 
+mod client;
 pub(crate) mod envelope;
 
 use std::collections::BTreeMap;
@@ -19,7 +20,7 @@ use tokio::io::{
 };
 use tokio::net::UnixStream;
 use tokio::net::unix::OwnedWriteHalf;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
@@ -28,7 +29,8 @@ use crate::engine::hello::{self, Exe, Hello, Reply};
 use crate::engine::host::{LOG, SOCKET};
 use crate::error::{ErrorName, ToolError};
 use crate::session::{Given, LineLimit, MAX_LINE};
-use crate::{Env, runner};
+use crate::{Env, cli, runner};
+use client::{Ended, Waiting, Writer};
 use envelope::Message;
 
 /// Held by the one bridge starting an engine, so bridges that start at once start one.
@@ -326,31 +328,99 @@ async fn read_line(input: &mut (impl tokio::io::AsyncBufRead + Unpin), max: usiz
 /// Relays between the client on stdin and stdout and the engine `engine` reaches, until the
 /// client's end.
 pub(crate) async fn run(target: Target, engine: Link) -> Result<(), String> {
-    let (sender, mut client) = mpsc::channel(1);
-    tokio::spawn(pass_lines(tokio::io::stdin(), MAX_LINE, sender));
+    let (sender, mut client) = mpsc::unbounded_channel();
+    let (ended, client_end) = watch::channel(None);
+    tokio::spawn(client::pass_lines(
+        tokio::io::stdin(),
+        MAX_LINE,
+        sender,
+        ended,
+    ));
+    let (writer, writer_failed) = Writer::start(tokio::io::stdout());
     let mut relay = Relay {
         target,
         engine: Some(engine),
         in_flight: BTreeMap::new(),
         initialize: None,
         unreported: false,
+        writer,
+        ends: Ends {
+            client: client_end,
+            writer: writer_failed,
+        },
     };
-    loop {
+    let stop = relay.serve(&mut client).await;
+    relay.finish(stop).await
+}
+
+/// Why the relay stops.
+#[derive(Debug)]
+enum Stop {
+    /// The client's input ended.
+    Client(Ended),
+    /// The client's stdout can't take what it is sent.
+    Writer(String),
+}
+
+/// The signals that end the relay, whatever it is waiting for.
+struct Ends {
+    client: watch::Receiver<Option<Ended>>,
+    writer: watch::Receiver<Option<String>>,
+}
+
+impl Ends {
+    /// The first of the writer's failure and the client's end.
+    async fn any(&mut self) -> Stop {
         tokio::select! {
-            line = client.recv() => match line {
-                Some(Read::Line(line)) => relay.client_line(line).await?,
-                Some(Read::Broken(detail)) => {
-                    return Err(format!("the client {detail}; its session ends"));
-                }
-                Some(Read::End) | None => return relay.drain().await,
-            },
-            line = relay.engine_read() => match line {
-                Read::Line(line) => relay.reply(&line).await?,
-                Read::End => relay.lost("closed the connection").await?,
-                Read::Broken(detail) => relay.lost(&detail).await?,
-            },
+            biased;
+            why = failure(&mut self.writer) => Stop::Writer(why),
+            end = self.client.wait_for(Option::is_some) => Stop::Client(
+                end.ok().and_then(|end| end.clone()).unwrap_or(Ended::Closed),
+            ),
         }
     }
+}
+
+/// Why the writer failed, once it has; never, if it ended without failing.
+async fn failure(writer: &mut watch::Receiver<Option<String>>) -> String {
+    let failed = writer
+        .wait_for(Option::is_some)
+        .await
+        .map(|why| why.clone().unwrap_or_default());
+    match failed {
+        Ok(why) => why,
+        Err(_) => std::future::pending().await,
+    }
+}
+
+/// `wait`'s outcome, unless the client ends or its stdout fails first. A wait that is
+/// ready at once wins, so a line the client sent right before its end still goes on.
+async fn first<T>(ends: &mut Ends, wait: impl Future<Output = T>) -> Result<T, Stop> {
+    tokio::select! {
+        biased;
+        value = wait => Ok(value),
+        stop = ends.any() => Err(stop),
+    }
+}
+
+/// Ends the process at once, with the engine session closed first: the client's stdout
+/// can't take what it is sent. A write to it already running blocks a thread that can't
+/// be stopped, which returning from `main` would wait for, maybe forever. The line on
+/// stderr waits 100 ms at most, in case stderr blocks too.
+#[expect(
+    clippy::exit,
+    reason = "returning would wait for a stdout write that may never end"
+)]
+fn leave(engine: Option<Link>, why: &str) -> ! {
+    drop(engine);
+    let (said, heard) = std::sync::mpsc::channel();
+    let message = format!("{why}; its session ends");
+    std::thread::spawn(move || {
+        cli::print_error(&message);
+        said.send(()).ok();
+    });
+    heard.recv_timeout(Duration::from_millis(100)).ok();
+    std::process::exit(1)
 }
 
 /// The relay's state.
@@ -364,17 +434,57 @@ struct Relay {
     initialize: Option<(Value, Vec<u8>)>,
     /// The engine was lost while nothing was in flight, and the client hasn't heard.
     unreported: bool,
+    writer: Writer,
+    ends: Ends,
 }
 
 impl Relay {
-    async fn engine_read(&mut self) -> Read {
-        match &mut self.engine {
-            Some(engine) => engine.next().await,
-            None => std::future::pending().await,
+    /// Relays until the client's input ends, in order after its lines, or its stdout fails.
+    async fn serve(&mut self, client: &mut mpsc::UnboundedReceiver<Waiting>) -> Stop {
+        loop {
+            let step = tokio::select! {
+                biased;
+                why = failure(&mut self.ends.writer) => Err(Stop::Writer(why)),
+                line = client.recv() => match line {
+                    Some((Read::Line(line), _room)) => self.client_line(line).await,
+                    Some((Read::Broken(detail), _)) => Err(Stop::Client(Ended::Broken(detail))),
+                    Some((Read::End, _)) | None => Err(Stop::Client(Ended::Closed)),
+                },
+                line = engine_read(&mut self.engine) => match line {
+                    Read::Line(line) => self.reply(line),
+                    Read::End => self.lost("closed the connection"),
+                    Read::Broken(detail) => self.lost(&detail),
+                }
+                .map_err(Stop::Writer),
+            };
+            if let Err(stop) = step {
+                return stop;
+            }
         }
     }
 
-    async fn client_line(&mut self, line: Vec<u8>) -> Result<(), String> {
+    /// Ends the relay as `stop` says, once every line queued for the client is written.
+    async fn finish(mut self, stop: Stop) -> Result<(), String> {
+        let result = match stop {
+            Stop::Writer(why) => leave(self.engine.take(), &why),
+            Stop::Client(Ended::Broken(detail)) => {
+                self.engine = None;
+                Err(format!("the client {detail}; its session ends"))
+            }
+            Stop::Client(Ended::Closed) => {
+                if let Err(why) = self.drain().await {
+                    leave(None, &why);
+                }
+                Ok(())
+            }
+        };
+        if let Err(why) = self.writer.finish().await {
+            leave(None, &why);
+        }
+        result
+    }
+
+    async fn client_line(&mut self, line: Vec<u8>) -> Result<(), Stop> {
         match envelope::read(&line) {
             Message::Request { id, method } => self.request(id, method, line).await,
             // Without an engine, notifications are dropped, and so is a cancellation of a
@@ -391,25 +501,25 @@ impl Relay {
         }
     }
 
-    async fn request(&mut self, id: Value, method: String, line: Vec<u8>) -> Result<(), String> {
+    async fn request(&mut self, id: Value, method: String, line: Vec<u8>) -> Result<(), Stop> {
         let initializing = method == "initialize";
         if initializing {
             self.initialize = Some((id.clone(), line.clone()));
         }
         if self.engine.is_none() {
             if std::mem::take(&mut self.unreported) {
-                return self
-                    .answer(&id, &method, self.lost_error("since the last call"))
-                    .await;
+                let error = self.lost_error("since the last call");
+                return self.answer(&id, &method, error).map_err(Stop::Writer);
             }
-            match self.reconnect(!initializing).await {
+            let replay = self.initialize.as_ref().filter(|_| !initializing);
+            match first(&mut self.ends, reconnect(&self.target, replay)).await? {
                 Ok(engine) => self.engine = Some(engine),
                 Err(detail) => {
                     let error = ToolError::new(
                         ErrorName::EngineUnavailable,
                         format!("{detail}; the next call tries again"),
                     );
-                    return self.answer(&id, &method, error).await;
+                    return self.answer(&id, &method, error).map_err(Stop::Writer);
                 }
             }
         }
@@ -417,64 +527,35 @@ impl Relay {
         self.send(&line).await
     }
 
-    /// Reaches an engine again and, with `replay`, sends it the client's `initialize`. Its
-    /// response is the first the new engine sends, matched by the client's own id, and
-    /// isn't passed on; `notifications/initialized` follows.
-    async fn reconnect(&self, replay: bool) -> Result<Link, String> {
-        let mut engine = connect(&self.target).await?;
-        let Some((id, line)) = self.initialize.as_ref().filter(|_| replay) else {
-            return Ok(engine);
-        };
-        tokio::time::timeout(hello::DEADLINE, engine.initialize(id, line))
-            .await
-            .map_err(|_| "the new engine didn't answer initialize in time".to_owned())?
-            .map_err(|detail| format!("initialize the new engine: {detail}"))?;
-        Ok(engine)
-    }
-
-    async fn send(&mut self, line: &[u8]) -> Result<(), String> {
+    async fn send(&mut self, line: &[u8]) -> Result<(), Stop> {
         let Some(engine) = &mut self.engine else {
             return Ok(());
         };
-        match tokio::time::timeout(ENGINE_WRITE, engine.output.write_all(line)).await {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(error)) => self.lost(&format!("couldn't be written to: {error}")).await,
-            Err(_) => {
-                let how = format!("stopped reading for {} s", ENGINE_WRITE.as_secs());
-                self.lost(&how).await
-            }
-        }
+        let write = tokio::time::timeout(ENGINE_WRITE, engine.output.write_all(line));
+        let how = match first(&mut self.ends, write).await? {
+            Ok(Ok(())) => return Ok(()),
+            Ok(Err(error)) => format!("couldn't be written to: {error}"),
+            Err(_) => format!("stopped reading for {} s", ENGINE_WRITE.as_secs()),
+        };
+        self.lost(&how).map_err(Stop::Writer)
     }
 
-    async fn reply(&mut self, line: &[u8]) -> Result<(), String> {
-        if let Message::Response { id } = envelope::read(line) {
+    /// Queues the engine's `line` for the client, or says why the client can't take it.
+    fn reply(&mut self, line: Vec<u8>) -> Result<(), String> {
+        if let Message::Response { id } = envelope::read(&line) {
             self.in_flight.remove(&id.to_string());
         }
-        let mut stdout = tokio::io::stdout();
-        stdout
-            .write_all(line)
-            .await
-            .map_err(|error| format!("write to the client: {error}"))?;
-        if !line.ends_with(b"\n") {
-            stdout
-                .write_all(b"\n")
-                .await
-                .map_err(|error| format!("write to the client: {error}"))?;
-        }
-        stdout
-            .flush()
-            .await
-            .map_err(|error| format!("write to the client: {error}"))
+        self.writer.queue(line)
     }
 
     /// The engine is gone: every request in flight gets `engine_lost`, or the next one
     /// does when none was.
-    async fn lost(&mut self, how: &str) -> Result<(), String> {
+    fn lost(&mut self, how: &str) -> Result<(), String> {
         let error = self.lost_error(how);
         self.engine = None;
         self.unreported = self.in_flight.is_empty();
         for (id, method) in std::mem::take(&mut self.in_flight).into_values() {
-            self.answer(&id, &method, error.clone()).await?;
+            self.answer(&id, &method, error.clone())?;
         }
         Ok(())
     }
@@ -492,21 +573,90 @@ impl Relay {
         )
     }
 
-    async fn answer(&mut self, id: &Value, method: &str, error: ToolError) -> Result<(), String> {
-        self.reply(&envelope::answer(id, method, error)).await
+    fn answer(&mut self, id: &Value, method: &str, error: ToolError) -> Result<(), String> {
+        self.reply(envelope::answer(id, method, error))
     }
 
-    /// The client has ended: the engine hears so, and what it still sends, for up to
-    /// `DRAIN`, is passed on.
-    async fn drain(mut self) -> Result<(), String> {
+    /// The client has ended: the engine hears so at once, and what it still sends, for up
+    /// to `DRAIN`, is passed on, unless the client's stdout fails first.
+    async fn drain(&mut self) -> Result<(), String> {
         let Some(mut engine) = self.engine.take() else {
             return Ok(());
         };
         engine.output.shutdown().await.ok();
         let until = Instant::now() + DRAIN;
-        while let Ok(Read::Line(line)) = tokio::time::timeout_at(until, engine.next()).await {
-            self.reply(&line).await?;
+        loop {
+            let next = tokio::select! {
+                biased;
+                why = failure(&mut self.ends.writer) => return Err(why),
+                next = tokio::time::timeout_at(until, engine.next()) => next,
+            };
+            let Ok(Read::Line(line)) = next else {
+                return Ok(());
+            };
+            self.reply(line)?;
         }
-        Ok(())
+    }
+}
+
+async fn engine_read(engine: &mut Option<Link>) -> Read {
+    match engine {
+        Some(engine) => engine.next().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Reaches an engine again and, given the client's `initialize`, sends it to the new
+/// engine. Its response is the first the new engine sends, matched by the client's own
+/// id, and isn't passed on; `notifications/initialized` follows.
+async fn reconnect(target: &Target, replay: Option<&(Value, Vec<u8>)>) -> Result<Link, String> {
+    let mut engine = connect(target).await?;
+    let Some((id, line)) = replay else {
+        return Ok(engine);
+    };
+    tokio::time::timeout(hello::DEADLINE, engine.initialize(id, line))
+        .await
+        .map_err(|_| "the new engine didn't answer initialize in time".to_owned())?
+        .map_err(|detail| format!("initialize the new engine: {detail}"))?;
+    Ok(engine)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A relay writing to an engine that doesn't read gives up as soon as the client ends,
+    /// rather than when the write's own deadline passes.
+    #[tokio::test(start_paused = true)]
+    async fn the_clients_end_cuts_a_write_to_an_engine_that_isnt_reading_short() {
+        let dir = crate::test_support::fresh_dir("bridge-stuck");
+        let (ours, _engine) = UnixStream::pair().unwrap();
+        let (input, output) = ours.into_split();
+        let (ended, client) = watch::channel(None);
+        let (writer, writer_failed) = Writer::start(tokio::io::sink());
+        let mut relay = Relay {
+            target: Target {
+                runtime: RuntimeDir::of(&crate::test_support::niri_env(&dir)).unwrap(),
+                hello: Vec::new(),
+            },
+            engine: Some(Link::new(1, BufReader::new(input), output)),
+            in_flight: BTreeMap::new(),
+            initialize: None,
+            unreported: false,
+            writer,
+            ends: Ends {
+                client,
+                writer: writer_failed,
+            },
+        };
+        let line = vec![b'x'; 16 * 1024 * 1024];
+        let started = Instant::now();
+        let (sent, ()) = tokio::join!(relay.send(&line), async {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            ended.send_replace(Some(Ended::Closed));
+        });
+        assert!(matches!(sent, Err(Stop::Client(Ended::Closed))), "{sent:?}");
+        assert_eq!(started.elapsed(), Duration::from_millis(100));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

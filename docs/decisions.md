@@ -643,3 +643,9 @@ These match the versions installed locally.
 
 - `stop` and `resume` parse the command before discovery and find niri's socket without connecting (review finding): a socket counts when niri names it, it belongs to the user and its PID is a running `niri`. A hung niri accepts no connection, so the connect check made the stop key fail exactly when it was needed.
 - This is weaker than the connect check, which tells a live socket from one a crashed niri left whose PID was reused. It is accepted only for these two commands, which set or clear a flag; serving, `recover` and the guardian still connect. Several candidates are still refused, and `resume` still refuses while the input-dirty marker exists.
+
+## 2026-10-10: one writer for the bridge's stdout
+
+- The bridge wrote each line to stdout inside its relay loop, so a client that stopped reading stopped the relay too, and its closing stdin went unseen while it held the lease (review finding). One task now writes stdout from a queue of 32 lines, which the relay fills without waiting; a full queue, a write error, or a line not written and flushed within 30 seconds ends the bridge.
+- Ending that way closes the engine connection first and then calls `std::process::exit`, under `#[expect(clippy::exit)]`: tokio's stdout writes on a blocking thread that can't be cancelled, and the runtime waits for blocking threads when `main` returns. A nonblocking stdout would avoid that, but stdout may be a regular file, and the exit is simpler.
+- The queue's bound comes from the existing 256 MiB engine line limit rather than a byte budget: 8 GiB at worst, but about 16 replies for a client that reads, since a session runs at most 16 calls at once. The client's lines wait in a 32 MiB backlog, twice the client line limit, and the reader also watches for the end of stdin while a line waits for room. No dependency was added.

@@ -11,13 +11,13 @@ use crate::niri::Niri;
 
 /// A program that starts a grandchild in its process group, records both process IDs and
 /// then waits far longer than any deadline.
-const STUCK: &str = r#"sleep 60 &
+pub(crate) const STUCK: &str = r#"sleep 60 &
 echo $! > "$DIR/grandchild.pid"
 echo $$ > "$DIR/child.pid"
 exec sleep 60"#;
 
 /// Whether the stuck program and its grandchild have both exited within two seconds.
-async fn stuck_program_exited(fixture: &Fixture) -> bool {
+pub(crate) async fn stuck_program_exited(fixture: &Fixture) -> bool {
     let child = pid_in(&fixture.path("child.pid")).await;
     let grandchild = pid_in(&fixture.path("grandchild.pid")).await;
     crate::fixture::eventually(Duration::from_secs(2), || {

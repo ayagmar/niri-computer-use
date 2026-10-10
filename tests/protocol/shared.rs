@@ -563,3 +563,131 @@ async fn an_engine_socket_path_too_long_falls_back_at_once() {
         "{stderr}"
     );
 }
+
+/// A client that has stopped reading: its pipe is full with `tools/list` answers, and more
+/// wait in the bridge for it, fewer than its queue holds.
+async fn stop_reading(client: &mut Server) {
+    client.pause_reading();
+    for _ in 0..10 {
+        client.request("tools/list", json!({})).await;
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+}
+
+/// Whether `other` takes the lease within `limit`.
+async fn takes_the_lease(other: &mut Server, limit: Duration) -> bool {
+    let until = Instant::now() + limit;
+    while Instant::now() < until {
+        if other.call("acquire_desktop", json!({})).await["isError"] == false {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    false
+}
+
+/// A client that stopped reading and then closed stdin gives the lease up at once, however
+/// much of what it was sent is still unwritten.
+#[tokio::test]
+async fn a_client_that_stops_reading_and_leaves_frees_the_lease_within_a_second() {
+    let fixture = shared("shared-deaf-end");
+    let mut desktop = Desktop::new(&fixture);
+    let mut deaf = Server::start(&fixture).await;
+    let _stream = desktop.stream().await;
+    deaf.structured("acquire_desktop").await;
+    let mut other = Server::start(&fixture).await;
+    stop_reading(&mut deaf).await;
+    let (held, _) = tool_error(&other.call("acquire_desktop", json!({})).await);
+    assert_eq!(held, "lease_held");
+    deaf.close_stdin();
+    assert!(takes_the_lease(&mut other, Duration::from_secs(1)).await);
+}
+
+/// A client that sends without reading fills the bridge's queue, which ends the bridge at
+/// once rather than when a line's deadline passes.
+#[tokio::test]
+async fn a_client_that_never_reads_ends_its_bridge_once_the_queue_is_full() {
+    let fixture = shared("shared-deaf-full");
+    let mut desktop = Desktop::new(&fixture);
+    let mut deaf = Server::start(&fixture).await;
+    let _stream = desktop.stream().await;
+    deaf.structured("acquire_desktop").await;
+    let mut other = Server::start(&fixture).await;
+    deaf.pause_reading();
+    for _ in 0..100 {
+        deaf.request("tools/list", json!({})).await;
+    }
+    let (status, stderr) = deaf.exit_within(Duration::from_secs(5)).await.unwrap();
+    assert!(!status.success(), "{status}");
+    assert_eq!(
+        stderr,
+        "niri-computer-use: the client left 32 lines unread; its session ends\n"
+    );
+    assert!(takes_the_lease(&mut other, Duration::from_secs(1)).await);
+}
+
+/// A cancellation still reaches the engine while the client's stdout is full.
+#[tokio::test]
+async fn a_cancellation_goes_through_while_the_client_isnt_reading() {
+    let fixture = shared("shared-deaf-cancel");
+    fixture.program("grim", crate::cancellation::STUCK);
+    let mut desktop = Desktop::new(&fixture);
+    let mut deaf = Server::start(&fixture).await;
+    let _stream = desktop.stream().await;
+    stop_reading(&mut deaf).await;
+    let id = deaf
+        .start_call("screenshot", json!({"target": "focused_output"}))
+        .await;
+    crate::fixture::pid_in(&fixture.path("child.pid")).await;
+    deaf.cancel(id).await;
+    assert!(crate::cancellation::stuck_program_exited(&fixture).await);
+}
+
+/// The engine lost while the client isn't reading: its call in flight is answered with
+/// `engine_lost` after what was queued before, once the client reads again.
+#[tokio::test]
+async fn an_engine_lost_while_the_client_isnt_reading_is_reported_in_order() {
+    let fixture = shared("shared-deaf-lost");
+    fixture.program("grim", crate::cancellation::STUCK);
+    let mut desktop = Desktop::new(&fixture);
+    let mut deaf = Server::start(&fixture).await;
+    let _stream = desktop.stream().await;
+    let engine = engine(&fixture).await;
+    stop_reading(&mut deaf).await;
+    let id = deaf
+        .start_call("screenshot", json!({"target": "focused_output"}))
+        .await;
+    crate::fixture::pid_in(&fixture.path("child.pid")).await;
+    kill(u32::try_from(engine).unwrap());
+    deaf.read_again();
+    let (name, _) = tool_error(&deaf.response(id).await["result"]);
+    assert_eq!(name, "engine_lost");
+    // `initialize`, the ten `tools/list`, then the screenshot.
+    assert_eq!(deaf.answered(), (1..=id).collect::<Vec<_>>());
+}
+
+/// A client that keeps stdin open but reads nothing more ends its bridge 30 s into the
+/// line it doesn't take, though the write to it can't be cut short: the process exits.
+#[tokio::test]
+async fn a_bridge_whose_client_reads_nothing_exits_at_the_write_deadline() {
+    let fixture = shared("shared-deaf-deadline");
+    let mut desktop = Desktop::new(&fixture);
+    let mut deaf = Server::start(&fixture).await;
+    let _stream = desktop.stream().await;
+    deaf.structured("acquire_desktop").await;
+    let mut other = Server::start(&fixture).await;
+    let stopped = Instant::now();
+    stop_reading(&mut deaf).await;
+    let (status, stderr) = deaf.exit_within(Duration::from_secs(40)).await.unwrap();
+    assert!(
+        stopped.elapsed() >= Duration::from_secs(30),
+        "{:?}",
+        stopped.elapsed()
+    );
+    assert!(!status.success(), "{status}");
+    assert_eq!(
+        stderr,
+        "niri-computer-use: the client didn't read a line within 30 s; its session ends\n"
+    );
+    assert!(takes_the_lease(&mut other, Duration::from_secs(1)).await);
+}

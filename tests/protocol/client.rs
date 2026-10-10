@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use crate::fixture::{Fixture, SPAWNING};
 
@@ -21,6 +21,8 @@ pub(crate) struct Server {
     child: Child,
     stdin: Option<ChildStdin>,
     lines: mpsc::UnboundedReceiver<Value>,
+    /// Whether the client reads the server's stdout.
+    reading: watch::Sender<bool>,
     /// Every message received so far, in order.
     received: Vec<Value>,
     next_id: u64,
@@ -44,17 +46,15 @@ impl Server {
         let pid = child.id().unwrap();
         fixture.started(pid);
         let stdin = child.stdin.take();
-        let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
+        let stdout = BufReader::new(child.stdout.take().unwrap()).lines();
         let (sender, lines) = mpsc::unbounded_channel();
-        tokio::spawn(async move {
-            while let Some(line) = stdout.next_line().await.unwrap() {
-                sender.send(json_rpc(&line)).ok();
-            }
-        });
+        let (reading, read) = watch::channel(true);
+        tokio::spawn(read_lines(stdout, sender, read));
         Self {
             child,
             stdin,
             lines,
+            reading,
             received: Vec::new(),
             next_id: 1,
             pid,
@@ -184,6 +184,33 @@ impl Server {
         u32::try_from(engine["pid"].as_u64().unwrap()).unwrap()
     }
 
+    /// Stops reading the server's stdout, after the line being read, until `read_again`.
+    pub(crate) fn pause_reading(&self) {
+        self.reading.send_replace(false);
+    }
+
+    pub(crate) fn read_again(&self) {
+        self.reading.send_replace(true);
+    }
+
+    /// Closes stdin and leaves the server running.
+    pub(crate) fn close_stdin(&mut self) {
+        drop(self.stdin.take());
+    }
+
+    /// The server's exit status and stderr, once it exits within `limit`.
+    pub(crate) async fn exit_within(&mut self, limit: Duration) -> Option<(ExitStatus, String)> {
+        let status = tokio::time::timeout(limit, self.child.wait())
+            .await
+            .ok()?
+            .unwrap();
+        let mut stderr = String::new();
+        if let Some(mut pipe) = self.child.stderr.take() {
+            pipe.read_to_string(&mut stderr).await.unwrap();
+        }
+        Some((status, stderr))
+    }
+
     /// Closes stdin and waits for the server to exit. Returns its status, the messages
     /// it wrote that nobody read yet, and its stderr.
     pub(crate) async fn stop(mut self) -> (ExitStatus, Vec<Value>, String) {
@@ -226,6 +253,20 @@ impl Drop for Server {
         while matches!(self.child.try_wait(), Ok(None)) && Instant::now() < end {
             std::thread::yield_now();
         }
+    }
+}
+
+/// Passes on each line of the server's stdout as a message, while `read` says to read.
+async fn read_lines(
+    mut stdout: tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+    sender: mpsc::UnboundedSender<Value>,
+    mut read: watch::Receiver<bool>,
+) {
+    while read.wait_for(|on| *on).await.is_ok() {
+        let Some(line) = stdout.next_line().await.unwrap() else {
+            return;
+        };
+        sender.send(json_rpc(&line)).ok();
     }
 }
 
