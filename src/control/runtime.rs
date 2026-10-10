@@ -41,7 +41,8 @@ impl Instance {
     pub(crate) fn resolve(socket: &Path, euid: u32) -> Self {
         Self(resolved(socket, euid).map_err(|why| {
             format!(
-                "NIRI_SOCKET {} {why}, so this process coordinates with no other: no lease, stop flag or marker",
+                "NIRI_SOCKET {} {why}, so no lease can be taken for it and every action is refused; \
+                 `stop`, `resume` and `recover` have no flag or marker to reach",
                 socket.display()
             )
         }))
@@ -264,7 +265,10 @@ mod tests {
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o770)).unwrap();
         let error = of(&socket).unwrap_err();
         assert!(error.contains("whose directory"), "{error}");
-        assert!(error.ends_with("no lease, stop flag or marker"), "{error}");
+        assert!(
+            error.ends_with("have no flag or marker to reach"),
+            "{error}"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
