@@ -536,3 +536,17 @@ These match the versions installed locally.
 - `screenshot_ref` stays required with `element`: the screenshot names the output the virtual pointer binds to and the rectangle the point must fall in, so an element ref never aims at something the agent hasn't seen.
 - A drag interpolates in layout coordinates, so a drag between an element and a pixel, or two elements, needs no image pixel in between. `scroll` keeps pixels only.
 - Element refs belong to the lease, as screenshot refs do, and the last 1000 are kept: a walk lists up to 500 elements, so two lists' worth stay usable.
+
+## 2026-10-10: the docs site for agents
+
+- No new npm dependencies. `llms.txt`, `llms-full.txt`, a `.md` address for every page and the skill under `skill/` are Astro static endpoints in `site/src/pages/`, built from the docs collection and from `skills/niri-computer-use/`. Starlight plugins for llms.txt would add a dependency for about a hundred lines of code, and the published skill must come from the one copy in `skills/`, not a second one in `site/`.
+- The sidebar and the agent files take their groups from `site/src/lib/groups.mjs`, so both list the same pages in the same order.
+- The Markdown versions turn relative links into absolute ones and images into their alt text, so they read correctly outside the site.
+- `pages.yml` also deploys on changes to `skills/`, since the site publishes the skill.
+
+## 2026-10-10: checks in the site build
+
+- `npm run build` runs `site/scripts/check-reference.mjs` before Astro and `site/scripts/check-links.mjs` after it, so CI and the Pages deploy both fail on a broken page.
+- `check-reference.mjs` reads `ErrorName` in `src/error.rs` and the `Policy` and `Preset` structs in `src/policy.rs`, and fails when the error reference or the configuration page documents a name the source doesn't have, or misses one it has.
+- `check-links.mjs` resolves every internal link and image in the built HTML, and every link to the site in the Markdown and llms files, to a file in `dist/`, checks `#fragment`s against the target's element ids, and checks that `llms.txt` links every page's Markdown and `llms-full.txt` contains it. starlight-links-validator would do the HTML part as a dependency; it doesn't check the agent files.
+- The old addresses `guides/getting-started/` and `reference/tools/` redirect to `start/install/` and `tools/overview/` through Astro's `redirects`.
