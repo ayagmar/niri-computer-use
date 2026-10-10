@@ -6,6 +6,7 @@
 
 mod activation;
 mod crash;
+mod dropped_paste;
 mod engine;
 mod exposure;
 mod guardian;

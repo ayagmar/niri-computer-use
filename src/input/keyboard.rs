@@ -22,9 +22,10 @@ use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::waiter::View;
 use crate::niri::{self, waiter::Waited};
 use crate::policy;
-use crate::runner::{self, Finished};
+use crate::runner::{self, Finished, Gated};
 
 use super::Input;
+use super::paste::Aftercare;
 
 /// Plan §6: about 0.4 s of wtype's sleeps at the 100-character cap, and C10's slowest
 /// run of the corpus at well under half of this.
@@ -278,9 +279,23 @@ pub(crate) async fn type_input(
     typing: Typing,
     expect: Expect,
 ) -> Result<Outcome, CallError> {
+    type_input_then(input, typing, expect, &mut None).await
+}
+
+/// `type_input`, where whatever commits the first stroke takes `aftercare` right before
+/// the stroke can go out, and keeps the input-dirty marker until it has said the stroke
+/// went out. `aftercare` is still there when nothing went out.
+pub(crate) async fn type_input_then(
+    input: Input<'_>,
+    typing: Typing,
+    expect: Expect,
+    aftercare: &mut Option<Aftercare>,
+) -> Result<Outcome, CallError> {
     typing.check()?;
     match input.keyboard.and_then(std::ffi::OsStr::to_str) {
-        Some("native") => return super::native::type_input(input, typing, expect).await,
+        Some("native") => {
+            return super::native::type_input(input, typing, expect, aftercare).await;
+        }
         None if input.keyboard.is_none() => {}
         Some("wtype") => {}
         _ => {
@@ -311,6 +326,7 @@ pub(crate) async fn type_input(
             typing.tool(),
             &stroke.args()?,
             stroke.stdin(),
+            aftercare,
         )
         .await
         .map_err(|error| partly(error, &typing, sent))?;
@@ -364,12 +380,13 @@ fn partly(error: ToolError, typing: &Typing, sent: Sent) -> ToolError {
 }
 
 /// Writes the marker, starts wtype behind the gate, records its PID, then feeds it in a
-/// task that outlives this call if the call is dropped.
+/// task that outlives this call if the call is dropped. That task takes `aftercare`.
 async fn run_wtype(
     runtime: &RuntimeDir,
     tool: &str,
     args: &[String],
     stdin: Vec<u8>,
+    aftercare: &mut Option<Aftercare>,
 ) -> Result<(), ToolError> {
     let mut marker = Written::write(runtime, Marker::pending(tool, Vec::new()))
         .map_err(|error| marker_error("write", &error))?;
@@ -406,8 +423,9 @@ async fn run_wtype(
     // A task of its own, so wtype finishes and the marker comes off even if the call is
     // dropped.
     let cleanup = Pending::start();
+    let aftercare = aftercare.take();
     let typed = tokio::spawn(async move {
-        let finished = finish(gated.feed(&stdin, MAX_STDOUT).await, marker);
+        let finished = feed(gated, &stdin, marker, aftercare).await;
         drop(cleanup);
         finished
     });
@@ -417,6 +435,27 @@ async fn run_wtype(
             format!("the wtype task ended: {error}"),
         )
     })?
+}
+
+/// Lets wtype past its gate and feeds it, between arming `aftercare` and saying the
+/// stroke went out, which it says even after a failure, since wtype may have typed some.
+async fn feed(
+    gated: Gated,
+    stdin: &[u8],
+    marker: Written,
+    aftercare: Option<Aftercare>,
+) -> Result<(), ToolError> {
+    let Some(mut aftercare) = aftercare else {
+        return finish(gated.feed(stdin, MAX_STDOUT).await, marker);
+    };
+    if let Err(error) = aftercare.arm().await {
+        // Still waiting at the gate: killing it now types nothing.
+        drop(gated);
+        return Err(cleared(marker, error));
+    }
+    let fed = gated.feed(stdin, MAX_STDOUT).await;
+    aftercare.sent().await;
+    finish(fed, marker)
 }
 
 /// Removes the marker once wtype has exited by itself. A wtype killed by a signal, or

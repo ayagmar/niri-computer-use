@@ -1,21 +1,31 @@
 //! `paste`'s work: text pasted through the clipboard, which is then put back. A keeper
 //! process, our own binary's `paste-keeper` started through the runner, saves every MIME
 //! type of the current selection, takes the selection with the text and reports `ready`.
-//! The server then presses the paste combination through `keyboard::type_input`, with all
-//! of its gates, and tells the keeper whether it went out. The keeper waits for the
-//! target's read, puts the saved selection back and keeps serving it, as `wl-copy` would,
-//! until another client takes the selection. A stop, a cancelled call, a failed key or the
-//! server's end closes the keeper's stdin, and it restores at once.
+//! The server then presses the paste combination through `keyboard::type_input_then`,
+//! with all of its gates, and tells the keeper whether it went out. The keeper waits for
+//! the target's read, puts the saved selection back and keeps serving it, as `wl-copy`
+//! would, until another client takes the selection. A key that never went out restores
+//! at once.
+//!
+//! Whoever commits the key, right before it can go out, takes the keeper's end as an
+//! `Aftercare`: wtype's task, or the native device. It says `k`, sends the key, then says
+//! `p` even if the key failed partway, and only then takes its input-dirty marker off, so a
+//! stop, a cancelled call or the session's end can't drop the keeper's end while a key may
+//! still arrive, and no new input, from this server or another, starts until the keeper
+//! has reported. A call dropped before the commit drops the keeper, which restores at once.
 //!
 //! The protocol, server to keeper: the text's length as 8 little-endian bytes and the
-//! text; `k` just before the key; then `p` once the key went out, or end of file. Keeper
-//! to server: one JSON `Report` per line, `ready` or `refused`, then `done`.
+//! text; `k` just before the key; then `p` once the key went out, or `n` if it didn't.
+//! End of file before `k` means no key. After `k`, the key may still come without `p` or
+//! `n`, so the keeper keeps the text on the clipboard rather than restore it. Keeper to
+//! server: one JSON `Report` per line, `ready` or `refused`, then `done`.
 
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader, Lines};
 use tokio::process::{ChildStdin, ChildStdout};
+use tokio::sync::oneshot;
 
 use crate::act::Outcome;
 use crate::error::{CallError, ErrorName, ToolError};
@@ -45,6 +55,9 @@ pub(crate) enum Clipboard {
     Replaced,
     /// Restoring failed; `detail` says why.
     Failed,
+    /// The key may have gone out, but the server couldn't say, so the pasted text stays
+    /// and the clipboard isn't restored; `detail` says why.
+    Kept,
     /// The keeper didn't report; `detail` says why.
     Unknown,
 }
@@ -92,13 +105,21 @@ pub(crate) async fn paste(
     }
     drop(waiter);
     input.display.checked(input.niri.socket).await?;
-    let mut keeper = Keeper::start(text.as_bytes()).await?;
-    keeper.arm().await?;
-    let typed = keyboard::type_input(input, Typing::Keys(vec![combo.to_owned()]), expect).await;
-    let went_out = matches!(&typed, Ok(outcome) if outcome.pressed.is_none());
-    let done = keeper.finish(went_out).await;
+    let keeper = Keeper::start(text.as_bytes()).await?;
+    let (report, done) = oneshot::channel();
+    let mut aftercare = Some(Aftercare { keeper, report });
+    let keys = Typing::Keys(vec![combo.to_owned()]);
+    let typed = keyboard::type_input_then(input, keys, expect, &mut aftercare).await;
+    let done = match aftercare {
+        // Nothing committed the key, so it never went out.
+        Some(aftercare) => aftercare.unsent().await,
+        None => done.await.unwrap_or_else(|_| Err(lost(DROPPED))),
+    };
     combined(typed, done)
 }
+
+/// Why a committed key's keeper never reported.
+const DROPPED: &str = "the key's cleanup ended without its report: the key may have gone out, so the keeper keeps the pasted text on the clipboard";
 
 fn check_text(text: &str) -> Result<(), CallError> {
     if text.is_empty() {
@@ -178,6 +199,7 @@ fn said(pasted: Pasted, detail: Option<&str>) -> String {
             "another client took the clipboard meanwhile, so it wasn't restored".to_owned()
         }
         Clipboard::Failed => format!("restoring the clipboard failed: {detail}"),
+        Clipboard::Kept => format!("the pasted text stays on the clipboard: {detail}"),
         Clipboard::Unknown => format!("the clipboard keeper didn't report: {detail}"),
     }
 }
@@ -212,26 +234,9 @@ impl Keeper {
         }
     }
 
-    /// Tells the keeper the key is about to go out, so reads from now on count.
-    async fn arm(&mut self) -> Result<(), ToolError> {
-        self.stdin.write_all(b"k").await.map_err(|error| {
-            ToolError::new(
-                ErrorName::UpstreamError,
-                format!(
-                    "the clipboard keeper ended before the key ({error}), so nothing was pasted; the clipboard may be empty"
-                ),
-            )
-        })
-    }
-
-    /// Says whether the key went out, or ends the keeper's stdin when it didn't, and waits
-    /// for its last report.
-    async fn finish(mut self, went_out: bool) -> Result<Report, ToolError> {
-        if went_out {
-            self.stdin.write_all(b"p").await.map_err(lost)?;
-        } else {
-            self.stdin.shutdown().await.map_err(lost)?;
-        }
+    /// Says `command`, `p` or `n`, and waits for the keeper's last report.
+    async fn finish(mut self, command: &[u8]) -> Result<Report, ToolError> {
+        self.stdin.write_all(command).await.map_err(lost)?;
         within(DONE, self.report()).await
     }
 
@@ -248,6 +253,39 @@ impl Keeper {
                 format!("the clipboard keeper's report {line:?}: {error}"),
             )
         })
+    }
+}
+
+/// A paste's keeper, taken by whoever commits its key, right before the key can go out.
+/// Dropped after `arm`, the keeper keeps the pasted text, since the key may still arrive.
+pub(crate) struct Aftercare {
+    keeper: Keeper,
+    report: oneshot::Sender<Result<Report, ToolError>>,
+}
+
+impl Aftercare {
+    /// Tells the keeper the key is about to go out, so reads from now on count.
+    pub(crate) async fn arm(&mut self) -> Result<(), ToolError> {
+        self.keeper.stdin.write_all(b"k").await.map_err(|error| {
+            ToolError::new(
+                ErrorName::UpstreamError,
+                format!(
+                    "the clipboard keeper ended before the key ({error}), so nothing was pasted; the clipboard may be empty"
+                ),
+            )
+        })
+    }
+
+    /// Says the key went out, or may have, and hands the keeper's last report, once it has
+    /// read and restored, to the call.
+    pub(crate) async fn sent(self) {
+        let done = self.keeper.finish(b"p").await;
+        self.report.send(done).ok();
+    }
+
+    /// Says the key never went out, so the keeper restores at once.
+    async fn unsent(self) -> Result<Report, ToolError> {
+        self.keeper.finish(b"n").await
     }
 }
 

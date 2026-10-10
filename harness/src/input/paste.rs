@@ -61,11 +61,14 @@ pub(super) fn run(
 }
 
 /// Starts the clipboard owner and waits until the clipboard offers its types.
-fn own(session: &mut Session<'_>, backend: &str) -> Result<(Process, Offered)> {
+pub(super) fn own(session: &mut Session<'_>, backend: &str) -> Result<(Process, Offered)> {
     let owner = copy(session, backend, false)?;
     let expected = owners_copy();
     session.wait_until("m7-paste-owner", "the owner's clipboard", WAIT, |session| {
-        Ok((offered(session)? == expected).then_some(()))
+        // A type listed by the selection before the owner's can be gone by its read.
+        Ok(offered(session)
+            .is_ok_and(|offered| offered == expected)
+            .then_some(()))
     })?;
     Ok((owner, expected))
 }

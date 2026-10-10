@@ -1,11 +1,15 @@
 //! Native per-key input. A dirty marker covers every possible press until release is
 //! acknowledged and, after an extended keymap, niri has sent the compositor's map back.
-//! SIGKILL requires recover; destruction alone releases nothing in niri.
+//! SIGKILL requires recover; destruction alone releases nothing in niri. A paste's
+//! `Aftercare` is armed right before the first stroke and told the key went out once the
+//! release is acknowledged, before the marker comes off; a release niri never acknowledged
+//! drops it, so the keeper keeps the pasted text.
 
 use std::time::Duration;
 
 use super::keyboard::{Expect, Sent, Typing, check_expect, ended};
 use super::keymap::{Key, plan};
+use super::paste::Aftercare;
 use super::{Input, focused_app_id};
 use crate::act::{Observed, Outcome};
 use crate::control::cleanup::Pending;
@@ -22,6 +26,7 @@ pub(super) async fn type_input(
     input: Input<'_>,
     typing: Typing,
     expect: Expect,
+    aftercare: &mut Option<Aftercare>,
 ) -> Result<Outcome, CallError> {
     let mut waiter = niri::waiter(input.niri.events).await?;
     let focus = check_expect(&expect, waiter.view())?;
@@ -64,6 +69,7 @@ pub(super) async fn type_input(
             )
             .into());
         }
+        device.commit(aftercare).await?;
         device.stroke(key).await?;
         if key.character {
             sent.chars += 1;
@@ -108,11 +114,11 @@ async fn interrupted(waiter: &mut Waiter, before: Option<u64>, group: u32) -> Op
     }
 }
 
-#[derive(Debug)]
 struct Device {
     keyboard: Option<Keyboard>,
     marker: Option<Written>,
     group: u32,
+    aftercare: Option<Aftercare>,
 }
 
 impl Device {
@@ -137,6 +143,7 @@ impl Device {
             keyboard: Some(keyboard),
             marker: Some(marker),
             group,
+            aftercare: None,
         })
     }
 
@@ -150,6 +157,16 @@ impl Device {
         Ok(self.keyboard()?.revision())
     }
 
+    /// Takes `aftercare`, if it is still there, and arms it.
+    async fn commit(&mut self, aftercare: &mut Option<Aftercare>) -> Result<(), ToolError> {
+        let Some(mut taken) = aftercare.take() else {
+            return Ok(());
+        };
+        taken.arm().await?;
+        self.aftercare = Some(taken);
+        Ok(())
+    }
+
     async fn stroke(&mut self, key: Key) -> Result<(), ToolError> {
         let keyboard = self.keyboard()?;
         keyboard.modifiers(key.modifiers, key.group)?;
@@ -159,11 +176,37 @@ impl Device {
         keyboard.sync().await
     }
 
+    /// Releases everything and puts the compositor's keymap back, then clears the marker.
+    /// With a paste's aftercare, that runs in a task of its own, so a dropped call can't
+    /// leave the keeper without its `p`.
     async fn finish(mut self) -> Result<(), ToolError> {
+        let Some(aftercare) = self.aftercare.take() else {
+            self.release().await?;
+            return self.clear();
+        };
+        let cleanup = Pending::start();
+        let finished = tokio::spawn(async move {
+            let released = self.release().await;
+            if released.is_ok() {
+                aftercare.sent().await;
+            }
+            let finished = released.and_then(|()| self.clear());
+            drop(cleanup);
+            finished
+        });
+        finished
+            .await
+            .map_err(|error| upstream(&format!("the release task ended: {error}")))?
+    }
+
+    async fn release(&mut self) -> Result<(), ToolError> {
         let group = self.group;
         let keyboard = self.keyboard()?;
         keyboard.release(&[], group).await?;
-        keyboard.restore(group).await?;
+        keyboard.restore(group).await
+    }
+
+    fn clear(&mut self) -> Result<(), ToolError> {
         if let Some(marker) = self.marker.take() {
             marker
                 .clear()
@@ -184,15 +227,33 @@ impl Drop for Device {
             return;
         }
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-            runtime.spawn(acknowledge_release(keyboard, marker, Pending::start()));
+            let aftercare = self.aftercare.take();
+            runtime.spawn(acknowledge_release(
+                keyboard,
+                marker,
+                aftercare,
+                Pending::start(),
+            ));
         }
     }
 }
 
-async fn acknowledge_release(mut keyboard: Keyboard, marker: Written, _cleanup: Pending) {
-    if keyboard.sync().await.is_ok() && keyboard.restored() {
-        marker.clear().ok();
+/// Clears the marker once niri has acknowledged the release, after telling a paste's
+/// keeper the key went out. Unacknowledged, the marker stays, and the keeper, dropped,
+/// keeps the pasted text.
+async fn acknowledge_release(
+    mut keyboard: Keyboard,
+    marker: Written,
+    aftercare: Option<Aftercare>,
+    _cleanup: Pending,
+) {
+    if keyboard.sync().await.is_err() || !keyboard.restored() {
+        return;
     }
+    if let Some(aftercare) = aftercare {
+        aftercare.sent().await;
+    }
+    marker.clear().ok();
 }
 
 fn upstream(detail: &str) -> ToolError {

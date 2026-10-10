@@ -1,10 +1,14 @@
 //! `niri-computer-use paste-keeper`, which `paste` starts for one call (see `paste` for
 //! the protocol). It saves the selection whole or refuses, takes it with the text, counts
 //! the reads that start after the server's `k`, and restores the saved selection once the
-//! target has read and gone quiet, or at once when the server's stdin ends. It then serves
-//! the restored selection, without a deadline, until another client takes it or niri goes
-//! away. Each step until then, and each transfer, has a deadline; the keeper ends only
-//! once every transfer it accepted has finished or reached its deadline.
+//! target has read and gone quiet after `p`, or at once on `n` or when the server's stdin
+//! ends before `k`. After `k`, only `p` or `n` proves the key can't still arrive: if the
+//! server ends or runs out of time without either, the keeper keeps the text, reports
+//! `kept`, and serves it until another client takes the selection, rather than risk a late
+//! key pasting the restored clipboard. It then serves the restored selection, without a
+//! deadline, until another client takes it or niri goes away. Each step until then, and
+//! each transfer, has a deadline; the keeper ends only once every transfer it accepted has
+//! finished or reached its deadline.
 
 use std::io::Write as _;
 use std::os::fd::AsFd as _;
@@ -33,8 +37,7 @@ const HINT: &str = "x-kde-passwordManagerHint";
 const SECRET: &[u8] = b"secret";
 /// The saved selection, all types together.
 const MAX_SAVED: usize = 16 * 1024 * 1024;
-/// From the start to the text, and from the text to `p` or the end of stdin: the key's
-/// whole call.
+/// From the start to the text, and from the text to `p` or `n`: the key's whole call.
 const COMMAND_WAIT: Duration = Duration::from_secs(10);
 /// After `p`, for the target's first read.
 const READ_WAIT: Duration = Duration::from_secs(2);
@@ -58,7 +61,23 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
     };
     say(&Report::Ready);
     let mut transfers = Transfers::default();
-    let watched = match watch(&mut selection, &mut commands, paste, &text, &mut transfers).await {
+    let watched = watch(&mut selection, &mut commands, paste, &text, &mut transfers).await;
+    if let Ok(watched) = watched
+        && !watched.replaced
+        && watched.abandoned()
+    {
+        say(&Report::Done {
+            read: watched.reads > 0,
+            clipboard: Clipboard::Kept,
+            detail: Some(KEPT.to_owned()),
+        });
+        keep(&mut selection, watched, paste, &text, &mut transfers)
+            .await
+            .ok();
+        transfers.finish().await;
+        return Ok(());
+    }
+    let watched = match watched {
         Ok(watched) if !watched.replaced => {
             confirm(&mut selection, watched, paste, &text, &mut transfers).await
         }
@@ -97,6 +116,9 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
     transfers.finish().await;
     Ok(())
 }
+
+/// Why the text stays.
+const KEPT: &str = "the server neither confirmed the key nor said it didn't go out, so a late key could still paste; the pasted text stays on the clipboard instead of what was there before";
 
 /// Binds, saves the selection, and takes it with a source offering the text.
 async fn take(env: &Env) -> Result<(Selection, Option<Contents>, SourceId), String> {
@@ -143,6 +165,8 @@ struct Watched {
     latest: Option<Instant>,
     /// Another client took the selection.
     replaced: bool,
+    /// The server said the key didn't go out.
+    unsent: bool,
 }
 
 impl Watched {
@@ -174,6 +198,18 @@ impl Watched {
         }
     }
 
+    /// The server's stdin ended. After `p` the wait for the read goes on; otherwise it ends
+    /// now. Returns whether it ends now.
+    const fn closed(&self) -> bool {
+        self.pasted.is_none()
+    }
+
+    /// Whether a key may still arrive: `k` came, then neither `p` nor `n`, because the
+    /// server ended or ran out of time.
+    const fn abandoned(&self) -> bool {
+        self.armed && self.pasted.is_none() && !self.unsent
+    }
+
     /// When the wait ends unless something happens first: the server's whole call before
     /// `p`, the first read's wait after it, and the quiet time after a read.
     fn ends(&self, started: Instant) -> Instant {
@@ -185,8 +221,8 @@ impl Watched {
     }
 }
 
-/// Serves the text's reads until the wait ends, the server's stdin ends, or another
-/// client takes the selection.
+/// Serves the text's reads until the wait ends, the server says the key didn't go out or
+/// ends before `p`, or another client takes the selection.
 async fn watch(
     selection: &mut Selection,
     commands: &mut Commands,
@@ -196,12 +232,22 @@ async fn watch(
 ) -> Result<Watched, String> {
     let started = Instant::now();
     let mut watched = Watched::default();
+    let mut open = true;
     loop {
         tokio::select! {
-            command = commands.next() => match command {
+            command = commands.next(), if open => match command {
                 Command::Arm => watched.armed = true,
                 Command::Pasted => watched.pasted = Some(Instant::now()),
-                Command::End => return Ok(watched),
+                Command::Unsent => {
+                    watched.unsent = true;
+                    return Ok(watched);
+                }
+                Command::End => {
+                    open = false;
+                    if watched.closed() {
+                        return Ok(watched);
+                    }
+                }
             },
             event = selection.next() => {
                 watched.handle(event.map_err(|error| error.detail)?, paste, text, transfers);
@@ -229,6 +275,21 @@ async fn confirm(
         watched.handle(event, paste, text, transfers);
     }
     Ok(watched)
+}
+
+/// Serves the text until another client takes the selection.
+async fn keep(
+    selection: &mut Selection,
+    mut watched: Watched,
+    paste: SourceId,
+    text: &Arc<[u8]>,
+    transfers: &mut Transfers,
+) -> Result<(), String> {
+    while !watched.replaced {
+        let event = selection.next().await.map_err(|error| error.detail)?;
+        watched.handle(event, paste, text, transfers);
+    }
+    Ok(())
 }
 
 /// Offers the saved selection again, or clears the selection when nothing was saved.
@@ -308,6 +369,9 @@ fn say(report: &Report) {
 enum Command {
     Arm,
     Pasted,
+    /// The key didn't go out.
+    Unsent,
+    /// End of file, or anything unknown.
     End,
 }
 
@@ -343,7 +407,7 @@ impl Commands {
         Ok(text)
     }
 
-    /// The next command; anything but `k` or `p` ends the call, as end of file does.
+    /// The next command; anything but `k`, `p` or `n` counts as end of file.
     async fn next(&mut self) -> Command {
         let mut byte = [0];
         match self.0.read(&mut byte).await {
@@ -357,6 +421,7 @@ const fn command(byte: u8) -> Command {
     match byte {
         b'k' => Command::Arm,
         b'p' => Command::Pasted,
+        b'n' => Command::Unsent,
         _ => Command::End,
     }
 }
@@ -393,9 +458,33 @@ mod tests {
     }
 
     #[test]
-    fn only_k_and_p_keep_the_call_going() {
+    fn after_k_only_p_or_n_lets_the_clipboard_be_restored() {
+        let before_k = Watched::default();
+        assert!(before_k.closed() && !before_k.abandoned());
+        let armed = Watched {
+            armed: true,
+            ..Watched::default()
+        };
+        // The server ended, or ran out of time, with the key perhaps on its way.
+        assert!(armed.closed() && armed.abandoned());
+        let unsent = Watched {
+            unsent: true,
+            ..armed
+        };
+        assert!(!unsent.abandoned());
+        // After `p` the key is done, and the end of stdin only stops the commands.
+        let pasted = Watched {
+            pasted: Some(Instant::now()),
+            ..armed
+        };
+        assert!(!pasted.closed() && !pasted.abandoned());
+    }
+
+    #[test]
+    fn only_n_ends_the_call_at_once_and_anything_unknown_counts_as_the_end() {
         assert_eq!(command(b'k'), Command::Arm);
         assert_eq!(command(b'p'), Command::Pasted);
+        assert_eq!(command(b'n'), Command::Unsent);
         assert_eq!(command(b'x'), Command::End);
     }
 

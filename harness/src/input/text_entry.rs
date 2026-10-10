@@ -1,6 +1,6 @@
 //! Native and wtype text in a real GTK 4 entry, read back from the application: ASCII,
-//! the C10 corpus and a submitted line, then `paste` (see `paste`). Optional dev
-//! fixture, like A05's button.
+//! the C10 corpus and a submitted line, then `paste` (see `paste` and `dropped_paste`).
+//! Optional dev fixture, like A05's button.
 
 use std::fs;
 use std::time::{Duration, Instant};
@@ -46,6 +46,7 @@ pub(super) fn run(session: &mut Session<'_>, owner: &mut Client, server: &str) -
     super::paste::run(session, owner, server, "wtype")?;
     super::paste::secret(session, owner)?;
     structured(&owner.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
+    super::dropped_paste::run(session, owner, server, process.pid())?;
     let mut native = Client::start_command(
         session,
         "env",

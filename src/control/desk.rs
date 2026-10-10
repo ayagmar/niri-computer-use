@@ -313,11 +313,7 @@ impl Desk {
             ));
         }
         if runtime.input_dirty().map_err(|error| unreadable(&error))? {
-            let marker = marker::read(runtime).map_or_else(String::new, |found| found.summary());
-            return Err(ToolError::new(
-                ErrorName::RecoveryRequired,
-                format!("input may be stuck ({marker}); the user runs `niri-computer-use recover`"),
-            ));
+            return Err(input_dirty(marker::read(runtime).as_ref()));
         }
         Ok(stopped.clone())
     }
@@ -556,6 +552,21 @@ fn cancelled(stopped: &watch::Receiver<bool>) -> ToolError {
     )
 }
 
+/// The refusal while the input-dirty marker is set. A marker this server wrote belongs to
+/// a dropped call's input that is still finishing, which `recover` would cut short.
+fn input_dirty(found: Option<&marker::Found>) -> ToolError {
+    let summary = found.map_or_else(String::new, marker::Found::summary);
+    let ours = matches!(found, Some(marker::Found::Marker(marker)) if marker.server_pid == std::process::id());
+    let detail = if ours {
+        format!(
+            "a cancelled call's input is still finishing ({summary}); try again once it has, within seconds"
+        )
+    } else {
+        format!("input may be stuck ({summary}); the user runs `niri-computer-use recover`")
+    };
+    ToolError::new(ErrorName::RecoveryRequired, detail)
+}
+
 /// A stop can't reach this server any more.
 fn watcher_ended() -> ToolError {
     ToolError::new(
@@ -739,6 +750,25 @@ mod tests {
         desk.release(&me).await;
         assert_eq!(act(&desk, None).await, Err(ErrorName::RecoveryRequired));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn only_another_servers_marker_sends_the_user_to_recover() {
+        // This server's own marker is a cancelled call's input still finishing, which
+        // `recover` would cut short.
+        let ours = marker::Marker::pending("paste", Vec::new());
+        let theirs = marker::Marker {
+            server_pid: std::process::id() + 1,
+            ..ours.clone()
+        };
+        let detail = |marker| input_dirty(Some(&marker::Found::Marker(marker))).detail;
+        assert!(!detail(ours).contains("recover"));
+        assert!(detail(theirs).contains("`niri-computer-use recover`"));
+        assert!(
+            input_dirty(None)
+                .detail
+                .contains("`niri-computer-use recover`")
+        );
     }
 
     #[tokio::test]

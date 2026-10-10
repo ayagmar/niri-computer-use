@@ -179,6 +179,17 @@ impl Client {
         self.process.stop().map(drop)
     }
 
+    /// Closes the server's stdin, as a client that goes away does; the server then ends by
+    /// itself.
+    pub(crate) fn close_input(&mut self) -> Result<()> {
+        self.process.feed(Vec::new())
+    }
+
+    /// Waits for the server to exit with success, within its deadline.
+    pub(crate) fn wait(self) -> Result<()> {
+        self.process.wait().map(drop)
+    }
+
     fn request(&mut self, method: &str, params: Value) -> Result<u64> {
         let id = self.next_id;
         self.next_id += 1;
