@@ -654,7 +654,8 @@ These match the versions installed locally.
 
 - The bridge wrote each line to stdout inside its relay loop, so a client that stopped reading stopped the relay too, and its closing stdin went unseen while it held the lease (review finding). One task now writes stdout from a queue of 32 lines, which the relay fills without waiting; a full queue, a write error, or a line not written and flushed within 30 seconds ends the bridge.
 - Ending that way closes the engine connection first and then calls `std::process::exit`, under `#[expect(clippy::exit)]`: tokio's stdout writes on a blocking thread that can't be cancelled, and the runtime waits for blocking threads when `main` returns. A nonblocking stdout would avoid that, but stdout may be a regular file, and the exit is simpler.
-- The queue's bound comes from the existing 256 MiB engine line limit rather than a byte budget: 8 GiB at worst, but about 16 replies for a client that reads, since a session runs at most 16 calls at once. The client's lines wait in a 32 MiB backlog, twice the client line limit; a full backlog ends the bridge (see "a full input backlog ends the bridge" below). No dependency was added.
+- The queue's bound comes from the existing 256 MiB engine line limit rather than a byte budget: 8 GiB at worst. A client that reads keeps few lines waiting, since the engine's lines come one at a time; the call limit doesn't bound them, as requests other than `tools/call` aren't limited.
+- The `engine_lost` answers to everything in flight were queued in one loop without waiting, so with more than 32 in flight the queue filled before the writer ran, and a client that was reading lost its bridge as if it had stopped (review finding, fix round 5). Each of these answers now waits for room, within a line's 30 seconds, until the client's stdout fails or its input overflows. The queue wasn't enlarged: any size has a burst that fills it. The client's lines wait in a 32 MiB backlog, twice the client line limit; a full backlog ends the bridge (see "a full input backlog ends the bridge" below). No dependency was added.
 
 ## 2026-10-10: the native keyboard restores the latest base map
 
@@ -744,3 +745,8 @@ These match the versions installed locally.
 
 - The server gave the keeper five seconds to report `ready`, while its steps, finding niri's PID and then binding, saving, the round trip after the save and the take, each had two (review finding). With a niri slow on every step, the server failed the call and the keeper still took the selection and then restored it.
 - `keeper::TAKE` is now the sum of those step deadlines, built from `niri::PID_LIMIT` and `selection::STEP`, and the server waits `READY`, that plus a second for the keeper to start: eleven seconds. Giving the keeper one overall deadline was the other option; cancelling it partway through the take could leave the selection with a source that is about to go away. No dependency was added.
+
+## 2026-10-10: a dead server's marker goes straight to recover
+
+- The refusal for a marker another server wrote said that server's input may still be finishing, and to try once more, even when that server had died and its crash guardian had sent the releases (review finding, fix round 5). Now that wording needs the marker's `server_pid` running, as `/proc/<pid>/stat` tells, and no `released` note; any other gets the `recover` wording at once.
+- The marker records no start time for its server, so a PID reused since that server died reads as running and costs one retry, as before. Recording it would change the marker's format, which every server and `recover` read with unknown fields refused, for a wording only. No dependency was added.

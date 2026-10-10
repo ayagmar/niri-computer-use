@@ -253,6 +253,31 @@ async fn a_lost_engine_fails_what_was_in_flight_and_the_next_call_reaches_a_new_
     assert_ne!(engine(&fixture).await, first);
 }
 
+/// More requests in flight than the bridge's queue of 32 holds, which only calls are
+/// limited by: when the engine is lost, a client that reads hears `engine_lost` for each,
+/// keeps its bridge, and its next call reaches a new engine.
+#[tokio::test]
+async fn a_lost_engine_answers_every_request_in_flight_to_a_client_that_reads() {
+    let fixture = shared("shared-lost-many");
+    let _niri = Niri::start(&fixture);
+    let mut server = Server::start(&fixture).await;
+    let first = server.serving_pid().await;
+    signal(first, rustix::process::Signal::STOP);
+    let mut ids = Vec::new();
+    for _ in 0..40 {
+        ids.push(server.request("tools/list", json!({})).await);
+    }
+    // The bridge relays them to the stopped engine's socket meanwhile.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    kill(first);
+    for id in ids {
+        let response = server.response(id).await;
+        let message = response["error"]["message"].as_str().unwrap_or_default();
+        assert!(message.starts_with("engine_lost: "), "{response}");
+    }
+    assert_ne!(server.serving_pid().await, first);
+}
+
 #[tokio::test]
 async fn after_the_runtime_directory_goes_the_next_call_reaches_a_new_engine() {
     let fixture = shared("shared-gone");

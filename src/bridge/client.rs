@@ -12,10 +12,11 @@ use tokio::task::JoinHandle;
 
 use super::{Read, read_line};
 
-/// How many lines may wait for the client to read them. A session runs at most 16 calls at
-/// once, so a client that reads has no more than that waiting, with a few notifications
-/// and local errors; a full queue means it has stopped reading. At worst the queue holds
-/// this many engine lines of up to 256 MiB, 8 GiB, plus the one being written.
+/// How many lines may wait for the client to read them. The engine's lines come one at a
+/// time, as it writes them, so a full queue of them means the client has stopped reading;
+/// the `engine_lost` answers the relay makes in one burst wait for room instead. At worst
+/// the queue holds this many engine lines of up to 256 MiB, 8 GiB, plus the one being
+/// written.
 pub(crate) const QUEUE: usize = 32;
 /// How long one line may take to reach the client, written and flushed, however slowly it
 /// reads meanwhile.
@@ -108,6 +109,20 @@ impl Writer {
         self.queue
             .try_send(line)
             .map_err(|_| format!("the client left {QUEUE} lines unread"))
+    }
+
+    /// Queues `line` once the queue has room, within `WRITE`. For a burst of lines the
+    /// relay makes itself, which a client reading as fast as it can can't take while the
+    /// relay makes them: the writer runs between them.
+    pub(crate) async fn queue_with_room(&self, line: Vec<u8>) -> Result<(), String> {
+        match tokio::time::timeout(WRITE, self.queue.send(line)).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(_)) => Err("the writer to the client has stopped".to_owned()),
+            Err(_) => Err(format!(
+                "the client left {QUEUE} lines unread for {} s",
+                WRITE.as_secs()
+            )),
+        }
     }
 
     /// Waits until every queued line is written, or writing failed.

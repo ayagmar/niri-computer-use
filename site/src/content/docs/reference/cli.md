@@ -93,7 +93,7 @@ Prints `niri-computer-use` and the version, such as `niri-computer-use 0.1.0`, a
 
 You don't run these yourself.
 
-- `engine` is the shared engine `serve` starts in [shared mode](../../concepts/configuration/#shared) when its niri instance has none. It serves every shared-mode client of the instance over `engine.sock` in the runtime directory, writes its errors to `engine.log` there, and exits two seconds after its last client is gone.
+- `engine` is the shared engine `serve` starts in [shared mode](../../concepts/configuration/#shared) when its niri instance has none. It serves every shared-mode client of the instance over `engine.sock` in the runtime directory, writes its errors to `engine.log` there, and exits two seconds after its last connection, lease and pending input cleanup have ended.
 - `guard <server-pid>` is the crash guardian `serve` or the engine starts. It waits for that server to end, and if the server's marker names native keys or pointer buttons it still held, releases them at once.
 - `paste-keeper` is the clipboard keeper `paste` starts. It holds the pasted text on the clipboard, then puts the saved clipboard back.
 

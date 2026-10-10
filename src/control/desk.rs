@@ -6,6 +6,7 @@
 //! and cancels the running one when the stop flag appears. A session that ends gives the
 //! lease up at once: its running action is dropped in whatever phase it is.
 
+use std::path::Path;
 use std::sync::{Arc, PoisonError, Weak};
 use std::time::Duration;
 
@@ -13,9 +14,9 @@ use serde::Serialize;
 use tokio::sync::{Mutex, watch};
 
 use super::lease::{self, Holder, Lease, Refused};
-use super::marker;
 use super::runtime::RuntimeDir;
 use super::stop;
+use super::{marker, procs};
 use crate::Env;
 use crate::a11y::ElementRef;
 use crate::error::{CallError, ErrorName, ToolError};
@@ -323,7 +324,8 @@ impl Desk {
             ));
         }
         if runtime.input_dirty().map_err(|error| unreadable(&error))? {
-            return Err(input_dirty(marker::read(runtime).as_ref()));
+            let found = marker::read(runtime);
+            return Err(input_dirty(found.as_ref(), Path::new("/proc")));
         }
         Ok(stopped.clone())
     }
@@ -569,10 +571,10 @@ fn cancelled(stopped: &watch::Receiver<bool>) -> ToolError {
 
 /// The refusal while the input-dirty marker is set. A marker whose input this server still
 /// holds belongs to a dropped call's input that is still finishing, which `recover` would
-/// cut short. One another server wrote may be too, which only that server knows, so the
-/// agent tries again once before `recover`. Any other stays until `recover`, which needs
-/// the lease.
-fn input_dirty(found: Option<&marker::Found>) -> ToolError {
+/// cut short. One another live server wrote may be too, which only that server knows, so
+/// the agent tries again once before `recover`. Any other stays until `recover`, which
+/// needs the lease.
+fn input_dirty(found: Option<&marker::Found>, proc_root: &Path) -> ToolError {
     let summary = found.map_or_else(String::new, marker::Found::summary);
     let marker = match found {
         Some(marker::Found::Marker(marker)) => Some(marker),
@@ -582,7 +584,7 @@ fn input_dirty(found: Option<&marker::Found>) -> ToolError {
         Some(marker) if marker.finishing() => format!(
             "a cancelled call's input is still finishing ({summary}); try again once it has, within seconds"
         ),
-        Some(marker) if marker.server_pid != std::process::id() => format!(
+        Some(marker) if another_server_may_finish(marker, proc_root) => format!(
             "input may be stuck ({summary}), or another server's input may still be finishing; try again in a few seconds, and if it still refuses, call release_desktop, then the user runs `niri-computer-use recover`, which needs the lease"
         ),
         _ => format!(
@@ -590,6 +592,16 @@ fn input_dirty(found: Option<&marker::Found>) -> ToolError {
         ),
     };
     ToolError::new(ErrorName::RecoveryRequired, detail)
+}
+
+/// Whether another server wrote `marker` and may still clear it: it runs, as far as
+/// `proc_root` tells, and its crash guardian hasn't sent the releases, which it does once
+/// the server has died. The marker records no start time, so a PID reused since the
+/// server died reads as running.
+fn another_server_may_finish(marker: &marker::Marker, proc_root: &Path) -> bool {
+    marker.server_pid != std::process::id()
+        && marker.released.is_none()
+        && procs::stat(proc_root, marker.server_pid).is_some_and(|stat| !stat.exited())
 }
 
 /// A stop can't reach this server any more.
@@ -634,7 +646,7 @@ mod tests {
 
     use crate::test_support::session;
 
-    fn env(dir: &std::path::Path) -> Env {
+    fn env(dir: &Path) -> Env {
         crate::test_support::niri_env(dir)
     }
 
@@ -779,7 +791,9 @@ mod tests {
         let dir = crate::test_support::fresh_dir("desk-finishing");
         let runtime = RuntimeDir::of(&env(&dir)).unwrap();
         runtime.create().unwrap();
-        let detail = |found: Option<marker::Found>| input_dirty(found.as_ref()).detail;
+        // No process runs in this `/proc` yet.
+        let proc_root = dir.join("proc");
+        let detail = |found: Option<marker::Found>| input_dirty(found.as_ref(), &proc_root).detail;
         // Input this server still holds clears its own marker, which `recover` would cut
         // short.
         let written =
@@ -803,17 +817,48 @@ mod tests {
         );
         assert!(detail(None).contains("`niri-computer-use recover`"));
         // Another server's input, such as a shared engine's beside this standalone server,
-        // may still be finishing; only that server knows.
+        // may still be finishing while that server runs; only it knows.
         let mut other = marker::Marker::pending("key", Vec::new());
         other.server_pid = std::process::id() + 1;
-        let path = runtime.path().join(crate::control::runtime::INPUT_DIRTY);
-        std::fs::write(path, serde_json::to_vec(&other).unwrap()).unwrap();
-        let others = detail(marker::read(&runtime));
+        let others = |marker: &marker::Marker| {
+            let path = runtime.path().join(crate::control::runtime::INPUT_DIRTY);
+            std::fs::write(path, serde_json::to_vec(marker).unwrap()).unwrap();
+            detail(marker::read(&runtime))
+        };
+        let dead = others(&other);
         assert!(
-            others.contains(
+            dead.contains("call release_desktop, then the user runs `niri-computer-use recover`")
+                && !dead.contains("try again"),
+            "{dead}"
+        );
+        let pid = other.server_pid;
+        let stat = |state: char| {
+            let process = proc_root.join(pid.to_string());
+            std::fs::create_dir_all(&process).unwrap();
+            let stat = format!(
+                "{pid} (niri-computer-u) {state} 1 {pid} {pid} 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 98765 0 0"
+            );
+            std::fs::write(process.join("stat"), stat).unwrap();
+        };
+        stat('S');
+        let running = others(&other);
+        assert!(
+            running.contains(
                 "another server's input may still be finishing; try again in a few seconds"
-            ) && others.contains("then the user runs `niri-computer-use recover`"),
-            "{others}"
+            ) && running.contains("then the user runs `niri-computer-use recover`"),
+            "{running}"
+        );
+        // A server that has exited, or whose crash guardian has sent the releases, which
+        // it does once the server died, finishes nothing, whatever runs under its PID now.
+        stat('Z');
+        assert!(!others(&other).contains("try again"));
+        stat('S');
+        other.released = Some(marker::now());
+        let released = others(&other);
+        assert!(
+            released.contains("the crash guardian sent its releases")
+                && !released.contains("try again"),
+            "{released}"
         );
         std::fs::remove_dir_all(dir).unwrap();
     }
