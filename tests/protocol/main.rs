@@ -26,6 +26,8 @@ mod cancellation;
 #[cfg(test)]
 mod control;
 #[cfg(test)]
+mod discovery;
+#[cfg(test)]
 mod errors;
 #[cfg(test)]
 mod events;

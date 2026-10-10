@@ -7,6 +7,7 @@ mod cli;
 mod clipboard;
 mod control;
 mod coords;
+mod discover;
 mod elements;
 mod error;
 mod image_header;
@@ -56,36 +57,50 @@ pub(crate) struct Env {
     /// The session bus, where the accessibility bus is looked up:
     /// `DBUS_SESSION_BUS_ADDRESS`, or else the user bus in the runtime directory.
     pub(crate) session_bus: Option<OsString>,
+    /// Where the runtime directory, niri's socket and the display came from.
+    pub(crate) discovery: discover::Sources,
 }
 
 impl Env {
     fn read() -> Self {
-        let var = |name| std::env::var_os(name).filter(|value| !value.is_empty());
-        Self {
-            niri_socket: var("NIRI_SOCKET")
-                .map_or_else(niri::Socket::default, |path| niri::Socket::at(path.into())),
-            path: var("PATH"),
+        Self::from_vars(|name| std::env::var_os(name), &discover::Roots::host())
+    }
+
+    /// The environment `var` reads, with what it lacks of the session discovered under
+    /// `roots`. An empty variable counts as unset.
+    fn from_vars(var: impl Fn(&str) -> Option<OsString>, roots: &discover::Roots<'_>) -> Self {
+        let var = |name| var(name).filter(|value| !value.is_empty());
+        let given = discover::Given {
             runtime_dir: var("XDG_RUNTIME_DIR").map(PathBuf::from),
+            niri_socket: var("NIRI_SOCKET").map(PathBuf::from),
             wayland_display: var("WAYLAND_DISPLAY"),
+        };
+        let session = discover::session(given, roots);
+        Self {
+            niri_socket: session
+                .niri_socket
+                .map_or_else(niri::Socket::unknown, niri::Socket::at),
+            path: var("PATH"),
+            wayland_display: session.wayland_display,
             home: var("HOME").map(PathBuf::from),
             keyboard: var("NIRI_COMPUTER_USE_KEYBOARD"),
             // Without the variable, D-Bus clients (libdbus, sd-bus, zbus) use the user bus
-            // systemd starts at `$XDG_RUNTIME_DIR/bus`. Clients such as Codex forward
-            // `XDG_RUNTIME_DIR` but not this variable.
+            // systemd starts at `$XDG_RUNTIME_DIR/bus`.
             session_bus: var("DBUS_SESSION_BUS_ADDRESS").or_else(|| {
-                var("XDG_RUNTIME_DIR").map(|dir| {
+                session.runtime_dir.as_ref().map(|dir| {
                     let mut address = OsString::from("unix:path=");
-                    address.push(dir);
-                    address.push("/bus");
+                    address.push(dir.join("bus"));
                     address
                 })
             }),
+            runtime_dir: session.runtime_dir,
             state_dir: var("XDG_STATE_HOME")
                 .map(PathBuf::from)
                 .or_else(|| var("HOME").map(|home| PathBuf::from(home).join(".local/state"))),
             config_dir: var("XDG_CONFIG_HOME")
                 .map(PathBuf::from)
                 .or_else(|| var("HOME").map(|home| PathBuf::from(home).join(".config"))),
+            discovery: session.sources,
         }
     }
 
@@ -272,6 +287,31 @@ mod tests {
         );
         assert_eq!(env("wayland-1", None).wayland_socket(), None);
         assert_eq!(Env::default().wayland_socket(), None);
+    }
+
+    #[test]
+    fn the_session_bus_is_in_the_discovered_runtime_directory() {
+        let root = test_support::fresh_dir("env-bus");
+        let euid = rustix::process::geteuid().as_raw();
+        let runtime = root.join(euid.to_string());
+        std::fs::create_dir(&runtime).unwrap();
+        std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let roots = discover::Roots {
+            run_user: &root,
+            proc: &root.join("proc"),
+            euid,
+        };
+        let env = Env::from_vars(|_| None, &roots);
+        let mut bus = OsString::from("unix:path=");
+        bus.push(runtime.join("bus"));
+        assert_eq!(env.session_bus, Some(bus));
+        assert_eq!(env.runtime_dir, Some(runtime));
+        let given = Env::from_vars(
+            |name| (name == "DBUS_SESSION_BUS_ADDRESS").then(|| "unix:path=/b".into()),
+            &roots,
+        );
+        assert_eq!(given.session_bus, Some("unix:path=/b".into()));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

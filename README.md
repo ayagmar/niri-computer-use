@@ -18,7 +18,7 @@ cargo install --locked --path niri-computer-use
 claude mcp add --scope user niri-computer-use -- ~/.cargo/bin/niri-computer-use serve
 ```
 
-[Client setup](https://ayagmar.github.io/niri-computer-use/start/clients/) covers Pi, Codex and other MCP clients, and the agent skill in [`skills/niri-computer-use`](skills/niri-computer-use/SKILL.md).
+No client needs extra configuration, Codex included: when `XDG_RUNTIME_DIR`, `NIRI_SOCKET` or `WAYLAND_DISPLAY` is missing, the server finds your session itself. A variable you set still wins, which matters when you run more than one niri session. [Client setup](https://ayagmar.github.io/niri-computer-use/start/clients/) covers Pi, Codex and other MCP clients, and the agent skill in [`skills/niri-computer-use`](skills/niri-computer-use/SKILL.md).
 
 ## Stop key
 

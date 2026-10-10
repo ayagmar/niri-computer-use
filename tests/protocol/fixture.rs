@@ -226,11 +226,13 @@ pub(crate) fn png(width: u32, height: u32) -> Vec<u8> {
     bytes
 }
 
+/// Runs the fake program `name` itself, as the server's runner would. It dies with the
+/// returned child.
 #[expect(
     clippy::disallowed_methods,
     reason = "the test runs a fake program itself, as the server's runner would"
 )]
-fn fake(fixture: &Fixture, name: &str) -> tokio::process::Child {
+pub(crate) fn fake(fixture: &Fixture, name: &str) -> tokio::process::Child {
     let _spawning = SPAWNING.lock().unwrap_or_else(PoisonError::into_inner);
     tokio::process::Command::new(fixture.path(&format!("bin/{name}")))
         .kill_on_drop(true)

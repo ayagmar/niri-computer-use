@@ -15,7 +15,7 @@ use crate::niri::events::StreamState;
 use crate::niri::{self, version::Compat};
 use crate::noctalia::{self, Presence};
 use crate::policy::{self, Facts, Loaded, PolicyStatus};
-use crate::{Env, a11y};
+use crate::{Env, a11y, discover};
 
 /// Programs the server runs or will run, reported as found on `PATH` or not.
 const BINARIES: [&str; 5] = ["grim", "wtype", "wl-copy", "wl-paste", "loginctl"];
@@ -24,6 +24,9 @@ const BINARIES: [&str; 5] = ["grim", "wtype", "wl-copy", "wl-paste", "loginctl"]
 pub(crate) struct Status {
     /// The basename of `NIRI_SOCKET`, which names the compositor instance.
     instance: Option<String>,
+    /// Where the runtime directory, niri's socket and the display came from: the
+    /// environment, or discovery, or why neither.
+    discovery: discover::Sources,
     niri: Niri,
     lease: LeaseStatus,
     /// Whether the stop flag is set for this niri instance.
@@ -116,6 +119,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
     };
     Status {
         instance: env.instance(),
+        discovery: env.discovery.clone(),
         niri: Niri {
             compat: version.as_deref().map(niri::version::compat),
             version,
@@ -176,6 +180,11 @@ mod tests {
             status,
             serde_json::json!({
                 "instance": null,
+                "discovery": {
+                    "runtime_dir": {"source": "missing", "detail": "XDG_RUNTIME_DIR is not set"},
+                    "niri_socket": {"source": "missing", "detail": "NIRI_SOCKET is not set"},
+                    "wayland_display": {"source": "missing", "detail": "WAYLAND_DISPLAY is not set"}
+                },
                 "niri": {
                     "version": null,
                     "ipc_crate": "26.4.0",

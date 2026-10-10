@@ -243,7 +243,7 @@ These match the versions installed locally.
 |---|---|---|---|
 | `@modelcontextprotocol/inspector` | 2.9.0 | 2026-09-30 | The pinned Inspector for `make inspect` and `make inspect-check` (plan §13). 2.10.0 was published on 2026-10-07, too recently for the version rule. It runs through `npx`, so nothing is added to the repository. |
 
-- The Inspector starts a stdio server with a minimal environment. `NIRI_SOCKET`, `XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY` and `XDG_SESSION_ID` are not passed on, and `status` then reports `NIRI_SOCKET is not set`. `scripts/inspector.sh` passes those four on explicitly.
+- The Inspector starts a stdio server with a minimal environment. `NIRI_SOCKET`, `XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY` and `XDG_SESSION_ID` are not passed on, and `status` then reports `NIRI_SOCKET is not set`. `scripts/inspector.sh` passes those four on explicitly. Since 2026-10-10 the server finds the first three itself; see below.
 - The Inspector's `--strict` schema check flagged `screenshot`'s `max_width`, typed `["integer", "null"]`, as less portable: clients that map tool schemas onto a single-type dialect may reject it. The optional `screenshot` arguments are now described as their own types and left out of `required`. The server still accepts `null` for them.
 
 ## 2026-10-08: the name
@@ -550,3 +550,12 @@ These match the versions installed locally.
 - `check-reference.mjs` reads `ErrorName` in `src/error.rs` and the `Policy` and `Preset` structs in `src/policy.rs`, and fails when the error reference or the configuration page documents a name the source doesn't have, or misses one it has.
 - `check-links.mjs` resolves every internal link and image in the built HTML, and every link to the site in the Markdown and llms files, to a file in `dist/`, checks `#fragment`s against the target's element ids, and checks that `llms.txt` links every page's Markdown and `llms-full.txt` contains it. starlight-links-validator would do the HTML part as a dependency; it doesn't check the agent files.
 - The old addresses `guides/getting-started/` and `reference/tools/` redirect to `start/install/` and `tools/overview/` through Astro's `redirects`.
+
+## 2026-10-10: finding the session without client configuration
+
+- A client should need no configuration beyond the command. Codex forwards only a short allow-list of variables, so its users had to add `env_vars` for `NIRI_SOCKET`, `XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY`. The server now discovers whichever of the three is missing, from the names logind and niri use: `/run/user/<euid>`, and `niri.<display>.<pid>.sock` (`IpcServer::start` in niri v26.04 `src/ipc/server.rs`).
+- Set variables always win, so a nested niri, a test fixture or a second session is chosen by setting them.
+- Discovery never chooses between niri instances. A socket counts only if it is a socket owned by the effective user and its PID is a running process called `niri`, which drops sockets a crashed niri left behind. Several live ones make niri `niri_unavailable` with their names, because driving the wrong session is worse than asking for `NIRI_SOCKET`.
+- The runtime directory must be owned by the effective user with mode `0700`, so a directory someone else made can't steer the server to their sockets.
+- The protocol fixture refuses to unset `XDG_RUNTIME_DIR`, so no protocol test can discover the host's session. Unit tests pass discovery roots of their own.
+- No dependency was added: `rustix::process::geteuid` comes from the `process` feature already enabled.

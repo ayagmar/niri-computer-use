@@ -58,7 +58,12 @@ struct Channels {
 impl Niri {
     /// Listens on the fixture's `NIRI_SOCKET` with one output, `DP-1`, focused.
     pub(crate) fn start(fixture: &Fixture) -> Self {
-        let listener = UnixListener::bind(fixture.niri_socket()).unwrap();
+        Self::listen(&fixture.niri_socket())
+    }
+
+    /// The same, listening on `socket`.
+    pub(crate) fn listen(socket: &std::path::Path) -> Self {
+        let listener = UnixListener::bind(socket).unwrap();
         let config = Arc::new(Mutex::new(Config {
             outputs: vec![output("DP-1", Some((0, 0, 2560, 1440, 1.0)))],
             focused: Some("DP-1".to_owned()),
