@@ -402,3 +402,24 @@ async fn a_client_killed_mid_key_frees_the_lease_while_others_keep_working() {
     assert!(eventually(WAIT, || !marker.exists()).await);
     other.structured("acquire_desktop").await;
 }
+
+#[tokio::test]
+async fn an_engine_socket_path_too_long_falls_back_at_once() {
+    let mut fixture = shared("shared-long");
+    // The engine's socket would be `<run>/niri-computer-use/<instance>/engine.sock`.
+    let niri_socket = fixture.path(&format!("run/niri.{}.sock", "x".repeat(40)));
+    let _niri = Niri::listen(&niri_socket);
+    fixture.set("NIRI_SOCKET", &niri_socket);
+    let started = Instant::now();
+    let server = Server::start(&fixture).await;
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
+    let (_, _, stderr) = server.stop().await;
+    assert!(
+        stderr.contains("serving this client standalone: connect to"),
+        "{stderr}"
+    );
+}

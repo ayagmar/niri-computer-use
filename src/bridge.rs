@@ -10,6 +10,7 @@ pub(crate) mod envelope;
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::os::unix::fs::OpenOptionsExt as _;
+use std::path::Path;
 use std::time::Duration;
 
 use serde_json::Value;
@@ -106,7 +107,7 @@ enum Read {
 enum Failed {
     /// No engine listens.
     Absent(String),
-    /// An engine answered, and refused this bridge.
+    /// An engine answered and refused this bridge, or none can ever be reached.
     Refused(String),
     /// Anything else, which a retry may get past.
     Retry(String),
@@ -143,18 +144,7 @@ async fn say_hello(target: &Target) -> Result<Link, Failed> {
     let socket = target.runtime.path().join(SOCKET);
     let stream = match tokio::time::timeout(CONNECT, UnixStream::connect(&socket)).await {
         Ok(Ok(stream)) => stream,
-        Ok(Err(error)) if is_absent(&error) => {
-            return Err(Failed::Absent(format!(
-                "connect to {}: {error}",
-                socket.display()
-            )));
-        }
-        Ok(Err(error)) => {
-            return Err(Failed::Retry(format!(
-                "connect to {}: {error}",
-                socket.display()
-            )));
-        }
+        Ok(Err(error)) => return Err(connect_failed(&socket, &error)),
         Err(_) => {
             return Err(Failed::Retry(format!(
                 "connect to {}: timed out",
@@ -192,11 +182,21 @@ async fn say_hello(target: &Target) -> Result<Link, Failed> {
     }
 }
 
-fn is_absent(error: &std::io::Error) -> bool {
-    matches!(
-        error.kind(),
+/// What a failed connect to `socket` means: no engine listens, none ever can, such as on
+/// a path over the 108 bytes a Unix socket's may have, or a retry may help.
+fn connect_failed(socket: &Path, error: &std::io::Error) -> Failed {
+    let detail = format!("connect to {}: {error}", socket.display());
+    let kind = error.kind();
+    if matches!(
+        kind,
         std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
-    )
+    ) {
+        Failed::Absent(detail)
+    } else if kind == std::io::ErrorKind::InvalidInput {
+        Failed::Refused(detail)
+    } else {
+        Failed::Retry(detail)
+    }
 }
 
 impl Link {
