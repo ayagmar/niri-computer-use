@@ -155,25 +155,57 @@ pub(crate) struct PolicyStatus {
     error: Option<String>,
 }
 
-impl Loaded {
-    /// Checks what reading the file at `path` gave; `None` when there is no config
-    /// directory to look in, which counts as invalid because a file might exist.
-    /// `unrestricted_env` is the environment turning `unrestricted` on, which lifts the
-    /// preset rules as the file's own key does.
-    pub(crate) fn from_read(
-        read: Option<(&Path, std::io::Result<String>)>,
-        unrestricted_env: bool,
-    ) -> Self {
-        let Some((path, read)) = read else {
-            return Self::Invalid("neither XDG_CONFIG_HOME nor HOME is set".to_owned());
+/// What reading the policy file gave, before it is checked: what a session brings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Source {
+    /// Neither `XDG_CONFIG_HOME` nor `HOME` is set, so there is no directory to look in.
+    NoConfigDir,
+    Missing,
+    Unreadable {
+        path: PathBuf,
+        error: String,
+    },
+    Text {
+        path: PathBuf,
+        text: String,
+    },
+}
+
+impl Source {
+    /// Reads `<config_dir>/niri-computer-use/policy.toml` now.
+    pub(crate) fn read(config_dir: Option<&Path>) -> Self {
+        let Some(dir) = config_dir else {
+            return Self::NoConfigDir;
         };
-        match read {
-            Ok(text) => parse(&text, unrestricted_env).map_or_else(
+        let path = dir.join("niri-computer-use").join("policy.toml");
+        match std::fs::read_to_string(&path) {
+            Ok(text) => Self::Text { path, text },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::Missing,
+            Err(error) => Self::Unreadable {
+                path,
+                error: error.to_string(),
+            },
+        }
+    }
+}
+
+impl Loaded {
+    /// Checks the file `source` read. No directory to look in counts as invalid, because
+    /// a file might exist. `unrestricted_env` is the session's variable turning
+    /// `unrestricted` on, which lifts the preset rules as the file's own key does.
+    pub(crate) fn from_source(source: &Source, unrestricted_env: bool) -> Self {
+        match source {
+            Source::NoConfigDir => {
+                Self::Invalid("neither XDG_CONFIG_HOME nor HOME is set".to_owned())
+            }
+            Source::Missing => Self::Missing,
+            Source::Unreadable { path, error } => {
+                Self::Invalid(format!("read {}: {error}", path.display()))
+            }
+            Source::Text { path, text } => parse(text, unrestricted_env).map_or_else(
                 |error| Self::Invalid(format!("{}: {error}", path.display())),
                 Self::Valid,
             ),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::Missing,
-            Err(error) => Self::Invalid(format!("read {}: {error}", path.display())),
         }
     }
 
@@ -856,28 +888,54 @@ app_id = "foot"
 
     #[test]
     fn a_missing_file_is_valid_and_others_are_reported() {
-        use std::io::{Error, ErrorKind};
-        let path = Path::new("/c/policy.toml");
-        let loaded = Loaded::from_read(Some((path, Err(Error::from(ErrorKind::NotFound)))), false);
+        let path = PathBuf::from("/c/policy.toml");
+        let text = |text: &str| Source::Text {
+            path: path.clone(),
+            text: text.to_owned(),
+        };
+        let loaded = Loaded::from_source(&Source::Missing, false);
         assert_eq!(loaded, Loaded::Missing);
         assert_eq!(loaded.status().state, "missing");
-        let status = Loaded::from_read(Some((path, Ok(EXAMPLE.to_owned()))), false).status();
+        let status = Loaded::from_source(&text(EXAMPLE), false).status();
         assert_eq!(
             (status.state, status.presets, status.denied_app_ids),
             ("loaded", 2, 1)
         );
         assert_eq!(status.preset_names, ["firefox", "terminal"]);
-        let invalid = Loaded::from_read(Some((path, Ok("nonsense".to_owned()))), false).status();
+        let invalid = Loaded::from_source(&text("nonsense"), false).status();
         assert_eq!(invalid.state, "invalid");
         assert!(invalid.error.unwrap().starts_with("/c/policy.toml: "));
-        let unreadable = Loaded::from_read(
-            Some((path, Err(Error::from(ErrorKind::PermissionDenied)))),
-            false,
-        );
+        let unreadable = Source::Unreadable {
+            path: path.clone(),
+            error: "Permission denied".to_owned(),
+        };
         assert!(
-            matches!(unreadable, Loaded::Invalid(error) if error.starts_with("read /c/policy.toml"))
+            matches!(Loaded::from_source(&unreadable, false), Loaded::Invalid(error) if error.starts_with("read /c/policy.toml"))
         );
-        assert_eq!(Loaded::from_read(None, false).status().state, "invalid");
+        assert_eq!(
+            Loaded::from_source(&Source::NoConfigDir, false)
+                .status()
+                .state,
+            "invalid"
+        );
+    }
+
+    #[test]
+    fn the_file_is_read_from_the_config_directory() {
+        let dir = crate::test_support::fresh_dir("policy-source");
+        assert_eq!(Source::read(None), Source::NoConfigDir);
+        assert_eq!(Source::read(Some(&dir)), Source::Missing);
+        let path = dir.join("niri-computer-use/policy.toml");
+        std::fs::create_dir(dir.join("niri-computer-use")).unwrap();
+        std::fs::write(&path, "unrestricted = true").unwrap();
+        assert_eq!(
+            Source::read(Some(&dir)),
+            Source::Text {
+                path,
+                text: "unrestricted = true".to_owned()
+            }
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

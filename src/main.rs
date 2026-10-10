@@ -50,12 +50,8 @@ pub(crate) struct Env {
     pub(crate) wayland_display: Option<OsString>,
     /// The Wayland display's socket, checked against niri at each use.
     pub(crate) display: niri::Display,
-    /// `$HOME`, for a `capture_dir` under `~/`.
-    pub(crate) home: Option<PathBuf>,
     /// `$XDG_STATE_HOME`, or `$HOME/.local/state`, for the audit log.
     pub(crate) state_dir: Option<PathBuf>,
-    /// `$XDG_CONFIG_HOME`, or `$HOME/.config`, for the policy file.
-    pub(crate) config_dir: Option<PathBuf>,
     /// The session bus, where the accessibility bus is looked up:
     /// `DBUS_SESSION_BUS_ADDRESS`, or else the user bus in the runtime directory.
     pub(crate) session_bus: Option<OsString>,
@@ -88,7 +84,6 @@ impl Env {
             path: var("PATH"),
             wayland_display: session.wayland_display,
             display: niri::Display::default(),
-            home: var("HOME").map(PathBuf::from),
             // Without the variable, D-Bus clients (libdbus, sd-bus, zbus) use the user bus
             // systemd starts at `$XDG_RUNTIME_DIR/bus`.
             session_bus: var("DBUS_SESSION_BUS_ADDRESS").or_else(|| {
@@ -102,26 +97,10 @@ impl Env {
             state_dir: var("XDG_STATE_HOME")
                 .map(PathBuf::from)
                 .or_else(|| var("HOME").map(|home| PathBuf::from(home).join(".local/state"))),
-            config_dir: var("XDG_CONFIG_HOME")
-                .map(PathBuf::from)
-                .or_else(|| var("HOME").map(|home| PathBuf::from(home).join(".config"))),
             discovery: session.sources,
         };
         env.display = niri::Display::new(env.wayland_socket());
         env
-    }
-
-    /// The policy file, `<config dir>/niri-computer-use/policy.toml`, read and checked now,
-    /// for a session whose own variable has `unrestricted_env` on.
-    pub(crate) fn policy(&self, unrestricted_env: bool) -> policy::Loaded {
-        let path = self
-            .config_dir
-            .as_ref()
-            .map(|dir| dir.join("niri-computer-use").join("policy.toml"));
-        let read = path
-            .as_deref()
-            .map(|path| (path, std::fs::read_to_string(path)));
-        policy::Loaded::from_read(read, unrestricted_env)
     }
 
     /// The basename of `NIRI_SOCKET`, which names the compositor instance.
@@ -210,13 +189,13 @@ enum Command {
 async fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     let env = Env::read().await;
-    let vars = session::Vars::read(|name| std::env::var_os(name));
+    let given = session::Given::read(|name| std::env::var_os(name));
     runner::pass_on(env.session_vars());
     let result = match command(&args) {
-        Some(Command::Serve) => serve(env, vars).await,
+        Some(Command::Serve) => serve(env, given).await,
         Some(Command::Status) => {
             let audit = audit::Audit::new(env.state_dir.clone());
-            let settings = session::Settings::read(&env, vars);
+            let settings = session::Settings::new(given);
             let accessibility = a11y::detect(env.session_bus.as_deref()).await;
             let sources = status::Sources {
                 event_stream: None,
@@ -263,8 +242,8 @@ fn command(args: &[OsString]) -> Option<Command> {
     }
 }
 
-async fn serve(env: Env, vars: session::Vars) -> Result<(), String> {
-    let session = session::Session::local(session::Settings::read(&env, vars));
+async fn serve(env: Env, given: session::Given) -> Result<(), String> {
+    let session = session::Session::local(session::Settings::new(given));
     let engine = engine::Engine::start(env).await?;
     let server = tools::Server::new(std::sync::Arc::new(engine), session);
     let service = server

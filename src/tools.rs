@@ -1156,8 +1156,8 @@ impl Server {
                 .save_path
                 .as_deref()
                 .map(|path| {
-                    let home = self.engine.env().home.as_deref();
-                    self.session.settings().policy.save_target(home, path)
+                    let settings = self.session.settings();
+                    settings.policy.save_target(settings.home.as_deref(), path)
                 })
                 .transpose();
             let save = match save {
@@ -1618,7 +1618,8 @@ mod tests {
     use crate::a11y::Presence;
     use crate::audit::Audit;
     use crate::error::ErrorName;
-    use crate::session::{Settings, Vars};
+    use crate::policy::Source;
+    use crate::session::{Given, Settings};
 
     #[test]
     fn only_close_window_is_destructive_and_only_actions_change_anything() {
@@ -1766,10 +1767,16 @@ mod tests {
         Arc::new(Engine::new(env, events, Audit::new(None), absent))
     }
 
-    /// A server of `engine` for a session with `vars`.
-    fn server(engine: &Arc<Engine>, vars: Vars) -> Server {
-        let settings = Settings::read(engine.env(), vars);
-        Server::new(Arc::clone(engine), Session::local(settings))
+    /// A server of `engine` for a session whose environment sets `unrestricted` to `1` or
+    /// not at all, with no policy file.
+    fn server(engine: &Arc<Engine>, unrestricted: bool) -> Server {
+        let given = Given {
+            unrestricted: unrestricted.then(|| "1".into()),
+            keyboard: None,
+            home: None,
+            policy: Source::Missing,
+        };
+        Server::new(Arc::clone(engine), Session::local(Settings::new(given)))
     }
 
     #[test]
@@ -1783,8 +1790,8 @@ mod tests {
             path: Some(dir.clone().into_os_string()),
             ..Env::default()
         });
-        let missing = server(&engine(Env::default()), Vars::default());
-        let restricted = server(&installed, Vars::default());
+        let missing = server(&engine(Env::default()), false);
+        let restricted = server(&installed, false);
         for tool in SHELL_TOOLS {
             assert!(restricted.tool_router.has_route(tool), "{tool}");
             assert!(!missing.tool_router.has_route(tool), "{tool}");
@@ -1792,24 +1799,16 @@ mod tests {
         assert!(missing.tool_router.has_route("status"));
         // The passthrough also needs unrestricted, which one session's variable turns on
         // for that session alone.
-        let unrestricted = Vars {
-            unrestricted: Some("1".into()),
-            ..Vars::default()
-        };
-        let unrestricted = server(&installed, unrestricted);
+        let unrestricted = server(&installed, true);
         assert!(unrestricted.tool_router.has_route("noctalia"));
         assert!(!restricted.tool_router.has_route("noctalia"));
-        assert!(
-            !server(&installed, Vars::default())
-                .tool_router
-                .has_route("noctalia")
-        );
+        assert!(!server(&installed, false).tool_router.has_route("noctalia"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn the_server_names_itself_and_gives_instructions() {
-        let server = server(&engine(Env::default()), Vars::default());
+        let server = server(&engine(Env::default()), false);
         let info = server.get_info();
         assert_eq!(info.server_info.name, "niri-computer-use");
         assert!(
