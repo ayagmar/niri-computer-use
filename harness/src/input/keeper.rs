@@ -88,9 +88,9 @@ fn late_k(session: &mut Session<'_>, server: &str) -> Result<()> {
     Ok(())
 }
 
-/// An owner holds the keeper's first read while saving until another client copies. The
-/// keeper must refuse rather than take the selection, so the newer copy stays and is
-/// never cancelled.
+/// An owner holds the keeper's read of its binary type, while the keeper saves, until
+/// another client copies. The keeper must refuse rather than take the selection, so the
+/// newer copy stays and is never cancelled.
 fn copied_while_saving(session: &mut Session<'_>, server: &str) -> Result<()> {
     let held = session.test_dir().root().join(HELD);
     if held.exists() {
