@@ -106,22 +106,18 @@ fn spawn(invocation: &Invocation<'_>, piped: bool) -> Result<Process> {
     let stdout = read_in_background(child.stdout.take());
     let stderr = read_in_background(child.stderr.take());
     let reaped = Arc::new(Mutex::new(false));
+    let end = Instant::now() + invocation.deadline;
     Ok(Process {
         program: program.to_owned(),
         exit: observe_exit(pid),
-        watchdog: Some(watchdog(
-            pid,
-            invocation.group,
-            invocation.deadline,
-            Arc::clone(&reaped),
-        )),
+        watchdog: Some(watchdog(pid, invocation.group, end, Arc::clone(&reaped))),
         reaped,
         stdin: child.stdin.take(),
         child,
         pid,
         group: invocation.group,
         deadline: invocation.deadline,
-        end: Instant::now() + invocation.deadline,
+        end,
         log_file: match &invocation.output {
             Sink::Capture => None,
             Sink::File(path) => Some(path.clone()),
@@ -221,11 +217,12 @@ impl Process {
         }
     }
 
-    /// Waits for the program to exit, until its deadline. `wait_for_exit` already tells an
-    /// exit before the deadline from a timeout.
+    /// Waits for the program to exit, until its deadline. An exit seen at or after the
+    /// deadline is a timeout, as for `stop`.
     pub(crate) fn wait(mut self) -> Result<Output> {
         let ending = wait_for_exit(&self.exit, self.end);
         self.exited = matches!(ending, Ok(Ending::Exited));
+        let ending = ending.map(|ending| self.late(ending));
         self.finish(ending)
     }
 
@@ -273,8 +270,8 @@ impl Process {
         self.finish(ending)
     }
 
-    /// For `stop`: an ending seen at or after the deadline is a timeout, even an exit. The
-    /// watchdog may have caused it, and a result that late doesn't count.
+    /// An ending seen at or after the deadline is a timeout, even an exit. The watchdog may
+    /// have caused it, and a result that late doesn't count.
     fn late(&self, ending: Ending) -> Ending {
         if ending != Ending::Interrupted && Instant::now() >= self.end {
             Ending::TimedOut
@@ -345,10 +342,13 @@ impl Drop for Process {
 
 /// Kills the child at its deadline unless it has been reaped by then. Ends early when the
 /// returned sender is dropped.
-fn watchdog(pid: Pid, group: Group, deadline: Duration, reaped: Arc<Mutex<bool>>) -> Sender<()> {
+fn watchdog(pid: Pid, group: Group, end: Instant, reaped: Arc<Mutex<bool>>) -> Sender<()> {
     let (cancel, cancelled) = mpsc::channel();
     thread::spawn(move || {
-        if cancelled.recv_timeout(deadline) == Err(RecvTimeoutError::Timeout)
+        // Never before `end`, the instant `wait` and `stop` treat as the deadline: a kill
+        // that lands earlier would read as the program failing on its own.
+        let left = end.saturating_duration_since(Instant::now());
+        if cancelled.recv_timeout(left) == Err(RecvTimeoutError::Timeout)
             && let Ok(reaped) = reaped.lock()
             && !*reaped
         {
