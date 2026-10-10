@@ -63,7 +63,7 @@ The server joins `args` with spaces and sends them over the same socket, with th
 | `reply` | what `noctalia msg` would print, cut at 64 KiB |
 | `truncated` | whether it was cut |
 
-A reply starting `error:`, which makes `noctalia msg` exit 1, comes back as `upstream_error` with Noctalia's text, such as `Noctalia replied: error: unknown command (try: noctalia msg --help)`. A lost reply is `uncertain`: Noctalia acts before it answers. The tool needs the lease, stops at the stop key and is written to the audit log with its arguments.
+A reply starting `error:`, which makes `noctalia msg` exit 1, comes back as `upstream_error` with Noctalia's text, such as `Noctalia replied: error: unknown command (try: noctalia msg --help)`. A lost reply is `uncertain`: Noctalia acts before it answers. The tool needs the lease, stops at the stop key and is written to the audit log as the number of arguments and their lengths, with the first argument only when it is a plain command word of lowercase letters and `-`, such as `panel-open`.
 
 This is how an agent can start a screen recording with Noctalia's OBS plugin, as a niri keybind would, since keybinds don't fire from the keyboard tools:
 

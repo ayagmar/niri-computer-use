@@ -1,7 +1,9 @@
 //! The audit log: one JSON line per tool call at
 //! `$XDG_STATE_HOME/niri-computer-use/audit.jsonl`, in a `0700` directory and a `0600` file.
 //! It records argument metadata and the outcome, never typed text, clipboard contents,
-//! screenshot data or window titles.
+//! screenshot data or window titles. The passthroughs log metadata too: `niri_action` its
+//! action's name, numbers and booleans with every string as its length, and `noctalia` its
+//! argument count and lengths, plus the first argument when it is a plain command word.
 
 use std::fs::{DirBuilder, OpenOptions};
 use std::io::Write as _;
@@ -11,12 +13,16 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use chrono::{SecondsFormat, Utc};
+use niri_ipc::Action;
 use rmcp::ErrorData;
 use rmcp::model::CallToolResult;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::error::CANCELLED;
+
+/// The longest first `noctalia` argument the log keeps as a command word.
+const COMMAND_WORD: usize = 32;
 
 /// Where the log goes, and the last write error, which `status` reports.
 #[derive(Debug, Clone)]
@@ -167,6 +173,55 @@ fn append(path: &std::path::Path, line: &[u8]) -> std::io::Result<()> {
     file.write_all(&[line, b"\n"].concat())
 }
 
+/// `niri_action`'s action for the log: its name and fields, with numbers, booleans and
+/// nulls as they are and every string as its length, so a command or a workspace name
+/// never reaches the log. Keys come from niri-ipc's types, never from the agent.
+pub(crate) fn action(action: &Action) -> Value {
+    serde_json::to_value(action).map_or(Value::Null, |json| lengths(&json))
+}
+
+/// A string becomes `{"len": n}` and a list of strings `{"count": n, "lens": [...]}`,
+/// counted in Unicode scalar values as `type_text`'s `text_len` is.
+fn lengths(value: &Value) -> Value {
+    match value {
+        Value::String(text) => json!({ "len": text.chars().count() }),
+        Value::Array(items) if items.iter().all(Value::is_string) => json!({
+            "count": items.len(),
+            "lens": items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(|text| text.chars().count())
+                .collect::<Vec<_>>(),
+        }),
+        Value::Array(items) => items.iter().map(lengths).collect(),
+        Value::Object(fields) => fields
+            .iter()
+            .map(|(key, field)| (key.clone(), lengths(field)))
+            .collect(),
+        Value::Null | Value::Bool(_) | Value::Number(_) => value.clone(),
+    }
+}
+
+/// `noctalia`'s arguments for the log: how many and how long, and the first one as
+/// `command` only when it is a plain command word such as `panel-open`, never free text.
+pub(crate) fn noctalia(args: &[String]) -> Value {
+    let command = args.first().filter(|first| command_word(first));
+    json!({
+        "count": args.len(),
+        "lens": args.iter().map(|arg| arg.chars().count()).collect::<Vec<_>>(),
+        "command": command,
+    })
+}
+
+/// Lowercase ASCII letters and `-`, at most 32 bytes.
+fn command_word(arg: &str) -> bool {
+    !arg.is_empty()
+        && arg.len() <= COMMAND_WORD
+        && arg
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte == b'-')
+}
+
 /// The outcome's error name, read from the tool's result and never from its content: a
 /// stable name for a failure, `invalid_arguments` for an argument mistake, and `cancelled`
 /// or `internal` when the call didn't produce a result.
@@ -291,6 +346,61 @@ mod tests {
         assert_eq!(outcome(&Err(other)).as_deref(), Some("internal"));
         let ts = Call::start("status").ts;
         assert!(ts.ends_with('Z') && ts.len() == 24, "{ts}");
+    }
+
+    #[test]
+    fn a_niri_action_is_logged_as_its_name_numbers_and_lengths() {
+        let action = |json: Value| serde_json::from_value::<Action>(json).unwrap();
+        assert_eq!(
+            super::action(&action(
+                json!({"Spawn": {"command": ["foot", "-e", "secret"]}})
+            )),
+            json!({"Spawn": {"command": {"count": 3, "lens": [4, 2, 6]}}})
+        );
+        assert_eq!(
+            super::action(&action(json!({"SpawnSh": {"command": "echo hunter2"}}))),
+            json!({"SpawnSh": {"command": {"len": 12}}})
+        );
+        assert_eq!(
+            super::action(&action(
+                json!({"SetWorkspaceName": {"name": "hunter2", "workspace": {"Index": 2}}})
+            )),
+            json!({"SetWorkspaceName": {"name": {"len": 7}, "workspace": {"Index": 2}}})
+        );
+        assert_eq!(
+            super::action(&action(
+                json!({"SetWindowWidth": {"id": 12, "change": {"SetFixed": 1600}}})
+            )),
+            json!({"SetWindowWidth": {"id": 12, "change": {"SetFixed": 1600}}})
+        );
+        assert_eq!(
+            super::action(&action(json!({"MoveWindowToWorkspace": {
+                "window_id": null, "reference": {"Name": "hunter2"}, "focus": true
+            }}))),
+            json!({"MoveWindowToWorkspace": {
+                "window_id": null, "reference": {"Name": {"len": 7}}, "focus": true
+            }})
+        );
+    }
+
+    #[test]
+    fn noctalia_logs_only_a_plain_command_word_and_lengths() {
+        let args = |args: &[&str]| args.iter().map(|&arg| arg.to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            noctalia(&args(&["notification-show", "hunter2"])),
+            json!({"count": 2, "lens": [17, 7], "command": "notification-show"})
+        );
+        assert_eq!(
+            noctalia(&args(&["--help"])),
+            json!({"count": 1, "lens": [6], "command": "--help"})
+        );
+        for free in ["Hunter2", "hunter2 x", "hunter_2", "", &"a".repeat(33)] {
+            assert_eq!(noctalia(&args(&[free]))["command"], Value::Null, "{free:?}");
+        }
+        assert_eq!(
+            noctalia(&args(&[&"a".repeat(32)]))["command"],
+            "a".repeat(32)
+        );
     }
 
     #[test]

@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use base64::Engine as _;
+use niri_ipc::Action;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock};
@@ -13,7 +14,7 @@ use serde_json::Value;
 
 use crate::a11y::model;
 use crate::act::{self, Outcome};
-use crate::audit::{Call, Caller};
+use crate::audit::{self, Call, Caller};
 use crate::coords::ImagePx;
 use crate::engine::Engine;
 use crate::error::{CANCELLED, CallError, ToolError};
@@ -270,7 +271,7 @@ struct LaunchArgs {
     screenshot: bool,
 }
 
-#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct NiriActionArgs {
     /// One niri action in niri's IPC JSON, the action's name as the only key, such as
@@ -282,11 +283,11 @@ struct NiriActionArgs {
     /// With true, the result also has a screenshot of the focused output, taken once the
     /// screen stopped changing, so no separate `screenshot` call is needed. Defaults to
     /// false.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default)]
     screenshot: bool,
 }
 
-#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct NoctaliaArgs {
     /// The command and its arguments, as after `noctalia msg`, such as `["plugin",
@@ -296,7 +297,7 @@ struct NoctaliaArgs {
     /// With true, the result also has a screenshot of the focused output, taken once the
     /// screen stopped changing, so no separate `screenshot` call is needed. Defaults to
     /// false.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default)]
     screenshot: bool,
 }
 
@@ -817,13 +818,15 @@ impl Server {
         Parameters(args): Parameters<NiriActionArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        let action = serde_json::from_value::<Action>(Value::Object(args.action));
+        let mut logged = serde_json::json!({ "action": action.as_ref().ok().map(audit::action) });
+        flag(&mut logged, "screenshot", args.screenshot);
         let niri = self.engine.niri();
         let settings = self.session.settings();
         let unrestricted = settings.unrestricted.enabled();
         let shoot = args.screenshot;
         let work = async move {
-            let action = serde_json::from_value(Value::Object(args.action)).map_err(|error| {
+            let action = action.map_err(|error| {
                 CallError::InvalidArguments(format!("`action` isn't a niri action: {error}"))
             })?;
             if let Some(refused) = policy::refuse_action(&action, unrestricted) {
@@ -1311,7 +1314,8 @@ impl Server {
         Parameters(args): Parameters<NoctaliaArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        let mut logged = audit::noctalia(&args.args);
+        flag(&mut logged, "screenshot", args.screenshot);
         let (env, niri) = (self.engine.env(), self.engine.niri());
         let shoot = args.screenshot;
         let work = async move {

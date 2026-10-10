@@ -1829,7 +1829,7 @@ async fn gated_niri_actions_need_unrestricted() {
         desk.audited(),
         [json!([
             "niri_action",
-            spawn,
+            {"action": {"Spawn": {"command": {"count": 1, "lens": [4]}}}},
             null,
             null,
             "unrestricted_required"
@@ -1931,6 +1931,12 @@ async fn noctalia_sends_any_command_only_when_unrestricted() {
     );
     assert_eq!(
         open.audited()[0],
-        json!(["noctalia", args, true, "sent", null])
+        json!([
+            "noctalia",
+            {"count": 2, "lens": [10, 9], "command": "panel-open"},
+            true,
+            "sent",
+            null
+        ])
     );
 }
