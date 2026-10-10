@@ -3,8 +3,9 @@
 //! however it exits; SIGKILL runs no `Drop`, and niri releases nothing when a virtual
 //! device goes. It then reads the input-dirty marker. Only a marker its own server wrote,
 //! naming native keycodes or pointer buttons, makes it send anything: the releases, zero
-//! modifiers and the compositor's keymap, from fresh devices whose peer must be the niri
-//! serving `NIRI_SOCKET`, under the lease and within one deadline. The marker stays, with
+//! modifiers, in the layout niri has active, and the compositor's keymap, from fresh
+//! devices whose peer must be the niri serving `NIRI_SOCKET`, under the lease and within
+//! one deadline. The marker stays, with
 //! the time of the releases, until a human runs `recover`.
 
 use std::time::Duration;
@@ -15,7 +16,7 @@ use super::lease::{Lease, Refused};
 use super::marker::{self, Found, Marker};
 use super::recover;
 use super::runtime::RuntimeDir;
-use crate::Env;
+use crate::{Env, cli};
 
 /// Everything after the server's end: the lease, niri's PID, binding and both releases.
 const DEADLINE: Duration = Duration::from_secs(10);
@@ -49,8 +50,10 @@ async fn release(env: &Env, runtime: &RuntimeDir, server: u32) -> Result<(), Str
     let Some(marker) = releases(Some(&snapshot.found), server) else {
         return Ok(());
     };
-    if let Some(keyboard) = &marker.keyboard {
-        recover::send_key_releases(env, keyboard).await?;
+    if let Some(keyboard) = &marker.keyboard
+        && let recover::Layout::Marked(why) = recover::send_key_releases(env, keyboard).await?
+    {
+        cli::print_error(&format!("the native key releases: {why}"));
     }
     if !marker.buttons.is_empty() {
         recover::send_releases(env, &marker.buttons, marker.output.as_deref()).await?;

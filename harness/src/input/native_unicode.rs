@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use niri_ipc::{Action, LayoutSwitchTarget, Request, Response};
+use niri_ipc::{Action, KeyboardLayouts, LayoutSwitchTarget, Request, Response};
 use rustix::process::{Pid, Signal, kill_process};
 use serde_json::{Value, json};
 
@@ -23,6 +23,8 @@ use crate::wev::keyboard::trace;
 const OBSERVER_DEADLINE: Duration = Duration::from_secs(60);
 /// How long a later call is watched for a keymap it should not cause.
 const QUIET: Duration = Duration::from_millis(300);
+/// How many cancelled calls may see the layout switch before one is dropped first.
+const CANCEL_ATTEMPTS: usize = 8;
 
 pub(super) fn run(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>) -> Result<()> {
     let (observer, directory, original) = observe(session, "native")?;
@@ -65,7 +67,12 @@ pub(super) fn run(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>)
 pub(super) fn crash(session: &mut Session<'_>, wev: &Wev<'_>, server: &str) -> Result<()> {
     let (observer, directory, original) = observe(session, "crash")?;
     let mut sent = 0;
-    super::native_gestures::typing_crash(session, wev, server, ("é", "extended"), |session| {
+    let crash = super::native_gestures::Crash {
+        text: "é",
+        name: "extended",
+        switch_to: None,
+    };
+    super::native_gestures::typing_crash(session, wev, server, crash, |session| {
         let maps = session.wait_until(
             "m7-crash-keymap",
             "the compositor's keymap from the guardian",
@@ -202,7 +209,8 @@ fn quiet_after(
 /// as soon as the extension reaches clients and continued after the change, so the change
 /// lands mid-call. The call must end early and leave the latest compositor keymap with
 /// clients, and the focused client in the layout niri switched to; neither the keymap nor
-/// the layout the call began with may come back. niri's config is put back at the end.
+/// the layout the call began with may come back. Then calls are cancelled after a switch
+/// (`cancelled`). niri's config is put back at the end.
 pub(super) fn layout_change(
     session: &mut Session<'_>,
     client: &mut Client,
@@ -226,15 +234,7 @@ pub(super) fn layout_change(
     clients_hold(session, &directory, &base, "the new keymap")?;
     let offset = wev.offset()?;
     let switched = mid_call(session, client, (serving, &directory), |session| {
-        session.request(&Request::Action(Action::SwitchLayout {
-            layout: LayoutSwitchTarget::Index(1),
-        }))?;
-        session.wait_until(
-            "m7-layout-switch",
-            "the second layout active",
-            WAIT,
-            |session| Ok((current_layout(session)? == 1).then_some(())),
-        )
+        switch_layout(session, 1)
     })?;
     expect_outcome(&switched.0, "interrupted", "")?;
     clients_hold(
@@ -246,22 +246,168 @@ pub(super) fn layout_change(
     // The release and restore after the call must not send the focused client back to
     // the layout the call began in. niri's own layout index doesn't follow a virtual
     // keyboard's group, so only the client shows it.
-    pause(QUIET);
-    let log = wev.read()?;
-    let group = trace(log.get(offset..).unwrap_or_default())?
-        .modifiers
-        .map(|modifiers| modifiers.group);
-    if group != Some(1) {
-        return Err(Failure::new(format!(
-            "M7 layout change: wev was left in group {group:?} after the call, not 1"
-        )));
-    }
+    left_in(wev, offset, 1, "after the call")?;
+    cancelled(session, client, wev, (serving, &directory, &base))?;
     write_config(&config, &original_config)?;
     clients_hold(session, &directory, &original, "the original keymap")?;
     observer.stop()?;
     session.log(
         "M7 native layout change: a new compositor keymap and a layout switch mid-extension each ended the call, and clients kept the new keymap, wev in the layout switched to",
     )
+}
+
+/// A call cancelled after niri switched layouts under it must leave the focused client in
+/// the layout niri has active, and clients with the latest keymap, however it ends. The
+/// serving process is stopped while the layout switches and the cancellation goes out, so
+/// the call either sees the switch first and ends `interrupted`, or is dropped first and
+/// cleans up as a dropped call does, the case this is for. It runs until a call was
+/// dropped.
+fn cancelled(
+    session: &mut Session<'_>,
+    client: &mut Client,
+    wev: &Wev<'_>,
+    (serving, directory, base): (i32, &Path, &[u8]),
+) -> Result<()> {
+    let mut ended = 0;
+    loop {
+        if ended >= CANCEL_ATTEMPTS {
+            return Err(Failure::new(format!(
+                "M7 layout change: each of {ended} cancelled calls saw the switch first; none was dropped"
+            )));
+        }
+        let target = 1 - current_layout(session)?;
+        let offset = wev.offset()?;
+        let before = keymaps::saved(directory)?.len();
+        let id = client.start_call(
+            "type_text",
+            json!({"text": "é".repeat(1000), "expect": {"app_id": "wev"}}),
+        )?;
+        extension_sent(directory, before)?;
+        signal(serving, Signal::STOP)?;
+        let changed = switch_layout(session, target).and_then(|()| client.cancel(id));
+        signal(serving, Signal::CONT)?;
+        changed?;
+        stop::marker_gone(session)?;
+        clients_hold(
+            session,
+            directory,
+            base,
+            "the new keymap after a cancelled call",
+        )?;
+        left_before_next(session, client, wev, (offset, target))?;
+        match client.replied(id)? {
+            None => break,
+            Some(reply) if field(&reply, "/result/structuredContent/observed") == "interrupted" => {
+                ended += 1;
+            }
+            Some(reply) => {
+                return Err(Failure::new(format!(
+                    "M7 layout change: a cancelled call answered {reply}"
+                )));
+            }
+        }
+    }
+    session.log(&format!(
+        "M7 native layout change: a call dropped after a layout switch left wev in the layout niri has active, after {ended} cancelled calls that saw the switch first and did too"
+    ))
+}
+
+/// After a pause, the focused client's last modifiers since `offset` are in `group`.
+fn left_in(wev: &Wev<'_>, offset: usize, group: u8, when: &str) -> Result<()> {
+    pause(QUIET);
+    let log = wev.read()?;
+    let left = trace(log.get(offset..).unwrap_or_default())?
+        .modifiers
+        .map(|modifiers| modifiers.group);
+    if left != Some(u32::from(group)) {
+        return Err(Failure::new(format!(
+            "M7 layout change: wev was left in group {left:?} {when}, not {group}"
+        )));
+    }
+    Ok(())
+}
+
+/// The focused client's last modifiers since `offset`, before the keymap of the next
+/// call, are in `group`. wev prints an event only when it next reads from niri, and in the
+/// nested trials the last modifiers a dropped call left reached its log only with later
+/// input, so a one-character call that needs the extension follows, and what counts is
+/// what wev printed before that call's keymap: the third since `offset`, after the
+/// cancelled call's extension and the restored map.
+fn left_before_next(
+    session: &mut Session<'_>,
+    client: &mut Client,
+    wev: &Wev<'_>,
+    (offset, group): (usize, u8),
+) -> Result<()> {
+    structured(&client.call(
+        session,
+        "type_text",
+        json!({"text": "é", "expect": {"app_id": "wev"}}),
+    )?)?;
+    let left = session.wait_until(
+        "m7-layout-next-keymap",
+        "wev printed the next call's keymap",
+        WAIT,
+        |_| {
+            let log = wev.read()?;
+            let since = log.get(offset..).unwrap_or_default();
+            let Some(before) = since
+                .match_indices("] keymap:")
+                .nth(2)
+                .and_then(|(next, _)| since.get(..next))
+            else {
+                return Ok(None);
+            };
+            Ok(Some(
+                trace(before)?.modifiers.map(|modifiers| modifiers.group),
+            ))
+        },
+    )?;
+    if left != Some(u32::from(group)) {
+        return Err(Failure::new(format!(
+            "M7 layout change: wev was left in group {left:?} after a cancelled call, not {group}"
+        )));
+    }
+    Ok(())
+}
+
+/// Switches niri to layout `index` and waits until it reports it active.
+pub(super) fn switch_layout(session: &mut Session<'_>, index: u8) -> Result<()> {
+    session.request(&Request::Action(Action::SwitchLayout {
+        layout: LayoutSwitchTarget::Index(index),
+    }))?;
+    session.wait_until(
+        "m7-layout-switch",
+        "the layout switched to",
+        WAIT,
+        |session| Ok((current_layout(session)? == index).then_some(())),
+    )
+}
+
+/// A server killed after niri switched layouts under its call: its guardian and then
+/// `recover` must each leave the focused client in the layout niri has active, not the one
+/// the marker recorded at the call's start. The call starts in layout 1 and the switch is
+/// to 0, which `typing_crash` checks with the rest of the zero modifiers.
+pub(super) fn layout_crash(session: &mut Session<'_>, wev: &Wev<'_>, server: &str) -> Result<()> {
+    let config = session.test_dir().niri_config();
+    let original_config =
+        fs::read_to_string(&config).context(format!("read {}", config.display()))?;
+    write_config(&config, &format!("{original_config}{TWO_LAYOUTS}"))?;
+    session.wait_until("m7-layouts", "niri's two layouts", WAIT, |session| {
+        Ok((layouts(session)?.names.len() == 2).then_some(()))
+    })?;
+    switch_layout(session, 1)?;
+    let crash = super::native_gestures::Crash {
+        text: "A",
+        name: "layout",
+        switch_to: Some(0),
+    };
+    super::native_gestures::typing_crash(session, wev, server, crash, |_| Ok(()))?;
+    write_config(&config, &original_config)?;
+    session.wait_until("m7-layouts", "niri's one layout", WAIT, |session| {
+        Ok((layouts(session)?.names.len() == 1).then_some(()))
+    })?;
+    session.log("M7 SIGKILL after a layout switch: the guardian and then recover left wev in the layout niri switched to, not the marker's")
 }
 
 const TWO_LAYOUTS: &str =
@@ -288,13 +434,17 @@ fn serving_pid(session: &mut Session<'_>, client: &mut Client) -> Result<i32> {
         .ok_or_else(|| Failure::new(format!("status names no serving PID: {status}")))
 }
 
-fn current_layout(session: &mut Session<'_>) -> Result<u8> {
+fn layouts(session: &mut Session<'_>) -> Result<KeyboardLayouts> {
     let Response::KeyboardLayouts(layouts) = session.request(&Request::KeyboardLayouts)? else {
         return Err(Failure::new(
             "niri answered KeyboardLayouts with something else",
         ));
     };
-    Ok(layouts.current_idx)
+    Ok(layouts)
+}
+
+pub(super) fn current_layout(session: &mut Session<'_>) -> Result<u8> {
+    Ok(layouts(session)?.current_idx)
 }
 
 /// Types a long text that needs an extended keymap, stops `serving` once niri has sent
@@ -311,6 +461,19 @@ fn mid_call<T>(
         "type_text",
         json!({"text": "é".repeat(1000), "expect": {"app_id": "wev"}}),
     )?;
+    extension_sent(directory, before)?;
+    signal(serving, Signal::STOP)?;
+    let changed = change(session);
+    signal(serving, Signal::CONT)?;
+    let changed = changed?;
+    let outcome = structured(&client.result(session, id)?)?;
+    stop::marker_gone(session)?;
+    Ok((outcome, changed))
+}
+
+/// Waits, polling every millisecond, until clients have been sent a map after the first
+/// `before`: the call's extension.
+fn extension_sent(directory: &Path, before: usize) -> Result<()> {
     let until = Instant::now() + WAIT;
     while keymaps::saved(directory)?.len() <= before {
         if Instant::now() > until {
@@ -320,13 +483,7 @@ fn mid_call<T>(
         }
         pause(Duration::from_millis(1));
     }
-    signal(serving, Signal::STOP)?;
-    let changed = change(session);
-    signal(serving, Signal::CONT)?;
-    let changed = changed?;
-    let outcome = structured(&client.result(session, id)?)?;
-    stop::marker_gone(session)?;
-    Ok((outcome, changed))
+    Ok(())
 }
 
 fn expect_outcome(outcome: &Value, observed: &str, detail: &str) -> Result<()> {
@@ -352,7 +509,7 @@ fn clients_hold(session: &mut Session<'_>, directory: &Path, map: &[u8], what: &
     })
 }
 
-fn signal(pid: i32, signal: Signal) -> Result<()> {
+pub(super) fn signal(pid: i32, signal: Signal) -> Result<()> {
     let pid = Pid::from_raw(pid).ok_or_else(|| Failure::new("no serving PID"))?;
     kill_process(pid, signal).context(format!("send {signal:?} to the serving process"))
 }

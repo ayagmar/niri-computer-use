@@ -81,17 +81,35 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
 }
 
 async fn release_keyboard(env: &Env, marked: &marker::Native) -> Result<(), String> {
-    send_key_releases(env, marked).await?;
-    cli::say(
-        "Sent native key releases and zero synthetic modifiers from a fresh virtual keyboard.",
-    );
+    let line = match send_key_releases(env, marked).await? {
+        Layout::Active(group) => format!(
+            "Sent native key releases and zero synthetic modifiers from a fresh virtual keyboard, in niri's active layout (index {group})."
+        ),
+        Layout::Marked(why) => format!(
+            "Sent native key releases and zero synthetic modifiers from a fresh virtual keyboard. {why}; the focused application may show another layout until the next key."
+        ),
+    };
+    cli::say(&line);
     Ok(())
+}
+
+/// The layout a fresh keyboard's zero modifiers went out in.
+pub(super) enum Layout {
+    /// The one niri has active, by its index.
+    Active(u32),
+    /// The marker's, from the call's start, since niri didn't say: why.
+    Marked(String),
 }
 
 /// Releases the marker's keycodes and zeroes the modifiers from a fresh virtual keyboard,
 /// which carries the compositor's current map, so niri sends that map to clients again
-/// with the releases. The display's peer must be the niri serving `NIRI_SOCKET`.
-pub(super) async fn send_key_releases(env: &Env, marked: &marker::Native) -> Result<(), String> {
+/// with the releases. The modifiers go out in the layout niri has active, the user's,
+/// or without niri's answer in the marker's. The display's peer must be the niri serving
+/// `NIRI_SOCKET`.
+pub(super) async fn send_key_releases(
+    env: &Env,
+    marked: &marker::Native,
+) -> Result<Layout, String> {
     if marked.codes.len() > 1000
         || marked.codes.iter().any(|code| *code > 767)
         || marked.group >= 32
@@ -105,10 +123,22 @@ pub(super) async fn send_key_releases(env: &Env, marked: &marker::Native) -> Res
     let mut keyboard = niri::keyboard::Keyboard::bind(display, pid)
         .await
         .map_err(|error| error.detail)?;
+    let layout = match niri::keyboard_group(&env.niri_socket).await {
+        Ok(group) => Layout::Active(group),
+        Err(error) => Layout::Marked(format!(
+            "niri didn't say which layout is active ({}), so they went out in layout index {}, where the call started",
+            error.detail, marked.group
+        )),
+    };
+    let group = match layout {
+        Layout::Active(group) => group,
+        Layout::Marked(_) => marked.group,
+    };
     keyboard
-        .release(&marked.codes, marked.group)
+        .release(&marked.codes, group)
         .await
-        .map_err(|error| error.detail)
+        .map_err(|error| error.detail)?;
+    Ok(layout)
 }
 
 /// Sends the release of each of `buttons` from a fresh virtual pointer, which clears a

@@ -1,9 +1,10 @@
 //! Held modifiers across pointer gestures, including stop/cancel and kill + recover.
 
+use rustix::process::Signal;
 use serde_json::{Value, json};
 
 use super::{SERVER_DEADLINE, Shot, WAIT, Wev, stop};
-use crate::failure::{Failure, Result};
+use crate::failure::{Context as _, Failure, Result};
 use crate::keyboard;
 use crate::mcp::{Client, field, structured};
 use crate::session::Session;
@@ -209,16 +210,31 @@ fn recover(
     next.stop()
 }
 
-/// Kills a server typing `text` repeated, after its first key, and requires its guardian,
-/// before `recover`, to release that key's original code with zero modifiers, then runs
-/// `before_recover` and `recover`. `name` tells the run's server logs apart.
+/// A native typing call to kill: `text` repeated, `name` to tell its server's logs apart,
+/// and the layout niri switches to, if any, while the serving process is stopped after the
+/// first key, so the call never sees the switch.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Crash<'a> {
+    pub(super) text: &'a str,
+    pub(super) name: &'a str,
+    pub(super) switch_to: Option<u8>,
+}
+
+/// Kills a server typing `crash.text` repeated, after its first key, and requires its
+/// guardian, before `recover`, to release that key's original code with zero modifiers in
+/// layout 0, then runs `before_recover` and `recover`, which must do the same.
 pub(super) fn typing_crash(
     session: &mut Session<'_>,
     wev: &Wev<'_>,
     server: &str,
-    (text, name): (&str, &str),
+    crash: Crash<'_>,
     before_recover: impl FnOnce(&mut Session<'_>) -> Result<()>,
 ) -> Result<()> {
+    let Crash {
+        text,
+        name,
+        switch_to,
+    } = crash;
     let mut client = Client::start_command(
         session,
         "env",
@@ -231,6 +247,7 @@ pub(super) fn typing_crash(
         SERVER_DEADLINE,
     )?;
     structured(&client.call(session, "acquire_desktop", json!({}))?)?;
+    let engine = super::guardian::engine(session, &mut client)?;
     let offset = wev.offset()?;
     client.start_call(
         "type_text",
@@ -243,7 +260,15 @@ pub(super) fn typing_crash(
             .any(|key| key.pressed)
             .then_some(()))
     })?;
-    let killed = super::guardian::kill(session, client)?;
+    if let Some(index) = switch_to {
+        let serving = match engine {
+            Some(pid) => i32::try_from(pid).context("the engine's PID")?,
+            None => client.pid(),
+        };
+        super::native_unicode::signal(serving, Signal::STOP)?;
+        super::native_unicode::switch_layout(session, index)?;
+    }
+    let killed = super::guardian::kill_known(client, engine)?;
     let at_kill = keyboard::since(wev.log, offset)?;
     let first = trace(&at_kill)?
         .keys

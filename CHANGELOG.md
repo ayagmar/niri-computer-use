@@ -80,5 +80,5 @@ All notable changes to this project are documented here. The format follows [Kee
 - A stopped, cancelled or disconnected `paste` no longer restores the clipboard before a key already on its way arrives. If the server dies once the key may be on its way, the keeper keeps the pasted text and reports `clipboard: kept` rather than risk pasting the saved clipboard.
 - Servers for one niri share its lease and stop flag whatever `XDG_RUNTIME_DIR` or `NIRI_SOCKET` spelling their clients pass.
 - Every change to the input-dirty marker takes one lock, so an older call's cleanup can't remove a newer call's marker.
-- The native keyboard restores the compositor's latest keymap in the layout niri last reported, not the map and layout from the start of the call.
+- The native keyboard restores the compositor's latest keymap, not the map from the start of the call, with zero modifiers in the layout niri has active: at the end of a call, after a cancelled one, and from the crash guardian and `recover`, which used the layout the marker recorded at the call's start. If niri doesn't answer, a call uses the layout niri last reported to it, and the guardian and `recover` the marker's, saying so.
 - The 16 MiB line limit applies to every line a read ends, not only the last.

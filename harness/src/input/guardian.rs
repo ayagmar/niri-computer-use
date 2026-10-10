@@ -34,16 +34,32 @@ impl Killed {
 /// SIGKILLs the process the guardian watches: the server, or in shared mode the engine
 /// its `status` names. Then the client's server or bridge goes too.
 pub(super) fn kill(session: &mut Session<'_>, mut client: Client) -> Result<Killed> {
+    let engine = engine(session, &mut client)?;
+    kill_known(client, engine)
+}
+
+/// The shared engine's PID, as `client`'s `status` names it, or `None` for a standalone
+/// server.
+pub(super) fn engine(session: &mut Session<'_>, client: &mut Client) -> Result<Option<u64>> {
     let status = structured(&client.call(session, "status", json!({}))?)?;
     let engine = field(&status, "/engine");
     if field(engine, "/mode") != "shared" {
+        return Ok(None);
+    }
+    field(engine, "/pid")
+        .as_u64()
+        .map(Some)
+        .ok_or_else(|| Failure::new(format!("status names no engine: {status}")))
+}
+
+/// `kill`, with the engine already known, so it works while the server or engine is
+/// stopped.
+pub(super) fn kill_known(client: Client, engine: Option<u64>) -> Result<Killed> {
+    let Some(pid) = engine else {
         let killed = Killed::now();
         client.stop()?;
         return Ok(killed);
-    }
-    let pid = field(engine, "/pid")
-        .as_u64()
-        .ok_or_else(|| Failure::new(format!("status names no engine: {status}")))?;
+    };
     let killed = kill_engine(pid)?;
     client.stop()?;
     Ok(killed)

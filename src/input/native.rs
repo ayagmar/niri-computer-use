@@ -16,7 +16,7 @@ use crate::control::cleanup::Pending;
 use crate::control::marker::{Marker, Native, Written};
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::{
-    self,
+    self, Socket,
     keyboard::Keyboard,
     waiter::{Waited, Waiter},
 };
@@ -117,6 +117,9 @@ async fn interrupted(waiter: &mut Waiter, before: Option<u64>, group: u32) -> Op
 struct Device {
     keyboard: Option<Keyboard>,
     marker: Option<Written>,
+    /// niri's socket, asked for the active layout before the layout is restored.
+    socket: Socket,
+    /// The layout niri last reported to this call.
     group: u32,
     aftercare: Option<Aftercare>,
 }
@@ -143,6 +146,7 @@ impl Device {
         Ok(Self {
             keyboard: Some(keyboard),
             marker: Some(marker),
+            socket: input.niri.socket.clone(),
             group,
             aftercare: None,
         })
@@ -177,10 +181,11 @@ impl Device {
         keyboard.sync().await
     }
 
-    /// Releases everything and puts the latest compositor keymap back, in the layout niri
-    /// last reported, `group`, if it reported one: a layout the user switched to meanwhile
-    /// stays. Then clears the marker. With a paste's aftercare, that runs in a task of its
-    /// own, so a dropped call can't leave the keeper without its `p`.
+    /// Releases everything and puts the latest compositor keymap back in the layout niri
+    /// has active, or without niri's answer in the one its event stream last reported,
+    /// `group`, if it reported one: a layout the user switched to meanwhile stays. Then
+    /// clears the marker. With a paste's aftercare, that runs in a task of its own, so a
+    /// dropped call can't leave the keeper without its `p`.
     async fn finish(mut self, group: Option<u32>) -> Result<(), ToolError> {
         if let Some(group) = group {
             self.group = group;
@@ -208,6 +213,9 @@ impl Device {
     }
 
     async fn release(&mut self) -> Result<(), ToolError> {
+        if let Ok(group) = niri::keyboard_group(&self.socket).await {
+            self.group = group;
+        }
         let group = self.group;
         let keyboard = self.keyboard()?;
         keyboard.release(&[], group).await?;
@@ -230,9 +238,7 @@ impl Drop for Device {
         let (Some(mut keyboard), Some(marker)) = (self.keyboard.take(), self.marker.take()) else {
             return;
         };
-        if keyboard.release_now(&[], self.group).is_err()
-            || keyboard.restore_now(self.group).is_err()
-        {
+        if keyboard.release_now(&[], self.group).is_err() {
             return;
         }
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
@@ -241,28 +247,54 @@ impl Drop for Device {
                 keyboard,
                 marker,
                 aftercare,
+                (self.socket.clone(), self.group),
                 Pending::start(),
             ));
         }
     }
 }
 
-/// Clears the marker once niri has acknowledged the release, after telling a paste's
-/// keeper the key went out. Unacknowledged, the marker stays, and the keeper, dropped,
+/// Once niri has acknowledged the release, which went out at once in the layout the call
+/// last knew, `layout`'s group, puts the latest compositor keymap back in the layout niri
+/// has active by now, and then, after telling a paste's keeper the key went out, clears
+/// the marker. Unacknowledged or not restored, the marker stays, and the keeper, dropped,
 /// keeps the pasted text.
 async fn acknowledge_release(
     mut keyboard: Keyboard,
     marker: Written,
     aftercare: Option<Aftercare>,
+    layout: (Socket, u32),
     _cleanup: Pending,
 ) {
-    if keyboard.sync().await.is_err() || !keyboard.restored() {
+    if keyboard.sync().await.is_err()
+        || restore_active(&mut keyboard, &layout.0, layout.1)
+            .await
+            .is_err()
+        || !keyboard.restored()
+    {
         return;
     }
     if let Some(aftercare) = aftercare {
         aftercare.sent().await;
     }
     marker.clear().await.ok();
+}
+
+/// Restores the base map with zero modifiers in the layout niri has active, or without
+/// niri's answer in `sent`, and sends the modifiers once more after niri has taken it:
+/// in the nested trials, this device saw the map a dropped call restored come back only
+/// after a further input, and the client sometimes got no modifiers event for one of the
+/// two.
+async fn restore_active(
+    keyboard: &mut Keyboard,
+    socket: &Socket,
+    sent: u32,
+) -> Result<(), ToolError> {
+    let group = niri::keyboard_group(socket).await.unwrap_or(sent);
+    keyboard.restore_now(group)?;
+    keyboard.sync().await?;
+    keyboard.modifiers(0, group)?;
+    keyboard.sync().await
 }
 
 fn upstream(detail: &str) -> ToolError {
