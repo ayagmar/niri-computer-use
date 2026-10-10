@@ -2,6 +2,7 @@
 //! the outcome read from the events the test sends back, as niri would after the action.
 
 use std::os::unix::net::UnixListener;
+use std::time::{Duration, Instant};
 
 use niri_ipc::{Action, WorkspaceReferenceArg};
 use serde_json::{Value, json};
@@ -364,6 +365,27 @@ async fn a_failed_capture_keeps_the_outcome_and_says_why() {
 }
 
 #[tokio::test]
+async fn another_client_is_refused_at_once_while_the_owner_acts_and_niri_is_slow() {
+    let mut desk = Desk::start("act-acquire-busy", "").await;
+    let mut other = Server::start(&desk.fixture).await;
+    desk.niri.hold_actions(true);
+    let id = desk
+        .server
+        .start_call("focus_window", json!({"id": 2}))
+        .await;
+    desk.niri.action().await;
+    // The readiness report asks niri, which now answers nothing until its deadline.
+    desk.niri.set_silent(true);
+    let asked = Instant::now();
+    let (name, detail) = tool_error(&other.call("acquire_desktop", json!({})).await);
+    let took = asked.elapsed();
+    assert_eq!(name, "lease_held", "{detail}");
+    assert!(took < Duration::from_secs(1), "refused after {took:?}");
+    desk.niri.set_silent(false);
+    desk.server.response(id).await;
+}
+
+#[tokio::test]
 async fn a_lost_reply_is_uncertain() {
     let mut desk = Desk::start("act-lost", "").await;
     desk.niri.hold_actions(true);
@@ -565,7 +587,7 @@ async fn a_stop_cancels_the_running_action_and_takes_the_lease_back() {
             released = true;
             break;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert!(released, "the stop didn't take the lease back");
     let (after, _) = tool_error(&desk.server.call("focus_window", json!({"id": 2})).await);
@@ -838,7 +860,7 @@ async fn keyboard_tools_check_their_text_focus_and_app_before_typing() {
         if focused == 2 {
             break;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert_eq!(focused, 2);
     let denied = desk
@@ -892,7 +914,7 @@ async fn paste_checks_its_text_focus_app_and_clipboard_before_the_key() {
         if desk.server.structured("desktop_state").await["focused_window"] == 2 {
             break;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
     }
     let denied = desk
         .server
@@ -1103,10 +1125,10 @@ async fn focus_moved_during_the_first_call(desk: &mut Desk, tool: &str, argument
     recording_wtype(&desk.fixture, FIRST_CALL_WAITS);
     let id = desk.server.start_call(tool, arguments).await;
     while !desk.fixture.path("first").exists() {
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
     }
     focus_changed(&desk.stream, 2);
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
     std::fs::write(desk.fixture.path("go"), "").unwrap();
     desk.server.response(id).await["result"].clone()
 }
@@ -1219,13 +1241,13 @@ async fn a_screenshot_waits_for_the_running_action() {
         .start_call("type_text", json!({"text": "x", "expect": "none"}))
         .await;
     while !desk.fixture.path("wtype.calls").exists() {
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
     }
     let shot = desk
         .server
         .start_call("screenshot", json!({"target": "focused_output"}))
         .await;
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
     std::fs::write(desk.fixture.path("go"), "").unwrap();
     desk.server.response(typing).await;
     desk.server.response(shot).await;
@@ -1468,7 +1490,7 @@ async fn panels_outside_the_allowlist_are_refused_without_asking_noctalia() {
 async fn a_panel_that_never_opens_times_out_with_a_screenshot() {
     let mut desk = Desk::start("act-shell-timeout", "").await;
     desk.noctalia.panels_follow(false);
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     let stuck = desk
         .server
         .call("shell_open", json!({"panel": "wallpaper"}))
@@ -1480,7 +1502,7 @@ async fn a_panel_that_never_opens_times_out_with_a_screenshot() {
             "shell": {"active_panel": null}
         })
     );
-    assert!(started.elapsed() >= std::time::Duration::from_secs(2));
+    assert!(started.elapsed() >= Duration::from_secs(2));
     assert_eq!(desk.noctalia.panel_commands(), ["panel-open wallpaper"]);
 }
 
@@ -1577,7 +1599,7 @@ async fn an_action_asked_for_a_screenshot_returns_the_screen_once_it_stopped_cha
         "grim",
         r#"n=$(cat "$DIR/grim.n" 2>/dev/null)x; printf %s "$n" > "$DIR/grim.n"; cat "$DIR/grim.out"; printf %s "$n""#,
     );
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     let moving = desk
         .act(
             "focus_window",
@@ -1601,7 +1623,7 @@ async fn release_desktop_can_give_focus_back_to_the_users_window() {
         .structured_with("release_desktop", release(false))
         .await;
     while desk.server.structured("desktop_state").await["focused_window"] != 1 {
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
     }
     let acquired = desk.server.structured("acquire_desktop").await;
     assert_eq!(acquired["users_window"], 1, "{acquired}");
@@ -1631,7 +1653,7 @@ async fn release_desktop_can_give_focus_back_to_the_users_window() {
     desk.stream.send(&json!({"WindowClosed": {"id": 1}}));
     focus_changed(&desk.stream, 2);
     while desk.server.structured("desktop_state").await["focused_window"] != 2 {
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
     }
     let gone = desk
         .server

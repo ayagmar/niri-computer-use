@@ -170,11 +170,14 @@ impl Desk {
     }
 
     /// Takes the lease for `session`, labelled `label`, or returns the holder if that
-    /// session has it already. `refusal`, the policy's answer, is asked under the action
-    /// mutex after the stop flag and the input-dirty marker, so a wait for the mutex can't
-    /// make it stale. `users_window`, asked last, finds the window with keyboard focus,
-    /// kept with a lease newly taken. Another session's lease refuses at once, without
-    /// waiting for its owner's running action.
+    /// session has it already. Another session's lease refuses at once, without waiting
+    /// for its owner's running action, and another server's lock refuses before anything
+    /// slow is asked. `refusal`, the policy's answer, is asked under the action mutex with
+    /// the lock taken, after the stop flag and the input-dirty marker, so a wait for the
+    /// mutex can't make it stale; a refusal gives the lock back. `users_window`, asked
+    /// last, finds the window with keyboard focus, kept with the lease. Since both take
+    /// time, the session's end, the stop flag and the marker are checked again before the
+    /// lease is granted.
     pub(crate) async fn acquire(
         &self,
         session: &Session,
@@ -197,20 +200,25 @@ impl Desk {
             return Ok(grant.lease.holder().clone());
         }
         self.unblocked(runtime)?;
-        if let Some(refusal) = refusal.await {
-            return Err(refusal);
-        }
         // Another session's grant refuses where another server's lock would.
         if let Some(grant) = held.as_ref() {
             return Err(refused(Refused::Held(Some(grant.lease.holder().clone()))));
         }
         let lease = Lease::acquire(runtime, label).map_err(refused)?;
+        if let Some(refusal) = refusal.await {
+            return Err(refusal);
+        }
+        let users_window = users_window.await;
+        if session.has_ended() {
+            return Err(session_ended());
+        }
+        self.unblocked(runtime)?;
         let holder = lease.holder().clone();
         let grant = Grant {
             owner: session.id(),
             lease,
         };
-        self.seat.put(&mut held, grant, users_window.await);
+        self.seat.put(&mut held, grant, users_window);
         drop(held);
         Ok(holder)
     }
@@ -1183,11 +1191,64 @@ mod tests {
         };
         let (result, ()) = tokio::join!(acquire, release);
         assert_eq!(result.unwrap_err().name, ErrorName::ScreenLocked);
+        // The refusal gave the lock it had taken back.
+        let runtime = RuntimeDir::of(&env(&dir)).unwrap();
+        assert_eq!(lease::holder(&runtime), None);
+        drop(Lease::acquire(&runtime, "another server").unwrap());
         let focused = ready(Some(9));
         desk.acquire(&me, "me/1", async { None }, focused)
             .await
             .unwrap();
         assert_eq!(desk.users_window(&me), Some(9));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn another_servers_lock_refuses_before_readiness_is_asked() {
+        let me = session(1);
+        let dir = crate::test_support::fresh_dir("desk-acquire-locked");
+        let desk = Desk::start(&env(&dir));
+        let runtime = RuntimeDir::of(&env(&dir)).unwrap();
+        let theirs = Lease::acquire(&runtime, "them/2").unwrap();
+        let refusal = async { panic!("readiness asked while another server holds the lock") };
+        let error = desk
+            .acquire(&me, "me/1", refusal, ready(None))
+            .await
+            .unwrap_err();
+        assert_eq!(error.name, ErrorName::LeaseHeld);
+        assert!(error.detail.contains("(them/2)"), "{}", error.detail);
+        drop(theirs);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_stop_or_the_sessions_end_during_readiness_grants_nothing() {
+        let me = session(1);
+        let dir = crate::test_support::fresh_dir("desk-acquire-late");
+        let desk = Desk::start(&env(&dir));
+        let runtime = RuntimeDir::of(&env(&dir)).unwrap();
+        let stopping = async {
+            runtime.stop().unwrap();
+            None
+        };
+        let error = desk
+            .acquire(&me, "me/1", stopping, ready(None))
+            .await
+            .unwrap_err();
+        assert_eq!(error.name, ErrorName::Stopped);
+        assert_eq!(lease::holder(&runtime), None);
+        runtime.resume().unwrap();
+        let ending = async {
+            me.end();
+            None
+        };
+        let ended = desk
+            .acquire(&me, "me/1", ready(None), ending)
+            .await
+            .unwrap_err();
+        assert_eq!(ended.detail, session_ended().detail);
+        assert!(desk.seat.owned_by(me.id()).is_none());
+        assert_eq!(lease::holder(&runtime), None);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
