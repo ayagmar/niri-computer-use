@@ -13,7 +13,7 @@ These are the user's decisions. Don't call the refused action again and don't tr
 | Error | Cause |
 |---|---|
 | `stopped` | The user pressed the stop key or ran `niri-computer-use stop`; it also cancels a running action. Only the user's `niri-computer-use resume` clears it. |
-| `recovery_required` | Input may be stuck from an earlier crash. Only the user's `niri-computer-use recover` clears it, and it needs the lease: call `release_desktop` first. The exception: when the `detail` says a cancelled call's input is still finishing, wait a few seconds and try once more. |
+| `recovery_required` | Input may be stuck from an earlier crash. Only the user's `niri-computer-use recover` clears it, and it needs the lease: call `release_desktop` first. The exception: when the `detail` says input is still finishing, or another server's may still be finishing, wait a few seconds and try once more. |
 | `screen_locked` | The screen is locked, or no source can say it isn't. |
 | `session_mismatch` | The server's `WAYLAND_DISPLAY` and `NIRI_SOCKET` belong to two different compositors, so input, screenshots and clipboard reads are refused. The user has to fix the client's environment. |
 | `lease_held` | Another agent holds the lease (`acquire_desktop` only). |
@@ -34,7 +34,7 @@ These are the user's decisions. Don't call the refused action again and don't tr
 | `element_unmappable` | The element is there but can't be aimed at now. The detail starts with `frame_size_mismatch` (the app's coordinates for this window can't be trusted: aim at a screenshot pixel instead), `not_showing` (bring it into view first), `empty`, or `outside_screenshot` (take a screenshot that shows it). |
 | `focus_mismatch` | The window in `expect` doesn't have keyboard focus. Look at `desktop_state` and a screenshot, focus the right window with `focus_window` if that's what you meant, then type. |
 | `text_too_long` | Over 1000 characters for `type_text`, or 1 MiB for `paste`; nothing was typed. Split the text into calls of at most 1000 characters, pass `submit: true` only on the last, and send nothing more once a call comes back with `typed`. |
-| `clipboard_unsaved` | `paste` couldn't save the user's clipboard whole (too large, an owner that didn't answer, or something its owner marked secret), so it changed nothing. Use `type_text` instead, in parts of at most 1000 characters. |
+| `clipboard_unsaved` | `paste` couldn't save the user's clipboard whole (too large, an owner that didn't answer, something its owner marked secret, or a copy made while it saved), so it changed nothing. Use `type_text` instead, in parts of at most 1000 characters. |
 | `save_not_enabled` | `screenshot`'s `save_path` needs a `capture_dir` in the user's policy file, and there is none. Ask the user to add one; don't save the image another way. |
 | `not_accessible` | The window's app isn't on the accessibility bus, or has no accessible window that is this one. Use screenshots for that window. |
 | `ambiguous_window` | The app has several accessible windows that could be this one. Use screenshots for that window. |

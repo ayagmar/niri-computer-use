@@ -242,7 +242,7 @@ mod tests {
                     "event_stream": null,
                     "error": {"error": "niri_unavailable", "detail": "NIRI_SOCKET is not set"}
                 },
-                "lease": {"held_by_me": false, "holder": null},
+                "lease": {"held_by_me": false, "holder": null, "error": "NIRI_SOCKET is not set"},
                 "stop": false,
                 "input_dirty": null,
                 "lock": {

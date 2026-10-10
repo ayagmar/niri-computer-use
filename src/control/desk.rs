@@ -132,6 +132,8 @@ impl Seat {
 pub(crate) struct LeaseStatus {
     pub(crate) held_by_me: bool,
     pub(crate) holder: Option<Holder>,
+    /// Why no lease can be taken for this niri at all, as `acquire_desktop` says it.
+    pub(crate) error: Option<String>,
 }
 
 impl Desk {
@@ -440,17 +442,22 @@ impl Desk {
             holder: owner
                 .map(|owner| owner.holder)
                 .or_else(|| self.runtime.as_ref().ok().and_then(lease::holder)),
+            error: self
+                .runtime
+                .as_ref()
+                .err()
+                .map(|error| error.detail.clone()),
         }
     }
 }
 
 /// What `status` reports when there is no desk, as in the `status` subcommand.
 pub(crate) fn status_without_desk(env: &Env) -> LeaseStatus {
+    let runtime = RuntimeDir::of(env);
     LeaseStatus {
         held_by_me: false,
-        holder: RuntimeDir::of(env)
-            .ok()
-            .and_then(|runtime| lease::holder(&runtime)),
+        holder: runtime.as_ref().ok().and_then(lease::holder),
+        error: runtime.err(),
     }
 }
 
@@ -562,18 +569,25 @@ fn cancelled(stopped: &watch::Receiver<bool>) -> ToolError {
 
 /// The refusal while the input-dirty marker is set. A marker whose input this server still
 /// holds belongs to a dropped call's input that is still finishing, which `recover` would
-/// cut short; any other stays until `recover`, which needs the lease.
+/// cut short. One another server wrote may be too, which only that server knows, so the
+/// agent tries again once before `recover`. Any other stays until `recover`, which needs
+/// the lease.
 fn input_dirty(found: Option<&marker::Found>) -> ToolError {
     let summary = found.map_or_else(String::new, marker::Found::summary);
-    let finishing = matches!(found, Some(marker::Found::Marker(marker)) if marker.finishing());
-    let detail = if finishing {
-        format!(
+    let marker = match found {
+        Some(marker::Found::Marker(marker)) => Some(marker),
+        _ => None,
+    };
+    let detail = match marker {
+        Some(marker) if marker.finishing() => format!(
             "a cancelled call's input is still finishing ({summary}); try again once it has, within seconds"
-        )
-    } else {
-        format!(
+        ),
+        Some(marker) if marker.server_pid != std::process::id() => format!(
+            "input may be stuck ({summary}), or another server's input may still be finishing; try again in a few seconds, and if it still refuses, call release_desktop, then the user runs `niri-computer-use recover`, which needs the lease"
+        ),
+        _ => format!(
             "input may be stuck ({summary}); call release_desktop, then the user runs `niri-computer-use recover`, which needs the lease"
-        )
+        ),
     };
     ToolError::new(ErrorName::RecoveryRequired, detail)
 }
@@ -688,7 +702,8 @@ mod tests {
             desk.status(&me),
             LeaseStatus {
                 held_by_me: true,
-                holder: Some(holder)
+                holder: Some(holder),
+                error: None
             }
         );
         drop(action);
@@ -782,10 +797,24 @@ mod tests {
         let given_up = detail(marker::read(&runtime));
         assert!(
             given_up
-                .contains("call release_desktop, then the user runs `niri-computer-use recover`"),
+                .contains("call release_desktop, then the user runs `niri-computer-use recover`")
+                && !given_up.contains("try again"),
             "{given_up}"
         );
         assert!(detail(None).contains("`niri-computer-use recover`"));
+        // Another server's input, such as a shared engine's beside this standalone server,
+        // may still be finishing; only that server knows.
+        let mut other = marker::Marker::pending("key", Vec::new());
+        other.server_pid = std::process::id() + 1;
+        let path = runtime.path().join(crate::control::runtime::INPUT_DIRTY);
+        std::fs::write(path, serde_json::to_vec(&other).unwrap()).unwrap();
+        let others = detail(marker::read(&runtime));
+        assert!(
+            others.contains(
+                "another server's input may still be finishing; try again in a few seconds"
+            ) && others.contains("then the user runs `niri-computer-use recover`"),
+            "{others}"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1058,7 +1087,8 @@ mod tests {
             desk.status(&me),
             LeaseStatus {
                 held_by_me: false,
-                holder: None
+                holder: None,
+                error: Some("NIRI_SOCKET is not set".to_owned())
             }
         );
     }
@@ -1084,7 +1114,8 @@ mod tests {
             desk.status(&other),
             LeaseStatus {
                 held_by_me: false,
-                holder: Some(holder.clone())
+                holder: Some(holder.clone()),
+                error: None
             }
         );
         assert!(desk.status(&me).held_by_me);

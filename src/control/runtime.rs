@@ -5,7 +5,9 @@
 //! niri, such as the nested harness, never sees them, and every server for this one does,
 //! whichever `XDG_RUNTIME_DIR` it inherited and however its `NIRI_SOCKET` spells the path.
 //! A process resolves the instance once, at its start, and keeps it: a symlink retargeted
-//! later, or a niri restarted under another name, doesn't move it.
+//! later, or a niri restarted under another name, doesn't move it. A socket with a hard
+//! link names no instance: the link is another name for the same niri, which would have
+//! a directory of its own.
 
 use std::fs::{DirBuilder, OpenOptions};
 use std::io;
@@ -21,8 +23,8 @@ pub(crate) const INPUT_DIRTY: &str = "input-dirty";
 
 /// niri's socket with every symlink resolved, in a directory of the user's with mode
 /// `0700`: the compositor instance a process coordinates for, or why it has none. Two
-/// spellings of one socket's path resolve to the same instance; two hard links to it
-/// don't.
+/// spellings of one socket's path resolve to the same instance; a socket with more than
+/// one hard link resolves to none, by any of its names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Instance(Result<PathBuf, String>);
 
@@ -33,12 +35,14 @@ impl Default for Instance {
 }
 
 impl Instance {
-    /// Resolves `socket`, which must be a socket owned by `euid` in a private directory
-    /// of `euid`'s once resolved. Nothing is taken in its place when it isn't.
+    /// Resolves `socket`, which must be a socket owned by `euid`, with one link, in a
+    /// private directory of `euid`'s once resolved. Nothing is taken in its place when it
+    /// isn't.
     pub(crate) fn resolve(socket: &Path, euid: u32) -> Self {
         Self(resolved(socket, euid).map_err(|why| {
             format!(
-                "NIRI_SOCKET {} {why}, so this process coordinates with no other: no lease, stop flag or marker",
+                "NIRI_SOCKET {} {why}, so no lease can be taken for it and every action is refused; \
+                 `stop`, `resume` and `recover` have no flag or marker to reach",
                 socket.display()
             )
         }))
@@ -64,6 +68,14 @@ fn resolved(socket: &Path, euid: u32) -> Result<PathBuf, String> {
         return Err(format!(
             "resolves to {}, which isn't a socket of user {euid}'s",
             canonical.display()
+        ));
+    }
+    if meta.nlink() > 1 {
+        return Err(format!(
+            "resolves to {}, which has {} hard links; servers reaching niri by another of \
+             its names wouldn't share the lease, stop flag or marker",
+            canonical.display(),
+            meta.nlink()
         ));
     }
     let dir = canonical.parent().unwrap_or_else(|| Path::new("/"));
@@ -253,7 +265,25 @@ mod tests {
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o770)).unwrap();
         let error = of(&socket).unwrap_err();
         assert!(error.contains("whose directory"), "{error}");
-        assert!(error.ends_with("no lease, stop flag or marker"), "{error}");
+        assert!(
+            error.ends_with("have no flag or marker to reach"),
+            "{error}"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_socket_with_a_hard_link_names_no_directory_by_either_name() {
+        let dir = crate::test_support::fresh_dir("runtime-hard-link");
+        let socket = socket_in(&dir, "niri.wayland-1.42.sock");
+        let alias = dir.join("alias.sock");
+        std::fs::hard_link(&socket, &alias).unwrap();
+        for name in [&socket, &alias] {
+            let error = of(name).unwrap_err();
+            assert!(error.contains("which has 2 hard links"), "{error}");
+        }
+        std::fs::remove_file(&alias).unwrap();
+        assert!(of(&socket).is_ok());
         std::fs::remove_dir_all(dir).unwrap();
     }
 

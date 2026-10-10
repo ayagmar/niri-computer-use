@@ -2,7 +2,8 @@
 //! paste-keeper` directly so the checks can choose when its stdin ends. A copy that
 //! arrives while the keeper is told to finish stays, a reader that asked for the text
 //! before the keeper ended still gets all of it, and a `k` that comes after the keeper
-//! stopped waiting for it gets no `armed`, so the server sends no key.
+//! stopped waiting for it gets no `armed`, so the server sends no key. A copy made while
+//! the keeper saves the clipboard refuses the paste and stays.
 
 use std::ffi::OsString;
 use std::fs;
@@ -14,7 +15,7 @@ use serde_json::Value;
 
 use super::WAIT;
 use super::paste::{copy, listed, offered, own, owners_copy};
-use crate::clipboard::{CANCELLED, TYPES};
+use crate::clipboard::{CANCELLED, HELD, TYPES};
 use crate::failure::{Context as _, Failure, Result};
 use crate::mcp::field;
 use crate::runner::Process;
@@ -42,8 +43,9 @@ pub(super) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
     }
     transfer_outlives_the_keeper(session, server)?;
     late_k(session, server)?;
+    copied_while_saving(session, server)?;
     session.log(&format!(
-        "Paste keeper: a copy made while the keeper was paused and told to end stayed in {ROUNDS} of {ROUNDS} rounds; a reader that asked before a replacement and read {} ms later got all {LARGE} bytes; a `k` after the keeper's wait ended got no `armed` within {} ms and the user's copy stayed offered",
+        "Paste keeper: a copy made while the keeper was paused and told to end stayed in {ROUNDS} of {ROUNDS} rounds; a reader that asked before a replacement and read {} ms later got all {LARGE} bytes; a `k` after the keeper's wait ended got no `armed` within {} ms and the user's copy stayed offered; a copy made while an owner held the keeper's save refused the paste and stayed offered",
         READER_DELAY.as_millis(),
         NO_ANSWER.as_millis()
     ))
@@ -86,13 +88,56 @@ fn late_k(session: &mut Session<'_>, server: &str) -> Result<()> {
     Ok(())
 }
 
+/// An owner holds the keeper's read of its binary type, while the keeper saves, until
+/// another client copies. The keeper must refuse rather than take the selection, so the
+/// newer copy stays and is never cancelled.
+fn copied_while_saving(session: &mut Session<'_>, server: &str) -> Result<()> {
+    let held = session.test_dir().root().join(HELD);
+    if held.exists() {
+        fs::remove_file(&held).context("remove the held note")?;
+    }
+    let slow = take_over(session, "saving-slow", Some("--hold"))?;
+    let (mut keeper, log) = spawn(session, server, b"pasted", "saving")?;
+    session.wait_until(
+        "keeper-saving-held",
+        "the slow owner's held read",
+        WAIT,
+        |_| Ok(held.exists().then_some(())),
+    )?;
+    let newer = copy(session, "keeper-saving-newer", None)?;
+    let report = session.wait_until("keeper-saving-report", "the keeper's report", WAIT, |_| {
+        Ok(reports(&log)?.into_iter().next())
+    })?;
+    slow.wait()?;
+    let refused = field(&report, "/report") == "refused";
+    if refused {
+        keeper.wait()?;
+    } else {
+        keeper.send(b"n".to_vec())?;
+        keeper.stop()?;
+    }
+    let kept =
+        offered(session)? == owners_copy() && !session.test_dir().root().join(CANCELLED).exists();
+    newer.stop()?;
+    let changed = field(&report, "/detail")
+        .as_str()
+        .is_some_and(|detail| detail.contains("copied while"));
+    if !refused || !changed || !kept {
+        return Err(Failure::new(format!(
+            "paste keeper saving: reported {report}; the newer copy {}",
+            if kept { "stayed" } else { "was overwritten" }
+        )));
+    }
+    Ok(())
+}
+
 /// Pauses the keeper, lets another client copy, ends the keeper's stdin and resumes it:
 /// the replacement and the end are both waiting when it wakes, and the copy must stay.
 fn replaced_as_it_ends(session: &mut Session<'_>, server: &str, round: usize) -> Result<()> {
     let name = format!("ending-{round}");
     let (mut keeper, log) = start(session, server, b"pasted", &name)?;
     signal(&keeper, Signal::STOP)?;
-    let owner = take_over(session, &name)?;
+    let owner = take_over(session, &name, None)?;
     keeper.feed(Vec::new())?;
     signal(&keeper, Signal::CONT)?;
     let report = done(session, keeper, &log)?;
@@ -147,7 +192,7 @@ fn transfer_outlives_the_keeper(session: &mut Session<'_>, server: &str) -> Resu
                 .then_some(()))
         },
     )?;
-    let owner = take_over(session, "transfer")?;
+    let owner = take_over(session, "transfer", None)?;
     let report = done(session, keeper, &log)?;
     reader.wait()?;
     owner.stop()?;
@@ -160,11 +205,11 @@ fn transfer_outlives_the_keeper(session: &mut Session<'_>, server: &str) -> Resu
     Ok(())
 }
 
-/// Starts the clipboard owner and waits until the selection offers its types. It reads
-/// none of them: one read from a paused keeper would wait for it, and one listed just
-/// before the owner took over would fail.
-fn take_over(session: &mut Session<'_>, name: &str) -> Result<Process> {
-    let owner = copy(session, &format!("keeper-{name}"), false)?;
+/// Starts the clipboard owner, with `option` as `copy` takes it, and waits until the
+/// selection offers its types. It reads none of them: one read from a paused keeper would
+/// wait for it, and one listed just before the owner took over would fail.
+fn take_over(session: &mut Session<'_>, name: &str, option: Option<&str>) -> Result<Process> {
+    let owner = copy(session, &format!("keeper-{name}"), option)?;
     let types: Vec<String> = TYPES.iter().map(|(mime, _)| (*mime).to_owned()).collect();
     session.wait_until(
         &format!("keeper-{name}-copied"),
@@ -182,17 +227,7 @@ fn start(
     text: &[u8],
     name: &str,
 ) -> Result<(Process, PathBuf)> {
-    let log = session.artifact(&format!("keeper-{name}.log"));
-    let mut keeper = session.serve(
-        server,
-        &["paste-keeper".into()],
-        log.clone(),
-        KEEPER_DEADLINE,
-    )?;
-    let length = u64::try_from(text.len()).context("the text's length")?;
-    let mut framed = length.to_le_bytes().to_vec();
-    framed.extend_from_slice(text);
-    keeper.send(framed)?;
+    let (keeper, log) = spawn(session, server, text, name)?;
     session.wait_until(
         &format!("keeper-{name}-ready"),
         "the keeper's ready report",
@@ -204,6 +239,27 @@ fn start(
             Ok(ready.then_some(()))
         },
     )?;
+    Ok((keeper, log))
+}
+
+/// Starts a keeper and sends it `text`; its reports go to the log returned.
+fn spawn(
+    session: &Session<'_>,
+    server: &str,
+    text: &[u8],
+    name: &str,
+) -> Result<(Process, PathBuf)> {
+    let log = session.artifact(&format!("keeper-{name}.log"));
+    let mut keeper = session.serve(
+        server,
+        &["paste-keeper".into()],
+        log.clone(),
+        KEEPER_DEADLINE,
+    )?;
+    let length = u64::try_from(text.len()).context("the text's length")?;
+    let mut framed = length.to_le_bytes().to_vec();
+    framed.extend_from_slice(text);
+    keeper.send(framed)?;
     Ok((keeper, log))
 }
 

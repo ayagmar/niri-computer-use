@@ -32,7 +32,7 @@ async fn one_server_holds_the_lease_and_the_other_is_told_who() {
     let seen = second.structured("status").await;
     assert_eq!(
         seen["lease"],
-        json!({"held_by_me": false, "holder": held["holder"]})
+        json!({"held_by_me": false, "holder": held["holder"], "error": null})
     );
     assert_eq!(
         first.structured("status").await["lease"]["held_by_me"],

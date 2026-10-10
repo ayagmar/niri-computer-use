@@ -62,7 +62,7 @@ pub(super) fn run(
 
 /// Starts the clipboard owner and waits until the clipboard offers its types.
 pub(super) fn own(session: &mut Session<'_>, backend: &str) -> Result<(Process, Offered)> {
-    let owner = copy(session, backend, false)?;
+    let owner = copy(session, backend, None)?;
     let expected = owners_copy();
     session.wait_until("m7-paste-owner", "the owner's clipboard", WAIT, |session| {
         // A type listed by the selection before the owner's can be gone by its read.
@@ -81,9 +81,9 @@ pub(super) fn owners_copy() -> Offered {
         .collect()
 }
 
-/// Starts the clipboard owner, which takes the selection, with its log named after `label`.
-/// A `secret` owner also offers the password-manager hint set to `secret`.
-pub(super) fn copy(session: &Session<'_>, label: &str, secret: bool) -> Result<Process> {
+/// Starts the clipboard owner, which takes the selection, with its log named after `label`
+/// and `option`, `--secret` or `--hold`, if any (see `harness clipboard`).
+pub(super) fn copy(session: &Session<'_>, label: &str, option: Option<&str>) -> Result<Process> {
     let cancelled = session.test_dir().root().join(CANCELLED);
     if cancelled.exists() {
         fs::remove_file(&cancelled).context("remove the owner's cancel note")?;
@@ -94,9 +94,7 @@ pub(super) fn copy(session: &Session<'_>, label: &str, secret: bool) -> Result<P
         session.test_dir().root().into(),
         OWNER_DEADLINE.as_millis().to_string().into(),
     ];
-    if secret {
-        args.push("--secret".into());
-    }
+    args.extend(option.map(OsString::from));
     let program = harness
         .to_str()
         .ok_or_else(|| Failure::new("the harness path isn't UTF-8"))?;
@@ -112,7 +110,7 @@ pub(super) fn copy(session: &Session<'_>, label: &str, secret: bool) -> Result<P
 /// `clipboard_unsaved` before any key: the owner keeps the selection and the entry stays
 /// empty.
 pub(super) fn secret(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
-    let owner = copy(session, "secret", true)?;
+    let owner = copy(session, "secret", Some("--secret"))?;
     let mut expected = owners_copy();
     expected.push((SECRET_HINT.0.to_owned(), SECRET_HINT.1.to_vec()));
     session.wait_until(
