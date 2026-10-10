@@ -231,8 +231,39 @@ impl Process {
 
     /// Kills a program that runs until it is told to stop. It fails if the program has
     /// already failed, or if its deadline has passed.
-    pub(crate) fn stop(mut self) -> Result<Output> {
-        let ending = match self.exit.try_recv() {
+    pub(crate) fn stop(self) -> Result<Output> {
+        let received = self.exit.try_recv();
+        self.stopped(received)
+    }
+
+    /// Like `stop`, but first asks the program to exit with SIGTERM and gives it `grace` to
+    /// clean up, such as removing sockets it bound outside its directory. Only the leader is
+    /// signalled, so it can end its own children; the rest of the group is killed after.
+    pub(crate) fn terminate(mut self, grace: Duration) -> Result<Output> {
+        let received = match self.exit.try_recv() {
+            Err(TryRecvError::Empty) => {
+                kill_process(self.pid, Signal::TERM)
+                    .context(format!("terminate {}", self.program))?;
+                self.exit.recv_timeout(grace)
+            }
+            before => return self.stopped(before),
+        };
+        match received {
+            Ok(waited) => {
+                self.exited = waited.is_ok();
+                let ending = waited.map(|()| self.late(Ending::Stopped));
+                self.finish(ending)
+            }
+            Err(RecvTimeoutError::Timeout) => self.stopped(Err(TryRecvError::Empty)),
+            Err(RecvTimeoutError::Disconnected) => self.stopped(Err(TryRecvError::Disconnected)),
+        }
+    }
+
+    fn stopped(
+        mut self,
+        received: std::result::Result<io::Result<()>, TryRecvError>,
+    ) -> Result<Output> {
+        let ending = match received {
             Ok(waited) => waited.map(|()| Ending::Exited),
             Err(TryRecvError::Empty) => Ok(Ending::Stopped),
             Err(TryRecvError::Disconnected) => Err(io::Error::other("the exit observer stopped")),
@@ -679,6 +710,49 @@ mod tests {
         let process = start(&invocation("sleep", &["30"], Duration::from_secs(5))).unwrap();
         process.stop().unwrap();
         assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    /// Starts `sh` running `script` with `$1` set to a fresh directory, and returns once it
+    /// has created `$1/ready`.
+    fn started_with_trap(name: &str, script: &str) -> (Process, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("harness-{name}-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let call = invocation(
+            "sh",
+            &["-c", script, name, dir.to_str().unwrap()],
+            Duration::from_secs(10),
+        );
+        let process = start(&call).unwrap();
+        let end = Instant::now() + Duration::from_secs(2);
+        while !dir.join("ready").exists() && Instant::now() < end {
+            thread::park_timeout(Duration::from_millis(10));
+        }
+        assert!(dir.join("ready").exists());
+        (process, dir)
+    }
+
+    #[test]
+    fn terminate_lets_a_program_clean_up() {
+        let (process, dir) = started_with_trap(
+            "terminate-clean",
+            "trap 'touch \"$1/cleaned\"; exit 0' TERM; touch \"$1/ready\"; \
+             while :; do sleep 0.05; done",
+        );
+        process.terminate(Duration::from_secs(3)).unwrap();
+        assert!(dir.join("cleaned").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn terminate_kills_a_program_that_ignores_sigterm() {
+        let (process, dir) = started_with_trap(
+            "terminate-ignored",
+            "trap '' TERM; touch \"$1/ready\"; while :; do sleep 0.05; done",
+        );
+        let started = Instant::now();
+        process.terminate(Duration::from_millis(300)).unwrap();
+        assert!(started.elapsed() < Duration::from_secs(3));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
