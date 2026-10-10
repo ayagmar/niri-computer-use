@@ -77,7 +77,7 @@ The clipboard couldn't be saved whole: it held over 16 MiB, its owner didn't ans
 
 ## Actions fail after the runtime directory was cleaned
 
-If something removes `$XDG_RUNTIME_DIR/niri-computer-use/` while a server runs, the server gives up the lease and refuses it until it restarts, and an action in progress fails with `upstream_error`. Restart the agent's session. A shared engine exits at once instead: calls in flight fail with `engine_lost`, and the session's next call starts a new engine.
+If something removes `$XDG_RUNTIME_DIR/niri-computer-use/` while a server runs, the server gives up the lease and refuses it until it restarts, and an action in progress fails with `upstream_error`. Restart the agent's session. A shared engine exits instead, within about a second: a call in flight fails with `engine_lost`, or, with none in flight, the session's next call does, and the call after that reaches a new engine.
 
 ## Shared mode serves the client standalone
 

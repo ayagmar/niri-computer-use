@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 
 use crate::client::{CLIENT, Server, WAIT, tool_error};
-use crate::fixture::{Fixture, eventually, jpeg, kill};
+use crate::fixture::{Fixture, eventually, exited, jpeg, kill};
 use crate::niri::{Niri, Stream, window_on};
 use crate::noctalia::{self, UNLOCKED};
 use crate::session::NiriProcess;
@@ -241,6 +241,19 @@ async fn a_lost_engine_fails_what_was_in_flight_and_the_next_call_reaches_a_new_
     assert_eq!(idle.call("status", json!({})).await["isError"], false);
     assert_eq!(busy.call("status", json!({})).await["isError"], false);
     assert_ne!(engine(&fixture).await, first);
+}
+
+#[tokio::test]
+async fn after_the_runtime_directory_goes_the_next_call_reaches_a_new_engine() {
+    let fixture = shared("shared-gone");
+    let _niri = Niri::start(&fixture);
+    let mut server = Server::start(&fixture).await;
+    let first = server.serving_pid().await;
+    std::fs::remove_dir_all(fixture.runtime_dir()).unwrap();
+    assert!(eventually(WAIT, || exited(i32::try_from(first).unwrap())).await);
+    let (lost, _) = tool_error(&server.call("status", json!({})).await);
+    assert_eq!(lost, "engine_lost");
+    assert_ne!(server.serving_pid().await, first);
 }
 
 #[tokio::test]

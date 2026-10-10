@@ -73,7 +73,7 @@
 
 `serve` runs in shared mode when the policy file says `shared = true` or `NIRI_COMPUTER_USE_SHARED` is `1`. It decides once, before it reads anything from its client:
 
-1. It connects to `engine.sock` (500 ms) and sends its hello. If nothing listens there, it takes `engine.start.lock`, so that bridges starting together start one engine, checks the socket again, and starts `/proc/self/exe engine` in its own process group with stderr appended to `engine.log`, then waits up to two seconds for the socket. It tries at most three starts, retrying every 20 ms to 200 ms, within five seconds.
+1. It connects to `engine.sock` (500 ms) and sends its hello. If nothing listens there, it creates the runtime directory if it is missing, which it is after someone removed it, takes `engine.start.lock`, so that bridges starting together start one engine, checks the socket again, and starts `/proc/self/exe engine` in its own process group with stderr appended to `engine.log`, then waits up to two seconds for the socket. It tries at most three starts, retrying every 20 ms to 200 ms, within five seconds.
 2. If the engine refuses the hello, the socket's path is too long for a Unix socket (108 bytes), or nothing answers within the five seconds, it serves its client standalone, as without shared mode, and writes why to stderr.
 3. Otherwise it relays lines both ways, unchanged. It keeps the ids and methods of the client's requests in flight and the client's `initialize`.
 

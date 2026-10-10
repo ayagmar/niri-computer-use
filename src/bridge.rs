@@ -68,9 +68,6 @@ impl Target {
         let mut line =
             serde_json::to_vec(&hello).map_err(|error| format!("write the hello: {error}"))?;
         line.push(b'\n');
-        runtime
-            .create()
-            .map_err(|error| format!("create {}: {error}", runtime.path().display()))?;
         Ok(Self {
             runtime,
             hello: line,
@@ -243,8 +240,15 @@ impl Link {
     }
 }
 
-/// Starts an engine, unless another bridge has meanwhile, and waits for it to listen.
+/// Starts an engine, unless another bridge has meanwhile, and waits for it to listen. The
+/// runtime directory is created first: it may never have existed, or have been removed
+/// since, which ended the engine this bridge served.
 async fn start(target: &Target, deadline: Instant) -> Result<(), String> {
+    let runtime = target.runtime.path();
+    target
+        .runtime
+        .create()
+        .map_err(|error| format!("create {}: {error}", runtime.display()))?;
     let Some(lock) = start_lock(&target.runtime, deadline).await? else {
         return Ok(());
     };
