@@ -58,7 +58,12 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
     };
     say(&Report::Ready);
     let mut transfers = Transfers::default();
-    let watched = watch(&mut selection, &mut commands, paste, &text, &mut transfers).await;
+    let watched = match watch(&mut selection, &mut commands, paste, &text, &mut transfers).await {
+        Ok(watched) if !watched.replaced => {
+            confirm(&mut selection, watched, paste, &text, &mut transfers).await
+        }
+        other => other,
+    };
     let (read, clipboard, detail) = match watched {
         Err(detail) => (false, Clipboard::Failed, Some(detail)),
         Ok(watched) if watched.replaced => (watched.reads > 0, Clipboard::Replaced, None),
@@ -143,6 +148,34 @@ struct Watched {
 }
 
 impl Watched {
+    /// Serves and counts a read of the text, or notes that another client took the
+    /// selection.
+    fn handle(
+        &mut self,
+        event: Event,
+        paste: SourceId,
+        text: &Arc<[u8]>,
+        transfers: &mut Transfers,
+    ) {
+        match event {
+            Event::Send { source, mime, fd } if source == paste => {
+                if self.armed {
+                    self.reads += 1;
+                    self.latest = Some(Instant::now());
+                }
+                let bytes = if mime == HINT {
+                    SECRET.into()
+                } else {
+                    Arc::clone(text)
+                };
+                transfers.spawn(fd, bytes);
+            }
+            Event::Cancelled(source) if source == paste => self.replaced = true,
+            // A source of ours from before, which is gone.
+            Event::Send { .. } | Event::Cancelled(_) => {}
+        }
+    }
+
     /// When the wait ends unless something happens first: the server's whole call before
     /// `p`, the first read's wait after it, and the quiet time after a read.
     fn ends(&self, started: Instant) -> Instant {
@@ -173,26 +206,31 @@ async fn watch(
                 Command::End => return Ok(watched),
             },
             event = selection.next() => {
-                match event.map_err(|error| error.detail)? {
-                    Event::Send { source, mime, fd } if source == paste => {
-                        if watched.armed {
-                            watched.reads += 1;
-                            watched.latest = Some(Instant::now());
-                        }
-                        let bytes = if mime == HINT { SECRET.into() } else { Arc::clone(text) };
-                        transfers.spawn(fd, bytes);
-                    }
-                    Event::Cancelled(source) if source == paste => {
-                        watched.replaced = true;
-                        return Ok(watched);
-                    }
-                    // A source of ours from before, which is gone.
-                    Event::Send { .. } | Event::Cancelled(_) => {}
+                watched.handle(event.map_err(|error| error.detail)?, paste, text, transfers);
+                if watched.replaced {
+                    return Ok(watched);
                 }
             }
             () = tokio::time::sleep_until(watched.ends(started)) => return Ok(watched),
         }
     }
+}
+
+/// Handles what niri sent before now, so a replacement already on its way counts: the end
+/// of stdin or the quiet time doesn't prove the text still holds the selection. A
+/// replacement niri handles after this is the race that data-control can't exclude, since
+/// it has no request that sets the selection only if it is still ours.
+async fn confirm(
+    selection: &mut Selection,
+    mut watched: Watched,
+    paste: SourceId,
+    text: &Arc<[u8]>,
+    transfers: &mut Transfers,
+) -> Result<Watched, String> {
+    for event in selection.pending().await.map_err(|error| error.detail)? {
+        watched.handle(event, paste, text, transfers);
+    }
+    Ok(watched)
 }
 
 /// Offers the saved selection again, or clears the selection when nothing was saved.

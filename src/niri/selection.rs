@@ -233,6 +233,12 @@ impl Selection {
             .ok_or_else(|| upstream("niri ended the data-control device"))
     }
 
+    /// The reads and ends of our sources that niri sent before now, in order.
+    pub(crate) async fn pending(&mut self) -> Result<Vec<Event>, ToolError> {
+        self.sync().await?;
+        Ok(self.state.events.drain(..).collect())
+    }
+
     async fn sync(&mut self) -> Result<(), ToolError> {
         let deadline = Instant::now() + DEADLINE;
         roundtrip(

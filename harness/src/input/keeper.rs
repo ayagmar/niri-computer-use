@@ -1,17 +1,19 @@
 //! The paste keeper against other clipboard clients, driving `niri-computer-use
-//! paste-keeper` directly. A reader that asked for the text before the keeper ended
-//! still gets all of it.
+//! paste-keeper` directly so the checks can choose when its stdin ends. A copy that
+//! arrives while the keeper is told to finish stays, and a reader that asked for the text
+//! before the keeper ended still gets all of it.
 
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use rustix::process::{Pid, Signal, kill_process};
 use serde_json::Value;
 
 use super::WAIT;
-use super::paste::{copy, listed};
-use crate::clipboard::TYPES;
+use super::paste::{copy, listed, offered, owners_copy};
+use crate::clipboard::{CANCELLED, TYPES};
 use crate::failure::{Context as _, Failure, Result};
 use crate::mcp::field;
 use crate::runner::Process;
@@ -25,12 +27,41 @@ const LARGE: usize = 256 * 1024;
 /// Longer than the keeper takes to end once replaced, shorter than its two-second
 /// transfer deadline.
 const READER_DELAY: Duration = Duration::from_secs(1);
+/// The keeper picks between its stdin's end and a pending replacement at random, so a
+/// keeper that trusts its stdin's end fails some round.
+const ROUNDS: usize = 8;
+
 pub(super) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
+    for round in 0..ROUNDS {
+        replaced_as_it_ends(session, server, round)?;
+    }
     transfer_outlives_the_keeper(session, server)?;
     session.log(&format!(
-        "Paste keeper: a reader that asked before a replacement and read {} ms later got all {LARGE} bytes",
+        "Paste keeper: a copy made while the keeper was paused and told to end stayed in {ROUNDS} of {ROUNDS} rounds; a reader that asked before a replacement and read {} ms later got all {LARGE} bytes",
         READER_DELAY.as_millis()
     ))
+}
+
+/// Pauses the keeper, lets another client copy, ends the keeper's stdin and resumes it:
+/// the replacement and the end are both waiting when it wakes, and the copy must stay.
+fn replaced_as_it_ends(session: &mut Session<'_>, server: &str, round: usize) -> Result<()> {
+    let name = format!("ending-{round}");
+    let (mut keeper, log) = start(session, server, b"pasted", &name)?;
+    signal(&keeper, Signal::STOP)?;
+    let owner = take_over(session, &name)?;
+    keeper.feed(Vec::new())?;
+    signal(&keeper, Signal::CONT)?;
+    let report = done(session, keeper, &log)?;
+    let kept =
+        offered(session)? == owners_copy() && !session.test_dir().root().join(CANCELLED).exists();
+    owner.stop()?;
+    if field(&report, "/clipboard") != "replaced" || !kept {
+        return Err(Failure::new(format!(
+            "paste keeper round {round}: reported {report}; the newer copy {}",
+            if kept { "stayed" } else { "was overwritten" }
+        )));
+    }
+    Ok(())
 }
 
 /// A reader asks for a large text and reads it slowly; meanwhile another client copies,
@@ -155,4 +186,9 @@ fn reports(log: &Path) -> Result<Vec<Value>> {
         .lines()
         .filter_map(|line| serde_json::from_str(line).ok())
         .collect())
+}
+
+fn signal(keeper: &Process, signal: Signal) -> Result<()> {
+    let pid = Pid::from_raw(keeper.pid()).ok_or_else(|| Failure::new("the keeper has no PID"))?;
+    kill_process(pid, signal).context(format!("send {signal:?} to the keeper"))
 }
