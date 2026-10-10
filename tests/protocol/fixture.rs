@@ -3,7 +3,7 @@
 //! audit log. The server starts with only these variables set.
 
 use std::collections::BTreeMap;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::net::UnixListener;
@@ -202,7 +202,7 @@ impl Drop for Fixture {
             .copied()
             .filter(|pid| !exited(i32::try_from(*pid).unwrap()))
             .collect();
-        end_processes(&self.dir);
+        end_processes(&self.env["XDG_RUNTIME_DIR"]);
         std::fs::remove_dir_all(&self.dir).ok();
         if !std::thread::panicking() {
             assert!(
@@ -250,12 +250,14 @@ pub(crate) async fn pid_in(file: &Path) -> i32 {
         .unwrap()
 }
 
-/// Kills every process that has `dir` in its environment, such as a shared engine in
-/// its idle grace and its guardian, and waits until none is left, for at most `WAIT`.
-fn end_processes(dir: &Path) {
+/// Kills every process whose environment has `XDG_RUNTIME_DIR` set to `runtime`, such as
+/// a shared engine in its idle grace and its guardian, and waits until none is left, for
+/// at most `WAIT`. Every fixture sets the variable, and the engine keeps it even when a
+/// test leaves `NIRI_SOCKET` to discovery.
+fn end_processes(runtime: &OsStr) {
     let end = Instant::now() + WAIT;
     loop {
-        let left = processes_naming(dir);
+        let left = processes_in(runtime);
         if left.is_empty() || Instant::now() > end {
             return;
         }
@@ -269,9 +271,11 @@ fn end_processes(dir: &Path) {
     }
 }
 
-/// The running processes of ours whose environment mentions `dir`.
-fn processes_naming(dir: &Path) -> Vec<i32> {
-    let needle = dir.as_os_str().as_bytes();
+/// The running processes of ours whose environment has the entry
+/// `XDG_RUNTIME_DIR=<runtime>`, matched whole: a process that only mentions the fixture's
+/// directory elsewhere, such as a shell whose `PWD` is inside it, isn't one.
+fn processes_in(runtime: &OsStr) -> Vec<i32> {
+    let wanted = [b"XDG_RUNTIME_DIR=".as_slice(), runtime.as_bytes()].concat();
     let Ok(entries) = std::fs::read_dir("/proc") else {
         return Vec::new();
     };
@@ -282,7 +286,7 @@ fn processes_naming(dir: &Path) -> Vec<i32> {
         .filter(|pid| {
             // Another user's processes can't be read, and a process can exit meanwhile.
             std::fs::read(format!("/proc/{pid}/environ"))
-                .is_ok_and(|environ| environ.windows(needle.len()).any(|part| part == needle))
+                .is_ok_and(|environ| environ.split(|byte| *byte == 0).any(|part| part == wanted))
         })
         .collect()
 }
