@@ -88,6 +88,18 @@ impl Seat {
     /// Gives the lease up once any running action has ended, if `whose` holds it, or
     /// whoever does for `None`. Returns whether it was given up.
     async fn give_up(&self, whose: Option<SessionId>) -> bool {
+        // While another session holds the lease, `whose` can't be granted it, so there is
+        // nothing to wait for: the owner's running action delays no one else's release or
+        // end. With the lease free, `whose` may be taking it right now, so wait.
+        if let Some(session) = whose
+            && self
+                .owner
+                .borrow()
+                .as_ref()
+                .is_some_and(|owner| owner.session != session)
+        {
+            return false;
+        }
         let mut held = self.lease.lock().await;
         let owned = held
             .as_ref()
@@ -1024,6 +1036,42 @@ mod tests {
             _ = owners => panic!("the owner's action ended"),
             refused = others => assert_eq!(refused.unwrap(), Err(ErrorName::LeaseRequired)),
         }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Releases `session`'s lease and ends it. Returns whether it held the lease.
+    async fn release_and_end(desk: &Desk, session: &Session) -> bool {
+        let released = desk.release(session).await;
+        desk.end_session(session).await;
+        released
+    }
+
+    #[tokio::test]
+    async fn another_session_releases_and_ends_at_once_while_the_owners_action_runs() {
+        let me = session(1);
+        let other = session(2);
+        let dir = crate::test_support::fresh_dir("desk-sessions-release");
+        let desk = Desk::start(&env(&dir));
+        desk.acquire(&me, "me/1", None, None).await.unwrap();
+        let (started, running) = tokio::sync::oneshot::channel::<()>();
+        let owners = desk.act(
+            &me,
+            async { None },
+            async move {
+                started.send(()).unwrap();
+                std::future::pending::<Result<(), CallError>>().await
+            },
+            std::future::ready,
+        );
+        let others = async {
+            running.await.unwrap();
+            tokio::time::timeout(Duration::from_secs(1), release_and_end(&desk, &other)).await
+        };
+        tokio::select! {
+            _ = owners => panic!("the owner's action ended"),
+            released = others => assert_eq!(released, Ok(false)),
+        }
+        assert!(desk.status(&me).held_by_me);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
