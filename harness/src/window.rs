@@ -162,11 +162,11 @@ pub(crate) fn run(options: &Options) -> Result<()> {
 
 /// Dispatches events until `done` holds, niri goes away, or `end`. Only a protocol or
 /// connection failure before `end` other than niri going away is an error.
-fn dispatch_until(
-    queue: &mut EventQueue<State>,
-    state: &mut State,
+pub(crate) fn dispatch_until<S>(
+    queue: &mut EventQueue<S>,
+    state: &mut S,
     end: Instant,
-    done: impl Fn(&State) -> bool,
+    done: impl Fn(&S) -> bool,
 ) -> Result<()> {
     loop {
         queue.dispatch_pending(state).context("dispatch")?;

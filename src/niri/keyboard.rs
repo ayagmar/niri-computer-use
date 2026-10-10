@@ -1,11 +1,16 @@
-//! An experimental virtual keyboard with the compositor's unchanged keymap.
-//! Destruction does not release input in niri; callers must acknowledge explicit releases.
+//! An experimental virtual keyboard with the compositor's keymap, or for one call an
+//! extended copy of it. niri sends a virtual keyboard's map to every `wl_keyboard` when
+//! the device next sends input, this one's included, so this keyboard sees what clients
+//! were sent. Destruction does not release input in niri; callers must acknowledge
+//! explicit releases.
 
 use std::fs::File;
+use std::io::Write as _;
 use std::os::fd::{AsFd as _, OwnedFd};
 use std::os::unix::fs::FileExt as _;
 use std::path::Path;
 
+use rustix::fs::{MemfdFlags, memfd_create};
 use tokio::io::{Interest, unix::AsyncFd};
 use tokio::time::Instant;
 use wayland_client::protocol::{
@@ -29,9 +34,17 @@ const MAX_MAP: u32 = 1024 * 1024;
 struct State {
     globals: Vec<(u32, String, u32)>,
     synced: bool,
+    /// The compositor's map when this keyboard was bound.
     map: Option<(File, String, u32)>,
     error: Option<String>,
+    /// Counts maps niri sent that are neither the compositor's nor this device's.
     revision: u64,
+    /// The extended map this device uploaded, until it uploads the compositor's again.
+    extended: Option<String>,
+    /// Whether the map niri last sent is this device's extension.
+    extension_sent: bool,
+    /// Whether the map niri last sent is byte for byte the compositor's.
+    original_sent: bool,
 }
 
 #[derive(Debug)]
@@ -122,6 +135,59 @@ impl Keyboard {
         self.state.revision
     }
 
+    /// Uploads `map` for the following keys. niri sends it to clients with the next key.
+    pub(crate) fn extend(&mut self, map: &str) -> Result<(), ToolError> {
+        let fd = memfd_create("niri-computer-use-keymap", MemfdFlags::CLOEXEC)
+            .map_err(|error| upstream(&format!("create the extended keymap: {error}")))?;
+        let mut file = File::from(fd);
+        file.write_all(map.as_bytes())
+            .and_then(|()| file.write_all(&[0]))
+            .map_err(|error| upstream(&format!("write the extended keymap: {error}")))?;
+        let size = u32::try_from(map.len() + 1)
+            .ok()
+            .filter(|size| *size <= MAX_MAP)
+            .ok_or_else(|| upstream("the extended keymap is too large"))?;
+        self.device.keymap(1, file.as_fd(), size);
+        self.state.extended = Some(map.to_owned());
+        self.flush()
+    }
+
+    /// Uploads the compositor's map again after `extend`, and sends zero modifiers so niri
+    /// sends it to clients. `restored` tells after a sync whether niri did.
+    pub(crate) fn restore_now(&mut self, group: u32) -> Result<(), ToolError> {
+        if self.state.extended.take().is_none() {
+            return Ok(());
+        }
+        let (file, _, size) = self
+            .state
+            .map
+            .as_ref()
+            .ok_or_else(|| upstream("the keyboard map is unavailable"))?;
+        self.device.keymap(1, file.as_fd(), *size);
+        self.device.modifiers(0, 0, 0, group);
+        self.flush()
+    }
+
+    /// Whether clients no longer hold this device's extension: niri never sent it, or
+    /// sent another map since.
+    pub(crate) const fn restored(&self) -> bool {
+        !self.state.extension_sent
+    }
+
+    /// `restore_now`, then proof that niri sent the compositor's map byte for byte if it
+    /// had sent the extension.
+    pub(crate) async fn restore(&mut self, group: u32) -> Result<(), ToolError> {
+        let sent = self.state.extension_sent;
+        self.restore_now(group)?;
+        self.sync().await?;
+        if !sent || self.state.original_sent {
+            return Ok(());
+        }
+        Err(upstream(
+            "niri didn't send the compositor's keymap back after the extended one",
+        ))
+    }
+
     pub(crate) fn key(&mut self, code: u32, pressed: bool) -> Result<(), ToolError> {
         if pressed && !self.pressed.contains(&code) {
             self.pressed.push(code);
@@ -183,6 +249,21 @@ impl Drop for Keyboard {
     }
 }
 
+impl State {
+    fn received(&mut self, map: (File, String, u32)) {
+        let Some((_, original, _)) = &self.map else {
+            self.map = Some(map);
+            self.original_sent = true;
+            return;
+        };
+        self.original_sent = *original == map.1;
+        self.extension_sent = self.extended.as_ref() == Some(&map.1);
+        if !self.original_sent && !self.extension_sent {
+            self.revision += 1;
+        }
+    }
+}
+
 impl Synced for State {
     fn synced(&self) -> bool {
         self.synced
@@ -233,15 +314,7 @@ impl Dispatch<WlKeyboard, ()> for State {
                 return;
             }
             match read_map(fd, size) {
-                Ok(map) => {
-                    state.revision += u64::from(
-                        state
-                            .map
-                            .as_ref()
-                            .is_none_or(|(_, previous, _)| previous != &map.1),
-                    );
-                    state.map = Some(map);
-                }
+                Ok(map) => state.received(map),
                 Err(error) => state.error = Some(error),
             }
         }

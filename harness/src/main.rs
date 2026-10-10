@@ -14,6 +14,7 @@ mod image_header;
 mod input;
 mod interrupt;
 mod keyboard;
+mod keymaps;
 mod log;
 mod mcp;
 mod nested;
@@ -43,6 +44,7 @@ use test_dir::TestDir;
 const USAGE: &str = "usage: harness run [--visible] [--scale <scale>] [--noctalia | --sitting | --control | --actions | --input | --shell | --eval <scenario> --skill <dir|none> --model <model>]
        harness host-capture <output>
        harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--started <file>]
+       harness keymaps <TEST_DIR> <directory> <deadline-ms>
        harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --eval <server> <scenario> <skill|none> <model>]";
 
 fn main() -> ExitCode {
@@ -71,6 +73,7 @@ fn dispatch(args: &[OsString]) -> Result<()> {
             run::run(&options)
         }
         ["window", options @ ..] => window::run(&window::Options::parse(options)?),
+        ["keymaps", options @ ..] => keymaps::run(options),
         ["host-capture", output] => {
             interrupt::install()?;
             capture::host(output)

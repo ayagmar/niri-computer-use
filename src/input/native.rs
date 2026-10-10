@@ -1,10 +1,11 @@
 //! Native per-key input. A dirty marker covers every possible press until release is
-//! acknowledged. SIGKILL requires recover; destruction alone releases nothing in niri.
+//! acknowledged and, after an extended keymap, niri has sent the compositor's map back.
+//! SIGKILL requires recover; destruction alone releases nothing in niri.
 
 use std::time::Duration;
 
 use super::keyboard::{Expect, Sent, Typing, check_expect, ended};
-use super::keymap::{Key, resolve};
+use super::keymap::{Key, plan};
 use super::{Input, focused_app_id};
 use crate::act::{Observed, Outcome};
 use crate::control::marker::{Marker, Native, Written};
@@ -39,10 +40,14 @@ pub(super) async fn type_input(
             "the active keyboard layout is unknown",
         )
     })?;
-    let keys = resolve(keyboard.map()?, group, &typing)?;
+    let plan = plan(keyboard.map()?, group, &typing)?;
+    let keys = plan.keys;
     let revision = keyboard.revision();
     let before = waiter.view().focused_window();
     let mut device = Device::new(keyboard, input, &typing, &keys, group)?;
+    if let Some(map) = &plan.extended {
+        device.keyboard()?.extend(map)?;
+    }
     let mut sent = Sent::default();
     for key in keys {
         if let Some(outcome) = interrupted(&mut waiter, before, group).await {
@@ -160,7 +165,9 @@ impl Device {
 
     async fn finish(mut self) -> Result<(), ToolError> {
         let group = self.group;
-        self.keyboard()?.release(&[], group).await?;
+        let keyboard = self.keyboard()?;
+        keyboard.release(&[], group).await?;
+        keyboard.restore(group).await?;
         if let Some(marker) = self.marker.take() {
             marker
                 .clear()
@@ -175,7 +182,9 @@ impl Drop for Device {
         let (Some(mut keyboard), Some(marker)) = (self.keyboard.take(), self.marker.take()) else {
             return;
         };
-        if keyboard.release_now(&[], self.group).is_err() {
+        if keyboard.release_now(&[], self.group).is_err()
+            || keyboard.restore_now(self.group).is_err()
+        {
             return;
         }
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
@@ -185,7 +194,7 @@ impl Drop for Device {
 }
 
 async fn acknowledge_release(mut keyboard: Keyboard, marker: Written) {
-    if keyboard.sync().await.is_ok() {
+    if keyboard.sync().await.is_ok() && keyboard.restored() {
         marker.clear().ok();
     }
 }

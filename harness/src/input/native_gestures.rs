@@ -165,13 +165,19 @@ pub(super) fn crash(
     client.start_call("drag", args)?;
     pressed(session, wev, offset)?;
     client.stop()?;
-    recover(session, wev, server, offset)?;
+    recover(session, wev, server, offset, "harness-m7-recover")?;
     held_at_pointer(&keyboard::since(wev.log, offset)?, "button:")?;
     session.log("M7 SIGKILL during held drag: marker blocked B; recover released button and modifiers; B acquired. No automatic crash release claim.")
 }
 
-fn recover(session: &mut Session<'_>, wev: &Wev<'_>, server: &str, offset: usize) -> Result<()> {
-    let mut next = Client::start(session, server, "harness-m7-recover", SERVER_DEADLINE)?;
+fn recover(
+    session: &mut Session<'_>,
+    wev: &Wev<'_>,
+    server: &str,
+    offset: usize,
+    name: &str,
+) -> Result<()> {
+    let mut next = Client::start(session, server, name, SERVER_DEADLINE)?;
     let refused = next.call(session, "acquire_desktop", json!({}))?;
     if field(&refused, "/structuredContent/error") != "recovery_required" {
         return Err(Failure::new(format!(
@@ -200,7 +206,15 @@ fn recover(session: &mut Session<'_>, wev: &Wev<'_>, server: &str, offset: usize
     next.stop()
 }
 
-pub(super) fn typing_crash(session: &mut Session<'_>, wev: &Wev<'_>, server: &str) -> Result<()> {
+/// Kills a server typing `text` repeated, after its first key, and requires recover to
+/// release that key's original code. `name` tells the run's server logs apart.
+pub(super) fn typing_crash(
+    session: &mut Session<'_>,
+    wev: &Wev<'_>,
+    server: &str,
+    text: &str,
+    name: &str,
+) -> Result<()> {
     let mut client = Client::start_command(
         session,
         "env",
@@ -209,14 +223,14 @@ pub(super) fn typing_crash(session: &mut Session<'_>, wev: &Wev<'_>, server: &st
             server.into(),
             "serve".into(),
         ],
-        "harness-m7-killed-typing",
+        &format!("harness-m7-killed-{name}"),
         SERVER_DEADLINE,
     )?;
     structured(&client.call(session, "acquire_desktop", json!({}))?)?;
     let offset = wev.offset()?;
     client.start_call(
         "type_text",
-        json!({"text": "A".repeat(1000), "expect": {"app_id": "wev"}}),
+        json!({"text": text.repeat(1000), "expect": {"app_id": "wev"}}),
     )?;
     session.wait_until("m7-kill-key", "the first native key press", WAIT, |_| {
         Ok(trace(&keyboard::since(wev.log, offset)?)?
@@ -233,7 +247,13 @@ pub(super) fn typing_crash(session: &mut Session<'_>, wev: &Wev<'_>, server: &st
         .find(|key| key.pressed)
         .ok_or_else(|| Failure::new("M7 kill lacked an observed press"))?;
     let recovery_offset = wev.offset()?;
-    recover(session, wev, server, offset)?;
+    recover(
+        session,
+        wev,
+        server,
+        offset,
+        &format!("harness-m7-recover-{name}"),
+    )?;
     let after = keyboard::since(wev.log, recovery_offset)?;
     let observed = trace(&after)?;
     if !observed
@@ -245,5 +265,5 @@ pub(super) fn typing_crash(session: &mut Session<'_>, wev: &Wev<'_>, server: &st
             "M7 recover didn't release the original native code",
         ));
     }
-    session.log(&format!("M7 SIGKILL during native typing: original wev code {}, balanced final key state, zero modifiers, recovery gate retained until recover", first.code))
+    session.log(&format!("M7 SIGKILL during native typing of {text:?}: original wev code {}, balanced final key state, zero modifiers, recovery gate retained until recover", first.code))
 }

@@ -9,6 +9,7 @@ mod crash;
 mod exposure;
 mod native;
 mod native_gestures;
+mod native_unicode;
 mod scrolling;
 mod stop;
 

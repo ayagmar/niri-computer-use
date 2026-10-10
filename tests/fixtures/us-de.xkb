@@ -1,9 +1,11 @@
-// Controlled fixture: two layouts and direct Unicode symbols; no system includes.
+// Controlled fixture: two layouts, direct Unicode symbols and two keys without symbols;
+// no system includes.
 xkb_keymap {
   xkb_keycodes "test" {
     minimum = 8; maximum = 64;
     <Y> = 29; <Z> = 52; <U> = 48; <ENTER> = 36;
     <LFSH> = 50; <LCTL> = 37; <LALT> = 64;
+    <I60> = 60; <I61> = 61;
   };
   xkb_types "test" {
     type "ONE_LEVEL" { modifiers = none; map[None] = Level1; };

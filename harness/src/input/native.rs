@@ -34,7 +34,7 @@ pub(super) fn run(
     let window = super::wev_window(session, &mut native)?;
     super::mismatch(session, &mut native, wev, window)?;
     super::routing(session, &mut native, wev, window)?;
-    missing(session, &mut native, wev)?;
+    super::native_unicode::run(session, &mut native, wev)?;
     measure(session, &mut native, wev, "native")?;
     super::exposure::run(session, &mut native, wev, "native")?;
     interruption(session, &mut native, wev, server, false)?;
@@ -43,8 +43,10 @@ pub(super) fn run(
     super::native_gestures::interrupt(session, &mut native, wev, server, false)?;
     super::native_gestures::interrupt(session, &mut native, wev, server, true)?;
     super::native_gestures::crash(session, native, wev, server)?;
-    super::native_gestures::typing_crash(session, wev, server)?;
+    super::native_gestures::typing_crash(session, wev, server, "A", "typing")?;
+    super::native_unicode::crash(session, wev, server)?;
     structured(&owner.call(session, "acquire_desktop", json!({}))?)?;
+    super::native_unicode::wtype_comparison(session, owner, wev)?;
     measure(session, owner, wev, "wtype")?;
     super::exposure::run(session, owner, wev, "wtype")
 }
@@ -70,27 +72,6 @@ fn normal(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>) -> Resu
     }
     stop::marker_gone(session)?;
     session.log("M7 native C5 equivalent: 20 Ctrl+a and 20 Hello calls, exact pairs and zero final modifiers")
-}
-
-fn missing(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>) -> Result<()> {
-    let start = wev.offset()?;
-    let result = client.call(
-        session,
-        "type_text",
-        json!({"text": "Hello →", "expect": {"app_id": "wev"}}),
-    )?;
-    if field(&result, "/structuredContent/error") != "refused" {
-        return Err(Failure::new(format!(
-            "M7: missing symbol must refuse: {result}"
-        )));
-    }
-    session.still_absent("m7-missing", Duration::from_millis(100), || {
-        Ok(!trace(&keyboard::since(wev.log, start)?)?.keys.is_empty())
-    })?;
-    stop::marker_gone(session)?;
-    session.log(
-        "M7 native Unicode parity BLOCKED: absent arrow refuses before typing on the nested layout",
-    )
 }
 
 fn measure(

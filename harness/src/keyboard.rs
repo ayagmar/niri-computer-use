@@ -11,7 +11,7 @@ use crate::wev::keyboard::{self, Modifiers, Trace};
 
 const WAIT: Duration = Duration::from_secs(5);
 pub(crate) const WTYPE_DEADLINE: Duration = Duration::from_secs(3);
-const CORPUS: &str = include_str!("../corpus.txt");
+pub(crate) const CORPUS: &str = include_str!("../corpus.txt");
 const CTRL_A: &[&str] = &["-M", "ctrl", "-k", "a", "-m", "ctrl"];
 const ROUTING: &[&str] = &[
     "-M", "ctrl", "-M", "shift", "-k", "F12", "-m", "shift", "-m", "ctrl",
