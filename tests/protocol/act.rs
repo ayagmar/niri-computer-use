@@ -1635,6 +1635,36 @@ async fn a_client_that_goes_mid_action_frees_the_lease_at_once() {
 }
 
 #[tokio::test]
+async fn a_client_that_goes_mid_key_leaves_no_marker_behind() {
+    use std::time::Duration;
+
+    let mut desk = Desk::start("act-client-gone-typing", "").await;
+    recording_wtype(&desk.fixture, "await_file go");
+    desk.server
+        .start_call("key", json!({"keys": ["Down"], "expect": "none"}))
+        .await;
+    let marker = desk
+        .fixture
+        .path("run/niri-computer-use/niri.test/input-dirty");
+    assert!(
+        crate::fixture::eventually(Duration::from_secs(2), || desk
+            .fixture
+            .path("wtype.calls")
+            .exists())
+        .await
+    );
+    // The call is dropped with the client, but the server waits for wtype to finish.
+    let stopped = tokio::spawn(desk.server.stop());
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!stopped.is_finished());
+    assert!(marker.exists());
+    std::fs::write(desk.fixture.path("go"), "").unwrap();
+    let (status, _, stderr) = stopped.await.unwrap();
+    assert!(status.success(), "{status}: {stderr}");
+    assert!(!marker.exists());
+}
+
+#[tokio::test]
 async fn niri_action_reports_the_window_as_niri_shows_it_after() {
     let mut desk = Desk::start("act-niri-action", "").await;
     let fullscreen = json!({"action": {"FullscreenWindow": {"id": 2}}});

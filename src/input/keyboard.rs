@@ -14,6 +14,7 @@ use std::time::Duration;
 use serde::Serialize;
 
 use crate::act::{Observed, Outcome};
+use crate::control::cleanup::Pending;
 use crate::control::marker::{Child, Marker, Phase, Written};
 use crate::control::procs;
 use crate::control::runtime::RuntimeDir;
@@ -402,7 +403,14 @@ async fn run_wtype(
             ToolError::new(ErrorName::UpstreamError, detail),
         ));
     }
-    let typed = tokio::spawn(async move { finish(gated.feed(&stdin, MAX_STDOUT).await, marker) });
+    // A task of its own, so wtype finishes and the marker comes off even if the call is
+    // dropped.
+    let cleanup = Pending::start();
+    let typed = tokio::spawn(async move {
+        let finished = finish(gated.feed(&stdin, MAX_STDOUT).await, marker);
+        drop(cleanup);
+        finished
+    });
     typed.await.map_err(|error| {
         ToolError::new(
             ErrorName::UpstreamError,

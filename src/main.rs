@@ -259,11 +259,13 @@ async fn serve(env: Env, given: session::Given) -> Result<(), String> {
         .serve((stdin, tokio::io::stdout()))
         .await
         .map_err(|error| format!("start MCP session: {error}"))?;
-    service
+    let ended = service
         .waiting()
         .await
         .map(drop)
-        .map_err(|error| format!("MCP session: {error}"))
+        .map_err(|error| format!("MCP session: {error}"));
+    control::cleanup::settled().await;
+    ended
 }
 
 #[cfg(test)]

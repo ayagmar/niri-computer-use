@@ -8,6 +8,7 @@ use super::keyboard::{Expect, Sent, Typing, check_expect, ended};
 use super::keymap::{Key, plan};
 use super::{Input, focused_app_id};
 use crate::act::{Observed, Outcome};
+use crate::control::cleanup::Pending;
 use crate::control::marker::{Marker, Native, Written};
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::{
@@ -183,12 +184,12 @@ impl Drop for Device {
             return;
         }
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-            runtime.spawn(acknowledge_release(keyboard, marker));
+            runtime.spawn(acknowledge_release(keyboard, marker, Pending::start()));
         }
     }
 }
 
-async fn acknowledge_release(mut keyboard: Keyboard, marker: Written) {
+async fn acknowledge_release(mut keyboard: Keyboard, marker: Written, _cleanup: Pending) {
     if keyboard.sync().await.is_ok() && keyboard.restored() {
         marker.clear().ok();
     }
