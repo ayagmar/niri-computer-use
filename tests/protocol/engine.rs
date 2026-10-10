@@ -241,3 +241,29 @@ async fn the_engine_listens_before_its_slow_start() {
     );
     drop(bus);
 }
+
+#[tokio::test]
+async fn past_sixty_four_connections_the_engine_is_busy() {
+    let fixture = Fixture::new("engine-busy");
+    let _engine = start(&fixture).await;
+    // A connection counts from its accept, before its hello.
+    let mut waiting = Vec::new();
+    for _ in 0..63 {
+        waiting.push(UnixStream::connect(socket(&fixture)).await.unwrap());
+    }
+    let (_last, served) = Connection::open(&fixture, &hello(&fixture)).await;
+    assert!(served["engine"]["pid"].is_u64(), "{served}");
+    let (mut over, refused) = Connection::open(&fixture, &hello(&fixture)).await;
+    assert_eq!(refused["refused"]["error"], "engine_busy", "{refused}");
+    assert_eq!(over.next().await, None);
+    drop(waiting);
+    // A connection that closes stops counting.
+    let since = Instant::now();
+    loop {
+        let (_again, reply) = Connection::open(&fixture, &hello(&fixture)).await;
+        if reply["engine"]["pid"].is_u64() {
+            break;
+        }
+        assert!(since.elapsed() < WAIT, "{reply}");
+    }
+}

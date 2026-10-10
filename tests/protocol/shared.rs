@@ -6,6 +6,7 @@ use std::os::unix::net::UnixListener;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
+use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 
 use crate::client::{CLIENT, Server, WAIT, tool_error};
 use crate::fixture::{Fixture, eventually, exited, jpeg, kill, signal};
@@ -300,6 +301,43 @@ async fn an_engine_that_stops_reading_counts_as_lost() {
     let (lost, detail) = tool_error(&server.response(call).await["result"]);
     assert_eq!(lost, "engine_lost");
     assert!(detail.contains("stopped reading"), "{detail}");
+}
+
+#[tokio::test]
+async fn an_engine_refusing_the_hello_after_a_loss_leaves_calls_unavailable() {
+    let fixture = shared("shared-refused");
+    let _niri = Niri::start(&fixture);
+    let mut server = Server::start(&fixture).await;
+    let first = server.serving_pid().await;
+    kill(first);
+    assert!(eventually(WAIT, || exited(i32::try_from(first).unwrap())).await);
+    let (lost, _) = tool_error(&server.call("status", json!({})).await);
+    assert_eq!(lost, "engine_lost");
+    let _refusing = refusing_engine(&fixture);
+    for _ in 0..2 {
+        let (error, detail) = tool_error(&server.call("status", json!({})).await);
+        assert_eq!(error, "engine_unavailable");
+        assert!(detail.contains("another build"), "{detail}");
+    }
+}
+
+/// Answers every hello on the engine's socket, which a killed engine left, with an
+/// `engine_version` refusal.
+fn refusing_engine(fixture: &Fixture) -> tokio::task::JoinHandle<()> {
+    let path = fixture.runtime_dir().join("engine.sock");
+    std::fs::remove_file(&path).unwrap();
+    let listener = tokio::net::UnixListener::bind(path).unwrap();
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let (input, mut output) = stream.into_split();
+            BufReader::new(input).lines().next_line().await.ok();
+            let refusal = br#"{"refused":{"error":"engine_version","detail":"another build"}}"#;
+            output
+                .write_all(&[refusal.as_slice(), b"\n"].concat())
+                .await
+                .ok();
+        }
+    })
 }
 
 #[tokio::test]
