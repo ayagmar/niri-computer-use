@@ -67,6 +67,24 @@ async fn without_a_running_niri_the_error_says_where_the_server_looked() {
     assert_eq!(status["discovery"]["niri_socket"]["detail"], detail);
 }
 
+/// libwayland connects to an inherited `WAYLAND_SOCKET` before it looks at
+/// `WAYLAND_DISPLAY`, so a child given one would skip the display the server checked.
+#[tokio::test]
+async fn children_never_inherit_a_wayland_socket() {
+    let mut fixture = Fixture::new("wayland-socket");
+    fixture.set("WAYLAND_SOCKET", "3");
+    let _niri = Niri::start(&fixture);
+    fixture.program(
+        "wl-paste",
+        r#"printf '%s %s' "${WAYLAND_SOCKET-unset}" "$WAYLAND_DISPLAY""#,
+    );
+    let mut server = Server::start(&fixture).await;
+    assert_eq!(
+        server.structured("clipboard_read").await,
+        json!({"text": format!("unset {DISPLAY}"), "reason": null})
+    );
+}
+
 /// Sol's case: the only running niri is on another display than the one the client gave,
 /// which wtype would reach while focus and policy were checked on that niri.
 #[tokio::test]
