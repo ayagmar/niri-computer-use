@@ -279,19 +279,18 @@ async fn acknowledge_release(
     marker.clear().await.ok();
 }
 
-/// Restores the base map with zero modifiers in the layout niri has active, or without
-/// niri's answer in `sent`, and sends the modifiers once more after niri has taken it:
-/// in the nested trials, this device saw the map a dropped call restored come back only
-/// after a further input, and the client sometimes got no modifiers event for one of the
-/// two.
+/// Puts the latest base map back with zero modifiers in the layout niri has active, or
+/// without niri's answer in `sent`, and sends the modifiers once more after niri has taken
+/// it: in the nested trials, this device saw the map a dropped call restored come back
+/// only after a further input, and the client sometimes got no modifiers event for one of
+/// the two.
 async fn restore_active(
     keyboard: &mut Keyboard,
     socket: &Socket,
     sent: u32,
 ) -> Result<(), ToolError> {
     let group = niri::keyboard_group(socket).await.unwrap_or(sent);
-    keyboard.restore_now(group)?;
-    keyboard.sync().await?;
+    keyboard.put_back(group).await?;
     keyboard.modifiers(0, group)?;
     keyboard.sync().await
 }

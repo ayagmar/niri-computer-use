@@ -210,7 +210,8 @@ fn quiet_after(
 /// lands mid-call. The call must end early and leave the latest compositor keymap with
 /// clients, and the focused client in the layout niri switched to; neither the keymap nor
 /// the layout the call began with may come back. Then calls are cancelled after a switch
-/// (`cancelled`). niri's config is put back at the end.
+/// (`cancelled`), and a call that needs no extension sees the keymap change (`ascii`).
+/// niri's config is put back at the end.
 pub(super) fn layout_change(
     session: &mut Session<'_>,
     client: &mut Client,
@@ -221,19 +222,17 @@ pub(super) fn layout_change(
         fs::read_to_string(&config).context(format!("read {}", config.display()))?;
     let (observer, directory, original) = observe(session, "layout")?;
     let serving = serving_pid(session, client)?;
-    let changed = mid_call(session, client, (serving, &directory), |session| {
+    let during = During::Extension(&directory);
+    let changed = mid_call(session, client, serving, &during, |session| {
+        let before = keymaps::saved(&directory)?.len();
         write_config(&config, &format!("{original_config}{TWO_LAYOUTS}"))?;
-        session.wait_until("m7-layout-keymap", "niri's two-layout keymap", WAIT, |_| {
-            Ok(keymaps::saved(&directory)?
-                .into_iter()
-                .find(|map| two_layouts(map)))
-        })
+        two_layout_keymap(session, &directory, before)
     })?;
     let (outcome, base) = changed;
     expect_outcome(&outcome, "uncertain", "the compositor keymap changed")?;
     clients_hold(session, &directory, &base, "the new keymap")?;
     let offset = wev.offset()?;
-    let switched = mid_call(session, client, (serving, &directory), |session| {
+    let switched = mid_call(session, client, serving, &during, |session| {
         switch_layout(session, 1)
     })?;
     expect_outcome(&switched.0, "interrupted", "")?;
@@ -250,10 +249,62 @@ pub(super) fn layout_change(
     cancelled(session, client, wev, (serving, &directory, &base))?;
     write_config(&config, &original_config)?;
     clients_hold(session, &directory, &original, "the original keymap")?;
+    ascii(
+        session,
+        client,
+        wev,
+        serving,
+        (&directory, &config, &original_config),
+    )?;
+    write_config(&config, &original_config)?;
+    clients_hold(session, &directory, &original, "the original keymap")?;
     observer.stop()?;
     session.log(
         "M7 native layout change: a new compositor keymap and a layout switch mid-extension each ended the call, and clients kept the new keymap, wev in the layout switched to",
     )
+}
+
+/// A new compositor keymap during a call that needs no extension: the virtual keyboard
+/// still holds the map it was bound with, and sends it back to clients with its next key.
+/// The call must end early, put the new keymap back and clear its marker; before, it left
+/// the old map with clients, or kept the marker for `recover`.
+fn ascii(
+    session: &mut Session<'_>,
+    client: &mut Client,
+    wev: &Wev<'_>,
+    serving: i32,
+    (directory, config, original_config): (&Path, &Path, &str),
+) -> Result<()> {
+    let (outcome, base) = mid_call(session, client, serving, &During::Ascii(wev), |session| {
+        let before = keymaps::saved(directory)?.len();
+        write_config(config, &format!("{original_config}{TWO_LAYOUTS}"))?;
+        two_layout_keymap(session, directory, before)
+    })?;
+    expect_outcome(&outcome, "uncertain", "the compositor keymap changed")?;
+    clients_hold(
+        session,
+        directory,
+        &base,
+        "the new keymap after an ASCII call",
+    )?;
+    session.log(
+        "M7 native layout change: a new compositor keymap during an ASCII call ended it, and clients kept the new keymap with the marker cleared",
+    )
+}
+
+/// Waits until niri has sent clients a keymap with two layouts after the first `before`
+/// maps, and returns it.
+fn two_layout_keymap(
+    session: &mut Session<'_>,
+    directory: &Path,
+    before: usize,
+) -> Result<Vec<u8>> {
+    session.wait_until("m7-layout-keymap", "niri's two-layout keymap", WAIT, |_| {
+        Ok(keymaps::saved(directory)?
+            .into_iter()
+            .skip(before)
+            .find(|map| two_layouts(map)))
+    })
 }
 
 /// A call cancelled after niri switched layouts under it must leave the focused client in
@@ -447,21 +498,41 @@ pub(super) fn current_layout(session: &mut Session<'_>) -> Result<u8> {
     Ok(layouts(session)?.current_idx)
 }
 
-/// Types a long text that needs an extended keymap, stops `serving` once niri has sent
-/// the extension to clients, runs `change`, continues `serving`, and returns the call's
-/// structured result with what `change` returned.
+/// The long call a change lands in, and how to tell it has started typing.
+enum During<'a> {
+    /// A text that needs an extended keymap, once niri has sent the extension to clients,
+    /// as the observer in this directory saw.
+    Extension(&'a Path),
+    /// An ASCII text that needs none, once wev has printed some of it.
+    Ascii(&'a Wev<'a>),
+}
+
+/// Types a long text `during` describes, stops `serving` once it is typing, runs `change`,
+/// continues `serving`, and returns the call's structured result with what `change`
+/// returned.
 fn mid_call<T>(
     session: &mut Session<'_>,
     client: &mut Client,
-    (serving, directory): (i32, &Path),
+    serving: i32,
+    during: &During<'_>,
     change: impl FnOnce(&mut Session<'_>) -> Result<T>,
 ) -> Result<(Value, T)> {
-    let before = keymaps::saved(directory)?.len();
+    let text = match during {
+        During::Extension(_) => "é",
+        During::Ascii(_) => "a",
+    };
+    let before = match during {
+        During::Extension(directory) => keymaps::saved(directory)?.len(),
+        During::Ascii(wev) => wev.offset()?,
+    };
     let id = client.start_call(
         "type_text",
-        json!({"text": "é".repeat(1000), "expect": {"app_id": "wev"}}),
+        json!({"text": text.repeat(1000), "expect": {"app_id": "wev"}}),
     )?;
-    extension_sent(directory, before)?;
+    match during {
+        During::Extension(directory) => extension_sent(directory, before)?,
+        During::Ascii(wev) => wev_grew(wev, before)?,
+    }
     signal(serving, Signal::STOP)?;
     let changed = change(session);
     signal(serving, Signal::CONT)?;
@@ -469,6 +540,21 @@ fn mid_call<T>(
     let outcome = structured(&client.result(session, id)?)?;
     stop::marker_gone(session)?;
     Ok((outcome, changed))
+}
+
+/// Waits, polling every millisecond, until wev has printed past `offset`: the call's
+/// first keys.
+fn wev_grew(wev: &Wev<'_>, offset: usize) -> Result<()> {
+    let until = Instant::now() + WAIT;
+    while wev.offset()? <= offset {
+        if Instant::now() > until {
+            return Err(Failure::new(
+                "M7 layout change: wev printed nothing of the ASCII call",
+            ));
+        }
+        pause(Duration::from_millis(1));
+    }
+    Ok(())
 }
 
 /// Waits, polling every millisecond, until clients have been sent a map after the first
