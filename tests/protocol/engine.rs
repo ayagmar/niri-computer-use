@@ -14,6 +14,7 @@ use tokio::process::Child;
 
 use crate::client::{CLIENT, WAIT, engine};
 use crate::fixture::{DISPLAY, Fixture, eventually};
+use crate::framing;
 
 fn socket(fixture: &Fixture) -> PathBuf {
     fixture.runtime_dir().join("engine.sock")
@@ -173,6 +174,33 @@ async fn a_line_over_the_limit_ends_only_that_session() {
     long.output.write_all(&over).await.ok();
     assert_eq!(long.next().await, None);
     assert_eq!(other.status(2).await["lease"]["held_by_me"], false);
+}
+
+#[tokio::test]
+async fn a_line_at_the_limit_is_served_and_one_over_between_others_ends_the_session() {
+    let fixture = Fixture::new("engine-framing");
+    let _child = start(&fixture).await;
+    let mut at = Connection::session(&fixture).await;
+    at.output
+        .write_all(&framing::padded_status(5, framing::MAX_LINE))
+        .await
+        .unwrap();
+    let mut answered = Vec::new();
+    while !framing::answers(&answered, &[5]) {
+        answered.push(at.next().await.expect("the engine closed the connection"));
+    }
+    let mut over = Connection::session(&fixture).await;
+    // The engine may stop reading, and close, before it has all of it.
+    over.output
+        .write_all(&framing::oversized_between(6))
+        .await
+        .ok();
+    let mut unread = Vec::new();
+    while let Some(message) = over.next().await {
+        unread.push(message);
+    }
+    assert!(!framing::answers(&unread, &[7, 8]), "{unread:?}");
+    assert_eq!(at.status(9).await["lease"]["held_by_me"], false);
 }
 
 #[tokio::test]

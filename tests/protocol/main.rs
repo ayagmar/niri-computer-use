@@ -34,6 +34,8 @@ mod errors;
 #[cfg(test)]
 mod events;
 #[cfg(test)]
+mod framing;
+#[cfg(test)]
 mod guard;
 #[cfg(test)]
 mod lease;

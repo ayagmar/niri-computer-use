@@ -144,14 +144,43 @@ impl Session {
 /// to six bytes a character in JSON, with room to spare.
 pub(crate) const MAX_LINE: usize = 16 * 1024 * 1024;
 
+/// Counts a stream into lines and says when one is over `max` bytes, newline included,
+/// however the stream was split into reads.
+#[derive(Debug)]
+pub(crate) struct LineLimit {
+    max: usize,
+    /// Bytes counted since the last newline.
+    line: usize,
+}
+
+impl LineLimit {
+    pub(crate) const fn new(max: usize) -> Self {
+        Self { max, line: 0 }
+    }
+
+    /// Counts `read`. Returns whether every line it ends, and the one it leaves unfinished,
+    /// is within the limit so far.
+    pub(crate) fn count(&mut self, read: &[u8]) -> bool {
+        let mut rest = read;
+        while let Some(newline) = rest.iter().position(|byte| *byte == b'\n') {
+            if self.line.saturating_add(newline + 1) > self.max {
+                return false;
+            }
+            self.line = 0;
+            rest = rest.get(newline + 1..).unwrap_or_default();
+        }
+        self.line = self.line.saturating_add(rest.len());
+        self.line <= self.max
+    }
+}
+
 /// A client's input, which says when the client has gone: at its end, on a read error, on
 /// a line longer than `MAX_LINE`, which ends the session, or when the transport drops it.
 #[derive(Debug)]
 pub(crate) struct Incoming<R> {
     input: R,
     gone: Option<oneshot::Sender<()>>,
-    /// Bytes read since the last newline.
-    line: usize,
+    lines: LineLimit,
 }
 
 impl<R> Incoming<R> {
@@ -161,18 +190,9 @@ impl<R> Incoming<R> {
         let incoming = Self {
             input,
             gone: Some(gone),
-            line: 0,
+            lines: LineLimit::new(MAX_LINE),
         };
         (incoming, went)
-    }
-
-    /// Counts `read` into the current line. Returns whether the line is still short enough.
-    fn count(&mut self, read: &[u8]) -> bool {
-        self.line = match read.iter().rposition(|byte| *byte == b'\n') {
-            Some(newline) => read.len() - newline - 1,
-            None => self.line.saturating_add(read.len()),
-        };
-        self.line <= MAX_LINE
     }
 
     fn gone(&mut self) {
@@ -195,7 +215,10 @@ impl<R: AsyncRead + Unpin> AsyncRead for Incoming<R> {
             // Nothing read into room for something is the end.
             Poll::Ready(Ok(())) if room > 0 && buf.remaining() == room => self.gone(),
             Poll::Ready(Ok(())) => {
-                if !self.count(buf.filled().get(before..).unwrap_or_default()) {
+                if !self
+                    .lines
+                    .count(buf.filled().get(before..).unwrap_or_default())
+                {
                     // A read that fails reads nothing.
                     buf.set_filled(before);
                     self.gone();
@@ -244,6 +267,40 @@ mod tests {
         let (over, ended) = read_all(lines).await;
         assert_eq!(over.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
         assert!(ended);
+    }
+
+    #[tokio::test]
+    async fn a_line_over_the_limit_in_the_middle_of_a_read_ends_the_session() {
+        let mut lines = b"{}\n".to_vec();
+        lines.extend(vec![b'x'; MAX_LINE]);
+        lines.extend(b"\n{}\n");
+        let (over, ended) = read_all(lines).await;
+        assert_eq!(over.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+        assert!(ended);
+    }
+
+    #[test]
+    fn a_line_counts_with_its_newline_however_the_input_is_split() {
+        // At most four bytes a line, newline included.
+        let within = |input: &[u8]| {
+            let whole = LineLimit::new(4).count(input);
+            for split in 0..=input.len() {
+                let (first, second) = input.split_at(split);
+                let mut limit = LineLimit::new(4);
+                let split_within = limit.count(first) && limit.count(second);
+                assert_eq!(split_within, whole, "{input:?} split at {split}");
+            }
+            let mut limit = LineLimit::new(4);
+            let bytewise = input.iter().all(|byte| limit.count(&[*byte]));
+            assert_eq!(bytewise, whole, "{input:?} a byte at a time");
+            whole
+        };
+        assert!(within(b"abc\n"));
+        assert!(!within(b"abcd\n"));
+        // A line not yet finished may reach the limit, but not its newline after.
+        assert!(within(b"abcd"));
+        assert!(!within(b"ab\nabcd\nab\n"));
+        assert!(within(b"ab\nabc\na\nabc"));
     }
 
     #[test]

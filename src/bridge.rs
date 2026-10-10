@@ -27,7 +27,7 @@ use crate::control::runtime::RuntimeDir;
 use crate::engine::hello::{self, Exe, Hello, Reply};
 use crate::engine::host::{LOG, SOCKET};
 use crate::error::{ErrorName, ToolError};
-use crate::session::{Given, MAX_LINE};
+use crate::session::{Given, LineLimit, MAX_LINE};
 use crate::{Env, runner};
 use envelope::Message;
 
@@ -319,7 +319,9 @@ async fn read_line(input: &mut (impl tokio::io::AsyncBufRead + Unpin), max: usiz
     match (&mut *input).take(limit).read_until(b'\n', &mut line).await {
         Err(error) => Read::Broken(error.to_string()),
         Ok(0) => Read::End,
-        Ok(_) if line.len() > max => Read::Broken(format!("sent a line over {max} bytes")),
+        Ok(_) if !LineLimit::new(max).count(&line) => {
+            Read::Broken(format!("sent a line over {max} bytes"))
+        }
         Ok(_) => Read::Line(line),
     }
 }
