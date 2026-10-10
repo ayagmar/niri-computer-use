@@ -60,6 +60,8 @@ An open panel holds keyboard focus, so `focused_window` is null while it is open
 | `key` | `keys`, 1 to 16 combinations such as `["ctrl+s"]` or `["Down", "Down", "Return"]`, and `expect` | `sent` or `interrupted`; `focus`: `matched` or `unchecked`; if focus moves after a key the rest aren't pressed and `pressed` counts the ones that were |
 | `type_text` | `text` (1 to 1000 characters), `expect`, optionally `submit` | as for `key`; sent in parts of 100, and if focus moves during a part the rest isn't typed: `interrupted`, with `typed` counting the characters sent. With `submit: true`, Enter is pressed after the whole text and `submitted` says whether it was |
 
+The table's 100-character parts describe the default wtype backend. Experimental native input checks between individual key pairs and refuses missing symbols before typing. Native-only `keys` on click/drag/scroll is a list of up to five held modifiers (shift, ctrl, alt, altgr, super), not a list of combinations. Do not enable native yourself or work around a refusal. Both backend counts describe completed input, not application-confirmed delivery. No clipboard-preserving paste tool exists.
+
 A combination uses keysym names (`a`, `Return`, `Escape`, `F5`, `slash`, `Page_Down`) and the modifiers `shift`, `ctrl`, `alt`, `altgr` and `super`.
 
 Pixel coordinates are in the screenshot named by `screenshot_ref`, and a pixel targets its centre. A ref is good for 60 seconds and for the lease it was taken under.
