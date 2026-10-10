@@ -1,19 +1,19 @@
 //! The policy file, `$XDG_CONFIG_HOME/niri-computer-use/policy.toml`, and the decisions it
-//! feeds: launch presets, the app deny list, whether a server may take the lease, and
-//! which output setups the pointer tools may run on. Also the Noctalia panels the shell
+//! feeds: launch presets, the app deny list, where screenshots may be saved, whether a
+//! server may take the lease, and which output setups the pointer tools may run on. Also the Noctalia panels the shell
 //! tools may open, which no file changes.
 //! Everything here is pure; the caller reads the file. The preset rules catch common
 //! mistakes. They are a guardrail, not a boundary: a wrapper script or a symlink with
 //! another name gets past any list.
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use niri_ipc::{Output, Transform};
 use serde::{Deserialize, Serialize};
 
 use crate::control::LockState;
-use crate::error::{ErrorName, ToolError};
+use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::events::StreamState;
 use crate::niri::version::Compat;
 
@@ -87,6 +87,10 @@ pub(crate) struct Policy {
     pub(crate) deny_input_app_ids: Vec<String>,
     #[serde(default, rename = "preset")]
     pub(crate) presets: Vec<Preset>,
+    /// Where `screenshot` may save files: an absolute path or one under `~/`. Without it,
+    /// nothing is saved.
+    #[serde(default)]
+    pub(crate) capture_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -119,6 +123,8 @@ pub(crate) struct PolicyStatus {
     /// What `launch` takes.
     preset_names: Vec<String>,
     denied_app_ids: usize,
+    /// Where `screenshot`'s `save_path` writes, as the file says it; null when saving is off.
+    capture_dir: Option<String>,
     error: Option<String>,
 }
 
@@ -174,14 +180,94 @@ impl Loaded {
                     .collect()
             }),
             denied_app_ids: policy.map_or(0, |policy| policy.deny_input_app_ids.len()),
+            capture_dir: policy.and_then(|policy| policy.capture_dir.clone()),
             error,
         }
+    }
+
+    /// Where `screenshot` saves `save_path`: `save_not_enabled` without `capture_dir`, an
+    /// argument mistake for a path that breaks the rules.
+    pub(crate) fn save_target(
+        &self,
+        home: Option<&Path>,
+        save_path: &str,
+    ) -> Result<SaveTarget, CallError> {
+        let not_enabled = |detail: &str| ToolError::new(ErrorName::SaveNotEnabled, detail);
+        let Self::Valid(Policy {
+            capture_dir: Some(dir),
+            ..
+        }) = self
+        else {
+            return Err(not_enabled(
+                "saving screenshots is off: the policy file has no capture_dir",
+            )
+            .into());
+        };
+        let dir = match dir.strip_prefix("~/") {
+            Some(rest) => home
+                .ok_or_else(|| not_enabled("capture_dir starts with ~/ but HOME is not set"))?
+                .join(rest),
+            None => PathBuf::from(dir),
+        };
+        let path = SavePath::parse(save_path).map_err(CallError::InvalidArguments)?;
+        Ok(SaveTarget { dir, path })
+    }
+}
+
+/// Where a screenshot is saved: the capture directory, and a path checked to stay in it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SaveTarget {
+    pub(crate) dir: PathBuf,
+    pub(crate) path: SavePath,
+}
+
+/// A `save_path` that follows the rules: relative, made only of plain names, naming a
+/// `.png` file. Symlinks are for the writer to refuse, since only the filesystem knows them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SavePath {
+    /// The subdirectories, outermost first, which must already exist.
+    pub(crate) dirs: Vec<String>,
+    pub(crate) file: String,
+}
+
+impl SavePath {
+    pub(crate) fn parse(text: &str) -> Result<Self, String> {
+        if text.starts_with('/') {
+            return Err(format!(
+                "save_path {text:?} must be relative to capture_dir"
+            ));
+        }
+        let mut names: Vec<String> = Vec::new();
+        for name in text.split('/') {
+            if name.is_empty() || name == "." || name == ".." || name.contains('\0') {
+                return Err(format!(
+                    "save_path {text:?} must be plain names joined by /, without ., .. or empty parts"
+                ));
+            }
+            names.push(name.to_owned());
+        }
+        let file = names.pop().unwrap_or_default();
+        let png = Path::new(&file)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("png"));
+        if !png {
+            return Err(format!("save_path {text:?} must name a .png file"));
+        }
+        Ok(Self { dirs: names, file })
     }
 }
 
 /// Parses the file and checks every preset.
 pub(crate) fn parse(text: &str) -> Result<Policy, String> {
     let policy: Policy = toml::from_str(text).map_err(|error| error.to_string())?;
+    if let Some(dir) = &policy.capture_dir
+        && !Path::new(dir).is_absolute()
+        && dir.strip_prefix("~/").is_none_or(str::is_empty)
+    {
+        return Err(format!(
+            "capture_dir {dir:?} must be an absolute path or start with ~/"
+        ));
+    }
     let mut names = BTreeSet::new();
     for preset in &policy.presets {
         check(preset)?;
@@ -462,6 +548,84 @@ app_id = "foot"
             Loaded::Missing.preset("firefox").unwrap_err().detail,
             "no preset named \"firefox\"; the policy file has []"
         );
+    }
+
+    #[test]
+    fn saving_needs_a_capture_dir_in_the_file() {
+        let home = Some(Path::new("/home/u"));
+        for loaded in [
+            Loaded::Missing,
+            Loaded::Valid(parse(EXAMPLE).unwrap()),
+            Loaded::Invalid("bad".to_owned()),
+        ] {
+            let Err(CallError::Tool(error)) = loaded.save_target(home, "a.png") else {
+                panic!("saved without capture_dir");
+            };
+            assert_eq!(error.name, ErrorName::SaveNotEnabled);
+        }
+        let tilde = Loaded::Valid(parse("capture_dir = \"~/Pictures/agent-shots\"").unwrap());
+        assert_eq!(
+            tilde.save_target(home, "readme/one.png"),
+            Ok(SaveTarget {
+                dir: PathBuf::from("/home/u/Pictures/agent-shots"),
+                path: SavePath {
+                    dirs: vec!["readme".to_owned()],
+                    file: "one.png".to_owned(),
+                },
+            })
+        );
+        assert!(matches!(
+            tilde.save_target(None, "a.png"),
+            Err(CallError::Tool(ToolError {
+                name: ErrorName::SaveNotEnabled,
+                ..
+            }))
+        ));
+        assert!(matches!(
+            tilde.save_target(home, "/etc/a.png"),
+            Err(CallError::InvalidArguments(_))
+        ));
+        let absolute = Loaded::Valid(parse("capture_dir = \"/srv/shots\"").unwrap());
+        assert_eq!(
+            absolute.save_target(home, "a.png").unwrap().dir,
+            PathBuf::from("/srv/shots")
+        );
+        assert_eq!(absolute.status().capture_dir.as_deref(), Some("/srv/shots"));
+        for relative in ["shots", "~", "~/", "~user/shots", ""] {
+            let file = format!("capture_dir = {relative:?}");
+            assert!(
+                parse(&file).unwrap_err().contains("absolute"),
+                "{relative:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_save_path_stays_inside_the_capture_dir_and_names_a_png() {
+        assert_eq!(
+            SavePath::parse("shot.png"),
+            Ok(SavePath {
+                dirs: Vec::new(),
+                file: "shot.png".to_owned()
+            })
+        );
+        assert_eq!(SavePath::parse("a/b/c.png").unwrap().dirs, ["a", "b"]);
+        assert!(SavePath::parse("Shot.PNG").is_ok());
+        for refused in [
+            "/tmp/x.png",
+            "../x.png",
+            "a/../../x.png",
+            "./x.png",
+            "a//x.png",
+            "a/",
+            "",
+            ".png",
+            "x.jpg",
+            "x.png/",
+            "x\0.png",
+        ] {
+            assert!(SavePath::parse(refused).is_err(), "{refused:?}");
+        }
     }
 
     #[test]

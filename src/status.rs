@@ -191,6 +191,7 @@ mod tests {
                 "audit": {"path": null, "last_error": "neither XDG_STATE_HOME nor HOME is set"},
                 "policy": {
                     "state": "missing", "presets": 0, "preset_names": [], "denied_app_ids": 0,
+                    "capture_dir": null,
                     "error": null
                 },
                 "binaries": {

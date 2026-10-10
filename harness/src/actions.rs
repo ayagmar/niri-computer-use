@@ -40,6 +40,7 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
         "M3: holds the lease as {}",
         field(&holder, "/holder/label")
     ))?;
+    saves(session, &mut client)?;
     let late = launches(session, &mut client)?;
     reuses(session, &mut client, late)?;
     focuses(session, &mut client, late)?;
@@ -50,11 +51,16 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
     noctalia.stop().map(drop)
 }
 
-/// The presets, each starting this harness as a fixture window.
+/// The presets, each starting this harness as a fixture window, and a capture directory
+/// under `TEST_DIR`.
 fn write_policy(session: &Session<'_>) -> Result<()> {
     let started = session.test_dir().root().join("slow-started");
     let started = started.to_string_lossy();
-    write_presets(
+    let shots = session.test_dir().root().join("shots");
+    // A JSON string is a valid TOML basic string.
+    let capture_dir =
+        serde_json::to_string(&shots.to_string_lossy()).context("encode capture_dir")?;
+    let presets = presets(
         session,
         &[
             ("late", &["--late", "400"]),
@@ -64,6 +70,10 @@ fn write_policy(session: &Session<'_>) -> Result<()> {
             ("keep", &["--keep-open"]),
             ("slow", &["--delay", SLOW_DELAY, "--started", &started]),
         ],
+    )?;
+    write_file(
+        session,
+        &format!("capture_dir = {capture_dir}\n\n{presets}"),
     )
 }
 
@@ -71,6 +81,11 @@ fn write_policy(session: &Session<'_>) -> Result<()> {
 /// fixture window with that `app_id` and the extra arguments. The server reads the file
 /// once, when it starts.
 pub(crate) fn write_presets(session: &Session<'_>, presets: &[(&str, &[&str])]) -> Result<()> {
+    write_file(session, &self::presets(session, presets)?)
+}
+
+/// The policy file's `[[preset]]` tables, one per entry.
+fn presets(session: &Session<'_>, presets: &[(&str, &[&str])]) -> Result<String> {
     let harness = std::env::current_exe().context("find the harness binary")?;
     let harness = harness
         .to_str()
@@ -91,11 +106,14 @@ pub(crate) fn write_presets(session: &Session<'_>, presets: &[(&str, &[&str])]) 
             ))
         })
         .collect::<Result<Vec<String>>>()?;
-    let policy = entries.join("\n");
+    Ok(entries.join("\n"))
+}
+
+fn write_file(session: &Session<'_>, policy: &str) -> Result<()> {
     let dir = session.test_dir().config().join("niri-computer-use");
     fs::create_dir_all(&dir).context(format!("create {}", dir.display()))?;
     let path = dir.join("policy.toml");
-    fs::write(&path, &policy).context(format!("write {}", path.display()))?;
+    fs::write(&path, policy).context(format!("write {}", path.display()))?;
     fs::write(session.artifact("policy.toml"), policy).context("copy the policy file")
 }
 
@@ -108,6 +126,58 @@ fn ready(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
         field(&status, "/lock"),
         field(&status, "/policy/preset_names")
     ))
+}
+
+/// `save_path` writes a PNG at the output's own scale whatever `max_width` is, and a
+/// second save to the same name is refused, leaving the first.
+fn saves(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
+    let outputs = structured(&client.call(session, "outputs", json!({}))?)?;
+    let logical = field(&outputs, "/winit/logical");
+    let expected = (scaled(logical, "width")?, scaled(logical, "height")?);
+    let args = json!({"target": "focused_output", "max_width": 320, "save_path": "full.png"});
+    let shot = structured(&client.call(session, "screenshot", args.clone())?)?;
+    let path = session.test_dir().root().join("shots/full.png");
+    let saved = fs::read(&path).context(format!("read {}", path.display()))?;
+    let size = crate::image_header::png_size(&saved);
+    expect(
+        size == Some(expected)
+            && field(&shot, "/saved/width") == expected.0
+            && field(&shot, "/saved/height") == expected.1
+            && field(&shot, "/width") == 320,
+        &format!("a saved {expected:?} PNG beside a 320-wide image, the file {size:?}"),
+        &shot.to_string(),
+    )?;
+    let again = client.call(session, "screenshot", args)?;
+    expect(
+        field(&again, "/isError") == true
+            && field(&again, "/content/0/text")
+                .as_str()
+                .is_some_and(|text| text.contains("already exists"))
+            && fs::read(&path).ok().as_ref() == Some(&saved),
+        "a second save to the same name is refused",
+        &again.to_string(),
+    )?;
+    session.log(&format!(
+        "M3: screenshot saved {expected:?} at {}: {shot}",
+        path.display()
+    ))
+}
+
+/// One side of a logical output in image pixels at its own scale, truncated as grim does.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "matches grim's `int width = logical width × scale`"
+)]
+fn scaled(logical: &Value, side: &str) -> Result<u32> {
+    let length = field(logical, &format!("/{side}")).as_f64();
+    let scale = field(logical, "/scale").as_f64();
+    match (length, scale) {
+        (Some(length), Some(scale)) => Ok((length * scale) as u32),
+        _ => Err(Failure::new(format!(
+            "M3: winit has no logical {side}: {logical}"
+        ))),
+    }
 }
 
 /// A late `app_id` still counts as `one`; two windows at once are `ambiguous`. Returns

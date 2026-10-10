@@ -28,7 +28,7 @@ target/debug/niri-computer-use status
 | `status` | the niri instance, niri's version and whether this build supports it, whether niri's event stream is connected, who holds the lease, the stop flag, the policy file, the lock state, whether Noctalia is running, and which required programs are on `PATH` |
 | `desktop_state` | windows, workspaces, the focused window, whether the overview is open, and the keyboard layouts, as one snapshot |
 | `outputs` | niri's outputs: modes, logical position and size, scale and transform |
-| `screenshot` | an image of one output or of a region inside one output, with its geometry. JPEG, at most 1280 image pixels wide by default |
+| `screenshot` | an image of one output or of a region inside one output, with its geometry. JPEG, at most 1280 image pixels wide by default. With `save_path` and a `capture_dir` in the policy file, it also writes a full-resolution PNG there |
 | `clipboard_read` | the clipboard's text, or why there is none |
 | `shell_status` | Noctalia's status: bar, open panel and lock screen. Only listed when `noctalia` is on `PATH` |
 | `wait_for` | waits until a window appears, closes or changes its title, or the screen stops changing, for up to 30 seconds |
@@ -45,7 +45,7 @@ target/debug/niri-computer-use status
 
 The action, input and shell tools require the lease and check the stop flag, the input-dirty marker and the lock state again before each action; a stop cancels the running one. Each result has `accepted`, whether niri or Noctalia took the request, and `observed`, what niri's event stream or Noctalia's status showed afterwards, including `interrupted` when focus went elsewhere during the wait and `uncertain` when the reply was lost; for input, `sent` once niri handled it. An outcome in doubt comes with a fresh screenshot of the focused output, and any action asked with `screenshot: true` comes with one taken once the screen stopped changing. Nothing is retried.
 
-Failures set `isError` and return `{"error": <name>, "detail": <upstream detail>}`. The names so far are `niri_unavailable`, `deadline_exceeded`, `upstream_error`, `noctalia_unavailable`, `lease_held`, `lease_required`, `stopped`, `recovery_required`, `read_only`, `screen_locked`, `unknown_preset`, `ref_invalid`, `untested_output_config`, `app_denied`, `focus_mismatch`, `text_too_long`, `panel_not_allowed` and `clipboard_unsaved`. A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and a plain-text message instead.
+Failures set `isError` and return `{"error": <name>, "detail": <upstream detail>}`. The names so far are `niri_unavailable`, `deadline_exceeded`, `upstream_error`, `noctalia_unavailable`, `lease_held`, `lease_required`, `stopped`, `recovery_required`, `read_only`, `screen_locked`, `unknown_preset`, `ref_invalid`, `untested_output_config`, `app_denied`, `focus_mismatch`, `text_too_long`, `panel_not_allowed`, `clipboard_unsaved` and `save_not_enabled`. A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and a plain-text message instead.
 
 ## Policy file
 
@@ -53,6 +53,7 @@ Failures set `isError` and return `{"error": <name>, "detail": <upstream detail>
 
 ```toml
 deny_input_app_ids = ["org.keepassxc.KeePassXC"]
+capture_dir = "~/Pictures/agent-shots"
 
 [[preset]]
 name = "firefox"
@@ -61,6 +62,8 @@ app_id = "firefox"
 ```
 
 A preset may not start a shell, an interpreter, `env`, `sudo` or another program that runs any command it is given, nor a terminal with arguments, not even `--app-id`, because terminals run trailing arguments as a command; a desktop file started with `gtk-launch` gives a terminal its own `app_id`. These rules catch common mistakes; they are a guardrail, not a boundary, since a wrapper script gets past any list. If the file breaks a rule or doesn't parse, `status` reports it as `invalid` and `acquire_desktop` and the action tools refuse with `read_only` until it is fixed and the server restarted. `launch` takes a preset's `name` and starts its `argv` through niri; `status` lists the names. The input tools refuse with `app_denied` while the focused window's `app_id` is on `deny_input_app_ids`, even with `expect: "none"`. This is a focus-based, best-effort guardrail, not target isolation: a pointer can hit a different, denied window while an allowed app has focus, and app IDs are self-reported. For high-assurance restrictions, use a separate desktop containing only approved applications.
+
+`capture_dir` turns on saving screenshots; it is off when the key is absent, and `screenshot` then refuses `save_path` with `save_not_enabled`. It is an absolute path or one starting with `~/`, and `status` shows it. `save_path` is relative to it, made only of plain names (no `..`, `.` or leading `/`), and names a `.png` file. The directory is created with mode `0700` if it is missing; subdirectories in `save_path` must already exist. Subdirectories are opened without following symlinks, and the file is created new with mode `0600` without following a symlink at its name, so a save can't leave the directory or replace a file. The saved PNG is a separate capture at the output's own scale, taken just before the image the tool returns, so `max_width` doesn't shrink it; `saved` in the result gives its path and pixel size.
 
 ## Observation and input limits
 

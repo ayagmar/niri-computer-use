@@ -49,6 +49,8 @@ pub(crate) enum ErrorName {
     PanelNotAllowed,
     /// `paste` couldn't save the clipboard whole, so it pasted nothing.
     ClipboardUnsaved,
+    /// `screenshot` was asked to save without a `capture_dir` in the policy file.
+    SaveNotEnabled,
 }
 
 /// A failure, serialized as `{"error": <name>, "detail": <upstream detail>}`.

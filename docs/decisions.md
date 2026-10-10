@@ -507,3 +507,10 @@ These match the versions installed locally.
 - A read proves only that some client asked for the text after the key: a `send` names no client. The keeper offers the text with `x-kde-passwordManagerHint: secret` so clipboard managers that honour it don't read or keep it; Noctalia's does, by the log line its binary has ("ignoring clipboard selection: password-hint MIME advertised").
 - In the nested session Noctalia's clipboard service adopts the last selection whenever the clipboard goes empty, so `wl-copy --clear` can't empty it once something was copied. The empty-clipboard check therefore runs before the suite's first copy.
 - The harness's clipboard owner uses ext-data-control, through the `staging` feature of the harness's existing `wayland-protocols` 0.32.13, so the nested test also shows the two data-control protocols share one selection. No crate was added.
+
+## 2026-10-10: saving screenshots
+
+- `screenshot` writes a file only when the policy file sets `capture_dir`. Agents without a shell otherwise have no way to write files, so it is opt-in and off by default.
+- The saved PNG is its own capture at the output's scale rather than the returned image re-encoded, because downscaling happens in grim and the server decodes no images. That costs one more grim call (about 14 to 100 ms on a 2560-wide output, see Screenshots) and lets the two images differ by a few milliseconds.
+- The path is confined with `openat` and `O_NOFOLLOW` through the existing `rustix` `fs` feature, not by canonicalizing and comparing prefixes, which a symlink swapped in between could get past. No new dependency.
+- `screenshot` keeps `read_only_hint: true`: the hint describes the desktop, and a save only adds a new file in a directory the user chose.
