@@ -27,7 +27,7 @@ const OWNER_DEADLINE: Duration = Duration::from_secs(60);
 const QUIET: Duration = Duration::from_secs(1);
 
 /// Each type the clipboard offers, in order, with its bytes.
-type Offered = Vec<(String, Vec<u8>)>;
+pub(super) type Offered = Vec<(String, Vec<u8>)>;
 
 pub(super) fn run(
     session: &mut Session<'_>,
@@ -62,6 +62,24 @@ pub(super) fn run(
 
 /// Starts the clipboard owner and waits until the clipboard offers its types.
 fn own(session: &mut Session<'_>, backend: &str) -> Result<(Process, Offered)> {
+    let owner = copy(session, backend)?;
+    let expected = owners_copy();
+    session.wait_until("m7-paste-owner", "the owner's clipboard", WAIT, |session| {
+        Ok((offered(session)? == expected).then_some(()))
+    })?;
+    Ok((owner, expected))
+}
+
+/// What the clipboard owner offers.
+pub(super) fn owners_copy() -> Offered {
+    TYPES
+        .iter()
+        .map(|(mime, bytes)| ((*mime).to_owned(), bytes.to_vec()))
+        .collect()
+}
+
+/// Starts the clipboard owner, which takes the selection, with its log named after `label`.
+pub(super) fn copy(session: &Session<'_>, label: &str) -> Result<Process> {
     let cancelled = session.test_dir().root().join(CANCELLED);
     if cancelled.exists() {
         fs::remove_file(&cancelled).context("remove the owner's cancel note")?;
@@ -75,20 +93,12 @@ fn own(session: &mut Session<'_>, backend: &str) -> Result<(Process, Offered)> {
     let program = harness
         .to_str()
         .ok_or_else(|| Failure::new("the harness path isn't UTF-8"))?;
-    let owner = session.start(
+    session.start(
         program,
         &args,
-        session.artifact(&format!("clipboard-{backend}.log")),
+        session.artifact(&format!("clipboard-{label}.log")),
         OWNER_DEADLINE,
-    )?;
-    let expected: Offered = TYPES
-        .iter()
-        .map(|(mime, bytes)| ((*mime).to_owned(), bytes.to_vec()))
-        .collect();
-    session.wait_until("m7-paste-owner", "the owner's clipboard", WAIT, |session| {
-        Ok((offered(session)? == expected).then_some(()))
-    })?;
-    Ok((owner, expected))
+    )
 }
 
 /// A wrong `expect` and the stop flag both refuse, and leave everything as it was.
@@ -167,21 +177,26 @@ pub(super) fn empty(session: &mut Session<'_>, client: &mut Client, backend: &st
 
 /// The clipboard's types and each one's bytes, read with `wl-paste` in the nested
 /// session; empty when nothing is copied.
-fn offered(session: &Session<'_>) -> Result<Offered> {
-    let listed = session.run("wl-paste", &["--list-types".into()]);
-    let listed = match listed {
-        Ok(output) => String::from_utf8(output.stdout).context("wl-paste's types")?,
-        Err(failure) if failure.to_string().contains("Nothing is copied") => {
-            return Ok(Offered::new());
-        }
-        Err(failure) => return Err(failure),
-    };
-    listed
-        .lines()
+pub(super) fn offered(session: &Session<'_>) -> Result<Offered> {
+    listed(session)?
+        .iter()
         .map(|mime| {
             let args = ["--no-newline".into(), "--type".into(), mime.into()];
             let output = session.run("wl-paste", &args)?;
-            Ok((mime.to_owned(), output.stdout))
+            Ok((mime.clone(), output.stdout))
         })
         .collect()
+}
+
+/// The clipboard's types, without reading any of them; empty when nothing is copied.
+pub(super) fn listed(session: &Session<'_>) -> Result<Vec<String>> {
+    match session.run("wl-paste", &["--list-types".into()]) {
+        Ok(output) => Ok(String::from_utf8(output.stdout)
+            .context("wl-paste's types")?
+            .lines()
+            .map(str::to_owned)
+            .collect()),
+        Err(failure) if failure.to_string().contains("Nothing is copied") => Ok(Vec::new()),
+        Err(failure) => Err(failure),
+    }
 }

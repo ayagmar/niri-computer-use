@@ -29,6 +29,7 @@ mod scale;
 mod session;
 mod shell;
 mod sitting;
+mod slow_reader;
 mod snapshot;
 mod supervise;
 mod test_dir;
@@ -49,6 +50,7 @@ const USAGE: &str = "usage: harness run [--visible] [--scale <scale>] [--ssd] [-
        harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--started <file>]
        harness keymaps <TEST_DIR> <directory> <deadline-ms>
        harness clipboard <TEST_DIR> <deadline-ms>
+       harness slow-reader <TEST_DIR> <delay-ms> <deadline-ms>
        harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--ssd] [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --a11y <server> | --eval <server> <scenario> <skill|none> <model>]";
 
 fn main() -> ExitCode {
@@ -79,6 +81,7 @@ fn dispatch(args: &[OsString]) -> Result<()> {
         ["window", options @ ..] => window::run(&window::Options::parse(options)?),
         ["keymaps", options @ ..] => keymaps::run(options),
         ["clipboard", options @ ..] => clipboard::run(options),
+        ["slow-reader", options @ ..] => slow_reader::run(options),
         ["host-capture", output] => {
             interrupt::install()?;
             capture::host(output)

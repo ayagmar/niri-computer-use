@@ -3,7 +3,8 @@
 //! the reads that start after the server's `k`, and restores the saved selection once the
 //! target has read and gone quiet, or at once when the server's stdin ends. It then serves
 //! the restored selection, without a deadline, until another client takes it or niri goes
-//! away. Each step until then, and each transfer, has a deadline.
+//! away. Each step until then, and each transfer, has a deadline; the keeper ends only
+//! once every transfer it accepted has finished or reached its deadline.
 
 use std::io::Write as _;
 use std::os::fd::AsFd as _;
@@ -12,6 +13,7 @@ use std::time::Duration;
 
 use tokio::io::AsyncReadExt as _;
 use tokio::net::unix::pipe;
+use tokio::task::JoinSet;
 use tokio::time::Instant;
 
 use super::paste::{Clipboard, MAX_TEXT, Report};
@@ -55,7 +57,9 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
         }
     };
     say(&Report::Ready);
-    let (read, clipboard, detail) = match watch(&mut selection, &mut commands, paste, &text).await {
+    let mut transfers = Transfers::default();
+    let watched = watch(&mut selection, &mut commands, paste, &text, &mut transfers).await;
+    let (read, clipboard, detail) = match watched {
         Err(detail) => (false, Clipboard::Failed, Some(detail)),
         Ok(watched) if watched.replaced => (watched.reads > 0, Clipboard::Replaced, None),
         Ok(watched) => {
@@ -69,9 +73,11 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
                         detail: None,
                     });
                     // Nobody waits for this; it ends with the selection or with niri.
-                    serve(&mut selection, restored, &saved.unwrap_or_default())
+                    let saved = saved.unwrap_or_default();
+                    serve(&mut selection, restored, &saved, &mut transfers)
                         .await
                         .ok();
+                    transfers.finish().await;
                     return Ok(());
                 }
                 Err(detail) => (read, Clipboard::Failed, Some(detail)),
@@ -83,6 +89,7 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
         clipboard,
         detail,
     });
+    transfers.finish().await;
     Ok(())
 }
 
@@ -154,6 +161,7 @@ async fn watch(
     commands: &mut Commands,
     paste: SourceId,
     text: &Arc<[u8]>,
+    transfers: &mut Transfers,
 ) -> Result<Watched, String> {
     let started = Instant::now();
     let mut watched = Watched::default();
@@ -172,7 +180,7 @@ async fn watch(
                             watched.latest = Some(Instant::now());
                         }
                         let bytes = if mime == HINT { SECRET.into() } else { Arc::clone(text) };
-                        spawn_transfer(fd, bytes);
+                        transfers.spawn(fd, bytes);
                     }
                     Event::Cancelled(source) if source == paste => {
                         watched.replaced = true;
@@ -209,12 +217,13 @@ async fn serve(
     selection: &mut Selection,
     restored: SourceId,
     saved: &Contents,
+    transfers: &mut Transfers,
 ) -> Result<(), String> {
     loop {
         match selection.next().await.map_err(|error| error.detail)? {
             Event::Send { source, mime, fd } if source == restored => {
                 if let Some((_, bytes)) = saved.iter().find(|(offered, _)| *offered == mime) {
-                    spawn_transfer(fd, Arc::clone(bytes));
+                    transfers.spawn(fd, Arc::clone(bytes));
                 }
             }
             Event::Cancelled(source) if source == restored => return Ok(()),
@@ -223,10 +232,24 @@ async fn serve(
     }
 }
 
-/// Writes to a reader in a task of its own, so a slow reader holds nothing else up. A
-/// reader that goes away just ends its transfer.
-fn spawn_transfer(fd: std::os::fd::OwnedFd, bytes: Arc<[u8]>) {
-    tokio::spawn(async move { selection::write(fd, &bytes, TRANSFER).await.ok() });
+/// The transfers this keeper accepted. Ending the process would cut them short, so it
+/// waits for each to finish or reach its own deadline first.
+#[derive(Debug, Default)]
+struct Transfers(JoinSet<()>);
+
+impl Transfers {
+    /// Writes to a reader in a task of its own, so a slow reader holds nothing else up. A
+    /// reader that goes away just ends its transfer.
+    fn spawn(&mut self, fd: std::os::fd::OwnedFd, bytes: Arc<[u8]>) {
+        while self.0.try_join_next().is_some() {}
+        self.0.spawn(async move {
+            selection::write(fd, &bytes, TRANSFER).await.ok();
+        });
+    }
+
+    async fn finish(mut self) {
+        while self.0.join_next().await.is_some() {}
+    }
 }
 
 /// Writes one report line. A server that went away reads nothing more, and its stdin's
