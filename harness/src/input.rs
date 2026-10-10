@@ -12,6 +12,7 @@ mod native_gestures;
 mod native_unicode;
 mod scrolling;
 mod stop;
+mod text_entry;
 
 use std::ffi::OsString;
 use std::fs;
@@ -82,6 +83,7 @@ pub(crate) fn run(session: &mut Session<'_>, output: &LogicalOutput, server: &st
     process.stop()?;
     scrolling::run(session, &mut client)?;
     activation::run(session, &mut client)?;
+    text_entry::run(session, &mut client, server)?;
     client.stop()?;
     noctalia.stop().map(drop)
 }

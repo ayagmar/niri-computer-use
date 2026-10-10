@@ -9,35 +9,15 @@ use serde_json::json;
 use super::{Shot, send};
 use crate::failure::{Context as _, Failure, Result};
 use crate::mcp::{Client, field, structured};
+use crate::runner::Process;
 use crate::session::Session;
 
 const TRIALS: u32 = 100;
 
 pub(super) fn run(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
-    let probe = [
-        "-I",
-        "-c",
-        "import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk",
-    ]
-    .map(OsString::from);
-    if let Err(error) = session.run("python3", &probe) {
-        return session.log(&format!(
-            "A05 GTK activation: skipped (Python GTK 4 unavailable: {error})"
-        ));
-    }
-    let fixture = session.test_dir().root().join("button.py");
-    fs::write(&fixture, include_str!("../../fixtures/button.py")).context("write GTK fixture")?;
-    let args = vec![
-        "-I".into(),
-        fixture.into(),
-        session.test_dir().root().into(),
-    ];
-    let process = session.start(
-        "python3",
-        &args,
-        session.artifact("button.log"),
-        Duration::from_secs(45),
-    )?;
+    let Some(process) = start_fixture(session, "button", "A05 GTK activation")? else {
+        return Ok(());
+    };
     structured(&client.call(session, "acquire_desktop", json!({}))?)?;
     let centre = session.wait_until(
         "gtk-ready",
@@ -91,4 +71,40 @@ pub(super) fn run(session: &mut Session<'_>, client: &mut Client) -> Result<()> 
     session.log(&format!("A05 GTK button: {TRIALS}/{TRIALS} actual activations; tool-to-observed-counter us p50={} p95={} p99={}", sample(49)?, sample(94)?, sample(98)?))?;
     structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     process.stop().map(drop)
+}
+
+/// Starts the GTK fixture in `mode`, or logs that `check` is skipped without GTK 4.
+pub(super) fn start_fixture(
+    session: &mut Session<'_>,
+    mode: &str,
+    check: &str,
+) -> Result<Option<Process>> {
+    let probe = [
+        "-I",
+        "-c",
+        "import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk",
+    ]
+    .map(OsString::from);
+    if let Err(error) = session.run("python3", &probe) {
+        session.log(&format!(
+            "{check}: skipped (Python GTK 4 unavailable: {error})"
+        ))?;
+        return Ok(None);
+    }
+    let fixture = session.test_dir().root().join("gtk.py");
+    fs::write(&fixture, include_str!("../../fixtures/gtk.py")).context("write GTK fixture")?;
+    let args = vec![
+        "-I".into(),
+        fixture.into(),
+        session.test_dir().root().into(),
+        mode.into(),
+    ];
+    session
+        .start(
+            "python3",
+            &args,
+            session.artifact(&format!("{mode}.log")),
+            Duration::from_secs(45),
+        )
+        .map(Some)
 }
