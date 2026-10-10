@@ -529,6 +529,7 @@ These match the versions installed locally.
 - Role and state names are AT-SPI's own (`atspi-constants.h`) in snake case, such as `push_button_menu` or `check_box`, so they match what other AT-SPI tools show. An unknown `role` argument is an argument mistake.
 - An element's place is `output origin + tile position + window offset in the tile + its WINDOW-relative extents`. It is trusted only when the app's accessible frame is niri's window size, within a pixel. A frame of another size, as with client-side decorations that draw shadows, makes every element of that window `unmappable: frame_size_mismatch` rather than a guess.
 - New error names: `not_accessible` when the window's application has no accessible window for it, and `ambiguous_window` when several of its windows fit.
+- A walk that runs out of the three-second budget after reading its first object returns what it read, with `capped: true` and `capped_reason: budget_exhausted`, instead of `deadline_exceeded` with nothing. Each object costs six D-Bus calls, so a browser or office document's tree ran out of time long before the 2000-object cap and lost everything already read. A deadline at the first object is still `deadline_exceeded`: that is a hung app. `role`, `name_contains` and `limit` go into the walk, which stops once it found one more match than `limit`. Added after Fable's review (B3).
 
 ## 2026-10-10: aiming at elements
 

@@ -7,7 +7,7 @@ use niri_ipc::Window;
 use serde::Serialize;
 
 use crate::a11y::model::{self, Extents, Filter, Fresh, LayoutBox, Placement, Refused, Unmappable};
-use crate::a11y::{self, A11y, ElementRef, Failed};
+use crate::a11y::{self, A11y, Capped, ElementRef, Failed, Node, Want};
 use crate::coords::LayoutPt;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri;
@@ -31,8 +31,10 @@ pub(crate) struct Listing {
     pub(crate) truncated: bool,
     /// How many accessible objects the walk read.
     pub(crate) walked: usize,
-    /// The walk stopped at its node cap, so elements further on are missing.
+    /// The walk stopped early, so elements further on are missing.
     pub(crate) capped: bool,
+    /// Why: `node_cap`, or `budget_exhausted` when the request's time ran out.
+    pub(crate) capped_reason: Option<Capped>,
 }
 
 /// One element.
@@ -99,13 +101,12 @@ pub(crate) async fn list(
     let frame = request
         .frame(&app, window.layout.window_size, window.title.as_deref())
         .await?;
-    let walked = request.walk(&app.bus, &frame.node).await?;
-    let mut matching = walked.nodes.iter().filter(|node| {
-        let role = model::role_name(node.role);
-        node.states.has(model::State::Showing)
-            && (ask.filter.role.is_some() || !node.name.is_empty() || !node.actions.is_empty())
-            && ask.filter.matches(role, &node.name)
-    });
+    let want = Want {
+        wanted: ask.limit,
+        matches: |node: &Node| listed(&ask.filter, node),
+    };
+    let walked = request.walk(&app.bus, &frame.node, want).await?;
+    let mut matching = walked.nodes.iter().filter(|node| listed(&ask.filter, node));
     let mut elements = Vec::new();
     for node in matching.by_ref().take(ask.limit) {
         let placement = Placement {
@@ -145,8 +146,17 @@ pub(crate) async fn list(
         truncated: matching.next().is_some(),
         elements,
         walked: walked.nodes.len(),
-        capped: walked.capped,
+        capped: walked.capped.is_some(),
+        capped_reason: walked.capped,
     })
+}
+
+/// Whether `elements` lists `node`: showing, matching the filter, and with a name or
+/// actions unless a role was asked for.
+fn listed(filter: &Filter, node: &Node) -> bool {
+    node.states.has(model::State::Showing)
+        && (filter.role.is_some() || !node.name.is_empty() || !node.actions.is_empty())
+        && filter.matches(model::role_name(node.role), &node.name)
 }
 
 /// Where to aim at `element` now: the centre of its box, from niri's geometry and the

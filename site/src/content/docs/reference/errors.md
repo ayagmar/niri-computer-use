@@ -161,7 +161,7 @@ These mean niri, a program or Noctalia didn't answer as expected. Report the nam
 
 **Cause:** niri, a program or an app didn't answer in time: two seconds for niri and `wl-paste`, five for `grim`, three for an `elements` walk.
 
-**What to do:** check whether niri or the app is stuck. A stopped app makes `elements` time out.
+**What to do:** check whether niri or the app is stuck. A stopped app makes `elements` time out; a large tree that is only slow gives a partial listing with `capped_reason: "budget_exhausted"` instead.
 
 ### `upstream_error`
 

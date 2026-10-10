@@ -1,12 +1,15 @@
 //! The bounded walk of one window's accessible tree, over any source of nodes. It visits
 //! nodes depth first in document order, goes into a node's children only while the node
-//! is showing, and stops after a fixed number of nodes, so a huge or hidden tree can't
+//! is showing, and stops after a fixed number of nodes, once it has found more nodes than
+//! were asked for, or when the request's time runs out, so a huge or hidden tree can't
 //! hold the request.
 
 use std::future::Future;
 
+use serde::Serialize;
+
 use super::model::{Extents, States};
-use crate::error::ToolError;
+use crate::error::{ErrorName, ToolError};
 
 /// One accessible object, as the walk read it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,36 +33,68 @@ pub(crate) trait Source: Sync {
     fn node(&self, path: &str) -> impl Future<Output = Result<Option<Node>, ToolError>> + Send;
 }
 
+/// Why a walk ended with nodes left to read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Capped {
+    /// It read as many nodes as it may.
+    NodeCap,
+    /// The request's time ran out after the first node.
+    BudgetExhausted,
+}
+
 /// The nodes under a root, in document order, without the root.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Walked {
     pub(crate) nodes: Vec<Node>,
-    /// The walk stopped at the node cap with nodes left to read.
-    pub(crate) capped: bool,
+    /// Set when the walk stopped early with nodes left that might have matched.
+    pub(crate) capped: Option<Capped>,
+}
+
+/// What the walk is looking for: nodes for which `matches` holds, and how many of them
+/// are wanted. The walk stops once it found one more than `wanted`, which is enough to
+/// know there are more.
+pub(crate) struct Want<F> {
+    pub(crate) wanted: usize,
+    pub(crate) matches: F,
 }
 
 /// Reads at most `cap` nodes under `root`, depth first, going into the children of
-/// showing nodes only. A node that is gone by the time it is read is skipped; any other
-/// failure ends the walk with it.
-pub(crate) async fn walk(
+/// showing nodes only, and stops early once `want` has more than it asked for. A node that
+/// is gone by the time it is read is skipped. A deadline after the first node ends the
+/// walk with the nodes read so far, `BudgetExhausted`; at the first node it is the error,
+/// as for a hung app. Any other failure ends the walk with it.
+pub(crate) async fn walk<F: Fn(&Node) -> bool + Sync>(
     source: &impl Source,
     root: &Node,
     cap: usize,
+    want: Want<F>,
 ) -> Result<Walked, ToolError> {
     let mut walked = Walked::default();
+    let mut found = 0;
     let mut pending: Vec<String> = root.children.iter().rev().cloned().collect();
     while let Some(path) = pending.pop() {
         if walked.nodes.len() == cap {
-            walked.capped = true;
+            walked.capped = Some(Capped::NodeCap);
             break;
         }
-        let Some(node) = source.node(&path).await? else {
-            continue;
+        let node = match source.node(&path).await {
+            Ok(Some(node)) => node,
+            Ok(None) => continue,
+            Err(error) if error.name == ErrorName::DeadlineExceeded && !walked.nodes.is_empty() => {
+                walked.capped = Some(Capped::BudgetExhausted);
+                break;
+            }
+            Err(error) => return Err(error),
         };
         if node.states.has(super::model::State::Showing) {
             pending.extend(node.children.iter().rev().cloned());
         }
+        found += usize::from((want.matches)(&node));
         walked.nodes.push(node);
+        if found > want.wanted {
+            break;
+        }
     }
     Ok(walked)
 }
@@ -74,16 +109,18 @@ mod tests {
     const SHOWING: u32 = (1 << 25) | (1 << 30);
 
     /// An in-memory tree: path → (showing, children). Missing paths are gone; `/hung`
-    /// fails as a hung app would.
+    /// fails as a hung app or a spent budget would, and `/broken` with a D-Bus error.
     struct Tree(BTreeMap<&'static str, (bool, Vec<&'static str>)>);
 
     impl Source for Tree {
         fn node(&self, path: &str) -> impl Future<Output = Result<Option<Node>, ToolError>> + Send {
-            if path == "/hung" {
-                return std::future::ready(Err(ToolError::new(
-                    ErrorName::DeadlineExceeded,
-                    "hung",
-                )));
+            let failure = match path {
+                "/hung" => Some(ErrorName::DeadlineExceeded),
+                "/broken" => Some(ErrorName::UpstreamError),
+                _ => None,
+            };
+            if let Some(name) = failure {
+                return std::future::ready(Err(ToolError::new(name, path)));
             }
             std::future::ready(Ok(self.0.get(path).map(|(showing, children)| Node {
                 path: path.to_owned(),
@@ -113,6 +150,13 @@ mod tests {
         walked.nodes.iter().map(|node| node.path.as_str()).collect()
     }
 
+    fn everything() -> Want<fn(&Node) -> bool> {
+        Want {
+            wanted: usize::MAX,
+            matches: |_| true,
+        }
+    }
+
     #[tokio::test]
     async fn visits_depth_first_in_document_order_and_skips_hidden_subtrees() {
         let tree = Tree(BTreeMap::from([
@@ -123,11 +167,16 @@ mod tests {
             ("/hidden/1", (true, vec![])),
             ("/b", (true, vec![])),
         ]));
-        let walked = walk(&tree, &root(&["/a", "/gone", "/hidden", "/b"]), 2000)
-            .await
-            .unwrap();
+        let walked = walk(
+            &tree,
+            &root(&["/a", "/gone", "/hidden", "/b"]),
+            2000,
+            everything(),
+        )
+        .await
+        .unwrap();
         assert_eq!(paths(&walked), ["/a", "/a/1", "/a/2", "/hidden", "/b"]);
-        assert!(!walked.capped);
+        assert_eq!(walked.capped, None);
     }
 
     #[tokio::test]
@@ -137,17 +186,66 @@ mod tests {
             ("/b", (true, vec![])),
             ("/c", (true, vec![])),
         ]));
-        let walked = walk(&tree, &root(&["/a", "/b", "/c"]), 2).await.unwrap();
+        let walked = walk(&tree, &root(&["/a", "/b", "/c"]), 2, everything())
+            .await
+            .unwrap();
         assert_eq!(paths(&walked), ["/a", "/b"]);
-        assert!(walked.capped);
-        let exact = walk(&tree, &root(&["/a", "/b"]), 2).await.unwrap();
-        assert!(!exact.capped);
+        assert_eq!(walked.capped, Some(Capped::NodeCap));
+        let exact = walk(&tree, &root(&["/a", "/b"]), 2, everything())
+            .await
+            .unwrap();
+        assert_eq!(exact.capped, None);
     }
 
     #[tokio::test]
-    async fn a_failing_node_ends_the_walk_with_its_error() {
-        let tree = Tree(BTreeMap::from([("/a", (true, vec!["/hung"]))]));
-        let error = walk(&tree, &root(&["/a"]), 2000).await.unwrap_err();
+    async fn stops_once_it_found_more_than_wanted() {
+        let tree = Tree(BTreeMap::from([
+            ("/a", (true, vec!["/a/1"])),
+            ("/a/1", (true, vec![])),
+            ("/b", (false, vec![])),
+            ("/c", (false, vec![])),
+            ("/d", (false, vec![])),
+        ]));
+        // Hidden nodes are the ones wanted here; two are asked for, so the third ends it.
+        let hidden = Want {
+            wanted: 2,
+            matches: |node: &Node| !node.states.has(super::super::model::State::Showing),
+        };
+        let walked = walk(&tree, &root(&["/a", "/b", "/c", "/d", "/e"]), 2000, hidden)
+            .await
+            .unwrap();
+        assert_eq!(paths(&walked), ["/a", "/a/1", "/b", "/c", "/d"]);
+        assert_eq!(walked.capped, None);
+    }
+
+    #[tokio::test]
+    async fn a_deadline_after_the_first_node_keeps_what_was_read() {
+        let tree = Tree(BTreeMap::from([
+            ("/a", (true, vec!["/a/1"])),
+            ("/a/1", (true, vec![])),
+        ]));
+        let walked = walk(&tree, &root(&["/a", "/hung", "/b"]), 2000, everything())
+            .await
+            .unwrap();
+        assert_eq!(paths(&walked), ["/a", "/a/1"]);
+        assert_eq!(walked.capped, Some(Capped::BudgetExhausted));
+    }
+
+    #[tokio::test]
+    async fn a_deadline_at_the_first_node_is_a_hung_app() {
+        let tree = Tree(BTreeMap::new());
+        let error = walk(&tree, &root(&["/gone", "/hung", "/a"]), 2000, everything())
+            .await
+            .unwrap_err();
         assert_eq!(error.name, ErrorName::DeadlineExceeded);
+    }
+
+    #[tokio::test]
+    async fn any_other_failure_ends_the_walk_with_its_error() {
+        let tree = Tree(BTreeMap::from([("/a", (true, vec!["/broken"]))]));
+        let error = walk(&tree, &root(&["/a"]), 2000, everything())
+            .await
+            .unwrap_err();
+        assert_eq!(error.name, ErrorName::UpstreamError);
     }
 }

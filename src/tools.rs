@@ -1114,7 +1114,9 @@ impl Server {
     /// argument of `click`, `pointer_move` and `drag`. Fails with `not_accessible` when the
     /// app has no accessible window for it, `ambiguous_window` when it has several that
     /// fit, `app_denied` for an app on the deny list, and `deadline_exceeded` when the app
-    /// doesn't answer within 3 seconds. Needs no lease and changes nothing.
+    /// doesn't answer at all. A large tree that takes longer than 3 seconds gives the
+    /// elements read so far, with `capped: true` and `capped_reason: "budget_exhausted"`;
+    /// `role` and `limit` let the walk stop sooner. Needs no lease and changes nothing.
     #[tool(annotations(read_only_hint = true))]
     async fn elements(
         &self,
