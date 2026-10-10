@@ -220,7 +220,8 @@ pub(crate) fn companion(program: &str, args: &[String]) -> Result<Companion, Too
 }
 
 /// Starts a child that outlives the server: in a process group of its own, with stdin and
-/// stdout closed and `stderr` as its stderr. The server never kills or waits for it. It
+/// stdout closed and `stderr` as its stderr. The server never kills or waits for it:
+/// dropping the child hands it to tokio, which reaps it once it exits. It
 /// gets the server's environment without the session's variables `main` discovered, so it
 /// finds the session as the server did.
 pub(crate) fn daemon(

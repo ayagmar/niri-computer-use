@@ -304,6 +304,21 @@ async fn an_engine_that_stops_reading_counts_as_lost() {
 }
 
 #[tokio::test]
+async fn an_engine_that_exits_is_reaped_by_the_bridge_that_started_it() {
+    let fixture = shared("shared-reaped");
+    let _niri = Niri::start(&fixture);
+    let mut server = Server::start(&fixture).await;
+    let started = server.serving_pid().await;
+    kill(started);
+    let gone = std::path::PathBuf::from(format!("/proc/{started}"));
+    assert!(
+        eventually(WAIT, || !gone.exists()).await,
+        "the exited engine is left a zombie"
+    );
+    assert!(!exited(i32::try_from(server.pid).unwrap()));
+}
+
+#[tokio::test]
 async fn an_engine_refusing_the_hello_after_a_loss_leaves_calls_unavailable() {
     let fixture = shared("shared-refused");
     let _niri = Niri::start(&fixture);
