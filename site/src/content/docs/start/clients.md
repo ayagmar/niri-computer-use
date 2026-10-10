@@ -89,6 +89,6 @@ ln -s "$PWD/skills/niri-computer-use" ~/.claude/skills/niri-computer-use
 ln -s "$PWD/skills/niri-computer-use" ~/.agents/skills/niri-computer-use
 ```
 
-Claude Code reads `~/.claude/skills`; Pi and Codex read `~/.agents/skills`.
+Claude Code reads `~/.claude/skills`; Pi and Codex read `~/.agents/skills`. The same files are on this site under [For agents](../../reference/agents/).
 
 Next: [bind the stop key and run a first session](../first-session/).
