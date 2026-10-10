@@ -437,6 +437,10 @@ impl walk::Source for AppTree<'_> {
     async fn node(&self, path: &str) -> Result<Option<Node>, ToolError> {
         self.request.node(self.bus, path).await
     }
+
+    fn spent(&self) -> bool {
+        Instant::now() >= self.request.deadline
+    }
 }
 
 /// A kept element as it is now.

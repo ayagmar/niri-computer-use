@@ -57,7 +57,7 @@ With `unmappable: frame_size_mismatch`, the app draws its own title bar and its 
 
 ## `elements` fails with `deadline_exceeded`
 
-The app didn't answer over the accessibility bus before the walk read anything. A stopped or hung app does this; in testing, a stopped Qt app failed after about a second while other apps kept answering. A large tree that is slow to read doesn't fail: it gives what was read in three seconds, with `capped_reason: "budget_exhausted"`.
+The app didn't answer one call over the accessibility bus within a second, or the three seconds ran out before the walk began. A stopped or hung app does this; in testing, a stopped Qt app failed after about a second while other apps kept answering. A large tree that is slow to read doesn't fail: it gives what was read in three seconds, with `capped_reason: "budget_exhausted"`.
 
 ## The pointer tools fail with `untested_output_config`
 

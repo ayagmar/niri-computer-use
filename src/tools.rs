@@ -1121,10 +1121,11 @@ impl Server {
     /// While you hold the lease each element has an `element_ref` for the `element`
     /// argument of `click`, `pointer_move` and `drag`. Fails with `not_accessible` when the
     /// app has no accessible window for it, `ambiguous_window` when it has several that
-    /// fit, `app_denied` for an app on the deny list, and `deadline_exceeded` when the app
-    /// doesn't answer at all. A large tree that takes longer than 3 seconds gives the
-    /// elements read so far, with `capped: true` and `capped_reason: "budget_exhausted"`;
-    /// `role` and `limit` let the walk stop sooner. Needs no lease and changes nothing.
+    /// fit, `app_denied` for an app on the deny list, and `deadline_exceeded` when one call
+    /// gets no answer within a second, as from a hung app. A walk that runs out of the 3
+    /// seconds gives the elements read so far, with `capped: true` and `capped_reason:
+    /// "budget_exhausted"`; `role`, `name_contains` and `limit` let it stop sooner. Needs no
+    /// lease and changes nothing.
     #[tool(annotations(read_only_hint = true))]
     async fn elements(
         &self,

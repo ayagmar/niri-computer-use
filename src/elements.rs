@@ -27,13 +27,13 @@ pub(crate) struct Ask {
 pub(crate) struct Listing {
     pub(crate) window_id: u64,
     pub(crate) elements: Vec<Listed>,
-    /// More elements matched than `limit`.
+    /// The walk found more matching elements than `limit` and stopped there.
     pub(crate) truncated: bool,
     /// How many accessible objects the walk read.
     pub(crate) walked: usize,
     /// The walk stopped early, so elements further on are missing.
     pub(crate) capped: bool,
-    /// Why: `node_cap`, or `budget_exhausted` when the request's time ran out.
+    /// Why: `node_cap`, or `budget_exhausted` when the request's three seconds ran out.
     pub(crate) capped_reason: Option<Capped>,
 }
 
@@ -224,4 +224,43 @@ pub(crate) fn unmappable(why: Unmappable) -> ToolError {
         ),
     };
     ToolError::new(ErrorName::ElementUnmappable, format!("{reason}: {detail}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::a11y::model::States;
+
+    const SHOWING: u32 = (1 << 25) | (1 << 30);
+    const BUTTON: u32 = 43;
+    const FILLER: u32 = 20;
+
+    fn node(role: u32, name: &str, showing: bool, actions: &[&str]) -> Node {
+        Node {
+            path: "/n".to_owned(),
+            role,
+            name: name.to_owned(),
+            states: States::from_words(&[if showing { SHOWING } else { 0 }]),
+            extents: None,
+            actions: actions.iter().map(|&action| action.to_owned()).collect(),
+            children: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn only_showing_elements_that_pass_every_filter_count_towards_the_limit() {
+        let save = Filter::new(Some("button".to_owned()), Some("SAVE"));
+        assert!(listed(&save, &node(BUTTON, "Save as", true, &[])));
+        // Other buttons don't use up the limit before the one asked for.
+        assert!(!listed(&save, &node(BUTTON, "Open", true, &["click"])));
+        assert!(!listed(&save, &node(BUTTON, "Save", false, &[])));
+        assert!(!listed(&save, &node(FILLER, "Save", true, &[])));
+
+        let any = Filter::default();
+        assert!(listed(&any, &node(FILLER, "", true, &["click"])));
+        assert!(listed(&any, &node(FILLER, "Title", true, &[])));
+        assert!(!listed(&any, &node(FILLER, "", true, &[])));
+        let fillers = Filter::new(Some("filler".to_owned()), None);
+        assert!(listed(&fillers, &node(FILLER, "", true, &[])));
+    }
 }
