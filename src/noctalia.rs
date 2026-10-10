@@ -2,13 +2,15 @@
 //!
 //! Noctalia 5.2.1's client writes `<cwd>\x1e<command>`, shuts down its write half and
 //! reads the reply until EOF (`src/ipc/ipc_client.cpp`). The service erases everything up
-//! to the first `\x1e` before parsing (`src/ipc/ipc_service.cpp`), so the server only
-//! ever sends fixed payloads, never text from a tool's arguments: `status`, and
-//! `panel-open` or `panel-close` with an allowlisted panel.
+//! to the first `\x1e` before parsing (`src/ipc/ipc_service.cpp`). The server sends fixed
+//! payloads, `status`, and `panel-open` or `panel-close` with an allowlisted panel, except
+//! for the `noctalia` tool under `unrestricted`, which sends its arguments joined with
+//! spaces as `noctalia msg` does (`src/ipc/cli.cpp`).
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use serde::Serialize;
 use serde_json::{Map, Value};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::net::UnixStream;
@@ -20,7 +22,7 @@ use crate::policy::Panel;
 const DEADLINE: Duration = Duration::from_secs(2);
 /// `/` as the caller's directory and the separator, before the command.
 const CWD_PREFIX: &[u8] = b"/\x1e";
-/// A `status` reply is a few hundred bytes.
+/// A `status` reply is a few hundred bytes; the `noctalia` tool's replies are cut here.
 const MAX_REPLY: u64 = 64 * 1024;
 
 /// Every command the server sends. Each is built from fixed words, so none can carry a
@@ -41,6 +43,14 @@ impl Command {
         };
         [CWD_PREFIX, command.as_bytes()].concat()
     }
+}
+
+/// Noctalia's answer to a command from the `noctalia` tool: what `noctalia msg` prints.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct Reply {
+    pub(crate) reply: String,
+    /// Whether the reply was longer than 64 KiB and cut there.
+    pub(crate) truncated: bool,
 }
 
 /// Whether Noctalia is installed and answering, for `status`.
@@ -77,6 +87,12 @@ pub(crate) async fn status(env: &Env) -> Result<Map<String, Value>, ToolError> {
         .await
         .unwrap_or_else(|_| Err(format!("no reply within {DEADLINE:?}")))
         .map_err(|error| unavailable(format!("{}: {error}", socket.display())))?;
+    if u64::try_from(reply.len()).unwrap_or(u64::MAX) > MAX_REPLY {
+        return Err(unavailable(format!(
+            "{}: the reply is longer than {MAX_REPLY} bytes",
+            socket.display()
+        )));
+    }
     interpret(&reply)
 }
 
@@ -97,6 +113,38 @@ pub(crate) fn active_panel(status: &Map<String, Value>) -> Result<Option<String>
 /// command out before it replies (`PanelManager::registerIpc`), so a lost reply leaves the
 /// panel's state unknown.
 pub(crate) async fn change_panel(env: &Env, command: Command) -> Result<(), Unanswered> {
+    acknowledged(&deliver(env, &command.payload()).await?)
+}
+
+/// Sends `args` joined with spaces, as `noctalia msg` does, and returns Noctalia's reply.
+/// A reply starting `error:`, which makes `noctalia msg` exit 1, is a refusal with
+/// Noctalia's text. Noctalia carries a command out before it replies, so a lost reply
+/// leaves its effect unknown.
+pub(crate) async fn message(env: &Env, args: &[String]) -> Result<Reply, Unanswered> {
+    let mut reply = deliver(env, &payload(args)).await?;
+    if reply.starts_with(b"error:") {
+        let text = String::from_utf8_lossy(&reply);
+        return Err(Unanswered::Refused(ToolError::new(
+            ErrorName::UpstreamError,
+            format!("Noctalia replied: {}", text.trim_end()),
+        )));
+    }
+    let limit = usize::try_from(MAX_REPLY).unwrap_or(usize::MAX);
+    let truncated = reply.len() > limit;
+    reply.truncate(limit);
+    Ok(Reply {
+        reply: String::from_utf8_lossy(&reply).into_owned(),
+        truncated,
+    })
+}
+
+fn payload(args: &[String]) -> Vec<u8> {
+    [CWD_PREFIX, args.join(" ").as_bytes()].concat()
+}
+
+/// Sends `payload` to Noctalia within the deadline and returns up to one byte more than
+/// `MAX_REPLY` of its reply.
+async fn deliver(env: &Env, payload: &[u8]) -> Result<Vec<u8>, Unanswered> {
     let socket = socket(env).ok_or_else(|| {
         Unanswered::Refused(unavailable(
             "WAYLAND_DISPLAY or XDG_RUNTIME_DIR doesn't name a Noctalia socket",
@@ -110,13 +158,13 @@ pub(crate) async fn change_panel(env: &Env, command: Command) -> Result<(), Unan
                 socket.display()
             )))
         })?;
-        exchange(stream, command)
+        exchange(stream, payload)
             .await
             .map_err(|error| Unanswered::Lost(lost(format!("{}: {error}", socket.display()))))
     })
     .await
     .map_err(|_| Unanswered::Lost(lost(format!("no reply from Noctalia within {DEADLINE:?}"))))??;
-    acknowledged(&reply)
+    Ok(reply)
 }
 
 fn acknowledged(reply: &[u8]) -> Result<(), Unanswered> {
@@ -140,16 +188,17 @@ async fn request(socket: &Path, command: Command) -> Result<Vec<u8>, String> {
     let stream = UnixStream::connect(socket)
         .await
         .map_err(|error| format!("connect: {error}"))?;
-    exchange(stream, command).await
+    exchange(stream, &command.payload()).await
 }
 
-/// Writes the whole payload, shuts down the write half, and reads until EOF.
+/// Writes the whole payload, shuts down the write half, and reads until EOF or one byte
+/// more than `MAX_REPLY`, so the caller can tell a reply that is too long.
 async fn exchange(
     mut stream: impl AsyncRead + AsyncWrite + Unpin,
-    command: Command,
+    payload: &[u8],
 ) -> Result<Vec<u8>, String> {
     stream
-        .write_all(&command.payload())
+        .write_all(payload)
         .await
         .map_err(|error| format!("write: {error}"))?;
     stream
@@ -162,9 +211,6 @@ async fn exchange(
         .read_to_end(&mut reply)
         .await
         .map_err(|error| format!("read: {error}"))?;
-    if u64::try_from(reply.len()).unwrap_or(u64::MAX) > MAX_REPLY {
-        return Err(format!("the reply is longer than {MAX_REPLY} bytes"));
-    }
     Ok(reply)
 }
 
@@ -228,7 +274,7 @@ mod tests {
             request
         });
         assert_eq!(
-            exchange(client, Command::Status).await.unwrap(),
+            exchange(client, &Command::Status.payload()).await.unwrap(),
             b"{\"locked\":false}"
         );
         assert_eq!(fake.await.unwrap(), b"/\x1estatus");
@@ -259,6 +305,71 @@ mod tests {
                 "{command:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_message_is_its_arguments_joined_as_noctalia_msg_joins_them() {
+        let args = [
+            "plugin",
+            "ayagmar/obs-control:controller",
+            "all",
+            "toggle-record",
+        ]
+        .map(str::to_owned);
+        assert_eq!(
+            payload(&args),
+            b"/\x1eplugin ayagmar/obs-control:controller all toggle-record"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_message_returns_the_reply_cut_at_the_limit_or_noctalias_error() {
+        let (env, listener) = fake_socket("message");
+        let answers = vec![
+            b"ok\n".to_vec(),
+            vec![b'x'; 70_000],
+            b"error: unknown command \"x\"\n".to_vec(),
+        ];
+        tokio::spawn(answer_each(listener, answers));
+        let args = ["x".to_owned()];
+        assert_eq!(
+            message(&env, &args).await.unwrap(),
+            Reply {
+                reply: "ok\n".to_owned(),
+                truncated: false
+            }
+        );
+        let long = message(&env, &args).await.unwrap();
+        assert_eq!((long.reply.len(), long.truncated), (64 * 1024, true));
+        let Err(Unanswered::Refused(error)) = message(&env, &args).await else {
+            panic!("an error: reply is a refusal");
+        };
+        assert_eq!(
+            error.detail,
+            "Noctalia replied: error: unknown command \"x\""
+        );
+        std::fs::remove_dir_all(env.runtime_dir.unwrap()).unwrap();
+    }
+
+    /// Answers one connection with each answer in turn.
+    async fn answer_each(listener: tokio::net::UnixListener, answers: Vec<Vec<u8>>) {
+        for answer in answers {
+            let (mut connection, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            connection.read_to_end(&mut request).await.unwrap();
+            connection.write_all(&answer).await.unwrap();
+        }
+    }
+
+    /// An environment whose Noctalia socket is a listener of the test's own.
+    fn fake_socket(name: &str) -> (Env, tokio::net::UnixListener) {
+        let env = Env {
+            runtime_dir: Some(crate::test_support::fresh_dir(name)),
+            wayland_display: Some(OsString::from("wayland-1")),
+            ..Env::default()
+        };
+        let path = socket(&env).unwrap();
+        (env, tokio::net::UnixListener::bind(path).unwrap())
     }
 
     #[test]

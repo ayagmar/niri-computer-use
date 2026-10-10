@@ -17,7 +17,7 @@
 | `niri/version.rs` | The version rule (pure). |
 | `policy.rs` | The policy file, its presets, the decision whether this server may take the lease or act, which niri actions `niri_action` sends only with `unrestricted`, which output setups the pointer may run on, and the Noctalia panels the shell tools may name (pure, apart from reading the file). |
 | `act/compositor.rs` | `niri_action`: any niri action, then the state niri reports for the window it is about. |
-| `act/shell.rs` | `shell_open` and `shell_close`: a panel command, then polling Noctalia's status for the change. |
+| `act/shell.rs` | `shell_open` and `shell_close`: a panel command, then polling Noctalia's status for the change. `noctalia`: any command, with Noctalia's reply. |
 | `status.rs` | Builds the readiness report shared by the tool and the subcommand. |
 | `input.rs` | What the input tools share: their context and the focused window's `app_id`. |
 | `input/pointer.rs` | The pointer tools' work: the checks before input, the steps of each gesture, and the marker around a button press. |

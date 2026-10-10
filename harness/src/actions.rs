@@ -398,7 +398,7 @@ fn layout(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
 }
 
 /// A server whose policy turns on `unrestricted` spawns a fixture through `niri_action`,
-/// which `wait_for` then sees.
+/// which `wait_for` then sees, and talks to the nested Noctalia through `noctalia`.
 fn unrestricted(session: &mut Session<'_>, server: &str) -> Result<()> {
     write_file(session, "unrestricted = true\n")?;
     let mut client = Client::start(session, server, "harness-m3-unrestricted", SERVER_DEADLINE)?;
@@ -421,8 +421,37 @@ fn unrestricted(session: &mut Session<'_>, server: &str) -> Result<()> {
     session.log(&format!(
         "M3: niri_action Spawn with unrestricted: {spawned}, {seen}"
     ))?;
+    noctalia(session, &mut client)?;
     structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     client.stop()
+}
+
+/// `noctalia` returns the nested Noctalia's reply, and its `error:` reply as
+/// `upstream_error` with Noctalia's text.
+fn noctalia(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
+    let status = act(session, client, "noctalia", json!({"args": ["status"]}))?;
+    expect_outcome(&status, "sent", "noctalia status")?;
+    let reply = field(&status, "/noctalia/reply")
+        .as_str()
+        .unwrap_or_default();
+    let parsed: Option<Value> = serde_json::from_str(reply).ok();
+    expect(
+        parsed
+            .as_ref()
+            .is_some_and(|answer| field(answer, "/locked") == false),
+        "Noctalia's status reply, unlocked",
+        &status.to_string(),
+    )?;
+    let unknown = client.call(session, "noctalia", json!({"args": ["no-such-command"]}))?;
+    expect(
+        field(&unknown, "/structuredContent/error") == "upstream_error"
+            && field(&unknown, "/structuredContent/detail")
+                .as_str()
+                .is_some_and(|detail| detail.starts_with("Noctalia replied: error:")),
+        "an unknown command is Noctalia's error",
+        &unknown.to_string(),
+    )?;
+    session.log(&format!("M3: noctalia passthrough: {status}, {unknown}"))
 }
 
 fn focus(session: &mut Session<'_>, client: &mut Client, id: u64) -> Result<()> {

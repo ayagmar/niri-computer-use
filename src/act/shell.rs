@@ -1,6 +1,7 @@
 //! `shell_open` and `shell_close`: change which Noctalia panel is open, then poll
 //! Noctalia's `status` until `activePanelId` shows the change (plan §6.1). Noctalia sends
-//! no events, so polling is the only way to observe it. Nothing is retried.
+//! no events, so polling is the only way to observe it. Nothing is retried. Also the
+//! `noctalia` tool, which sends any command and reports Noctalia's reply.
 
 use std::time::Duration;
 
@@ -81,6 +82,27 @@ async fn change(
     let mut seen = outcome(Some(true), watched.observed, watched.shell, niri).await;
     seen.detail = watched.detail;
     Ok(seen)
+}
+
+/// Sends `args` to Noctalia as `noctalia msg` would: `sent`, with Noctalia's reply.
+pub(crate) async fn message(
+    env: &Env,
+    niri: Niri<'_>,
+    args: &[String],
+) -> Result<Outcome, CallError> {
+    match noctalia::message(env, args).await {
+        Ok(reply) => {
+            let mut sent = outcome(Some(true), Observed::Sent, None, niri).await;
+            sent.noctalia = Some(reply);
+            Ok(sent)
+        }
+        Err(Unanswered::Refused(error)) => Err(error.into()),
+        Err(Unanswered::Lost(error)) => {
+            let mut lost = outcome(None, Observed::Uncertain, None, niri).await;
+            lost.detail = Some(error.detail);
+            Ok(lost)
+        }
+    }
 }
 
 async fn active_panel(env: &Env) -> Result<Option<String>, ToolError> {
@@ -169,6 +191,7 @@ async fn outcome(
         pressed: None,
         submitted: None,
         shell,
+        noctalia: None,
         window: None,
         paste: None,
         detail: None,

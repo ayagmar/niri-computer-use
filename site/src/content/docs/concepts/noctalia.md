@@ -9,7 +9,7 @@ sidebar:
 
 ## Detection
 
-When the server starts, it looks for `noctalia` on `PATH`. If it is there, the server lists three more tools: `shell_status`, `shell_open` and `shell_close`. The tool list is fixed for the session, so install Noctalia before starting the agent.
+When the server starts, it looks for `noctalia` on `PATH`. If it is there, the server lists three more tools: `shell_status`, `shell_open` and `shell_close`, and a fourth, `noctalia`, when [`unrestricted`](../configuration/#unrestricted) is on. The tool list is fixed for the session, so install Noctalia before starting the agent.
 
 The server talks to Noctalia over its socket, `$XDG_RUNTIME_DIR/noctalia-$WAYLAND_DISPLAY.sock`, with a two-second deadline. `status` reports `noctalia` as `running`, `not_running` with the reason in `noctalia_error`, or `not_installed`.
 
@@ -47,6 +47,29 @@ Any other name, such as the session menu, which can power off, the launcher, whi
 When the panel is already open, or already closed, nothing is sent and `accepted` is false. The result has `shell.active_panel`, the open panel when the observation ended.
 
 An open panel holds keyboard focus, so `focused_window` is null while it is open. Type into it with `expect: "none"`.
+
+## Any command
+
+With [`unrestricted`](../configuration/#unrestricted) on, the `noctalia` tool sends any Noctalia command, the way `noctalia msg` does:
+
+| Argument | Value |
+|---|---|
+| `args` (required) | 1 to 64 strings: the command and its arguments, as after `noctalia msg` |
+
+The server joins `args` with spaces and sends them over the same socket, with the same two-second deadline, as `noctalia msg` does. Noctalia's `notification-show` is the one command `noctalia msg` rewrites (as JSON) before sending; send that JSON yourself. `observed` is `sent` and `noctalia` holds Noctalia's answer:
+
+| Field | Value |
+|---|---|
+| `reply` | what `noctalia msg` would print, cut at 64 KiB |
+| `truncated` | whether it was cut |
+
+A reply starting `error:`, which makes `noctalia msg` exit 1, comes back as `upstream_error` with Noctalia's text, such as `Noctalia replied: error: unknown command (try: noctalia msg --help)`. A lost reply is `uncertain`: Noctalia acts before it answers. The tool needs the lease, stops at the stop key and is written to the audit log with its arguments.
+
+This is how an agent can start a screen recording with Noctalia's OBS plugin, as a niri keybind would, since keybinds don't fire from the keyboard tools:
+
+```json
+{"args": ["plugin", "ayagmar/obs-control:controller", "all", "toggle-record"]}
+```
 
 ## Paste and clipboard history
 

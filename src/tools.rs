@@ -289,6 +289,20 @@ struct NiriActionArgs {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+struct NoctaliaArgs {
+    /// The command and its arguments, as after `noctalia msg`, such as `["plugin",
+    /// "ayagmar/obs-control:controller", "all", "toggle-record"]`; joined with spaces.
+    #[schemars(length(min = 1, max = 64))]
+    args: Vec<String>,
+    /// With true, the result also has a screenshot of the focused output, taken once the
+    /// screen stopped changing, so no separate `screenshot` call is needed. Defaults to
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    screenshot: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
 struct PanelArgs {
     /// A Noctalia panel: `control-center`, `wallpaper` or `tray-drawer`.
     panel: String,
@@ -575,8 +589,9 @@ pub(crate) struct Server {
 
 #[tool_router]
 impl Server {
-    /// The `shell_*` tools exist only when `noctalia` is on `PATH`, and `elements` only
-    /// with an accessibility bus, so the tool list stays fixed for the session.
+    /// The `shell_*` tools exist only when `noctalia` is on `PATH`, `noctalia` only when
+    /// `unrestricted` is on as well, and `elements` only with an accessibility bus, so the
+    /// tool list stays fixed for the session.
     pub(crate) fn new(
         env: Env,
         events: Result<EventStream, ToolError>,
@@ -584,11 +599,15 @@ impl Server {
         accessibility: Presence,
     ) -> Self {
         let mut tool_router = Self::tool_router();
+        let policy = env.policy();
         let noctalia_installed = env.finds("noctalia");
         if !noctalia_installed {
             for tool in SHELL_TOOLS {
                 tool_router.remove_route(tool);
             }
+        }
+        if !noctalia_installed || !env.unrestricted(&policy).enabled() {
+            tool_router.remove_route("noctalia");
         }
         let a11y = accessibility.address.clone().map(A11y::new);
         if a11y.is_none() {
@@ -596,7 +615,7 @@ impl Server {
         }
         Self {
             desk: Desk::start(&env),
-            policy: env.policy(),
+            policy,
             env,
             events,
             audit,
@@ -1324,6 +1343,47 @@ impl Server {
         .await
     }
 
+    /// Sends a command to Noctalia, as `noctalia msg <args…>` would, for shell and plugin
+    /// commands such as `["plugin", "<plugin>:<entry>", "all", "<command>"]`; `["--help"]`
+    /// lists Noctalia's commands. `observed` is `sent`, and `noctalia.reply` is Noctalia's
+    /// answer (cut at 64 KiB, with `noctalia.truncated`). A reply starting `error:` comes
+    /// back as `upstream_error` with Noctalia's text. Noctalia acts before it replies, so
+    /// `uncertain` means the command may have run. Listed only when the user set
+    /// `unrestricted = true`. Requires the lease.
+    #[tool(annotations(
+        read_only_hint = false,
+        destructive_hint = true,
+        idempotent_hint = false,
+        open_world_hint = false
+    ))]
+    async fn noctalia(
+        &self,
+        Parameters(args): Parameters<NoctaliaArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        let (env, niri) = (&self.env, self.niri());
+        let shoot = args.screenshot;
+        let work = async move {
+            if !(1..=64).contains(&args.args.len()) {
+                return Err(CallError::InvalidArguments(
+                    "`args` must have 1 to 64 items".to_owned(),
+                ));
+            }
+            act::shell::message(env, niri, &args.args).await
+        };
+        self.act(
+            &context,
+            Asked {
+                tool: "noctalia",
+                logged,
+                shoot,
+            },
+            work,
+        )
+        .await
+    }
+
     /// The clipboard's text, read with `wl-paste`. `text` is null, with a `reason`, when
     /// nothing is copied (`nothing_copied`) or nothing copied is text (`no_text`).
     #[tool(annotations(read_only_hint = true))]
@@ -1909,12 +1969,21 @@ mod tests {
             ..Env::default()
         };
         let installed = Server::new(installed, no_events(), Audit::new(None), absent());
-        let absent = Server::new(Env::default(), no_events(), Audit::new(None), absent());
+        let missing = Server::new(Env::default(), no_events(), Audit::new(None), absent());
         for tool in SHELL_TOOLS {
             assert!(installed.tool_router.has_route(tool), "{tool}");
-            assert!(!absent.tool_router.has_route(tool), "{tool}");
+            assert!(!missing.tool_router.has_route(tool), "{tool}");
         }
-        assert!(absent.tool_router.has_route("status"));
+        assert!(missing.tool_router.has_route("status"));
+        // The passthrough also needs unrestricted.
+        assert!(!installed.tool_router.has_route("noctalia"));
+        let unrestricted = Env {
+            path: Some(dir.clone().into_os_string()),
+            unrestricted: Some("1".into()),
+            ..Env::default()
+        };
+        let unrestricted = Server::new(unrestricted, no_events(), Audit::new(None), absent());
+        assert!(unrestricted.tool_router.has_route("noctalia"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

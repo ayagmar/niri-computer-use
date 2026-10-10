@@ -38,7 +38,7 @@ The lease, the stop key, the lock gate, the policy file and the audit log are gu
 
 ## Policy
 
-`~/.config/niri-computer-use/policy.toml` holds launch presets, apps that never get input, and where screenshots may be saved. One key, `unrestricted`, is off by default. Agents without a shell of their own, such as desktop apps, rely on that: with it off, the server can't run anything you didn't put in a preset. With `unrestricted = true`, or `NIRI_COMPUTER_USE_UNRESTRICTED=1` in one client's server settings, an agent can run any program through the server: `niri_action` accepts `Spawn`, `Quit` and the other gated niri actions, and presets may pass arguments to terminals and set `env`. Everything still needs the lease, stops at the stop key and goes to the audit log. See [Configuration](https://ayagmar.github.io/niri-computer-use/concepts/configuration/#unrestricted).
+`~/.config/niri-computer-use/policy.toml` holds launch presets, apps that never get input, and where screenshots may be saved. One key, `unrestricted`, is off by default. Agents without a shell of their own, such as desktop apps, rely on that: with it off, the server can't run anything you didn't put in a preset. With `unrestricted = true`, or `NIRI_COMPUTER_USE_UNRESTRICTED=1` in one client's server settings, an agent can run any program through the server: `niri_action` accepts `Spawn`, `Quit` and the other gated niri actions, the `noctalia` tool sends any Noctalia command, and presets may pass arguments to terminals and set `env`. Everything still needs the lease, stops at the stop key and goes to the audit log. See [Configuration](https://ayagmar.github.io/niri-computer-use/concepts/configuration/#unrestricted).
 
 ## Documentation
 

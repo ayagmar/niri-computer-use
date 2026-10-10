@@ -588,3 +588,11 @@ These match the versions installed locally.
 - `status.unrestricted` reports `enabled`, `source` (`policy`, `env` or `both`) and `error`.
 - A preset's `env` is applied by spawning `env -- NAME=value … argv` through niri, because niri 26.04's `Spawn` has no environment field. niri still starts it with the session's environment, plus these variables. Names must be non-empty and free of `=` and NUL, and with `env` the program can't contain `=`, which `env` would read as an assignment. Without `unrestricted`, a preset with `env` makes the file invalid.
 - An agent never adds arguments or variables: `launch` still takes only a preset name.
+
+## 2026-10-10: the `noctalia` passthrough, and OBS through it
+
+- With `unrestricted` on and Noctalia installed, the `noctalia` tool sends any Noctalia command: its arguments joined with spaces after the `/\x1e` prefix, exactly as Noctalia 5.2.1's `noctalia msg` builds it (`src/ipc/cli.cpp`, `src/ipc/ipc_client.cpp`). Only `notification-show`, which the CLI rewrites as JSON, differs.
+- It uses the socket `noctalia.rs` already speaks, with the same 2 s deadline, not a `noctalia msg` subprocess. The socket gives Noctalia's reply, which is what the CLI prints. The CLI's exit status follows from the reply alone, 1 for a reply starting `error:`, which the tool returns as `upstream_error` with Noctalia's text, and the CLI writes nothing to stderr for a reply. So a subprocess would add a process per call and nothing else.
+- Replies are cut at 64 KiB, with `truncated`. A lost reply is `uncertain`, because Noctalia carries a command out before replying.
+- The tool is listed only when `unrestricted` is on, decided at startup like the other optional tools. Noctalia commands include the launcher, the session menu and plugins, which can run programs.
+- Screen recording goes through the user's own Noctalia OBS plugin (`plugin ayagmar/obs-control:controller all toggle-record`), the command their niri bind runs, instead of a built-in recorder. That adds no runtime dependency, and the user's OBS scenes, encoder and output folder apply.

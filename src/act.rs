@@ -97,6 +97,9 @@ pub(crate) struct Outcome {
     /// Shell tools: Noctalia's open panel when the observation ended.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) shell: Option<shell::Shell>,
+    /// `noctalia`: Noctalia's reply.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) noctalia: Option<crate::noctalia::Reply>,
     /// `niri_action`: the window the action is about, as niri reports it at the end.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) window: Option<compositor::WindowState>,
@@ -134,6 +137,7 @@ impl Outcome {
             pressed: None,
             submitted: None,
             shell: None,
+            noctalia: None,
             window: None,
             paste: None,
             detail: None,
@@ -153,6 +157,7 @@ impl Outcome {
             pressed: None,
             submitted: None,
             shell: None,
+            noctalia: None,
             window: None,
             paste: None,
             detail: Some(detail),

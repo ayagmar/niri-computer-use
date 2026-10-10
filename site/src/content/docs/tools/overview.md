@@ -35,8 +35,9 @@ The server offers 23 tools. `shell_status`, `shell_open` and `shell_close` are l
 | `paste` | yes | pastes up to 1 MiB through the clipboard, then restores it | [Keyboard](../keyboard/#paste) |
 | `shell_open` | yes | opens one of three Noctalia panels | [Noctalia](../../concepts/noctalia/#panels) |
 | `shell_close` | yes | closes it | [Noctalia](../../concepts/noctalia/#panels) |
+| `noctalia` | yes | sends any Noctalia command; only with `unrestricted` | [Noctalia](../../concepts/noctalia/#any-command) |
 
-The reading tools carry MCP's `readOnlyHint`, and `close_window` and `niri_action` carry `destructiveHint`.
+The reading tools carry MCP's `readOnlyHint`, and `close_window`, `niri_action` and `noctalia` carry `destructiveHint`.
 
 ## Results
 

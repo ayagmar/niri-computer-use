@@ -1686,3 +1686,40 @@ env = { GDK_SCALE = "2" }
     let (name, _) = tool_error(&off.server.call("niri_action", spawn).await);
     assert_eq!(name, "unrestricted_required");
 }
+
+#[tokio::test]
+async fn noctalia_sends_any_command_only_when_unrestricted() {
+    let mut desk = Desk::start("act-noctalia-off", "").await;
+    let tools = desk.server.tools().await;
+    assert!(!tools.iter().any(|tool| tool["name"] == "noctalia"));
+
+    let on = [("NIRI_COMPUTER_USE_UNRESTRICTED", "1")];
+    let mut open = Desk::start_with("act-noctalia", "", &on).await;
+    let listed = open.server.tools().await;
+    assert!(listed.iter().any(|tool| tool["name"] == "noctalia"));
+    let args = json!({"args": ["panel-open", "wallpaper"]});
+    let result = open.server.call("noctalia", args.clone()).await;
+    assert_eq!(
+        outcome(&result),
+        json!({
+            "accepted": true, "observed": "sent", "focused_window": 1,
+            "noctalia": {"reply": "ok\n", "truncated": false}
+        })
+    );
+    assert_eq!(open.noctalia.panel_commands(), ["panel-open wallpaper"]);
+    let (name, detail) = tool_error(
+        &open
+            .server
+            .call("noctalia", json!({"args": ["plugin", "x:y", "all", "go"]}))
+            .await,
+    );
+    assert_eq!(name, "upstream_error");
+    assert_eq!(
+        detail,
+        "Noctalia replied: error: unknown command \"plugin x:y all go\""
+    );
+    assert_eq!(
+        open.audited()[0],
+        json!(["noctalia", args, true, "sent", null])
+    );
+}

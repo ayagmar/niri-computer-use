@@ -75,6 +75,7 @@ The directory is created with mode `0700` if it is missing. `save_path` is relat
 With `true`:
 
 - `niri_action` also sends the gated actions: `Spawn` and `SpawnSh`, which run any program, `Quit`, monitor power, `LoadConfigFile`, niri's screenshot actions, `ToggleKeyboardShortcutsInhibit`, `SwitchLayout`, the cast actions and the debug toggles. Without it they fail with `unrestricted_required`. See [`niri_action`](../../tools/acting/#niri_action).
+- The [`noctalia`](../noctalia/#any-command) tool is listed, when Noctalia is installed, and sends any Noctalia command.
 - Presets may start terminals with arguments and programs that run commands, and may set `env`.
 
 `NIRI_COMPUTER_USE_UNRESTRICTED=1` in the server's environment turns it on too, so you can allow it for one MCP client only, in that client's server settings, without a policy file. Either one turns it on, and nothing in the environment turns off a file's `true`. Any other value of the variable leaves it off and shows up as `status.unrestricted.error`.

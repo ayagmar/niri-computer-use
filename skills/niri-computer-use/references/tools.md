@@ -48,6 +48,7 @@ Watching the desktop never needs the lease.
 | `niri_action` | `action`: one niri action in niri's JSON, such as `{"FullscreenWindow": {"id": 12}}`, `{"SetWindowWidth": {"id": 12, "change": {"SetFixed": 1600}}}`, `{"ToggleWindowFloating": {"id": null}}` (null: the focused window) or `{"MaximizeColumn": {}}` | for an action about one window, `changed`, `unchanged` (within a second) or `closed`, with `window`: `window_size`, `tile_size`, `is_floating`, `is_focused`, `workspace_id`; otherwise `sent`. No fullscreen flag: a fullscreen window's `window_size` is its output's size |
 | `shell_open` | `panel`: `control-center`, `wallpaper` or `tray-drawer` | `opened` or `timeout` within two seconds, with `shell.active_panel`; `accepted: false` when it was already open. Listed only with Noctalia |
 | `shell_close` | `panel`, as for `shell_open` | `closed` or `timeout`; `accepted: false` when it wasn't open |
+| `noctalia` | `args`: a Noctalia command and its arguments, as after `noctalia msg`, such as `["plugin", "<plugin>:<entry>", "all", "<command>"]`; `["--help"]` lists them | `sent`, with `noctalia.reply`, Noctalia's answer. Its `error:` reply is `upstream_error`. Listed only with Noctalia and `unrestricted` |
 
 Use `launch` with `reuse: true` unless the user asked for another window of the app.
 
