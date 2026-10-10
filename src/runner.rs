@@ -17,7 +17,7 @@ use tokio::time::Instant;
 use crate::error::{ErrorName, ToolError};
 
 /// The session variables as `main` resolved them, given to every child on top of the
-/// environment it inherits. A client such as Codex starts the server without them, and
+/// environment it inherits, without `WAYLAND_SOCKET`. A client such as Codex starts the server without them, and
 /// grim, wtype and wl-clipboard need them to reach the display. Setting them in the
 /// server's own environment would take `unsafe`.
 static SESSION: OnceLock<Vec<(&'static str, OsString)>> = OnceLock::new();
@@ -54,8 +54,9 @@ impl Finished {
 }
 
 /// Runs `program` with `args` and no stdin, and collects its output, all within
-/// `deadline`. Stdout over `max_stdout` bytes is an error. A non-zero exit is returned,
-/// not treated as an error, because some programs report ordinary outcomes that way.
+/// `deadline`. Stdout over `max_stdout` bytes is an error that keeps the exit status and
+/// stderr. A non-zero exit is returned, not treated as an error, because some programs
+/// report ordinary outcomes that way.
 pub(crate) async fn run(
     program: &str,
     args: &[String],
@@ -251,6 +252,9 @@ fn detached(
 )]
 fn command(program: &str) -> Command {
     let mut command = Command::new(program);
+    // libwayland would use an inherited connection before `WAYLAND_DISPLAY`, skipping the
+    // display `main` checked is niri's.
+    command.env_remove("WAYLAND_SOCKET");
     command.envs(
         SESSION
             .get()
@@ -291,16 +295,20 @@ impl Running {
         let (stdout, stderr) = (stdout.map_err(broken)?, stderr.map_err(broken)?);
         let status = self.child.wait().await.map_err(broken)?;
         self.group = None;
+        let stderr = String::from_utf8_lossy(&stderr).into_owned();
         if u64::try_from(stdout.len()).unwrap_or(u64::MAX) > max_stdout {
             return Err(ToolError::new(
                 ErrorName::UpstreamError,
-                format!("{program} wrote more than {max_stdout} bytes"),
+                format!(
+                    "{program} wrote more than {max_stdout} bytes and exited with {status}: {}",
+                    stderr.trim()
+                ),
             ));
         }
         Ok(Finished {
             status,
             stdout,
-            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            stderr,
         })
     }
 }
@@ -384,13 +392,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn too_much_stdout_is_an_error() {
-        let error = run("sh", &args(&["-c", "printf 12345"]), DEADLINE, 4)
+    async fn too_much_stdout_is_an_error_that_keeps_the_exit_and_stderr() {
+        let script = "printf 12345; echo 'no frame' >&2; exit 2";
+        let error = run("sh", &args(&["-c", script]), DEADLINE, 4)
             .await
             .unwrap_err();
         assert_eq!(
             error,
-            ToolError::new(ErrorName::UpstreamError, "sh wrote more than 4 bytes")
+            ToolError::new(
+                ErrorName::UpstreamError,
+                "sh wrote more than 4 bytes and exited with exit status: 2: no frame"
+            )
         );
     }
 

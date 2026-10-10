@@ -117,7 +117,7 @@ The server reads these once, at startup. When `XDG_RUNTIME_DIR`, `NIRI_SOCKET` o
 | `XDG_RUNTIME_DIR` | the lease, the stop flag and the input-dirty marker, in `niri-computer-use/<instance>/`, where `<instance>` is the socket's file name without `.sock` |
 | `WAYLAND_DISPLAY` | the pointer tools, `paste`, and finding Noctalia's socket |
 | `DBUS_SESSION_BUS_ADDRESS` | finding the accessibility bus for `elements`; without it, `$XDG_RUNTIME_DIR/bus` |
-| `PATH` | `grim`, `wl-paste`, `wl-copy`, `wtype`, `loginctl` and `noctalia` |
+| `PATH` | `grim`, `wl-paste`, `wtype`, `loginctl` and `noctalia` |
 | `XDG_CONFIG_HOME`, else `HOME` | the policy file |
 | `XDG_STATE_HOME`, else `HOME` | the audit log |
 | `HOME` | a `capture_dir` that starts with `~/` |

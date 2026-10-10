@@ -44,6 +44,7 @@ pub(super) fn run(session: &mut Session<'_>, owner: &mut Client, server: &str) -
     let wtype = rounds(session, owner, "wtype")?;
     super::paste::empty(session, owner, "wtype")?;
     super::paste::run(session, owner, server, "wtype")?;
+    super::paste::secret(session, owner)?;
     structured(&owner.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     let mut native = Client::start_command(
         session,

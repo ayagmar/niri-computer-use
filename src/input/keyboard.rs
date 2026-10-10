@@ -299,6 +299,12 @@ pub(crate) async fn type_input(
     let before = waiter.view().focused_window();
     let mut sent = Sent::default();
     for stroke in typing.strokes() {
+        // wtype finds the display by name alone, so who serves it is checked right before.
+        input
+            .display
+            .checked(input.niri.socket)
+            .await
+            .map_err(|error| partly(error, &typing, sent))?;
         run_wtype(
             input.runtime,
             typing.tool(),

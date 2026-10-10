@@ -15,6 +15,7 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 |---|---|
 | `instance` | the basename of niri's socket, which names the niri instance |
 | `discovery.runtime_dir`, `discovery.niri_socket`, `discovery.wayland_display` | where each came from: `{"source": "environment"}`, `{"source": "discovered"}`, or `{"source": "missing", "detail": …}` with why (see [Session variables](../../start/clients/#session-variables)) |
+| `display_error` | null when the Wayland display is niri's right now, checked on every call; otherwise why input, screenshots and clipboard reads are refused, such as [`session_mismatch`](../../reference/errors/#session_mismatch) |
 | `discovery.warning` | null, or why the given variables might not fit together, such as `NIRI_SOCKET` outside `XDG_RUNTIME_DIR` |
 | `niri.version` | niri's version string, such as `26.04 (8ed0da4)` |
 | `niri.ipc_crate` | the `niri-ipc` version this build uses, `26.4.0` |
@@ -39,7 +40,7 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `policy.capture_dir` | where `screenshot` saves, as the file writes it, or null when saving is off |
 | `unrestricted.enabled`, `unrestricted.source`, `unrestricted.error` | whether gated `niri_action`s and unrestricted presets are allowed, whether the policy file, `NIRI_COMPUTER_USE_UNRESTRICTED` or both allowed them, and why the variable was ignored |
 | `audit.path`, `audit.last_error` | the audit log and the last failure to write it |
-| `binaries` | whether `grim`, `wl-paste`, `wl-copy`, `wtype` and `loginctl` are on `PATH` |
+| `binaries` | whether `grim`, `wl-paste`, `wtype` and `loginctl` are on `PATH` |
 
 ## `desktop_state`
 

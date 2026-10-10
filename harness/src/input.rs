@@ -8,6 +8,7 @@ mod activation;
 mod crash;
 mod exposure;
 mod guardian;
+mod keeper;
 mod native;
 mod native_gestures;
 mod native_unicode;
@@ -87,6 +88,7 @@ pub(crate) fn run(session: &mut Session<'_>, output: &LogicalOutput, server: &st
     scrolling::run(session, &mut client)?;
     activation::run(session, &mut client)?;
     text_entry::run(session, &mut client, server)?;
+    keeper::run(session, server)?;
     client.stop()?;
     noctalia.stop().map(drop)
 }

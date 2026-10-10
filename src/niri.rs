@@ -11,6 +11,7 @@ mod wayland;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use niri_ipc::{Action, Output, Request, Response, Window, Workspace};
 
@@ -47,6 +48,41 @@ impl Default for Socket {
     }
 }
 
+/// The Wayland display's socket, or why it is unknown. A path names no compositor for
+/// good: niri can exit and another compositor take the name, so whatever reaches the
+/// display checks who serves it at the moment of use, either on its own connection or,
+/// for a child such as wtype, grim or wl-paste that finds the display by name, through
+/// `checked` right before it starts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Display(Result<PathBuf, ToolError>);
+
+impl Display {
+    /// The display at `path`, or none, for the reason the error gives.
+    pub(crate) fn new(path: Result<PathBuf, String>) -> Self {
+        Self(path.map_err(|detail| ToolError::new(ErrorName::UpstreamError, detail)))
+    }
+
+    /// The display's socket, unchecked, for a connection that checks its own peer.
+    pub(crate) fn path(&self) -> Result<&Path, &ToolError> {
+        self.0.as_deref()
+    }
+
+    /// The display's socket, if the niri on `socket` serves it right now, within the
+    /// connections' deadlines: `niri_unavailable` once niri is gone, `session_mismatch`
+    /// when another process serves the display.
+    pub(crate) async fn checked(&self, socket: &Socket) -> Result<&Path, ToolError> {
+        let display = self.path().map_err(Clone::clone)?;
+        wayland::niri_stream(display, pid(socket).await?).await?;
+        Ok(display)
+    }
+}
+
+impl Default for Display {
+    fn default() -> Self {
+        Self::new(Err("WAYLAND_DISPLAY is not set".to_owned()))
+    }
+}
+
 /// niri's version string, such as `26.04 (8ed0da4)`.
 pub(crate) async fn version(socket: &Socket) -> Result<String, ToolError> {
     let Response::Version(version) = request::send(known(socket)?, &Request::Version).await? else {
@@ -57,7 +93,13 @@ pub(crate) async fn version(socket: &Socket) -> Result<String, ToolError> {
 
 /// The process ID of the niri listening on the socket.
 pub(crate) async fn pid(socket: &Socket) -> Result<u32, ToolError> {
-    request::peer_pid(known(socket)?).await
+    request::peer_pid(known(socket)?, request::DEADLINE).await
+}
+
+/// The process ID of whatever listens on the socket at `path`, if it accepts a connection
+/// within `limit`. A socket a crashed niri left accepts none.
+pub(crate) async fn listener_pid(path: &Path, limit: Duration) -> Result<u32, ToolError> {
+    request::peer_pid(path, limit).await
 }
 
 /// niri's outputs by connector name, in name order.

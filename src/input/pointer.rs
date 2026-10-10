@@ -12,6 +12,7 @@
 //! ends, or, when it is dropped midway by a stop or a cancelled request, by the release
 //! sent on the way out.
 
+use std::ops::RangeInclusive;
 use std::time::Duration;
 
 use tokio::time::Instant;
@@ -41,6 +42,8 @@ const DRAG_STEPS: u32 = 10;
 const DRAG_STEP: Duration = Duration::from_millis(20);
 const MAX_CLICKS: u8 = 3;
 const MAX_NOTCHES: i32 = 10;
+/// The wheel notches one call may turn each way.
+const NOTCHES: RangeInclusive<i32> = -MAX_NOTCHES..=MAX_NOTCHES;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Button {
@@ -126,7 +129,7 @@ impl<P> Gesture<P> {
                 notches_x,
                 notches_y,
                 ..
-            } if notches_x.abs() > MAX_NOTCHES || notches_y.abs() > MAX_NOTCHES => {
+            } if !NOTCHES.contains(&notches_x) || !NOTCHES.contains(&notches_y) => {
                 mistake(format!(
                     "at most {MAX_NOTCHES} notches each way per call; scroll again after a screenshot"
                 ))
@@ -272,12 +275,7 @@ pub(crate) async fn point(
         .into_iter()
         .map(|point| shot.aim_at(point, now, &outputs, connection))
         .collect::<Result<Vec<_>, _>>()?;
-    let display = input.display.ok_or_else(|| {
-        ToolError::new(
-            ErrorName::UpstreamError,
-            "WAYLAND_DISPLAY or XDG_RUNTIME_DIR is not set",
-        )
-    })?;
+    let display = input.display.path().map_err(Clone::clone)?;
     let held = Held::prepare(input, waiter.view(), keys).await?;
     let pointer = Pointer::bind(display, niri::pid(socket).await?, &shot.output).await?;
     let pressing = Pressing { tool, button };

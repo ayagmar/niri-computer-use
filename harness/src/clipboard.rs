@@ -1,7 +1,8 @@
 //! `harness clipboard`: a clipboard owner in the nested session, through ext-data-control
 //! rather than the server's wlr protocol. It offers `TYPES`, each with contents of its
-//! own, and serves reads until another client takes the selection, when it writes
-//! `CANCELLED` in the test directory, or until its deadline.
+//! own, and with `--secret` also `SECRET_HINT` set to `secret`, as a password manager
+//! marks what it copies. It serves reads until another client takes the selection, when
+//! it writes `CANCELLED` in the test directory, or until its deadline.
 
 use std::fs::{self, File};
 use std::io::Write as _;
@@ -26,7 +27,7 @@ use crate::nested::Nested;
 use crate::test_dir::TestDir;
 use crate::window::dispatch_until;
 
-pub(crate) const USAGE: &str = "usage: harness clipboard <TEST_DIR> <deadline-ms>";
+pub(crate) const USAGE: &str = "usage: harness clipboard <TEST_DIR> <deadline-ms> [--secret]";
 /// What the user copied: text, its markup and binary data, all different.
 pub(crate) const TYPES: [(&str, &[u8]); 3] = [
     (
@@ -36,19 +37,32 @@ pub(crate) const TYPES: [(&str, &[u8]); 3] = [
     ("text/html", b"<b>The user's own copy</b>"),
     ("application/x-ncu-bytes", &[0, 1, 2, 0x7f, 0xfe, 0xff]),
 ];
+/// The type password managers mark their copies with, and its value for a secret.
+pub(crate) const SECRET_HINT: (&str, &[u8]) = ("x-kde-passwordManagerHint", b"secret");
 /// Written in the test directory once another client took the selection.
 pub(crate) const CANCELLED: &str = "clipboard-cancelled";
 
 #[derive(Debug, Default)]
 struct State {
+    /// Each type offered, with its bytes.
+    offered: Vec<(&'static str, &'static [u8])>,
     cancelled: bool,
     error: Option<Failure>,
 }
 
 pub(crate) fn run(args: &[&str]) -> Result<()> {
-    let [test_dir, deadline] = args else {
-        return Err(Failure::new(USAGE));
+    let (test_dir, deadline, secret) = match args {
+        [test_dir, deadline] => (test_dir, deadline, false),
+        [test_dir, deadline, "--secret"] => (test_dir, deadline, true),
+        _ => return Err(Failure::new(USAGE)),
     };
+    let mut state = State {
+        offered: TYPES.to_vec(),
+        ..State::default()
+    };
+    if secret {
+        state.offered.push(SECRET_HINT);
+    }
     let end = Instant::now() + Duration::from_millis(deadline.parse().context(USAGE)?);
     let test_dir = TestDir::open(PathBuf::from(test_dir))?;
     Nested::from_env(&test_dir)?;
@@ -62,11 +76,10 @@ pub(crate) fn run(args: &[&str]) -> Result<()> {
         .context("bind ext_data_control_manager_v1")?;
     let device = manager.get_data_device(&seat, &handle, ());
     let source = manager.create_data_source(&handle, ());
-    for (mime, _) in TYPES {
-        source.offer(mime.to_owned());
+    for (mime, _) in &state.offered {
+        source.offer((*mime).to_owned());
     }
     device.set_selection(Some(&source));
-    let mut state = State::default();
     dispatch_until(&mut queue, &mut state, end, |state| {
         state.cancelled || state.error.is_some()
     })?;
@@ -87,7 +100,7 @@ impl Dispatch<ExtDataControlSourceV1, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         if let ext_data_control_source_v1::Event::Send { mime_type, fd } = event {
-            let Some((_, bytes)) = TYPES.iter().find(|(mime, _)| *mime == mime_type) else {
+            let Some((_, bytes)) = state.offered.iter().find(|(mime, _)| *mime == mime_type) else {
                 state.error = Some(Failure::new(format!("asked for unoffered {mime_type}")));
                 return;
             };

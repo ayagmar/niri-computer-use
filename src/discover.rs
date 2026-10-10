@@ -8,19 +8,23 @@
 //!   without one, it is `/run/user/<euid>`, which logind creates for the user with mode
 //!   `0700`. Either must belong to the user and have mode `0700`;
 //! - niri's socket is `niri.<display>.<pid>.sock` in niri's runtime directory
-//!   (`IpcServer::start` in niri v26.04 `src/ipc/server.rs`);
+//!   (`IpcServer::start` in niri v26.04 `src/ipc/server.rs`), and it counts only while
+//!   process `<pid>` is a running niri that accepts a connection on it;
 //! - the Wayland display is that `<display>`, a socket in the runtime directory.
 //!
 //! Parsing a socket's name and choosing among the sockets are pure. The reads take their
-//! roots as parameters, so tests use directories of their own.
+//! roots as parameters, so tests use directories of their own; the connections go only to
+//! the sockets found there.
 
 use std::ffi::{OsStr, OsString};
 use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::Serialize;
 
 use crate::control::procs;
+use crate::niri;
 
 /// Where a session variable's value came from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -90,8 +94,11 @@ pub(crate) struct Session {
     pub(crate) sources: Sources,
 }
 
+/// How long a socket found in the runtime directory may take to accept a connection.
+const CONNECT_DEADLINE: Duration = Duration::from_millis(500);
+
 /// Fills in what `given` lacks.
-pub(crate) fn session(given: Given, roots: &Roots<'_>) -> Session {
+pub(crate) async fn session(given: Given, roots: &Roots<'_>) -> Session {
     let warning = misplaced(given.runtime_dir.as_deref(), given.niri_socket.as_deref());
     let (runtime_dir, runtime_source) = pick(given.runtime_dir, || {
         given.niri_socket.as_deref().map_or_else(
@@ -100,12 +107,12 @@ pub(crate) fn session(given: Given, roots: &Roots<'_>) -> Session {
         )
     });
     let runtime_dir = runtime_dir.ok();
-    let (niri_socket, niri_source) = pick(given.niri_socket, || {
-        let dir = runtime_dir
-            .as_deref()
-            .ok_or("NIRI_SOCKET is not set and there is no runtime directory to look for it in")?;
-        choose(dir, &niri_sockets(dir, roots)?)
-    });
+    let (niri_socket, niri_source) = if let Some(socket) = given.niri_socket {
+        (Ok(socket), Source::Environment)
+    } else {
+        let display = given.wayland_display.as_deref();
+        found(niri_socket(runtime_dir.as_deref(), display, roots).await)
+    };
     let (wayland_display, wayland_source) = pick(given.wayland_display, || {
         wayland_display(niri_socket.as_deref(), runtime_dir.as_deref())
     });
@@ -130,7 +137,12 @@ fn pick<T>(
     if let Some(value) = given {
         return (Ok(value), Source::Environment);
     }
-    match discover() {
+    found(discover())
+}
+
+/// What discovery found, or why it found nothing.
+fn found<T>(discovered: Result<T, String>) -> (Result<T, String>, Source) {
+    match discovered {
         Ok(value) => (Ok(value), Source::Discovered),
         Err(detail) => (Err(detail.clone()), Source::Missing(detail)),
     }
@@ -205,25 +217,47 @@ pub(crate) fn parse_socket_name(name: &str) -> Option<(&str, u32)> {
     Some((display, pid.parse().ok()?))
 }
 
+/// The socket of the one running niri in the runtime directory `dir`, on `display` if one
+/// is given.
+async fn niri_socket(
+    dir: Option<&Path>,
+    display: Option<&OsStr>,
+    roots: &Roots<'_>,
+) -> Result<PathBuf, String> {
+    let dir =
+        dir.ok_or("NIRI_SOCKET is not set and there is no runtime directory to look for it in")?;
+    let mut found = niri_sockets(dir, roots).await?;
+    found.retain(|socket| display.is_none_or(|display| serves(socket, display, dir)));
+    choose(dir, &found, display)
+}
+
 /// The sockets in `dir` named the way niri names its own, owned by `roots.euid`, whose
-/// PID is a running process called `niri`, in name order.
-fn niri_sockets(dir: &Path, roots: &Roots<'_>) -> Result<Vec<PathBuf>, String> {
+/// PID is a running process called `niri` that listens on them, in name order. A socket a
+/// crashed niri left stays behind, and its PID may since belong to another niri; it accepts
+/// no connection, so it doesn't count. Nothing is deleted.
+async fn niri_sockets(dir: &Path, roots: &Roots<'_>) -> Result<Vec<PathBuf>, String> {
     let entries = std::fs::read_dir(dir).map_err(|error| {
         format!(
             "NIRI_SOCKET is not set and {} can't be listed: {error}",
             dir.display()
         )
     })?;
-    let mut found: Vec<PathBuf> = entries
+    let named: Vec<(PathBuf, u32)> = entries
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let (_, pid) = parse_socket_name(entry.file_name().to_str()?)?;
             // Not followed: a symlink is not niri's socket.
             let meta = entry.metadata().ok()?;
             let ours = meta.file_type().is_socket() && meta.uid() == roots.euid;
-            (ours && runs_niri(roots.proc, pid)).then(|| entry.path())
+            (ours && runs_niri(roots.proc, pid)).then(|| (entry.path(), pid))
         })
         .collect();
+    let mut found = Vec::new();
+    for (socket, pid) in named {
+        if niri::listener_pid(&socket, CONNECT_DEADLINE).await == Ok(pid) {
+            found.push(socket);
+        }
+    }
     found.sort();
     Ok(found)
 }
@@ -233,12 +267,32 @@ fn runs_niri(proc_root: &Path, pid: u32) -> bool {
         && procs::comm(proc_root, pid).as_deref() == Some("niri")
 }
 
-/// The one niri socket found in `dir`. None, or several, is an error that says what to
-/// do; this never guesses between two sessions.
-fn choose(dir: &Path, found: &[PathBuf]) -> Result<PathBuf, String> {
+/// Whether niri's socket `socket` in `dir` names the given `WAYLAND_DISPLAY`: a name in
+/// `dir`, or an absolute path.
+fn serves(socket: &Path, display: &OsStr, dir: &Path) -> bool {
+    let Some((named, _)) = socket
+        .file_name()
+        .and_then(OsStr::to_str)
+        .and_then(parse_socket_name)
+    else {
+        return false;
+    };
+    let display = Path::new(display);
+    if display.is_absolute() {
+        return display == dir.join(named);
+    }
+    display == Path::new(named)
+}
+
+/// The one niri socket found in `dir`, for the given `display` if there is one. None, or
+/// several, is an error that says what to do; this never guesses between two sessions.
+fn choose(dir: &Path, found: &[PathBuf], display: Option<&OsStr>) -> Result<PathBuf, String> {
+    let on = display.map_or_else(String::new, |display| {
+        format!(" on WAYLAND_DISPLAY {}", display.to_string_lossy())
+    });
     match found {
         [] => Err(format!(
-            "NIRI_SOCKET is not set and {} has no socket of a running niri",
+            "NIRI_SOCKET is not set and {} has no socket of a running niri{on}",
             dir.display()
         )),
         [one] => Ok(one.clone()),
@@ -249,8 +303,8 @@ fn choose(dir: &Path, found: &[PathBuf]) -> Result<PathBuf, String> {
                 .map(OsStr::to_string_lossy)
                 .collect();
             Err(format!(
-                "NIRI_SOCKET is not set and {} has the sockets of {} running niri instances: {}; \
-                 set NIRI_SOCKET to the one to use",
+                "NIRI_SOCKET is not set and {} has the sockets of {} running niri instances{on}: \
+                 {}; set NIRI_SOCKET to the one to use",
                 dir.display(),
                 several.len(),
                 names.join(", ")
@@ -292,7 +346,7 @@ fn wayland_display(
 #[cfg(test)]
 mod tests {
     use std::os::unix::fs::PermissionsExt as _;
-    use std::os::unix::net::UnixListener;
+    use std::os::unix::net::{UnixListener, UnixStream};
 
     use super::*;
 
@@ -338,7 +392,7 @@ mod tests {
         /// A process `pid` called `comm`, running or a zombie.
         fn process(&self, pid: u32, comm: &str, state: char) {
             let dir = self.proc().join(pid.to_string());
-            std::fs::create_dir(&dir).unwrap();
+            std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(dir.join("comm"), format!("{comm}\n")).unwrap();
             let stat = format!(
                 "{pid} ({comm}) {state} 1 {pid} {pid} 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 98765 0 0"
@@ -352,16 +406,38 @@ mod tests {
             self.sockets.push(socket);
         }
 
-        fn session(&self, given: Given) -> Session {
+        /// A socket file called `name` that nothing listens on, as a crashed niri leaves.
+        async fn stale(&self, name: &str) -> PathBuf {
+            let path = self.runtime().join(name);
+            drop(UnixListener::bind(&path).unwrap());
+            // A child another test forked meanwhile holds the listener until it execs.
+            let mut polls = 0;
+            while UnixStream::connect(&path).is_ok() {
+                assert!(polls < 500, "{} still accepts connections", path.display());
+                polls += 1;
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            path
+        }
+
+        /// A running niri on `display`, as niri names its socket. The test's process
+        /// listens on the socket, so the niri has the test's PID. Returns the name.
+        fn niri(&mut self, display: &str) -> String {
+            let me = std::process::id();
+            self.process(me, "niri", 'S');
+            let name = format!("niri.{display}.{me}.sock");
+            self.socket(&name);
+            name
+        }
+
+        async fn session(&self, given: Given) -> Session {
             let (run_user, proc) = self.roots();
-            session(
-                given,
-                &Roots {
-                    run_user: &run_user,
-                    proc: &proc,
-                    euid: self.euid,
-                },
-            )
+            let roots = Roots {
+                run_user: &run_user,
+                proc: &proc,
+                euid: self.euid,
+            };
+            session(given, &roots).await
         }
     }
 
@@ -369,6 +445,18 @@ mod tests {
         fn drop(&mut self) {
             std::fs::remove_dir_all(&self.root).ok();
         }
+    }
+
+    /// Discovery with one socket, named for the test's PID, and `process` as the process
+    /// with that PID, if any.
+    async fn alone_with(process: Option<(&str, char)>) -> Session {
+        let me = std::process::id();
+        let mut host = Host::new("discover-dead");
+        if let Some((comm, state)) = process {
+            host.process(me, comm, state);
+        }
+        host.socket(&format!("niri.wayland-1.{me}.sock"));
+        host.session(Given::default()).await
     }
 
     fn missing(source: &Source) -> &str {
@@ -403,11 +491,14 @@ mod tests {
     #[test]
     fn uses_one_socket_but_never_guesses_between_several() {
         let dir = Path::new("/run/user/1000");
-        let none = choose(dir, &[]).unwrap_err();
+        let none = choose(dir, &[], None).unwrap_err();
         assert!(none.contains("/run/user/1000 has no socket"), "{none}");
         let one = dir.join("niri.wayland-1.5.sock");
-        assert_eq!(choose(dir, std::slice::from_ref(&one)), Ok(one.clone()));
-        let several = choose(dir, &[one, dir.join("niri.wayland-2.6.sock")]).unwrap_err();
+        assert_eq!(
+            choose(dir, std::slice::from_ref(&one), None),
+            Ok(one.clone())
+        );
+        let several = choose(dir, &[one, dir.join("niri.wayland-2.6.sock")], None).unwrap_err();
         assert_eq!(
             several,
             "NIRI_SOCKET is not set and /run/user/1000 has the sockets of 2 running niri \
@@ -416,18 +507,14 @@ mod tests {
         );
     }
 
-    #[test]
-    fn finds_the_session_of_the_one_running_niri() {
+    #[tokio::test]
+    async fn finds_the_session_of_the_one_running_niri() {
         let mut host = Host::new("discover-one");
-        host.process(5, "niri", 'S');
-        host.socket("niri.wayland-1.5.sock");
+        let name = host.niri("wayland-1");
         host.socket("wayland-1");
-        let session = host.session(Given::default());
+        let session = host.session(Given::default()).await;
         assert_eq!(session.runtime_dir, Some(host.runtime()));
-        assert_eq!(
-            session.niri_socket,
-            Ok(host.runtime().join("niri.wayland-1.5.sock"))
-        );
+        assert_eq!(session.niri_socket, Ok(host.runtime().join(name)));
         assert_eq!(session.wayland_display, Some("wayland-1".into()));
         let found = Source::Discovered;
         assert_eq!(
@@ -441,49 +528,98 @@ mod tests {
         );
     }
 
-    #[test]
-    fn skips_sockets_of_dead_or_other_processes_and_files_that_arent_sockets() {
-        let mut host = Host::new("discover-dead");
-        host.process(6, "niri", 'Z');
-        host.process(7, "bash", 'S');
-        host.process(8, "niri", 'S');
-        host.socket("niri.wayland-1.5.sock");
-        host.socket("niri.wayland-2.6.sock");
-        host.socket("niri.wayland-3.7.sock");
-        std::fs::write(host.runtime().join("niri.wayland-4.8.sock"), "").unwrap();
-        let session = host.session(Given::default());
-        let detail = missing(&session.sources.niri_socket);
+    #[tokio::test]
+    async fn skips_sockets_of_dead_or_other_processes_and_files_that_arent_sockets() {
+        for process in [None, Some(("niri", 'Z')), Some(("bash", 'S'))] {
+            let session = alone_with(process).await;
+            let detail = missing(&session.sources.niri_socket);
+            assert!(
+                detail.contains("has no socket of a running niri"),
+                "{process:?}: {detail}"
+            );
+            assert_eq!(session.niri_socket, Err(detail.to_owned()));
+            let display = missing(&session.sources.wayland_display);
+            assert!(display.contains("no niri socket"), "{display}");
+        }
+        let me = std::process::id();
+        let host = Host::new("discover-file");
+        host.process(me, "niri", 'S');
+        std::fs::write(host.runtime().join(format!("niri.wayland-1.{me}.sock")), "").unwrap();
+        let file = host.session(Given::default()).await;
+        assert!(missing(&file.sources.niri_socket).contains("has no socket of a running niri"));
+    }
+
+    /// A crashed niri leaves its socket behind, and its PID may later be another niri's.
+    #[tokio::test]
+    async fn only_a_socket_niri_listens_on_counts_and_none_is_deleted() {
+        let mut host = Host::new("discover-stale");
+        let me = std::process::id();
+        host.process(me, "niri", 'S');
+        let stale = host.stale(&format!("niri.wayland-0.{me}.sock")).await;
+        let only_stale = host.session(Given::default()).await;
+        let detail = missing(&only_stale.sources.niri_socket);
         assert!(
             detail.contains("has no socket of a running niri"),
             "{detail}"
         );
-        assert_eq!(session.niri_socket, Err(detail.to_owned()));
-        let display = missing(&session.sources.wayland_display);
-        assert!(display.contains("no niri socket"), "{display}");
+        // Named for a running niri, but another process listens on it.
+        host.process(5, "niri", 'S');
+        host.socket("niri.wayland-2.5.sock");
+        let live = host.niri("wayland-1");
+        let session = host.session(Given::default()).await;
+        assert_eq!(session.niri_socket, Ok(host.runtime().join(live)));
+        assert!(stale.exists());
     }
 
-    #[test]
-    fn several_running_niris_leave_the_socket_unknown() {
+    #[tokio::test]
+    async fn several_running_niris_leave_the_socket_unknown() {
         let mut host = Host::new("discover-two");
-        for (pid, display) in [(5, "wayland-1"), (6, "wayland-2")] {
-            host.process(pid, "niri", 'S');
-            host.socket(&format!("niri.{display}.{pid}.sock"));
+        let names = ["wayland-1", "wayland-2"].map(|display| {
             host.socket(display);
-        }
-        let session = host.session(Given::default());
+            host.niri(display)
+        });
+        let session = host.session(Given::default()).await;
         let detail = session.niri_socket.unwrap_err();
-        assert!(
-            detail.contains("niri.wayland-1.5.sock, niri.wayland-2.6.sock"),
-            "{detail}"
-        );
+        assert!(detail.contains(&names.join(", ")), "{detail}");
         assert_eq!(session.wayland_display, None);
     }
 
-    #[test]
-    fn a_socket_of_another_user_is_not_niris() {
+    #[tokio::test]
+    async fn a_given_display_keeps_only_the_niri_that_serves_it() {
+        let mut host = Host::new("discover-on-display");
+        host.niri("wayland-1");
+        let second = host.runtime().join(host.niri("wayland-2"));
+        let on = |display: &Path| {
+            host.session(Given {
+                wayland_display: Some(display.into()),
+                ..Given::default()
+            })
+        };
+        assert_eq!(
+            on(Path::new("wayland-2")).await.niri_socket,
+            Ok(second.clone())
+        );
+        assert_eq!(
+            on(&host.runtime().join("wayland-2")).await.niri_socket,
+            Ok(second)
+        );
+        for other in [Path::new("wayland-3"), Path::new("/elsewhere/wayland-2")] {
+            let session = on(other).await;
+            let detail = session.niri_socket.unwrap_err();
+            assert!(
+                detail.ends_with(&format!(
+                    "has no socket of a running niri on WAYLAND_DISPLAY {}",
+                    other.display()
+                )),
+                "{detail}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_socket_of_another_user_is_not_niris() {
         let mut host = Host::new("discover-owner");
-        host.process(5, "niri", 'S');
-        host.socket("niri.wayland-1.5.sock");
+        host.niri("wayland-1");
         let (run_user, proc) = host.roots();
         let roots = Roots {
             run_user: &run_user,
@@ -494,24 +630,28 @@ mod tests {
             euid: host.euid + 1,
             ..roots
         };
-        assert_eq!(niri_sockets(&host.runtime(), &roots).unwrap().len(), 1);
         assert_eq!(
-            niri_sockets(&host.runtime(), &other).unwrap(),
+            niri_sockets(&host.runtime(), &roots).await.unwrap().len(),
+            1
+        );
+        assert_eq!(
+            niri_sockets(&host.runtime(), &other).await.unwrap(),
             Vec::<PathBuf>::new()
         );
     }
 
-    #[test]
-    fn set_variables_win_over_discovery() {
+    #[tokio::test]
+    async fn set_variables_win_over_discovery() {
         let mut host = Host::new("discover-given");
-        host.process(5, "niri", 'S');
-        host.socket("niri.wayland-1.5.sock");
+        host.niri("wayland-1");
         host.socket("wayland-1");
-        let session = host.session(Given {
-            runtime_dir: Some("/elsewhere".into()),
-            niri_socket: Some("/elsewhere/niri.wayland-9.9.sock".into()),
-            wayland_display: Some("wayland-9".into()),
-        });
+        let session = host
+            .session(Given {
+                runtime_dir: Some("/elsewhere".into()),
+                niri_socket: Some("/elsewhere/niri.wayland-9.9.sock".into()),
+                wayland_display: Some("wayland-9".into()),
+            })
+            .await;
         assert_eq!(session.runtime_dir, Some("/elsewhere".into()));
         assert_eq!(
             session.niri_socket,
@@ -530,27 +670,27 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_display_comes_from_a_given_niri_socket_too() {
+    #[tokio::test]
+    async fn the_display_comes_from_a_given_niri_socket_too() {
         let mut host = Host::new("discover-display");
         host.socket("wayland-3");
         let given = |socket: &str| Given {
             niri_socket: Some(host.runtime().join(socket)),
             ..Given::default()
         };
-        let session = host.session(given("niri.wayland-3.42.sock"));
+        let session = host.session(given("niri.wayland-3.42.sock")).await;
         assert_eq!(session.wayland_display, Some("wayland-3".into()));
         assert_eq!(session.sources.wayland_display, Source::Discovered);
-        let nameless = host.session(given("niri.test.sock"));
+        let nameless = host.session(given("niri.test.sock")).await;
         let unnamed = missing(&nameless.sources.wayland_display);
         assert!(unnamed.contains("names no display"), "{unnamed}");
-        let gone = host.session(given("niri.wayland-4.42.sock"));
+        let gone = host.session(given("niri.wayland-4.42.sock")).await;
         let absent = missing(&gone.sources.wayland_display);
         assert!(absent.ends_with("wayland-4 is not a socket"), "{absent}");
     }
 
-    #[test]
-    fn a_given_niri_socket_names_the_runtime_directory() {
+    #[tokio::test]
+    async fn a_given_niri_socket_names_the_runtime_directory() {
         let host = Host::new("discover-nested");
         let nested = host.root.join("nested");
         std::fs::create_dir(&nested).unwrap();
@@ -561,14 +701,14 @@ mod tests {
             niri_socket: Some(socket.clone()),
             ..Given::default()
         };
-        let session = host.session(given());
+        let session = host.session(given()).await;
         assert_eq!(session.runtime_dir, Some(nested.clone()));
         assert_eq!(session.sources.runtime_dir, Source::Discovered);
         assert_eq!(session.wayland_display, Some("wayland-2".into()));
 
         // Never the default directory instead: its lease and stop flag are another one's.
         std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let open = host.session(given());
+        let open = host.session(given()).await;
         assert_eq!(open.runtime_dir, None);
         let detail = missing(&open.sources.runtime_dir);
         assert!(
@@ -578,28 +718,35 @@ mod tests {
         assert!(detail.ends_with("set XDG_RUNTIME_DIR to niri's runtime directory"));
     }
 
-    #[test]
-    fn a_niri_socket_outside_the_given_runtime_directory_is_a_warning() {
+    #[tokio::test]
+    async fn a_niri_socket_outside_the_given_runtime_directory_is_a_warning() {
         let host = Host::new("discover-misplaced");
-        let session = host.session(Given {
-            runtime_dir: Some("/run/user/1000".into()),
-            niri_socket: Some("/tmp/nested/niri.wayland-2.42.sock".into()),
-            wayland_display: None,
-        });
-        assert_eq!(session.runtime_dir, Some("/run/user/1000".into()));
+        let runtime = host.runtime();
+        let nested = host.root.join("nested/niri.wayland-2.42.sock");
+        let session = host
+            .session(Given {
+                runtime_dir: Some(runtime.clone()),
+                niri_socket: Some(nested.clone()),
+                wayland_display: None,
+            })
+            .await;
+        assert_eq!(session.runtime_dir, Some(runtime.clone()));
         let warning = session.sources.warning.unwrap();
         assert!(
-            warning.starts_with(
-                "NIRI_SOCKET /tmp/nested/niri.wayland-2.42.sock is not in XDG_RUNTIME_DIR \
-                 /run/user/1000"
-            ),
+            warning.starts_with(&format!(
+                "NIRI_SOCKET {} is not in XDG_RUNTIME_DIR {}",
+                nested.display(),
+                runtime.display()
+            )),
             "{warning}"
         );
-        let inside = host.session(Given {
-            runtime_dir: Some("/run/user/1000/".into()),
-            niri_socket: Some("/run/user/1000/niri.wayland-1.5.sock".into()),
-            wayland_display: None,
-        });
+        let inside = host
+            .session(Given {
+                runtime_dir: Some(format!("{}/", runtime.display()).into()),
+                niri_socket: Some(runtime.join("niri.wayland-1.5.sock")),
+                wayland_display: None,
+            })
+            .await;
         assert_eq!(inside.sources.warning, None);
     }
 

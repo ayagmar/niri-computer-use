@@ -3,7 +3,8 @@
 //! the reads that start after the server's `k`, and restores the saved selection once the
 //! target has read and gone quiet, or at once when the server's stdin ends. It then serves
 //! the restored selection, without a deadline, until another client takes it or niri goes
-//! away. Each step until then, and each transfer, has a deadline.
+//! away. Each step until then, and each transfer, has a deadline; the keeper ends only
+//! once every transfer it accepted has finished or reached its deadline.
 
 use std::io::Write as _;
 use std::os::fd::AsFd as _;
@@ -12,6 +13,7 @@ use std::time::Duration;
 
 use tokio::io::AsyncReadExt as _;
 use tokio::net::unix::pipe;
+use tokio::task::JoinSet;
 use tokio::time::Instant;
 
 use super::paste::{Clipboard, MAX_TEXT, Report};
@@ -55,7 +57,14 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
         }
     };
     say(&Report::Ready);
-    let (read, clipboard, detail) = match watch(&mut selection, &mut commands, paste, &text).await {
+    let mut transfers = Transfers::default();
+    let watched = match watch(&mut selection, &mut commands, paste, &text, &mut transfers).await {
+        Ok(watched) if !watched.replaced => {
+            confirm(&mut selection, watched, paste, &text, &mut transfers).await
+        }
+        other => other,
+    };
+    let (read, clipboard, detail) = match watched {
         Err(detail) => (false, Clipboard::Failed, Some(detail)),
         Ok(watched) if watched.replaced => (watched.reads > 0, Clipboard::Replaced, None),
         Ok(watched) => {
@@ -69,9 +78,11 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
                         detail: None,
                     });
                     // Nobody waits for this; it ends with the selection or with niri.
-                    serve(&mut selection, restored, &saved.unwrap_or_default())
+                    let saved = saved.unwrap_or_default();
+                    serve(&mut selection, restored, &saved, &mut transfers)
                         .await
                         .ok();
+                    transfers.finish().await;
                     return Ok(());
                 }
                 Err(detail) => (read, Clipboard::Failed, Some(detail)),
@@ -83,18 +94,17 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
         clipboard,
         detail,
     });
+    transfers.finish().await;
     Ok(())
 }
 
 /// Binds, saves the selection, and takes it with a source offering the text.
 async fn take(env: &Env) -> Result<(Selection, Option<Contents>, SourceId), String> {
-    let display = env
-        .wayland_socket()
-        .ok_or("WAYLAND_DISPLAY or XDG_RUNTIME_DIR is not set")?;
+    let display = env.display.path().map_err(|error| error.detail.clone())?;
     let niri = crate::niri::pid(&env.niri_socket)
         .await
         .map_err(|error| error.detail)?;
-    let mut selection = Selection::bind(&display, niri)
+    let mut selection = Selection::bind(display, niri)
         .await
         .map_err(|error| error.detail)?;
     let saved = selection
@@ -136,6 +146,34 @@ struct Watched {
 }
 
 impl Watched {
+    /// Serves and counts a read of the text, or notes that another client took the
+    /// selection.
+    fn handle(
+        &mut self,
+        event: Event,
+        paste: SourceId,
+        text: &Arc<[u8]>,
+        transfers: &mut Transfers,
+    ) {
+        match event {
+            Event::Send { source, mime, fd } if source == paste => {
+                if self.armed {
+                    self.reads += 1;
+                    self.latest = Some(Instant::now());
+                }
+                let bytes = if mime == HINT {
+                    SECRET.into()
+                } else {
+                    Arc::clone(text)
+                };
+                transfers.spawn(fd, bytes);
+            }
+            Event::Cancelled(source) if source == paste => self.replaced = true,
+            // A source of ours from before, which is gone.
+            Event::Send { .. } | Event::Cancelled(_) => {}
+        }
+    }
+
     /// When the wait ends unless something happens first: the server's whole call before
     /// `p`, the first read's wait after it, and the quiet time after a read.
     fn ends(&self, started: Instant) -> Instant {
@@ -154,6 +192,7 @@ async fn watch(
     commands: &mut Commands,
     paste: SourceId,
     text: &Arc<[u8]>,
+    transfers: &mut Transfers,
 ) -> Result<Watched, String> {
     let started = Instant::now();
     let mut watched = Watched::default();
@@ -165,26 +204,31 @@ async fn watch(
                 Command::End => return Ok(watched),
             },
             event = selection.next() => {
-                match event.map_err(|error| error.detail)? {
-                    Event::Send { source, mime, fd } if source == paste => {
-                        if watched.armed {
-                            watched.reads += 1;
-                            watched.latest = Some(Instant::now());
-                        }
-                        let bytes = if mime == HINT { SECRET.into() } else { Arc::clone(text) };
-                        spawn_transfer(fd, bytes);
-                    }
-                    Event::Cancelled(source) if source == paste => {
-                        watched.replaced = true;
-                        return Ok(watched);
-                    }
-                    // A source of ours from before, which is gone.
-                    Event::Send { .. } | Event::Cancelled(_) => {}
+                watched.handle(event.map_err(|error| error.detail)?, paste, text, transfers);
+                if watched.replaced {
+                    return Ok(watched);
                 }
             }
             () = tokio::time::sleep_until(watched.ends(started)) => return Ok(watched),
         }
     }
+}
+
+/// Handles what niri sent before now, so a replacement already on its way counts: the end
+/// of stdin or the quiet time doesn't prove the text still holds the selection. A
+/// replacement niri handles after this is the race that data-control can't exclude, since
+/// it has no request that sets the selection only if it is still ours.
+async fn confirm(
+    selection: &mut Selection,
+    mut watched: Watched,
+    paste: SourceId,
+    text: &Arc<[u8]>,
+    transfers: &mut Transfers,
+) -> Result<Watched, String> {
+    for event in selection.pending().await.map_err(|error| error.detail)? {
+        watched.handle(event, paste, text, transfers);
+    }
+    Ok(watched)
 }
 
 /// Offers the saved selection again, or clears the selection when nothing was saved.
@@ -209,12 +253,13 @@ async fn serve(
     selection: &mut Selection,
     restored: SourceId,
     saved: &Contents,
+    transfers: &mut Transfers,
 ) -> Result<(), String> {
     loop {
         match selection.next().await.map_err(|error| error.detail)? {
             Event::Send { source, mime, fd } if source == restored => {
                 if let Some((_, bytes)) = saved.iter().find(|(offered, _)| *offered == mime) {
-                    spawn_transfer(fd, Arc::clone(bytes));
+                    transfers.spawn(fd, Arc::clone(bytes));
                 }
             }
             Event::Cancelled(source) if source == restored => return Ok(()),
@@ -223,10 +268,24 @@ async fn serve(
     }
 }
 
-/// Writes to a reader in a task of its own, so a slow reader holds nothing else up. A
-/// reader that goes away just ends its transfer.
-fn spawn_transfer(fd: std::os::fd::OwnedFd, bytes: Arc<[u8]>) {
-    tokio::spawn(async move { selection::write(fd, &bytes, TRANSFER).await.ok() });
+/// The transfers this keeper accepted. Ending the process would cut them short, so it
+/// waits for each to finish or reach its own deadline first.
+#[derive(Debug, Default)]
+struct Transfers(JoinSet<()>);
+
+impl Transfers {
+    /// Writes to a reader in a task of its own, so a slow reader holds nothing else up. A
+    /// reader that goes away just ends its transfer.
+    fn spawn(&mut self, fd: std::os::fd::OwnedFd, bytes: Arc<[u8]>) {
+        while self.0.try_join_next().is_some() {}
+        self.0.spawn(async move {
+            selection::write(fd, &bytes, TRANSFER).await.ok();
+        });
+    }
+
+    async fn finish(mut self) {
+        while self.0.join_next().await.is_some() {}
+    }
 }
 
 /// Writes one report line. A server that went away reads nothing more, and its stdin's
