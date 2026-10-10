@@ -31,7 +31,7 @@ Before `click`, `drag`, `key`, `type_text` or `paste` send anything, the server 
 
 ## The crash guardian
 
-Each standalone `serve`, and each shared engine, starts a small guardian process. If the server or engine dies while it holds input, for example after `kill -9`, the guardian releases the keys and buttons the marker names at once, so nothing stays pressed while you are away. The marker still stays until you run `recover`.
+Each standalone `serve`, and each shared engine, starts a small guardian process. If the server or engine dies while it holds input, for example after `kill -9`, the guardian at once releases the native keyboard's keys and the pointer buttons that the marker records. It leaves alone a `wtype` call, which outlives the server and finishes on its own, and a marker it can't read, and a release can fail or time out. The marker still stays until you run `recover`.
 
 ## The lock gate
 
@@ -45,7 +45,7 @@ Before each action the server checks, in this order: the stop flag (`stopped`), 
 
 - `launch` starts only presets from your [policy file](../configuration/), never a command the agent writes.
 - `niri_action` refuses niri's actions that run programs, write files or reach past the window layout, such as `Spawn`, `Quit` and `LoadConfigFile`, with `unrestricted_required`, and the `noctalia` tool isn't listed, unless you turn on [`unrestricted`](../configuration/#unrestricted). Turning it on lets an agent run any program through the server; every call still needs the lease, stops at the stop key and is logged.
-- The pointer and keyboard tools refuse with `app_denied` while the focused window's `app_id` is on your deny list.
+- The pointer and keyboard tools refuse with `app_denied` while the focused window's `app_id` is on your deny list. `elements` refuses a denied app's window, and `close_window` and `niri_action`'s `CloseWindow` refuse to close one, whether named or focused. Focus and layout actions, such as `focus_window` or making a window fullscreen, still reach a denied window: they move it, not what is in it.
 - The keyboard tools need `expect`, the window the agent means to type into, and refuse with `focus_mismatch` rather than type elsewhere. They stop if focus moves while they type.
 - The pointer tools aim only at pixels of a screenshot the agent took under its lease, at most a minute old, of an output that hasn't changed since. They run only on one monitor at transform `Normal`.
 - `shell_open` and `shell_close` open only three Noctalia panels.
@@ -58,7 +58,7 @@ Every action reports `accepted`, whether niri took the request, and `observed`, 
 
 ## The audit log
 
-Every tool call is appended to `~/.local/state/niri-computer-use/audit.jsonl` (or under `$XDG_STATE_HOME`): the time, the client, the tool, its arguments and the outcome. The directory is `0700` and the file `0600`. Typed and pasted text, clipboard contents, window titles and images are never written; the log keeps their length.
+Every tool call is appended to `~/.local/state/niri-computer-use/audit.jsonl` (or under `$XDG_STATE_HOME`): the time, the client, the tool, its arguments and the outcome. The directory is `0700` and the file `0600`. Typed and pasted text, clipboard contents, window titles and images are never written; the log keeps their length. Text the agent passes on goes the same way: `niri_action` logs the action's name and field names, its numbers and booleans, and every string, such as a `Spawn` command, as its length in bytes, and JSON that isn't a niri action only as its size; `noctalia` logs how many arguments and how long.
 
 ## What isn't a boundary
 

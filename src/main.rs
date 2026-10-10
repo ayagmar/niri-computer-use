@@ -36,7 +36,7 @@ use std::process::ExitCode;
 
 use crate::control::runtime::RuntimeDir;
 
-const USAGE: &str = "usage: niri-computer-use serve | status | stop | resume | recover | engine | guard <server-pid> | paste-keeper";
+const USAGE: &str = "usage: niri-computer-use serve | status | stop | resume | recover | engine | guard <server-pid> | paste-keeper | --version";
 
 /// What the server reads from its environment, once at startup. An empty variable
 /// counts as unset.
@@ -200,12 +200,18 @@ enum Command {
     /// The clipboard keeper `paste` starts: hold the pasted text, then restore the
     /// clipboard.
     PasteKeeper,
+    /// Print the version.
+    Version,
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     let command = command(&args);
+    if command == Some(Command::Version) {
+        cli::say(concat!("niri-computer-use ", env!("CARGO_PKG_VERSION")));
+        return ExitCode::SUCCESS;
+    }
     // The flag commands must work while niri hangs, and pick only where a flag goes.
     let probe = match command {
         Some(Command::Stop | Command::Resume) => discover::Probe::Offline,
@@ -243,7 +249,7 @@ async fn main() -> ExitCode {
         Some(Command::Engine) => engine::host::run(env).await,
         Some(Command::Guard(server)) => control::guard::run(&env, server).await,
         Some(Command::PasteKeeper) => input::keeper::run(&env).await,
-        None => Err(USAGE.to_owned()),
+        Some(Command::Version) | None => Err(USAGE.to_owned()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -263,6 +269,7 @@ fn command(args: &[OsString]) -> Option<Command> {
         [only] if only == "recover" => Some(Command::Recover),
         [only] if only == "paste-keeper" => Some(Command::PasteKeeper),
         [only] if only == "engine" => Some(Command::Engine),
+        [only] if only == "--version" => Some(Command::Version),
         [guard, server] if guard == "guard" => server.to_str()?.parse().ok().map(Command::Guard),
         _ => None,
     }

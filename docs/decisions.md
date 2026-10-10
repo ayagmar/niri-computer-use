@@ -529,6 +529,7 @@ These match the versions installed locally.
 - Role and state names are AT-SPI's own (`atspi-constants.h`) in snake case, such as `push_button_menu` or `check_box`, so they match what other AT-SPI tools show. An unknown `role` argument is an argument mistake.
 - An element's place is `output origin + tile position + window offset in the tile + its WINDOW-relative extents`. It is trusted only when the app's accessible frame is niri's window size, within a pixel. A frame of another size, as with client-side decorations that draw shadows, makes every element of that window `unmappable: frame_size_mismatch` rather than a guess.
 - New error names: `not_accessible` when the window's application has no accessible window for it, and `ambiguous_window` when several of its windows fit.
+- A walk that runs out of the three-second budget returns what it read, possibly nothing, with `capped: true` and `capped_reason: budget_exhausted`, instead of `deadline_exceeded` with nothing. Each object costs six D-Bus calls, so a browser or office document's tree ran out of time long before the 2000-object cap and lost everything already read. Only the whole budget counts: one call's own one-second deadline, as for a hung app, stays `deadline_exceeded`, and a bus failure stays `upstream_error`, wherever in the walk they happen (Sol's design check: a first-node failure doesn't prove a hung app, since finding the app and frame spend the same budget). The full match predicate (showing, the name-or-action rule, `role`, `name_contains`) goes into the walk, which stops once it found one more match than `limit`, so `truncated` means a further match was found. It keeps walking through showing elements that don't match, and the 2000-object cap still bounds it. Added after Fable's review (B3).
 
 ## 2026-10-10: aiming at elements
 
@@ -584,7 +585,10 @@ These match the versions installed locally.
   - `SwitchLayout`: changes the layout the user types with after the lease. The native keyboard backend also builds on the active layout.
   - `SetDynamicCastWindow`, `SetDynamicCastMonitor`, `ClearDynamicCastTarget`, `StopCast`: change what a screencast shows or end it, which could show a window to a call.
   - `ToggleDebugTint`, `DebugToggleOpaqueRegions`, `DebugToggleDamage`: rendering debug state, not layout or focus; no agent needs them.
+  - `DoScreenTransition`: niri renders the frozen frame on every output and screencast for `delay_ms`, up to 65.5 s with no clamp, while the agent could keep acting through `elements` and the keyboard. Rendering state like the debug toggles, and no agent task needs it. Added after the gate review.
 - Everything else only changes niri's layout, focus or views and is allowed, including `CloseWindow`, `SetWorkspaceName`, the overview and urgency.
+- `CloseWindow`, and the `close_window` tool, refuse a window whose app is on the deny list, named or focused, with `app_denied` (`policy::refuse_window`). Closing can end the user's password manager or settings window; focus and layout actions leave the app's content alone and stay unchecked. Added after the gate review.
+- `CloseWindow` with a null id goes out with the id of the focused window that was checked, so focus moving to a denied window before niri handles it can't redirect the close. With no window focused nothing is sent, and the call is an argument mistake. From Sol's design check.
 - For an action about one window, the result reports that window as niri's event stream shows it: within 1 s of the action, plus 200 ms for a resize that arrives in steps. niri 26.04's IPC has no fullscreen or maximized flag, so those show as sizes. A 1 s wait on an action that changes nothing is the cost.
 - The gate is checked after the lease, stop and lock checks, so a refused action is audit-logged like any other.
 
@@ -596,6 +600,7 @@ These match the versions installed locally.
 - `status.unrestricted` reports `enabled`, `source` (`policy`, `env` or `both`) and `error`.
 - A preset's `env` is applied by spawning `env -- NAME=value … argv` through niri, because niri 26.04's `Spawn` has no environment field. niri still starts it with the session's environment, plus these variables. Names must be non-empty and free of `=` and NUL, and with `env` the program can't contain `=`, which `env` would read as an assignment. Without `unrestricted`, a preset with `env` makes the file invalid.
 - An agent never adds arguments or variables: `launch` still takes only a preset name.
+- With `unrestricted` on and no preset for an app, the skill, `launch`'s description and the server instructions tell the agent to start it with `niri_action`'s `Spawn` and the program's argv, never a shell or `SpawnSh`, then `wait_for` its window by `app_id`. The user turned `unrestricted` on for this, and the earlier "ask for a preset" text kept a compliant agent from using it. A preset still comes first, and with `unrestricted` off the agent asks for one.
 
 ## 2026-10-10: the `noctalia` passthrough, and OBS through it
 
@@ -654,3 +659,17 @@ These match the versions installed locally.
 
 - The native keyboard uploaded the map it was bound with at the end of a call, so a compositor keymap that changed during an extension was replaced by the stale one, and the layout captured at the start was sent back with it (review finding). It now keeps the latest base map apart from its own extensions' echoes and restores that, in the layout niri last reported.
 - Maps are compared by their libxkbcommon serialization, which `input/keymap.rs` already produces, because niri re-serializes uploaded maps; byte comparison took a re-serialized echo for a new map. A map niri sends is not labelled as the compositor's, so any map that isn't one of this device's echoes counts as a base map, and restoration counts only when the last map received is the base map uploaded. No dependency was added.
+
+## 2026-10-10: the passthroughs log metadata only
+
+- `niri_action` and `noctalia` logged their arguments whole, so a `Spawn` command, a workspace name or a `noctalia` argument could carry clipboard text or a title into `audit.jsonl`, against the log's promise. Sol's review reproduced it with a sentinel through MCP, on a refused call.
+- `niri_action` now logs the parsed action: its name and field names as niri-ipc's serde spells them, numbers, booleans and nulls as they are, every string as its length in bytes and every list of strings as a count and byte lengths. JSON that isn't an action logs a fixed `invalid_action` category with its key count and size, never its keys, since an unknown variant or field name is the agent's text.
+- `noctalia` logs only the argument count and byte lengths. A first draft kept a first argument of lowercase letters and `-` as a command word; Sol's design check showed clipboard text such as `synthetic-private-content` fits that shape, so syntax can't tell a command from private text. A fixed list of Noctalia's command names would be the way to get readable commands back.
+- Lengths are in bytes, the size the log can state without decoding anything.
+- The log no longer says which program `Spawn` started; the promise that the log holds no desktop text wins over that.
+
+## 2026-10-10: release preparation
+
+- The package has `description`, `repository`, `readme`, `keywords` and `categories`. Only `description` (with the existing `license`) is required to publish on crates.io; the rest helps people find it. Nothing was published.
+- The workspace's `cargo_common_metadata = "allow"` is gone. The lint only checks packages that can be published, and the harness is `publish = false`, so `make check` passes with it at the workspace's `cargo` level and `-D warnings`.
+- `--version` is handled before the server reads its environment or looks for a session, so it works with no desktop and never connects to a niri socket.

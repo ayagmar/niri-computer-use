@@ -707,6 +707,87 @@ async fn denial_is_focus_based_and_unchecked_expect_does_not_bypass_it() {
 }
 
 #[tokio::test]
+async fn closing_a_denied_apps_window_is_refused_named_or_focused() {
+    let mut desk = Desk::start("act-deny-close", r#"deny_input_app_ids = ["a"]"#).await;
+    for (tool, arguments) in [
+        ("close_window", json!({"id": 1})),
+        ("niri_action", json!({"action": {"CloseWindow": {"id": 1}}})),
+        (
+            "niri_action",
+            json!({"action": {"CloseWindow": {"id": null}}}),
+        ),
+    ] {
+        let (name, detail) = tool_error(&desk.server.call(tool, arguments).await);
+        assert_eq!(name, "app_denied", "{tool}");
+        assert_eq!(
+            detail, r#"window 1's app_id "a" is on the policy's deny list"#,
+            "{tool}"
+        );
+    }
+    assert!(!desk.niri.sent_action());
+    // Layout actions still reach a denied window, and other apps' windows still close.
+    let floated = desk
+        .act(
+            "niri_action",
+            json!({"action": {"ToggleWindowFloating": {"id": 1}}}),
+            |_, _| {},
+        )
+        .await;
+    assert_eq!(outcome(&floated)["observed"], "unchanged");
+    let closed = desk
+        .act("close_window", json!({"id": 2}), |stream, _| {
+            stream.send(&json!({"WindowClosed": {"id": 2}}));
+        })
+        .await;
+    assert_eq!(outcome(&closed)["observed"], "closed");
+}
+
+#[tokio::test]
+async fn a_focused_close_names_the_window_it_checked() {
+    let deny_b = r#"deny_input_app_ids = ["b"]"#;
+    let mut desk = Desk::start("act-close-focused", deny_b).await;
+    let close_focused = json!({"action": {"CloseWindow": {"id": null}}});
+    let closed = desk
+        .act("niri_action", close_focused.clone(), |stream, action| {
+            assert!(
+                matches!(action, Action::CloseWindow { id: Some(1) }),
+                "{action:?}"
+            );
+            // Focus moving to the denied window now can't redirect the close.
+            focus_changed(stream, 2);
+            stream.send(&json!({"WindowClosed": {"id": 1}}));
+        })
+        .await;
+    assert_eq!(outcome(&closed)["observed"], "closed");
+    assert_eq!(outcome(&closed)["windows"], json!([1]));
+
+    // With no window focused, nothing is sent.
+    desk.stream
+        .send(&json!({"WindowFocusChanged": {"id": null}}));
+    while !desk.server.structured("desktop_state").await["focused_window"].is_null() {
+        tokio::task::yield_now().await;
+    }
+    let unfocused = desk.server.call("niri_action", close_focused).await;
+    assert_eq!(
+        mistake(&unfocused),
+        "invalid arguments: no window has focus; pass the id of the window to close"
+    );
+    assert!(!desk.niri.sent_action());
+
+    // unrestricted doesn't lift the deny list.
+    let policy = format!("unrestricted = true\n{deny_b}");
+    let mut open = Desk::start("act-close-unrestricted", &policy).await;
+    for (tool, arguments) in [
+        ("niri_action", json!({"action": {"CloseWindow": {"id": 2}}})),
+        ("close_window", json!({"id": 2})),
+    ] {
+        let refused = open.server.call(tool, arguments).await;
+        assert_eq!(tool_error(&refused).0, "app_denied", "{tool}");
+    }
+    assert!(!open.niri.sent_action());
+}
+
+#[tokio::test]
 async fn pointer_tools_check_the_ref_the_outputs_and_their_arguments_first() {
     let mut desk = Desk::start("act-pointer", "").await;
     let at = |id: &str, x: u32| json!({"screenshot_ref": id, "x": x, "y": 10});
@@ -1815,7 +1896,7 @@ async fn gated_niri_actions_need_unrestricted() {
         desk.audited(),
         [json!([
             "niri_action",
-            spawn,
+            {"action": {"Spawn": {"command": {"count": 1, "bytes": [4]}}}},
             null,
             null,
             "unrestricted_required"
@@ -1884,6 +1965,79 @@ env = { GDK_SCALE = "2" }
     assert_eq!(name, "unrestricted_required");
 }
 
+/// Text an agent could pass on from the clipboard: lowercase words and `-`, the shape of
+/// a command word.
+const PRIVATE: &str = "synthetic-private-content";
+
+#[tokio::test]
+async fn passthrough_arguments_reach_the_audit_log_only_as_metadata() {
+    let on = [("NIRI_COMPUTER_USE_UNRESTRICTED", "1")];
+    let mut desk = Desk::start_with("act-audit-private", "", &on).await;
+    let spawn = json!({"action": {"Spawn": {"command": ["foot", PRIVATE]}}});
+    desk.act("niri_action", spawn, |_, _| {}).await;
+    for args in [json!([PRIVATE, PRIVATE]), json!(["panel-open", PRIVATE])] {
+        desk.server.call("noctalia", json!({ "args": args })).await;
+    }
+    // Cancelled while it waits for the window to change.
+    let moved = json!({"action": {"MoveWindowToWorkspace": {
+        "window_id": 2, "reference": {"Name": PRIVATE}, "focus": false
+    }}});
+    let id = desk.server.start_call("niri_action", moved).await;
+    desk.niri.action().await;
+    desk.server.cancel(id).await;
+    let cancelled = || {
+        desk.fixture
+            .audit_lines()
+            .iter()
+            .any(|line| line["error"] == "cancelled")
+    };
+    assert!(crate::fixture::eventually(Duration::from_secs(2), cancelled).await);
+    for garbled in [json!({PRIVATE: {}}), json!({"Spawn": {"command": PRIVATE}})] {
+        let result = desk
+            .server
+            .call("niri_action", json!({ "action": garbled }))
+            .await;
+        assert!(
+            mistake(&result).starts_with("invalid arguments"),
+            "{result}"
+        );
+    }
+    // Refused without the lease.
+    let released = json!({"restore_focus": false});
+    desk.server.call("release_desktop", released).await;
+    let named = json!({"action": {"SetWorkspaceName": {"name": PRIVATE, "workspace": null}}});
+    desk.server.call("niri_action", named).await;
+    desk.server
+        .call("noctalia", json!({"args": [PRIVATE]}))
+        .await;
+
+    let text = std::fs::read_to_string(desk.fixture.audit_log()).unwrap();
+    assert!(!text.contains(PRIVATE), "{text}");
+    let logged: Vec<Value> = desk
+        .audited()
+        .into_iter()
+        .filter(|line| line[0] != "release_desktop")
+        .map(|line| json!([line[0], line[1], line[4]]))
+        .collect();
+    let garbled =
+        |bytes: usize| json!({"action": {"category": "invalid_action", "keys": 1, "bytes": bytes}});
+    assert_eq!(
+        logged,
+        [
+            json!(["niri_action", {"action": {"Spawn": {"command": {"count": 2, "bytes": [4, 25]}}}}, null]),
+            json!(["noctalia", {"count": 2, "bytes": [25, 25]}, "upstream_error"]),
+            json!(["noctalia", {"count": 2, "bytes": [10, 25]}, null]),
+            json!(["niri_action", {"action": {"MoveWindowToWorkspace": {
+                "window_id": 2, "reference": {"Name": {"bytes": 25}}, "focus": false
+            }}}, "cancelled"]),
+            json!(["niri_action", garbled(32), "invalid_arguments"]),
+            json!(["niri_action", garbled(49), "invalid_arguments"]),
+            json!(["niri_action", {"action": {"SetWorkspaceName": {"name": {"bytes": 25}, "workspace": null}}}, "lease_required"]),
+            json!(["noctalia", {"count": 1, "bytes": [25]}, "lease_required"]),
+        ]
+    );
+}
+
 #[tokio::test]
 async fn noctalia_sends_any_command_only_when_unrestricted() {
     let mut desk = Desk::start("act-noctalia-off", "").await;
@@ -1917,6 +2071,12 @@ async fn noctalia_sends_any_command_only_when_unrestricted() {
     );
     assert_eq!(
         open.audited()[0],
-        json!(["noctalia", args, true, "sent", null])
+        json!([
+            "noctalia",
+            {"count": 2, "bytes": [10, 9]},
+            true,
+            "sent",
+            null
+        ])
     );
 }

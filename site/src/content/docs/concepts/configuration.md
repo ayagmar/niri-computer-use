@@ -58,7 +58,7 @@ With this file, `status` reports:
 
 ### `deny_input_app_ids`
 
-A list of `app_id`s, default empty. While the window with keyboard focus has one of them, `click`, `drag`, `scroll`, `pointer_move`, `key`, `type_text` and `paste` refuse with `app_denied`, even with `expect: "none"`. `elements` refuses for a window of a denied app whatever has focus.
+A list of `app_id`s, default empty. While the window with keyboard focus has one of them, `click`, `drag`, `scroll`, `pointer_move`, `key`, `type_text` and `paste` refuse with `app_denied`, even with `expect: "none"`. `elements` refuses for a window of a denied app whatever has focus, and so do `close_window` and `niri_action`'s `CloseWindow`, for the window they name or the focused one. Focus and layout actions aren't checked.
 
 The check follows keyboard focus, and apps choose their own `app_id`, so this guards against mistakes. A click can still land on a denied window while an allowed app has focus. `desktop_state` shows each window's `app_id`.
 
@@ -74,13 +74,13 @@ The directory is created with mode `0700` if it is missing. `save_path` is relat
 
 With `true`:
 
-- `niri_action` also sends the gated actions: `Spawn` and `SpawnSh`, which run any program, `Quit`, monitor power, `LoadConfigFile`, niri's screenshot actions, `ToggleKeyboardShortcutsInhibit`, `SwitchLayout`, the cast actions and the debug toggles. Without it they fail with `unrestricted_required`. See [`niri_action`](../../tools/acting/#niri_action).
+- `niri_action` also sends the gated actions: `Spawn` and `SpawnSh`, which run any program, `Quit`, monitor power, `LoadConfigFile`, niri's screenshot actions, `ToggleKeyboardShortcutsInhibit`, `SwitchLayout`, the cast actions, the debug toggles and `DoScreenTransition`. Without it they fail with `unrestricted_required`. See [`niri_action`](../../tools/acting/#niri_action).
 - The [`noctalia`](../noctalia/#any-command) tool is listed, when Noctalia is installed, and sends any Noctalia command.
 - Presets may start terminals with arguments and programs that run commands, and may set `env`.
 
 `NIRI_COMPUTER_USE_UNRESTRICTED=1` in the server's environment turns it on too, so you can allow it for one MCP client only, in that client's server settings, without a policy file. Either one turns it on, and nothing in the environment turns off a file's `true`. Any other value of the variable leaves it off and shows up as `status.unrestricted.error`.
 
-Turning it on never skips the lease, the stop key or the audit log: every gated action still needs the lease, stops at the stop key, and is logged with its arguments.
+Turning it on never skips the lease, the stop key or the audit log: every gated action still needs the lease, stops at the stop key, and is logged, as metadata like every call.
 
 ### `shared`
 

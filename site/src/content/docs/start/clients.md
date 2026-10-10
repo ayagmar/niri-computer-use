@@ -23,7 +23,7 @@ pi mcp add niri-computer-use --exposure direct -- ~/.cargo/bin/niri-computer-use
 pi mcp list
 ```
 
-`pi mcp list` should print `niri-computer-use: connected, 23 tools (direct, global)` with Noctalia and an accessibility bus, fewer without. `--exposure direct` gives the model the tools themselves, so a screenshot reaches it as an image. Pi passes its environment on to the server.
+`pi mcp list` should show `niri-computer-use` as connected. How many tools it counts depends on the session, from 20 to 25: see the [tools overview](../../tools/overview/). `--exposure direct` gives the model the tools themselves, so a screenshot reaches it as an image. Pi passes its environment on to the server.
 
 ## Codex
 

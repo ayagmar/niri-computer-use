@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use base64::Engine as _;
+use niri_ipc::Action;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock};
@@ -13,7 +14,7 @@ use serde_json::Value;
 
 use crate::a11y::model;
 use crate::act::{self, Outcome};
-use crate::audit::{Call, Caller};
+use crate::audit::{self, Call, Caller};
 use crate::coords::ImagePx;
 use crate::engine::Engine;
 use crate::error::{CANCELLED, CallError, ToolError};
@@ -270,7 +271,7 @@ struct LaunchArgs {
     screenshot: bool,
 }
 
-#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct NiriActionArgs {
     /// One niri action in niri's IPC JSON, the action's name as the only key, such as
@@ -282,11 +283,11 @@ struct NiriActionArgs {
     /// With true, the result also has a screenshot of the focused output, taken once the
     /// screen stopped changing, so no separate `screenshot` call is needed. Defaults to
     /// false.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default)]
     screenshot: bool,
 }
 
-#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct NoctaliaArgs {
     /// The command and its arguments, as after `noctalia msg`, such as `["plugin",
@@ -296,7 +297,7 @@ struct NoctaliaArgs {
     /// With true, the result also has a screenshot of the focused output, taken once the
     /// screen stopped changing, so no separate `screenshot` call is needed. Defaults to
     /// false.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default)]
     screenshot: bool,
 }
 
@@ -730,8 +731,13 @@ impl Server {
     /// `ambiguous` with several, or `none` within five seconds. With `reuse`, one existing
     /// window is focused instead (`focused`), and several give `ambiguous` without starting
     /// anything. Never call it again because a window didn't show up; look first. With no
-    /// preset for the app, ask the user to add one rather than starting it another way.
-    /// Requires the lease.
+    /// preset for the app and `status.unrestricted.enabled` true, start it with
+    /// `niri_action` `{"Spawn": {"command": ["<program>", ...]}}`, never a shell or
+    /// `SpawnSh`. `Spawn` returns only `sent`: `wait_for` the window by an `app_id` you
+    /// know or find it in a fresh `desktop_state`, since the `app_id` is often not the
+    /// program's name, and never `Spawn` again after `uncertain` or a timeout. With it
+    /// false, ask the user to add a preset rather than starting it another way. Requires
+    /// the lease.
     #[tool(annotations(
         read_only_hint = false,
         destructive_hint = false,
@@ -762,7 +768,8 @@ impl Server {
 
     /// Asks a window to close, as its close button would. `observed` is `closed`, or
     /// `pending` if it is still open after five seconds, for example behind an
-    /// unsaved-changes dialog; nothing forces it. Requires the lease.
+    /// unsaved-changes dialog; nothing forces it. Refused with `app_denied` when the
+    /// window's app is on the policy's deny list. Requires the lease.
     #[tool(annotations(
         read_only_hint = false,
         destructive_hint = true,
@@ -775,7 +782,8 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
-        let work = act::close_window(self.engine.niri(), args.id);
+        let policy = &self.session.settings().policy;
+        let work = act::close_window(self.engine.niri(), policy, args.id);
         self.act(
             &context,
             Asked {
@@ -798,10 +806,13 @@ impl Server {
     /// and `window` is that window as niri then reports it: `window_size`, `tile_size`,
     /// `is_floating`, `is_focused`, `workspace_id`. niri reports no fullscreen flag; a
     /// fullscreen window fills its output. Other actions give `sent`. niri's refusal comes
-    /// back as `upstream_error` with niri's message. Actions that run programs, write
-    /// files or reach past the layout (`Spawn`, `SpawnSh`, `Quit`, `LoadConfigFile`, niri's
-    /// screenshot actions, monitor power, casts) fail with `unrestricted_required` unless
-    /// the user set `unrestricted = true`; tell the user rather than working around it.
+    /// back as `upstream_error` with niri's message. `CloseWindow` on a window whose app is
+    /// on the policy's deny list fails with `app_denied`; with a null id it closes the
+    /// focused window by its id, and with no window focused sends nothing. Actions that
+    /// run programs, write files or reach past the layout (`Spawn`, `SpawnSh`, `Quit`,
+    /// `LoadConfigFile`, niri's screenshot actions, monitor power, casts) fail with
+    /// `unrestricted_required` unless the user set `unrestricted = true`; tell the user
+    /// rather than working around it.
     /// Requires the lease.
     #[tool(annotations(
         read_only_hint = false,
@@ -814,18 +825,24 @@ impl Server {
         Parameters(args): Parameters<NiriActionArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        let action = serde_json::from_value::<Action>(Value::Object(args.action.clone()));
+        let projected = action
+            .as_ref()
+            .map_or_else(|_| audit::invalid_action(&args.action), audit::action);
+        let mut logged = serde_json::json!({ "action": projected });
+        flag(&mut logged, "screenshot", args.screenshot);
         let niri = self.engine.niri();
-        let unrestricted = self.session.settings().unrestricted.enabled();
+        let settings = self.session.settings();
+        let unrestricted = settings.unrestricted.enabled();
         let shoot = args.screenshot;
         let work = async move {
-            let action = serde_json::from_value(Value::Object(args.action)).map_err(|error| {
+            let action = action.map_err(|error| {
                 CallError::InvalidArguments(format!("`action` isn't a niri action: {error}"))
             })?;
             if let Some(refused) = policy::refuse_action(&action, unrestricted) {
                 return Err(refused.into());
             }
-            act::compositor::run(niri, action).await
+            act::compositor::run(niri, &settings.policy, action).await
         };
         self.act(
             &context,
@@ -1104,8 +1121,11 @@ impl Server {
     /// While you hold the lease each element has an `element_ref` for the `element`
     /// argument of `click`, `pointer_move` and `drag`. Fails with `not_accessible` when the
     /// app has no accessible window for it, `ambiguous_window` when it has several that
-    /// fit, `app_denied` for an app on the deny list, and `deadline_exceeded` when the app
-    /// doesn't answer within 3 seconds. Needs no lease and changes nothing.
+    /// fit, `app_denied` for an app on the deny list, and `deadline_exceeded` when one call
+    /// gets no answer within a second, as from a hung app. A walk that runs out of the 3
+    /// seconds gives the elements read so far, with `capped: true` and `capped_reason:
+    /// "budget_exhausted"`; `role`, `name_contains` and `limit` let it stop sooner. Needs no
+    /// lease and changes nothing.
     #[tool(annotations(read_only_hint = true))]
     async fn elements(
         &self,
@@ -1307,7 +1327,8 @@ impl Server {
         Parameters(args): Parameters<NoctaliaArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        let mut logged = audit::noctalia(&args.args);
+        flag(&mut logged, "screenshot", args.screenshot);
         let (env, niri) = (self.engine.env(), self.engine.niri());
         let shoot = args.screenshot;
         let work = async move {
@@ -1596,7 +1617,7 @@ fn invalid(message: &str) -> CallToolResult {
 #[tool_handler(
     router = self.tool_router,
     name = "niri-computer-use",
-    instructions = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `elements`, when listed, gives one window's accessible elements and where they are. `clipboard_read` returns the clipboard's text, and `shell_status`, when Noctalia is installed, its panel and lock state. To act, call `acquire_desktop`, then one action at a time (`focus_window`, `focus_workspace`, `launch`, `close_window`, `niri_action` for window layout such as fullscreen, floating and widths, with Noctalia `shell_open` and `shell_close`, and for input `pointer_move`, `click`, `drag` and `scroll` with a fresh `screenshot_ref`, or `key`, `type_text` and `paste` with `expect`), reading `accepted` and `observed` before the next call. To see an action's result, pass it `screenshot: true` rather than sending a `screenshot` alongside it, and use `wait_for` rather than repeated screenshots to wait for a window or for the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter, and start apps only through `launch` presets. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
+    instructions = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `elements`, when listed, gives one window's accessible elements and where they are. `clipboard_read` returns the clipboard's text, and `shell_status`, when Noctalia is installed, its panel and lock state. To act, call `acquire_desktop`, then one action at a time (`focus_window`, `focus_workspace`, `launch`, `close_window`, `niri_action` for window layout such as fullscreen, floating and widths, with Noctalia `shell_open` and `shell_close`, and for input `pointer_move`, `click`, `drag` and `scroll` with a fresh `screenshot_ref`, or `key`, `type_text` and `paste` with `expect`), reading `accepted` and `observed` before the next call. To see an action's result, pass it `screenshot: true` rather than sending a `screenshot` alongside it, and use `wait_for` rather than repeated screenshots to wait for a window or for the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter, and start apps through `launch` presets; with no preset for the app, use `niri_action` `Spawn` with the program's argv (never a shell or `SpawnSh`) when `status.unrestricted.enabled` is true, then find its window with `wait_for` or `desktop_state` (its `app_id` may differ from the program's name) and never repeat the `Spawn`; otherwise ask the user to add a preset. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
 )]
 impl ServerHandler for Server {}
 
@@ -1630,7 +1651,7 @@ mod tests {
     use crate::session::{Given, Settings};
 
     #[test]
-    fn only_close_window_is_destructive_and_only_actions_change_anything() {
+    fn actions_say_whether_they_destroy_or_repeat_safely_and_reading_changes_nothing() {
         let hints = |tool: rmcp::model::Tool| {
             let annotations = tool.annotations.unwrap();
             (
@@ -1647,8 +1668,17 @@ mod tests {
             (Server::focus_workspace_tool_attr(), (no, no, yes)),
             (Server::launch_tool_attr(), (no, no, no)),
             (Server::close_window_tool_attr(), (no, yes, no)),
+            (Server::niri_action_tool_attr(), (no, yes, no)),
+            (Server::pointer_move_tool_attr(), (no, no, yes)),
+            (Server::click_tool_attr(), (no, yes, no)),
+            (Server::drag_tool_attr(), (no, yes, no)),
+            (Server::scroll_tool_attr(), (no, no, no)),
+            (Server::key_tool_attr(), (no, yes, no)),
+            (Server::type_text_tool_attr(), (no, yes, no)),
+            (Server::paste_tool_attr(), (no, yes, no)),
             (Server::shell_open_tool_attr(), (no, no, yes)),
             (Server::shell_close_tool_attr(), (no, no, yes)),
+            (Server::noctalia_tool_attr(), (no, yes, no)),
         ] {
             let name = tool.name.clone();
             assert_eq!(hints(tool), expected, "{name}");
@@ -1660,6 +1690,8 @@ mod tests {
             Server::screenshot_tool_attr(),
             Server::clipboard_read_tool_attr(),
             Server::shell_status_tool_attr(),
+            Server::elements_tool_attr(),
+            Server::wait_for_tool_attr(),
         ] {
             let annotations = tool.annotations.unwrap();
             assert_eq!(annotations.read_only_hint, Some(true), "{}", tool.name);

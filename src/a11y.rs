@@ -23,7 +23,7 @@ use zbus::zvariant::{DynamicType, OwnedObjectPath, OwnedValue};
 
 use crate::error::{ErrorName, ToolError};
 use model::{Extents, Frame, Kept, NoFrame, Picked, States};
-pub(crate) use walk::Node;
+pub(crate) use walk::{Capped, Node, Want};
 
 /// Each call's deadline.
 const CALL: Duration = Duration::from_secs(1);
@@ -384,9 +384,15 @@ impl Request {
         }))
     }
 
-    /// The nodes under `root` in application `bus`, at most `NODE_CAP` of them.
-    pub(crate) async fn walk(&self, bus: &str, root: &Node) -> Result<walk::Walked, ToolError> {
-        walk::walk(&AppTree { request: self, bus }, root, NODE_CAP).await
+    /// The nodes under `root` in application `bus`, at most `NODE_CAP` of them, until
+    /// `want` has more than it asked for or the budget runs out.
+    pub(crate) async fn walk<F: Fn(&Node) -> bool + Sync>(
+        &self,
+        bus: &str,
+        root: &Node,
+        want: Want<F>,
+    ) -> Result<walk::Walked, ToolError> {
+        walk::walk(&AppTree { request: self, bus }, root, NODE_CAP, want).await
     }
 
     /// The object's extents in its window, from its Component interface.
@@ -430,6 +436,10 @@ struct AppTree<'a> {
 impl walk::Source for AppTree<'_> {
     async fn node(&self, path: &str) -> Result<Option<Node>, ToolError> {
         self.request.node(self.bus, path).await
+    }
+
+    fn spent(&self) -> bool {
+        Instant::now() >= self.request.deadline
     }
 }
 

@@ -7,7 +7,7 @@ use niri_ipc::Window;
 use serde::Serialize;
 
 use crate::a11y::model::{self, Extents, Filter, Fresh, LayoutBox, Placement, Refused, Unmappable};
-use crate::a11y::{self, A11y, ElementRef, Failed};
+use crate::a11y::{self, A11y, Capped, ElementRef, Failed, Node, Want};
 use crate::coords::LayoutPt;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri;
@@ -27,12 +27,14 @@ pub(crate) struct Ask {
 pub(crate) struct Listing {
     pub(crate) window_id: u64,
     pub(crate) elements: Vec<Listed>,
-    /// More elements matched than `limit`.
+    /// The walk found more matching elements than `limit` and stopped there.
     pub(crate) truncated: bool,
     /// How many accessible objects the walk read.
     pub(crate) walked: usize,
-    /// The walk stopped at its node cap, so elements further on are missing.
+    /// The walk stopped early, so elements further on are missing.
     pub(crate) capped: bool,
+    /// Why: `node_cap`, or `budget_exhausted` when the request's three seconds ran out.
+    pub(crate) capped_reason: Option<Capped>,
 }
 
 /// One element.
@@ -99,13 +101,12 @@ pub(crate) async fn list(
     let frame = request
         .frame(&app, window.layout.window_size, window.title.as_deref())
         .await?;
-    let walked = request.walk(&app.bus, &frame.node).await?;
-    let mut matching = walked.nodes.iter().filter(|node| {
-        let role = model::role_name(node.role);
-        node.states.has(model::State::Showing)
-            && (ask.filter.role.is_some() || !node.name.is_empty() || !node.actions.is_empty())
-            && ask.filter.matches(role, &node.name)
-    });
+    let want = Want {
+        wanted: ask.limit,
+        matches: |node: &Node| listed(&ask.filter, node),
+    };
+    let walked = request.walk(&app.bus, &frame.node, want).await?;
+    let mut matching = walked.nodes.iter().filter(|node| listed(&ask.filter, node));
     let mut elements = Vec::new();
     for node in matching.by_ref().take(ask.limit) {
         let placement = Placement {
@@ -145,8 +146,17 @@ pub(crate) async fn list(
         truncated: matching.next().is_some(),
         elements,
         walked: walked.nodes.len(),
-        capped: walked.capped,
+        capped: walked.capped.is_some(),
+        capped_reason: walked.capped,
     })
+}
+
+/// Whether `elements` lists `node`: showing, matching the filter, and with a name or
+/// actions unless a role was asked for.
+fn listed(filter: &Filter, node: &Node) -> bool {
+    node.states.has(model::State::Showing)
+        && (filter.role.is_some() || !node.name.is_empty() || !node.actions.is_empty())
+        && filter.matches(model::role_name(node.role), &node.name)
 }
 
 /// Where to aim at `element` now: the centre of its box, from niri's geometry and the
@@ -214,4 +224,43 @@ pub(crate) fn unmappable(why: Unmappable) -> ToolError {
         ),
     };
     ToolError::new(ErrorName::ElementUnmappable, format!("{reason}: {detail}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::a11y::model::States;
+
+    const SHOWING: u32 = (1 << 25) | (1 << 30);
+    const BUTTON: u32 = 43;
+    const FILLER: u32 = 20;
+
+    fn node(role: u32, name: &str, showing: bool, actions: &[&str]) -> Node {
+        Node {
+            path: "/n".to_owned(),
+            role,
+            name: name.to_owned(),
+            states: States::from_words(&[if showing { SHOWING } else { 0 }]),
+            extents: None,
+            actions: actions.iter().map(|&action| action.to_owned()).collect(),
+            children: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn only_showing_elements_that_pass_every_filter_count_towards_the_limit() {
+        let save = Filter::new(Some("button".to_owned()), Some("SAVE"));
+        assert!(listed(&save, &node(BUTTON, "Save as", true, &[])));
+        // Other buttons don't use up the limit before the one asked for.
+        assert!(!listed(&save, &node(BUTTON, "Open", true, &["click"])));
+        assert!(!listed(&save, &node(BUTTON, "Save", false, &[])));
+        assert!(!listed(&save, &node(FILLER, "Save", true, &[])));
+
+        let any = Filter::default();
+        assert!(listed(&any, &node(FILLER, "", true, &["click"])));
+        assert!(listed(&any, &node(FILLER, "Title", true, &[])));
+        assert!(!listed(&any, &node(FILLER, "", true, &[])));
+        let fillers = Filter::new(Some("filler".to_owned()), None);
+        assert!(listed(&fillers, &node(FILLER, "", true, &[])));
+    }
 }

@@ -546,8 +546,8 @@ pub(crate) fn refuse_input(policy: &Loaded, focused_app_id: Option<&str>) -> Opt
     denied(policy, focused_app_id?, "the focused window")
 }
 
-/// `app_denied` when the window that owns an accessible element belongs to an app on the
-/// deny list, whatever has focus.
+/// `app_denied` when `window`, such as the one that owns an accessible element or the one
+/// being closed, belongs to an app on the deny list, whatever has focus.
 pub(crate) fn refuse_window(
     policy: &Loaded,
     window: u64,
@@ -620,8 +620,10 @@ pub(crate) const fn action_gate(action: &Action) -> ActionGate {
         | Action::DebugToggleDamage { .. } => {
             ActionGate::Gated("it changes niri's debug rendering, not the layout or focus")
         }
-        Action::DoScreenTransition { .. }
-        | Action::CloseWindow { .. }
+        Action::DoScreenTransition { .. } => ActionGate::Gated(
+            "it freezes what the user sees on every output, and in screencasts, for up to 65 s",
+        ),
+        Action::CloseWindow { .. }
         | Action::FullscreenWindow { .. }
         | Action::ToggleWindowedFullscreen { .. }
         | Action::FocusWindow { .. }
@@ -1263,6 +1265,7 @@ app_id = "foot"
             json!({"ToggleDebugTint": {}}),
             json!({"DebugToggleOpaqueRegions": {}}),
             json!({"DebugToggleDamage": {}}),
+            json!({"DoScreenTransition": {"delay_ms": 65535}}),
         ] {
             assert!(
                 matches!(action_gate(&action(gated.clone())), ActionGate::Gated(_)),

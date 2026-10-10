@@ -19,7 +19,7 @@
 | `screenshot` | `target`, and optionally `region`, `max_width`, `format`, `save_path` | an image, then metadata: output, captured rectangle in layout coordinates, scale, image size, and `screenshot_ref` while you hold the lease; with `save_path`, `saved`: the PNG's path and pixel size |
 | `clipboard_read` | none | `text`, or `text: null` with `reason` `nothing_copied` or `no_text` |
 | `shell_status` | none | Noctalia's `barVisible`, `panelOpen`, `activePanelId` and `locked`. Listed only when Noctalia is installed |
-| `elements` | `window_id`, optionally `role`, `name_contains`, `limit` (1 to 500, default 50) | that window's accessible elements: `element_ref` (`elem-N`, while you hold the lease), `role`, `name`, `states`, `actions`, and `layout_box` in layout coordinates, or null with `unmappable`; `truncated`, `walked`, `capped`. Listed only when the session has an accessibility bus |
+| `elements` | `window_id`, optionally `role`, `name_contains`, `limit` (1 to 500, default 50) | that window's accessible elements: `element_ref` (`elem-<tag>-N`, while you hold the lease), `role`, `name`, `states`, `actions`, and `layout_box` in layout coordinates, or null with `unmappable`; `truncated`, `walked`, `capped` with `capped_reason` (`node_cap`, or `budget_exhausted` when a large tree took over 3 s: narrow it with `role`, `name_contains` or `limit`). Listed only when the session has an accessibility bus |
 | `wait_for` | `until`, optionally `timeout_ms` (100 to 30000, default 10000) and `screenshot` | `observed`: `met` with the matching `windows`, `timeout`, or `uncertain`; `focused_window`; `waited_ms` |
 
 `until` is one of `{"window": {"app_id": …, "title": …}}` (a window with that `app_id` and a title containing that text; either one may be left out), `{"closed": <window id>}`, `{"title": {"window_id": …, "contains": …}}`, or `"screen_stable"` (two captures of the focused output 100 ms apart are the same).
@@ -50,7 +50,7 @@ Watching the desktop never needs the lease.
 | `shell_close` | `panel`, as for `shell_open` | `closed` or `timeout`; `accepted: false` when it wasn't open |
 | `noctalia` | `args`: a Noctalia command and its arguments, as after `noctalia msg`, such as `["plugin", "<plugin>:<entry>", "all", "<command>"]`; `["--help"]` lists them | `sent`, with `noctalia.reply`, Noctalia's answer. Its `error:` reply is `upstream_error`. Listed only with Noctalia and `unrestricted` |
 
-Use `launch` with `reuse: true` unless the user asked for another window of the app.
+Use `launch` with `reuse: true` unless the user asked for another window of the app. With no preset for the app and `status.unrestricted.enabled` true, start it with `niri_action {"Spawn": {"command": ["<program>", ...]}}`, never a shell or `SpawnSh`. It returns only `sent`: `wait_for` its window by an `app_id` you know, or find it in a fresh `desktop_state`, since the `app_id` is often not the program's name. Don't `Spawn` again after `uncertain` or a timeout. With `unrestricted` off, ask the user for a preset.
 
 An open panel holds keyboard focus, so `focused_window` is null while it is open. To type into it, use `expect: "none"` after a screenshot shows it ready, and close it with `shell_close` when you're done.
 

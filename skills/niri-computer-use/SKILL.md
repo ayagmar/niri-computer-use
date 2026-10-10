@@ -70,7 +70,10 @@ Stop and tell the user, quoting the error's `detail`, when a tool returns `stopp
 
 `unrestricted_required` means the action, such as niri's `Spawn`, needs `unrestricted = true` in the user's policy file. Tell the user that, and don't reach the same result another way: no keys, presets or shell commands in its place.
 
-If the app the user wants has no launch preset (`status` lists `policy.preset_names`), say so and ask them to add one to their policy file. Don't look for another way to start it: keys and typing would land in whatever window has focus.
+If no launch preset fits the app the user wants (`status` lists `policy.preset_names`), look at `status.unrestricted.enabled`:
+
+- `true`: start it with `niri_action {"Spawn": {"command": ["<program>", ...]}}`, the program's name as the desktop runs it, such as `["gnome-calculator"]`. Never a shell and never `SpawnSh`. `Spawn` returns only `sent`: no process and no window. Then `wait_for` its window by an `app_id` you know, or take a fresh `desktop_state` to find the new window. The `app_id` is often not the program's name, so don't assume it. Never call `Spawn` again after an `uncertain` result or a window that didn't appear in time; look, and tell the user. Prefer a preset when one exists: `launch` watches for the window and handles `reuse`.
+- `false`: say so and ask the user to add a preset to their policy file. Don't look for another way to start it: keys and typing would land in whatever window has focus, and Noctalia's launcher is no way around it either.
 
 ## Giving the desktop back
 

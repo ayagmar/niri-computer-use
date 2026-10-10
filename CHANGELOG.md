@@ -33,6 +33,21 @@ All notable changes to this project are documented here. The format follows [Kee
 - `type_text`'s `submit`: presses Enter only once all of the text went out, and reports `submitted`.
 - `acquire_desktop` returns `users_window`, and `release_desktop` takes `restore_focus` to give focus back to it.
 - `make nested-eval` scenarios `dialog-midway` and `errand`, a check for calls sent together, and call and turn counts in `timing.json`.
+- `pointer_move`, `click`, `drag` and `scroll`: input through niri's virtual pointer, aimed at pixels of a screenshot this lease took through its `screenshot_ref`. A ref expires after 60 seconds or when its output changes. They run only on one enabled output at transform `Normal`, and refuse others with `untested_output_config`.
+- `key` and `type_text`: keyboard input through `wtype`, into the window named in `expect`, refused with `focus_mismatch` elsewhere and with `app_denied` for an app on the policy's deny list.
+- An input-dirty marker written before input and removed once it is released, so a crash mid-input leaves `recovery_required` until `recover`.
+- An experimental native keyboard backend, `NIRI_COMPUTER_USE_KEYBOARD=native`: niri's virtual keyboard protocol with focus checked before every key, symbols the layout lacks typed through a temporary keymap that is proved restored, and modifiers held through `click`, `drag` and `scroll` with `keys`. `wtype` stays the default.
+- A crash guardian for each server: when the server dies holding native keys or pointer buttons, it releases them at once. The marker still waits for `recover`.
+- `paste`: up to 1 MiB through the clipboard, with a keeper process that saves every type the clipboard offers, holds the text marked as a secret for clipboard managers, and puts the saved clipboard back. It refuses with `clipboard_unsaved` before changing anything when it can't save the clipboard or the clipboard is marked secret.
+- `screenshot`'s `save_path`: a full-resolution PNG under the policy file's `capture_dir`, created new, never through a symlink, refused with `save_not_enabled` without a `capture_dir`.
+- `elements`: one window's accessible elements over AT-SPI, with roles, names, states, actions and boxes in layout coordinates, listed when the session has an accessibility bus. Each element has an `element_ref` under the lease that `pointer_move`, `click` and `drag` take as `element`; it is checked again before aiming. New error names `not_accessible`, `ambiguous_window`, `element_stale` and `element_unmappable`.
+- Session discovery: `XDG_RUNTIME_DIR`, `NIRI_SOCKET` and `WAYLAND_DISPLAY` are found when the client doesn't pass them, from the user's only running niri, so clients need no environment settings. Given variables win, and discovery never chooses between niri instances.
+- `niri_action`: any niri action in niri's IPC JSON, such as fullscreen, floating or a window's width, with the window's state as niri reports it after. Actions that run programs, write files or reach past the layout are refused with `unrestricted_required`.
+- `unrestricted = true` in the policy file, or `NIRI_COMPUTER_USE_UNRESTRICTED=1` for one client: lets `niri_action` send the gated actions, lists the `noctalia` tool, and lifts the preset rules. Off by default. `status.unrestricted` reports it.
+- `noctalia`: any Noctalia command, as `noctalia msg` sends it, listed only with Noctalia installed and `unrestricted` on.
+- A shared engine per niri instance, with `shared = true` or `NIRI_COMPUTER_USE_SHARED=1`: each client's `serve` relays to one `niri-computer-use engine`, which holds one desk, guardian, event stream and accessibility connection for every client, while policy, `unrestricted`, keyboard backend and home stay per client.
+- The documentation site, with `llms.txt` and a Markdown address for every page.
+- `niri-computer-use --version`.
 
 ### Changed
 
@@ -46,6 +61,9 @@ All notable changes to this project are documented here. The format follows [Kee
 - The tool descriptions and the server's instructions carry the rules agents most often broke: no screenshot alongside an action, no Enter after text that didn't fully go out, apps only through presets, focus back to the user's window when done.
 - The `niri-computer-use` skill is rewritten: a description that says when to load it, a shorter workflow with reasons and examples, and the tool and error tables moved to `references/`.
 - The project is renamed from `niri-desktop-mcp` to `niri-computer-use`, including the binary, the MCP server's name and the audit log's directory.
+- `niri_action`'s `DoScreenTransition` needs `unrestricted`: it can freeze every output and screencast for up to 65 seconds.
+- `elements` returns what it read, with `capped_reason: budget_exhausted`, when a large tree runs out of its three seconds, instead of failing with `deadline_exceeded`; `role`, `name_contains` and `limit` stop the walk early.
+- With `unrestricted` on and no preset for an app, the skill and the tool text have agents start it with `niri_action`'s `Spawn` and wait for its window, instead of asking for a preset.
 
 ### Fixed
 
@@ -53,3 +71,5 @@ All notable changes to this project are documented here. The format follows [Kee
 - Settled capture budgets include the initial delay and capture work. A timed-out later capture returns the last completed sample unsettled; no completed sample gives `deadline_exceeded`.
 - Fractional-scale pointer motion uses niri's ceiled physical-mode space rather than truncated IPC dimensions. Unknown or changed pointer geometry refuses input.
 - C15's nested capture assertions use grim's truncated image size instead of rounding odd dimensions.
+- `close_window` and `niri_action`'s `CloseWindow` refuse with `app_denied` to close a window whose app is on the policy's deny list, named or focused.
+- The audit log no longer keeps text an agent passes to `niri_action` or `noctalia`, such as a `Spawn` command or a notification body: it logs the action's name, field names, numbers and booleans with every string as its length in bytes, and only Noctalia's argument count and byte lengths.

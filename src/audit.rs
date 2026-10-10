@@ -1,7 +1,9 @@
 //! The audit log: one JSON line per tool call at
 //! `$XDG_STATE_HOME/niri-computer-use/audit.jsonl`, in a `0700` directory and a `0600` file.
 //! It records argument metadata and the outcome, never typed text, clipboard contents,
-//! screenshot data or window titles.
+//! screenshot data or window titles. The passthroughs log metadata too: `niri_action` its
+//! action's name, field names, numbers and booleans with every string as its length in
+//! bytes, and `noctalia` only its argument count and byte lengths.
 
 use std::fs::{DirBuilder, OpenOptions};
 use std::io::Write as _;
@@ -11,10 +13,11 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use chrono::{SecondsFormat, Utc};
+use niri_ipc::Action;
 use rmcp::ErrorData;
 use rmcp::model::CallToolResult;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Map, Value, json};
 
 use crate::error::CANCELLED;
 
@@ -167,6 +170,52 @@ fn append(path: &std::path::Path, line: &[u8]) -> std::io::Result<()> {
     file.write_all(&[line, b"\n"].concat())
 }
 
+/// `niri_action`'s action for the log: its name and field names, as niri-ipc spells them,
+/// with numbers, booleans and nulls as they are and every string as its length in bytes,
+/// so a command or a workspace name never reaches the log.
+pub(crate) fn action(action: &Action) -> Value {
+    serde_json::to_value(action).map_or(Value::Null, |json| lengths(&json))
+}
+
+/// JSON that isn't a niri action, for the log: a fixed category and its size, never its
+/// keys, which are the agent's text.
+pub(crate) fn invalid_action(action: &Map<String, Value>) -> Value {
+    json!({
+        "category": "invalid_action",
+        "keys": action.len(),
+        "bytes": serde_json::to_string(action).map_or(0, |text| text.len()),
+    })
+}
+
+/// A string becomes `{"bytes": n}` and a list of strings `{"count": n, "bytes": [...]}`.
+fn lengths(value: &Value) -> Value {
+    match value {
+        Value::String(text) => json!({ "bytes": text.len() }),
+        Value::Array(items) if items.iter().all(Value::is_string) => json!({
+            "count": items.len(),
+            "bytes": items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::len)
+                .collect::<Vec<_>>(),
+        }),
+        Value::Array(items) => items.iter().map(lengths).collect(),
+        Value::Object(fields) => fields
+            .iter()
+            .map(|(key, field)| (key.clone(), lengths(field)))
+            .collect(),
+        Value::Null | Value::Bool(_) | Value::Number(_) => value.clone(),
+    }
+}
+
+/// `noctalia`'s arguments for the log: how many, and each one's length in bytes.
+pub(crate) fn noctalia(args: &[String]) -> Value {
+    json!({
+        "count": args.len(),
+        "bytes": args.iter().map(String::len).collect::<Vec<_>>(),
+    })
+}
+
 /// The outcome's error name, read from the tool's result and never from its content: a
 /// stable name for a failure, `invalid_arguments` for an argument mistake, and `cancelled`
 /// or `internal` when the call didn't produce a result.
@@ -291,6 +340,51 @@ mod tests {
         assert_eq!(outcome(&Err(other)).as_deref(), Some("internal"));
         let ts = Call::start("status").ts;
         assert!(ts.ends_with('Z') && ts.len() == 24, "{ts}");
+    }
+
+    #[test]
+    fn a_niri_action_is_logged_as_its_names_numbers_and_byte_lengths() {
+        let action = |json: Value| serde_json::from_value::<Action>(json).unwrap();
+        assert_eq!(
+            super::action(&action(
+                json!({"Spawn": {"command": ["foot", "-e", "sécret"]}})
+            )),
+            json!({"Spawn": {"command": {"count": 3, "bytes": [4, 2, 7]}}})
+        );
+        assert_eq!(
+            super::action(&action(json!({"SpawnSh": {"command": "echo hunter2"}}))),
+            json!({"SpawnSh": {"command": {"bytes": 12}}})
+        );
+        assert_eq!(
+            super::action(&action(
+                json!({"SetWindowWidth": {"id": 12, "change": {"SetFixed": 1600}}})
+            )),
+            json!({"SetWindowWidth": {"id": 12, "change": {"SetFixed": 1600}}})
+        );
+        assert_eq!(
+            super::action(&action(json!({"MoveWindowToWorkspace": {
+                "window_id": null, "reference": {"Name": "hunter2"}, "focus": true
+            }}))),
+            json!({"MoveWindowToWorkspace": {
+                "window_id": null, "reference": {"Name": {"bytes": 7}}, "focus": true
+            }})
+        );
+    }
+
+    #[test]
+    fn json_that_is_no_action_is_logged_as_a_category_and_its_size() {
+        let garbled: Map<String, Value> =
+            serde_json::from_value(json!({"hunter2": {"x": 1}})).unwrap();
+        assert_eq!(
+            invalid_action(&garbled),
+            json!({"category": "invalid_action", "keys": 1, "bytes": 19})
+        );
+    }
+
+    #[test]
+    fn noctalia_logs_only_counts_and_byte_lengths() {
+        let args = ["panel-open".to_owned(), "hunter-two".to_owned()];
+        assert_eq!(noctalia(&args), json!({"count": 2, "bytes": [10, 10]}));
     }
 
     #[test]

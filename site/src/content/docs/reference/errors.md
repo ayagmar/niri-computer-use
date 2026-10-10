@@ -51,7 +51,7 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 ### `app_denied`
 
-**Cause:** the window with keyboard focus belongs to an app on `deny_input_app_ids`, or for `elements`, the window asked about does.
+**Cause:** the window with keyboard focus belongs to an app on `deny_input_app_ids`, or for `elements`, the window asked about does, or for `close_window` and `niri_action`'s `CloseWindow`, the window it would close does.
 
 **What to do:** nothing, if you meant it. Otherwise remove the app from the [policy file](../../concepts/configuration/#deny_input_app_ids) and restart the agent's session.
 
@@ -161,7 +161,7 @@ These mean niri, a program or Noctalia didn't answer as expected. Report the nam
 
 **Cause:** niri, a program or an app didn't answer in time: two seconds for niri and `wl-paste`, five for `grim`, three for an `elements` walk.
 
-**What to do:** check whether niri or the app is stuck. A stopped app makes `elements` time out.
+**What to do:** check whether niri or the app is stuck. A stopped app makes `elements` time out; a large tree that is only slow gives a partial listing with `capped_reason: "budget_exhausted"` instead.
 
 ### `upstream_error`
 

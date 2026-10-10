@@ -39,7 +39,8 @@ pub(crate) enum ErrorName {
     UnknownPreset,
     /// A pointer tool on an output setup no live test covers.
     UntestedOutputConfig,
-    /// Input to a window whose `app_id` the policy denies.
+    /// Input to, reading the elements of, or closing a window whose `app_id` the policy
+    /// denies.
     AppDenied,
     /// A keyboard tool's `expect` doesn't match the focused window.
     FocusMismatch,

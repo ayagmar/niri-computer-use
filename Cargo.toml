@@ -14,6 +14,11 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description = "An MCP server for AI agents to observe and drive a niri Wayland desktop"
+repository = "https://github.com/ayagmar/niri-computer-use"
+readme = "README.md"
+keywords = ["niri", "wayland", "mcp", "computer-use", "desktop-automation"]
+categories = ["command-line-utilities", "os::linux-apis", "accessibility"]
 
 [lints]
 workspace = true
@@ -67,7 +72,6 @@ lossy_float_literal = "warn"
 verbose_file_reads = "warn"
 module_name_repetitions = "allow"
 multiple_crate_versions = "allow"
-cargo_common_metadata = "allow"
 redundant_pub_crate = "allow"
 
 [profile.release]

@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-The server offers 23 tools. `shell_status`, `shell_open` and `shell_close` are listed only when Noctalia is installed, and `elements` only when the session has an accessibility bus.
+The server offers up to 25 tools. `shell_status`, `shell_open` and `shell_close` are listed only when Noctalia is installed, `noctalia` only when Noctalia is installed and [`unrestricted`](../../concepts/configuration/#unrestricted) is on, and `elements` only when the session has an accessibility bus, so a session without Noctalia or an accessibility bus has 20.
 
 ## Every tool
 
@@ -37,7 +37,7 @@ The server offers 23 tools. `shell_status`, `shell_open` and `shell_close` are l
 | `shell_close` | yes | closes it | [Noctalia](../../concepts/noctalia/#panels) |
 | `noctalia` | yes | sends any Noctalia command; only with `unrestricted` | [Noctalia](../../concepts/noctalia/#any-command) |
 
-The reading tools carry MCP's `readOnlyHint`, and `close_window`, `niri_action` and `noctalia` carry `destructiveHint`.
+The reading tools carry MCP's `readOnlyHint`, and `close_window`, `niri_action`, `click`, `drag`, `key`, `type_text`, `paste` and `noctalia` carry `destructiveHint`.
 
 ## Results
 
@@ -64,4 +64,4 @@ A mistake in the arguments, such as an unknown output, a window id that doesn't 
 
 ## The audit log
 
-Every call is appended to the [audit log](../../concepts/safety/#the-audit-log) with its arguments and outcome. Typed and pasted text, clipboard contents, window titles, accessible names and images are never written; the log keeps their length.
+Every call is appended to the [audit log](../../concepts/safety/#the-audit-log) with its argument metadata and outcome. Typed and pasted text, clipboard contents, window titles, accessible names and images are never written; the log keeps their length.

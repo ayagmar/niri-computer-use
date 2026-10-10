@@ -6,10 +6,10 @@ sidebar:
 ---
 
 ```text
-niri-computer-use serve | status | stop | resume | recover | engine | guard <server-pid> | paste-keeper
+niri-computer-use serve | status | stop | resume | recover | engine | guard <server-pid> | paste-keeper | --version
 ```
 
-Each takes exactly one subcommand and no options. Anything else prints that usage line to stderr and exits 1. Every subcommand works on the niri instance in `NIRI_SOCKET`, or, without it, the one running niri of yours the server [finds](../../start/clients/#session-variables). A niri bind passes `NIRI_SOCKET` on.
+It takes exactly one subcommand, or `--version`, and no other options. Anything else prints that usage line to stderr and exits 1. Every subcommand works on the niri instance in `NIRI_SOCKET`, or, without it, the one running niri of yours the server [finds](../../start/clients/#session-variables). A niri bind passes `NIRI_SOCKET` on.
 
 ## `serve`
 
@@ -81,12 +81,20 @@ Marker cleared. `niri-computer-use resume` clears the stop flag if it is set.
 
 Any other answer exits 1 with `not confirmed; the marker stays`.
 
+## `--version`
+
+```sh
+niri-computer-use --version
+```
+
+Prints `niri-computer-use` and the version, such as `niri-computer-use 0.1.0`, and exits 0. It reads nothing from the session.
+
 ## Internal subcommands
 
 You don't run these yourself.
 
 - `engine` is the shared engine `serve` starts in [shared mode](../../concepts/configuration/#shared) when its niri instance has none. It serves every shared-mode client of the instance over `engine.sock` in the runtime directory, writes its errors to `engine.log` there, and exits two seconds after its last client is gone.
-- `guard <server-pid>` is the crash guardian `serve` or the engine starts. It waits for that server to end, and if the server's marker names held keys or buttons, releases them at once.
+- `guard <server-pid>` is the crash guardian `serve` or the engine starts. It waits for that server to end, and if the server's marker names native keys or pointer buttons it still held, releases them at once.
 - `paste-keeper` is the clipboard keeper `paste` starts. It holds the pasted text on the clipboard, then puts the saved clipboard back.
 
 ## Exit status and errors
