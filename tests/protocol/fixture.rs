@@ -36,6 +36,9 @@ pub(crate) const SESSION: &str = "7";
 pub(crate) struct Fixture {
     pub(crate) dir: PathBuf,
     env: BTreeMap<&'static str, OsString>,
+    /// The servers started here. Each must have exited before the directory is removed,
+    /// or its audit log could create the directory again.
+    servers: Mutex<Vec<u32>>,
     /// The Wayland display, served by the test's process like the fake niri, so the server
     /// takes it as niri's. Nothing speaks Wayland on it.
     _display: UnixListener,
@@ -74,6 +77,7 @@ impl Fixture {
         let fixture = Self {
             dir,
             env,
+            servers: Mutex::new(Vec::new()),
             _display: display,
         };
         let longest = fixture.noctalia_socket().as_os_str().len();
@@ -86,6 +90,14 @@ impl Fixture {
 
     pub(crate) fn env(&self) -> &BTreeMap<&'static str, OsString> {
         &self.env
+    }
+
+    /// Notes a server started on this fixture, which must exit before the fixture drops.
+    pub(crate) fn started(&self, server: u32) {
+        self.servers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(server);
     }
 
     pub(crate) fn set(&mut self, name: &'static str, value: impl Into<OsString>) {
@@ -155,7 +167,22 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
+        let servers = self
+            .servers
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner);
+        let running: Vec<u32> = servers
+            .iter()
+            .copied()
+            .filter(|pid| Path::new(&format!("/proc/{pid}")).exists())
+            .collect();
         std::fs::remove_dir_all(&self.dir).ok();
+        if !std::thread::panicking() {
+            assert!(
+                running.is_empty(),
+                "servers {running:?} outlived their fixture; drop them before it"
+            );
+        }
     }
 }
 

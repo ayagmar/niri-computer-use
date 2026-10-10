@@ -3,7 +3,7 @@
 
 use std::process::{ExitStatus, Stdio};
 use std::sync::PoisonError;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
@@ -38,11 +38,11 @@ impl Server {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
             .spawn()
             .unwrap();
         drop(spawning);
         let pid = child.id().unwrap();
+        fixture.started(pid);
         let stdin = child.stdin.take();
         let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
         let (sender, lines) = mpsc::unbounded_channel();
@@ -200,6 +200,18 @@ impl Server {
             .expect("stderr stayed open")
             .unwrap();
         stderr
+    }
+}
+
+impl Drop for Server {
+    /// Kills the server and waits until it has exited, so that nothing it does outlasts
+    /// the test's teardown.
+    fn drop(&mut self) {
+        self.child.start_kill().ok();
+        let end = Instant::now() + WAIT;
+        while matches!(self.child.try_wait(), Ok(None)) && Instant::now() < end {
+            std::thread::yield_now();
+        }
     }
 }
 
