@@ -804,10 +804,12 @@ impl Server {
     /// `is_floating`, `is_focused`, `workspace_id`. niri reports no fullscreen flag; a
     /// fullscreen window fills its output. Other actions give `sent`. niri's refusal comes
     /// back as `upstream_error` with niri's message. `CloseWindow` on a window whose app is
-    /// on the policy's deny list fails with `app_denied`. Actions that run programs, write
-    /// files or reach past the layout (`Spawn`, `SpawnSh`, `Quit`, `LoadConfigFile`, niri's
-    /// screenshot actions, monitor power, casts) fail with `unrestricted_required` unless
-    /// the user set `unrestricted = true`; tell the user rather than working around it.
+    /// on the policy's deny list fails with `app_denied`; with a null id it closes the
+    /// focused window by its id, and with no window focused sends nothing. Actions that
+    /// run programs, write files or reach past the layout (`Spawn`, `SpawnSh`, `Quit`,
+    /// `LoadConfigFile`, niri's screenshot actions, monitor power, casts) fail with
+    /// `unrestricted_required` unless the user set `unrestricted = true`; tell the user
+    /// rather than working around it.
     /// Requires the lease.
     #[tool(annotations(
         read_only_hint = false,

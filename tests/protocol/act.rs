@@ -721,6 +721,51 @@ async fn closing_a_denied_apps_window_is_refused_named_or_focused() {
 }
 
 #[tokio::test]
+async fn a_focused_close_names_the_window_it_checked() {
+    let deny_b = r#"deny_input_app_ids = ["b"]"#;
+    let mut desk = Desk::start("act-close-focused", deny_b).await;
+    let close_focused = json!({"action": {"CloseWindow": {"id": null}}});
+    let closed = desk
+        .act("niri_action", close_focused.clone(), |stream, action| {
+            assert!(
+                matches!(action, Action::CloseWindow { id: Some(1) }),
+                "{action:?}"
+            );
+            // Focus moving to the denied window now can't redirect the close.
+            focus_changed(stream, 2);
+            stream.send(&json!({"WindowClosed": {"id": 1}}));
+        })
+        .await;
+    assert_eq!(outcome(&closed)["observed"], "closed");
+    assert_eq!(outcome(&closed)["windows"], json!([1]));
+
+    // With no window focused, nothing is sent.
+    desk.stream
+        .send(&json!({"WindowFocusChanged": {"id": null}}));
+    while !desk.server.structured("desktop_state").await["focused_window"].is_null() {
+        tokio::task::yield_now().await;
+    }
+    let unfocused = desk.server.call("niri_action", close_focused).await;
+    assert_eq!(
+        mistake(&unfocused),
+        "invalid arguments: no window has focus; pass the id of the window to close"
+    );
+    assert!(!desk.niri.sent_action());
+
+    // unrestricted doesn't lift the deny list.
+    let policy = format!("unrestricted = true\n{deny_b}");
+    let mut open = Desk::start("act-close-unrestricted", &policy).await;
+    for (tool, arguments) in [
+        ("niri_action", json!({"action": {"CloseWindow": {"id": 2}}})),
+        ("close_window", json!({"id": 2})),
+    ] {
+        let refused = open.server.call(tool, arguments).await;
+        assert_eq!(tool_error(&refused).0, "app_denied", "{tool}");
+    }
+    assert!(!open.niri.sent_action());
+}
+
+#[tokio::test]
 async fn pointer_tools_check_the_ref_the_outputs_and_their_arguments_first() {
     let mut desk = Desk::start("act-pointer", "").await;
     let at = |id: &str, x: u32| json!({"screenshot_ref": id, "x": x, "y": 10});

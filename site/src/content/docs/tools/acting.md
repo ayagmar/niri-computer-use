@@ -100,7 +100,7 @@ For window layout and other compositor actions that have no tool of their own. F
 {"action": {"MaximizeColumn": {}}}
 ```
 
-An `id` of null means the focused window. JSON that isn't a niri action is an argument mistake carrying serde's message, and so is a window id that doesn't exist. niri's refusal is `upstream_error` with niri's message.
+An `id` of null means the focused window. `CloseWindow` with a null id goes out naming the focused window by its id, so focus moving meanwhile can't redirect it, and with no window focused it sends nothing and is an argument mistake. JSON that isn't a niri action is an argument mistake carrying serde's message, and so is a window id that doesn't exist. niri's refusal is `upstream_error` with niri's message.
 
 For an action about one window, the one it names or the focused one, the server waits up to a second for niri to report a change in that window, then 200 ms more for a resize that comes in steps. `observed` is `changed`, `unchanged` or `closed`, `windows` holds the id, and `window` is the window as niri then reports it:
 

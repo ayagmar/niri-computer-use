@@ -220,11 +220,12 @@ const fn aim(action: &Action) -> Aim {
 /// Sends `action`, then, for an action about one window, reports that window as niri
 /// shows it once it changed, or after a second: `changed`, `unchanged` or `closed`, with
 /// the window's state. Any other action is `sent`. `CloseWindow` on a window of an app on
-/// the deny list is refused.
+/// the deny list is refused, and goes out naming the window that was checked, so focus
+/// moving meanwhile can't redirect it.
 pub(crate) async fn run(
     niri: Niri<'_>,
     policy: &Loaded,
-    action: Action,
+    mut action: Action,
 ) -> Result<Outcome, CallError> {
     let mut waiter = niri::waiter(niri.events).await?;
     let target = match aim(&action) {
@@ -233,8 +234,14 @@ pub(crate) async fn run(
         Aim::Window(id) if waiter.view().windows().contains_key(&id) => Some(id),
         Aim::Window(id) => return Err(no_window(id)),
     };
-    if let (Action::CloseWindow { .. }, Some(id)) = (&action, target) {
+    if let Action::CloseWindow { .. } = action {
+        let id = target.ok_or_else(|| {
+            CallError::InvalidArguments(
+                "no window has focus; pass the id of the window to close".to_owned(),
+            )
+        })?;
         refuse_close(policy, waiter.view(), id)?;
+        action = Action::CloseWindow { id: Some(id) };
     }
     let before = target.and_then(|id| state(waiter.view(), id));
     if let Some(lost) = send(niri.socket, action).await? {
