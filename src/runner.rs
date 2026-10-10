@@ -54,8 +54,9 @@ impl Finished {
 }
 
 /// Runs `program` with `args` and no stdin, and collects its output, all within
-/// `deadline`. Stdout over `max_stdout` bytes is an error. A non-zero exit is returned,
-/// not treated as an error, because some programs report ordinary outcomes that way.
+/// `deadline`. Stdout over `max_stdout` bytes is an error that keeps the exit status and
+/// stderr. A non-zero exit is returned, not treated as an error, because some programs
+/// report ordinary outcomes that way.
 pub(crate) async fn run(
     program: &str,
     args: &[String],
@@ -291,16 +292,20 @@ impl Running {
         let (stdout, stderr) = (stdout.map_err(broken)?, stderr.map_err(broken)?);
         let status = self.child.wait().await.map_err(broken)?;
         self.group = None;
+        let stderr = String::from_utf8_lossy(&stderr).into_owned();
         if u64::try_from(stdout.len()).unwrap_or(u64::MAX) > max_stdout {
             return Err(ToolError::new(
                 ErrorName::UpstreamError,
-                format!("{program} wrote more than {max_stdout} bytes"),
+                format!(
+                    "{program} wrote more than {max_stdout} bytes and exited with {status}: {}",
+                    stderr.trim()
+                ),
             ));
         }
         Ok(Finished {
             status,
             stdout,
-            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            stderr,
         })
     }
 }
@@ -384,13 +389,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn too_much_stdout_is_an_error() {
-        let error = run("sh", &args(&["-c", "printf 12345"]), DEADLINE, 4)
+    async fn too_much_stdout_is_an_error_that_keeps_the_exit_and_stderr() {
+        let script = "printf 12345; echo 'no frame' >&2; exit 2";
+        let error = run("sh", &args(&["-c", script]), DEADLINE, 4)
             .await
             .unwrap_err();
         assert_eq!(
             error,
-            ToolError::new(ErrorName::UpstreamError, "sh wrote more than 4 bytes")
+            ToolError::new(
+                ErrorName::UpstreamError,
+                "sh wrote more than 4 bytes and exited with exit status: 2: no frame"
+            )
         );
     }
 
