@@ -598,6 +598,7 @@ These match the versions installed locally.
 - `status.unrestricted` reports `enabled`, `source` (`policy`, `env` or `both`) and `error`.
 - A preset's `env` is applied by spawning `env -- NAME=value … argv` through niri, because niri 26.04's `Spawn` has no environment field. niri still starts it with the session's environment, plus these variables. Names must be non-empty and free of `=` and NUL, and with `env` the program can't contain `=`, which `env` would read as an assignment. Without `unrestricted`, a preset with `env` makes the file invalid.
 - An agent never adds arguments or variables: `launch` still takes only a preset name.
+- With `unrestricted` on and no preset for an app, the skill, `launch`'s description and the server instructions tell the agent to start it with `niri_action`'s `Spawn` and the program's argv, never a shell or `SpawnSh`, then `wait_for` its window by `app_id`. The user turned `unrestricted` on for this, and the earlier "ask for a preset" text kept a compliant agent from using it. A preset still comes first, and with `unrestricted` off the agent asks for one.
 
 ## 2026-10-10: the `noctalia` passthrough, and OBS through it
 

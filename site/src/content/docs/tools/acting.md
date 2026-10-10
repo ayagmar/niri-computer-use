@@ -75,6 +75,8 @@ niri starts the preset's fixed `argv`; the app keeps running after the server ex
 
 With `reuse`: one existing matching window is focused, and `observed` is `focused` with its id in `windows`; several give `ambiguous` with their ids and `accepted: false`, and nothing is started; none starts the preset as usual.
 
+With no preset for the app and [`unrestricted`](../../concepts/configuration/#unrestricted) on, the skill tells agents to start it with `niri_action`'s `Spawn` and the program's argv, never a shell or `SpawnSh`, and then wait for its window with `wait_for`. With `unrestricted` off they ask you for a preset.
+
 ## `close_window`
 
 | Argument | Value |

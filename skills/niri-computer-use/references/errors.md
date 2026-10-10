@@ -28,7 +28,7 @@ These are the user's decisions. Don't call the refused action again and don't tr
 | Error | What to do |
 |---|---|
 | `lease_required` | You called an action without the lease. Call `acquire_desktop` if the user asked you to act. |
-| `unknown_preset` | `launch` named a preset that doesn't exist; the detail lists the ones that do. If none fits, ask the user to add one. |
+| `unknown_preset` | `launch` named a preset that doesn't exist; the detail lists the ones that do. If none fits and `status.unrestricted.enabled` is true, start the app with `niri_action` `Spawn` and `wait_for` its window; otherwise ask the user to add one. |
 | `ref_invalid` | The detail starts with `unknown_ref`, `expired`, `output_changed` or `out_of_bounds`. Take a new screenshot and aim again from it; for `out_of_bounds`, use a pixel inside the image. |
 | `element_stale` | The element ref's window, app or element is gone, it is now another kind of element, or this lease didn't list it. Call `elements` again and aim from its new list. |
 | `element_unmappable` | The element is there but can't be aimed at now. The detail starts with `frame_size_mismatch` (the app's coordinates for this window can't be trusted: aim at a screenshot pixel instead), `not_showing` (bring it into view first), `empty`, or `outside_screenshot` (take a screenshot that shows it). |
