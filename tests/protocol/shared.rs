@@ -278,6 +278,22 @@ async fn an_engine_ended_by_a_replaced_directory_leaves_the_new_engine_reachable
 }
 
 #[tokio::test]
+async fn an_engine_that_stops_reading_counts_as_lost() {
+    let fixture = shared("shared-wedged");
+    let _niri = Niri::start(&fixture);
+    let mut server = Server::start(&fixture).await;
+    let engine = server.serving_pid().await;
+    signal(engine, rustix::process::Signal::STOP);
+    // More than the socket's buffers hold, so the bridge's write waits for a read.
+    let call = server
+        .start_call("screenshot", json!({"target": "x".repeat(4 << 20)}))
+        .await;
+    let (lost, detail) = tool_error(&server.response(call).await["result"]);
+    assert_eq!(lost, "engine_lost");
+    assert!(detail.contains("stopped reading"), "{detail}");
+}
+
+#[tokio::test]
 async fn a_line_over_the_limit_ends_the_bridge() {
     let fixture = shared("shared-line");
     let _niri = Niri::start(&fixture);

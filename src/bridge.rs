@@ -46,6 +46,9 @@ const LISTENING: Duration = Duration::from_secs(2);
 const MAX_ENGINE_LINE: usize = 256 * 1024 * 1024;
 /// How long, after its client's end, the bridge still passes on what the engine sends.
 const DRAIN: Duration = Duration::from_secs(6);
+/// How long a write to the engine may wait for the engine to read. An engine that reads
+/// nothing for this long, stopped or stuck, counts as lost.
+const ENGINE_WRITE: Duration = Duration::from_secs(5);
 
 /// The engine a bridge reaches, and the hello it sends.
 #[derive(Debug)]
@@ -434,10 +437,14 @@ impl Relay {
         let Some(engine) = &mut self.engine else {
             return Ok(());
         };
-        if let Err(error) = engine.output.write_all(line).await {
-            return self.lost(&format!("couldn't be written to: {error}")).await;
+        match tokio::time::timeout(ENGINE_WRITE, engine.output.write_all(line)).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => self.lost(&format!("couldn't be written to: {error}")).await,
+            Err(_) => {
+                let how = format!("stopped reading for {} s", ENGINE_WRITE.as_secs());
+                self.lost(&how).await
+            }
         }
-        Ok(())
     }
 
     async fn reply(&mut self, line: &[u8]) -> Result<(), String> {

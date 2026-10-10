@@ -181,7 +181,7 @@ These come only from a server in [shared mode](../../concepts/configuration/#sha
 
 ### `engine_lost`
 
-**Cause:** the shared engine ended, killed or crashed, while the call was in flight, or since the session's last call. What a call in flight did is unknown, and the session's lease, refs and focus record went with the engine. The `detail` names the engine's PID when the server knew it.
+**Cause:** the shared engine ended, killed or crashed, or stopped reading from this server for five seconds, while the call was in flight, or since the session's last call. What a call in flight did is unknown, and the session's lease, refs and focus record went with the engine. The `detail` names the engine's PID when the server knew it.
 
 **What to do:** look at `desktop_state` or a screenshot before acting again, and call `acquire_desktop` again if you still need it. The next call reaches a new engine; the engine's own error, if any, is in `engine.log` in the runtime directory.
 
