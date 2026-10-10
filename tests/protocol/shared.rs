@@ -9,7 +9,7 @@ use serde_json::json;
 
 use crate::client::{CLIENT, Server, WAIT, tool_error};
 use crate::fixture::{Fixture, eventually, jpeg, kill};
-use crate::niri::{Niri, window_on};
+use crate::niri::{Niri, Stream, window_on};
 use crate::noctalia::{self, UNLOCKED};
 use crate::session::NiriProcess;
 
@@ -78,6 +78,31 @@ fn hold_engine_lock(fixture: &Fixture) -> File {
     let lock = File::create(fixture.runtime_dir().join("engine.lock")).unwrap();
     lock.lock().unwrap();
     lock
+}
+
+/// A niri and an unlocked Noctalia, so that a client can take the lease.
+struct Desktop {
+    niri: Niri,
+    _noctalia: noctalia::Reply,
+}
+
+impl Desktop {
+    fn new(fixture: &Fixture) -> Self {
+        fixture.program("noctalia", "exit 0");
+        Self {
+            niri: Niri::start(fixture),
+            _noctalia: noctalia::start(fixture, UNLOCKED),
+        }
+    }
+
+    /// The event stream the engine opens, with one window focused on it.
+    async fn stream(&mut self) -> Stream {
+        let stream = self.niri.stream().await;
+        stream.workspaces(1);
+        stream.send(&json!({"WindowsChanged": {"windows": [window_on(1, Some("a"), 1, true)]}}));
+        stream.send(&json!({"OverviewOpenedOrClosed": {"is_open": false}}));
+        stream
+    }
 }
 
 #[tokio::test]
@@ -300,15 +325,10 @@ async fn visit(fixture: &Fixture) {
 #[tokio::test]
 async fn fifty_clients_coming_and_going_leave_the_engine_as_it_was() {
     let fixture = shared("shared-churn");
-    let mut niri = Niri::start(&fixture);
-    fixture.program("noctalia", "exit 0");
-    let _noctalia = noctalia::start(&fixture, UNLOCKED);
+    let mut desktop = Desktop::new(&fixture);
     let mut anchor = Server::start(&fixture).await;
     let engine = engine(&fixture).await;
-    let stream = niri.stream().await;
-    stream.workspaces(1);
-    stream.send(&json!({"WindowsChanged": {"windows": [window_on(1, Some("a"), 1, true)]}}));
-    stream.send(&json!({"OverviewOpenedOrClosed": {"is_open": false}}));
+    let _stream = desktop.stream().await;
     // The first visit opens what the engine keeps for good, such as niri's event stream.
     visit(&fixture).await;
     assert_eq!(sessions(&mut anchor).await, 1);
@@ -323,4 +343,62 @@ async fn fifty_clients_coming_and_going_leave_the_engine_as_it_was() {
     );
     assert_eq!(sessions(&mut anchor).await, 1);
     assert_eq!(engines(&fixture), [engine]);
+}
+
+#[tokio::test]
+async fn a_bridge_and_a_standalone_server_share_one_lease() {
+    let mut fixture = shared("shared-mixed");
+    let mut desktop = Desktop::new(&fixture);
+    let mut bridged = Server::start(&fixture).await;
+    let _engine_stream = desktop.stream().await;
+    fixture.unset("NIRI_COMPUTER_USE_SHARED");
+    let mut standalone = Server::start(&fixture).await;
+    let _own_stream = desktop.stream().await;
+    holds_alone(&mut bridged, &mut standalone).await;
+    holds_alone(&mut standalone, &mut bridged).await;
+}
+
+/// `holder` takes the lease, `other` is refused it, and `holder` gives it back.
+async fn holds_alone(holder: &mut Server, other: &mut Server) {
+    holder.structured("acquire_desktop").await;
+    let (name, _) = tool_error(&other.call("acquire_desktop", json!({})).await);
+    assert_eq!(name, "lease_held");
+    let release = json!({"restore_focus": false});
+    let released = holder.structured_with("release_desktop", release).await;
+    assert_eq!(released["released"], true);
+}
+
+#[tokio::test]
+async fn a_client_killed_mid_key_frees_the_lease_while_others_keep_working() {
+    let fixture = shared("shared-killed");
+    let mut desktop = Desktop::new(&fixture);
+    fixture.program("wtype", r#"echo >> "$DIR/wtype.calls"; await_file go"#);
+    let mut typing = Server::start(&fixture).await;
+    let mut other = Server::start(&fixture).await;
+    let _stream = desktop.stream().await;
+    typing.structured("acquire_desktop").await;
+    typing
+        .start_call("key", json!({"keys": ["Down"], "expect": "none"}))
+        .await;
+    assert!(eventually(WAIT, || fixture.path("wtype.calls").exists()).await);
+    typing.kill().await;
+    let killed = Instant::now();
+    let mut free = false;
+    while !free && killed.elapsed() < Duration::from_secs(1) {
+        free = other.structured("status").await["lease"]["holder"].is_null();
+        assert_eq!(
+            other.call("desktop_state", json!({})).await["isError"],
+            false
+        );
+    }
+    assert!(
+        free,
+        "the lease was still held {:?} after",
+        killed.elapsed()
+    );
+    let marker = fixture.runtime_dir().join("input-dirty");
+    assert!(marker.exists());
+    std::fs::write(fixture.path("go"), "").unwrap();
+    assert!(eventually(WAIT, || !marker.exists()).await);
+    other.structured("acquire_desktop").await;
 }

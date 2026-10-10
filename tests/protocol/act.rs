@@ -600,6 +600,8 @@ async fn a_stop_ends_the_owners_queued_actions_and_frees_the_lease_within_a_seco
         stopped.elapsed()
     );
     std::fs::write(desk.fixture.path("go"), "").unwrap();
+    let (refused, _) = tool_error(&desk.server.call("acquire_desktop", json!({})).await);
+    assert_eq!(refused, "stopped");
 }
 
 /// A `ref_invalid`'s name and its reason, the detail's first word.
