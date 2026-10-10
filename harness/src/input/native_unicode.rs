@@ -36,10 +36,11 @@ pub(super) fn run(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>)
         )?)?;
         let seen = keyboard::observed(session, wev.log, offset, 100, true)?;
         keyboard::text(&trace(&seen)?, CORPUS)?;
-        times.push(start.elapsed());
+        let elapsed = start.elapsed();
+        times.push(elapsed);
         restored(session, &directory, &original, before)?;
         stop::marker_gone(session)?;
-        session.log(&format!("M7 native C10 run {run}: 100 decoded pairs, extended keymap sent, then the compositor's keymap byte for byte"))?;
+        session.log(&format!("M7 native C10 run {run}: 100 decoded pairs in {:.3} ms, extended keymap sent, then the compositor's keymap byte for byte", elapsed.as_secs_f64() * 1000.0))?;
     }
     quiet_after(session, client, wev, &directory)?;
     observer.stop()?;
