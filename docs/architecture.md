@@ -57,7 +57,7 @@ Some clients start MCP servers with a short allow-list of environment variables;
 - `NIRI_SOCKET`: niri names its socket `niri.<display>.<pid>.sock` in its runtime directory. The server lists the runtime directory and keeps the sockets of that form, not symlinks, owned by the effective user, whose `<pid>` is a running process with `/proc/<pid>/comm` = `niri`. With exactly one, it uses that. With none, niri is `niri_unavailable` with a detail naming the directory it looked in. With several, such as two niri sessions of the same user, it picks none: `niri_unavailable` names them and says to set `NIRI_SOCKET`.
 - `WAYLAND_DISPLAY`: the `<display>` in the niri socket's name, whether that socket was given or found, if `$XDG_RUNTIME_DIR/<display>` is a socket.
 
-The session bus's fallback, `$XDG_RUNTIME_DIR/bus`, uses the runtime directory found this way too. `status` reports under `discovery` whether each of the three came from the environment or was discovered, or why it is missing. The peer-PID checks on the Wayland and niri connections stay: the Wayland socket must be served by the niri on `NIRI_SOCKET`, whichever way each was found.
+The session bus's fallback, `$XDG_RUNTIME_DIR/bus`, uses the runtime directory found this way too. Every child the runner starts, such as `grim`, `wtype`, `wl-paste`, the crash guardian and the paste keeper, gets the three as resolved on top of the environment it inherits, so it reaches the same display and niri. `status` reports under `discovery` whether each of the three came from the environment or was discovered, or why it is missing. The peer-PID checks on the Wayland and niri connections stay: the Wayland socket must be served by the niri on `NIRI_SOCKET`, whichever way each was found.
 
 ## niri requests
 

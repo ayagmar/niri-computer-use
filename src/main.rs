@@ -135,6 +135,26 @@ impl Env {
         Some(self.runtime_dir.as_ref()?.join(display))
     }
 
+    /// The session variables as found, for the server's children.
+    fn session_vars(&self) -> Vec<(&'static str, OsString)> {
+        let socket = self
+            .niri_socket
+            .path()
+            .ok()
+            .map(|path| path.as_os_str().to_owned());
+        [
+            (
+                "XDG_RUNTIME_DIR",
+                self.runtime_dir.clone().map(PathBuf::into_os_string),
+            ),
+            ("NIRI_SOCKET", socket),
+            ("WAYLAND_DISPLAY", self.wayland_display.clone()),
+        ]
+        .into_iter()
+        .filter_map(|(name, value)| Some((name, value?)))
+        .collect()
+    }
+
     /// Whether `PATH` has an executable file called `program`.
     pub(crate) fn finds(&self, program: &str) -> bool {
         let dirs = self.path.iter().flat_map(std::env::split_paths);
@@ -169,6 +189,7 @@ enum Command {
 async fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     let env = Env::read();
+    runner::pass_on(env.session_vars());
     let result = match command(&args) {
         Some(Command::Serve) => serve(env).await,
         Some(Command::Status) => {

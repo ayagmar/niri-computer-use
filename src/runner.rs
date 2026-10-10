@@ -4,7 +4,9 @@
 //! is killed. A child that is still unreaped keeps its process ID, and with it the group
 //! ID, from being reused, so the kill can't reach another group.
 
+use std::ffi::OsString;
 use std::process::{ExitStatus, Stdio};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use rustix::process::{Pid, Signal, kill_process_group};
@@ -13,6 +15,18 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::time::Instant;
 
 use crate::error::{ErrorName, ToolError};
+
+/// The session variables as `main` resolved them, given to every child on top of the
+/// environment it inherits. A client such as Codex starts the server without them, and
+/// grim, wtype and wl-clipboard need them to reach the display. Setting them in the
+/// server's own environment would take `unsafe`.
+static SESSION: OnceLock<Vec<(&'static str, OsString)>> = OnceLock::new();
+
+/// Gives `session` to every child started from now on. Only the first call counts: `main`
+/// makes it once, before any child starts.
+pub(crate) fn pass_on(session: Vec<(&'static str, OsString)>) {
+    SESSION.get_or_init(|| session);
+}
 
 /// How much stderr an error keeps. The rest is read and discarded, so a verbose child
 /// never sees its stderr closed.
@@ -236,7 +250,15 @@ fn detached(
     reason = "the runner is the one place that starts processes"
 )]
 fn command(program: &str) -> Command {
-    Command::new(program)
+    let mut command = Command::new(program);
+    command.envs(
+        SESSION
+            .get()
+            .into_iter()
+            .flatten()
+            .map(|(name, value)| (name, value)),
+    );
+    command
 }
 
 /// A started child. Dropping it before it has been reaped kills its process group.

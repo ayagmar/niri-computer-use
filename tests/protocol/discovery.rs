@@ -34,6 +34,18 @@ async fn without_the_session_variables_the_server_finds_the_running_niri() {
     assert_eq!(status["instance"], name);
     assert_eq!(status["niri"]["version"], "26.04 (protocol-test)");
     assert_eq!(status["outputs"]["pointer_supported"], true);
+
+    // Programs such as grim, wtype and wl-paste reach the display through these.
+    fixture.program(
+        "wl-paste",
+        r#"printf '%s %s %s' "$XDG_RUNTIME_DIR" "$WAYLAND_DISPLAY" "$NIRI_SOCKET""#,
+    );
+    let run = fixture.path("run");
+    let passed = format!("{} {DISPLAY} {}", run.display(), run.join(&name).display());
+    assert_eq!(
+        server.structured("clipboard_read").await,
+        json!({"text": passed, "reason": null})
+    );
 }
 
 #[tokio::test]
