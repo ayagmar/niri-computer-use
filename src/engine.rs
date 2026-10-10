@@ -128,14 +128,18 @@ impl Engine {
         })
     }
 
-    /// The screenshot ref named `id` of the lease held.
-    pub(crate) fn shot(&self, id: &str) -> Result<Shot, ToolError> {
-        self.desk.shot(id)
+    /// The screenshot ref named `id` of the lease `session` holds.
+    pub(crate) fn shot(&self, session: &Session, id: &str) -> Result<Shot, ToolError> {
+        self.desk.shot(session.id(), id)
     }
 
-    /// The element ref named `id` of the lease held.
-    pub(crate) fn element(&self, id: &str) -> Result<a11y::ElementRef, ToolError> {
-        self.desk.element(id)
+    /// The element ref named `id` of the lease `session` holds.
+    pub(crate) fn element(
+        &self,
+        session: &Session,
+        id: &str,
+    ) -> Result<a11y::ElementRef, ToolError> {
+        self.desk.element(session.id(), id)
     }
 
     /// The readiness report, as `status` returns it to `session`.
@@ -149,7 +153,7 @@ impl Engine {
             event_stream: Some(event_stream),
             audit: &self.audit,
             noctalia_installed: self.noctalia_installed,
-            lease: self.desk.status(),
+            lease: self.desk.status(session.id()),
             policy: &settings.policy,
             unrestricted: &settings.unrestricted,
             accessibility: &self.accessibility,
@@ -169,14 +173,17 @@ impl Engine {
             .await
             .ok()
             .and_then(|waiter| waiter.view().focused_window());
-        let holder = self.desk.acquire(label, refusal, focused).await?;
-        Ok((holder, self.desk.users_window()))
+        let holder = self
+            .desk
+            .acquire(session.id(), label, refusal, focused)
+            .await?;
+        Ok((holder, self.desk.users_window(session.id())))
     }
 
     /// Gives the lease up, with `restore_focus` first giving focus back to the user's
     /// window through the action gate.
     pub(crate) async fn release(&self, session: &Session, restore_focus: bool) -> Release {
-        let users_window = self.desk.users_window();
+        let users_window = self.desk.users_window(session.id());
         let restored = match (restore_focus, users_window) {
             (true, Some(id)) => Some(self.restore(session, id).await),
             _ => None,
@@ -184,7 +191,7 @@ impl Engine {
         Release {
             users_window,
             restored,
-            released: self.desk.release().await,
+            released: self.desk.release(session.id()).await,
         }
     }
 
@@ -199,18 +206,22 @@ impl Engine {
         // Boxed, because the readiness report, the action's work and its wait make large
         // futures.
         let refusal = Box::pin(self.refusal(session));
-        let evidence = |outcome| Box::pin(self.evidence(outcome, shoot));
-        self.desk.act(refusal, Box::pin(work), evidence).await
+        let evidence = |outcome| Box::pin(self.evidence(session, outcome, shoot));
+        self.desk
+            .act(session.id(), refusal, Box::pin(work), evidence)
+            .await
     }
 
     /// A screenshot, serialized with this engine's actions. With `save`, a full-resolution
     /// PNG of the target is written there first.
     pub(crate) async fn screenshot(
         &self,
+        session: &Session,
         request: observe::Request,
         save: Option<SaveTarget>,
     ) -> Result<observe::Screenshot, CallError> {
-        self.desk.observe(self.capture_saving(request, save)).await
+        let capture = self.capture_saving(session, request, save);
+        self.desk.observe(session.id(), capture).await
     }
 
     /// The accessible elements `ask` names, each kept as an element ref while the lease is
@@ -225,7 +236,7 @@ impl Engine {
                 a11y::not_accessible("this session has no accessibility bus".to_owned()).into(),
             );
         };
-        let lease = self.desk.ref_lease();
+        let lease = self.desk.ref_lease(session.id());
         let remember = |element| lease.and_then(|lease| self.desk.remember_element(lease, element));
         // Boxed, because the walk's calls make a large future.
         Box::pin(elements::list(
@@ -263,11 +274,15 @@ impl Engine {
     /// samples or while waiting for a window condition.
     pub(crate) async fn wait(
         &self,
+        session: &Session,
         until: &wait::Until,
         limit: std::time::Duration,
         screenshot: bool,
     ) -> Result<(wait::Report, Option<observe::Screenshot>), CallError> {
-        let capture = || self.desk.observe(self.capture(observe::Request::focused()));
+        let capture = || {
+            let capture = self.capture(session, observe::Request::focused());
+            self.desk.observe(session.id(), capture)
+        };
         if *until == wait::Until::ScreenStable {
             let (report, last) = wait::screen(capture, limit).await?;
             return Ok((report, screenshot.then_some(last)));
@@ -293,7 +308,10 @@ impl Engine {
     async fn restore(&self, session: &Session, id: u64) -> Value {
         let refusal = Box::pin(self.refusal(session));
         let work = Box::pin(act::refocus(self.niri(), id));
-        let restored = match self.desk.act(refusal, work, std::future::ready).await {
+        let acted = self
+            .desk
+            .act(session.id(), refusal, work, std::future::ready);
+        let restored = match acted.await {
             Ok(outcome) => serde_json::to_value(outcome),
             Err(CallError::Tool(error)) => serde_json::to_value(error),
             Err(CallError::InvalidArguments(message)) => {
@@ -305,8 +323,12 @@ impl Engine {
 
     /// Takes a screenshot and, while this engine holds the lease, keeps it as a ref that
     /// the result names.
-    async fn capture(&self, request: observe::Request) -> Result<observe::Screenshot, CallError> {
-        let lease = self.desk.ref_lease();
+    async fn capture(
+        &self,
+        session: &Session,
+        request: observe::Request,
+    ) -> Result<observe::Screenshot, CallError> {
+        let lease = self.desk.ref_lease(session.id());
         let connection = self.events.as_ref().ok().and_then(EventStream::connection);
         let taken = Instant::now();
         let mut shot =
@@ -322,6 +344,7 @@ impl Engine {
     /// the screenshot to return, which says where the PNG went.
     async fn capture_saving(
         &self,
+        session: &Session,
         request: observe::Request,
         save: Option<SaveTarget>,
     ) -> Result<observe::Screenshot, CallError> {
@@ -332,7 +355,7 @@ impl Engine {
             }
             None => None,
         };
-        let mut shot = self.capture(request).await?;
+        let mut shot = self.capture(session, request).await?;
         shot.metadata.saved = saved;
         Ok(shot)
     }
@@ -344,7 +367,7 @@ impl Engine {
     }
 
     /// The outcome with the screenshot `shoot` asks for, or the one an outcome in doubt gets.
-    async fn evidence(&self, outcome: Outcome, shoot: bool) -> act::Evidenced {
-        act::with_evidence(outcome, shoot, |request| self.capture(request)).await
+    async fn evidence(&self, session: &Session, outcome: Outcome, shoot: bool) -> act::Evidenced {
+        act::with_evidence(outcome, shoot, |request| self.capture(session, request)).await
     }
 }

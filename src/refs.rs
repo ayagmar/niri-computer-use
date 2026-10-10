@@ -283,42 +283,8 @@ impl Refs {
 
 #[cfg(test)]
 mod tests {
-    use niri_ipc::Transform;
-
     use super::*;
-
-    fn shot() -> Shot {
-        Shot {
-            output: "winit".to_owned(),
-            geometry: LogicalOutput {
-                x: 0,
-                y: 0,
-                width: 960,
-                height: 720,
-                scale: 1.5,
-                transform: Transform::Flipped180,
-            },
-            motion_geometry: Some(LogicalOutput {
-                x: 0,
-                y: 0,
-                width: 960,
-                height: 720,
-                scale: 1.5,
-                transform: Transform::Flipped180,
-            }),
-            captured: Rect {
-                x: 0,
-                y: 0,
-                width: 960,
-                height: 720,
-            },
-            scale: 1.5,
-            width: 1440,
-            height: 1080,
-            taken: Instant::now(),
-            connection: 1,
-        }
-    }
+    use crate::test_support::shot;
 
     fn outputs(geometry: LogicalOutput) -> BTreeMap<String, Output> {
         let mode = crate::test_support::output_mode::from_logical(

@@ -53,9 +53,15 @@ impl Settings {
     }
 }
 
+/// Which session of the engine: what the lease, its refs and the window to give focus
+/// back to belong to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct SessionId(pub(crate) u64);
+
 /// A client: who it is, for the audit log and the lease record, and its settings.
 #[derive(Debug, Clone)]
 pub(crate) struct Session {
+    id: SessionId,
     /// The process the client started: this server.
     pid: u32,
     settings: Arc<Settings>,
@@ -65,9 +71,14 @@ impl Session {
     /// The one client of a server that serves its own stdio.
     pub(crate) fn local(settings: Settings) -> Self {
         Self {
+            id: SessionId(1),
             pid: std::process::id(),
             settings: Arc::new(settings),
         }
+    }
+
+    pub(crate) const fn id(&self) -> SessionId {
+        self.id
     }
 
     pub(crate) fn settings(&self) -> &Settings {

@@ -1169,7 +1169,7 @@ impl Server {
                 Ok(request) => request,
                 Err(message) => return Ok(invalid(&message)),
             };
-            match self.engine.screenshot(request, save).await {
+            match self.engine.screenshot(&self.session, request, save).await {
                 Ok(shot) => image(&shot),
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
                 Err(CallError::Tool(error)) => Ok(error.into_result()),
@@ -1200,7 +1200,11 @@ impl Server {
             if let Err(message) = until.check() {
                 return Ok(invalid(&message));
             }
-            match self.engine.wait(&until, limit, args.screenshot).await {
+            match self
+                .engine
+                .wait(&self.session, &until, limit, args.screenshot)
+                .await
+            {
                 Ok(waited) => waited_result(waited),
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
                 Err(CallError::Tool(error)) => Ok(error.into_result()),
@@ -1353,8 +1357,8 @@ impl Server {
         let tool = gesture.as_ref().map_or("pointer", Gesture::tool);
         let work = async {
             let input = self.engine.input(&self.session)?;
-            let shot = self.engine.shot(&aim.id);
-            let element = |id: &str| self.engine.element(id);
+            let shot = self.engine.shot(&self.session, &aim.id);
+            let element = |id: &str| self.engine.element(&self.session, id);
             pointer::point(input, shot, gesture?, &aim.keys, element).await
         };
         self.act(

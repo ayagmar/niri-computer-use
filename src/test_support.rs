@@ -18,3 +18,33 @@ pub(crate) fn fresh_dir(name: &str) -> PathBuf {
     std::fs::create_dir(&dir).unwrap();
     dir
 }
+
+/// A screenshot ref of a whole 960x720 output at scale 1.5, flipped, taken now.
+pub(crate) fn shot() -> crate::refs::Shot {
+    use niri_ipc::{LogicalOutput, Transform};
+
+    let geometry = LogicalOutput {
+        x: 0,
+        y: 0,
+        width: 960,
+        height: 720,
+        scale: 1.5,
+        transform: Transform::Flipped180,
+    };
+    crate::refs::Shot {
+        output: "winit".to_owned(),
+        geometry,
+        motion_geometry: Some(geometry),
+        captured: crate::observe::Rect {
+            x: 0,
+            y: 0,
+            width: 960,
+            height: 720,
+        },
+        scale: 1.5,
+        width: 1440,
+        height: 1080,
+        taken: tokio::time::Instant::now(),
+        connection: 1,
+    }
+}
