@@ -73,7 +73,7 @@ The window the agent named in `expect` lost keyboard focus before typing started
 
 ## `paste` fails with `clipboard_unsaved`
 
-The clipboard couldn't be saved whole: it held over 16 MiB, its owner didn't answer within two seconds, a password manager marked its contents as secret, or something else was copied while it was being saved. Nothing changed. Type the text with `type_text` instead.
+The clipboard couldn't be saved whole: it held over 16 MiB, its owner didn't answer within two seconds, a password manager marked its contents as secret, or something else was copied while it was being saved. Nothing changed. Type the text with `type_text` instead. A paste's own text, left on the clipboard by a `kept` outcome, doesn't cause this: the next paste replaces it.
 
 ## Actions fail after the runtime directory was cleaned
 

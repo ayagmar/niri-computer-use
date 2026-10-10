@@ -10,7 +10,9 @@
 //! key pasting the restored clipboard. It then serves the restored selection, without a
 //! deadline, until another client takes it or niri goes away. Each step until then, and
 //! each transfer, has a deadline; the keeper ends only once every transfer it accepted has
-//! finished or reached its deadline.
+//! finished or reached its deadline. The text carries a type of our own, `PASTE`, so a
+//! later keeper replaces a kept text despite its secret hint, and clears the clipboard
+//! afterwards rather than put it back.
 
 use std::io::Write as _;
 use std::os::fd::AsFd as _;
@@ -37,6 +39,9 @@ const TEXT_TYPES: [&str; 5] = [
 /// The hint KDE's and other clipboard managers honour: don't keep this in the history.
 const HINT: &str = "x-kde-passwordManagerHint";
 const SECRET: &[u8] = b"secret";
+/// A type of our own beside the text, so that a later paste knows the selection for a
+/// keeper's text, which a `kept` outcome left behind, rather than the user's.
+const PASTE: &str = "application/x-niri-computer-use-paste";
 /// The saved selection, all types together.
 const MAX_SAVED: usize = 16 * 1024 * 1024;
 /// From the start to the text, and from the text to `p` or `n`: the key's whole call.
@@ -57,7 +62,7 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
         .await
         .map_err(|_| format!("no text within {COMMAND_WAIT:?}"))??
         .into();
-    let (mut selection, saved, paste) = match take(env).await {
+    let (mut selection, previous, paste) = match take(env).await {
         Ok(taken) => taken,
         Err(detail) => {
             say(&Report::Refused { detail });
@@ -90,8 +95,9 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
         Ok(watched) if watched.replaced => (watched.reads > 0, Clipboard::Replaced, None),
         Ok(watched) => {
             let read = watched.reads > 0;
+            let (saved, dropped) = previous.into_parts();
             match restore(&mut selection, saved.as_ref()).await {
-                Ok(None) => (read, Clipboard::Cleared, None),
+                Ok(None) => (read, Clipboard::Cleared, dropped),
                 Ok(Some(restored)) => {
                     say(&Report::Done {
                         read,
@@ -120,11 +126,11 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
 }
 
 /// Why the text stays.
-const KEPT: &str = "the server neither confirmed the key nor said it didn't go out, so a late key could still paste; the pasted text stays on the clipboard instead of what was there before";
+const KEPT: &str = "the server neither confirmed the key nor said it didn't go out, so a late key could still paste; the pasted text stays on the clipboard instead of what was there before, until something else is copied or the next paste clears it";
 
 /// Binds, saves the selection, and takes it with a source offering the text, if
 /// `previous` allows: within `TAKE`.
-async fn take(env: &Env) -> Result<(Selection, Option<Contents>, SourceId), String> {
+async fn take(env: &Env) -> Result<(Selection, Previous, SourceId), String> {
     let display = env.display.path().map_err(|error| error.detail.clone())?;
     let niri = niri::pid(&env.niri_socket)
         .await
@@ -140,14 +146,35 @@ async fn take(env: &Env) -> Result<(Selection, Option<Contents>, SourceId), Stri
         .unchanged_since(&saved)
         .await
         .map_err(|error| error.detail)?;
-    let saved = previous(saved.contents, current)?;
+    let previous = previous(saved.contents, current)?;
     let mut types = TEXT_TYPES.to_vec();
-    types.push(HINT);
+    types.extend([HINT, PASTE]);
     let paste = selection
         .offer(&types)
         .await
         .map_err(|error| error.detail)?;
-    Ok((selection, saved, paste))
+    Ok((selection, previous, paste))
+}
+
+/// What the clipboard held before the paste, as the restore treats it.
+#[derive(Debug, PartialEq, Eq)]
+enum Previous {
+    /// The user's selection, or `None` for nothing: put back afterwards.
+    Saved(Option<Contents>),
+    /// An earlier paste's text, which its keeper kept serving after a `kept` outcome: the
+    /// user's copy it stood in for is already lost, and the late key it guarded against
+    /// has long landed, so the clipboard is cleared afterwards rather than put it back.
+    Paste,
+}
+
+impl Previous {
+    /// What to put back, and why nothing is when that is an earlier paste's text.
+    fn into_parts(self) -> (Option<Contents>, Option<String>) {
+        match self {
+            Self::Saved(saved) => (saved, None),
+            Self::Paste => (None, Some(DROPPED.to_owned())),
+        }
+    }
 }
 
 /// Decides from the selection saved, and whether it was `current`, still the selection
@@ -155,21 +182,30 @@ async fn take(env: &Env) -> Result<(Selection, Option<Contents>, SourceId), Stri
 /// made while the save ran refuses: the restore would put the older one back over it, and
 /// the newer one may be a secret the check below never saw. A copy niri handles between
 /// that check and the take is the race data-control can't exclude, since it has no
-/// request that sets the selection only if it is still the one seen. A secret refuses.
-fn previous(saved: Option<Contents>, current: bool) -> Result<Option<Contents>, String> {
+/// request that sets the selection only if it is still the one seen. A secret refuses,
+/// unless it is an earlier paste's text, which the keeper marks as one too.
+fn previous(saved: Option<Contents>, current: bool) -> Result<Previous, String> {
     if !current {
         return Err(CHANGED.to_owned());
     }
-    if saved.as_ref().is_some_and(secret) {
+    let Some(saved) = saved else {
+        return Ok(Previous::Saved(None));
+    };
+    if saved.iter().any(|(mime, _)| mime == PASTE) {
+        return Ok(Previous::Paste);
+    }
+    if secret(&saved) {
         return Err(format!(
             "the clipboard holds what its owner marked as a secret ({HINT}); restoring it would keep it past its owner's own clearing"
         ));
     }
-    Ok(saved)
+    Ok(Previous::Saved(Some(saved)))
 }
 
 /// Why a copy made while saving refuses.
 const CHANGED: &str = "something else was copied while the clipboard was being saved; nothing changed, so that copy stays";
+/// Why the clipboard is cleared rather than put back.
+const DROPPED: &str = "the clipboard held an earlier paste's text, which that paste's keeper kept, so it was dropped rather than put back";
 
 fn secret(saved: &Contents) -> bool {
     saved
@@ -209,10 +245,10 @@ impl Watched {
                     self.reads += 1;
                     self.latest = Some(Instant::now());
                 }
-                let bytes = if mime == HINT {
-                    SECRET.into()
-                } else {
-                    Arc::clone(text)
+                let bytes = match mime.as_str() {
+                    HINT => SECRET.into(),
+                    PASTE => Arc::from(&[][..]),
+                    _ => Arc::clone(text),
                 };
                 transfers.spawn(fd, bytes);
             }
@@ -604,8 +640,11 @@ mod tests {
     #[test]
     fn the_saved_selection_is_put_back_and_nothing_saved_leaves_it_empty() {
         let copied = saved(&[("text/plain", b"copied")]);
-        assert_eq!(previous(Some(copied.clone()), true), Ok(Some(copied)));
-        assert_eq!(previous(None, true), Ok(None));
+        assert_eq!(
+            previous(Some(copied.clone()), true),
+            Ok(Previous::Saved(Some(copied)))
+        );
+        assert_eq!(previous(None, true), Ok(Previous::Saved(None)));
     }
 
     /// A copy made while the save ran refuses, whatever was saved: restoring would put the
@@ -625,6 +664,21 @@ mod tests {
         );
         assert!(refused.is_err_and(|detail| detail.contains("marked as a secret")));
         let other = saved(&[("text/plain", b"hunter2"), (HINT, b"other")]);
-        assert_eq!(previous(Some(other.clone()), true), Ok(Some(other)));
+        assert_eq!(
+            previous(Some(other.clone()), true),
+            Ok(Previous::Saved(Some(other)))
+        );
+    }
+
+    /// The text a `kept` outcome left is replaced, though marked secret, and isn't put
+    /// back afterwards; the clipboard is cleared instead, and the outcome says so.
+    #[test]
+    fn an_earlier_pastes_text_is_replaced_and_dropped() {
+        let mut types: Vec<(&str, &[u8])> =
+            TEXT_TYPES.iter().map(|mime| (*mime, &b"old"[..])).collect();
+        types.extend([(HINT, SECRET), (PASTE, &[][..])]);
+        let previous = previous(Some(saved(&types)), true).unwrap();
+        assert_eq!(previous, Previous::Paste);
+        assert_eq!(previous.into_parts(), (None, Some(DROPPED.to_owned())));
     }
 }

@@ -101,7 +101,7 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 ### `clipboard_unsaved`
 
-**Cause:** `paste` couldn't save the clipboard whole before replacing it: every type it offers, over 16 MiB in all, or not read within two seconds. Or the clipboard holds what its owner marked as a secret (`x-kde-passwordManagerHint`), or something else was copied while it was being saved. Nothing changed.
+**Cause:** `paste` couldn't save the clipboard whole before replacing it: every type it offers, over 16 MiB in all, or not read within two seconds. Or the clipboard holds what its owner marked as a secret (`x-kde-passwordManagerHint`), or something else was copied while it was being saved. Nothing changed. An earlier paste's text, which a `kept` outcome leaves on the clipboard marked as a secret, isn't refused: the next `paste` replaces it and reports `clipboard: cleared`.
 
 **What to do:** type the text with `type_text` instead, in parts of at most 1000 characters.
 

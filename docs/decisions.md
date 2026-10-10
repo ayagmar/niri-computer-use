@@ -734,6 +734,12 @@ These match the versions installed locally.
 - `Held` now ends through native typing's own cleanup, `native::restore_active`, which also gained the `restored` check it was always followed by: release, ask niri for the active layout, upload the latest base map, zero modifiers, wait, and fail unless clients and the device hold that map. A failure keeps the marker for `recover`. Sharing the function keeps the two paths from drifting again; the cleanup still runs under `cleanup::spawn`'s deadline.
 - The check is in the nested input suite: a held drag whose serving process is stopped right after the press while niri's config gains a layout and niri switches to it. With the old release, clients kept the old keymap and the check failed. A unit test would need a fake Wayland compositor that echoes virtual-keyboard maps, which the repository doesn't have. No dependency was added.
 
+## 2026-10-10: a paste after `kept` replaces the kept text
+
+- After a `kept` outcome the keeper keeps serving the agent's text marked `x-kde-passwordManagerHint: secret`, so every later `paste` refused with `clipboard_unsaved`, naming a password manager that wasn't there (review finding).
+- The keeper now also offers `application/x-niri-computer-use-paste`. A later keeper that saves a selection carrying it doesn't refuse on the hint and doesn't put it back afterwards: it clears the clipboard and reports `cleared`, with a `detail` saying the earlier paste's text was dropped. The user's copy that text stood in for is already lost, and the late key it guarded against has long landed; restoring it would only put the agent's old text back. A selection with the hint and without that type is still refused.
+- Only a keeper offers the type, but nothing stops another client from offering it; such a selection would be dropped rather than restored, which costs that client's copy, not a secret's safety. No dependency was added.
+
 ## 2026-10-10: the keeper's ready budget follows its steps
 
 - The server gave the keeper five seconds to report `ready`, while its steps, finding niri's PID and then binding, saving, the round trip after the save and the take, each had two (review finding). With a niri slow on every step, the server failed the call and the keeper still took the selection and then restored it.

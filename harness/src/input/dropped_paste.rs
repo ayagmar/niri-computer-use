@@ -3,7 +3,8 @@
 //! the server's or engine's death while wtype survives it. The GTK entry must then hold
 //! the agent's text, never the user's copy the keeper saved. For a call that goes away,
 //! the clipboard must offer the user's copy again afterwards; for a dead server, which
-//! can't say whether the key went out, it must keep offering the agent's text.
+//! can't say whether the key went out, it must keep offering the agent's text, until the
+//! next paste replaces it and clears the clipboard rather than put it back.
 //!
 //! The call goes away while the key is late in one of two ways. A `wtype` wrapper holds
 //! the key back past the keeper's two-second read wait, so only a keeper whose end waits
@@ -32,6 +33,10 @@ use crate::runner::Process;
 use crate::session::{self, Session};
 
 const TEXT: &str = "The agent's text, never the user's";
+/// What a paste after a `kept` outcome pastes.
+const AFTER: &str = "A later paste replaces the kept text";
+/// The type the keeper marks its text with, beside the text.
+const PASTE_TYPE: &str = "application/x-niri-computer-use-paste";
 /// Past the keeper's two-second read wait, and inside wtype's three-second deadline.
 const HELD: Duration = Duration::from_millis(2200);
 /// About what a real `wtype` takes, well inside the keeper's read wait.
@@ -77,8 +82,9 @@ pub(super) fn run(
     clear_as(session, owner)?;
     died(session, owner, server, &wrapper)?;
     clear_as(session, owner)?;
+    after_kept(session, owner)?;
     session.log(&format!(
-        "M7 paste dropped once its key may be on its way: stop, cancel and the client's end with the wtype key held {} ms, and with wtype and natively with the entry's read {} ms late, left the agent's text in the GTK entry and the user's copy offered again; the {} death with the key held {} ms left the agent's text in the entry and on the clipboard",
+        "M7 paste dropped once its key may be on its way: stop, cancel and the client's end with the wtype key held {} ms, and with wtype and natively with the entry's read {} ms late, left the agent's text in the GTK entry and the user's copy offered again; the {} death with the key held {} ms left the agent's text in the entry and on the clipboard, and the next paste replaced it and dropped it",
         HELD.as_millis(),
         LATE.as_millis(),
         if shared { "engine's" } else { "server's" },
@@ -171,6 +177,32 @@ fn died(session: &mut Session<'_>, owner: &mut Client, server: &str, wrapper: &P
     pasting.kept(session)?;
     guardian::reconnect(session, owner)?;
     crash::recover(session, owner, server, "has already exited")
+}
+
+/// A paste after `died`'s `kept`: the dead server's keeper still offers its text, marked
+/// as a secret, which the next paste replaces rather than refuses, and clears afterwards
+/// rather than put back.
+fn after_kept(session: &mut Session<'_>, owner: &mut Client) -> Result<()> {
+    structured(&owner.call(session, "acquire_desktop", json!({}))?)?;
+    if !listed(session)?.iter().any(|mime| mime == PASTE_TYPE) {
+        return Err(Failure::new(
+            "M7 paste after kept: the kept text isn't marked as a paste's",
+        ));
+    }
+    let args = json!({"text": AFTER, "keys": "ctrl+v", "expect": {"app_id": APP_ID}});
+    let pasted = structured(&owner.call(session, "paste", args)?)?;
+    entry_shows(session, AFTER)?;
+    let dropped = field(&pasted, "/detail")
+        .as_str()
+        .is_some_and(|detail| detail.contains("earlier paste's text"));
+    if field(&pasted, "/paste") != &json!({"read": true, "clipboard": "cleared"}) || !dropped {
+        return Err(Failure::new(format!("M7 paste after kept: {pasted}")));
+    }
+    session.still_absent("m7-after-kept", BRIEF, || {
+        Ok(listed(session)?.iter().any(|mime| mime == PASTE_TYPE))
+    })?;
+    clear(session, owner)?;
+    structured(&owner.call(session, "release_desktop", json!({"restore_focus": false}))?).map(drop)
 }
 
 /// In a shared run, kills the engine `owner` reaches, so the next server starts one with

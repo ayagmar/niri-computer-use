@@ -1048,8 +1048,9 @@ impl Server {
     /// refused too. Pass the combination that pastes in that app as `keys`: `ctrl+v`, or
     /// `ctrl+shift+v` in terminals. `expect` and the refusals are as for `key`, checked
     /// before the clipboard is touched. `paste.read` says whether an app read the text
-    /// after the key; `paste.clipboard` is `restored`, `cleared` (it was empty),
-    /// `replaced` (someone copied meanwhile, so theirs stays), `failed` or `unknown`, with
+    /// after the key; `paste.clipboard` is `restored`, `cleared` (it was empty, or held
+    /// an earlier paste's text, as `detail` says), `replaced` (someone copied meanwhile,
+    /// so theirs stays), `failed`, `kept` (the pasted text stays) or `unknown`, with
     /// `detail`. Check the result with a screenshot; never paste again on your own. The
     /// text is never logged. Requires the lease.
     #[tool(annotations(

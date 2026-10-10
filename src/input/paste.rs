@@ -61,7 +61,8 @@ const ADMIT: Duration = Duration::from_millis(500);
 pub(crate) enum Clipboard {
     /// Every MIME type it offered is offered again.
     Restored,
-    /// Nothing was selected, and nothing is again.
+    /// Nothing was selected, and nothing is again; or an earlier paste's text was, which
+    /// a `kept` outcome left, and it is dropped, as `detail` says.
     Cleared,
     /// Another client took the selection before the restore, so theirs stays.
     Replaced,
@@ -205,16 +206,19 @@ fn joined(first: Option<String>, second: Option<String>) -> Option<String> {
 
 /// What became of the clipboard, in words, for an error's detail.
 fn said(pasted: Pasted, detail: Option<&str>) -> String {
-    let detail = detail.unwrap_or("no detail");
+    let given = detail.unwrap_or("no detail");
     match pasted.clipboard {
         Clipboard::Restored => "the clipboard was restored".to_owned(),
-        Clipboard::Cleared => "the clipboard is empty again, as it was".to_owned(),
+        Clipboard::Cleared => detail.map_or_else(
+            || "the clipboard is empty again, as it was".to_owned(),
+            |detail| format!("the clipboard is empty: {detail}"),
+        ),
         Clipboard::Replaced => {
             "another client took the clipboard meanwhile, so it wasn't restored".to_owned()
         }
-        Clipboard::Failed => format!("restoring the clipboard failed: {detail}"),
-        Clipboard::Kept => format!("the pasted text stays on the clipboard: {detail}"),
-        Clipboard::Unknown => format!("the clipboard keeper didn't report: {detail}"),
+        Clipboard::Failed => format!("restoring the clipboard failed: {given}"),
+        Clipboard::Kept => format!("the pasted text stays on the clipboard: {given}"),
+        Clipboard::Unknown => format!("the clipboard keeper didn't report: {given}"),
     }
 }
 
@@ -498,6 +502,25 @@ mod tests {
         assert_eq!(
             error.detail,
             "expected app_id \"a\"; the clipboard was restored"
+        );
+    }
+
+    /// A clipboard cleared of an earlier paste's text wasn't empty before: the error says
+    /// what was dropped rather than that the clipboard is as it was.
+    #[test]
+    fn a_failed_key_after_an_earlier_paste_says_its_text_was_dropped() {
+        let refused = ToolError::new(ErrorName::FocusMismatch, "expected app_id \"a\"");
+        let done = Report::Done {
+            read: false,
+            clipboard: Clipboard::Cleared,
+            detail: Some("an earlier paste's text was dropped".to_owned()),
+        };
+        let Err(CallError::Tool(error)) = combined(Err(refused.into()), Ok(done)) else {
+            panic!("the key's error is lost");
+        };
+        assert_eq!(
+            error.detail,
+            "expected app_id \"a\"; the clipboard is empty: an earlier paste's text was dropped"
         );
     }
 
