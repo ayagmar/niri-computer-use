@@ -237,11 +237,14 @@ impl Engine {
         session: &Session,
         label: &str,
     ) -> Result<(Holder, Option<u64>), ToolError> {
-        let refusal = self.refusal(session).await;
-        let focused = niri::waiter(self.events.as_ref())
-            .await
-            .ok()
-            .and_then(|waiter| waiter.view().focused_window());
+        // Boxed, because the readiness report makes a large future.
+        let refusal = Box::pin(self.refusal(session));
+        let focused = async {
+            niri::waiter(self.events.as_ref())
+                .await
+                .ok()
+                .and_then(|waiter| waiter.view().focused_window())
+        };
         let holder = self.desk.acquire(session, label, refusal, focused).await?;
         Ok((holder, self.desk.users_window(session)))
     }
@@ -465,7 +468,12 @@ mod tests {
         let owner = crate::test_support::session(1);
         engine
             .desk
-            .acquire(&owner, "owner/1", None, Some(5))
+            .acquire(
+                &owner,
+                "owner/1",
+                std::future::ready(None),
+                std::future::ready(Some(5)),
+            )
             .await
             .unwrap();
         let other = crate::test_support::session(2);

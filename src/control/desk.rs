@@ -88,16 +88,7 @@ impl Seat {
     /// Gives the lease up once any running action has ended, if `whose` holds it, or
     /// whoever does for `None`. Returns whether it was given up.
     async fn give_up(&self, whose: Option<SessionId>) -> bool {
-        // While another session holds the lease, `whose` can't be granted it, so there is
-        // nothing to wait for: the owner's running action delays no one else's release or
-        // end. With the lease free, `whose` may be taking it right now, so wait.
-        if let Some(session) = whose
-            && self
-                .owner
-                .borrow()
-                .as_ref()
-                .is_some_and(|owner| owner.session != session)
-        {
+        if whose.is_some_and(|session| self.held_by_other(session).is_some()) {
             return false;
         }
         let mut held = self.lease.lock().await;
@@ -107,6 +98,18 @@ impl Seat {
         let released = owned && self.take(&mut held);
         drop(held);
         released
+    }
+
+    /// The holder, if a session other than `session` holds the lease. Read without the
+    /// action mutex: while another session holds the lease, `session` can't be granted it,
+    /// so the owner's running action has nothing to make `session` wait for. With the lease
+    /// free, `session` may be taking it right now, so the caller waits for the mutex.
+    fn held_by_other(&self, session: SessionId) -> Option<Holder> {
+        self.owner
+            .borrow()
+            .as_ref()
+            .filter(|owner| owner.session != session)
+            .map(|owner| owner.holder.clone())
     }
 
     /// The owner, if it is `session`.
@@ -167,17 +170,24 @@ impl Desk {
     }
 
     /// Takes the lease for `session`, labelled `label`, or returns the holder if that
-    /// session has it already. `refusal` is the policy's answer for the moment, checked
-    /// after the stop flag and the input-dirty marker. `users_window`, the window with
-    /// keyboard focus now, is kept with a lease newly taken.
+    /// session has it already. `refusal`, the policy's answer, is asked under the action
+    /// mutex after the stop flag and the input-dirty marker, so a wait for the mutex can't
+    /// make it stale. `users_window`, asked last, finds the window with keyboard focus,
+    /// kept with a lease newly taken. Another session's lease refuses at once, without
+    /// waiting for its owner's running action.
     pub(crate) async fn acquire(
         &self,
         session: &Session,
         label: &str,
-        refusal: Option<ToolError>,
-        users_window: Option<u64>,
+        refusal: impl Future<Output = Option<ToolError>>,
+        users_window: impl Future<Output = Option<u64>>,
     ) -> Result<Holder, ToolError> {
         let runtime = self.runtime.as_ref().map_err(Clone::clone)?;
+        // The same checks, in the same order, as under the mutex.
+        self.unblocked(runtime)?;
+        if let Some(holder) = self.seat.held_by_other(session.id()) {
+            return Err(refused(Refused::Held(Some(holder))));
+        }
         let mut held = self.seat.lease.lock().await;
         // Checked under the mutex, so `end_session` either sees this grant or refuses it.
         if session.has_ended() {
@@ -187,7 +197,7 @@ impl Desk {
             return Ok(grant.lease.holder().clone());
         }
         self.unblocked(runtime)?;
-        if let Some(refusal) = refusal {
+        if let Some(refusal) = refusal.await {
             return Err(refusal);
         }
         // Another session's grant refuses where another server's lock would.
@@ -200,7 +210,7 @@ impl Desk {
             owner: session.id(),
             lease,
         };
-        self.seat.put(&mut held, grant, users_window);
+        self.seat.put(&mut held, grant, users_window.await);
         drop(held);
         Ok(holder)
     }
@@ -581,6 +591,7 @@ fn refused(refused: Refused) -> ToolError {
 
 #[cfg(test)]
 mod tests {
+    use std::future::ready;
     use std::time::Duration;
 
     use super::*;
@@ -613,19 +624,30 @@ mod tests {
         let dir = crate::test_support::fresh_dir("desk");
         let desk = Desk::start(&env(&dir));
         let other = Desk::start(&env(&dir));
-        let holder = desk.acquire(&me, "me/1", None, None).await.unwrap();
-        assert_eq!(desk.acquire(&me, "me/1", None, None).await.unwrap(), holder);
+        let holder = desk
+            .acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
+        assert_eq!(
+            desk.acquire(&me, "me/1", ready(None), ready(None))
+                .await
+                .unwrap(),
+            holder
+        );
         let status = desk.status(&me);
         assert!(status.held_by_me);
         assert_eq!(other.status(&me).holder, Some(holder.clone()));
-        let refused = other.acquire(&me, "other/2", None, None).await.unwrap_err();
+        let refused = other
+            .acquire(&me, "other/2", ready(None), ready(None))
+            .await
+            .unwrap_err();
         assert_eq!(refused.name, ErrorName::LeaseHeld);
         assert!(refused.detail.contains("(me/1)"), "{}", refused.detail);
         assert!(desk.release(&me).await);
         assert!(!desk.release(&me).await);
         assert_eq!(
             other
-                .acquire(&me, "other/2", None, None)
+                .acquire(&me, "other/2", ready(None), ready(None))
                 .await
                 .unwrap()
                 .label,
@@ -639,7 +661,10 @@ mod tests {
         let me = session(1);
         let dir = crate::test_support::fresh_dir("desk-busy");
         let desk = Desk::start(&env(&dir));
-        let holder = desk.acquire(&me, "me/1", None, None).await.unwrap();
+        let holder = desk
+            .acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
         let action = desk.seat.lease.lock().await;
         assert_eq!(
             desk.status(&me),
@@ -659,7 +684,9 @@ mod tests {
         let me = session(1);
         let dir = crate::test_support::fresh_dir("desk-observe");
         let desk = Desk::start(&env(&dir));
-        desk.acquire(&me, "me/1", None, None).await.unwrap();
+        desk.acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
         let (started, running) = tokio::sync::oneshot::channel();
         let capture_desk = desk.clone();
         let work = async move {
@@ -686,7 +713,7 @@ mod tests {
     /// An action whose work records that it ran and returns `value`.
     async fn act(desk: &Desk, refusal: Option<ToolError>) -> Result<u8, ErrorName> {
         let me = session(1);
-        desk.act(&me, async { refusal }, async { Ok(7) }, std::future::ready)
+        desk.act(&me, async { refusal }, async { Ok(7) }, ready)
             .await
             .map_err(|error| match error {
                 CallError::Tool(error) => error.name,
@@ -701,7 +728,9 @@ mod tests {
         let desk = Desk::start(&env(&dir));
         let runtime = RuntimeDir::of(&env(&dir)).unwrap();
         assert_eq!(act(&desk, None).await, Err(ErrorName::LeaseRequired));
-        desk.acquire(&me, "me/1", None, None).await.unwrap();
+        desk.acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
         assert_eq!(act(&desk, None).await, Ok(7));
         let locked = ToolError::new(ErrorName::ScreenLocked, "locked");
         assert_eq!(act(&desk, Some(locked)).await, Err(ErrorName::ScreenLocked));
@@ -718,7 +747,9 @@ mod tests {
         let dir = crate::test_support::fresh_dir("desk-act-stop");
         let desk = Desk::start(&env(&dir));
         let runtime = RuntimeDir::of(&env(&dir)).unwrap();
-        desk.acquire(&me, "me/1", None, None).await.unwrap();
+        desk.acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
         let (started, running) = tokio::sync::oneshot::channel::<()>();
         let (held, dropped) = tokio::sync::oneshot::channel::<()>();
         let action = desk.act(
@@ -729,7 +760,7 @@ mod tests {
                 let _held = held;
                 std::future::pending::<Result<(), CallError>>().await
             },
-            std::future::ready,
+            ready,
         );
         let stop = async {
             running.await.unwrap();
@@ -757,7 +788,10 @@ mod tests {
     async fn replace_lease(runtime: &RuntimeDir, other: &Desk) {
         let me = session(1);
         std::fs::remove_file(runtime.path().join("lease")).unwrap();
-        other.acquire(&me, "other/2", None, None).await.unwrap();
+        other
+            .acquire(&me, "other/2", ready(None), ready(None))
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -767,7 +801,9 @@ mod tests {
         let desk = Desk::start(&env(&dir));
         let other = Desk::start(&env(&dir));
         let runtime = RuntimeDir::of(&env(&dir)).unwrap();
-        desk.acquire(&me, "me/1", None, None).await.unwrap();
+        desk.acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
         let readiness = async {
             replace_lease(&runtime, &other).await;
             None
@@ -781,7 +817,7 @@ mod tests {
                     ran = true;
                     Ok(())
                 },
-                std::future::ready,
+                ready,
             )
             .await;
         let Err(CallError::Tool(error)) = result else {
@@ -801,7 +837,9 @@ mod tests {
         let desk = Desk::start(&env(&dir));
         let other = Desk::start(&env(&dir));
         let runtime = RuntimeDir::of(&env(&dir)).unwrap();
-        desk.acquire(&me, "me/1", None, None).await.unwrap();
+        desk.acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
         let (started, running) = tokio::sync::oneshot::channel::<()>();
         let (held, dropped) = tokio::sync::oneshot::channel::<()>();
         let action = desk.act(
@@ -812,7 +850,7 @@ mod tests {
                 let _held = held;
                 std::future::pending::<Result<(), CallError>>().await
             },
-            std::future::ready,
+            ready,
         );
         let replace = async {
             running.await.unwrap();
@@ -838,7 +876,9 @@ mod tests {
         let dir = crate::test_support::fresh_dir("desk-act-gone");
         let desk = Desk::start(&env(&dir));
         let runtime = RuntimeDir::of(&env(&dir)).unwrap();
-        desk.acquire(&me, "me/1", None, None).await.unwrap();
+        desk.acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
         let (started, running) = tokio::sync::oneshot::channel::<()>();
         let action = desk.act(
             &me,
@@ -847,7 +887,7 @@ mod tests {
                 started.send(()).unwrap();
                 std::future::pending::<Result<(), CallError>>().await
             },
-            std::future::ready,
+            ready,
         );
         let remove = async {
             running.await.unwrap();
@@ -872,12 +912,14 @@ mod tests {
         let dir = crate::test_support::fresh_dir("desk-stop");
         let desk = Desk::start(&env(&dir));
         let runtime = RuntimeDir::of(&env(&dir)).unwrap();
-        desk.acquire(&me, "me/1", None, None).await.unwrap();
+        desk.acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
         runtime.stop().unwrap();
         assert!(released(&desk).await);
         assert_eq!(lease::holder(&runtime), None);
         assert_eq!(
-            desk.acquire(&me, "me/1", None, None)
+            desk.acquire(&me, "me/1", ready(None), ready(None))
                 .await
                 .unwrap_err()
                 .name,
@@ -892,14 +934,16 @@ mod tests {
             .unwrap();
         std::fs::write(runtime.path().join("input-dirty"), "").unwrap();
         assert_eq!(
-            desk.acquire(&me, "me/1", None, None)
+            desk.acquire(&me, "me/1", ready(None), ready(None))
                 .await
                 .unwrap_err()
                 .name,
             ErrorName::RecoveryRequired
         );
         std::fs::remove_file(runtime.path().join("input-dirty")).unwrap();
-        desk.acquire(&me, "me/1", None, None).await.unwrap();
+        desk.acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -909,11 +953,16 @@ mod tests {
         let dir = crate::test_support::fresh_dir("desk-removed");
         let desk = Desk::start(&env(&dir));
         let runtime = RuntimeDir::of(&env(&dir)).unwrap();
-        desk.acquire(&me, "me/1", None, None).await.unwrap();
+        desk.acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
         std::fs::remove_dir_all(runtime.path()).unwrap();
         assert!(released(&desk).await);
         // A new directory has a new lock file, which no stop could reach for this server.
-        let error = desk.acquire(&me, "me/1", None, None).await.unwrap_err();
+        let error = desk
+            .acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap_err();
         assert_eq!(error.name, ErrorName::UpstreamError);
         assert!(
             error.detail.contains("restart the server"),
@@ -933,7 +982,10 @@ mod tests {
         let desk = Desk::start(&env(&dir));
         let mode = |bits| std::fs::Permissions::from_mode(bits);
         std::fs::set_permissions(runtime.path(), mode(0o000)).unwrap();
-        let error = desk.acquire(&me, "me/1", None, None).await.unwrap_err();
+        let error = desk
+            .acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap_err();
         std::fs::set_permissions(runtime.path(), mode(0o700)).unwrap();
         assert_eq!(error.name, ErrorName::UpstreamError);
         assert!(
@@ -948,7 +1000,10 @@ mod tests {
     async fn without_a_niri_instance_there_is_nothing_to_take() {
         let me = session(1);
         let desk = Desk::start(&Env::default());
-        let error = desk.acquire(&me, "me/1", None, None).await.unwrap_err();
+        let error = desk
+            .acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap_err();
         assert_eq!(error.name, ErrorName::NiriUnavailable);
         assert_eq!(error.detail, "NIRI_SOCKET is not set");
         assert_eq!(
@@ -966,9 +1021,12 @@ mod tests {
         let other = session(2);
         let dir = crate::test_support::fresh_dir("desk-sessions");
         let desk = Desk::start(&env(&dir));
-        let holder = desk.acquire(&me, "me/1", None, Some(5)).await.unwrap();
+        let holder = desk
+            .acquire(&me, "me/1", ready(None), ready(Some(5)))
+            .await
+            .unwrap();
         let refused = desk
-            .acquire(&other, "other/2", None, None)
+            .acquire(&other, "other/2", ready(None), ready(None))
             .await
             .unwrap_err();
         assert_eq!(refused.name, ErrorName::LeaseHeld);
@@ -990,7 +1048,7 @@ mod tests {
         // the last owner's.
         assert!(desk.release(&me).await);
         assert_eq!(
-            desk.acquire(&other, "other/2", None, None)
+            desk.acquire(&other, "other/2", ready(None), ready(None))
                 .await
                 .unwrap()
                 .label,
@@ -1003,7 +1061,7 @@ mod tests {
 
     /// An action of `session` whose work returns 7.
     async fn act_as(desk: &Desk, session: &Session) -> Result<u8, ErrorName> {
-        desk.act(session, async { None }, async { Ok(7) }, std::future::ready)
+        desk.act(session, async { None }, async { Ok(7) }, ready)
             .await
             .map_err(|error| match error {
                 CallError::Tool(error) => error.name,
@@ -1017,7 +1075,9 @@ mod tests {
         let other = session(2);
         let dir = crate::test_support::fresh_dir("desk-sessions-busy");
         let desk = Desk::start(&env(&dir));
-        desk.acquire(&me, "me/1", None, None).await.unwrap();
+        desk.acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
         let (started, running) = tokio::sync::oneshot::channel::<()>();
         let owners = desk.act(
             &me,
@@ -1026,7 +1086,7 @@ mod tests {
                 started.send(()).unwrap();
                 std::future::pending::<Result<(), CallError>>().await
             },
-            std::future::ready,
+            ready,
         );
         let others = async {
             running.await.unwrap();
@@ -1036,6 +1096,68 @@ mod tests {
             _ = owners => panic!("the owner's action ended"),
             refused = others => assert_eq!(refused.unwrap(), Err(ErrorName::LeaseRequired)),
         }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn another_sessions_acquire_is_refused_at_once_while_the_owners_action_runs() {
+        let me = session(1);
+        let other = session(2);
+        let dir = crate::test_support::fresh_dir("desk-sessions-acquire");
+        let desk = Desk::start(&env(&dir));
+        desk.acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
+        let (started, running) = tokio::sync::oneshot::channel::<()>();
+        let owners = desk.act(
+            &me,
+            async { None },
+            async move {
+                started.send(()).unwrap();
+                std::future::pending::<Result<(), CallError>>().await
+            },
+            ready,
+        );
+        let others = async {
+            running.await.unwrap();
+            let acquire = desk.acquire(&other, "other/2", ready(None), ready(None));
+            tokio::time::timeout(Duration::from_millis(100), acquire).await
+        };
+        tokio::select! {
+            _ = owners => panic!("the owner's action ended"),
+            refused = others => {
+                let error = refused.expect("waited for the owner's action").unwrap_err();
+                assert_eq!(error.name, ErrorName::LeaseHeld);
+                assert!(error.detail.contains("(me/1)"), "{}", error.detail);
+            }
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn acquire_asks_for_readiness_and_focus_once_the_running_action_has_ended() {
+        let me = session(1);
+        let dir = crate::test_support::fresh_dir("desk-acquire-fresh");
+        let desk = Desk::start(&env(&dir));
+        let action = desk.seat.lease.lock().await;
+        let asked = std::cell::Cell::new(false);
+        let refusal = async {
+            asked.set(true);
+            Some(ToolError::new(ErrorName::ScreenLocked, "locked meanwhile"))
+        };
+        let acquire = desk.acquire(&me, "me/1", refusal, ready(None));
+        let release = async {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            assert!(!asked.get(), "asked before the running action ended");
+            drop(action);
+        };
+        let (result, ()) = tokio::join!(acquire, release);
+        assert_eq!(result.unwrap_err().name, ErrorName::ScreenLocked);
+        let focused = ready(Some(9));
+        desk.acquire(&me, "me/1", async { None }, focused)
+            .await
+            .unwrap();
+        assert_eq!(desk.users_window(&me), Some(9));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1052,7 +1174,9 @@ mod tests {
         let other = session(2);
         let dir = crate::test_support::fresh_dir("desk-sessions-release");
         let desk = Desk::start(&env(&dir));
-        desk.acquire(&me, "me/1", None, None).await.unwrap();
+        desk.acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
         let (started, running) = tokio::sync::oneshot::channel::<()>();
         let owners = desk.act(
             &me,
@@ -1061,7 +1185,7 @@ mod tests {
                 started.send(()).unwrap();
                 std::future::pending::<Result<(), CallError>>().await
             },
-            std::future::ready,
+            ready,
         );
         let others = async {
             running.await.unwrap();
@@ -1081,7 +1205,9 @@ mod tests {
         let other = session(2);
         let dir = crate::test_support::fresh_dir("desk-sessions-refs");
         let desk = Desk::start(&env(&dir));
-        desk.acquire(&me, "me/1", None, None).await.unwrap();
+        desk.acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
         assert_eq!(desk.ref_lease(&other), None);
         let lease = desk.ref_lease(&me).unwrap();
         let id = desk.remember(lease, crate::test_support::shot()).unwrap();
@@ -1092,7 +1218,9 @@ mod tests {
         );
         // The lease changing hands drops them, even for the next owner.
         desk.release(&me).await;
-        desk.acquire(&other, "other/2", None, None).await.unwrap();
+        desk.acquire(&other, "other/2", ready(None), ready(None))
+            .await
+            .unwrap();
         assert_eq!(
             desk.shot(&other, &id).unwrap_err().name,
             ErrorName::RefInvalid
@@ -1119,7 +1247,9 @@ mod tests {
             let (me, other) = (session(1), session(2));
             let dir = crate::test_support::fresh_dir("desk-ended");
             let desk = Desk::start(&env(&dir));
-            desk.acquire(&me, "me/1", None, None).await.unwrap();
+            desk.acquire(&me, "me/1", ready(None), ready(None))
+                .await
+                .unwrap();
             // Another session ending leaves the lease alone.
             desk.end_session(&session(3)).await;
             assert!(desk.status(&me).held_by_me);
@@ -1128,9 +1258,14 @@ mod tests {
             assert!(error.detail.contains("session ended"), "{error:?}");
             assert_eq!(desk.status(&other).holder, None);
             // The ended session can't take it again; another can.
-            let refused = desk.acquire(&me, "me/1", None, None).await.unwrap_err();
+            let refused = desk
+                .acquire(&me, "me/1", ready(None), ready(None))
+                .await
+                .unwrap_err();
             assert_eq!(refused.name, ErrorName::LeaseRequired);
-            desk.acquire(&other, "other/2", None, None).await.unwrap();
+            desk.acquire(&other, "other/2", ready(None), ready(None))
+                .await
+                .unwrap();
             std::fs::remove_dir_all(dir).unwrap();
         }
     }
@@ -1177,7 +1312,9 @@ mod tests {
         let other = session(2);
         let dir = crate::test_support::fresh_dir("desk-ended-observe");
         let desk = Desk::start(&env(&dir));
-        desk.acquire(&me, "me/1", None, None).await.unwrap();
+        desk.acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
         let started = tokio::sync::Notify::new();
         let capture = async {
             started.notify_one();
@@ -1213,7 +1350,9 @@ mod tests {
         let other = session(2);
         let dir = crate::test_support::fresh_dir("desk-sessions-observe");
         let desk = Desk::start(&env(&dir));
-        desk.acquire(&me, "me/1", None, None).await.unwrap();
+        desk.acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
         let action = desk.seat.lease.lock().await;
         assert_eq!(observed(&desk, &other).await, Some(7));
         assert_eq!(observed(&desk, &me).await, None);
