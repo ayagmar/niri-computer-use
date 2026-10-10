@@ -19,7 +19,7 @@ These are the user's decisions. Don't call the refused action again and don't tr
 | `read_only` | The niri version isn't supported, niri sent events this build can't read, or the policy file is invalid. |
 | `app_denied` | The user's policy denies input to the focused app. |
 | `untested_output_config` | The pointer only runs on one monitor at transform `Normal` (or in a nested niri). |
-| `refused` | The selected keyboard backend cannot safely send the requested input: for example a symbol missing from native's active keymap, invalid backend selection, or held modifiers without native. Tell the user; do not change the backend or bypass the tools. |
+| `refused` | The selected keyboard backend cannot safely send the requested input: for example a text with more symbols missing from native's layout than it has spare keys, a missing control character, invalid backend selection, or held modifiers without native. Tell the user; do not change the backend or bypass the tools. |
 
 ## Fix and continue
 

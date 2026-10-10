@@ -1,6 +1,6 @@
 ---
 name: niri-computer-use
-description: "Operates the user's niri Wayland desktop through the niri-computer-use MCP server: reads windows, workspaces and outputs, takes screenshots, and while holding the desktop lease focuses windows, launches preset apps, clicks, scrolls, drags, types and opens Noctalia panels. Load this before the first call to any niri-computer-use tool (status, screenshot, desktop_state, acquire_desktop, click, key, type_text and the rest), and whenever the user asks to look at their screen, check or test a GUI app, click or type in a window, switch windows or workspaces, or otherwise drive their Linux desktop, even if they don't mention niri."
+description: "Operates the user's niri Wayland desktop through the niri-computer-use MCP server: reads windows, workspaces and outputs, takes screenshots, and while holding the desktop lease focuses windows, launches preset apps, clicks (also on accessible elements), scrolls, drags, types, pastes and opens Noctalia panels. Load this before the first call to any niri-computer-use tool (status, screenshot, desktop_state, acquire_desktop, click, key, type_text and the rest), and whenever the user asks to look at their screen, check or test a GUI app, click or type in a window, switch windows or workspaces, or otherwise drive their Linux desktop, even if they don't mention niri."
 license: MIT
 compatibility: Needs the niri-computer-use MCP server (niri-computer-use serve) registered in the agent, running inside a niri 26.04 session.
 ---
@@ -46,9 +46,11 @@ When three actions in a row change nothing toward the goal, stop and tell the us
 
 ### Typing text, then sending it
 
-`type_text` takes up to 1000 characters. The default wtype backend sends parts of 100 and checks focus between them; an in-flight part can finish after focus changes or stop. The experimental native backend checks between individual key pairs but refuses symbols missing from the active layout. If focus moves, `observed` is `interrupted` and `typed` counts completed input, not delivery confirmed in the intended application. Do not assume a failed call typed nothing; its detail may describe partial input.
+`type_text` takes up to 1000 characters. The default wtype backend sends parts of 100 and checks focus between them; an in-flight part can finish after focus changes or stop. The experimental native backend checks between individual key pairs and types symbols the layout lacks through a temporary keymap; it refuses when a text needs more of them than it has spare keys. If focus moves, `observed` is `interrupted` and `typed` counts completed input, not delivery confirmed in the intended application. Do not assume a failed call typed nothing; its detail may describe partial input.
 
-Native is only for explicitly configured isolated sessions; do not change the user's backend or work around a `refused` result. With native selected, click/drag/scroll can hold `keys: ["ctrl", "shift"]`, up to five modifiers (shift, ctrl, alt, altgr, super). Crash recovery remains human-only. For long text use `paste`, with the combination that pastes in that app; it puts the user's clipboard back afterwards.
+Native is only for explicitly configured sessions; do not change the user's backend or work around a `refused` result. With native selected, click/drag/scroll can hold `keys: ["ctrl", "shift"]`, up to five modifiers (shift, ctrl, alt, altgr, super).
+
+For text over 1000 characters, or when typing is slow, use `paste` with either backend. Pass `keys` for the app: `ctrl+v` in most apps, `ctrl+shift+v` in terminals. It puts the user's clipboard back afterwards, and with `clipboard_unsaved` it changed nothing: type the text instead, in parts.
 
 To send a message, pass `submit: true`. The server presses Enter only once every character went out, and `submitted` says whether it did. Don't press Enter yourself after a call that stopped early: Enter sends whatever is in the box, and a half-typed message that gets sent can't be taken back. Look at the screenshot that comes with the result, then finish or fix the text first.
 
@@ -90,6 +92,16 @@ acquire_desktop           → users_window 42
 focus_window {id: 7, screenshot: true}            → focused; shot-3, the button at (412, 230)
 click {screenshot_ref: "shot-3", x: 412, y: 230, screenshot: true}  → sent; the click had its effect
 release_desktop {restore_focus: true}             → restored: focused
+```
+
+Pressing a named button through accessibility:
+
+```
+acquire_desktop                                   → users_window 42
+focus_window {id: 7, screenshot: true}            → focused; shot-4
+elements {window_id: 7, role: "button", name_contains: "save"}  → element_ref "elem-2", with a layout_box
+click {screenshot_ref: "shot-4", element: "elem-2", screenshot: true}  → sent; the image shows it saved
+release_desktop {restore_focus: true}
 ```
 
 ## Reference
