@@ -11,8 +11,9 @@
 set -euo pipefail
 
 readonly INSPECTOR=@modelcontextprotocol/inspector@2.9.0
-# The Inspector starts the server with a minimal environment, so these are passed on.
-readonly SESSION_VARS='["NIRI_SOCKET", "XDG_RUNTIME_DIR", "WAYLAND_DISPLAY", "XDG_SESSION_ID"]'
+# The Inspector starts the server with a minimal environment, so these are passed on: the
+# same three a Codex user forwards. The server finds the session bus in XDG_RUNTIME_DIR.
+readonly SESSION_VARS='["NIRI_SOCKET", "XDG_RUNTIME_DIR", "WAYLAND_DISPLAY"]'
 
 case "${1:-}" in
 web | check) ;;
@@ -60,10 +61,22 @@ call() {
   fi
 }
 
+# Every tool listed with niri reachable; Noctalia and the accessibility bus add the rest.
+readonly TOOLS='["acquire_desktop","click","clipboard_read","close_window","desktop_state",
+  "drag","focus_window","focus_workspace","key","launch","outputs","paste","pointer_move",
+  "release_desktop","screenshot","scroll","status","type_text","wait_for"]'
+# Tools that only read; every other tool changes the desktop or the lease.
+readonly READ_ONLY='["clipboard_read","desktop_state","elements","outputs","screenshot",
+  "shell_status","status","wait_for"]'
+
+# Runs after check_status, whose result says whether the accessibility bus was found.
 list_tools() {
-  local expected='["acquire_desktop","clipboard_read","desktop_state","outputs","release_desktop","screenshot","status"]'
+  local expected="${TOOLS}"
   if command -v noctalia >/dev/null; then
-    expected='["acquire_desktop","clipboard_read","desktop_state","outputs","release_desktop","screenshot","shell_status","status"]'
+    expected="${expected} + [\"shell_close\",\"shell_open\",\"shell_status\"]"
+  fi
+  if jq -e '.result.structuredContent.accessibility.available' "${work}/status.json" >/dev/null; then
+    expected="${expected} + [\"elements\"]"
   fi
   # --strict exits 6 on a schema portability error.
   local status=0
@@ -74,11 +87,11 @@ list_tools() {
     failures=$((failures + 1))
   fi
   check "tools/list names the expected tools" \
-    "[.result.tools[].name] | sort == ${expected}" "${work}/tools.json"
-  # The lease tools change the lease, not the desktop; the check doesn't call them, so it
-  # never takes the lease from an agent using this session.
-  check "every tool but the lease tools is read-only" \
-    'all(.result.tools[]; .annotations.readOnlyHint == (.name | endswith("_desktop") | not))' \
+    "[.result.tools[].name] | sort == (${expected} | sort)" "${work}/tools.json"
+  # The check calls only read-only tools, so it never takes the lease from an agent using
+  # this session or changes the desktop.
+  check "exactly the observation tools are read-only" \
+    "all(.result.tools[]; .annotations.readOnlyHint == (.name | IN(${READ_ONLY}[])))" \
     "${work}/tools.json"
   check "no schema portability findings" \
     '(.schemaFindings // []) | length == 0' "${work}/tools.json"
@@ -109,6 +122,15 @@ check_observation() {
   check "desktop_state: one snapshot with every field" \
     '.result.structuredContent | keys == ["focused_window","keyboard_layouts","overview_open","windows","workspaces"]' \
     "${work}/desktop_state.json"
+  local focused
+  focused=$(jq '.result.structuredContent.focused_window' "${work}/desktop_state.json")
+  if [[ ${focused} != null ]] &&
+    jq -e '.result.structuredContent.accessibility.available' "${work}/status.json" >/dev/null; then
+    call elements elements "{\"window_id\": ${focused}, \"limit\": 5}"
+    check "elements: the focused window's elements, or why it has none" \
+      '.result.structuredContent | (.window_id != null and (.elements | type) == "array")
+        or .error == "not_accessible" or .error == "ambiguous_window"' "${work}/elements.json"
+  fi
   call clipboard_read clipboard_read
   check "clipboard_read: text or a reason" \
     '.result.structuredContent | keys == ["reason","text"] and ((.text == null) != (.reason == null))' \
@@ -167,8 +189,8 @@ web)
   npx -y "${INSPECTOR}" --web --config "${config}"
   ;;
 *)
-  list_tools
   check_status
+  list_tools
   check_observation
   check_screenshots
   check_audit

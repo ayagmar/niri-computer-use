@@ -55,12 +55,12 @@ The `grim` deadline test takes five seconds, the length of that deadline.
 
 ```sh
 make inspect          # the Inspector's web UI, which opens in your browser
-make inspect-check    # list and call every tool through the Inspector's CLI
+make inspect-check    # list every tool and call the read-only ones through the Inspector's CLI
 ```
 
-The Inspector starts the server with a minimal environment, so the script passes on `NIRI_SOCKET`, `XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY` and `XDG_SESSION_ID` from your shell. It points `XDG_STATE_HOME` and the Inspector's own settings at a temporary directory, which is removed when the script exits, so your audit log isn't touched.
+The Inspector starts the server with a minimal environment, so the script passes on `NIRI_SOCKET`, `XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY` from your shell, the same three a Codex user forwards; the server finds the session bus under `XDG_RUNTIME_DIR`. It points `XDG_STATE_HOME` and the Inspector's own settings at a temporary directory, which is removed when the script exits, so your audit log isn't touched.
 
-`make inspect-check` lists the tools with `--strict`, which also reports schema portability problems. It then calls each tool on your desktop: `status`, `outputs`, `desktop_state`, `clipboard_read`, `shell_status` when `noctalia` is on `PATH`, and three screenshots. It prints one line per check and never prints the image data, the clipboard text or window titles. Finally it checks the audit log in the temporary directory: one line per call, mode `0600`, in a `0700` directory.
+`make inspect-check` lists the tools with `--strict`, which also reports schema portability problems, and checks that exactly the observation tools are marked read-only. It then calls only read-only tools on your desktop, so it never takes the lease: `status`, `outputs`, `desktop_state`, `elements` on the focused window when the accessibility bus is there, `clipboard_read`, `shell_status` when `noctalia` is on `PATH`, and three screenshots. It prints one line per check and never prints the image data, the clipboard text, window titles or accessible names. Finally it checks the audit log in the temporary directory: one line per call, mode `0600`, in a `0700` directory.
 
 ## Docs site
 
