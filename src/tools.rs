@@ -20,7 +20,7 @@ use crate::input::keyboard::{self, Expect, Typing};
 use crate::input::pointer::{self, Button, Gesture};
 use crate::niri::events::{EventStream, StreamState};
 use crate::observe::{DEFAULT_MAX_WIDTH, Format, Rect, Target};
-use crate::policy::{self, Loaded};
+use crate::policy::{self, Loaded, SaveTarget};
 use crate::refs::Shot;
 use crate::{Env, clipboard, niri, noctalia, observe, settle, status, wait};
 
@@ -45,6 +45,14 @@ struct ScreenshotArgs {
     /// `jpeg` (the default) or `png`.
     #[schemars(with = "FormatArg", default = "default_format")]
     format: Option<FormatArg>,
+    /// Also save the capture as a PNG at the output's full resolution, whatever
+    /// `max_width` is: a new `.png` file at this path relative to the policy file's
+    /// `capture_dir`, such as `readme/editor.png`. Its directories must exist; an existing
+    /// file is never replaced. Fails with `save_not_enabled` when the policy file has no
+    /// `capture_dir`.
+    #[schemars(with = "String", default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    save_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, schemars::JsonSchema)]
@@ -888,8 +896,10 @@ impl Server {
     /// A screenshot of one output or of a region inside one output, as an image plus
     /// metadata: the output, its transform and layout origin, the captured rectangle in
     /// layout coordinates, and the scale from logical pixels to image pixels, plus a
-    /// `screenshot_ref` for the pointer tools while you hold the lease. It waits for an
-    /// action still running to finish and excludes this server's next action during
+    /// `screenshot_ref` for the pointer tools while you hold the lease. With `save_path`, a
+    /// full-resolution PNG is also written under the user's `capture_dir`, and `saved`
+    /// gives its path and pixel size; it is a separate capture taken just before. It waits
+    /// for an action still running to finish and excludes this server's next action during
     /// capture, not external input or redraws. Call it after the action's result, not
     /// alongside it; better, pass `screenshot: true` to the action itself. Prefer
     /// `desktop_state` when structured data answers the question.
@@ -899,14 +909,25 @@ impl Server {
         Parameters(args): Parameters<ScreenshotArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        // Targets, sizes and formats only: nothing in these arguments is content.
+        // Targets, sizes, formats and the save path only: nothing in these arguments is
+        // content.
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
         self.audited(&context, "screenshot", logged, async {
+            let save = args
+                .save_path
+                .as_deref()
+                .map(|path| self.policy.save_target(self.env.home.as_deref(), path))
+                .transpose();
+            let save = match save {
+                Ok(save) => save,
+                Err(CallError::InvalidArguments(message)) => return Ok(invalid(&message)),
+                Err(CallError::Tool(error)) => return Ok(error.into_result()),
+            };
             let request = match args.request() {
                 Ok(request) => request,
                 Err(message) => return Ok(invalid(&message)),
             };
-            match self.desk.observe(self.capture(request)).await {
+            match self.desk.observe(self.capture_saving(request, save)).await {
                 Ok(shot) => image(&shot),
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
                 Err(CallError::Tool(error)) => Ok(error.into_result()),
@@ -1169,6 +1190,25 @@ impl Server {
             let kept = Shot::of(&shot, taken, connection);
             shot.metadata.screenshot_ref = self.desk.remember(lease, kept);
         }
+        Ok(shot)
+    }
+
+    /// With `save`, first writes a full-resolution PNG of the target there; then captures
+    /// the screenshot to return, which says where the PNG went.
+    async fn capture_saving(
+        &self,
+        request: observe::Request,
+        save: Option<SaveTarget>,
+    ) -> Result<observe::Screenshot, CallError> {
+        let saved = match &save {
+            Some(save) => {
+                let socket = self.env.niri_socket.as_deref();
+                Some(observe::save(socket, &request.target, save).await?)
+            }
+            None => None,
+        };
+        let mut shot = self.capture(request).await?;
+        shot.metadata.saved = saved;
         Ok(shot)
     }
 

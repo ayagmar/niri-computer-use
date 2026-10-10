@@ -16,7 +16,7 @@
 | `status` | none | readiness: niri's version and event stream, who holds the lease, the stop flag, the input-dirty marker, lock state, whether the outputs suit the pointer (`outputs.pointer_supported`), Noctalia, the policy file and its preset names, the audit log, programs on `PATH` |
 | `desktop_state` | none | one snapshot: windows, workspaces, `focused_window`, `overview_open`, keyboard layouts |
 | `outputs` | none | outputs by connector name, with logical position, size, scale and transform |
-| `screenshot` | `target`, and optionally `region`, `max_width`, `format` | an image, then metadata: output, captured rectangle in layout coordinates, scale, image size, and `screenshot_ref` while you hold the lease |
+| `screenshot` | `target`, and optionally `region`, `max_width`, `format`, `save_path` | an image, then metadata: output, captured rectangle in layout coordinates, scale, image size, and `screenshot_ref` while you hold the lease; with `save_path`, `saved`: the PNG's path and pixel size |
 | `clipboard_read` | none | `text`, or `text: null` with `reason` `nothing_copied` or `no_text` |
 | `shell_status` | none | Noctalia's `barVisible`, `panelOpen`, `activePanelId` and `locked`. Listed only when Noctalia is installed |
 | `wait_for` | `until`, optionally `timeout_ms` (100 to 30000, default 10000) and `screenshot` | `observed`: `met` with the matching `windows`, `timeout`, or `uncertain`; `focused_window`; `waited_ms` |
@@ -84,3 +84,5 @@ Each action waits up to five seconds, the shell tools two. With `timeout`, `pend
 - `region`, with `region: {x, y, width, height}` in layout coordinates (the coordinates `outputs` uses). The rectangle must lie inside one output.
 
 Images are JPEG at most 1280 pixels wide by default. `max_width` can go higher for a region wider than that, and a region keeps the output's native scale when it fits. `format` is `jpeg` (the default) or `png`.
+
+`save_path` writes a full-resolution PNG, whatever `max_width` is, to a new file relative to the user's `capture_dir`, such as `readme/editor.png`. It works only when the user set `capture_dir` in the policy file (`status` shows `policy.capture_dir`); otherwise it fails with `save_not_enabled`. The path must be relative, without `..`, and end in `.png`; its directories must exist; an existing file is never replaced, so pick a new name rather than retrying the same one.

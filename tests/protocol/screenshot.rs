@@ -140,3 +140,93 @@ async fn a_lowered_fractional_scale_gives_exactly_max_width() {
     let scale = metadata["scale"].as_f64().unwrap();
     assert!((scale - 1000.0 / 1707.0).abs() < 1e-9, "{scale}");
 }
+
+/// A grim that logs each call's arguments on a line and writes a 2560x1440 PNG at the
+/// output's own scale, or a 1280-wide JPEG otherwise.
+fn two_sizes(fixture: &Fixture) -> (Vec<u8>, Vec<u8>) {
+    let (full, small) = (png(2560, 1440), jpeg(1280, 720, b"small"));
+    std::fs::write(fixture.path("full.png"), &full).unwrap();
+    std::fs::write(fixture.path("small.jpg"), &small).unwrap();
+    fixture.program(
+        "grim",
+        r#"echo "$*" >> "$DIR/grim.calls"
+case "$*" in
+  "-t png -s 1 "*) cat "$DIR/full.png" ;;
+  *) cat "$DIR/small.jpg" ;;
+esac"#,
+    );
+    (full, small)
+}
+
+fn grim_calls(fixture: &Fixture) -> Vec<String> {
+    std::fs::read_to_string(fixture.path("grim.calls"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+fn policy(fixture: &Fixture, text: &str) {
+    std::fs::create_dir_all(fixture.path("config/niri-computer-use")).unwrap();
+    std::fs::write(fixture.path("config/niri-computer-use/policy.toml"), text).unwrap();
+}
+
+#[tokio::test]
+async fn saving_is_refused_without_a_capture_dir_and_captures_nothing() {
+    let fixture = Fixture::new("shot-nosave");
+    let _niri = Niri::start(&fixture);
+    two_sizes(&fixture);
+    let mut server = Server::start(&fixture).await;
+    let result = server
+        .call(
+            "screenshot",
+            json!({"target": "focused_output", "save_path": "a.png"}),
+        )
+        .await;
+    assert_eq!(result["isError"], true, "{result}");
+    assert_eq!(result["structuredContent"]["error"], "save_not_enabled");
+    assert_eq!(grim_calls(&fixture), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn a_save_is_a_full_resolution_png_inside_the_capture_dir() {
+    let mut fixture = Fixture::new("shot-save");
+    let _niri = Niri::start(&fixture);
+    let (full, small) = two_sizes(&fixture);
+    fixture.set("HOME", fixture.dir.clone());
+    policy(&fixture, "capture_dir = \"~/shots\"\n");
+    let mut server = Server::start(&fixture).await;
+    let save = |path: &str| json!({"target": "focused_output", "save_path": path});
+    let result = server.call("screenshot", save("one.png")).await;
+    let metadata = delivered(&result, &small, "image/jpeg");
+    let saved = fixture.path("shots/one.png");
+    assert_eq!(
+        metadata["saved"],
+        json!({"path": saved, "width": 2560, "height": 1440})
+    );
+    assert_eq!(std::fs::read(&saved).unwrap(), full);
+    assert_eq!(
+        grim_calls(&fixture),
+        ["-t png -s 1 -o DP-1 -", "-t jpeg -q 80 -s 0.5 -o DP-1 -"]
+    );
+    let again = server.call("screenshot", save("one.png")).await;
+    let text = again["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("already exists"), "{again}");
+    assert_eq!(std::fs::read(&saved).unwrap(), full);
+    let calls = grim_calls(&fixture).len();
+    for escape in ["../one.png", "/tmp/one.png", "one.jpg"] {
+        let refused = server.call("screenshot", save(escape)).await;
+        assert!(
+            refused["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("invalid arguments: "),
+            "{refused}"
+        );
+    }
+    assert_eq!(
+        grim_calls(&fixture).len(),
+        calls,
+        "a refused path captures nothing"
+    );
+}

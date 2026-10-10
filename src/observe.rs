@@ -4,14 +4,15 @@
 //! (`render.c:145–146`), which truncates. The expected size follows the same rule, and a
 //! capture whose header disagrees is an error rather than an image with unknown geometry.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use niri_ipc::{LogicalOutput, Output, Transform};
 use serde::Serialize;
 
 use crate::error::{CallError, ErrorName, ToolError};
-use crate::{image_header, niri, runner};
+use crate::policy::SaveTarget;
+use crate::{image_header, niri, runner, save};
 
 /// The slowest capture in M0 (C15) took 275 ms.
 const GRIM_DEADLINE: Duration = Duration::from_secs(5);
@@ -112,6 +113,17 @@ pub(crate) struct Metadata {
     /// the wait.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) settled: Option<bool>,
+    /// With `save_path`: the PNG written at the output's own scale.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) saved: Option<Saved>,
+}
+
+/// A screenshot written to the capture directory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct Saved {
+    pub(crate) path: PathBuf,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
 }
 
 #[derive(Debug)]
@@ -173,6 +185,27 @@ pub(crate) async fn screenshot(
         geometry: *output.logical,
         motion_geometry,
         image: done.stdout,
+    })
+}
+
+/// Captures `target` as a PNG at its output's own scale, whatever the returned image's
+/// `max_width`, and writes it to `save`.
+pub(crate) async fn save(
+    socket: Option<&Path>,
+    target: &Target,
+    save: &SaveTarget,
+) -> Result<Saved, CallError> {
+    let request = Request {
+        target: target.clone(),
+        max_width: None,
+        format: Format::Png,
+    };
+    let shot = screenshot(socket, &request).await?;
+    let path = save::write(save, &shot.image)?;
+    Ok(Saved {
+        path,
+        width: shot.metadata.width,
+        height: shot.metadata.height,
     })
 }
 
@@ -292,6 +325,7 @@ fn plan(
             capture_ms: 0,
             screenshot_ref: None,
             settled: None,
+            saved: None,
         },
     })
 }

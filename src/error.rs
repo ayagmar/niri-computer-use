@@ -47,6 +47,8 @@ pub(crate) enum ErrorName {
     RefInvalid,
     /// `shell_open` or `shell_close` named a panel outside the allowlist.
     PanelNotAllowed,
+    /// `screenshot` was asked to save without a `capture_dir` in the policy file.
+    SaveNotEnabled,
 }
 
 /// A failure, serialized as `{"error": <name>, "detail": <upstream detail>}`.

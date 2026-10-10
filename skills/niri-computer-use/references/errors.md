@@ -30,6 +30,7 @@ These are the user's decisions. Don't call the refused action again and don't tr
 | `ref_invalid` | The detail starts with `unknown_ref`, `expired`, `output_changed` or `out_of_bounds`. Take a new screenshot and aim again from it; for `out_of_bounds`, use a pixel inside the image. |
 | `focus_mismatch` | The window in `expect` doesn't have keyboard focus. Look at `desktop_state` and a screenshot, focus the right window with `focus_window` if that's what you meant, then type. |
 | `text_too_long` | Over 1000 characters; nothing was typed. Split the text into calls of at most 1000 characters, pass `submit: true` only on the last, and send nothing more once a call comes back with `typed`. |
+| `save_not_enabled` | `screenshot`'s `save_path` needs a `capture_dir` in the user's policy file, and there is none. Ask the user to add one; don't save the image another way. |
 | `panel_not_allowed` | Only `control-center`, `wallpaper` and `tray-drawer` can be opened. Don't reach another panel some other way. |
 
 ## Report and don't loop

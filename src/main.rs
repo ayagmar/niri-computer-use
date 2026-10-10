@@ -15,6 +15,7 @@ mod observe;
 mod policy;
 mod refs;
 mod runner;
+mod save;
 mod settle;
 mod status;
 #[cfg(test)]
@@ -42,6 +43,8 @@ pub(crate) struct Env {
     pub(crate) path: Option<OsString>,
     pub(crate) runtime_dir: Option<PathBuf>,
     pub(crate) wayland_display: Option<OsString>,
+    /// `$HOME`, for a `capture_dir` under `~/`.
+    pub(crate) home: Option<PathBuf>,
     /// `$XDG_STATE_HOME`, or `$HOME/.local/state`, for the audit log.
     pub(crate) state_dir: Option<PathBuf>,
     /// `$XDG_CONFIG_HOME`, or `$HOME/.config`, for the policy file.
@@ -58,6 +61,7 @@ impl Env {
             path: var("PATH"),
             runtime_dir: var("XDG_RUNTIME_DIR").map(PathBuf::from),
             wayland_display: var("WAYLAND_DISPLAY"),
+            home: var("HOME").map(PathBuf::from),
             keyboard: var("NIRI_COMPUTER_USE_KEYBOARD"),
             state_dir: var("XDG_STATE_HOME")
                 .map(PathBuf::from)
