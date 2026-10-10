@@ -27,6 +27,7 @@ mod run;
 mod runner;
 mod scale;
 mod session;
+mod shared;
 mod shell;
 mod sitting;
 mod slow_reader;
@@ -45,13 +46,13 @@ use scale::Scale;
 use supervise::Probes;
 use test_dir::TestDir;
 
-const USAGE: &str = "usage: harness run [--visible] [--scale <scale>] [--ssd] [--noctalia | --sitting | --control | --actions | --input | --shell | --a11y | --eval <scenario> --skill <dir|none> --model <model>]
+const USAGE: &str = "usage: harness run [--visible] [--shared] [--scale <scale>] [--ssd] [--noctalia | --sitting | --control | --actions | --input | --shell | --a11y | --engine | --eval <scenario> --skill <dir|none> --model <model>]
        harness host-capture <output>
        harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--started <file>]
        harness keymaps <TEST_DIR> <directory> <deadline-ms>
        harness clipboard <TEST_DIR> <deadline-ms> [--secret]
        harness slow-reader <TEST_DIR> <delay-ms> <deadline-ms>
-       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--ssd] [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --a11y <server> | --eval <server> <scenario> <skill|none> <model>]";
+       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--ssd] [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --a11y <server> | --engine <server> | --eval <server> <scenario> <skill|none> <model>]";
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -135,6 +136,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
         sitting: false,
         server: None,
         eval: None,
+        mode: run::ServerMode::Standalone,
     };
     let (mut scenario, mut skill, mut model) = (None, None, None);
     let mut args = args.iter();
@@ -144,11 +146,16 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
                 options.scale = args.next().ok_or_else(|| Failure::new(USAGE))?.parse()?;
             }
             "--visible" => options.visible = true,
+            "--shared" => options.mode = run::ServerMode::Shared,
             "--ssd" => options.decorations = config::Decorations::Server,
             "--noctalia" => options.noctalia = true,
             "--sitting" => options.sitting = true,
             "--control" | "--actions" | "--input" | "--shell" | "--a11y" => {
                 options.server = run::ServerChecks::from_flag(arg);
+            }
+            "--engine" => {
+                options.server = Some(run::ServerChecks::Engine);
+                options.mode = run::ServerMode::Shared;
             }
             "--eval" => scenario = Some(*args.next().ok_or_else(|| Failure::new(USAGE))?),
             "--skill" => skill = Some(*args.next().ok_or_else(|| Failure::new(USAGE))?),
@@ -168,7 +175,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
         > 1
     {
         return Err(Failure::new(
-            "--sitting, --noctalia, --control, --actions, --input, --shell, --a11y and --eval cannot be combined",
+            "--sitting, --noctalia, --control, --actions, --input, --shell, --a11y, --engine and --eval cannot be combined",
         ));
     }
     options.visible |= options.sitting;

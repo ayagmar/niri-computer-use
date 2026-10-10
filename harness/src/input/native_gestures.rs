@@ -164,7 +164,7 @@ pub(super) fn crash(
     let offset = wev.offset()?;
     client.start_call("drag", args)?;
     pressed(session, wev, offset)?;
-    let killed = super::guardian::kill(client)?;
+    let killed = super::guardian::kill(session, client)?;
     super::guardian::released(session, killed, "held drag button and ctrl+shift", || {
         Ok(released(&keyboard::since(wev.log, offset)?).is_ok())
     })?;
@@ -243,7 +243,7 @@ pub(super) fn typing_crash(
             .any(|key| key.pressed)
             .then_some(()))
     })?;
-    let killed = super::guardian::kill(client)?;
+    let killed = super::guardian::kill(session, client)?;
     let at_kill = keyboard::since(wev.log, offset)?;
     let first = trace(&at_kill)?
         .keys

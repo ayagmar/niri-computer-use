@@ -14,7 +14,10 @@ use crate::test_dir::TestDir;
 pub(crate) type Env = BTreeMap<&'static str, OsString>;
 
 /// Kept from the user's session as they are.
-const KEPT: [&str; 3] = ["HOME", "PATH", "LANG"];
+const KEPT: [&str; 4] = ["HOME", "PATH", "LANG", SHARED];
+
+/// Set to `1` by `--shared`, so that every server runs in shared mode.
+const SHARED: &str = "NIRI_COMPUTER_USE_SHARED";
 
 /// The one path that may point outside `TEST_DIR`: the host Wayland socket nested niri
 /// draws its window on.
@@ -79,7 +82,8 @@ fn required(name: &str) -> Result<OsString> {
 
 /// Builds PARENT. `NIRI_SOCKET`, `WAYLAND_SOCKET`, `DISPLAY`, `XDG_SESSION_ID` and
 /// `DBUS_SESSION_BUS_ADDRESS` are left out, as is everything else not listed here.
-pub(crate) fn parent(test_dir: &TestDir, host: &Host, display: &Path) -> Env {
+/// `shared` sets `NIRI_COMPUTER_USE_SHARED=1`.
+pub(crate) fn parent(test_dir: &TestDir, host: &Host, display: &Path, shared: bool) -> Env {
     let mut env = Env::from([
         ("XDG_RUNTIME_DIR", test_dir.run().into_os_string()),
         ("XDG_STATE_HOME", test_dir.state().into_os_string()),
@@ -105,6 +109,9 @@ pub(crate) fn parent(test_dir: &TestDir, host: &Host, display: &Path) -> Env {
     ]);
     if let Some(lang) = &host.lang {
         env.insert("LANG", lang.clone());
+    }
+    if shared {
+        env.insert(SHARED, "1".into());
     }
     env
 }
@@ -199,7 +206,8 @@ mod tests {
     #[test]
     fn parent_leaves_out_host_endpoints() {
         let (test_dir, base) = test_dir("parent");
-        let env = parent(&test_dir, &host(), Path::new("/fake/wayland-1"));
+        let env = parent(&test_dir, &host(), Path::new("/fake/wayland-1"), true);
+        assert_eq!(env.get(SHARED), Some(&OsString::from("1")));
         for name in [
             "NIRI_SOCKET",
             "WAYLAND_SOCKET",
@@ -216,18 +224,18 @@ mod tests {
     #[test]
     fn containment_rejects_unknown_and_escaping_variables() {
         let (test_dir, base) = test_dir("containment");
-        let mut stray = parent(&test_dir, &host(), Path::new("/fake/wayland-1"));
+        let mut stray = parent(&test_dir, &host(), Path::new("/fake/wayland-1"), false);
         stray.insert(
             "NIRI_SOCKET",
             test_dir.run().join("niri.sock").into_os_string(),
         );
         assert!(check_containment(&stray, &test_dir).is_err());
 
-        let mut escaping = parent(&test_dir, &host(), Path::new("/fake/wayland-1"));
+        let mut escaping = parent(&test_dir, &host(), Path::new("/fake/wayland-1"), false);
         escaping.insert("XDG_CONFIG_HOME", OsString::from("/home/u/.config"));
         assert!(check_containment(&escaping, &test_dir).is_err());
 
-        let mut system_bus = parent(&test_dir, &host(), Path::new("/fake/wayland-1"));
+        let mut system_bus = parent(&test_dir, &host(), Path::new("/fake/wayland-1"), false);
         system_bus.insert(
             SYSTEM_BUS,
             OsString::from("unix:path=/run/dbus/system_bus_socket"),
@@ -239,12 +247,12 @@ mod tests {
         );
         assert!(check_containment(&system_bus, &test_dir).is_err());
 
-        let listening = parent(&test_dir, &host(), Path::new("/fake/wayland-1"));
+        let listening = parent(&test_dir, &host(), Path::new("/fake/wayland-1"), false);
         fs::write(test_dir.system_bus(), "").unwrap();
         assert!(check_containment(&listening, &test_dir).is_err());
         fs::remove_file(test_dir.system_bus()).unwrap();
 
-        let mut relative = parent(&test_dir, &host(), Path::new("/fake/wayland-1"));
+        let mut relative = parent(&test_dir, &host(), Path::new("/fake/wayland-1"), false);
         relative.insert(HOST_SOCKET, OsString::from("wayland-1"));
         assert!(check_containment(&relative, &test_dir).is_err());
         fs::remove_dir_all(base).unwrap();

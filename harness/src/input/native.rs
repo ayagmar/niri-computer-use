@@ -47,6 +47,7 @@ pub(super) fn run(
     super::native_gestures::typing_crash(session, wev, server, ("A", "typing"), |_| Ok(()))?;
     super::native_unicode::crash(session, wev, server)?;
     pacer.stop()?;
+    super::guardian::reconnect(session, owner)?;
     structured(&owner.call(session, "acquire_desktop", json!({}))?)?;
     super::native_unicode::wtype_comparison(session, owner, wev)?;
     measure(session, owner, wev, "wtype")?;

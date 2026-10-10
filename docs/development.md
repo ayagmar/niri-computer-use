@@ -125,7 +125,7 @@ Later steps need the nested output to be at least 400x300 logical pixels at scal
 
 What a run does:
 
-1. Creates a fresh `TEST_DIR` at `$XDG_RUNTIME_DIR/niri-computer-use-test/<unix time>-<pid>/`, mode 0700, with `run/`, `state/`, `cache/`, `config/` and `data/`. The `niri-computer-use-test` directory itself stays after the run, empty.
+1. Creates a fresh `TEST_DIR` at `$XDG_RUNTIME_DIR/ncu-test/<unix time>-<pid>/`, mode 0700, with `run/`, `state/`, `cache/`, `config/` and `data/`. The name is short so that the shared engine's socket under it fits a Unix socket's 108 bytes. The `ncu-test` directory itself stays after the run, empty.
 2. Writes a niri config (no startup commands, animations, borders or Xwayland; a magenta background; a fixed 400x300 floating `wev`; one `Ctrl+Shift+F12` test bind) and checks it with `niri validate`.
 3. Builds the environment for the nested niri from scratch. The XDG and Noctalia directories point into `TEST_DIR`, `WAYLAND_DISPLAY` is the absolute path of cage's private Wayland socket (your Wayland socket only in visible mode), and `HOME`, `PATH` and `LANG` are kept. `DBUS_SYSTEM_BUS_ADDRESS` points to `TEST_DIR/run/no-system-bus`, where nothing exists, so nothing in the nested session can reach your system bus. `NIRI_SOCKET`, `WAYLAND_SOCKET`, `DISPLAY`, `XDG_SESSION_ID` and `DBUS_SESSION_BUS_ADDRESS` are not set. The run stops if any other variable is present or a path points outside `TEST_DIR`.
    With `NOCTALIA=1` it also writes a Noctalia config that turns off the first-run setup wizard and weather, lists no plugin sources, and points the wallpaper directory at an empty `TEST_DIR/data/wallpapers`, so the wallpaper panel never lists your pictures, and checks it with `noctalia config validate`. That command exits 0 even when it warns, for example about an unknown key, so the harness requires its plain "Config is valid" line.
@@ -270,6 +270,24 @@ The run has a 130-second deadline. Its files are in `target/e2e/<run>/`, includi
    It checks the registry once more after the server's checks.
 
 Every call on a bus from the harness goes through `busctl --address=… --json=short` with the step deadline. The run has a 240-second deadline. It needs at-spi2-core (`at-spi-bus-launcher`, `at-spi2-registryd`), `busctl` from systemd, Python 3 with PyGObject, GTK 4 and GTK 3, and `qml6` with Qt Quick Controls (qt6-declarative).
+
+## Nested shared-engine checks
+
+`SHARED=1` (or `harness run --shared`) runs any of the server checks in shared mode: the nested session's environment gets `NIRI_COMPUTER_USE_SHARED=1`, so every server the supervisor starts bridges its client to the nested niri's one engine. The kill checks of `make nested-input` then kill the engine that `status.engine.pid` names, since its guardian is the one that releases input, and the clients connected to it must report `engine_lost` once before their next call reaches a new engine. After the nested session, the run fails if any server's log says it served its client standalone, or if the engine's socket is still there five seconds later.
+
+```sh
+make nested-actions SHARED=1
+make nested-input SHARED=1
+make nested-control SHARED=1
+make nested-a11y SHARED=1
+```
+
+`make nested-engine` runs the shared engine's own checks, always in shared mode, with Noctalia as the lock source and `wev` to see the input. It has a 150-second deadline. The supervisor starts ten clients, then checks:
+
+- E1: every client's `status` names the same engine, which serves 10 sessions with its event stream connected, and one process runs `guard <engine>`.
+- E3: client A's bridge is killed during a drag. `wev` sees the button released, client B's `status` and `desktop_state` are answered meanwhile, B can take the lease within a second of the kill, and the input-dirty marker is gone.
+- E4: `niri-computer-use stop` while A types 100 characters and eight other clients each have `status`, `desktop_state` and a screenshot in flight. A's call returns `stopped`, the lease is free within a second, every other call is answered, `wtype` still types the whole text, and after `resume` A takes the lease again.
+- E5: the engine is killed with `SIGKILL` during A's drag. A's call returns `engine_lost`, the guardian releases the button, every other client gets `engine_lost` once and then reaches one new engine, and B is refused with `recovery_required` until `recover`.
 
 ## Skill evals
 

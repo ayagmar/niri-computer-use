@@ -4,11 +4,12 @@
 use std::fs;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::WAIT;
 use crate::failure::{Context as _, Failure, Result};
-use crate::mcp::Client;
+use crate::mcp::{Client, field, structured};
+use crate::runner;
 use crate::session::Session;
 
 const MS_PER_DAY: i64 = 86_400_000;
@@ -21,14 +22,55 @@ pub(super) struct Killed {
     wall: SystemTime,
 }
 
-/// SIGKILLs the server's process group, which the guardian left.
-pub(super) fn kill(client: Client) -> Result<Killed> {
-    let killed = Killed {
-        at: Instant::now(),
-        wall: SystemTime::now(),
-    };
+impl Killed {
+    fn now() -> Self {
+        Self {
+            at: Instant::now(),
+            wall: SystemTime::now(),
+        }
+    }
+}
+
+/// SIGKILLs the process the guardian watches: the server, or in shared mode the engine
+/// its `status` names. Then the client's server or bridge goes too.
+pub(super) fn kill(session: &mut Session<'_>, mut client: Client) -> Result<Killed> {
+    let status = structured(&client.call(session, "status", json!({}))?)?;
+    let engine = field(&status, "/engine");
+    if field(engine, "/mode") != "shared" {
+        let killed = Killed::now();
+        client.stop()?;
+        return Ok(killed);
+    }
+    let pid = field(engine, "/pid")
+        .as_u64()
+        .ok_or_else(|| Failure::new(format!("status names no engine: {status}")))?;
+    let killed = kill_engine(pid)?;
     client.stop()?;
     Ok(killed)
+}
+
+/// SIGKILLs the shared engine `pid`.
+pub(super) fn kill_engine(pid: u64) -> Result<Killed> {
+    let killed = Killed::now();
+    runner::kill_pid(u32::try_from(pid).context("the engine's PID")?)?;
+    Ok(killed)
+}
+
+/// After the shared engine was killed, `client`'s session went with it: its next call
+/// gets `engine_lost`, and the one after reaches a new engine. A standalone server's
+/// client has nothing to report.
+pub(super) fn reconnect(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
+    let first = client.call(session, "status", json!({}))?;
+    if field(&first, "/structuredContent/error") == "engine_lost" {
+        return structured(&client.call(session, "status", json!({}))?).map(drop);
+    }
+    let status = structured(&first)?;
+    if field(&status, "/engine/mode") == "shared" {
+        return Err(Failure::new(format!(
+            "a client of the killed engine didn't report it: {status}"
+        )));
+    }
+    Ok(())
 }
 
 /// Waits for the guardian's note in the marker and for `seen` to find the releases in the

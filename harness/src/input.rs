@@ -6,6 +6,7 @@
 
 mod activation;
 mod crash;
+mod engine;
 mod exposure;
 mod guardian;
 mod keeper;
@@ -20,7 +21,7 @@ mod text_entry;
 
 use std::ffi::OsString;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use niri_ipc::{LogicalOutput, WindowLayout};
@@ -29,6 +30,7 @@ use serde_json::{Value, json};
 use crate::failure::{Context as _, Failure, Result};
 use crate::keyboard;
 use crate::mcp::{self, Client, field, structured};
+use crate::runner::Process;
 use crate::session::Session;
 use crate::wev::{self, Pointer};
 
@@ -65,11 +67,7 @@ pub(crate) fn run(session: &mut Session<'_>, output: &LogicalOutput, server: &st
         field(&status, "/outputs")
     ))?;
     structured(&client.call(session, "acquire_desktop", json!({}))?)?;
-    // Started after Noctalia, whose bar moves floating windows down when it appears.
-    let wev_log = session.artifact("wev.log");
-    let args = ["-oL", "wev"].map(OsString::from);
-    let process = session.start("stdbuf", &args, wev_log.clone(), WEV_DEADLINE)?;
-    let window = crate::supervise::wait_for_wev(session)?;
+    let (process, wev_log, window) = start_wev(session)?;
     let wev = Wev {
         log: &wev_log,
         surface: surface_origin(output, &window)?,
@@ -83,6 +81,7 @@ pub(crate) fn run(session: &mut Session<'_>, output: &LogicalOutput, server: &st
     stop::run(session, &mut client, &wev, server)?;
     structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     crash::run(session, &wev, server)?;
+    guardian::reconnect(session, &mut client)?;
     // wev floats over the tiled kitty, so it goes first.
     process.stop()?;
     scrolling::run(session, &mut client)?;
@@ -91,6 +90,47 @@ pub(crate) fn run(session: &mut Session<'_>, output: &LogicalOutput, server: &st
     keeper::run(session, server)?;
     client.stop()?;
     noctalia.stop().map(drop)
+}
+
+/// The shared engine's checks, `--engine`: ten clients on one engine, with `wev` to see
+/// their input.
+pub(crate) fn run_engine(
+    session: &mut Session<'_>,
+    output: &LogicalOutput,
+    server: &str,
+) -> Result<()> {
+    let noctalia = session.start(
+        "noctalia",
+        &[],
+        session.artifact("noctalia.log"),
+        NOCTALIA_DEADLINE,
+    )?;
+    let mut clients = engine::start(session, server)?;
+    let first = clients
+        .first_mut()
+        .ok_or_else(|| Failure::new("no client"))?;
+    mcp::ready(session, first, "e-ready", READY)?;
+    let (process, wev_log, window) = start_wev(session)?;
+    let wev = Wev {
+        log: &wev_log,
+        surface: surface_origin(output, &window)?,
+    };
+    engine::run(session, &mut clients, &wev, server)?;
+    process.stop()?;
+    for client in clients {
+        client.stop()?;
+    }
+    noctalia.stop().map(drop)
+}
+
+/// Starts `wev` and waits for its window. Started after Noctalia, whose bar moves
+/// floating windows down when it appears.
+fn start_wev(session: &mut Session<'_>) -> Result<(Process, PathBuf, WindowLayout)> {
+    let wev_log = session.artifact("wev.log");
+    let args = ["-oL", "wev"].map(OsString::from);
+    let process = session.start("stdbuf", &args, wev_log.clone(), WEV_DEADLINE)?;
+    let window = crate::supervise::wait_for_wev(session)?;
+    Ok((process, wev_log, window))
 }
 
 /// `wev`'s log and its surface's top-left corner in the layout.

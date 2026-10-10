@@ -77,6 +77,14 @@ enum Ending {
 
 /// Runs a program to completion and requires exit status 0. Errors keep the exit status
 /// and stderr, or name the file the output went to.
+/// SIGKILLs a process the harness didn't start, such as the shared engine a server's
+/// `status` names.
+pub(crate) fn kill_pid(pid: u32) -> Result<()> {
+    let raw = i32::try_from(pid).context("a process ID")?;
+    let target = Pid::from_raw(raw).ok_or_else(|| Failure::new("process ID 0"))?;
+    kill_process(target, Signal::KILL).context(format!("SIGKILL {raw}"))
+}
+
 pub(crate) fn run(invocation: &Invocation<'_>) -> Result<Output> {
     start(invocation)?.wait()
 }

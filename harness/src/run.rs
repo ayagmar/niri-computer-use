@@ -16,6 +16,7 @@ use crate::journal;
 use crate::log::Log;
 use crate::runner::{self, ChildEnv, Group, Invocation, Sink};
 use crate::scale::Scale;
+use crate::shared;
 use crate::snapshot;
 use crate::supervise;
 use crate::test_dir::TestDir;
@@ -28,6 +29,7 @@ const ACTIONS_DEADLINE: Duration = Duration::from_secs(130);
 const INPUT_DEADLINE: Duration = Duration::from_secs(180);
 const SHELL_DEADLINE: Duration = Duration::from_secs(130);
 const A11Y_DEADLINE: Duration = Duration::from_secs(240);
+const ENGINE_DEADLINE: Duration = Duration::from_secs(150);
 /// The agent's twelve minutes, with the fixtures and Noctalia around it.
 const EVAL_DEADLINE: Duration = Duration::from_mins(15);
 /// All `noctalia config validate` prints for a config without warnings. It exits 0 even
@@ -49,6 +51,16 @@ pub(crate) struct Options {
     pub(crate) server: Option<ServerChecks>,
     /// Run one skill eval: an agent doing one task through `niri-computer-use`.
     pub(crate) eval: Option<eval::Options>,
+    pub(crate) mode: ServerMode,
+}
+
+/// How the servers under test serve their clients.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ServerMode {
+    /// Each server serves its one client.
+    Standalone,
+    /// Every server bridges its client to the nested niri's shared engine.
+    Shared,
 }
 
 /// The checks that run `niri-computer-use` servers against the nested niri.
@@ -64,6 +76,8 @@ pub(crate) enum ServerChecks {
     Shell,
     /// M9: the nested accessibility bus.
     A11y,
+    /// The shared engine with ten clients; always in shared mode.
+    Engine,
 }
 
 impl ServerChecks {
@@ -74,6 +88,7 @@ impl ServerChecks {
             Self::Input => "--input",
             Self::Shell => "--shell",
             Self::A11y => "--a11y",
+            Self::Engine => "--engine",
         }
     }
 
@@ -84,6 +99,7 @@ impl ServerChecks {
             Self::Input,
             Self::Shell,
             Self::A11y,
+            Self::Engine,
         ]
         .into_iter()
         .find(|checks| checks.flag() == flag)
@@ -96,6 +112,7 @@ impl ServerChecks {
             Self::Input => INPUT_DEADLINE,
             Self::Shell => SHELL_DEADLINE,
             Self::A11y => A11Y_DEADLINE,
+            Self::Engine => ENGINE_DEADLINE,
         }
     }
 }
@@ -105,11 +122,16 @@ pub(crate) fn run(options: &Options) -> Result<()> {
     let stamp = stamp()?;
     let artifacts = create_artifacts(&stamp)?;
     let mut log = Log::create(&artifacts.join("harness.log"), true)?;
-    let test_dir = TestDir::create(&host.runtime_dir.join("niri-computer-use-test"), &stamp)?;
+    // Short, so that the shared engine's socket fits a Unix socket's 108 bytes.
+    let test_dir = TestDir::create(&host.runtime_dir.join("ncu-test"), &stamp)?;
     log.line(&format!("TEST_DIR {}", test_dir.root().display()))?;
     log.line(&format!("artifacts {}", artifacts.display()))?;
 
-    let outcome = run_nested(&host, &test_dir, &artifacts, options, &mut log);
+    let mut outcome = run_nested(&host, &test_dir, &artifacts, options, &mut log);
+    if options.mode == ServerMode::Shared {
+        let checked = shared::check(&test_dir, &artifacts, &mut log);
+        outcome = outcome.and(checked);
+    }
     // Checked even when the run failed: that is when a stray process is most likely.
     let leftovers = no_leftovers(test_dir.root(), &mut log);
     let outcome = outcome.and(leftovers);
@@ -262,7 +284,7 @@ fn preflight(
     write(&artifacts.join("niri.kdl"), &niri_config)?;
     write(&test_dir.dbus_config(), &config::dbus(&test_dir.run()))?;
 
-    let env = environment::parent(test_dir, host, display);
+    let env = environment::parent(test_dir, host, display, options.mode == ServerMode::Shared);
     environment::check_containment(&env, test_dir)?;
     runner::run(&Invocation {
         program: "niri",
@@ -420,14 +442,11 @@ mod tests {
 
     #[test]
     fn a_command_line_naming_test_dir_is_a_leftover() {
-        let root = Path::new("/run/user/1000/niri-computer-use-test/1-2");
-        let clone =
-            b"git\0clone\0https://github.com/x\0/run/user/1000/niri-computer-use-test/1-2/state/x\0";
+        let root = Path::new("/run/user/1000/ncu-test/1-2");
+        let clone = b"git\0clone\0https://github.com/x\0/run/user/1000/ncu-test/1-2/state/x\0";
         assert_eq!(
             naming(clone, root).as_deref(),
-            Some(
-                "git clone https://github.com/x /run/user/1000/niri-computer-use-test/1-2/state/x"
-            )
+            Some("git clone https://github.com/x /run/user/1000/ncu-test/1-2/state/x")
         );
         assert_eq!(naming(b"harness\0run\0--noctalia\0", root), None);
         assert_eq!(naming(b"", root), None);

@@ -1,4 +1,5 @@
-//! The two-server crash (plan §13): server A is killed mid-`type_text` and mid-drag.
+//! The two-server crash (plan §13): server A, or in shared mode the engine, is killed
+//! mid-`type_text` and mid-drag.
 //! Server B must refuse with `recovery_required` until the user's `recover` has run, which
 //! finds `wtype` already done in the first case and sends the button's release from a
 //! fresh pointer in the second. In the second, A's crash guardian has already released
@@ -40,7 +41,12 @@ fn refused(session: &mut Session<'_>, server: &str, name: &str) -> Result<Client
 }
 
 /// `recover` with a `yes`, which must say `said`; then B takes the lease.
-fn recover(session: &mut Session<'_>, b: &mut Client, server: &str, said: &str) -> Result<()> {
+pub(super) fn recover(
+    session: &mut Session<'_>,
+    b: &mut Client,
+    server: &str,
+    said: &str,
+) -> Result<()> {
     let script = format!("printf 'yes\\n' | '{server}' recover");
     let output = session.run("sh", &["-c".into(), script.into()])?;
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -66,7 +72,7 @@ fn mid_typing(session: &mut Session<'_>, wev: &Wev<'_>, server: &str) -> Result<
         let seen = keyboard::since(wev.log, offset)?;
         Ok((!wev::keyboard::trace(&seen)?.keys.is_empty()).then_some(()))
     })?;
-    a.stop()?;
+    super::guardian::kill(session, a)?;
     let mut b = refused(session, server, "harness-m4-b")?;
     // wtype is in a group of its own, so it outlives server A and types everything.
     let seen = keyboard::observed(session, wev.log, offset, text.chars().count(), false)?;
@@ -101,7 +107,7 @@ fn mid_drag(session: &mut Session<'_>, wev: &Wev<'_>, server: &str) -> Result<()
     session.wait_until("m4-crash-drag", "the drag's press in wev", WAIT, |_| {
         Ok(wev.since(offset)?.contains(&press).then_some(()))
     })?;
-    let killed = super::guardian::kill(a)?;
+    let killed = super::guardian::kill(session, a)?;
     let mut b = refused(session, server, "harness-m4-d")?;
     // niri releases nothing when a pointer goes (C8): A's guardian sends the release.
     super::guardian::released(session, killed, "M4 drag button", || {
