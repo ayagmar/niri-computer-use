@@ -236,7 +236,15 @@ The run has a 130-second deadline. Its files are in `target/e2e/<run>/`, includi
    - GTK 3: `harness/fixtures/gtk3.py` (`org.ncu.Gtk3`): a label, a button counting into `TEST_DIR/gtk3-count`, and an entry.
    - Qt Quick: `qml6 harness/fixtures/qt.qml` (`org.qt-project.qml`): a label, a button counting into `TEST_DIR/qt-count`, and a text field. It runs with `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1`, which Qt needs to register on the bus, `QT_FORCE_STDERR_LOGGING=1`, which keeps its logs out of your journal (Qt otherwise writes to journald's socket, which the nested environment doesn't replace), and `QML_XHR_ALLOW_FILE_WRITE=1`, so the QML can write its counter.
 
-Every call on a bus goes through `busctl --address=… --json=short` with the step deadline. The run has a 240-second deadline. It needs at-spi2-core (`at-spi-bus-launcher`, `at-spi2-registryd`), `busctl` from systemd, Python 3 with PyGObject, GTK 4 and GTK 3, and `qml6` with Qt Quick Controls (qt6-declarative).
+5. Starts the nested Noctalia as the lock source and one `niri-computer-use serve`, which must report `accessibility.available` and list `elements`, and takes the lease. Then, through `elements` and `click` with `element`, using the unmodified pointer path:
+   - GTK 4: clicks `Primary` 100 times, each counted exactly once; moves the window by (+37, +11) with niri's `MoveFloatingWindow` and clicks the element listed before the move, which must hit; clicks `Vanish`, waits until `elements` no longer lists it, and requires `element_stale` for its ref.
+   - With the GTK 4 window still open, starts Qt, stops it with `kill -STOP`, and requires `elements` on the GTK window to answer within 3 s and on the Qt window to fail with `deadline_exceeded` within 3 s, then sends `kill -CONT`.
+   - GTK 3 and Qt: with `SSD=1`, 100 counted clicks each. Without it, their accessible frame is larger than niri's window, so `elements` must report `unmappable: frame_size_mismatch`, a click must fail with `element_unmappable`, and the counter must stay at 0 for half a second.
+   - `close_window` on the GTK 4 window, then a click on its `Primary` ref must fail with `element_stale` in under 50 ms by the audit log's `duration_ms`. The audit log is copied to the artifacts.
+
+   It checks the registry once more after the server's checks.
+
+Every call on a bus from the harness goes through `busctl --address=… --json=short` with the step deadline. The run has a 240-second deadline. It needs at-spi2-core (`at-spi-bus-launcher`, `at-spi2-registryd`), `busctl` from systemd, Python 3 with PyGObject, GTK 4 and GTK 3, and `qml6` with Qt Quick Controls (qt6-declarative).
 
 ## Skill evals
 

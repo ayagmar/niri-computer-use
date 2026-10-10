@@ -12,6 +12,8 @@ use std::time::Duration;
 use niri_ipc::{Request, Response, Window};
 use serde_json::Value;
 
+mod server;
+
 use crate::config::Decorations;
 use crate::failure::{Context as _, Failure, Result};
 use crate::nested;
@@ -27,7 +29,7 @@ const FIXTURE_DEADLINE: Duration = Duration::from_secs(220);
 const REGISTRY_NAME: &str = "org.a11y.atspi.Registry";
 const ROOT: &str = "/org/a11y/atspi/accessible/root";
 
-pub(crate) fn run(session: &mut Session<'_>, decorations: Decorations) -> Result<()> {
+pub(crate) fn run(session: &mut Session<'_>, server: &str, decorations: Decorations) -> Result<()> {
     session.log(&format!("M9: decorations {decorations:?}"))?;
     let bus = Bus::start(session)?;
     bus.only_nested_apps(session, "before the fixtures")?;
@@ -41,6 +43,8 @@ pub(crate) fn run(session: &mut Session<'_>, decorations: Decorations) -> Result
         bus.only_nested_apps(session, &format!("with the {toolkit:?} fixture"))?;
         fixture.stop()?;
     }
+    server::run(session, &bus, server, decorations)?;
+    bus.only_nested_apps(session, "after the server's checks")?;
     bus.stop()
 }
 
@@ -330,10 +334,7 @@ impl Fixture {
             &format!("the {:?} fixture's window", self.toolkit),
             STARTUP,
             |session| {
-                let Response::Windows(windows) = session.request(&Request::Windows)? else {
-                    return Err(Failure::new("niri answered Windows with another response"));
-                };
-                Ok(windows.into_iter().find(|window| {
+                Ok(windows(session)?.into_iter().find(|window| {
                     window.pid == Some(pid)
                         && window.layout.window_size == (400, 300)
                         && window.layout.tile_pos_in_workspace_view.is_some()
@@ -350,6 +351,18 @@ impl Fixture {
     pub(crate) fn stop(self) -> Result<()> {
         self.process.stop().map(drop)
     }
+}
+
+fn windows(session: &mut Session<'_>) -> Result<Vec<Window>> {
+    let Response::Windows(windows) = session.request(&Request::Windows)? else {
+        return Err(Failure::new("niri answered Windows with another response"));
+    };
+    Ok(windows)
+}
+
+/// niri's window `id`, while it has one.
+fn window(session: &mut Session<'_>, id: u64) -> Result<Option<Window>> {
+    Ok(windows(session)?.into_iter().find(|window| window.id == id))
 }
 
 #[cfg(test)]
