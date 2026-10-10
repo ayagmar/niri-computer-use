@@ -174,3 +174,19 @@ These mean niri, a program or Noctalia didn't answer as expected. Report the nam
 **Cause:** Noctalia is installed but didn't answer on its socket within two seconds, usually because it isn't running.
 
 **What to do:** start Noctalia, or ignore the shell tools. Without Noctalia running, the lock state relies on logind alone.
+
+## Shared mode
+
+These come only from a server in [shared mode](../../concepts/configuration/#shared), which relays its client to one engine per niri instance.
+
+### `engine_lost`
+
+**Cause:** the shared engine ended, killed or crashed, while the call was in flight, or since the session's last call. What a call in flight did is unknown, and the session's lease, refs and focus record went with the engine. The `detail` names the engine's PID when the server knew it.
+
+**What to do:** look at `desktop_state` or a screenshot before acting again, and call `acquire_desktop` again if you still need it. The next call reaches a new engine; the engine's own error, if any, is in `engine.log` in the runtime directory.
+
+### `engine_unavailable`
+
+**Cause:** after an engine was lost, the server couldn't reach or start a new one within five seconds, or the new one refused it. The `detail` says why. The next call tries again.
+
+**What to do:** read the `detail` and `engine.log` in the runtime directory. A server that can't reach an engine when it starts serves its client on its own instead, so this happens only after a loss.

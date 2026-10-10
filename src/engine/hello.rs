@@ -4,7 +4,7 @@
 //! Pure, apart from reading this binary's identity.
 
 use std::os::unix::fs::MetadataExt as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -16,6 +16,8 @@ const VERSION: u32 = 1;
 /// A hello line, newline included. The policy file's text, at most `MAX_POLICY`, can grow
 /// up to six times in JSON.
 pub(crate) const MAX_LINE: usize = 512 * 1024;
+/// The policy file a bridge sends; a longer one is sent as unreadable.
+pub(crate) const MAX_POLICY: usize = 64 * 1024;
 /// How long each side waits for the other's hello line.
 pub(crate) const DEADLINE: Duration = Duration::from_secs(2);
 
@@ -59,6 +61,48 @@ pub(crate) struct Hello {
 }
 
 impl Hello {
+    /// The hello of a bridge running `exe` for the niri on `niri_socket` and the display
+    /// on `wayland_socket`, for a client whose environment gave `given`. A policy file over
+    /// `MAX_POLICY` is sent as unreadable. Fails on a value that isn't UTF-8.
+    pub(crate) fn new(
+        exe: Exe,
+        niri_socket: &Path,
+        wayland_socket: Option<&Path>,
+        given: Given,
+    ) -> Result<Self, String> {
+        let utf8 = |name: &str, value: Option<std::ffi::OsString>| {
+            value
+                .map(|value| {
+                    value
+                        .into_string()
+                        .map_err(|_| format!("{name} isn't UTF-8"))
+                })
+                .transpose()
+        };
+        let policy = match given.policy {
+            policy::Source::Text { path, text } if text.len() > MAX_POLICY => {
+                policy::Source::Unreadable {
+                    path,
+                    error: format!("it is over {MAX_POLICY} bytes, the most a shared engine takes"),
+                }
+            }
+            other @ (policy::Source::NoConfigDir
+            | policy::Source::Missing
+            | policy::Source::Unreadable { .. }
+            | policy::Source::Text { .. }) => other,
+        };
+        Ok(Self {
+            version: VERSION,
+            exe,
+            niri_socket: niri_socket.to_path_buf(),
+            wayland_socket: wayland_socket.map(Path::to_path_buf),
+            unrestricted: utf8("NIRI_COMPUTER_USE_UNRESTRICTED", given.unrestricted)?,
+            keyboard: utf8("NIRI_COMPUTER_USE_KEYBOARD", given.keyboard)?,
+            home: given.home,
+            policy,
+        })
+    }
+
     /// What the client's environment gave its session.
     pub(crate) fn given(self) -> Given {
         Given {
@@ -224,5 +268,28 @@ mod tests {
             own.take(b"GET / HTTP/1.1").unwrap_err().0,
             Refusal::BadHello
         );
+    }
+
+    #[test]
+    fn a_policy_file_too_long_to_send_counts_as_unreadable() {
+        let own = own();
+        let given = |text: String| Given {
+            unrestricted: None,
+            keyboard: None,
+            home: None,
+            policy: policy::Source::Text {
+                path: PathBuf::from("/p.toml"),
+                text,
+            },
+        };
+        let sent = |text| Hello::new(own.exe, &own.niri_socket, None, given(text)).unwrap();
+        assert!(matches!(
+            sent("#".repeat(MAX_POLICY)).given().policy,
+            policy::Source::Text { .. }
+        ));
+        assert!(matches!(
+            sent("#".repeat(MAX_POLICY + 1)).given().policy,
+            policy::Source::Unreadable { .. }
+        ));
     }
 }

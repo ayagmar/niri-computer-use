@@ -3,6 +3,7 @@
 mod a11y;
 mod act;
 mod audit;
+mod bridge;
 mod cli;
 mod clipboard;
 mod control;
@@ -245,9 +246,40 @@ fn command(args: &[OsString]) -> Option<Command> {
     }
 }
 
+/// Serves the client on stdin and stdout: through the shared engine in shared mode, unless
+/// it can't be reached or refuses this client, and standalone otherwise. Decided before
+/// the client's first byte is read.
 async fn serve(env: Env, given: session::Given) -> Result<(), String> {
+    let settings = session::Settings::new(given.clone());
+    let shared = policy::shared(
+        &settings.policy,
+        std::env::var_os("NIRI_COMPUTER_USE_SHARED").as_deref(),
+    );
+    let reached = match shared {
+        Ok(true) => reach_engine(&env, given.clone()).await.map(Some),
+        Ok(false) => Ok(None),
+        Err(note) => Err(note),
+    };
+    match reached {
+        Ok(Some((target, link))) => return bridge::run(target, link).await,
+        Ok(None) => {}
+        Err(reason) => cli::print_error(&format!("serving this client standalone: {reason}")),
+    }
+    standalone(env, settings).await
+}
+
+async fn reach_engine(
+    env: &Env,
+    given: session::Given,
+) -> Result<(bridge::Target, bridge::Link), String> {
+    let target = bridge::Target::new(env, given)?;
+    let link = bridge::connect(&target).await?;
+    Ok((target, link))
+}
+
+async fn standalone(env: Env, settings: session::Settings) -> Result<(), String> {
     let engine = std::sync::Arc::new(engine::Engine::start(env).await?);
-    let session = engine.open_session(std::process::id(), session::Settings::new(given));
+    let session = engine.open_session(std::process::id(), settings);
     let served =
         engine::host::serve_session(&engine, session, tokio::io::stdin(), tokio::io::stdout())
             .await;

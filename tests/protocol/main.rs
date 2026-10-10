@@ -46,6 +46,8 @@ mod screenshot;
 #[cfg(test)]
 mod session;
 #[cfg(test)]
+mod shared;
+#[cfg(test)]
 mod shell;
 #[cfg(test)]
 mod wait;

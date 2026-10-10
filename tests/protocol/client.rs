@@ -117,6 +117,13 @@ impl Server {
         stdin.flush().await.unwrap();
     }
 
+    /// Writes `bytes` as they are, as much as the server reads of them.
+    pub(crate) async fn send_raw(&mut self, bytes: &[u8]) {
+        let stdin = self.stdin.as_mut().unwrap();
+        stdin.write_all(bytes).await.ok();
+        stdin.flush().await.ok();
+    }
+
     /// The response to `id`, waiting up to `WAIT` for it.
     pub(crate) async fn response(&mut self, id: u64) -> Value {
         loop {

@@ -1,0 +1,242 @@
+//! Shared mode over stdio: `serve` as a bridge to the one engine of its niri instance,
+//! which the first bridge starts.
+
+use std::fs::File;
+use std::os::unix::net::UnixListener;
+use std::time::{Duration, Instant};
+
+use rustix::process::{Pid, Signal, kill_process};
+use serde_json::json;
+
+use crate::client::{CLIENT, Server, WAIT, tool_error};
+use crate::fixture::{Fixture, eventually, jpeg};
+use crate::niri::Niri;
+use crate::session::NiriProcess;
+
+/// A fixture whose servers run in shared mode.
+fn shared(name: &str) -> Fixture {
+    let mut fixture = Fixture::new(name);
+    fixture.set("NIRI_COMPUTER_USE_SHARED", "1");
+    fixture
+}
+
+/// The arguments and environment of each process of the user's.
+fn processes() -> Vec<(i32, Vec<String>, Vec<String>)> {
+    let split = |bytes: Vec<u8>| -> Vec<String> {
+        bytes
+            .split(|byte| *byte == 0)
+            .map(|part| String::from_utf8_lossy(part).into_owned())
+            .collect()
+    };
+    std::fs::read_dir("/proc")
+        .unwrap()
+        .filter_map(|entry| {
+            let pid = entry.ok()?.file_name().to_str()?.parse().ok()?;
+            let args = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+            let environ = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
+            Some((pid, split(args), split(environ)))
+        })
+        .collect()
+}
+
+/// The engines running for the fixture's niri.
+fn engines(fixture: &Fixture) -> Vec<i32> {
+    let niri = format!("NIRI_SOCKET={}", fixture.niri_socket().display());
+    processes()
+        .into_iter()
+        .filter(|(_, args, environ)| {
+            args.get(1).is_some_and(|arg| arg == "engine") && environ.contains(&niri)
+        })
+        .map(|(pid, _, _)| pid)
+        .collect()
+}
+
+/// The one engine for the fixture's niri, once there is exactly one.
+async fn engine(fixture: &Fixture) -> i32 {
+    assert!(
+        eventually(WAIT, || engines(fixture).len() == 1).await,
+        "engines: {:?}",
+        engines(fixture)
+    );
+    engines(fixture)[0]
+}
+
+/// How many crash guardians watch `server`.
+fn guardians(server: i32) -> usize {
+    processes()
+        .into_iter()
+        .filter(|(_, args, _)| {
+            args.get(1).is_some_and(|arg| arg == "guard")
+                && args.get(2).is_some_and(|arg| *arg == server.to_string())
+        })
+        .count()
+}
+
+fn kill(pid: i32) {
+    kill_process(Pid::from_raw(pid).unwrap(), Signal::KILL).unwrap();
+}
+
+/// Holds `engine.lock`, so that every engine started meanwhile leaves at once.
+fn hold_engine_lock(fixture: &Fixture) -> File {
+    std::fs::create_dir_all(fixture.runtime_dir()).unwrap();
+    let lock = File::create(fixture.runtime_dir().join("engine.lock")).unwrap();
+    lock.lock().unwrap();
+    lock
+}
+
+#[tokio::test]
+async fn ten_clients_share_one_engine_and_its_lease() {
+    let fixture = shared("shared-ten");
+    let _niri = NiriProcess::unlocked(&fixture).await;
+    let mut servers = Vec::new();
+    for _ in 0..10 {
+        servers.push(Server::spawn(&fixture));
+    }
+    for server in &mut servers {
+        let response = server.initialize("2025-11-25").await;
+        assert!(response.get("result").is_some(), "{response}");
+    }
+    let engine = engine(&fixture).await;
+    assert_eq!(guardians(engine), 1);
+    let (first, rest) = servers.split_first_mut().unwrap();
+    let second = &mut rest[0];
+    let label = format!("{CLIENT}/{}", first.pid);
+    assert_eq!(
+        first.structured("acquire_desktop").await["holder"]["label"],
+        label.as_str()
+    );
+    let (name, detail) = tool_error(&second.call("acquire_desktop", json!({})).await);
+    assert_eq!(name, "lease_held");
+    assert!(detail.contains(&format!("({label})")), "{detail}");
+    let sessions: Vec<_> = fixture
+        .audit_lines()
+        .into_iter()
+        .filter(|line| line["tool"] == "acquire_desktop")
+        .map(|line| line["session"].clone())
+        .collect();
+    assert_eq!(
+        sessions,
+        [json!(label), json!(format!("{CLIENT}/{}", second.pid))]
+    );
+}
+
+#[tokio::test]
+async fn unrestricted_is_the_clients_own_in_shared_mode() {
+    let mut fixture = shared("shared-unrestricted");
+    let _niri = Niri::start(&fixture);
+    fixture.set("NIRI_COMPUTER_USE_UNRESTRICTED", "1");
+    let mut on = Server::start(&fixture).await;
+    fixture.unset("NIRI_COMPUTER_USE_UNRESTRICTED");
+    let mut off = Server::start(&fixture).await;
+    engine(&fixture).await;
+    assert_eq!(
+        off.structured("status").await["unrestricted"]["enabled"],
+        false
+    );
+    assert_eq!(
+        on.structured("status").await["unrestricted"]["enabled"],
+        true
+    );
+    assert_eq!(
+        off.structured("status").await["unrestricted"]["enabled"],
+        false
+    );
+}
+
+#[tokio::test]
+async fn a_client_on_another_display_is_served_standalone() {
+    let mut fixture = shared("shared-mismatch");
+    let _niri = Niri::start(&fixture);
+    let mut bridged = Server::start(&fixture).await;
+    let engine = engine(&fixture).await;
+    let _other = UnixListener::bind(fixture.path("run/wayland-other")).unwrap();
+    fixture.set("WAYLAND_DISPLAY", "wayland-other");
+    let mut standalone = Server::start(&fixture).await;
+    assert_eq!(standalone.call("status", json!({})).await["isError"], false);
+    assert_eq!(engines(&fixture), [engine]);
+    assert_eq!(guardians(i32::try_from(standalone.pid).unwrap()), 1);
+    let (_, _, stderr) = standalone.stop().await;
+    assert!(
+        stderr.contains("serving this client standalone: the shared engine refused this client (session_mismatch)"),
+        "{stderr}"
+    );
+    assert_eq!(bridged.call("status", json!({})).await["isError"], false);
+}
+
+#[tokio::test]
+async fn a_lost_engine_fails_what_was_in_flight_and_the_next_call_reaches_a_new_one() {
+    let fixture = shared("shared-lost");
+    let _niri = Niri::start(&fixture);
+    std::fs::write(fixture.path("grim.out"), jpeg(1280, 720, b"pixels")).unwrap();
+    fixture.program(
+        "grim",
+        r#"echo >> "$DIR/grim.started"; await_file go; cat "$DIR/grim.out""#,
+    );
+    let mut busy = Server::start(&fixture).await;
+    let mut idle = Server::start(&fixture).await;
+    let first = engine(&fixture).await;
+    let shot = busy
+        .start_call("screenshot", json!({"target": "focused_output"}))
+        .await;
+    assert!(eventually(WAIT, || fixture.path("grim.started").exists()).await);
+    kill(first);
+    let lost = Instant::now();
+    let (in_flight, detail) = tool_error(&busy.response(shot).await["result"]);
+    assert_eq!(in_flight, "engine_lost");
+    assert!(detail.contains(&format!("(PID {first})")), "{detail}");
+    assert!(
+        lost.elapsed() < Duration::from_secs(1),
+        "{:?}",
+        lost.elapsed()
+    );
+    // A client with nothing in flight hears of the loss at its next call.
+    let lock = hold_engine_lock(&fixture);
+    let (next, _) = tool_error(&idle.call("status", json!({})).await);
+    assert_eq!(next, "engine_lost");
+    let (unavailable, why) = tool_error(&idle.call("status", json!({})).await);
+    assert_eq!(unavailable, "engine_unavailable");
+    assert!(why.contains("the next call tries again"), "{why}");
+    drop(lock);
+    // Each reaches a new engine, which needs `initialize` replayed to take a call.
+    assert_eq!(idle.call("status", json!({})).await["isError"], false);
+    assert_eq!(busy.call("status", json!({})).await["isError"], false);
+    assert_ne!(engine(&fixture).await, first);
+}
+
+#[tokio::test]
+async fn a_line_over_the_limit_ends_the_bridge() {
+    let fixture = shared("shared-line");
+    let _niri = Niri::start(&fixture);
+    let mut long = Server::start(&fixture).await;
+    let mut other = Server::start(&fixture).await;
+    engine(&fixture).await;
+    long.send_raw(&vec![b'x'; 16 * 1024 * 1024 + 1]).await;
+    let (status, unread, stderr) = long.stop().await;
+    assert!(!status.success(), "{status}");
+    assert_eq!(unread, Vec::<serde_json::Value>::new());
+    assert_eq!(stderr.lines().count(), 1, "{stderr}");
+    assert!(stderr.contains("over 16777216 bytes"), "{stderr}");
+    assert_eq!(other.call("status", json!({})).await["isError"], false);
+}
+
+#[tokio::test]
+async fn without_an_engine_in_time_the_client_is_served_standalone() {
+    let fixture = shared("shared-cold");
+    let _niri = Niri::start(&fixture);
+    let _lock = hold_engine_lock(&fixture);
+    let started = Instant::now();
+    let mut server = Server::start(&fixture).await;
+    assert!(
+        started.elapsed() >= Duration::from_secs(4),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(server.call("status", json!({})).await["isError"], false);
+    // Engines started meanwhile all leave.
+    assert!(eventually(WAIT, || engines(&fixture).is_empty()).await);
+    let (_, _, stderr) = server.stop().await;
+    assert!(
+        stderr.contains("serving this client standalone: no shared engine answered within 5 s"),
+        "{stderr}"
+    );
+}

@@ -76,7 +76,7 @@ impl Fixture {
             env,
             _display: display,
         };
-        let longest = fixture.noctalia_socket().as_os_str().len();
+        let longest = fixture.runtime_dir().join("engine.sock").as_os_str().len();
         assert!(
             longest < 108,
             "fixture name {name:?} makes socket paths too long"
@@ -108,6 +108,12 @@ impl Fixture {
 
     pub(crate) fn noctalia_socket(&self) -> PathBuf {
         self.dir.join(format!("run/noctalia-{DISPLAY}.sock"))
+    }
+
+    /// The server's runtime directory for the fixture's niri, which holds the engine's
+    /// socket, lock and log.
+    pub(crate) fn runtime_dir(&self) -> PathBuf {
+        self.dir.join("run/niri-computer-use/niri.test")
     }
 
     pub(crate) fn audit_log(&self) -> PathBuf {

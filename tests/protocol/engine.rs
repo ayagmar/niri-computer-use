@@ -15,10 +15,8 @@ use tokio::process::Child;
 use crate::client::{CLIENT, WAIT, engine};
 use crate::fixture::{DISPLAY, Fixture, eventually};
 
-const RUNTIME: &str = "run/niri-computer-use/niri.test";
-
 fn socket(fixture: &Fixture) -> PathBuf {
-    fixture.path(&format!("{RUNTIME}/engine.sock"))
+    fixture.runtime_dir().join("engine.sock")
 }
 
 /// The hello of a bridge running this build for the fixture's niri and display.
@@ -213,7 +211,7 @@ async fn removing_the_runtime_directory_ends_the_engine_and_its_sessions() {
     let fixture = Fixture::new("engine-gone");
     let mut child = start(&fixture).await;
     let mut session = Connection::session(&fixture).await;
-    std::fs::remove_dir_all(fixture.path(RUNTIME)).unwrap();
+    std::fs::remove_dir_all(fixture.runtime_dir()).unwrap();
     assert_eq!(session.next().await, None);
     assert!(
         exits_within(&mut child, Duration::from_secs(5))

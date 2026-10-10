@@ -44,6 +44,10 @@ These are the user's decisions. Don't call the refused action again and don't tr
 
 `niri_unavailable`, `deadline_exceeded`, `upstream_error` and `noctalia_unavailable` mean niri, a helper program or Noctalia didn't answer as expected. Tell the user the name and detail. Don't repeat the same call in a loop.
 
+## Shared mode
+
+`engine_lost` means the shared engine serving this session ended. What a call in flight did is unknown, and the lease is gone: look at `desktop_state` or a screenshot before acting again, and call `acquire_desktop` again if you still need it. `engine_unavailable` means no shared engine could be reached for this call; the next call tries again. Tell the user if it keeps happening.
+
 ## Not an error
 
 `focused_window` is null while keyboard focus is outside the window layout, for example on a shell panel, the lock screen or the overview.

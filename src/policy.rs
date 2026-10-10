@@ -96,6 +96,9 @@ pub(crate) struct Policy {
     /// turns it on.
     #[serde(default)]
     pub(crate) unrestricted: bool,
+    /// Serves this client through the instance's shared engine.
+    #[serde(default)]
+    pub(crate) shared: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -423,6 +426,21 @@ pub(crate) struct Unrestricted {
     /// `NIRI_COMPUTER_USE_UNRESTRICTED`: on for `1`, off when unset or empty, and an error for
     /// anything else, which leaves it off.
     pub(crate) env: Result<bool, String>,
+}
+
+/// Whether `serve` bridges its client to the shared engine: the policy file's `shared`, or
+/// `NIRI_COMPUTER_USE_SHARED` set to `1`, given as `env`. Any other value of the variable
+/// leaves it as the file says, and is the error when that is off.
+pub(crate) fn shared(policy: &Loaded, env: Option<&std::ffi::OsStr>) -> Result<bool, String> {
+    let from_file = matches!(policy, Loaded::Valid(policy) if policy.shared);
+    match env {
+        Some(value) if value == "1" => Ok(true),
+        Some(value) if !value.is_empty() && !from_file => Err(format!(
+            "NIRI_COMPUTER_USE_SHARED is \"{}\"; only 1 turns shared mode on",
+            value.display()
+        )),
+        _ => Ok(from_file),
+    }
 }
 
 /// What `status` reports about `unrestricted`.
@@ -828,6 +846,41 @@ name = "terminal"
 argv = ["/usr/bin/foot"]
 app_id = "foot"
 "#;
+
+    #[test]
+    fn shared_mode_comes_from_the_file_or_the_variable_set_to_one() {
+        let file = |shared| {
+            Loaded::Valid(Policy {
+                shared,
+                ..Policy::default()
+            })
+        };
+        let env = |value: &'static str| Some(std::ffi::OsStr::new(value));
+        assert_eq!(shared(&Loaded::Missing, None), Ok(false));
+        assert_eq!(shared(&file(true), None), Ok(true));
+        assert_eq!(shared(&file(false), env("1")), Ok(true));
+        assert_eq!(
+            shared(&Loaded::Invalid("bad".to_owned()), env("1")),
+            Ok(true)
+        );
+        assert_eq!(shared(&file(false), env("")), Ok(false));
+        assert!(
+            shared(&file(false), env("yes"))
+                .unwrap_err()
+                .contains("\"yes\"")
+        );
+        assert_eq!(shared(&file(true), env("yes")), Ok(true));
+        assert_eq!(
+            Loaded::from_source(
+                &Source::Text {
+                    path: "/p.toml".into(),
+                    text: "shared = true".to_owned()
+                },
+                false
+            ),
+            file(true)
+        );
+    }
 
     #[test]
     fn reads_the_plan_example() {

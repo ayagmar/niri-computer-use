@@ -12,6 +12,8 @@
 | `engine.rs` | What the server's sessions share, apart from MCP: the crash guardian, the event stream, the accessibility bus, the audit log and the desk, and the work each tool runs through them: the readiness check, the action gate and its evidence, captures and their refs, waits, and giving focus back. |
 | `engine/host.rs` | The `engine` subcommand: the engine lock, the instance socket, each connection's hello and session, and the idle exit. `serve_session` serves one session over any stream, stdio included. |
 | `engine/hello.rs` | The hello each side sends before MCP on a connection to the engine, and the engine's checks of it (pure, apart from reading the binary's identity). |
+| `bridge.rs` | `serve` in shared mode: reaches the instance's engine, starting it under `engine.start.lock` when there is none, then relays the client's MCP lines to it and answers for it when it is lost. |
+| `bridge/envelope.rs` | What the bridge reads of a relayed line (request, notification, response) and the answers it makes itself (pure). |
 | `session.rs` | One client of the engine: its label in the audit log and the lease record, and the settings its own environment gives it: the policy file, read from its config directory when the session starts, its `HOME` for `capture_dir`, and its `NIRI_COMPUTER_USE_UNRESTRICTED` and `NIRI_COMPUTER_USE_KEYBOARD`. |
 | `niri.rs`, `niri/request.rs`, `niri/events.rs` | The only code that talks to niri: one connection per request, one long-lived event stream, and the virtual pointer's Wayland connection. |
 | `niri/pointer.rs` | The virtual pointer: its own Wayland connection to niri, bound to one output. |
@@ -66,6 +68,20 @@
 5. Once it has had no connection, no lease held and no input cleanup pending for two seconds, it closes and removes `engine.sock`, still holding the lock, and exits. When its stop watcher ends, because the runtime directory was removed or replaced, it ends every session and exits at once.
 
 The engine's stderr is `engine.log`. Its session ids count up from 1 for its lifetime; a session's ended flag lives with the session, so the engine keeps nothing for a session after its connection is gone.
+
+### The bridge
+
+`serve` runs in shared mode when the policy file says `shared = true` or `NIRI_COMPUTER_USE_SHARED` is `1`. It decides once, before it reads anything from its client:
+
+1. It connects to `engine.sock` (500 ms) and sends its hello. If nothing listens there, it takes `engine.start.lock`, so that bridges starting together start one engine, checks the socket again, and starts `/proc/self/exe engine` in its own process group with stderr appended to `engine.log`, then waits up to two seconds for the socket. It tries at most three starts, retrying every 20 ms to 200 ms, within five seconds.
+2. If the engine refuses the hello, or nothing answers within the five seconds, it serves its client standalone, as without shared mode, and writes why to stderr.
+3. Otherwise it relays lines both ways, unchanged. It keeps the ids and methods of the client's requests in flight and the client's `initialize`.
+
+The hello carries no `PATH`: the engine runs `grim`, `wtype` and the other programs from its own `PATH`, the first bridge's, so a later bridge's `PATH` would change nothing and isn't compared.
+
+Once relaying, the bridge never serves standalone. When the engine closes the connection or a read from it fails, every request in flight gets `engine_lost`: a `tools/call` as a tool result with `isError`, anything else as a JSON-RPC error. With nothing in flight, the session's next request gets it instead. After that, the next request starts a new connection as in step 1; if that fails, the request gets `engine_unavailable` and the one after tries again. Notifications that arrive with no engine are dropped, and so is a `notifications/cancelled` for a request already answered. On a new connection the bridge replays the client's `initialize`, which can only happen with nothing in flight, takes the first response with the client's own id for it, without passing it on, and sends `notifications/initialized`; then it sends the request.
+
+A client line over 16 MiB ends the bridge: it stops relaying, writes one line to stderr and exits, closing stdout, and the engine ends that session. When the client closes stdin, the bridge closes its side of the connection and passes on what the engine still sends, for up to six seconds.
 
 ## Finding the session
 

@@ -65,6 +65,10 @@ pub(crate) enum ErrorName {
     ElementUnmappable,
     /// A gated `niri_action` while the policy's `unrestricted` is off.
     UnrestrictedRequired,
+    /// The shared engine ended while the call was in flight, or since the last call.
+    EngineLost,
+    /// The bridge couldn't reach or start a shared engine for this call.
+    EngineUnavailable,
 }
 
 /// A failure, serialized as `{"error": <name>, "detail": <upstream detail>}`.
