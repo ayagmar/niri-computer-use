@@ -661,6 +661,18 @@ async fn pointer_tools_check_the_ref_the_outputs_and_their_arguments_first() {
 }
 
 #[tokio::test]
+async fn scroll_refuses_notches_past_the_cap_at_the_signed_extremes() {
+    let mut desk = Desk::start("act-notches", "").await;
+    let id = screenshot_ref(&mut desk).await;
+    for (x, y) in [(i32::MIN, 0), (0, i32::MIN), (i32::MAX, 0), (-11, 0)] {
+        let arguments =
+            json!({"screenshot_ref": id, "x": 10, "y": 10, "notches_x": x, "notches_y": y});
+        let result = desk.server.call("scroll", arguments).await;
+        assert!(mistake(&result).contains("notches"), "{x} {y}");
+    }
+}
+
+#[tokio::test]
 async fn a_point_is_a_pixel_or_an_element_ref_of_this_lease() {
     let mut desk = Desk::start("act-element", "").await;
     let id = screenshot_ref(&mut desk).await;
