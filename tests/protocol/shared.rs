@@ -498,6 +498,38 @@ async fn servers_reaching_one_niri_through_other_paths_share_its_lease_and_stop_
     fixture.set("XDG_RUNTIME_DIR", runtime);
 }
 
+/// Sol's case: a hard link to niri's socket is another name for the same niri, which would
+/// have a runtime directory, and so a lease and stop flag, of its own. While the link
+/// exists, a server started by either name takes no lease, and `stop` has no flag to set;
+/// once it is gone, the socket's own name works again.
+#[tokio::test]
+async fn a_niri_socket_with_a_hard_link_takes_no_lease_by_either_name() {
+    let mut fixture = shared("shared-hard-link");
+    let mut desktop = Desktop::new(&fixture);
+    let alias = fixture.path("run/alias.sock");
+    std::fs::hard_link(fixture.niri_socket(), &alias).unwrap();
+    let mut original = Server::start(&fixture).await;
+    let _original_stream = desktop.stream().await;
+    fixture.unset("NIRI_COMPUTER_USE_SHARED");
+    fixture.set("NIRI_SOCKET", &alias);
+    let mut linked = Server::start(&fixture).await;
+    let _linked_stream = desktop.stream().await;
+    for server in [&mut original, &mut linked] {
+        let (name, detail) = tool_error(&server.call("acquire_desktop", json!({})).await);
+        assert_eq!(name, "niri_unavailable");
+        assert!(detail.contains("which has 2 hard links"), "{detail}");
+        assert_eq!(server.structured("status").await["lease"]["error"], detail);
+    }
+    assert!(!crate::client::run(&fixture, "stop").await.status.success());
+    assert!(!fixture.runtime_dir().exists());
+
+    std::fs::remove_file(&alias).unwrap();
+    fixture.set("NIRI_SOCKET", fixture.niri_socket());
+    let mut again = Server::start(&fixture).await;
+    let _again_stream = desktop.stream().await;
+    again.structured("acquire_desktop").await;
+}
+
 /// `holder` takes the lease, `other` is refused it, and `holder` gives it back.
 async fn holds_alone(holder: &mut Server, other: &mut Server) {
     holder.structured("acquire_desktop").await;

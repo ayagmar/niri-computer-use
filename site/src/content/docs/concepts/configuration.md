@@ -121,7 +121,7 @@ The server reads these once, at startup. When `XDG_RUNTIME_DIR`, `NIRI_SOCKET` o
 
 | Variable | Used for |
 |---|---|
-| `NIRI_SOCKET` | niri's IPC socket. With every symlink resolved, it also names the niri instance that the lease, the stop flag and the input-dirty marker belong to: they are in `niri-computer-use/<instance>/` beside the socket, where `<instance>` is its file name without `.sock` |
+| `NIRI_SOCKET` | niri's IPC socket. With every symlink resolved, it also names the niri instance that the lease, the stop flag and the input-dirty marker belong to: they are in `niri-computer-use/<instance>/` beside the socket, where `<instance>` is its file name without `.sock`. A socket with a hard link, which would be another name for the same niri, gets no lease by any name |
 | `XDG_RUNTIME_DIR` | finding niri's socket, the display and the session bus |
 | `WAYLAND_DISPLAY` | the pointer tools, `paste`, and finding Noctalia's socket |
 | `DBUS_SESSION_BUS_ADDRESS` | finding the accessibility bus for `elements`; without it, `$XDG_RUNTIME_DIR/bus` |

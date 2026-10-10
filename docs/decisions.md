@@ -641,8 +641,9 @@ These match the versions installed locally.
 
 - The runtime directory is `<dir>/niri-computer-use/<instance>/` beside niri's socket with every symlink resolved, not under `XDG_RUNTIME_DIR` (review finding). Before, a standalone server and a bridge whose clients passed different `XDG_RUNTIME_DIR` spellings, or a `NIRI_SOCKET` symlink with another name, locked different `lease` files for one niri and missed each other's stop flag.
 - The socket is resolved once per process and connections use the resolved path, so a symlink retargeted later can't move a running server to another niri or another lease.
-- Resolution fails closed: a socket that doesn't resolve, isn't the user's, or lies in a directory that isn't the user's with mode `0700` leaves the process with no runtime directory. Picking `/run/user/<euid>` or the unresolved path instead could split the lease again.
+- Resolution fails closed: a socket that doesn't resolve, isn't the user's, has more than one hard link, or lies in a directory that isn't the user's with mode `0700` leaves the process with no runtime directory. Picking `/run/user/<euid>` or the unresolved path instead could split the lease again.
 - A restarted niri gets a new directory with its new socket name. What the old instance left there, including an input-dirty marker, stays for a human: once the old socket is gone nothing resolves to it, so `recover` can't reach it. No dependency was added.
+- A socket with more than one hard link is refused by every name (review finding, fix round 4). Resolving symlinks can't tell two hard links apart, so each name would get its own lease and stop flag for one niri. Keying the directory on the socket's device and inode instead would keep working through a link, but a name that has to stay stable for the instance is simpler, and a link to niri's socket is no setup worth supporting. A server that resolved the socket before the link was made keeps its directory: the check runs once per process, like the resolution.
 
 ## 2026-10-10: stop and resume don't connect to niri
 

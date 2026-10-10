@@ -132,6 +132,8 @@ impl Seat {
 pub(crate) struct LeaseStatus {
     pub(crate) held_by_me: bool,
     pub(crate) holder: Option<Holder>,
+    /// Why no lease can be taken for this niri at all, as `acquire_desktop` says it.
+    pub(crate) error: Option<String>,
 }
 
 impl Desk {
@@ -440,17 +442,22 @@ impl Desk {
             holder: owner
                 .map(|owner| owner.holder)
                 .or_else(|| self.runtime.as_ref().ok().and_then(lease::holder)),
+            error: self
+                .runtime
+                .as_ref()
+                .err()
+                .map(|error| error.detail.clone()),
         }
     }
 }
 
 /// What `status` reports when there is no desk, as in the `status` subcommand.
 pub(crate) fn status_without_desk(env: &Env) -> LeaseStatus {
+    let runtime = RuntimeDir::of(env);
     LeaseStatus {
         held_by_me: false,
-        holder: RuntimeDir::of(env)
-            .ok()
-            .and_then(|runtime| lease::holder(&runtime)),
+        holder: runtime.as_ref().ok().and_then(lease::holder),
+        error: runtime.err(),
     }
 }
 
@@ -688,7 +695,8 @@ mod tests {
             desk.status(&me),
             LeaseStatus {
                 held_by_me: true,
-                holder: Some(holder)
+                holder: Some(holder),
+                error: None
             }
         );
         drop(action);
@@ -1058,7 +1066,8 @@ mod tests {
             desk.status(&me),
             LeaseStatus {
                 held_by_me: false,
-                holder: None
+                holder: None,
+                error: Some("NIRI_SOCKET is not set".to_owned())
             }
         );
     }
@@ -1084,7 +1093,8 @@ mod tests {
             desk.status(&other),
             LeaseStatus {
                 held_by_me: false,
-                holder: Some(holder.clone())
+                holder: Some(holder.clone()),
+                error: None
             }
         );
         assert!(desk.status(&me).held_by_me);

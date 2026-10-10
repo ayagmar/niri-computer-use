@@ -728,6 +728,15 @@ mod tests {
             connected.niri_socket
         );
 
+        // A hard link to it, by any name, leaves the stop flag nowhere.
+        let link = host.root.join("link");
+        std::fs::hard_link(&hung, &link).unwrap();
+        let linked = host.probe(Given::default(), Probe::Offline).await;
+        assert_eq!(linked.niri_socket, Ok(hung.clone()));
+        let refused = linked.instance.socket().unwrap_err();
+        assert!(refused.contains("which has 2 hard links"), "{refused}");
+        std::fs::remove_file(link).unwrap();
+
         // A socket whose PID isn't a running niri doesn't count.
         host.stale("niri.wayland-2.42.sock").await;
         let skipped = host.probe(Given::default(), Probe::Offline).await;

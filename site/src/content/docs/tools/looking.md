@@ -27,6 +27,7 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `niri.error` | why niri's version couldn't be read, or null |
 | `lease.held_by_me` | whether this server holds the lease |
 | `lease.holder` | the holder's `pid`, `label` (client name and server PID, such as `claude-code/4711`) and `since`, or null |
+| `lease.error` | null, or why no lease can be taken for this niri at all, such as a `NIRI_SOCKET` with a hard link; `acquire_desktop` fails with the same reason |
 | `input_dirty` | the input-dirty marker, or null: its `operation`, `phase` (`pending` or `running`), `server_pid`, `since`, the input `child` once known, and any pointer `buttons` pressed; `{"error": …}` if the marker can't be read |
 | `stop` | whether the stop flag is set for this niri instance (`niri-computer-use stop`, cleared by `niri-computer-use resume`) |
 | `lock.state` | `locked`, `unlocked` or `unknown` |
