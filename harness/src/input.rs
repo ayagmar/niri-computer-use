@@ -10,6 +10,7 @@ mod exposure;
 mod native;
 mod native_gestures;
 mod native_unicode;
+mod pacer;
 mod scrolling;
 mod stop;
 mod text_entry;

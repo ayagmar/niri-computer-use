@@ -36,6 +36,7 @@ pub(super) fn run(
     super::routing(session, &mut native, wev, window)?;
     super::native_unicode::run(session, &mut native, wev)?;
     measure(session, &mut native, wev, "native")?;
+    let pacer = super::pacer::start(session)?;
     super::exposure::run(session, &mut native, wev, "native")?;
     interruption(session, &mut native, wev, server, false)?;
     interruption(session, &mut native, wev, server, true)?;
@@ -45,6 +46,7 @@ pub(super) fn run(
     super::native_gestures::crash(session, native, wev, server)?;
     super::native_gestures::typing_crash(session, wev, server, "A", "typing")?;
     super::native_unicode::crash(session, wev, server)?;
+    pacer.stop()?;
     structured(&owner.call(session, "acquire_desktop", json!({}))?)?;
     super::native_unicode::wtype_comparison(session, owner, wev)?;
     measure(session, owner, wev, "wtype")?;

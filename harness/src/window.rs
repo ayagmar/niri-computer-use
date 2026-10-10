@@ -2,8 +2,9 @@
 //! from a launch preset, so it runs with niri's environment, which it checks is NESTED
 //! before it connects. It maps one or more plain toplevels and can start late, set its
 //! `app_id` only after mapping, and ignore close requests the way an app asking about
-//! unsaved changes does. It exits when its windows are closed, when niri goes away, or at
-//! its own deadline.
+//! unsaved changes does. With `--animate` it commits a damaged frame on every frame
+//! callback, so niri renders every frame, as for a video. It exits when its windows are
+//! closed, when niri goes away, or at its own deadline.
 
 use std::os::fd::AsFd as _;
 use std::path::PathBuf;
@@ -13,6 +14,7 @@ use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::fs::{MemfdFlags, ftruncate, memfd_create};
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::wl_buffer::WlBuffer;
+use wayland_client::protocol::wl_callback::{self, WlCallback};
 use wayland_client::protocol::wl_compositor::WlCompositor;
 use wayland_client::protocol::wl_registry::WlRegistry;
 use wayland_client::protocol::wl_shm::{self, WlShm};
@@ -32,7 +34,7 @@ const DEADLINE: Duration = Duration::from_secs(90);
 const WIDTH: i32 = 320;
 const HEIGHT: i32 = 240;
 
-pub(crate) const USAGE: &str = "usage: harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--started <file>] [--deadline <ms>]";
+pub(crate) const USAGE: &str = "usage: harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--animate] [--started <file>] [--deadline <ms>]";
 
 /// What the fixture does.
 #[derive(Debug, PartialEq, Eq)]
@@ -47,6 +49,8 @@ pub(crate) struct Options {
     pub(crate) late: Option<Duration>,
     /// Ignore close requests.
     pub(crate) keep_open: bool,
+    /// Commit a damaged frame on every frame callback.
+    pub(crate) animate: bool,
     /// A file to create as soon as the fixture starts, before its delay.
     pub(crate) started: Option<PathBuf>,
     /// How long the fixture runs at most.
@@ -65,6 +69,7 @@ impl Options {
             delay: Duration::ZERO,
             late: None,
             keep_open: false,
+            animate: false,
             started: None,
             deadline: DEADLINE,
         };
@@ -82,6 +87,7 @@ impl Options {
                 "--delay" => options.delay = millis(rest.next())?,
                 "--late" => options.late = Some(millis(rest.next())?),
                 "--keep-open" => options.keep_open = true,
+                "--animate" => options.animate = true,
                 "--deadline" => options.deadline = millis(rest.next())?,
                 "--started" => {
                     let value = rest.next().ok_or_else(|| Failure::new(USAGE))?;
@@ -101,6 +107,7 @@ impl Options {
 #[derive(Debug)]
 struct State {
     keep_open: bool,
+    animate: bool,
     /// Toplevels the compositor has configured and that got a buffer.
     mapped: u32,
     closed: u32,
@@ -128,6 +135,7 @@ pub(crate) fn run(options: &Options) -> Result<()> {
         .context("bind xdg_wm_base")?;
     let mut state = State {
         keep_open: options.keep_open,
+        animate: options.animate,
         mapped: 0,
         closed: 0,
         buffer: buffer(&shm, &handle)?,
@@ -259,14 +267,36 @@ impl Dispatch<XdgSurface, WlSurface> for State {
         event: xdg_surface::Event,
         surface: &WlSurface,
         _: &Connection,
-        _: &QueueHandle<Self>,
+        handle: &QueueHandle<Self>,
     ) {
         if let xdg_surface::Event::Configure { serial } = event {
             xdg.ack_configure(serial);
             surface.attach(Some(&state.buffer), 0, 0);
+            if state.animate {
+                surface.frame(handle, surface.clone());
+            }
             surface.damage_buffer(0, 0, WIDTH, HEIGHT);
             surface.commit();
             state.mapped += 1;
+        }
+    }
+}
+
+/// The next frame: damaged again, so niri has something to render.
+impl Dispatch<WlCallback, WlSurface> for State {
+    fn event(
+        state: &mut Self,
+        _: &WlCallback,
+        event: wl_callback::Event,
+        surface: &WlSurface,
+        _: &Connection,
+        handle: &QueueHandle<Self>,
+    ) {
+        if let wl_callback::Event::Done { .. } = event {
+            surface.frame(handle, surface.clone());
+            surface.attach(Some(&state.buffer), 0, 0);
+            surface.damage_buffer(0, 0, WIDTH, HEIGHT);
+            surface.commit();
         }
     }
 }
@@ -309,6 +339,7 @@ mod tests {
                 delay: Duration::ZERO,
                 late: None,
                 keep_open: false,
+                animate: false,
                 started: None,
                 deadline: DEADLINE,
             }
@@ -323,6 +354,7 @@ mod tests {
             "--late",
             "300",
             "--keep-open",
+            "--animate",
             "--started",
             "/t/s",
             "--deadline",
@@ -333,6 +365,7 @@ mod tests {
         assert_eq!(all.delay, Duration::from_millis(1500));
         assert_eq!(all.late, Some(Duration::from_millis(300)));
         assert!(all.keep_open);
+        assert!(all.animate);
         assert_eq!(all.started, Some(PathBuf::from("/t/s")));
         assert_eq!(all.deadline, Duration::from_mins(10));
         for bad in [
