@@ -5,7 +5,6 @@ use std::collections::BTreeMap;
 use niri_ipc::Output;
 use serde::Serialize;
 
-use crate::Env;
 use crate::audit::{Audit, AuditStatus};
 use crate::control::desk::LeaseStatus;
 use crate::control::marker::{self, Found};
@@ -16,6 +15,7 @@ use crate::niri::events::StreamState;
 use crate::niri::{self, version::Compat};
 use crate::noctalia::{self, Presence};
 use crate::policy::{self, Facts, Loaded, PolicyStatus};
+use crate::{Env, a11y};
 
 /// Programs the server runs or will run, reported as found on `PATH` or not.
 const BINARIES: [&str; 5] = ["grim", "wtype", "wl-copy", "wl-paste", "loginctl"];
@@ -35,6 +35,8 @@ pub(crate) struct Status {
     noctalia: Presence,
     /// Why Noctalia counts as not running, when it's installed.
     noctalia_error: Option<ToolError>,
+    /// Whether this session has an accessibility bus, for `elements`.
+    accessibility: a11y::Presence,
     audit: AuditStatus,
     policy: PolicyStatus,
     binaries: BTreeMap<&'static str, bool>,
@@ -51,6 +53,8 @@ pub(crate) struct Sources<'a> {
     pub(crate) noctalia_installed: bool,
     pub(crate) lease: LeaseStatus,
     pub(crate) policy: &'a Loaded,
+    /// Decided once at startup for the server, whose tool list depends on it.
+    pub(crate) accessibility: &'a a11y::Presence,
 }
 
 /// Whether the pointer tools may run on niri's outputs right now.
@@ -88,6 +92,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         noctalia_installed,
         lease,
         policy,
+        accessibility,
     } = sources;
     let socket = env.niri_socket.as_deref();
     let (version, outputs, noctalia) =
@@ -127,6 +132,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         outputs: OutputSupport::of(outputs),
         noctalia: presence,
         noctalia_error,
+        accessibility: accessibility.clone(),
         audit: audit.status(),
         policy: policy.status(),
         binaries: BINARIES
@@ -163,6 +169,7 @@ mod tests {
             noctalia_installed: false,
             lease: status_without_desk(&Env::default()),
             policy: &Loaded::Missing,
+            accessibility: &a11y::detect(None).await,
         };
         let status = serde_json::to_value(collect(&Env::default(), sources).await).unwrap();
         assert_eq!(
@@ -188,6 +195,11 @@ mod tests {
                 "outputs": {"pointer_supported": false, "reason": "NIRI_SOCKET is not set"},
                 "noctalia": "not_installed",
                 "noctalia_error": null,
+                "accessibility": {
+                    "available": false,
+                    "address": null,
+                    "reason": "DBUS_SESSION_BUS_ADDRESS is not set"
+                },
                 "audit": {"path": null, "last_error": "neither XDG_STATE_HOME nor HOME is set"},
                 "policy": {
                     "state": "missing", "presets": 0, "preset_names": [], "denied_app_ids": 0,

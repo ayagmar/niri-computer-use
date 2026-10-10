@@ -366,10 +366,23 @@ pub(crate) fn refuse_control(facts: Facts<'_>) -> Option<ToolError> {
 /// denies input to (plan §9). Its `app_id` is the client's own claim, and a click can land
 /// on another window, so this is a guardrail, not a boundary.
 pub(crate) fn refuse_input(policy: &Loaded, focused_app_id: Option<&str>) -> Option<ToolError> {
+    denied(policy, focused_app_id?, "the focused window")
+}
+
+/// `app_denied` when the window that owns an accessible element belongs to an app on the
+/// deny list, whatever has focus.
+pub(crate) fn refuse_window(
+    policy: &Loaded,
+    window: u64,
+    app_id: Option<&str>,
+) -> Option<ToolError> {
+    denied(policy, app_id?, &format!("window {window}"))
+}
+
+fn denied(policy: &Loaded, app_id: &str, whose: &str) -> Option<ToolError> {
     let Loaded::Valid(policy) = policy else {
         return None;
     };
-    let app_id = focused_app_id?;
     policy
         .deny_input_app_ids
         .iter()
@@ -377,7 +390,7 @@ pub(crate) fn refuse_input(policy: &Loaded, focused_app_id: Option<&str>) -> Opt
         .then(|| {
             ToolError::new(
                 ErrorName::AppDenied,
-                format!("the focused window's app_id {app_id:?} is on the policy's deny list"),
+                format!("{whose}'s app_id {app_id:?} is on the policy's deny list"),
             )
         })
 }
@@ -718,6 +731,20 @@ app_id = "foot"
             refuse_input(&Loaded::Missing, Some("org.keepassxc.KeePassXC")),
             None
         );
+    }
+
+    #[test]
+    fn elements_of_a_denied_apps_window_are_refused_whatever_has_focus() {
+        let policy = Loaded::Valid(parse(EXAMPLE).unwrap());
+        let refused = refuse_window(&policy, 7, Some("org.keepassxc.KeePassXC")).unwrap();
+        assert_eq!(refused.name, ErrorName::AppDenied);
+        assert!(
+            refused.detail.starts_with("window 7's app_id"),
+            "{}",
+            refused.detail
+        );
+        assert_eq!(refuse_window(&policy, 7, Some("firefox")), None);
+        assert_eq!(refuse_window(&policy, 7, None), None);
     }
 
     fn output(name: &str, transform: Option<Transform>) -> Output {

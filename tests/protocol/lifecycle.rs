@@ -242,6 +242,24 @@ async fn without_noctalia_on_path_there_are_no_shell_tools() {
 }
 
 #[tokio::test]
+async fn without_an_accessibility_bus_there_is_no_elements_tool_and_status_says_why() {
+    let fixture = Fixture::new("no-a11y");
+    let mut server = Server::start(&fixture).await;
+    assert!(!names(&server.tools().await).contains(&"elements"));
+    assert_eq!(
+        server.structured("status").await["accessibility"],
+        json!({
+            "available": false,
+            "address": null,
+            "reason": "DBUS_SESSION_BUS_ADDRESS is not set"
+        })
+    );
+    let id = server.start_call("elements", json!({"window_id": 1})).await;
+    let response = server.response(id).await;
+    assert!(response["error"]["code"].is_i64(), "{response}");
+}
+
+#[tokio::test]
 async fn an_unknown_tool_is_a_protocol_error() {
     let fixture = Fixture::new("unknown");
     let mut server = Server::start(&fixture).await;

@@ -514,3 +514,18 @@ These match the versions installed locally.
 - The saved PNG is its own capture at the output's scale rather than the returned image re-encoded, because downscaling happens in grim and the server decodes no images. That costs one more grim call (about 14 to 100 ms on a 2560-wide output, see Screenshots) and lets the two images differ by a few milliseconds.
 - The path is confined with `openat` and `O_NOFOLLOW` through the existing `rustix` `fs` feature, not by canonicalizing and comparing prefixes, which a symlink swapped in between could get past. No new dependency.
 - `screenshot` keeps `read_only_hint: true`: the hint describes the desktop, and a save only adds a new file in a directory the user chose.
+
+## 2026-10-10: zbus for the accessibility bus
+
+- `elements` and `element:` read AT-SPI over D-Bus, which needs a D-Bus client. Spawning `busctl` per call would cost a process for each of the up to 2000 objects a walk reads, so the server keeps one connection to the accessibility bus instead.
+- `zbus` 5.19.0, published 2026-08-09, the newest stable release at least 7 days old. MIT, MSRV 1.87. `default-features = false` with only the `tokio` feature: it runs on the server's runtime with no thread of its own, and `cargo tree -e features -i zbus` resolves no other feature (no `p2p`, no `async-io`).
+- Not `atspi` 0.30.0 (2026-05-06). Its `atspi-connection` defaults to `p2p`, whose connect awaits every application on the bus in turn with no deadline, so one stopped app hangs it (the research report measured this). Its `atspi-proxies` 0.14.0 always compiles in zbus's `async-io`, even with `tokio`. It would add 48 crates to the lock file, against 26 for zbus alone.
+- The calls are hand-written with `Connection::call_method`, not zbus proxies: a proxy caches properties and adds match rules, which means more round trips and no per-call deadline. Each call has a 1 s deadline and each request a 3 s budget. Only the application whose PID is niri's window's PID is called; the registry and the bus answer the rest.
+- `async-recursion` (a zbus dependency) is held at 1.1.1: 1.2.0 came out on 2026-10-03, less than 7 days ago. `toml_edit` resolves to 0.25.15 (2026-09-11) for the same reason.
+- Cost: `Cargo.lock` grows from 112 to 138 packages, and the server's normal dependency tree on Linux from 83 to 106 crates. The stripped release binary grows from 4,422,464 to 6,279,608 bytes.
+
+## 2026-10-10: elements
+
+- Role and state names are AT-SPI's own (`atspi-constants.h`) in snake case, such as `push_button_menu` or `check_box`, so they match what other AT-SPI tools show. An unknown `role` argument is an argument mistake.
+- An element's place is `output origin + tile position + window offset in the tile + its WINDOW-relative extents`. It is trusted only when the app's accessible frame is niri's window size, within a pixel. A frame of another size, as with client-side decorations that draw shadows, makes every element of that window `unmappable: frame_size_mismatch` rather than a guess.
+- New error names: `not_accessible` when the window's application has no accessible window for it, and `ambiguous_window` when several of its windows fit.

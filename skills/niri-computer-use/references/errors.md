@@ -32,6 +32,8 @@ These are the user's decisions. Don't call the refused action again and don't tr
 | `text_too_long` | Over 1000 characters for `type_text`, or 1 MiB for `paste`; nothing was typed. Split the text into calls of at most 1000 characters, pass `submit: true` only on the last, and send nothing more once a call comes back with `typed`. |
 | `clipboard_unsaved` | `paste` couldn't save the user's clipboard whole (too large, an owner that didn't answer, or something its owner marked secret), so it changed nothing. Use `type_text` instead, in parts of at most 1000 characters. |
 | `save_not_enabled` | `screenshot`'s `save_path` needs a `capture_dir` in the user's policy file, and there is none. Ask the user to add one; don't save the image another way. |
+| `not_accessible` | The window's app isn't on the accessibility bus, or has no accessible window that is this one. Use screenshots for that window. |
+| `ambiguous_window` | The app has several accessible windows that could be this one. Use screenshots for that window. |
 | `panel_not_allowed` | Only `control-center`, `wallpaper` and `tray-drawer` can be opened. Don't reach another panel some other way. |
 
 ## Report and don't loop

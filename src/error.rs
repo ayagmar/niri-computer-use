@@ -51,6 +51,10 @@ pub(crate) enum ErrorName {
     ClipboardUnsaved,
     /// `screenshot` was asked to save without a `capture_dir` in the policy file.
     SaveNotEnabled,
+    /// The window's application isn't on the accessibility bus, or has no window there.
+    NotAccessible,
+    /// Several of the application's accessible windows could be the window asked about.
+    AmbiguousWindow,
 }
 
 /// A failure, serialized as `{"error": <name>, "detail": <upstream detail>}`.

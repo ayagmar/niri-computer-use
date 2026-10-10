@@ -19,9 +19,12 @@
 | `screenshot` | `target`, and optionally `region`, `max_width`, `format`, `save_path` | an image, then metadata: output, captured rectangle in layout coordinates, scale, image size, and `screenshot_ref` while you hold the lease; with `save_path`, `saved`: the PNG's path and pixel size |
 | `clipboard_read` | none | `text`, or `text: null` with `reason` `nothing_copied` or `no_text` |
 | `shell_status` | none | Noctalia's `barVisible`, `panelOpen`, `activePanelId` and `locked`. Listed only when Noctalia is installed |
+| `elements` | `window_id`, optionally `role`, `name_contains`, `limit` (1 to 500, default 50) | that window's accessible elements: `role`, `name`, `states`, `actions`, and `layout_box` in layout coordinates, or null with `unmappable`; `truncated`, `walked`, `capped`. Listed only when the session has an accessibility bus |
 | `wait_for` | `until`, optionally `timeout_ms` (100 to 30000, default 10000) and `screenshot` | `observed`: `met` with the matching `windows`, `timeout`, or `uncertain`; `focused_window`; `waited_ms` |
 
 `until` is one of `{"window": {"app_id": …, "title": …}}` (a window with that `app_id` and a title containing that text; either one may be left out), `{"closed": <window id>}`, `{"title": {"window_id": …, "contains": …}}`, or `"screen_stable"` (two captures of the focused output 100 ms apart are the same).
+
+`elements` lists the showing elements that have a name or an action, in the app's order; with `role` (AT-SPI's role names in snake case, such as `button`, `check_box`, `entry` or `menu_item`) it lists every showing element of that role. `name_contains` matches without regard to case. `unmappable` is `frame_size_mismatch` when the app's coordinates for that window can't be trusted, as with client-side decorations, `not_showing`, or `empty`. Names are the app's own text, like text in a screenshot. When `status.accessibility.available` is false, `elements` isn't listed and `reason` says why.
 
 If `status` shows `niri.error` "NIRI_SOCKET is not set", the agent started the server without the niri session's environment. Tell the user rather than retrying.
 

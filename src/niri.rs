@@ -12,7 +12,7 @@ mod wayland;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use niri_ipc::{Action, Output, Request, Response};
+use niri_ipc::{Action, Output, Request, Response, Window, Workspace};
 
 use crate::error::{ErrorName, ToolError, Unanswered};
 use events::{DesktopState, EventStream};
@@ -37,6 +37,24 @@ pub(crate) async fn outputs(socket: Option<&Path>) -> Result<BTreeMap<String, Ou
         return Err(unexpected("Outputs"));
     };
     Ok(outputs.into_iter().collect())
+}
+
+/// niri's windows, as it reports them right now.
+pub(crate) async fn windows(socket: Option<&Path>) -> Result<Vec<Window>, ToolError> {
+    let Response::Windows(windows) = request::send(known(socket)?, &Request::Windows).await? else {
+        return Err(unexpected("Windows"));
+    };
+    Ok(windows)
+}
+
+/// niri's workspaces, as it reports them right now.
+pub(crate) async fn workspaces(socket: Option<&Path>) -> Result<Vec<Workspace>, ToolError> {
+    let Response::Workspaces(workspaces) =
+        request::send(known(socket)?, &Request::Workspaces).await?
+    else {
+        return Err(unexpected("Workspaces"));
+    };
+    Ok(workspaces)
 }
 
 /// The output with keyboard focus, if niri reports one.

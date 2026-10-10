@@ -1,11 +1,13 @@
 //! niri-computer-use: an MCP server that lets AI agents observe a niri desktop.
 
+mod a11y;
 mod act;
 mod audit;
 mod cli;
 mod clipboard;
 mod control;
 mod coords;
+mod elements;
 mod error;
 mod image_header;
 mod input;
@@ -51,6 +53,8 @@ pub(crate) struct Env {
     pub(crate) config_dir: Option<PathBuf>,
     /// Explicit experimental backend selection; absent means wtype.
     pub(crate) keyboard: Option<OsString>,
+    /// `DBUS_SESSION_BUS_ADDRESS`, where the accessibility bus is looked up.
+    pub(crate) session_bus: Option<OsString>,
 }
 
 impl Env {
@@ -63,6 +67,7 @@ impl Env {
             wayland_display: var("WAYLAND_DISPLAY"),
             home: var("HOME").map(PathBuf::from),
             keyboard: var("NIRI_COMPUTER_USE_KEYBOARD"),
+            session_bus: var("DBUS_SESSION_BUS_ADDRESS"),
             state_dir: var("XDG_STATE_HOME")
                 .map(PathBuf::from)
                 .or_else(|| var("HOME").map(|home| PathBuf::from(home).join(".local/state"))),
@@ -141,12 +146,14 @@ async fn main() -> ExitCode {
         Some(Command::Status) => {
             let audit = audit::Audit::new(env.state_dir.clone());
             let policy = env.policy();
+            let accessibility = a11y::detect(env.session_bus.as_deref()).await;
             let sources = status::Sources {
                 event_stream: None,
                 audit: &audit,
                 noctalia_installed: env.finds("noctalia"),
                 lease: control::desk::status_without_desk(&env),
                 policy: &policy,
+                accessibility: &accessibility,
             };
             cli::print_json(&status::collect(&env, sources).await)
                 .map_err(|error| format!("print status: {error}"))
@@ -197,7 +204,8 @@ async fn serve(env: Env) -> Result<(), String> {
         .clone()
         .map(niri::events::EventStream::spawn);
     let audit = audit::Audit::new(env.state_dir.clone());
-    let service = tools::Server::new(env, events, audit)
+    let accessibility = a11y::detect(env.session_bus.as_deref()).await;
+    let service = tools::Server::new(env, events, audit, accessibility)
         .serve(rmcp::transport::stdio())
         .await
         .map_err(|error| format!("start MCP session: {error}"))?;
