@@ -9,7 +9,7 @@ sidebar:
 niri-computer-use serve | status | stop | resume | recover | guard <server-pid> | paste-keeper
 ```
 
-Each takes exactly one subcommand and no options. Anything else prints that usage line to stderr and exits 1. Every subcommand works on the niri instance in `NIRI_SOCKET`, so run them from a shell inside your niri session, or from a niri bind, which passes `NIRI_SOCKET` on.
+Each takes exactly one subcommand and no options. Anything else prints that usage line to stderr and exits 1. Every subcommand works on the niri instance in `NIRI_SOCKET`, or, without it, the one running niri of yours the server [finds](../../start/clients/#session-variables). A niri bind passes `NIRI_SOCKET` on.
 
 ## `serve`
 
@@ -37,7 +37,7 @@ niri-computer-use stop
 
 Sets the stop flag for this niri instance, prints nothing and exits 0. A running action ends with `stopped`, the lease holder gives the lease up, and `acquire_desktop` and every action refuse with `stopped` until `resume`. Bind it to a key: see [First session](../../start/first-session/#bind-the-stop-key).
 
-It fails, exiting 1, when `NIRI_SOCKET` or `XDG_RUNTIME_DIR` isn't set or the flag can't be written.
+It fails, exiting 1, when niri's socket or the runtime directory is neither set nor found, or the flag can't be written.
 
 ## `resume`
 

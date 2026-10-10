@@ -141,9 +141,9 @@ These mean niri, a program or Noctalia didn't answer as expected. Report the nam
 
 ### `niri_unavailable`
 
-**Cause:** `NIRI_SOCKET` isn't set, or niri's socket is missing, refused the connection or closed it.
+**Cause:** `NIRI_SOCKET` isn't set and the server found no running niri of yours, or found several; or niri's socket is missing, refused the connection or closed it.
 
-**What to do:** start the agent from inside your niri session, or make the client pass `NIRI_SOCKET` on (see [Client setup](../../start/clients/)). `status` shows the reason under `niri.error`.
+**What to do:** `status` shows the reason under `niri.error`. With several niri sessions, start the agent from inside the one you want or pass `NIRI_SOCKET` on (see [Session variables](../../start/clients/#session-variables)).
 
 ### `deadline_exceeded`
 

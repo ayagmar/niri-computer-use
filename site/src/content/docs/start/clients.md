@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-niri-computer-use is a stdio MCP server: the client starts `niri-computer-use serve` and talks to it over stdin and stdout. The server finds niri through `NIRI_SOCKET` and the rest of your session through its environment, so run these commands from a shell inside your niri session.
+niri-computer-use is a stdio MCP server: the client starts `niri-computer-use serve` and talks to it over stdin and stdout. No client needs more than the command. The server finds your niri session itself when its environment lacks `XDG_RUNTIME_DIR`, `NIRI_SOCKET` or `WAYLAND_DISPLAY`, as it does under Codex; see [Session variables](#session-variables).
 
 ## Claude Code
 
@@ -31,19 +31,7 @@ pi mcp list
 codex mcp add niri-computer-use -- ~/.cargo/bin/niri-computer-use serve
 ```
 
-Codex starts MCP servers with a short list of variables, and that list doesn't include niri's. Add this line to the `[mcp_servers.niri-computer-use]` section the command wrote to `~/.codex/config.toml`:
-
-```toml
-env_vars = ["NIRI_SOCKET", "XDG_RUNTIME_DIR", "WAYLAND_DISPLAY"]
-```
-
-Then check that Codex forwards them:
-
-```sh
-codex mcp get niri-computer-use
-```
-
-The `env:` line should name all three. `codex mcp list` doesn't start the server, so it can't tell you whether it connects. Without `NIRI_SOCKET` the server's `status` reports `NIRI_SOCKET is not set`.
+Codex starts MCP servers with a short list of variables that leaves out niri's, so the server finds the session itself; `env_vars` isn't needed. `codex mcp list` doesn't start the server, so ask the agent to call `status`: `discovery` shows `discovered` for the three session variables, and `niri.error` is null.
 
 ## Other MCP clients
 
@@ -60,16 +48,7 @@ Any client that starts stdio servers can run it. A client that reads the common 
 }
 ```
 
-Use the full path to the binary. If the client starts servers with a reduced environment, as Codex and the MCP Inspector do, it must also pass on these variables from your niri session:
-
-| Variable | Why |
-|---|---|
-| `NIRI_SOCKET` | niri's IPC socket; without it nothing works |
-| `XDG_RUNTIME_DIR` | where the lease, the stop flag and the input-dirty marker live |
-| `WAYLAND_DISPLAY` | the pointer tools, paste, and finding Noctalia |
-| `DBUS_SESSION_BUS_ADDRESS` | the accessibility bus; without it the server uses `$XDG_RUNTIME_DIR/bus` |
-
-`NIRI_SOCKET` names niri's process, so it changes every time niri starts. A fixed value in a config file breaks after you log in again; prefer a client setting that forwards the variable by name, as Codex's `env_vars` does.
+Use the full path to the binary. A client that starts servers with a reduced environment, as Codex and the MCP Inspector do, needs nothing more.
 
 To check a config file without an agent, list the tools through the [MCP Inspector](https://github.com/modelcontextprotocol/inspector) (needs Node.js):
 
@@ -78,6 +57,20 @@ npx -y @modelcontextprotocol/inspector@2.9.0 --cli --config mcp.json --server ni
 ```
 
 It prints the tool list as JSON.
+
+## Session variables
+
+When one of these is unset or empty, the server finds it at startup:
+
+| Variable | Found as |
+|---|---|
+| `XDG_RUNTIME_DIR` | `/run/user/<your uid>`, if it is your directory with mode `0700`, as logind creates it |
+| `NIRI_SOCKET` | the one socket in the runtime directory named `niri.<display>.<pid>.sock`, as niri names it, that is yours and whose process is a running `niri` |
+| `WAYLAND_DISPLAY` | the `<display>` in that socket's name, if the runtime directory has a socket by that name |
+
+The session bus for `elements` is `$XDG_RUNTIME_DIR/bus` unless `DBUS_SESSION_BUS_ADDRESS` is set. `status` reports under `discovery` whether each came from the environment or was discovered, and why it is missing when neither.
+
+A variable you set always wins. That matters when you run more than one niri session as the same user: the server never picks one of several, and `status` reports `niri_unavailable` naming the sockets it found. Start the agent from a shell inside the session you want, or pass `NIRI_SOCKET` on. `NIRI_SOCKET` names niri's process and changes every time niri starts, so forward it by name, as Codex's `env_vars = ["NIRI_SOCKET"]` does, rather than writing a fixed path into a config file.
 
 ## The skill
 

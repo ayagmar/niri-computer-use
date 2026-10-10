@@ -9,7 +9,7 @@ Many apps describe their widgets to screen readers over the accessibility bus (A
 
 ## When it is listed
 
-`elements` is listed only when the session has an accessibility bus. The server asks the session bus, at `DBUS_SESSION_BUS_ADDRESS` or else `$XDG_RUNTIME_DIR/bus`, for the accessibility bus's address once at startup. `status` reports the answer under `accessibility`: `available`, the bus's `address`, and the `reason` when there is none. Most desktops start the bus with at-spi2-core.
+`elements` is listed only when the session has an accessibility bus. The server asks the session bus, at `DBUS_SESSION_BUS_ADDRESS` or else `$XDG_RUNTIME_DIR/bus` (with the runtime directory [found](../../start/clients/#session-variables) when the client didn't pass it), for the accessibility bus's address once at startup. `status` reports the answer under `accessibility`: `available`, the bus's `address`, and the `reason` when there is none. Most desktops start the bus with at-spi2-core.
 
 ## `elements`
 
