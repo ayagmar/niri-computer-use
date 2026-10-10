@@ -41,7 +41,7 @@ const USAGE: &str = "usage: niri-computer-use serve | status | stop | resume | r
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Env {
     /// niri's IPC socket, which also names the compositor instance.
-    pub(crate) niri_socket: Option<PathBuf>,
+    pub(crate) niri_socket: niri::Socket,
     pub(crate) path: Option<OsString>,
     pub(crate) runtime_dir: Option<PathBuf>,
     pub(crate) wayland_display: Option<OsString>,
@@ -62,7 +62,8 @@ impl Env {
     fn read() -> Self {
         let var = |name| std::env::var_os(name).filter(|value| !value.is_empty());
         Self {
-            niri_socket: var("NIRI_SOCKET").map(PathBuf::from),
+            niri_socket: var("NIRI_SOCKET")
+                .map_or_else(niri::Socket::default, |path| niri::Socket::at(path.into())),
             path: var("PATH"),
             runtime_dir: var("XDG_RUNTIME_DIR").map(PathBuf::from),
             wayland_display: var("WAYLAND_DISPLAY"),
@@ -103,7 +104,8 @@ impl Env {
     /// The basename of `NIRI_SOCKET`, which names the compositor instance.
     pub(crate) fn instance(&self) -> Option<String> {
         self.niri_socket
-            .as_deref()
+            .path()
+            .ok()
             .and_then(std::path::Path::file_name)
             .map(|name| name.to_string_lossy().into_owned())
     }
@@ -212,8 +214,9 @@ async fn serve(env: Env) -> Result<(), String> {
     .map_err(|error| format!("start the crash guardian: {}", error.detail))?;
     let events = env
         .niri_socket
-        .clone()
-        .map(niri::events::EventStream::spawn);
+        .path()
+        .map(|socket| niri::events::EventStream::spawn(socket.to_path_buf()))
+        .map_err(Clone::clone);
     let audit = audit::Audit::new(env.state_dir.clone());
     let accessibility = a11y::detect(env.session_bus.as_deref()).await;
     let service = tools::Server::new(env, events, audit, accessibility)

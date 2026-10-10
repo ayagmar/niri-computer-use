@@ -99,7 +99,7 @@ pub(super) async fn send_key_releases(env: &Env, marked: &marker::Native) -> Res
     let display = env
         .wayland_socket()
         .ok_or("WAYLAND_DISPLAY or XDG_RUNTIME_DIR is not set")?;
-    let pid = niri::pid(env.niri_socket.as_deref())
+    let pid = niri::pid(&env.niri_socket)
         .await
         .map_err(|error| error.detail)?;
     let mut keyboard = niri::keyboard::Keyboard::bind(&display, pid)
@@ -131,7 +131,7 @@ pub(super) async fn send_releases(
     buttons: &[u32],
     marked: Option<&str>,
 ) -> Result<(), String> {
-    let socket = env.niri_socket.as_deref();
+    let socket = &env.niri_socket;
     let outputs = niri::outputs(socket).await.map_err(|error| error.detail)?;
     let mut enabled = outputs.values().filter(|output| output.logical.is_some());
     let output = enabled

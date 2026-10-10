@@ -4,13 +4,14 @@
 //! (`render.c:145–146`), which truncates. The expected size follows the same rule, and a
 //! capture whose header disagrees is an error rather than an image with unknown geometry.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use niri_ipc::{LogicalOutput, Output, Transform};
 use serde::Serialize;
 
 use crate::error::{CallError, ErrorName, ToolError};
+use crate::niri::Socket;
 use crate::policy::SaveTarget;
 use crate::{image_header, niri, runner, save};
 
@@ -137,7 +138,7 @@ pub(crate) struct Screenshot {
 }
 
 pub(crate) async fn screenshot(
-    socket: Option<&Path>,
+    socket: &Socket,
     request: &Request,
 ) -> Result<Screenshot, CallError> {
     let outputs = niri::outputs(socket).await?;
@@ -191,7 +192,7 @@ pub(crate) async fn screenshot(
 /// Captures `target` as a PNG at its output's own scale, whatever the returned image's
 /// `max_width`, and writes it to `save`.
 pub(crate) async fn save(
-    socket: Option<&Path>,
+    socket: &Socket,
     target: &Target,
     save: &SaveTarget,
 ) -> Result<Saved, CallError> {

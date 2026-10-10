@@ -7,7 +7,6 @@
 //! expected target ends the wait as `interrupted`: someone else is using the desktop.
 
 use std::collections::BTreeSet;
-use std::path::Path;
 use std::time::Duration;
 
 use niri_ipc::{Action, Window, WorkspaceReferenceArg};
@@ -17,7 +16,7 @@ use crate::error::{CallError, ErrorName, ToolError, Unanswered};
 use crate::input::keyboard::Focus;
 use crate::input::paste::Pasted;
 use crate::niri;
-use crate::niri::events::EventStream;
+use crate::niri::Socket;
 use crate::niri::waiter::{View, Waited, Waiter};
 use crate::observe::{self, Metadata, Screenshot};
 use crate::policy::Preset;
@@ -213,8 +212,8 @@ where
 /// Where actions go and where their effects are watched.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Niri<'a> {
-    pub(crate) socket: Option<&'a Path>,
-    pub(crate) events: Option<&'a EventStream>,
+    pub(crate) socket: &'a Socket,
+    pub(crate) events: niri::Events<'a>,
 }
 
 pub(crate) async fn focus_window(niri: Niri<'_>, id: u64) -> Result<Outcome, CallError> {
@@ -356,7 +355,7 @@ pub(crate) async fn launch(
 
 /// Focuses `id` and waits until it has focus.
 async fn focus(
-    socket: Option<&Path>,
+    socket: &Socket,
     waiter: &mut Waiter,
     id: u64,
     windows: Vec<u64>,
@@ -383,7 +382,7 @@ fn unsent(observed: Observed, view: &View, windows: Vec<u64>) -> Outcome {
 }
 
 /// Sends the action. A refusal is an error; a lost reply is the `uncertain` outcome.
-async fn send(socket: Option<&Path>, action: Action) -> Result<Option<Outcome>, CallError> {
+async fn send(socket: &Socket, action: Action) -> Result<Option<Outcome>, CallError> {
     match niri::act(socket, action).await {
         Ok(()) => Ok(None),
         Err(Unanswered::Refused(error)) => Err(error.into()),

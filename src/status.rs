@@ -94,7 +94,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         policy,
         accessibility,
     } = sources;
-    let socket = env.niri_socket.as_deref();
+    let socket = &env.niri_socket;
     let (version, outputs, noctalia) =
         tokio::join!(niri::version(socket), niri::outputs(socket), async {
             if noctalia_installed {
@@ -104,7 +104,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
             }
         });
     let noctalia_status = noctalia.as_ref().and_then(|reply| reply.as_ref().ok());
-    let lock = control::lock(env.niri_socket.as_deref(), noctalia_status).await;
+    let lock = control::lock(&env.niri_socket, noctalia_status).await;
     let (version, error) = match version {
         Ok(version) => (Some(version), None),
         Err(error) => (None, Some(error)),

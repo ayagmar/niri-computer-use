@@ -542,8 +542,8 @@ struct PasteArgs {
 #[derive(Debug, Clone)]
 pub(crate) struct Server {
     env: Env,
-    /// None without `NIRI_SOCKET`.
-    events: Option<EventStream>,
+    /// Without niri's socket, the socket's error.
+    events: Result<EventStream, ToolError>,
     audit: Audit,
     desk: Desk,
     /// Read once at startup.
@@ -563,7 +563,7 @@ impl Server {
     /// with an accessibility bus, so the tool list stays fixed for the session.
     pub(crate) fn new(
         env: Env,
-        events: Option<EventStream>,
+        events: Result<EventStream, ToolError>,
         audit: Audit,
         accessibility: Presence,
     ) -> Self {
@@ -1035,7 +1035,7 @@ impl Server {
         &self,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let outputs = niri::outputs(self.env.niri_socket.as_deref());
+        let outputs = niri::outputs(&self.env.niri_socket);
         self.audited(&context, "outputs", Value::Null, async {
             answer(outputs.await)
         })
@@ -1095,7 +1095,7 @@ impl Server {
             let lease = self.desk.ref_lease();
             let remember =
                 |element| lease.and_then(|lease| self.desk.remember_element(lease, element));
-            let socket = self.env.niri_socket.as_deref();
+            let socket = &self.env.niri_socket;
             // Boxed, because the walk's calls make a large future.
             match Box::pin(elements::list(socket, a11y, &self.policy, &ask, remember)).await {
                 Ok(listing) => structured(&listing),
@@ -1272,9 +1272,9 @@ impl Server {
 }
 
 impl Server {
-    fn niri(&self) -> act::Niri<'_> {
+    const fn niri(&self) -> act::Niri<'_> {
         act::Niri {
-            socket: self.env.niri_socket.as_deref(),
+            socket: &self.env.niri_socket,
             events: self.events.as_ref(),
         }
     }
@@ -1401,9 +1401,9 @@ impl Server {
     /// the result names.
     async fn capture(&self, request: observe::Request) -> Result<observe::Screenshot, CallError> {
         let lease = self.desk.ref_lease();
-        let connection = self.events.as_ref().and_then(EventStream::connection);
+        let connection = self.events.as_ref().ok().and_then(EventStream::connection);
         let taken = Instant::now();
-        let mut shot = observe::screenshot(self.env.niri_socket.as_deref(), &request).await?;
+        let mut shot = observe::screenshot(&self.env.niri_socket, &request).await?;
         if let (Some(lease), Some(connection)) = (lease, connection) {
             let kept = Shot::of(&shot, taken, connection);
             shot.metadata.screenshot_ref = self.desk.remember(lease, kept);
@@ -1420,7 +1420,7 @@ impl Server {
     ) -> Result<observe::Screenshot, CallError> {
         let saved = match &save {
             Some(save) => {
-                let socket = self.env.niri_socket.as_deref();
+                let socket = &self.env.niri_socket;
                 Some(observe::save(socket, &request.target, save).await?)
             }
             None => None,
@@ -1818,6 +1818,10 @@ mod tests {
         assert!(args(None, 501).ask().is_err());
     }
 
+    fn no_events() -> Result<EventStream, ToolError> {
+        Err(ToolError::new(ErrorName::NiriUnavailable, "no niri"))
+    }
+
     fn absent() -> Presence {
         Presence {
             available: false,
@@ -1837,8 +1841,8 @@ mod tests {
             path: Some(dir.clone().into_os_string()),
             ..Env::default()
         };
-        let installed = Server::new(installed, None, Audit::new(None), absent());
-        let absent = Server::new(Env::default(), None, Audit::new(None), absent());
+        let installed = Server::new(installed, no_events(), Audit::new(None), absent());
+        let absent = Server::new(Env::default(), no_events(), Audit::new(None), absent());
         for tool in SHELL_TOOLS {
             assert!(installed.tool_router.has_route(tool), "{tool}");
             assert!(!absent.tool_router.has_route(tool), "{tool}");
@@ -1849,7 +1853,7 @@ mod tests {
 
     #[test]
     fn the_server_names_itself_and_gives_instructions() {
-        let server = Server::new(Env::default(), None, Audit::new(None), absent());
+        let server = Server::new(Env::default(), no_events(), Audit::new(None), absent());
         let info = server.get_info();
         assert_eq!(info.server_info.name, "niri-computer-use");
         assert!(

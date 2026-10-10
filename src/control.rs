@@ -21,6 +21,7 @@ use std::time::Duration;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
+use crate::niri::Socket;
 use crate::{niri, runner};
 
 const LOGINCTL_DEADLINE: Duration = Duration::from_secs(2);
@@ -58,10 +59,7 @@ impl Lock {
 }
 
 /// Asks logind about niri's session and reads `noctalia`'s status reply; locked wins.
-pub(crate) async fn lock(
-    niri_socket: Option<&Path>,
-    noctalia: Option<&Map<String, Value>>,
-) -> Lock {
+pub(crate) async fn lock(niri_socket: &Socket, noctalia: Option<&Map<String, Value>>) -> Lock {
     let session = niri_session(niri_socket).await;
     let logind = match &session {
         Ok(id) => locked_hint(id).await,
@@ -78,7 +76,7 @@ pub(crate) async fn lock(
 /// such as this server's own when it runs from SSH or a TTY, would read a hint niri never
 /// sets. niri sets it only when started with `--session`; a plain `niri` inherits the
 /// variable but leaves the hint at `no` while locked.
-async fn niri_session(niri_socket: Option<&Path>) -> Result<String, String> {
+async fn niri_session(niri_socket: &Socket) -> Result<String, String> {
     let pid = niri::pid(niri_socket)
         .await
         .map_err(|error| format!("find niri's process: {}", error.detail))?;

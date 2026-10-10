@@ -133,7 +133,7 @@ mod tests {
     async fn follows_the_flag_as_stop_and_resume_change_it() {
         let dir = crate::test_support::fresh_dir("stop-watch");
         let runtime = RuntimeDir::of(&Env {
-            niri_socket: Some(dir.join("niri.test.sock")),
+            niri_socket: crate::niri::Socket::at(dir.join("niri.test.sock")),
             runtime_dir: Some(dir.clone()),
             ..Env::default()
         })
@@ -155,7 +155,7 @@ mod tests {
     async fn removing_the_directory_counts_as_stopped_and_ends_the_watch() {
         let dir = crate::test_support::fresh_dir("stop-watch-gone");
         let runtime = RuntimeDir::of(&Env {
-            niri_socket: Some(dir.join("niri.test.sock")),
+            niri_socket: crate::niri::Socket::at(dir.join("niri.test.sock")),
             runtime_dir: Some(dir.clone()),
             ..Env::default()
         })
@@ -176,7 +176,7 @@ mod tests {
     async fn replacing_the_directory_ends_the_watch() {
         let dir = crate::test_support::fresh_dir("stop-watch-replaced");
         let runtime = RuntimeDir::of(&Env {
-            niri_socket: Some(dir.join("niri.test.sock")),
+            niri_socket: crate::niri::Socket::at(dir.join("niri.test.sock")),
             runtime_dir: Some(dir.clone()),
             ..Env::default()
         })
@@ -200,7 +200,7 @@ mod tests {
     async fn a_flag_set_before_watching_is_seen() {
         let dir = crate::test_support::fresh_dir("stop-watch-early");
         let runtime = RuntimeDir::of(&Env {
-            niri_socket: Some(dir.join("niri.test.sock")),
+            niri_socket: crate::niri::Socket::at(dir.join("niri.test.sock")),
             runtime_dir: Some(dir.clone()),
             ..Env::default()
         })

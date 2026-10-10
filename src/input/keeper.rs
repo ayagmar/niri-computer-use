@@ -91,7 +91,7 @@ async fn take(env: &Env) -> Result<(Selection, Option<Contents>, SourceId), Stri
     let display = env
         .wayland_socket()
         .ok_or("WAYLAND_DISPLAY or XDG_RUNTIME_DIR is not set")?;
-    let niri = crate::niri::pid(env.niri_socket.as_deref())
+    let niri = crate::niri::pid(&env.niri_socket)
         .await
         .map_err(|error| error.detail)?;
     let mut selection = Selection::bind(&display, niri)

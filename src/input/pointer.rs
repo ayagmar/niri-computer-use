@@ -258,6 +258,7 @@ pub(crate) async fn point(
     let connection = input
         .niri
         .events
+        .ok()
         .and_then(niri::events::EventStream::connection);
     shot.check(Instant::now(), &outputs, connection)?;
     let tool = gesture.tool();
