@@ -7,7 +7,8 @@ use serde_json::{Value, json};
 
 use crate::client::{CLIENT, Server, run, tool_error};
 use crate::fixture::Fixture;
-use crate::niri::Niri;
+use crate::niri::{Niri, window_on};
+use crate::noctalia::{self, UNLOCKED};
 use crate::session::NiriProcess;
 
 #[tokio::test]
@@ -169,4 +170,51 @@ async fn an_unknown_lock_state_refuses_the_lease() {
     let (name, detail) = tool_error(&server.call("acquire_desktop", json!({})).await);
     assert_eq!(name, "screen_locked");
     assert!(detail.contains("unknown"), "{detail}");
+}
+
+/// niri restarted under a new socket: a server for the new instance has a lease and flags
+/// of its own, while what the old one left stays where it was, for a human to look at.
+#[tokio::test]
+async fn a_restarted_niri_shares_nothing_with_the_old_instance() {
+    let mut fixture = Fixture::new("lease-restart");
+    fixture.program("noctalia", "exit 0");
+    let _noctalia = noctalia::start(&fixture, UNLOCKED);
+    let mut old_niri = Niri::start(&fixture);
+    let mut old = Server::start(&fixture).await;
+    let old_stream = old_niri.stream().await;
+    old_stream.initial(&[window_on(1, Some("a"), 1, true)]);
+    old_stream.workspaces(1);
+    old.structured("acquire_desktop").await;
+    let marker = fixture.path("run/niri-computer-use/niri.test/input-dirty");
+    std::fs::write(&marker, "").unwrap();
+
+    drop((old_stream, old_niri));
+    std::fs::remove_file(fixture.niri_socket()).unwrap();
+    let restarted = fixture.path("run/niri.restarted.sock");
+    let mut new_niri = Niri::listen(&restarted);
+    let old_socket = fixture.niri_socket();
+    fixture.set("NIRI_SOCKET", &restarted);
+    let mut new = Server::start(&fixture).await;
+    let new_stream = new_niri.stream().await;
+    new_stream.initial(&[window_on(1, Some("a"), 1, true)]);
+    new_stream.workspaces(1);
+    assert!(run(&fixture, "stop").await.status.success());
+    assert_eq!(new.structured("status").await["stop"], true);
+    assert_eq!(old.structured("status").await["stop"], false);
+    assert!(run(&fixture, "resume").await.status.success());
+    new.structured("acquire_desktop").await;
+
+    // The old instance's socket is gone, so nothing resolves to it any more.
+    fixture.set("NIRI_SOCKET", old_socket);
+    let recover = run(&fixture, "recover").await;
+    assert!(!recover.status.success(), "{recover:?}");
+    let stderr = String::from_utf8_lossy(&recover.stderr);
+    assert!(stderr.contains("can't be resolved"), "{stderr}");
+    assert!(marker.exists());
+    let release = json!({"restore_focus": false});
+    assert_eq!(
+        old.structured_with("release_desktop", release).await["released"],
+        true
+    );
+    assert_eq!(new.structured("status").await["lease"]["held_by_me"], true);
 }

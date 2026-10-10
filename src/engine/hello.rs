@@ -135,7 +135,14 @@ pub(crate) enum Refusal {
     BadHello,
 }
 
-/// What the engine compares a hello with: its own build, niri and display.
+/// The display's socket with every symlink resolved, as a hello names it, so two
+/// spellings of one socket's path match; as given when it can't be resolved.
+pub(crate) fn resolved(display: &Path) -> PathBuf {
+    std::fs::canonicalize(display).unwrap_or_else(|_| display.to_path_buf())
+}
+
+/// What the engine compares a hello with: its own build, its resolved niri socket and
+/// display.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Own {
     pub(crate) exe: Exe,

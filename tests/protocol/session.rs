@@ -46,7 +46,7 @@ impl NiriProcess {
     }
 
     async fn launch(fixture: &Fixture, session: Option<&str>, niri_args: &[&str]) -> Self {
-        // A socket left by an earlier fake niri in the same test.
+        // The fixture's socket file, or one an earlier fake niri in the same test left.
         std::fs::remove_file(fixture.niri_socket()).ok();
         let program = std::env::current_exe().unwrap();
         let mut command = command(&program);
@@ -90,6 +90,7 @@ impl NiriProcess {
     /// A plain `niri` on the fixture's `NIRI_SOCKET` that relays every connection to the
     /// socket `to`.
     pub(crate) async fn relaying(fixture: &Fixture, to: &Path) -> Self {
+        std::fs::remove_file(fixture.niri_socket()).ok();
         let program = std::env::current_exe().unwrap();
         let mut command = command(&program);
         command.env(SOCKET, fixture.niri_socket()).env(RELAY, to);

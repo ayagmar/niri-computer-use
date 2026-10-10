@@ -275,14 +275,15 @@ fn expect(holds: bool, what: &str, seen: &str) -> Result<()> {
     }
 }
 
-/// The runtime directory the servers share for the nested niri.
-pub(crate) fn runtime_dir(run: &Path, niri_socket: &Path) -> Result<PathBuf> {
-    let name = niri_socket
-        .file_name()
-        .ok_or_else(|| Failure::new("the nested NIRI_SOCKET has no file name"))?
-        .to_string_lossy();
+/// The runtime directory the servers share for the nested niri, whose socket, with every
+/// symlink resolved, is `resolved`.
+pub(crate) fn runtime_dir(resolved: &Path) -> Result<PathBuf> {
+    let (Some(dir), Some(name)) = (resolved.parent(), resolved.file_name()) else {
+        return Err(Failure::new("the nested NIRI_SOCKET has no file name"));
+    };
+    let name = name.to_string_lossy();
     let instance = name.strip_suffix(".sock").unwrap_or(&name);
-    Ok(run.join("niri-computer-use").join(instance))
+    Ok(dir.join("niri-computer-use").join(instance))
 }
 
 #[cfg(test)]
@@ -292,11 +293,7 @@ mod tests {
     #[test]
     fn the_runtime_dir_is_named_after_the_nested_instance() {
         assert_eq!(
-            runtime_dir(
-                Path::new("/t/run"),
-                Path::new("/t/run/niri.wayland-2.99.sock")
-            )
-            .unwrap(),
+            runtime_dir(Path::new("/t/run/niri.wayland-2.99.sock")).unwrap(),
             Path::new("/t/run/niri-computer-use/niri.wayland-2.99")
         );
     }

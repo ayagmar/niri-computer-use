@@ -63,6 +63,8 @@ impl Niri {
 
     /// The same, listening on `socket`.
     pub(crate) fn listen(socket: &std::path::Path) -> Self {
+        // In place of the socket file the fixture leaves, as a restarted niri does.
+        std::fs::remove_file(socket).ok();
         let listener = UnixListener::bind(socket).unwrap();
         let config = Arc::new(Mutex::new(Config {
             outputs: vec![output("DP-1", Some((0, 0, 2560, 1440, 1.0)))],

@@ -42,8 +42,11 @@ const USAGE: &str = "usage: niri-computer-use serve | status | stop | resume | r
 /// counts as unset.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Env {
-    /// niri's IPC socket, which also names the compositor instance.
+    /// niri's IPC socket: resolved, when `instance` is.
     pub(crate) niri_socket: niri::Socket,
+    /// The compositor instance, resolved once at startup, which names the runtime
+    /// directory.
+    pub(crate) instance: control::runtime::Instance,
     pub(crate) path: Option<OsString>,
     pub(crate) runtime_dir: Option<PathBuf>,
     pub(crate) wayland_display: Option<OsString>,
@@ -76,10 +79,15 @@ impl Env {
             wayland_display: var("WAYLAND_DISPLAY"),
         };
         let session = discover::session(given, roots).await;
+        // Connections go to the resolved socket, so a symlink retargeted later doesn't move
+        // them to another niri.
+        let niri_socket = match (session.instance.socket(), session.niri_socket) {
+            (Ok(resolved), _) => niri::Socket::at(resolved.to_path_buf()),
+            (Err(_), found) => found.map_or_else(niri::Socket::unknown, niri::Socket::at),
+        };
         let mut env = Self {
-            niri_socket: session
-                .niri_socket
-                .map_or_else(niri::Socket::unknown, niri::Socket::at),
+            niri_socket,
+            instance: session.instance,
             path: var("PATH"),
             wayland_display: session.wayland_display,
             display: niri::Display::default(),
@@ -102,7 +110,8 @@ impl Env {
         env
     }
 
-    /// The basename of `NIRI_SOCKET`, which names the compositor instance.
+    /// The file name of niri's socket, resolved when it could be, which names the compositor
+    /// instance.
     pub(crate) fn instance(&self) -> Option<String> {
         self.niri_socket
             .path()
@@ -376,9 +385,10 @@ mod tests {
     }
 
     /// A client that forwards niri's socket but not the runtime directory, for a niri
-    /// whose runtime directory isn't the default one, such as a nested niri.
+    /// whose runtime directory isn't the default one, such as a nested niri, and one that
+    /// reaches both through another root that links to them.
     #[tokio::test]
-    async fn servers_for_one_niri_share_its_lease_and_stop_flag_without_the_runtime_variable() {
+    async fn servers_for_one_niri_share_its_lease_and_stop_flag_however_they_reach_it() {
         use crate::control::lease::Lease;
         use crate::control::runtime::RuntimeDir;
 
@@ -396,6 +406,9 @@ mod tests {
             euid,
         };
         let socket = nested.join("niri.wayland-2.42.sock");
+        let _niri = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let alias = root.join("alias");
+        std::os::unix::fs::symlink(&nested, &alias).unwrap();
         let full = Env::from_vars(
             |name| match name {
                 "XDG_RUNTIME_DIR" => Some(nested.clone().into()),
@@ -410,14 +423,26 @@ mod tests {
             &roots,
         )
         .await;
-        let (full, partial) = (
+        let aliased = Env::from_vars(
+            |name| match name {
+                "XDG_RUNTIME_DIR" => Some(alias.clone().into()),
+                "NIRI_SOCKET" => Some(alias.join("niri.wayland-2.42.sock").into()),
+                _ => None,
+            },
+            &roots,
+        )
+        .await;
+        let (full, partial, aliased) = (
             RuntimeDir::of(&full).unwrap(),
             RuntimeDir::of(&partial).unwrap(),
+            RuntimeDir::of(&aliased).unwrap(),
         );
         let _held = Lease::acquire(&full, "full").unwrap();
         assert!(Lease::acquire(&partial, "partial").is_err());
+        assert!(Lease::acquire(&aliased, "aliased").is_err());
         full.stop().unwrap();
         assert!(partial.stopped().unwrap());
+        assert!(aliased.stopped().unwrap());
         std::fs::remove_dir_all(root).unwrap();
     }
 

@@ -37,7 +37,7 @@ niri-computer-use stop
 
 Sets the stop flag for this niri instance, prints nothing and exits 0. A running action ends with `stopped`, the lease holder gives the lease up, and `acquire_desktop` and every action refuse with `stopped` until `resume`. Bind it to a key: see [First session](../../start/first-session/#bind-the-stop-key).
 
-It fails, exiting 1, when niri's socket or the runtime directory is neither set nor found, or the flag can't be written.
+It fails, exiting 1, when niri's socket is neither set nor found, doesn't resolve to a socket of yours in a directory only you can use, or the flag can't be written.
 
 ## `resume`
 

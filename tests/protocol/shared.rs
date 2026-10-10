@@ -470,6 +470,34 @@ async fn a_bridge_and_a_standalone_server_share_one_lease() {
     holds_alone(&mut standalone, &mut bridged).await;
 }
 
+/// A client whose runtime directory and niri socket are other spellings of the same ones,
+/// through a link to the directory and a link to the socket whose name says nothing,
+/// reaches the same lease and stop flag, whether it is served standalone or not.
+#[tokio::test]
+async fn servers_reaching_one_niri_through_other_paths_share_its_lease_and_stop_flag() {
+    let mut fixture = shared("shared-alias");
+    let mut desktop = Desktop::new(&fixture);
+    let mut bridged = Server::start(&fixture).await;
+    let _engine_stream = desktop.stream().await;
+    let alias = fixture.path("alias");
+    std::os::unix::fs::symlink(fixture.path("run"), &alias).unwrap();
+    std::os::unix::fs::symlink(alias.join("niri.test.sock"), fixture.path("run/niri")).unwrap();
+    let runtime = fixture.env()["XDG_RUNTIME_DIR"].clone();
+    fixture.unset("NIRI_COMPUTER_USE_SHARED");
+    fixture.set("XDG_RUNTIME_DIR", &alias);
+    fixture.set("NIRI_SOCKET", alias.join("niri"));
+    let mut standalone = Server::start(&fixture).await;
+    let _own_stream = desktop.stream().await;
+    let status = standalone.structured("status").await;
+    assert_eq!(status["engine"]["mode"], "standalone", "{status}");
+    holds_alone(&mut bridged, &mut standalone).await;
+    holds_alone(&mut standalone, &mut bridged).await;
+    assert!(crate::client::run(&fixture, "stop").await.status.success());
+    assert_eq!(bridged.structured("status").await["stop"], true);
+    // The engine, started with the fixture's own variables, is found by them at the end.
+    fixture.set("XDG_RUNTIME_DIR", runtime);
+}
+
 /// `holder` takes the lease, `other` is refused it, and `holder` gives it back.
 async fn holds_alone(holder: &mut Server, other: &mut Server) {
     holder.structured("acquire_desktop").await;

@@ -1,11 +1,17 @@
-//! The runtime directory of one compositor instance,
-//! `$XDG_RUNTIME_DIR/niri-computer-use/<instance>/`, where `<instance>` is the basename of
-//! `NIRI_SOCKET` without `.sock`. It holds the flags every server for that instance
-//! shares, so a server for another niri, such as the nested harness, never sees them.
+//! The runtime directory of one compositor instance, `<dir>/niri-computer-use/<instance>/`,
+//! where `<dir>` is the directory that holds niri's socket and `<instance>` the socket's
+//! name without `.sock`, both with every symlink resolved. It holds the lease, the flags
+//! and the engine's socket every server for that instance shares, so a server for another
+//! niri, such as the nested harness, never sees them, and every server for this one does,
+//! whichever `XDG_RUNTIME_DIR` it inherited and however its `NIRI_SOCKET` spells the path.
+//! A process resolves the instance once, at its start, and keeps it: a symlink retargeted
+//! later, or a niri restarted under another name, doesn't move it.
 
 use std::fs::{DirBuilder, OpenOptions};
 use std::io;
-use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _};
+use std::os::unix::fs::{
+    DirBuilderExt as _, FileTypeExt as _, MetadataExt as _, OpenOptionsExt as _,
+};
 use std::path::{Path, PathBuf};
 
 use crate::Env;
@@ -13,26 +19,72 @@ use crate::Env;
 const STOP: &str = "stop";
 pub(crate) const INPUT_DIRTY: &str = "input-dirty";
 
+/// niri's socket with every symlink resolved, in a directory of the user's with mode
+/// `0700`: the compositor instance a process coordinates for, or why it has none. Two
+/// spellings of one socket's path resolve to the same instance; two hard links to it
+/// don't.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Instance(Result<PathBuf, String>);
+
+impl Default for Instance {
+    fn default() -> Self {
+        Self(Err("NIRI_SOCKET is not set".to_owned()))
+    }
+}
+
+impl Instance {
+    /// Resolves `socket`, which must be a socket owned by `euid` in a private directory
+    /// of `euid`'s once resolved. Nothing is taken in its place when it isn't.
+    pub(crate) fn resolve(socket: &Path, euid: u32) -> Self {
+        Self(resolved(socket, euid).map_err(|why| {
+            format!(
+                "NIRI_SOCKET {} {why}, so this process coordinates with no other: no lease, stop flag or marker",
+                socket.display()
+            )
+        }))
+    }
+
+    /// No instance, for the reason given.
+    pub(crate) const fn unknown(why: String) -> Self {
+        Self(Err(why))
+    }
+
+    /// The resolved socket.
+    pub(crate) fn socket(&self) -> Result<&Path, &String> {
+        self.0.as_deref()
+    }
+}
+
+fn resolved(socket: &Path, euid: u32) -> Result<PathBuf, String> {
+    let canonical =
+        std::fs::canonicalize(socket).map_err(|error| format!("can't be resolved: {error}"))?;
+    let meta = std::fs::metadata(&canonical)
+        .map_err(|error| format!("can't be read once resolved: {error}"))?;
+    if !meta.file_type().is_socket() || meta.uid() != euid {
+        return Err(format!(
+            "resolves to {}, which isn't a socket of user {euid}'s",
+            canonical.display()
+        ));
+    }
+    let dir = canonical.parent().unwrap_or_else(|| Path::new("/"));
+    crate::discover::private(dir, euid)
+        .map_err(|why| format!("resolves to {}, whose directory {why}", canonical.display()))?;
+    Ok(canonical)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RuntimeDir {
     path: PathBuf,
 }
 
 impl RuntimeDir {
-    /// The directory for the niri instance `env` names. Nothing is created.
+    /// The directory for the niri instance `env` resolved. Nothing is created.
     pub(crate) fn of(env: &Env) -> Result<Self, String> {
-        let socket = env
-            .niri_socket
-            .path()
-            .map_err(|error| error.detail.clone())?;
-        let runtime = env
-            .runtime_dir
-            .as_deref()
-            .ok_or("XDG_RUNTIME_DIR is not set")?;
-        let name = socket
-            .file_name()
-            .ok_or_else(|| format!("NIRI_SOCKET {} has no file name", socket.display()))?
-            .to_string_lossy();
+        let socket = env.instance.socket().map_err(Clone::clone)?;
+        let (Some(dir), Some(name)) = (socket.parent(), socket.file_name()) else {
+            return Err(format!("NIRI_SOCKET {} has no file name", socket.display()));
+        };
+        let name = name.to_string_lossy();
         let instance = name.strip_suffix(".sock").unwrap_or(&name);
         if instance.is_empty() {
             return Err(format!(
@@ -41,7 +93,7 @@ impl RuntimeDir {
             ));
         }
         Ok(Self {
-            path: runtime.join("niri-computer-use").join(instance),
+            path: dir.join("niri-computer-use").join(instance),
         })
     }
 
@@ -111,48 +163,104 @@ mod tests {
 
     use super::*;
 
-    fn env(dir: &Path) -> Env {
-        Env {
-            niri_socket: crate::niri::Socket::at(dir.join("niri.wayland-1.42.sock")),
-            runtime_dir: Some(dir.join("run")),
+    fn euid() -> u32 {
+        rustix::process::geteuid().as_raw()
+    }
+
+    /// A private `dir` holding a socket file called `name`.
+    fn socket_in(dir: &Path, name: &str) -> PathBuf {
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let socket = dir.join(name);
+        drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
+        socket
+    }
+
+    fn of(socket: &Path) -> Result<RuntimeDir, String> {
+        RuntimeDir::of(&Env {
+            instance: Instance::resolve(socket, euid()),
             ..Env::default()
-        }
+        })
     }
 
     #[test]
     fn is_named_after_the_niri_instance() {
-        let dir = Path::new("/r");
+        let dir = crate::test_support::fresh_dir("runtime-named");
+        let socket = socket_in(&dir, "niri.wayland-1.42.sock");
+        let canonical = std::fs::canonicalize(&dir).unwrap();
         assert_eq!(
-            RuntimeDir::of(&env(dir)).unwrap().path(),
-            Path::new("/r/run/niri-computer-use/niri.wayland-1.42")
-        );
-        let unset = Env {
-            runtime_dir: None,
-            ..env(dir)
-        };
-        assert_eq!(
-            RuntimeDir::of(&unset),
-            Err("XDG_RUNTIME_DIR is not set".to_owned())
+            of(&socket).unwrap().path(),
+            canonical.join("niri-computer-use/niri.wayland-1.42")
         );
         assert_eq!(
             RuntimeDir::of(&Env::default()),
             Err("NIRI_SOCKET is not set".to_owned())
         );
         // Without a name, the flag would land in the directory every instance shares.
-        let nameless = Env {
-            niri_socket: crate::niri::Socket::at(dir.join(".sock")),
-            ..env(dir)
-        };
-        assert_eq!(
-            RuntimeDir::of(&nameless),
-            Err("NIRI_SOCKET /r/.sock has no instance name".to_owned())
-        );
+        let nameless = socket_in(&dir, ".sock");
+        let error = of(&nameless).unwrap_err();
+        assert!(error.ends_with("has no instance name"), "{error}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn every_spelling_of_one_socket_names_one_directory() {
+        let dir = crate::test_support::fresh_dir("runtime-spelling");
+        let real = dir.join("real");
+        std::fs::create_dir(&real).unwrap();
+        let socket = socket_in(&real, "niri.wayland-1.42.sock");
+        // Another runtime root, as a client with another `XDG_RUNTIME_DIR` would see it,
+        // and a socket link whose own name says nothing of the instance.
+        std::os::unix::fs::symlink(&real, dir.join("root")).unwrap();
+        std::os::unix::fs::symlink(&socket, dir.join("anything")).unwrap();
+        let expected = of(&socket).unwrap();
+        for spelling in [
+            dir.join("root/niri.wayland-1.42.sock"),
+            dir.join("anything"),
+            real.join("./niri.wayland-1.42.sock"),
+        ] {
+            assert_eq!(of(&spelling).unwrap(), expected, "{}", spelling.display());
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_socket_that_is_not_the_users_own_private_one_names_no_directory() {
+        let dir = crate::test_support::fresh_dir("runtime-refused");
+        let socket = socket_in(&dir, "niri.wayland-1.42.sock");
+        std::fs::write(dir.join("niri.file.sock"), "").unwrap();
+        for (instance, why) in [
+            (
+                Instance::resolve(&dir.join("niri.file.sock"), euid()),
+                "isn't a socket",
+            ),
+            (
+                Instance::resolve(&dir.join("niri.gone.sock"), euid()),
+                "can't be resolved",
+            ),
+            (
+                Instance::resolve(&socket, euid() + 1),
+                "isn't a socket of user",
+            ),
+        ] {
+            let error = RuntimeDir::of(&Env {
+                instance,
+                ..Env::default()
+            })
+            .unwrap_err();
+            assert!(error.contains(why), "{error}");
+        }
+        // Anyone could have made that socket in a directory others may write to.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o770)).unwrap();
+        let error = of(&socket).unwrap_err();
+        assert!(error.contains("whose directory"), "{error}");
+        assert!(error.ends_with("no lease, stop flag or marker"), "{error}");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn stop_sets_a_private_flag_and_resume_clears_it() {
         let dir = crate::test_support::fresh_dir("runtime");
-        let runtime = RuntimeDir::of(&env(&dir)).unwrap();
+        let runtime = of(&socket_in(&dir, "niri.wayland-1.42.sock")).unwrap();
         assert!(!runtime.stopped().unwrap());
         runtime.stop().unwrap();
         runtime.stop().unwrap();
@@ -171,7 +279,7 @@ mod tests {
     #[test]
     fn resume_refuses_while_input_may_be_stuck() {
         let dir = crate::test_support::fresh_dir("runtime-dirty");
-        let runtime = RuntimeDir::of(&env(&dir)).unwrap();
+        let runtime = of(&socket_in(&dir, "niri.wayland-1.42.sock")).unwrap();
         runtime.stop().unwrap();
         std::fs::write(runtime.path().join(INPUT_DIRTY), "").unwrap();
         let error = runtime.resume().unwrap_err();

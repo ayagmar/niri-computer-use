@@ -236,3 +236,43 @@ async fn refuses_what_reaches_the_display(server: &mut Server, expected: &str) {
         assert_eq!(refused, expected, "{tool}: {detail}");
     }
 }
+
+/// A `NIRI_SOCKET` that is a link, retargeted to another niri after the server started:
+/// the server keeps acting on the niri and sharing the lease of the one it resolved.
+#[tokio::test]
+async fn a_niri_socket_link_retargeted_later_leaves_the_server_on_its_niri() {
+    let mut fixture = Fixture::new("discover-link");
+    let mut first = Niri::start(&fixture);
+    let mut other = Niri::listen(&fixture.path("run/niri.other.sock"));
+    fixture.program("noctalia", "exit 0");
+    let _noctalia = noctalia::start(&fixture, UNLOCKED);
+    let link = fixture.path("run/niri");
+    std::os::unix::fs::symlink(fixture.niri_socket(), &link).unwrap();
+    fixture.set("NIRI_SOCKET", &link);
+    let mut server = Server::start(&fixture).await;
+    let stream = first.stream().await;
+    stream.initial(&[
+        window_on(1, Some("a"), 1, true),
+        window_on(2, Some("b"), 1, false),
+    ]);
+    stream.workspaces(1);
+
+    std::fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(fixture.path("run/niri.other.sock"), &link).unwrap();
+    server.structured("acquire_desktop").await;
+    let (result, action) = tokio::join!(server.call("focus_window", json!({"id": 2})), async {
+        let action = first.action().await;
+        stream.send(&json!({"WindowFocusChanged": {"id": 2}}));
+        action
+    });
+    assert_eq!(result["isError"], false, "{result}");
+    assert!(
+        matches!(action, niri_ipc::Action::FocusWindow { id: 2 }),
+        "{action:?}"
+    );
+    assert!(!other.sent_action());
+    fixture.set("NIRI_SOCKET", fixture.niri_socket());
+    let mut direct = Server::start(&fixture).await;
+    let (name, _) = tool_error(&direct.call("acquire_desktop", json!({})).await);
+    assert_eq!(name, "lease_held");
+}

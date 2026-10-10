@@ -66,6 +66,8 @@ impl Fixture {
         for sub in ["bin", "utils", "run", "state", "config"] {
             std::fs::create_dir(dir.join(sub)).unwrap();
         }
+        // niri's runtime directory is private, and the server trusts no other.
+        std::fs::set_permissions(dir.join("run"), std::fs::Permissions::from_mode(0o700)).unwrap();
         for utility in UTILITIES {
             std::os::unix::fs::symlink(locate(utility), dir.join("utils").join(utility)).unwrap();
         }
@@ -82,6 +84,9 @@ impl Fixture {
             ("XDG_CONFIG_HOME", dir.join("config").into_os_string()),
         ]);
         let display = UnixListener::bind(dir.join("run").join(DISPLAY)).unwrap();
+        // niri's socket, which nothing listens on until a test starts a fake niri; the
+        // server needs it to resolve the instance its lease and flags belong to.
+        drop(UnixListener::bind(dir.join("run/niri.test.sock")).unwrap());
         let mut fixture = Self {
             dir,
             env,

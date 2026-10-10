@@ -134,15 +134,9 @@ fn write_record(path: &Path, holder: Option<&Holder>) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Env;
 
     fn runtime(dir: &Path) -> RuntimeDir {
-        RuntimeDir::of(&Env {
-            niri_socket: crate::niri::Socket::at(dir.join("niri.test.sock")),
-            runtime_dir: Some(dir.to_path_buf()),
-            ..Env::default()
-        })
-        .unwrap()
+        RuntimeDir::of(&crate::test_support::niri_env(dir)).unwrap()
     }
 
     #[test]

@@ -453,11 +453,7 @@ mod tests {
     #[tokio::test]
     async fn another_session_releasing_neither_refocuses_nor_learns_the_owners_window() {
         let dir = crate::test_support::fresh_dir("engine-release");
-        let env = Env {
-            niri_socket: niri::Socket::at(dir.join("niri.test.sock")),
-            runtime_dir: Some(dir.clone()),
-            ..Env::default()
-        };
+        let env = crate::test_support::niri_env(&dir);
         let events = Err(ToolError::new(ErrorName::NiriUnavailable, "no niri"));
         let absent = Presence {
             available: false,

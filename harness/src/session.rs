@@ -114,7 +114,13 @@ impl<'a> Session<'a> {
     /// The runtime directory `niri-computer-use` servers use for the nested niri.
     pub(crate) fn control_dir(&self) -> Result<PathBuf> {
         let nested = Nested::from_env(self.test_dir)?;
-        crate::control::runtime_dir(&self.test_dir.run(), &nested.niri)
+        let resolved = std::fs::canonicalize(&nested.niri).map_err(|error| {
+            Failure::new(format!(
+                "{} can't be resolved: {error}",
+                nested.niri.display()
+            ))
+        })?;
+        crate::control::runtime_dir(&resolved)
     }
 
     /// The nested Noctalia's socket once it exists, checked like the other endpoints.

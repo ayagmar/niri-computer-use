@@ -144,7 +144,7 @@ impl Desk {
             refs: std::sync::Mutex::new(Refs::default()),
         });
         let runtime = RuntimeDir::of(env).map_err(|detail| {
-            let name = if env.niri_socket.path().is_err() {
+            let name = if env.instance.socket().is_err() {
                 ErrorName::NiriUnavailable
             } else {
                 ErrorName::UpstreamError
@@ -618,11 +618,7 @@ mod tests {
     use crate::test_support::session;
 
     fn env(dir: &std::path::Path) -> Env {
-        Env {
-            niri_socket: crate::niri::Socket::at(dir.join("niri.test.sock")),
-            runtime_dir: Some(dir.to_path_buf()),
-            ..Env::default()
-        }
+        crate::test_support::niri_env(dir)
     }
 
     /// Whether the desk gives the lease up within five seconds.

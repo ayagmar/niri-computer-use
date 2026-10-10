@@ -19,6 +19,25 @@ pub(crate) fn fresh_dir(name: &str) -> PathBuf {
     dir
 }
 
+/// The environment of a process whose niri socket is `niri.test.sock` in `dir`, resolved
+/// as at its start: `dir` is made private and gets that socket file, which nothing
+/// listens on.
+pub(crate) fn niri_env(dir: &std::path::Path) -> crate::Env {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let socket = dir.join("niri.test.sock");
+    if !socket.exists() {
+        drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
+    }
+    let euid = rustix::process::geteuid().as_raw();
+    crate::Env {
+        niri_socket: crate::niri::Socket::at(socket.clone()),
+        instance: crate::control::runtime::Instance::resolve(&socket, euid),
+        runtime_dir: Some(dir.to_path_buf()),
+        ..crate::Env::default()
+    }
+}
+
 /// Session `id` of one process, with no policy file and nothing turned on.
 pub(crate) fn session(id: u64) -> crate::session::Session {
     let given = crate::session::Given {
