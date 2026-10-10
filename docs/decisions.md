@@ -726,6 +726,7 @@ These match the versions installed locally.
 - It refuses rather than saving again: a client that keeps copying could hold it in a loop, and the agent can type the text instead or try again.
 - A copy niri handles between that round trip and the take is still overwritten, as one between the last check and the restore is: data-control has no request that sets the selection only if it is still the one seen.
 - The nested keeper checks cover it with `harness clipboard --hold`, an owner that answers no read until another client copies. The selection code talks to niri's Wayland socket, and the repository has no fake Wayland server to drive it in `make check`.
+- Removing the refusal used to leave `make check` green (review finding). The decision is now a pure step, `keeper::previous`, given the saved selection and whether it was still current, and `Saved::still_current` compares niri's announcement count; both are unit-tested, as is that `State::select` counts every announcement, an empty one included, since it can't tell our own source's offer from another client's. What stays nested-only is the wiring: that `take` makes the round trip after the save and passes its answer to `previous`. Testing that in `make check` needs a fake data-control server for the protocol fixture, a Wayland server written for the tests; that is the accepted gap.
 
 ## 2026-10-10: held pointer modifiers restore like native typing
 

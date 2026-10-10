@@ -45,6 +45,14 @@ pub(crate) struct Saved {
     announcement: u64,
 }
 
+impl Saved {
+    /// Whether this is still the selection when niri has made `announced` announcements:
+    /// none came after the one it was saved from.
+    const fn still_current(&self, announced: u64) -> bool {
+        announced == self.announcement
+    }
+}
+
 /// A source this connection made, numbered in the order it was made.
 pub(crate) type SourceId = u32;
 
@@ -160,7 +168,7 @@ impl Selection {
     /// now is handled.
     pub(crate) async fn unchanged_since(&mut self, saved: &Saved) -> Result<bool, ToolError> {
         self.sync().await?;
-        Ok(self.state.announcements == saved.announcement)
+        Ok(saved.still_current(self.state.announcements))
     }
 
     /// The current selection's contents; `None` when nothing is selected.
@@ -421,3 +429,44 @@ impl Dispatch<WlCallback, ()> for State {
 
 delegate_noop!(State: ignore WlSeat);
 delegate_noop!(State: ignore ZwlrDataControlManagerV1);
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::net::UnixStream;
+
+    use wayland_client::Proxy as _;
+
+    use super::*;
+
+    /// An offer for the state to hold. Nothing serves it: the state only counts it.
+    fn offer() -> ZwlrDataControlOfferV1 {
+        let (ours, _) = UnixStream::pair().unwrap();
+        let connection = Connection::from_socket(ours).unwrap();
+        ZwlrDataControlOfferV1::inert(connection.backend().downgrade())
+    }
+
+    /// A copy made while the save ran is an announcement after the saved one, whoever made
+    /// it: the state can't tell our own source's offer from another client's, so a check
+    /// that skipped any would let a newer copy be overwritten.
+    #[test]
+    fn every_announcement_after_the_save_makes_it_stale() {
+        let mut state = State::default();
+        state.select(Some(offer()));
+        let saved = Saved {
+            contents: None,
+            announcement: state.announcements,
+        };
+        assert!(saved.still_current(state.announcements));
+        state.select(None);
+        assert!(
+            !saved.still_current(state.announcements),
+            "an empty selection"
+        );
+        let resaved = Saved {
+            contents: None,
+            announcement: state.announcements,
+        };
+        state.select(Some(offer()));
+        assert!(!resaved.still_current(state.announcements), "an offer");
+    }
+}

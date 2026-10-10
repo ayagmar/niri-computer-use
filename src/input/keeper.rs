@@ -119,11 +119,8 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
 /// Why the text stays.
 const KEPT: &str = "the server neither confirmed the key nor said it didn't go out, so a late key could still paste; the pasted text stays on the clipboard instead of what was there before";
 
-/// Binds, saves the selection, and takes it with a source offering the text. A copy made
-/// while the save ran refuses: the restore would put the older one back over it, and the
-/// newer one may be a secret the check below never saw. A copy niri handles between that
-/// check and the take is the race data-control can't exclude, since it has no request
-/// that sets the selection only if it is still the one seen.
+/// Binds, saves the selection, and takes it with a source offering the text, if
+/// `previous` allows.
 async fn take(env: &Env) -> Result<(Selection, Option<Contents>, SourceId), String> {
     let display = env.display.path().map_err(|error| error.detail.clone())?;
     let niri = crate::niri::pid(&env.niri_socket)
@@ -136,19 +133,11 @@ async fn take(env: &Env) -> Result<(Selection, Option<Contents>, SourceId), Stri
         .save(MAX_SAVED)
         .await
         .map_err(|error| error.detail)?;
-    if !selection
+    let current = selection
         .unchanged_since(&saved)
         .await
-        .map_err(|error| error.detail)?
-    {
-        return Err(CHANGED.to_owned());
-    }
-    let saved = saved.contents;
-    if saved.as_ref().is_some_and(secret) {
-        return Err(format!(
-            "the clipboard holds what its owner marked as a secret ({HINT}); restoring it would keep it past its owner's own clearing"
-        ));
-    }
+        .map_err(|error| error.detail)?;
+    let saved = previous(saved.contents, current)?;
     let mut types = TEXT_TYPES.to_vec();
     types.push(HINT);
     let paste = selection
@@ -156,6 +145,24 @@ async fn take(env: &Env) -> Result<(Selection, Option<Contents>, SourceId), Stri
         .await
         .map_err(|error| error.detail)?;
     Ok((selection, saved, paste))
+}
+
+/// Decides from the selection saved, and whether it was `current`, still the selection
+/// once the save ended, what the paste puts back afterwards, or why it refuses. A copy
+/// made while the save ran refuses: the restore would put the older one back over it, and
+/// the newer one may be a secret the check below never saw. A copy niri handles between
+/// that check and the take is the race data-control can't exclude, since it has no
+/// request that sets the selection only if it is still the one seen. A secret refuses.
+fn previous(saved: Option<Contents>, current: bool) -> Result<Option<Contents>, String> {
+    if !current {
+        return Err(CHANGED.to_owned());
+    }
+    if saved.as_ref().is_some_and(secret) {
+        return Err(format!(
+            "the clipboard holds what its owner marked as a secret ({HINT}); restoring it would keep it past its owner's own clearing"
+        ));
+    }
+    Ok(saved)
 }
 
 /// Why a copy made while saving refuses.
@@ -584,15 +591,37 @@ mod tests {
         assert_eq!(command(b'x'), Command::End);
     }
 
+    fn saved(types: &[(&str, &[u8])]) -> Contents {
+        types
+            .iter()
+            .map(|(mime, bytes)| ((*mime).to_owned(), Arc::from(*bytes)))
+            .collect()
+    }
+
+    #[test]
+    fn the_saved_selection_is_put_back_and_nothing_saved_leaves_it_empty() {
+        let copied = saved(&[("text/plain", b"copied")]);
+        assert_eq!(previous(Some(copied.clone()), true), Ok(Some(copied)));
+        assert_eq!(previous(None, true), Ok(None));
+    }
+
+    /// A copy made while the save ran refuses, whatever was saved: restoring would put the
+    /// older selection back over it.
+    #[test]
+    fn a_copy_made_while_saving_refuses() {
+        for saved in [None, Some(saved(&[("text/plain", b"older")]))] {
+            assert_eq!(previous(saved, false), Err(CHANGED.to_owned()));
+        }
+    }
+
     #[test]
     fn a_secret_marked_by_its_owner_is_not_kept() {
-        let saved = |hint: &[u8]| -> Contents {
-            vec![
-                ("text/plain".to_owned(), Arc::from(&b"hunter2"[..])),
-                (HINT.to_owned(), Arc::from(hint)),
-            ]
-        };
-        assert!(secret(&saved(b"secret")));
-        assert!(!secret(&saved(b"other")));
+        let refused = previous(
+            Some(saved(&[("text/plain", b"hunter2"), (HINT, SECRET)])),
+            true,
+        );
+        assert!(refused.is_err_and(|detail| detail.contains("marked as a secret")));
+        let other = saved(&[("text/plain", b"hunter2"), (HINT, b"other")]);
+        assert_eq!(previous(Some(other.clone()), true), Ok(Some(other)));
     }
 }
