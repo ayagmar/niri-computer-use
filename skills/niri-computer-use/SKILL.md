@@ -52,7 +52,7 @@ When three actions in a row change nothing toward the goal, stop and tell the us
 
 Native is only for explicitly configured sessions; do not change the user's backend or work around a `refused` result. With native selected, click/drag/scroll can hold `keys: ["ctrl", "shift"]`, up to five modifiers (shift, ctrl, alt, altgr, super).
 
-For text over 1000 characters, or when typing is slow, use `paste` with either backend. Pass `keys` for the app: `ctrl+v` in most apps, `ctrl+shift+v` in terminals. It puts the user's clipboard back afterwards, and with `clipboard_unsaved` it changed nothing: type the text instead, in parts.
+For text over 1000 characters, or when typing is slow, use `paste` with either backend. Pass `keys` for the app: `ctrl+v` in most apps, `ctrl+shift+v` in terminals. It puts the user's clipboard back afterwards when it can: the result's `clipboard` says `restored` or `cleared` when it did, `replaced` when someone copied meanwhile, and `kept`, `failed` or `unknown` when the user's copy may be lost, which you tell the user. With `clipboard_unsaved` it changed nothing: type the text instead, in parts.
 
 To send a message, pass `submit: true`. The server presses Enter only once every character went out, and `submitted` says whether it did. Don't press Enter yourself after a call that stopped early: Enter sends whatever is in the box, and a half-typed message that gets sent can't be taken back. Look at the screenshot that comes with the result, then finish or fix the text first.
 
