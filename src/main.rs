@@ -347,6 +347,50 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// A client that forwards niri's socket but not the runtime directory, for a niri
+    /// whose runtime directory isn't the default one, such as a nested niri.
+    #[test]
+    fn servers_for_one_niri_share_its_lease_and_stop_flag_without_the_runtime_variable() {
+        use crate::control::lease::Lease;
+        use crate::control::runtime::RuntimeDir;
+
+        let root = test_support::fresh_dir("env-nested");
+        let euid = rustix::process::geteuid().as_raw();
+        let default = root.join("run").join(euid.to_string());
+        let nested = root.join("nested");
+        for dir in [&default, &nested] {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let roots = discover::Roots {
+            run_user: &root.join("run"),
+            proc: &root.join("proc"),
+            euid,
+        };
+        let socket = nested.join("niri.wayland-2.42.sock");
+        let full = Env::from_vars(
+            |name| match name {
+                "XDG_RUNTIME_DIR" => Some(nested.clone().into()),
+                "NIRI_SOCKET" => Some(socket.clone().into()),
+                _ => None,
+            },
+            &roots,
+        );
+        let partial = Env::from_vars(
+            |name| (name == "NIRI_SOCKET").then(|| socket.clone().into()),
+            &roots,
+        );
+        let (full, partial) = (
+            RuntimeDir::of(&full).unwrap(),
+            RuntimeDir::of(&partial).unwrap(),
+        );
+        let _held = Lease::acquire(&full, "full").unwrap();
+        assert!(Lease::acquire(&partial, "partial").is_err());
+        full.stop().unwrap();
+        assert!(partial.stopped().unwrap());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn takes_exactly_one_known_subcommand() {
         let args = |list: &[&str]| list.iter().map(OsString::from).collect::<Vec<_>>();

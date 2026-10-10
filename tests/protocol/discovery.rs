@@ -28,7 +28,8 @@ async fn without_the_session_variables_the_server_finds_the_running_niri() {
         json!({
             "runtime_dir": {"source": "environment"},
             "niri_socket": {"source": "discovered"},
-            "wayland_display": {"source": "discovered"}
+            "wayland_display": {"source": "discovered"},
+            "warning": null
         })
     );
     assert_eq!(status["instance"], name);

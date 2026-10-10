@@ -187,7 +187,8 @@ mod tests {
                 "discovery": {
                     "runtime_dir": {"source": "missing", "detail": "XDG_RUNTIME_DIR is not set"},
                     "niri_socket": {"source": "missing", "detail": "NIRI_SOCKET is not set"},
-                    "wayland_display": {"source": "missing", "detail": "WAYLAND_DISPLAY is not set"}
+                    "wayland_display": {"source": "missing", "detail": "WAYLAND_DISPLAY is not set"},
+                    "warning": null
                 },
                 "niri": {
                     "version": null,

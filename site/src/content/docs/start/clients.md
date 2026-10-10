@@ -64,7 +64,7 @@ When one of these is unset or empty, the server finds it at startup:
 
 | Variable | Found as |
 |---|---|
-| `XDG_RUNTIME_DIR` | `/run/user/<your uid>`, if it is your directory with mode `0700`, as logind creates it |
+| `XDG_RUNTIME_DIR` | the directory holding `NIRI_SOCKET` when that is set, otherwise `/run/user/<your uid>`; either must be your directory with mode `0700`, as logind creates it |
 | `NIRI_SOCKET` | the one socket in the runtime directory named `niri.<display>.<pid>.sock`, as niri names it, that is yours and whose process is a running `niri` |
 | `WAYLAND_DISPLAY` | the `<display>` in that socket's name, if the runtime directory has a socket by that name |
 
