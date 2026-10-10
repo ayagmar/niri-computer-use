@@ -710,3 +710,10 @@ These match the versions installed locally.
 
 - The 16 MiB line limit counted from the last newline in each read, so a read that ended an oversized line and started a short one passed the long one (review finding). `session::LineLimit` now checks every line a read completes, newline included, before resetting, and the standalone server, the engine's sessions and the bridge's reader share it.
 - An oversized line ends the session wherever it falls among others, and lines after it are not answered: a client that sent one has lost track of its framing, so nothing after it can be trusted to be what the client meant. No dependency was added.
+
+## 2026-10-10: a copy made while the keeper saves refuses the paste
+
+- After saving the selection and before taking it, the keeper makes a round trip to niri and handles every selection it announced meanwhile; if one came, it refuses with `clipboard_unsaved` and changes nothing (review finding). Before, it took the selection over a copy made during the save and later restored the older one, so that copy was lost, and a newer copy marked secret never met the secret check.
+- It refuses rather than saving again: a client that keeps copying could hold it in a loop, and the agent can type the text instead or try again.
+- A copy niri handles between that round trip and the take is still overwritten, as one between the last check and the restore is: data-control has no request that sets the selection only if it is still the one seen.
+- The nested keeper checks cover it with `harness clipboard --hold`, an owner that answers no read until another client copies. The selection code talks to niri's Wayland socket, and the repository has no fake Wayland server to drive it in `make check`.

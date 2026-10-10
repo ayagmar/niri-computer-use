@@ -122,7 +122,11 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
 /// Why the text stays.
 const KEPT: &str = "the server neither confirmed the key nor said it didn't go out, so a late key could still paste; the pasted text stays on the clipboard instead of what was there before";
 
-/// Binds, saves the selection, and takes it with a source offering the text.
+/// Binds, saves the selection, and takes it with a source offering the text. A copy made
+/// while the save ran refuses: the restore would put the older one back over it, and the
+/// newer one may be a secret the check below never saw. A copy niri handles between that
+/// check and the take is the race data-control can't exclude, since it has no request
+/// that sets the selection only if it is still the one seen.
 async fn take(env: &Env) -> Result<(Selection, Option<Contents>, SourceId), String> {
     let display = env.display.path().map_err(|error| error.detail.clone())?;
     let niri = crate::niri::pid(&env.niri_socket)
@@ -135,6 +139,14 @@ async fn take(env: &Env) -> Result<(Selection, Option<Contents>, SourceId), Stri
         .save(MAX_SAVED)
         .await
         .map_err(|error| error.detail)?;
+    if !selection
+        .unchanged_since(&saved)
+        .await
+        .map_err(|error| error.detail)?
+    {
+        return Err(CHANGED.to_owned());
+    }
+    let saved = saved.contents;
     if saved.as_ref().is_some_and(secret) {
         return Err(format!(
             "the clipboard holds what its owner marked as a secret ({HINT}); restoring it would keep it past its owner's own clearing"
@@ -148,6 +160,9 @@ async fn take(env: &Env) -> Result<(Selection, Option<Contents>, SourceId), Stri
         .map_err(|error| error.detail)?;
     Ok((selection, saved, paste))
 }
+
+/// Why a copy made while saving refuses.
+const CHANGED: &str = "something else was copied while the clipboard was being saved; nothing changed, so that copy stays";
 
 fn secret(saved: &Contents) -> bool {
     saved

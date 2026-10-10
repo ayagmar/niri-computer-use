@@ -2,10 +2,16 @@
 //! rather than the server's wlr protocol. It offers `TYPES`, each with contents of its
 //! own, and with `--secret` also `SECRET_HINT` set to `secret`, as a password manager
 //! marks what it copies. It serves reads until another client takes the selection, when
-//! it writes `CANCELLED` in the test directory, or until its deadline.
+//! it writes `CANCELLED` in the test directory, or until its deadline. With `--hold`, a
+//! slow owner, it answers no read of `HELD_TYPE` until another client takes the
+//! selection: it writes `HELD` once it holds one, answers every held read once taken, and
+//! writes no `CANCELLED`. Only a client that saves every type, as the paste keeper does,
+//! reads that type; a clipboard manager that reads the text, as Noctalia's does, is
+//! answered at once.
 
 use std::fs::{self, File};
 use std::io::Write as _;
+use std::os::fd::OwnedFd;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -27,7 +33,8 @@ use crate::nested::Nested;
 use crate::test_dir::TestDir;
 use crate::window::dispatch_until;
 
-pub(crate) const USAGE: &str = "usage: harness clipboard <TEST_DIR> <deadline-ms> [--secret]";
+pub(crate) const USAGE: &str =
+    "usage: harness clipboard <TEST_DIR> <deadline-ms> [--secret | --hold]";
 /// What the user copied: text, its markup and binary data, all different.
 pub(crate) const TYPES: [(&str, &[u8]); 3] = [
     (
@@ -41,30 +48,42 @@ pub(crate) const TYPES: [(&str, &[u8]); 3] = [
 pub(crate) const SECRET_HINT: (&str, &[u8]) = ("x-kde-passwordManagerHint", b"secret");
 /// Written in the test directory once another client took the selection.
 pub(crate) const CANCELLED: &str = "clipboard-cancelled";
+/// Written in the test directory once a `--hold` owner holds a read.
+pub(crate) const HELD: &str = "clipboard-held";
+/// The type whose reads a `--hold` owner holds: the binary one.
+const HELD_TYPE: &str = TYPES[2].0;
 
 #[derive(Debug, Default)]
 struct State {
     /// Each type offered, with its bytes.
     offered: Vec<(&'static str, &'static [u8])>,
+    /// Where a `--hold` owner notes that it holds a read.
+    hold: Option<PathBuf>,
+    /// The reads held, with what each asked for.
+    held: Vec<(OwnedFd, &'static [u8])>,
     cancelled: bool,
     error: Option<Failure>,
 }
 
 pub(crate) fn run(args: &[&str]) -> Result<()> {
-    let (test_dir, deadline, secret) = match args {
-        [test_dir, deadline] => (test_dir, deadline, false),
-        [test_dir, deadline, "--secret"] => (test_dir, deadline, true),
+    let (test_dir, deadline, option) = match args {
+        [test_dir, deadline] => (test_dir, deadline, None),
+        [test_dir, deadline, option @ ("--secret" | "--hold")] => {
+            (test_dir, deadline, Some(*option))
+        }
         _ => return Err(Failure::new(USAGE)),
     };
+    let test_dir = TestDir::open(PathBuf::from(test_dir))?;
     let mut state = State {
         offered: TYPES.to_vec(),
         ..State::default()
     };
-    if secret {
-        state.offered.push(SECRET_HINT);
+    match option {
+        Some("--secret") => state.offered.push(SECRET_HINT),
+        Some(_) => state.hold = Some(test_dir.root().join(HELD)),
+        None => {}
     }
     let end = Instant::now() + Duration::from_millis(deadline.parse().context(USAGE)?);
-    let test_dir = TestDir::open(PathBuf::from(test_dir))?;
     Nested::from_env(&test_dir)?;
     let connection = Connection::connect_to_env().context("connect to the nested niri")?;
     let (globals, mut queue) =
@@ -83,11 +102,34 @@ pub(crate) fn run(args: &[&str]) -> Result<()> {
     dispatch_until(&mut queue, &mut state, end, |state| {
         state.cancelled || state.error.is_some()
     })?;
-    if state.cancelled {
+    for (fd, bytes) in state.held.drain(..) {
+        File::from(fd)
+            .write_all(bytes)
+            .context("answer a held read")?;
+    }
+    if state.cancelled && state.hold.is_none() {
         let path = test_dir.root().join(CANCELLED);
         fs::write(&path, "").context(format!("write {}", path.display()))?;
     }
     state.error.map_or(Ok(()), Err)
+}
+
+impl State {
+    /// Answers a read of `bytes` now, or holds it.
+    fn answer(&mut self, fd: OwnedFd, mime: &str, bytes: &'static [u8]) {
+        let Some(note) = self.hold.as_ref().filter(|_| mime == HELD_TYPE) else {
+            if let Err(error) = File::from(fd).write_all(bytes) {
+                self.error = Some(Failure::new(format!("send {mime}: {error}")));
+            }
+            return;
+        };
+        if self.held.is_empty()
+            && let Err(error) = fs::write(note, "")
+        {
+            self.error = Some(Failure::new(format!("write {}: {error}", note.display())));
+        }
+        self.held.push((fd, bytes));
+    }
 }
 
 impl Dispatch<ExtDataControlSourceV1, ()> for State {
@@ -100,13 +142,12 @@ impl Dispatch<ExtDataControlSourceV1, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         if let ext_data_control_source_v1::Event::Send { mime_type, fd } = event {
-            let Some((_, bytes)) = state.offered.iter().find(|(mime, _)| *mime == mime_type) else {
+            let Some(&(_, bytes)) = state.offered.iter().find(|(mime, _)| *mime == mime_type)
+            else {
                 state.error = Some(Failure::new(format!("asked for unoffered {mime_type}")));
                 return;
             };
-            if let Err(error) = File::from(fd).write_all(bytes) {
-                state.error = Some(Failure::new(format!("send {mime_type}: {error}")));
-            }
+            state.answer(fd, &mime_type, bytes);
         } else if matches!(event, ext_data_control_source_v1::Event::Cancelled) {
             state.cancelled = true;
         }

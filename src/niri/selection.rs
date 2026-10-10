@@ -37,6 +37,14 @@ use crate::error::{ErrorName, ToolError};
 /// A selection's contents: each MIME type with its bytes, in the order it was offered.
 pub(crate) type Contents = Vec<(String, Arc<[u8]>)>;
 
+/// A selection as saved: its contents, `None` when nothing was selected, and which of
+/// niri's announcements it was.
+#[derive(Debug)]
+pub(crate) struct Saved {
+    pub(crate) contents: Option<Contents>,
+    announcement: u64,
+}
+
 /// A source this connection made, numbered in the order it was made.
 pub(crate) type SourceId = u32;
 
@@ -68,6 +76,8 @@ struct State {
     /// The offers niri introduced, with the MIME types each has announced.
     offers: Vec<(ZwlrDataControlOfferV1, Vec<String>)>,
     selection: Current,
+    /// How many selections niri has announced.
+    announcements: u64,
     /// Whether niri has ended the data device.
     finished: bool,
     events: VecDeque<Event>,
@@ -136,8 +146,25 @@ impl Selection {
     }
 
     /// Reads every MIME type of the current selection, within `DEADLINE` and `max` bytes in
-    /// all. `None` when nothing is selected.
-    pub(crate) async fn save(&self, max: usize) -> Result<Option<Contents>, ToolError> {
+    /// all. A selection niri announces meanwhile isn't seen; `unchanged_since` tells.
+    pub(crate) async fn save(&self, max: usize) -> Result<Saved, ToolError> {
+        let announcement = self.state.announcements;
+        let contents = self.contents(max).await?;
+        Ok(Saved {
+            contents,
+            announcement,
+        })
+    }
+
+    /// Whether `saved` is still the selection, once every announcement niri sent before
+    /// now is handled.
+    pub(crate) async fn unchanged_since(&mut self, saved: &Saved) -> Result<bool, ToolError> {
+        self.sync().await?;
+        Ok(self.state.announcements == saved.announcement)
+    }
+
+    /// The current selection's contents; `None` when nothing is selected.
+    async fn contents(&self, max: usize) -> Result<Option<Contents>, ToolError> {
         let deadline = Instant::now() + DEADLINE;
         let Current::Offer(offer) = self.state.selection.clone() else {
             return Ok(None);
@@ -282,6 +309,7 @@ impl State {
         self.offers
             .retain(|(offer, _)| selected.as_ref() == Some(offer));
         self.selection = selected.map_or(Current::Empty, Current::Offer);
+        self.announcements += 1;
     }
 }
 
