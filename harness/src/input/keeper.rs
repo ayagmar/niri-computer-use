@@ -120,7 +120,7 @@ fn transfer_outlives_the_keeper(session: &mut Session<'_>, server: &str) -> Resu
 /// none of them: one read from a paused keeper would wait for it, and one listed just
 /// before the owner took over would fail.
 fn take_over(session: &mut Session<'_>, name: &str) -> Result<Process> {
-    let owner = copy(session, &format!("keeper-{name}"))?;
+    let owner = copy(session, &format!("keeper-{name}"), false)?;
     let types: Vec<String> = TYPES.iter().map(|(mime, _)| (*mime).to_owned()).collect();
     session.wait_until(
         &format!("keeper-{name}-copied"),

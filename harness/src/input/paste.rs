@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use super::{WAIT, stop};
-use crate::clipboard::{CANCELLED, TYPES};
+use crate::clipboard::{CANCELLED, SECRET_HINT, TYPES};
 use crate::failure::{Context as _, Failure, Result};
 use crate::keyboard::CORPUS;
 use crate::mcp::{Client, field, structured};
@@ -62,7 +62,7 @@ pub(super) fn run(
 
 /// Starts the clipboard owner and waits until the clipboard offers its types.
 fn own(session: &mut Session<'_>, backend: &str) -> Result<(Process, Offered)> {
-    let owner = copy(session, backend)?;
+    let owner = copy(session, backend, false)?;
     let expected = owners_copy();
     session.wait_until("m7-paste-owner", "the owner's clipboard", WAIT, |session| {
         Ok((offered(session)? == expected).then_some(()))
@@ -79,17 +79,21 @@ pub(super) fn owners_copy() -> Offered {
 }
 
 /// Starts the clipboard owner, which takes the selection, with its log named after `label`.
-pub(super) fn copy(session: &Session<'_>, label: &str) -> Result<Process> {
+/// A `secret` owner also offers the password-manager hint set to `secret`.
+pub(super) fn copy(session: &Session<'_>, label: &str, secret: bool) -> Result<Process> {
     let cancelled = session.test_dir().root().join(CANCELLED);
     if cancelled.exists() {
         fs::remove_file(&cancelled).context("remove the owner's cancel note")?;
     }
     let harness = std::env::current_exe().context("find the harness binary")?;
-    let args: Vec<OsString> = vec![
+    let mut args: Vec<OsString> = vec![
         "clipboard".into(),
         session.test_dir().root().into(),
         OWNER_DEADLINE.as_millis().to_string().into(),
     ];
+    if secret {
+        args.push("--secret".into());
+    }
     let program = harness
         .to_str()
         .ok_or_else(|| Failure::new("the harness path isn't UTF-8"))?;
@@ -98,6 +102,33 @@ pub(super) fn copy(session: &Session<'_>, label: &str) -> Result<Process> {
         &args,
         session.artifact(&format!("clipboard-{label}.log")),
         OWNER_DEADLINE,
+    )
+}
+
+/// A clipboard its owner marked secret can't be saved, so `paste` refuses with
+/// `clipboard_unsaved` before any key: the owner keeps the selection and the entry stays
+/// empty.
+pub(super) fn secret(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
+    let owner = copy(session, "secret", true)?;
+    let mut expected = owners_copy();
+    expected.push((SECRET_HINT.0.to_owned(), SECRET_HINT.1.to_vec()));
+    session.wait_until(
+        "m7-paste-secret",
+        "the secret owner's clipboard",
+        WAIT,
+        |session| Ok((offered(session)? == expected).then_some(())),
+    )?;
+    let args = json!({"text": "x", "keys": "ctrl+v", "expect": {"app_id": APP_ID}});
+    refused(session, client, args, "clipboard_unsaved")?;
+    entry_shows(session, "")?;
+    if session.test_dir().root().join(CANCELLED).exists() || offered(session)? != expected {
+        return Err(Failure::new(
+            "M7 paste: a refused secret clipboard changed the clipboard",
+        ));
+    }
+    owner.stop()?;
+    session.log(
+        "M7 paste with a clipboard marked secret: clipboard_unsaved, the owner kept the selection and the entry stayed empty",
     )
 }
 
