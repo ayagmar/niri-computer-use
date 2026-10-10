@@ -74,7 +74,7 @@ The directory is created with mode `0700` if it is missing. `save_path` is relat
 
 With `true`:
 
-- `niri_action` also sends the gated actions: `Spawn` and `SpawnSh`, which run any program, `Quit`, monitor power, `LoadConfigFile`, niri's screenshot actions, `ToggleKeyboardShortcutsInhibit`, `SwitchLayout`, the cast actions and the debug toggles. Without it they fail with `unrestricted_required`. See [`niri_action`](../../tools/acting/#niri_action).
+- `niri_action` also sends the gated actions: `Spawn` and `SpawnSh`, which run any program, `Quit`, monitor power, `LoadConfigFile`, niri's screenshot actions, `ToggleKeyboardShortcutsInhibit`, `SwitchLayout`, the cast actions, the debug toggles and `DoScreenTransition`. Without it they fail with `unrestricted_required`. See [`niri_action`](../../tools/acting/#niri_action).
 - The [`noctalia`](../noctalia/#any-command) tool is listed, when Noctalia is installed, and sends any Noctalia command.
 - Presets may start terminals with arguments and programs that run commands, and may set `env`.
 
