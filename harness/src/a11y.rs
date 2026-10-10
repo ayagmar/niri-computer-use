@@ -58,9 +58,17 @@ impl Bus {
     pub(crate) fn start(session: &mut Session<'_>) -> Result<Self> {
         let session_bus =
             std::env::var("DBUS_SESSION_BUS_ADDRESS").context("read DBUS_SESSION_BUS_ADDRESS")?;
-        let args = ["--launch-immediately", "--a11y=1"].map(OsString::from);
-        let launcher = session.start(
+        // dbus-broker-launch, the launcher's first choice under systemd, logs to the
+        // user's journal; dbus-daemon without `<syslog/>` logs to stderr only.
+        let args = [
+            "ATSPI_DBUS_IMPLEMENTATION=dbus-daemon",
             LAUNCHER,
+            "--launch-immediately",
+            "--a11y=1",
+        ]
+        .map(OsString::from);
+        let launcher = session.start(
+            "env",
             &args,
             session.artifact("at-spi-bus.log"),
             BUS_DEADLINE,

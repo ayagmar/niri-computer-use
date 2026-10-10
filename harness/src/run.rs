@@ -12,6 +12,7 @@ use crate::config::{self, Decorations};
 use crate::environment::{self, Env, Host};
 use crate::eval;
 use crate::failure::{Context as _, Failure, Result};
+use crate::journal;
 use crate::log::Log;
 use crate::runner::{self, ChildEnv, Group, Invocation, Sink};
 use crate::scale::Scale;
@@ -212,11 +213,13 @@ fn run_nested(
     if !options.visible {
         log.line("headless cage: isolated; C1 host snapshots enabled")?;
     }
+    let journal = journal::mark()?;
     let nested = snapshot::checked(
         log,
         || snapshot::take(host),
         || run_session(&env, test_dir, artifacts, options),
     );
+    let journal = journal::check(&journal, log);
     for line in fs::read_to_string(artifacts.join(supervise::LOG_FILE))
         .unwrap_or_default()
         .lines()
@@ -224,6 +227,7 @@ fn run_nested(
         log.line(&format!("  {line}"))?;
     }
     nested?;
+    journal?;
     log.line("stages 1-2, nested niri and private bus: pass")
 }
 

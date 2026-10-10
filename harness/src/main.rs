@@ -15,6 +15,7 @@ mod image;
 mod image_header;
 mod input;
 mod interrupt;
+mod journal;
 mod keyboard;
 mod keymaps;
 mod log;
