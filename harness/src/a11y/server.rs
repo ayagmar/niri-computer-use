@@ -1,7 +1,10 @@
 //! M9's acceptance through the server: `elements` lists the fixtures' buttons and the
 //! pointer tools aim at them with `element`, through the unmodified pointer path. Each
 //! activation is counted by the fixture itself, so a click that lands elsewhere, or twice,
-//! fails the run. The nested Noctalia is the lock source, as in M4.
+//! fails the run. M9b's element actions follow, in `actions`. The nested Noctalia is the
+//! lock source, as in M4.
+
+mod actions;
 
 use std::fs;
 use std::time::{Duration, Instant};
@@ -44,6 +47,7 @@ pub(super) fn run(
         session.artifact("noctalia.log"),
         NOCTALIA_DEADLINE,
     )?;
+    policy(session)?;
     let client = Client::start(session, server, "harness-m9", SERVER_DEADLINE)?;
     let mut checks = Checks {
         session,
@@ -53,9 +57,20 @@ pub(super) fn run(
     checks.ready()?;
     checks.gtk4(bus, decorations)?;
     checks.gtk3(bus, decorations)?;
+    checks.element_actions(bus, server)?;
     checks.call("release_desktop", json!({"restore_focus": false}))?;
     checks.client.stop()?;
     noctalia.stop().map(drop)
+}
+
+/// The policy file: the `app_id` the GTK 4 fixture can rename itself to is denied.
+fn policy(session: &Session<'_>) -> Result<()> {
+    let dir = session.test_dir().config().join("niri-computer-use");
+    fs::create_dir_all(&dir).context(format!("create {}", dir.display()))?;
+    let policy = format!("deny_input_app_ids = [\"{}\"]\n", actions::DENIED);
+    let path = dir.join("policy.toml");
+    fs::write(&path, &policy).context(format!("write {}", path.display()))?;
+    fs::write(session.artifact("policy.toml"), policy).context("copy the policy file")
 }
 
 /// The server and the screenshot ref the clicks go through.

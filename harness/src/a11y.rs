@@ -321,8 +321,34 @@ impl Fixture {
         Ok(Self { toolkit, process })
     }
 
+    /// A GTK 4 window that isn't a fixture of the checks, to take focus from them.
+    pub(crate) fn start_decoy(session: &Session<'_>) -> Result<Self> {
+        let root = session.test_dir().root();
+        let file = root.join("gtk.py");
+        fs::write(&file, include_str!("../fixtures/gtk.py"))
+            .context(format!("write {}", file.display()))?;
+        let args = vec!["-I".into(), file.into(), root.into(), "button".into()];
+        let log = session.artifact("fixture-decoy.log");
+        let process = session.start("python3", &args, log, FIXTURE_DEADLINE)?;
+        Ok(Self {
+            toolkit: Toolkit::Gtk4,
+            process,
+        })
+    }
+
     pub(crate) const fn pid(&self) -> i32 {
         self.process.pid()
+    }
+
+    /// Waits for the decoy's window, whatever its size.
+    pub(crate) fn decoy_window(&self, session: &mut Session<'_>) -> Result<u64> {
+        let pid = self.pid();
+        let window = session.wait_until("a11y-decoy", "the decoy window", STARTUP, |session| {
+            Ok(windows(session)?
+                .into_iter()
+                .find(|window| window.pid == Some(pid)))
+        })?;
+        Ok(window.id)
     }
 
     /// Waits for the fixture's 400x300 window and for the fixture on the bus.

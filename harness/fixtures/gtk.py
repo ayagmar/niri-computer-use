@@ -4,7 +4,11 @@
 every change, and each activation (Enter) with the text it submitted, then clears it.
 `a11y` is a 400x300 window for the accessibility checks: a label, the `Primary` and
 `Second` buttons, which count their activations in `primary-count` and `second-count`,
-an entry, and a `Vanish` button that removes itself when clicked.
+the `Plain entry`, which reports its text in `a11y-entry-text`, the `Password entry` and
+`Pin entry` (an entry for a PIN that hides it), which count their changes in
+`password-changes` and `pin-changes` without their text, a `Vanish` button that
+removes itself when clicked, a `Dismiss` button that closes the window, and a `Rename`
+button that changes the window's Wayland app_id to `org.ncu.Denied`.
 """
 
 import json
@@ -31,7 +35,8 @@ os.environ["GDK_BACKEND"] = "wayland"
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gio, GLib, Gtk
+gi.require_version("GdkWayland", "4.0")
+from gi.repository import GdkWayland, Gio, GLib, Gtk
 
 counter = root / "activations"
 app_id = {"button": "org.ncu.Activation", "entry": "org.ncu.Entry", "a11y": "org.ncu.A11y"}[mode]
@@ -83,6 +88,7 @@ def entry_window(window):
 
 
 counts = {"primary": 0, "second": 0}
+changes = {"password": 0, "pin": 0}
 
 
 def counted(button, key):
@@ -91,21 +97,53 @@ def counted(button, key):
     report(f"{key}-count", str(counts[key]))
 
 
+def secret_changed(entry, key):
+    changes[key] += 1
+    report(f"{key}-changes", str(changes[key]))
+
+
+def labelled(widget, label):
+    widget.update_property([Gtk.AccessibleProperty.LABEL], [label])
+    return widget
+
+
 def a11y_window(window):
-    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+    grid = Gtk.Grid(row_spacing=6, column_spacing=6, column_homogeneous=True)
     for side in ("top", "bottom", "start", "end"):
-        getattr(box, f"set_margin_{side}")(20)
-    box.append(Gtk.Label(label="Accessibility fixture"))
-    for key in counts:
+        getattr(grid, f"set_margin_{side}")(16)
+    grid.attach(Gtk.Label(label="Accessibility fixture"), 0, 0, 2, 1)
+    for column, key in enumerate(counts):
         button = Gtk.Button(label=f"{key.capitalize()}: 0")
         button.connect("clicked", counted, key)
-        box.append(button)
+        grid.attach(button, column, 1, 1, 1)
         report(f"{key}-count", "0")
-    box.append(Gtk.Entry())
+    entry = labelled(Gtk.Entry(), "Plain entry")
+    entry.connect("changed", lambda entry: report("a11y-entry-text", entry.get_text()))
+    grid.attach(entry, 0, 2, 1, 1)
+    report("a11y-entry-text", "")
+    password = labelled(Gtk.PasswordEntry(), "Password entry")
+    pin = labelled(
+        Gtk.Entry(visibility=False, input_purpose=Gtk.InputPurpose.PIN), "Pin entry"
+    )
+    for column, (key, secret) in enumerate((("password", password), ("pin", pin))):
+        secret.connect("changed", secret_changed, key)
+        grid.attach(secret, column, 3, 1, 1)
+        report(f"{key}-changes", "0")
     vanish = Gtk.Button(label="Vanish")
-    vanish.connect("clicked", lambda button: box.remove(button))
-    box.append(vanish)
-    window.set_child(box)
+    vanish.connect("clicked", lambda button: grid.remove(button))
+    grid.attach(vanish, 1, 2, 1, 1)
+    dismiss = Gtk.Button(label="Dismiss")
+    dismiss.connect("clicked", lambda button: window.close())
+    grid.attach(dismiss, 0, 4, 1, 1)
+    rename = Gtk.Button(label="Rename")
+    rename.connect(
+        "clicked",
+        lambda button: GdkWayland.WaylandToplevel.set_application_id(
+            window.get_surface(), "org.ncu.Denied"
+        ),
+    )
+    grid.attach(rename, 1, 4, 1, 1)
+    window.set_child(grid)
 
 
 def activate(application):
