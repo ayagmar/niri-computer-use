@@ -379,6 +379,16 @@ impl Ends {
             ),
         }
     }
+
+    /// The first of the writer's failure and the client's input overflowing the backlog:
+    /// the ends that don't wait behind the client's lines still to be relayed.
+    async fn cut(&mut self) -> Stop {
+        tokio::select! {
+            biased;
+            why = failure(&mut self.writer) => Stop::Writer(why),
+            why = overflow(&mut self.client) => Stop::Client(Ended::Full(why)),
+        }
+    }
 }
 
 /// Why the writer failed, once it has; never, if it ended without failing.
@@ -462,19 +472,17 @@ impl Relay {
         loop {
             let step = tokio::select! {
                 biased;
-                why = failure(&mut self.ends.writer) => Err(Stop::Writer(why)),
-                why = overflow(&mut self.ends.client) => Err(Stop::Client(Ended::Full(why))),
+                stop = self.ends.cut() => Err(stop),
                 line = client.recv() => match line {
                     Some((Read::Line(line), _room)) => self.client_line(line).await,
                     Some((Read::Broken(detail), _)) => Err(Stop::Client(Ended::Broken(detail))),
                     Some((Read::End, _)) | None => Err(Stop::Client(Ended::Closed)),
                 },
                 line = engine_read(&mut self.engine) => match line {
-                    Read::Line(line) => self.reply(line),
-                    Read::End => self.lost("closed the connection"),
-                    Read::Broken(detail) => self.lost(&detail),
-                }
-                .map_err(Stop::Writer),
+                    Read::Line(line) => self.reply(line).map_err(Stop::Writer),
+                    Read::End => self.lost("closed the connection").await,
+                    Read::Broken(detail) => self.lost(&detail).await,
+                },
             };
             if let Err(stop) = step {
                 return stop;
@@ -556,7 +564,7 @@ impl Relay {
             Ok(Err(error)) => format!("couldn't be written to: {error}"),
             Err(_) => format!("stopped reading for {} s", ENGINE_WRITE.as_secs()),
         };
-        self.lost(&how).map_err(Stop::Writer)
+        self.lost(&how).await
     }
 
     /// Queues the engine's `line` for the client, or says why the client can't take it.
@@ -568,13 +576,20 @@ impl Relay {
     }
 
     /// The engine is gone: every request in flight gets `engine_lost`, or the next one
-    /// does when none was.
-    fn lost(&mut self, how: &str) -> Result<(), String> {
+    /// does when none was. Any number may be in flight, since only calls are limited, so
+    /// each answer waits for room in the client's queue, unless its stdout fails or its
+    /// input overflows first. A client that has closed its input may still be reading.
+    async fn lost(&mut self, how: &str) -> Result<(), Stop> {
         let error = self.lost_error(how);
         self.engine = None;
         self.unreported = self.in_flight.is_empty();
         for (id, method) in std::mem::take(&mut self.in_flight).into_values() {
-            self.answer(&id, &method, error.clone())?;
+            let line = envelope::answer(&id, &method, error.clone());
+            tokio::select! {
+                biased;
+                stop = self.ends.cut() => return Err(stop),
+                queued = self.writer.queue_with_room(line) => queued.map_err(Stop::Writer)?,
+            }
         }
         Ok(())
     }
@@ -644,14 +659,23 @@ async fn reconnect(target: &Target, replay: Option<&(Value, Vec<u8>)>) -> Result
 mod tests {
     use std::sync::Arc;
 
+    use serde_json::json;
+    use tokio::io::{AsyncWrite, DuplexStream, duplex};
     use tokio::sync::Semaphore;
 
     use super::*;
+    use client::{QUEUE, WRITE};
 
-    /// A relay to the engine at the other end of `engine`, ending when `client` says.
-    fn relay(dir: &Path, engine: UnixStream, client: watch::Receiver<Option<Ended>>) -> Relay {
+    /// A relay to the engine at the other end of `engine`, ending when `client` says, that
+    /// writes the client's lines to `stdout`.
+    fn relay(
+        dir: &Path,
+        engine: UnixStream,
+        client: watch::Receiver<Option<Ended>>,
+        stdout: impl AsyncWrite + Unpin + Send + 'static,
+    ) -> Relay {
         let (input, output) = engine.into_split();
-        let (writer, writer_failed) = Writer::start(tokio::io::sink());
+        let (writer, writer_failed) = Writer::start(stdout);
         Relay {
             target: Target {
                 runtime: RuntimeDir::of(&crate::test_support::niri_env(dir)).unwrap(),
@@ -676,7 +700,7 @@ mod tests {
         let dir = crate::test_support::fresh_dir("bridge-stuck");
         let (ours, _engine) = UnixStream::pair().unwrap();
         let (ended, client) = watch::channel(None);
-        let mut relay = relay(&dir, ours, client);
+        let mut relay = relay(&dir, ours, client, tokio::io::sink());
         let line = vec![b'x'; 16 * 1024 * 1024];
         let started = Instant::now();
         let (sent, ()) = tokio::join!(relay.send(&line), async {
@@ -696,7 +720,7 @@ mod tests {
         let dir = crate::test_support::fresh_dir("bridge-overflow");
         let (ours, engine) = UnixStream::pair().unwrap();
         let (ended, client) = watch::channel(None);
-        let mut relay = relay(&dir, ours, client);
+        let mut relay = relay(&dir, ours, client, tokio::io::sink());
         relay.send(b"first\n").await.unwrap();
         let (lines, mut waiting) = mpsc::unbounded_channel();
         let line = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n".to_vec();
@@ -714,6 +738,70 @@ mod tests {
         let mut sent = Vec::new();
         BufReader::new(engine).read_to_end(&mut sent).await.unwrap();
         assert_eq!(sent, b"first\n");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A relay whose engine has `count` `tools/list` requests in flight, ids 0 and up, and
+    /// the client's end of its stdout.
+    fn requests_in_flight(dir: &Path, count: u64) -> (Relay, DuplexStream) {
+        let (ours, _engine) = UnixStream::pair().unwrap();
+        let (_ended, client) = watch::channel(None);
+        let (stdout, client_end) = duplex(1024);
+        let mut relay = relay(dir, ours, client, stdout);
+        for id in 0..count {
+            let request = (json!(id), "tools/list".to_owned());
+            relay.in_flight.insert(id.to_string(), request);
+        }
+        (relay, client_end)
+    }
+
+    /// Every message the client reads, until its stdout closes.
+    async fn read_all(client_end: DuplexStream) -> Vec<Value> {
+        let mut lines = BufReader::new(client_end).lines();
+        let mut read = Vec::new();
+        while let Some(line) = lines.next_line().await.unwrap() {
+            read.push(serde_json::from_str(&line).unwrap());
+        }
+        read
+    }
+
+    /// Only calls are limited, so more requests than the client's queue holds can be in
+    /// flight when the engine is lost: a client that reads gets an answer to each, and the
+    /// relay goes on.
+    #[tokio::test]
+    async fn a_lost_engine_answers_more_requests_than_the_queue_holds_to_a_reading_client() {
+        let dir = crate::test_support::fresh_dir("bridge-lost-many");
+        let count = u64::try_from(QUEUE).unwrap() + 8;
+        let (mut relay, client_end) = requests_in_flight(&dir, count);
+        let reading = tokio::spawn(read_all(client_end));
+        relay.lost("closed the connection").await.unwrap();
+        relay.writer.finish().await.unwrap();
+        let answered = reading.await.unwrap();
+        let mut ids: Vec<u64> = answered
+            .iter()
+            .map(|answer| answer["id"].as_u64().unwrap())
+            .collect();
+        ids.sort_unstable();
+        assert_eq!(ids, (0..count).collect::<Vec<_>>());
+        for answer in &answered {
+            let message = answer["error"]["message"].as_str().unwrap();
+            assert!(message.starts_with("engine_lost: "), "{message}");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A client that has stopped reading still loses its bridge when the engine is lost
+    /// with more in flight than its queue holds: the answers wait no longer than a line
+    /// may take to be written.
+    #[tokio::test(start_paused = true)]
+    async fn a_lost_engines_answers_to_a_client_that_reads_nothing_end_the_relay() {
+        let dir = crate::test_support::fresh_dir("bridge-lost-deaf");
+        let count = u64::try_from(QUEUE).unwrap() + 8;
+        let (mut relay, _client_end) = requests_in_flight(&dir, count);
+        let started = Instant::now();
+        let lost = relay.lost("closed the connection").await;
+        assert!(matches!(lost, Err(Stop::Writer(_))), "{lost:?}");
+        assert_eq!(started.elapsed(), WRITE);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
