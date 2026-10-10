@@ -50,7 +50,7 @@ Watching the desktop never needs the lease.
 | `shell_close` | `panel`, as for `shell_open` | `closed` or `timeout`; `accepted: false` when it wasn't open |
 | `noctalia` | `args`: a Noctalia command and its arguments, as after `noctalia msg`, such as `["plugin", "<plugin>:<entry>", "all", "<command>"]`; `["--help"]` lists them | `sent`, with `noctalia.reply`, Noctalia's answer. Its `error:` reply is `upstream_error`. Listed only with Noctalia and `unrestricted` |
 
-Use `launch` with `reuse: true` unless the user asked for another window of the app. With no preset for the app and `status.unrestricted.enabled` true, start it with `niri_action {"Spawn": {"command": ["<program>", ...]}}`, never a shell or `SpawnSh`, then `wait_for` its window by `app_id`; with `unrestricted` off, ask the user for a preset.
+Use `launch` with `reuse: true` unless the user asked for another window of the app. With no preset for the app and `status.unrestricted.enabled` true, start it with `niri_action {"Spawn": {"command": ["<program>", ...]}}`, never a shell or `SpawnSh`. It returns only `sent`: `wait_for` its window by an `app_id` you know, or find it in a fresh `desktop_state`, since the `app_id` is often not the program's name. Don't `Spawn` again after `uncertain` or a timeout. With `unrestricted` off, ask the user for a preset.
 
 An open panel holds keyboard focus, so `focused_window` is null while it is open. To type into it, use `expect: "none"` after a screenshot shows it ready, and close it with `shell_close` when you're done.
 
