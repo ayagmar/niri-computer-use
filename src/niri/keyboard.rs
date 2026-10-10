@@ -3,6 +3,11 @@
 //! the device next sends input, this one's included, so this keyboard sees what clients
 //! were sent. Destruction does not release input in niri; callers must acknowledge
 //! explicit releases.
+//!
+//! Maps are told apart by their libxkbcommon serialization, since niri re-serializes the
+//! map a device uploads. One that matches an extension this device uploaded is its echo;
+//! any other is a base map, the first one niri sent or a later compositor map, after a
+//! layout or configuration change. Restoring uploads the latest base map.
 
 use std::fs::File;
 use std::io::Write as _;
@@ -27,23 +32,39 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 
 use super::wayland::{DEADLINE, Synced, connect, roundtrip, upstream};
 use crate::error::ToolError;
+use crate::input::keymap::serialized;
 
 const MAX_MAP: u32 = 1024 * 1024;
+
+/// A map niri sent: the file to upload it again from, its text and size, and its
+/// serialization, if it compiles.
+#[derive(Debug)]
+struct Map {
+    file: File,
+    text: String,
+    size: u32,
+    serialized: Option<String>,
+}
 
 #[derive(Debug, Default)]
 struct State {
     globals: Vec<(u32, String, u32)>,
     synced: bool,
-    /// The compositor's map when this keyboard was bound.
-    map: Option<(File, String, u32)>,
+    /// The latest base map.
+    base: Option<Map>,
     error: Option<String>,
-    /// Counts maps niri sent that are neither the compositor's nor this device's.
+    /// Counts base maps after the first.
     revision: u64,
-    /// The extended map this device uploaded, until it uploads the compositor's again.
+    /// The extended map this device uploaded, until it uploads the base again.
     extended: Option<String>,
-    /// Whether niri sent a map other than the compositor's while an extension was
-    /// uploaded, and hasn't sent the compositor's byte for byte since.
-    unrestored: bool,
+    /// Every extension this device uploaded, serialized, so that no echo of one, however
+    /// late, counts as a base map.
+    echoes: Vec<String>,
+    /// The base map this device last uploaded, serialized.
+    uploaded: Option<String>,
+    /// The last map niri sent, serialized: what clients hold. `None` before any, or when
+    /// it didn't compile.
+    clients: Option<String>,
 }
 
 #[derive(Debug)]
@@ -102,7 +123,7 @@ impl Keyboard {
             Instant::now() + DEADLINE,
         )
         .await?;
-        let (file, _, size) = state.map.as_ref().ok_or_else(|| {
+        let base = state.base.as_ref().ok_or_else(|| {
             upstream(
                 state
                     .error
@@ -111,7 +132,7 @@ impl Keyboard {
             )
         })?;
         let device = manager.create_virtual_keyboard(&seat, &handle, ());
-        device.keymap(1, file.as_fd(), *size);
+        device.keymap(1, base.file.as_fd(), base.size);
         Ok(Self {
             connection,
             queue,
@@ -124,9 +145,9 @@ impl Keyboard {
 
     pub(crate) fn map(&self) -> Result<&str, ToolError> {
         self.state
-            .map
+            .base
             .as_ref()
-            .map(|(_, text, _)| text.as_str())
+            .map(|base| base.text.as_str())
             .ok_or_else(|| upstream("the keyboard map is unavailable"))
     }
 
@@ -147,29 +168,25 @@ impl Keyboard {
             .filter(|size| *size <= MAX_MAP)
             .ok_or_else(|| upstream("the extended keymap is too large"))?;
         self.device.keymap(1, file.as_fd(), size);
-        self.state.extended = Some(map.to_owned());
+        self.state.extending(map);
         self.flush()
     }
 
-    /// Uploads the compositor's map again after `extend`, and sends zero modifiers so niri
-    /// sends it to clients. `restored` tells after a sync whether niri did.
+    /// Uploads the latest base map again after `extend`, and sends zero modifiers in
+    /// layout `group` so niri sends it to clients. `restored` tells after a sync whether
+    /// niri did.
     pub(crate) fn restore_now(&mut self, group: u32) -> Result<(), ToolError> {
-        if self.state.extended.take().is_none() {
+        let Some(base) = self.state.restoring()? else {
             return Ok(());
-        }
-        let (file, _, size) = self
-            .state
-            .map
-            .as_ref()
-            .ok_or_else(|| upstream("the keyboard map is unavailable"))?;
-        self.device.keymap(1, file.as_fd(), *size);
+        };
+        self.device.keymap(1, base.file.as_fd(), base.size);
         self.device.modifiers(0, 0, 0, group);
         self.flush()
     }
 
-    /// Whether clients hold the compositor's map: since an extension was uploaded, niri
-    /// sent no other map, or sent the compositor's byte for byte after it.
-    pub(crate) const fn restored(&self) -> bool {
+    /// Whether clients hold the base map this device uploaded last: no extension is
+    /// uploaded, and the last map niri sent is that base map.
+    pub(crate) fn restored(&self) -> bool {
         self.state.restored()
     }
 
@@ -181,7 +198,7 @@ impl Keyboard {
             return Ok(());
         }
         Err(upstream(
-            "niri didn't send the compositor's keymap back after the extended one",
+            "niri didn't send the latest compositor keymap back after the extended one",
         ))
     }
 
@@ -247,25 +264,55 @@ impl Drop for Keyboard {
 }
 
 impl State {
-    const fn restored(&self) -> bool {
-        !self.unrestored
+    fn restored(&self) -> bool {
+        self.extended.is_none()
+            && self
+                .clients
+                .as_ref()
+                .is_some_and(|clients| self.uploaded.as_ref() == Some(clients))
     }
 
-    /// Any map but the compositor's counts while an extension is uploaded or unrestored,
-    /// even one that differs from the extension only in serialization. Maps other than
-    /// the compositor's and the extension also count as compositor keymap changes.
-    fn received(&mut self, map: (File, String, u32)) {
-        let Some((_, original, _)) = &self.map else {
-            self.map = Some(map);
+    /// The latest base map to upload in place of an extension, noted as uploaded; `None`
+    /// without an extension.
+    fn restoring(&mut self) -> Result<Option<&Map>, ToolError> {
+        if self.extended.take().is_none() {
+            return Ok(None);
+        }
+        let base = self
+            .base
+            .as_ref()
+            .ok_or_else(|| upstream("the keyboard map is unavailable"))?;
+        self.uploaded.clone_from(&base.serialized);
+        Ok(Some(base))
+    }
+
+    /// Notes the extension `map` as uploaded, and its echo as this device's.
+    fn extending(&mut self, map: &str) {
+        self.extended = Some(map.to_owned());
+        self.echoes
+            .push(serialized(map).unwrap_or_else(|| map.to_owned()));
+    }
+
+    /// Classifies a map niri sent: an echo of an extension, the base again, or a new base
+    /// map. One that doesn't compile is none of them, and leaves clients' map unknown.
+    fn received(&mut self, map: Map) {
+        self.clients.clone_from(&map.serialized);
+        let Some(serialized) = &map.serialized else {
             return;
         };
-        if *original == map.1 {
-            self.unrestored = false;
+        if self.echoes.contains(serialized) {
             return;
         }
-        self.unrestored |= self.extended.is_some();
-        if self.extended.as_ref() != Some(&map.1) {
-            self.revision += 1;
+        match &self.base {
+            None => {
+                self.uploaded = Some(serialized.clone());
+                self.base = Some(map);
+            }
+            Some(base) if base.serialized.as_ref() == Some(serialized) => {}
+            Some(_) => {
+                self.revision += 1;
+                self.base = Some(map);
+            }
         }
     }
 }
@@ -279,7 +326,7 @@ impl Synced for State {
     }
 }
 
-fn read_map(fd: OwnedFd, size: u32) -> Result<(File, String, u32), String> {
+fn read_map(fd: OwnedFd, size: u32) -> Result<Map, String> {
     if size == 0 || size > MAX_MAP {
         return Err(format!(
             "keyboard keymap size {size} is outside 1..={MAX_MAP}"
@@ -302,7 +349,12 @@ fn read_map(fd: OwnedFd, size: u32) -> Result<(File, String, u32), String> {
     }
     let text = String::from_utf8(bytes)
         .map_err(|error| format!("keyboard keymap isn't UTF-8: {error}"))?;
-    Ok((file, text, size))
+    Ok(Map {
+        serialized: serialized(&text),
+        file,
+        text,
+        size,
+    })
 }
 
 impl Dispatch<WlKeyboard, ()> for State {
@@ -372,30 +424,99 @@ mod tests {
 
     use super::*;
 
-    fn map(text: &str) -> (File, String, u32) {
+    const BASE: &str = include_str!("../../tests/fixtures/us-de.xkb");
+
+    fn map(text: &str) -> Map {
         let fd = memfd_create("keymap-test", MemfdFlags::CLOEXEC).unwrap();
-        (File::from(fd), text.to_owned(), 0)
+        Map {
+            file: File::from(fd),
+            text: text.to_owned(),
+            size: 0,
+            serialized: serialized(text),
+        }
+    }
+
+    /// The fixture with `entry` added to its symbols.
+    fn with(entry: &str) -> String {
+        BASE.replace(
+            "    modifier_map Shift",
+            &format!("    {entry}\n    modifier_map Shift"),
+        )
+    }
+
+    /// Bound to `BASE`, with the extension `extension` uploaded.
+    fn extended(extension: &str) -> State {
+        let mut state = State::default();
+        state.received(map(BASE));
+        state.extending(extension);
+        state
+    }
+
+    fn restoring(state: &mut State) -> String {
+        state.restoring().unwrap().unwrap().text.clone()
     }
 
     #[test]
-    fn any_other_map_after_an_extension_needs_the_compositors_back() {
+    fn the_same_base_spelled_otherwise_changes_nothing() {
         let mut state = State::default();
-        state.received(map("compositor"));
-        state.extended = Some("extension".into());
-        state.received(map("extension, re-serialized differently"));
+        state.received(map(BASE));
+        state.received(map(&BASE.replace("// no system includes.\n", "")));
+        assert!(state.restored());
+        assert_eq!(state.revision, 0);
+    }
+
+    #[test]
+    fn the_echo_of_an_extension_needs_the_base_back() {
+        let extension = with("key <I60> { [eacute] };");
+        let mut state = extended(&extension);
+        // niri re-serializes what it echoes.
+        state.received(map(&extension.replace("  ", "\t")));
         assert!(!state.restored());
+        assert_eq!(state.revision, 0);
+        assert_eq!(restoring(&mut state), BASE);
+        assert!(!state.restored(), "the echo is still what clients hold");
+        state.received(map(BASE));
+        assert!(state.restored());
+    }
+
+    /// The compositor's map changed during an extension: the new one is restored, never
+    /// the one the keyboard was bound with.
+    #[test]
+    fn a_new_base_map_is_the_one_restored() {
+        let extension = with("key <I60> { [eacute] };");
+        let mut state = extended(&extension);
+        state.received(map(&extension));
+        let new = BASE.replace("[Return]", "[KP_Enter]");
+        state.received(map(&new));
         assert_eq!(state.revision, 1);
-        state.extended = None;
-        state.received(map("compositor"));
+        assert_eq!(restoring(&mut state), new);
+        state.received(map(BASE));
+        assert!(!state.restored(), "the old base isn't the one uploaded");
+        state.received(map(&new));
         assert!(state.restored());
     }
 
     #[test]
-    fn without_an_extension_a_foreign_map_only_counts_as_a_change() {
-        let mut state = State::default();
-        state.received(map("compositor"));
-        state.received(map("new layout"));
+    fn a_late_echo_of_an_old_extension_is_not_a_restore() {
+        let mut state = extended(&with("key <I60> { [eacute] };"));
+        restoring(&mut state);
+        state.received(map(BASE));
         assert!(state.restored());
-        assert_eq!(state.revision, 1);
+        let second = with("key <I61> { [ssharp] };");
+        state.extending(&second);
+        restoring(&mut state);
+        state.received(map(&with("key <I60> { [eacute] };")));
+        assert!(!state.restored());
+        assert_eq!(state.revision, 0, "an echo is never a new base");
+        assert_eq!(state.base.as_ref().unwrap().text, BASE);
+    }
+
+    #[test]
+    fn a_map_that_doesnt_compile_is_never_a_restore() {
+        let mut state = extended(&with("key <I60> { [eacute] };"));
+        restoring(&mut state);
+        state.received(map("not a keymap"));
+        assert!(!state.restored());
+        assert_eq!(state.base.as_ref().unwrap().text, BASE);
     }
 }

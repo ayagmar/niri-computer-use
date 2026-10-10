@@ -6,7 +6,7 @@
 mod held;
 pub(crate) mod keeper;
 pub(crate) mod keyboard;
-mod keymap;
+pub(crate) mod keymap;
 mod native;
 pub(crate) mod paste;
 pub(crate) mod pointer;

@@ -52,7 +52,7 @@ pub(super) async fn type_input(
     let mut sent = Sent::default();
     for key in keys {
         if let Some(outcome) = interrupted(&mut waiter, before, group).await {
-            device.finish().await?;
+            device.finish(waiter.view().keyboard_group()).await?;
             return Ok(ended(outcome, focus, &typing, sent));
         }
         if input
@@ -77,7 +77,7 @@ pub(super) async fn type_input(
             sent.keys += 1;
         }
         if device.revision()? != revision {
-            device.finish().await?;
+            device.finish(waiter.view().keyboard_group()).await?;
             return Ok(ended(
                 Outcome::uncertain(
                     Some(true),
@@ -90,7 +90,7 @@ pub(super) async fn type_input(
             ));
         }
     }
-    device.finish().await?;
+    device.finish(waiter.view().keyboard_group()).await?;
     let outcome = interrupted(&mut waiter, before, group)
         .await
         .unwrap_or_else(|| Outcome::seen(Observed::Sent, waiter.view(), Vec::new()));
@@ -177,10 +177,14 @@ impl Device {
         keyboard.sync().await
     }
 
-    /// Releases everything and puts the compositor's keymap back, then clears the marker.
-    /// With a paste's aftercare, that runs in a task of its own, so a dropped call can't
-    /// leave the keeper without its `p`.
-    async fn finish(mut self) -> Result<(), ToolError> {
+    /// Releases everything and puts the latest compositor keymap back, in the layout niri
+    /// last reported, `group`, if it reported one: a layout the user switched to meanwhile
+    /// stays. Then clears the marker. With a paste's aftercare, that runs in a task of its
+    /// own, so a dropped call can't leave the keeper without its `p`.
+    async fn finish(mut self, group: Option<u32>) -> Result<(), ToolError> {
+        if let Some(group) = group {
+            self.group = group;
+        }
         let Some(aftercare) = self.aftercare.take() else {
             self.release().await?;
             return self.clear().await;

@@ -35,6 +35,7 @@ pub(super) fn run(
     super::mismatch(session, &mut native, wev, window)?;
     super::routing(session, &mut native, wev, window)?;
     super::native_unicode::run(session, &mut native, wev)?;
+    super::native_unicode::layout_change(session, &mut native, wev)?;
     measure(session, &mut native, wev, "native")?;
     let pacer = super::pacer::start(session)?;
     super::exposure::run(session, &mut native, wev, "native")?;

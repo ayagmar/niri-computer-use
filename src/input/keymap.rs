@@ -238,6 +238,14 @@ fn modifier_mask(map: &xkb::Keymap, modifiers: &[&str]) -> Result<u32, CallError
     Ok(mask)
 }
 
+/// `map` as libxkbcommon serializes it once compiled, as niri re-serializes a map a device
+/// uploads; `None` if it doesn't compile. Two spellings of one map give the same text.
+pub(crate) fn serialized(map: &str) -> Option<String> {
+    compile(map)
+        .ok()
+        .map(|keymap| keymap.get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1))
+}
+
 pub(super) fn held_mask(map: &str, modifiers: &[&str]) -> Result<u32, CallError> {
     modifier_mask(&compile(map)?, modifiers)
 }
