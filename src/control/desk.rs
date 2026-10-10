@@ -20,6 +20,8 @@ use crate::refs::{Refs, Shot};
 
 /// How often a held lease checks that its file is still the one at `lease`.
 const CHECK: Duration = Duration::from_secs(1);
+/// How often a running action checks the same.
+const MOVED_CHECK: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone)]
 pub(crate) struct Desk {
@@ -147,8 +149,10 @@ impl Desk {
 
     /// Runs one action with the action mutex held. It runs only while neither the stop flag
     /// nor the input-dirty marker is set, this server holds the lease, and `refusal`, the
-    /// policy's answer asked once those checks pass, has none. A stop that arrives while
-    /// `work` runs cancels it; the stop watcher then takes the lease back. `finish` turns
+    /// policy's answer asked once those checks pass, has none. The lease file must still be
+    /// the one locked right before `work` starts. A stop that arrives while `work` runs
+    /// cancels it; the stop watcher then takes the lease back. A lease file removed or
+    /// replaced meanwhile cancels it too, and the lease is given up at once. `finish` turns
     /// the work's result into the call's, still under the mutex but past the stop, so a
     /// stop can't discard what the work already found.
     pub(crate) async fn act<T, U, F>(
@@ -161,25 +165,39 @@ impl Desk {
         F: Future<Output = U>,
     {
         let runtime = self.runtime.as_ref().map_err(Clone::clone)?;
-        let held = self.seat.lease.lock().await;
+        let mut held = self.seat.lease.lock().await;
         let mut stopped = self.unblocked(runtime)?;
-        if held.is_none() {
+        let Some(lease) = held.as_ref() else {
             return Err(ToolError::new(
                 ErrorName::LeaseRequired,
                 "this server doesn't hold the lease; call acquire_desktop first",
             )
             .into());
-        }
+        };
         if let Some(refusal) = refusal.await {
             return Err(refusal.into());
         }
-        let done = tokio::select! {
-            biased;
-            _ = stopped.wait_for(|stopped| *stopped) => None,
-            done = work => Some(done),
+        let ended = if lease.intact() {
+            tokio::select! {
+                biased;
+                _ = stopped.wait_for(|stopped| *stopped) => Ended::Stopped,
+                () = moved(lease) => Ended::Moved("cancelled the action; anything niri had already accepted may have taken effect"),
+                done = work => Ended::Done(done),
+            }
+        } else {
+            Ended::Moved("sent nothing")
         };
-        let Some(done) = done else {
-            return Err(cancelled(&stopped).into());
+        let done = match ended {
+            Ended::Done(done) => done,
+            Ended::Stopped => return Err(cancelled(&stopped).into()),
+            Ended::Moved(what) => {
+                self.seat.take(&mut held);
+                // Without the directory, the stop watcher is about to end too.
+                if !runtime.path().exists() {
+                    return Err(watcher_ended().into());
+                }
+                return Err(lease_moved(what).into());
+            }
         };
         let finished = finish(done?).await;
         drop(held);
@@ -311,6 +329,36 @@ async fn release_loop(mut stopped: watch::Receiver<bool>, seat: Weak<Seat>) {
             },
         }
     }
+}
+
+/// How an action's work ended.
+enum Ended<T> {
+    Done(T),
+    /// The stop flag cancelled it.
+    Stopped,
+    /// The lease file was removed or replaced, before the work or during it, as said.
+    Moved(&'static str),
+}
+
+/// Returns once `lease` no longer names the file it locked. A running action checks this
+/// itself, because the periodic check waits for the action mutex the action holds.
+async fn moved(lease: &Lease) {
+    let mut check = tokio::time::interval(MOVED_CHECK);
+    loop {
+        check.tick().await;
+        if !lease.intact() {
+            return;
+        }
+    }
+}
+
+fn lease_moved(what: &str) -> ToolError {
+    ToolError::new(
+        ErrorName::LeaseRequired,
+        format!(
+            "the lease file was removed or replaced, so another server may hold the lease; this server gave it up and {what}"
+        ),
+    )
 }
 
 /// Drops the lease if its file was removed or replaced. Returns false once the desk is
@@ -538,6 +586,80 @@ mod tests {
         assert!(dropped.await.is_err());
         assert!(released(&desk).await);
         assert_eq!(act(&desk, None).await, Err(ErrorName::Stopped));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Removes the `lease` file and lets `other` lock the new one, as a second server would.
+    async fn replace_lease(runtime: &RuntimeDir, other: &Desk) {
+        std::fs::remove_file(runtime.path().join("lease")).unwrap();
+        other.acquire("other/2", None, None).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_lease_replaced_during_the_readiness_check_refuses_the_work() {
+        let dir = crate::test_support::fresh_dir("desk-act-replaced");
+        let desk = Desk::start(&env(&dir));
+        let other = Desk::start(&env(&dir));
+        let runtime = RuntimeDir::of(&env(&dir)).unwrap();
+        desk.acquire("me/1", None, None).await.unwrap();
+        let readiness = async {
+            replace_lease(&runtime, &other).await;
+            None
+        };
+        let mut ran = false;
+        let result = desk
+            .act(
+                readiness,
+                async {
+                    ran = true;
+                    Ok(())
+                },
+                std::future::ready,
+            )
+            .await;
+        let Err(CallError::Tool(error)) = result else {
+            panic!("{result:?}");
+        };
+        assert_eq!(error.name, ErrorName::LeaseRequired);
+        assert!(!ran);
+        assert!(!desk.status().held_by_me);
+        assert!(other.status().held_by_me);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_lease_replaced_mid_action_cancels_it_and_gives_the_lease_up() {
+        let dir = crate::test_support::fresh_dir("desk-act-moved");
+        let desk = Desk::start(&env(&dir));
+        let other = Desk::start(&env(&dir));
+        let runtime = RuntimeDir::of(&env(&dir)).unwrap();
+        desk.acquire("me/1", None, None).await.unwrap();
+        let (started, running) = tokio::sync::oneshot::channel::<()>();
+        let (held, dropped) = tokio::sync::oneshot::channel::<()>();
+        let action = desk.act(
+            async { None },
+            async move {
+                started.send(()).unwrap();
+                let _held = held;
+                std::future::pending::<Result<(), CallError>>().await
+            },
+            std::future::ready,
+        );
+        let replace = async {
+            running.await.unwrap();
+            replace_lease(&runtime, &other).await;
+        };
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(action, replace)
+        })
+        .await
+        .unwrap();
+        let Err(CallError::Tool(error)) = result else {
+            panic!("{result:?}");
+        };
+        assert_eq!(error.name, ErrorName::LeaseRequired);
+        assert!(dropped.await.is_err());
+        assert!(!desk.status().held_by_me);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

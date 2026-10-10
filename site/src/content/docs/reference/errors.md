@@ -65,7 +65,7 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 ### `lease_required`
 
-**Cause:** an action tool was called without holding the lease.
+**Cause:** an action tool was called without holding the lease, or the lease file was removed or replaced before or during the action, so another server may hold the lease. The server then gives its lease up, and cancels an action that was running.
 
 **What to do:** call `acquire_desktop` first, if you asked the agent to act.
 
