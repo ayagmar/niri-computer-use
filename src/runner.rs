@@ -220,13 +220,15 @@ pub(crate) fn companion(program: &str, args: &[String]) -> Result<Companion, Too
 }
 
 /// Starts a child that outlives the server: in a process group of its own, with stdin and
-/// stdout closed and `stderr` as its stderr. The server never kills or waits for it.
+/// stdout closed and `stderr` as its stderr. The server never kills or waits for it. It
+/// gets the server's environment without the session's variables `main` discovered, so it
+/// finds the session as the server did.
 pub(crate) fn daemon(
     program: &str,
     args: &[String],
     stderr: std::fs::File,
 ) -> Result<(), ToolError> {
-    command(program)
+    own_command(program)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -273,11 +275,17 @@ fn detached(
     clippy::disallowed_methods,
     reason = "the runner is the one place that starts processes"
 )]
-fn command(program: &str) -> Command {
+fn own_command(program: &str) -> Command {
     let mut command = Command::new(program);
     // libwayland would use an inherited connection before `WAYLAND_DISPLAY`, skipping the
     // display `main` checked is niri's.
     command.env_remove("WAYLAND_SOCKET");
+    command
+}
+
+/// A command with the session's variables, as `main` resolved them.
+fn command(program: &str) -> Command {
+    let mut command = own_command(program);
     command.envs(
         SESSION
             .get()
