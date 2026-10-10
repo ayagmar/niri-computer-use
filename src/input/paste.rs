@@ -48,8 +48,9 @@ const START: Duration = Duration::from_secs(1);
 /// The keeper's start, then its `take`, which ends with `ready` or `refused` within
 /// `keeper::TAKE` whenever niri answers slowly: 11 s.
 const READY: Duration = START.saturating_add(keeper::TAKE);
-/// The keeper's wait for the read, its quiet time and the restore's round trip.
-const DONE: Duration = Duration::from_secs(5);
+/// From `p` to the keeper's report: `keeper::FINISH`, and half a second for the report
+/// line to reach the server: 6.5 s.
+const DONE: Duration = keeper::FINISH.saturating_add(Duration::from_millis(500));
 /// From `k` to `armed`: the keeper answers after one round trip to niri, which takes
 /// milliseconds. Well inside wtype's three seconds, which run while wtype waits at its
 /// gate for this, and short enough that a keeper that can't answer fails the call quickly.
@@ -397,6 +398,35 @@ pub(super) const STOPPED_WAITING: &str =
 mod tests {
     use super::*;
     use crate::act::Observed;
+
+    #[tokio::test]
+    async fn a_keeper_that_takes_the_selection_slowly_is_still_waited_for() {
+        // Five and a half seconds: past the old fixed wait, inside `keeper::TAKE`.
+        let script = r#"dd bs=1 count=9 status=none >/dev/null; sleep 5.5; echo '{"report":"ready"}'; exec cat >/dev/null"#;
+        let started = runner::companion("sh", &["-c".to_owned(), script.to_owned()]).unwrap();
+        assert!(Keeper::ready(started, b"x").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_keeper_whose_restore_is_slow_still_reports_what_it_did() {
+        // After `p`: no read for two seconds, then two slow round trips to niri.
+        let (aftercare, done) = fake_aftercare(
+            r#"dd bs=1 count=1 status=none >/dev/null; sleep 5.5; echo '{"report":"done","read":false,"clipboard":"cleared"}'; exec cat >/dev/null"#,
+        )
+        .await;
+        aftercare.sent().await;
+        let report = done.await.unwrap().unwrap();
+        assert!(
+            matches!(
+                report,
+                Report::Done {
+                    clipboard: Clipboard::Cleared,
+                    ..
+                }
+            ),
+            "{report:?}"
+        );
+    }
 
     #[tokio::test]
     async fn a_keeper_that_stopped_waiting_for_the_key_admits_none() {

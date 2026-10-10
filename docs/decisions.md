@@ -745,6 +745,7 @@ These match the versions installed locally.
 
 - The server gave the keeper five seconds to report `ready`, while its steps, finding niri's PID and then binding, saving, the round trip after the save and the take, each had two (review finding). With a niri slow on every step, the server failed the call and the keeper still took the selection and then restored it.
 - `keeper::TAKE` is now the sum of those step deadlines, built from `niri::PID_LIMIT` and `selection::STEP`, and the server waits `READY`, that plus a second for the keeper to start: eleven seconds. Giving the keeper one overall deadline was the other option; cancelling it partway through the take could leave the selection with a source that is about to go away. No dependency was added.
+- The wait for the keeper's last report after `p` had the same gap: five seconds for the two-second wait for a read and two round trips of two seconds each, so a slow niri turned a finished restore into `clipboard: unknown` (review finding). `keeper::FINISH` is that sum, and the server waits it plus half a second for the report line. Both budgets have a test with a keeper stand-in that answers after five and a half seconds.
 
 ## 2026-10-10: a dead server's marker goes straight to recover
 

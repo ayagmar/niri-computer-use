@@ -55,6 +55,10 @@ const TRANSFER: Duration = Duration::from_secs(2);
 /// The longest `take` runs: niri's PID, then binding, saving, the check after the save and
 /// taking the selection, each within its own deadline.
 pub(crate) const TAKE: Duration = niri::PID_LIMIT.saturating_add(selection::STEP.saturating_mul(4));
+/// The longest the keeper takes from `p` to its report when no read comes: the wait for
+/// the read, then the round trip that checks for a replacement and the one that restores
+/// or clears, each within its own deadline.
+pub(crate) const FINISH: Duration = READ_WAIT.saturating_add(selection::STEP.saturating_mul(2));
 
 pub(crate) async fn run(env: &Env) -> Result<(), String> {
     let mut commands = Commands::stdin()?;

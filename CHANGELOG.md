@@ -94,3 +94,4 @@ All notable changes to this project are documented here. The format follows [Kee
 - Modifiers held with `keys` on a native `click`, `drag` or `scroll` end as native typing does: the compositor's latest keymap in the layout niri has active, proved before the marker comes off. They used to restore the map and layout from the gesture's start.
 - A `paste` after a `clipboard: kept` outcome replaces the kept text instead of refusing with `clipboard_unsaved`, and clears the clipboard afterwards rather than put that text back. The keeper marks its text with `application/x-niri-computer-use-paste`.
 - `paste` waits up to eleven seconds for the keeper to take the clipboard, as long as the keeper's steps can take, instead of five.
+- `paste` waits six and a half seconds for the keeper's last report, as long as its wait for a read and its two round trips can take, instead of five, so a slow niri no longer turns a finished restore into `clipboard: unknown`.

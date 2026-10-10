@@ -20,7 +20,7 @@ use crate::error::{ErrorName, ToolError};
 /// How long a cleanup may run, and how long the server waits for them at its end. Every
 /// step of a cleanup has a deadline of its own, and steps that all came close to theirs
 /// would add up to more: a native paste's are a `KeyboardLayouts` request and up to four
-/// Wayland round trips of two seconds each, the keeper's report in five and the marker's
+/// Wayland round trips of two seconds each, the keeper's report in six and a half and the marker's
 /// lock in half a second. Each takes milliseconds when niri and the keeper answer.
 pub(crate) const LIMIT: Duration = Duration::from_secs(10);
 
