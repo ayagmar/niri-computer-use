@@ -1,14 +1,17 @@
 //! Native modifiers shared with a pointer gesture's single dirty marker.
 
-use super::{Input, keyboard::parse_combo, keymap::held_mask};
+use super::{Input, keyboard::parse_combo, keymap::held_mask, native};
 use crate::control::marker::Native;
 use crate::error::{CallError, ErrorName, ToolError};
-use crate::niri::{self, keyboard::Keyboard, waiter::View};
+use crate::niri::{self, Socket, keyboard::Keyboard, waiter::View};
 
 #[derive(Debug)]
 pub(super) struct Held {
     keyboard: Keyboard,
+    /// niri's socket, asked for the active layout before the layout is restored.
+    socket: Socket,
     mask: u32,
+    /// The layout niri reported when the gesture began.
     group: u32,
     active: bool,
 }
@@ -55,6 +58,7 @@ impl Held {
         let mask = held_mask(keyboard.map()?, &names)?;
         Ok(Some(Self {
             keyboard,
+            socket: input.niri.socket.clone(),
             mask,
             group,
             active: false,
@@ -82,10 +86,13 @@ impl Held {
         true
     }
 
+    /// Releases the modifiers, then puts the latest compositor keymap back in the layout
+    /// niri has active by now, as native typing's cleanup does. An error, the restore
+    /// unproved included, leaves the gesture's marker for `recover`.
     pub(super) async fn released(&mut self) -> Result<(), ToolError> {
         self.keyboard.release(&[], self.group).await?;
         self.active = false;
-        Ok(())
+        native::restore_active(&mut self.keyboard, &self.socket, self.group).await
     }
 }
 

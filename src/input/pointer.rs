@@ -431,8 +431,9 @@ impl Drop for Device {
     }
 }
 
-/// Releases what `pointer` still holds and removes `marker` once niri has handled it. If
-/// the marker can't be removed, it stays, and blocks input until `recover`.
+/// Releases what `pointer` and `held` still hold and removes `marker` once niri has
+/// handled it and the held modifiers' keymap is proved restored. Otherwise, or if the
+/// marker can't be removed, it stays, and blocks input until `recover`.
 async fn release(
     mut pointer: Pointer,
     mut held: Option<Held>,

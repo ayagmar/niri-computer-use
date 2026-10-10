@@ -268,11 +268,6 @@ async fn acknowledge_release(
 ) -> Result<(), ToolError> {
     keyboard.sync().await?;
     restore_active(&mut keyboard, &layout.0, layout.1).await?;
-    if !keyboard.restored() {
-        return Err(upstream(
-            "the last keymap niri sent clients isn't its latest compositor keymap",
-        ));
-    }
     if let Some(aftercare) = aftercare {
         aftercare.sent().await;
     }
@@ -286,8 +281,9 @@ async fn acknowledge_release(
 /// without niri's answer in `sent`, and sends the modifiers once more after niri has taken
 /// it: in the nested trials, this device saw the map a dropped call restored come back
 /// only after a further input, and the client sometimes got no modifiers event for one of
-/// the two.
-async fn restore_active(
+/// the two. Then proves clients and the device hold the latest base map; an error leaves
+/// the caller's marker for `recover`. A held pointer modifier's release ends the same way.
+pub(super) async fn restore_active(
     keyboard: &mut Keyboard,
     socket: &Socket,
     sent: u32,
@@ -295,7 +291,13 @@ async fn restore_active(
     let group = niri::keyboard_group(socket).await.unwrap_or(sent);
     keyboard.put_back(group).await?;
     keyboard.modifiers(0, group)?;
-    keyboard.sync().await
+    keyboard.sync().await?;
+    if keyboard.restored() {
+        return Ok(());
+    }
+    Err(upstream(
+        "the last keymap niri sent clients isn't its latest compositor keymap",
+    ))
 }
 
 fn upstream(detail: &str) -> ToolError {

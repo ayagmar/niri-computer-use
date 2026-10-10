@@ -1,13 +1,22 @@
 //! Held modifiers across pointer gestures, including stop/cancel and kill + recover.
 
+use std::fs;
+use std::path::Path;
+use std::time::{Duration, Instant};
+
 use rustix::process::Signal;
 use serde_json::{Value, json};
 
+use super::native_unicode::{
+    TWO_LAYOUTS, clients_hold, left_in, observe, serving_pid, signal, switch_layout,
+    two_layout_keymap, write_config,
+};
 use super::{SERVER_DEADLINE, Shot, WAIT, Wev, stop};
 use crate::failure::{Context as _, Failure, Result};
 use crate::keyboard;
+use crate::keymaps;
 use crate::mcp::{Client, field, structured};
-use crate::session::Session;
+use crate::session::{Session, pause};
 use crate::wev::{
     self, Pointer,
     keyboard::{Modifiers, trace},
@@ -155,6 +164,106 @@ fn pressed(session: &mut Session<'_>, wev: &Wev<'_>, offset: usize) -> Result<()
     })
 }
 
+/// A held drag whose niri config gains a second layout, which niri then switches to,
+/// before the drag ends: its release must put niri's new keymap back to clients, leave wev
+/// in the layout niri switched to, and clear the marker. Before, it sent clients the map
+/// and the layout the gesture began with, and cleared the marker anyway. The serving
+/// process is stopped right after the press and continued after the change, so the change
+/// lands mid-gesture; wev printing the new keymap before the button's release shows it
+/// did. niri's config is put back at the end.
+pub(super) fn layout_change(
+    session: &mut Session<'_>,
+    client: &mut Client,
+    wev: &Wev<'_>,
+) -> Result<()> {
+    let config = session.test_dir().niri_config();
+    let original_config =
+        fs::read_to_string(&config).context(format!("read {}", config.display()))?;
+    let (observer, directory, original) = observe(session, "held")?;
+    let serving = serving_pid(session, client)?;
+    let args = arguments(session, client, wev, "drag")?;
+    let offset = wev.offset()?;
+    let id = client.start_call("drag", args)?;
+    pressed_now(wev, offset)?;
+    signal(serving, Signal::STOP)?;
+    let changed = gain_layout(session, &directory, &config, &original_config);
+    signal(serving, Signal::CONT)?;
+    let base = changed?;
+    let outcome = structured(&client.result(session, id)?)?;
+    if field(&outcome, "/observed") != "sent" {
+        return Err(Failure::new(format!(
+            "M7 held drag across a layout change: {outcome}"
+        )));
+    }
+    stop::marker_gone(session)?;
+    clients_hold(
+        session,
+        &directory,
+        &base,
+        "the new keymap after a held drag",
+    )?;
+    left_in(wev, offset, 1, "after a held drag")?;
+    released_after_change(wev, offset)?;
+    write_config(&config, &original_config)?;
+    clients_hold(session, &directory, &original, "the original keymap")?;
+    observer.stop()?;
+    session.log(
+        "M7 held drag across a layout change: clients kept niri's new keymap, wev the layout switched to, and the marker cleared",
+    )
+}
+
+/// Waits, polling every millisecond, until wev has printed the drag's press since
+/// `offset`, so the serving process can be stopped before its release.
+fn pressed_now(wev: &Wev<'_>, offset: usize) -> Result<()> {
+    let press = Pointer::Button {
+        code: 272,
+        pressed: true,
+    };
+    let until = Instant::now() + WAIT;
+    while !wev.since(offset)?.contains(&press) {
+        if Instant::now() > until {
+            return Err(Failure::new("M7 held drag: wev printed no press"));
+        }
+        pause(Duration::from_millis(1));
+    }
+    Ok(())
+}
+
+/// Gives niri's config a second layout, waits for its keymap to reach clients, switches
+/// niri to the second layout, and returns that keymap.
+fn gain_layout(
+    session: &mut Session<'_>,
+    directory: &Path,
+    config: &Path,
+    original_config: &str,
+) -> Result<Vec<u8>> {
+    let before = keymaps::saved(directory)?.len();
+    write_config(config, &format!("{original_config}{TWO_LAYOUTS}"))?;
+    let base = two_layout_keymap(session, directory, before)?;
+    switch_layout(session, 1)?;
+    Ok(base)
+}
+
+/// wev printed the new keymap before the drag's release: the change landed mid-gesture.
+fn released_after_change(wev: &Wev<'_>, offset: usize) -> Result<()> {
+    let log = wev.read()?;
+    let since = log.get(offset..).unwrap_or_default();
+    let before_keymap = since
+        .find("] keymap:")
+        .and_then(|at| since.get(..at))
+        .ok_or_else(|| Failure::new("M7 held drag: wev printed no new keymap"))?;
+    let release = Pointer::Button {
+        code: 272,
+        pressed: false,
+    };
+    if wev::pointer_trace(before_keymap)?.contains(&release) {
+        return Err(Failure::new(
+            "M7 held drag: the drag ended before the layout change reached wev",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn crash(
     session: &mut Session<'_>,
     mut client: Client,
@@ -265,8 +374,8 @@ pub(super) fn typing_crash(
             Some(pid) => i32::try_from(pid).context("the engine's PID")?,
             None => client.pid(),
         };
-        super::native_unicode::signal(serving, Signal::STOP)?;
-        super::native_unicode::switch_layout(session, index)?;
+        signal(serving, Signal::STOP)?;
+        switch_layout(session, index)?;
     }
     let killed = super::guardian::kill_known(client, engine)?;
     let at_kill = keyboard::since(wev.log, offset)?;

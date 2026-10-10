@@ -44,6 +44,7 @@ pub(super) fn run(
     super::native_gestures::normal(session, &mut native, wev)?;
     super::native_gestures::interrupt(session, &mut native, wev, server, false)?;
     super::native_gestures::interrupt(session, &mut native, wev, server, true)?;
+    super::native_gestures::layout_change(session, &mut native, wev)?;
     super::native_gestures::crash(session, native, wev, server)?;
     let crash = super::native_gestures::Crash {
         text: "A",

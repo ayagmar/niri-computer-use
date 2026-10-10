@@ -726,3 +726,9 @@ These match the versions installed locally.
 - It refuses rather than saving again: a client that keeps copying could hold it in a loop, and the agent can type the text instead or try again.
 - A copy niri handles between that round trip and the take is still overwritten, as one between the last check and the restore is: data-control has no request that sets the selection only if it is still the one seen.
 - The nested keeper checks cover it with `harness clipboard --hold`, an owner that answers no read until another client copies. The selection code talks to niri's Wayland socket, and the repository has no fake Wayland server to drive it in `make check`.
+
+## 2026-10-10: held pointer modifiers restore like native typing
+
+- Modifiers held with `keys` on a native `click`, `drag` or `scroll` were released in the layout the gesture began in, with the device's own map, and the marker came off after one round trip (review finding). A keyboard configuration change or a layout switch during the gesture left clients with the old map and layout until a physical key, and nothing kept the marker.
+- `Held` now ends through native typing's own cleanup, `native::restore_active`, which also gained the `restored` check it was always followed by: release, ask niri for the active layout, upload the latest base map, zero modifiers, wait, and fail unless clients and the device hold that map. A failure keeps the marker for `recover`. Sharing the function keeps the two paths from drifting again; the cleanup still runs under `cleanup::spawn`'s deadline.
+- The check is in the nested input suite: a held drag whose serving process is stopped right after the press while niri's config gains a layout and niri switches to it. With the old release, clients kept the old keymap and the check failed. A unit test would need a fake Wayland compositor that echoes virtual-keyboard maps, which the repository doesn't have. No dependency was added.

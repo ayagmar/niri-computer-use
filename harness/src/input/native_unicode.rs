@@ -124,7 +124,10 @@ pub(super) fn wtype_comparison(
     ))
 }
 
-fn observe(session: &mut Session<'_>, name: &str) -> Result<(Process, PathBuf, Vec<u8>)> {
+pub(super) fn observe(
+    session: &mut Session<'_>,
+    name: &str,
+) -> Result<(Process, PathBuf, Vec<u8>)> {
     let directory = session.artifact(&format!("keymaps-{name}"));
     fs::create_dir_all(&directory).context(format!("create {}", directory.display()))?;
     let harness = std::env::current_exe().context("find the harness binary")?;
@@ -294,7 +297,7 @@ fn ascii(
 
 /// Waits until niri has sent clients a keymap with two layouts after the first `before`
 /// maps, and returns it.
-fn two_layout_keymap(
+pub(super) fn two_layout_keymap(
     session: &mut Session<'_>,
     directory: &Path,
     before: usize,
@@ -364,7 +367,7 @@ fn cancelled(
 }
 
 /// After a pause, the focused client's last modifiers since `offset` are in `group`.
-fn left_in(wev: &Wev<'_>, offset: usize, group: u8, when: &str) -> Result<()> {
+pub(super) fn left_in(wev: &Wev<'_>, offset: usize, group: u8, when: &str) -> Result<()> {
     pause(QUIET);
     let log = wev.read()?;
     let left = trace(log.get(offset..).unwrap_or_default())?
@@ -461,10 +464,10 @@ pub(super) fn layout_crash(session: &mut Session<'_>, wev: &Wev<'_>, server: &st
     session.log("M7 SIGKILL after a layout switch: the guardian and then recover left wev in the layout niri switched to, not the marker's")
 }
 
-const TWO_LAYOUTS: &str =
+pub(super) const TWO_LAYOUTS: &str =
     "\ninput {\n    keyboard {\n        xkb {\n            layout \"us,de\"\n        }\n    }\n}\n";
 
-fn write_config(config: &Path, text: &str) -> Result<()> {
+pub(super) fn write_config(config: &Path, text: &str) -> Result<()> {
     fs::write(config, text).context(format!("write {}", config.display()))
 }
 
@@ -477,7 +480,7 @@ fn two_layouts(map: &[u8]) -> bool {
 }
 
 /// The process that types for `client`: its server, or in shared mode the engine.
-fn serving_pid(session: &mut Session<'_>, client: &mut Client) -> Result<i32> {
+pub(super) fn serving_pid(session: &mut Session<'_>, client: &mut Client) -> Result<i32> {
     let status = structured(&client.call(session, "status", json!({}))?)?;
     field(&status, "/engine/pid")
         .as_i64()
@@ -589,7 +592,12 @@ fn expect_outcome(outcome: &Value, observed: &str, detail: &str) -> Result<()> {
 }
 
 /// Waits until the last map niri sent clients is `map`.
-fn clients_hold(session: &mut Session<'_>, directory: &Path, map: &[u8], what: &str) -> Result<()> {
+pub(super) fn clients_hold(
+    session: &mut Session<'_>,
+    directory: &Path,
+    map: &[u8],
+    what: &str,
+) -> Result<()> {
     session.wait_until("m7-layout-restored", what, WAIT, |_| {
         Ok((keymaps::saved(directory)?.last().map(Vec::as_slice) == Some(map)).then_some(()))
     })

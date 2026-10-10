@@ -72,7 +72,7 @@ What changes with native:
 - It uses the compositor's keymap and checks focus, the layout and the stop flag between individual key presses, not between parts of 100 characters.
 - Text with symbols the active layout lacks is typed through a temporary keymap for that call, using keycodes the layout leaves empty, and the compositor's keymap is restored before the call succeeds. There are only so many spare keycodes (14 in a US layout), so a text needing more distinct missing symbols, or a missing control character, is refused whole with `refused`; split it.
 - `key` combinations still refuse keysyms the layout lacks.
-- `click`, `drag` and `scroll` can hold modifiers with `keys`.
+- `click`, `drag` and `scroll` can hold modifiers with `keys`. Their release ends like a typing call, below.
 - If the server is killed mid-call, its crash guardian releases the keys and sends the compositor's keymap back.
-- A call that ends, is cancelled or is cleaned up after a crash leaves the focused application in the layout niri has active, also when you switched layouts during the call.
+- A call that ends, is cancelled or is cleaned up after a crash, a gesture holding modifiers included, leaves the focused application with niri's latest keymap and in the layout niri has active, also when the keyboard configuration changed or you switched layouts during the call. If the server can't confirm that clients hold that keymap, the input-dirty marker stays and actions refuse until `recover`.
 
