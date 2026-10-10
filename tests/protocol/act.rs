@@ -1537,3 +1537,96 @@ async fn release_desktop_can_give_focus_back_to_the_users_window() {
     assert_eq!(gone["restored"]["accepted"], false, "{gone}");
     assert!(!desk.niri.sent_action());
 }
+
+#[tokio::test]
+async fn niri_action_reports_the_window_as_niri_shows_it_after() {
+    let mut desk = Desk::start("act-niri-action", "").await;
+    let fullscreen = json!({"action": {"FullscreenWindow": {"id": 2}}});
+    let result = desk
+        .act("niri_action", fullscreen.clone(), |stream, action| {
+            assert!(
+                matches!(action, Action::FullscreenWindow { id: Some(2) }),
+                "{action:?}"
+            );
+            stream.send(&json!({"WindowLayoutsChanged": {"changes": [[2, {
+                "pos_in_scrolling_layout": [1, 1], "tile_size": [2560.0, 1440.0],
+                "window_size": [2560, 1440], "tile_pos_in_workspace_view": null,
+                "window_offset_in_tile": [0.0, 0.0]
+            }]]}}));
+        })
+        .await;
+    assert_eq!(
+        outcome(&result),
+        json!({
+            "accepted": true, "observed": "changed", "focused_window": 1, "windows": [2],
+            "window": {
+                "id": 2, "workspace_id": 1, "is_focused": false, "is_floating": false,
+                "is_urgent": false, "window_size": [2560, 1440], "tile_size": [2560.0, 1440.0],
+                "pos_in_scrolling_layout": [1, 1]
+            }
+        })
+    );
+    let unknown = desk
+        .server
+        .call(
+            "niri_action",
+            json!({"action": {"FullscreenWindow": {"id": 9}}}),
+        )
+        .await;
+    assert_eq!(
+        mistake(&unknown),
+        "invalid arguments: no window with id 9; desktop_state lists them"
+    );
+    let garbled = desk
+        .server
+        .call("niri_action", json!({"action": {"Fullscreen": {}}}))
+        .await;
+    assert!(
+        mistake(&garbled).starts_with(
+            "invalid arguments: `action` isn't a niri action: unknown variant `Fullscreen`"
+        ),
+        "{garbled}"
+    );
+    assert!(!desk.niri.sent_action());
+    assert_eq!(
+        desk.audited()[0],
+        json!(["niri_action", fullscreen, true, "changed", null])
+    );
+}
+
+#[tokio::test]
+async fn gated_niri_actions_need_unrestricted() {
+    let spawn = json!({"action": {"Spawn": {"command": ["foot"]}}});
+    let mut desk = Desk::start("act-gated", "").await;
+    let (name, detail) = tool_error(&desk.server.call("niri_action", spawn.clone()).await);
+    assert_eq!(name, "unrestricted_required");
+    assert!(
+        detail.starts_with("Spawn needs unrestricted = true"),
+        "{detail}"
+    );
+    assert!(!desk.niri.sent_action());
+    assert_eq!(
+        desk.audited(),
+        [json!([
+            "niri_action",
+            spawn,
+            null,
+            null,
+            "unrestricted_required"
+        ])]
+    );
+
+    let mut open = Desk::start("act-unrestricted", "unrestricted = true").await;
+    let result = open
+        .act("niri_action", spawn, |_, action| {
+            assert!(
+                matches!(&action, Action::Spawn { command } if command == &["foot"]),
+                "{action:?}"
+            );
+        })
+        .await;
+    assert_eq!(
+        outcome(&result),
+        json!({"accepted": true, "observed": "sent", "focused_window": 1})
+    );
+}

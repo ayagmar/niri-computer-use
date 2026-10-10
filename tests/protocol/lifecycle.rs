@@ -54,6 +54,7 @@ fn expected(name: &str) -> (Value, Value) {
         "focus_window" | "focus_workspace" => (json!([false, false, true]), json!(["id"])),
         "close_window" => (json!([false, true, false]), json!(["id"])),
         "launch" => (json!([false, false, false]), json!(["preset"])),
+        "niri_action" => (json!([false, true, false]), json!(["action"])),
         "screenshot" => (json!([true, null, null]), json!(["target"])),
         "pointer_move" => (json!([false, false, true]), json!(["screenshot_ref"])),
         "click" => (json!([false, true, false]), json!(["screenshot_ref"])),
@@ -95,6 +96,7 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
             "focus_workspace",
             "key",
             "launch",
+            "niri_action",
             "outputs",
             "paste",
             "pointer_move",
@@ -131,9 +133,10 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
 }
 
 /// How many arguments each tool takes; tools not listed take none.
-const PROPERTIES: [(&str, usize); 16] = [
+const PROPERTIES: [(&str, usize); 17] = [
     ("screenshot", 5),
     ("launch", 3),
+    ("niri_action", 2),
     ("focus_window", 2),
     ("focus_workspace", 2),
     ("close_window", 2),
@@ -214,6 +217,7 @@ async fn without_noctalia_on_path_there_are_no_shell_tools() {
             "focus_workspace",
             "key",
             "launch",
+            "niri_action",
             "outputs",
             "paste",
             "pointer_move",

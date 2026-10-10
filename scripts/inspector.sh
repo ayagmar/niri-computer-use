@@ -63,7 +63,7 @@ call() {
 
 # Every tool listed with niri reachable; Noctalia and the accessibility bus add the rest.
 readonly TOOLS='["acquire_desktop","click","clipboard_read","close_window","desktop_state",
-  "drag","focus_window","focus_workspace","key","launch","outputs","paste","pointer_move",
+  "drag","focus_window","focus_workspace","key","launch","niri_action","outputs","paste","pointer_move",
   "release_desktop","screenshot","scroll","status","type_text","wait_for"]'
 # Tools that only read; every other tool changes the desktop or the lease.
 readonly READ_ONLY='["clipboard_read","desktop_state","elements","outputs","screenshot",

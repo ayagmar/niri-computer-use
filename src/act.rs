@@ -22,6 +22,7 @@ use crate::observe::{self, Metadata, Screenshot};
 use crate::policy::Preset;
 use crate::settle;
 
+pub(crate) mod compositor;
 pub(crate) mod shell;
 
 /// How long an action waits for its effect.
@@ -57,8 +58,13 @@ pub(crate) enum Observed {
     /// The request's reply, or the event stream, was lost: the action may or may not have
     /// happened.
     Uncertain,
-    /// Input tools: niri handled the input. What it did is for the next screenshot to show.
+    /// Input tools and `niri_action`: niri handled it. What it did is for the next
+    /// screenshot to show.
     Sent,
+    /// `niri_action`: niri reported a change in the window the action is about.
+    Changed,
+    /// `niri_action`: niri reported no change in the window within a second.
+    Unchanged,
 }
 
 /// An action's result.
@@ -91,6 +97,9 @@ pub(crate) struct Outcome {
     /// Shell tools: Noctalia's open panel when the observation ended.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) shell: Option<shell::Shell>,
+    /// `niri_action`: the window the action is about, as niri reports it at the end.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) window: Option<compositor::WindowState>,
     /// `paste`: whether the text was read, and what became of the clipboard.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) paste: Option<Pasted>,
@@ -125,6 +134,7 @@ impl Outcome {
             pressed: None,
             submitted: None,
             shell: None,
+            window: None,
             paste: None,
             detail: None,
             screenshot: None,
@@ -143,6 +153,7 @@ impl Outcome {
             pressed: None,
             submitted: None,
             shell: None,
+            window: None,
             paste: None,
             detail: Some(detail),
             screenshot: None,
@@ -163,7 +174,9 @@ impl Outcome {
             | Observed::Opened
             | Observed::One
             | Observed::Ambiguous
-            | Observed::Sent => false,
+            | Observed::Sent
+            | Observed::Changed
+            | Observed::Unchanged => false,
         }
     }
 }

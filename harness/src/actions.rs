@@ -4,7 +4,9 @@
 //! `one` with a late `app_id` and `ambiguous`, `reuse` with zero, one and two existing
 //! windows, `focus_window` and `focus_workspace`, `close_window` giving `closed` and
 //! `pending` with its screenshot, and `interrupted` when the harness moves focus during a
-//! launch's wait. Everything the run creates lives under `TEST_DIR`.
+//! launch's wait. `niri_action` fullscreens and restores a window, floats it and sets its
+//! width, refuses `Spawn`, and a second server whose policy turns on `unrestricted` spawns
+//! a fixture with it. Everything the run creates lives under `TEST_DIR`.
 
 use std::fs;
 use std::path::Path;
@@ -46,8 +48,10 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
     focuses(session, &mut client, late)?;
     closes(session, &mut client)?;
     interrupted(session, &mut client, late)?;
+    layout(session, &mut client)?;
     structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     client.stop()?;
+    unrestricted(session, server)?;
     noctalia.stop().map(drop)
 }
 
@@ -69,6 +73,7 @@ fn write_policy(session: &Session<'_>) -> Result<()> {
             ("plain", &[]),
             ("keep", &["--keep-open"]),
             ("slow", &["--delay", SLOW_DELAY, "--started", &started]),
+            ("sized", &["--resize"]),
         ],
     )?;
     write_file(
@@ -330,6 +335,94 @@ fn interrupted(session: &mut Session<'_>, client: &mut Client, target: u64) -> R
     session.log(&format!(
         "M3: launch interrupted, with a screenshot: {outcome}"
     ))
+}
+
+/// `niri_action` on a fixture that takes the size niri configures: fullscreen fills the
+/// output and a second toggle gives the old size back, floating is reported, and a fixed
+/// width is the window's width. `Spawn` is refused without `unrestricted`.
+fn layout(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
+    let outputs = structured(&client.call(session, "outputs", json!({}))?)?;
+    let logical = field(&outputs, "/winit/logical");
+    let screen = json!([field(logical, "/width"), field(logical, "/height")]);
+    let sized = act(session, client, "launch", json!({"preset": "sized"}))?;
+    expect_outcome(&sized, "one", "launch sized")?;
+    let id = only_window(&sized)?;
+    let tiled = field(&window(session, client, id)?, "/layout/window_size").clone();
+    let fullscreen = json!({"action": {"FullscreenWindow": {"id": id}}});
+    let full = act(session, client, "niri_action", fullscreen.clone())?;
+    expect_outcome(&full, "changed", "FullscreenWindow")?;
+    expect(
+        field(&full, "/window/window_size") == &screen,
+        &format!("the fullscreen window is the output's size {screen}"),
+        &full.to_string(),
+    )?;
+    let back = act(session, client, "niri_action", fullscreen)?;
+    expect_outcome(&back, "changed", "FullscreenWindow again")?;
+    expect(
+        field(&back, "/window/window_size") == &tiled,
+        &format!("the window is back to {tiled}"),
+        &back.to_string(),
+    )?;
+    session.log(&format!(
+        "M3: niri_action fullscreen and back: {full}, {back}"
+    ))?;
+    let float = json!({"action": {"ToggleWindowFloating": {"id": id}}});
+    let floating = act(session, client, "niri_action", float)?;
+    expect_outcome(&floating, "changed", "ToggleWindowFloating")?;
+    expect(
+        field(&floating, "/window/is_floating") == true,
+        "the window floats",
+        &floating.to_string(),
+    )?;
+    let width = json!({"action": {"SetWindowWidth": {"id": id, "change": {"SetFixed": 400}}}});
+    let wide = act(session, client, "niri_action", width)?;
+    expect_outcome(&wide, "changed", "SetWindowWidth")?;
+    expect(
+        field(&wide, "/window/window_size/0") == 400,
+        "the window is 400 wide",
+        &wide.to_string(),
+    )?;
+    session.log(&format!(
+        "M3: niri_action float and width: {floating}, {wide}"
+    ))?;
+    let spawn = json!({"action": {"Spawn": {"command": ["true"]}}});
+    let refused = client.call(session, "niri_action", spawn)?;
+    expect(
+        field(&refused, "/structuredContent/error") == "unrestricted_required",
+        "Spawn refused without unrestricted",
+        &refused.to_string(),
+    )?;
+    let closed = act(session, client, "close_window", json!({"id": id}))?;
+    expect_outcome(&closed, "closed", "close the sized window")?;
+    session.log(&format!("M3: niri_action Spawn refused: {refused}"))
+}
+
+/// A server whose policy turns on `unrestricted` spawns a fixture through `niri_action`,
+/// which `wait_for` then sees.
+fn unrestricted(session: &mut Session<'_>, server: &str) -> Result<()> {
+    write_file(session, "unrestricted = true\n")?;
+    let mut client = Client::start(session, server, "harness-m3-unrestricted", SERVER_DEADLINE)?;
+    ready(session, &mut client)?;
+    structured(&client.call(session, "acquire_desktop", json!({}))?)?;
+    let harness = std::env::current_exe().context("find the harness binary")?;
+    let test_dir = session.test_dir().root();
+    let command = json!([harness, "window", test_dir, "spawned"]);
+    let spawn = json!({"action": {"Spawn": {"command": command}}});
+    let spawned = act(session, &mut client, "niri_action", spawn)?;
+    expect_outcome(&spawned, "sent", "Spawn with unrestricted")?;
+    let until = json!({"until": {"window": {"app_id": "spawned"}}, "timeout_ms": 5000});
+    let seen = structured(&client.call(session, "wait_for", until)?)?;
+    let id = match field(&seen, "/windows").as_array().map(Vec::as_slice) {
+        Some([id]) if field(&seen, "/observed") == "met" => id.clone(),
+        _ => return Err(Failure::new(format!("M3: no spawned window: {seen}"))),
+    };
+    let closed = act(session, &mut client, "close_window", json!({"id": id}))?;
+    expect_outcome(&closed, "closed", "close the spawned window")?;
+    session.log(&format!(
+        "M3: niri_action Spawn with unrestricted: {spawned}, {seen}"
+    ))?;
+    structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
+    client.stop()
 }
 
 fn focus(session: &mut Session<'_>, client: &mut Client, id: u64) -> Result<()> {

@@ -3,7 +3,9 @@
 //! before it connects. It maps one or more plain toplevels and can start late, set its
 //! `app_id` only after mapping, and ignore close requests the way an app asking about
 //! unsaved changes does. With `--animate` it commits a damaged frame on every frame
-//! callback, so niri renders every frame, as for a video. It exits when its windows are
+//! callback, so niri renders every frame, as for a video. With `--resize` it takes the size
+//! niri configures, as a real app does, so niri reports fullscreen and widths as window
+//! sizes. It exits when its windows are
 //! closed, when niri goes away, or at its own deadline.
 
 use std::os::fd::AsFd as _;
@@ -34,7 +36,7 @@ const DEADLINE: Duration = Duration::from_secs(90);
 const WIDTH: i32 = 320;
 const HEIGHT: i32 = 240;
 
-pub(crate) const USAGE: &str = "usage: harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--animate] [--started <file>] [--deadline <ms>]";
+pub(crate) const USAGE: &str = "usage: harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--animate] [--resize] [--started <file>] [--deadline <ms>]";
 
 /// What the fixture does.
 #[derive(Debug, PartialEq, Eq)]
@@ -51,6 +53,8 @@ pub(crate) struct Options {
     pub(crate) keep_open: bool,
     /// Commit a damaged frame on every frame callback.
     pub(crate) animate: bool,
+    /// Draw at the size niri configures instead of 320×240.
+    pub(crate) resize: bool,
     /// A file to create as soon as the fixture starts, before its delay.
     pub(crate) started: Option<PathBuf>,
     /// How long the fixture runs at most.
@@ -70,6 +74,7 @@ impl Options {
             late: None,
             keep_open: false,
             animate: false,
+            resize: false,
             started: None,
             deadline: DEADLINE,
         };
@@ -88,6 +93,7 @@ impl Options {
                 "--late" => options.late = Some(millis(rest.next())?),
                 "--keep-open" => options.keep_open = true,
                 "--animate" => options.animate = true,
+                "--resize" => options.resize = true,
                 "--deadline" => options.deadline = millis(rest.next())?,
                 "--started" => {
                     let value = rest.next().ok_or_else(|| Failure::new(USAGE))?;
@@ -108,10 +114,16 @@ impl Options {
 struct State {
     keep_open: bool,
     animate: bool,
+    resize: bool,
+    shm: WlShm,
     /// Toplevels the compositor has configured and that got a buffer.
     mapped: u32,
     closed: u32,
     buffer: WlBuffer,
+    /// The buffer's size.
+    size: (i32, i32),
+    /// The size niri's last toplevel configure asked for; zero lets the window choose.
+    configured: (i32, i32),
 }
 
 pub(crate) fn run(options: &Options) -> Result<()> {
@@ -136,9 +148,13 @@ pub(crate) fn run(options: &Options) -> Result<()> {
     let mut state = State {
         keep_open: options.keep_open,
         animate: options.animate,
+        resize: options.resize,
+        buffer: buffer(&shm, &handle, (WIDTH, HEIGHT))?,
+        shm,
         mapped: 0,
         closed: 0,
-        buffer: buffer(&shm, &handle)?,
+        size: (WIDTH, HEIGHT),
+        configured: (0, 0),
     };
     let toplevels: Vec<(WlSurface, XdgToplevel)> = (0..options.count)
         .map(|_| {
@@ -204,16 +220,20 @@ pub(crate) fn dispatch_until<S>(
 
 /// One black buffer, shared by every window. Its memory is never written, so it stays
 /// zero: black in `XRGB8888`.
-fn buffer(shm: &WlShm, handle: &QueueHandle<State>) -> Result<WlBuffer> {
-    let stride = WIDTH * 4;
-    let size = stride * HEIGHT;
+fn buffer(
+    shm: &WlShm,
+    handle: &QueueHandle<State>,
+    (width, height): (i32, i32),
+) -> Result<WlBuffer> {
+    let stride = width * 4;
+    let size = stride * height;
     let fd = memfd_create("harness-window", MemfdFlags::CLOEXEC).context("memfd_create")?;
     ftruncate(&fd, u64::try_from(size).context("buffer size")?).context("size the buffer")?;
     let pool = shm.create_pool(fd.as_fd(), size, handle, ());
     let buffer = pool.create_buffer(
         0,
-        WIDTH,
-        HEIGHT,
+        width,
+        height,
         stride,
         wl_shm::Format::Xrgb8888,
         handle,
@@ -259,7 +279,8 @@ impl Dispatch<XdgWmBase, ()> for State {
     }
 }
 
-/// The first configure maps the window: ack it, attach the buffer, commit.
+/// Each configure is acked with a commit; the first maps the window. With `--resize`, a
+/// configure with a new size gets a buffer of that size.
 impl Dispatch<XdgSurface, WlSurface> for State {
     fn event(
         state: &mut Self,
@@ -271,11 +292,23 @@ impl Dispatch<XdgSurface, WlSurface> for State {
     ) {
         if let xdg_surface::Event::Configure { serial } = event {
             xdg.ack_configure(serial);
+            let wanted = match state.configured {
+                (width, height) if state.resize && width > 0 && height > 0 => (width, height),
+                _ => state.size,
+            };
+            // A buffer that can't be made leaves the old size, which the test then reports.
+            if wanted != state.size
+                && let Ok(buffer) = buffer(&state.shm, handle, wanted)
+            {
+                state.buffer.destroy();
+                state.buffer = buffer;
+                state.size = wanted;
+            }
             surface.attach(Some(&state.buffer), 0, 0);
             if state.animate {
                 surface.frame(handle, surface.clone());
             }
-            surface.damage_buffer(0, 0, WIDTH, HEIGHT);
+            surface.damage_buffer(0, 0, state.size.0, state.size.1);
             surface.commit();
             state.mapped += 1;
         }
@@ -295,7 +328,7 @@ impl Dispatch<WlCallback, WlSurface> for State {
         if let wl_callback::Event::Done { .. } = event {
             surface.frame(handle, surface.clone());
             surface.attach(Some(&state.buffer), 0, 0);
-            surface.damage_buffer(0, 0, WIDTH, HEIGHT);
+            surface.damage_buffer(0, 0, state.size.0, state.size.1);
             surface.commit();
         }
     }
@@ -310,9 +343,18 @@ impl Dispatch<XdgToplevel, ()> for State {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if matches!(event, xdg_toplevel::Event::Close) && !state.keep_open {
-            toplevel.destroy();
-            state.closed += 1;
+        match event {
+            xdg_toplevel::Event::Configure { width, height, .. } => {
+                state.configured = (width, height);
+            }
+            xdg_toplevel::Event::Close if !state.keep_open => {
+                toplevel.destroy();
+                state.closed += 1;
+            }
+            xdg_toplevel::Event::Close
+            | xdg_toplevel::Event::ConfigureBounds { .. }
+            | xdg_toplevel::Event::WmCapabilities { .. }
+            | _ => {}
         }
     }
 }
@@ -340,6 +382,7 @@ mod tests {
                 late: None,
                 keep_open: false,
                 animate: false,
+                resize: false,
                 started: None,
                 deadline: DEADLINE,
             }
@@ -355,6 +398,7 @@ mod tests {
             "300",
             "--keep-open",
             "--animate",
+            "--resize",
             "--started",
             "/t/s",
             "--deadline",
@@ -366,6 +410,7 @@ mod tests {
         assert_eq!(all.late, Some(Duration::from_millis(300)));
         assert!(all.keep_open);
         assert!(all.animate);
+        assert!(all.resize);
         assert_eq!(all.started, Some(PathBuf::from("/t/s")));
         assert_eq!(all.deadline, Duration::from_mins(10));
         for bad in [

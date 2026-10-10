@@ -66,6 +66,12 @@ Where `screenshot` may save files, default unset. It is an absolute path or one 
 
 The directory is created with mode `0700` if it is missing. `save_path` is relative to it, made only of plain names (no `..`, `.` or leading `/`), and names a `.png` file; subdirectories in it must already exist. The server opens subdirectories without following symlinks and creates the file new, with mode `0600`, so a save can't leave the directory or replace a file. See [Screenshots](../../tools/screenshots/#saving-a-screenshot).
 
+### `unrestricted`
+
+`true` or `false`, default `false`. With `true`, `niri_action` also sends the gated actions: `Spawn` and `SpawnSh`, which run any program, `Quit`, monitor power, `LoadConfigFile`, niri's screenshot actions, `ToggleKeyboardShortcutsInhibit`, `SwitchLayout`, the cast actions and the debug toggles. Without it they fail with `unrestricted_required`. See [`niri_action`](../../tools/acting/#niri_action).
+
+It is off because an agent that can spawn programs can do anything you can. Turning it on never skips the lease, the stop key or the audit log.
+
 ### `[[preset]]`
 
 One table per app `launch` may start. Each takes three keys, all required:

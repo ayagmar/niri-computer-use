@@ -60,6 +60,8 @@ pub(crate) enum ErrorName {
     ElementStale,
     /// An element ref that is still there but can't be aimed at now: see `Unmappable`.
     ElementUnmappable,
+    /// A gated `niri_action` while the policy's `unrestricted` is off.
+    UnrestrictedRequired,
 }
 
 /// A failure, serialized as `{"error": <name>, "detail": <upstream detail>}`.

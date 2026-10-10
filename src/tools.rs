@@ -273,6 +273,22 @@ struct LaunchArgs {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+struct NiriActionArgs {
+    /// One niri action in niri's IPC JSON, the action's name as the only key, such as
+    /// `{"FullscreenWindow": {"id": 12}}`, `{"SetWindowWidth": {"id": 12, "change":
+    /// {"SetFixed": 1600}}}`, `{"ToggleWindowFloating": {"id": null}}` (the focused
+    /// window) or `{"MaximizeColumn": {}}`. The names and fields are niri-ipc 26.4's
+    /// `Action`.
+    action: serde_json::Map<String, Value>,
+    /// With true, the result also has a screenshot of the focused output, taken once the
+    /// screen stopped changing, so no separate `screenshot` call is needed. Defaults to
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    screenshot: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
 struct PanelArgs {
     /// A Noctalia panel: `control-center`, `wallpaper` or `tray-drawer`.
     panel: String,
@@ -787,6 +803,56 @@ impl Server {
                 tool: "close_window",
                 logged,
                 shoot: args.screenshot,
+            },
+            work,
+        )
+        .await
+    }
+
+    /// Sends one niri action, in niri's IPC JSON, for window layout and other compositor
+    /// actions that have no tool here: fullscreen, floating, widths and heights, columns,
+    /// moving windows between workspaces, the overview. Never press niri's keybinds with
+    /// `key` instead; they don't fire from it. Prefer `focus_window`, `focus_workspace`,
+    /// `close_window`, `launch` and `screenshot` where they fit, since they watch for their
+    /// effect. For an action about one window (the one it names, or the focused window),
+    /// `observed` is `changed`, `unchanged` (nothing changed within a second) or `closed`,
+    /// and `window` is that window as niri then reports it: `window_size`, `tile_size`,
+    /// `is_floating`, `is_focused`, `workspace_id`. niri reports no fullscreen flag; a
+    /// fullscreen window fills its output. Other actions give `sent`. niri's refusal comes
+    /// back as `upstream_error` with niri's message. Actions that run programs, write
+    /// files or reach past the layout (`Spawn`, `SpawnSh`, `Quit`, `LoadConfigFile`, niri's
+    /// screenshot actions, monitor power, casts) fail with `unrestricted_required` unless
+    /// the user set `unrestricted = true`; tell the user rather than working around it.
+    /// Requires the lease.
+    #[tool(annotations(
+        read_only_hint = false,
+        destructive_hint = true,
+        idempotent_hint = false,
+        open_world_hint = false
+    ))]
+    async fn niri_action(
+        &self,
+        Parameters(args): Parameters<NiriActionArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        let (niri, unrestricted) = (self.niri(), self.policy.unrestricted());
+        let shoot = args.screenshot;
+        let work = async move {
+            let action = serde_json::from_value(Value::Object(args.action)).map_err(|error| {
+                CallError::InvalidArguments(format!("`action` isn't a niri action: {error}"))
+            })?;
+            if let Some(refused) = policy::refuse_action(&action, unrestricted) {
+                return Err(refused.into());
+            }
+            act::compositor::run(niri, action).await
+        };
+        self.act(
+            &context,
+            Asked {
+                tool: "niri_action",
+                logged,
+                shoot,
             },
             work,
         )

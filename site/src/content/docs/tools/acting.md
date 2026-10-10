@@ -25,7 +25,7 @@ Returns `{"users_window": <id>, "released": true}`, or `released: false` if this
 
 ## Action tools
 
-`focus_window`, `focus_workspace`, `launch` and `close_window` act on the desktop through niri's IPC, and the pointer and keyboard tools send input. Before each action the server checks, in this order, the stop flag (`stopped`), the input-dirty marker (`recovery_required`), the lease (`lease_required`), then niri's version, the policy file and the lock state, as `acquire_desktop` does. One action runs at a time; an action or `release_desktop` called meanwhile waits for it. A stop during an action cancels it with `stopped`, and anything niri had already accepted may have taken effect. Cancelling the MCP request cancels the action and keeps the lease.
+`focus_window`, `focus_workspace`, `launch`, `close_window` and `niri_action` act on the desktop through niri's IPC, and the pointer and keyboard tools send input. Before each action the server checks, in this order, the stop flag (`stopped`), the input-dirty marker (`recovery_required`), the lease (`lease_required`), then niri's version, the policy file and the lock state, as `acquire_desktop` does. One action runs at a time; an action or `release_desktop` called meanwhile waits for it. A stop during an action cancels it with `stopped`, and anything niri had already accepted may have taken effect. Cancelling the MCP request cancels the action and keeps the lease.
 
 Every action tool also takes `screenshot`, default false. With true, the result comes with a screenshot of the focused output taken once the screen stopped changing: the server looks 50 ms after the action, then captures every 100 ms until two captures in a row are the same image, for at most 1.5 seconds, and `settled` in its metadata says whether they were. The screenshot is taken before the next action can start, so it shows this action's result, and its `screenshot_ref` serves the pointer tools.
 
@@ -82,6 +82,37 @@ With `reuse`: one existing matching window is focused, and `observed` is `focuse
 | `id` (required) | a window id from `desktop_state` |
 
 Asks the window to close, as its close button would. `observed` is `closed` once niri reports it gone, or `pending` if it is still open after five seconds, for example behind an unsaved-changes dialog. Nothing forces it closed. `windows` holds the id.
+
+## `niri_action`
+
+| Argument | Value |
+|---|---|
+| `action` (required) | one niri action in niri's IPC JSON: an object whose only key is the action's name, as in niri-ipc 26.4's `Action` |
+
+For window layout and other compositor actions that have no tool of their own. For example:
+
+```json
+{"action": {"FullscreenWindow": {"id": 12}}}
+{"action": {"SetWindowWidth": {"id": 12, "change": {"SetFixed": 1600}}}}
+{"action": {"ToggleWindowFloating": {"id": null}}}
+{"action": {"MaximizeColumn": {}}}
+```
+
+An `id` of null means the focused window. JSON that isn't a niri action is an argument mistake carrying serde's message, and so is a window id that doesn't exist. niri's refusal is `upstream_error` with niri's message.
+
+For an action about one window, the one it names or the focused one, the server waits up to a second for niri to report a change in that window, then 200 ms more for a resize that comes in steps. `observed` is `changed`, `unchanged` or `closed`, `windows` holds the id, and `window` is the window as niri then reports it:
+
+| Field | Value |
+|---|---|
+| `window_size` | the window's size in logical pixels, without niri's borders |
+| `tile_size` | the tile's size, borders included |
+| `is_floating`, `is_focused`, `is_urgent` | as niri reports them |
+| `workspace_id` | the window's workspace |
+| `pos_in_scrolling_layout` | column and row from 1, or null while floating |
+
+niri 26.04 reports no fullscreen or maximized flag; a fullscreen window's `window_size` is its output's logical size. Any other action, such as focusing a column or opening the overview, gives `sent` once niri handled it.
+
+Prefer `focus_window`, `focus_workspace`, `close_window`, `launch` and `screenshot` where they fit, since they watch for their effect. Some actions are gated: `Spawn` and `SpawnSh` run programs, `Quit` ends the session, `PowerOffMonitors` and `PowerOnMonitors` switch the monitors, `LoadConfigFile` loads a config that can bind keys and start programs, niri's `Screenshot` actions write files and replace the clipboard, `ToggleKeyboardShortcutsInhibit` can keep the stop key's bind from reaching niri, `SwitchLayout` changes the layout the user types with, the cast actions change what a screencast shows, and the debug toggles change niri's rendering. They fail with `unrestricted_required` unless the user turned on [`unrestricted`](../../concepts/configuration/#unrestricted). Every action, gated or not, needs the lease, stops at the stop key and is written to the audit log with its JSON.
 
 ## Pointer tools
 

@@ -135,6 +135,12 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 **What to do:** for `frame_size_mismatch`, aim at a screenshot pixel instead. For `not_showing`, bring it into view first; for `outside_screenshot`, take a screenshot that shows it.
 
+### `unrestricted_required`
+
+**Cause:** `niri_action` was given a gated action, such as `Spawn`, `Quit` or `LoadConfigFile`, and the user's policy doesn't turn on `unrestricted`. The `detail` names the action and why it is gated. Nothing was sent.
+
+**What to do:** tell the user the action needs [`unrestricted = true`](../../concepts/configuration/#unrestricted). Don't reach the same result another way.
+
 ## Failures upstream
 
 These mean niri, a program or Noctalia didn't answer as expected. Report the name and the `detail`; repeating the same call in a loop won't help.

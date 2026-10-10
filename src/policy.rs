@@ -1,7 +1,8 @@
 //! The policy file, `$XDG_CONFIG_HOME/niri-computer-use/policy.toml`, and the decisions it
 //! feeds: launch presets, the app deny list, where screenshots may be saved, whether a
-//! server may take the lease, and which output setups the pointer tools may run on. Also the Noctalia panels the shell
-//! tools may open, which no file changes.
+//! server may take the lease, which niri actions need `unrestricted = true`, and which output
+//! setups the pointer tools may run on. Also the Noctalia panels the shell tools may open,
+//! which no file changes.
 //! Everything here is pure; the caller reads the file. The preset rules catch common
 //! mistakes. They are a guardrail, not a boundary: a wrapper script or a symlink with
 //! another name gets past any list.
@@ -9,7 +10,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use niri_ipc::{Output, Transform};
+use niri_ipc::{Action, Output, Transform};
 use serde::{Deserialize, Serialize};
 
 use crate::control::LockState;
@@ -91,6 +92,10 @@ pub(crate) struct Policy {
     /// nothing is saved.
     #[serde(default)]
     pub(crate) capture_dir: Option<String>,
+    /// Lets `niri_action` send the gated actions, such as `Spawn`. Off unless the user
+    /// turns it on.
+    #[serde(default)]
+    pub(crate) unrestricted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -161,6 +166,14 @@ impl Loaded {
                     format!("no preset named {name:?}; the policy file has {names:?}"),
                 )
             })
+    }
+
+    /// Whether the file turns `unrestricted` on. A missing or invalid file doesn't.
+    pub(crate) const fn unrestricted(&self) -> bool {
+        match self {
+            Self::Valid(policy) => policy.unrestricted,
+            Self::Missing | Self::Invalid(_) => false,
+        }
     }
 
     pub(crate) fn status(&self) -> PolicyStatus {
@@ -393,6 +406,199 @@ fn denied(policy: &Loaded, app_id: &str, whose: &str) -> Option<ToolError> {
                 format!("{whose}'s app_id {app_id:?} is on the policy's deny list"),
             )
         })
+}
+
+/// Whether `niri_action` may send an action without `unrestricted = true`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ActionGate {
+    /// Changes only niri's layout, focus or views.
+    Allowed,
+    /// Refused unless `unrestricted = true`, for this reason.
+    Gated(&'static str),
+}
+
+/// Sorts niri 26.04's actions into the ones that only change niri's layout, focus or views
+/// and the ones that run programs, write files or change state outside niri's layout.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one exhaustive match over niri's actions without a wildcard arm, so an action a \
+              new niri-ipc adds fails to compile instead of being allowed"
+)]
+pub(crate) const fn action_gate(action: &Action) -> ActionGate {
+    match action {
+        Action::Spawn { .. } | Action::SpawnSh { .. } => ActionGate::Gated("it runs any program"),
+        Action::Quit { .. } => ActionGate::Gated("it ends the niri session"),
+        Action::PowerOffMonitors { .. } | Action::PowerOnMonitors { .. } => {
+            ActionGate::Gated("it powers the monitors off or on")
+        }
+        Action::LoadConfigFile { .. } => {
+            ActionGate::Gated("it loads a niri config file, which can bind keys and start programs")
+        }
+        Action::Screenshot { .. }
+        | Action::ScreenshotScreen { .. }
+        | Action::ScreenshotWindow { .. } => ActionGate::Gated(
+            "it writes a file and replaces the clipboard; the screenshot tool's save_path saves without either",
+        ),
+        Action::ToggleKeyboardShortcutsInhibit { .. } => ActionGate::Gated(
+            "it changes whether niri's keybinds, the stop key's among them, reach niri",
+        ),
+        Action::SwitchLayout { .. } => {
+            ActionGate::Gated("it changes the keyboard layout the user types with")
+        }
+        Action::SetDynamicCastWindow { .. }
+        | Action::SetDynamicCastMonitor { .. }
+        | Action::ClearDynamicCastTarget { .. }
+        | Action::StopCast { .. } => {
+            ActionGate::Gated("it changes what a screencast shows, or stops it")
+        }
+        Action::ToggleDebugTint { .. }
+        | Action::DebugToggleOpaqueRegions { .. }
+        | Action::DebugToggleDamage { .. } => {
+            ActionGate::Gated("it changes niri's debug rendering, not the layout or focus")
+        }
+        Action::DoScreenTransition { .. }
+        | Action::CloseWindow { .. }
+        | Action::FullscreenWindow { .. }
+        | Action::ToggleWindowedFullscreen { .. }
+        | Action::FocusWindow { .. }
+        | Action::FocusWindowInColumn { .. }
+        | Action::FocusWindowPrevious { .. }
+        | Action::FocusColumnLeft { .. }
+        | Action::FocusColumnRight { .. }
+        | Action::FocusColumnFirst { .. }
+        | Action::FocusColumnLast { .. }
+        | Action::FocusColumnRightOrFirst { .. }
+        | Action::FocusColumnLeftOrLast { .. }
+        | Action::FocusColumn { .. }
+        | Action::FocusWindowOrMonitorUp { .. }
+        | Action::FocusWindowOrMonitorDown { .. }
+        | Action::FocusColumnOrMonitorLeft { .. }
+        | Action::FocusColumnOrMonitorRight { .. }
+        | Action::FocusWindowDown { .. }
+        | Action::FocusWindowUp { .. }
+        | Action::FocusWindowDownOrColumnLeft { .. }
+        | Action::FocusWindowDownOrColumnRight { .. }
+        | Action::FocusWindowUpOrColumnLeft { .. }
+        | Action::FocusWindowUpOrColumnRight { .. }
+        | Action::FocusWindowOrWorkspaceDown { .. }
+        | Action::FocusWindowOrWorkspaceUp { .. }
+        | Action::FocusWindowTop { .. }
+        | Action::FocusWindowBottom { .. }
+        | Action::FocusWindowDownOrTop { .. }
+        | Action::FocusWindowUpOrBottom { .. }
+        | Action::MoveColumnLeft { .. }
+        | Action::MoveColumnRight { .. }
+        | Action::MoveColumnToFirst { .. }
+        | Action::MoveColumnToLast { .. }
+        | Action::MoveColumnLeftOrToMonitorLeft { .. }
+        | Action::MoveColumnRightOrToMonitorRight { .. }
+        | Action::MoveColumnToIndex { .. }
+        | Action::MoveWindowDown { .. }
+        | Action::MoveWindowUp { .. }
+        | Action::MoveWindowDownOrToWorkspaceDown { .. }
+        | Action::MoveWindowUpOrToWorkspaceUp { .. }
+        | Action::ConsumeOrExpelWindowLeft { .. }
+        | Action::ConsumeOrExpelWindowRight { .. }
+        | Action::ConsumeWindowIntoColumn { .. }
+        | Action::ExpelWindowFromColumn { .. }
+        | Action::SwapWindowRight { .. }
+        | Action::SwapWindowLeft { .. }
+        | Action::ToggleColumnTabbedDisplay { .. }
+        | Action::SetColumnDisplay { .. }
+        | Action::CenterColumn { .. }
+        | Action::CenterWindow { .. }
+        | Action::CenterVisibleColumns { .. }
+        | Action::FocusWorkspaceDown { .. }
+        | Action::FocusWorkspaceUp { .. }
+        | Action::FocusWorkspace { .. }
+        | Action::FocusWorkspacePrevious { .. }
+        | Action::MoveWindowToWorkspaceDown { .. }
+        | Action::MoveWindowToWorkspaceUp { .. }
+        | Action::MoveWindowToWorkspace { .. }
+        | Action::MoveColumnToWorkspaceDown { .. }
+        | Action::MoveColumnToWorkspaceUp { .. }
+        | Action::MoveColumnToWorkspace { .. }
+        | Action::MoveWorkspaceDown { .. }
+        | Action::MoveWorkspaceUp { .. }
+        | Action::MoveWorkspaceToIndex { .. }
+        | Action::SetWorkspaceName { .. }
+        | Action::UnsetWorkspaceName { .. }
+        | Action::FocusMonitorLeft { .. }
+        | Action::FocusMonitorRight { .. }
+        | Action::FocusMonitorDown { .. }
+        | Action::FocusMonitorUp { .. }
+        | Action::FocusMonitorPrevious { .. }
+        | Action::FocusMonitorNext { .. }
+        | Action::FocusMonitor { .. }
+        | Action::MoveWindowToMonitorLeft { .. }
+        | Action::MoveWindowToMonitorRight { .. }
+        | Action::MoveWindowToMonitorDown { .. }
+        | Action::MoveWindowToMonitorUp { .. }
+        | Action::MoveWindowToMonitorPrevious { .. }
+        | Action::MoveWindowToMonitorNext { .. }
+        | Action::MoveWindowToMonitor { .. }
+        | Action::MoveColumnToMonitorLeft { .. }
+        | Action::MoveColumnToMonitorRight { .. }
+        | Action::MoveColumnToMonitorDown { .. }
+        | Action::MoveColumnToMonitorUp { .. }
+        | Action::MoveColumnToMonitorPrevious { .. }
+        | Action::MoveColumnToMonitorNext { .. }
+        | Action::MoveColumnToMonitor { .. }
+        | Action::SetWindowWidth { .. }
+        | Action::SetWindowHeight { .. }
+        | Action::ResetWindowHeight { .. }
+        | Action::SwitchPresetColumnWidth { .. }
+        | Action::SwitchPresetColumnWidthBack { .. }
+        | Action::SwitchPresetWindowWidth { .. }
+        | Action::SwitchPresetWindowWidthBack { .. }
+        | Action::SwitchPresetWindowHeight { .. }
+        | Action::SwitchPresetWindowHeightBack { .. }
+        | Action::MaximizeColumn { .. }
+        | Action::MaximizeWindowToEdges { .. }
+        | Action::SetColumnWidth { .. }
+        | Action::ExpandColumnToAvailableWidth { .. }
+        | Action::ShowHotkeyOverlay { .. }
+        | Action::MoveWorkspaceToMonitorLeft { .. }
+        | Action::MoveWorkspaceToMonitorRight { .. }
+        | Action::MoveWorkspaceToMonitorDown { .. }
+        | Action::MoveWorkspaceToMonitorUp { .. }
+        | Action::MoveWorkspaceToMonitorPrevious { .. }
+        | Action::MoveWorkspaceToMonitorNext { .. }
+        | Action::MoveWorkspaceToMonitor { .. }
+        | Action::ToggleWindowFloating { .. }
+        | Action::MoveWindowToFloating { .. }
+        | Action::MoveWindowToTiling { .. }
+        | Action::FocusFloating { .. }
+        | Action::FocusTiling { .. }
+        | Action::SwitchFocusBetweenFloatingAndTiling { .. }
+        | Action::MoveFloatingWindow { .. }
+        | Action::ToggleWindowRuleOpacity { .. }
+        | Action::ToggleOverview { .. }
+        | Action::OpenOverview { .. }
+        | Action::CloseOverview { .. }
+        | Action::ToggleWindowUrgent { .. }
+        | Action::SetWindowUrgent { .. }
+        | Action::UnsetWindowUrgent { .. } => ActionGate::Allowed,
+    }
+}
+
+/// `unrestricted_required` for a gated action while `unrestricted` is off.
+pub(crate) fn refuse_action(action: &Action, unrestricted: bool) -> Option<ToolError> {
+    let ActionGate::Gated(reason) = action_gate(action) else {
+        return None;
+    };
+    if unrestricted {
+        return None;
+    }
+    // niri's JSON for an action is an object with the action's name as its one key.
+    let name = serde_json::to_value(action)
+        .ok()
+        .and_then(|json| json.as_object()?.keys().next().cloned())
+        .unwrap_or_default();
+    Some(ToolError::new(
+        ErrorName::UnrestrictedRequired,
+        format!("{name} needs unrestricted = true in the user's policy file: {reason}"),
+    ))
 }
 
 /// The Noctalia panels `shell_open` and `shell_close` may name (plan §6.1). Never the
@@ -788,6 +994,78 @@ app_id = "foot"
             "{}",
             error.detail
         );
+    }
+
+    fn action(json: serde_json::Value) -> Action {
+        serde_json::from_value(json).unwrap()
+    }
+
+    #[test]
+    fn actions_that_run_programs_or_reach_past_the_layout_are_gated() {
+        use serde_json::json;
+        for gated in [
+            json!({"Spawn": {"command": ["foot"]}}),
+            json!({"SpawnSh": {"command": "foot"}}),
+            json!({"Quit": {"skip_confirmation": true}}),
+            json!({"PowerOffMonitors": {}}),
+            json!({"PowerOnMonitors": {}}),
+            json!({"LoadConfigFile": {"path": "/tmp/other.kdl"}}),
+            json!({"Screenshot": {"show_pointer": false, "path": null}}),
+            json!({"ScreenshotScreen": {"write_to_disk": true, "show_pointer": false, "path": null}}),
+            json!({"ScreenshotWindow": {"id": null, "write_to_disk": true, "show_pointer": false, "path": "/tmp/w.png"}}),
+            json!({"ToggleKeyboardShortcutsInhibit": {}}),
+            json!({"SwitchLayout": {"layout": "Next"}}),
+            json!({"SetDynamicCastWindow": {"id": 3}}),
+            json!({"SetDynamicCastMonitor": {"output": null}}),
+            json!({"ClearDynamicCastTarget": {}}),
+            json!({"StopCast": {"session_id": 1}}),
+            json!({"ToggleDebugTint": {}}),
+            json!({"DebugToggleOpaqueRegions": {}}),
+            json!({"DebugToggleDamage": {}}),
+        ] {
+            assert!(
+                matches!(action_gate(&action(gated.clone())), ActionGate::Gated(_)),
+                "{gated}"
+            );
+        }
+        for allowed in [
+            json!({"FullscreenWindow": {"id": 12}}),
+            json!({"SetWindowWidth": {"id": 12, "change": {"SetFixed": 1600}}}),
+            json!({"ToggleWindowFloating": {"id": 12}}),
+            json!({"MaximizeColumn": {}}),
+            json!({"CloseWindow": {"id": null}}),
+            json!({"FocusWorkspace": {"reference": {"Index": 2}}}),
+            json!({"SetWorkspaceName": {"name": "demo", "workspace": null}}),
+            json!({"ToggleOverview": {}}),
+        ] {
+            assert_eq!(
+                action_gate(&action(allowed.clone())),
+                ActionGate::Allowed,
+                "{allowed}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_gated_action_needs_unrestricted() {
+        let spawn = action(serde_json::json!({"Spawn": {"command": ["foot"]}}));
+        let refused = refuse_action(&spawn, false).unwrap();
+        assert_eq!(refused.name, ErrorName::UnrestrictedRequired);
+        assert_eq!(
+            refused.detail,
+            "Spawn needs unrestricted = true in the user's policy file: it runs any program"
+        );
+        assert_eq!(refuse_action(&spawn, true), None);
+        let float = action(serde_json::json!({"ToggleWindowFloating": {"id": null}}));
+        assert_eq!(refuse_action(&float, false), None);
+    }
+
+    #[test]
+    fn unrestricted_is_off_unless_the_file_turns_it_on() {
+        assert!(!Loaded::Missing.unrestricted());
+        assert!(!Loaded::Valid(parse(EXAMPLE).unwrap()).unrestricted());
+        assert!(Loaded::Valid(parse("unrestricted = true").unwrap()).unrestricted());
+        assert!(parse("unrestricted = \"yes\"").is_err());
     }
 
     #[test]

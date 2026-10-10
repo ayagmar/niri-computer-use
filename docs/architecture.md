@@ -15,7 +15,8 @@
 | `niri/waiter.rs` | Waiters: how an action watches the event stream, event by event, for its effect. |
 | `act.rs` | The action tools' work: check the arguments against niri's state, dispatch one niri action, observe its effect. |
 | `niri/version.rs` | The version rule (pure). |
-| `policy.rs` | The policy file, its presets, the decision whether this server may take the lease or act, which output setups the pointer may run on, and the Noctalia panels the shell tools may name (pure, apart from reading the file). |
+| `policy.rs` | The policy file, its presets, the decision whether this server may take the lease or act, which niri actions `niri_action` sends only with `unrestricted`, which output setups the pointer may run on, and the Noctalia panels the shell tools may name (pure, apart from reading the file). |
+| `act/compositor.rs` | `niri_action`: any niri action, then the state niri reports for the window it is about. |
 | `act/shell.rs` | `shell_open` and `shell_close`: a panel command, then polling Noctalia's status for the change. |
 | `status.rs` | Builds the readiness report shared by the tool and the subcommand. |
 | `input.rs` | What the input tools share: their context and the focused window's `app_id`. |

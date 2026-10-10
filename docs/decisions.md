@@ -560,3 +560,22 @@ These match the versions installed locally.
 - The protocol fixture refuses to unset `XDG_RUNTIME_DIR`, so no protocol test can discover the host's session. Unit tests pass discovery roots of their own.
 - The runner gives every child the resolved variables. Setting them in the server's own environment would need `unsafe` (`std::env::set_var` in edition 2024), which the crate forbids, so `main` hands them to the runner once, in a `OnceLock`, before any child starts. The crash guardian and the paste keeper therefore read the same niri socket as the server, even if another niri starts meanwhile.
 - No dependency was added: `rustix::process::geteuid` comes from the `process` feature already enabled.
+
+## 2026-10-10: `niri_action` and the gated actions
+
+- One tool takes any niri action in niri's own JSON form, `niri_ipc::Action`, instead of a tool per layout action. niri's actions are already a stable, documented vocabulary, and agents recording stills and demos needed fullscreen, floating and widths, which no tool had.
+- The schema is a plain object, not niri-ipc's `json-schema` feature: that would add a feature and put a schema of 141 variants in every client's tool list.
+- `policy::action_gate` sorts every variant with one exhaustive `match` and no wildcard arm, so an action a new niri-ipc adds fails to compile until someone decides it. The workspace also denies wildcard arms, so the window-target match in `act/compositor.rs` is exhaustive too. Both carry `#[expect(clippy::too_many_lines)]`, because splitting a match without a wildcard isn't possible.
+- Gated, decided from niri 26.04's `niri-ipc/src/lib.rs` and refused with `unrestricted_required` unless `unrestricted = true`:
+  - `Spawn`, `SpawnSh`: run any program.
+  - `Quit`: ends the session.
+  - `PowerOffMonitors`, `PowerOnMonitors`: DPMS, outside the layout.
+  - `LoadConfigFile`: loads any path as niri's config, which can bind keys and start programs.
+  - `Screenshot`, `ScreenshotScreen`, `ScreenshotWindow`: write to any absolute `path` and replace the clipboard. `screenshot` with `save_path` saves under `capture_dir` without either.
+  - `ToggleKeyboardShortcutsInhibit`: changes whether niri's binds reach niri, and the stop key is a niri bind.
+  - `SwitchLayout`: changes the layout the user types with after the lease. The native keyboard backend also builds on the active layout.
+  - `SetDynamicCastWindow`, `SetDynamicCastMonitor`, `ClearDynamicCastTarget`, `StopCast`: change what a screencast shows or end it, which could show a window to a call.
+  - `ToggleDebugTint`, `DebugToggleOpaqueRegions`, `DebugToggleDamage`: rendering debug state, not layout or focus; no agent needs them.
+- Everything else only changes niri's layout, focus or views and is allowed, including `CloseWindow`, `SetWorkspaceName`, the overview and urgency.
+- For an action about one window, the result reports that window as niri's event stream shows it: within 1 s of the action, plus 200 ms for a resize that arrives in steps. niri 26.04's IPC has no fullscreen or maximized flag, so those show as sizes. A 1 s wait on an action that changes nothing is the cost.
+- The gate is checked after the lease, stop and lock checks, so a refused action is audit-logged like any other.

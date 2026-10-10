@@ -25,6 +25,7 @@ The server offers 23 tools. `shell_status`, `shell_open` and `shell_close` are l
 | `focus_workspace` | yes | focuses a workspace by id | [Acting](../acting/#focus_workspace) |
 | `launch` | yes | starts a preset from the policy file | [Acting](../acting/#launch) |
 | `close_window` | yes | asks a window to close | [Acting](../acting/#close_window) |
+| `niri_action` | yes | sends any niri action, such as fullscreen, floating or a window width | [Acting](../acting/#niri_action) |
 | `pointer_move` | yes | moves the pointer to a pixel or an element | [Acting](../acting/#pointer_move) |
 | `click` | yes | clicks a pixel or an element | [Acting](../acting/#click) |
 | `drag` | yes | drags from one point to another | [Acting](../acting/#drag) |
@@ -35,7 +36,7 @@ The server offers 23 tools. `shell_status`, `shell_open` and `shell_close` are l
 | `shell_open` | yes | opens one of three Noctalia panels | [Noctalia](../../concepts/noctalia/#panels) |
 | `shell_close` | yes | closes it | [Noctalia](../../concepts/noctalia/#panels) |
 
-The reading tools carry MCP's `readOnlyHint`, and `close_window` carries `destructiveHint`.
+The reading tools carry MCP's `readOnlyHint`, and `close_window` and `niri_action` carry `destructiveHint`.
 
 ## Results
 

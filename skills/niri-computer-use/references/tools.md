@@ -45,6 +45,7 @@ Watching the desktop never needs the lease.
 | `focus_workspace` | `id`: a workspace id, not its index | `focused` or `timeout`; `accepted: false` when it already had focus |
 | `launch` | `preset`, optionally `reuse` | `one`, `ambiguous` or `none`, with the new window ids in `windows`, or `focused` when a single-instance app showed the window it had. With `reuse: true`: `focused` for one existing window, or `ambiguous` with several and nothing started |
 | `close_window` | `id`: a window id | `closed`, or `pending` when the window is still open after five seconds, for example behind an unsaved-changes dialog |
+| `niri_action` | `action`: one niri action in niri's JSON, such as `{"FullscreenWindow": {"id": 12}}`, `{"SetWindowWidth": {"id": 12, "change": {"SetFixed": 1600}}}`, `{"ToggleWindowFloating": {"id": null}}` (null: the focused window) or `{"MaximizeColumn": {}}` | for an action about one window, `changed`, `unchanged` (within a second) or `closed`, with `window`: `window_size`, `tile_size`, `is_floating`, `is_focused`, `workspace_id`; otherwise `sent`. No fullscreen flag: a fullscreen window's `window_size` is its output's size |
 | `shell_open` | `panel`: `control-center`, `wallpaper` or `tray-drawer` | `opened` or `timeout` within two seconds, with `shell.active_panel`; `accepted: false` when it was already open. Listed only with Noctalia |
 | `shell_close` | `panel`, as for `shell_open` | `closed` or `timeout`; `accepted: false` when it wasn't open |
 

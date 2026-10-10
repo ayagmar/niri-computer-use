@@ -187,8 +187,9 @@ Every server talks MCP over a shell pipeline (`printf` of the requests, then `sl
 | `reuse`, `plain` | one ordinary window |
 | `keep` | ignores close requests, as an app asking about unsaved changes does |
 | `slow` | writes a marker file at once and maps its window 2.5 seconds later |
+| `sized` | draws at the size niri configures (`--resize`) |
 
-`harness window` checks that its environment is the nested one before it connects, maps black 320x240 toplevels through `xdg_wm_base`, with `--animate` attaches and damages its buffer again on every frame callback, and exits when its windows close, when niri goes away, or after 90 seconds. niri starts it from the preset with niri's own environment, so it never reaches the host compositor.
+`harness window` checks that its environment is the nested one before it connects, maps black 320x240 toplevels through `xdg_wm_base`, with `--resize` redraws at each size niri configures, with `--animate` attaches and damages its buffer again on every frame callback, and exits when its windows close, when niri goes away, or after 90 seconds. niri starts it from the preset with niri's own environment, so it never reaches the host compositor.
 
 One server holds the lease for the whole run. The supervisor keeps its stdin open and reads its replies back from `server-harness-m3.log`. Through it, the run checks:
 
@@ -198,6 +199,8 @@ One server holds the lease for the whole run. The supervisor keeps its stdin ope
 4. `focus_window`, then `focus_workspace` to the empty workspace, with no window focused, and back, with focus on the window it left, each `focused`.
 5. `close_window` on a `plain` window gives `closed`; on a `keep` window, `pending` with a screenshot of the output in the result.
 6. `launch slow`, and as soon as the marker appears the supervisor focuses the `late` window through its own niri connection: the launch gives `interrupted` naming that window, with a screenshot.
+7. On a `sized` window, `niri_action` `FullscreenWindow` gives `changed` with `window.window_size` equal to the output's logical size, and again gives the tiled size back; `ToggleWindowFloating` gives `is_floating: true`; `SetWindowWidth` with `SetFixed: 400` gives a window 400 wide. `Spawn` is refused with `unrestricted_required`.
+8. After the first server stops, the supervisor rewrites the policy file to `unrestricted = true` and starts a second server, which spawns `harness window … spawned` through `niri_action` `Spawn`; `wait_for` sees the window, and `close_window` closes it.
 
 The run has a 130-second deadline. Its files are in `target/e2e/<run>/`, including `policy.toml`, the server's replies and Noctalia's log.
 
