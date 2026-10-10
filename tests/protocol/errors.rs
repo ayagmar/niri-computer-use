@@ -157,6 +157,7 @@ async fn an_image_of_the_wrong_size_is_an_upstream_error() {
 #[tokio::test]
 async fn clipboard_text_over_one_mebibyte_is_an_upstream_error() {
     let fixture = Fixture::new("big-clipboard");
+    let _niri = Niri::start(&fixture);
     fixture.program("wl-paste", "head -c 1048577 /dev/zero | tr '\\0' x");
     let mut server = Server::start(&fixture).await;
     let (name, detail) = tool_error(&server.call("clipboard_read", json!({})).await);

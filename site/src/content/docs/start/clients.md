@@ -64,13 +64,19 @@ When one of these is unset or empty, the server finds it at startup:
 
 | Variable | Found as |
 |---|---|
-| `XDG_RUNTIME_DIR` | `/run/user/<your uid>`, if it is your directory with mode `0700`, as logind creates it |
-| `NIRI_SOCKET` | the one socket in the runtime directory named `niri.<display>.<pid>.sock`, as niri names it, that is yours and whose process is a running `niri` |
+| `XDG_RUNTIME_DIR` | the directory holding `NIRI_SOCKET` when that is set, otherwise `/run/user/<your uid>`; either must be your directory with mode `0700`, as logind creates it |
+| `NIRI_SOCKET` | the one socket in the runtime directory named `niri.<display>.<pid>.sock`, as niri names it, that is yours, whose process is a running `niri`, and that this `niri` answers on; when `WAYLAND_DISPLAY` is set, only a socket for that display counts |
 | `WAYLAND_DISPLAY` | the `<display>` in that socket's name, if the runtime directory has a socket by that name |
 
 The session bus for `elements` is `$XDG_RUNTIME_DIR/bus` unless `DBUS_SESSION_BUS_ADDRESS` is set. `status` reports under `discovery` whether each came from the environment or was discovered, and why it is missing when neither.
 
-A variable you set always wins. That matters when you run more than one niri session as the same user: the server never picks one of several, and `status` reports `niri_unavailable` naming the sockets it found. Start the agent from a shell inside the session you want, or pass `NIRI_SOCKET` on. `NIRI_SOCKET` names niri's process and changes every time niri starts, so forward it by name, as Codex's `env_vars = ["NIRI_SOCKET"]` does, rather than writing a fixed path into a config file.
+A variable you set always wins, and the server finds the rest to match it. That matters when you run more than one niri session as the same user: the server never picks one of several, and `status` reports `niri_unavailable` naming the sockets it found. Start the agent from a shell inside the session you want, or pass `NIRI_SOCKET` on. `NIRI_SOCKET` names niri's process and changes every time niri starts, so forward it by name, as Codex's `env_vars = ["NIRI_SOCKET"]` does, rather than writing a fixed path into a config file.
+
+Forwarding `NIRI_SOCKET` alone is enough when niri's runtime directory is yours with mode `0700`, as `/run/user/<your uid>` is. For a niri whose runtime directory isn't, forward `XDG_RUNTIME_DIR` too; otherwise `status` shows the runtime directory missing, and the lease, input and screenshots are refused.
+
+Forward the variables from one niri session. When `WAYLAND_DISPLAY` belongs to another compositor than `NIRI_SOCKET`, the server refuses input, screenshots and clipboard reads with `session_mismatch`, and `status` says why under `display_error`.
+
+Without the variables, a server started over SSH, from a TTY or as a systemd service still finds your niri session when it is the only one, and an agent using it acts on your desktop. The lease, the stop key and the lock check still apply, but nothing asks whether you meant it.
 
 ## The skill
 

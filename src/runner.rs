@@ -17,7 +17,7 @@ use tokio::time::Instant;
 use crate::error::{ErrorName, ToolError};
 
 /// The session variables as `main` resolved them, given to every child on top of the
-/// environment it inherits. A client such as Codex starts the server without them, and
+/// environment it inherits, without `WAYLAND_SOCKET`. A client such as Codex starts the server without them, and
 /// grim, wtype and wl-clipboard need them to reach the display. Setting them in the
 /// server's own environment would take `unsafe`.
 static SESSION: OnceLock<Vec<(&'static str, OsString)>> = OnceLock::new();
@@ -252,6 +252,9 @@ fn detached(
 )]
 fn command(program: &str) -> Command {
     let mut command = Command::new(program);
+    // libwayland would use an inherited connection before `WAYLAND_DISPLAY`, skipping the
+    // display `main` checked is niri's.
+    command.env_remove("WAYLAND_SOCKET");
     command.envs(
         SESSION
             .get()

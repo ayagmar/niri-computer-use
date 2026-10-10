@@ -6,6 +6,7 @@ use std::time::Duration;
 use serde::Serialize;
 
 use crate::error::{ErrorName, ToolError};
+use crate::niri::{Display, Socket};
 use crate::runner::{self, Finished};
 
 const DEADLINE: Duration = Duration::from_secs(2);
@@ -19,7 +20,10 @@ pub(crate) struct Clipboard {
     reason: Option<&'static str>,
 }
 
-pub(crate) async fn read_text() -> Result<Clipboard, ToolError> {
+/// Reads with wl-paste, which finds the display by name alone, so only right after the
+/// niri on `socket` is found serving `display`.
+pub(crate) async fn read_text(socket: &Socket, display: &Display) -> Result<Clipboard, ToolError> {
+    display.checked(socket).await?;
     let args = ["--no-newline", "--type", "text"].map(str::to_owned);
     interpret(runner::run("wl-paste", &args, DEADLINE, MAX_TEXT).await?)
 }

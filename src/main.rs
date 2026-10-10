@@ -46,6 +46,8 @@ pub(crate) struct Env {
     pub(crate) path: Option<OsString>,
     pub(crate) runtime_dir: Option<PathBuf>,
     pub(crate) wayland_display: Option<OsString>,
+    /// The Wayland display's socket, checked against niri at each use.
+    pub(crate) display: niri::Display,
     /// `$HOME`, for a `capture_dir` under `~/`.
     pub(crate) home: Option<PathBuf>,
     /// `$XDG_STATE_HOME`, or `$HOME/.local/state`, for the audit log.
@@ -62,26 +64,30 @@ pub(crate) struct Env {
 }
 
 impl Env {
-    fn read() -> Self {
-        Self::from_vars(|name| std::env::var_os(name), &discover::Roots::host())
+    async fn read() -> Self {
+        Self::from_vars(|name| std::env::var_os(name), &discover::Roots::host()).await
     }
 
     /// The environment `var` reads, with what it lacks of the session discovered under
     /// `roots`. An empty variable counts as unset.
-    fn from_vars(var: impl Fn(&str) -> Option<OsString>, roots: &discover::Roots<'_>) -> Self {
+    async fn from_vars(
+        var: impl Fn(&str) -> Option<OsString> + Sync,
+        roots: &discover::Roots<'_>,
+    ) -> Self {
         let var = |name| var(name).filter(|value| !value.is_empty());
         let given = discover::Given {
             runtime_dir: var("XDG_RUNTIME_DIR").map(PathBuf::from),
             niri_socket: var("NIRI_SOCKET").map(PathBuf::from),
             wayland_display: var("WAYLAND_DISPLAY"),
         };
-        let session = discover::session(given, roots);
-        Self {
+        let session = discover::session(given, roots).await;
+        let mut env = Self {
             niri_socket: session
                 .niri_socket
                 .map_or_else(niri::Socket::unknown, niri::Socket::at),
             path: var("PATH"),
             wayland_display: session.wayland_display,
+            display: niri::Display::default(),
             home: var("HOME").map(PathBuf::from),
             keyboard: var("NIRI_COMPUTER_USE_KEYBOARD"),
             // Without the variable, D-Bus clients (libdbus, sd-bus, zbus) use the user bus
@@ -101,7 +107,9 @@ impl Env {
                 .map(PathBuf::from)
                 .or_else(|| var("HOME").map(|home| PathBuf::from(home).join(".config"))),
             discovery: session.sources,
-        }
+        };
+        env.display = niri::Display::new(env.wayland_socket());
+        env
     }
 
     /// The policy file, `<config dir>/niri-computer-use/policy.toml`, read and checked.
@@ -127,12 +135,25 @@ impl Env {
 
     /// The Wayland display's socket: `WAYLAND_DISPLAY`, under `XDG_RUNTIME_DIR` unless it
     /// is an absolute path.
-    pub(crate) fn wayland_socket(&self) -> Option<PathBuf> {
-        let display = std::path::Path::new(self.wayland_display.as_ref()?);
+    fn wayland_socket(&self) -> Result<PathBuf, String> {
+        let display = std::path::Path::new(self.wayland_display.as_ref().ok_or_else(|| {
+            match &self.discovery.wayland_display {
+                discover::Source::Missing(detail) => detail.clone(),
+                discover::Source::Environment | discover::Source::Discovered => {
+                    "WAYLAND_DISPLAY is not set".to_owned()
+                }
+            }
+        })?);
         if display.is_absolute() {
-            return Some(display.to_path_buf());
+            return Ok(display.to_path_buf());
         }
-        Some(self.runtime_dir.as_ref()?.join(display))
+        let runtime = self.runtime_dir.as_ref().ok_or_else(|| {
+            format!(
+                "XDG_RUNTIME_DIR is not set, so WAYLAND_DISPLAY {} names no socket",
+                display.display()
+            )
+        })?;
+        Ok(runtime.join(display))
     }
 
     /// The session variables as found, for the server's children.
@@ -188,7 +209,7 @@ enum Command {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
-    let env = Env::read();
+    let env = Env::read().await;
     runner::pass_on(env.session_vars());
     let result = match command(&args) {
         Some(Command::Serve) => serve(env).await,
@@ -300,18 +321,24 @@ mod tests {
         };
         assert_eq!(
             env("wayland-1", Some("/run/user/1000")).wayland_socket(),
-            Some(PathBuf::from("/run/user/1000/wayland-1"))
+            Ok(PathBuf::from("/run/user/1000/wayland-1"))
         );
         assert_eq!(
             env("/tmp/w/wayland-9", None).wayland_socket(),
-            Some(PathBuf::from("/tmp/w/wayland-9"))
+            Ok(PathBuf::from("/tmp/w/wayland-9"))
         );
-        assert_eq!(env("wayland-1", None).wayland_socket(), None);
-        assert_eq!(Env::default().wayland_socket(), None);
+        assert_eq!(
+            env("wayland-1", None).wayland_socket(),
+            Err("XDG_RUNTIME_DIR is not set, so WAYLAND_DISPLAY wayland-1 names no socket".into())
+        );
+        assert_eq!(
+            Env::default().wayland_socket(),
+            Err("WAYLAND_DISPLAY is not set".into())
+        );
     }
 
-    #[test]
-    fn the_session_bus_is_in_the_discovered_runtime_directory() {
+    #[tokio::test]
+    async fn the_session_bus_is_in_the_discovered_runtime_directory() {
         let root = test_support::fresh_dir("env-bus");
         let euid = rustix::process::geteuid().as_raw();
         let runtime = root.join(euid.to_string());
@@ -322,7 +349,7 @@ mod tests {
             proc: &root.join("proc"),
             euid,
         };
-        let env = Env::from_vars(|_| None, &roots);
+        let env = Env::from_vars(|_| None, &roots).await;
         let mut bus = OsString::from("unix:path=");
         bus.push(runtime.join("bus"));
         assert_eq!(env.session_bus, Some(bus));
@@ -330,8 +357,55 @@ mod tests {
         let given = Env::from_vars(
             |name| (name == "DBUS_SESSION_BUS_ADDRESS").then(|| "unix:path=/b".into()),
             &roots,
-        );
+        )
+        .await;
         assert_eq!(given.session_bus, Some("unix:path=/b".into()));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A client that forwards niri's socket but not the runtime directory, for a niri
+    /// whose runtime directory isn't the default one, such as a nested niri.
+    #[tokio::test]
+    async fn servers_for_one_niri_share_its_lease_and_stop_flag_without_the_runtime_variable() {
+        use crate::control::lease::Lease;
+        use crate::control::runtime::RuntimeDir;
+
+        let root = test_support::fresh_dir("env-nested");
+        let euid = rustix::process::geteuid().as_raw();
+        let default = root.join("run").join(euid.to_string());
+        let nested = root.join("nested");
+        for dir in [&default, &nested] {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let roots = discover::Roots {
+            run_user: &root.join("run"),
+            proc: &root.join("proc"),
+            euid,
+        };
+        let socket = nested.join("niri.wayland-2.42.sock");
+        let full = Env::from_vars(
+            |name| match name {
+                "XDG_RUNTIME_DIR" => Some(nested.clone().into()),
+                "NIRI_SOCKET" => Some(socket.clone().into()),
+                _ => None,
+            },
+            &roots,
+        )
+        .await;
+        let partial = Env::from_vars(
+            |name| (name == "NIRI_SOCKET").then(|| socket.clone().into()),
+            &roots,
+        )
+        .await;
+        let (full, partial) = (
+            RuntimeDir::of(&full).unwrap(),
+            RuntimeDir::of(&partial).unwrap(),
+        );
+        let _held = Lease::acquire(&full, "full").unwrap();
+        assert!(Lease::acquire(&partial, "partial").is_err());
+        full.stop().unwrap();
+        assert!(partial.stopped().unwrap());
         std::fs::remove_dir_all(root).unwrap();
     }
 

@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 
 use crate::client::{Server, tool_error};
 use crate::fixture::Fixture;
+use crate::niri::Niri;
 use crate::noctalia::{self, LOCKED, UNLOCKED};
 use crate::session::NiriProcess;
 
@@ -142,6 +143,7 @@ async fn a_niri_without_session_is_not_asked_about_through_logind() {
 #[tokio::test]
 async fn the_clipboard_is_text_nothing_copied_or_no_text() {
     let fixture = Fixture::new("clipboard");
+    let _niri = Niri::start(&fixture);
     let mut server = Server::start(&fixture).await;
     fixture.program(
         "wl-paste",

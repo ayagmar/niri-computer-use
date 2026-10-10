@@ -27,6 +27,10 @@ pub(crate) struct Status {
     /// Where the runtime directory, niri's socket and the display came from: the
     /// environment, or discovery, or why neither.
     discovery: discover::Sources,
+    /// Why input, screenshots and clipboard reads would be refused now: the Wayland display
+    /// isn't niri's, or couldn't be checked. Null when it is niri's. Checked afresh for each
+    /// report.
+    display_error: Option<ToolError>,
     niri: Niri,
     lease: LeaseStatus,
     /// Whether the stop flag is set for this niri instance.
@@ -108,6 +112,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         });
     let noctalia_status = noctalia.as_ref().and_then(|reply| reply.as_ref().ok());
     let lock = control::lock(&env.niri_socket, noctalia_status).await;
+    let display_error = env.display.checked(socket).await.err();
     let (version, error) = match version {
         Ok(version) => (Some(version), None),
         Err(error) => (None, Some(error)),
@@ -120,6 +125,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
     Status {
         instance: env.instance(),
         discovery: env.discovery.clone(),
+        display_error,
         niri: Niri {
             compat: version.as_deref().map(niri::version::compat),
             version,
@@ -183,7 +189,12 @@ mod tests {
                 "discovery": {
                     "runtime_dir": {"source": "missing", "detail": "XDG_RUNTIME_DIR is not set"},
                     "niri_socket": {"source": "missing", "detail": "NIRI_SOCKET is not set"},
-                    "wayland_display": {"source": "missing", "detail": "WAYLAND_DISPLAY is not set"}
+                    "wayland_display": {"source": "missing", "detail": "WAYLAND_DISPLAY is not set"},
+                    "warning": null
+                },
+                "display_error": {
+                    "error": "upstream_error",
+                    "detail": "WAYLAND_DISPLAY is not set"
                 },
                 "niri": {
                     "version": null,

@@ -1007,12 +1007,11 @@ impl Server {
             "expect": args.expect,
         });
         flag(&mut logged, "screenshot", args.screenshot);
-        let display = self.env.wayland_socket();
         let expect = args.expect.into();
         let work = async {
             let input = Input {
                 niri: self.niri(),
-                display: display.as_deref(),
+                display: &self.env.display,
                 runtime: self.desk.runtime()?,
                 policy: &self.policy,
                 keyboard: self.env.keyboard.as_deref(),
@@ -1265,7 +1264,7 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         self.audited(&context, "clipboard_read", Value::Null, async {
-            answer(clipboard::read_text().await)
+            answer(clipboard::read_text(&self.env.niri_socket, &self.env.display).await)
         })
         .await
     }
@@ -1289,11 +1288,10 @@ impl Server {
         gesture: Result<Gesture<Spot>, CallError>,
     ) -> Result<CallToolResult, ErrorData> {
         let tool = gesture.as_ref().map_or("pointer", Gesture::tool);
-        let display = self.env.wayland_socket();
         let work = async {
             let input = Input {
                 niri: self.niri(),
-                display: display.as_deref(),
+                display: &self.env.display,
                 runtime: self.desk.runtime()?,
                 policy: &self.policy,
                 keyboard: self.env.keyboard.as_deref(),
@@ -1322,7 +1320,6 @@ impl Server {
         logged: Value,
         keying: Keying,
     ) -> Result<CallToolResult, ErrorData> {
-        let display = self.env.wayland_socket();
         let Keying {
             typing,
             expect,
@@ -1332,7 +1329,7 @@ impl Server {
         let work = async {
             let input = Input {
                 niri: self.niri(),
-                display: display.as_deref(),
+                display: &self.env.display,
                 runtime: self.desk.runtime()?,
                 policy: &self.policy,
                 keyboard: self.env.keyboard.as_deref(),
@@ -1403,7 +1400,8 @@ impl Server {
         let lease = self.desk.ref_lease();
         let connection = self.events.as_ref().ok().and_then(EventStream::connection);
         let taken = Instant::now();
-        let mut shot = observe::screenshot(&self.env.niri_socket, &request).await?;
+        let mut shot =
+            observe::screenshot(&self.env.niri_socket, &self.env.display, &request).await?;
         if let (Some(lease), Some(connection)) = (lease, connection) {
             let kept = Shot::of(&shot, taken, connection);
             shot.metadata.screenshot_ref = self.desk.remember(lease, kept);
@@ -1420,8 +1418,8 @@ impl Server {
     ) -> Result<observe::Screenshot, CallError> {
         let saved = match &save {
             Some(save) => {
-                let socket = &self.env.niri_socket;
-                Some(observe::save(socket, &request.target, save).await?)
+                let (socket, display) = (&self.env.niri_socket, &self.env.display);
+                Some(observe::save(socket, display, &request.target, save).await?)
             }
             None => None,
         };

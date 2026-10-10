@@ -15,6 +15,7 @@ These are the user's decisions. Don't call the refused action again and don't tr
 | `stopped` | The user pressed the stop key or ran `niri-computer-use stop`; it also cancels a running action. Only the user's `niri-computer-use resume` clears it. |
 | `recovery_required` | Input may be stuck from an earlier crash. Only the user's `niri-computer-use recover` clears it. |
 | `screen_locked` | The screen is locked, or no source can say it isn't. |
+| `session_mismatch` | The server's `WAYLAND_DISPLAY` and `NIRI_SOCKET` belong to two different compositors, so input, screenshots and clipboard reads are refused. The user has to fix the client's environment. |
 | `lease_held` | Another agent holds the lease (`acquire_desktop` only). |
 | `read_only` | The niri version isn't supported, niri sent events this build can't read, or the policy file is invalid. |
 | `app_denied` | The user's policy denies input to the focused app. |

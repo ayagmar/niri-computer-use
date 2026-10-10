@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::os::unix::fs::PermissionsExt as _;
+use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -35,6 +36,9 @@ pub(crate) const SESSION: &str = "7";
 pub(crate) struct Fixture {
     pub(crate) dir: PathBuf,
     env: BTreeMap<&'static str, OsString>,
+    /// The Wayland display, served by the test's process like the fake niri, so the server
+    /// takes it as niri's. Nothing speaks Wayland on it.
+    _display: UnixListener,
 }
 
 impl Fixture {
@@ -66,7 +70,12 @@ impl Fixture {
             ("XDG_STATE_HOME", dir.join("state").into_os_string()),
             ("XDG_CONFIG_HOME", dir.join("config").into_os_string()),
         ]);
-        let fixture = Self { dir, env };
+        let display = UnixListener::bind(dir.join("run").join(DISPLAY)).unwrap();
+        let fixture = Self {
+            dir,
+            env,
+            _display: display,
+        };
         let longest = fixture.noctalia_socket().as_os_str().len();
         assert!(
             longest < 108,
