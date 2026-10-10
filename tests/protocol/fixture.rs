@@ -83,7 +83,13 @@ impl Fixture {
         self.env.insert(name, value.into());
     }
 
+    /// Removes a variable from the server's environment, except `XDG_RUNTIME_DIR`: without
+    /// it the server would look for the host's session in `/run/user/<uid>`.
     pub(crate) fn unset(&mut self, name: &'static str) {
+        assert_ne!(
+            name, "XDG_RUNTIME_DIR",
+            "the server must never discover the host session"
+        );
         self.env.remove(name);
     }
 
