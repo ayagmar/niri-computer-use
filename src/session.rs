@@ -98,11 +98,6 @@ impl Session {
         }
     }
 
-    /// The one client of a server that serves its own stdio.
-    pub(crate) fn local(settings: Settings) -> Self {
-        Self::new(SessionId(1), std::process::id(), settings)
-    }
-
     /// Marks the session ended, for good.
     pub(crate) fn end(&self) {
         self.ended.send_replace(true);
@@ -134,12 +129,18 @@ impl Session {
     }
 }
 
-/// A client's input, which says when the client has gone: at its end, on a read error, or
-/// when the transport drops it.
+/// The longest line a client may send, newline included: `paste`'s 1 MiB of text, at up
+/// to six bytes a character in JSON, with room to spare.
+pub(crate) const MAX_LINE: usize = 16 * 1024 * 1024;
+
+/// A client's input, which says when the client has gone: at its end, on a read error, on
+/// a line longer than `MAX_LINE`, which ends the session, or when the transport drops it.
 #[derive(Debug)]
 pub(crate) struct Incoming<R> {
     input: R,
     gone: Option<oneshot::Sender<()>>,
+    /// Bytes read since the last newline.
+    line: usize,
 }
 
 impl<R> Incoming<R> {
@@ -149,8 +150,18 @@ impl<R> Incoming<R> {
         let incoming = Self {
             input,
             gone: Some(gone),
+            line: 0,
         };
         (incoming, went)
+    }
+
+    /// Counts `read` into the current line. Returns whether the line is still short enough.
+    fn count(&mut self, read: &[u8]) -> bool {
+        self.line = match read.iter().rposition(|byte| *byte == b'\n') {
+            Some(newline) => read.len() - newline - 1,
+            None => self.line.saturating_add(read.len()),
+        };
+        self.line <= MAX_LINE
     }
 
     fn gone(&mut self) {
@@ -166,13 +177,25 @@ impl<R: AsyncRead + Unpin> AsyncRead for Incoming<R> {
         context: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
+        let before = buf.filled().len();
         let room = buf.remaining();
         let read = Pin::new(&mut self.input).poll_read(context, buf);
         match &read {
             // Nothing read into room for something is the end.
             Poll::Ready(Ok(())) if room > 0 && buf.remaining() == room => self.gone(),
+            Poll::Ready(Ok(())) => {
+                if !self.count(buf.filled().get(before..).unwrap_or_default()) {
+                    // A read that fails reads nothing.
+                    buf.set_filled(before);
+                    self.gone();
+                    return Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("the client sent a line over {MAX_LINE} bytes"),
+                    )));
+                }
+            }
             Poll::Ready(Err(_)) => self.gone(),
-            Poll::Ready(Ok(())) | Poll::Pending => {}
+            Poll::Pending => {}
         }
         read
     }
@@ -186,7 +209,31 @@ impl<R> Drop for Incoming<R> {
 
 #[cfg(test)]
 mod tests {
+    use tokio::io::AsyncReadExt as _;
+
     use super::*;
+
+    /// Reads all of `input` through `Incoming`. Returns the read's result and whether the
+    /// client counts as gone.
+    async fn read_all(input: Vec<u8>) -> (std::io::Result<usize>, bool) {
+        let (mut incoming, mut gone) = Incoming::new(input.as_slice());
+        let read = incoming.read_to_end(&mut Vec::new()).await;
+        (read, gone.try_recv().is_ok())
+    }
+
+    #[tokio::test]
+    async fn a_line_over_the_limit_ends_the_session_and_the_end_of_input_too() {
+        let mut lines = vec![b'x'; MAX_LINE - 1];
+        lines.push(b'\n');
+        lines.extend(vec![b'y'; MAX_LINE]);
+        let (whole, gone) = read_all(lines.clone()).await;
+        assert_eq!(whole.unwrap(), 2 * MAX_LINE);
+        assert!(gone);
+        lines.push(b'z');
+        let (over, ended) = read_all(lines).await;
+        assert_eq!(over.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+        assert!(ended);
+    }
 
     #[test]
     fn the_policy_comes_from_the_sessions_own_config_directory() {

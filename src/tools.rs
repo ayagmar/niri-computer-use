@@ -1776,7 +1776,10 @@ mod tests {
             home: None,
             policy: Source::Missing,
         };
-        Server::new(Arc::clone(engine), Session::local(Settings::new(given)))
+        Server::new(
+            Arc::clone(engine),
+            engine.open_session(1, Settings::new(given)),
+        )
     }
 
     #[test]

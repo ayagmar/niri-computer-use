@@ -155,8 +155,10 @@ pub(crate) struct PolicyStatus {
     error: Option<String>,
 }
 
-/// What reading the policy file gave, before it is checked: what a session brings.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// What reading the policy file gave, before it is checked: what a session brings. A
+/// bridge sends it to the engine in its hello.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum Source {
     /// Neither `XDG_CONFIG_HOME` nor `HOME` is set, so there is no directory to look in.
     NoConfigDir,

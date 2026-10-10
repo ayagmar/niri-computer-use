@@ -33,11 +33,9 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use rmcp::ServiceExt as _;
-
 use crate::control::runtime::RuntimeDir;
 
-const USAGE: &str = "usage: niri-computer-use serve | status | stop | resume | recover | guard <server-pid> | paste-keeper";
+const USAGE: &str = "usage: niri-computer-use serve | status | stop | resume | recover | engine | guard <server-pid> | paste-keeper";
 
 /// What the server reads from its environment, once at startup. An empty variable
 /// counts as unset.
@@ -177,6 +175,9 @@ enum Command {
     Resume,
     /// Clear the input-dirty marker after ending the input child and asking the human.
     Recover,
+    /// The shared engine a bridge starts: serve every client of this niri instance on its
+    /// socket.
+    Engine,
     /// The crash guardian `serve` starts: after the server's end, release what its marker
     /// names.
     Guard(u32),
@@ -216,6 +217,7 @@ async fn main() -> ExitCode {
         }),
         Some(Command::Resume) => RuntimeDir::of(&env).and_then(|runtime| runtime.resume()),
         Some(Command::Recover) => control::recover::run(&env).await,
+        Some(Command::Engine) => engine::host::run(env).await,
         Some(Command::Guard(server)) => control::guard::run(&env, server).await,
         Some(Command::PasteKeeper) => input::keeper::run(&env).await,
         None => Err(USAGE.to_owned()),
@@ -237,35 +239,21 @@ fn command(args: &[OsString]) -> Option<Command> {
         [only] if only == "resume" => Some(Command::Resume),
         [only] if only == "recover" => Some(Command::Recover),
         [only] if only == "paste-keeper" => Some(Command::PasteKeeper),
+        [only] if only == "engine" => Some(Command::Engine),
         [guard, server] if guard == "guard" => server.to_str()?.parse().ok().map(Command::Guard),
         _ => None,
     }
 }
 
 async fn serve(env: Env, given: session::Given) -> Result<(), String> {
-    let session = session::Session::local(session::Settings::new(given));
     let engine = std::sync::Arc::new(engine::Engine::start(env).await?);
-    let (stdin, gone) = session::Incoming::new(tokio::io::stdin());
-    // Without this, rmcp lets a running call finish, for up to 5 s, after the client's end.
-    tokio::spawn({
-        let (engine, session) = (std::sync::Arc::clone(&engine), session.clone());
-        async move {
-            gone.await.ok();
-            engine.end_session(&session).await;
-        }
-    });
-    let server = tools::Server::new(engine, session);
-    let service = server
-        .serve((stdin, tokio::io::stdout()))
-        .await
-        .map_err(|error| format!("start MCP session: {error}"))?;
-    let ended = service
-        .waiting()
-        .await
-        .map(drop)
-        .map_err(|error| format!("MCP session: {error}"));
+    let session = engine.open_session(std::process::id(), session::Settings::new(given));
+    let served =
+        engine::host::serve_session(&engine, session, tokio::io::stdin(), tokio::io::stdout())
+            .await;
+    // A dropped action's input cleanup may still run; cut short, it leaves the marker.
     control::cleanup::settled().await;
-    ended
+    served
 }
 
 #[cfg(test)]

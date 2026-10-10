@@ -390,6 +390,20 @@ impl Desk {
         self.seat.owned_by(session.id()).map(|_| refs)
     }
 
+    /// Whether a session holds the lease. Doesn't wait for a running action.
+    pub(crate) fn held(&self) -> bool {
+        self.seat.owner.borrow().is_some()
+    }
+
+    /// Returns once the stop watcher has ended, for good: never, without a watcher.
+    pub(crate) async fn watcher_ended(&self) {
+        let Ok(stopped) = &self.stopped else {
+            return std::future::pending().await;
+        };
+        let mut stopped = stopped.clone();
+        while stopped.changed().await.is_ok() {}
+    }
+
     /// The lease as `session` sees it. Doesn't wait for a running action.
     pub(crate) fn status(&self, session: &Session) -> LeaseStatus {
         let owner = self.seat.owner.borrow().clone();

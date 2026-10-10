@@ -203,6 +203,21 @@ impl Server {
     }
 }
 
+/// Starts `niri-computer-use engine` directly, as a bridge would, with its stderr piped.
+pub(crate) fn engine(fixture: &Fixture) -> Child {
+    let _spawning = SPAWNING.lock().unwrap_or_else(PoisonError::into_inner);
+    command()
+        .arg("engine")
+        .env_clear()
+        .envs(fixture.env())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap()
+}
+
 #[expect(
     clippy::disallowed_methods,
     reason = "the test starts the server binary itself, outside the server's runner"

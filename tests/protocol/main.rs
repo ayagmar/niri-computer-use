@@ -28,6 +28,8 @@ mod control;
 #[cfg(test)]
 mod discovery;
 #[cfg(test)]
+mod engine;
+#[cfg(test)]
 mod errors;
 #[cfg(test)]
 mod events;

@@ -31,6 +31,11 @@ impl Drop for Pending {
     }
 }
 
+/// How many cleanups are pending now.
+pub(crate) fn pending() -> usize {
+    *PENDING.borrow()
+}
+
 /// Waits until no cleanup is pending, or `LIMIT` has passed.
 pub(crate) async fn settled() {
     let mut pending = PENDING.subscribe();

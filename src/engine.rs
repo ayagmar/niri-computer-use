@@ -4,6 +4,13 @@
 //! its evidence, captures and their refs, waits, and giving focus back. `tools.rs` turns
 //! MCP calls into calls here and the results into MCP content.
 
+pub(crate) mod hello;
+pub(crate) mod host;
+
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError};
+
 use serde::Serialize;
 use serde_json::Value;
 use tokio::time::Instant;
@@ -19,7 +26,7 @@ use crate::niri::events::{EventStream, StreamState};
 use crate::observe;
 use crate::policy::{self, SaveTarget};
 use crate::refs::Shot;
-use crate::session::Session;
+use crate::session::{Session, SessionId, Settings};
 use crate::{Env, clipboard, elements, niri, noctalia, runner, settle, status, wait};
 
 #[derive(Debug)]
@@ -35,6 +42,10 @@ pub(crate) struct Engine {
     accessibility: Presence,
     /// The accessibility bus, when there is one.
     a11y: Option<A11y>,
+    /// The sessions being served, by id.
+    sessions: Mutex<BTreeMap<SessionId, Session>>,
+    /// The last session id given out.
+    last_session: AtomicU64,
     /// Lives as long as the engine; see `control::guard`.
     _guardian: Option<runner::Watcher>,
 }
@@ -88,8 +99,48 @@ impl Engine {
             audit,
             accessibility,
             a11y,
+            sessions: Mutex::new(BTreeMap::new()),
+            last_session: AtomicU64::new(0),
             _guardian: None,
         }
+    }
+
+    /// Starts serving a session for the client process `pid`, with `settings`.
+    pub(crate) fn open_session(&self, pid: u32, settings: Settings) -> Session {
+        let id = SessionId(self.last_session.fetch_add(1, Ordering::Relaxed) + 1);
+        let session = Session::new(id, pid, settings);
+        self.sessions().insert(id, session.clone());
+        session
+    }
+
+    /// Ends `session`, if it hasn't ended yet, and stops counting it.
+    pub(crate) async fn close_session(&self, session: &Session) {
+        self.end_session(session).await;
+        self.sessions().remove(&session.id());
+    }
+
+    /// Ends every session being served.
+    pub(crate) async fn end_sessions(&self) {
+        let sessions: Vec<Session> = self.sessions().values().cloned().collect();
+        for session in &sessions {
+            self.end_session(session).await;
+        }
+    }
+
+    /// Whether the engine has nothing to finish: no session holds the lease and no input
+    /// cleanup is pending.
+    pub(crate) fn settled(&self) -> bool {
+        !self.desk.held() && crate::control::cleanup::pending() == 0
+    }
+
+    /// Returns once the stop watcher has ended, for good: never, without a watcher.
+    pub(crate) async fn watcher_ended(&self) {
+        self.desk.watcher_ended().await;
+    }
+
+    /// No code panics while holding the lock, so a poisoned one still holds sound entries.
+    fn sessions(&self) -> std::sync::MutexGuard<'_, BTreeMap<SessionId, Session>> {
+        self.sessions.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     pub(crate) const fn env(&self) -> &Env {

@@ -1,6 +1,6 @@
 # Architecture
 
-`niri-computer-use` is one binary. `serve` runs an MCP server over stdin and stdout, one process per agent session. `status` prints the readiness report and exits. `stop` and `resume` set and clear the stop flag, and `recover` clears the input-dirty marker.
+`niri-computer-use` is one binary. `serve` runs an MCP server over stdin and stdout, one process per agent session. `status` prints the readiness report and exits. `stop` and `resume` set and clear the stop flag, and `recover` clears the input-dirty marker. `engine` serves every client of one niri instance from one process, over a Unix socket (see [The shared engine](#the-shared-engine)).
 
 ## Modules
 
@@ -10,6 +10,8 @@
 | `discover.rs` | Finds `XDG_RUNTIME_DIR`, `NIRI_SOCKET` and `WAYLAND_DISPLAY` when the environment lacks them: parsing niri's socket names and choosing among them are pure, and the reads take their roots as parameters. |
 | `tools.rs` | The rmcp tool definitions. Each tool turns the call into one engine or module call and the result into MCP content, and logs it. |
 | `engine.rs` | What the server's sessions share, apart from MCP: the crash guardian, the event stream, the accessibility bus, the audit log and the desk, and the work each tool runs through them: the readiness check, the action gate and its evidence, captures and their refs, waits, and giving focus back. |
+| `engine/host.rs` | The `engine` subcommand: the engine lock, the instance socket, each connection's hello and session, and the idle exit. `serve_session` serves one session over any stream, stdio included. |
+| `engine/hello.rs` | The hello each side sends before MCP on a connection to the engine, and the engine's checks of it (pure, apart from reading the binary's identity). |
 | `session.rs` | One client of the engine: its label in the audit log and the lease record, and the settings its own environment gives it: the policy file, read from its config directory when the session starts, its `HOME` for `capture_dir`, and its `NIRI_COMPUTER_USE_UNRESTRICTED` and `NIRI_COMPUTER_USE_KEYBOARD`. |
 | `niri.rs`, `niri/request.rs`, `niri/events.rs` | The only code that talks to niri: one connection per request, one long-lived event stream, and the virtual pointer's Wayland connection. |
 | `niri/pointer.rs` | The virtual pointer: its own Wayland connection to niri, bound to one output. |
@@ -52,6 +54,18 @@
 | `image_header.rs` | Reads a PNG's or JPEG's size from its header. The harness includes the same file. |
 | `error.rs` | Tool failures with their stable names. |
 | `cli.rs` | Terminal output for the subcommands. Nothing else may print, because stdout is the MCP transport. |
+
+## The shared engine
+
+`niri-computer-use engine` serves every client of one niri instance from one process, which holds the one desk, crash guardian, event stream, accessibility connection and audit writer. It runs in the instance's runtime directory:
+
+1. It takes an exclusive `flock` on `engine.lock`, waiting up to one second for an engine that is exiting. If another engine keeps it, this one exits 0 having changed nothing.
+2. It empties `engine.log`, removes a stale `engine.sock`, binds a new one, sets it to mode `0600` and listens. Only then does it start the crash guardian, the event stream and the accessibility lookup, while connections queue.
+3. Each connection must come from a process of the same user (`SO_PEERCRED`); others are closed. The client sends one hello line, at most 512 KiB, within two seconds: the hello version, the identity of the binary it runs (`/proc/self/exe`'s device, inode, size and modification time), the niri socket and Wayland socket it found, its `NIRI_COMPUTER_USE_UNRESTRICTED` and `NIRI_COMPUTER_USE_KEYBOARD`, its `HOME`, and its policy file as read (missing, unreadable with the error, or the text). The engine answers `{"engine": {"pid": <pid>}}`, or `{"refused": {"error", "detail"}}` with `engine_version` (another build or hello version), `session_mismatch` (another niri socket or display), `engine_busy` (64 connections already) or `bad_hello`, and closes.
+4. After the hello the connection carries MCP, and the session's settings come only from its hello. A session ends when its connection ends or fails, or when it sends a line over 16 MiB.
+5. Once it has had no connection, no lease held and no input cleanup pending for two seconds, it closes and removes `engine.sock`, still holding the lock, and exits. When its stop watcher ends, because the runtime directory was removed or replaced, it ends every session and exits at once.
+
+The engine's stderr is `engine.log`. Its session ids count up from 1 for its lifetime; a session's ended flag lives with the session, so the engine keeps nothing for a session after its connection is gone.
 
 ## Finding the session
 
@@ -134,7 +148,7 @@ One server at a time holds the lease on a niri instance. It is an exclusive, non
 
 Removing the runtime directory or the `lease` file while a server holds the lease would let another server lock a new file, and would leave the holder watching a directory nobody can reach. So the watcher checks, on every event and once a second, that the directory's path still names the inode it watches; when it doesn't, the watcher reports the flag as set and ends, the holder gives the lease up, and `acquire_desktop` refuses from then on with a detail that says to restart the server. Separately, the holder checks once a second that `lease` still names the file it locked, and gives the lease up if not. That check waits for the action mutex, so a running action checks for itself, without the mutex it already holds: once right before its work starts, after the readiness report, and every 100 ms while the work runs (see Actions). The once-a-second checks exist because the kernel delays a directory's own deletion event while a file inside it is open, as the held lease is. The lease's mutex is the action mutex: an action holds it while it runs. `status` reads a copy of the holder kept beside the lease, so it never waits for a running action. Inside a server, the lease belongs to the session that took it, and so do its refs and `users_window`: another session's `acquire_desktop` gets `lease_held`, its actions `lease_required` without waiting for the owner's running action, and its `release_desktop` releases nothing. A `serve` process has one session.
 
-A session ends when its client closes the server's stdin, or reading it fails. The desk then drops the session's running action in whatever phase it is, the readiness check, the work or its evidence screenshot, along with a capture of the session waiting on or holding the action mutex, and gives its lease up the way a stop does, without giving focus back. An ended session can't take the lease again. Without this, rmcp would let a running call go on for up to five seconds after the client has gone, with the lease held. A dropped call can leave input cleanup running: a `wtype` still typing, or the releases of a dropped gesture or native key press, until niri has handled them and the input-dirty marker comes off. `serve` waits for those, up to five seconds, before it exits, so the client's end doesn't cut them short and leave the marker behind; each has a shorter deadline of its own.
+A session ends when its client closes the server's stdin, reading it fails, or the client sends a line over 16 MiB. The desk then drops the session's running action in whatever phase it is, the readiness check, the work or its evidence screenshot, along with a capture of the session waiting on or holding the action mutex, and gives its lease up the way a stop does, without giving focus back. An ended session can't take the lease again. Without this, rmcp would let a running call go on for up to five seconds after the client has gone, with the lease held. A dropped call can leave input cleanup running: a `wtype` still typing, or the releases of a dropped gesture or native key press, until niri has handled them and the input-dirty marker comes off. `serve` waits for those, up to five seconds, before it exits, so the client's end doesn't cut them short and leave the marker behind; each has a shorter deadline of its own.
 
 ## The policy file and the lease decision
 
