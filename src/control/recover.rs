@@ -12,7 +12,7 @@ use rustix::process::{Pid, Signal, getuid, kill_process, kill_process_group};
 use super::lease::{Lease, Refused};
 use super::marker::{self, Found, Marker};
 use super::procs;
-use super::runtime::{INPUT_DIRTY, RuntimeDir};
+use super::runtime::RuntimeDir;
 use crate::niri::pointer::{Pointer, Step};
 use crate::{Env, cli, niri};
 
@@ -36,13 +36,13 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
             Refused::Io(detail) => detail,
         },
     )?;
-    let Some(found) = marker::read(&runtime) else {
+    let Some(snapshot) = marker::snapshot(&runtime) else {
         cli::say("No input-dirty marker: nothing to recover.");
         return Ok(());
     };
-    cli::say(&format!("Input-dirty marker: {}", found.summary()));
+    cli::say(&format!("Input-dirty marker: {}", snapshot.found.summary()));
     let root = Path::new(PROC);
-    match &found {
+    match &snapshot.found {
         Found::Marker(Marker {
             keyboard: Some(keyboard),
             buttons,
@@ -71,8 +71,10 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
     if !cli::confirm("Is all input released?") {
         return Err("not confirmed; the marker stays".to_owned());
     }
-    let path = runtime.path().join(INPUT_DIRTY);
-    std::fs::remove_file(&path).map_err(|error| format!("remove {}: {error}", path.display()))?;
+    // Only the marker this run released: another input's, written meanwhile, stays.
+    snapshot.clear(&runtime).await.map_err(|error| {
+        format!("{error}; run `niri-computer-use recover` again for the marker there now")
+    })?;
     drop(lease);
     cli::say("Marker cleared. `niri-computer-use resume` clears the stop flag if it is set.");
     Ok(())

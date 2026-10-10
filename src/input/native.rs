@@ -45,7 +45,7 @@ pub(super) async fn type_input(
     let keys = plan.keys;
     let revision = keyboard.revision();
     let before = waiter.view().focused_window();
-    let mut device = Device::new(keyboard, input, &typing, &keys, group)?;
+    let mut device = Device::new(keyboard, input, &typing, &keys, group).await?;
     if let Some(map) = &plan.extended {
         device.keyboard()?.extend(map)?;
     }
@@ -122,7 +122,7 @@ struct Device {
 }
 
 impl Device {
-    fn new(
+    async fn new(
         keyboard: Keyboard,
         input: Input<'_>,
         typing: &Typing,
@@ -138,6 +138,7 @@ impl Device {
             group,
         });
         let marker = Written::write(input.runtime, marker)
+            .await
             .map_err(|error| upstream(&format!("write native input-dirty marker: {error}")))?;
         Ok(Self {
             keyboard: Some(keyboard),
@@ -182,7 +183,7 @@ impl Device {
     async fn finish(mut self) -> Result<(), ToolError> {
         let Some(aftercare) = self.aftercare.take() else {
             self.release().await?;
-            return self.clear();
+            return self.clear().await;
         };
         let cleanup = Pending::start();
         let finished = tokio::spawn(async move {
@@ -190,7 +191,10 @@ impl Device {
             if released.is_ok() {
                 aftercare.sent().await;
             }
-            let finished = released.and_then(|()| self.clear());
+            let finished = match released {
+                Ok(()) => self.clear().await,
+                Err(error) => Err(error),
+            };
             drop(cleanup);
             finished
         });
@@ -206,10 +210,11 @@ impl Device {
         keyboard.restore(group).await
     }
 
-    fn clear(&mut self) -> Result<(), ToolError> {
+    async fn clear(&mut self) -> Result<(), ToolError> {
         if let Some(marker) = self.marker.take() {
             marker
                 .clear()
+                .await
                 .map_err(|error| upstream(&format!("clear native input-dirty marker: {error}")))?;
         }
         Ok(())
@@ -253,7 +258,7 @@ async fn acknowledge_release(
     if let Some(aftercare) = aftercare {
         aftercare.sent().await;
     }
-    marker.clear().ok();
+    marker.clear().await.ok();
 }
 
 fn upstream(detail: &str) -> ToolError {

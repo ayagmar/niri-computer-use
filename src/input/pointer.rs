@@ -280,7 +280,7 @@ pub(crate) async fn point(
     let held = Held::prepare(input, waiter.view(), keys).await?;
     let pointer = Pointer::bind(display, niri::pid(socket).await?, &shot.output).await?;
     let pressing = Pressing { tool, button };
-    let mut device = Device::new(pointer, input.runtime, pressing, &shot.output, held)?;
+    let mut device = Device::new(pointer, input.runtime, pressing, &shot.output, held).await?;
     if let Err(error) = device.run(plan(&located, &aimed)).await {
         // Nothing reached niri: an error like any other before input.
         if !device.sent() {
@@ -288,7 +288,7 @@ pub(crate) async fn point(
         }
         return Ok(Outcome::uncertain(None, Some(waiter.view()), error.detail));
     }
-    device.finish()?;
+    device.finish().await?;
     // The events the input caused so far, such as a click's focus change.
     if let Waited::Lost(reason) = waiter.until(Duration::ZERO, |_| None::<()>).await {
         return Ok(Outcome::uncertain(Some(true), Some(waiter.view()), reason));
@@ -341,28 +341,28 @@ struct Device {
 impl Device {
     /// Writes the marker first if `gesture` presses a button, naming the output the
     /// pointer is bound to, which `recover` binds its release to.
-    fn new(
+    async fn new(
         pointer: Pointer,
         runtime: &RuntimeDir,
         pressing: Pressing,
         output: &str,
         held: Option<Held>,
     ) -> Result<Self, ToolError> {
-        let marker = (pressing.button.is_some() || held.is_some())
-            .then(|| {
-                let buttons = pressing.button.into_iter().map(Button::code).collect();
-                let mut marker = Marker::pending(pressing.tool, buttons);
-                marker.output = Some(output.to_owned());
-                marker.keyboard = held.as_ref().map(Held::marker);
-                Written::write(runtime, marker)
-            })
-            .transpose()
-            .map_err(|error| {
+        let marker = if pressing.button.is_some() || held.is_some() {
+            let buttons = pressing.button.into_iter().map(Button::code).collect();
+            let mut marker = Marker::pending(pressing.tool, buttons);
+            marker.output = Some(output.to_owned());
+            marker.keyboard = held.as_ref().map(Held::marker);
+            let written = Written::write(runtime, marker).await.map_err(|error| {
                 ToolError::new(
                     ErrorName::UpstreamError,
                     format!("write the input-dirty marker: {error}"),
                 )
             })?;
+            Some(written)
+        } else {
+            None
+        };
         Ok(Self {
             pointer: Some(pointer),
             marker,
@@ -399,11 +399,11 @@ impl Device {
     }
 
     /// Removes the marker after a gesture niri has handled whole.
-    fn finish(mut self) -> Result<(), ToolError> {
+    async fn finish(mut self) -> Result<(), ToolError> {
         let Some(marker) = self.marker.take() else {
             return Ok(());
         };
-        marker.clear().map_err(|error| {
+        marker.clear().await.map_err(|error| {
             ToolError::new(
                 ErrorName::UpstreamError,
                 format!(
@@ -445,7 +445,7 @@ async fn release(mut pointer: Pointer, mut held: Option<Held>, marker: Written, 
     {
         return;
     }
-    marker.clear().ok();
+    marker.clear().await.ok();
 }
 
 #[cfg(test)]

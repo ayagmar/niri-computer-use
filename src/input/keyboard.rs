@@ -389,11 +389,12 @@ async fn run_wtype(
     aftercare: &mut Option<Aftercare>,
 ) -> Result<(), ToolError> {
     let mut marker = Written::write(runtime, Marker::pending(tool, Vec::new()))
+        .await
         .map_err(|error| marker_error("write", &error))?;
     let gated = match runner::gated("wtype", args, &UTF8, WTYPE_DEADLINE) {
         Ok(gated) => gated,
         // Nothing started, so nothing was typed.
-        Err(error) => return Err(cleared(marker, error)),
+        Err(error) => return Err(cleared(marker, error).await),
     };
     let child = gated.pid().and_then(|pid| {
         let stat = procs::stat(Path::new("/proc"), pid)?;
@@ -402,23 +403,21 @@ async fn run_wtype(
             start_time: stat.start_time,
         })
     });
-    let recorded = child
-        .ok_or_else(|| "wtype's PID or start time is unknown".to_owned())
-        .and_then(|child| {
-            marker
-                .update(|marker| {
-                    marker.phase = Phase::Running;
-                    marker.child = Some(child);
-                })
-                .map_err(|error| format!("record wtype in the input-dirty marker: {error}"))
-        });
+    let recorded = match child {
+        Some(child) => marker
+            .update(|marker| {
+                marker.phase = Phase::Running;
+                marker.child = Some(child);
+            })
+            .await
+            .map_err(|error| format!("record wtype in the input-dirty marker: {error}")),
+        None => Err("wtype's PID or start time is unknown".to_owned()),
+    };
     if let Err(detail) = recorded {
         // Still waiting at the gate: killing it now types nothing.
         drop(gated);
-        return Err(cleared(
-            marker,
-            ToolError::new(ErrorName::UpstreamError, detail),
-        ));
+        let error = ToolError::new(ErrorName::UpstreamError, detail);
+        return Err(cleared(marker, error).await);
     }
     // A task of its own, so wtype finishes and the marker comes off even if the call is
     // dropped.
@@ -446,21 +445,21 @@ async fn feed(
     aftercare: Option<Aftercare>,
 ) -> Result<(), ToolError> {
     let Some(mut aftercare) = aftercare else {
-        return finish(gated.feed(stdin, MAX_STDOUT).await, marker);
+        return finish(gated.feed(stdin, MAX_STDOUT).await, marker).await;
     };
     if let Err(error) = aftercare.arm().await {
         // Still waiting at the gate: killing it now types nothing.
         drop(gated);
-        return Err(cleared(marker, error));
+        return Err(cleared(marker, error).await);
     }
     let fed = gated.feed(stdin, MAX_STDOUT).await;
     aftercare.sent().await;
-    finish(fed, marker)
+    finish(fed, marker).await
 }
 
 /// Removes the marker once wtype has exited by itself. A wtype killed by a signal, or
 /// one past its deadline, which the runner kills, leaves it.
-fn finish(fed: Result<Finished, ToolError>, marker: Written) -> Result<(), ToolError> {
+async fn finish(fed: Result<Finished, ToolError>, marker: Written) -> Result<(), ToolError> {
     let finished = match fed {
         Ok(finished) => finished,
         Err(error) => {
@@ -484,6 +483,7 @@ fn finish(fed: Result<Finished, ToolError>, marker: Written) -> Result<(), ToolE
     }
     marker
         .clear()
+        .await
         .map_err(|error| marker_error("remove", &error))?;
     if finished.status.success() {
         Ok(())
@@ -494,8 +494,8 @@ fn finish(fed: Result<Finished, ToolError>, marker: Written) -> Result<(), ToolE
 
 /// `error`, after removing the marker of a call that typed nothing; a marker that can't
 /// be removed is added to the detail, since it blocks the next action.
-fn cleared(marker: Written, error: ToolError) -> ToolError {
-    match marker.clear() {
+async fn cleared(marker: Written, error: ToolError) -> ToolError {
+    match marker.clear().await {
         Ok(()) => error,
         Err(clear) => ToolError::new(
             error.name,

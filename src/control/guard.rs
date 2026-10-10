@@ -43,8 +43,10 @@ pub(crate) async fn run(env: &Env, server: u32) -> Result<(), String> {
 async fn release(env: &Env, runtime: &RuntimeDir, server: u32) -> Result<(), String> {
     let lease = lease(runtime).await?;
     // Read again under the lease: `recover` may have cleared it meanwhile.
-    let found = marker::read(runtime);
-    let Some(marker) = releases(found.as_ref(), server) else {
+    let Some(snapshot) = marker::snapshot(runtime) else {
+        return Ok(());
+    };
+    let Some(marker) = releases(Some(&snapshot.found), server) else {
         return Ok(());
     };
     if let Some(keyboard) = &marker.keyboard {
@@ -53,7 +55,9 @@ async fn release(env: &Env, runtime: &RuntimeDir, server: u32) -> Result<(), Str
     if !marker.buttons.is_empty() {
         recover::send_releases(env, &marker.buttons, marker.output.as_deref()).await?;
     }
-    marker::note_released(runtime, marker.clone())
+    snapshot
+        .note_released(runtime)
+        .await
         .map_err(|error| format!("note the releases in the input-dirty marker: {error}"))?;
     drop(lease);
     Ok(())

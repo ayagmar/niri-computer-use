@@ -4,8 +4,9 @@
 use std::process::Stdio;
 
 use serde_json::{Value, json};
+use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 
-use crate::client::{Server, answer, run, tool_error};
+use crate::client::{Server, WAIT, answer, run, subcommand, tool_error};
 use crate::fixture::{Fixture, eventually, exited};
 use crate::session::NiriProcess;
 
@@ -128,6 +129,42 @@ async fn without_a_yes_the_marker_stays() {
     // End of input is not a yes either.
     assert!(!answer(&fixture, "recover", "").await.status.success());
     assert!(marker_exists(&fixture));
+}
+
+#[tokio::test]
+async fn a_marker_written_while_recover_waits_for_the_answer_stays() {
+    let fixture = Fixture::new("recover-replaced");
+    let (_child, pid, start_time) = stubborn_child();
+    write_marker(&fixture, &running(pid, start_time));
+    let mut recover = subcommand(&fixture, "recover");
+    let mut stdout = BufReader::new(recover.stdout.take().unwrap()).lines();
+    while let Some(line) = tokio::time::timeout(WAIT, stdout.next_line())
+        .await
+        .unwrap()
+        .unwrap()
+    {
+        if line.contains("Is all input released?") {
+            break;
+        }
+    }
+    // Another input's marker, written after recover read the first one.
+    let theirs = json!({"operation": "click", "phase": "pending", "server_pid": 2, "since": "t", "buttons": [272]});
+    write_marker(&fixture, &theirs);
+    let mut stdin = recover.stdin.take().unwrap();
+    stdin.write_all(b"yes\n").await.unwrap();
+    drop(stdin);
+    let out = tokio::time::timeout(WAIT, recover.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("run `niri-computer-use recover` again"),
+        "{stderr}"
+    );
+    let left = std::fs::read_to_string(fixture.path(&format!("{DIR}/input-dirty"))).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&left).unwrap(), theirs);
 }
 
 #[tokio::test]

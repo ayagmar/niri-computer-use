@@ -257,14 +257,10 @@ pub(crate) async fn run(fixture: &Fixture, subcommand: &str) -> std::process::Ou
     answer(fixture, subcommand, "").await
 }
 
-/// Runs a subcommand with `input` as the human's answers on stdin.
-pub(crate) async fn answer(
-    fixture: &Fixture,
-    subcommand: &str,
-    input: &str,
-) -> std::process::Output {
+/// Starts a subcommand in the fixture's environment, with stdin, stdout and stderr piped.
+pub(crate) fn subcommand(fixture: &Fixture, subcommand: &str) -> Child {
     let spawning = SPAWNING.lock().unwrap_or_else(PoisonError::into_inner);
-    let mut child = command()
+    let child = command()
         .arg(subcommand)
         .env_clear()
         .envs(fixture.env())
@@ -275,6 +271,16 @@ pub(crate) async fn answer(
         .spawn()
         .unwrap();
     drop(spawning);
+    child
+}
+
+/// Runs a subcommand with `input` as the human's answers on stdin.
+pub(crate) async fn answer(
+    fixture: &Fixture,
+    subcommand_name: &str,
+    input: &str,
+) -> std::process::Output {
+    let mut child = subcommand(fixture, subcommand_name);
     let mut stdin = child.stdin.take().unwrap();
     stdin.write_all(input.as_bytes()).await.unwrap();
     drop(stdin);
