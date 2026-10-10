@@ -93,8 +93,8 @@ Clicking a button in another window and coming back:
 ```
 desktop_state             → the user is on window 42; the target is window 7
 acquire_desktop           → users_window 42
-focus_window {id: 7, screenshot: true}            → focused; shot-3, the button at (412, 230)
-click {screenshot_ref: "shot-3", x: 412, y: 230, screenshot: true}  → sent; the click had its effect
+focus_window {id: 7, screenshot: true}            → focused; shot-5e1a90c2-3, the button at (412, 230)
+click {screenshot_ref: "shot-5e1a90c2-3", x: 412, y: 230, screenshot: true}  → sent; the click had its effect
 release_desktop {restore_focus: true}             → restored: focused
 ```
 
@@ -102,9 +102,9 @@ Pressing a named button through accessibility:
 
 ```
 acquire_desktop                                   → users_window 42
-focus_window {id: 7, screenshot: true}            → focused; shot-4
-elements {window_id: 7, role: "button", name_contains: "save"}  → element_ref "elem-2", with a layout_box
-click {screenshot_ref: "shot-4", element: "elem-2", screenshot: true}  → sent; the image shows it saved
+focus_window {id: 7, screenshot: true}            → focused; shot-5e1a90c2-4
+elements {window_id: 7, role: "button", name_contains: "save"}  → element_ref "elem-5e1a90c2-2", with a layout_box
+click {screenshot_ref: "shot-5e1a90c2-4", element: "elem-5e1a90c2-2", screenshot: true}  → sent; the image shows it saved
 release_desktop {restore_focus: true}
 ```
 

@@ -67,7 +67,7 @@ impl Button {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Spot {
     Pixel(ImagePx),
-    /// An element ref, `elem-N`.
+    /// An element ref, `elem-<tag>-N`.
     Element(String),
 }
 

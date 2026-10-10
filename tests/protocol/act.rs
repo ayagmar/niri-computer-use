@@ -305,12 +305,17 @@ async fn screenshots_under_the_lease_are_refs_of_that_lease() {
     let mut desk = Desk::start("act-refs", "").await;
     let shot = json!({"target": "focused_output"});
     let screenshot_ref = |result: Value| result["structuredContent"]["screenshot_ref"].clone();
-    let first = desk.server.call("screenshot", shot.clone()).await;
-    assert_eq!(screenshot_ref(first), "shot-1");
+    let first = screenshot_ref(desk.server.call("screenshot", shot.clone()).await);
+    // `shot-<the server's tag>-<number>`.
+    let tag = first
+        .as_str()
+        .and_then(|id| id.strip_prefix("shot-")?.strip_suffix("-1"))
+        .unwrap()
+        .to_owned();
     let evidence = desk.act("focus_window", json!({"id": 2}), |_, _| {}).await;
     assert_eq!(
         evidence["structuredContent"]["screenshot"]["screenshot_ref"],
-        "shot-2"
+        format!("shot-{tag}-2")
     );
     desk.server
         .structured_with("release_desktop", json!({"restore_focus": false}))
@@ -319,7 +324,21 @@ async fn screenshots_under_the_lease_are_refs_of_that_lease() {
     assert_eq!(screenshot_ref(unleased), Value::Null);
     desk.server.structured("acquire_desktop").await;
     let again = desk.server.call("screenshot", shot).await;
-    assert_eq!(screenshot_ref(again), "shot-3");
+    assert_eq!(screenshot_ref(again), format!("shot-{tag}-3"));
+}
+
+/// A client whose server was restarted, or a bridge reconnected to a new engine, may still
+/// hold a ref the earlier process issued: it must not name the new process's capture.
+#[tokio::test]
+async fn a_ref_from_another_server_process_is_unknown() {
+    let mut earlier = Desk::start("act-refs-a", "").await;
+    let mut now = Desk::start("act-refs-b", "").await;
+    let old = screenshot_ref(&mut earlier).await;
+    let new = screenshot_ref(&mut now).await;
+    assert_ne!(old, new);
+    let at = |id: &str| json!({"screenshot_ref": id, "x": 10, "y": 10});
+    let moved = now.server.call("pointer_move", at(&old)).await;
+    assert_eq!(reason(&moved), ("ref_invalid", "unknown_ref".to_owned()));
 }
 
 #[tokio::test]

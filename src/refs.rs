@@ -3,9 +3,12 @@
 //! keep the accessible elements `elements` listed under the lease, so a pointer tool can
 //! aim at one. Refs belong to one lease: taking or giving up the lease drops them all, and
 //! an id is never issued twice by one server, so a ref from an earlier lease is simply
-//! unknown.
+//! unknown. Every id carries the server process's tag, so neither is a ref from another
+//! process, such as a server that ran before this one.
 
 use std::collections::{BTreeMap, VecDeque};
+use std::hash::BuildHasher as _;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use niri_ipc::{LogicalOutput, Output};
@@ -187,8 +190,10 @@ pub(crate) fn invalid(reason: &str, detail: &str) -> ToolError {
 }
 
 /// The refs of the current lease.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct Refs {
+    /// In every id, between the kind and the number.
+    tag: String,
     /// Leases seen, counted from 1, and refs issued: ids are never reused.
     leases: u64,
     issued: u64,
@@ -199,7 +204,46 @@ pub(crate) struct Refs {
     elements: VecDeque<(u64, ElementRef)>,
 }
 
+impl Default for Refs {
+    /// Refs whose ids carry this process's tag.
+    fn default() -> Self {
+        Self::new(process_tag().to_owned())
+    }
+}
+
+/// Eight hex digits, random for each process.
+fn process_tag() -> &'static str {
+    static TAG: OnceLock<String> = OnceLock::new();
+    TAG.get_or_init(|| {
+        // The standard library seeds its hash keys from the system's randomness.
+        let random = std::hash::RandomState::new().hash_one(std::process::id());
+        format!("{:08x}", random & 0xFFFF_FFFF)
+    })
+}
+
 impl Refs {
+    /// No refs yet, with `tag` in every id.
+    pub(crate) const fn new(tag: String) -> Self {
+        Self {
+            tag,
+            leases: 0,
+            issued: 0,
+            lease: None,
+            shots: VecDeque::new(),
+            elements_issued: 0,
+            elements: VecDeque::new(),
+        }
+    }
+
+    /// The number in `id`, if it is an id of `kind` with this tag.
+    fn number(&self, id: &str, kind: &str) -> Option<u64> {
+        let rest = id.strip_prefix(kind)?.strip_prefix('-')?;
+        rest.strip_prefix(self.tag.as_str())?
+            .strip_prefix('-')?
+            .parse()
+            .ok()
+    }
+
     /// A new lease: earlier refs are dropped.
     pub(crate) fn start(&mut self) {
         self.leases += 1;
@@ -230,10 +274,11 @@ impl Refs {
             self.shots.pop_front();
         }
         self.shots.push_back((self.issued, shot));
-        Some(format!("shot-{}", self.issued))
+        Some(format!("shot-{}-{}", self.tag, self.issued))
     }
 
-    /// Keeps `element` and returns its id, `elem-N`, if `lease` is still the current one.
+    /// Keeps `element` and returns its id, `elem-<tag>-N`, if `lease` is still the current
+    /// one.
     pub(crate) fn insert_element(&mut self, lease: u64, element: ElementRef) -> Option<String> {
         if self.lease != Some(lease) {
             return None;
@@ -243,12 +288,12 @@ impl Refs {
             self.elements.pop_front();
         }
         self.elements.push_back((self.elements_issued, element));
-        Some(format!("elem-{}", self.elements_issued))
+        Some(format!("elem-{}-{}", self.tag, self.elements_issued))
     }
 
     /// The element ref named `id`, if the current lease kept it.
     pub(crate) fn element(&self, id: &str) -> Result<ElementRef, ToolError> {
-        let wanted = id.strip_prefix("elem-").and_then(|n| n.parse::<u64>().ok());
+        let wanted = self.number(id, "elem");
         self.elements
             .iter()
             .find(|(issued, _)| Some(*issued) == wanted)
@@ -265,7 +310,7 @@ impl Refs {
 
     /// The ref named `id`, if the current lease kept it.
     pub(crate) fn get(&self, id: &str) -> Result<Shot, ToolError> {
-        let wanted = id.strip_prefix("shot-").and_then(|n| n.parse::<u64>().ok());
+        let wanted = self.number(id, "shot");
         self.shots
             .iter()
             .find(|(issued, _)| Some(*issued) == wanted)
@@ -434,6 +479,20 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn an_id_from_another_process_names_nothing_here() {
+        let mut earlier = Refs::new("0a1b2c3d".to_owned());
+        let mut now = Refs::new("4e5f6a7b".to_owned());
+        earlier.start();
+        now.start();
+        let old = earlier.insert(earlier.lease().unwrap(), shot()).unwrap();
+        let new = now.insert(now.lease().unwrap(), shot()).unwrap();
+        assert_ne!(old, new);
+        assert!(now.get(&new).is_ok());
+        let error = now.get(&old).unwrap_err();
+        assert!(error.detail.starts_with("unknown_ref"), "{}", error.detail);
+    }
+
     #[test]
     fn element_refs_belong_to_one_lease_and_keep_the_latest_thousand() {
         let element = || ElementRef {
@@ -447,35 +506,35 @@ mod tests {
             },
         };
         let stale = |refs: &Refs, id: &str| refs.element(id).unwrap_err().name;
-        let mut refs = Refs::default();
+        let mut refs = Refs::new("t".to_owned());
         assert_eq!(refs.insert_element(1, element()), None);
         refs.start();
         let first = refs.lease().unwrap();
         assert_eq!(
             refs.insert_element(first, element()).as_deref(),
-            Some("elem-1")
+            Some("elem-t-1")
         );
-        assert_eq!(refs.element("elem-1"), Ok(element()));
+        assert_eq!(refs.element("elem-t-1"), Ok(element()));
         refs.start();
         let second = refs.lease().unwrap();
-        assert_eq!(stale(&refs, "elem-1"), ErrorName::ElementStale);
+        assert_eq!(stale(&refs, "elem-t-1"), ErrorName::ElementStale);
         assert_eq!(refs.insert_element(first, element()), None);
         for _ in 0..=KEPT_ELEMENTS {
             refs.insert_element(second, element());
         }
-        assert_eq!(stale(&refs, "elem-2"), ErrorName::ElementStale);
-        assert!(refs.element("elem-3").is_ok());
-        assert_eq!(stale(&refs, "shot-3"), ErrorName::ElementStale);
+        assert_eq!(stale(&refs, "elem-t-2"), ErrorName::ElementStale);
+        assert!(refs.element("elem-t-3").is_ok());
+        assert_eq!(stale(&refs, "shot-t-3"), ErrorName::ElementStale);
     }
 
     #[tokio::test]
     async fn refs_belong_to_one_lease_and_ids_are_never_reused() {
-        let mut refs = Refs::default();
+        let mut refs = Refs::new("t".to_owned());
         assert_eq!(refs.lease(), None);
         assert_eq!(refs.insert(1, shot()), None);
         refs.start();
         let first = refs.lease().unwrap();
-        assert_eq!(refs.insert(first, shot()).as_deref(), Some("shot-1"));
+        assert_eq!(refs.insert(first, shot()).as_deref(), Some("shot-t-1"));
         refs.end();
         // A capture that started under the old lease isn't kept.
         assert_eq!(refs.insert(first, shot()), None);
@@ -483,10 +542,10 @@ mod tests {
         let second = refs.lease().unwrap();
         assert_ne!(first, second);
         assert_eq!(refs.insert(first, shot()), None);
-        assert_eq!(refs.insert(second, shot()).as_deref(), Some("shot-2"));
+        assert_eq!(refs.insert(second, shot()).as_deref(), Some("shot-t-2"));
         assert_eq!(refs.shots.len(), 1);
-        assert!(refs.get("shot-2").is_ok());
-        for unknown in ["shot-1", "shot-9", "2", "shot-x"] {
+        assert!(refs.get("shot-t-2").is_ok());
+        for unknown in ["shot-t-1", "shot-t-9", "shot-2", "2", "shot-t-x"] {
             assert_eq!(
                 reason(refs.get(unknown).map(|_| ProtocolPt {
                     x: 0,

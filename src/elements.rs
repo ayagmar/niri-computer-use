@@ -38,7 +38,7 @@ pub(crate) struct Listing {
 /// One element.
 #[derive(Debug, Serialize)]
 pub(crate) struct Listed {
-    /// `elem-N` for the pointer tools' `element`, while this server holds the lease.
+    /// `elem-<tag>-N` for the pointer tools' `element`, while this server holds the lease.
     pub(crate) element_ref: Option<String>,
     pub(crate) role: &'static str,
     /// The app's text: untrusted data.

@@ -34,7 +34,7 @@ Each element:
 
 | Field | Value |
 |---|---|
-| `element_ref` | `elem-N`, for the pointer tools' `element`, while this server holds the lease; null without it |
+| `element_ref` | an id such as `elem-5e1a90c2-2`, for the pointer tools' `element`, while this server holds the lease; null without it |
 | `role`, `name` | the role, and the name the app gives it |
 | `states`, `actions` | AT-SPI states, such as `focused`, `checked` or `editable`, and the names of the actions the app offers for it |
 | `layout_box` | the element's box in layout coordinates, from niri's window geometry and the app's coordinates inside the window, or null |
@@ -56,7 +56,7 @@ The app gets three seconds to answer the whole walk, and one second for each cal
 While the agent holds the lease, pass an element's `element_ref` as `element` to `click`, `pointer_move` or `drag`, with the `screenshot_ref` of a screenshot that shows it:
 
 ```json
-{"screenshot_ref": "shot-4", "element": "elem-2"}
+{"screenshot_ref": "shot-5e1a90c2-4", "element": "elem-5e1a90c2-2"}
 ```
 
 Just before sending, the server asks the app for the element again and checks that it is the same kind of element, still showing, and inside the screenshot. Then it aims at the centre of its box as it is now, so a window that moved since `elements` is still hit. It fails with `element_stale` when the element, its window or its app is gone, and with `element_unmappable` when the element can't be aimed at now; the detail starts with `frame_size_mismatch`, `not_showing`, `empty` or `outside_screenshot`. The server keeps the last 1000 element refs of a lease and drops them all when the lease ends.

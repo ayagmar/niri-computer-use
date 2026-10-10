@@ -31,7 +31,7 @@ The result is an image block, then the metadata as text and as `structuredConten
 | `scale` | image pixels per logical pixel |
 | `width`, `height`, `mime_type` | the image, checked against its own header |
 | `captured_at_unix_ms`, `capture_ms` | when the capture started and how long it took |
-| `screenshot_ref` | an id such as `shot-4` for this capture while this server holds the lease, or null. The server keeps the last 64 of the current lease in memory and drops them all when the lease is taken or given up |
+| `screenshot_ref` | an id such as `shot-5e1a90c2-4` for this capture while this server holds the lease, or null. The server keeps the last 64 of the current lease in memory and drops them all when the lease is taken or given up |
 | `settled` | only on a screenshot that waited for the screen to stop changing (an action's `screenshot: true`, or `wait_for`'s `screen_stable`): true when the last two captures were the same image, false when the screen still changed at the limit |
 | `saved` | with `save_path`: the saved file's `path`, `width` and `height` |
 
