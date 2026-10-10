@@ -7,10 +7,11 @@ use std::time::Duration;
 use niri_ipc::{Action, Window};
 use serde::Serialize;
 
-use super::{Niri, Observed, Outcome, no_window, send};
+use super::{Niri, Observed, Outcome, no_window, refuse_close, send};
 use crate::error::CallError;
 use crate::niri;
 use crate::niri::waiter::{View, Waited};
+use crate::policy::Loaded;
 
 /// How long to wait for niri to report a change in the window.
 const OBSERVE: Duration = Duration::from_secs(1);
@@ -218,8 +219,13 @@ const fn aim(action: &Action) -> Aim {
 
 /// Sends `action`, then, for an action about one window, reports that window as niri
 /// shows it once it changed, or after a second: `changed`, `unchanged` or `closed`, with
-/// the window's state. Any other action is `sent`.
-pub(crate) async fn run(niri: Niri<'_>, action: Action) -> Result<Outcome, CallError> {
+/// the window's state. Any other action is `sent`. `CloseWindow` on a window of an app on
+/// the deny list is refused.
+pub(crate) async fn run(
+    niri: Niri<'_>,
+    policy: &Loaded,
+    action: Action,
+) -> Result<Outcome, CallError> {
     let mut waiter = niri::waiter(niri.events).await?;
     let target = match aim(&action) {
         Aim::None => None,
@@ -227,6 +233,9 @@ pub(crate) async fn run(niri: Niri<'_>, action: Action) -> Result<Outcome, CallE
         Aim::Window(id) if waiter.view().windows().contains_key(&id) => Some(id),
         Aim::Window(id) => return Err(no_window(id)),
     };
+    if let (Action::CloseWindow { .. }, Some(id)) = (&action, target) {
+        refuse_close(policy, waiter.view(), id)?;
+    }
     let before = target.and_then(|id| state(waiter.view(), id));
     if let Some(lost) = send(niri.socket, action).await? {
         return Ok(lost);

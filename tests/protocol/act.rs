@@ -685,6 +685,42 @@ async fn denial_is_focus_based_and_unchecked_expect_does_not_bypass_it() {
 }
 
 #[tokio::test]
+async fn closing_a_denied_apps_window_is_refused_named_or_focused() {
+    let mut desk = Desk::start("act-deny-close", r#"deny_input_app_ids = ["a"]"#).await;
+    for (tool, arguments) in [
+        ("close_window", json!({"id": 1})),
+        ("niri_action", json!({"action": {"CloseWindow": {"id": 1}}})),
+        (
+            "niri_action",
+            json!({"action": {"CloseWindow": {"id": null}}}),
+        ),
+    ] {
+        let (name, detail) = tool_error(&desk.server.call(tool, arguments).await);
+        assert_eq!(name, "app_denied", "{tool}");
+        assert_eq!(
+            detail, r#"window 1's app_id "a" is on the policy's deny list"#,
+            "{tool}"
+        );
+    }
+    assert!(!desk.niri.sent_action());
+    // Layout actions still reach a denied window, and other apps' windows still close.
+    let floated = desk
+        .act(
+            "niri_action",
+            json!({"action": {"ToggleWindowFloating": {"id": 1}}}),
+            |_, _| {},
+        )
+        .await;
+    assert_eq!(outcome(&floated)["observed"], "unchanged");
+    let closed = desk
+        .act("close_window", json!({"id": 2}), |stream, _| {
+            stream.send(&json!({"WindowClosed": {"id": 2}}));
+        })
+        .await;
+    assert_eq!(outcome(&closed)["observed"], "closed");
+}
+
+#[tokio::test]
 async fn pointer_tools_check_the_ref_the_outputs_and_their_arguments_first() {
     let mut desk = Desk::start("act-pointer", "").await;
     let at = |id: &str, x: u32| json!({"screenshot_ref": id, "x": x, "y": 10});

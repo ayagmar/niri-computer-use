@@ -762,7 +762,8 @@ impl Server {
 
     /// Asks a window to close, as its close button would. `observed` is `closed`, or
     /// `pending` if it is still open after five seconds, for example behind an
-    /// unsaved-changes dialog; nothing forces it. Requires the lease.
+    /// unsaved-changes dialog; nothing forces it. Refused with `app_denied` when the
+    /// window's app is on the policy's deny list. Requires the lease.
     #[tool(annotations(
         read_only_hint = false,
         destructive_hint = true,
@@ -775,7 +776,8 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
-        let work = act::close_window(self.engine.niri(), args.id);
+        let policy = &self.session.settings().policy;
+        let work = act::close_window(self.engine.niri(), policy, args.id);
         self.act(
             &context,
             Asked {
@@ -798,7 +800,8 @@ impl Server {
     /// and `window` is that window as niri then reports it: `window_size`, `tile_size`,
     /// `is_floating`, `is_focused`, `workspace_id`. niri reports no fullscreen flag; a
     /// fullscreen window fills its output. Other actions give `sent`. niri's refusal comes
-    /// back as `upstream_error` with niri's message. Actions that run programs, write
+    /// back as `upstream_error` with niri's message. `CloseWindow` on a window whose app is
+    /// on the policy's deny list fails with `app_denied`. Actions that run programs, write
     /// files or reach past the layout (`Spawn`, `SpawnSh`, `Quit`, `LoadConfigFile`, niri's
     /// screenshot actions, monitor power, casts) fail with `unrestricted_required` unless
     /// the user set `unrestricted = true`; tell the user rather than working around it.
@@ -816,7 +819,8 @@ impl Server {
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
         let niri = self.engine.niri();
-        let unrestricted = self.session.settings().unrestricted.enabled();
+        let settings = self.session.settings();
+        let unrestricted = settings.unrestricted.enabled();
         let shoot = args.screenshot;
         let work = async move {
             let action = serde_json::from_value(Value::Object(args.action)).map_err(|error| {
@@ -825,7 +829,7 @@ impl Server {
             if let Some(refused) = policy::refuse_action(&action, unrestricted) {
                 return Err(refused.into());
             }
-            act::compositor::run(niri, action).await
+            act::compositor::run(niri, &settings.policy, action).await
         };
         self.act(
             &context,

@@ -51,7 +51,7 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 ### `app_denied`
 
-**Cause:** the window with keyboard focus belongs to an app on `deny_input_app_ids`, or for `elements`, the window asked about does.
+**Cause:** the window with keyboard focus belongs to an app on `deny_input_app_ids`, or for `elements`, the window asked about does, or for `close_window` and `niri_action`'s `CloseWindow`, the window it would close does.
 
 **What to do:** nothing, if you meant it. Otherwise remove the app from the [policy file](../../concepts/configuration/#deny_input_app_ids) and restart the agent's session.
 

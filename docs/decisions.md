@@ -586,6 +586,7 @@ These match the versions installed locally.
   - `ToggleDebugTint`, `DebugToggleOpaqueRegions`, `DebugToggleDamage`: rendering debug state, not layout or focus; no agent needs them.
   - `DoScreenTransition`: niri renders the frozen frame on every output and screencast for `delay_ms`, up to 65.5 s with no clamp, while the agent could keep acting through `elements` and the keyboard. Rendering state like the debug toggles, and no agent task needs it. Added after the gate review.
 - Everything else only changes niri's layout, focus or views and is allowed, including `CloseWindow`, `SetWorkspaceName`, the overview and urgency.
+- `CloseWindow`, and the `close_window` tool, refuse a window whose app is on the deny list, named or focused, with `app_denied` (`policy::refuse_window`). Closing can end the user's password manager or settings window; focus and layout actions leave the app's content alone and stay unchecked. Added after the gate review.
 - For an action about one window, the result reports that window as niri's event stream shows it: within 1 s of the action, plus 200 ms for a resize that arrives in steps. niri 26.04's IPC has no fullscreen or maximized flag, so those show as sizes. A 1 s wait on an action that changes nothing is the cost.
 - The gate is checked after the lease, stop and lock checks, so a refused action is audit-logged like any other.
 

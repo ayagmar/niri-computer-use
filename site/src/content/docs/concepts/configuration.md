@@ -58,7 +58,7 @@ With this file, `status` reports:
 
 ### `deny_input_app_ids`
 
-A list of `app_id`s, default empty. While the window with keyboard focus has one of them, `click`, `drag`, `scroll`, `pointer_move`, `key`, `type_text` and `paste` refuse with `app_denied`, even with `expect: "none"`. `elements` refuses for a window of a denied app whatever has focus.
+A list of `app_id`s, default empty. While the window with keyboard focus has one of them, `click`, `drag`, `scroll`, `pointer_move`, `key`, `type_text` and `paste` refuse with `app_denied`, even with `expect: "none"`. `elements` refuses for a window of a denied app whatever has focus, and so do `close_window` and `niri_action`'s `CloseWindow`, for the window they name or the focused one. Focus and layout actions aren't checked.
 
 The check follows keyboard focus, and apps choose their own `app_id`, so this guards against mistakes. A click can still land on a denied window while an allowed app has focus. `desktop_state` shows each window's `app_id`.
 

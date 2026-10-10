@@ -546,8 +546,8 @@ pub(crate) fn refuse_input(policy: &Loaded, focused_app_id: Option<&str>) -> Opt
     denied(policy, focused_app_id?, "the focused window")
 }
 
-/// `app_denied` when the window that owns an accessible element belongs to an app on the
-/// deny list, whatever has focus.
+/// `app_denied` when `window`, such as the one that owns an accessible element or the one
+/// being closed, belongs to an app on the deny list, whatever has focus.
 pub(crate) fn refuse_window(
     policy: &Loaded,
     window: u64,

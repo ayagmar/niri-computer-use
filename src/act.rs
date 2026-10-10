@@ -19,7 +19,7 @@ use crate::niri;
 use crate::niri::Socket;
 use crate::niri::waiter::{View, Waited, Waiter};
 use crate::observe::{self, Metadata, Screenshot};
-use crate::policy::Preset;
+use crate::policy::{self, Loaded, Preset};
 use crate::settle;
 
 pub(crate) mod compositor;
@@ -290,11 +290,16 @@ pub(crate) async fn focus_workspace(niri: Niri<'_>, id: u64) -> Result<Outcome, 
 
 /// Asks the window to close, as its close button would. An app may ask first, so a window
 /// still open at the end of the wait is `pending`; nothing escalates.
-pub(crate) async fn close_window(niri: Niri<'_>, id: u64) -> Result<Outcome, CallError> {
+pub(crate) async fn close_window(
+    niri: Niri<'_>,
+    policy: &Loaded,
+    id: u64,
+) -> Result<Outcome, CallError> {
     let mut waiter = niri::waiter(niri.events).await?;
     if !waiter.view().windows().contains_key(&id) {
         return Err(no_window(id));
     }
+    refuse_close(policy, waiter.view(), id)?;
     if let Some(lost) = send(niri.socket, Action::CloseWindow { id: Some(id) }).await? {
         return Ok(lost);
     }
@@ -491,6 +496,17 @@ fn matching(view: &View, app_id: &str, except: &BTreeSet<u64>) -> Vec<u64> {
         .collect();
     ids.sort_unstable();
     ids
+}
+
+/// `app_denied` when window `id` belongs to an app on the policy's deny list. Closing is
+/// the one window action the deny list covers besides input: focus and layout leave the
+/// app as it was.
+fn refuse_close(policy: &Loaded, view: &View, id: u64) -> Result<(), CallError> {
+    let app_id = view
+        .windows()
+        .get(&id)
+        .and_then(|window| window.app_id.as_deref());
+    policy::refuse_window(policy, id, app_id).map_or(Ok(()), |refused| Err(refused.into()))
 }
 
 fn no_window(id: u64) -> CallError {
