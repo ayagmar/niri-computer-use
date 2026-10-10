@@ -230,3 +230,36 @@ async fn a_save_is_a_full_resolution_png_inside_the_capture_dir() {
         "a refused path captures nothing"
     );
 }
+
+#[tokio::test]
+async fn a_session_runs_at_most_sixteen_tool_calls_at_once() {
+    use std::time::Duration;
+
+    let fixture = Fixture::new("shot-in-flight");
+    let _niri = Niri::start(&fixture);
+    std::fs::write(fixture.path("grim.out"), jpeg(1280, 720, b"pixels")).unwrap();
+    fixture.program(
+        "grim",
+        r#"echo >> "$DIR/grim.started"; await_file go; cat "$DIR/grim.out""#,
+    );
+    let mut server = Server::start(&fixture).await;
+    let target = json!({"target": "focused_output"});
+    let mut running = Vec::new();
+    for _ in 0..16 {
+        running.push(server.start_call("screenshot", target.clone()).await);
+    }
+    let started = || {
+        std::fs::read_to_string(fixture.path("grim.started"))
+            .map_or(0, |started| started.lines().count())
+    };
+    assert!(crate::fixture::eventually(Duration::from_secs(5), || started() == 16).await);
+    let refused = server.start_call("screenshot", target.clone()).await;
+    let response = server.response(refused).await;
+    let message = response["error"]["message"].as_str().unwrap();
+    assert!(message.contains("16 tool calls running"), "{response}");
+    std::fs::write(fixture.path("go"), "").unwrap();
+    for id in running {
+        assert_eq!(server.response(id).await["result"]["isError"], false);
+    }
+    assert_eq!(server.call("screenshot", target).await["isError"], false);
+}

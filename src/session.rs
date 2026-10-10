@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use tokio::io::{AsyncRead, ReadBuf};
-use tokio::sync::{oneshot, watch};
+use tokio::sync::{Semaphore, SemaphorePermit, oneshot, watch};
 
 use crate::policy::{self, Loaded, Unrestricted};
 
@@ -77,6 +77,9 @@ impl Settings {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct SessionId(pub(crate) u64);
 
+/// The most tool calls one session may have running at once.
+pub(crate) const MAX_IN_FLIGHT: usize = 16;
+
 /// A client: who it is, for the audit log and the lease record, its settings, and whether
 /// it has ended. Clones share the ended flag.
 #[derive(Debug, Clone)]
@@ -86,6 +89,7 @@ pub(crate) struct Session {
     pid: u32,
     settings: Arc<Settings>,
     ended: Arc<watch::Sender<bool>>,
+    in_flight: Arc<Semaphore>,
 }
 
 impl Session {
@@ -95,7 +99,14 @@ impl Session {
             pid,
             settings: Arc::new(settings),
             ended: Arc::new(watch::Sender::new(false)),
+            in_flight: Arc::new(Semaphore::new(MAX_IN_FLIGHT)),
         }
+    }
+
+    /// Lets one more tool call run, unless `MAX_IN_FLIGHT` are running already. The call
+    /// holds what this returns while it runs.
+    pub(crate) fn admit(&self) -> Option<SemaphorePermit<'_>> {
+        self.in_flight.try_acquire().ok()
     }
 
     /// Marks the session ended, for good.

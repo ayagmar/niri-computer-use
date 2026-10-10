@@ -22,7 +22,7 @@ use crate::input::paste;
 use crate::input::pointer::{self, Button, Gesture, Spot};
 use crate::observe::{DEFAULT_MAX_WIDTH, Format, Rect, Target};
 use crate::policy;
-use crate::session::Session;
+use crate::session::{MAX_IN_FLIGHT, Session};
 use crate::{elements, observe, wait};
 
 /// Optional arguments are described as their own type with their real default, without
@@ -1448,6 +1448,14 @@ impl Server {
         args: Value,
         work: impl Future<Output = Result<CallToolResult, ErrorData>>,
     ) -> Result<CallToolResult, ErrorData> {
+        let Some(_admitted) = self.session.admit() else {
+            return Err(ErrorData::invalid_request(
+                format!(
+                    "this session has {MAX_IN_FLIGHT} tool calls running already; wait for one to finish"
+                ),
+                None,
+            ));
+        };
         let result = unless_cancelled(context.ct.cancelled(), work)
             .await
             .and_then(|result| result);
