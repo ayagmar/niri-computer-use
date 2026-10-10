@@ -177,6 +177,13 @@ impl Server {
             .collect()
     }
 
+    /// The process that serves this client and holds the lease for it, as `status` names
+    /// it: this server, or in shared mode the engine.
+    pub(crate) async fn serving_pid(&mut self) -> u32 {
+        let engine = self.structured("status").await["engine"].clone();
+        u32::try_from(engine["pid"].as_u64().unwrap()).unwrap()
+    }
+
     /// Closes stdin and waits for the server to exit. Returns its status, the messages
     /// it wrote that nobody read yet, and its stderr.
     pub(crate) async fn stop(mut self) -> (ExitStatus, Vec<Value>, String) {

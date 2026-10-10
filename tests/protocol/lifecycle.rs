@@ -4,7 +4,7 @@
 use serde_json::{Value, json};
 
 use crate::client::{Server, WAIT};
-use crate::fixture::Fixture;
+use crate::fixture::{Fixture, eventually, shared_mode};
 use crate::niri::{Niri, window};
 
 fn names(tools: &[Value]) -> Vec<&str> {
@@ -276,9 +276,20 @@ async fn a_request_before_initialize_is_refused_and_the_server_exits() {
     let response = server.response(id).await;
     assert!(response["error"]["code"].is_i64(), "{response}");
     let (status, unread, stderr) = server.stop().await;
-    assert!(!status.success());
     assert_eq!(unread, Vec::<Value>::new());
-    assert!(stderr.contains("start MCP session"), "{stderr}");
+    failed_to_start(&fixture, status, &stderr).await;
+}
+
+/// The MCP session failed to start: the server exited with an error, or in shared mode the
+/// engine logged it, while its bridge only relays.
+async fn failed_to_start(fixture: &Fixture, status: std::process::ExitStatus, stderr: &str) {
+    if shared_mode() {
+        let logged = || fixture.engine_log().contains("start MCP session");
+        assert!(eventually(WAIT, logged).await, "{}", fixture.engine_log());
+    } else {
+        assert!(!status.success());
+        assert!(stderr.contains("start MCP session"), "{stderr}");
+    }
 }
 
 #[tokio::test]
@@ -295,9 +306,8 @@ async fn ping_works_before_initialize() {
 async fn stdin_closing_before_initialize_fails_with_nothing_on_stdout() {
     let fixture = Fixture::new("eof-early");
     let (status, unread, stderr) = Server::spawn(&fixture).stop().await;
-    assert!(!status.success());
     assert_eq!(unread, Vec::<Value>::new());
-    assert!(stderr.contains("start MCP session"), "{stderr}");
+    failed_to_start(&fixture, status, &stderr).await;
 }
 
 #[tokio::test]

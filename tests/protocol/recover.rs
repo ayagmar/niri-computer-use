@@ -67,10 +67,11 @@ async fn recover_refuses_while_a_server_holds_the_lease() {
         &fixture,
         &json!({"operation": "key", "phase": "pending", "server_pid": 1, "since": "t"}),
     );
+    let holder = server.serving_pid().await;
     let out = answer(&fixture, "recover", "yes\n").await;
     assert!(!out.status.success());
     let stderr = String::from_utf8(out.stderr).unwrap();
-    assert!(stderr.contains(&format!("PID {}", server.pid)), "{stderr}");
+    assert!(stderr.contains(&format!("PID {holder}")), "{stderr}");
     assert!(marker_exists(&fixture));
 }
 

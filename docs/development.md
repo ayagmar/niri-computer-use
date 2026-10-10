@@ -49,6 +49,14 @@ The tests check:
 
 The `grim` deadline test takes five seconds, the length of that deadline.
 
+`make check` runs the suite twice: standalone, then in shared mode, where every server the tests start bridges to the fixture's shared engine:
+
+```sh
+NCU_PROTOCOL_MODE=shared cargo test --locked --test protocol
+```
+
+A few tests check what differs by design in shared mode: the lease holder's PID and the crash guardian belong to the engine, which `status.engine.pid` names; the engine's and its guardian's stderr is `engine.log` in the runtime directory; a client that leaves mid-action returns at once while the engine finishes the input cleanup; and a failed MCP handshake is the engine's, which logs it, while the bridge only relays. `tests/protocol/shared.rs` covers what only shared mode does, in either run: ten clients on one engine and one guardian, each client's own `unrestricted`, the fallbacks to standalone, a lost engine, an oversized client line, and fifty clients coming and going that leave the engine's sessions and file descriptors as they were.
+
 ## MCP Inspector
 
 `scripts/inspector.sh` runs the server under the pinned MCP Inspector, 2.9.0, inside the niri session your shell is in. It needs Node.js 22.19 or newer for `npx`, and `jq`.

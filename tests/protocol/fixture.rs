@@ -26,6 +26,11 @@ const AWAIT_FILE: &str = r#"await_file() {
     done
 }"#;
 
+/// Whether the suite runs its servers in shared mode: `NCU_PROTOCOL_MODE=shared`.
+pub(crate) fn shared_mode() -> bool {
+    std::env::var_os("NCU_PROTOCOL_MODE").is_some_and(|mode| mode == "shared")
+}
+
 /// Held while writing a fake program and while starting a server. A child forked during a
 /// write would inherit the open file until it execs, and running the program meanwhile
 /// fails with "Text file busy".
@@ -71,11 +76,14 @@ impl Fixture {
             ("XDG_CONFIG_HOME", dir.join("config").into_os_string()),
         ]);
         let display = UnixListener::bind(dir.join("run").join(DISPLAY)).unwrap();
-        let fixture = Self {
+        let mut fixture = Self {
             dir,
             env,
             _display: display,
         };
+        if shared_mode() {
+            fixture.set("NIRI_COMPUTER_USE_SHARED", "1");
+        }
         let longest = fixture.runtime_dir().join("engine.sock").as_os_str().len();
         assert!(
             longest < 108,
@@ -114,6 +122,12 @@ impl Fixture {
     /// socket, lock and log.
     pub(crate) fn runtime_dir(&self) -> PathBuf {
         self.dir.join("run/niri-computer-use/niri.test")
+    }
+
+    /// What the shared engine and its guardian wrote to stderr, or nothing before an engine
+    /// ran.
+    pub(crate) fn engine_log(&self) -> String {
+        std::fs::read_to_string(self.runtime_dir().join("engine.log")).unwrap_or_default()
     }
 
     pub(crate) fn audit_log(&self) -> PathBuf {
@@ -160,8 +174,21 @@ impl Fixture {
 }
 
 impl Drop for Fixture {
+    /// Removes the directory, retrying for up to a second: a shared engine, which outlives
+    /// the test's servers, may write in it meanwhile.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "drop can't await, and blocks only while an engine still writes in the directory"
+    )]
     fn drop(&mut self) {
-        std::fs::remove_dir_all(&self.dir).ok();
+        for _ in 0..50 {
+            match std::fs::remove_dir_all(&self.dir) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                _ => return,
+            }
+        }
     }
 }
 
@@ -200,6 +227,12 @@ pub(crate) async fn pid_in(file: &Path) -> i32 {
         .trim()
         .parse()
         .unwrap()
+}
+
+/// Sends `SIGKILL` to `pid`.
+pub(crate) fn kill(pid: u32) {
+    let pid = rustix::process::Pid::from_raw(i32::try_from(pid).unwrap()).unwrap();
+    rustix::process::kill_process(pid, rustix::process::Signal::KILL).unwrap();
 }
 
 /// Whether `pid` has exited: gone, or a zombie waiting to be reaped.

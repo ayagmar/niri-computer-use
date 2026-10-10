@@ -5,12 +5,12 @@ use std::fs::File;
 use std::os::unix::net::UnixListener;
 use std::time::{Duration, Instant};
 
-use rustix::process::{Pid, Signal, kill_process};
 use serde_json::json;
 
 use crate::client::{CLIENT, Server, WAIT, tool_error};
-use crate::fixture::{Fixture, eventually, jpeg};
-use crate::niri::Niri;
+use crate::fixture::{Fixture, eventually, jpeg, kill};
+use crate::niri::{Niri, window_on};
+use crate::noctalia::{self, UNLOCKED};
 use crate::session::NiriProcess;
 
 /// A fixture whose servers run in shared mode.
@@ -72,10 +72,6 @@ fn guardians(server: i32) -> usize {
         .count()
 }
 
-fn kill(pid: i32) {
-    kill_process(Pid::from_raw(pid).unwrap(), Signal::KILL).unwrap();
-}
-
 /// Holds `engine.lock`, so that every engine started meanwhile leaves at once.
 fn hold_engine_lock(fixture: &Fixture) -> File {
     std::fs::create_dir_all(fixture.runtime_dir()).unwrap();
@@ -86,7 +82,8 @@ fn hold_engine_lock(fixture: &Fixture) -> File {
 
 #[tokio::test]
 async fn a_server_without_shared_mode_serves_its_one_client_itself() {
-    let fixture = Fixture::new("standalone");
+    let mut fixture = Fixture::new("standalone");
+    fixture.unset("NIRI_COMPUTER_USE_SHARED");
     let _niri = Niri::start(&fixture);
     let mut server = Server::start(&fixture).await;
     assert_eq!(
@@ -197,7 +194,7 @@ async fn a_lost_engine_fails_what_was_in_flight_and_the_next_call_reaches_a_new_
         .start_call("screenshot", json!({"target": "focused_output"}))
         .await;
     assert!(eventually(WAIT, || fixture.path("grim.started").exists()).await);
-    kill(first);
+    kill(u32::try_from(first).unwrap());
     let lost = Instant::now();
     let (in_flight, detail) = tool_error(&busy.response(shot).await["result"]);
     assert_eq!(in_flight, "engine_lost");
@@ -266,4 +263,64 @@ async fn without_an_engine_in_time_the_client_is_served_standalone() {
         stderr.contains("serving this client standalone: no shared engine answered within 5 s"),
         "{stderr}"
     );
+}
+
+/// The engine's open file descriptors.
+fn fds(pid: i32) -> usize {
+    std::fs::read_dir(format!("/proc/{pid}/fd"))
+        .unwrap()
+        .count()
+}
+
+/// How many sessions the engine serves, once its count has stopped changing.
+async fn sessions(server: &mut Server) -> u64 {
+    let mut last = 0;
+    for _ in 0..50 {
+        let now = server.structured("status").await["engine"]["sessions"]
+            .as_u64()
+            .unwrap();
+        if now == last {
+            return now;
+        }
+        last = now;
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    last
+}
+
+/// One client that takes the lease and leaves without giving it back.
+async fn visit(fixture: &Fixture) {
+    let mut server = Server::start(fixture).await;
+    let taken = server.structured("acquire_desktop").await;
+    assert!(taken["holder"].is_object(), "{taken}");
+    let (status, _, stderr) = server.stop().await;
+    assert!(status.success(), "{stderr}");
+}
+
+#[tokio::test]
+async fn fifty_clients_coming_and_going_leave_the_engine_as_it_was() {
+    let fixture = shared("shared-churn");
+    let mut niri = Niri::start(&fixture);
+    fixture.program("noctalia", "exit 0");
+    let _noctalia = noctalia::start(&fixture, UNLOCKED);
+    let mut anchor = Server::start(&fixture).await;
+    let engine = engine(&fixture).await;
+    let stream = niri.stream().await;
+    stream.workspaces(1);
+    stream.send(&json!({"WindowsChanged": {"windows": [window_on(1, Some("a"), 1, true)]}}));
+    stream.send(&json!({"OverviewOpenedOrClosed": {"is_open": false}}));
+    // The first visit opens what the engine keeps for good, such as niri's event stream.
+    visit(&fixture).await;
+    assert_eq!(sessions(&mut anchor).await, 1);
+    let before = fds(engine);
+    for _ in 0..50 {
+        visit(&fixture).await;
+    }
+    assert!(
+        eventually(WAIT, || fds(engine) == before).await,
+        "{before} file descriptors before, {} after",
+        fds(engine)
+    );
+    assert_eq!(sessions(&mut anchor).await, 1);
+    assert_eq!(engines(&fixture), [engine]);
 }

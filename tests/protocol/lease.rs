@@ -20,7 +20,7 @@ async fn one_server_holds_the_lease_and_the_other_is_told_who() {
 
     let held = first.structured("acquire_desktop").await;
     assert_eq!(held["holder"]["label"], label.as_str());
-    assert_eq!(held["holder"]["pid"], first.pid);
+    assert_eq!(held["holder"]["pid"], first.serving_pid().await);
     // Asking again while holding it is fine.
     assert_eq!(first.structured("acquire_desktop").await, held);
 

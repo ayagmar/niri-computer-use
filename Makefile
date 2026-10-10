@@ -8,6 +8,7 @@ check:
 	cargo clippy --all-targets --locked -- -D warnings
 	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
 	cargo test --all-targets --locked
+	NCU_PROTOCOL_MODE=shared cargo test --test protocol --locked
 	cargo deny check
 	cargo machete
 	typos

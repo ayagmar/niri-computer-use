@@ -7,7 +7,7 @@ use niri_ipc::{Action, WorkspaceReferenceArg};
 use serde_json::{Value, json};
 
 use crate::client::{Server, mistake, run, tool_error};
-use crate::fixture::{DISPLAY, Fixture, jpeg};
+use crate::fixture::{DISPLAY, Fixture, jpeg, shared_mode};
 use crate::niri::{Niri, Stream, output, window_on};
 use crate::noctalia::{self, LOCKED, UNLOCKED};
 
@@ -567,6 +567,39 @@ async fn a_stop_cancels_the_running_action_and_takes_the_lease_back() {
     assert!(released, "the stop didn't take the lease back");
     let (after, _) = tool_error(&desk.server.call("focus_window", json!({"id": 2})).await);
     assert_eq!(after, "stopped");
+}
+
+#[tokio::test]
+async fn a_stop_ends_the_owners_queued_actions_and_frees_the_lease_within_a_second() {
+    use std::time::{Duration, Instant};
+
+    let mut desk = Desk::start("act-stop-queue", "").await;
+    recording_wtype(&desk.fixture, "await_file go");
+    let key = json!({"keys": ["Down"], "expect": "none"});
+    let mut calls = Vec::new();
+    for _ in 0..16 {
+        calls.push(desk.server.start_call("key", key.clone()).await);
+    }
+    // The first runs, blocked in wtype, and the other fifteen wait for it.
+    let calls_file = desk.fixture.path("wtype.calls");
+    assert!(crate::fixture::eventually(Duration::from_secs(2), || calls_file.exists()).await);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let stopped = Instant::now();
+    assert!(run(&desk.fixture, "stop").await.status.success());
+    for id in calls {
+        let (name, detail) = tool_error(&desk.server.response(id).await["result"]);
+        assert_eq!(name, "stopped", "{detail}");
+    }
+    let mut free = false;
+    while !free && stopped.elapsed() < Duration::from_secs(1) {
+        free = desk.server.structured("status").await["lease"]["holder"].is_null();
+    }
+    assert!(
+        free,
+        "the lease was still held {:?} after the stop",
+        stopped.elapsed()
+    );
+    std::fs::write(desk.fixture.path("go"), "").unwrap();
 }
 
 /// A `ref_invalid`'s name and its reason, the detail's first word.
@@ -1627,11 +1660,16 @@ async fn a_client_that_goes_mid_action_frees_the_lease_at_once() {
         went.elapsed()
     );
     let mut next = Server::start(&desk.fixture).await;
-    let stream = desk.niri.stream().await;
+    // A new server opens its own event stream; the shared engine keeps its one.
+    let stream = if shared_mode() {
+        desk.stream
+    } else {
+        desk.niri.stream().await
+    };
     stream.workspaces(2);
     stream.send(&json!({"WindowsChanged": {"windows": [window_on(2, Some("b"), 1, true)]}}));
     let taken = next.structured("acquire_desktop").await;
-    assert_eq!(taken["holder"]["pid"], next.pid);
+    assert_eq!(taken["holder"]["pid"], next.serving_pid().await);
 }
 
 #[tokio::test]
@@ -1653,15 +1691,20 @@ async fn a_client_that_goes_mid_key_leaves_no_marker_behind() {
             .exists())
         .await
     );
-    // The call is dropped with the client, but the server waits for wtype to finish.
+    // The call is dropped with the client, but the server waits for wtype to finish. A
+    // bridge exits at once, and its engine finishes the cleanup.
     let stopped = tokio::spawn(desk.server.stop());
     tokio::time::sleep(Duration::from_millis(300)).await;
-    assert!(!stopped.is_finished());
+    assert_eq!(stopped.is_finished(), shared_mode());
     assert!(marker.exists());
     std::fs::write(desk.fixture.path("go"), "").unwrap();
     let (status, _, stderr) = stopped.await.unwrap();
     assert!(status.success(), "{status}: {stderr}");
-    assert!(!marker.exists());
+    if shared_mode() {
+        assert!(crate::fixture::eventually(Duration::from_secs(2), || !marker.exists()).await);
+    } else {
+        assert!(!marker.exists());
+    }
 }
 
 #[tokio::test]
