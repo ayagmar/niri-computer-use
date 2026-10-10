@@ -378,3 +378,47 @@ impl Engine {
         act::with_evidence(outcome, shoot, |request| self.capture(session, request)).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::policy::Source;
+    use crate::session::{Given, SessionId, Settings};
+
+    #[tokio::test]
+    async fn another_session_releasing_neither_refocuses_nor_learns_the_owners_window() {
+        let dir = crate::test_support::fresh_dir("engine-release");
+        let env = Env {
+            niri_socket: niri::Socket::at(dir.join("niri.test.sock")),
+            runtime_dir: Some(dir.clone()),
+            ..Env::default()
+        };
+        let events = Err(ToolError::new(ErrorName::NiriUnavailable, "no niri"));
+        let absent = Presence {
+            available: false,
+            address: None,
+            reason: Some("no session bus".to_owned()),
+        };
+        let engine = Engine::new(env, events, Audit::new(None), absent);
+        let owner = SessionId(1);
+        engine
+            .desk
+            .acquire(owner, "owner/1", None, Some(5))
+            .await
+            .unwrap();
+        let given = Given {
+            unrestricted: None,
+            keyboard: None,
+            home: None,
+            policy: Source::Missing,
+        };
+        let other = Session::numbered(2, Settings::new(given));
+        let release = engine.release(&other, true).await;
+        assert_eq!(release.users_window, None);
+        assert!(release.restored.is_none(), "{:?}", release.restored);
+        assert!(!release.released);
+        assert!(engine.desk.status(owner).held_by_me);
+        assert_eq!(engine.desk.users_window(owner), Some(5));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}

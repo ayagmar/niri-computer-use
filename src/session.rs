@@ -96,6 +96,15 @@ impl Session {
         }
     }
 
+    /// A session numbered `id`, as one of several clients of one engine.
+    #[cfg(test)]
+    pub(crate) fn numbered(id: u64, settings: Settings) -> Self {
+        Self {
+            id: SessionId(id),
+            ..Self::local(settings)
+        }
+    }
+
     pub(crate) const fn id(&self) -> SessionId {
         self.id
     }
