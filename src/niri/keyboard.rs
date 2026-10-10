@@ -41,10 +41,9 @@ struct State {
     revision: u64,
     /// The extended map this device uploaded, until it uploads the compositor's again.
     extended: Option<String>,
-    /// Whether the map niri last sent is this device's extension.
-    extension_sent: bool,
-    /// Whether the map niri last sent is byte for byte the compositor's.
-    original_sent: bool,
+    /// Whether niri sent a map other than the compositor's while an extension was
+    /// uploaded, and hasn't sent the compositor's byte for byte since.
+    unrestored: bool,
 }
 
 #[derive(Debug)]
@@ -168,19 +167,17 @@ impl Keyboard {
         self.flush()
     }
 
-    /// Whether clients no longer hold this device's extension: niri never sent it, or
-    /// sent another map since.
+    /// Whether clients hold the compositor's map: since an extension was uploaded, niri
+    /// sent no other map, or sent the compositor's byte for byte after it.
     pub(crate) const fn restored(&self) -> bool {
-        !self.state.extension_sent
+        self.state.restored()
     }
 
-    /// `restore_now`, then proof that niri sent the compositor's map byte for byte if it
-    /// had sent the extension.
+    /// `restore_now`, then the proof `restored` gives.
     pub(crate) async fn restore(&mut self, group: u32) -> Result<(), ToolError> {
-        let sent = self.state.extension_sent;
         self.restore_now(group)?;
         self.sync().await?;
-        if !sent || self.state.original_sent {
+        if self.restored() {
             return Ok(());
         }
         Err(upstream(
@@ -250,15 +247,24 @@ impl Drop for Keyboard {
 }
 
 impl State {
+    const fn restored(&self) -> bool {
+        !self.unrestored
+    }
+
+    /// Any map but the compositor's counts while an extension is uploaded or unrestored,
+    /// even one that differs from the extension only in serialization. Maps other than
+    /// the compositor's and the extension also count as compositor keymap changes.
     fn received(&mut self, map: (File, String, u32)) {
         let Some((_, original, _)) = &self.map else {
             self.map = Some(map);
-            self.original_sent = true;
             return;
         };
-        self.original_sent = *original == map.1;
-        self.extension_sent = self.extended.as_ref() == Some(&map.1);
-        if !self.original_sent && !self.extension_sent {
+        if *original == map.1 {
+            self.unrestored = false;
+            return;
+        }
+        self.unrestored |= self.extended.is_some();
+        if self.extended.as_ref() != Some(&map.1) {
             self.revision += 1;
         }
     }
@@ -359,3 +365,37 @@ impl Dispatch<WlCallback, ()> for State {
 delegate_noop!(State: ignore WlSeat);
 delegate_noop!(State: ZwpVirtualKeyboardManagerV1);
 delegate_noop!(State: ZwpVirtualKeyboardV1);
+
+#[cfg(test)]
+mod tests {
+    use rustix::fs::{MemfdFlags, memfd_create};
+
+    use super::*;
+
+    fn map(text: &str) -> (File, String, u32) {
+        let fd = memfd_create("keymap-test", MemfdFlags::CLOEXEC).unwrap();
+        (File::from(fd), text.to_owned(), 0)
+    }
+
+    #[test]
+    fn any_other_map_after_an_extension_needs_the_compositors_back() {
+        let mut state = State::default();
+        state.received(map("compositor"));
+        state.extended = Some("extension".into());
+        state.received(map("extension, re-serialized differently"));
+        assert!(!state.restored());
+        assert_eq!(state.revision, 1);
+        state.extended = None;
+        state.received(map("compositor"));
+        assert!(state.restored());
+    }
+
+    #[test]
+    fn without_an_extension_a_foreign_map_only_counts_as_a_change() {
+        let mut state = State::default();
+        state.received(map("compositor"));
+        state.received(map("new layout"));
+        assert!(state.restored());
+        assert_eq!(state.revision, 1);
+    }
+}
