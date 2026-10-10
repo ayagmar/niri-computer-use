@@ -17,6 +17,7 @@ use crate::coords::ImagePx;
 use crate::error::{CANCELLED, CallError, ErrorName, ToolError};
 use crate::input::Input;
 use crate::input::keyboard::{self, Expect, Typing};
+use crate::input::paste;
 use crate::input::pointer::{self, Button, Gesture};
 use crate::niri::events::{EventStream, StreamState};
 use crate::observe::{DEFAULT_MAX_WIDTH, Format, Rect, Target};
@@ -421,6 +422,49 @@ struct TypeTextArgs {
     /// stayed. Defaults to false.
     #[serde(default)]
     submit: bool,
+    /// With true, the result also has a screenshot of the focused output, taken once the
+    /// screen stopped changing, so no separate `screenshot` call is needed. Defaults to
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    screenshot: bool,
+}
+
+/// The combination that pastes in the focused app.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+enum PasteKeys {
+    /// Most apps.
+    #[serde(rename = "ctrl+v")]
+    CtrlV,
+    /// Terminals, such as foot, kitty, Alacritty and Ghostty.
+    #[serde(rename = "ctrl+shift+v")]
+    CtrlShiftV,
+    /// Apps where neither of the others pastes, such as some terminals and X11 apps.
+    #[serde(rename = "shift+Insert")]
+    ShiftInsert,
+}
+
+impl PasteKeys {
+    const fn combo(self) -> &'static str {
+        match self {
+            Self::CtrlV => "ctrl+v",
+            Self::CtrlShiftV => "ctrl+shift+v",
+            Self::ShiftInsert => "shift+Insert",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct PasteArgs {
+    /// The text to paste, up to 1 MiB.
+    text: String,
+    /// The combination that pastes in the focused app: `ctrl+v` in most apps,
+    /// `ctrl+shift+v` in terminals.
+    keys: PasteKeys,
+    /// Where keyboard focus must be; checked before the clipboard is touched and again
+    /// before the key.
+    expect: ExpectArg,
     /// With true, the result also has a screenshot of the focused output, taken once the
     /// screen stopped changing, so no separate `screenshot` call is needed. Defaults to
     /// false.
@@ -854,6 +898,55 @@ impl Server {
         self.type_input(&context, logged, keying).await
     }
 
+    /// Pastes text into the focused app through the clipboard, for text too long for
+    /// `type_text` (up to 1 MiB), then puts the user's clipboard back. The clipboard is
+    /// saved whole first, every type it offers, or the call is refused with
+    /// `clipboard_unsaved` and nothing changes; a clipboard its owner marked as a secret is
+    /// refused too. Pass the combination that pastes in that app as `keys`: `ctrl+v`, or
+    /// `ctrl+shift+v` in terminals. `expect` and the refusals are as for `key`, checked
+    /// before the clipboard is touched. `paste.read` says whether an app read the text
+    /// after the key; `paste.clipboard` is `restored`, `cleared` (it was empty),
+    /// `replaced` (someone copied meanwhile, so theirs stays), `failed` or `unknown`, with
+    /// `detail`. Check the result with a screenshot; never paste again on your own. The
+    /// text is never logged. Requires the lease.
+    #[tool(annotations(
+        read_only_hint = false,
+        destructive_hint = true,
+        idempotent_hint = false,
+        open_world_hint = false
+    ))]
+    async fn paste(
+        &self,
+        Parameters(args): Parameters<PasteArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        // The length, never the text.
+        let mut logged = serde_json::json!({
+            "text_len": args.text.chars().count(),
+            "keys": args.keys,
+            "expect": args.expect,
+        });
+        flag(&mut logged, "screenshot", args.screenshot);
+        let display = self.env.wayland_socket();
+        let expect = args.expect.into();
+        let work = async {
+            let input = Input {
+                niri: self.niri(),
+                display: display.as_deref(),
+                runtime: self.desk.runtime()?,
+                policy: &self.policy,
+                keyboard: self.env.keyboard.as_deref(),
+            };
+            paste::paste(input, &args.text, args.keys.combo(), expect).await
+        };
+        let asked = Asked {
+            tool: "paste",
+            logged,
+            shoot: args.screenshot,
+        };
+        self.act(&context, asked, work).await
+    }
+
     /// niri's outputs (monitors) by connector name: modes, logical position and size,
     /// scale and transform, as niri reports them.
     #[tool(annotations(read_only_hint = true))]
@@ -1191,8 +1284,9 @@ impl Server {
             logged,
             shoot,
         } = asked;
-        self.record(context, Call::action(tool), logged, async {
-            // Boxed, because the readiness report and the action's wait make large futures.
+        // Boxed, because the readiness report, the action's work and its wait make large
+        // futures.
+        Box::pin(self.record(context, Call::action(tool), logged, async {
             let refusal = Box::pin(self.refusal());
             let evidence = |outcome| Box::pin(self.evidence(outcome, shoot));
             match self.desk.act(refusal, Box::pin(work), evidence).await {
@@ -1200,7 +1294,7 @@ impl Server {
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
                 Err(CallError::Tool(error)) => Ok(error.into_result()),
             }
-        })
+        }))
         .await
     }
 
@@ -1396,7 +1490,7 @@ fn invalid(message: &str) -> CallToolResult {
 #[tool_handler(
     router = self.tool_router,
     name = "niri-computer-use",
-    instructions = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `clipboard_read` returns the clipboard's text, and `shell_status`, when Noctalia is installed, its panel and lock state. To act, call `acquire_desktop`, then one action at a time (`focus_window`, `focus_workspace`, `launch`, `close_window`, with Noctalia `shell_open` and `shell_close`, and for input `pointer_move`, `click`, `drag` and `scroll` with a fresh `screenshot_ref`, or `key` and `type_text` with `expect`), reading `accepted` and `observed` before the next call. To see an action's result, pass it `screenshot: true` rather than sending a `screenshot` alongside it, and use `wait_for` rather than repeated screenshots to wait for a window or for the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter, and start apps only through `launch` presets. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
+    instructions = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `clipboard_read` returns the clipboard's text, and `shell_status`, when Noctalia is installed, its panel and lock state. To act, call `acquire_desktop`, then one action at a time (`focus_window`, `focus_workspace`, `launch`, `close_window`, with Noctalia `shell_open` and `shell_close`, and for input `pointer_move`, `click`, `drag` and `scroll` with a fresh `screenshot_ref`, or `key`, `type_text` and `paste` with `expect`), reading `accepted` and `observed` before the next call. To see an action's result, pass it `screenshot: true` rather than sending a `screenshot` alongside it, and use `wait_for` rather than repeated screenshots to wait for a window or for the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter, and start apps only through `launch` presets. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
 )]
 impl ServerHandler for Server {}
 

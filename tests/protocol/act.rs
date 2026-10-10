@@ -721,6 +721,58 @@ async fn keyboard_tools_check_their_text_focus_and_app_before_typing() {
 }
 
 #[tokio::test]
+async fn paste_checks_its_text_focus_app_and_clipboard_before_the_key() {
+    let mut desk = Desk::start("act-paste", r#"deny_input_app_ids = ["b"]"#).await;
+    fake_wtype(&desk.fixture, "exit 0");
+    let paste =
+        |text: &str, expect: Value| json!({"text": text, "keys": "ctrl+v", "expect": expect});
+    let long = desk
+        .server
+        .call("paste", paste(&"a".repeat(1024 * 1024 + 1), json!("none")))
+        .await;
+    assert_eq!(tool_error(&long).0, "text_too_long");
+    let elsewhere = desk
+        .server
+        .call("paste", paste("x", json!({"window_id": 2})))
+        .await;
+    assert_eq!(tool_error(&elsewhere).0, "focus_mismatch");
+    // Nothing serves the fixture's Wayland display, so the clipboard can't be saved.
+    let unsaved = desk
+        .server
+        .call("paste", paste("pasted words", json!({"app_id": "a"})))
+        .await;
+    let (name, detail) = tool_error(&unsaved);
+    assert_eq!(name, "clipboard_unsaved");
+    assert!(detail.contains("connect to"), "{detail}");
+    assert!(detail.ends_with("nothing was pasted"), "{detail}");
+    assert!(!desk.fixture.path("wtype.args").exists());
+
+    focus_changed(&desk.stream, 2);
+    for _ in 0..100 {
+        if desk.server.structured("desktop_state").await["focused_window"] == 2 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let denied = desk
+        .server
+        .call("paste", paste("x", json!({"app_id": "b"})))
+        .await;
+    assert_eq!(tool_error(&denied).0, "app_denied");
+    let audit = std::fs::read_to_string(desk.fixture.audit_log()).unwrap();
+    assert!(!audit.contains("pasted words"), "{audit}");
+    assert_eq!(
+        desk.audited(),
+        [
+            json!(["paste", {"text_len": 1024 * 1024 + 1, "keys": "ctrl+v", "expect": "none"}, null, null, "text_too_long"]),
+            json!(["paste", {"text_len": 1, "keys": "ctrl+v", "expect": {"window_id": 2}}, null, null, "focus_mismatch"]),
+            json!(["paste", {"text_len": 12, "keys": "ctrl+v", "expect": {"app_id": "a"}}, null, null, "clipboard_unsaved"]),
+            json!(["paste", {"text_len": 1, "keys": "ctrl+v", "expect": {"app_id": "b"}}, null, null, "app_denied"]),
+        ]
+    );
+}
+
+#[tokio::test]
 async fn held_pointer_keys_validate_before_any_input() {
     let mut desk = Desk::start_backend("held-invalid", "", "native").await;
     let id = screenshot_ref(&mut desk).await;

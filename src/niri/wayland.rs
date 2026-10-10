@@ -58,6 +58,18 @@ pub(super) async fn roundtrip<S: Synced + 'static>(
 ) -> Result<(), ToolError> {
     state.reset();
     connection.display().sync(&queue.handle(), ());
+    dispatch_until(queue, state, readable, Some(deadline), S::synced).await
+}
+
+/// Dispatches events until `done` holds, or until `deadline`, if there is one. Dropping
+/// the future loses nothing: events read are queued until the next dispatch.
+pub(super) async fn dispatch_until<S: 'static>(
+    queue: &mut EventQueue<S>,
+    state: &mut S,
+    readable: &AsyncFd<OwnedFd>,
+    deadline: Option<Instant>,
+    done: impl Fn(&S) -> bool,
+) -> Result<(), ToolError> {
     let broken =
         |error: &dyn std::fmt::Display| upstream(&format!("niri's Wayland display: {error}"));
     queue.flush().map_err(|error| broken(&error))?;
@@ -65,20 +77,14 @@ pub(super) async fn roundtrip<S: Synced + 'static>(
         queue
             .dispatch_pending(state)
             .map_err(|error| broken(&error))?;
-        if state.synced() {
+        if done(state) {
             return Ok(());
         }
         let Some(guard) = queue.prepare_read() else {
             continue;
         };
-        let mut ready = tokio::time::timeout_at(deadline, readable.readable())
-            .await
-            .map_err(|_| {
-                ToolError::new(
-                    ErrorName::DeadlineExceeded,
-                    format!("niri's Wayland display didn't answer within {DEADLINE:?}"),
-                )
-            })?
+        let mut ready = until(deadline, readable.readable())
+            .await?
             .map_err(|error| broken(&error))?;
         match guard.read() {
             Ok(_) => {}
@@ -88,6 +94,21 @@ pub(super) async fn roundtrip<S: Synced + 'static>(
             Err(error) => return Err(broken(&error)),
         }
     }
+}
+
+async fn until<T>(
+    deadline: Option<Instant>,
+    work: impl Future<Output = T>,
+) -> Result<T, ToolError> {
+    let Some(deadline) = deadline else {
+        return Ok(work.await);
+    };
+    tokio::time::timeout_at(deadline, work).await.map_err(|_| {
+        ToolError::new(
+            ErrorName::DeadlineExceeded,
+            format!("niri's Wayland display didn't answer within {DEADLINE:?}"),
+        )
+    })
 }
 
 pub(super) fn upstream(detail: &str) -> ToolError {

@@ -72,6 +72,10 @@ fn expected(name: &str) -> (Value, Value) {
             json!(["screenshot_ref", "x", "y"]),
         ),
         "key" => (json!([false, true, false]), json!(["keys", "expect"])),
+        "paste" => (
+            json!([false, true, false]),
+            json!(["text", "keys", "expect"]),
+        ),
         "shell_open" | "shell_close" => (json!([false, false, true]), json!(["panel"])),
         "type_text" => (json!([false, true, false]), json!(["text", "expect"])),
         _ => read_only,
@@ -98,6 +102,7 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
             "key",
             "launch",
             "outputs",
+            "paste",
             "pointer_move",
             "release_desktop",
             "screenshot",
@@ -132,7 +137,7 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
 }
 
 /// How many arguments each tool takes; tools not listed take none.
-const PROPERTIES: [(&str, usize); 15] = [
+const PROPERTIES: [(&str, usize); 16] = [
     ("screenshot", 4),
     ("launch", 3),
     ("focus_window", 2),
@@ -144,6 +149,7 @@ const PROPERTIES: [(&str, usize); 15] = [
     ("scroll", 7),
     ("key", 3),
     ("type_text", 4),
+    ("paste", 4),
     ("shell_open", 2),
     ("shell_close", 2),
     ("release_desktop", 1),
@@ -214,6 +220,7 @@ async fn without_noctalia_on_path_there_are_no_shell_tools() {
             "key",
             "launch",
             "outputs",
+            "paste",
             "pointer_move",
             "release_desktop",
             "screenshot",
@@ -237,7 +244,9 @@ async fn without_noctalia_on_path_there_are_no_shell_tools() {
 async fn an_unknown_tool_is_a_protocol_error() {
     let fixture = Fixture::new("unknown");
     let mut server = Server::start(&fixture).await;
-    let id = server.start_call("paste", json!({"text": "x"})).await;
+    let id = server
+        .start_call("run_command", json!({"command": "x"}))
+        .await;
     let response = server.response(id).await;
     assert!(response["error"]["code"].is_i64(), "{response}");
     assert_eq!(fixture.audit_lines(), Vec::<Value>::new());

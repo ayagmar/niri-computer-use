@@ -146,7 +146,7 @@ pub(super) fn marker_gone(session: &mut Session<'_>) -> Result<()> {
 }
 
 /// Clears the stop and takes the lease again, once the server has seen the resume.
-fn resume(session: &mut Session<'_>, client: &mut Client, server: &str) -> Result<()> {
+pub(super) fn resume(session: &mut Session<'_>, client: &mut Client, server: &str) -> Result<()> {
     session.run(server, &["resume".into()])?;
     session.wait_until("m4-resume", "the lease taken again", WAIT, |session| {
         let result = client.call(session, "acquire_desktop", json!({}))?;

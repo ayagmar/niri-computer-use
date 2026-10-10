@@ -15,6 +15,7 @@ use serde::Serialize;
 
 use crate::error::{CallError, ErrorName, ToolError, Unanswered};
 use crate::input::keyboard::Focus;
+use crate::input::paste::Pasted;
 use crate::niri;
 use crate::niri::events::EventStream;
 use crate::niri::waiter::{View, Waited, Waiter};
@@ -91,6 +92,9 @@ pub(crate) struct Outcome {
     /// Shell tools: Noctalia's open panel when the observation ended.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) shell: Option<shell::Shell>,
+    /// `paste`: whether the text was read, and what became of the clipboard.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) paste: Option<Pasted>,
     /// Why the outcome is uncertain.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) detail: Option<String>,
@@ -122,6 +126,7 @@ impl Outcome {
             pressed: None,
             submitted: None,
             shell: None,
+            paste: None,
             detail: None,
             screenshot: None,
             screenshot_error: None,
@@ -139,6 +144,7 @@ impl Outcome {
             pressed: None,
             submitted: None,
             shell: None,
+            paste: None,
             detail: Some(detail),
             screenshot: None,
             screenshot_error: None,

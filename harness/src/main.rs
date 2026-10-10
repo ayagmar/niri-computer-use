@@ -2,6 +2,7 @@
 
 mod actions;
 mod capture;
+mod clipboard;
 mod config;
 mod control;
 mod environment;
@@ -45,6 +46,7 @@ const USAGE: &str = "usage: harness run [--visible] [--scale <scale>] [--noctali
        harness host-capture <output>
        harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--started <file>]
        harness keymaps <TEST_DIR> <directory> <deadline-ms>
+       harness clipboard <TEST_DIR> <deadline-ms>
        harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --eval <server> <scenario> <skill|none> <model>]";
 
 fn main() -> ExitCode {
@@ -74,6 +76,7 @@ fn dispatch(args: &[OsString]) -> Result<()> {
         }
         ["window", options @ ..] => window::run(&window::Options::parse(options)?),
         ["keymaps", options @ ..] => keymaps::run(options),
+        ["clipboard", options @ ..] => clipboard::run(options),
         ["host-capture", output] => {
             interrupt::install()?;
             capture::host(output)

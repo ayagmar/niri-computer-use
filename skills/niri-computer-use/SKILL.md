@@ -46,7 +46,7 @@ When three actions in a row change nothing toward the goal, stop and tell the us
 
 `type_text` takes up to 1000 characters. The default wtype backend sends parts of 100 and checks focus between them; an in-flight part can finish after focus changes or stop. The experimental native backend checks between individual key pairs but refuses symbols missing from the active layout. If focus moves, `observed` is `interrupted` and `typed` counts completed input, not delivery confirmed in the intended application. Do not assume a failed call typed nothing; its detail may describe partial input.
 
-Native is only for explicitly configured isolated sessions; do not change the user's backend or work around a `refused` result. With native selected, click/drag/scroll can hold `keys: ["ctrl", "shift"]`, up to five modifiers (shift, ctrl, alt, altgr, super). Crash recovery remains human-only. Clipboard-preserving paste is not available.
+Native is only for explicitly configured isolated sessions; do not change the user's backend or work around a `refused` result. With native selected, click/drag/scroll can hold `keys: ["ctrl", "shift"]`, up to five modifiers (shift, ctrl, alt, altgr, super). Crash recovery remains human-only. For long text use `paste`, with the combination that pastes in that app; it puts the user's clipboard back afterwards.
 
 To send a message, pass `submit: true`. The server presses Enter only once every character went out, and `submitted` says whether it did. Don't press Enter yourself after a call that stopped early: Enter sends whatever is in the box, and a half-typed message that gets sent can't be taken back. Look at the screenshot that comes with the result, then finish or fix the text first.
 

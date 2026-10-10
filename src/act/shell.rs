@@ -169,6 +169,7 @@ async fn outcome(
         pressed: None,
         submitted: None,
         shell,
+        paste: None,
         detail: None,
         screenshot: None,
         screenshot_error: None,

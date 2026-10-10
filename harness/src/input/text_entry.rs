@@ -1,5 +1,6 @@
 //! Native and wtype text in a real GTK 4 entry, read back from the application: ASCII,
-//! the C10 corpus and a submitted line. Optional dev fixture, like A05's button.
+//! the C10 corpus and a submitted line, then `paste` (see `paste`). Optional dev
+//! fixture, like A05's button.
 
 use std::fs;
 use std::time::{Duration, Instant};
@@ -12,7 +13,7 @@ use crate::keyboard::CORPUS;
 use crate::mcp::{Client, field, structured};
 use crate::session::Session;
 
-const APP_ID: &str = "org.ncu.Entry";
+pub(super) const APP_ID: &str = "org.ncu.Entry";
 const ASCII: &str = "Hello, world! 0123456789 ~`{}|<>?";
 const SUBMITTED: &str = "Sent from the entry: café → 5 €";
 const ROUNDS: usize = 3;
@@ -41,6 +42,8 @@ pub(super) fn run(session: &mut Session<'_>, owner: &mut Client, server: &str) -
         },
     )?;
     let wtype = rounds(session, owner, "wtype")?;
+    super::paste::empty(session, owner, "wtype")?;
+    super::paste::run(session, owner, server, "wtype")?;
     structured(&owner.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     let mut native = Client::start_command(
         session,
@@ -55,6 +58,7 @@ pub(super) fn run(session: &mut Session<'_>, owner: &mut Client, server: &str) -
     )?;
     structured(&native.call(session, "acquire_desktop", json!({}))?)?;
     let native_times = rounds(session, &mut native, "native")?;
+    super::paste::run(session, &mut native, server, "native")?;
     structured(&native.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     native.stop()?;
     process.stop()?;
@@ -100,7 +104,7 @@ fn typed(session: &mut Session<'_>, client: &mut Client, text: &str) -> Result<D
 }
 
 /// `ctrl+a`, then `BackSpace`, empties the entry.
-fn clear(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
+pub(super) fn clear(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
     call(
         session,
         client,
@@ -150,7 +154,7 @@ fn call(session: &mut Session<'_>, client: &mut Client, tool: &str, mut args: Va
     Ok(())
 }
 
-fn entry_shows(session: &mut Session<'_>, expected: &str) -> Result<()> {
+pub(super) fn entry_shows(session: &mut Session<'_>, expected: &str) -> Result<()> {
     session.wait_until("m7-entry-text", "the entry's text", WAIT, |session| {
         let path = session.test_dir().root().join("entry-text");
         let text = fs::read_to_string(&path).context(format!("read {}", path.display()))?;

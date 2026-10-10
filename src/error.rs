@@ -40,13 +40,15 @@ pub(crate) enum ErrorName {
     AppDenied,
     /// A keyboard tool's `expect` doesn't match the focused window.
     FocusMismatch,
-    /// `type_text` over 1000 characters.
+    /// `type_text` over 1000 characters, or `paste` over 1 MiB.
     TextTooLong,
     /// A screenshot ref that is unknown, expired, for a changed output, or a pixel outside
     /// its image.
     RefInvalid,
     /// `shell_open` or `shell_close` named a panel outside the allowlist.
     PanelNotAllowed,
+    /// `paste` couldn't save the clipboard whole, so it pasted nothing.
+    ClipboardUnsaved,
 }
 
 /// A failure, serialized as `{"error": <name>, "detail": <upstream detail>}`.

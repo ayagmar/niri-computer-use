@@ -1,11 +1,14 @@
 //! The input tools' work: the pointer tools in `pointer`, the keyboard tools in
-//! `keyboard`. Both refuse input to an app on the policy's deny list, and both write the
-//! input-dirty marker before anything that could leave input held.
+//! `keyboard`, and `paste`, with its clipboard keeper in `keeper`, which presses its key
+//! through `keyboard`. All refuse input to an app on the policy's deny list, and all write
+//! the input-dirty marker before anything that could leave input held.
 
 mod held;
+pub(crate) mod keeper;
 pub(crate) mod keyboard;
 mod keymap;
 mod native;
+pub(crate) mod paste;
 pub(crate) mod pointer;
 
 use std::path::Path;

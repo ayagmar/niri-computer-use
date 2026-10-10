@@ -31,8 +31,7 @@ use rmcp::ServiceExt as _;
 
 use crate::control::runtime::RuntimeDir;
 
-const USAGE: &str =
-    "usage: niri-computer-use serve | status | stop | resume | recover | guard <server-pid>";
+const USAGE: &str = "usage: niri-computer-use serve | status | stop | resume | recover | guard <server-pid> | paste-keeper";
 
 /// What the server reads from its environment, once at startup. An empty variable
 /// counts as unset.
@@ -124,6 +123,9 @@ enum Command {
     /// The crash guardian `serve` starts: after the server's end, release what its marker
     /// names.
     Guard(u32),
+    /// The clipboard keeper `paste` starts: hold the pasted text, then restore the
+    /// clipboard.
+    PasteKeeper,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -153,6 +155,7 @@ async fn main() -> ExitCode {
         Some(Command::Resume) => RuntimeDir::of(&env).and_then(|runtime| runtime.resume()),
         Some(Command::Recover) => control::recover::run(&env).await,
         Some(Command::Guard(server)) => control::guard::run(&env, server).await,
+        Some(Command::PasteKeeper) => input::keeper::run(&env).await,
         None => Err(USAGE.to_owned()),
     };
     match result {
@@ -171,6 +174,7 @@ fn command(args: &[OsString]) -> Option<Command> {
         [only] if only == "stop" => Some(Command::Stop),
         [only] if only == "resume" => Some(Command::Resume),
         [only] if only == "recover" => Some(Command::Recover),
+        [only] if only == "paste-keeper" => Some(Command::PasteKeeper),
         [guard, server] if guard == "guard" => server.to_str()?.parse().ok().map(Command::Guard),
         _ => None,
     }
@@ -253,6 +257,10 @@ mod tests {
         assert_eq!(command(&args(&["resume"])), Some(Command::Resume));
         assert_eq!(command(&args(&["recover"])), Some(Command::Recover));
         assert_eq!(command(&args(&["guard", "42"])), Some(Command::Guard(42)));
+        assert_eq!(
+            command(&args(&["paste-keeper"])),
+            Some(Command::PasteKeeper)
+        );
         for bad in [
             &[][..],
             &["stop", "now"],

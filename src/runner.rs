@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use rustix::process::{Pid, Signal, kill_process_group};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _};
-use tokio::process::{Child, ChildStdin, Command};
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::time::Instant;
 
 use crate::error::{ErrorName, ToolError};
@@ -173,10 +173,48 @@ pub(crate) struct Watcher {
 }
 
 pub(crate) fn watcher(program: &str, args: &[String]) -> Result<Watcher, ToolError> {
+    let (child, stdin, _) = detached(program, args, Stdio::null())?;
+    Ok(Watcher {
+        _child: child,
+        _stdin: stdin,
+    })
+}
+
+/// A child that may outlive the call that starts it, and the server: it talks to the
+/// server over its stdin and stdout, in a process group of its own, and dropping the handle
+/// doesn't kill it. Closing its stdin tells it the server is done with it; every step it
+/// takes has its own deadline, except what the caller documents as unbounded.
+#[derive(Debug)]
+pub(crate) struct Companion {
+    /// Held so the server keeps its handle on the child.
+    _child: Child,
+    pub(crate) stdin: ChildStdin,
+    pub(crate) stdout: ChildStdout,
+}
+
+pub(crate) fn companion(program: &str, args: &[String]) -> Result<Companion, ToolError> {
+    let (child, stdin, stdout) = detached(program, args, Stdio::piped())?;
+    let stdout = stdout.ok_or_else(|| {
+        ToolError::new(ErrorName::UpstreamError, format!("{program} has no stdout"))
+    })?;
+    Ok(Companion {
+        _child: child,
+        stdin,
+        stdout,
+    })
+}
+
+/// Starts a child with a pipe as its stdin, in a process group of its own, not killed on
+/// drop. Its stderr is the server's.
+fn detached(
+    program: &str,
+    args: &[String],
+    output: Stdio,
+) -> Result<(Child, ChildStdin, Option<ChildStdout>), ToolError> {
     let mut child = command(program)
         .args(args)
         .stdin(Stdio::piped())
-        .stdout(Stdio::null())
+        .stdout(output)
         .stderr(Stdio::inherit())
         .process_group(0)
         .spawn()
@@ -189,10 +227,8 @@ pub(crate) fn watcher(program: &str, args: &[String]) -> Result<Watcher, ToolErr
     let stdin = child.stdin.take().ok_or_else(|| {
         ToolError::new(ErrorName::UpstreamError, format!("{program} has no stdin"))
     })?;
-    Ok(Watcher {
-        _child: child,
-        _stdin: stdin,
-    })
+    let stdout = child.stdout.take();
+    Ok((child, stdin, stdout))
 }
 
 #[expect(

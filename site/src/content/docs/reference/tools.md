@@ -26,7 +26,8 @@ A failure sets `isError` and returns `{"error": <name>, "detail": <upstream deta
 | `untested_output_config` | a pointer tool while niri's outputs are a setup no live test covers; `detail` lists the enabled outputs and their transforms |
 | `app_denied` | input while the focused window's `app_id` is on the policy file's `deny_input_app_ids` |
 | `focus_mismatch` | a keyboard tool's `expect` doesn't match the window with keyboard focus; `detail` says what has focus |
-| `text_too_long` | `type_text` with over 1000 characters; `detail` gives the length and says nothing was typed |
+| `text_too_long` | `type_text` with over 1000 characters, or `paste` with over 1 MiB; `detail` gives the length and says nothing was typed |
+| `clipboard_unsaved` | `paste` couldn't save the clipboard whole, or the clipboard holds what its owner marked as a secret; `detail` says why, and nothing changed |
 | `panel_not_allowed` | `shell_open` or `shell_close` named a panel other than `control-center`, `wallpaper` or `tray-drawer` |
 
 A mistake in the arguments, such as an unknown output or a value of the wrong type, comes back with `isError` and one plain-text block starting `invalid arguments:`, without `structuredContent`, so the model can correct the call.
@@ -289,6 +290,21 @@ For each combination, presses the modifiers, presses and releases the key, then 
 | `screenshot` | see Action tools |
 
 The text goes out in parts of 100 characters. If focus moved after a part, the rest isn't typed: `observed` is `interrupted` and `typed` gives the number of characters sent. A part that fails ends the call with that error, its `detail` starting with how many characters were typed before it. A result without `typed` means the whole text went out. With `submit`, the result has `submitted`: true once `Return` was pressed, false when the text stopped early and `Return` wasn't pressed.
+
+### `paste`
+
+| Argument | Value |
+|---|---|
+| `text` (required) | up to 1 MiB, counted in UTF-8 bytes |
+| `keys` (required) | the combination that pastes in the focused app: `ctrl+v`, `ctrl+shift+v` (terminals) or `shift+Insert` |
+| `expect` (required) | see above |
+| `screenshot` | see Action tools |
+
+Pastes the text through the clipboard, then puts the clipboard back. `expect` and the deny list are checked first, before the clipboard is touched. Then a keeper process, the server's own binary as `niri-computer-use paste-keeper`, reads every type the clipboard offers through the wlr data-control protocol, up to 16 MiB in all within two seconds; if it can't, or the clipboard holds `x-kde-passwordManagerHint` set to `secret`, the call ends with `clipboard_unsaved` and nothing changes. The keeper takes the selection with the text, offered as `text/plain;charset=utf-8`, `text/plain`, `UTF8_STRING`, `STRING` and `TEXT`, and marked with that hint so clipboard managers that honour it keep it out of their history. The server then presses `keys` as `key` would, with the same checks.
+
+Once the key went out, the keeper waits up to two seconds for an app to read the text, then until no new read has begun for 100 ms, and offers every saved type again. It keeps serving them, as `wl-copy` does, until something else is copied. If the key didn't go out, or the call is stopped or cancelled, it restores at once. If something else was copied meanwhile, that copy stays.
+
+The result is `key`'s with `paste`: `read`, whether an app asked for the text after the key, and `clipboard`: `restored`; `cleared`, when nothing was copied before and nothing is again; `replaced`; `failed`, with `detail`; or `unknown` when the keeper didn't report within five seconds. A failed key's error says what became of the clipboard in its `detail`. A read can't be traced to the app it came from: a clipboard manager that reads every new selection and ignores the hint counts as a read. The text is never logged: the audit log has `text_len`.
 
 ## `wait_for`
 

@@ -4,6 +4,7 @@ pub(crate) mod events;
 pub(crate) mod keyboard;
 pub(crate) mod pointer;
 mod request;
+pub(crate) mod selection;
 pub(crate) mod version;
 pub(crate) mod waiter;
 mod wayland;
