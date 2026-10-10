@@ -711,3 +711,10 @@ These match the versions installed locally.
 
 - The 16 MiB line limit counted from the last newline in each read, so a read that ended an oversized line and started a short one passed the long one (review finding). `session::LineLimit` now checks every line a read completes, newline included, before resetting, and the standalone server, the engine's sessions and the bridge's reader share it.
 - An oversized line ends the session wherever it falls among others, and lines after it are not answered: a client that sent one has lost track of its framing, so nothing after it can be trusted to be what the client meant. No dependency was added.
+
+## 2026-10-10: each input cleanup ends by its own deadline
+
+- `cleanup::LIMIT`, the server's wait at its end, was a sum written in a comment, and a native paste's cleanup had since gained a `KeyboardLayouts` request and two Wayland round trips: up to 13.5 seconds against the ten (review finding). The extra keymap upload of "the native keyboard restores the latest base map" would have made it 15.5, and a dropped call's cleanup that took over from a failed release started a new count.
+- Every cleanup now runs through `cleanup::spawn`, which drops it at its deadline, `LIMIT` after it started; a native cleanup that takes over from a failed release keeps that release's deadline. So no cleanup outlasts the server's wait however its steps add up, and a sum can't drift from the steps again. Computing `LIMIT` from the step constants was the other option; it would still miss a step added later, and the native worst case would have meant a wait of over fifteen seconds at every exit with a cleanup pending.
+- A cleanup cut short leaves its marker, as any failed cleanup does, so the next action sends the user to `recover`; a call waiting for it gets `deadline_exceeded` saying so. Each step takes milliseconds when niri and the keeper answer, so only a niri slow on every round trip reaches the deadline. The Wayland round trips can't be slowed in a test without a fake compositor, which the fixtures don't have; the deadline is tested at `cleanup::spawn` with a cleanup that never ends.
+- No dependency was added.

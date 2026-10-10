@@ -24,7 +24,7 @@ use super::{
 use crate::a11y::model::Unmappable;
 use crate::a11y::{self, ElementRef};
 use crate::act::{Observed, Outcome};
-use crate::control::cleanup::Pending;
+use crate::control::cleanup;
 use crate::control::marker::{Marker, Written};
 use crate::control::runtime::RuntimeDir;
 use crate::coords::{ImagePx, LayoutPt, ProtocolPt};
@@ -425,27 +425,29 @@ impl Drop for Device {
         let mut held = self.held.take();
         let keyboard_released = held.as_mut().is_none_or(Held::release_now);
         let pointer_released = pointer.release_all();
-        if keyboard_released
-            && pointer_released
-            && let Ok(runtime) = tokio::runtime::Handle::try_current()
-        {
-            runtime.spawn(release(pointer, held, marker, Pending::start()));
+        if keyboard_released && pointer_released && tokio::runtime::Handle::try_current().is_ok() {
+            cleanup::spawn(cleanup::deadline(), release(pointer, held, marker));
         }
     }
 }
 
 /// Releases what `pointer` still holds and removes `marker` once niri has handled it. If
 /// the marker can't be removed, it stays, and blocks input until `recover`.
-async fn release(mut pointer: Pointer, mut held: Option<Held>, marker: Written, _cleanup: Pending) {
-    if pointer.sync().await.is_err() {
-        return;
+async fn release(
+    mut pointer: Pointer,
+    mut held: Option<Held>,
+    marker: Written,
+) -> Result<(), ToolError> {
+    pointer.sync().await?;
+    if let Some(held) = &mut held {
+        held.released().await?;
     }
-    if let Some(held) = &mut held
-        && held.released().await.is_err()
-    {
-        return;
-    }
-    marker.clear().await.ok();
+    marker.clear().await.map_err(|error| {
+        ToolError::new(
+            ErrorName::UpstreamError,
+            format!("remove the input-dirty marker: {error}"),
+        )
+    })
 }
 
 #[cfg(test)]

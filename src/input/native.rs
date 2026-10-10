@@ -7,12 +7,14 @@
 
 use std::time::Duration;
 
+use tokio::time::Instant;
+
 use super::keyboard::{Expect, Sent, Typing, check_expect, ended};
 use super::keymap::{Key, plan};
 use super::paste::Aftercare;
 use super::{Input, focused_app_id};
 use crate::act::{Observed, Outcome};
-use crate::control::cleanup::Pending;
+use crate::control::cleanup;
 use crate::control::marker::{Marker, Native, Written};
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::{
@@ -122,6 +124,9 @@ struct Device {
     /// The layout niri last reported to this call.
     group: u32,
     aftercare: Option<Aftercare>,
+    /// The deadline of the cleanup task the release runs in, which a cleanup started when
+    /// the device drops takes over.
+    ends: Option<Instant>,
 }
 
 impl Device {
@@ -149,6 +154,7 @@ impl Device {
             socket: input.niri.socket.clone(),
             group,
             aftercare: None,
+            ends: None,
         })
     }
 
@@ -193,18 +199,12 @@ impl Device {
             self.release().await?;
             return self.clear().await;
         };
-        let cleanup = Pending::start();
-        let finished = tokio::spawn(async move {
-            let released = self.release().await;
-            if released.is_ok() {
-                aftercare.sent().await;
-            }
-            let finished = match released {
-                Ok(()) => self.clear().await,
-                Err(error) => Err(error),
-            };
-            drop(cleanup);
-            finished
+        let ends = cleanup::deadline();
+        self.ends = Some(ends);
+        let finished = cleanup::spawn(ends, async move {
+            self.release().await?;
+            aftercare.sent().await;
+            self.clear().await
         });
         finished
             .await
@@ -240,15 +240,17 @@ impl Drop for Device {
         if keyboard.release_now(&[], self.group).is_err() {
             return;
         }
-        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+        if tokio::runtime::Handle::try_current().is_ok() {
             let aftercare = self.aftercare.take();
-            runtime.spawn(acknowledge_release(
-                keyboard,
-                marker,
-                aftercare,
-                (self.socket.clone(), self.group),
-                Pending::start(),
-            ));
+            cleanup::spawn(
+                self.ends.unwrap_or_else(cleanup::deadline),
+                acknowledge_release(
+                    keyboard,
+                    marker,
+                    aftercare,
+                    (self.socket.clone(), self.group),
+                ),
+            );
         }
     }
 }
@@ -263,20 +265,21 @@ async fn acknowledge_release(
     marker: Written,
     aftercare: Option<Aftercare>,
     layout: (Socket, u32),
-    _cleanup: Pending,
-) {
-    if keyboard.sync().await.is_err()
-        || restore_active(&mut keyboard, &layout.0, layout.1)
-            .await
-            .is_err()
-        || !keyboard.restored()
-    {
-        return;
+) -> Result<(), ToolError> {
+    keyboard.sync().await?;
+    restore_active(&mut keyboard, &layout.0, layout.1).await?;
+    if !keyboard.restored() {
+        return Err(upstream(
+            "the last keymap niri sent clients isn't its latest compositor keymap",
+        ));
     }
     if let Some(aftercare) = aftercare {
         aftercare.sent().await;
     }
-    marker.clear().await.ok();
+    marker
+        .clear()
+        .await
+        .map_err(|error| upstream(&format!("clear native input-dirty marker: {error}")))
 }
 
 /// Puts the latest base map back with zero modifiers in the layout niri has active, or
@@ -312,6 +315,7 @@ mod tests {
             group: 0,
             socket: Socket::unknown("no niri in this test"),
             aftercare: None,
+            ends: None,
         };
         let (aftercare, _done) = fake_aftercare(STOPPED_WAITING).await;
         let mut aftercare = Some(aftercare);

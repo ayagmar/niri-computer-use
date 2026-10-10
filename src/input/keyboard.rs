@@ -14,7 +14,7 @@ use std::time::Duration;
 use serde::Serialize;
 
 use crate::act::{Observed, Outcome};
-use crate::control::cleanup::Pending;
+use crate::control::cleanup;
 use crate::control::marker::{Child, Marker, Phase, Written};
 use crate::control::procs;
 use crate::control::runtime::RuntimeDir;
@@ -421,12 +421,9 @@ async fn run_wtype(
     }
     // A task of its own, so wtype finishes and the marker comes off even if the call is
     // dropped.
-    let cleanup = Pending::start();
     let aftercare = aftercare.take();
-    let typed = tokio::spawn(async move {
-        let finished = feed(gated, &stdin, marker, aftercare).await;
-        drop(cleanup);
-        finished
+    let typed = cleanup::spawn(cleanup::deadline(), async move {
+        feed(gated, &stdin, marker, aftercare).await
     });
     typed.await.map_err(|error| {
         ToolError::new(
