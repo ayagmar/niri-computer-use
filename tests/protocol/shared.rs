@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 
 use crate::client::{CLIENT, Server, WAIT, tool_error};
-use crate::fixture::{Fixture, eventually, exited, jpeg, kill};
+use crate::fixture::{Fixture, eventually, exited, jpeg, kill, signal};
 use crate::niri::{Niri, Stream, window_on};
 use crate::noctalia::{self, UNLOCKED};
 use crate::session::NiriProcess;
@@ -254,6 +254,27 @@ async fn after_the_runtime_directory_goes_the_next_call_reaches_a_new_engine() {
     let (lost, _) = tool_error(&server.call("status", json!({})).await);
     assert_eq!(lost, "engine_lost");
     assert_ne!(server.serving_pid().await, first);
+}
+
+#[tokio::test]
+async fn an_engine_ended_by_a_replaced_directory_leaves_the_new_engine_reachable() {
+    let fixture = shared("shared-replaced");
+    let _niri = Niri::start(&fixture);
+    let mut first = Server::start(&fixture).await;
+    let old = first.serving_pid().await;
+    // Stopped, the old engine can only notice the new directory once the new engine
+    // listens in it.
+    signal(old, rustix::process::Signal::STOP);
+    std::fs::remove_dir_all(fixture.runtime_dir()).unwrap();
+    let mut second = Server::start(&fixture).await;
+    let new = second.serving_pid().await;
+    assert_ne!(new, old);
+    signal(old, rustix::process::Signal::CONT);
+    assert!(eventually(WAIT, || exited(i32::try_from(old).unwrap())).await);
+    let mut third = Server::start(&fixture).await;
+    let engine = third.structured("status").await["engine"].clone();
+    assert_eq!(engine["mode"], "shared", "{engine}");
+    assert_eq!(engine["pid"], new, "{engine}");
 }
 
 #[tokio::test]

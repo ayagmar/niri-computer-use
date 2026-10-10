@@ -3,8 +3,6 @@
 //! never has to interpret event names or order.
 
 use std::io;
-use std::os::unix::fs::MetadataExt as _;
-use std::path::Path;
 use std::time::Duration;
 
 use rustix::fs::inotify;
@@ -12,7 +10,7 @@ use rustix::io::Errno;
 use tokio::io::unix::AsyncFd;
 use tokio::sync::watch;
 
-use super::runtime::RuntimeDir;
+use super::runtime::{RuntimeDir, identity};
 
 /// How often the directory's identity is checked besides on events. The kernel delays the
 /// directory's own deletion event while a file inside it is open, as the held lease is.
@@ -75,12 +73,6 @@ pub(crate) fn watch(runtime: RuntimeDir) -> io::Result<watch::Receiver<bool>> {
 /// The flag, counting a directory that can't be read as stopped, so the lease is given up.
 fn flag_set(runtime: &RuntimeDir) -> bool {
     runtime.stopped().unwrap_or(true)
-}
-
-/// The device and inode a path names now.
-fn identity(path: &Path) -> io::Result<(u64, u64)> {
-    let meta = std::fs::metadata(path)?;
-    Ok((meta.dev(), meta.ino()))
 }
 
 /// Whether the directory is still watched after a batch of events.

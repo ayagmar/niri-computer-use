@@ -19,7 +19,7 @@ use tokio::time::Instant;
 
 use super::Engine;
 use super::hello::{self, Own, Refusal, Reply};
-use crate::control::runtime::RuntimeDir;
+use crate::control::runtime::{RuntimeDir, identity};
 use crate::session::{Incoming, Session, Settings};
 use crate::status::Mode;
 use crate::{Env, cli, control, tools};
@@ -48,7 +48,7 @@ pub(crate) async fn run(env: Env) -> Result<(), String> {
         return Ok(());
     };
     truncate_log(&runtime)?;
-    let listener = listen(&runtime)?;
+    let (listener, bound) = listen(&runtime)?;
     let own = Own {
         exe: hello::Exe::current()?,
         niri_socket: env
@@ -61,7 +61,7 @@ pub(crate) async fn run(env: Env) -> Result<(), String> {
     let engine = Arc::new(Engine::start(env, Mode::Shared, None).await?);
     let served = accept(&listener, &engine, &Arc::new(own)).await;
     drop(listener);
-    std::fs::remove_file(runtime.path().join(SOCKET)).ok();
+    unlink_own_socket(&runtime, bound);
     engine.end_sessions().await;
     control::cleanup::settled().await;
     drop(lock);
@@ -255,7 +255,7 @@ fn truncate_log(runtime: &RuntimeDir) -> Result<(), String> {
 
 /// Binds `engine.sock` afresh, readable by the user alone. Only the lock holder does, so a
 /// socket already there is stale.
-fn listen(runtime: &RuntimeDir) -> Result<UnixListener, String> {
+fn listen(runtime: &RuntimeDir) -> Result<(UnixListener, (u64, u64)), String> {
     let path = runtime.path().join(SOCKET);
     match std::fs::remove_file(&path) {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
@@ -267,5 +267,15 @@ fn listen(runtime: &RuntimeDir) -> Result<UnixListener, String> {
         UnixListener::bind(&path).map_err(|error| format!("bind {}: {error}", path.display()))?;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
         .map_err(|error| format!("chmod {}: {error}", path.display()))?;
-    Ok(listener)
+    let bound = identity(&path).map_err(|error| format!("stat {}: {error}", path.display()))?;
+    Ok((listener, bound))
+}
+
+/// Removes `engine.sock` if it is still the socket this engine bound. After the runtime
+/// directory was replaced, the path may name a new engine's socket, which must stay.
+fn unlink_own_socket(runtime: &RuntimeDir, bound: (u64, u64)) {
+    let path = runtime.path().join(SOCKET);
+    if identity(&path).ok() == Some(bound) {
+        std::fs::remove_file(path).ok();
+    }
 }

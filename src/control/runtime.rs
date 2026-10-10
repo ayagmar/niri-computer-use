@@ -5,7 +5,7 @@
 
 use std::fs::{DirBuilder, OpenOptions};
 use std::io;
-use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
+use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 
 use crate::Env;
@@ -97,6 +97,12 @@ impl RuntimeDir {
             _ => Ok(()),
         }
     }
+}
+
+/// The device and inode `path` names now, to tell whether it was replaced since.
+pub(crate) fn identity(path: &Path) -> io::Result<(u64, u64)> {
+    let meta = std::fs::metadata(path)?;
+    Ok((meta.dev(), meta.ino()))
 }
 
 #[cfg(test)]

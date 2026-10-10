@@ -289,8 +289,13 @@ fn processes_naming(dir: &Path) -> Vec<i32> {
 
 /// Sends `SIGKILL` to `pid`.
 pub(crate) fn kill(pid: u32) {
+    signal(pid, rustix::process::Signal::KILL);
+}
+
+/// Sends `signal` to `pid`.
+pub(crate) fn signal(pid: u32, signal: rustix::process::Signal) {
     let pid = rustix::process::Pid::from_raw(i32::try_from(pid).unwrap()).unwrap();
-    rustix::process::kill_process(pid, rustix::process::Signal::KILL).unwrap();
+    rustix::process::kill_process(pid, signal).unwrap();
 }
 
 /// Whether `pid` has exited: gone, or a zombie waiting to be reaped.
