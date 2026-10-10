@@ -66,7 +66,8 @@ impl Checks<'_, '_> {
         for toolkit in Toolkit::ALL {
             self.toolkit_actions(bus, server, toolkit)?;
         }
-        self.denied(bus)
+        self.denied(bus)?;
+        self.audited()
     }
 
     fn toolkit_actions(&mut self, bus: &Bus, server: &str, toolkit: Toolkit) -> Result<()> {
@@ -347,6 +348,56 @@ impl Checks<'_, '_> {
             field(&renamed, "/observed")
         ))?;
         fixture.stop().map(drop)
+    }
+
+    /// The audit log names the role, and the action or the text's length, of each element
+    /// action that went through, and never the text set or an element's name. A ref the
+    /// stop flag or a release revoked has no role. Kept as `audit-m9b.jsonl`.
+    fn audited(&mut self) -> Result<()> {
+        let path = self
+            .session
+            .test_dir()
+            .state()
+            .join("niri-computer-use/audit.jsonl");
+        let audit = fs::read_to_string(&path).context(format!("read {}", path.display()))?;
+        fs::write(self.session.artifact("audit-m9b.jsonl"), &audit)
+            .context("copy the audit log")?;
+        let secrets = [
+            "ncu m9b", "xxxxxxxx", "entry", "Primary", "Dismiss", "Rename",
+        ];
+        let mut acted: u32 = 0;
+        for line in audit.lines() {
+            let entry: Value = serde_json::from_str(line).context("parse an audit line")?;
+            let detail = match field(&entry, "/tool").as_str() {
+                Some("activate_element") => "/args/action",
+                Some("set_element_text") => "/args/text_len",
+                _ => continue,
+            };
+            let leaked = secrets.iter().any(|secret| line.contains(secret));
+            expect(
+                !leaked,
+                "an element action logged with no text or name",
+                &entry,
+            )?;
+            if !field(&entry, "/error").is_null() {
+                continue;
+            }
+            expect(
+                !field(&entry, "/args/role").is_null() && !field(&entry, detail).is_null(),
+                "an element action logged with its role, and its action or length",
+                &entry,
+            )?;
+            acted += 1;
+        }
+        let wanted = 3 * ACTIVATIONS;
+        if acted < wanted {
+            return Err(Failure::new(format!(
+                "M9b: expected at least {wanted} element actions in the audit log; saw {acted}"
+            )));
+        }
+        self.session.log(&format!(
+            "M9b: audit log: {acted} element actions with their role, none with text or a name"
+        ))
     }
 
     /// The one element of `window` whose name contains `name`, with `role` if given.
