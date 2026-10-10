@@ -8,7 +8,6 @@ use serde::Serialize;
 use tokio::time::Instant;
 
 use crate::error::{CallError, ToolError};
-use crate::niri::events::EventStream;
 use crate::niri::waiter::{View, Waited};
 use crate::observe::{Metadata, Screenshot};
 use crate::{niri, settle};
@@ -112,7 +111,7 @@ fn met(until: &Until, view: &View) -> Option<Vec<u64>> {
 
 /// Waits on the event stream for a window condition, up to `limit`.
 pub(crate) async fn window(
-    events: Option<&EventStream>,
+    events: niri::Events<'_>,
     until: &Until,
     limit: Duration,
 ) -> Result<Report, CallError> {

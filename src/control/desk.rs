@@ -94,7 +94,7 @@ impl Desk {
             users_window: std::sync::Mutex::new(None),
         });
         let runtime = RuntimeDir::of(env).map_err(|detail| {
-            let name = if env.niri_socket.is_none() {
+            let name = if env.niri_socket.path().is_err() {
                 ErrorName::NiriUnavailable
             } else {
                 ErrorName::UpstreamError
@@ -390,7 +390,7 @@ mod tests {
 
     fn env(dir: &std::path::Path) -> Env {
         Env {
-            niri_socket: Some(dir.join("niri.test.sock")),
+            niri_socket: crate::niri::Socket::at(dir.join("niri.test.sock")),
             runtime_dir: Some(dir.to_path_buf()),
             ..Env::default()
         }

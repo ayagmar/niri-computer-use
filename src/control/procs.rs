@@ -74,6 +74,12 @@ pub(crate) fn has_arg(proc_root: &Path, pid: u32, flag: &str) -> std::io::Result
         .any(|arg| arg == flag.as_bytes()))
 }
 
+/// The process's name from `/proc/<pid>/comm`.
+pub(crate) fn comm(proc_root: &Path, pid: u32) -> Option<String> {
+    let comm = std::fs::read_to_string(proc_root.join(pid.to_string()).join("comm")).ok()?;
+    Some(comm.trim_end().to_owned())
+}
+
 /// The PIDs of running processes named `name` whose real user is `uid`.
 pub(crate) fn named(proc_root: &Path, name: &str, uid: u32) -> Vec<u32> {
     let Ok(entries) = std::fs::read_dir(proc_root) else {
@@ -83,9 +89,8 @@ pub(crate) fn named(proc_root: &Path, name: &str, uid: u32) -> Vec<u32> {
         .filter_map(|entry| entry.ok()?.file_name().to_str()?.parse::<u32>().ok())
         .filter(|&pid| {
             let dir = proc_root.join(pid.to_string());
-            let comm = std::fs::read_to_string(dir.join("comm")).unwrap_or_default();
             let status = std::fs::read_to_string(dir.join("status")).unwrap_or_default();
-            comm.trim_end() == name
+            comm(proc_root, pid).as_deref() == Some(name)
                 && real_uid(&status) == Some(uid)
                 && stat(proc_root, pid).is_some_and(|stat| !stat.exited())
         })

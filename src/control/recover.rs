@@ -96,13 +96,11 @@ pub(super) async fn send_key_releases(env: &Env, marked: &marker::Native) -> Res
     {
         return Err("invalid native keycodes or layout in the marker; the marker stays".into());
     }
-    let display = env
-        .wayland_socket()
-        .ok_or("WAYLAND_DISPLAY or XDG_RUNTIME_DIR is not set")?;
-    let pid = niri::pid(env.niri_socket.as_deref())
+    let display = env.display.path().map_err(|error| error.detail.clone())?;
+    let pid = niri::pid(&env.niri_socket)
         .await
         .map_err(|error| error.detail)?;
-    let mut keyboard = niri::keyboard::Keyboard::bind(&display, pid)
+    let mut keyboard = niri::keyboard::Keyboard::bind(display, pid)
         .await
         .map_err(|error| error.detail)?;
     keyboard
@@ -131,7 +129,7 @@ pub(super) async fn send_releases(
     buttons: &[u32],
     marked: Option<&str>,
 ) -> Result<(), String> {
-    let socket = env.niri_socket.as_deref();
+    let socket = &env.niri_socket;
     let outputs = niri::outputs(socket).await.map_err(|error| error.detail)?;
     let mut enabled = outputs.values().filter(|output| output.logical.is_some());
     let output = enabled
@@ -139,11 +137,9 @@ pub(super) async fn send_releases(
         .find(|output| Some(output.name.as_str()) == marked)
         .or_else(|| enabled.next())
         .ok_or("niri has no enabled output")?;
-    let display = env
-        .wayland_socket()
-        .ok_or("WAYLAND_DISPLAY or XDG_RUNTIME_DIR is not set")?;
+    let display = env.display.path().map_err(|error| error.detail.clone())?;
     let pid = niri::pid(socket).await.map_err(|error| error.detail)?;
-    let mut pointer = Pointer::bind(&display, pid, &output.name)
+    let mut pointer = Pointer::bind(display, pid, &output.name)
         .await
         .map_err(|error| error.detail)?;
     for &button in buttons {

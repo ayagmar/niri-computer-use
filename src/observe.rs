@@ -4,13 +4,14 @@
 //! (`render.c:145–146`), which truncates. The expected size follows the same rule, and a
 //! capture whose header disagrees is an error rather than an image with unknown geometry.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use niri_ipc::{LogicalOutput, Output, Transform};
 use serde::Serialize;
 
 use crate::error::{CallError, ErrorName, ToolError};
+use crate::niri::{Display, Socket};
 use crate::policy::SaveTarget;
 use crate::{image_header, niri, runner, save};
 
@@ -136,8 +137,11 @@ pub(crate) struct Screenshot {
     pub(crate) image: Vec<u8>,
 }
 
+/// Captures with grim, which finds the display by name alone, so only right after the
+/// niri on `socket` is found serving `display`.
 pub(crate) async fn screenshot(
-    socket: Option<&Path>,
+    socket: &Socket,
+    display: &Display,
     request: &Request,
 ) -> Result<Screenshot, CallError> {
     let outputs = niri::outputs(socket).await?;
@@ -151,6 +155,7 @@ pub(crate) async fn screenshot(
         .map_err(CallError::InvalidArguments)?;
     let plan = plan(output, &request.target, request.max_width, request.format)
         .map_err(CallError::InvalidArguments)?;
+    display.checked(socket).await?;
     let started = Instant::now();
     let captured_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -191,7 +196,8 @@ pub(crate) async fn screenshot(
 /// Captures `target` as a PNG at its output's own scale, whatever the returned image's
 /// `max_width`, and writes it to `save`.
 pub(crate) async fn save(
-    socket: Option<&Path>,
+    socket: &Socket,
+    display: &Display,
     target: &Target,
     save: &SaveTarget,
 ) -> Result<Saved, CallError> {
@@ -200,7 +206,7 @@ pub(crate) async fn save(
         max_width: None,
         format: Format::Png,
     };
-    let shot = screenshot(socket, &request).await?;
+    let shot = screenshot(socket, display, &request).await?;
     let path = save::write(save, &shot.image)?;
     Ok(Saved {
         path,

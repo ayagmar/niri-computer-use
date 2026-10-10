@@ -6,7 +6,8 @@
 
 | Module | Does |
 |---|---|
-| `main.rs` | Reads `NIRI_SOCKET` and `PATH` once, picks the subcommand, and starts the server on a single-threaded Tokio runtime. |
+| `main.rs` | Reads the environment once, with what `discover.rs` finds for the session variables it lacks, picks the subcommand, and starts the server on a single-threaded Tokio runtime. |
+| `discover.rs` | Finds `XDG_RUNTIME_DIR`, `NIRI_SOCKET` and `WAYLAND_DISPLAY` when the environment lacks them: parsing niri's socket names and choosing among them are pure, and the reads take their roots as parameters. |
 | `tools.rs` | The rmcp tool definitions. Each tool turns the call into one module call and the result into MCP content. |
 | `niri.rs`, `niri/request.rs`, `niri/events.rs` | The only code that talks to niri: one connection per request, one long-lived event stream, and the virtual pointer's Wayland connection. |
 | `niri/pointer.rs` | The virtual pointer: its own Wayland connection to niri, bound to one output. |
@@ -47,6 +48,16 @@
 | `image_header.rs` | Reads a PNG's or JPEG's size from its header. The harness includes the same file. |
 | `error.rs` | Tool failures with their stable names. |
 | `cli.rs` | Terminal output for the subcommands. Nothing else may print, because stdout is the MCP transport. |
+
+## Finding the session
+
+Some clients start MCP servers with a short allow-list of environment variables; Codex passes on `HOME`, `PATH`, `USER`, `LANG`, `TERM` and a few more, but not `XDG_RUNTIME_DIR`, `NIRI_SOCKET` or `WAYLAND_DISPLAY`. At startup the server fills in each of the three that is unset or empty, and a variable that is set always wins:
+
+- `XDG_RUNTIME_DIR`: the directory holding `NIRI_SOCKET` when that is set, because niri puts its socket in its own runtime directory; otherwise `/run/user/<euid>`, as logind creates it. Either only if it is a directory (not a symlink) owned by the effective user with mode `0700`. When the socket's directory fails that, the runtime directory is missing, not `/run/user/<euid>`: the lease and stop flag live there, and a server using another directory than niri's session would neither see its stop flag nor share its lease.
+- `NIRI_SOCKET`: niri names its socket `niri.<display>.<pid>.sock` in its runtime directory. The server lists the runtime directory and keeps the sockets of that form, not symlinks, owned by the effective user, whose `<pid>` is a running process with `/proc/<pid>/comm` = `niri` and that accept a connection, within 500 ms, whose peer PID is `<pid>`; a socket a crashed niri left accepts none, even after its PID is reused, and stays where it is. When `WAYLAND_DISPLAY` is set, only sockets naming that display count; an absolute display path is compared with `<runtime dir>/<display>`. With exactly one, it uses that. With none, niri is `niri_unavailable` with a detail naming the directory it looked in. With several, such as two niri sessions of the same user, it picks none: `niri_unavailable` names them and says to set `NIRI_SOCKET`.
+- `WAYLAND_DISPLAY`: the `<display>` in the niri socket's name, whether that socket was given or found, if `$XDG_RUNTIME_DIR/<display>` is a socket.
+
+The session bus's fallback, `$XDG_RUNTIME_DIR/bus`, uses the runtime directory found this way too. Every child the runner starts, such as `grim`, `wtype`, `wl-paste`, the crash guardian and the paste keeper, gets the three as resolved on top of the environment it inherits, and never an inherited `WAYLAND_SOCKET`, which libwayland would use before `WAYLAND_DISPLAY`, so it reaches the same display and niri. `status` reports under `discovery` whether each of the three came from the environment or was discovered, or why it is missing. When both `XDG_RUNTIME_DIR` and `NIRI_SOCKET` are set and the socket isn't in that directory, the server uses them as given and `discovery.warning` says so: a symlink or `..` can name niri's runtime directory another way, so it isn't refused. The server's own Wayland connections, for native input, the pointer, the paste keeper and `recover`, check on every connect that the display's peer PID is niri's. `wtype`, `grim` and `wl-paste` find the display by name alone, so right before each of them starts, and before the paste keeper starts, the server makes the same check on a connection of its own. When niri is gone the check gives `niri_unavailable`, and when another process serves the display, `session_mismatch`; either way input, screenshots and clipboard reads are refused before anything reaches the display. `status` makes the check on every call and shows the current result under `display_error`.
 
 ## niri requests
 
@@ -107,7 +118,7 @@ An element's box is `output origin + tile_pos_in_workspace_view + window_offset_
 
 ## Runtime directory and the stop flag
 
-Each niri instance has a runtime directory, `$XDG_RUNTIME_DIR/niri-computer-use/<instance>/`, where `<instance>` is the basename of `NIRI_SOCKET` without `.sock`, for example `niri.wayland-1.1487`. Servers for the same niri share it; a server for another niri, such as the nested harness, has its own. `niri-computer-use stop` creates the directory with mode `0700` and the empty file `stop` in it with mode `0600`; `status` reports `stop: true` while that file exists. `niri-computer-use resume` removes it, and refuses while `input-dirty` exists in the same directory. Both need `NIRI_SOCKET`, which niri sets for the commands it spawns, and `XDG_RUNTIME_DIR`, which comes from the session.
+Each niri instance has a runtime directory, `$XDG_RUNTIME_DIR/niri-computer-use/<instance>/`, where `<instance>` is the basename of `NIRI_SOCKET` without `.sock`, for example `niri.wayland-1.1487`. Servers for the same niri share it; a server for another niri, such as the nested harness, has its own. `niri-computer-use stop` creates the directory with mode `0700` and the empty file `stop` in it with mode `0600`; `status` reports `stop: true` while that file exists. `niri-computer-use resume` removes it, and refuses while `input-dirty` exists in the same directory. Both need niri's socket and the runtime directory: from `NIRI_SOCKET`, which niri sets for the commands it spawns, and `XDG_RUNTIME_DIR`, or [found](#finding-the-session) without them.
 
 ## The lease
 

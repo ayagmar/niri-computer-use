@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::os::unix::fs::PermissionsExt as _;
+use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -35,6 +36,9 @@ pub(crate) const SESSION: &str = "7";
 pub(crate) struct Fixture {
     pub(crate) dir: PathBuf,
     env: BTreeMap<&'static str, OsString>,
+    /// The Wayland display, served by the test's process like the fake niri, so the server
+    /// takes it as niri's. Nothing speaks Wayland on it.
+    _display: UnixListener,
 }
 
 impl Fixture {
@@ -66,7 +70,12 @@ impl Fixture {
             ("XDG_STATE_HOME", dir.join("state").into_os_string()),
             ("XDG_CONFIG_HOME", dir.join("config").into_os_string()),
         ]);
-        let fixture = Self { dir, env };
+        let display = UnixListener::bind(dir.join("run").join(DISPLAY)).unwrap();
+        let fixture = Self {
+            dir,
+            env,
+            _display: display,
+        };
         let longest = fixture.noctalia_socket().as_os_str().len();
         assert!(
             longest < 108,
@@ -83,7 +92,13 @@ impl Fixture {
         self.env.insert(name, value.into());
     }
 
+    /// Removes a variable from the server's environment, except `XDG_RUNTIME_DIR`: without
+    /// it the server would look for the host's session in `/run/user/<uid>`.
     pub(crate) fn unset(&mut self, name: &'static str) {
+        assert_ne!(
+            name, "XDG_RUNTIME_DIR",
+            "the server must never discover the host session"
+        );
         self.env.remove(name);
     }
 
@@ -220,11 +235,13 @@ pub(crate) fn png(width: u32, height: u32) -> Vec<u8> {
     bytes
 }
 
+/// Runs the fake program `name` itself, as the server's runner would. It dies with the
+/// returned child.
 #[expect(
     clippy::disallowed_methods,
     reason = "the test runs a fake program itself, as the server's runner would"
 )]
-fn fake(fixture: &Fixture, name: &str) -> tokio::process::Child {
+pub(crate) fn fake(fixture: &Fixture, name: &str) -> tokio::process::Child {
     let _spawning = SPAWNING.lock().unwrap_or_else(PoisonError::into_inner);
     tokio::process::Command::new(fixture.path(&format!("bin/{name}")))
         .kill_on_drop(true)

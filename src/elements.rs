@@ -3,8 +3,6 @@
 //! relative to the window (see `a11y::model`). Names are the app's data: they are
 //! returned, never logged.
 
-use std::path::Path;
-
 use niri_ipc::Window;
 use serde::Serialize;
 
@@ -13,6 +11,7 @@ use crate::a11y::{self, A11y, ElementRef, Failed};
 use crate::coords::LayoutPt;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri;
+use crate::niri::Socket;
 use crate::policy::{self, Loaded};
 
 /// What `elements` was asked for.
@@ -58,7 +57,7 @@ struct Placed {
 }
 
 /// niri's window `id` right now, with its place in the layout, from fresh requests.
-async fn placed(socket: Option<&Path>, id: u64) -> Result<Option<Placed>, ToolError> {
+async fn placed(socket: &Socket, id: u64) -> Result<Option<Placed>, ToolError> {
     let (windows, workspaces, outputs) = tokio::join!(
         niri::windows(socket),
         niri::workspaces(socket),
@@ -79,7 +78,7 @@ async fn placed(socket: Option<&Path>, id: u64) -> Result<Option<Placed>, ToolEr
 /// Lists the accessible elements of window `ask.window_id`, keeping a ref of each through
 /// `remember` while there is a lease.
 pub(crate) async fn list(
-    socket: Option<&Path>,
+    socket: &Socket,
     a11y: &A11y,
     policy: &Loaded,
     ask: &Ask,
@@ -154,7 +153,7 @@ pub(crate) async fn list(
 /// element as it is now, after the checks of the research report's A5. Nothing is
 /// retried.
 pub(crate) async fn aim(
-    socket: Option<&Path>,
+    socket: &Socket,
     a11y: &A11y,
     policy: &Loaded,
     element: &ElementRef,

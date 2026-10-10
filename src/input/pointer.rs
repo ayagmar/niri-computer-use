@@ -258,6 +258,7 @@ pub(crate) async fn point(
     let connection = input
         .niri
         .events
+        .ok()
         .and_then(niri::events::EventStream::connection);
     shot.check(Instant::now(), &outputs, connection)?;
     let tool = gesture.tool();
@@ -271,12 +272,7 @@ pub(crate) async fn point(
         .into_iter()
         .map(|point| shot.aim_at(point, now, &outputs, connection))
         .collect::<Result<Vec<_>, _>>()?;
-    let display = input.display.ok_or_else(|| {
-        ToolError::new(
-            ErrorName::UpstreamError,
-            "WAYLAND_DISPLAY or XDG_RUNTIME_DIR is not set",
-        )
-    })?;
+    let display = input.display.path().map_err(Clone::clone)?;
     let held = Held::prepare(input, waiter.view(), keys).await?;
     let pointer = Pointer::bind(display, niri::pid(socket).await?, &shot.output).await?;
     let pressing = Pressing { tool, button };

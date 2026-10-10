@@ -1,7 +1,7 @@
 //! The human-only control subcommands and what `status` reports about them.
 
 use crate::client::{Server, run};
-use crate::fixture::Fixture;
+use crate::fixture::{DISPLAY, Fixture};
 
 #[tokio::test]
 async fn stop_and_resume_set_and_clear_the_flag_status_reports() {
@@ -49,5 +49,12 @@ async fn stop_without_a_niri_instance_fails_and_says_why() {
     let stop = run(&fixture, "stop").await;
     assert!(!stop.status.success());
     let stderr = String::from_utf8(stop.stderr).unwrap();
-    assert_eq!(stderr, "niri-computer-use: NIRI_SOCKET is not set\n");
+    assert_eq!(
+        stderr,
+        format!(
+            "niri-computer-use: NIRI_SOCKET is not set and {} has no socket of a running niri \
+             on WAYLAND_DISPLAY {DISPLAY}\n",
+            fixture.path("run").display()
+        )
+    );
 }

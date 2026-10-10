@@ -21,7 +21,10 @@ pub(crate) struct RuntimeDir {
 impl RuntimeDir {
     /// The directory for the niri instance `env` names. Nothing is created.
     pub(crate) fn of(env: &Env) -> Result<Self, String> {
-        let socket = env.niri_socket.as_deref().ok_or("NIRI_SOCKET is not set")?;
+        let socket = env
+            .niri_socket
+            .path()
+            .map_err(|error| error.detail.clone())?;
         let runtime = env
             .runtime_dir
             .as_deref()
@@ -104,7 +107,7 @@ mod tests {
 
     fn env(dir: &Path) -> Env {
         Env {
-            niri_socket: Some(dir.join("niri.wayland-1.42.sock")),
+            niri_socket: crate::niri::Socket::at(dir.join("niri.wayland-1.42.sock")),
             runtime_dir: Some(dir.join("run")),
             ..Env::default()
         }
@@ -131,7 +134,7 @@ mod tests {
         );
         // Without a name, the flag would land in the directory every instance shares.
         let nameless = Env {
-            niri_socket: Some(dir.join(".sock")),
+            niri_socket: crate::niri::Socket::at(dir.join(".sock")),
             ..env(dir)
         };
         assert_eq!(

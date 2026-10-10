@@ -27,12 +27,7 @@ pub(super) async fn type_input(
     if let Some(refused) = policy::refuse_input(input.policy, focused_app_id(waiter.view())) {
         return Err(refused.into());
     }
-    let display = input.display.ok_or_else(|| {
-        ToolError::new(
-            ErrorName::UpstreamError,
-            "WAYLAND_DISPLAY or XDG_RUNTIME_DIR is not set",
-        )
-    })?;
+    let display = input.display.path().map_err(Clone::clone)?;
     let keyboard = Keyboard::bind(display, niri::pid(input.niri.socket).await?).await?;
     let group = waiter.view().keyboard_group().ok_or_else(|| {
         ToolError::new(

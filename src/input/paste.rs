@@ -91,6 +91,7 @@ pub(crate) async fn paste(
         return Err(refused.into());
     }
     drop(waiter);
+    input.display.checked(input.niri.socket).await?;
     let mut keeper = Keeper::start(text.as_bytes()).await?;
     keeper.arm().await?;
     let typed = keyboard::type_input(input, Typing::Keys(vec![combo.to_owned()]), expect).await;

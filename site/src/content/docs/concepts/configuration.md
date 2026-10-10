@@ -92,7 +92,7 @@ These rules catch common mistakes. A wrapper script or a symlink with another na
 
 ## Environment
 
-The server reads these once, at startup:
+The server reads these once, at startup. When `XDG_RUNTIME_DIR`, `NIRI_SOCKET` or `WAYLAND_DISPLAY` is unset, it finds your session itself, as described in [Session variables](../../start/clients/#session-variables); a set variable always wins.
 
 | Variable | Used for |
 |---|---|

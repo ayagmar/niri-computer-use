@@ -138,7 +138,7 @@ mod tests {
 
     fn runtime(dir: &Path) -> RuntimeDir {
         RuntimeDir::of(&Env {
-            niri_socket: Some(dir.join("niri.test.sock")),
+            niri_socket: crate::niri::Socket::at(dir.join("niri.test.sock")),
             runtime_dir: Some(dir.to_path_buf()),
             ..Env::default()
         })

@@ -88,13 +88,11 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
 
 /// Binds, saves the selection, and takes it with a source offering the text.
 async fn take(env: &Env) -> Result<(Selection, Option<Contents>, SourceId), String> {
-    let display = env
-        .wayland_socket()
-        .ok_or("WAYLAND_DISPLAY or XDG_RUNTIME_DIR is not set")?;
-    let niri = crate::niri::pid(env.niri_socket.as_deref())
+    let display = env.display.path().map_err(|error| error.detail.clone())?;
+    let niri = crate::niri::pid(&env.niri_socket)
         .await
         .map_err(|error| error.detail)?;
-    let mut selection = Selection::bind(&display, niri)
+    let mut selection = Selection::bind(display, niri)
         .await
         .map_err(|error| error.detail)?;
     let saved = selection

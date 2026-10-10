@@ -9,7 +9,11 @@ Each problem here was seen in testing, on a real desktop or in a nested niri. Fo
 
 ## `status` reports `NIRI_SOCKET is not set`
 
-The server didn't get your niri session's environment. Either the agent was started outside the niri session, such as over SSH or from a TTY, or the client starts servers with a reduced environment. Codex and the MCP Inspector do. Start the agent from a terminal inside niri, and for Codex add `env_vars` as shown in [Client setup](../../start/clients/#codex).
+The server got no `NIRI_SOCKET` and found no niri session of yours. `niri.error` says where it looked, and `discovery` shows what else is missing. Usually niri isn't running as your user, or the server runs as another user or in a container that can't see `/run/user/<uid>`. Clients with a reduced environment, such as Codex, need no `env_vars`: the server finds the session itself (see [Session variables](../../start/clients/#session-variables)).
+
+## `status` reports several running niri instances
+
+You run more than one niri session as the same user, and the server won't guess which one to drive. Start the agent from a shell inside the session you want, or make the client pass `NIRI_SOCKET` on; a set variable always wins.
 
 ## The lease is refused with `screen_locked` while the screen is unlocked
 
