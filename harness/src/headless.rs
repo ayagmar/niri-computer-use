@@ -10,6 +10,8 @@ use crate::failure::{Context as _, Failure, Result};
 use crate::runner::{self, ChildEnv, Group, Invocation, Process, Sink};
 
 const STARTUP: Duration = Duration::from_secs(10);
+/// How long cage gets to shut down before it is killed.
+const TERM_GRACE: Duration = Duration::from_secs(3);
 
 #[derive(Debug)]
 pub(crate) struct Headless {
@@ -61,8 +63,10 @@ impl Headless {
         }
     }
 
+    /// Stops cage with SIGTERM so it removes the X11 socket and lock it binds in `/tmp`,
+    /// which a SIGKILL leaves behind.
     pub(crate) fn stop(self) -> Result<()> {
-        self.process.stop().map(|_| ())
+        self.process.terminate(TERM_GRACE).map(|_| ())
     }
 }
 
