@@ -66,4 +66,4 @@ The server checks the element, not what is drawn over it: a panel or popup cover
 
 ## Which apps work
 
-Tested in a nested niri: GTK 4 apps, and GTK 3 and Qt 6 apps with server-side decorations. Not yet tested: Firefox, Chromium and Electron apps, libadwaita apps, and Qt apps that don't set `QT_LINUX_ACCESSIBILITY_ALWAYS_ON`. When `elements` gives nothing useful, aim at screenshot pixels instead.
+Tested in a nested niri: GTK 4 apps, and GTK 3 and Qt 6 apps with server-side decorations. Not yet tested: Firefox, Chromium and Electron apps, libadwaita apps, and Qt apps that don't set `QT_LINUX_ACCESSIBILITY_ALWAYS_ON`. Apps in a Flatpak sandbox aren't accessible today: the accessibility bus reports the process of the sandbox's D-Bus proxy, not the app's, so `elements` finds no application for the window and fails with `not_accessible`. Large trees, such as a browser page or an office document, can take longer than the three seconds; the listing then has what was read, with `capped_reason: budget_exhausted`, and `role`, `name_contains` or a small `limit` help. When `elements` gives nothing useful, aim at screenshot pixels instead.

@@ -21,7 +21,7 @@ Refused with `lease_held` while another server holds it, `stopped` while the sto
 |---|---|
 | `restore_focus` (required) | true to give keyboard focus back to `users_window` before giving the lease up |
 
-Returns `{"users_window": <id>, "released": true}`, or `released: false` if this server didn't hold it. With `restore_focus` and a `users_window`, it first focuses that window as `focus_window` would, through the same checks, and adds `restored`: that action's result, with `observed: closed` and `accepted: false` if the window is gone, or `{"error", "detail"}` if the action was refused. The lease is given up either way. While an action runs, it waits for that action to end, at worst about fifteen seconds. The lease is also given up when the stop flag appears and when the server exits.
+Returns `{"users_window": <id>, "released": true}`, or `released: false` if this server didn't hold it. With `restore_focus` and a `users_window`, it first focuses that window as `focus_window` would, through the same checks, and adds `restored`: that action's result, with `observed: closed` and `accepted: false` if the window is gone, or `{"error", "detail"}` if the action was refused. The lease is given up either way. While its own action runs, it waits for that action to end. Each step of an action has its own deadline, but the action as a whole has none, so the wait is at worst the sum of its steps, such as 16 `wtype` calls of up to three seconds each for a `key` call. The stop key doesn't wait. The lease is also given up when the stop flag appears and when the server exits.
 
 ## Action tools
 

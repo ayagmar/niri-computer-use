@@ -25,13 +25,13 @@ The flag stays until you run `niri-computer-use resume`. An agent can't press th
 
 ## Input that may be stuck, and `recover`
 
-Before `click`, `drag`, `key`, `type_text` or `paste` send anything, the server writes an input-dirty marker. It removes the marker once the input is released. If the call is cancelled midway, it releases any held button or key first. If it can't, the marker stays, and every action refuses with `recovery_required` until you run `niri-computer-use recover`.
+Before `click`, `drag`, `key`, `type_text` or `paste` send input, the server writes an input-dirty marker. It removes the marker once the input is released. The marker covers keys and pointer buttons, not the clipboard: `paste` takes the clipboard before its key's marker is written, and its keeper process, not the marker, puts your clipboard back. If the call is cancelled midway, it releases any held button or key first. If it can't, the marker stays, and every action refuses with `recovery_required` until you run `niri-computer-use recover`.
 
 `recover` ends the input program the marker names, releases any pointer button or key it names, then asks you to check that no key or button is held. It clears the marker only when you type `yes`. See the [CLI reference](../../reference/cli/#recover).
 
 ## The crash guardian
 
-Each standalone `serve`, and each shared engine, starts a small guardian process. If the server or engine dies while it holds input, for example after `kill -9`, the guardian releases the keys and buttons the marker names at once, so nothing stays pressed while you are away. The marker still stays until you run `recover`.
+Each standalone `serve`, and each shared engine, starts a small guardian process. If the server or engine dies while it holds input, for example after `kill -9`, the guardian at once releases the native keyboard's keys and the pointer buttons that the marker records. It leaves alone a `wtype` call, which outlives the server and finishes on its own, and a marker it can't read, and a release can fail or time out. The marker stays until you run `recover` in every case, which checks with you that nothing is still held.
 
 ## The lock gate
 
