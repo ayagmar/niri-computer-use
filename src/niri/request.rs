@@ -12,7 +12,7 @@ use tokio::net::UnixStream;
 
 use crate::error::{ErrorName, ToolError, Unanswered};
 
-const DEADLINE: Duration = Duration::from_secs(2);
+pub(super) const DEADLINE: Duration = Duration::from_secs(2);
 
 /// Sends one request on a new connection and returns niri's response, all within two
 /// seconds.
@@ -30,16 +30,17 @@ pub(crate) async fn send(socket: &Path, request: &Request) -> Result<Response, T
 }
 
 /// The PID of the process listening on niri's socket, from the connection's peer
-/// credentials. Nothing is sent; niri sees the connection close.
-pub(crate) async fn peer_pid(socket: &Path) -> Result<u32, ToolError> {
+/// credentials, if it accepts the connection within `limit`. Nothing is sent; niri sees
+/// the connection close.
+pub(crate) async fn peer_pid(socket: &Path, limit: Duration) -> Result<u32, ToolError> {
     let connect = UnixStream::connect(socket);
-    let stream = tokio::time::timeout(DEADLINE, connect)
+    let stream = tokio::time::timeout(limit, connect)
         .await
         .map_err(|_| {
             ToolError::new(
                 ErrorName::DeadlineExceeded,
                 format!(
-                    "connect to {}: no answer within {DEADLINE:?}",
+                    "connect to {}: no answer within {limit:?}",
                     socket.display()
                 ),
             )

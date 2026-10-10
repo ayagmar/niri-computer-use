@@ -11,6 +11,7 @@ mod wayland;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use niri_ipc::{Action, Output, Request, Response, Window, Workspace};
 
@@ -91,7 +92,13 @@ pub(crate) async fn version(socket: &Socket) -> Result<String, ToolError> {
 
 /// The process ID of the niri listening on the socket.
 pub(crate) async fn pid(socket: &Socket) -> Result<u32, ToolError> {
-    request::peer_pid(known(socket)?).await
+    request::peer_pid(known(socket)?, request::DEADLINE).await
+}
+
+/// The process ID of whatever listens on the socket at `path`, if it accepts a connection
+/// within `limit`. A socket a crashed niri left accepts none.
+pub(crate) async fn listener_pid(path: &Path, limit: Duration) -> Result<u32, ToolError> {
+    request::peer_pid(path, limit).await
 }
 
 /// niri's outputs by connector name, in name order.

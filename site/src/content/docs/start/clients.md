@@ -65,7 +65,7 @@ When one of these is unset or empty, the server finds it at startup:
 | Variable | Found as |
 |---|---|
 | `XDG_RUNTIME_DIR` | the directory holding `NIRI_SOCKET` when that is set, otherwise `/run/user/<your uid>`; either must be your directory with mode `0700`, as logind creates it |
-| `NIRI_SOCKET` | the one socket in the runtime directory named `niri.<display>.<pid>.sock`, as niri names it, that is yours and whose process is a running `niri`; when `WAYLAND_DISPLAY` is set, only a socket for that display counts |
+| `NIRI_SOCKET` | the one socket in the runtime directory named `niri.<display>.<pid>.sock`, as niri names it, that is yours, whose process is a running `niri`, and that this `niri` answers on; when `WAYLAND_DISPLAY` is set, only a socket for that display counts |
 | `WAYLAND_DISPLAY` | the `<display>` in that socket's name, if the runtime directory has a socket by that name |
 
 The session bus for `elements` is `$XDG_RUNTIME_DIR/bus` unless `DBUS_SESSION_BUS_ADDRESS` is set. `status` reports under `discovery` whether each came from the environment or was discovered, and why it is missing when neither.

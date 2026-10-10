@@ -7,19 +7,24 @@
 //! filter, which matches no test.
 //!
 //! It answers `Version` itself, or relays every connection to the in-process fake niri, so
-//! a test has the whole fake while niri's socket is served by a process of its own.
+//! a test has the whole fake while niri's socket is served by a process of its own. Started
+//! through a link called `niri`, it can also serve a Wayland display, as discovery expects
+//! of a running niri.
 
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
 use crate::fixture::{Fixture, eventually};
 
+/// Where it listens; `<pid>` stands for its process ID.
 const SOCKET: &str = "NCU_FAKE_NIRI_SOCKET";
 const RELAY: &str = "NCU_FAKE_NIRI_RELAY";
+/// A display socket it listens on too, accepting nothing.
+const DISPLAY_SOCKET: &str = "NCU_FAKE_NIRI_DISPLAY";
 const NAME: &str = "session::fake_niri_process";
 
 /// A running fake niri. Dropping it kills the process.
@@ -41,15 +46,24 @@ impl NiriProcess {
     }
 
     async fn launch(fixture: &Fixture, session: Option<&str>, niri_args: &[&str]) -> Self {
-        Self::spawn(fixture, command(), session, niri_args).await
+        // A socket left by an earlier fake niri in the same test.
+        std::fs::remove_file(fixture.niri_socket()).ok();
+        let program = std::env::current_exe().unwrap();
+        let mut command = command(&program);
+        command.env(SOCKET, fixture.niri_socket());
+        Self::spawn(command, &fixture.niri_socket(), session, niri_args)
+            .await
+            .0
     }
 
+    /// Starts `command` and waits for its socket, `listen` with `<pid>` replaced by its
+    /// process ID, which it returns.
     async fn spawn(
-        fixture: &Fixture,
         mut command: tokio::process::Command,
+        listen: &Path,
         session: Option<&str>,
         niri_args: &[&str],
-    ) -> Self {
+    ) -> (Self, PathBuf) {
         command
             .args([
                 "--exact",
@@ -60,26 +74,53 @@ impl NiriProcess {
                 NAME,
             ])
             .args(niri_args)
-            .env(SOCKET, fixture.niri_socket())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .kill_on_drop(true);
         if let Some(session) = session {
             command.env("XDG_SESSION_ID", session);
         }
-        // A socket left by an earlier fake niri in the same test.
-        let socket = fixture.niri_socket();
-        std::fs::remove_file(&socket).ok();
         let child = command.spawn().unwrap();
+        let pid = child.id().unwrap().to_string();
+        let socket = PathBuf::from(listen.to_str().unwrap().replace("<pid>", &pid));
         assert!(eventually(Duration::from_secs(10), || socket.exists()).await);
-        Self { _process: child }
+        (Self { _process: child }, socket)
     }
 
-    /// A plain `niri` that relays every connection to the socket `to`.
+    /// A plain `niri` on the fixture's `NIRI_SOCKET` that relays every connection to the
+    /// socket `to`.
     pub(crate) async fn relaying(fixture: &Fixture, to: &Path) -> Self {
-        let mut command = command();
-        command.env(RELAY, to);
-        Self::spawn(fixture, command, None, &[]).await
+        let program = std::env::current_exe().unwrap();
+        let mut command = command(&program);
+        command.env(SOCKET, fixture.niri_socket()).env(RELAY, to);
+        Self::spawn(command, &fixture.niri_socket(), None, &[])
+            .await
+            .0
+    }
+
+    /// A process called `niri` that serves `run/<display>` and relays every connection on
+    /// `run/niri.<display>.<pid>.sock` to the socket `to`: a running niri as discovery
+    /// finds it. Returns the socket's name too.
+    pub(crate) async fn discoverable(
+        fixture: &Fixture,
+        display: &str,
+        to: &Path,
+    ) -> (Self, String) {
+        let program = fixture.path("niri");
+        std::os::unix::fs::symlink(std::env::current_exe().unwrap(), &program).unwrap();
+        let display_socket = fixture.path(&format!("run/{display}"));
+        // The fixture's own display, served by the test's process instead.
+        std::fs::remove_file(&display_socket).ok();
+        let listen = fixture.path(&format!("run/niri.{display}.<pid>.sock"));
+        let mut command = command(&program);
+        command
+            .env(SOCKET, &listen)
+            .env(RELAY, to)
+            .env(DISPLAY_SOCKET, &display_socket);
+        let (process, socket) = Self::spawn(command, &listen, None, &[]).await;
+        assert!(eventually(Duration::from_secs(10), || display_socket.exists()).await);
+        let name = socket.file_name().unwrap().to_str().unwrap().to_owned();
+        (process, name)
     }
 
     /// A fake niri in session `c4`, with a `loginctl` that says it is unlocked, as the
@@ -90,13 +131,13 @@ impl NiriProcess {
     }
 }
 
-/// The test binary, with an empty environment.
+/// The test binary at `program`, with an empty environment.
 #[expect(
     clippy::disallowed_methods,
     reason = "the test binary starts itself as the fake niri"
 )]
-fn command() -> tokio::process::Command {
-    let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+fn command(program: &Path) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(program);
     command.env_clear();
     command
 }
@@ -106,9 +147,12 @@ fn command() -> tokio::process::Command {
 #[test]
 #[ignore = "runs only as the fake niri process a test starts"]
 fn fake_niri_process() {
-    let Some(path) = std::env::var_os(SOCKET) else {
+    let Some(path) = std::env::var(SOCKET).ok() else {
         return;
     };
+    let _display =
+        std::env::var_os(DISPLAY_SOCKET).map(|display| UnixListener::bind(display).unwrap());
+    let path = path.replace("<pid>", &std::process::id().to_string());
     let listener = UnixListener::bind(path).unwrap();
     let relay = std::env::var_os(RELAY);
     for connection in listener.incoming() {

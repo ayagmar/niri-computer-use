@@ -5,7 +5,7 @@
 use serde_json::{Value, json};
 
 use crate::client::{Server, tool_error};
-use crate::fixture::{DISPLAY, Fixture, fake};
+use crate::fixture::{DISPLAY, Fixture};
 use crate::niri::{Niri, window_on};
 use crate::noctalia::{self, UNLOCKED};
 use crate::session::NiriProcess;
@@ -15,11 +15,9 @@ async fn without_the_session_variables_the_server_finds_the_running_niri() {
     let mut fixture = Fixture::new("discover");
     fixture.unset("NIRI_SOCKET");
     fixture.unset("WAYLAND_DISPLAY");
-    // A process called `niri`, whose PID names the socket the way niri's does.
-    fixture.program("niri", "await_file never");
-    let process = fake(&fixture, "niri");
-    let name = format!("niri.{DISPLAY}.{}.sock", process.id().unwrap());
-    let _niri = Niri::listen(&fixture.path(&format!("run/{name}")));
+    let backend = fixture.path("run/backend.sock");
+    let _niri = Niri::listen(&backend);
+    let (_process, name) = NiriProcess::discoverable(&fixture, DISPLAY, &backend).await;
 
     let mut server = Server::start(&fixture).await;
     let status = server.structured("status").await;
@@ -91,10 +89,9 @@ async fn children_never_inherit_a_wayland_socket() {
 async fn a_given_display_rules_out_a_niri_on_another_display() {
     let mut fixture = Fixture::new("discover-other");
     fixture.unset("NIRI_SOCKET");
-    fixture.program("niri", "await_file never");
-    let process = fake(&fixture, "niri");
-    let name = format!("niri.wayland-other.{}.sock", process.id().unwrap());
-    let _niri = Niri::listen(&fixture.path(&format!("run/{name}")));
+    let backend = fixture.path("run/backend.sock");
+    let _niri = Niri::listen(&backend);
+    let _process = NiriProcess::discoverable(&fixture, "wayland-other", &backend).await;
     fixture.program("noctalia", "exit 0");
     let _noctalia = noctalia::start(&fixture, UNLOCKED);
     fixture.program("wtype", r#": > "$DIR/wtype.ran""#);
