@@ -290,6 +290,8 @@ pub(crate) async fn type_input(
             .into());
         }
     }
+    // wtype finds the display by name alone.
+    input.display.map_err(Clone::clone)?;
     let mut waiter = niri::waiter(input.niri.events).await?;
     let focus = check_expect(&expect, waiter.view())?;
     if let Some(refused) = policy::refuse_input(input.policy, super::focused_app_id(waiter.view()))

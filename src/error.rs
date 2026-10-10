@@ -14,6 +14,9 @@ pub(crate) enum ErrorName {
     Refused,
     /// niri's socket is unknown or couldn't be reached.
     NiriUnavailable,
+    /// The Wayland display isn't served by the niri on niri's socket, so nothing that
+    /// reaches the display may run.
+    SessionMismatch,
     /// A request or wait passed its deadline.
     DeadlineExceeded,
     /// niri replied with an error, or with something this server can't read.

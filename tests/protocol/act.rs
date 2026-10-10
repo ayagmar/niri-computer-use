@@ -5,7 +5,7 @@ use niri_ipc::{Action, WorkspaceReferenceArg};
 use serde_json::{Value, json};
 
 use crate::client::{Server, mistake, run, tool_error};
-use crate::fixture::{Fixture, jpeg};
+use crate::fixture::{DISPLAY, Fixture, jpeg};
 use crate::niri::{Niri, Stream, output, window_on};
 use crate::noctalia::{self, LOCKED, UNLOCKED};
 
@@ -51,6 +51,12 @@ impl Desk {
             server,
             noctalia,
         }
+    }
+
+    /// Removes the Wayland display's socket after the server checked it at startup, so
+    /// native input finds nothing to connect to.
+    fn unplug_display(&self) {
+        std::fs::remove_file(self.fixture.path(&format!("run/{DISPLAY}"))).unwrap();
     }
 
     /// Calls `tool`, hands its action to `respond`, and returns the result.
@@ -568,6 +574,7 @@ async fn denial_is_focus_based_and_unchecked_expect_does_not_bypass_it() {
     let id = screenshot_ref(&mut desk).await;
     // b is visible, but a is focused. Policy does not hit-test these coordinates.
     // With no fake Wayland server the call reaches connect, not an app_denied refusal.
+    desk.unplug_display();
     let click = desk
         .server
         .call("click", json!({"screenshot_ref": id, "x": 10, "y": 10}))
@@ -614,6 +621,7 @@ async fn pointer_tools_check_the_ref_the_outputs_and_their_arguments_first() {
     assert!(mistake(&mistaken).contains("`count`"));
 
     // The fixture's Wayland display has no socket: everything checked, nothing sent.
+    desk.unplug_display();
     let click = desk.server.call("click", at(&id, 10)).await;
     let (name, detail) = tool_error(&click);
     assert_eq!(name, "upstream_error");
@@ -774,6 +782,7 @@ async fn paste_checks_its_text_focus_app_and_clipboard_before_the_key() {
         .await;
     assert_eq!(tool_error(&elsewhere).0, "focus_mismatch");
     // Nothing serves the fixture's Wayland display, so the clipboard can't be saved.
+    desk.unplug_display();
     let unsaved = desk
         .server
         .call("paste", paste("pasted words", json!({"app_id": "a"})))
@@ -832,6 +841,7 @@ async fn held_pointer_keys_validate_before_any_input() {
 #[tokio::test]
 async fn native_selection_never_falls_back_to_wtype() {
     let mut desk = Desk::start_backend("native-no-fallback", "", "native").await;
+    desk.unplug_display();
     fake_wtype(&desk.fixture, "cat >/dev/null");
     let result = desk
         .server

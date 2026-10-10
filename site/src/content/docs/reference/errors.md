@@ -31,6 +31,12 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 **What to do:** unlock the screen. If it is unlocked and `lock.state` is `unknown`, run niri as `niri --session` or run Noctalia; see [Troubleshooting](../troubleshooting/#the-lease-is-refused-with-screen_locked-while-the-screen-is-unlocked).
 
+### `session_mismatch`
+
+**Cause:** the Wayland display isn't served by the niri on niri's socket, so `WAYLAND_DISPLAY` and `NIRI_SOCKET` name two different compositors. The server checks this once at startup and then refuses input, screenshots and clipboard reads, because `wtype`, `grim` and `wl-paste` would reach the other compositor. `status` shows it under `display_error`.
+
+**What to do:** pass the agent's client both variables from the same niri session, or neither, and start a new agent session.
+
 ### `lease_held`
 
 **Cause:** another server holds the lease on this niri instance. The `detail` names its PID, its client and since when.

@@ -27,6 +27,9 @@ pub(crate) struct Status {
     /// Where the runtime directory, niri's socket and the display came from: the
     /// environment, or discovery, or why neither.
     discovery: discover::Sources,
+    /// Why input, screenshots and clipboard reads are refused: the Wayland display isn't
+    /// niri's, or couldn't be checked. Null when it is niri's.
+    display_error: Option<ToolError>,
     niri: Niri,
     lease: LeaseStatus,
     /// Whether the stop flag is set for this niri instance.
@@ -120,6 +123,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
     Status {
         instance: env.instance(),
         discovery: env.discovery.clone(),
+        display_error: env.display.path().err().cloned(),
         niri: Niri {
             compat: version.as_deref().map(niri::version::compat),
             version,
@@ -185,6 +189,10 @@ mod tests {
                     "niri_socket": {"source": "missing", "detail": "NIRI_SOCKET is not set"},
                     "wayland_display": {"source": "missing", "detail": "WAYLAND_DISPLAY is not set"},
                     "warning": null
+                },
+                "display_error": {
+                    "error": "upstream_error",
+                    "detail": "the Wayland display hasn't been checked against niri"
                 },
                 "niri": {
                     "version": null,

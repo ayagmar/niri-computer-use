@@ -46,6 +46,8 @@ pub(crate) struct Env {
     pub(crate) path: Option<OsString>,
     pub(crate) runtime_dir: Option<PathBuf>,
     pub(crate) wayland_display: Option<OsString>,
+    /// The Wayland display, once `main` has checked it is niri's.
+    pub(crate) display: niri::Display,
     /// `$HOME`, for a `capture_dir` under `~/`.
     pub(crate) home: Option<PathBuf>,
     /// `$XDG_STATE_HOME`, or `$HOME/.local/state`, for the audit log.
@@ -82,6 +84,7 @@ impl Env {
                 .map_or_else(niri::Socket::unknown, niri::Socket::at),
             path: var("PATH"),
             wayland_display: session.wayland_display,
+            display: niri::Display::default(),
             home: var("HOME").map(PathBuf::from),
             keyboard: var("NIRI_COMPUTER_USE_KEYBOARD"),
             // Without the variable, D-Bus clients (libdbus, sd-bus, zbus) use the user bus
@@ -127,12 +130,31 @@ impl Env {
 
     /// The Wayland display's socket: `WAYLAND_DISPLAY`, under `XDG_RUNTIME_DIR` unless it
     /// is an absolute path.
-    pub(crate) fn wayland_socket(&self) -> Option<PathBuf> {
-        let display = std::path::Path::new(self.wayland_display.as_ref()?);
+    fn wayland_socket(&self) -> Result<PathBuf, String> {
+        let display = std::path::Path::new(self.wayland_display.as_ref().ok_or_else(|| {
+            match &self.discovery.wayland_display {
+                discover::Source::Missing(detail) => detail.clone(),
+                discover::Source::Environment | discover::Source::Discovered => {
+                    "WAYLAND_DISPLAY is not set".to_owned()
+                }
+            }
+        })?);
         if display.is_absolute() {
-            return Some(display.to_path_buf());
+            return Ok(display.to_path_buf());
         }
-        Some(self.runtime_dir.as_ref()?.join(display))
+        let runtime = self.runtime_dir.as_ref().ok_or_else(|| {
+            format!(
+                "XDG_RUNTIME_DIR is not set, so WAYLAND_DISPLAY {} names no socket",
+                display.display()
+            )
+        })?;
+        Ok(runtime.join(display))
+    }
+
+    /// Checks that the niri on `NIRI_SOCKET` serves the Wayland display, before anything
+    /// that reaches the display starts.
+    async fn check_display(&mut self) {
+        self.display = niri::Display::check(&self.niri_socket, self.wayland_socket()).await;
     }
 
     /// The session variables as found, for the server's children.
@@ -188,9 +210,14 @@ enum Command {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
-    let env = Env::read();
+    let mut env = Env::read();
     runner::pass_on(env.session_vars());
-    let result = match command(&args) {
+    let command = command(&args);
+    // The stop flag mustn't wait on a compositor that may not answer.
+    if !matches!(command, Some(Command::Stop | Command::Resume) | None) {
+        env.check_display().await;
+    }
+    let result = match command {
         Some(Command::Serve) => serve(env).await,
         Some(Command::Status) => {
             let audit = audit::Audit::new(env.state_dir.clone());
@@ -300,14 +327,20 @@ mod tests {
         };
         assert_eq!(
             env("wayland-1", Some("/run/user/1000")).wayland_socket(),
-            Some(PathBuf::from("/run/user/1000/wayland-1"))
+            Ok(PathBuf::from("/run/user/1000/wayland-1"))
         );
         assert_eq!(
             env("/tmp/w/wayland-9", None).wayland_socket(),
-            Some(PathBuf::from("/tmp/w/wayland-9"))
+            Ok(PathBuf::from("/tmp/w/wayland-9"))
         );
-        assert_eq!(env("wayland-1", None).wayland_socket(), None);
-        assert_eq!(Env::default().wayland_socket(), None);
+        assert_eq!(
+            env("wayland-1", None).wayland_socket(),
+            Err("XDG_RUNTIME_DIR is not set, so WAYLAND_DISPLAY wayland-1 names no socket".into())
+        );
+        assert_eq!(
+            Env::default().wayland_socket(),
+            Err("WAYLAND_DISPLAY is not set".into())
+        );
     }
 
     #[test]

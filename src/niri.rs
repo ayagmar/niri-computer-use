@@ -47,6 +47,40 @@ impl Default for Socket {
     }
 }
 
+/// The Wayland display's socket, checked to be served by the niri on niri's socket, or why
+/// it can't be used. wtype, grim and wl-paste find the display by name alone, so nothing
+/// that reaches the display starts without this check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Display(Result<PathBuf, ToolError>);
+
+impl Display {
+    /// Checks once, within the connections' deadlines, that the niri on `socket` serves
+    /// the display at `display`.
+    pub(crate) async fn check(socket: &Socket, display: Result<PathBuf, String>) -> Self {
+        let checked = async {
+            let display =
+                display.map_err(|detail| ToolError::new(ErrorName::UpstreamError, detail))?;
+            wayland::niri_stream(&display, pid(socket).await?).await?;
+            Ok(display)
+        };
+        Self(checked.await)
+    }
+
+    /// The display's socket, or the error that says why it can't be used.
+    pub(crate) fn path(&self) -> Result<&Path, &ToolError> {
+        self.0.as_deref()
+    }
+}
+
+impl Default for Display {
+    fn default() -> Self {
+        Self(Err(ToolError::new(
+            ErrorName::UpstreamError,
+            "the Wayland display hasn't been checked against niri",
+        )))
+    }
+}
+
 /// niri's version string, such as `26.04 (8ed0da4)`.
 pub(crate) async fn version(socket: &Socket) -> Result<String, ToolError> {
     let Response::Version(version) = request::send(known(socket)?, &Request::Version).await? else {

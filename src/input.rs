@@ -15,6 +15,7 @@ use std::path::Path;
 
 use crate::act::Niri;
 use crate::control::runtime::RuntimeDir;
+use crate::error::ToolError;
 use crate::niri::waiter::View;
 use crate::policy::Loaded;
 
@@ -22,8 +23,8 @@ use crate::policy::Loaded;
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Input<'a> {
     pub(crate) niri: Niri<'a>,
-    /// The Wayland display's socket, if known.
-    pub(crate) display: Option<&'a Path>,
+    /// The Wayland display's socket once checked to be niri's, or why it can't be used.
+    pub(crate) display: Result<&'a Path, &'a ToolError>,
     pub(crate) runtime: &'a RuntimeDir,
     pub(crate) policy: &'a Loaded,
     pub(crate) keyboard: Option<&'a std::ffi::OsStr>,

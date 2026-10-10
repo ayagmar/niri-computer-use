@@ -21,6 +21,16 @@ pub(super) trait Synced: Dispatch<WlCallback, ()> {
 }
 
 pub(super) async fn connect(display: &Path, niri_pid: u32) -> Result<Connection, ToolError> {
+    let stream = niri_stream(display, niri_pid)
+        .await?
+        .into_std()
+        .map_err(|error| upstream(&format!("use the Wayland socket: {error}")))?;
+    Connection::from_socket(stream).map_err(|error| upstream(&format!("start Wayland: {error}")))
+}
+
+/// A connection to the display at `display`, whose peer must be niri's PID. Clients that
+/// find the display by name, such as wtype, would otherwise reach another compositor.
+pub(super) async fn niri_stream(display: &Path, niri_pid: u32) -> Result<UnixStream, ToolError> {
     let stream = tokio::time::timeout(DEADLINE, UnixStream::connect(display))
         .await
         .map_err(|_| {
@@ -38,15 +48,17 @@ pub(super) async fn connect(display: &Path, niri_pid: u32) -> Result<Connection,
         .map_err(|error| upstream(&format!("read the Wayland display's credentials: {error}")))?
         .pid();
     if peer != i32::try_from(niri_pid).ok() {
-        return Err(upstream(&format!(
-            "the Wayland display {} is served by PID {peer:?}, not niri's PID {niri_pid}",
-            display.display()
-        )));
+        let peer = peer.map_or_else(|| "an unknown PID".to_owned(), |pid| format!("PID {pid}"));
+        return Err(ToolError::new(
+            ErrorName::SessionMismatch,
+            format!(
+                "the Wayland display {} is served by {peer}, not niri's PID {niri_pid}; set \
+                 WAYLAND_DISPLAY and NIRI_SOCKET to the same niri's",
+                display.display()
+            ),
+        ));
     }
-    let stream = stream
-        .into_std()
-        .map_err(|error| upstream(&format!("use the Wayland socket: {error}")))?;
-    Connection::from_socket(stream).map_err(|error| upstream(&format!("start Wayland: {error}")))
+    Ok(stream)
 }
 
 pub(super) async fn roundtrip<S: Synced + 'static>(

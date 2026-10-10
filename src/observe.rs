@@ -11,7 +11,7 @@ use niri_ipc::{LogicalOutput, Output, Transform};
 use serde::Serialize;
 
 use crate::error::{CallError, ErrorName, ToolError};
-use crate::niri::Socket;
+use crate::niri::{Display, Socket};
 use crate::policy::SaveTarget;
 use crate::{image_header, niri, runner, save};
 
@@ -137,10 +137,14 @@ pub(crate) struct Screenshot {
     pub(crate) image: Vec<u8>,
 }
 
+/// Captures with grim, which finds the display by name alone, so only once `display` is
+/// checked to be niri's.
 pub(crate) async fn screenshot(
     socket: &Socket,
+    display: &Display,
     request: &Request,
 ) -> Result<Screenshot, CallError> {
+    display.path().map_err(Clone::clone)?;
     let outputs = niri::outputs(socket).await?;
     let focused = match request.target {
         Target::FocusedOutput => niri::focused_output(socket)
@@ -193,6 +197,7 @@ pub(crate) async fn screenshot(
 /// `max_width`, and writes it to `save`.
 pub(crate) async fn save(
     socket: &Socket,
+    display: &Display,
     target: &Target,
     save: &SaveTarget,
 ) -> Result<Saved, CallError> {
@@ -201,7 +206,7 @@ pub(crate) async fn save(
         max_width: None,
         format: Format::Png,
     };
-    let shot = screenshot(socket, &request).await?;
+    let shot = screenshot(socket, display, &request).await?;
     let path = save::write(save, &shot.image)?;
     Ok(Saved {
         path,
