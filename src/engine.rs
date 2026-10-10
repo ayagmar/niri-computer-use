@@ -130,7 +130,7 @@ impl Engine {
 
     /// The screenshot ref named `id` of the lease `session` holds.
     pub(crate) fn shot(&self, session: &Session, id: &str) -> Result<Shot, ToolError> {
-        self.desk.shot(session.id(), id)
+        self.desk.shot(session, id)
     }
 
     /// The element ref named `id` of the lease `session` holds.
@@ -139,7 +139,7 @@ impl Engine {
         session: &Session,
         id: &str,
     ) -> Result<a11y::ElementRef, ToolError> {
-        self.desk.element(session.id(), id)
+        self.desk.element(session, id)
     }
 
     /// The readiness report, as `status` returns it to `session`.
@@ -153,7 +153,7 @@ impl Engine {
             event_stream: Some(event_stream),
             audit: &self.audit,
             noctalia_installed: self.noctalia_installed,
-            lease: self.desk.status(session.id()),
+            lease: self.desk.status(session),
             policy: &settings.policy,
             unrestricted: &settings.unrestricted,
             accessibility: &self.accessibility,
@@ -173,17 +173,14 @@ impl Engine {
             .await
             .ok()
             .and_then(|waiter| waiter.view().focused_window());
-        let holder = self
-            .desk
-            .acquire(session.id(), label, refusal, focused)
-            .await?;
-        Ok((holder, self.desk.users_window(session.id())))
+        let holder = self.desk.acquire(session, label, refusal, focused).await?;
+        Ok((holder, self.desk.users_window(session)))
     }
 
     /// Gives the lease up, with `restore_focus` first giving focus back to the user's
     /// window through the action gate.
     pub(crate) async fn release(&self, session: &Session, restore_focus: bool) -> Release {
-        let users_window = self.desk.users_window(session.id());
+        let users_window = self.desk.users_window(session);
         let restored = match (restore_focus, users_window) {
             (true, Some(id)) => Some(self.restore(session, id).await),
             _ => None,
@@ -191,14 +188,14 @@ impl Engine {
         Release {
             users_window,
             restored,
-            released: self.desk.release(session.id()).await,
+            released: self.desk.release(session).await,
         }
     }
 
     /// Ends `session` once its client has gone: drops its running action and gives its
     /// lease up, without giving focus back.
     pub(crate) async fn end_session(&self, session: &Session) {
-        self.desk.end_session(session.id()).await;
+        self.desk.end_session(session).await;
     }
 
     /// Runs one action through the desk's gate, with a screenshot when `shoot` asks for one
@@ -214,7 +211,7 @@ impl Engine {
         let refusal = Box::pin(self.refusal(session));
         let evidence = |outcome| Box::pin(self.evidence(session, outcome, shoot));
         self.desk
-            .act(session.id(), refusal, Box::pin(work), evidence)
+            .act(session, refusal, Box::pin(work), evidence)
             .await
     }
 
@@ -228,7 +225,7 @@ impl Engine {
     ) -> Result<observe::Screenshot, CallError> {
         // Boxed, because a saved capture makes a large future.
         let capture = Box::pin(self.capture_saving(session, request, save));
-        self.desk.observe(session.id(), capture).await
+        self.desk.observe(session, capture).await
     }
 
     /// The accessible elements `ask` names, each kept as an element ref while the lease is
@@ -243,7 +240,7 @@ impl Engine {
                 a11y::not_accessible("this session has no accessibility bus".to_owned()).into(),
             );
         };
-        let lease = self.desk.ref_lease(session.id());
+        let lease = self.desk.ref_lease(session);
         let remember = |element| lease.and_then(|lease| self.desk.remember_element(lease, element));
         // Boxed, because the walk's calls make a large future.
         Box::pin(elements::list(
@@ -288,7 +285,7 @@ impl Engine {
     ) -> Result<(wait::Report, Option<observe::Screenshot>), CallError> {
         let capture = || {
             let capture = self.capture(session, observe::Request::focused());
-            self.desk.observe(session.id(), capture)
+            self.desk.observe(session, capture)
         };
         if *until == wait::Until::ScreenStable {
             let (report, last) = wait::screen(capture, limit).await?;
@@ -315,9 +312,7 @@ impl Engine {
     async fn restore(&self, session: &Session, id: u64) -> Value {
         let refusal = Box::pin(self.refusal(session));
         let work = Box::pin(act::refocus(self.niri(), id));
-        let acted = self
-            .desk
-            .act(session.id(), refusal, work, std::future::ready);
+        let acted = self.desk.act(session, refusal, work, std::future::ready);
         let restored = match acted.await {
             Ok(outcome) => serde_json::to_value(outcome),
             Err(CallError::Tool(error)) => serde_json::to_value(error),
@@ -335,7 +330,7 @@ impl Engine {
         session: &Session,
         request: observe::Request,
     ) -> Result<observe::Screenshot, CallError> {
-        let lease = self.desk.ref_lease(session.id());
+        let lease = self.desk.ref_lease(session);
         let connection = self.events.as_ref().ok().and_then(EventStream::connection);
         let taken = Instant::now();
         let mut shot =
@@ -382,8 +377,6 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::policy::Source;
-    use crate::session::{Given, SessionId, Settings};
 
     #[tokio::test]
     async fn another_session_releasing_neither_refocuses_nor_learns_the_owners_window() {
@@ -400,25 +393,19 @@ mod tests {
             reason: Some("no session bus".to_owned()),
         };
         let engine = Engine::new(env, events, Audit::new(None), absent);
-        let owner = SessionId(1);
+        let owner = crate::test_support::session(1);
         engine
             .desk
-            .acquire(owner, "owner/1", None, Some(5))
+            .acquire(&owner, "owner/1", None, Some(5))
             .await
             .unwrap();
-        let given = Given {
-            unrestricted: None,
-            keyboard: None,
-            home: None,
-            policy: Source::Missing,
-        };
-        let other = Session::numbered(2, Settings::new(given));
+        let other = crate::test_support::session(2);
         let release = engine.release(&other, true).await;
         assert_eq!(release.users_window, None);
         assert!(release.restored.is_none(), "{:?}", release.restored);
         assert!(!release.released);
-        assert!(engine.desk.status(owner).held_by_me);
-        assert_eq!(engine.desk.users_window(owner), Some(5));
+        assert!(engine.desk.status(&owner).held_by_me);
+        assert_eq!(engine.desk.users_window(&owner), Some(5));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

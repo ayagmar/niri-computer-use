@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use tokio::io::{AsyncRead, ReadBuf};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 
 use crate::policy::{self, Loaded, Unrestricted};
 
@@ -77,32 +77,46 @@ impl Settings {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct SessionId(pub(crate) u64);
 
-/// A client: who it is, for the audit log and the lease record, and its settings.
+/// A client: who it is, for the audit log and the lease record, its settings, and whether
+/// it has ended. Clones share the ended flag.
 #[derive(Debug, Clone)]
 pub(crate) struct Session {
     id: SessionId,
-    /// The process the client started: this server.
+    /// The process the client started: this server, or the bridge.
     pid: u32,
     settings: Arc<Settings>,
+    ended: Arc<watch::Sender<bool>>,
 }
 
 impl Session {
-    /// The one client of a server that serves its own stdio.
-    pub(crate) fn local(settings: Settings) -> Self {
+    pub(crate) fn new(id: SessionId, pid: u32, settings: Settings) -> Self {
         Self {
-            id: SessionId(1),
-            pid: std::process::id(),
+            id,
+            pid,
             settings: Arc::new(settings),
+            ended: Arc::new(watch::Sender::new(false)),
         }
     }
 
-    /// A session numbered `id`, as one of several clients of one engine.
-    #[cfg(test)]
-    pub(crate) fn numbered(id: u64, settings: Settings) -> Self {
-        Self {
-            id: SessionId(id),
-            ..Self::local(settings)
-        }
+    /// The one client of a server that serves its own stdio.
+    pub(crate) fn local(settings: Settings) -> Self {
+        Self::new(SessionId(1), std::process::id(), settings)
+    }
+
+    /// Marks the session ended, for good.
+    pub(crate) fn end(&self) {
+        self.ended.send_replace(true);
+    }
+
+    pub(crate) fn has_ended(&self) -> bool {
+        *self.ended.borrow()
+    }
+
+    /// Returns once the session has ended.
+    pub(crate) async fn ended(&self) {
+        let mut ended = self.ended.subscribe();
+        // `self` holds the sender, so the wait can't fail.
+        ended.wait_for(|ended| *ended).await.map(drop).ok();
     }
 
     pub(crate) const fn id(&self) -> SessionId {

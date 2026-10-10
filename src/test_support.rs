@@ -19,6 +19,21 @@ pub(crate) fn fresh_dir(name: &str) -> PathBuf {
     dir
 }
 
+/// Session `id` of one process, with no policy file and nothing turned on.
+pub(crate) fn session(id: u64) -> crate::session::Session {
+    let given = crate::session::Given {
+        unrestricted: None,
+        keyboard: None,
+        home: None,
+        policy: crate::policy::Source::Missing,
+    };
+    crate::session::Session::new(
+        crate::session::SessionId(id),
+        std::process::id(),
+        crate::session::Settings::new(given),
+    )
+}
+
 /// A screenshot ref of a whole 960x720 output at scale 1.5, flipped, taken now.
 pub(crate) fn shot() -> crate::refs::Shot {
     use niri_ipc::{LogicalOutput, Transform};
