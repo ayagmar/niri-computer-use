@@ -46,7 +46,7 @@ pub(crate) struct Env {
     pub(crate) path: Option<OsString>,
     pub(crate) runtime_dir: Option<PathBuf>,
     pub(crate) wayland_display: Option<OsString>,
-    /// The Wayland display, once `main` has checked it is niri's.
+    /// The Wayland display's socket, checked against niri at each use.
     pub(crate) display: niri::Display,
     /// `$HOME`, for a `capture_dir` under `~/`.
     pub(crate) home: Option<PathBuf>,
@@ -81,7 +81,7 @@ impl Env {
             wayland_display: var("WAYLAND_DISPLAY"),
         };
         let session = discover::session(given, roots).await;
-        Self {
+        let mut env = Self {
             niri_socket: session
                 .niri_socket
                 .map_or_else(niri::Socket::unknown, niri::Socket::at),
@@ -107,7 +107,9 @@ impl Env {
                 .map(PathBuf::from)
                 .or_else(|| var("HOME").map(|home| PathBuf::from(home).join(".config"))),
             discovery: session.sources,
-        }
+        };
+        env.display = niri::Display::new(env.wayland_socket());
+        env
     }
 
     /// The policy file, `<config dir>/niri-computer-use/policy.toml`, read and checked.
@@ -152,12 +154,6 @@ impl Env {
             )
         })?;
         Ok(runtime.join(display))
-    }
-
-    /// Checks that the niri on `NIRI_SOCKET` serves the Wayland display, before anything
-    /// that reaches the display starts.
-    async fn check_display(&mut self) {
-        self.display = niri::Display::check(&self.niri_socket, self.wayland_socket()).await;
     }
 
     /// The session variables as found, for the server's children.
@@ -213,14 +209,9 @@ enum Command {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
-    let mut env = Env::read().await;
+    let env = Env::read().await;
     runner::pass_on(env.session_vars());
-    let command = command(&args);
-    // The stop flag mustn't wait on a compositor that may not answer.
-    if !matches!(command, Some(Command::Stop | Command::Resume) | None) {
-        env.check_display().await;
-    }
-    let result = match command {
+    let result = match command(&args) {
         Some(Command::Serve) => serve(env).await,
         Some(Command::Status) => {
             let audit = audit::Audit::new(env.state_dir.clone());

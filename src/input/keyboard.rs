@@ -290,8 +290,6 @@ pub(crate) async fn type_input(
             .into());
         }
     }
-    // wtype finds the display by name alone.
-    input.display.map_err(Clone::clone)?;
     let mut waiter = niri::waiter(input.niri.events).await?;
     let focus = check_expect(&expect, waiter.view())?;
     if let Some(refused) = policy::refuse_input(input.policy, super::focused_app_id(waiter.view()))
@@ -301,6 +299,12 @@ pub(crate) async fn type_input(
     let before = waiter.view().focused_window();
     let mut sent = Sent::default();
     for stroke in typing.strokes() {
+        // wtype finds the display by name alone, so who serves it is checked right before.
+        input
+            .display
+            .checked(input.niri.socket)
+            .await
+            .map_err(|error| partly(error, &typing, sent))?;
         run_wtype(
             input.runtime,
             typing.tool(),

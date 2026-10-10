@@ -33,7 +33,7 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 ### `session_mismatch`
 
-**Cause:** the Wayland display isn't served by the niri on niri's socket, so `WAYLAND_DISPLAY` and `NIRI_SOCKET` name two different compositors. The server checks this once at startup and then refuses input, screenshots and clipboard reads, because `wtype`, `grim` and `wl-paste` would reach the other compositor. `status` shows it under `display_error`.
+**Cause:** the Wayland display isn't served by the niri on niri's socket, so `WAYLAND_DISPLAY` and `NIRI_SOCKET` name two different compositors. The server checks this right before each input, screenshot and clipboard read, and refuses them, because `wtype`, `grim` and `wl-paste` would reach the other compositor. A niri that restarted while the server ran gives this too when another compositor took over the display. `status` shows the current check under `display_error`.
 
 **What to do:** pass the agent's client both variables from the same niri session, or neither, and start a new agent session.
 

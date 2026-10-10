@@ -11,11 +11,9 @@ mod native;
 pub(crate) mod paste;
 pub(crate) mod pointer;
 
-use std::path::Path;
-
 use crate::act::Niri;
 use crate::control::runtime::RuntimeDir;
-use crate::error::ToolError;
+use crate::niri::Display;
 use crate::niri::waiter::View;
 use crate::policy::Loaded;
 
@@ -23,8 +21,8 @@ use crate::policy::Loaded;
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Input<'a> {
     pub(crate) niri: Niri<'a>,
-    /// The Wayland display's socket once checked to be niri's, or why it can't be used.
-    pub(crate) display: Result<&'a Path, &'a ToolError>,
+    /// The Wayland display, checked against niri at each use.
+    pub(crate) display: &'a Display,
     pub(crate) runtime: &'a RuntimeDir,
     pub(crate) policy: &'a Loaded,
     pub(crate) keyboard: Option<&'a std::ffi::OsStr>,

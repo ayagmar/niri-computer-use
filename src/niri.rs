@@ -48,37 +48,38 @@ impl Default for Socket {
     }
 }
 
-/// The Wayland display's socket, checked to be served by the niri on niri's socket, or why
-/// it can't be used. wtype, grim and wl-paste find the display by name alone, so nothing
-/// that reaches the display starts without this check.
+/// The Wayland display's socket, or why it is unknown. A path names no compositor for
+/// good: niri can exit and another compositor take the name, so whatever reaches the
+/// display checks who serves it at the moment of use, either on its own connection or,
+/// for a child such as wtype, grim or wl-paste that finds the display by name, through
+/// `checked` right before it starts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Display(Result<PathBuf, ToolError>);
 
 impl Display {
-    /// Checks once, within the connections' deadlines, that the niri on `socket` serves
-    /// the display at `display`.
-    pub(crate) async fn check(socket: &Socket, display: Result<PathBuf, String>) -> Self {
-        let checked = async {
-            let display =
-                display.map_err(|detail| ToolError::new(ErrorName::UpstreamError, detail))?;
-            wayland::niri_stream(&display, pid(socket).await?).await?;
-            Ok(display)
-        };
-        Self(checked.await)
+    /// The display at `path`, or none, for the reason the error gives.
+    pub(crate) fn new(path: Result<PathBuf, String>) -> Self {
+        Self(path.map_err(|detail| ToolError::new(ErrorName::UpstreamError, detail)))
     }
 
-    /// The display's socket, or the error that says why it can't be used.
+    /// The display's socket, unchecked, for a connection that checks its own peer.
     pub(crate) fn path(&self) -> Result<&Path, &ToolError> {
         self.0.as_deref()
+    }
+
+    /// The display's socket, if the niri on `socket` serves it right now, within the
+    /// connections' deadlines: `niri_unavailable` once niri is gone, `session_mismatch`
+    /// when another process serves the display.
+    pub(crate) async fn checked(&self, socket: &Socket) -> Result<&Path, ToolError> {
+        let display = self.path().map_err(Clone::clone)?;
+        wayland::niri_stream(display, pid(socket).await?).await?;
+        Ok(display)
     }
 }
 
 impl Default for Display {
     fn default() -> Self {
-        Self(Err(ToolError::new(
-            ErrorName::UpstreamError,
-            "the Wayland display hasn't been checked against niri",
-        )))
+        Self::new(Err("WAYLAND_DISPLAY is not set".to_owned()))
     }
 }
 

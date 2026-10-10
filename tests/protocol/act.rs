@@ -1,6 +1,8 @@
 //! The action tools over stdio: the gate before each action, what niri is asked to do, and
 //! the outcome read from the events the test sends back, as niri would after the action.
 
+use std::os::unix::net::UnixListener;
+
 use niri_ipc::{Action, WorkspaceReferenceArg};
 use serde_json::{Value, json};
 
@@ -53,10 +55,14 @@ impl Desk {
         }
     }
 
-    /// Removes the Wayland display's socket after the server checked it at startup, so
-    /// native input finds nothing to connect to.
+    /// Removes the Wayland display's socket, so input finds nothing to connect to.
     fn unplug_display(&self) {
         std::fs::remove_file(self.fixture.path(&format!("run/{DISPLAY}"))).unwrap();
+    }
+
+    /// Serves the display from the test's process again, as the fixture does.
+    fn replug_display(&self) -> UnixListener {
+        UnixListener::bind(self.fixture.path(&format!("run/{DISPLAY}"))).unwrap()
     }
 
     /// Calls `tool`, hands its action to `respond`, and returns the result.
@@ -582,6 +588,7 @@ async fn denial_is_focus_based_and_unchecked_expect_does_not_bypass_it() {
     let (name, detail) = tool_error(&click);
     assert_eq!(name, "upstream_error");
     assert!(detail.starts_with("connect to"), "{detail}");
+    let _display = desk.replug_display();
     fake_wtype(&desk.fixture, "cat >/dev/null");
     let allowed = desk
         .server
@@ -781,16 +788,15 @@ async fn paste_checks_its_text_focus_app_and_clipboard_before_the_key() {
         .call("paste", paste("x", json!({"window_id": 2})))
         .await;
     assert_eq!(tool_error(&elsewhere).0, "focus_mismatch");
-    // Nothing serves the fixture's Wayland display, so the clipboard can't be saved.
+    // Nothing serves the fixture's Wayland display, so the clipboard isn't touched.
     desk.unplug_display();
-    let unsaved = desk
+    let unserved = desk
         .server
         .call("paste", paste("pasted words", json!({"app_id": "a"})))
         .await;
-    let (name, detail) = tool_error(&unsaved);
-    assert_eq!(name, "clipboard_unsaved");
-    assert!(detail.contains("connect to"), "{detail}");
-    assert!(detail.ends_with("nothing was pasted"), "{detail}");
+    let (name, detail) = tool_error(&unserved);
+    assert_eq!(name, "upstream_error");
+    assert!(detail.starts_with("connect to"), "{detail}");
     assert!(!desk.fixture.path("wtype.args").exists());
 
     focus_changed(&desk.stream, 2);
@@ -812,7 +818,7 @@ async fn paste_checks_its_text_focus_app_and_clipboard_before_the_key() {
         [
             json!(["paste", {"text_len": 1024 * 1024 + 1, "keys": "ctrl+v", "expect": "none"}, null, null, "text_too_long"]),
             json!(["paste", {"text_len": 1, "keys": "ctrl+v", "expect": {"window_id": 2}}, null, null, "focus_mismatch"]),
-            json!(["paste", {"text_len": 12, "keys": "ctrl+v", "expect": {"app_id": "a"}}, null, null, "clipboard_unsaved"]),
+            json!(["paste", {"text_len": 12, "keys": "ctrl+v", "expect": {"app_id": "a"}}, null, null, "upstream_error"]),
             json!(["paste", {"text_len": 1, "keys": "ctrl+v", "expect": {"app_id": "b"}}, null, null, "app_denied"]),
         ]
     );

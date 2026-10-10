@@ -1011,7 +1011,7 @@ impl Server {
         let work = async {
             let input = Input {
                 niri: self.niri(),
-                display: self.env.display.path(),
+                display: &self.env.display,
                 runtime: self.desk.runtime()?,
                 policy: &self.policy,
                 keyboard: self.env.keyboard.as_deref(),
@@ -1264,7 +1264,7 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         self.audited(&context, "clipboard_read", Value::Null, async {
-            answer(clipboard::read_text(&self.env.display).await)
+            answer(clipboard::read_text(&self.env.niri_socket, &self.env.display).await)
         })
         .await
     }
@@ -1291,7 +1291,7 @@ impl Server {
         let work = async {
             let input = Input {
                 niri: self.niri(),
-                display: self.env.display.path(),
+                display: &self.env.display,
                 runtime: self.desk.runtime()?,
                 policy: &self.policy,
                 keyboard: self.env.keyboard.as_deref(),
@@ -1329,7 +1329,7 @@ impl Server {
         let work = async {
             let input = Input {
                 niri: self.niri(),
-                display: self.env.display.path(),
+                display: &self.env.display,
                 runtime: self.desk.runtime()?,
                 policy: &self.policy,
                 keyboard: self.env.keyboard.as_deref(),

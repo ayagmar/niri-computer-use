@@ -272,7 +272,7 @@ pub(crate) async fn point(
         .into_iter()
         .map(|point| shot.aim_at(point, now, &outputs, connection))
         .collect::<Result<Vec<_>, _>>()?;
-    let display = input.display.map_err(Clone::clone)?;
+    let display = input.display.path().map_err(Clone::clone)?;
     let held = Held::prepare(input, waiter.view(), keys).await?;
     let pointer = Pointer::bind(display, niri::pid(socket).await?, &shot.output).await?;
     let pressing = Pressing { tool, button };

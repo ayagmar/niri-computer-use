@@ -83,7 +83,6 @@ pub(crate) async fn paste(
     expect: Expect,
 ) -> Result<Outcome, CallError> {
     check_text(text)?;
-    input.display.map_err(Clone::clone)?;
     // The clipboard isn't touched for a paste the key's own checks would refuse.
     let waiter = niri::waiter(input.niri.events).await?;
     keyboard::check_expect(&expect, waiter.view())?;
@@ -92,6 +91,7 @@ pub(crate) async fn paste(
         return Err(refused.into());
     }
     drop(waiter);
+    input.display.checked(input.niri.socket).await?;
     let mut keeper = Keeper::start(text.as_bytes()).await?;
     keeper.arm().await?;
     let typed = keyboard::type_input(input, Typing::Keys(vec![combo.to_owned()]), expect).await;

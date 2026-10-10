@@ -137,14 +137,13 @@ pub(crate) struct Screenshot {
     pub(crate) image: Vec<u8>,
 }
 
-/// Captures with grim, which finds the display by name alone, so only once `display` is
-/// checked to be niri's.
+/// Captures with grim, which finds the display by name alone, so only right after the
+/// niri on `socket` is found serving `display`.
 pub(crate) async fn screenshot(
     socket: &Socket,
     display: &Display,
     request: &Request,
 ) -> Result<Screenshot, CallError> {
-    display.path().map_err(Clone::clone)?;
     let outputs = niri::outputs(socket).await?;
     let focused = match request.target {
         Target::FocusedOutput => niri::focused_output(socket)
@@ -156,6 +155,7 @@ pub(crate) async fn screenshot(
         .map_err(CallError::InvalidArguments)?;
     let plan = plan(output, &request.target, request.max_width, request.format)
         .map_err(CallError::InvalidArguments)?;
+    display.checked(socket).await?;
     let started = Instant::now();
     let captured_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)

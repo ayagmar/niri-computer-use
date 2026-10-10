@@ -2,6 +2,8 @@
 //! server finds both in the fixture's runtime directory, by niri's own socket naming. And
 //! variables that name two compositors: nothing that reaches the display may run.
 
+use std::os::unix::net::UnixListener;
+
 use serde_json::{Value, json};
 
 use crate::client::{Server, tool_error};
@@ -172,5 +174,65 @@ async fn a_display_niri_doesnt_serve_refuses_input_screenshots_and_the_clipboard
             !fixture.path(&format!("{program}.ran")).exists(),
             "{program} ran"
         );
+    }
+}
+
+/// Sol's lifetime case: the display passes the check at startup, then is served by another
+/// process, first while niri still runs and then after niri is gone. The server checks at
+/// each use, so nothing that reaches the display runs.
+#[tokio::test]
+async fn a_display_replaced_after_startup_refuses_input_screenshots_and_the_clipboard() {
+    let mut fixture = Fixture::new("display-replaced");
+    fixture.unset("NIRI_SOCKET");
+    let backend = fixture.path("run/backend.sock");
+    let mut niri = Niri::listen(&backend);
+    let (process, name) = NiriProcess::discoverable(&fixture, DISPLAY, &backend).await;
+    fixture.program("noctalia", "exit 0");
+    let _noctalia = noctalia::start(&fixture, UNLOCKED);
+    for program in ["wtype", "grim", "wl-paste"] {
+        fixture.program(program, &format!(": > \"$DIR/{program}.ran\""));
+    }
+    let mut server = Server::start(&fixture).await;
+    let stream = niri.stream().await;
+    stream.initial(&[window_on(1, Some("a"), 1, true)]);
+    assert_eq!(
+        server.structured("status").await["display_error"],
+        Value::Null
+    );
+    server.structured("acquire_desktop").await;
+
+    let display = fixture.path(&format!("run/{DISPLAY}"));
+    std::fs::remove_file(&display).unwrap();
+    let _replacement = UnixListener::bind(&display).unwrap();
+    refuses_what_reaches_the_display(&mut server, "session_mismatch").await;
+
+    drop(process);
+    std::fs::remove_file(fixture.path(&format!("run/{name}"))).unwrap();
+    refuses_what_reaches_the_display(&mut server, "niri_unavailable").await;
+    for program in ["wtype", "grim", "wl-paste"] {
+        assert!(
+            !fixture.path(&format!("{program}.ran")).exists(),
+            "{program} ran"
+        );
+    }
+}
+
+/// `status` shows `expected` under `display_error`, and input, a screenshot and a clipboard
+/// read are refused with it.
+async fn refuses_what_reaches_the_display(server: &mut Server, expected: &str) {
+    assert_eq!(
+        server.structured("status").await["display_error"]["error"],
+        expected
+    );
+    for (tool, arguments) in [
+        (
+            "type_text",
+            json!({"text": "secret", "expect": {"app_id": "a"}}),
+        ),
+        ("screenshot", json!({"target": "focused_output"})),
+        ("clipboard_read", json!({})),
+    ] {
+        let (refused, detail) = tool_error(&server.call(tool, arguments).await);
+        assert_eq!(refused, expected, "{tool}: {detail}");
     }
 }
