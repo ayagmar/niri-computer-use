@@ -3,8 +3,10 @@
 //! `NIRI_SOCKET` and `WAYLAND_DISPLAY`. A variable that is set always wins; discovery
 //! fills in only what is missing, from the way logind and niri lay out a session:
 //!
-//! - the runtime directory is `/run/user/<euid>`, which logind creates for the user with
-//!   mode `0700`;
+//! - the runtime directory is the one holding a given `NIRI_SOCKET`, because niri puts its
+//!   socket in its own runtime directory (`socket_dir` in niri v26.04 `src/ipc/server.rs`);
+//!   without one, it is `/run/user/<euid>`, which logind creates for the user with mode
+//!   `0700`. Either must belong to the user and have mode `0700`;
 //! - niri's socket is `niri.<display>.<pid>.sock` in niri's runtime directory
 //!   (`IpcServer::start` in niri v26.04 `src/ipc/server.rs`);
 //! - the Wayland display is that `<display>`, a socket in the runtime directory.
@@ -36,6 +38,8 @@ pub(crate) struct Sources {
     pub(crate) runtime_dir: Source,
     pub(crate) niri_socket: Source,
     pub(crate) wayland_display: Source,
+    /// A doubt about the values that doesn't stop the server from using them.
+    pub(crate) warning: Option<String>,
 }
 
 impl Default for Sources {
@@ -46,6 +50,7 @@ impl Default for Sources {
             runtime_dir: unset("XDG_RUNTIME_DIR"),
             niri_socket: unset("NIRI_SOCKET"),
             wayland_display: unset("WAYLAND_DISPLAY"),
+            warning: None,
         }
     }
 }
@@ -87,8 +92,12 @@ pub(crate) struct Session {
 
 /// Fills in what `given` lacks.
 pub(crate) fn session(given: Given, roots: &Roots<'_>) -> Session {
+    let warning = misplaced(given.runtime_dir.as_deref(), given.niri_socket.as_deref());
     let (runtime_dir, runtime_source) = pick(given.runtime_dir, || {
-        runtime_dir(roots.run_user, roots.euid)
+        given.niri_socket.as_deref().map_or_else(
+            || runtime_dir(roots.run_user, roots.euid),
+            |socket| socket_runtime_dir(socket, roots.euid),
+        )
     });
     let runtime_dir = runtime_dir.ok();
     let (niri_socket, niri_source) = pick(given.niri_socket, || {
@@ -108,6 +117,7 @@ pub(crate) fn session(given: Given, roots: &Roots<'_>) -> Session {
             runtime_dir: runtime_source,
             niri_socket: niri_source,
             wayland_display: wayland_source,
+            warning,
         },
     }
 }
@@ -126,27 +136,61 @@ fn pick<T>(
     }
 }
 
-/// `<run_user>/<euid>`, if it is a directory of `euid`'s with mode `0700`, as logind
-/// creates it.
+/// `<run_user>/<euid>`, if it is a private directory of `euid`'s, as logind creates it.
 fn runtime_dir(run_user: &Path, euid: u32) -> Result<PathBuf, String> {
     let dir = run_user.join(euid.to_string());
-    let unusable = |why: String| format!("XDG_RUNTIME_DIR is not set and {} {why}", dir.display());
-    let meta = std::fs::symlink_metadata(&dir)
-        .map_err(|error| unusable(format!("can't be read: {error}")))?;
+    private(&dir, euid)
+        .map(|()| dir.clone())
+        .map_err(|why| format!("XDG_RUNTIME_DIR is not set and {} {why}", dir.display()))
+}
+
+/// The directory holding niri's socket, which is niri's runtime directory, if it is a
+/// private directory of `euid`'s. Anything else is refused, never replaced by another
+/// directory: the lease and the stop flag must be the ones niri's own session uses.
+fn socket_runtime_dir(socket: &Path, euid: u32) -> Result<PathBuf, String> {
+    let dir = socket.parent().unwrap_or_else(|| Path::new(""));
+    private(dir, euid)
+        .map(|()| dir.to_path_buf())
+        .map_err(|why| {
+            format!(
+                "XDG_RUNTIME_DIR is not set and {}, the directory of NIRI_SOCKET, {why}; set \
+             XDG_RUNTIME_DIR to niri's runtime directory",
+                dir.display()
+            )
+        })
+}
+
+/// Whether `dir` is a directory, not a symlink, owned by `euid` with mode `0700`; if not,
+/// why not.
+fn private(dir: &Path, euid: u32) -> Result<(), String> {
+    let meta = std::fs::symlink_metadata(dir).map_err(|error| format!("can't be read: {error}"))?;
     if !meta.is_dir() {
-        return Err(unusable("is not a directory".to_owned()));
+        return Err("is not a directory".to_owned());
     }
     if meta.uid() != euid {
-        return Err(unusable(format!(
-            "belongs to user {}, not {euid}",
-            meta.uid()
-        )));
+        return Err(format!("belongs to user {}, not {euid}", meta.uid()));
     }
     let mode = meta.mode() & 0o7777;
     if mode != 0o700 {
-        return Err(unusable(format!("has mode {mode:04o}, not 0700")));
+        return Err(format!("has mode {mode:04o}, not 0700"));
     }
-    Ok(dir)
+    Ok(())
+}
+
+/// A warning when both variables are given and niri's socket isn't in the runtime
+/// directory. niri puts its socket in its own runtime directory, but the same directory
+/// can be spelled another way, through a symlink for one, so this doesn't refuse.
+fn misplaced(runtime_dir: Option<&Path>, niri_socket: Option<&Path>) -> Option<String> {
+    let (runtime_dir, socket) = (runtime_dir?, niri_socket?);
+    (socket.parent() != Some(runtime_dir)).then(|| {
+        format!(
+            "NIRI_SOCKET {} is not in XDG_RUNTIME_DIR {}; unless that is another name for \
+             niri's runtime directory, this server's lease and stop flag aren't the ones \
+             servers started from niri's session use",
+            socket.display(),
+            runtime_dir.display()
+        )
+    })
 }
 
 /// The display and PID in a socket name niri gives, `niri.<display>.<pid>.sock`.
@@ -392,6 +436,7 @@ mod tests {
                 runtime_dir: found.clone(),
                 niri_socket: found.clone(),
                 wayland_display: found,
+                warning: None,
             }
         );
     }
@@ -480,6 +525,7 @@ mod tests {
                 runtime_dir: given.clone(),
                 niri_socket: given.clone(),
                 wayland_display: given,
+                warning: None,
             }
         );
     }
@@ -501,6 +547,60 @@ mod tests {
         let gone = host.session(given("niri.wayland-4.42.sock"));
         let absent = missing(&gone.sources.wayland_display);
         assert!(absent.ends_with("wayland-4 is not a socket"), "{absent}");
+    }
+
+    #[test]
+    fn a_given_niri_socket_names_the_runtime_directory() {
+        let host = Host::new("discover-nested");
+        let nested = host.root.join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let _display = UnixListener::bind(nested.join("wayland-2")).unwrap();
+        let socket = nested.join("niri.wayland-2.42.sock");
+        let given = || Given {
+            niri_socket: Some(socket.clone()),
+            ..Given::default()
+        };
+        let session = host.session(given());
+        assert_eq!(session.runtime_dir, Some(nested.clone()));
+        assert_eq!(session.sources.runtime_dir, Source::Discovered);
+        assert_eq!(session.wayland_display, Some("wayland-2".into()));
+
+        // Never the default directory instead: its lease and stop flag are another one's.
+        std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let open = host.session(given());
+        assert_eq!(open.runtime_dir, None);
+        let detail = missing(&open.sources.runtime_dir);
+        assert!(
+            detail.contains("the directory of NIRI_SOCKET, has mode 0755, not 0700"),
+            "{detail}"
+        );
+        assert!(detail.ends_with("set XDG_RUNTIME_DIR to niri's runtime directory"));
+    }
+
+    #[test]
+    fn a_niri_socket_outside_the_given_runtime_directory_is_a_warning() {
+        let host = Host::new("discover-misplaced");
+        let session = host.session(Given {
+            runtime_dir: Some("/run/user/1000".into()),
+            niri_socket: Some("/tmp/nested/niri.wayland-2.42.sock".into()),
+            wayland_display: None,
+        });
+        assert_eq!(session.runtime_dir, Some("/run/user/1000".into()));
+        let warning = session.sources.warning.unwrap();
+        assert!(
+            warning.starts_with(
+                "NIRI_SOCKET /tmp/nested/niri.wayland-2.42.sock is not in XDG_RUNTIME_DIR \
+                 /run/user/1000"
+            ),
+            "{warning}"
+        );
+        let inside = host.session(Given {
+            runtime_dir: Some("/run/user/1000/".into()),
+            niri_socket: Some("/run/user/1000/niri.wayland-1.5.sock".into()),
+            wayland_display: None,
+        });
+        assert_eq!(inside.sources.warning, None);
     }
 
     #[test]

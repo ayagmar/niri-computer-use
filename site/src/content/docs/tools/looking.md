@@ -15,6 +15,7 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 |---|---|
 | `instance` | the basename of niri's socket, which names the niri instance |
 | `discovery.runtime_dir`, `discovery.niri_socket`, `discovery.wayland_display` | where each came from: `{"source": "environment"}`, `{"source": "discovered"}`, or `{"source": "missing", "detail": …}` with why (see [Session variables](../../start/clients/#session-variables)) |
+| `discovery.warning` | null, or why the given variables might not fit together, such as `NIRI_SOCKET` outside `XDG_RUNTIME_DIR` |
 | `niri.version` | niri's version string, such as `26.04 (8ed0da4)` |
 | `niri.ipc_crate` | the `niri-ipc` version this build uses, `26.4.0` |
 | `niri.compat` | `ok` when the major and minor versions match, `patch_warning` when only the patch differs, `read_only` otherwise |
