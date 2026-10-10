@@ -146,15 +146,15 @@ impl Waiter {
     /// Applies the next event the view doesn't hold yet.
     async fn next<T>(&mut self, deadline: Instant) -> Result<(), Waited<T>> {
         loop {
-            let update = match tokio::time::timeout_at(deadline, self.updates.recv()).await {
-                Err(_) => return Err(Waited::Timeout),
-                Ok(Ok(update)) => update,
-                Ok(Err(broadcast::error::RecvError::Lagged(missed))) => {
+            let update = match self.receive(deadline).await {
+                None => return Err(Waited::Timeout),
+                Some(Ok(update)) => update,
+                Some(Err(broadcast::error::RecvError::Lagged(missed))) => {
                     return Err(Waited::Lost(format!(
                         "missed {missed} of niri's events while waiting"
                     )));
                 }
-                Ok(Err(broadcast::error::RecvError::Closed)) => {
+                Some(Err(broadcast::error::RecvError::Closed)) => {
                     return Err(Waited::Lost("niri's event stream stopped".to_owned()));
                 }
             };
@@ -172,6 +172,31 @@ impl Waiter {
                     self.view.apply(*event);
                     return Ok(());
                 }
+            }
+        }
+    }
+
+    /// The next update, or `None` at the deadline. Past it, the stream's task gets one
+    /// turn to pass on what niri already sent, and then only updates already received
+    /// count: a timer would round up to the next millisecond tick.
+    async fn receive(
+        &mut self,
+        deadline: Instant,
+    ) -> Option<Result<Update, broadcast::error::RecvError>> {
+        if Instant::now() < deadline {
+            return tokio::time::timeout_at(deadline, self.updates.recv())
+                .await
+                .ok();
+        }
+        tokio::task::yield_now().await;
+        match self.updates.try_recv() {
+            Ok(update) => Some(Ok(update)),
+            Err(broadcast::error::TryRecvError::Empty) => None,
+            Err(broadcast::error::TryRecvError::Lagged(missed)) => {
+                Some(Err(broadcast::error::RecvError::Lagged(missed)))
+            }
+            Err(broadcast::error::TryRecvError::Closed) => {
+                Some(Err(broadcast::error::RecvError::Closed))
             }
         }
     }
@@ -286,5 +311,47 @@ pub(crate) mod tests {
             waiter.until(LIMIT, |_| None::<()>).await,
             Waited::Lost(reason) if reason.contains("stopped")
         ));
+    }
+
+    /// Native typing checks focus before every key pair; a timer tick per check cost about
+    /// a millisecond each, most of a 100-key call.
+    #[tokio::test]
+    async fn a_zero_wait_answers_without_a_timer_tick() {
+        let (mut waiter, sender) = waiter(view(vec![window(1, None, 1, true)]), 0);
+        let started = std::time::Instant::now();
+        for seq in 1..=100 {
+            assert_eq!(
+                waiter.until(Duration::ZERO, |_| None::<()>).await,
+                Waited::Timeout
+            );
+            sender.send(Update::Event(seq, Box::new(focus(2)))).unwrap();
+            assert_eq!(
+                waiter.until(Duration::ZERO, |_| None::<()>).await,
+                Waited::Timeout
+            );
+            assert_eq!(waiter.view().focused_window(), None);
+        }
+        assert!(
+            started.elapsed() < Duration::from_millis(20),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    /// The stream's task must get a turn first: an event it has already read but not yet
+    /// passed on would otherwise reach the check only after the next key.
+    #[tokio::test]
+    async fn a_zero_wait_lets_the_stream_pass_on_what_it_has() {
+        let (mut waiter, sender) = waiter(view(vec![window(1, None, 1, true)]), 0);
+        tokio::spawn(async move {
+            sender.send(Update::Event(1, Box::new(focus(2)))).unwrap();
+        });
+        assert_eq!(
+            waiter
+                .until(Duration::ZERO, |view| (view.focused_window() != Some(1))
+                    .then_some(()))
+                .await,
+            Waited::Done(())
+        );
     }
 }
