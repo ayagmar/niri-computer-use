@@ -25,6 +25,14 @@ cargo install --locked --path niri-computer-use
 
 The binary goes to `~/.cargo/bin/niri-computer-use`. To update, pull and run the same `cargo install` again.
 
+Before updating, end every running `niri-computer-use` process: close the agent sessions that run `serve`, and with [`shared`](../../concepts/configuration/#shared) on, wait for the engine to exit, two seconds after its last client, or end it. This lists any still running:
+
+```sh
+pgrep -a '^niri-computer-u'
+```
+
+Older development builds keep the lease, the stop flag and the input-dirty marker under `XDG_RUNTIME_DIR` rather than beside niri's socket, and don't take the marker's lock, so an old and a new server on one niri would act as if the other weren't there. Start your clients again once nothing is listed.
+
 ## Check it
 
 From a shell inside your niri session:

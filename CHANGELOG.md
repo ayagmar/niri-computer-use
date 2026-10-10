@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## Unreleased
 
+### Upgrading
+
+- Before upgrading, end every running `niri-computer-use` process, servers, bridges and shared engines alike, then start your clients again. `pgrep -a '^niri-computer-u'` lists them. Older builds keep their runtime directory under `XDG_RUNTIME_DIR` rather than beside niri's socket, so an old and a new server on one niri share neither the lease nor the stop flag, and they don't take the input-dirty marker's lock.
+
 ### Added
 
 - Optional GTK 4 button-activation acceptance in `make nested-input`: 100 actual activations with observed-counter latency percentiles.
@@ -76,7 +80,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - C15's nested capture assertions use grim's truncated image size instead of rounding odd dimensions.
 - `close_window` and `niri_action`'s `CloseWindow` refuse with `app_denied` to close a window whose app is on the policy's deny list, named or focused.
 - The audit log no longer keeps text an agent passes to `niri_action` or `noctalia`, such as a `Spawn` command or a notification body: it logs the action's name, field names, numbers and booleans with every string as its length in bytes, and only Noctalia's argument count and byte lengths.
-- Another session's `acquire_desktop` refuses with `lease_held` at once, instead of waiting for the owner's running action; the lease is checked again before it is granted.
+- Another session's `acquire_desktop` refuses with `lease_held` at once, instead of waiting for the owner's running action. After its readiness check it looks again at whether the session has ended, the stop flag and the input-dirty marker before granting the lease.
 - A stopped, cancelled or disconnected `paste` no longer restores the clipboard before a key already on its way arrives. If the server dies once the key may be on its way, the keeper keeps the pasted text and reports `clipboard: kept` rather than risk pasting the saved clipboard.
 - Servers for one niri share its lease and stop flag whatever `XDG_RUNTIME_DIR` or `NIRI_SOCKET` spelling their clients pass.
 - Every change to the input-dirty marker takes one lock, so an older call's cleanup can't remove a newer call's marker.
