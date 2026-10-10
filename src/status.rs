@@ -14,7 +14,7 @@ use crate::error::ToolError;
 use crate::niri::events::StreamState;
 use crate::niri::{self, version::Compat};
 use crate::noctalia::{self, Presence};
-use crate::policy::{self, Facts, Loaded, PolicyStatus};
+use crate::policy::{self, Facts, Loaded, PolicyStatus, UnrestrictedStatus};
 use crate::{Env, a11y, discover};
 
 /// Programs the server runs or will run, reported as found on `PATH` or not.
@@ -42,6 +42,9 @@ pub(crate) struct Status {
     accessibility: a11y::Presence,
     audit: AuditStatus,
     policy: PolicyStatus,
+    /// Whether gated actions are allowed, and whether the policy file or the environment
+    /// allowed them.
+    unrestricted: UnrestrictedStatus,
     binaries: BTreeMap<&'static str, bool>,
 }
 
@@ -139,6 +142,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         accessibility: accessibility.clone(),
         audit: audit.status(),
         policy: policy.status(),
+        unrestricted: env.unrestricted(policy).status(),
         binaries: BINARIES
             .into_iter()
             .map(|name| (name, env.finds(name)))
@@ -215,6 +219,7 @@ mod tests {
                     "capture_dir": null,
                     "error": null
                 },
+                "unrestricted": {"enabled": false, "source": null, "error": null},
                 "binaries": {
                     "grim": false, "loginctl": false, "wl-copy": false, "wl-paste": false, "wtype": false
                 }

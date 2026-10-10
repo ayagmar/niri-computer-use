@@ -54,6 +54,8 @@ pub(crate) struct Env {
     pub(crate) config_dir: Option<PathBuf>,
     /// Explicit experimental backend selection; absent means wtype.
     pub(crate) keyboard: Option<OsString>,
+    /// `NIRI_COMPUTER_USE_UNRESTRICTED`, as given: `1` turns `unrestricted` on.
+    pub(crate) unrestricted: Option<OsString>,
     /// The session bus, where the accessibility bus is looked up:
     /// `DBUS_SESSION_BUS_ADDRESS`, or else the user bus in the runtime directory.
     pub(crate) session_bus: Option<OsString>,
@@ -84,6 +86,7 @@ impl Env {
             wayland_display: session.wayland_display,
             home: var("HOME").map(PathBuf::from),
             keyboard: var("NIRI_COMPUTER_USE_KEYBOARD"),
+            unrestricted: var("NIRI_COMPUTER_USE_UNRESTRICTED"),
             // Without the variable, D-Bus clients (libdbus, sd-bus, zbus) use the user bus
             // systemd starts at `$XDG_RUNTIME_DIR/bus`.
             session_bus: var("DBUS_SESSION_BUS_ADDRESS").or_else(|| {
@@ -113,7 +116,16 @@ impl Env {
         let read = path
             .as_deref()
             .map(|path| (path, std::fs::read_to_string(path)));
-        policy::Loaded::from_read(read)
+        let env_on = policy::Unrestricted::parse_env(self.unrestricted.as_deref()) == Ok(true);
+        policy::Loaded::from_read(read, env_on)
+    }
+
+    /// Whether `unrestricted` is on, from the policy file `policy` and the environment.
+    pub(crate) fn unrestricted(&self, policy: &policy::Loaded) -> policy::Unrestricted {
+        policy::Unrestricted {
+            policy: policy.unrestricted(),
+            env: policy::Unrestricted::parse_env(self.unrestricted.as_deref()),
+        }
     }
 
     /// The basename of `NIRI_SOCKET`, which names the compositor instance.

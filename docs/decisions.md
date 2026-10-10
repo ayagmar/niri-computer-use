@@ -579,3 +579,12 @@ These match the versions installed locally.
 - Everything else only changes niri's layout, focus or views and is allowed, including `CloseWindow`, `SetWorkspaceName`, the overview and urgency.
 - For an action about one window, the result reports that window as niri's event stream shows it: within 1 s of the action, plus 200 ms for a resize that arrives in steps. niri 26.04's IPC has no fullscreen or maximized flag, so those show as sizes. A 1 s wait on an action that changes nothing is the cost.
 - The gate is checked after the lease, stop and lock checks, so a refused action is audit-logged like any other.
+
+## 2026-10-10: `unrestricted`, off by default
+
+- One top-level key, `unrestricted = true`, instead of lists. Turning it on lets `niri_action` send the gated actions and lifts the preset rules: terminals with arguments, programs that run commands, and an `env` table.
+- It is off by default. Agents without a shell, such as desktop apps, can't run programs except through this server, and with it off the server starts only what the user put in a preset. Turning it on means an agent can run any program through the server. The lease, the stop key and the audit log still apply to every call.
+- `NIRI_COMPUTER_USE_UNRESTRICTED=1` turns it on as well, so a user can allow it for one MCP client in that client's server settings without a policy file. Either source enables it; nothing in the environment turns off a file's `true`. Any other value counts as off and is reported in `status.unrestricted.error`, so a typo such as `true` isn't silently ignored. It doesn't make the server read-only, because nothing gets looser.
+- `status.unrestricted` reports `enabled`, `source` (`policy`, `env` or `both`) and `error`.
+- A preset's `env` is applied by spawning `env -- NAME=value … argv` through niri, because niri 26.04's `Spawn` has no environment field. niri still starts it with the session's environment, plus these variables. Names must be non-empty and free of `=` and NUL, and with `env` the program can't contain `=`, which `env` would read as an assignment. Without `unrestricted`, a preset with `env` makes the file invalid.
+- An agent never adds arguments or variables: `launch` still takes only a preset name.

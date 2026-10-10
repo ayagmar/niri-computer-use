@@ -36,6 +36,7 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `policy.presets`, `policy.denied_app_ids`, `policy.error` | how many presets and denied apps the policy file has, and why it is invalid |
 | `policy.preset_names` | the preset names `launch` takes |
 | `policy.capture_dir` | where `screenshot` saves, as the file writes it, or null when saving is off |
+| `unrestricted.enabled`, `unrestricted.source`, `unrestricted.error` | whether gated `niri_action`s and unrestricted presets are allowed, whether the policy file, `NIRI_COMPUTER_USE_UNRESTRICTED` or both allowed them, and why the variable was ignored |
 | `audit.path`, `audit.last_error` | the audit log and the last failure to write it |
 | `binaries` | whether `grim`, `wl-paste`, `wl-copy`, `wtype` and `loginctl` are on `PATH` |
 

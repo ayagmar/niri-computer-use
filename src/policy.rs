@@ -7,7 +7,7 @@
 //! mistakes. They are a guardrail, not a boundary: a wrapper script or a symlink with
 //! another name gets past any list.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use niri_ipc::{Action, Output, Transform};
@@ -103,10 +103,32 @@ pub(crate) struct Policy {
 pub(crate) struct Preset {
     /// What `launch` takes.
     pub(crate) name: String,
-    /// Fixed; no shells, interpreters or terminals with arguments.
+    /// Fixed; without `unrestricted`, no shells, interpreters or terminals with arguments.
     pub(crate) argv: Vec<String>,
     /// For observing the launched window and for `reuse`.
     pub(crate) app_id: String,
+    /// Variables added to the app's environment; only with `unrestricted`.
+    #[serde(default)]
+    pub(crate) env: BTreeMap<String, String>,
+}
+
+impl Preset {
+    /// What niri spawns. niri's `Spawn` takes no environment, so variables go through
+    /// `env`, which niri finds on its `PATH`.
+    pub(crate) fn command(&self) -> Vec<String> {
+        if self.env.is_empty() {
+            return self.argv.clone();
+        }
+        let assignments = self
+            .env
+            .iter()
+            .map(|(name, value)| format!("{name}={value}"));
+        ["env".to_owned(), "--".to_owned()]
+            .into_iter()
+            .chain(assignments)
+            .chain(self.argv.iter().cloned())
+            .collect()
+    }
 }
 
 /// The file's state, as loaded once at startup.
@@ -136,12 +158,17 @@ pub(crate) struct PolicyStatus {
 impl Loaded {
     /// Checks what reading the file at `path` gave; `None` when there is no config
     /// directory to look in, which counts as invalid because a file might exist.
-    pub(crate) fn from_read(read: Option<(&Path, std::io::Result<String>)>) -> Self {
+    /// `unrestricted_env` is the environment turning `unrestricted` on, which lifts the
+    /// preset rules as the file's own key does.
+    pub(crate) fn from_read(
+        read: Option<(&Path, std::io::Result<String>)>,
+        unrestricted_env: bool,
+    ) -> Self {
         let Some((path, read)) = read else {
             return Self::Invalid("neither XDG_CONFIG_HOME nor HOME is set".to_owned());
         };
         match read {
-            Ok(text) => parse(&text).map_or_else(
+            Ok(text) => parse(&text, unrestricted_env).map_or_else(
                 |error| Self::Invalid(format!("{}: {error}", path.display())),
                 Self::Valid,
             ),
@@ -270,8 +297,9 @@ impl SavePath {
     }
 }
 
-/// Parses the file and checks every preset.
-pub(crate) fn parse(text: &str) -> Result<Policy, String> {
+/// Parses the file and checks every preset, by the looser rules when the file or the
+/// environment (`unrestricted_env`) turns `unrestricted` on.
+pub(crate) fn parse(text: &str, unrestricted_env: bool) -> Result<Policy, String> {
     let policy: Policy = toml::from_str(text).map_err(|error| error.to_string())?;
     if let Some(dir) = &policy.capture_dir
         && !Path::new(dir).is_absolute()
@@ -282,8 +310,9 @@ pub(crate) fn parse(text: &str) -> Result<Policy, String> {
         ));
     }
     let mut names = BTreeSet::new();
+    let unrestricted = policy.unrestricted || unrestricted_env;
     for preset in &policy.presets {
-        check(preset)?;
+        check(preset, unrestricted)?;
         if !names.insert(preset.name.as_str()) {
             return Err(format!("two presets are named {:?}", preset.name));
         }
@@ -291,7 +320,7 @@ pub(crate) fn parse(text: &str) -> Result<Policy, String> {
     Ok(policy)
 }
 
-fn check(preset: &Preset) -> Result<(), String> {
+fn check(preset: &Preset, unrestricted: bool) -> Result<(), String> {
     let name = &preset.name;
     if name.is_empty() || preset.app_id.is_empty() {
         return Err("a preset needs a non-empty name and app_id".to_owned());
@@ -299,6 +328,14 @@ fn check(preset: &Preset) -> Result<(), String> {
     let Some(program) = preset.argv.first().filter(|program| !program.is_empty()) else {
         return Err(format!("preset {name:?} has an empty argv"));
     };
+    if unrestricted {
+        return check_env(preset, program);
+    }
+    if !preset.env.is_empty() {
+        return Err(format!(
+            "preset {name:?} has env, which needs unrestricted = true"
+        ));
+    }
     let base = Path::new(program)
         .file_name()
         .map_or_else(String::new, |base| base.to_string_lossy().into_owned());
@@ -320,6 +357,81 @@ fn check(preset: &Preset) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// With `env`, the program goes after the assignments `env` reads, so it can't look like
+/// one, and each name must be one `env` can set.
+fn check_env(preset: &Preset, program: &str) -> Result<(), String> {
+    let name = &preset.name;
+    if preset.env.is_empty() {
+        return Ok(());
+    }
+    if program.contains('=') {
+        return Err(format!(
+            "preset {name:?} has env, so its program can't contain ="
+        ));
+    }
+    for (variable, value) in &preset.env {
+        if variable.is_empty() || variable.contains(['=', '\0']) || value.contains('\0') {
+            return Err(format!(
+                "preset {name:?} has env variable {variable:?}, which env can't set"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Whether `unrestricted` is on, and which source turned it on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Unrestricted {
+    /// The policy file's key.
+    pub(crate) policy: bool,
+    /// `NIRI_COMPUTER_USE_UNRESTRICTED`: on for `1`, off when unset or empty, and an error for
+    /// anything else, which leaves it off.
+    pub(crate) env: Result<bool, String>,
+}
+
+/// What `status` reports about `unrestricted`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct UnrestrictedStatus {
+    enabled: bool,
+    /// `policy`, `env` or `both`; null while off.
+    source: Option<&'static str>,
+    /// Why the variable was ignored.
+    error: Option<String>,
+}
+
+impl Unrestricted {
+    /// The variable's value, read as `Unrestricted::env` says.
+    pub(crate) fn parse_env(value: Option<&std::ffi::OsStr>) -> Result<bool, String> {
+        match value {
+            None => Ok(false),
+            Some(value) if value.is_empty() => Ok(false),
+            Some(value) if value == "1" => Ok(true),
+            Some(value) => Err(format!(
+                "NIRI_COMPUTER_USE_UNRESTRICTED is \"{}\"; only 1 turns unrestricted on, so it stays off",
+                value.display()
+            )),
+        }
+    }
+
+    pub(crate) const fn enabled(&self) -> bool {
+        self.policy || matches!(self.env, Ok(true))
+    }
+
+    pub(crate) fn status(&self) -> UnrestrictedStatus {
+        let source = match (self.policy, matches!(self.env, Ok(true))) {
+            (true, true) => Some("both"),
+            (true, false) => Some("policy"),
+            (false, true) => Some("env"),
+            (false, false) => None,
+        };
+        UnrestrictedStatus {
+            enabled: self.enabled(),
+            source,
+            error: self.env.clone().err(),
+        }
+    }
 }
 
 /// What the control decision looks at, gathered when `acquire_desktop` or an action tool
@@ -685,22 +797,23 @@ app_id = "foot"
 
     #[test]
     fn reads_the_plan_example() {
-        let policy = parse(EXAMPLE).unwrap();
+        let policy = parse(EXAMPLE, false).unwrap();
         assert_eq!(policy.deny_input_app_ids, ["org.keepassxc.KeePassXC"]);
         assert_eq!(policy.presets.len(), 2);
         assert_eq!(policy.presets[1].argv, ["/usr/bin/foot"]);
-        assert_eq!(parse("").unwrap(), Policy::default());
+        assert_eq!(parse("", false).unwrap(), Policy::default());
         // An app that only looks versioned, and a flatpak app, are fine.
         let fine = "[[preset]]\nname = \"a\"\nargv = [\"gimp-2.10\"]\napp_id = \"gimp\"\n\n[[preset]]\nname = \"b\"\nargv = [\"flatpak\", \"run\", \"org.mozilla.firefox\"]\napp_id = \"firefox\"\n";
-        assert_eq!(parse(fine).unwrap().presets.len(), 2);
+        assert_eq!(parse(fine, false).unwrap().presets.len(), 2);
     }
 
     #[test]
     fn refuses_presets_that_could_run_any_command() {
         let preset = |argv: &str| {
-            parse(&format!(
-                "[[preset]]\nname = \"x\"\nargv = {argv}\napp_id = \"x\""
-            ))
+            parse(
+                &format!("[[preset]]\nname = \"x\"\nargv = {argv}\napp_id = \"x\""),
+                false,
+            )
             .unwrap_err()
         };
         assert!(preset(r#"["bash", "-c", "rm -rf ~"]"#).contains("runs any command"));
@@ -719,43 +832,57 @@ app_id = "foot"
 
     #[test]
     fn refuses_unknown_keys_duplicates_and_blank_names() {
-        assert!(parse("deny_apps = []").is_err());
+        assert!(parse("deny_apps = []", false).is_err());
         assert!(
-            parse("[[preset]]\nname = \"a\"\nargv = [\"a\"]\napp_id = \"a\"\nshell = true")
-                .is_err()
+            parse(
+                "[[preset]]\nname = \"a\"\nargv = [\"a\"]\napp_id = \"a\"\nshell = true",
+                false
+            )
+            .is_err()
         );
         let twice = "[[preset]]\nname = \"a\"\nargv = [\"a\"]\napp_id = \"a\"\n".repeat(2);
-        assert_eq!(parse(&twice).unwrap_err(), "two presets are named \"a\"");
-        assert!(parse("[[preset]]\nname = \"\"\nargv = [\"a\"]\napp_id = \"a\"").is_err());
+        assert_eq!(
+            parse(&twice, false).unwrap_err(),
+            "two presets are named \"a\""
+        );
+        assert!(
+            parse(
+                "[[preset]]\nname = \"\"\nargv = [\"a\"]\napp_id = \"a\"",
+                false
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn a_missing_file_is_valid_and_others_are_reported() {
         use std::io::{Error, ErrorKind};
         let path = Path::new("/c/policy.toml");
-        let loaded = Loaded::from_read(Some((path, Err(Error::from(ErrorKind::NotFound)))));
+        let loaded = Loaded::from_read(Some((path, Err(Error::from(ErrorKind::NotFound)))), false);
         assert_eq!(loaded, Loaded::Missing);
         assert_eq!(loaded.status().state, "missing");
-        let status = Loaded::from_read(Some((path, Ok(EXAMPLE.to_owned())))).status();
+        let status = Loaded::from_read(Some((path, Ok(EXAMPLE.to_owned()))), false).status();
         assert_eq!(
             (status.state, status.presets, status.denied_app_ids),
             ("loaded", 2, 1)
         );
         assert_eq!(status.preset_names, ["firefox", "terminal"]);
-        let invalid = Loaded::from_read(Some((path, Ok("nonsense".to_owned())))).status();
+        let invalid = Loaded::from_read(Some((path, Ok("nonsense".to_owned()))), false).status();
         assert_eq!(invalid.state, "invalid");
         assert!(invalid.error.unwrap().starts_with("/c/policy.toml: "));
-        let unreadable =
-            Loaded::from_read(Some((path, Err(Error::from(ErrorKind::PermissionDenied)))));
+        let unreadable = Loaded::from_read(
+            Some((path, Err(Error::from(ErrorKind::PermissionDenied)))),
+            false,
+        );
         assert!(
             matches!(unreadable, Loaded::Invalid(error) if error.starts_with("read /c/policy.toml"))
         );
-        assert_eq!(Loaded::from_read(None).status().state, "invalid");
+        assert_eq!(Loaded::from_read(None, false).status().state, "invalid");
     }
 
     #[test]
     fn launch_names_a_preset_from_the_file() {
-        let loaded = Loaded::Valid(parse(EXAMPLE).unwrap());
+        let loaded = Loaded::Valid(parse(EXAMPLE, false).unwrap());
         assert_eq!(loaded.preset("terminal").unwrap().app_id, "foot");
         let unknown = loaded.preset("Firefox").unwrap_err();
         assert_eq!(unknown.name, ErrorName::UnknownPreset);
@@ -774,7 +901,7 @@ app_id = "foot"
         let home = Some(Path::new("/home/u"));
         for loaded in [
             Loaded::Missing,
-            Loaded::Valid(parse(EXAMPLE).unwrap()),
+            Loaded::Valid(parse(EXAMPLE, false).unwrap()),
             Loaded::Invalid("bad".to_owned()),
         ] {
             let Err(CallError::Tool(error)) = loaded.save_target(home, "a.png") else {
@@ -782,7 +909,8 @@ app_id = "foot"
             };
             assert_eq!(error.name, ErrorName::SaveNotEnabled);
         }
-        let tilde = Loaded::Valid(parse("capture_dir = \"~/Pictures/agent-shots\"").unwrap());
+        let tilde =
+            Loaded::Valid(parse("capture_dir = \"~/Pictures/agent-shots\"", false).unwrap());
         assert_eq!(
             tilde.save_target(home, "readme/one.png"),
             Ok(SaveTarget {
@@ -804,7 +932,7 @@ app_id = "foot"
             tilde.save_target(home, "/etc/a.png"),
             Err(CallError::InvalidArguments(_))
         ));
-        let absolute = Loaded::Valid(parse("capture_dir = \"/srv/shots\"").unwrap());
+        let absolute = Loaded::Valid(parse("capture_dir = \"/srv/shots\"", false).unwrap());
         assert_eq!(
             absolute.save_target(home, "a.png").unwrap().dir,
             PathBuf::from("/srv/shots")
@@ -813,7 +941,7 @@ app_id = "foot"
         for relative in ["shots", "~", "~/", "~user/shots", ""] {
             let file = format!("capture_dir = {relative:?}");
             assert!(
-                parse(&file).unwrap_err().contains("absolute"),
+                parse(&file, false).unwrap_err().contains("absolute"),
                 "{relative:?}"
             );
         }
@@ -923,7 +1051,7 @@ app_id = "foot"
 
     #[test]
     fn input_to_a_denied_app_is_refused() {
-        let policy = Loaded::Valid(parse(EXAMPLE).unwrap());
+        let policy = Loaded::Valid(parse(EXAMPLE, false).unwrap());
         let refused = refuse_input(&policy, Some("org.keepassxc.KeePassXC")).unwrap();
         assert_eq!(refused.name, ErrorName::AppDenied);
         assert!(
@@ -941,7 +1069,7 @@ app_id = "foot"
 
     #[test]
     fn elements_of_a_denied_apps_window_are_refused_whatever_has_focus() {
-        let policy = Loaded::Valid(parse(EXAMPLE).unwrap());
+        let policy = Loaded::Valid(parse(EXAMPLE, false).unwrap());
         let refused = refuse_window(&policy, 7, Some("org.keepassxc.KeePassXC")).unwrap();
         assert_eq!(refused.name, ErrorName::AppDenied);
         assert!(
@@ -1063,9 +1191,89 @@ app_id = "foot"
     #[test]
     fn unrestricted_is_off_unless_the_file_turns_it_on() {
         assert!(!Loaded::Missing.unrestricted());
-        assert!(!Loaded::Valid(parse(EXAMPLE).unwrap()).unrestricted());
-        assert!(Loaded::Valid(parse("unrestricted = true").unwrap()).unrestricted());
-        assert!(parse("unrestricted = \"yes\"").is_err());
+        assert!(!Loaded::Valid(parse(EXAMPLE, false).unwrap()).unrestricted());
+        assert!(Loaded::Valid(parse("unrestricted = true", false).unwrap()).unrestricted());
+        assert!(parse("unrestricted = \"yes\"", false).is_err());
+    }
+
+    #[test]
+    fn unrestricted_lifts_the_preset_rules_and_allows_env() {
+        let shot = "[[preset]]\nname = \"shot\"\nargv = [\"kitty\", \"--class\", \"shot\"]\napp_id = \"shot\"\nenv = { GDK_SCALE = \"2\" }\n";
+        assert!(
+            parse(shot, false)
+                .unwrap_err()
+                .contains("needs unrestricted = true")
+        );
+        let plain_env =
+            "[[preset]]\nname = \"a\"\nargv = [\"gimp\"]\napp_id = \"gimp\"\nenv = { A = \"1\" }\n";
+        assert_eq!(
+            parse(plain_env, false).unwrap_err(),
+            "preset \"a\" has env, which needs unrestricted = true"
+        );
+        // The environment or the file's own key turns it on.
+        let preset = &parse(shot, true).unwrap().presets[0];
+        assert_eq!(
+            preset.command(),
+            ["env", "--", "GDK_SCALE=2", "kitty", "--class", "shot"]
+        );
+        let keyed = format!("unrestricted = true\n{shot}");
+        assert_eq!(parse(&keyed, false).unwrap().presets.len(), 1);
+        let runner =
+            "[[preset]]\nname = \"b\"\nargv = [\"bash\", \"-c\", \"obs\"]\napp_id = \"obs\"\n";
+        assert!(parse(runner, true).is_ok());
+        assert_eq!(
+            parse(EXAMPLE, true).unwrap().presets[0].command(),
+            ["firefox"]
+        );
+        for bad in [r#"{ "" = "1" }"#, r#"{ "A=B" = "1" }"#] {
+            let file =
+                format!("[[preset]]\nname = \"c\"\nargv = [\"x\"]\napp_id = \"x\"\nenv = {bad}\n");
+            assert!(
+                parse(&file, true).unwrap_err().contains("env can't set"),
+                "{bad}"
+            );
+        }
+        let assignment =
+            "[[preset]]\nname = \"d\"\nargv = [\"A=1\"]\napp_id = \"x\"\nenv = { B = \"2\" }\n";
+        assert!(
+            parse(assignment, true)
+                .unwrap_err()
+                .contains("can't contain =")
+        );
+    }
+
+    #[test]
+    fn the_variable_turns_unrestricted_on_only_with_1() {
+        use std::ffi::OsStr;
+        let read = |value: Option<&str>| Unrestricted::parse_env(value.map(OsStr::new));
+        assert_eq!(read(None), Ok(false));
+        assert_eq!(read(Some("")), Ok(false));
+        assert_eq!(read(Some("1")), Ok(true));
+        for wrong in ["0", "yes", "true", " 1"] {
+            assert!(
+                read(Some(wrong)).unwrap_err().contains("stays off"),
+                "{wrong}"
+            );
+        }
+        let status =
+            |policy, env| serde_json::to_value(Unrestricted { policy, env }.status()).unwrap();
+        assert_eq!(
+            status(false, Ok(false)),
+            serde_json::json!({"enabled": false, "source": null, "error": null})
+        );
+        assert_eq!(status(true, Ok(false))["source"], "policy");
+        assert_eq!(status(false, Ok(true))["source"], "env");
+        assert_eq!(status(true, Ok(true))["source"], "both");
+        // A wrong value can't turn off the file's true.
+        let wrong = status(true, Err("bad".to_owned()));
+        assert_eq!(
+            (&wrong["enabled"], &wrong["source"], &wrong["error"]),
+            (
+                &serde_json::json!(true),
+                &serde_json::json!("policy"),
+                &serde_json::json!("bad")
+            )
+        );
     }
 
     #[test]

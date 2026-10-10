@@ -313,7 +313,7 @@ const fn reuse(existing: &[u64]) -> Reuse {
     }
 }
 
-/// Starts the preset's fixed argv through niri, or with `reuse` focuses its one existing
+/// Starts the preset's fixed command through niri, or with `reuse` focuses its one existing
 /// window, and reports the windows that match its `app_id`.
 pub(crate) async fn launch(
     niri: Niri<'_>,
@@ -335,7 +335,7 @@ pub(crate) async fn launch(
     let before: BTreeSet<u64> = waiter.view().windows().keys().copied().collect();
     let focused = waiter.view().focused_window();
     let action = Action::Spawn {
-        command: preset.argv.clone(),
+        command: preset.command(),
     };
     if let Some(lost) = send(niri.socket, action).await? {
         return Ok(lost);

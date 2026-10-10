@@ -19,6 +19,8 @@ The server reads `~/.config/niri-computer-use/policy.toml`, or `$XDG_CONFIG_HOME
 | `capture_dir` | as the file writes it, or null when saving is off |
 | `error` | why the file is invalid |
 
+`status` also shows `unrestricted`: `enabled`, `source` (`policy`, `env`, `both`, or null while off) and `error`, which explains a `NIRI_COMPUTER_USE_UNRESTRICTED` value other than `1`.
+
 An invalid file doesn't stop the server, but `acquire_desktop` and every action refuse with `read_only` until you fix it and restart. A file with an unknown key is invalid too.
 
 ## Full example
@@ -68,21 +70,29 @@ The directory is created with mode `0700` if it is missing. `save_path` is relat
 
 ### `unrestricted`
 
-`true` or `false`, default `false`. With `true`, `niri_action` also sends the gated actions: `Spawn` and `SpawnSh`, which run any program, `Quit`, monitor power, `LoadConfigFile`, niri's screenshot actions, `ToggleKeyboardShortcutsInhibit`, `SwitchLayout`, the cast actions and the debug toggles. Without it they fail with `unrestricted_required`. See [`niri_action`](../../tools/acting/#niri_action).
+`true` or `false`, default `false`. It is off because some agents, such as desktop apps, have no shell of their own, and this server is then the only way they reach your programs. With it on, an agent can run any program through the server.
 
-It is off because an agent that can spawn programs can do anything you can. Turning it on never skips the lease, the stop key or the audit log.
+With `true`:
+
+- `niri_action` also sends the gated actions: `Spawn` and `SpawnSh`, which run any program, `Quit`, monitor power, `LoadConfigFile`, niri's screenshot actions, `ToggleKeyboardShortcutsInhibit`, `SwitchLayout`, the cast actions and the debug toggles. Without it they fail with `unrestricted_required`. See [`niri_action`](../../tools/acting/#niri_action).
+- Presets may start terminals with arguments and programs that run commands, and may set `env`.
+
+`NIRI_COMPUTER_USE_UNRESTRICTED=1` in the server's environment turns it on too, so you can allow it for one MCP client only, in that client's server settings, without a policy file. Either one turns it on, and nothing in the environment turns off a file's `true`. Any other value of the variable leaves it off and shows up as `status.unrestricted.error`.
+
+Turning it on never skips the lease, the stop key or the audit log: every gated action still needs the lease, stops at the stop key, and is logged with its arguments.
 
 ### `[[preset]]`
 
-One table per app `launch` may start. Each takes three keys, all required:
+One table per app `launch` may start. `name`, `argv` and `app_id` are required:
 
 | Key | Value |
 |---|---|
 | `name` | what the agent passes to `launch`; unique and not empty |
 | `argv` | the program and its fixed arguments, started by niri as given; no shell runs it |
 | `app_id` | the `app_id` its windows have, so `launch` can see them appear and `reuse` can find them |
+| `env` | only with [`unrestricted`](#unrestricted): a table of variables added to the app's environment, such as `env = { GDK_SCALE = "2" }`. niri starts `env -- NAME=value … argv`, because niri's spawn takes no environment |
 
-`launch` takes only the `name`; the agent can't add arguments. A preset may not start:
+`launch` takes only the `name`; the agent can't add arguments or variables. Unless `unrestricted` is on, a preset may not start:
 
 - a shell, an interpreter, `env`, `sudo`, `doas`, `pkexec`, `systemd-run`, `nohup`, `setsid`, `xargs`, `timeout`, `nice`, `busybox`, `uwsm`, `distrobox`, `toolbox`, or another program that runs any command it is given; versioned names such as `python3.13` count too
 - `flatpak` with `--command`
@@ -110,6 +120,7 @@ The server reads these once, at startup. When `XDG_RUNTIME_DIR`, `NIRI_SOCKET` o
 | `XDG_CONFIG_HOME`, else `HOME` | the policy file |
 | `XDG_STATE_HOME`, else `HOME` | the audit log |
 | `HOME` | a `capture_dir` that starts with `~/` |
+| `NIRI_COMPUTER_USE_UNRESTRICTED` | `1` turns on [`unrestricted`](#unrestricted) for this server; unset or empty leaves the policy file to decide |
 | `NIRI_COMPUTER_USE_KEYBOARD` | the keyboard backend: unset or `wtype` for the default, `native` for the [experimental native backend](../../tools/keyboard/#the-native-backend) |
 
 The lock state comes from logind's session for niri's own process, which the server finds through niri's socket, so the server's own `XDG_SESSION_ID` doesn't matter.

@@ -22,12 +22,21 @@ struct Desk {
 
 impl Desk {
     async fn start(name: &str, policy: &str) -> Self {
-        Self::start_backend(name, policy, "wtype").await
+        Self::start_with(name, policy, &[]).await
     }
 
     async fn start_backend(name: &str, policy: &str, backend: &str) -> Self {
+        Self::start_with(name, policy, &[("NIRI_COMPUTER_USE_KEYBOARD", backend)]).await
+    }
+
+    /// As `start`, with these variables in the server's environment; the keyboard backend
+    /// is wtype unless they choose another.
+    async fn start_with(name: &str, policy: &str, vars: &[(&'static str, &str)]) -> Self {
         let mut fixture = Fixture::new(name);
-        fixture.set("NIRI_COMPUTER_USE_KEYBOARD", backend);
+        fixture.set("NIRI_COMPUTER_USE_KEYBOARD", "wtype");
+        for (variable, value) in vars {
+            fixture.set(variable, value);
+        }
         std::fs::create_dir_all(fixture.path("config/niri-computer-use")).unwrap();
         std::fs::write(fixture.path("config/niri-computer-use/policy.toml"), policy).unwrap();
         fixture.program("noctalia", "exit 0");
@@ -1629,4 +1638,51 @@ async fn gated_niri_actions_need_unrestricted() {
         outcome(&result),
         json!({"accepted": true, "observed": "sent", "focused_window": 1})
     );
+}
+
+#[tokio::test]
+async fn the_variable_turns_unrestricted_on_for_one_client() {
+    const SHOT: &str = r#"
+[[preset]]
+name = "shot"
+argv = ["kitty", "--class", "shot"]
+app_id = "shot"
+env = { GDK_SCALE = "2" }
+"#;
+    let on = [("NIRI_COMPUTER_USE_UNRESTRICTED", "1")];
+    let mut desk = Desk::start_with("act-unrestricted-env", SHOT, &on).await;
+    let status = desk.server.structured("status").await;
+    assert_eq!(
+        status["unrestricted"],
+        json!({"enabled": true, "source": "env", "error": null})
+    );
+    assert_eq!(status["policy"]["state"], "loaded");
+    let id = desk
+        .server
+        .start_call("launch", json!({"preset": "shot"}))
+        .await;
+    let action = desk.niri.action().await;
+    assert!(
+        matches!(&action, Action::Spawn { command }
+            if command == &["env", "--", "GDK_SCALE=2", "kitty", "--class", "shot"]),
+        "{action:?}"
+    );
+    desk.server.response(id).await;
+    let spawn = json!({"action": {"Spawn": {"command": ["foot"]}}});
+    desk.act("niri_action", spawn.clone(), |_, _| {}).await;
+
+    // Any other value is reported and leaves it off, and the env preset invalid.
+    let wrong = [("NIRI_COMPUTER_USE_UNRESTRICTED", "yes")];
+    let mut off = Desk::start_with("act-unrestricted-wrong", "", &wrong).await;
+    let reported = off.server.structured("status").await;
+    assert_eq!(reported["unrestricted"]["enabled"], false);
+    assert!(
+        reported["unrestricted"]["error"]
+            .as_str()
+            .unwrap()
+            .starts_with("NIRI_COMPUTER_USE_UNRESTRICTED is \"yes\""),
+        "{reported}"
+    );
+    let (name, _) = tool_error(&off.server.call("niri_action", spawn).await);
+    assert_eq!(name, "unrestricted_required");
 }

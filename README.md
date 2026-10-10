@@ -6,7 +6,7 @@ An MCP server for AI agents to observe and drive a [niri](https://github.com/nir
 
 Documentation: **https://ayagmar.github.io/niri-computer-use/**, also as plain Markdown for agents ([llms.txt](https://ayagmar.github.io/niri-computer-use/llms.txt)).
 
-**Status: early development.** 23 tools over stdio: reading the desktop, screenshots, accessible elements, and, under a lease, focus, launch, close, pointer, keyboard, paste and three Noctalia panels. The native keyboard backend is experimental and off by default. Acceptance evidence for each milestone is in [docs/results/](docs/results/).
+**Status: early development.** 24 tools over stdio: reading the desktop, screenshots, accessible elements, and, under a lease, focus, launch, close, niri actions, pointer, keyboard, paste and three Noctalia panels. The native keyboard backend is experimental and off by default. Acceptance evidence for each milestone is in [docs/results/](docs/results/).
 
 ## Install
 
@@ -36,10 +36,14 @@ binds {
 
 The lease, the stop key, the lock gate, the policy file and the audit log are guardrails, not a sandbox. An agent holding the lease can do anything you could with a mouse and keyboard, and any connected agent can see your screen, window titles and clipboard. Read [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/) before letting an agent act, and [SECURITY.md](SECURITY.md) to report a problem.
 
+## Policy
+
+`~/.config/niri-computer-use/policy.toml` holds launch presets, apps that never get input, and where screenshots may be saved. One key, `unrestricted`, is off by default. Agents without a shell of their own, such as desktop apps, rely on that: with it off, the server can't run anything you didn't put in a preset. With `unrestricted = true`, or `NIRI_COMPUTER_USE_UNRESTRICTED=1` in one client's server settings, an agent can run any program through the server: `niri_action` accepts `Spawn`, `Quit` and the other gated niri actions, and presets may pass arguments to terminals and set `env`. Everything still needs the lease, stops at the stop key and goes to the audit log. See [Configuration](https://ayagmar.github.io/niri-computer-use/concepts/configuration/#unrestricted).
+
 ## Documentation
 
 - [Tools](https://ayagmar.github.io/niri-computer-use/tools/overview/): every tool, its arguments and results
-- [Configuration](https://ayagmar.github.io/niri-computer-use/concepts/configuration/): `policy.toml`, launch presets, the deny list, `capture_dir`
+- [Configuration](https://ayagmar.github.io/niri-computer-use/concepts/configuration/): `policy.toml`, launch presets, the deny list, `capture_dir`, `unrestricted`
 - [Error reference](https://ayagmar.github.io/niri-computer-use/reference/errors/) and [Troubleshooting](https://ayagmar.github.io/niri-computer-use/reference/troubleshooting/)
 - [CLI reference](https://ayagmar.github.io/niri-computer-use/reference/cli/): `serve`, `status`, `stop`, `resume`, `recover`
 

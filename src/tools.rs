@@ -836,7 +836,8 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
-        let (niri, unrestricted) = (self.niri(), self.policy.unrestricted());
+        let niri = self.niri();
+        let unrestricted = self.env.unrestricted(&self.policy).enabled();
         let shoot = args.screenshot;
         let work = async move {
             let action = serde_json::from_value(Value::Object(args.action)).map_err(|error| {
