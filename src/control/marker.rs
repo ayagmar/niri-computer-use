@@ -11,11 +11,13 @@
 //! the change, never across input or a human's answer; when it can't be taken within
 //! `LOCK_WAIT`, the change fails and the marker stays.
 
+use std::collections::HashSet;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::Write as _;
 use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{LazyLock, Mutex, PoisonError};
 use std::time::Duration;
 
 use tokio::time::Instant;
@@ -104,7 +106,21 @@ impl Marker {
             owner: Some(owner()),
         }
     }
+
+    /// Whether this process holds the marker's input, which clears the marker once it
+    /// finishes. A marker whose input gave up on it, or that another process wrote, stays
+    /// until `recover`.
+    pub(crate) fn finishing(&self) -> bool {
+        self.owner.as_ref().is_some_and(|owner| {
+            HELD.lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .contains(owner)
+        })
+    }
 }
+
+/// The owners of this process's `Written` markers.
+static HELD: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Mutex::default);
 
 /// A name no other marker has: this process's ID, the time and a count.
 fn owner() -> String {
@@ -120,7 +136,8 @@ pub(crate) fn now() -> String {
 }
 
 /// The marker this server wrote. Dropping it leaves the file in place: only `clear`
-/// removes it, once the input is known to be released.
+/// removes it, once the input is known to be released. While it exists, the marker is
+/// `finishing`.
 #[derive(Debug)]
 pub(crate) struct Written {
     dir: PathBuf,
@@ -146,6 +163,11 @@ impl Written {
             ));
         }
         save(&written.dir, &written.marker)?;
+        if let Some(owner) = &written.marker.owner {
+            HELD.lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(owner.clone());
+        }
         Ok(written)
     }
 
@@ -176,6 +198,16 @@ impl Written {
         };
         let found: Option<Marker> = serde_json::from_slice(&bytes).ok();
         Ok(found.is_some_and(|found| found.owner == self.marker.owner))
+    }
+}
+
+impl Drop for Written {
+    fn drop(&mut self) {
+        if let Some(owner) = &self.marker.owner {
+            HELD.lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(owner);
+        }
     }
 }
 

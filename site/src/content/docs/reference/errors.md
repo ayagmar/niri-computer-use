@@ -23,7 +23,7 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 **Cause:** the input-dirty marker exists: an earlier input call couldn't confirm that every key and button was released, for example because the server was killed mid-click. The `detail` names the marker's operation and phase.
 
-**What to do:** run `niri-computer-use recover` and answer its question. See [Safety](../../concepts/safety/#input-that-may-be-stuck-and-recover).
+**What to do:** if the `detail` says a cancelled call's input is still finishing, that input removes the marker itself within seconds; try again then. Otherwise the agent calls `release_desktop`, since `recover` needs the lease, and you run `niri-computer-use recover` and answer its question. See [Safety](../../concepts/safety/#input-that-may-be-stuck-and-recover).
 
 ### `screen_locked`
 

@@ -1491,7 +1491,14 @@ async fn a_wtype_that_fails_by_itself_clears_the_marker_and_one_killed_leaves_it
     assert!(killed_detail.contains("marker stays"), "{killed_detail}");
     assert!(desk.fixture.path(MARKER).exists());
     let blocked = desk.server.call("type_text", type_x).await;
-    assert_eq!(tool_error(&blocked).0, "recovery_required");
+    let (blocked_name, blocked_detail) = tool_error(&blocked);
+    assert_eq!(blocked_name, "recovery_required");
+    // The killed wtype's cleanup has ended, so nothing will take the marker off.
+    assert!(
+        blocked_detail
+            .contains("call release_desktop, then the user runs `niri-computer-use recover`"),
+        "{blocked_detail}"
+    );
 }
 
 #[tokio::test]

@@ -560,17 +560,20 @@ fn cancelled(stopped: &watch::Receiver<bool>) -> ToolError {
     )
 }
 
-/// The refusal while the input-dirty marker is set. A marker this server wrote belongs to
-/// a dropped call's input that is still finishing, which `recover` would cut short.
+/// The refusal while the input-dirty marker is set. A marker whose input this server still
+/// holds belongs to a dropped call's input that is still finishing, which `recover` would
+/// cut short; any other stays until `recover`, which needs the lease.
 fn input_dirty(found: Option<&marker::Found>) -> ToolError {
     let summary = found.map_or_else(String::new, marker::Found::summary);
-    let ours = matches!(found, Some(marker::Found::Marker(marker)) if marker.server_pid == std::process::id());
-    let detail = if ours {
+    let finishing = matches!(found, Some(marker::Found::Marker(marker)) if marker.finishing());
+    let detail = if finishing {
         format!(
             "a cancelled call's input is still finishing ({summary}); try again once it has, within seconds"
         )
     } else {
-        format!("input may be stuck ({summary}); the user runs `niri-computer-use recover`")
+        format!(
+            "input may be stuck ({summary}); call release_desktop, then the user runs `niri-computer-use recover`, which needs the lease"
+        )
     };
     ToolError::new(ErrorName::RecoveryRequired, detail)
 }
@@ -756,23 +759,34 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    #[test]
-    fn only_another_servers_marker_sends_the_user_to_recover() {
-        // This server's own marker is a cancelled call's input still finishing, which
-        // `recover` would cut short.
-        let ours = marker::Marker::pending("paste", Vec::new());
-        let theirs = marker::Marker {
-            server_pid: std::process::id() + 1,
-            ..ours.clone()
-        };
-        let detail = |marker| input_dirty(Some(&marker::Found::Marker(marker))).detail;
-        assert!(!detail(ours).contains("recover"));
-        assert!(detail(theirs).contains("`niri-computer-use recover`"));
+    #[tokio::test]
+    async fn only_a_marker_whose_input_is_still_finishing_spares_the_user_recover() {
+        let dir = crate::test_support::fresh_dir("desk-finishing");
+        let runtime = RuntimeDir::of(&env(&dir)).unwrap();
+        runtime.create().unwrap();
+        let detail = |found: Option<marker::Found>| input_dirty(found.as_ref()).detail;
+        // Input this server still holds clears its own marker, which `recover` would cut
+        // short.
+        let written =
+            marker::Written::write(&runtime, marker::Marker::pending("paste", Vec::new()))
+                .await
+                .unwrap();
+        let held = detail(marker::read(&runtime));
         assert!(
-            input_dirty(None)
-                .detail
-                .contains("`niri-computer-use recover`")
+            held.contains("still finishing") && !held.contains("recover"),
+            "{held}"
         );
+        // Input that gave up on its marker, such as a wtype killed by a signal, leaves it
+        // for the user, though this server wrote it.
+        drop(written);
+        let given_up = detail(marker::read(&runtime));
+        assert!(
+            given_up
+                .contains("call release_desktop, then the user runs `niri-computer-use recover`"),
+            "{given_up}"
+        );
+        assert!(detail(None).contains("`niri-computer-use recover`"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[tokio::test]

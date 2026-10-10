@@ -25,7 +25,11 @@ The flag stays until you run `niri-computer-use resume`. An agent can't press th
 
 ## Input that may be stuck, and `recover`
 
-Before `click`, `drag`, `key`, `type_text` or `paste` send anything, the server writes an input-dirty marker. It removes the marker once the input is released. If the call is cancelled midway, it releases any held button or key first. If it can't, the marker stays, and every action refuses with `recovery_required` until you run `niri-computer-use recover`.
+Before `click`, `drag`, `key`, `type_text` or `paste` send any input, the server writes an input-dirty marker, and it removes the marker once the input is released. `paste` takes the clipboard before it writes its marker, and its keeper process, not the marker, puts the clipboard back (see [`paste`](../../tools/keyboard/#paste)).
+
+If the call is cancelled midway, the server releases any held button. A `wtype` already typing, or a paste key already sent, isn't stopped: it finishes after the cancellation, and the marker stays until it has, for `paste` until the keeper has reported. Meanwhile other calls refuse with `recovery_required` and a `detail` saying a cancelled call's input is still finishing; they can try again within seconds.
+
+If the input can't be released, or its cleanup ended without removing the marker, for example because `wtype` was killed by a signal, the marker stays. Every action then refuses with `recovery_required`, and the `detail` tells the agent to call `release_desktop` and you to run `niri-computer-use recover`, which needs the lease.
 
 `recover` ends the input program the marker names, releases any pointer button or key it names, then asks you to check that no key or button is held. It clears the marker only when you type `yes`. See the [CLI reference](../../reference/cli/#recover).
 

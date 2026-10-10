@@ -81,5 +81,6 @@ All notable changes to this project are documented here. The format follows [Kee
 - `paste` sends its key only once the keeper has answered that it still holds the text. A server delayed past the keeper's ten-second wait could paste the user's restored clipboard instead; now the call fails, says nothing was pasted, and the clipboard stays restored.
 - Servers for one niri share its lease and stop flag whatever `XDG_RUNTIME_DIR` or `NIRI_SOCKET` spelling their clients pass.
 - Every change to the input-dirty marker takes one lock, so an older call's cleanup can't remove a newer call's marker.
+- A marker left by a cleanup that failed, such as a `wtype` killed by a signal, now sends the user to `recover` instead of saying the input is still finishing; that answer is kept for input the server is still finishing.
 - The native keyboard restores the compositor's latest keymap in the layout niri last reported, not the map and layout from the start of the call.
 - The 16 MiB line limit applies to every line a read ends, not only the last.

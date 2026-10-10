@@ -538,9 +538,37 @@ async fn a_client_killed_mid_key_frees_the_lease_while_others_keep_working() {
     );
     let marker = fixture.runtime_dir().join("input-dirty");
     assert!(marker.exists());
+    // The engine still runs that key's wtype, which takes the marker off once it ends.
+    let (name, detail) = tool_error(&other.call("acquire_desktop", json!({})).await);
+    assert_eq!(name, "recovery_required");
+    assert!(detail.contains("still finishing"), "{detail}");
     std::fs::write(fixture.path("go"), "").unwrap();
     assert!(eventually(WAIT, || !marker.exists()).await);
     other.structured("acquire_desktop").await;
+}
+
+#[tokio::test]
+async fn a_marker_a_killed_wtype_left_sends_every_client_to_recover() {
+    let fixture = shared("shared-wtype-killed");
+    let mut desktop = Desktop::new(&fixture);
+    fixture.program("wtype", "cat > /dev/null; kill -KILL $$");
+    let mut typing = Server::start(&fixture).await;
+    let mut other = Server::start(&fixture).await;
+    let _stream = desktop.stream().await;
+    typing.structured("acquire_desktop").await;
+    let killed = typing
+        .call("key", json!({"keys": ["Down"], "expect": "none"}))
+        .await;
+    assert_eq!(tool_error(&killed).0, "upstream_error");
+    // The engine wrote the marker, but nothing of it will take it off.
+    for client in [&mut typing, &mut other] {
+        let (name, detail) = tool_error(&client.call("acquire_desktop", json!({})).await);
+        assert_eq!(name, "recovery_required");
+        assert!(
+            detail.contains("call release_desktop, then the user runs `niri-computer-use recover`"),
+            "{detail}"
+        );
+    }
 }
 
 #[tokio::test]
