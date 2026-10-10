@@ -1,4 +1,4 @@
-.PHONY: check lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-eval sitting host-capture
+.PHONY: check lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-eval sitting host-capture
 
 SCALE ?= 1
 NESTED_FLAGS = $(if $(VISIBLE),--visible) $(if $(SHARED),--shared)
@@ -54,6 +54,11 @@ nested-a11y:
 nested-engine:
 	cargo build --locked -p niri-computer-use
 	cargo run --locked -p harness -- run $(NESTED_FLAGS) --scale $(SCALE) --engine
+
+# Release builds; SERVER=<path> measures another build, such as an older one.
+nested-measure:
+	cargo build --locked --release -p niri-computer-use
+	cargo run --locked -p harness -- run $(NESTED_FLAGS) --measure --server $(or $(SERVER),target/release/niri-computer-use)
 
 # One skill eval in the nested niri: make nested-eval SCENARIO=compose-message SKILL=skills/niri-computer-use MODEL=sonnet
 nested-eval:

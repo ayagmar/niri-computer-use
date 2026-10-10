@@ -30,6 +30,7 @@ const INPUT_DEADLINE: Duration = Duration::from_secs(180);
 const SHELL_DEADLINE: Duration = Duration::from_secs(130);
 const A11Y_DEADLINE: Duration = Duration::from_secs(240);
 const ENGINE_DEADLINE: Duration = Duration::from_secs(150);
+const MEASURE_DEADLINE: Duration = Duration::from_secs(300);
 /// The agent's twelve minutes, with the fixtures and Noctalia around it.
 const EVAL_DEADLINE: Duration = Duration::from_mins(15);
 /// All `noctalia config validate` prints for a config without warnings. It exits 0 even
@@ -52,6 +53,8 @@ pub(crate) struct Options {
     /// Run one skill eval: an agent doing one task through `niri-computer-use`.
     pub(crate) eval: Option<eval::Options>,
     pub(crate) mode: ServerMode,
+    /// The server under test, instead of this checkout's debug build.
+    pub(crate) binary: Option<PathBuf>,
 }
 
 /// How the servers under test serve their clients.
@@ -78,6 +81,8 @@ pub(crate) enum ServerChecks {
     A11y,
     /// The shared engine with ten clients; always in shared mode.
     Engine,
+    /// What the servers cost, for docs/results/engine.md.
+    Measure,
 }
 
 impl ServerChecks {
@@ -89,6 +94,7 @@ impl ServerChecks {
             Self::Shell => "--shell",
             Self::A11y => "--a11y",
             Self::Engine => "--engine",
+            Self::Measure => "--measure",
         }
     }
 
@@ -100,6 +106,7 @@ impl ServerChecks {
             Self::Shell,
             Self::A11y,
             Self::Engine,
+            Self::Measure,
         ]
         .into_iter()
         .find(|checks| checks.flag() == flag)
@@ -113,6 +120,7 @@ impl ServerChecks {
             Self::Shell => SHELL_DEADLINE,
             Self::A11y => A11Y_DEADLINE,
             Self::Engine => ENGINE_DEADLINE,
+            Self::Measure => MEASURE_DEADLINE,
         }
     }
 }
@@ -362,12 +370,12 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: &Optio
         args.push("--sitting".into());
     } else if options.noctalia {
         args.push("--noctalia".into());
-        args.push(server()?.into());
+        args.push(server(options)?.into());
     } else if let Some(checks) = options.server {
         args.push(checks.flag().into());
-        args.push(server()?.into());
+        args.push(server(options)?.into());
     } else if let Some(eval) = &options.eval {
-        args.extend(eval_args(eval)?);
+        args.extend(eval_args(eval, options)?);
     }
     runner::run(&Invocation {
         program: "dbus-run-session",
@@ -397,14 +405,14 @@ const fn deadline(options: &Options) -> Duration {
 }
 
 /// `--eval <server> <scenario> <skill directory | none> <model>` for the supervisor.
-fn eval_args(eval: &eval::Options) -> Result<Vec<OsString>> {
+fn eval_args(eval: &eval::Options, options: &Options) -> Result<Vec<OsString>> {
     let skill = eval.skill.as_ref().map_or_else(
         || OsString::from("none"),
         |skill| skill.clone().into_os_string(),
     );
     Ok(vec![
         "--eval".into(),
-        server()?.into(),
+        server(options)?.into(),
         eval.scenario.name().into(),
         skill,
         eval.model.clone().into(),
@@ -412,10 +420,14 @@ fn eval_args(eval: &eval::Options) -> Result<Vec<OsString>> {
 }
 
 /// The `niri-computer-use` binary the make targets build.
-fn server() -> Result<PathBuf> {
-    let path = env::current_dir()
-        .context("read the working directory")?
-        .join(SERVER);
+/// The server under test: `--server`'s, or this checkout's debug build.
+fn server(options: &Options) -> Result<PathBuf> {
+    let path = match &options.binary {
+        Some(path) => path.clone(),
+        None => env::current_dir()
+            .context("read the working directory")?
+            .join(SERVER),
+    };
     if path.is_file() {
         Ok(path)
     } else {

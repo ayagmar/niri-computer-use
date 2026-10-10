@@ -289,6 +289,15 @@ make nested-a11y SHARED=1
 - E4: `niri-computer-use stop` while A types 100 characters and eight other clients each have `status`, `desktop_state` and a screenshot in flight. A's call returns `stopped`, the lease is free within a second, every other call is answered, `wtype` still types the whole text, and after `resume` A takes the lease again.
 - E5: the engine is killed with `SIGKILL` during A's drag. A's call returns `engine_lost`, the guardian releases the button, every other client gets `engine_lost` once and then reaches one new engine, and B is refused with `recovery_required` until `recover`.
 
+`make nested-measure` measures what the servers cost, with a release build and Noctalia running. It has a 300-second deadline and writes `measure.json` to the run's artifacts. `SERVER=<path>` measures another build, such as one of an older commit, with the current harness. Both modes:
+
+```sh
+make nested-measure
+make nested-measure SHARED=1
+```
+
+For 1, 3 and 10 clients that each call `status`, `desktop_state` and `screenshot` and then idle, it takes every process's PSS, RSS and open files (the median of three samples a second apart) and its CPU time over ten idle seconds: servers or bridges, the engine and the guardians. It also takes the median round trip of 50 `status` and 50 `screenshot` calls with 1 and 10 clients connected, the first client's start up to its `initialize` reply, and a `status` round trip while another client's screenshot runs. Round trips are timed by reading the client's log every millisecond. In shared mode it also runs 200 clients one after another, with and without one client connected throughout, sampling the engine's PSS and open files, and checks that no engine, guardian or socket is left afterwards. In shared mode the engine exits between measurements, so each one starts cold, as a standalone server does.
+
 ## Skill evals
 
 `make nested-eval` runs an agent against one scenario in a nested niri and grades what it did. It needs `claude` on `PATH` and logged in, and it spends tokens:

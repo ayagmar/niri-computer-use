@@ -76,6 +76,7 @@ pub(crate) fn supervise(
                 ServerChecks::Shell => crate::shell::run(&mut session, server),
                 ServerChecks::A11y => crate::a11y::run(&mut session, server, probes.decorations),
                 ServerChecks::Engine => crate::input::run_engine(&mut session, &output, server),
+                ServerChecks::Measure => crate::measure::run(&mut session, server),
             }
         } else {
             steps(&mut session, &output, probes)

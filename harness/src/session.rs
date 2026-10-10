@@ -216,7 +216,7 @@ fn nested<'a>(
     reason = "the harness is synchronous, so there is no async runtime to block; this is \
               the poll interval of a wait that has its own deadline"
 )]
-fn pause(duration: Duration) {
+pub(crate) fn pause(duration: Duration) {
     std::thread::sleep(duration);
 }
 

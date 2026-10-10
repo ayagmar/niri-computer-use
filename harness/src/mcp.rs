@@ -3,19 +3,22 @@
 //! JSON-RPC message per line, and the client reads replies back from there.
 
 use std::ffi::OsString;
-use std::fs;
+use std::fs::{self, File};
+use std::io::{Read as _, Seek as _, SeekFrom};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 
 use crate::failure::{Context as _, Failure, Result};
 use crate::runner::Process;
-use crate::session::Session;
+use crate::session::{self, Session};
 
 /// Longer than the slowest action, about fifteen seconds: the readiness report, five
 /// seconds of waiting, half a second of settling, and a screenshot.
 const REPLY: Duration = Duration::from_secs(20);
+/// How often a timed call looks for its reply.
+const TIMED_POLL: Duration = Duration::from_millis(1);
 
 #[derive(Debug)]
 pub(crate) struct Client {
@@ -36,6 +39,23 @@ impl Client {
         Self::start_command(session, server, &["serve".into()], name, deadline)
     }
 
+    /// As `start`, also returning how long the server took to answer `initialize`, to
+    /// within about a millisecond.
+    pub(crate) fn start_timed(
+        session: &Session<'_>,
+        server: &str,
+        name: &str,
+        deadline: Duration,
+    ) -> Result<(Self, Duration)> {
+        let started = Instant::now();
+        let mut client = Self::spawn(session, server, &["serve".into()], name, deadline)?;
+        let id = client.initialize(name)?;
+        client.reply_from(0, id)?;
+        let took = started.elapsed();
+        client.initialized()?;
+        Ok((client, took))
+    }
+
     /// As `start`, with the server started by `program` and `args`, such as `env` to
     /// change its environment.
     pub(crate) fn start_command(
@@ -45,23 +65,48 @@ impl Client {
         name: &str,
         deadline: Duration,
     ) -> Result<Self> {
+        let mut client = Self::spawn(session, program, args, name, deadline)?;
+        let id = client.initialize(name)?;
+        client.reply(session, id)?;
+        client.initialized()?;
+        Ok(client)
+    }
+
+    fn spawn(
+        session: &Session<'_>,
+        program: &str,
+        args: &[OsString],
+        name: &str,
+        deadline: Duration,
+    ) -> Result<Self> {
         let log = session.artifact(&format!("server-{name}.log"));
+        // Replies are found by id in the log, so an earlier client's log would answer for
+        // this one.
+        if log.exists() {
+            return Err(Failure::new(format!(
+                "a client named {name} already ran in this run"
+            )));
+        }
         let process = session.serve(program, args, log.clone(), deadline)?;
-        let mut client = Self {
+        Ok(Self {
             process,
             log,
             next_id: 1,
-        };
-        let id = client.request(
+        })
+    }
+
+    fn initialize(&mut self, name: &str) -> Result<u64> {
+        self.request(
             "initialize",
             json!({
                 "protocolVersion": "2025-11-25", "capabilities": {},
                 "clientInfo": {"name": name, "version": "1"}
             }),
-        )?;
-        client.reply(session, id)?;
-        client.write(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))?;
-        Ok(client)
+        )
+    }
+
+    fn initialized(&mut self) -> Result<()> {
+        self.write(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
     }
 
     /// Sends `tools/call` without waiting for the reply. Returns the request's id.
@@ -81,6 +126,23 @@ impl Client {
     ) -> Result<Value> {
         let id = self.start_call(tool, arguments)?;
         self.result(session, id)
+    }
+
+    /// Calls `tool` and returns the `result` of its reply and the round trip, to within
+    /// about a millisecond.
+    pub(crate) fn timed_call(&mut self, tool: &str, arguments: Value) -> Result<(Value, Duration)> {
+        let offset = fs::metadata(&self.log)
+            .context(format!("read {}", self.log.display()))?
+            .len();
+        let started = Instant::now();
+        let id = self.start_call(tool, arguments)?;
+        let reply = self.reply_from(offset, id)?;
+        let round_trip = started.elapsed();
+        let result = reply
+            .get("result")
+            .cloned()
+            .ok_or_else(|| Failure::new(format!("request {id} failed: {reply}")))?;
+        Ok((result, round_trip))
     }
 
     /// The `result` of the reply to `id`, waiting up to fifteen seconds for it.
@@ -106,6 +168,11 @@ impl Client {
 
     pub(crate) fn cancel(&mut self, id: u64) -> Result<()> {
         self.write(&json!({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": id, "reason": "nested cancellation test"}}))
+    }
+
+    /// The process ID of the server or bridge this client started.
+    pub(crate) const fn pid(&self) -> i32 {
+        self.process.pid()
     }
 
     pub(crate) fn stop(self) -> Result<()> {
@@ -137,6 +204,32 @@ impl Client {
                 fs::read_to_string(&self.log).context(format!("read {}", self.log.display()))?;
             Ok(reply_in(&text, id))
         })
+    }
+
+    /// The reply to `id` in the log from byte `offset` on, looked for every `TIMED_POLL`.
+    /// Only the output after `offset` is read, so a long log costs nothing.
+    fn reply_from(&self, offset: u64, id: u64) -> Result<Value> {
+        let read = |error| Failure::new(format!("read {}: {error}", self.log.display()));
+        let mut file = File::open(&self.log).map_err(read)?;
+        file.seek(SeekFrom::Start(offset)).map_err(read)?;
+        let end = Instant::now() + REPLY;
+        let mut output = Vec::new();
+        loop {
+            #[expect(
+                clippy::verbose_file_reads,
+                reason = "this reads only what the server wrote since the last look"
+            )]
+            file.read_to_end(&mut output).map_err(read)?;
+            if let Some(reply) = reply_in(&String::from_utf8_lossy(&output), id) {
+                return Ok(reply);
+            }
+            if Instant::now() > end {
+                return Err(Failure::new(format!(
+                    "the server's reply to request {id} not seen within {REPLY:?}"
+                )));
+            }
+            session::pause(TIMED_POLL);
+        }
     }
 }
 

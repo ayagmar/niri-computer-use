@@ -8,12 +8,14 @@ use std::time::{Duration, Instant};
 
 use crate::failure::{Context as _, Failure, Result};
 use crate::log::Log;
+use crate::session;
 use crate::test_dir::TestDir;
 
 /// What a server in shared mode writes to stderr when it serves its client itself.
 const FALLBACK: &str = "serving this client standalone";
 /// The engine's two seconds of idle grace, and room to exit.
 const ENGINE_EXIT: Duration = Duration::from_secs(5);
+const POLL: Duration = Duration::from_millis(100);
 
 pub(crate) fn check(test_dir: &TestDir, artifacts: &Path, log: &mut Log) -> Result<()> {
     let fell_back = fallbacks(artifacts)?;
@@ -23,7 +25,7 @@ pub(crate) fn check(test_dir: &TestDir, artifacts: &Path, log: &mut Log) -> Resu
     let deadline = Instant::now() + ENGINE_EXIT;
     let mut sockets = engine_sockets(test_dir)?;
     while !sockets.is_empty() && Instant::now() < deadline {
-        pause();
+        session::pause(POLL);
         sockets = engine_sockets(test_dir)?;
     }
     if !fell_back.is_empty() {
@@ -81,12 +83,4 @@ fn engine_sockets(test_dir: &TestDir) -> Result<Vec<String>> {
         }
     }
     Ok(found)
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the synchronous harness has no async runtime; the wait for the engine is bounded"
-)]
-fn pause() {
-    std::thread::sleep(Duration::from_millis(100));
 }
