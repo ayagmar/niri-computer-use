@@ -70,7 +70,7 @@ impl Presence {
 /// call's deadline for connecting and one for the call.
 pub(crate) async fn detect(session_bus: Option<&OsStr>) -> Presence {
     let Some(session_bus) = session_bus.and_then(OsStr::to_str) else {
-        return Presence::absent("DBUS_SESSION_BUS_ADDRESS is not set");
+        return Presence::absent("neither DBUS_SESSION_BUS_ADDRESS nor XDG_RUNTIME_DIR is set");
     };
     let address = async {
         let connection = within(CALL, "connect to the session bus", connect(session_bus)).await?;
@@ -516,7 +516,7 @@ mod tests {
         assert!(!presence.available);
         assert_eq!(
             presence.reason.as_deref(),
-            Some("DBUS_SESSION_BUS_ADDRESS is not set")
+            Some("neither DBUS_SESSION_BUS_ADDRESS nor XDG_RUNTIME_DIR is set")
         );
     }
 

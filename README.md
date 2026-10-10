@@ -92,7 +92,7 @@ codex mcp add niri-computer-use -- ~/.cargo/bin/niri-computer-use serve
 Claude Code and Pi pass their environment on to the server, so it finds niri. Codex passes only a short list of variables, so add this line to the `[mcp_servers.niri-computer-use]` section that `codex mcp add` writes to `~/.codex/config.toml`:
 
 ```toml
-env_vars = ["NIRI_SOCKET", "XDG_RUNTIME_DIR", "WAYLAND_DISPLAY", "XDG_SESSION_ID"]
+env_vars = ["NIRI_SOCKET", "XDG_RUNTIME_DIR", "WAYLAND_DISPLAY"]
 ```
 
 Without it, `status` reports `NIRI_SOCKET is not set`.

@@ -198,7 +198,7 @@ mod tests {
                 "accessibility": {
                     "available": false,
                     "address": null,
-                    "reason": "DBUS_SESSION_BUS_ADDRESS is not set"
+                    "reason": "neither DBUS_SESSION_BUS_ADDRESS nor XDG_RUNTIME_DIR is set"
                 },
                 "audit": {"path": null, "last_error": "neither XDG_STATE_HOME nor HOME is set"},
                 "policy": {

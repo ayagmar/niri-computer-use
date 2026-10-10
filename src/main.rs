@@ -53,7 +53,8 @@ pub(crate) struct Env {
     pub(crate) config_dir: Option<PathBuf>,
     /// Explicit experimental backend selection; absent means wtype.
     pub(crate) keyboard: Option<OsString>,
-    /// `DBUS_SESSION_BUS_ADDRESS`, where the accessibility bus is looked up.
+    /// The session bus, where the accessibility bus is looked up:
+    /// `DBUS_SESSION_BUS_ADDRESS`, or else the user bus in the runtime directory.
     pub(crate) session_bus: Option<OsString>,
 }
 
@@ -67,7 +68,17 @@ impl Env {
             wayland_display: var("WAYLAND_DISPLAY"),
             home: var("HOME").map(PathBuf::from),
             keyboard: var("NIRI_COMPUTER_USE_KEYBOARD"),
-            session_bus: var("DBUS_SESSION_BUS_ADDRESS"),
+            // Without the variable, D-Bus clients (libdbus, sd-bus, zbus) use the user bus
+            // systemd starts at `$XDG_RUNTIME_DIR/bus`. Clients such as Codex forward
+            // `XDG_RUNTIME_DIR` but not this variable.
+            session_bus: var("DBUS_SESSION_BUS_ADDRESS").or_else(|| {
+                var("XDG_RUNTIME_DIR").map(|dir| {
+                    let mut address = OsString::from("unix:path=");
+                    address.push(dir);
+                    address.push("/bus");
+                    address
+                })
+            }),
             state_dir: var("XDG_STATE_HOME")
                 .map(PathBuf::from)
                 .or_else(|| var("HOME").map(|home| PathBuf::from(home).join(".local/state"))),

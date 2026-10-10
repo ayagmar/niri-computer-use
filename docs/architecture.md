@@ -97,7 +97,7 @@ The lock state comes from logind's `LockedHint` and from Noctalia's `locked`, an
 
 ## Accessibility
 
-At startup the server asks the session bus (`DBUS_SESSION_BUS_ADDRESS`) for the accessibility bus's address with `org.a11y.Bus.GetAddress`, with one second to connect and one for the call. Only when that works is `elements` listed, and `status.accessibility` says which it was and why, for the whole session, as with Noctalia. The server connects to the accessibility bus on the first `elements` call and keeps the connection, connecting again after one fails.
+At startup the server asks the session bus (`DBUS_SESSION_BUS_ADDRESS`, or else `$XDG_RUNTIME_DIR/bus`, where systemd puts the user bus and where libdbus, sd-bus and zbus look by default) for the accessibility bus's address with `org.a11y.Bus.GetAddress`, with one second to connect and one for the call. Only when that works is `elements` listed, and `status.accessibility` says which it was and why, for the whole session, as with Noctalia. The server connects to the accessibility bus on the first `elements` call and keeps the connection, connecting again after one fails.
 
 `elements` takes a window id. It reads the window from niri right then, refuses with `app_denied` when its `app_id` is on the deny list, and needs niri's PID for it. AT-SPI's registry lists the applications by bus name, and the bus, not the applications, says which process owns each name, so only the application whose process is the window's is ever called. Every call has a one-second deadline, the whole request three seconds; past it, `deadline_exceeded`. An object that disappears in the middle is skipped, and any other failure ends the call with the D-Bus error.
 

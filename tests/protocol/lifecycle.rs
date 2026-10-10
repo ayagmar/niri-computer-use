@@ -240,14 +240,13 @@ async fn without_an_accessibility_bus_there_is_no_elements_tool_and_status_says_
     let fixture = Fixture::new("no-a11y");
     let mut server = Server::start(&fixture).await;
     assert!(!names(&server.tools().await).contains(&"elements"));
-    assert_eq!(
-        server.structured("status").await["accessibility"],
-        json!({
-            "available": false,
-            "address": null,
-            "reason": "DBUS_SESSION_BUS_ADDRESS is not set"
-        })
-    );
+    // Clients such as Codex forward XDG_RUNTIME_DIR but not DBUS_SESSION_BUS_ADDRESS, so
+    // the server looks for the user bus in the runtime directory, which has none here.
+    let accessibility = server.structured("status").await["accessibility"].clone();
+    assert_eq!(accessibility["available"], false);
+    let reason = accessibility["reason"].as_str().unwrap();
+    let bus = fixture.dir.join("run/bus");
+    assert!(reason.contains(bus.to_str().unwrap()), "{reason}");
     let id = server.start_call("elements", json!({"window_id": 1})).await;
     let response = server.response(id).await;
     assert!(response["error"]["code"].is_i64(), "{response}");
