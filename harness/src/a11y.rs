@@ -68,7 +68,6 @@ impl Bus {
             "ATSPI_DBUS_IMPLEMENTATION=dbus-daemon",
             LAUNCHER,
             "--launch-immediately",
-            "--a11y=1",
         ]
         .map(OsString::from);
         let launcher = session.start(

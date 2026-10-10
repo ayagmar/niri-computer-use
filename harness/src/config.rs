@@ -74,7 +74,7 @@ window-rule {{
 window-rule {{
     match app-id="^org\\.ncu\\.A11y$"
     match app-id="^org\\.ncu\\.Gtk3$"
-    match app-id="^org\\.qt-project\\.qml$"
+    match app-id="^org\\.qt-project\\.qml6?$"
     open-floating true
     default-floating-position x=20 y=20 relative-to="top-left"
     default-column-width {{ fixed 400; }}
