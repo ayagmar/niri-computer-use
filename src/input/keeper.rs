@@ -23,8 +23,8 @@ use tokio::task::JoinSet;
 use tokio::time::Instant;
 
 use super::paste::{Clipboard, MAX_TEXT, Report};
-use crate::Env;
 use crate::niri::selection::{self, Contents, Event, Selection, SourceId};
+use crate::{Env, niri};
 
 /// The types the text is offered as: those `wl-copy` offers for text.
 const TEXT_TYPES: [&str; 5] = [
@@ -47,6 +47,9 @@ const READ_WAIT: Duration = Duration::from_secs(2);
 const QUIET: Duration = Duration::from_millis(100);
 /// Each transfer to a reader.
 const TRANSFER: Duration = Duration::from_secs(2);
+/// The longest `take` runs: niri's PID, then binding, saving, the check after the save and
+/// taking the selection, each within its own deadline.
+pub(crate) const TAKE: Duration = niri::PID_LIMIT.saturating_add(selection::STEP.saturating_mul(4));
 
 pub(crate) async fn run(env: &Env) -> Result<(), String> {
     let mut commands = Commands::stdin()?;
@@ -120,10 +123,10 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
 const KEPT: &str = "the server neither confirmed the key nor said it didn't go out, so a late key could still paste; the pasted text stays on the clipboard instead of what was there before";
 
 /// Binds, saves the selection, and takes it with a source offering the text, if
-/// `previous` allows.
+/// `previous` allows: within `TAKE`.
 async fn take(env: &Env) -> Result<(Selection, Option<Contents>, SourceId), String> {
     let display = env.display.path().map_err(|error| error.detail.clone())?;
-    let niri = crate::niri::pid(&env.niri_socket)
+    let niri = niri::pid(&env.niri_socket)
         .await
         .map_err(|error| error.detail)?;
     let mut selection = Selection::bind(display, niri)

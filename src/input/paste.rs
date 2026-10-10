@@ -38,12 +38,16 @@ use crate::policy;
 use crate::runner;
 
 use super::Input;
+use super::keeper;
 use super::keyboard::{self, Expect, Typing};
 
 /// `paste`'s text, in bytes.
 pub(crate) const MAX_TEXT: usize = 1024 * 1024;
-/// Binding and saving the selection, each within niri's 2 s deadline, then taking it.
-const READY: Duration = Duration::from_secs(5);
+/// The keeper's start and its read of the text, which the server writes at once.
+const START: Duration = Duration::from_secs(1);
+/// The keeper's start, then its `take`, which ends with `ready` or `refused` within
+/// `keeper::TAKE` whenever niri answers slowly: 11 s.
+const READY: Duration = START.saturating_add(keeper::TAKE);
 /// The keeper's wait for the read, its quiet time and the restore's round trip.
 const DONE: Duration = Duration::from_secs(5);
 /// From `k` to `armed`: the keeper answers after one round trip to niri, which takes

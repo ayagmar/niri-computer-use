@@ -91,3 +91,4 @@ All notable changes to this project are documented here. The format follows [Kee
 - The 16 MiB line limit applies to every line a read ends, not only the last.
 - An input cleanup that outlives its call, such as a dropped native `paste`'s release, ends within ten seconds of its start, as long as the server waits for it at exit. One still running then keeps its marker for `recover`, and a call waiting for it says so.
 - Modifiers held with `keys` on a native `click`, `drag` or `scroll` end as native typing does: the compositor's latest keymap in the layout niri has active, proved before the marker comes off. They used to restore the map and layout from the gesture's start.
+- `paste` waits up to eleven seconds for the keeper to take the clipboard, as long as the keeper's steps can take, instead of five.

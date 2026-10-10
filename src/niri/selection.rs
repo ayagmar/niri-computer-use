@@ -37,6 +37,9 @@ use crate::error::{ErrorName, ToolError};
 /// A selection's contents: each MIME type with its bytes, in the order it was offered.
 pub(crate) type Contents = Vec<(String, Arc<[u8]>)>;
 
+/// The longest each of `bind`, `save`, `unchanged_since`, `offer` and `clear` takes.
+pub(crate) const STEP: Duration = DEADLINE;
+
 /// A selection as saved: its contents, `None` when nothing was selected, and which of
 /// niri's announcements it was.
 #[derive(Debug)]

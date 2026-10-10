@@ -91,7 +91,10 @@ pub(crate) async fn version(socket: &Socket) -> Result<String, ToolError> {
     Ok(version)
 }
 
-/// The process ID of the niri listening on the socket.
+/// The longest `pid` takes.
+pub(crate) const PID_LIMIT: Duration = request::DEADLINE;
+
+/// The process ID of the niri listening on the socket, within `PID_LIMIT`.
 pub(crate) async fn pid(socket: &Socket) -> Result<u32, ToolError> {
     request::peer_pid(known(socket)?, request::DEADLINE).await
 }
