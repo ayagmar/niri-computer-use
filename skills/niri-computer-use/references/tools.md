@@ -81,11 +81,11 @@ Pixel coordinates are in the screenshot named by `screenshot_ref`, and a pixel t
 - `accepted`: true once niri or Noctalia took the request, false when nothing was sent (already in that state), null when the reply was lost.
 - `observed`: what the server saw by the end of its wait, as in the tables above, or `interrupted` (someone else moved focus) or `uncertain`.
 - `focused_window` when the observation ended.
-- `typed`, for `type_text` that stopped early: the characters sent; `pressed` likewise for `key`; `submitted` with `submit`; `paste` for `paste`.
+- `typed`, for `type_text` that stopped early: the characters sent; `pressed` likewise for `key`; `submitted` with `submit`; `paste` for `paste`; `window` for `niri_action`; `noctalia` for `noctalia`.
 
 Every action takes `screenshot: true`: the result then has an image of the focused output taken once the screen stopped changing (`settled` in its metadata says whether it did within 1.5 seconds), and its `screenshot_ref` works for the pointer tools.
 
-Each action waits up to five seconds, the shell tools two. With `timeout`, `pending`, `none`, `interrupted` or `uncertain`, the result has an image of the focused output with its metadata in `screenshot` even without asking, or `screenshot_error` if it couldn't be taken.
+Each action waits up to five seconds, the shell tools two, and `niri_action` one second for its window to change. With `timeout`, `pending`, `none`, `interrupted` or `uncertain`, the result has an image of the focused output with its metadata in `screenshot` even without asking, or `screenshot_error` if it couldn't be taken.
 
 ## Screenshot targets
 

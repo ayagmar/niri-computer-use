@@ -44,6 +44,7 @@ logind only knows the lock state when niri runs as `niri --session`. Without tha
 Before each action the server checks, in this order: the stop flag (`stopped`), the input-dirty marker (`recovery_required`), the lease (`lease_required`), niri's version and event stream and the policy file (`read_only`), and the lock state (`screen_locked`). The tools then check their own arguments:
 
 - `launch` starts only presets from your [policy file](../configuration/), never a command the agent writes.
+- `niri_action` refuses niri's actions that run programs, write files or reach past the window layout, such as `Spawn`, `Quit` and `LoadConfigFile`, with `unrestricted_required`, and the `noctalia` tool isn't listed, unless you turn on [`unrestricted`](../configuration/#unrestricted). Turning it on lets an agent run any program through the server; every call still needs the lease, stops at the stop key and is logged.
 - The pointer and keyboard tools refuse with `app_denied` while the focused window's `app_id` is on your deny list.
 - The keyboard tools need `expect`, the window the agent means to type into, and refuse with `focus_mismatch` rather than type elsewhere. They stop if focus moves while they type.
 - The pointer tools aim only at pixels of a screenshot the agent took under its lease, at most a minute old, of an output that hasn't changed since. They run only on one monitor at transform `Normal`.
@@ -64,7 +65,7 @@ Every tool call is appended to `~/.local/state/niri-computer-use/audit.jsonl` (o
 - Screenshots, window titles, accessible names and the clipboard reach any connected agent without a lease, even while the screen is locked. Connect only agents you trust with what is on your screen.
 - The deny list follows keyboard focus, and a click lands wherever the pointer is: it can hit a denied window while an allowed app has focus.
 - Apps choose their own `app_id`, so any app can call itself anything.
-- The preset rules refuse shells, interpreters and terminals with arguments, but a wrapper script gets past any list.
+- The preset rules refuse shells, interpreters and terminals with arguments, but a wrapper script gets past any list. With `unrestricted` on there are no preset rules.
 - You can still type and click while an agent works. The server notices focus moving and stops typing, but nothing keeps you and an agent from moving the pointer at the same time.
 - With the default `wtype` backend, a part of up to 100 characters that has started keeps typing after a stop or a focus change.
 - The lease belongs to a server process. Anything that runs as your user can start `niri-computer-use` too.
