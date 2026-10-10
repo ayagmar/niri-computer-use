@@ -18,7 +18,7 @@ Looking needs nothing: any connected agent can call `status`, `desktop_state`, `
 Bind `niri-computer-use stop` to a key in your niri config (see [First session](../../start/first-session/#bind-the-stop-key)). Pressing it:
 
 - cancels the action that is running, which ends with `stopped`; anything niri had already accepted may have taken effect
-- takes the lease back from the agent
+- takes the lease back from the agent, once a screenshot or readiness check under way has finished
 - refuses every later `acquire_desktop` and action with `stopped`
 
 The flag stays until you run `niri-computer-use resume`. An agent can't press the stop key: niri's keybinds don't fire from the virtual keyboard and pointer the server uses.
