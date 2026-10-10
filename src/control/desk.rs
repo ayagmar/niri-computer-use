@@ -14,6 +14,7 @@ use super::marker;
 use super::runtime::RuntimeDir;
 use super::stop;
 use crate::Env;
+use crate::a11y::ElementRef;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::refs::{Refs, Shot};
 
@@ -243,6 +244,17 @@ impl Desk {
     /// since the capture started.
     pub(crate) fn remember(&self, lease: u64, shot: Shot) -> Option<String> {
         self.seat.refs().insert(lease, shot)
+    }
+
+    /// Keeps `element` as an element ref of `lease` and returns its id, unless that lease
+    /// has ended since.
+    pub(crate) fn remember_element(&self, lease: u64, element: ElementRef) -> Option<String> {
+        self.seat.refs().insert_element(lease, element)
+    }
+
+    /// The element ref named `id` of the lease held.
+    pub(crate) fn element(&self, id: &str) -> Result<ElementRef, ToolError> {
+        self.seat.refs().element(id)
     }
 
     /// The runtime directory, where input writes its marker.

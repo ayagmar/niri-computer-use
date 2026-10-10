@@ -1,6 +1,10 @@
 //! The pointer tools' work (plan §6, §8): aim at pixels of a screenshot ref, then send the
 //! gesture through a virtual pointer bound to that screenshot's output.
 //!
+//! A point is a pixel of the screenshot, or an accessible element `elements` listed,
+//! whose place is worked out again from niri and the accessibility bus right before the
+//! gesture (`elements::aim`) and must lie inside the screenshot.
+//!
 //! Before anything is sent, the focused window's app must not be on the deny list, the
 //! outputs, requested right then, must be a setup live tests cover, and every point must
 //! pass the ref's checks. A gesture that presses a button writes the input-dirty marker
@@ -16,16 +20,18 @@ use super::{
     Input, focused_app_id,
     held::{self, Held},
 };
+use crate::a11y::model::Unmappable;
+use crate::a11y::{self, ElementRef};
 use crate::act::{Observed, Outcome};
 use crate::control::marker::{Marker, Written};
 use crate::control::runtime::RuntimeDir;
-use crate::coords::{ImagePx, ProtocolPt};
+use crate::coords::{ImagePx, LayoutPt, ProtocolPt};
 use crate::error::{CallError, ErrorName, ToolError};
-use crate::niri;
 use crate::niri::pointer::{Axis, Pointer, Step};
 use crate::niri::waiter::Waited;
 use crate::policy;
 use crate::refs::Shot;
+use crate::{elements, niri};
 
 /// How long the pointer rests on a drag's start before and after pressing, so the app
 /// sees the hover and the press as separate moments.
@@ -54,29 +60,38 @@ impl Button {
     }
 }
 
+/// Where a gesture points, as the agent named it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Spot {
+    Pixel(ImagePx),
+    /// An element ref, `elem-N`.
+    Element(String),
+}
+
+/// A gesture at points of type `P`: `Spot`s as asked, then layout points once located.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Gesture {
-    Move(ImagePx),
+pub(crate) enum Gesture<P> {
+    Move(P),
     Click {
-        at: ImagePx,
+        at: P,
         button: Button,
         count: u8,
     },
     Drag {
-        from: ImagePx,
-        to: ImagePx,
+        from: P,
+        to: P,
         button: Button,
     },
     /// Wheel notches: positive is right or down.
     Scroll {
-        at: ImagePx,
+        at: P,
         notches_x: i32,
         notches_y: i32,
     },
 }
 
-impl Gesture {
-    pub(crate) const fn tool(self) -> &'static str {
+impl<P> Gesture<P> {
+    pub(crate) const fn tool(&self) -> &'static str {
         match self {
             Self::Move(_) => "pointer_move",
             Self::Click { .. } => "click",
@@ -86,17 +101,17 @@ impl Gesture {
     }
 
     /// The button the gesture presses, if any.
-    const fn button(self) -> Option<Button> {
+    const fn button(&self) -> Option<Button> {
         match self {
-            Self::Click { button, .. } | Self::Drag { button, .. } => Some(button),
+            Self::Click { button, .. } | Self::Drag { button, .. } => Some(*button),
             Self::Move(_) | Self::Scroll { .. } => None,
         }
     }
 
     /// Checks the arguments that the schema can't.
-    fn check(self) -> Result<(), CallError> {
+    fn check(&self) -> Result<(), CallError> {
         let mistake = |message: String| Err(CallError::InvalidArguments(message));
-        match self {
+        match *self {
             Self::Click { count, .. } if !(1..=MAX_CLICKS).contains(&count) => {
                 mistake(format!("`count` must be 1 to {MAX_CLICKS}, not {count}"))
             }
@@ -120,31 +135,53 @@ impl Gesture {
         }
     }
 
-    /// The image pixels the gesture goes through, in order. A drag goes from its start to
-    /// its end in even steps.
-    fn pixels(self) -> Vec<ImagePx> {
+    /// The same gesture at the points `locate` gives for each of its own, in order.
+    async fn located<Q, F>(self, mut locate: impl FnMut(P) -> F) -> Result<Gesture<Q>, ToolError>
+    where
+        F: Future<Output = Result<Q, ToolError>>,
+    {
+        Ok(match self {
+            Self::Move(at) => Gesture::Move(locate(at).await?),
+            Self::Click { at, button, count } => Gesture::Click {
+                at: locate(at).await?,
+                button,
+                count,
+            },
+            Self::Drag { from, to, button } => Gesture::Drag {
+                from: locate(from).await?,
+                to: locate(to).await?,
+                button,
+            },
+            Self::Scroll {
+                at,
+                notches_x,
+                notches_y,
+            } => Gesture::Scroll {
+                at: locate(at).await?,
+                notches_x,
+                notches_y,
+            },
+        })
+    }
+}
+
+impl Gesture<LayoutPt> {
+    /// The points the gesture goes through, in order. A drag goes from its start to its
+    /// end in even steps.
+    fn points(self) -> Vec<LayoutPt> {
         match self {
             Self::Move(at) | Self::Click { at, .. } | Self::Scroll { at, .. } => vec![at],
             Self::Drag { from, to, .. } => (0..=DRAG_STEPS)
-                .map(|step| ImagePx {
-                    x: between(from.x, to.x, step),
-                    y: between(from.y, to.y, step),
+                .map(|step| {
+                    let along = f64::from(step) / f64::from(DRAG_STEPS);
+                    LayoutPt {
+                        x: (to.x - from.x).mul_add(along, from.x),
+                        y: (to.y - from.y).mul_add(along, from.y),
+                    }
                 })
                 .collect(),
         }
     }
-}
-
-/// The point `step` of `DRAG_STEPS` along from `from` to `to`, rounded to a pixel.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "a point between two u32 pixels, rounded, is a u32 pixel"
-)]
-fn between(from: u32, to: u32, step: u32) -> u32 {
-    let from = f64::from(from);
-    let to = f64::from(to);
-    (from + (to - from) * f64::from(step) / f64::from(DRAG_STEPS)).round() as u32
 }
 
 /// One thing to do: send a step, or wait.
@@ -154,21 +191,21 @@ enum Planned {
     Pause(Duration),
 }
 
-/// The steps of `gesture`, given where each of its pixels is on the output.
-fn plan(gesture: Gesture, aimed: &[ProtocolPt]) -> Vec<Planned> {
+/// The steps of `gesture`, given where each of its points is on the output.
+fn plan<P>(gesture: &Gesture<P>, aimed: &[ProtocolPt]) -> Vec<Planned> {
     let motions = aimed
         .iter()
         .map(|point| Planned::Send(Step::Motion(*point)));
     match gesture {
         Gesture::Move(_) => motions.collect(),
-        Gesture::Click { button, count, .. } => {
+        &Gesture::Click { button, count, .. } => {
             let click = [
                 Planned::Send(Step::Press(button.code())),
                 Planned::Send(Step::Release(button.code())),
             ];
             motions.chain((0..count).flat_map(|_| click)).collect()
         }
-        Gesture::Drag { button, .. } => {
+        &Gesture::Drag { button, .. } => {
             let mut planned = Vec::new();
             let mut motions = motions;
             planned.extend(motions.next());
@@ -183,7 +220,7 @@ fn plan(gesture: Gesture, aimed: &[ProtocolPt]) -> Vec<Planned> {
             planned.push(Planned::Send(Step::Release(button.code())));
             planned
         }
-        Gesture::Scroll {
+        &Gesture::Scroll {
             notches_x,
             notches_y,
             ..
@@ -199,12 +236,14 @@ fn plan(gesture: Gesture, aimed: &[ProtocolPt]) -> Vec<Planned> {
 }
 
 /// Aims `gesture` through `shot` and sends it. `observed` is `sent`: niri handled the
-/// input, and its effect is for the next screenshot to show.
+/// input, and its effect is for the next screenshot to show. `element` looks an element
+/// ref up.
 pub(crate) async fn point(
     input: Input<'_>,
     shot: Result<Shot, ToolError>,
-    gesture: Gesture,
+    gesture: Gesture<Spot>,
     keys: &[String],
+    element: impl Fn(&str) -> Result<ElementRef, ToolError> + Sync,
 ) -> Result<Outcome, CallError> {
     gesture.check()?;
     held::check(keys)?;
@@ -216,15 +255,21 @@ pub(crate) async fn point(
     let socket = input.niri.socket;
     let outputs = niri::outputs(socket).await?;
     policy::pointer_support(outputs.values())?;
-    let now = Instant::now();
     let connection = input
         .niri
         .events
         .and_then(niri::events::EventStream::connection);
-    let aimed = gesture
-        .pixels()
+    shot.check(Instant::now(), &outputs, connection)?;
+    let tool = gesture.tool();
+    let button = gesture.button();
+    let located = gesture
+        .located(|spot| locate(input, &shot, spot, &element))
+        .await?;
+    let now = Instant::now();
+    let aimed = located
+        .points()
         .into_iter()
-        .map(|pixel| shot.aim(pixel, now, &outputs, connection))
+        .map(|point| shot.aim_at(point, now, &outputs, connection))
         .collect::<Result<Vec<_>, _>>()?;
     let display = input.display.ok_or_else(|| {
         ToolError::new(
@@ -234,8 +279,9 @@ pub(crate) async fn point(
     })?;
     let held = Held::prepare(input, waiter.view(), keys).await?;
     let pointer = Pointer::bind(display, niri::pid(socket).await?, &shot.output).await?;
-    let mut device = Device::new(pointer, input.runtime, gesture, &shot.output, held)?;
-    if let Err(error) = device.run(plan(gesture, &aimed)).await {
+    let pressing = Pressing { tool, button };
+    let mut device = Device::new(pointer, input.runtime, pressing, &shot.output, held)?;
+    if let Err(error) = device.run(plan(&located, &aimed)).await {
         // Nothing reached niri: an error like any other before input.
         if !device.sent() {
             return Err(error.into());
@@ -248,6 +294,37 @@ pub(crate) async fn point(
         return Ok(Outcome::uncertain(Some(true), Some(waiter.view()), reason));
     }
     Ok(Outcome::seen(Observed::Sent, waiter.view(), Vec::new()))
+}
+
+/// Where `spot` is in the layout: a pixel's centre, or an element's, which must lie in
+/// the screenshot.
+async fn locate(
+    input: Input<'_>,
+    shot: &Shot,
+    asked: Spot,
+    element: &(impl Fn(&str) -> Result<ElementRef, ToolError> + Sync),
+) -> Result<LayoutPt, ToolError> {
+    let id = match asked {
+        Spot::Pixel(pixel) => return shot.layout_of(pixel),
+        Spot::Element(id) => id,
+    };
+    let kept = element(&id)?;
+    let a11y = input
+        .a11y
+        .ok_or_else(|| a11y::not_accessible("this session has no accessibility bus".to_owned()))?;
+    let point = elements::aim(input.niri.socket, a11y, input.policy, &kept).await?;
+    if shot.contains(point) {
+        Ok(point)
+    } else {
+        Err(elements::unmappable(Unmappable::OutsideScreenshot))
+    }
+}
+
+/// The tool a gesture belongs to and the button it presses, for the marker.
+#[derive(Debug, Clone, Copy)]
+struct Pressing {
+    tool: &'static str,
+    button: Option<Button>,
 }
 
 /// The pointer, with the input-dirty marker while a gesture may press a button. Dropping
@@ -267,14 +344,14 @@ impl Device {
     fn new(
         pointer: Pointer,
         runtime: &RuntimeDir,
-        gesture: Gesture,
+        pressing: Pressing,
         output: &str,
         held: Option<Held>,
     ) -> Result<Self, ToolError> {
-        let marker = (gesture.button().is_some() || held.is_some())
+        let marker = (pressing.button.is_some() || held.is_some())
             .then(|| {
-                let buttons = gesture.button().into_iter().map(Button::code).collect();
-                let mut marker = Marker::pending(gesture.tool(), buttons);
+                let buttons = pressing.button.into_iter().map(Button::code).collect();
+                let mut marker = Marker::pending(pressing.tool, buttons);
                 marker.output = Some(output.to_owned());
                 marker.keyboard = held.as_ref().map(Held::marker);
                 Written::write(runtime, marker)
@@ -394,7 +471,7 @@ mod tests {
             count: 2,
         };
         assert_eq!(
-            plan(double, &[at(1)]),
+            plan(&double, &[at(1)]),
             [
                 Planned::Send(Step::Motion(at(1))),
                 Planned::Send(Step::Press(273)),
@@ -404,7 +481,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            plan(Gesture::Move(PX), &[at(1)]),
+            plan(&Gesture::Move(PX), &[at(1)]),
             [Planned::Send(Step::Motion(at(1)))]
         );
     }
@@ -412,16 +489,16 @@ mod tests {
     #[test]
     fn a_drag_presses_at_its_start_moves_in_steps_and_releases_at_its_end() {
         let drag = Gesture::Drag {
-            from: ImagePx { x: 0, y: 100 },
-            to: ImagePx { x: 15, y: 0 },
+            from: LayoutPt { x: 0.0, y: 100.0 },
+            to: LayoutPt { x: 15.0, y: -20.0 },
             button: Button::Left,
         };
-        let pixels = drag.pixels();
-        assert_eq!(pixels.len(), 11);
-        assert_eq!(pixels.first(), Some(&ImagePx { x: 0, y: 100 }));
-        assert_eq!(pixels.get(1), Some(&ImagePx { x: 2, y: 90 }));
-        assert_eq!(pixels.last(), Some(&ImagePx { x: 15, y: 0 }));
-        let planned = plan(drag, &[at(0), at(1), at(2)]);
+        let points = drag.points();
+        assert_eq!(points.len(), 11);
+        assert_eq!(points.first(), Some(&LayoutPt { x: 0.0, y: 100.0 }));
+        assert_eq!(points.get(1), Some(&LayoutPt { x: 1.5, y: 88.0 }));
+        assert_eq!(points.last(), Some(&LayoutPt { x: 15.0, y: -20.0 }));
+        let planned = plan(&drag, &[at(0), at(1), at(2)]);
         assert_eq!(
             planned,
             [
@@ -446,7 +523,7 @@ mod tests {
             notches_y: 3,
         };
         assert_eq!(
-            plan(both, &[at(1)]),
+            plan(&both, &[at(1)]),
             [
                 Planned::Send(Step::Motion(at(1))),
                 Planned::Send(Step::Wheel(Axis::Vertical, 3)),
@@ -459,7 +536,7 @@ mod tests {
             notches_y: 1,
         };
         assert_eq!(
-            plan(down, &[at(1)]),
+            plan(&down, &[at(1)]),
             [
                 Planned::Send(Step::Motion(at(1))),
                 Planned::Send(Step::Wheel(Axis::Vertical, 1)),

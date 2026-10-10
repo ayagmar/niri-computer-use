@@ -22,7 +22,7 @@ use zbus::Connection;
 use zbus::zvariant::{DynamicType, OwnedObjectPath, OwnedValue};
 
 use crate::error::{ErrorName, ToolError};
-use model::{Extents, Frame, NoFrame, Picked, States};
+use model::{Extents, Frame, Kept, NoFrame, Picked, States};
 pub(crate) use walk::Node;
 
 /// Each call's deadline.
@@ -401,6 +401,24 @@ impl Request {
             height,
         })
     }
+
+    /// What a kept element is now: its role, states and extents, and its frame's extents,
+    /// read together.
+    pub(crate) async fn probe(&self, element: &ElementRef) -> Result<Probe, Failed> {
+        let at = (element.bus.as_str(), element.path.as_str());
+        let (role, states, extents, frame) = tokio::join!(
+            self.call::<_, u32>(at, (ACCESSIBLE, "GetRole"), &()),
+            self.call::<_, Vec<u32>>(at, (ACCESSIBLE, "GetState"), &()),
+            self.extents(&element.bus, &element.path),
+            self.extents(&element.bus, &element.frame),
+        );
+        Ok(Probe {
+            role: role?,
+            states: States::from_words(&states?),
+            extents: extents?,
+            frame: frame?,
+        })
+    }
 }
 
 /// One application's tree, for the walk.
@@ -413,6 +431,26 @@ impl walk::Source for AppTree<'_> {
     async fn node(&self, path: &str) -> Result<Option<Node>, ToolError> {
         self.request.node(self.bus, path).await
     }
+}
+
+/// A kept element as it is now.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Probe {
+    pub(crate) role: u32,
+    pub(crate) states: States,
+    pub(crate) extents: Extents,
+    pub(crate) frame: Extents,
+}
+
+/// An element listed under the lease, kept so a pointer tool can aim at it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ElementRef {
+    /// The application's unique bus name, never reused while the bus lives.
+    pub(crate) bus: String,
+    pub(crate) path: String,
+    /// The path of the frame that is the window, for the frame guard.
+    pub(crate) frame: String,
+    pub(crate) kept: Kept,
 }
 
 /// A call on an object that may be gone: `None` once it is.

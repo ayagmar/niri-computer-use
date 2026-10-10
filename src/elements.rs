@@ -1,16 +1,17 @@
-//! `elements`' work. niri says where the window is, right when asked; the accessibility
-//! bus says what is in it and where relative to the window (see `a11y::model`). Names are
-//! the app's data: they are returned, never logged.
+//! `elements`' work, and aiming a pointer tool at an element it listed. niri says where
+//! the window is, right when asked; the accessibility bus says what is in it and where
+//! relative to the window (see `a11y::model`). Names are the app's data: they are
+//! returned, never logged.
 
 use std::path::Path;
 
 use niri_ipc::Window;
 use serde::Serialize;
 
-use crate::a11y::model::{self, Extents, Filter, LayoutBox, Placement, Unmappable};
-use crate::a11y::{self, A11y};
+use crate::a11y::model::{self, Extents, Filter, Fresh, LayoutBox, Placement, Refused, Unmappable};
+use crate::a11y::{self, A11y, ElementRef, Failed};
 use crate::coords::LayoutPt;
-use crate::error::{CallError, ToolError};
+use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri;
 use crate::policy::{self, Loaded};
 
@@ -38,6 +39,8 @@ pub(crate) struct Listing {
 /// One element.
 #[derive(Debug, Serialize)]
 pub(crate) struct Listed {
+    /// `elem-N` for the pointer tools' `element`, while this server holds the lease.
+    pub(crate) element_ref: Option<String>,
     pub(crate) role: &'static str,
     /// The app's text: untrusted data.
     pub(crate) name: String,
@@ -73,12 +76,14 @@ async fn placed(socket: Option<&Path>, id: u64) -> Result<Option<Placed>, ToolEr
     Ok(Some(Placed { window, origin }))
 }
 
-/// Lists the accessible elements of window `ask.window_id`.
+/// Lists the accessible elements of window `ask.window_id`, keeping a ref of each through
+/// `remember` while there is a lease.
 pub(crate) async fn list(
     socket: Option<&Path>,
     a11y: &A11y,
     policy: &Loaded,
     ask: &Ask,
+    mut remember: impl FnMut(ElementRef) -> Option<String>,
 ) -> Result<Listing, CallError> {
     let placed = placed(socket, ask.window_id).await?.ok_or_else(|| {
         CallError::InvalidArguments(format!("no window with id {}", ask.window_id))
@@ -116,7 +121,18 @@ pub(crate) async fn list(
             origin: placed.origin,
         };
         let placed_box = model::place(placement);
+        let element_ref = remember(ElementRef {
+            bus: app.bus.clone(),
+            path: node.path.clone(),
+            frame: frame.node.path.clone(),
+            kept: model::Kept {
+                role: node.role,
+                window: window.id,
+                pid,
+            },
+        });
         elements.push(Listed {
+            element_ref,
             role: model::role_name(node.role),
             name: node.name.clone(),
             states: node.states.names(),
@@ -132,4 +148,71 @@ pub(crate) async fn list(
         walked: walked.nodes.len(),
         capped: walked.capped,
     })
+}
+
+/// Where to aim at `element` now: the centre of its box, from niri's geometry and the
+/// element as it is now, after the checks of the research report's A5. Nothing is
+/// retried.
+pub(crate) async fn aim(
+    socket: Option<&Path>,
+    a11y: &A11y,
+    policy: &Loaded,
+    element: &ElementRef,
+) -> Result<LayoutPt, ToolError> {
+    let kept = &element.kept;
+    let placed = placed(socket, kept.window)
+        .await?
+        .filter(|placed| placed.window.pid == Some(kept.pid))
+        .ok_or_else(|| stale(&format!("window {} is gone", kept.window)))?;
+    let window = &placed.window;
+    if let Some(refused) = policy::refuse_window(policy, window.id, window.app_id.as_deref()) {
+        return Err(refused);
+    }
+    let request = a11y.request(a11y::BUDGET).await?;
+    let probe = match request.probe(element).await {
+        Ok(probe) => probe,
+        Err(Failed::Gone(detail)) => return Err(stale(&detail)),
+        Err(failed) => return Err(failed.into()),
+    };
+    let fresh = Fresh {
+        role: probe.role,
+        placement: Placement {
+            states: probe.states,
+            extents: probe.extents,
+            frame_fits: model::frame_fits(probe.frame, window.layout.window_size),
+            origin: placed.origin,
+        },
+    };
+    match model::recheck(kept, fresh) {
+        Ok(found) => Ok(found.centre()),
+        Err(Refused::Stale(detail)) => Err(stale(&detail)),
+        Err(Refused::Unmappable(why)) => Err(unmappable(why)),
+    }
+}
+
+fn stale(detail: &str) -> ToolError {
+    ToolError::new(
+        ErrorName::ElementStale,
+        format!("{detail}; call elements again"),
+    )
+}
+
+/// `element_unmappable`, with the reason first, as `ref_invalid` has it.
+pub(crate) fn unmappable(why: Unmappable) -> ToolError {
+    let (reason, detail) = match why {
+        Unmappable::FrameSizeMismatch => (
+            "frame_size_mismatch",
+            "the app's accessible window isn't the size niri gives the window, so its coordinates can't be trusted; aim with a screenshot pixel instead",
+        ),
+        Unmappable::NotShowing => (
+            "not_showing",
+            "the element or its window isn't showing; bring it into view and call elements again",
+        ),
+        Unmappable::Empty => ("empty", "the element has no area"),
+        Unmappable::OutsideScreenshot => (
+            "outside_screenshot",
+            "the element's centre is outside the screenshot; take a screenshot that shows it",
+        ),
+    };
+    ToolError::new(ErrorName::ElementUnmappable, format!("{reason}: {detail}"))
 }

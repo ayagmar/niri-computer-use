@@ -19,7 +19,7 @@
 | `screenshot` | `target`, and optionally `region`, `max_width`, `format`, `save_path` | an image, then metadata: output, captured rectangle in layout coordinates, scale, image size, and `screenshot_ref` while you hold the lease; with `save_path`, `saved`: the PNG's path and pixel size |
 | `clipboard_read` | none | `text`, or `text: null` with `reason` `nothing_copied` or `no_text` |
 | `shell_status` | none | Noctalia's `barVisible`, `panelOpen`, `activePanelId` and `locked`. Listed only when Noctalia is installed |
-| `elements` | `window_id`, optionally `role`, `name_contains`, `limit` (1 to 500, default 50) | that window's accessible elements: `role`, `name`, `states`, `actions`, and `layout_box` in layout coordinates, or null with `unmappable`; `truncated`, `walked`, `capped`. Listed only when the session has an accessibility bus |
+| `elements` | `window_id`, optionally `role`, `name_contains`, `limit` (1 to 500, default 50) | that window's accessible elements: `element_ref` (`elem-N`, while you hold the lease), `role`, `name`, `states`, `actions`, and `layout_box` in layout coordinates, or null with `unmappable`; `truncated`, `walked`, `capped`. Listed only when the session has an accessibility bus |
 | `wait_for` | `until`, optionally `timeout_ms` (100 to 30000, default 10000) and `screenshot` | `observed`: `met` with the matching `windows`, `timeout`, or `uncertain`; `focused_window`; `waited_ms` |
 
 `until` is one of `{"window": {"app_id": …, "title": …}}` (a window with that `app_id` and a title containing that text; either one may be left out), `{"closed": <window id>}`, `{"title": {"window_id": …, "contains": …}}`, or `"screen_stable"` (two captures of the focused output 100 ms apart are the same).
@@ -56,9 +56,9 @@ An open panel holds keyboard focus, so `focused_window` is null while it is open
 
 | Tool | Arguments | `observed` |
 |---|---|---|
-| `pointer_move` | `screenshot_ref`, `x`, `y` | `sent`; moves the pointer there, to hover |
-| `click` | `screenshot_ref`, `x`, `y`, optionally `button` (`left`, `right`, `middle`) and `count` (1 to 3) | `sent` |
-| `drag` | `screenshot_ref`, `from: {x, y}`, `to: {x, y}`, optionally `button` | `sent`; presses at `from`, moves, releases at `to` |
+| `pointer_move` | `screenshot_ref`, and `x`, `y` or `element` | `sent`; moves the pointer there, to hover |
+| `click` | `screenshot_ref`, and `x`, `y` or `element`, optionally `button` (`left`, `right`, `middle`) and `count` (1 to 3) | `sent` |
+| `drag` | `screenshot_ref`, `from` and `to`, each `{x, y}` or `{element}`, optionally `button` | `sent`; presses at `from`, moves, releases at `to` |
 | `scroll` | `screenshot_ref`, `x`, `y`, `notches_y` (positive is down) and/or `notches_x` (positive is right), at most 10 each | `sent` |
 | `key` | `keys`, 1 to 16 combinations such as `["ctrl+s"]` or `["Down", "Down", "Return"]`, and `expect` | `sent` or `interrupted`; `focus`: `matched` or `unchecked`; if focus moves after a key the rest aren't pressed and `pressed` counts the ones that were |
 | `type_text` | `text` (1 to 1000 characters), `expect`, optionally `submit` | as for `key`; sent in parts of 100, and if focus moves during a part the rest isn't typed: `interrupted`, with `typed` counting the characters sent. With `submit: true`, Enter is pressed after the whole text and `submitted` says whether it was |
@@ -71,6 +71,8 @@ Use `paste` for text over 1000 characters, or when typing it is slow; it works w
 A combination uses keysym names (`a`, `Return`, `Escape`, `F5`, `slash`, `Page_Down`) and the modifiers `shift`, `ctrl`, `alt`, `altgr` and `super`.
 
 Pixel coordinates are in the screenshot named by `screenshot_ref`, and a pixel targets its centre. A ref is good for 60 seconds and for the lease it was taken under.
+
+`element` takes an `element_ref` from `elements` listed under this lease and aims at the element's centre. The server checks the element again just before: still there, the same role, showing, and its centre inside the screenshot named by `screenshot_ref`. `element_stale` or `element_unmappable` means nothing was sent. `scroll` takes pixels only.
 
 ## Fields every action result has
 

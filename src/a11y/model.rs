@@ -258,6 +258,15 @@ pub(crate) struct LayoutBox {
     pub(crate) height: f64,
 }
 
+impl LayoutBox {
+    pub(crate) const fn centre(self) -> LayoutPt {
+        LayoutPt {
+            x: self.width.mul_add(0.5, self.x),
+            y: self.height.mul_add(0.5, self.y),
+        }
+    }
+}
+
 /// Why an element has no layout box.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -270,6 +279,8 @@ pub(crate) enum Unmappable {
     NotShowing,
     /// The element has no area.
     Empty,
+    /// The element's centre is outside the screenshot the pointer aims through.
+    OutsideScreenshot,
 }
 
 /// Where the window's geometry starts in the layout: the output's origin, plus the tile's
@@ -421,6 +432,41 @@ impl Filter {
     }
 }
 
+/// An element as a ref keeps it, to check again before aiming at it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Kept {
+    pub(crate) role: u32,
+    pub(crate) window: u64,
+    pub(crate) pid: i32,
+}
+
+/// The element and its window as they are now.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Fresh {
+    pub(crate) role: u32,
+    pub(crate) placement: Placement,
+}
+
+/// Why a ref can't be aimed at any more.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Refused {
+    /// The element is gone or is now something else.
+    Stale(String),
+    Unmappable(Unmappable),
+}
+
+/// Checks a kept element against how it is now: the same role, then a layout box.
+pub(crate) fn recheck(kept: &Kept, fresh: Fresh) -> Result<LayoutBox, Refused> {
+    if fresh.role != kept.role {
+        return Err(Refused::Stale(format!(
+            "the element was a {} and is now a {}",
+            role_name(kept.role),
+            role_name(fresh.role)
+        )));
+    }
+    place(fresh.placement).map_err(Refused::Unmappable)
+}
+
 #[cfg(test)]
 mod tests {
     use niri_ipc::Transform;
@@ -482,6 +528,7 @@ mod tests {
                 height: 34.0
             }
         );
+        assert_eq!(primary.centre(), LayoutPt { x: 220.0, y: 180.0 });
     }
 
     #[test]
@@ -495,6 +542,7 @@ mod tests {
         let found = place(placement(extents(40, 70, 320, 34), Some(origin))).unwrap();
         assert!((found.x - (-1280.0 + 57.333_333 + 1.5 + 40.0)).abs() < 1e-9);
         assert!((found.y - (100.0 + 65.333_333 + 2.25 + 70.0)).abs() < 1e-9);
+        assert!((found.centre().x - (found.x + 160.0)).abs() < 1e-9);
     }
 
     #[test]
@@ -597,5 +645,35 @@ mod tests {
             ["enabled", "showing", "visible", "read_only"]
         );
         assert_eq!(States::from_words(&[]), States::default());
+    }
+
+    #[test]
+    fn a_kept_element_is_stale_once_it_changes_role_and_unmappable_once_hidden() {
+        let kept = Kept {
+            role: 43,
+            window: 3,
+            pid: 4711,
+        };
+        let shown = placement(
+            extents(40, 70, 320, 34),
+            Some(LayoutPt { x: 20.0, y: 20.0 }),
+        );
+        let fresh = |role, placement| Fresh { role, placement };
+        assert_eq!(
+            recheck(&kept, fresh(43, shown)).map(LayoutBox::centre),
+            Ok(LayoutPt { x: 220.0, y: 107.0 })
+        );
+        assert!(matches!(
+            recheck(&kept, fresh(29, shown)),
+            Err(Refused::Stale(detail)) if detail.contains("button") && detail.contains("label")
+        ));
+        let hidden = Placement {
+            states: States::default(),
+            ..shown
+        };
+        assert_eq!(
+            recheck(&kept, fresh(43, hidden)),
+            Err(Refused::Unmappable(Unmappable::NotShowing))
+        );
     }
 }

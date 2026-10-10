@@ -55,14 +55,8 @@ fn expected(name: &str) -> (Value, Value) {
         "close_window" => (json!([false, true, false]), json!(["id"])),
         "launch" => (json!([false, false, false]), json!(["preset"])),
         "screenshot" => (json!([true, null, null]), json!(["target"])),
-        "pointer_move" => (
-            json!([false, false, true]),
-            json!(["screenshot_ref", "x", "y"]),
-        ),
-        "click" => (
-            json!([false, true, false]),
-            json!(["screenshot_ref", "x", "y"]),
-        ),
+        "pointer_move" => (json!([false, false, true]), json!(["screenshot_ref"])),
+        "click" => (json!([false, true, false]), json!(["screenshot_ref"])),
         "drag" => (
             json!([false, true, false]),
             json!(["screenshot_ref", "from", "to"]),
@@ -143,8 +137,8 @@ const PROPERTIES: [(&str, usize); 16] = [
     ("focus_window", 2),
     ("focus_workspace", 2),
     ("close_window", 2),
-    ("pointer_move", 4),
-    ("click", 7),
+    ("pointer_move", 5),
+    ("click", 8),
     ("drag", 6),
     ("scroll", 7),
     ("key", 3),

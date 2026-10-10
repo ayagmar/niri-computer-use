@@ -529,3 +529,10 @@ These match the versions installed locally.
 - Role and state names are AT-SPI's own (`atspi-constants.h`) in snake case, such as `push_button_menu` or `check_box`, so they match what other AT-SPI tools show. An unknown `role` argument is an argument mistake.
 - An element's place is `output origin + tile position + window offset in the tile + its WINDOW-relative extents`. It is trusted only when the app's accessible frame is niri's window size, within a pixel. A frame of another size, as with client-side decorations that draw shadows, makes every element of that window `unmappable: frame_size_mismatch` rather than a guess.
 - New error names: `not_accessible` when the window's application has no accessible window for it, and `ambiguous_window` when several of its windows fit.
+
+## 2026-10-10: aiming at elements
+
+- A pointer tool given `element` checks it again right before acting, with no retry: the window still exists with the same process, one round of calls to the element answers within its budget, its role is unchanged, it is still showing, the frame still fits, and its centre, from niri's geometry now, lies inside the screenshot. New error names: `element_stale` and `element_unmappable`.
+- `screenshot_ref` stays required with `element`: the screenshot names the output the virtual pointer binds to and the rectangle the point must fall in, so an element ref never aims at something the agent hasn't seen.
+- A drag interpolates in layout coordinates, so a drag between an element and a pixel, or two elements, needs no image pixel in between. `scroll` keeps pixels only.
+- Element refs belong to the lease, as screenshot refs do, and the last 1000 are kept: a walk lists up to 500 elements, so two lists' worth stay usable.

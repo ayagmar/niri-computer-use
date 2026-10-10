@@ -55,6 +55,11 @@ pub(crate) enum ErrorName {
     NotAccessible,
     /// Several of the application's accessible windows could be the window asked about.
     AmbiguousWindow,
+    /// An element ref whose window, application or object is gone, or whose object is now
+    /// something else.
+    ElementStale,
+    /// An element ref that is still there but can't be aimed at now: see `Unmappable`.
+    ElementUnmappable,
 }
 
 /// A failure, serialized as `{"error": <name>, "detail": <upstream detail>}`.

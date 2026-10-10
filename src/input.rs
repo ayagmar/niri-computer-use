@@ -27,6 +27,8 @@ pub(crate) struct Input<'a> {
     pub(crate) runtime: &'a RuntimeDir,
     pub(crate) policy: &'a Loaded,
     pub(crate) keyboard: Option<&'a std::ffi::OsStr>,
+    /// The accessibility bus, when this session has one.
+    pub(crate) a11y: Option<&'a crate::a11y::A11y>,
 }
 
 /// The `app_id` of the window with keyboard focus, if it has one.

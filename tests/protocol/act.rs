@@ -661,6 +661,43 @@ async fn pointer_tools_check_the_ref_the_outputs_and_their_arguments_first() {
 }
 
 #[tokio::test]
+async fn a_point_is_a_pixel_or_an_element_ref_of_this_lease() {
+    let mut desk = Desk::start("act-element", "").await;
+    let id = screenshot_ref(&mut desk).await;
+    for arguments in [
+        json!({"screenshot_ref": id, "x": 10, "y": 10, "element": "elem-1"}),
+        json!({"screenshot_ref": id, "x": 10}),
+        json!({"screenshot_ref": id}),
+    ] {
+        let result = desk.server.call("click", arguments.clone()).await;
+        assert!(mistake(&result).contains("`element`"), "{arguments}");
+    }
+    let half = json!({"screenshot_ref": id, "from": {"x": 1, "y": 1}, "to": {"y": 5}});
+    assert!(mistake(&desk.server.call("drag", half).await).contains("`element`"));
+
+    let unknown = json!({"screenshot_ref": id, "element": "elem-7"});
+    let stale = desk.server.call("pointer_move", unknown.clone()).await;
+    let (name, detail) = tool_error(&stale);
+    assert_eq!(name, "element_stale");
+    assert!(detail.contains("elements"), "{detail}");
+    let marker = desk
+        .fixture
+        .path("run/niri-computer-use/niri.test/input-dirty");
+    assert!(!marker.exists());
+    let logged = desk.audited();
+    assert_eq!(
+        logged.last(),
+        Some(&json!([
+            "pointer_move",
+            unknown,
+            null,
+            null,
+            "element_stale"
+        ]))
+    );
+}
+
+#[tokio::test]
 async fn keyboard_tools_check_their_text_focus_and_app_before_typing() {
     let mut desk = Desk::start("act-keys", r#"deny_input_app_ids = ["b"]"#).await;
     let long = desk
