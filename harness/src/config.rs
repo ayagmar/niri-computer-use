@@ -4,13 +4,32 @@ use std::path::Path;
 
 use crate::scale::Scale;
 
+/// Who draws window decorations in the nested niri.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Decorations {
+    /// niri's default: apps draw their own.
+    Client,
+    /// `prefer-no-csd`: apps that honour it leave their decorations to niri, which draws
+    /// none here, as borders are off.
+    Server,
+}
+
+impl Decorations {
+    /// The supervisor's flag for `Server`.
+    pub(crate) const SERVER_FLAG: &'static str = "--ssd";
+}
+
 /// The nested niri config. No startup commands, animations, borders or Xwayland, a solid
 /// magenta background, a fixed 400x300 floating `wev`, a fixed 560x360 floating `kitty`
-/// for the scroll check, and one test bind.
-pub(crate) fn niri(scale: Scale, bind_marker: &Path) -> String {
+/// for the scroll check, the accessibility fixtures floating at 400x300, and one test bind.
+pub(crate) fn niri(scale: Scale, bind_marker: &Path, decorations: Decorations) -> String {
     let marker = bind_marker.display();
+    let prefer_no_csd = match decorations {
+        Decorations::Client => "",
+        Decorations::Server => "prefer-no-csd\n\n",
+    };
     format!(
-        r##"hotkey-overlay {{
+        r##"{prefer_no_csd}hotkey-overlay {{
     skip-at-startup
 }}
 
@@ -54,6 +73,8 @@ window-rule {{
 
 window-rule {{
     match app-id="^org\\.ncu\\.A11y$"
+    match app-id="^org\\.ncu\\.Gtk3$"
+    match app-id="^org\\.qt-project\\.qml$"
     open-floating true
     default-floating-position x=20 y=20 relative-to="top-left"
     default-column-width {{ fixed 400; }}
@@ -141,10 +162,21 @@ mod tests {
 
     #[test]
     fn niri_config_sets_scale_and_bind_marker() {
-        let config = niri("1.5".parse().unwrap(), Path::new("/t/bind-fired"));
+        let config = niri(
+            "1.5".parse().unwrap(),
+            Path::new("/t/bind-fired"),
+            Decorations::Client,
+        );
         assert!(config.contains("    scale 1.5\n"));
+        assert!(!config.contains("prefer-no-csd"));
         assert!(config.contains(r#"spawn "touch" "/t/bind-fired";"#));
         assert!(!config.contains("spawn-at-startup"));
+    }
+
+    #[test]
+    fn server_decorations_prefer_no_csd() {
+        let config = niri(Scale::ONE, Path::new("/t/m"), Decorations::Server);
+        assert!(config.starts_with("prefer-no-csd\n\n"));
     }
 
     #[test]

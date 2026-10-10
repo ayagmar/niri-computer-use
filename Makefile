@@ -48,7 +48,7 @@ nested-shell:
 
 nested-a11y:
 	cargo build --locked -p niri-computer-use
-	cargo run --locked -p harness -- run $(NESTED_FLAGS) --scale $(SCALE) --a11y
+	cargo run --locked -p harness -- run $(NESTED_FLAGS) --scale $(SCALE) $(if $(SSD),--ssd) --a11y
 
 # One skill eval in the nested niri: make nested-eval SCENARIO=compose-message SKILL=skills/niri-computer-use MODEL=sonnet
 nested-eval:

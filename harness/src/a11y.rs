@@ -7,11 +7,12 @@
 
 use std::ffi::OsString;
 use std::fs;
-use std::path::PathBuf;
 use std::time::Duration;
 
+use niri_ipc::{Request, Response, Window};
 use serde_json::Value;
 
+use crate::config::Decorations;
 use crate::failure::{Context as _, Failure, Result};
 use crate::nested;
 use crate::runner::Process;
@@ -26,18 +27,20 @@ const FIXTURE_DEADLINE: Duration = Duration::from_secs(220);
 const REGISTRY_NAME: &str = "org.a11y.atspi.Registry";
 const ROOT: &str = "/org/a11y/atspi/accessible/root";
 
-pub(crate) fn run(session: &mut Session<'_>) -> Result<()> {
+pub(crate) fn run(session: &mut Session<'_>, decorations: Decorations) -> Result<()> {
+    session.log(&format!("M9: decorations {decorations:?}"))?;
     let bus = Bus::start(session)?;
     bus.only_nested_apps(session, "before the fixtures")?;
-    let gtk = start_gtk(session)?;
-    session.wait_until(
-        "a11y-gtk",
-        "the GTK 4 fixture on the bus",
-        STARTUP,
-        |session| Ok((!bus.apps(session)?.is_empty()).then_some(())),
-    )?;
-    bus.only_nested_apps(session, "with the GTK 4 fixture")?;
-    gtk.stop()?;
+    for toolkit in Toolkit::ALL {
+        let fixture = Fixture::start(session, toolkit)?;
+        let window = fixture.window(session, &bus)?;
+        session.log(&format!(
+            "M9: {toolkit:?} window {} app_id {:?}, size {:?}",
+            window.id, window.app_id, window.layout.window_size
+        ))?;
+        bus.only_nested_apps(session, &format!("with the {toolkit:?} fixture"))?;
+        fixture.stop()?;
+    }
     bus.stop()
 }
 
@@ -148,6 +151,16 @@ impl Bus {
         i32::try_from(pid).map_err(|_| Failure::new(format!("pid {pid} is out of range")))
     }
 
+    /// Whether an application with process ID `pid` is on the bus.
+    pub(crate) fn registered(&self, session: &Session<'_>, pid: i32) -> Result<bool> {
+        for app in self.apps(session)? {
+            if self.pid(session, &app)? == pid {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     pub(crate) fn stop(self) -> Result<()> {
         self.registry.stop()?;
         self.launcher.stop().map(drop)
@@ -241,26 +254,94 @@ fn parent_of(stat: &str) -> Option<i32> {
     rest.split_whitespace().nth(1)?.parse().ok()
 }
 
-/// Starts the GTK 4 fixture's accessibility window.
-fn start_gtk(session: &Session<'_>) -> Result<Process> {
-    let fixture = session.test_dir().root().join("gtk.py");
-    fs::write(&fixture, include_str!("../fixtures/gtk.py")).context("write the GTK fixture")?;
-    let args = fixture_args(session, fixture, "a11y");
-    session.start(
-        "python3",
-        &args,
-        session.artifact("gtk-a11y.log"),
-        FIXTURE_DEADLINE,
-    )
+/// The toolkits of the fixtures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Toolkit {
+    Gtk4,
+    Gtk3,
+    Qt,
 }
 
-fn fixture_args(session: &Session<'_>, fixture: PathBuf, mode: &str) -> Vec<OsString> {
-    vec![
-        "-I".into(),
-        fixture.into(),
-        session.test_dir().root().into(),
-        mode.into(),
-    ]
+impl Toolkit {
+    pub(crate) const ALL: [Self; 3] = [Self::Gtk4, Self::Gtk3, Self::Qt];
+}
+
+/// A running fixture.
+#[derive(Debug)]
+pub(crate) struct Fixture {
+    pub(crate) toolkit: Toolkit,
+    process: Process,
+}
+
+impl Fixture {
+    /// Writes the fixture's source into `TEST_DIR` and starts it. The Qt fixture gets
+    /// accessibility switched on, its logs on stderr instead of the journal, and file
+    /// writes from QML for its counter, in its own environment only.
+    pub(crate) fn start(session: &Session<'_>, toolkit: Toolkit) -> Result<Self> {
+        let root = session.test_dir().root();
+        let (name, source) = match toolkit {
+            Toolkit::Gtk4 => ("gtk.py", include_str!("../fixtures/gtk.py")),
+            Toolkit::Gtk3 => ("gtk3.py", include_str!("../fixtures/gtk3.py")),
+            Toolkit::Qt => ("qt.qml", include_str!("../fixtures/qt.qml")),
+        };
+        let file = root.join(name);
+        fs::write(&file, source).context(format!("write {}", file.display()))?;
+        let (program, args): (&str, Vec<OsString>) = match toolkit {
+            Toolkit::Gtk4 => (
+                "python3",
+                vec!["-I".into(), file.into(), root.into(), "a11y".into()],
+            ),
+            Toolkit::Gtk3 => ("python3", vec!["-I".into(), file.into(), root.into()]),
+            Toolkit::Qt => (
+                "env",
+                vec![
+                    "QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1".into(),
+                    "QT_FORCE_STDERR_LOGGING=1".into(),
+                    "QML_XHR_ALLOW_FILE_WRITE=1".into(),
+                    "qml6".into(),
+                    file.into(),
+                    "--".into(),
+                    root.into(),
+                ],
+            ),
+        };
+        let log = session.artifact(&format!("fixture-{toolkit:?}.log").to_lowercase());
+        let process = session.start(program, &args, log, FIXTURE_DEADLINE)?;
+        Ok(Self { toolkit, process })
+    }
+
+    pub(crate) const fn pid(&self) -> i32 {
+        self.process.pid()
+    }
+
+    /// Waits for the fixture's 400x300 window and for the fixture on the bus.
+    pub(crate) fn window(&self, session: &mut Session<'_>, bus: &Bus) -> Result<Window> {
+        let pid = self.pid();
+        let window = session.wait_until(
+            "a11y-window",
+            &format!("the {:?} fixture's window", self.toolkit),
+            STARTUP,
+            |session| {
+                let Response::Windows(windows) = session.request(&Request::Windows)? else {
+                    return Err(Failure::new("niri answered Windows with another response"));
+                };
+                Ok(windows.into_iter().find(|window| {
+                    window.pid == Some(pid)
+                        && window.layout.window_size == (400, 300)
+                        && window.layout.tile_pos_in_workspace_view.is_some()
+                }))
+            },
+        )?;
+        let what = format!("the {:?} fixture on the bus", self.toolkit);
+        session.wait_until("a11y-registered", &what, STARTUP, |session| {
+            Ok(bus.registered(session, pid)?.then_some(()))
+        })?;
+        Ok(window)
+    }
+
+    pub(crate) fn stop(self) -> Result<()> {
+        self.process.stop().map(drop)
+    }
 }
 
 #[cfg(test)]

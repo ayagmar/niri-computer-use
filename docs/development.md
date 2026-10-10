@@ -226,13 +226,17 @@ The run has a 130-second deadline. Its files are in `target/e2e/<run>/`, includi
 
 ## Nested accessibility checks
 
-`make nested-a11y` runs M9's checks in a nested niri with a private accessibility bus. `SCALE` sets the nested output's scale as for `make nested`. The supervisor:
+`make nested-a11y` runs M9's checks in a nested niri with a private accessibility bus. `SCALE` sets the nested output's scale as for `make nested`, and `SSD=1` adds `prefer-no-csd` to the nested niri's config, so apps that honour it leave their decorations to niri (which draws none, borders being off). The supervisor:
 
 1. Starts `/usr/lib/at-spi-bus-launcher --launch-immediately --a11y=1`. It claims `org.a11y.Bus` on the nested session bus and starts a bus of its own at `$XDG_RUNTIME_DIR/at-spi/bus`. The supervisor waits until the name has an owner, reads the address with `GetAddress`, and requires its socket to resolve under `TEST_DIR/run`.
 2. Starts `/usr/lib/at-spi2-registryd` itself. The nested session bus has no service directories, and the accessibility bus would activate the registry through systemd, which it can't reach, so nothing is activated from the host.
-3. Checks that every application the registry lists (`GetChildren` on its root) is a process of the nested session: the bus daemon's `GetConnectionUnixProcessID` for each one, followed through `/proc/<pid>/stat` to the nested niri. It checks before any fixture starts, when the list is empty, and again with the GTK 4 fixture's `a11y` window registered.
+3. Checks that every application the registry lists (`GetChildren` on its root) is a process of the nested session: the bus daemon's `GetConnectionUnixProcessID` for each one, followed through `/proc/<pid>/stat` to the nested niri. It checks before any fixture starts, when the list is empty, and again with each fixture registered.
+4. Starts the fixtures one at a time, each a 400x300 window the nested config floats at (20, 20), and waits for its window in niri and for its process on the bus:
+   - GTK 4: `harness/fixtures/gtk.py` in `a11y` mode (`org.ncu.A11y`): a label, the `Primary` and `Second` buttons, which count their activations in `TEST_DIR/primary-count` and `second-count`, an entry, and a `Vanish` button that removes itself.
+   - GTK 3: `harness/fixtures/gtk3.py` (`org.ncu.Gtk3`): a label, a button counting into `TEST_DIR/gtk3-count`, and an entry.
+   - Qt Quick: `qml6 harness/fixtures/qt.qml` (`org.qt-project.qml`): a label, a button counting into `TEST_DIR/qt-count`, and a text field. It runs with `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1`, which Qt needs to register on the bus, `QT_FORCE_STDERR_LOGGING=1`, which keeps its logs out of your journal (Qt otherwise writes to journald's socket, which the nested environment doesn't replace), and `QML_XHR_ALLOW_FILE_WRITE=1`, so the QML can write its counter.
 
-Every call on a bus goes through `busctl --address=… --json=short` with the step deadline. The run has a 240-second deadline. It needs at-spi2-core (`at-spi-bus-launcher`, `at-spi2-registryd`), `busctl` from systemd, and Python 3 with PyGObject and GTK 4.
+Every call on a bus goes through `busctl --address=… --json=short` with the step deadline. The run has a 240-second deadline. It needs at-spi2-core (`at-spi-bus-launcher`, `at-spi2-registryd`), `busctl` from systemd, Python 3 with PyGObject, GTK 4 and GTK 3, and `qml6` with Qt Quick Controls (qt6-declarative).
 
 ## Skill evals
 

@@ -43,12 +43,12 @@ use scale::Scale;
 use supervise::Probes;
 use test_dir::TestDir;
 
-const USAGE: &str = "usage: harness run [--visible] [--scale <scale>] [--noctalia | --sitting | --control | --actions | --input | --shell | --a11y | --eval <scenario> --skill <dir|none> --model <model>]
+const USAGE: &str = "usage: harness run [--visible] [--scale <scale>] [--ssd] [--noctalia | --sitting | --control | --actions | --input | --shell | --a11y | --eval <scenario> --skill <dir|none> --model <model>]
        harness host-capture <output>
        harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--started <file>]
        harness keymaps <TEST_DIR> <directory> <deadline-ms>
        harness clipboard <TEST_DIR> <deadline-ms>
-       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --a11y <server> | --eval <server> <scenario> <skill|none> <model>]";
+       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--ssd] [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --a11y <server> | --eval <server> <scenario> <skill|none> <model>]";
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -83,7 +83,14 @@ fn dispatch(args: &[OsString]) -> Result<()> {
             capture::host(output)
         }
         ["supervise", test_dir, artifacts, scale, rest @ ..] => {
+            let (decorations, rest) = match rest {
+                [flag, rest @ ..] if *flag == config::Decorations::SERVER_FLAG => {
+                    (config::Decorations::Server, rest)
+                }
+                _ => (config::Decorations::Client, rest),
+            };
             let mut probes = Probes {
+                decorations,
                 noctalia: None,
                 sitting: false,
                 server: None,
@@ -118,6 +125,7 @@ fn dispatch(args: &[OsString]) -> Result<()> {
 fn run_options(args: &[&str]) -> Result<run::Options> {
     let mut options = run::Options {
         scale: Scale::ONE,
+        decorations: config::Decorations::Client,
         visible: false,
         noctalia: false,
         sitting: false,
@@ -132,6 +140,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
                 options.scale = args.next().ok_or_else(|| Failure::new(USAGE))?.parse()?;
             }
             "--visible" => options.visible = true,
+            "--ssd" => options.decorations = config::Decorations::Server,
             "--noctalia" => options.noctalia = true,
             "--sitting" => options.sitting = true,
             "--control" | "--actions" | "--input" | "--shell" | "--a11y" => {

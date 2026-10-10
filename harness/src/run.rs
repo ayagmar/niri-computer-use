@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::time::{Duration, SystemTime};
 
-use crate::config;
+use crate::config::{self, Decorations};
 use crate::environment::{self, Env, Host};
 use crate::eval;
 use crate::failure::{Context as _, Failure, Result};
@@ -37,6 +37,7 @@ const NOCTALIA_VALID: &str = "\u{2713} Config is valid\n";
 #[derive(Debug, Clone)]
 pub(crate) struct Options {
     pub(crate) scale: Scale,
+    pub(crate) decorations: Decorations,
     /// Draw on the host only for an explicitly requested human sitting.
     pub(crate) visible: bool,
     /// Start Noctalia in the nested session and run C13 through `niri-computer-use`.
@@ -252,7 +253,7 @@ fn preflight(
     options: &Options,
     display: &Path,
 ) -> Result<Env> {
-    let niri_config = config::niri(options.scale, &test_dir.bind_marker());
+    let niri_config = config::niri(options.scale, &test_dir.bind_marker(), options.decorations);
     write(&test_dir.niri_config(), &niri_config)?;
     write(&artifacts.join("niri.kdl"), &niri_config)?;
     write(&test_dir.dbus_config(), &config::dbus(&test_dir.run()))?;
@@ -328,6 +329,9 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: &Optio
         artifacts.into(),
         options.scale.to_string().into(),
     ];
+    if options.decorations == Decorations::Server {
+        args.push(Decorations::SERVER_FLAG.into());
+    }
     if options.sitting {
         args.push("--sitting".into());
     } else if options.noctalia {

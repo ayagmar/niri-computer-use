@@ -158,6 +158,12 @@ pub(crate) struct Process {
 }
 
 impl Process {
+    /// The child's process ID. It can't be reused before the child is reaped, which only
+    /// `wait` and `stop` do, and they take the handle.
+    pub(crate) const fn pid(&self) -> i32 {
+        self.pid.as_raw_nonzero().get()
+    }
+
     /// Writes all bytes, then closes stdin, within the child's original deadline. The
     /// watchdog also bounds a writer blocked by a child that never reads its pipe.
     pub(crate) fn feed(&mut self, bytes: Vec<u8>) -> Result<()> {

@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use niri_ipc::{LogicalOutput, Request, Response, Transform, WindowLayout};
 
+use crate::config::Decorations;
 use crate::failure::{Context as _, Failure, Result};
 use crate::log::Log;
 use crate::nested::Nested;
@@ -29,6 +30,8 @@ const WAIT: Duration = Duration::from_secs(5);
 /// What `harness run` passes on.
 #[derive(Debug)]
 pub(crate) struct Probes<'a> {
+    /// Whether the nested niri prefers server-side decorations.
+    pub(crate) decorations: Decorations,
     /// The `niri-computer-use` binary, only when C13 was requested.
     pub(crate) noctalia: Option<&'a str>,
     pub(crate) sitting: bool,
@@ -71,7 +74,7 @@ pub(crate) fn supervise(
                 ServerChecks::Actions => crate::actions::run(&mut session, server),
                 ServerChecks::Input => crate::input::run(&mut session, &output, server),
                 ServerChecks::Shell => crate::shell::run(&mut session, server),
-                ServerChecks::A11y => crate::a11y::run(&mut session),
+                ServerChecks::A11y => crate::a11y::run(&mut session, probes.decorations),
             }
         } else {
             steps(&mut session, &output, probes)
