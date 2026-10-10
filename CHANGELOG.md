@@ -78,6 +78,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - The audit log no longer keeps text an agent passes to `niri_action` or `noctalia`, such as a `Spawn` command or a notification body: it logs the action's name, field names, numbers and booleans with every string as its length in bytes, and only Noctalia's argument count and byte lengths.
 - Another session's `acquire_desktop` refuses with `lease_held` at once, instead of waiting for the owner's running action; the lease is checked again before it is granted.
 - A stopped, cancelled or disconnected `paste` no longer restores the clipboard before a key already on its way arrives. If the server dies once the key may be on its way, the keeper keeps the pasted text and reports `clipboard: kept` rather than risk pasting the saved clipboard.
+- `paste` sends its key only once the keeper has answered that it still holds the text. A server delayed past the keeper's ten-second wait could paste the user's restored clipboard instead; now the call fails, says nothing was pasted, and the clipboard stays restored.
 - Servers for one niri share its lease and stop flag whatever `XDG_RUNTIME_DIR` or `NIRI_SOCKET` spelling their clients pass.
 - Every change to the input-dirty marker takes one lock, so an older call's cleanup can't remove a newer call's marker.
 - The native keyboard restores the compositor's latest keymap in the layout niri last reported, not the map and layout from the start of the call.

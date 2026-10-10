@@ -1,7 +1,8 @@
 //! The paste keeper against other clipboard clients, driving `niri-computer-use
 //! paste-keeper` directly so the checks can choose when its stdin ends. A copy that
-//! arrives while the keeper is told to finish stays, and a reader that asked for the text
-//! before the keeper ended still gets all of it.
+//! arrives while the keeper is told to finish stays, a reader that asked for the text
+//! before the keeper ended still gets all of it, and a `k` that comes after the keeper
+//! stopped waiting for it gets no `armed`, so the server sends no key.
 
 use std::ffi::OsString;
 use std::fs;
@@ -12,7 +13,7 @@ use rustix::process::{Pid, Signal, kill_process};
 use serde_json::Value;
 
 use super::WAIT;
-use super::paste::{copy, listed, offered, owners_copy};
+use super::paste::{copy, listed, offered, own, owners_copy};
 use crate::clipboard::{CANCELLED, TYPES};
 use crate::failure::{Context as _, Failure, Result};
 use crate::mcp::field;
@@ -30,16 +31,59 @@ const READER_DELAY: Duration = Duration::from_secs(1);
 /// The keeper picks between its stdin's end and a pending replacement at random, so a
 /// keeper that trusts its stdin's end fails some round.
 const ROUNDS: usize = 8;
+/// Past the keeper's ten-second wait for the server's commands.
+const STOPPED_WAITING: Duration = Duration::from_secs(13);
+/// Far longer than the keeper takes to answer a `k` it admits.
+const NO_ANSWER: Duration = Duration::from_secs(1);
 
 pub(super) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
     for round in 0..ROUNDS {
         replaced_as_it_ends(session, server, round)?;
     }
     transfer_outlives_the_keeper(session, server)?;
+    late_k(session, server)?;
     session.log(&format!(
-        "Paste keeper: a copy made while the keeper was paused and told to end stayed in {ROUNDS} of {ROUNDS} rounds; a reader that asked before a replacement and read {} ms later got all {LARGE} bytes",
-        READER_DELAY.as_millis()
+        "Paste keeper: a copy made while the keeper was paused and told to end stayed in {ROUNDS} of {ROUNDS} rounds; a reader that asked before a replacement and read {} ms later got all {LARGE} bytes; a `k` after the keeper's wait ended got no `armed` within {} ms and the user's copy stayed offered",
+        READER_DELAY.as_millis(),
+        NO_ANSWER.as_millis()
     ))
+}
+
+/// The keeper waits for `k` until its wait ends, restores the user's copy and serves it;
+/// a `k` after that must not be admitted, and the user's copy stays.
+fn late_k(session: &mut Session<'_>, server: &str) -> Result<()> {
+    let (owner, copied) = own(session, "keeper-late-k")?;
+    let (mut keeper, log) = start(session, server, b"pasted", "late-k")?;
+    owner.wait()?;
+    let done = session.wait_until(
+        "keeper-late-k-restored",
+        "the keeper's done report",
+        STOPPED_WAITING,
+        |_| {
+            Ok(reports(&log)?
+                .into_iter()
+                .find(|report| field(report, "/report") == "done"))
+        },
+    )?;
+    if field(&done, "/clipboard") != "restored" {
+        return Err(Failure::new(format!(
+            "paste keeper late k: reported {done} once its wait ended"
+        )));
+    }
+    keeper.send(b"k".to_vec())?;
+    session.still_absent("keeper-late-k-armed", NO_ANSWER, || {
+        Ok(reports(&log)?
+            .iter()
+            .any(|report| field(report, "/report") == "armed"))
+    })?;
+    let after = offered(session)?;
+    keeper.stop()?;
+    if after != copied {
+        return Err(Failure::new(format!(
+            "paste keeper late k: the clipboard offers {after:?}, not the user's copy {copied:?}"
+        )));
+    }
+    Ok(())
 }
 
 /// Pauses the keeper, lets another client copy, ends the keeper's stdin and resumes it:

@@ -1,8 +1,10 @@
 //! `niri-computer-use paste-keeper`, which `paste` starts for one call (see `paste` for
-//! the protocol). It saves the selection whole or refuses, takes it with the text, counts
-//! the reads that start after the server's `k`, and restores the saved selection once the
-//! target has read and gone quiet after `p`, or at once on `n` or when the server's stdin
-//! ends before `k`. After `k`, only `p` or `n` proves the key can't still arrive: if the
+//! the protocol). It saves the selection whole or refuses, takes it with the text, admits
+//! the key on the server's `k` with `armed` while the text still holds the selection,
+//! counts the reads that start after that, and restores the saved selection once the
+//! target has read and gone quiet after `p`, or at once on `n`, when the server's stdin
+//! ends before `k`, or when `k` doesn't come in time; a `k` after that gets no answer, so
+//! no key goes out. After `k`, only `p` or `n` proves the key can't still arrive: if the
 //! server ends or runs out of time without either, the keeper keeps the text, reports
 //! `kept`, and serves it until another client takes the selection, rather than risk a late
 //! key pasting the restored clipboard. It then serves the restored selection, without a
@@ -61,7 +63,7 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
     };
     say(&Report::Ready);
     let mut transfers = Transfers::default();
-    let watched = watch(&mut selection, &mut commands, paste, &text, &mut transfers).await;
+    let watched = watch(&mut selection, commands, paste, &text, &mut transfers).await;
     if let Ok(watched) = watched
         && !watched.replaced
         && watched.abandoned()
@@ -198,6 +200,12 @@ impl Watched {
         }
     }
 
+    /// Whether a `k` now admits the key: the text still holds the selection and the key
+    /// wasn't admitted already.
+    const fn admits(&self) -> bool {
+        !self.armed && !self.replaced
+    }
+
     /// The server's stdin ended. After `p` the wait for the read goes on; otherwise it ends
     /// now. Returns whether it ends now.
     const fn closed(&self) -> bool {
@@ -222,10 +230,11 @@ impl Watched {
 }
 
 /// Serves the text's reads until the wait ends, the server says the key didn't go out or
-/// ends before `p`, or another client takes the selection.
+/// ends before `p`, or another client takes the selection. It takes the server's commands
+/// and closes them as it ends, so no `k` is admitted after it.
 async fn watch(
     selection: &mut Selection,
-    commands: &mut Commands,
+    mut commands: Commands,
     paste: SourceId,
     text: &Arc<[u8]>,
     transfers: &mut Transfers,
@@ -236,7 +245,12 @@ async fn watch(
     loop {
         tokio::select! {
             command = commands.next(), if open => match command {
-                Command::Arm => watched.armed = true,
+                Command::Arm => {
+                    watched = admit(selection, watched, paste, text, transfers).await?;
+                    if watched.replaced {
+                        return Ok(watched);
+                    }
+                }
                 Command::Pasted => watched.pasted = Some(Instant::now()),
                 Command::Unsent => {
                     watched.unsent = true;
@@ -258,6 +272,28 @@ async fn watch(
             () = tokio::time::sleep_until(watched.ends(started)) => return Ok(watched),
         }
     }
+}
+
+/// Admits the key: once the reads niri sent before now are handled, and only while the
+/// text still holds the selection and the key wasn't admitted already, arms the count and
+/// says `armed`. The server sends the key only on that report, so a `k` that comes after
+/// `watch` ended, which nothing reads, or one that finds the text replaced, sends nothing.
+async fn admit(
+    selection: &mut Selection,
+    watched: Watched,
+    paste: SourceId,
+    text: &Arc<[u8]>,
+    transfers: &mut Transfers,
+) -> Result<Watched, String> {
+    if !watched.admits() {
+        return Ok(watched);
+    }
+    let mut watched = confirm(selection, watched, paste, text, transfers).await?;
+    if watched.admits() {
+        watched.armed = true;
+        say(&Report::Armed);
+    }
+    Ok(watched)
 }
 
 /// Handles what niri sent before now, so a replacement already on its way counts: the end
@@ -478,6 +514,21 @@ mod tests {
             ..armed
         };
         assert!(!pasted.closed() && !pasted.abandoned());
+    }
+
+    #[test]
+    fn a_k_admits_the_key_once_and_only_while_the_text_holds_the_selection() {
+        assert!(Watched::default().admits());
+        let armed = Watched {
+            armed: true,
+            ..Watched::default()
+        };
+        assert!(!armed.admits());
+        let replaced = Watched {
+            replaced: true,
+            ..Watched::default()
+        };
+        assert!(!replaced.admits());
     }
 
     #[test]

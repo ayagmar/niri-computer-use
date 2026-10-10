@@ -444,14 +444,17 @@ async fn feed(
     marker: Written,
     aftercare: Option<Aftercare>,
 ) -> Result<(), ToolError> {
-    let Some(mut aftercare) = aftercare else {
+    let Some(aftercare) = aftercare else {
         return finish(gated.feed(stdin, MAX_STDOUT).await, marker).await;
     };
-    if let Err(error) = aftercare.arm().await {
-        // Still waiting at the gate: killing it now types nothing.
-        drop(gated);
-        return Err(cleared(marker, error).await);
-    }
+    let aftercare = match aftercare.arm().await {
+        Ok(armed) => armed,
+        Err(error) => {
+            // Still waiting at the gate: killing it now types nothing.
+            drop(gated);
+            return Err(cleared(marker, error).await);
+        }
+    };
     let fed = gated.feed(stdin, MAX_STDOUT).await;
     aftercare.sent().await;
     finish(fed, marker).await
@@ -678,5 +681,34 @@ mod tests {
             .unwrap_err()
             .detail;
         assert!(detail.contains("window 1"), "{detail}");
+    }
+
+    #[tokio::test]
+    async fn a_paste_key_its_keeper_doesnt_admit_is_never_let_past_the_gate() {
+        let dir = crate::test_support::fresh_dir("feed-unadmitted");
+        let runtime = RuntimeDir::of(&crate::test_support::niri_env(&dir)).unwrap();
+        runtime.create().unwrap();
+        let marker = Written::write(&runtime, Marker::pending("paste", Vec::new()))
+            .await
+            .unwrap();
+        let typed = dir.join("typed");
+        let script = format!("cat > '{}'", typed.display());
+        let gated = runner::gated("sh", &["-c".to_owned(), script], &[], WTYPE_DEADLINE).unwrap();
+        let (aftercare, _done) =
+            crate::input::paste::fake_aftercare(crate::input::paste::STOPPED_WAITING).await;
+        let error = feed(gated, b"ctrl+v", marker, Some(aftercare))
+            .await
+            .unwrap_err();
+        assert!(
+            error.detail.contains("nothing was pasted"),
+            "{}",
+            error.detail
+        );
+        // Killed at its gate, the stand-in for wtype read nothing.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(std::fs::read(&typed).unwrap_or_default(), b"");
+        // Nothing went out, so the marker is off.
+        assert!(!runtime.input_dirty().unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

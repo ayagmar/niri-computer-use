@@ -8,8 +8,9 @@
 //! at once.
 //!
 //! Whoever commits the key, right before it can go out, takes the keeper's end as an
-//! `Aftercare`: wtype's task, or the native device. It says `k`, sends the key, then says
-//! `p` even if the key failed partway, and only then takes its input-dirty marker off, so a
+//! `Aftercare`: wtype's task, or the native device. It says `k` and waits for the keeper to
+//! admit the key; without that, the key doesn't go out. Then it sends the key, says `p`
+//! even if the key failed partway, and only then takes its input-dirty marker off, so a
 //! stop, a cancelled call or the session's end can't drop the keeper's end while a key may
 //! still arrive, and no new input, from this server or another, starts until the keeper
 //! has reported. A call dropped before the commit drops the keeper, which restores at once.
@@ -18,7 +19,10 @@
 //! text; `k` just before the key; then `p` once the key went out, or `n` if it didn't.
 //! End of file before `k` means no key. After `k`, the key may still come without `p` or
 //! `n`, so the keeper keeps the text on the clipboard rather than restore it. Keeper to
-//! server: one JSON `Report` per line, `ready` or `refused`, then `done`.
+//! server: one JSON `Report` per line, `ready` or `refused`, then `armed` for a `k` that
+//! came while the keeper still waited for it with the text on the clipboard, and `done`.
+//! A keeper that stopped waiting has restored the clipboard and said `done`, and never
+//! answers a later `k` with `armed`.
 
 use std::time::Duration;
 
@@ -42,6 +46,10 @@ pub(crate) const MAX_TEXT: usize = 1024 * 1024;
 const READY: Duration = Duration::from_secs(5);
 /// The keeper's wait for the read, its quiet time and the restore's round trip.
 const DONE: Duration = Duration::from_secs(5);
+/// From `k` to `armed`: the keeper answers after one round trip to niri, which takes
+/// milliseconds. Well inside wtype's three seconds, which run while wtype waits at its
+/// gate for this, and short enough that a keeper that can't answer fails the call quickly.
+const ADMIT: Duration = Duration::from_millis(500);
 
 /// What became of the clipboard the call found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,6 +87,8 @@ pub(crate) enum Report {
     Ready,
     /// The selection couldn't be saved whole; nothing changed.
     Refused { detail: String },
+    /// The key may go out: the text holds the selection, and reads from now on count.
+    Armed,
     Done {
         read: bool,
         clipboard: Clipboard,
@@ -214,6 +224,11 @@ impl Keeper {
     /// Starts a keeper with `text`, and waits until it holds the selection.
     async fn start(text: &[u8]) -> Result<Self, ToolError> {
         let started = runner::companion("/proc/self/exe", &["paste-keeper".to_owned()])?;
+        Self::ready(started, text).await
+    }
+
+    /// Gives the started keeper `text`, and waits until it holds the selection.
+    async fn ready(started: runner::Companion, text: &[u8]) -> Result<Self, ToolError> {
         let mut keeper = Self {
             stdin: started.stdin,
             lines: BufReader::new(started.stdout).lines(),
@@ -230,14 +245,31 @@ impl Keeper {
                 ErrorName::ClipboardUnsaved,
                 format!("{detail}; the clipboard is unchanged and nothing was pasted"),
             )),
-            other @ Report::Done { .. } => Err(unexpected(&other)),
+            other @ (Report::Armed | Report::Done { .. }) => Err(unexpected(&other)),
         }
     }
 
-    /// Says `command`, `p` or `n`, and waits for the keeper's last report.
+    /// Says `command`, `p` or `n`, and waits for the keeper's last report. An `armed` that
+    /// came too late for the key is passed over.
     async fn finish(mut self, command: &[u8]) -> Result<Report, ToolError> {
-        self.stdin.write_all(command).await.map_err(lost)?;
-        within(DONE, self.report()).await
+        let last = async {
+            let mut report = self.tell(command).await?;
+            while report == Report::Armed {
+                report = self.report().await?;
+            }
+            Ok(report)
+        };
+        within(DONE, last).await
+    }
+
+    /// Says `command` and reads the next report. A keeper that has ended can't read it,
+    /// but may have reported before it did.
+    async fn tell(&mut self, command: &[u8]) -> Result<Report, ToolError> {
+        match self.stdin.write_all(command).await {
+            Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+            written => written.map_err(lost)?,
+        }
+        self.report().await
     }
 
     async fn report(&mut self) -> Result<Report, ToolError> {
@@ -264,16 +296,23 @@ pub(crate) struct Aftercare {
 }
 
 impl Aftercare {
-    /// Tells the keeper the key is about to go out, so reads from now on count.
-    pub(crate) async fn arm(&mut self) -> Result<(), ToolError> {
-        self.keeper.stdin.write_all(b"k").await.map_err(|error| {
-            ToolError::new(
-                ErrorName::UpstreamError,
-                format!(
-                    "the clipboard keeper ended before the key ({error}), so nothing was pasted; the clipboard may be empty"
-                ),
-            )
-        })
+    /// Tells the keeper the key is about to go out, and returns once it has admitted the
+    /// key, within `ADMIT`. Otherwise the key must not go out: the keeper hears `n` unless
+    /// it already reported, its last report goes to the call, and the error says nothing
+    /// was pasted.
+    pub(crate) async fn arm(mut self) -> Result<Self, ToolError> {
+        let refused = match within(ADMIT, self.keeper.tell(b"k")).await {
+            Ok(Report::Armed) => return Ok(self),
+            Ok(done @ Report::Done { .. }) => {
+                self.report.send(Ok(done)).ok();
+                return Err(unadmitted("it had stopped waiting for the key"));
+            }
+            Ok(other) => format!("it reported {other:?}"),
+            Err(error) => error.detail,
+        };
+        let done = self.keeper.finish(b"n").await;
+        self.report.send(done).ok();
+        Err(unadmitted(&refused))
     }
 
     /// Says the key went out, or may have, and hands the keeper's last report, once it has
@@ -308,6 +347,16 @@ fn lost(error: impl std::fmt::Display) -> ToolError {
     )
 }
 
+/// The key wasn't sent, because the keeper didn't admit it.
+fn unadmitted(why: &str) -> ToolError {
+    ToolError::new(
+        ErrorName::UpstreamError,
+        format!(
+            "the clipboard keeper didn't admit the key ({why}), so the key wasn't sent and nothing was pasted"
+        ),
+    )
+}
+
 fn unexpected(report: &Report) -> ToolError {
     ToolError::new(
         ErrorName::UpstreamError,
@@ -315,10 +364,75 @@ fn unexpected(report: &Report) -> ToolError {
     )
 }
 
+/// A paste's aftercare whose keeper is `sh -c script`, which reads the 9 bytes of the
+/// text `x` and answers `ready` first, and the receiver of its last report.
+#[cfg(test)]
+pub(super) async fn fake_aftercare(
+    script: &str,
+) -> (Aftercare, oneshot::Receiver<Result<Report, ToolError>>) {
+    let script = format!(
+        "dd bs=1 count=9 status=none >/dev/null; echo '{{\"report\":\"ready\"}}'; {script}"
+    );
+    let started = runner::companion("sh", &["-c".to_owned(), script]).unwrap();
+    let keeper = Keeper::ready(started, b"x").await.unwrap();
+    let (report, done) = oneshot::channel();
+    (Aftercare { keeper, report }, done)
+}
+
+/// A keeper's script that, like one whose wait for the key ended, has restored the
+/// clipboard and reported, and answers nothing more.
+#[cfg(test)]
+pub(super) const STOPPED_WAITING: &str =
+    r#"echo '{"report":"done","read":false,"clipboard":"restored"}'; exec cat >/dev/null"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::act::Observed;
+
+    #[tokio::test]
+    async fn a_keeper_that_stopped_waiting_for_the_key_admits_none() {
+        let (aftercare, done) = fake_aftercare(STOPPED_WAITING).await;
+        let Err(error) = aftercare.arm().await else {
+            panic!("a keeper that restored the clipboard admitted the key");
+        };
+        assert!(
+            error.detail.contains("nothing was pasted"),
+            "{}",
+            error.detail
+        );
+        let Err(CallError::Tool(error)) = combined(Err(error.into()), done.await.unwrap()) else {
+            panic!("the refusal is lost");
+        };
+        assert!(
+            error.detail.ends_with("; the clipboard was restored"),
+            "{}",
+            error.detail
+        );
+    }
+
+    #[tokio::test]
+    async fn a_key_the_keeper_admits_too_late_isnt_sent_and_the_keeper_hears_n() {
+        // `armed` comes past `ADMIT`; the keeper then restores on `n`.
+        let script = r#"dd bs=1 count=1 status=none >/dev/null; sleep 0.8; echo '{"report":"armed"}'; c=$(dd bs=1 count=1 status=none); echo "{\"report\":\"done\",\"read\":false,\"clipboard\":\"restored\",\"detail\":\"after $c\"}""#;
+        let (aftercare, done) = fake_aftercare(script).await;
+        let Err(error) = aftercare.arm().await else {
+            panic!("a key admitted too late went out");
+        };
+        assert!(
+            error.detail.contains("nothing was pasted"),
+            "{}",
+            error.detail
+        );
+        assert_eq!(
+            done.await.unwrap().unwrap(),
+            Report::Done {
+                read: false,
+                clipboard: Clipboard::Restored,
+                detail: Some("after n".to_owned())
+            }
+        );
+    }
 
     fn sent() -> Outcome {
         Outcome {

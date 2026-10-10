@@ -160,11 +160,10 @@ impl Device {
 
     /// Takes `aftercare`, if it is still there, and arms it.
     async fn commit(&mut self, aftercare: &mut Option<Aftercare>) -> Result<(), ToolError> {
-        let Some(mut taken) = aftercare.take() else {
+        let Some(taken) = aftercare.take() else {
             return Ok(());
         };
-        taken.arm().await?;
-        self.aftercare = Some(taken);
+        self.aftercare = Some(taken.arm().await?);
         Ok(())
     }
 
@@ -267,4 +266,30 @@ async fn acknowledge_release(
 
 fn upstream(detail: &str) -> ToolError {
     ToolError::new(ErrorName::UpstreamError, detail)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::input::paste::{STOPPED_WAITING, fake_aftercare};
+
+    #[tokio::test]
+    async fn a_paste_key_its_keeper_doesnt_admit_is_never_committed() {
+        let mut device = Device {
+            keyboard: None,
+            marker: None,
+            group: 0,
+            aftercare: None,
+        };
+        let (aftercare, _done) = fake_aftercare(STOPPED_WAITING).await;
+        let mut aftercare = Some(aftercare);
+        let error = device.commit(&mut aftercare).await.unwrap_err();
+        assert!(
+            error.detail.contains("nothing was pasted"),
+            "{}",
+            error.detail
+        );
+        // The stroke after the commit doesn't run, and nothing says the key went out.
+        assert!(aftercare.is_none() && device.aftercare.is_none());
+    }
 }
