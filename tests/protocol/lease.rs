@@ -5,8 +5,9 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use crate::client::{CLIENT, Server, run, tool_error};
-use crate::fixture::Fixture;
+use crate::client::{CLIENT, Server, WAIT, run, tool_error};
+use crate::fixture::{Fixture, eventually, exited, kill, shared_mode};
+use crate::guard::guardian;
 use crate::niri::{Niri, window_on};
 use crate::noctalia::{self, UNLOCKED};
 use crate::session::NiriProcess;
@@ -173,7 +174,8 @@ async fn an_unknown_lock_state_refuses_the_lease() {
 }
 
 /// niri restarted under a new socket: a server for the new instance has a lease and flags
-/// of its own, while what the old one left stays where it was, for a human to look at.
+/// of its own, while what the old one left stays where it was, for a human to look at. The
+/// old server's guardian, ending with it, sends nothing to the new niri for its marker.
 #[tokio::test]
 async fn a_restarted_niri_shares_nothing_with_the_old_instance() {
     let mut fixture = Fixture::new("lease-restart");
@@ -185,8 +187,15 @@ async fn a_restarted_niri_shares_nothing_with_the_old_instance() {
     old_stream.initial(&[window_on(1, Some("a"), 1, true)]);
     old_stream.workspaces(1);
     old.structured("acquire_desktop").await;
+    let serving = old.serving_pid().await;
+    let guardian = guardian(serving);
     let marker = fixture.path("run/niri-computer-use/niri.test/input-dirty");
-    std::fs::write(&marker, "").unwrap();
+    let releasable = json!({
+        "operation": "drag", "phase": "pending", "server_pid": serving,
+        "since": "2026-10-10T00:00:00.000Z", "buttons": [272]
+    })
+    .to_string();
+    std::fs::write(&marker, &releasable).unwrap();
 
     drop((old_stream, old_niri));
     std::fs::remove_file(fixture.niri_socket()).unwrap();
@@ -217,4 +226,13 @@ async fn a_restarted_niri_shares_nothing_with_the_old_instance() {
         true
     );
     assert_eq!(new.structured("status").await["lease"]["held_by_me"], true);
+
+    if shared_mode() {
+        kill(serving);
+    } else {
+        old.kill().await;
+    }
+    assert!(eventually(WAIT, || exited(guardian)).await);
+    assert!(!new_niri.connected_from(guardian));
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), releasable);
 }
