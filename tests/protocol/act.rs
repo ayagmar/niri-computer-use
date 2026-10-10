@@ -1874,7 +1874,7 @@ async fn gated_niri_actions_need_unrestricted() {
         desk.audited(),
         [json!([
             "niri_action",
-            {"action": {"Spawn": {"command": {"count": 1, "lens": [4]}}}},
+            {"action": {"Spawn": {"command": {"count": 1, "bytes": [4]}}}},
             null,
             null,
             "unrestricted_required"
@@ -1943,6 +1943,79 @@ env = { GDK_SCALE = "2" }
     assert_eq!(name, "unrestricted_required");
 }
 
+/// Text an agent could pass on from the clipboard: lowercase words and `-`, the shape of
+/// a command word.
+const PRIVATE: &str = "synthetic-private-content";
+
+#[tokio::test]
+async fn passthrough_arguments_reach_the_audit_log_only_as_metadata() {
+    let on = [("NIRI_COMPUTER_USE_UNRESTRICTED", "1")];
+    let mut desk = Desk::start_with("act-audit-private", "", &on).await;
+    let spawn = json!({"action": {"Spawn": {"command": ["foot", PRIVATE]}}});
+    desk.act("niri_action", spawn, |_, _| {}).await;
+    for args in [json!([PRIVATE, PRIVATE]), json!(["panel-open", PRIVATE])] {
+        desk.server.call("noctalia", json!({ "args": args })).await;
+    }
+    // Cancelled while it waits for the window to change.
+    let moved = json!({"action": {"MoveWindowToWorkspace": {
+        "window_id": 2, "reference": {"Name": PRIVATE}, "focus": false
+    }}});
+    let id = desk.server.start_call("niri_action", moved).await;
+    desk.niri.action().await;
+    desk.server.cancel(id).await;
+    let cancelled = || {
+        desk.fixture
+            .audit_lines()
+            .iter()
+            .any(|line| line["error"] == "cancelled")
+    };
+    assert!(crate::fixture::eventually(std::time::Duration::from_secs(2), cancelled).await);
+    for garbled in [json!({PRIVATE: {}}), json!({"Spawn": {"command": PRIVATE}})] {
+        let result = desk
+            .server
+            .call("niri_action", json!({ "action": garbled }))
+            .await;
+        assert!(
+            mistake(&result).starts_with("invalid arguments"),
+            "{result}"
+        );
+    }
+    // Refused without the lease.
+    let released = json!({"restore_focus": false});
+    desk.server.call("release_desktop", released).await;
+    let named = json!({"action": {"SetWorkspaceName": {"name": PRIVATE, "workspace": null}}});
+    desk.server.call("niri_action", named).await;
+    desk.server
+        .call("noctalia", json!({"args": [PRIVATE]}))
+        .await;
+
+    let text = std::fs::read_to_string(desk.fixture.audit_log()).unwrap();
+    assert!(!text.contains(PRIVATE), "{text}");
+    let logged: Vec<Value> = desk
+        .audited()
+        .into_iter()
+        .filter(|line| line[0] != "release_desktop")
+        .map(|line| json!([line[0], line[1], line[4]]))
+        .collect();
+    let garbled =
+        |bytes: usize| json!({"action": {"category": "invalid_action", "keys": 1, "bytes": bytes}});
+    assert_eq!(
+        logged,
+        [
+            json!(["niri_action", {"action": {"Spawn": {"command": {"count": 2, "bytes": [4, 25]}}}}, null]),
+            json!(["noctalia", {"count": 2, "bytes": [25, 25]}, "upstream_error"]),
+            json!(["noctalia", {"count": 2, "bytes": [10, 25]}, null]),
+            json!(["niri_action", {"action": {"MoveWindowToWorkspace": {
+                "window_id": 2, "reference": {"Name": {"bytes": 25}}, "focus": false
+            }}}, "cancelled"]),
+            json!(["niri_action", garbled(32), "invalid_arguments"]),
+            json!(["niri_action", garbled(49), "invalid_arguments"]),
+            json!(["niri_action", {"action": {"SetWorkspaceName": {"name": {"bytes": 25}, "workspace": null}}}, "lease_required"]),
+            json!(["noctalia", {"count": 1, "bytes": [25]}, "lease_required"]),
+        ]
+    );
+}
+
 #[tokio::test]
 async fn noctalia_sends_any_command_only_when_unrestricted() {
     let mut desk = Desk::start("act-noctalia-off", "").await;
@@ -1978,7 +2051,7 @@ async fn noctalia_sends_any_command_only_when_unrestricted() {
         open.audited()[0],
         json!([
             "noctalia",
-            {"count": 2, "lens": [10, 9], "command": "panel-open"},
+            {"count": 2, "bytes": [10, 9]},
             true,
             "sent",
             null

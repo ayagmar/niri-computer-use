@@ -65,7 +65,7 @@ The server joins `args` with spaces and sends them over the same socket, with th
 
 It reaches every command `noctalia msg` does, not only panels and plugins. Noctalia 5.2.1's include `session logout`, `reboot`, `shutdown`, `suspend` and `lock-and-suspend`; `dpms-off`; `screenshot-fullscreen` and `screenshot-region`, which write files and the clipboard; `clipboard-copy` and `clipboard-clear`, which replace or empty your clipboard with no restore and no secret hint, unlike `paste`; `config-reload`, `log-level-set` and `plugins`; and opening any panel, the launcher, the session menu and the clipboard history among them. It has no unlock command, so the tool can't get past `screen_locked`.
 
-A reply starting `error:`, which makes `noctalia msg` exit 1, comes back as `upstream_error` with Noctalia's text, such as `Noctalia replied: error: unknown command (try: noctalia msg --help)`. A lost reply is `uncertain`: Noctalia acts before it answers. The tool needs the lease, stops at the stop key and is written to the audit log as the number of arguments and their lengths, with the first argument only when it is a plain command word of lowercase letters and `-`, such as `panel-open`.
+A reply starting `error:`, which makes `noctalia msg` exit 1, comes back as `upstream_error` with Noctalia's text, such as `Noctalia replied: error: unknown command (try: noctalia msg --help)`. A lost reply is `uncertain`: Noctalia acts before it answers. The tool needs the lease, stops at the stop key and is written to the audit log as the number of arguments and their lengths in bytes, never their text.
 
 This is how an agent can start a screen recording with Noctalia's OBS plugin, as a niri keybind would, since keybinds don't fire from the keyboard tools:
 

@@ -822,8 +822,11 @@ impl Server {
         Parameters(args): Parameters<NiriActionArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let action = serde_json::from_value::<Action>(Value::Object(args.action));
-        let mut logged = serde_json::json!({ "action": action.as_ref().ok().map(audit::action) });
+        let action = serde_json::from_value::<Action>(Value::Object(args.action.clone()));
+        let projected = action
+            .as_ref()
+            .map_or_else(|_| audit::invalid_action(&args.action), audit::action);
+        let mut logged = serde_json::json!({ "action": projected });
         flag(&mut logged, "screenshot", args.screenshot);
         let niri = self.engine.niri();
         let settings = self.session.settings();

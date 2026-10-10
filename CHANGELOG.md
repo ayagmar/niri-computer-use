@@ -72,4 +72,4 @@ All notable changes to this project are documented here. The format follows [Kee
 - Fractional-scale pointer motion uses niri's ceiled physical-mode space rather than truncated IPC dimensions. Unknown or changed pointer geometry refuses input.
 - C15's nested capture assertions use grim's truncated image size instead of rounding odd dimensions.
 - `close_window` and `niri_action`'s `CloseWindow` refuse with `app_denied` to close a window whose app is on the policy's deny list, named or focused.
-- The audit log no longer keeps text an agent passes to `niri_action` or `noctalia`, such as a `Spawn` command or a notification body: it logs the action's name, numbers and booleans with every string as its length, and Noctalia's argument count and lengths with the first argument only when it is a plain command word.
+- The audit log no longer keeps text an agent passes to `niri_action` or `noctalia`, such as a `Spawn` command or a notification body: it logs the action's name, field names, numbers and booleans with every string as its length in bytes, and only Noctalia's argument count and byte lengths.
