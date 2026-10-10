@@ -1642,7 +1642,7 @@ mod tests {
     use crate::session::{Given, Settings};
 
     #[test]
-    fn only_close_window_is_destructive_and_only_actions_change_anything() {
+    fn actions_say_whether_they_destroy_or_repeat_safely_and_reading_changes_nothing() {
         let hints = |tool: rmcp::model::Tool| {
             let annotations = tool.annotations.unwrap();
             (
@@ -1659,8 +1659,17 @@ mod tests {
             (Server::focus_workspace_tool_attr(), (no, no, yes)),
             (Server::launch_tool_attr(), (no, no, no)),
             (Server::close_window_tool_attr(), (no, yes, no)),
+            (Server::niri_action_tool_attr(), (no, yes, no)),
+            (Server::pointer_move_tool_attr(), (no, no, yes)),
+            (Server::click_tool_attr(), (no, yes, no)),
+            (Server::drag_tool_attr(), (no, yes, no)),
+            (Server::scroll_tool_attr(), (no, no, no)),
+            (Server::key_tool_attr(), (no, yes, no)),
+            (Server::type_text_tool_attr(), (no, yes, no)),
+            (Server::paste_tool_attr(), (no, yes, no)),
             (Server::shell_open_tool_attr(), (no, no, yes)),
             (Server::shell_close_tool_attr(), (no, no, yes)),
+            (Server::noctalia_tool_attr(), (no, yes, no)),
         ] {
             let name = tool.name.clone();
             assert_eq!(hints(tool), expected, "{name}");
@@ -1672,6 +1681,8 @@ mod tests {
             Server::screenshot_tool_attr(),
             Server::clipboard_read_tool_attr(),
             Server::shell_status_tool_attr(),
+            Server::elements_tool_attr(),
+            Server::wait_for_tool_attr(),
         ] {
             let annotations = tool.annotations.unwrap();
             assert_eq!(annotations.read_only_hint, Some(true), "{}", tool.name);
