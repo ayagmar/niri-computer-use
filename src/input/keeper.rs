@@ -64,26 +64,23 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
     say(&Report::Ready);
     let mut transfers = Transfers::default();
     let watched = watch(&mut selection, commands, paste, &text, &mut transfers).await;
-    if let Ok(watched) = watched
-        && !watched.replaced
-        && watched.abandoned()
-    {
-        say(&Report::Done {
-            read: watched.reads > 0,
-            clipboard: Clipboard::Kept,
-            detail: Some(KEPT.to_owned()),
-        });
-        keep(&mut selection, watched, paste, &text, &mut transfers)
-            .await
-            .ok();
-        transfers.finish().await;
-        return Ok(());
-    }
-    let watched = match watched {
-        Ok(watched) if !watched.replaced => {
+    let watched = match After::of(watched) {
+        After::Keep(watched) => {
+            say(&Report::Done {
+                read: watched.reads > 0,
+                clipboard: Clipboard::Kept,
+                detail: Some(KEPT.to_owned()),
+            });
+            keep(&mut selection, watched, paste, &text, &mut transfers)
+                .await
+                .ok();
+            transfers.finish().await;
+            return Ok(());
+        }
+        After::Confirm(watched) => {
             confirm(&mut selection, watched, paste, &text, &mut transfers).await
         }
-        other => other,
+        After::Settled(watched) => watched,
     };
     let (read, clipboard, detail) = match watched {
         Err(detail) => (false, Clipboard::Failed, Some(detail)),
@@ -240,6 +237,28 @@ impl Watched {
             (None, _) => started + COMMAND_WAIT,
             (Some(pasted), None) => pasted + READ_WAIT,
             (Some(pasted), Some(latest)) => pasted.max(latest) + QUIET,
+        }
+    }
+}
+
+/// What follows the wait for the key, by how it ended.
+#[derive(Debug, PartialEq, Eq)]
+enum After {
+    /// The key may still arrive: the text stays, and the saved selection isn't restored.
+    Keep(Watched),
+    /// The text may still hold the selection: check that it does, then restore.
+    Confirm(Watched),
+    /// Another client took the selection, or the wait failed: nothing to restore.
+    Settled(Result<Watched, String>),
+}
+
+impl After {
+    fn of(watched: Result<Watched, String>) -> Self {
+        match watched {
+            Ok(watched) if watched.replaced => Self::Settled(Ok(watched)),
+            Ok(watched) if watched.abandoned() => Self::Keep(watched),
+            Ok(watched) => Self::Confirm(watched),
+            Err(detail) => Self::Settled(Err(detail)),
         }
     }
 }
@@ -510,25 +529,36 @@ mod tests {
 
     #[test]
     fn after_k_only_p_or_n_lets_the_clipboard_be_restored() {
+        // The end of stdin before `k` ends the wait, and the clipboard is restored.
         let before_k = Watched::default();
-        assert!(before_k.closed() && !before_k.abandoned());
+        assert!(before_k.closed());
+        assert_eq!(After::of(Ok(before_k)), After::Confirm(before_k));
+        // `k`, then the end of stdin: the server ended with the key perhaps on its way, so
+        // the wait ends and the text stays.
         let armed = Watched {
             armed: true,
             ..Watched::default()
         };
-        // The server ended, or ran out of time, with the key perhaps on its way.
-        assert!(armed.closed() && armed.abandoned());
+        assert!(armed.closed());
+        assert_eq!(After::of(Ok(armed)), After::Keep(armed));
         let unsent = Watched {
             unsent: true,
             ..armed
         };
-        assert!(!unsent.abandoned());
+        assert_eq!(After::of(Ok(unsent)), After::Confirm(unsent));
         // After `p` the key is done, and the end of stdin only stops the commands.
         let pasted = Watched {
             pasted: Some(Instant::now()),
             ..armed
         };
-        assert!(!pasted.closed() && !pasted.abandoned());
+        assert!(!pasted.closed());
+        assert_eq!(After::of(Ok(pasted)), After::Confirm(pasted));
+        // A copy made meanwhile stays, whatever the server said.
+        let replaced = Watched {
+            replaced: true,
+            ..armed
+        };
+        assert_eq!(After::of(Ok(replaced)), After::Settled(Ok(replaced)));
     }
 
     #[test]

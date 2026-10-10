@@ -711,4 +711,36 @@ mod tests {
         assert!(!runtime.input_dirty().unwrap());
         std::fs::remove_dir_all(dir).unwrap();
     }
+
+    /// The keeper hears `p` only once the key is out: a `p` before it would let the keeper
+    /// restore the user's clipboard for the late key to paste.
+    #[tokio::test]
+    async fn a_paste_keys_keeper_hears_p_only_once_the_key_is_out() {
+        let dir = crate::test_support::fresh_dir("feed-ordered");
+        let runtime = RuntimeDir::of(&crate::test_support::niri_env(&dir)).unwrap();
+        runtime.create().unwrap();
+        let marker = Written::write(&runtime, Marker::pending("paste", Vec::new()))
+            .await
+            .unwrap();
+        let out = dir.join("out");
+        // The stand-in for wtype takes a moment for the key, then notes it is out.
+        let wtype = format!("cat >/dev/null; sleep 0.2; : > '{}'", out.display());
+        let gated = runner::gated("sh", &["-c".to_owned(), wtype], &[], WTYPE_DEADLINE).unwrap();
+        let keeper = format!(
+            r#"dd bs=1 count=1 status=none >/dev/null; echo '{{"report":"armed"}}'; c=$(dd bs=1 count=1 status=none); if [ -e '{}' ]; then when=after; else when=before; fi; echo "{{\"report\":\"done\",\"read\":true,\"clipboard\":\"restored\",\"detail\":\"$c $when the key\"}}""#,
+            out.display()
+        );
+        let (aftercare, done) = crate::input::paste::fake_aftercare(&keeper).await;
+        feed(gated, b"", marker, Some(aftercare)).await.unwrap();
+        assert_eq!(
+            done.await.unwrap().unwrap(),
+            crate::input::paste::Report::Done {
+                read: true,
+                clipboard: crate::input::paste::Clipboard::Restored,
+                detail: Some("p after the key".to_owned())
+            }
+        );
+        assert!(!runtime.input_dirty().unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
