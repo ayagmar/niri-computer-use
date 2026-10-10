@@ -64,6 +64,9 @@ All notable changes to this project are documented here. The format follows [Kee
 - `niri_action`'s `DoScreenTransition` needs `unrestricted`: it can freeze every output and screencast for up to 65 seconds.
 - `elements` returns what it read, with `capped_reason: budget_exhausted`, when a large tree runs out of its three seconds, instead of failing with `deadline_exceeded`; `role`, `name_contains` and `limit` stop the walk early.
 - With `unrestricted` on and no preset for an app, the skill and the tool text have agents start it with `niri_action`'s `Spawn` and wait for its window, instead of asking for a preset.
+- The runtime directory that holds the lease, the stop flag and the input-dirty marker is `niri-computer-use/<instance>/` beside niri's socket with every symlink resolved, no longer under `XDG_RUNTIME_DIR`. A socket that doesn't resolve to the user's own leaves the server with no runtime directory rather than one picked another way.
+- `stop` and `resume` find niri's socket without connecting to it, so the stop key works while niri hangs.
+- A client that stops reading its server's output loses its session and the lease: once 32 lines wait for it, or one has waited 30 seconds, the bridge exits.
 
 ### Fixed
 
@@ -73,3 +76,9 @@ All notable changes to this project are documented here. The format follows [Kee
 - C15's nested capture assertions use grim's truncated image size instead of rounding odd dimensions.
 - `close_window` and `niri_action`'s `CloseWindow` refuse with `app_denied` to close a window whose app is on the policy's deny list, named or focused.
 - The audit log no longer keeps text an agent passes to `niri_action` or `noctalia`, such as a `Spawn` command or a notification body: it logs the action's name, field names, numbers and booleans with every string as its length in bytes, and only Noctalia's argument count and byte lengths.
+- Another session's `acquire_desktop` refuses with `lease_held` at once, instead of waiting for the owner's running action; the lease is checked again before it is granted.
+- A stopped, cancelled or disconnected `paste` no longer restores the clipboard before a key already on its way arrives. If the server dies once the key may be on its way, the keeper keeps the pasted text and reports `clipboard: kept` rather than risk pasting the saved clipboard.
+- Servers for one niri share its lease and stop flag whatever `XDG_RUNTIME_DIR` or `NIRI_SOCKET` spelling their clients pass.
+- Every change to the input-dirty marker takes one lock, so an older call's cleanup can't remove a newer call's marker.
+- The native keyboard restores the compositor's latest keymap in the layout niri last reported, not the map and layout from the start of the call.
+- The 16 MiB line limit applies to every line a read ends, not only the last.
