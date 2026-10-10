@@ -543,3 +543,10 @@ These match the versions installed locally.
 - The sidebar and the agent files take their groups from `site/src/lib/groups.mjs`, so both list the same pages in the same order.
 - The Markdown versions turn relative links into absolute ones and images into their alt text, so they read correctly outside the site.
 - `pages.yml` also deploys on changes to `skills/`, since the site publishes the skill.
+
+## 2026-10-10: checks in the site build
+
+- `npm run build` runs `site/scripts/check-reference.mjs` before Astro and `site/scripts/check-links.mjs` after it, so CI and the Pages deploy both fail on a broken page.
+- `check-reference.mjs` reads `ErrorName` in `src/error.rs` and the `Policy` and `Preset` structs in `src/policy.rs`, and fails when the error reference or the configuration page documents a name the source doesn't have, or misses one it has.
+- `check-links.mjs` resolves every internal link and image in the built HTML, and every link to the site in the Markdown and llms files, to a file in `dist/`, checks `#fragment`s against the target's element ids, and checks that `llms.txt` links every page's Markdown and `llms-full.txt` contains it. starlight-links-validator would do the HTML part as a dependency; it doesn't check the agent files.
+- The old addresses `guides/getting-started/` and `reference/tools/` redirect to `start/install/` and `tools/overview/` through Astro's `redirects`.
