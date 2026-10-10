@@ -691,3 +691,49 @@ async fn a_bridge_whose_client_reads_nothing_exits_at_the_write_deadline() {
     );
     assert!(takes_the_lease(&mut other, Duration::from_secs(1)).await);
 }
+
+/// A `tools/call` line of about 15 MiB with id `id`.
+fn padded_call(id: u64) -> Vec<u8> {
+    let call = json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "tools/call",
+        "params": {"name": "screenshot", "arguments": {"target": "x".repeat(15 << 20)}},
+    });
+    let mut line = serde_json::to_vec(&call).unwrap();
+    line.push(b'\n');
+    line
+}
+
+/// A client whose lines the engine doesn't take, more than the bridge's backlog holds with
+/// more input behind them, ends its bridge at once, closed stdin or not, and the engine
+/// ends its session once it reads again.
+#[tokio::test]
+async fn a_client_whose_lines_overflow_the_backlog_ends_its_bridge_at_once() {
+    let fixture = shared("shared-backlog");
+    let mut desktop = Desktop::new(&fixture);
+    // The engine's parent is the bridge that started it. Were it the one that exits, the
+    // stopped engine's process group would be orphaned, and the kernel would hang it up.
+    let mut other = Server::start(&fixture).await;
+    let _stream = desktop.stream().await;
+    let mut flood = Server::start(&fixture).await;
+    flood.structured("acquire_desktop").await;
+    let engine = flood.serving_pid().await;
+    signal(engine, rustix::process::Signal::STOP);
+    for id in 100..103 {
+        flood.send_raw(&padded_call(id)).await;
+    }
+    flood
+        .send_raw(b"{\"jsonrpc\":\"2.0\",\"id\":103,\"method\":\"tools/list\"}\n")
+        .await;
+    flood.close_stdin();
+    let exited = flood.exit_within(Duration::from_secs(2)).await;
+    signal(engine, rustix::process::Signal::CONT);
+    let (status, stderr) = exited.expect("the bridge waited for the engine");
+    assert!(!status.success(), "{status}");
+    assert_eq!(
+        stderr,
+        "niri-computer-use: the client sent more than 33554432 bytes the shared engine hadn't taken yet; its session ends\n"
+    );
+    assert!(takes_the_lease(&mut other, Duration::from_secs(2)).await);
+}

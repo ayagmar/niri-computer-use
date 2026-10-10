@@ -653,7 +653,7 @@ These match the versions installed locally.
 
 - The bridge wrote each line to stdout inside its relay loop, so a client that stopped reading stopped the relay too, and its closing stdin went unseen while it held the lease (review finding). One task now writes stdout from a queue of 32 lines, which the relay fills without waiting; a full queue, a write error, or a line not written and flushed within 30 seconds ends the bridge.
 - Ending that way closes the engine connection first and then calls `std::process::exit`, under `#[expect(clippy::exit)]`: tokio's stdout writes on a blocking thread that can't be cancelled, and the runtime waits for blocking threads when `main` returns. A nonblocking stdout would avoid that, but stdout may be a regular file, and the exit is simpler.
-- The queue's bound comes from the existing 256 MiB engine line limit rather than a byte budget: 8 GiB at worst, but about 16 replies for a client that reads, since a session runs at most 16 calls at once. The client's lines wait in a 32 MiB backlog, twice the client line limit, and the reader also watches for the end of stdin while a line waits for room. No dependency was added.
+- The queue's bound comes from the existing 256 MiB engine line limit rather than a byte budget: 8 GiB at worst, but about 16 replies for a client that reads, since a session runs at most 16 calls at once. The client's lines wait in a 32 MiB backlog, twice the client line limit; a full backlog ends the bridge (see "a full input backlog ends the bridge" below). No dependency was added.
 
 ## 2026-10-10: the native keyboard restores the latest base map
 
@@ -673,3 +673,8 @@ These match the versions installed locally.
 - The package has `description`, `repository`, `readme`, `keywords` and `categories`. Only `description` (with the existing `license`) is required to publish on crates.io; the rest helps people find it. Nothing was published.
 - The workspace's `cargo_common_metadata = "allow"` is gone. The lint only checks packages that can be published, and the harness is `publish = false`, so `make check` passes with it at the workspace's `cargo` level and `-D warnings`.
 - `--version` is handled before the server reads its environment or looks for a session, so it works with no desktop and never connects to a niri socket.
+
+## 2026-10-10: a full input backlog ends the bridge
+
+- A line that found the bridge's 32 MiB input backlog full waited for room, and while it waited the reader looked for the end of stdin only when nothing more was buffered, so a client that sent more and then closed stdin went unseen while the relay waited on the engine (review finding). The reader now never waits: a line with no room ends the bridge as a full output queue does, closing the engine connection, so the engine ends the session and frees the lease, then saying why on stderr and exiting.
+- The same policy as the output queue: input the engine hasn't taken is bounded, and a client past the bound loses its session rather than holding the lease while the bridge can't see it. Watching for the end behind buffered bytes would need the reader to keep reading past the bound anyway, which is what the backlog exists to stop. No dependency was added.

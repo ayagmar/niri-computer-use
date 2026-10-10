@@ -1,12 +1,12 @@
 //! The client's side of the bridge: its lines from stdin, and one writer for everything
 //! that goes to its stdout. Neither may keep the relay from seeing that the client has
-//! gone: the reader reports the client's end even while a line waits for the relay, and
-//! the writer never makes the relay wait for the client to read.
+//! gone: the reader never waits for the relay, so it sees the client's end however long
+//! the relay waits, and the writer never makes the relay wait for the client to read.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::io::{AsyncBufReadExt as _, AsyncRead, AsyncWrite, AsyncWriteExt as _, BufReader};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _, BufReader};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
 use tokio::task::JoinHandle;
 
@@ -28,16 +28,18 @@ pub(crate) enum Ended {
     Closed,
     /// A read failed, or a line was over the limit.
     Broken(String),
+    /// A line found the backlog full: the relay has taken nothing for that long.
+    Full(String),
 }
 
 /// One of the client's reads, holding its room in the backlog until it is dropped.
 pub(crate) type Waiting = (Read, OwnedSemaphorePermit);
 
 /// Reads the client's lines, up to `max` bytes each, and passes them on, then how the input
-/// ended. Lines totalling twice `max` may wait for the relay, so the reader usually reads
-/// on to the end while the relay is stuck in a wait; and `ended` says so as soon as the
-/// input ends, even while a line waits for room, so the relay can give up its wait. The
-/// lines still come first in `lines`.
+/// ended. Lines totalling twice `max` may wait for the relay, so the reader reads on to the
+/// end while the relay is stuck in a wait, and `ended` says so as soon as the input ends,
+/// so the relay can give up its wait; the lines still come first in `lines`. A line with
+/// no room left ends the input as `Full` at once: waiting for room would hide its end.
 pub(crate) async fn pass_lines(
     input: impl AsyncRead + Unpin,
     max: usize,
@@ -52,7 +54,8 @@ pub(crate) async fn pass_lines(
             Read::Line(line) => u32::try_from(line.len()).unwrap_or(u32::MAX),
             Read::End | Read::Broken(_) => 0,
         };
-        let Some(room) = room(&backlog, size, &mut input, &ended).await else {
+        let Ok(room) = Arc::clone(&backlog).try_acquire_many_owned(size) else {
+            ended.send_replace(Some(Ended::Full(backlog_full(max))));
             return;
         };
         let end = ending(&read);
@@ -65,25 +68,12 @@ pub(crate) async fn pass_lines(
     }
 }
 
-/// Room in `backlog` for `size` bytes, once there is, saying in `ended` if the input ends
-/// meanwhile.
-async fn room(
-    backlog: &Arc<Semaphore>,
-    size: u32,
-    input: &mut BufReader<impl AsyncRead + Unpin>,
-    ended: &watch::Sender<Option<Ended>>,
-) -> Option<OwnedSemaphorePermit> {
-    let acquire = Arc::clone(backlog).acquire_many_owned(size);
-    tokio::pin!(acquire);
-    let permit = tokio::select! {
-        biased;
-        permit = &mut acquire => permit,
-        end = at_end(input) => {
-            ended.send_replace(Some(end));
-            acquire.await
-        }
-    };
-    permit.ok()
+/// Why the input ended when the backlog of a reader of lines up to `max` bytes is full.
+fn backlog_full(max: usize) -> String {
+    format!(
+        "the client sent more than {} bytes the shared engine hadn't taken yet",
+        max.saturating_mul(2)
+    )
 }
 
 /// How the input ended, when `read` is its end.
@@ -92,15 +82,6 @@ fn ending(read: &Read) -> Option<Ended> {
         Read::Line(_) => None,
         Read::End => Some(Ended::Closed),
         Read::Broken(detail) => Some(Ended::Broken(detail.clone())),
-    }
-}
-
-/// How the input ends, once it has: never, while more is buffered or on its way.
-async fn at_end(input: &mut BufReader<impl AsyncRead + Unpin>) -> Ended {
-    match input.fill_buf().await {
-        Ok([]) => Ended::Closed,
-        Ok(_) => std::future::pending().await,
-        Err(error) => Ended::Broken(error.to_string()),
     }
 }
 
@@ -170,38 +151,79 @@ mod tests {
 
     use super::*;
 
-    /// A relay stuck in a wait takes no lines: the client's end still shows, behind lines
-    /// that fit the backlog and one that waits for room, and the lines still come first.
-    #[tokio::test]
-    async fn the_clients_end_shows_while_its_lines_wait() {
-        let (mut client, input) = duplex(1024);
-        let (lines, mut received) = mpsc::unbounded_channel();
-        let (ended, mut end) = watch::channel(None);
-        tokio::spawn(pass_lines(input, 100, lines, ended));
-        let long = [vec![b'x'; 98], b"\n".to_vec()].concat();
-        let sent = [b"a\n".to_vec(), b"b\n".to_vec(), long.clone(), long];
-        client.write_all(&sent.concat()).await.unwrap();
-        drop(client);
+    /// The client's end within a second, and the reads passed on, in order.
+    async fn end_and_reads(
+        mut received: mpsc::UnboundedReceiver<Waiting>,
+        mut end: watch::Receiver<Option<Ended>>,
+    ) -> (Ended, Vec<Read>) {
         let seen = tokio::time::timeout(Duration::from_secs(1), end.wait_for(Option::is_some))
             .await
             .expect("the end didn't show")
             .unwrap()
-            .clone();
-        assert_eq!(seen, Some(Ended::Closed));
-        let mut order = Vec::new();
-        while let Some((read, room)) = received.recv().await {
-            drop(room);
-            order.push(read);
+            .clone()
+            .unwrap();
+        let mut reads = Vec::new();
+        while let Some((read, _room)) = received.recv().await {
+            reads.push(read);
         }
-        let passed: Vec<_> = order
+        (seen, reads)
+    }
+
+    fn lines(reads: &[Read]) -> Vec<Vec<u8>> {
+        reads
             .iter()
             .filter_map(|read| match read {
                 Read::Line(line) => Some(line.clone()),
                 Read::End | Read::Broken(_) => None,
             })
-            .collect();
-        assert_eq!(passed, sent);
-        assert!(matches!(order.last(), Some(Read::End)), "{order:?}");
+            .collect()
+    }
+
+    /// Starts a reader of lines up to 100 bytes, given `sent` and then the client's end.
+    async fn read_all(
+        sent: &[Vec<u8>],
+    ) -> (
+        mpsc::UnboundedReceiver<Waiting>,
+        watch::Receiver<Option<Ended>>,
+    ) {
+        let (mut client, input) = duplex(1024);
+        let (lines, received) = mpsc::unbounded_channel();
+        let (ended, end) = watch::channel(None);
+        tokio::spawn(pass_lines(input, 100, lines, ended));
+        client.write_all(&sent.concat()).await.unwrap();
+        drop(client);
+        (received, end)
+    }
+
+    /// A relay stuck in a wait takes no lines: the client's end still shows behind lines
+    /// that fit the backlog, and the lines come first.
+    #[tokio::test]
+    async fn the_clients_end_shows_while_its_lines_wait() {
+        let long = [vec![b'x'; 98], b"\n".to_vec()].concat();
+        let sent = [b"a\n".to_vec(), b"b\n".to_vec(), long];
+        let (received, end) = read_all(&sent).await;
+        let (seen, reads) = end_and_reads(received, end).await;
+        assert_eq!(seen, Ended::Closed);
+        assert_eq!(lines(&reads), sent);
+        assert!(matches!(reads.last(), Some(Read::End)), "{reads:?}");
+    }
+
+    /// A line with no room left, with more input buffered behind it, ends the input at
+    /// once rather than waiting for room, which would hide the client's end.
+    #[tokio::test]
+    async fn a_line_with_no_room_ends_the_input_at_once() {
+        let long = [vec![b'x'; 98], b"\n".to_vec()].concat();
+        let sent = [long.clone(), long.clone(), long, b"after\n".to_vec()];
+        let (received, end) = read_all(&sent).await;
+        let (seen, reads) = end_and_reads(received, end).await;
+        assert_eq!(
+            seen,
+            Ended::Full(
+                "the client sent more than 200 bytes the shared engine hadn't taken yet".into()
+            )
+        );
+        assert_eq!(lines(&reads), sent[..2]);
+        assert_eq!(reads.len(), 2, "{reads:?}");
     }
 
     #[tokio::test]

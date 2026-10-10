@@ -356,7 +356,7 @@ pub(crate) async fn run(target: Target, engine: Link) -> Result<(), String> {
 /// Why the relay stops.
 #[derive(Debug)]
 enum Stop {
-    /// The client's input ended.
+    /// The client's input ended, or overflowed the backlog.
     Client(Ended),
     /// The client's stdout can't take what it is sent.
     Writer(String),
@@ -393,6 +393,22 @@ async fn failure(writer: &mut watch::Receiver<Option<String>>) -> String {
     }
 }
 
+/// Why the client's input overflowed the backlog, once it has; never, if it didn't.
+async fn overflow(client: &mut watch::Receiver<Option<Ended>>) -> String {
+    let full = client
+        .wait_for(|end| matches!(end, Some(Ended::Full(_))))
+        .await
+        .ok()
+        .and_then(|end| match &*end {
+            Some(Ended::Full(why)) => Some(why.clone()),
+            _ => None,
+        });
+    match full {
+        Some(why) => why,
+        None => std::future::pending().await,
+    }
+}
+
 /// `wait`'s outcome, unless the client ends or its stdout fails first. A wait that is
 /// ready at once wins, so a line the client sent right before its end still goes on.
 async fn first<T>(ends: &mut Ends, wait: impl Future<Output = T>) -> Result<T, Stop> {
@@ -404,9 +420,10 @@ async fn first<T>(ends: &mut Ends, wait: impl Future<Output = T>) -> Result<T, S
 }
 
 /// Ends the process at once, with the engine session closed first: the client's stdout
-/// can't take what it is sent. A write to it already running blocks a thread that can't
-/// be stopped, which returning from `main` would wait for, maybe forever. The line on
-/// stderr waits 100 ms at most, in case stderr blocks too.
+/// can't take what it is sent, or it sent more than the relay has taken. A write to its
+/// stdout already running blocks a thread that can't be stopped, which returning from
+/// `main` would wait for, maybe forever. The line on stderr waits 100 ms at most, in case
+/// stderr blocks too.
 #[expect(
     clippy::exit,
     reason = "returning would wait for a stdout write that may never end"
@@ -439,12 +456,14 @@ struct Relay {
 }
 
 impl Relay {
-    /// Relays until the client's input ends, in order after its lines, or its stdout fails.
+    /// Relays until the client's input ends, in order after its lines, overflows the
+    /// backlog, or its stdout fails.
     async fn serve(&mut self, client: &mut mpsc::UnboundedReceiver<Waiting>) -> Stop {
         loop {
             let step = tokio::select! {
                 biased;
                 why = failure(&mut self.ends.writer) => Err(Stop::Writer(why)),
+                why = overflow(&mut self.ends.client) => Err(Stop::Client(Ended::Full(why))),
                 line = client.recv() => match line {
                     Some((Read::Line(line), _room)) => self.client_line(line).await,
                     Some((Read::Broken(detail), _)) => Err(Stop::Client(Ended::Broken(detail))),
@@ -466,7 +485,7 @@ impl Relay {
     /// Ends the relay as `stop` says, once every line queued for the client is written.
     async fn finish(mut self, stop: Stop) -> Result<(), String> {
         let result = match stop {
-            Stop::Writer(why) => leave(self.engine.take(), &why),
+            Stop::Writer(why) | Stop::Client(Ended::Full(why)) => leave(self.engine.take(), &why),
             Stop::Client(Ended::Broken(detail)) => {
                 self.engine = None;
                 Err(format!("the client {detail}; its session ends"))
@@ -623,20 +642,19 @@ async fn reconnect(target: &Target, replay: Option<&(Value, Vec<u8>)>) -> Result
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use tokio::sync::Semaphore;
+
     use super::*;
 
-    /// A relay writing to an engine that doesn't read gives up as soon as the client ends,
-    /// rather than when the write's own deadline passes.
-    #[tokio::test(start_paused = true)]
-    async fn the_clients_end_cuts_a_write_to_an_engine_that_isnt_reading_short() {
-        let dir = crate::test_support::fresh_dir("bridge-stuck");
-        let (ours, _engine) = UnixStream::pair().unwrap();
-        let (input, output) = ours.into_split();
-        let (ended, client) = watch::channel(None);
+    /// A relay to the engine at the other end of `engine`, ending when `client` says.
+    fn relay(dir: &Path, engine: UnixStream, client: watch::Receiver<Option<Ended>>) -> Relay {
+        let (input, output) = engine.into_split();
         let (writer, writer_failed) = Writer::start(tokio::io::sink());
-        let mut relay = Relay {
+        Relay {
             target: Target {
-                runtime: RuntimeDir::of(&crate::test_support::niri_env(&dir)).unwrap(),
+                runtime: RuntimeDir::of(&crate::test_support::niri_env(dir)).unwrap(),
                 hello: Vec::new(),
             },
             engine: Some(Link::new(1, BufReader::new(input), output)),
@@ -648,7 +666,17 @@ mod tests {
                 client,
                 writer: writer_failed,
             },
-        };
+        }
+    }
+
+    /// A relay writing to an engine that doesn't read gives up as soon as the client ends,
+    /// rather than when the write's own deadline passes.
+    #[tokio::test(start_paused = true)]
+    async fn the_clients_end_cuts_a_write_to_an_engine_that_isnt_reading_short() {
+        let dir = crate::test_support::fresh_dir("bridge-stuck");
+        let (ours, _engine) = UnixStream::pair().unwrap();
+        let (ended, client) = watch::channel(None);
+        let mut relay = relay(&dir, ours, client);
         let line = vec![b'x'; 16 * 1024 * 1024];
         let started = Instant::now();
         let (sent, ()) = tokio::join!(relay.send(&line), async {
@@ -657,6 +685,35 @@ mod tests {
         });
         assert!(matches!(sent, Err(Stop::Client(Ended::Closed))), "{sent:?}");
         assert_eq!(started.elapsed(), Duration::from_millis(100));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Once the client's lines overflow the backlog, the relay ends without sending the
+    /// lines still waiting for it, though the engine takes them at once: a line already
+    /// sent shows the write would be ready.
+    #[tokio::test]
+    async fn an_overflowed_backlog_ends_the_relay_before_the_lines_still_waiting() {
+        let dir = crate::test_support::fresh_dir("bridge-overflow");
+        let (ours, engine) = UnixStream::pair().unwrap();
+        let (ended, client) = watch::channel(None);
+        let mut relay = relay(&dir, ours, client);
+        relay.send(b"first\n").await.unwrap();
+        let (lines, mut waiting) = mpsc::unbounded_channel();
+        let line = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n".to_vec();
+        let room = Arc::new(Semaphore::new(1)).try_acquire_owned();
+        lines.send((Read::Line(line), room.unwrap())).unwrap();
+        ended.send_replace(Some(Ended::Full("full".to_owned())));
+        let stop = tokio::time::timeout(Duration::from_secs(1), relay.serve(&mut waiting))
+            .await
+            .expect("the relay went on");
+        assert!(
+            matches!(&stop, Stop::Client(Ended::Full(why)) if why == "full"),
+            "{stop:?}"
+        );
+        drop(relay);
+        let mut sent = Vec::new();
+        BufReader::new(engine).read_to_end(&mut sent).await.unwrap();
+        assert_eq!(sent, b"first\n");
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
