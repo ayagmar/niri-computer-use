@@ -56,7 +56,8 @@ async fn without_a_running_niri_the_error_says_where_the_server_looked() {
     let mut server = Server::start(&fixture).await;
     let status = server.structured("status").await;
     let detail = format!(
-        "NIRI_SOCKET is not set and {} has no socket of a running niri",
+        "NIRI_SOCKET is not set and {} has no socket of a running niri on WAYLAND_DISPLAY \
+         {DISPLAY}",
         fixture.path("run").display()
     );
     assert_eq!(
@@ -64,6 +65,43 @@ async fn without_a_running_niri_the_error_says_where_the_server_looked() {
         json!({"error": "niri_unavailable", "detail": detail})
     );
     assert_eq!(status["discovery"]["niri_socket"]["detail"], detail);
+}
+
+/// Sol's case: the only running niri is on another display than the one the client gave,
+/// which wtype would reach while focus and policy were checked on that niri.
+#[tokio::test]
+async fn a_given_display_rules_out_a_niri_on_another_display() {
+    let mut fixture = Fixture::new("discover-other");
+    fixture.unset("NIRI_SOCKET");
+    fixture.program("niri", "await_file never");
+    let process = fake(&fixture, "niri");
+    let name = format!("niri.wayland-other.{}.sock", process.id().unwrap());
+    let _niri = Niri::listen(&fixture.path(&format!("run/{name}")));
+    fixture.program("noctalia", "exit 0");
+    let _noctalia = noctalia::start(&fixture, UNLOCKED);
+    fixture.program("wtype", r#": > "$DIR/wtype.ran""#);
+    let mut server = Server::start(&fixture).await;
+    let detail = format!(
+        "NIRI_SOCKET is not set and {} has no socket of a running niri on WAYLAND_DISPLAY \
+         {DISPLAY}",
+        fixture.path("run").display()
+    );
+    let unavailable = json!({"error": "niri_unavailable", "detail": detail});
+    assert_eq!(
+        server.structured("status").await["niri"]["error"],
+        unavailable
+    );
+    for (tool, arguments) in [
+        ("acquire_desktop", json!({})),
+        (
+            "type_text",
+            json!({"text": "secret", "expect": {"app_id": "a"}}),
+        ),
+    ] {
+        let result = server.call(tool, arguments).await;
+        assert_eq!(result["structuredContent"], unavailable, "{tool}");
+    }
+    assert!(!fixture.path("wtype.ran").exists());
 }
 
 /// niri's socket is served by a process of its own, which relays to the fake niri, while

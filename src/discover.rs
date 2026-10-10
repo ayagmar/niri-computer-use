@@ -104,7 +104,10 @@ pub(crate) fn session(given: Given, roots: &Roots<'_>) -> Session {
         let dir = runtime_dir
             .as_deref()
             .ok_or("NIRI_SOCKET is not set and there is no runtime directory to look for it in")?;
-        choose(dir, &niri_sockets(dir, roots)?)
+        let display = given.wayland_display.as_deref();
+        let mut found = niri_sockets(dir, roots)?;
+        found.retain(|socket| display.is_none_or(|display| serves(socket, display, dir)));
+        choose(dir, &found, display)
     });
     let (wayland_display, wayland_source) = pick(given.wayland_display, || {
         wayland_display(niri_socket.as_deref(), runtime_dir.as_deref())
@@ -233,12 +236,32 @@ fn runs_niri(proc_root: &Path, pid: u32) -> bool {
         && procs::comm(proc_root, pid).as_deref() == Some("niri")
 }
 
-/// The one niri socket found in `dir`. None, or several, is an error that says what to
-/// do; this never guesses between two sessions.
-fn choose(dir: &Path, found: &[PathBuf]) -> Result<PathBuf, String> {
+/// Whether niri's socket `socket` in `dir` names the given `WAYLAND_DISPLAY`: a name in
+/// `dir`, or an absolute path.
+fn serves(socket: &Path, display: &OsStr, dir: &Path) -> bool {
+    let Some((named, _)) = socket
+        .file_name()
+        .and_then(OsStr::to_str)
+        .and_then(parse_socket_name)
+    else {
+        return false;
+    };
+    let display = Path::new(display);
+    if display.is_absolute() {
+        return display == dir.join(named);
+    }
+    display == Path::new(named)
+}
+
+/// The one niri socket found in `dir`, for the given `display` if there is one. None, or
+/// several, is an error that says what to do; this never guesses between two sessions.
+fn choose(dir: &Path, found: &[PathBuf], display: Option<&OsStr>) -> Result<PathBuf, String> {
+    let on = display.map_or_else(String::new, |display| {
+        format!(" on WAYLAND_DISPLAY {}", display.to_string_lossy())
+    });
     match found {
         [] => Err(format!(
-            "NIRI_SOCKET is not set and {} has no socket of a running niri",
+            "NIRI_SOCKET is not set and {} has no socket of a running niri{on}",
             dir.display()
         )),
         [one] => Ok(one.clone()),
@@ -249,8 +272,8 @@ fn choose(dir: &Path, found: &[PathBuf]) -> Result<PathBuf, String> {
                 .map(OsStr::to_string_lossy)
                 .collect();
             Err(format!(
-                "NIRI_SOCKET is not set and {} has the sockets of {} running niri instances: {}; \
-                 set NIRI_SOCKET to the one to use",
+                "NIRI_SOCKET is not set and {} has the sockets of {} running niri instances{on}: \
+                 {}; set NIRI_SOCKET to the one to use",
                 dir.display(),
                 several.len(),
                 names.join(", ")
@@ -403,11 +426,14 @@ mod tests {
     #[test]
     fn uses_one_socket_but_never_guesses_between_several() {
         let dir = Path::new("/run/user/1000");
-        let none = choose(dir, &[]).unwrap_err();
+        let none = choose(dir, &[], None).unwrap_err();
         assert!(none.contains("/run/user/1000 has no socket"), "{none}");
         let one = dir.join("niri.wayland-1.5.sock");
-        assert_eq!(choose(dir, std::slice::from_ref(&one)), Ok(one.clone()));
-        let several = choose(dir, &[one, dir.join("niri.wayland-2.6.sock")]).unwrap_err();
+        assert_eq!(
+            choose(dir, std::slice::from_ref(&one), None),
+            Ok(one.clone())
+        );
+        let several = choose(dir, &[one, dir.join("niri.wayland-2.6.sock")], None).unwrap_err();
         assert_eq!(
             several,
             "NIRI_SOCKET is not set and /run/user/1000 has the sockets of 2 running niri \
@@ -477,6 +503,39 @@ mod tests {
             "{detail}"
         );
         assert_eq!(session.wayland_display, None);
+    }
+
+    #[test]
+    fn a_given_display_keeps_only_the_niri_that_serves_it() {
+        let mut host = Host::new("discover-on-display");
+        for (pid, display) in [(5, "wayland-1"), (6, "wayland-2")] {
+            host.process(pid, "niri", 'S');
+            host.socket(&format!("niri.{display}.{pid}.sock"));
+            host.socket(display);
+        }
+        let on = |display: &Path| {
+            host.session(Given {
+                wayland_display: Some(display.into()),
+                ..Given::default()
+            })
+        };
+        let second = host.runtime().join("niri.wayland-2.6.sock");
+        assert_eq!(on(Path::new("wayland-2")).niri_socket, Ok(second.clone()));
+        assert_eq!(
+            on(&host.runtime().join("wayland-2")).niri_socket,
+            Ok(second)
+        );
+        for other in [Path::new("wayland-3"), Path::new("/elsewhere/wayland-2")] {
+            let session = on(other);
+            let detail = session.niri_socket.unwrap_err();
+            assert!(
+                detail.ends_with(&format!(
+                    "has no socket of a running niri on WAYLAND_DISPLAY {}",
+                    other.display()
+                )),
+                "{detail}"
+            );
+        }
     }
 
     #[test]
