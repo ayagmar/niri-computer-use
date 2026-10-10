@@ -158,6 +158,43 @@ impl Gated {
     }
 }
 
+/// A child that lives as long as the server and only waits for its stdin to end. The
+/// server holds the pipe's one write end, so the child reads end of file when the server
+/// exits, however it exits. It has a process group of its own, so a signal to the
+/// server's group doesn't reach it, and dropping the handle doesn't kill it: it has
+/// nothing to wait for but the server, and every step it takes after that has its own
+/// deadline. Its stdout is closed, because the server's is the MCP transport.
+#[derive(Debug)]
+pub(crate) struct Watcher {
+    /// Held so the server keeps its handle on the child for its lifetime.
+    _child: Child,
+    /// The write end; closing it, or the server's exit, ends the child's wait.
+    _stdin: ChildStdin,
+}
+
+pub(crate) fn watcher(program: &str, args: &[String]) -> Result<Watcher, ToolError> {
+    let mut child = command(program)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .process_group(0)
+        .spawn()
+        .map_err(|error| {
+            ToolError::new(
+                ErrorName::UpstreamError,
+                format!("start {program}: {error}"),
+            )
+        })?;
+    let stdin = child.stdin.take().ok_or_else(|| {
+        ToolError::new(ErrorName::UpstreamError, format!("{program} has no stdin"))
+    })?;
+    Ok(Watcher {
+        _child: child,
+        _stdin: stdin,
+    })
+}
+
 #[expect(
     clippy::disallowed_methods,
     reason = "the runner is the one place that starts processes"

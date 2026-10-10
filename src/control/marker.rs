@@ -5,7 +5,7 @@
 
 use std::io::Write as _;
 use std::os::unix::fs::OpenOptionsExt as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -34,6 +34,10 @@ pub(crate) struct Marker {
     /// Native protocol evdev keycodes that may need release, never typed text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) keyboard: Option<Native>,
+    /// When the crash guardian sent the releases, after the server that wrote the marker
+    /// died. The marker still blocks until `recover`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) released: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,13 +71,19 @@ impl Marker {
             operation: operation.to_owned(),
             phase: Phase::Pending,
             server_pid: std::process::id(),
-            since: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+            since: now(),
             child: None,
             buttons,
             output: None,
             keyboard: None,
+            released: None,
         }
     }
+}
+
+/// The time now, as markers record it.
+pub(crate) fn now() -> String {
+    Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
 /// The marker this server wrote. Dropping it leaves the file in place: only `clear`
@@ -106,16 +116,26 @@ impl Written {
     }
 
     fn save(&self) -> std::io::Result<()> {
-        let staged = self.path.with_extension("new");
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&staged)?;
-        file.write_all(&serde_json::to_vec(&self.marker).map_err(std::io::Error::other)?)?;
-        std::fs::rename(&staged, &self.path)
+        save(&self.path, &self.marker)
     }
+}
+
+/// Writes `marker` again with the time the crash guardian sent its releases.
+pub(crate) fn note_released(runtime: &RuntimeDir, mut marker: Marker) -> std::io::Result<()> {
+    marker.released = Some(now());
+    save(&runtime.path().join(INPUT_DIRTY), &marker)
+}
+
+fn save(path: &Path, marker: &Marker) -> std::io::Result<()> {
+    let staged = path.with_extension("new");
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&staged)?;
+    file.write_all(&serde_json::to_vec(marker).map_err(std::io::Error::other)?)?;
+    std::fs::rename(&staged, path)
 }
 
 /// What `status` and `recover` find.
@@ -154,13 +174,18 @@ impl Found {
     pub(crate) fn summary(&self) -> String {
         match self {
             Self::Marker(marker) => format!(
-                "{} {} since {}",
+                "{} {} since {}{}",
                 marker.operation,
                 match marker.phase {
                     Phase::Pending => "pending",
                     Phase::Running => "running",
                 },
-                marker.since
+                marker.since,
+                marker
+                    .released
+                    .as_ref()
+                    .map(|at| format!("; the crash guardian sent its releases at {at}"))
+                    .unwrap_or_default()
             ),
             Self::Unreadable { error } => error.clone(),
         }
@@ -172,7 +197,7 @@ mod tests {
     use super::*;
     use crate::Env;
 
-    fn runtime(dir: &std::path::Path) -> RuntimeDir {
+    fn runtime(dir: &Path) -> RuntimeDir {
         RuntimeDir::of(&Env {
             niri_socket: Some(dir.join("niri.test.sock")),
             runtime_dir: Some(dir.to_path_buf()),

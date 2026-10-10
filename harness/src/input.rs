@@ -7,6 +7,7 @@
 mod activation;
 mod crash;
 mod exposure;
+mod guardian;
 mod native;
 mod native_gestures;
 mod native_unicode;

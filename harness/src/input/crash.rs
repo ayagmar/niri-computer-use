@@ -1,9 +1,8 @@
 //! The two-server crash (plan §13): server A is killed mid-`type_text` and mid-drag.
 //! Server B must refuse with `recovery_required` until the user's `recover` has run, which
 //! finds `wtype` already done in the first case and sends the button's release from a
-//! fresh pointer in the second.
-
-use std::time::Duration;
+//! fresh pointer in the second. In the second, A's crash guardian has already released
+//! the button, without `recover`.
 
 use serde_json::json;
 
@@ -102,10 +101,10 @@ fn mid_drag(session: &mut Session<'_>, wev: &Wev<'_>, server: &str) -> Result<()
     session.wait_until("m4-crash-drag", "the drag's press in wev", WAIT, |_| {
         Ok(wev.since(offset)?.contains(&press).then_some(()))
     })?;
-    a.stop()?;
+    let killed = super::guardian::kill(a)?;
     let mut b = refused(session, server, "harness-m4-d")?;
-    // niri releases nothing when a pointer goes (C8): the button stays down.
-    session.still_absent("m4-crash-held", Duration::from_millis(500), || {
+    // niri releases nothing when a pointer goes (C8): A's guardian sends the release.
+    super::guardian::released(session, killed, "M4 drag button", || {
         Ok(wev.since(offset)?.contains(&release))
     })?;
     recover(
@@ -118,5 +117,5 @@ fn mid_drag(session: &mut Session<'_>, wev: &Wev<'_>, server: &str) -> Result<()
         Ok(wev.since(offset)?.contains(&release).then_some(()))
     })?;
     b.stop()?;
-    session.log("M4 crash mid-drag: the button stayed down, B refused with recovery_required, recover released it from a fresh pointer, B took the lease")
+    session.log("M4 crash mid-drag: the guardian released the button, B refused with recovery_required until recover, which sent the release again, B took the lease")
 }

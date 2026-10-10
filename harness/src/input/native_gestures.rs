@@ -164,10 +164,13 @@ pub(super) fn crash(
     let offset = wev.offset()?;
     client.start_call("drag", args)?;
     pressed(session, wev, offset)?;
-    client.stop()?;
+    let killed = super::guardian::kill(client)?;
+    super::guardian::released(session, killed, "held drag button and ctrl+shift", || {
+        Ok(released(&keyboard::since(wev.log, offset)?).is_ok())
+    })?;
     recover(session, wev, server, offset, "harness-m7-recover")?;
     held_at_pointer(&keyboard::since(wev.log, offset)?, "button:")?;
-    session.log("M7 SIGKILL during held drag: marker blocked B; recover released button and modifiers; B acquired. No automatic crash release claim.")
+    session.log("M7 SIGKILL during held drag: the guardian released button and modifiers; the marker blocked B until recover; B acquired")
 }
 
 fn recover(
@@ -206,14 +209,15 @@ fn recover(
     next.stop()
 }
 
-/// Kills a server typing `text` repeated, after its first key, and requires recover to
-/// release that key's original code. `name` tells the run's server logs apart.
+/// Kills a server typing `text` repeated, after its first key, and requires its guardian,
+/// before `recover`, to release that key's original code with zero modifiers, then runs
+/// `before_recover` and `recover`. `name` tells the run's server logs apart.
 pub(super) fn typing_crash(
     session: &mut Session<'_>,
     wev: &Wev<'_>,
     server: &str,
-    text: &str,
-    name: &str,
+    (text, name): (&str, &str),
+    before_recover: impl FnOnce(&mut Session<'_>) -> Result<()>,
 ) -> Result<()> {
     let mut client = Client::start_command(
         session,
@@ -239,13 +243,17 @@ pub(super) fn typing_crash(
             .any(|key| key.pressed)
             .then_some(()))
     })?;
-    client.stop()?;
-    let before_recover = keyboard::since(wev.log, offset)?;
-    let first = trace(&before_recover)?
+    let killed = super::guardian::kill(client)?;
+    let at_kill = keyboard::since(wev.log, offset)?;
+    let first = trace(&at_kill)?
         .keys
         .into_iter()
         .find(|key| key.pressed)
         .ok_or_else(|| Failure::new("M7 kill lacked an observed press"))?;
+    super::guardian::released(session, killed, &format!("typing {text:?}"), || {
+        Ok(released(&keyboard::since(wev.log, offset)?).is_ok())
+    })?;
+    before_recover(session)?;
     let recovery_offset = wev.offset()?;
     recover(
         session,
@@ -265,5 +273,5 @@ pub(super) fn typing_crash(
             "M7 recover didn't release the original native code",
         ));
     }
-    session.log(&format!("M7 SIGKILL during native typing of {text:?}: original wev code {}, balanced final key state, zero modifiers, recovery gate retained until recover", first.code))
+    session.log(&format!("M7 SIGKILL during native typing of {text:?}: the guardian released original wev code {}, zero modifiers, recovery gate retained until recover, which released it again", first.code))
 }

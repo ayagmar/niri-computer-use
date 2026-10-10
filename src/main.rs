@@ -31,7 +31,8 @@ use rmcp::ServiceExt as _;
 
 use crate::control::runtime::RuntimeDir;
 
-const USAGE: &str = "usage: niri-computer-use serve | status | stop | resume | recover";
+const USAGE: &str =
+    "usage: niri-computer-use serve | status | stop | resume | recover | guard <server-pid>";
 
 /// What the server reads from its environment, once at startup. An empty variable
 /// counts as unset.
@@ -120,6 +121,9 @@ enum Command {
     Resume,
     /// Clear the input-dirty marker after ending the input child and asking the human.
     Recover,
+    /// The crash guardian `serve` starts: after the server's end, release what its marker
+    /// names.
+    Guard(u32),
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -148,6 +152,7 @@ async fn main() -> ExitCode {
         }),
         Some(Command::Resume) => RuntimeDir::of(&env).and_then(|runtime| runtime.resume()),
         Some(Command::Recover) => control::recover::run(&env).await,
+        Some(Command::Guard(server)) => control::guard::run(&env, server).await,
         None => Err(USAGE.to_owned()),
     };
     match result {
@@ -166,11 +171,19 @@ fn command(args: &[OsString]) -> Option<Command> {
         [only] if only == "stop" => Some(Command::Stop),
         [only] if only == "resume" => Some(Command::Resume),
         [only] if only == "recover" => Some(Command::Recover),
+        [guard, server] if guard == "guard" => server.to_str()?.parse().ok().map(Command::Guard),
         _ => None,
     }
 }
 
 async fn serve(env: Env) -> Result<(), String> {
+    // Lives until the server exits; see `control::guard`. `/proc/self/exe` still runs this
+    // binary when its file has been replaced since.
+    let _guardian = runner::watcher(
+        "/proc/self/exe",
+        &["guard".to_owned(), std::process::id().to_string()],
+    )
+    .map_err(|error| format!("start the crash guardian: {}", error.detail))?;
     let events = env
         .niri_socket
         .clone()
@@ -239,7 +252,15 @@ mod tests {
         assert_eq!(command(&args(&["stop"])), Some(Command::Stop));
         assert_eq!(command(&args(&["resume"])), Some(Command::Resume));
         assert_eq!(command(&args(&["recover"])), Some(Command::Recover));
-        for bad in [&[][..], &["stop", "now"], &["serve", "status"], &["--help"]] {
+        assert_eq!(command(&args(&["guard", "42"])), Some(Command::Guard(42)));
+        for bad in [
+            &[][..],
+            &["stop", "now"],
+            &["serve", "status"],
+            &["--help"],
+            &["guard"],
+            &["guard", "-1"],
+        ] {
             assert_eq!(command(&args(bad)), None, "{bad:?}");
         }
     }

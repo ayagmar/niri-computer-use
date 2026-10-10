@@ -58,28 +58,32 @@ pub(super) fn run(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>)
 }
 
 /// A server killed while its extended map is niri's active one leaves that map in
-/// clients; recover's fresh keyboard must send the compositor's back byte for byte.
+/// clients; its guardian's fresh keyboard must send the compositor's back byte for byte,
+/// before `recover`.
 pub(super) fn crash(session: &mut Session<'_>, wev: &Wev<'_>, server: &str) -> Result<()> {
     let (observer, directory, original) = observe(session, "crash")?;
-    super::native_gestures::typing_crash(session, wev, server, "é", "extended")?;
-    let maps = session.wait_until(
-        "m7-crash-keymap",
-        "the compositor's keymap after recover",
-        WAIT,
-        |_| {
-            let maps = keymaps::saved(&directory)?;
-            Ok((maps.len() >= 3 && maps.last() == Some(&original)).then_some(maps))
-        },
-    )?;
+    let mut sent = 0;
+    super::native_gestures::typing_crash(session, wev, server, ("é", "extended"), |session| {
+        let maps = session.wait_until(
+            "m7-crash-keymap",
+            "the compositor's keymap from the guardian",
+            WAIT,
+            |_| {
+                let maps = keymaps::saved(&directory)?;
+                Ok((maps.len() >= 3 && maps.last() == Some(&original)).then_some(maps))
+            },
+        )?;
+        if maps.get(1) == Some(&original) {
+            return Err(Failure::new(
+                "M7 native crash: the killed call's extended keymap never reached clients",
+            ));
+        }
+        sent = maps.len() - 1;
+        Ok(())
+    })?;
     observer.stop()?;
-    if maps.get(1) == Some(&original) {
-        return Err(Failure::new(
-            "M7 native crash: the killed call's extended keymap never reached clients",
-        ));
-    }
     session.log(&format!(
-        "M7 SIGKILL during an extended keymap: {} maps sent; recover sent the compositor's byte for byte",
-        maps.len() - 1
+        "M7 SIGKILL during an extended keymap: {sent} maps sent; the guardian sent the compositor's byte for byte before recover"
     ))
 }
 

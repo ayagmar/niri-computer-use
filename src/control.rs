@@ -7,6 +7,7 @@
 //! (`src/niri.rs` at v26.04), whichever `ext_session_lock` client locks the screen.
 
 pub(crate) mod desk;
+pub(crate) mod guard;
 pub(crate) mod lease;
 pub(crate) mod marker;
 pub(crate) mod procs;

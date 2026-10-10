@@ -188,6 +188,19 @@ impl Server {
         }
         (status, unread, stderr)
     }
+
+    /// SIGKILLs the server and returns its stderr, read until every process holding the
+    /// pipe, the guardian included, has closed it.
+    pub(crate) async fn kill(&mut self) -> String {
+        self.child.kill().await.unwrap();
+        let mut stderr = String::new();
+        let pipe = self.child.stderr.as_mut().unwrap();
+        tokio::time::timeout(WAIT, pipe.read_to_string(&mut stderr))
+            .await
+            .expect("stderr stayed open")
+            .unwrap();
+        stderr
+    }
 }
 
 #[expect(

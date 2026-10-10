@@ -79,6 +79,17 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
 }
 
 async fn release_keyboard(env: &Env, marked: &marker::Native) -> Result<(), String> {
+    send_key_releases(env, marked).await?;
+    cli::say(
+        "Sent native key releases and zero synthetic modifiers from a fresh virtual keyboard.",
+    );
+    Ok(())
+}
+
+/// Releases the marker's keycodes and zeroes the modifiers from a fresh virtual keyboard,
+/// which carries the compositor's current map, so niri sends that map to clients again
+/// with the releases. The display's peer must be the niri serving `NIRI_SOCKET`.
+pub(super) async fn send_key_releases(env: &Env, marked: &marker::Native) -> Result<(), String> {
     if marked.codes.len() > 1000
         || marked.codes.iter().any(|code| *code > 767)
         || marked.group >= 32
@@ -97,11 +108,7 @@ async fn release_keyboard(env: &Env, marked: &marker::Native) -> Result<(), Stri
     keyboard
         .release(&marked.codes, marked.group)
         .await
-        .map_err(|error| error.detail)?;
-    cli::say(
-        "Sent native key releases and zero synthetic modifiers from a fresh virtual keyboard.",
-    );
-    Ok(())
+        .map_err(|error| error.detail)
 }
 
 /// Sends the release of each of `buttons` from a fresh virtual pointer, which clears a
@@ -119,7 +126,11 @@ async fn release_buttons(env: &Env, buttons: &[u32], output: Option<&str>) {
 
 /// Binds the pointer to the marker's output if it is still enabled, else to the first
 /// enabled one: a release needs no position.
-async fn send_releases(env: &Env, buttons: &[u32], marked: Option<&str>) -> Result<(), String> {
+pub(super) async fn send_releases(
+    env: &Env,
+    buttons: &[u32],
+    marked: Option<&str>,
+) -> Result<(), String> {
     let socket = env.niri_socket.as_deref();
     let outputs = niri::outputs(socket).await.map_err(|error| error.detail)?;
     let mut enabled = outputs.values().filter(|output| output.logical.is_some());
