@@ -721,26 +721,29 @@ mod tests {
     #[tokio::test]
     async fn a_niri_socket_outside_the_given_runtime_directory_is_a_warning() {
         let host = Host::new("discover-misplaced");
+        let runtime = host.runtime();
+        let nested = host.root.join("nested/niri.wayland-2.42.sock");
         let session = host
             .session(Given {
-                runtime_dir: Some("/run/user/1000".into()),
-                niri_socket: Some("/tmp/nested/niri.wayland-2.42.sock".into()),
+                runtime_dir: Some(runtime.clone()),
+                niri_socket: Some(nested.clone()),
                 wayland_display: None,
             })
             .await;
-        assert_eq!(session.runtime_dir, Some("/run/user/1000".into()));
+        assert_eq!(session.runtime_dir, Some(runtime.clone()));
         let warning = session.sources.warning.unwrap();
         assert!(
-            warning.starts_with(
-                "NIRI_SOCKET /tmp/nested/niri.wayland-2.42.sock is not in XDG_RUNTIME_DIR \
-                 /run/user/1000"
-            ),
+            warning.starts_with(&format!(
+                "NIRI_SOCKET {} is not in XDG_RUNTIME_DIR {}",
+                nested.display(),
+                runtime.display()
+            )),
             "{warning}"
         );
         let inside = host
             .session(Given {
-                runtime_dir: Some("/run/user/1000/".into()),
-                niri_socket: Some("/run/user/1000/niri.wayland-1.5.sock".into()),
+                runtime_dir: Some(format!("{}/", runtime.display()).into()),
+                niri_socket: Some(runtime.join("niri.wayland-1.5.sock")),
                 wayland_display: None,
             })
             .await;
