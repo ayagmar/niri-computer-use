@@ -77,7 +77,11 @@ The clipboard couldn't be saved whole: it held over 16 MiB, its owner didn't ans
 
 ## Actions fail after the runtime directory was cleaned
 
-If something removes `$XDG_RUNTIME_DIR/niri-computer-use/` while a server runs, the server gives up the lease and refuses it until it restarts, and an action in progress fails with `upstream_error`. Restart the agent's session.
+If something removes `$XDG_RUNTIME_DIR/niri-computer-use/` while a server runs, the server gives up the lease and refuses it until it restarts, and an action in progress fails with `upstream_error`. Restart the agent's session. A shared engine exits at once instead: calls in flight fail with `engine_lost`, and the session's next call starts a new engine.
+
+## Shared mode serves the client standalone
+
+With [`shared`](../../concepts/configuration/#shared) on, `status.engine.mode` says `standalone` and `engine.fallback` says why; the server's stderr has the same line. If the engine runs another build, you reinstalled while it ran: new clients are served standalone until the old engine's clients have ended and it exits, and the next client starts a new one. If the engine's socket path is too long, `XDG_RUNTIME_DIR` is: the socket is `$XDG_RUNTIME_DIR/niri-computer-use/<niri socket name>/engine.sock`, which must fit in 108 bytes. `/run/user/<uid>` fits; a long test or container directory may not. If no engine answered, read `engine.log` next to that socket.
 
 ## An action comes back `timeout`, `pending` or `interrupted`
 

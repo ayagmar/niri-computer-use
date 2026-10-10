@@ -9,9 +9,9 @@ An agent using niri-computer-use works on your real desktop, with your apps and 
 
 ## The lease
 
-Looking needs nothing: any connected agent can call `status`, `desktop_state`, `screenshot` and the other reading tools. Acting needs the lease. An agent takes it with `acquire_desktop` and gives it up with `release_desktop`. One server holds it per niri instance; another server's `acquire_desktop` is refused with `lease_held`, and its detail names the holder's PID, client and since when.
+Looking needs nothing: any connected agent can call `status`, `desktop_state`, `screenshot` and the other reading tools. Acting needs the lease. An agent takes it with `acquire_desktop` and gives it up with `release_desktop`. One agent session holds it per niri instance; another session's `acquire_desktop` is refused with `lease_held`, and its detail names the holder's PID, client and since when. That holds in [shared mode](../configuration/#shared) too, where one engine serves every client.
 
-`acquire_desktop` notes the window you were on. `release_desktop` with `restore_focus: true` puts keyboard focus back there. The lease is also given up when the server exits and when you press the stop key.
+`acquire_desktop` notes the window you were on. `release_desktop` with `restore_focus: true` puts keyboard focus back there. The lease is also given up when the agent's session ends, because its client closed the connection or its server exited, and when you press the stop key.
 
 ## Stop and resume
 
@@ -31,7 +31,7 @@ Before `click`, `drag`, `key`, `type_text` or `paste` send anything, the server 
 
 ## The crash guardian
 
-Each `serve` starts a small guardian process. If the server dies while it holds input, for example after `kill -9`, the guardian releases the keys and buttons the marker names at once, so nothing stays pressed while you are away. The marker still stays until you run `recover`.
+Each standalone `serve`, and each shared engine, starts a small guardian process. If the server or engine dies while it holds input, for example after `kill -9`, the guardian releases the keys and buttons the marker names at once, so nothing stays pressed while you are away. The marker still stays until you run `recover`.
 
 ## The lock gate
 
