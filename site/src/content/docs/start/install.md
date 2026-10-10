@@ -25,7 +25,7 @@ cargo install --locked --path niri-computer-use
 
 The binary goes to `~/.cargo/bin/niri-computer-use`. To update, pull and run the same `cargo install` again.
 
-Before updating, end every running `niri-computer-use` process: close the agent sessions that run `serve`, and with [`shared`](../../concepts/configuration/#shared) on, wait for the engine to exit, two seconds after its last client, or end it. This lists any still running:
+Before updating, end every running `niri-computer-use` process: close the agent sessions that run `serve`, and with [`shared`](../../concepts/configuration/#shared) on, wait for the engine to exit, two seconds after its last connection, lease and pending input cleanup have ended, or end it. This lists any still running:
 
 ```sh
 pgrep -a '^niri-computer-u'
