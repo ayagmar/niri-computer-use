@@ -66,7 +66,7 @@ A window can open in the middle of your work, a dialog or a notification that ta
 
 ## When to stop and hand back
 
-Stop and tell the user, quoting the error's `detail`, when a tool returns `stopped`, `recovery_required`, `screen_locked`, `lease_held`, `read_only`, `app_denied`, `untested_output_config` or `refused`. These are the user's decisions: `resume` and `recover` are their commands, and only they can unlock the screen or free the lease. Don't call the refused action again.
+Stop and tell the user, quoting the error's `detail`, when a tool returns `stopped`, `recovery_required`, `screen_locked`, `lease_held`, `read_only`, `app_denied`, `untested_output_config` or `refused`. These are the user's decisions: `resume` and `recover` are their commands, and only they can unlock the screen or free the lease. Don't call the refused action again. One exception: when a `recovery_required` detail says input is still finishing, or may still be finishing, wait a few seconds and try once more; if it refuses again, stop and hand back.
 
 `unrestricted_required` means the action, such as niri's `Spawn`, needs `unrestricted = true` in the user's policy file. Tell the user that, and don't reach the same result another way: no keys, presets or shell commands in its place.
 
