@@ -1,5 +1,6 @@
 //! Nested niri test harness for niri-computer-use. See `docs/development.md`.
 
+mod a11y;
 mod actions;
 mod capture;
 mod clipboard;
@@ -42,12 +43,12 @@ use scale::Scale;
 use supervise::Probes;
 use test_dir::TestDir;
 
-const USAGE: &str = "usage: harness run [--visible] [--scale <scale>] [--noctalia | --sitting | --control | --actions | --input | --shell | --eval <scenario> --skill <dir|none> --model <model>]
+const USAGE: &str = "usage: harness run [--visible] [--scale <scale>] [--noctalia | --sitting | --control | --actions | --input | --shell | --a11y | --eval <scenario> --skill <dir|none> --model <model>]
        harness host-capture <output>
        harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--started <file>]
        harness keymaps <TEST_DIR> <directory> <deadline-ms>
        harness clipboard <TEST_DIR> <deadline-ms>
-       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --eval <server> <scenario> <skill|none> <model>]";
+       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --a11y <server> | --eval <server> <scenario> <skill|none> <model>]";
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -133,7 +134,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
             "--visible" => options.visible = true,
             "--noctalia" => options.noctalia = true,
             "--sitting" => options.sitting = true,
-            "--control" | "--actions" | "--input" | "--shell" => {
+            "--control" | "--actions" | "--input" | "--shell" | "--a11y" => {
                 options.server = run::ServerChecks::from_flag(arg);
             }
             "--eval" => scenario = Some(*args.next().ok_or_else(|| Failure::new(USAGE))?),
@@ -154,7 +155,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
         > 1
     {
         return Err(Failure::new(
-            "--sitting, --noctalia, --control, --actions, --input, --shell and --eval cannot be combined",
+            "--sitting, --noctalia, --control, --actions, --input, --shell, --a11y and --eval cannot be combined",
         ));
     }
     options.visible |= options.sitting;

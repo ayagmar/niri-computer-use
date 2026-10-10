@@ -224,6 +224,16 @@ The run has a 180-second deadline. Its files are in `target/e2e/<run>/`, includi
 
 The run has a 130-second deadline. Its files are in `target/e2e/<run>/`, including a `success-<panel>.png` for each panel.
 
+## Nested accessibility checks
+
+`make nested-a11y` runs M9's checks in a nested niri with a private accessibility bus. `SCALE` sets the nested output's scale as for `make nested`. The supervisor:
+
+1. Starts `/usr/lib/at-spi-bus-launcher --launch-immediately --a11y=1`. It claims `org.a11y.Bus` on the nested session bus and starts a bus of its own at `$XDG_RUNTIME_DIR/at-spi/bus`. The supervisor waits until the name has an owner, reads the address with `GetAddress`, and requires its socket to resolve under `TEST_DIR/run`.
+2. Starts `/usr/lib/at-spi2-registryd` itself. The nested session bus has no service directories, and the accessibility bus would activate the registry through systemd, which it can't reach, so nothing is activated from the host.
+3. Checks that every application the registry lists (`GetChildren` on its root) is a process of the nested session: the bus daemon's `GetConnectionUnixProcessID` for each one, followed through `/proc/<pid>/stat` to the nested niri. It checks before any fixture starts, when the list is empty, and again with the GTK 4 fixture's `a11y` window registered.
+
+Every call on a bus goes through `busctl --address=… --json=short` with the step deadline. The run has a 240-second deadline. It needs at-spi2-core (`at-spi-bus-launcher`, `at-spi2-registryd`), `busctl` from systemd, and Python 3 with PyGObject and GTK 4.
+
 ## Skill evals
 
 `make nested-eval` runs an agent against one scenario in a nested niri and grades what it did. It needs `claude` on `PATH` and logged in, and it spends tokens:

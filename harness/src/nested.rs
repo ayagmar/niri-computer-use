@@ -124,7 +124,7 @@ pub(crate) fn nothing_at(path: &Path) -> Result<()> {
     }
 }
 
-fn resolve_under(path: &Path, run: &Path) -> Result<()> {
+pub(crate) fn resolve_under(path: &Path, run: &Path) -> Result<()> {
     let resolved = fs::canonicalize(path).context(format!("resolve {}", path.display()))?;
     if is_under(&resolved, run) {
         Ok(())

@@ -53,6 +53,14 @@ window-rule {{
 }}
 
 window-rule {{
+    match app-id="^org\\.ncu\\.A11y$"
+    open-floating true
+    default-floating-position x=20 y=20 relative-to="top-left"
+    default-column-width {{ fixed 400; }}
+    default-window-height {{ fixed 300; }}
+}}
+
+window-rule {{
     match app-id="^org\\.ncu\\.Pacer$"
     open-floating true
     default-floating-position x=0 y=0 relative-to="bottom-right"

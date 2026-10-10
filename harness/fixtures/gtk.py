@@ -2,6 +2,9 @@
 
 `button` counts a button's real activations. `entry` reports a text entry's text after
 every change, and each activation (Enter) with the text it submitted, then clears it.
+`a11y` is a 400x300 window for the accessibility checks: a label, the `Primary` and
+`Second` buttons, which count their activations in `primary-count` and `second-count`,
+an entry, and a `Vanish` button that removes itself when clicked.
 """
 
 import json
@@ -11,7 +14,7 @@ import sys
 
 root = Path(sys.argv[1]).resolve(strict=True)
 mode = sys.argv[2]
-if mode not in ("button", "entry"):
+if mode not in ("button", "entry", "a11y"):
     raise RuntimeError(f"unknown fixture {mode}")
 run = root / "run"
 for name in ("NIRI_SOCKET", "WAYLAND_DISPLAY"):
@@ -31,7 +34,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gio, GLib, Gtk
 
 counter = root / "activations"
-app_id = "org.ncu.Activation" if mode == "button" else "org.ncu.Entry"
+app_id = {"button": "org.ncu.Activation", "entry": "org.ncu.Entry", "a11y": "org.ncu.A11y"}[mode]
 app = Gtk.Application(application_id=app_id, flags=Gio.ApplicationFlags.NON_UNIQUE)
 clicks = 0
 submits = 0
@@ -79,17 +82,40 @@ def entry_window(window):
     entry.grab_focus()
 
 
+counts = {"primary": 0, "second": 0}
+
+
+def counted(button, key):
+    counts[key] += 1
+    button.set_label(f"{key.capitalize()}: {counts[key]}")
+    report(f"{key}-count", str(counts[key]))
+
+
+def a11y_window(window):
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+    for side in ("top", "bottom", "start", "end"):
+        getattr(box, f"set_margin_{side}")(20)
+    box.append(Gtk.Label(label="Accessibility fixture"))
+    for key in counts:
+        button = Gtk.Button(label=f"{key.capitalize()}: 0")
+        button.connect("clicked", counted, key)
+        box.append(button)
+        report(f"{key}-count", "0")
+    box.append(Gtk.Entry())
+    vanish = Gtk.Button(label="Vanish")
+    vanish.connect("clicked", lambda button: box.remove(button))
+    box.append(vanish)
+    window.set_child(box)
+
+
 def activate(application):
     window = Gtk.ApplicationWindow(application=application)
-    window.set_default_size(320, 240)
+    window.set_default_size(*((400, 300) if mode == "a11y" else (320, 240)))
     window.set_title(f"{mode} fixture")
-    if mode == "button":
-        button_window(window)
-    else:
-        entry_window(window)
+    {"button": button_window, "entry": entry_window, "a11y": a11y_window}[mode](window)
     window.present()
 
 
 app.connect("activate", activate)
-GLib.timeout_add_seconds(45, app.quit)
+GLib.timeout_add_seconds(240 if mode == "a11y" else 45, app.quit)
 app.run([])

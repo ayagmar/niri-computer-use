@@ -26,6 +26,7 @@ const CONTROL_DEADLINE: Duration = Duration::from_secs(90);
 const ACTIONS_DEADLINE: Duration = Duration::from_secs(130);
 const INPUT_DEADLINE: Duration = Duration::from_secs(180);
 const SHELL_DEADLINE: Duration = Duration::from_secs(130);
+const A11Y_DEADLINE: Duration = Duration::from_secs(240);
 /// The agent's twelve minutes, with the fixtures and Noctalia around it.
 const EVAL_DEADLINE: Duration = Duration::from_mins(15);
 /// All `noctalia config validate` prints for a config without warnings. It exits 0 even
@@ -59,6 +60,8 @@ pub(crate) enum ServerChecks {
     Input,
     /// M5: the shell tools and the Noctalia lock source.
     Shell,
+    /// M9: the nested accessibility bus.
+    A11y,
 }
 
 impl ServerChecks {
@@ -68,13 +71,20 @@ impl ServerChecks {
             Self::Actions => "--actions",
             Self::Input => "--input",
             Self::Shell => "--shell",
+            Self::A11y => "--a11y",
         }
     }
 
     pub(crate) fn from_flag(flag: &str) -> Option<Self> {
-        [Self::Control, Self::Actions, Self::Input, Self::Shell]
-            .into_iter()
-            .find(|checks| checks.flag() == flag)
+        [
+            Self::Control,
+            Self::Actions,
+            Self::Input,
+            Self::Shell,
+            Self::A11y,
+        ]
+        .into_iter()
+        .find(|checks| checks.flag() == flag)
     }
 
     const fn deadline(self) -> Duration {
@@ -83,6 +93,7 @@ impl ServerChecks {
             Self::Actions => ACTIONS_DEADLINE,
             Self::Input => INPUT_DEADLINE,
             Self::Shell => SHELL_DEADLINE,
+            Self::A11y => A11Y_DEADLINE,
         }
     }
 }
