@@ -605,6 +605,16 @@ async fn a_stop_ends_the_owners_queued_actions_and_frees_the_lease_within_a_seco
     std::fs::write(desk.fixture.path("go"), "").unwrap();
     let (refused, _) = tool_error(&desk.server.call("acquire_desktop", json!({})).await);
     assert_eq!(refused, "stopped");
+    // The released wtype finishes the cancelled key, so nothing is left held.
+    let dirty = desk.fixture.runtime_dir().join("input-dirty");
+    assert!(crate::fixture::eventually(Duration::from_secs(3), || !dirty.exists()).await);
+    let resume = run(&desk.fixture, "resume").await;
+    assert!(resume.status.success(), "{resume:?}");
+    desk.server.structured("acquire_desktop").await;
+    assert_eq!(
+        desk.server.structured("status").await["lease"]["held_by_me"],
+        true
+    );
 }
 
 /// A `ref_invalid`'s name and its reason, the detail's first word.
