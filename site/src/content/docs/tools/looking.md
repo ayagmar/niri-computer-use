@@ -37,7 +37,7 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `policy.preset_names` | the preset names `launch` takes |
 | `policy.capture_dir` | where `screenshot` saves, as the file writes it, or null when saving is off |
 | `audit.path`, `audit.last_error` | the audit log and the last failure to write it |
-| `binaries` | whether `grim`, `wl-paste`, `wl-copy`, `wtype` and `loginctl` are on `PATH` |
+| `binaries` | whether `grim`, `wl-paste`, `wtype` and `loginctl` are on `PATH` |
 
 ## `desktop_state`
 

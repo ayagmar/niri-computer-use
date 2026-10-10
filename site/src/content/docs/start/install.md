@@ -12,7 +12,7 @@ niri-computer-use is installed from source. There is no package yet.
 - niri 26.04. With another major or minor version the server is read-only: it looks but refuses to act.
 - Rust 1.99.0. The repository pins it in `rust-toolchain.toml`, so rustup installs it when you build.
 - libxkbcommon, which the keyboard code links against (`libxkbcommon-dev` on Debian and Ubuntu, `libxkbcommon` on Arch).
-- At run time: `grim` for screenshots, `wl-paste` and `wl-copy` from wl-clipboard for the clipboard, `wtype` for the keyboard, and `loginctl` from systemd for the lock state.
+- At run time: `grim` for screenshots, `wl-paste` from wl-clipboard to read the clipboard, `wtype` for the keyboard, and `loginctl` from systemd for the lock state.
 - Optional: [Noctalia](../../concepts/noctalia/) 5.2 for its panels and lock state, and an accessibility bus (at-spi2-core) for [`elements`](../../tools/elements/).
 
 ## Build and install

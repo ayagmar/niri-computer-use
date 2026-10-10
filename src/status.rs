@@ -17,8 +17,8 @@ use crate::noctalia::{self, Presence};
 use crate::policy::{self, Facts, Loaded, PolicyStatus};
 use crate::{Env, a11y, discover};
 
-/// Programs the server runs or will run, reported as found on `PATH` or not.
-const BINARIES: [&str; 5] = ["grim", "wtype", "wl-copy", "wl-paste", "loginctl"];
+/// Programs the server runs, reported as found on `PATH` or not.
+const BINARIES: [&str; 4] = ["grim", "wtype", "wl-paste", "loginctl"];
 
 #[derive(Debug, Serialize)]
 pub(crate) struct Status {
@@ -216,7 +216,7 @@ mod tests {
                     "error": null
                 },
                 "binaries": {
-                    "grim": false, "loginctl": false, "wl-copy": false, "wl-paste": false, "wtype": false
+                    "grim": false, "loginctl": false, "wl-paste": false, "wtype": false
                 }
             })
         );
