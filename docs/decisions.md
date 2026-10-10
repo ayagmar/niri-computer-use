@@ -644,3 +644,9 @@ These match the versions installed locally.
 - `noctalia` logs only the argument count and byte lengths. A first draft kept a first argument of lowercase letters and `-` as a command word; Sol's design check showed clipboard text such as `synthetic-private-content` fits that shape, so syntax can't tell a command from private text. A fixed list of Noctalia's command names would be the way to get readable commands back.
 - Lengths are in bytes, the size the log can state without decoding anything.
 - The log no longer says which program `Spawn` started; the promise that the log holds no desktop text wins over that.
+
+## 2026-10-10: release preparation
+
+- The package has `description`, `repository`, `readme`, `keywords` and `categories`. Only `description` (with the existing `license`) is required to publish on crates.io; the rest helps people find it. Nothing was published.
+- The workspace's `cargo_common_metadata = "allow"` is gone. The lint only checks packages that can be published, and the harness is `publish = false`, so `make check` passes with it at the workspace's `cargo` level and `-D warnings`.
+- `--version` is handled before the server reads its environment or looks for a session, so it works with no desktop and never connects to a niri socket.
