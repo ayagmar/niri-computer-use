@@ -105,9 +105,14 @@ impl Recorder {
         }
     }
 
-    /// Applies the events already received.
+    /// Applies the events already received when it starts, and no more, so a niri that
+    /// keeps sending can't hold it.
     async fn drain(&mut self) {
-        while self.lost.is_none() && self.next(Duration::ZERO).await {}
+        for _ in 0..self.waiter.queued() {
+            if self.lost.is_some() || !self.next(Duration::ZERO).await {
+                return;
+            }
+        }
     }
 
     /// Applies the next event, waiting at most `limit` for it: whether one came. The
@@ -295,5 +300,36 @@ mod tests {
         assert!(changes.lost.unwrap().contains("disconnected"));
         // Focus may have moved on since: unknown, not window 2.
         assert_eq!(outcome.focused_window, None);
+    }
+
+    /// Marks window 1 urgent on odd sequence numbers and not on even ones.
+    const fn urgent(seq: u64) -> Event {
+        Event::WindowUrgencyChanged {
+            id: 1,
+            urgent: seq % 2 == 1,
+        }
+    }
+
+    /// Sends one more event each time it gets to run, until the thousandth.
+    async fn keeps_sending(sender: Sender) {
+        for seq in 2..1000 {
+            event(&sender, seq, urgent(seq));
+            tokio::task::yield_now().await;
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_niri_that_keeps_sending_cant_hold_the_report_after_a_screenshot() {
+        let (recorder, mut outcome, sender) = watching(vec![app()]);
+        event(&sender, 1, urgent(1));
+        let sending = tokio::spawn(keeps_sending(sender));
+        let changes = recorder.finish(Wait::Settled, &mut outcome).await;
+        assert!(!sending.is_finished());
+        sending.abort();
+        // The event received before the report ended is in it.
+        assert_eq!(
+            changes.windows.first().and_then(|window| window.urgent),
+            Some(true)
+        );
     }
 }
