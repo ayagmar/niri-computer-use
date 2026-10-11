@@ -140,6 +140,8 @@ enum Fact {
     FocusMoved,
     /// The element's window, or the window a niri action is about, closes.
     WindowClosed,
+    /// Another server's input may be stuck.
+    InputDirty,
     /// The window takes an `app_id` the policy denies. The policy is read once per session,
     /// so this is how a denial can appear while a call runs.
     DenyListed,
@@ -164,6 +166,7 @@ impl Fact {
         let kind = tool.kind();
         let element = kind == Kind::Element;
         match self {
+            Self::InputDirty => Some(&["recovery_required"]),
             Self::FocusMoved => (kind != Kind::Niri).then_some(&["focus_mismatch"]),
             Self::WindowClosed => match kind {
                 Kind::Element => Some(&["element_stale"]),
@@ -330,6 +333,8 @@ impl World {
     /// ref. The trace starts afterwards.
     async fn reset(&mut self, tool: Tool) -> Value {
         self.points.idle().await;
+        let marker = self.fixture.runtime_dir().join("input-dirty");
+        std::fs::remove_file(marker).ok();
         self.closed.lock().unwrap().clear();
         for (path, object) in self.saved.drain(..) {
             self.mock.change(path, |now| *now = object);
@@ -402,6 +407,10 @@ impl World {
                     .send(&json!({"WindowOpenedOrChanged": {"window": denied}}));
                 self.until_desktop(|desktop| app_id(desktop, window).as_deref() == Some(DENIED))
                     .await;
+            }
+            Fact::InputDirty => {
+                let marker = self.fixture.runtime_dir().join("input-dirty");
+                std::fs::write(marker, "").unwrap();
             }
             Fact::BecamePassword => self.change_object(path, |object| object.role = PASSWORD_TEXT),
             Fact::Renamed => self.change_object(path, |object| {
@@ -681,6 +690,11 @@ fn focus_moving_while_a_reply_is_held() {
 #[test]
 fn the_window_closing_while_a_reply_is_held() {
     explore(Fact::WindowClosed);
+}
+
+#[test]
+fn a_marker_set_while_a_reply_is_held() {
+    explore(Fact::InputDirty);
 }
 
 #[test]

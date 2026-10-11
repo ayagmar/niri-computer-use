@@ -246,7 +246,8 @@ impl Desk {
 
     /// Runs one action of `session` with the action mutex held. It runs only while neither
     /// the stop flag nor the input-dirty marker is set, `session` holds the lease, and
-    /// `refusal`, the policy's answer asked once those checks pass, has none. A session
+    /// `refusal`, the policy's answer asked once those checks pass, has none; the stop flag
+    /// and the marker are checked again after it, since it takes time. A session
     /// without the lease is refused without waiting for another session's action. The lease
     /// file must still be the one locked right before `work` starts. A stop that arrives
     /// while `work` runs cancels it; the stop watcher then takes the lease back. A lease
@@ -292,13 +293,15 @@ impl Desk {
     {
         let runtime = self.runtime.as_ref().map_err(Clone::clone)?;
         let mut held = self.seat.lease.lock().await;
-        let mut stopped = self.unblocked(runtime)?;
+        self.unblocked(runtime)?;
         let Some(grant) = held.as_ref().filter(|grant| grant.owner == session.id()) else {
             return Err(lease_required().into());
         };
         if let Some(refusal) = refusal.await {
             return Err(refusal.into());
         }
+        // `refusal` takes time, so a stop or another input's marker may have come meanwhile.
+        let mut stopped = self.unblocked(runtime)?;
         self.seat.sending.store(false, Ordering::Relaxed);
         self.seat.answer().take();
         let ended = if grant.lease.intact() {
