@@ -123,3 +123,19 @@ Runs at `bf1014b`, the last code commit, each with C1's host snapshot unchanged,
 | `make nested-a11y SSD=1 SHARED=1` | 1791722788-456957 | pass |
 
 Activations took a median of 318–344 ms per call, as before; the gate's deadline adds one clock read per pass. An earlier run, 1791722209-376414, failed reading the Qt fixture's counter while the fixture was rewriting it, fixed in `c01d79f`.
+
+## After the fourth review
+
+The fourth round decides an app's accessible frames for all of its niri windows together, so a frame another window of the app could own, with the same title or an unknown one, is `ambiguous_window`; reports focus after the look when an element action's reply is lost; sends the acting call only with its whole one-second deadline left; and checks the last gate's 250 ms bound right before the call goes out. The nested fixtures' dialogs and list window, other windows of the same apps, still list and act as before.
+
+Runs at `a648af7`, the last code commit, each with C1's host snapshot unchanged, no host journal entries from the run and no leftover processes:
+
+| Command | Run | Result |
+|---|---|---|
+| `make check` | before every commit | pass: 299 server, 127 harness and 210 protocol tests, one protocol test ignored |
+| `make nested-a11y` | 1791725832-771847 | pass |
+| `make nested-a11y SHARED=1` | 1791725625-739083 | pass |
+| `make nested-a11y SSD=1` | 1791725681-750959 | pass |
+| `make nested-a11y SSD=1 SHARED=1` | 1791725752-760838 | pass |
+
+Activations took a median of 319–346 ms per call, as before. A `make check` run failed once with "Text file busy" when a test's `dbus-daemon` was forked while another test wrote a fake program; fixed in `6d4b1f1`.
