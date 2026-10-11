@@ -255,8 +255,8 @@ impl Request {
             .map_err(|error| Failed::Error(self.upstream(&what, &error)))
     }
 
-    /// Calls `member`, which acts on the application, once. Nothing goes out when the
-    /// budget is spent or the connection is closed already. Once the call may have gone
+    /// Calls `member`, which acts on the application, once. Nothing goes out when less than
+    /// the call's own deadline is left of the budget or the connection is closed already. Once the call may have gone
     /// out, no reply within the deadline, a lost connection, the bus's `NoReply` and a reply
     /// that can't be read are `Lost`, since the application may have acted; an error the
     /// application answered is its answer, as `Failed`.
@@ -274,9 +274,7 @@ impl Request {
         let (interface, method) = member;
         let what = format!("{interface}.{method} on {destination}");
         let left = self.deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return Err(Failed::Error(late(&what, left)));
-        }
+        let deadline = acting_deadline(&what, left).map_err(Failed::Error)?;
         if self.connection.is_closed() {
             *self.shared.lock().await = None;
             return Err(Failed::Error(ToolError::new(
@@ -292,9 +290,9 @@ impl Request {
         let call =
             self.connection
                 .call_method(Some(destination), path, Some(interface), method, body);
-        let reply = match tokio::time::timeout(left.min(CALL), call).await {
+        let reply = match tokio::time::timeout(deadline, call).await {
             Ok(Ok(reply)) => reply,
-            Err(_) => return lost(late(&what, left).detail),
+            Err(_) => return lost(late(&what, deadline).detail),
             Ok(Err(zbus::Error::MethodError(name, _, _))) if name.as_str() == NO_REPLY => {
                 return lost(format!("{what}: {NO_REPLY}"));
             }
@@ -698,6 +696,24 @@ async fn within<T>(
     }
 }
 
+/// The deadline of a call that acts, `what`: the whole of `CALL`, or `deadline_exceeded` when
+/// less is `left` of the request's budget. Sent with less, an app answering in time for any
+/// other call could lose its reply to the deadline, and the action would be `uncertain`
+/// though it most likely happened.
+fn acting_deadline(what: &str, left: Duration) -> Result<Duration, ToolError> {
+    if left < CALL {
+        return Err(ToolError::new(
+            ErrorName::DeadlineExceeded,
+            format!(
+                "{what}: less than the call's {} s is left of the request's {} s budget; nothing was sent",
+                CALL.as_secs(),
+                BUDGET.as_secs()
+            ),
+        ));
+    }
+    Ok(CALL)
+}
+
 fn late(what: &str, left: Duration) -> ToolError {
     let detail = if left < CALL {
         format!(
@@ -760,5 +776,20 @@ mod tests {
                 .is_some_and(|reason| reason.starts_with("connect to the session bus")),
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_acting_call_goes_out_only_with_its_whole_deadline_left() {
+        assert_eq!(acting_deadline("DoAction", BUDGET), Ok(CALL));
+        assert_eq!(acting_deadline("DoAction", CALL), Ok(CALL));
+        for left in [Duration::from_millis(999), Duration::ZERO] {
+            let refused = acting_deadline("DoAction", left).unwrap_err();
+            assert_eq!(refused.name, ErrorName::DeadlineExceeded);
+            assert!(
+                refused.detail.ends_with("nothing was sent"),
+                "{}",
+                refused.detail
+            );
+        }
     }
 }
