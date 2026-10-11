@@ -9,15 +9,18 @@ pub(crate) mod host;
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::Serialize;
 use serde_json::Value;
 use tokio::time::Instant;
 
 use crate::a11y::{self, A11y, Presence};
+use crate::act::record::{Recorder, Wait};
 use crate::act::{self, Outcome};
 use crate::audit::Audit;
+use crate::changes::Changes;
+use crate::changes::elements::{self as element_changes, Seen, Unknown};
 use crate::control;
 use crate::control::desk::{Desk, Worked};
 use crate::control::lease::Holder;
@@ -45,6 +48,8 @@ pub(crate) struct Engine {
     a11y: Option<A11y>,
     /// The sessions being served, by id.
     sessions: Mutex<BTreeMap<SessionId, Session>>,
+    /// The clipboard as the current lease sees it, from its `acquire` on.
+    clipboard: Mutex<Option<clipboard::Watch>>,
     /// The last session id given out.
     last_session: AtomicU64,
     mode: status::Mode,
@@ -139,6 +144,7 @@ impl Engine {
             accessibility,
             a11y,
             sessions: Mutex::new(BTreeMap::new()),
+            clipboard: Mutex::new(None),
             last_session: AtomicU64::new(0),
             mode: status::Mode::Standalone,
             fallback: None,
@@ -269,10 +275,11 @@ impl Engine {
         status::collect(&self.env, sources).await
     }
 
-    /// Takes the lease for `session`, labelled `label`. Returns the holder and the window
-    /// that had keyboard focus, which `release` can give focus back to.
+    /// Takes the lease for `session`, labelled `label`, and watches the clipboard from
+    /// then on. Returns the holder and the window that had keyboard focus, which `release`
+    /// can give focus back to.
     pub(crate) async fn acquire(
-        &self,
+        self: &Arc<Self>,
         session: &Session,
         label: &str,
     ) -> Result<(Holder, Option<u64>), ToolError> {
@@ -285,6 +292,9 @@ impl Engine {
                 .and_then(|waiter| waiter.view().focused_window())
         };
         let holder = self.desk.acquire(session, label, refusal, focused).await?;
+        if let Some(lease) = self.desk.ref_lease(session) {
+            self.watch_clipboard(session, lease).await;
+        }
         Ok((holder, self.desk.users_window(session)))
     }
 
@@ -309,20 +319,36 @@ impl Engine {
         self.desk.end_session(session).await;
     }
 
-    /// Runs one action through the desk's gate, with a screenshot when `shoot` asks for one
-    /// or its outcome is in doubt.
+    /// Runs one action through the desk's gate, with a screenshot when `report.shoot` asks
+    /// for one or its outcome is in doubt, and the report of what it changed.
     pub(crate) async fn act(
         &self,
         session: &Session,
-        shoot: bool,
+        report: Report<'_>,
         work: impl Future<Output = Result<Outcome, CallError>>,
     ) -> Result<act::Evidenced, CallError> {
         // Boxed, because the readiness report, the action's work and its wait make large
         // futures.
         let refusal = Box::pin(self.refusal(session));
-        let evidence = |worked| Box::pin(self.evidence(session, worked, shoot));
+        let watched = async {
+            let before = match report.elements {
+                Some(target) => Some(Box::pin(self.survey_before(session, target)).await),
+                None => None,
+            };
+            let mut recorder = Recorder::start(self.events.as_ref()).await;
+            let outcome = match &mut recorder {
+                Ok(recorder) => recorder.follow(work).await?,
+                Err(_) => work.await?,
+            };
+            Ok(Watched {
+                outcome,
+                recorder,
+                before,
+            })
+        };
+        let evidence = |worked| Box::pin(self.evidence(session, worked, report.shoot));
         self.desk
-            .act(session, refusal, Box::pin(work), evidence)
+            .act(session, refusal, Box::pin(watched), evidence)
             .await
     }
 
@@ -379,9 +405,56 @@ impl Engine {
         noctalia::status(&self.env).await
     }
 
-    /// The clipboard's text.
-    pub(crate) async fn clipboard(&self) -> Result<impl Serialize, ToolError> {
-        clipboard::read_text(&self.env.niri_socket, &self.env.display).await
+    /// The clipboard's text, if it was copied during `session`'s lease.
+    pub(crate) async fn clipboard(&self, session: &Session) -> Result<impl Serialize, ToolError> {
+        let lease = self.desk.ref_lease(session).ok_or_else(|| {
+            ToolError::new(
+                ErrorName::LeaseRequired,
+                "this session doesn't hold the lease; call acquire_desktop first",
+            )
+        })?;
+        let reader = self
+            .watch()
+            .as_ref()
+            .filter(|watch| watch.lease() == lease)
+            .map(clipboard::Watch::reader)
+            .ok_or_else(|| {
+                ToolError::new(
+                    ErrorName::UpstreamError,
+                    "nothing watches the clipboard for this lease; release the desktop and acquire it again",
+                )
+            })?;
+        reader.read().await
+    }
+
+    /// Watches the clipboard for `session`'s `lease` from now on, unless something already
+    /// does. The watch ends itself once the lease is gone, however it went: released, taken
+    /// back by a stop, lost, or its session ended. A later lease replaces it.
+    async fn watch_clipboard(self: &Arc<Self>, session: &Session, lease: u64) {
+        if self
+            .watch()
+            .as_ref()
+            .is_some_and(|watch| watch.lease() == lease)
+        {
+            return;
+        }
+        let engine = Arc::downgrade(self);
+        let owner = session.clone();
+        let holds = move || {
+            !owner.has_ended()
+                && engine
+                    .upgrade()
+                    .is_some_and(|engine| engine.desk.ref_lease(&owner) == Some(lease))
+        };
+        let (socket, display) = (self.env.niri_socket.clone(), self.env.display.clone());
+        let watch = clipboard::Watch::start(socket, display, lease, holds).await;
+        *self.watch() = Some(watch);
+    }
+
+    fn watch(&self) -> std::sync::MutexGuard<'_, Option<clipboard::Watch>> {
+        self.clipboard
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Waits for `until`, then with `screenshot` adds one taken once the screen stopped
@@ -496,23 +569,145 @@ impl Engine {
         policy::refuse_lock(self.lock().await.state())
     }
 
-    /// The outcome with the screenshot `shoot` asks for, or the one an outcome in doubt gets.
-    /// The outcome with its evidence, or, for work cut short after its call went out, the
+    /// The outcome with the screenshot `shoot` asks for, or the one an outcome in doubt
+    /// gets, then what the action changed. For work cut short after its call went out, the
     /// outcome alone: after a stop or with the lease gone, nothing more is asked.
     async fn evidence(
         &self,
         session: &Session,
-        worked: Worked<Outcome>,
+        worked: Worked<Watched>,
         shoot: bool,
     ) -> act::Evidenced {
-        let Worked::Done(outcome) = worked else {
-            return act::Evidenced {
-                outcome: Outcome::concluded(worked),
-                image: None,
-            };
+        let watched = match worked {
+            Worked::Done(watched) => watched,
+            Worked::CutAfterSending(cut, answered) => {
+                return act::Evidenced {
+                    outcome: Outcome::concluded(Worked::CutAfterSending(cut, answered)),
+                    image: None,
+                };
+            }
         };
-        act::with_evidence(outcome, shoot, |request| self.capture(session, request)).await
+        let Watched {
+            outcome,
+            mut recorder,
+            before,
+        } = watched;
+        let capture = |request| self.capture(session, request);
+        let evidence = act::with_evidence(outcome, shoot, capture);
+        let mut evidenced = match &mut recorder {
+            Ok(recorder) => recorder.follow(evidence).await,
+            Err(_) => evidence.await,
+        };
+        let wait = if shoot { Wait::Settled } else { Wait::Quiet };
+        let mut changes = match recorder {
+            Ok(recorder) => recorder.finish(wait, &mut evidenced.outcome).await,
+            // Nothing was watched, so an empty report would read as "nothing changed".
+            Err(error) => Changes {
+                lost: Some(error.detail),
+                ..Changes::default()
+            },
+        };
+        if let Some(before) = before {
+            changes.elements = Box::pin(self.survey_after(session, before)).await;
+        }
+        evidenced.outcome.changes = (!changes.is_empty()).then_some(changes);
+        evidenced
     }
+
+    /// The elements of the window `target` names, before an action, for its report.
+    async fn survey_before(&self, session: &Session, target: Watch<'_>) -> Surveyed {
+        let window = match target {
+            Watch::Element(id) => match self.desk.element(session, id) {
+                Ok(element) => element.kept.window,
+                Err(error) => return Err(Unknown::failed(None, error)),
+            },
+            Watch::Focused => match niri::waiter(self.events.as_ref()).await {
+                Ok(waiter) => waiter
+                    .view()
+                    .focused_window()
+                    .ok_or_else(Unknown::no_window)?,
+                Err(error) => return Err(Unknown::failed(None, error)),
+            },
+        };
+        let seen = self.survey(session, window).await?;
+        Ok((window, seen))
+    }
+
+    /// What changed among the elements surveyed `before` the action, from another walk.
+    async fn survey_after(
+        &self,
+        session: &Session,
+        before: Surveyed,
+    ) -> Option<element_changes::Report> {
+        let (window, before) = match before {
+            Ok(before) => before,
+            Err(unknown) => return Some(element_changes::Report::Unknown(unknown)),
+        };
+        let after = match self.survey(session, window).await {
+            Ok(after) => after,
+            Err(unknown) => return Some(element_changes::Report::Unknown(unknown)),
+        };
+        let lease = self.desk.ref_lease(session);
+        let remember = |seen: &Seen| {
+            lease.and_then(|lease| self.desk.remember_element(lease, seen.element.clone()))
+        };
+        element_changes::diff(window, &before, &after, remember).map(element_changes::Report::Diff)
+    }
+
+    /// Every element `elements` would list of window `window`.
+    async fn survey(&self, session: &Session, window: u64) -> Result<Vec<Seen>, Unknown> {
+        let Some(a11y) = &self.a11y else {
+            let none = a11y::not_accessible("this session has no accessibility bus".to_owned());
+            return Err(Unknown::failed(Some(window), none));
+        };
+        let policy = &session.settings().policy;
+        Box::pin(elements::survey(
+            &self.env.niri_socket,
+            a11y,
+            policy,
+            window,
+        ))
+        .await
+    }
+}
+
+/// What an action's report covers: whether a screenshot was asked for, and the window
+/// whose elements to compare before and after, if any.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Report<'a> {
+    pub(crate) shoot: bool,
+    pub(crate) elements: Option<Watch<'a>>,
+}
+
+impl Report<'_> {
+    /// A report of niri's changes alone, with a screenshot when `shoot`.
+    pub(crate) const fn shot(shoot: bool) -> Self {
+        Self {
+            shoot,
+            elements: None,
+        }
+    }
+}
+
+/// Whose elements an action's report compares.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Watch<'a> {
+    /// The window of the element ref with this id.
+    Element(&'a str),
+    /// The window with keyboard focus when the action starts.
+    Focused,
+}
+
+/// A window's elements before an action, or why they aren't known.
+type Surveyed = Result<(u64, Vec<Seen>), Unknown>;
+
+/// An action's outcome, with the watch on niri, or why it couldn't start, and the elements
+/// from before it.
+#[derive(Debug)]
+struct Watched {
+    outcome: Outcome,
+    recorder: Result<Recorder, ToolError>,
+    before: Option<Surveyed>,
 }
 
 #[cfg(test)]

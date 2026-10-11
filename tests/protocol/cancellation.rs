@@ -6,6 +6,7 @@ use std::time::Duration;
 use serde_json::json;
 
 use crate::client::Server;
+use crate::clipboard::Leased;
 use crate::fixture::{Fixture, exited, jpeg, pid_in};
 use crate::niri::Niri;
 
@@ -65,9 +66,31 @@ async fn cancelling_a_screenshot_kills_grim_and_its_group() {
     .await;
 }
 
+/// The lease's clipboard watcher drops a read whose call was cancelled while the owner
+/// still holds it, so the next read doesn't wait out the first one's deadline.
 #[tokio::test]
-async fn cancelling_clipboard_read_kills_wl_paste_and_its_group() {
-    cancel_while_running("cancel-paste", "wl-paste", "clipboard_read", json!({})).await;
+async fn cancelling_clipboard_read_drops_its_read() {
+    let mut leased = Leased::start("cancel-paste", None).await;
+    leased.owner().hold("text/plain");
+    leased
+        .owner()
+        .copy(Some(vec![("text/plain", b"held".to_vec())]));
+    let id = leased.server.start_call("clipboard_read", json!({})).await;
+    leased.owner().held().await;
+    leased.server.cancel(id).await;
+    let answered = vec![("text/plain;charset=utf-8", b"answered".to_vec())];
+    leased.owner().copy(Some(answered));
+    let started = std::time::Instant::now();
+    assert_eq!(
+        leased.server.structured("clipboard_read").await,
+        json!({"text": "answered", "reason": null})
+    );
+    // Well inside the two-second read deadline.
+    assert!(started.elapsed() < Duration::from_millis(500));
+    assert!(!leased.server.answered().contains(&id));
+    let lines = leased.fixture.audit_lines();
+    assert_eq!(lines[1]["tool"], "clipboard_read");
+    assert_eq!(lines[1]["error"], "cancelled");
 }
 
 #[tokio::test]
@@ -119,7 +142,6 @@ async fn concurrent_calls_are_answered_as_each_finishes() {
     let image = jpeg(1280, 720, &[]);
     std::fs::write(fixture.path("grim.out"), &image).unwrap();
     fixture.program("grim", r#"sleep 1; cat "$DIR/grim.out""#);
-    fixture.program("wl-paste", "printf text");
     let mut server = Server::start(&fixture).await;
     let stream = niri.stream().await;
     stream.initial(&[crate::niri::window(1, "a")]);
@@ -127,7 +149,7 @@ async fn concurrent_calls_are_answered_as_each_finishes() {
         .start_call("screenshot", json!({"target": "focused_output"}))
         .await;
     let mut fast = Vec::new();
-    for tool in ["status", "outputs", "desktop_state", "clipboard_read"] {
+    for tool in ["status", "outputs", "desktop_state"] {
         fast.push(server.start_call(tool, json!({})).await);
     }
     for id in &fast {

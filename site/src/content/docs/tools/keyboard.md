@@ -34,6 +34,7 @@ Before `wtype` starts, the server writes the input-dirty marker (`pending`), and
 | `keys` (required) | 1 to 16 combinations, pressed in order. Each is modifiers and one key joined by `+`, such as `ctrl+s`, `ctrl+shift+t`, `alt+F4` or `Return`. The key is an XKB keysym name (`a`, `Return`, `Escape`, `F5`, `slash`, `Page_Down`); the modifiers are `shift`, `ctrl`, `alt`, `altgr` and `super` |
 | `expect` (required) | see above |
 | `screenshot` | see Action tools |
+| `element_changes` | default false; with true, [element changes](../elements/#element-changes) for the window focused when the call starts |
 
 For each combination, presses the modifiers, presses and releases the key, then releases the modifiers in reverse order. If focus moves after one, the rest aren't pressed: `observed` is `interrupted` and `pressed` gives the number that were. A combination that fails ends the call with that error, its `detail` starting with how many were pressed before it.
 
@@ -45,6 +46,7 @@ For each combination, presses the modifiers, presses and releases the key, then 
 | `expect` (required) | see above |
 | `submit` | default false; with true, `Return` is pressed once all of the text went out |
 | `screenshot` | see Action tools |
+| `element_changes` | default false; with true, [element changes](../elements/#element-changes) for the window focused when the call starts |
 
 The text goes out in parts of 100 characters. If focus moved after a part, the rest isn't typed: `observed` is `interrupted` and `typed` gives the number of characters sent. A part that fails ends the call with that error, its `detail` starting with how many characters were typed before it. A result without `typed` means the whole text went out. With `submit`, the result has `submitted`: true once `Return` was pressed, false when the text stopped early and `Return` wasn't pressed.
 
@@ -56,6 +58,7 @@ The text goes out in parts of 100 characters. If focus moved after a part, the r
 | `keys` (required) | the combination that pastes in the focused app: `ctrl+v`, `ctrl+shift+v` (terminals) or `shift+Insert` |
 | `expect` (required) | see above |
 | `screenshot` | see Action tools |
+| `element_changes` | default false; with true, [element changes](../elements/#element-changes) for the window focused when the call starts |
 
 Pastes the text through the clipboard, then puts the clipboard back. `expect` and the deny list are checked first, before the clipboard is touched. Then a keeper process, the server's own binary as `niri-computer-use paste-keeper`, reads every type the clipboard offers through the wlr data-control protocol, up to 16 MiB in all within two seconds; if it can't, if the clipboard holds `x-kde-passwordManagerHint` set to `secret` (other than an earlier paste's text, below), or if something else was copied while it saved, the call ends with `clipboard_unsaved` and nothing changes. The server waits up to eleven seconds for the keeper to take the clipboard or refuse: a second to start, then two seconds each to find niri, connect, save, check for a copy made meanwhile and take the clipboard. The keeper takes the selection with the text, offered as `text/plain;charset=utf-8`, `text/plain`, `UTF8_STRING`, `STRING` and `TEXT`, marked with that hint so clipboard managers that honour it keep it out of their history, and with `application/x-niri-computer-use-paste`, which marks it as a paste's. The server then presses `keys` as `key` would, with the same checks. Right before the key goes out, it asks the keeper to admit it and waits up to half a second for the answer. The keeper admits the key only while it still holds the text on the clipboard and is still waiting for the key, which it does for ten seconds after taking the clipboard; after that it has already put the clipboard back, and it admits nothing. A key the keeper doesn't admit isn't sent.
 

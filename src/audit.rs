@@ -41,6 +41,9 @@ struct Record<'a> {
     /// For action tools, from their result; null for read-only tools and for failures.
     accepted: Option<bool>,
     observed: Option<&'a str>,
+    /// For action tools that reported changes, how many of each kind, from their result.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    changes: Option<Value>,
     error: Option<String>,
     duration_ms: u128,
 }
@@ -116,10 +119,10 @@ impl Audit {
         args: &Value,
         result: &Result<CallToolResult, ErrorData>,
     ) {
-        let (accepted, observed) = if call.action {
+        let (accepted, observed, changes) = if call.action {
             effect(result)
         } else {
-            (None, None)
+            (None, None, None)
         };
         self.write(&Record {
             ts: &call.ts,
@@ -129,6 +132,7 @@ impl Audit {
             args,
             accepted,
             observed,
+            changes,
             error: outcome(result),
             duration_ms: call.started.elapsed().as_millis(),
         });
@@ -237,20 +241,53 @@ fn outcome(result: &Result<CallToolResult, ErrorData>) -> Option<String> {
 }
 
 /// An action's `accepted` and `observed` fields, which hold only booleans and outcome
-/// names. Failures have neither.
-fn effect(result: &Result<CallToolResult, ErrorData>) -> (Option<bool>, Option<&str>) {
+/// names, and its change report as counts. Failures have none of them.
+fn effect(
+    result: &Result<CallToolResult, ErrorData>,
+) -> (Option<bool>, Option<&str>, Option<Value>) {
     let Some(content) = result
         .as_ref()
         .ok()
         .filter(|result| result.is_error != Some(true))
         .and_then(|result| result.structured_content.as_ref())
     else {
-        return (None, None);
+        return (None, None, None);
     };
     (
         content.get("accepted").and_then(Value::as_bool),
         content.get("observed").and_then(Value::as_str),
+        content.get("changes").map(counted),
     )
+}
+
+/// A change report as counts: windows opened, closed and changed, whether focus and the
+/// focused workspace moved, and the element changes' sizes or why they are unknown, which
+/// is an error name. Never a title, an app id or an element's name.
+fn counted(changes: &Value) -> Value {
+    let count =
+        |of: &Value, field: &str| of.get(field).and_then(Value::as_array).map_or(0, Vec::len);
+    let number = |of: &Value, field: &str| of.get(field).and_then(Value::as_u64).unwrap_or(0);
+    let elements = changes.get("elements").map(|elements| {
+        if let Some(unknown) = elements.get("unknown") {
+            return json!({ "unknown": unknown.as_str() });
+        }
+        json!({
+            "added": count(elements, "added"),
+            "removed": count(elements, "removed"),
+            "changed": count(elements, "changed"),
+            "truncated": number(elements, "truncated"),
+        })
+    });
+    json!({
+        "opened": count(changes, "opened"),
+        "closed": count(changes, "closed"),
+        "windows": count(changes, "windows"),
+        "focus": changes.get("focus").is_some(),
+        "workspace": changes.get("workspace").is_some(),
+        "truncated": number(changes, "truncated"),
+        "lost": changes.get("lost").is_some(),
+        "elements": elements,
+    })
 }
 
 #[cfg(test)]
@@ -271,6 +308,7 @@ mod tests {
             args,
             accepted: None,
             observed: None,
+            changes: None,
             error,
             duration_ms: 12,
         }
@@ -424,6 +462,61 @@ mod tests {
                 serde_json::json!([null, null, null]),
                 serde_json::json!([null, null, "lease_required"]),
             ]
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_change_report_is_logged_as_counts_without_titles_or_names() {
+        let dir = crate::test_support::fresh_dir("audit-changes");
+        let audit = Audit::new(Some(dir.clone()));
+        let caller = Caller {
+            session: "smoke/1",
+            instance: None,
+        };
+        let reported = CallToolResult::structured(serde_json::json!({
+            "accepted": true, "observed": "present", "focused_window": 4,
+            "changes": {
+                "opened": [{"id": 4, "app_id": "APP-SENTINEL", "workspace_id": 1, "title": "TITLE-SENTINEL"}],
+                "focus": {"from": 1, "to": 4},
+                "windows": [{"id": 1, "title": "TITLE-SENTINEL"}],
+                "elements": {
+                    "window_id": 1,
+                    "added": [{"element_ref": "elem-1", "role": "label", "name": "NAME-SENTINEL", "states": []}],
+                    "changed": [{"element_ref": "elem-2", "role": "button", "name": "NAME-SENTINEL", "was": "NAME-SENTINEL"}],
+                    "truncated": 3
+                }
+            }
+        }));
+        let unknown = CallToolResult::structured(serde_json::json!({
+            "accepted": true, "observed": "sent",
+            "changes": {"elements": {"window_id": 1, "unknown": "not_accessible", "detail": "DETAIL-SENTINEL"}}
+        }));
+        let args = serde_json::json!({});
+        audit.finish(
+            &Call::action("activate_element"),
+            caller,
+            &args,
+            &Ok(reported),
+        );
+        audit.finish(&Call::action("key"), caller, &args, &Ok(unknown));
+        let text = std::fs::read_to_string(dir.join("niri-computer-use/audit.jsonl")).unwrap();
+        assert!(!text.contains("SENTINEL"), "{text}");
+        let lines: Vec<Value> = text
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(
+            lines[0]["changes"],
+            serde_json::json!({
+                "opened": 1, "closed": 0, "windows": 1, "focus": true, "workspace": false,
+                "truncated": 0, "lost": false,
+                "elements": {"added": 1, "removed": 0, "changed": 1, "truncated": 3}
+            })
+        );
+        assert_eq!(
+            lines[1]["changes"]["elements"],
+            serde_json::json!({"unknown": "not_accessible"})
         );
         std::fs::remove_dir_all(dir).unwrap();
     }

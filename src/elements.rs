@@ -12,6 +12,7 @@ use crate::a11y::model::{
     self, Extents, Filter, Fresh, LayoutBox, Link, NameHash, Placement, Refused, Shape, Unmappable,
 };
 use crate::a11y::{self, A11y, Capped, ElementRef, Failed, Node, Want};
+use crate::changes::elements::{Seen, Unknown};
 use crate::coords::LayoutPt;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri;
@@ -112,6 +113,95 @@ fn others<'a>(window: &Window, windows: impl IntoIterator<Item = &'a Window>) ->
         .collect()
 }
 
+/// One walk of a window's tree: the window as niri placed it, its application's process,
+/// bus name and frame, and the objects under the frame.
+struct Read {
+    placed: Placed,
+    pid: i32,
+    bus: String,
+    frame: a11y::FoundFrame,
+    walked: a11y::Walked,
+}
+
+impl Read {
+    /// What a ref to the object at `at` keeps.
+    fn element(&self, at: usize, node: &Node) -> ElementRef {
+        ElementRef {
+            bus: self.bus.clone(),
+            path: node.path.clone(),
+            frame: self.frame.node.path.clone(),
+            kept: model::Kept {
+                role: node.role,
+                window: self.placed.window.id,
+                pid: self.pid,
+                actions: node.actions.clone(),
+                lineage: self.walked.lineage(at),
+            },
+        }
+    }
+
+    /// The objects `filter` lists, with where each sits in the walk.
+    fn listed<'a>(&'a self, filter: &'a Filter) -> impl Iterator<Item = (usize, &'a Node)> {
+        self.walked
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| listed(filter, node))
+    }
+}
+
+/// What a walk looks for: the objects `filter` lists, until it found more than `limit`;
+/// with `names_only`, its failures leave the app's error messages out.
+#[derive(Debug, Clone, Copy)]
+struct Walk<'a> {
+    filter: &'a Filter,
+    limit: usize,
+    names_only: bool,
+}
+
+/// Walks window `window_id`'s tree as `walk` says, or none when niri has no such window:
+/// niri's window right now, the deny list, its application and frame, then the walk.
+async fn read(
+    socket: &Socket,
+    a11y: &A11y,
+    policy: &Loaded,
+    window_id: u64,
+    walk: Walk<'_>,
+) -> Result<Option<Read>, ToolError> {
+    let Some(placed) = placed(socket, window_id).await? else {
+        return Ok(None);
+    };
+    let window = &placed.window;
+    if let Some(refused) = policy::refuse_window(policy, window.id, window.app_id.as_deref()) {
+        return Err(refused);
+    }
+    let pid = window.pid.ok_or_else(|| {
+        a11y::not_accessible(format!("niri knows no process for window {}", window.id))
+    })?;
+    let request = a11y.request(a11y::BUDGET).await?;
+    let request = if walk.names_only {
+        request.names_only()
+    } else {
+        request
+    };
+    let app = request.app(pid).await?;
+    let frame = request
+        .frame(&app, shape(window), &others(window, &placed.others))
+        .await?;
+    let want = Want {
+        wanted: walk.limit,
+        matches: |node: &Node| listed(walk.filter, node),
+    };
+    let walked = request.walk(&app.bus, &frame.node, want).await?;
+    Ok(Some(Read {
+        placed,
+        pid,
+        bus: app.bus,
+        frame,
+        walked,
+    }))
+}
+
 /// Lists the accessible elements of window `ask.window_id`, keeping a ref of each through
 /// `remember` while there is a lease.
 pub(crate) async fn list(
@@ -121,31 +211,17 @@ pub(crate) async fn list(
     ask: &Ask,
     mut remember: impl FnMut(ElementRef) -> Option<String>,
 ) -> Result<Listing, CallError> {
-    let placed = placed(socket, ask.window_id).await?.ok_or_else(|| {
-        CallError::InvalidArguments(format!("no window with id {}", ask.window_id))
-    })?;
-    let window = &placed.window;
-    if let Some(refused) = policy::refuse_window(policy, window.id, window.app_id.as_deref()) {
-        return Err(refused.into());
-    }
-    let pid = window.pid.ok_or_else(|| {
-        a11y::not_accessible(format!("niri knows no process for window {}", window.id))
-    })?;
-    let request = a11y.request(a11y::BUDGET).await?;
-    let app = request.app(pid).await?;
-    let frame = request
-        .frame(&app, shape(window), &others(window, &placed.others))
-        .await?;
-    let want = Want {
-        wanted: ask.limit,
-        matches: |node: &Node| listed(&ask.filter, node),
+    let walk = Walk {
+        filter: &ask.filter,
+        limit: ask.limit,
+        names_only: false,
     };
-    let walked = request.walk(&app.bus, &frame.node, want).await?;
-    let mut matching = walked
-        .nodes
-        .iter()
-        .enumerate()
-        .filter(|(_, node)| listed(&ask.filter, node));
+    let read = read(socket, a11y, policy, ask.window_id, walk)
+        .await?
+        .ok_or_else(|| {
+            CallError::InvalidArguments(format!("no window with id {}", ask.window_id))
+        })?;
+    let mut matching = read.listed(&ask.filter);
     let mut elements = Vec::new();
     for (at, node) in matching.by_ref().take(ask.limit) {
         let placement = Placement {
@@ -156,24 +232,12 @@ pub(crate) async fn list(
                 width: 0,
                 height: 0,
             }),
-            frame_fits: frame.fits,
-            origin: placed.origin,
+            frame_fits: read.frame.fits,
+            origin: read.placed.origin,
         };
         let placed_box = model::place(placement);
-        let element_ref = remember(ElementRef {
-            bus: app.bus.clone(),
-            path: node.path.clone(),
-            frame: frame.node.path.clone(),
-            kept: model::Kept {
-                role: node.role,
-                window: window.id,
-                pid,
-                actions: node.actions.clone(),
-                lineage: walked.lineage(at),
-            },
-        });
         elements.push(Listed {
-            element_ref,
+            element_ref: remember(read.element(at, node)),
             role: model::role_name(node.role),
             name: node.name.clone(),
             states: node.states.names(),
@@ -183,13 +247,45 @@ pub(crate) async fn list(
         });
     }
     Ok(Listing {
-        window_id: window.id,
+        window_id: read.placed.window.id,
         truncated: matching.next().is_some(),
         elements,
-        walked: walked.nodes.len(),
-        capped: walked.capped.is_some(),
-        capped_reason: walked.capped,
+        walked: read.walked.nodes.len(),
+        capped: read.walked.capped.is_some(),
+        capped_reason: read.walked.capped,
     })
+}
+
+/// Every element of window `window_id` that `elements` would list without filters, for
+/// an action's change report: `Unknown` when the walk fails, stops early, or the window is
+/// gone. Its failures leave the app's error messages out, as an element action's do.
+pub(crate) async fn survey(
+    socket: &Socket,
+    a11y: &A11y,
+    policy: &Loaded,
+    window_id: u64,
+) -> Result<Vec<Seen>, Unknown> {
+    let filter = Filter::default();
+    let walk = Walk {
+        filter: &filter,
+        limit: usize::MAX,
+        names_only: true,
+    };
+    let read = read(socket, a11y, policy, window_id, walk)
+        .await
+        .map_err(|error| Unknown::failed(Some(window_id), error))?
+        .ok_or_else(|| Unknown::gone(window_id))?;
+    if let Some(capped) = read.walked.capped {
+        return Err(Unknown::capped(window_id, capped));
+    }
+    Ok(read
+        .listed(&filter)
+        .map(|(at, node)| Seen {
+            element: read.element(at, node),
+            name: node.name.clone(),
+            states: node.states,
+        })
+        .collect())
 }
 
 /// Whether `elements` lists `node`: showing, matching the filter, and with a name or

@@ -1164,7 +1164,7 @@ async fn a_stop_or_lost_lease_after_the_call_went_out_leaves_it_uncertain() {
 }
 
 // Sol's held `SetTextContents`: focus left the window while the app held its answer. The
-// result's focused window is the one when the look afterwards ended.
+// result's focused window is the one when the change report ended.
 #[tokio::test]
 async fn focus_that_moved_while_the_text_went_out_is_reported_as_it_is_afterwards() {
     let mut desk = Desk::start("el-text-focus").await;
@@ -1212,7 +1212,7 @@ async fn a_stream_lost_while_the_call_was_out_leaves_focus_unknown() {
 
 // Fable's case: the acting call held past its deadline while focus left the window, or while
 // niri's event stream was lost. The reply is lost, so `accepted` is null, and the focused
-// window is the one when the look afterwards ended, or none once the stream was lost, which
+// window is the one when the change report ended, or none once the stream was lost, which
 // `detail` says beside the lost reply.
 #[tokio::test]
 async fn a_lost_reply_reports_focus_as_it_is_after_the_look() {
@@ -1301,4 +1301,176 @@ async fn a_password_field_is_never_activated() {
     let refused = desk.server.call("activate_element", arguments).await;
     assert_eq!(tool_error(&refused).0, "secret_field");
     assert_eq!(desk.mock.calls("DoAction"), 0);
+}
+
+/// The mock's objects, with a `Toggle` button that shows or hides the `Note` label, hidden
+/// at first, beside the `Safe` button.
+fn toggling() -> Vec<(&'static str, Object)> {
+    let toggle = Object {
+        toggles: vec!["/note".to_owned()],
+        ..Object::button("Toggle", &["click"])
+    };
+    let note = Object {
+        role: atspi::LABEL,
+        name: "Note".to_owned(),
+        extents: Some((10, 90, 80, 20)),
+        ..Object::default()
+    };
+    vec![
+        ("/frame", Object::frame("Mock", (800, 600), &["/panel"])),
+        ("/panel", Object::panel(&["/button", "/toggle", "/note"])),
+        ("/button", Object::button("Safe", &["click"])),
+        ("/toggle", toggle),
+        ("/note", note),
+    ]
+}
+
+/// `activate_element` on `element` with `element_changes`.
+async fn activate_watching(desk: &mut Desk, element: &str) -> Value {
+    let arguments = json!({
+        "element": element, "expect": {"window_id": WINDOW}, "element_changes": true
+    });
+    desk.server
+        .structured_with("activate_element", arguments)
+        .await
+}
+
+#[tokio::test]
+async fn an_activation_reports_the_elements_it_shows_and_hides_and_nothing_else() {
+    let windows = [app_window(WINDOW, true)];
+    let mut desk = Desk::start_with("chg-elements", &["/frame"], toggling(), &windows).await;
+    let toggle = desk.element("Toggle").await;
+    let shown = activate_watching(&mut desk, &toggle).await;
+    assert_eq!(shown["observed"], "present", "{shown}");
+    let elements = &shown["changes"]["elements"];
+    assert_eq!(elements["window_id"], WINDOW, "{shown}");
+    let added = &elements["added"];
+    assert_eq!(added.as_array().map(Vec::len), Some(1), "{shown}");
+    assert_eq!(added[0]["role"], "label", "{shown}");
+    assert_eq!(added[0]["name"], "Note", "{shown}");
+    assert!(added[0]["element_ref"].is_string(), "{shown}");
+    // Only the elements: niri saw nothing change.
+    assert_eq!(
+        shown["changes"].as_object().map(serde_json::Map::len),
+        Some(1),
+        "{shown}"
+    );
+
+    let hidden = activate_watching(&mut desk, &toggle).await;
+    assert_eq!(
+        hidden["changes"],
+        json!({"elements": {"window_id": WINDOW, "removed": [{"role": "label", "name": "Note"}]}})
+    );
+    let safe = desk.element("Safe").await;
+    let nothing = activate_watching(&mut desk, &safe).await;
+    assert_eq!(nothing["observed"], "present", "{nothing}");
+    assert!(nothing.get("changes").is_none(), "{nothing}");
+
+    let logged = desk.fixture.audit_lines();
+    let counts: Vec<&Value> = logged
+        .iter()
+        .filter(|line| line["tool"] == "activate_element")
+        .map(|line| &line["changes"]["elements"])
+        .collect();
+    assert_eq!(
+        counts,
+        [
+            &json!({"added": 1, "removed": 0, "changed": 0, "truncated": 0}),
+            &json!({"added": 0, "removed": 1, "changed": 0, "truncated": 0}),
+            &Value::Null,
+        ]
+    );
+    let text = serde_json::to_string(&logged).unwrap();
+    assert!(!text.contains("Note"), "{text}");
+}
+
+#[tokio::test]
+async fn a_button_that_opens_a_dialog_reports_the_window_and_the_focus_it_took() {
+    let mut desk = Desk::start("chg-dialog").await;
+    let button = desk.element("Safe").await;
+    let acting = desk.mock.hold_on("DoAction", "/button");
+    let arguments = json!({"element": button, "expect": {"window_id": WINDOW}});
+    let id = desk.server.start_call("activate_element", arguments).await;
+    acting.arrived().await;
+    let mut dialog = app_window(5, true);
+    dialog["title"] = json!("Synthetic dialog");
+    desk.stream
+        .send(&json!({"WindowOpenedOrChanged": {"window": dialog}}));
+    desk.stream.send(&json!({"WindowFocusChanged": {"id": 5}}));
+    acting.release();
+    let result = desk.server.response(id).await["result"].clone();
+    let outcome = &result["structuredContent"];
+    assert_eq!(outcome["observed"], "present", "{outcome}");
+    assert_eq!(
+        outcome["changes"],
+        json!({
+            "opened": [{
+                "id": 5, "app_id": "org.ncu.Mock", "workspace_id": 1, "title": "Synthetic dialog"
+            }],
+            "focus": {"from": WINDOW, "to": 5}
+        })
+    );
+    let logged = desk.fixture.audit_lines();
+    let last = logged.last().unwrap();
+    assert_eq!(last["changes"]["opened"], 1, "{last}");
+    assert_eq!(last["changes"]["focus"], true, "{last}");
+    assert!(!last.to_string().contains("Synthetic"), "{last}");
+}
+
+#[tokio::test]
+async fn a_walk_that_fails_after_the_action_leaves_the_elements_unknown_not_the_action() {
+    let mut desk = Desk::start("chg-unknown").await;
+    let button = desk.element("Safe").await;
+    let acting = desk.mock.hold_on("DoAction", "/button");
+    let arguments = json!({
+        "element": button, "expect": {"window_id": WINDOW}, "element_changes": true
+    });
+    let id = desk.server.start_call("activate_element", arguments).await;
+    acting.arrived().await;
+    // Past the walk's one-second deadline for a call.
+    desk.mock
+        .slow_on("GetChildren", "/panel", Duration::from_millis(1500));
+    acting.release();
+    let result = desk.server.response(id).await["result"].clone();
+    let outcome = &result["structuredContent"];
+    assert_eq!(outcome["accepted"], true, "{outcome}");
+    assert_eq!(outcome["observed"], "present", "{outcome}");
+    let elements = &outcome["changes"]["elements"];
+    assert_eq!(elements["window_id"], WINDOW, "{outcome}");
+    assert_eq!(elements["unknown"], "deadline_exceeded", "{outcome}");
+    assert_eq!(desk.mock.calls("DoAction"), 1);
+}
+
+#[tokio::test]
+async fn element_changes_on_a_click_needs_an_element() {
+    let mut desk = Desk::start("chg-pixel").await;
+    let shot = desk.screenshot_ref().await;
+    let pixel = json!({"screenshot_ref": shot, "x": 5, "y": 5, "element_changes": true});
+    let refused = mistake(&desk.server.call("click", pixel).await);
+    assert!(
+        refused.contains("`element_changes` needs `element`"),
+        "{refused}"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_walk_after_the_action_never_returns_the_apps_error_message() {
+    let mut desk = Desk::start("chg-sentinel").await;
+    let button = desk.element("Safe").await;
+    let acting = desk.mock.hold_on("DoAction", "/button");
+    let arguments = json!({
+        "element": button, "expect": {"window_id": WINDOW}, "element_changes": true
+    });
+    let id = desk.server.start_call("activate_element", arguments).await;
+    acting.arrived().await;
+    desk.mock.fail("GetChildren", SENTINEL);
+    acting.release();
+    let response = desk.server.response(id).await;
+    let outcome = &response["result"]["structuredContent"];
+    assert_eq!(outcome["observed"], "present", "{outcome}");
+    assert_eq!(
+        outcome["changes"]["elements"]["unknown"], "upstream_error",
+        "{outcome}"
+    );
+    assert!(!response.to_string().contains(SENTINEL), "{response}");
 }

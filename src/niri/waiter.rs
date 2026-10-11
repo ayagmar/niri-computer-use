@@ -125,6 +125,11 @@ impl Waiter {
         &self.view
     }
 
+    /// How many updates have arrived that the view hasn't taken yet.
+    pub(crate) fn queued(&self) -> usize {
+        self.updates.len()
+    }
+
     /// Calls `check` on the current view, then after every event, until it returns a value,
     /// `limit` passes, or the stream is lost.
     pub(crate) async fn until<T>(

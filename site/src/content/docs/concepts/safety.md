@@ -58,15 +58,16 @@ A refusal sends nothing. The [error reference](../../reference/errors/) lists ev
 
 ## Evidence screenshots
 
-Every action reports `accepted`, whether niri took the request, and `observed`, what niri's event stream showed afterwards. When the outcome is in doubt, such as a timeout, focus moving to another window, or a lost reply, the result comes with a fresh screenshot of the focused output, so the agent sees what happened instead of guessing. The server never retries an action.
+Every action reports `accepted`, whether niri took the request, and `observed`, what niri's event stream showed afterwards. When the outcome is in doubt, such as a timeout, focus moving to another window, or a lost reply, the result comes with a fresh screenshot of the focused output, so the agent sees what happened instead of guessing. Each result also says, under `changes`, what niri saw the action change, such as a window that opened or focus that moved. The server never retries an action.
 
 ## The audit log
 
-Every tool call is appended to `~/.local/state/niri-computer-use/audit.jsonl` (or under `$XDG_STATE_HOME`): the time, the client, the tool, its arguments and the outcome. The directory is `0700` and the file `0600`. Typed and pasted text, clipboard contents, window titles and images are never written; the log keeps their length. Text the agent passes on goes the same way: `niri_action` logs the action's name and field names, its numbers and booleans, and every string, such as a `Spawn` command, as its length in bytes, and JSON that isn't a niri action only as its size; `noctalia` logs how many arguments and how long.
+Every tool call is appended to `~/.local/state/niri-computer-use/audit.jsonl` (or under `$XDG_STATE_HOME`): the time, the client, the tool, its arguments and the outcome. The directory is `0700` and the file `0600`. Typed and pasted text, clipboard contents, window titles and images are never written; the log keeps their length. Text the agent passes on goes the same way: `niri_action` logs the action's name and field names, its numbers and booleans, and every string, such as a `Spawn` command, as its length in bytes, and JSON that isn't a niri action only as its size; `noctalia` logs how many arguments and how long. Of an action's `changes`, only counts are written: windows opened, closed and changed, whether focus and the workspace moved, and how many elements were added, removed and changed.
 
 ## What isn't a boundary
 
-- Screenshots, window titles, accessible names and the clipboard reach any connected agent without a lease, even while the screen is locked. Connect only agents you trust with what is on your screen.
+- Screenshots, window titles and accessible names reach any connected agent without a lease, even while the screen is locked. Connect only agents you trust with what is on your screen.
+- `clipboard_read` needs the lease and returns only what was copied while it was held; what you copied before is withheld as `copied_before_lease`. A copy you make yourself while an agent holds the lease is readable. A copy its owner marks as a secret, such as a password from KeePassXC, is withheld with `reason: "secret"`; a password manager that doesn't mark its copies gets no such protection.
 - The deny list follows keyboard focus, and a click lands wherever the pointer is: it can hit a denied window while an allowed app has focus.
 - Apps choose their own `app_id`, so any app can call itself anything.
 - The preset rules refuse shells, interpreters and terminals with arguments, but a wrapper script gets past any list. With `unrestricted` on there are no preset rules.

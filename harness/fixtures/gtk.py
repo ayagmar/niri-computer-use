@@ -7,13 +7,16 @@ every change, and each activation (Enter) with the text it submitted, then clear
 the `Plain entry`, which reports its text in `a11y-entry-text`, the `Password entry` and
 `Pin entry` (an entry for a PIN that hides it), which count their changes in
 `password-changes` and `pin-changes` without their text, the `Hidden entry`, which
-only hides its synthetic text, as a free-form entry can, a `Vanish` button that
+only hides its synthetic text, as a free-form entry can, an `Open dialog` button that
+opens a 240x120 `Dialog fixture` window over it, a `Vanish` button that
 removes itself when clicked, a `Dismiss` button that closes the window, and a `Rename`
 button that changes the window's Wayland app_id to `org.ncu.Denied`. `list` is a 400x300
 window with `Step` and `Jump` buttons above a `Gtk.ListView` of 200 synthetic records,
 `Record 001` to `Record 200`, each row a label and a `Delete` button. `Step` scrolls
 the list 120 pixels down, `Jump` brings `Record 101` into view, and each `Delete`
-removes the record its row shows then and appends it to `list-deletes`.
+removes the record its row shows then and appends it to `list-deletes`. `copy` is a
+`Copy link` button that puts a synthetic link on the clipboard, as an app's copy-link
+button does, and counts its copies in `copies`.
 """
 
 import json
@@ -23,7 +26,7 @@ import sys
 
 root = Path(sys.argv[1]).resolve(strict=True)
 mode = sys.argv[2]
-if mode not in ("button", "entry", "a11y", "list"):
+if mode not in ("button", "entry", "a11y", "list", "copy"):
     raise RuntimeError(f"unknown fixture {mode}")
 run = root / "run"
 for name in ("NIRI_SOCKET", "WAYLAND_DISPLAY"):
@@ -49,6 +52,7 @@ app_id = {
     "entry": "org.ncu.Entry",
     "a11y": "org.ncu.A11y",
     "list": "org.ncu.List",
+    "copy": "org.ncu.Copy",
 }[mode]
 app = Gtk.Application(application_id=app_id, flags=Gio.ApplicationFlags.NON_UNIQUE)
 clicks = 0
@@ -117,6 +121,13 @@ def labelled(widget, label):
     return widget
 
 
+def dialog(parent):
+    window = Gtk.Window(transient_for=parent, title="Dialog fixture")
+    window.set_default_size(240, 120)
+    window.set_child(Gtk.Label(label="Synthetic dialog"))
+    window.present()
+
+
 def a11y_window(window):
     grid = Gtk.Grid(row_spacing=6, column_spacing=6, column_homogeneous=True)
     for side in ("top", "bottom", "start", "end"):
@@ -140,7 +151,10 @@ def a11y_window(window):
         grid.attach(secret, column, 3, 1, 1)
         report(f"{key}-changes", "0")
     hidden = labelled(Gtk.Entry(visibility=False, text="ncu hidden"), "Hidden entry")
-    grid.attach(hidden, 0, 5, 2, 1)
+    grid.attach(hidden, 0, 5, 1, 1)
+    opener = Gtk.Button(label="Open dialog")
+    opener.connect("clicked", lambda button: dialog(window))
+    grid.attach(opener, 1, 5, 1, 1)
     vanish = Gtk.Button(label="Vanish")
     vanish.connect("clicked", lambda button: grid.remove(button))
     grid.attach(vanish, 1, 2, 1, 1)
@@ -207,6 +221,24 @@ def list_window(window):
     report("list-deletes", "[]")
 
 
+LINK = "https://example.invalid/ncu-copied-link"
+copies = 0
+
+
+def copied(button):
+    global copies
+    copies += 1
+    button.get_clipboard().set(LINK)
+    report("copies", str(copies))
+
+
+def copy_window(window):
+    button = Gtk.Button(label="Copy link")
+    button.connect("clicked", copied)
+    window.set_child(button)
+    report("copies", "0")
+
+
 def activate(application):
     window = Gtk.ApplicationWindow(application=application)
     window.set_default_size(*((400, 300) if mode in ("a11y", "list") else (320, 240)))
@@ -216,6 +248,7 @@ def activate(application):
         "entry": entry_window,
         "a11y": a11y_window,
         "list": list_window,
+        "copy": copy_window,
     }
     windows[mode](window)
     window.present()

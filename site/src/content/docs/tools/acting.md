@@ -29,21 +29,37 @@ Returns `{"users_window": <id>, "released": true}`, or `released: false` if this
 
 Every action tool also takes `screenshot`, default false. With true, the result comes with a screenshot of the focused output taken once the screen stopped changing: the server looks 50 ms after the action, then captures every 100 ms until two captures in a row are the same image, for at most 1.5 seconds, and `settled` in its metadata says whether they were. The screenshot is taken before the next action can start, so it shows this action's result, and its `screenshot_ref` serves the pointer tools.
 
+Every action's result also says what niri saw it change, as `changes`, so the agent can often tell what an action did without a screenshot. The server watches niri's event stream from the start of the action, without asking niri anything, until niri has sent no event for 250 ms, counted from the start of the action, so the time the action's own wait spends quiet counts; at most half a second after that wait, or with `screenshot: true` until the screenshot was taken; so a dialog that opens a moment after a click is in it. `changes` is left out when nothing changed. Absent `changes` means niri saw no change, not that the app did nothing: typed text or a ticked check box changes nothing niri reports. It has, each only when it has something:
+
+| Field | Value |
+|---|---|
+| `opened` | windows open afterwards and not before, each as `{"id", "app_id", "workspace_id", "title"}`; a window that opened and closed again in between is in both lists |
+| `closed` | windows open before and not afterwards, each as `{"id", "app_id"}` |
+| `focus` | `{"from", "to"}`: the window with keyboard focus before and afterwards, null for none |
+| `workspace` | `{"from", "to"}`: the focused workspace before and afterwards |
+| `windows` | windows open before and afterwards whose `title`, `app_id`, `workspace_id`, `floating`, `size` (niri's `window_size`) or `urgent` changed, each as its `id` with the new values of the fields that changed. niri 26.04 has no fullscreen flag, so fullscreen shows as a size. Positions in the scrolling layout aren't reported: opening a column moves every column to its right |
+| `truncated` | how many window entries were left out: `opened`, `closed` and `windows` hold 12 together |
+| `lost` | why the report is incomplete, with niri's reason: its event stream ended before the report did, and what is there was seen before, or it couldn't be watched at all, and no window, focus or workspace change is there; `elements`, from its own walks, can still be |
+| `elements` | with `element_changes`, what changed among a window's accessible elements: see [Element changes](../elements/#element-changes) |
+
+Titles are cut at 100 characters, with `…`. A stop or another server taking the lease during the action leaves `changes` out, as it leaves out the screenshot.
+
 An unknown window or workspace id is an argument mistake, and nothing is sent. Otherwise the result has these fields:
 
 | Field | Value |
 |---|---|
 | `accepted` | true once niri acknowledged the request; false when nothing was sent; null when the request was sent but niri's reply was lost |
 | `observed` | what niri's event stream showed afterwards; the values are listed under each tool |
-| `focused_window` | the window with keyboard focus when the observation ended, or null when focus isn't on a window or the reply was lost |
+| `focused_window` | the window with keyboard focus when `changes` ended, the same view `changes.focus.to` comes from; null when focus isn't on a window or niri's event stream was lost meanwhile |
 | `windows` | the windows the outcome is about, when there are any |
+| `changes` | what niri saw the action change, as above; absent when nothing did |
 | `detail` | why the outcome is `uncertain` |
 | `screenshot` | with `screenshot: true` or an outcome in doubt, the metadata of a screenshot of the focused output, as `screenshot` returns it; the image follows the text in the result's content |
 | `screenshot_error` | `{"error", "detail"}` saying why that screenshot couldn't be taken |
 
 Every action waits up to five seconds for its effect. Two outcomes can end any of them:
 
-- `interrupted`: focus moved to a window that was neither focused before nor the expected target, so someone else is using the desktop. `focused_window` says where focus went.
+- `interrupted`: focus moved to a window that was neither focused before nor the expected target, so someone else is using the desktop. `focused_window` says where focus came to rest.
 - `uncertain`: niri's reply or event stream was lost, so the action may or may not have happened. `accepted` is null when the reply was lost.
 
 None of these outcomes is an error, and the server never retries an action. `timeout`, `pending`, `none`, `interrupted` and `uncertain` are outcomes in doubt: the result comes with a fresh screenshot of the focused output, 1280 pixels wide, so the agent can see the desktop without another call.
@@ -102,7 +118,7 @@ For window layout and other compositor actions that have no tool of their own. F
 
 An `id` of null means the focused window. `CloseWindow` with a null id goes out naming the focused window by its id, so focus moving meanwhile can't redirect it, and with no window focused it sends nothing and is an argument mistake. JSON that isn't a niri action is an argument mistake carrying serde's message, and so is a window id that doesn't exist. niri's refusal is `upstream_error` with niri's message.
 
-For an action about one window, the one it names or the focused one, the server waits up to a second for niri to report a change in that window, then 200 ms more for a resize that comes in steps. `observed` is `changed`, `unchanged` or `closed`, `windows` holds the id, and `window` is the window as niri then reports it:
+For an action about one window, the one it names or the focused one, the server waits up to a second for niri to report a change in that window, then 200 ms more for a resize that comes in steps. `observed` is `changed`, `unchanged` or `closed`, `windows` holds the id, and `window` is the window as niri reports it when `changes` ended, or as last seen once it closed:
 
 | Field | Value |
 |---|---|
@@ -130,7 +146,7 @@ Prefer `focus_window`, `focus_workspace`, `close_window`, `launch` and `screensh
 
 With the [native keyboard backend](../keyboard/#the-native-backend), `click`, `drag` and `scroll` also take `keys`, up to five modifiers held through the gesture: `shift`, `ctrl`, `alt`, `altgr` and `super`. With the default backend, `keys` is refused with `refused`.
 
-The input goes through a virtual pointer bound to the screenshot's output, on a Wayland connection of its own to the display in `WAYLAND_DISPLAY`. The server first checks that the process serving that display is the niri at `NIRI_SOCKET`, and fails with `upstream_error` otherwise. The result has `accepted: true` and `observed: sent` once niri has handled the input, with `focused_window` as niri's event stream showed it just after. What the input did is for the next screenshot to show. If the Wayland connection fails before anything reached it, the call fails with that error. If it breaks or niri stops answering after something was sent, `observed` is `uncertain` with `accepted` null and a `detail`, and the result comes with a screenshot.
+The input goes through a virtual pointer bound to the screenshot's output, on a Wayland connection of its own to the display in `WAYLAND_DISPLAY`. The server first checks that the process serving that display is the niri at `NIRI_SOCKET`, and fails with `upstream_error` otherwise. The result has `accepted: true` and `observed: sent` once niri has handled the input, with `focused_window` as niri's event stream showed it just after. What niri saw the input change is in `changes`; what it did inside a window is for a screenshot to show. If the Wayland connection fails before anything reached it, the call fails with that error. If it breaks or niri stops answering after something was sent, `observed` is `uncertain` with `accepted` null and a `detail`, and the result comes with a screenshot.
 
 `click` and `drag` write the input-dirty marker before they send anything, and remove it once niri has handled the button's release. If the call is cancelled midway, by a stop or by the client, the server releases the button on the way out and removes the marker once niri has handled the release, so other calls may see `recovery_required` for a moment. If the release can't be sent or the marker can't be removed, the marker stays, and every action refuses with `recovery_required` until the user runs `niri-computer-use recover`. If the server itself is killed, its crash guardian sends the releases at once; the marker still stays until `recover`.
 
@@ -151,6 +167,7 @@ Moves the pointer there, to hover.
 | `screenshot_ref`, and `x` and `y` or `element` | as for `pointer_move` |
 | `button` | `left` (default), `right` or `middle` |
 | `count` | 1 (default) to 3; 2 is a double click |
+| `element_changes` | default false; with true and `element`, [element changes](../elements/#element-changes) for the element's window. With a pixel, it is an argument mistake: the server doesn't know which window is under a pixel |
 
 Moves to the pixel, then presses and releases the button `count` times.
 

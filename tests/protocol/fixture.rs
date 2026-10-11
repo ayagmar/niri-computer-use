@@ -12,6 +12,7 @@ use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use crate::client::WAIT;
+use crate::clipboard::Owner;
 use crate::holds::Points;
 
 /// Programs the fake programs may use. They run with their own `PATH`, so the server's
@@ -51,9 +52,10 @@ pub(crate) struct Fixture {
     servers: Mutex<Vec<u32>>,
     /// The hold points every fake started here passes.
     points: Points,
-    /// The Wayland display, served by the test's process like the fake niri, so the server
-    /// takes it as niri's. Nothing speaks Wayland on it.
-    _display: UnixListener,
+    /// The Wayland display's clipboard. The display is served by the test's process like
+    /// the fake niri, so the server takes it as niri's, and answers as a display with
+    /// nothing copied until a test copies something.
+    pub(crate) clipboard: Owner,
 }
 
 impl Fixture {
@@ -87,7 +89,10 @@ impl Fixture {
             ("XDG_STATE_HOME", dir.join("state").into_os_string()),
             ("XDG_CONFIG_HOME", dir.join("config").into_os_string()),
         ]);
-        let display = UnixListener::bind(dir.join("run").join(DISPLAY)).unwrap();
+        let clipboard = Owner::on(
+            UnixListener::bind(dir.join("run").join(DISPLAY)).unwrap(),
+            None,
+        );
         // niri's socket, which nothing listens on until a test starts a fake niri; the
         // server needs it to resolve the instance its lease and flags belong to.
         drop(UnixListener::bind(dir.join("run/niri.test.sock")).unwrap());
@@ -96,7 +101,7 @@ impl Fixture {
             env,
             servers: Mutex::new(Vec::new()),
             points: Points::default(),
-            _display: display,
+            clipboard,
         };
         if shared_mode() {
             fixture.set("NIRI_COMPUTER_USE_SHARED", "1");

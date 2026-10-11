@@ -24,9 +24,18 @@ use crate::fixture::Fixture;
 use crate::holds::{Held, Points};
 
 /// The events niri would send after carrying out an action.
-type Effects = Arc<dyn Fn(&Action) -> Vec<Value> + Send + Sync>;
+type Effect = dyn Fn(&Action) -> Vec<Value> + Send + Sync;
 
-#[derive(Default)]
+#[derive(Clone)]
+struct Effects(Arc<Effect>);
+
+impl std::fmt::Debug for Effects {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Effects")
+    }
+}
+
+#[derive(Debug, Default)]
 struct Config {
     outputs: Vec<Output>,
     focused: Option<String>,
@@ -45,6 +54,7 @@ struct Config {
     streams: Vec<mpsc::WeakUnboundedSender<String>>,
 }
 
+#[derive(Debug)]
 pub(crate) struct Niri {
     config: Arc<Mutex<Config>>,
     streams: mpsc::UnboundedReceiver<Stream>,
@@ -151,7 +161,7 @@ impl Niri {
     /// From now on, sends `effects`' events for each action on every open event stream
     /// once it answered the action, as niri would after carrying it out.
     pub(crate) fn effects(&self, effects: impl Fn(&Action) -> Vec<Value> + Send + Sync + 'static) {
-        self.config.lock().unwrap().effects = Some(Arc::new(effects));
+        self.config.lock().unwrap().effects = Some(Effects(Arc::new(effects)));
     }
 
     /// Answers every `Version` request `delay` later.
@@ -422,7 +432,7 @@ fn name(value: &Value) -> String {
 async fn effect(channels: &Channels, action: &Action) {
     let effects = channels.config.lock().unwrap().effects.clone();
     let Some(effects) = effects else { return };
-    let events = effects(action);
+    let events = (effects.0)(action);
     let _busy = channels.points.pass("niri:effect".to_owned()).await;
     let config = channels.config.lock().unwrap();
     for event in events {

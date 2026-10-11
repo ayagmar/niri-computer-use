@@ -1,112 +1,196 @@
-//! The clipboard, read with `wl-paste`. It uses the data-control protocol, so it needs no
-//! keyboard focus and works without Noctalia.
+//! The clipboard's text, read through wlr data-control on a Wayland connection of its own
+//! to niri, so it needs no keyboard focus and works without Noctalia. Only what was copied
+//! during the lease is read (see `watch`), and never what its owner marked as a secret.
 
-use std::time::Duration;
+mod watch;
 
 use serde::Serialize;
+use tokio::time::Instant;
 
+pub(crate) use self::watch::Watch;
 use crate::error::{ErrorName, ToolError};
-use crate::niri::{Display, Socket};
-use crate::runner::{self, Finished};
+use crate::niri::selection::{self, Offer, Selection};
 
-const DEADLINE: Duration = Duration::from_secs(2);
-const MAX_TEXT: u64 = 1024 * 1024;
+/// The hint KDE's and other clipboard managers honour: don't keep this in the history.
+/// Password managers such as `KeePassXC` mark what they copy with it.
+pub(crate) const HINT: &str = "x-kde-passwordManagerHint";
+/// The hint's value for a secret.
+pub(crate) const SECRET: &[u8] = b"secret";
+const MAX_TEXT: usize = 1024 * 1024;
+/// The hint's value is one word; a longer one isn't `secret`, and fails the read.
+const MAX_HINT: usize = 64;
 
 /// The clipboard's text, or why there is none.
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct Clipboard {
     text: Option<String>,
-    /// `nothing_copied` or `no_text` when `text` is null.
+    /// `copied_before_lease`, `nothing_copied`, `no_text` or `secret` when `text` is null.
     reason: Option<&'static str>,
 }
 
-/// Reads with wl-paste, which finds the display by name alone, so only right after the
-/// niri on `socket` is found serving `display`.
-pub(crate) async fn read_text(socket: &Socket, display: &Display) -> Result<Clipboard, ToolError> {
-    display.checked(socket).await?;
-    let args = ["--no-newline", "--type", "text"].map(str::to_owned);
-    interpret(runner::run("wl-paste", &args, DEADLINE, MAX_TEXT).await?)
+impl Clipboard {
+    const fn withheld(reason: &'static str) -> Self {
+        Self {
+            text: None,
+            reason: Some(reason),
+        }
+    }
 }
 
-/// wl-paste 2.3.0 exits 1 with `Nothing is copied` for an empty clipboard, and with
-/// `Clipboard content is not available as requested type "text"` when nothing offers text
-/// (`src/wl-paste.c:222–245`, `:265–268`).
-fn interpret(done: Finished) -> Result<Clipboard, ToolError> {
-    if done.status.success() {
-        let text = String::from_utf8(done.stdout).map_err(|_| {
-            ToolError::new(
-                ErrorName::UpstreamError,
-                "the clipboard's text isn't valid UTF-8",
-            )
-        })?;
-        return Ok(Clipboard {
-            text: Some(text),
-            reason: None,
-        });
-    }
-    let reason = if done.stderr.starts_with("Nothing is copied") {
-        "nothing_copied"
-    } else if done.stderr.contains("is not available as requested type") {
-        "no_text"
-    } else {
-        return Err(done.failure("wl-paste"));
+/// Reads the current selection's hint and text from its one offer, so a copy made between
+/// the two can't pass a secret off as plain text: both reads within one step's deadline.
+async fn read(selection: &Selection) -> Result<Clipboard, ToolError> {
+    let Some(offer) = selection.current() else {
+        return Ok(Clipboard::withheld("nothing_copied"));
     };
+    let deadline = Instant::now() + selection::STEP;
+    let hint = hint(&offer, deadline).await?;
+    let mime = match pick(offer.types(), hint.as_deref()) {
+        Ok(mime) => mime,
+        Err(reason) => return Ok(Clipboard::withheld(reason)),
+    };
+    let text = String::from_utf8(offer.receive(mime, MAX_TEXT, deadline).await?).map_err(|_| {
+        ToolError::new(
+            ErrorName::UpstreamError,
+            "the clipboard's text isn't valid UTF-8",
+        )
+    })?;
     Ok(Clipboard {
-        text: None,
-        reason: Some(reason),
+        text: Some(text),
+        reason: None,
     })
+}
+
+/// The hint's value, when the offer has one. A hint that can't be read fails the read.
+async fn hint(offer: &Offer<'_>, deadline: Instant) -> Result<Option<Vec<u8>>, ToolError> {
+    if !offers_hint(offer.types()) {
+        return Ok(None);
+    }
+    offer.receive(HINT, MAX_HINT, deadline).await.map(Some)
+}
+
+fn offers_hint(types: &[String]) -> bool {
+    types.iter().any(|mime| mime == HINT)
+}
+
+/// The type to read the text from, or why none is read: `secret` when the owner's hint
+/// says so, whatever else it offers, else the type `wl-paste --type text` reads, or
+/// `no_text`. A paste's own text, which its keeper serves until another copy when it can't
+/// put the clipboard back, carries the hint too, and stays withheld: it may be another
+/// client's paste on a shared engine, or a password typed through `paste`, and the agent
+/// that pasted it already has it.
+fn pick<'a>(types: &'a [String], hint: Option<&[u8]>) -> Result<&'a str, &'static str> {
+    if hint == Some(SECRET) {
+        return Err("secret");
+    }
+    text_type(types).ok_or("no_text")
+}
+
+/// The type wl-paste 2.3.0 reads for `--type text`: `text/plain;charset=utf-8`, then
+/// `text/plain`, then the first type offered that `is_text` calls text
+/// (`src/wl-paste.c:66–113`, `:143–148`).
+fn text_type(types: &[String]) -> Option<&str> {
+    let offered = |wanted: &str| {
+        types
+            .iter()
+            .map(String::as_str)
+            .find(|mime| *mime == wanted)
+    };
+    offered("text/plain;charset=utf-8")
+        .or_else(|| offered("text/plain"))
+        .or_else(|| types.iter().map(String::as_str).find(|mime| is_text(mime)))
+}
+
+/// wl-clipboard 2.3.0's `mime_type_is_text` (`src/util/string.c:23–55`).
+fn is_text(mime: &str) -> bool {
+    const SUFFIXES: [&str; 6] = ["script", "xml", "yaml", "csv", "ini", "pgp-keys"];
+    mime.starts_with("text/")
+        || matches!(mime, "TEXT" | "STRING" | "UTF8_STRING")
+        || mime.contains("json")
+        || mime.contains("application/vnd.ms-publisher")
+        || SUFFIXES.iter().any(|suffix| mime.ends_with(suffix))
 }
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::process::ExitStatusExt as _;
-    use std::process::ExitStatus;
-
     use super::*;
+    use crate::input::keeper;
 
-    fn finished(code: i32, stdout: &[u8], stderr: &str) -> Finished {
-        Finished {
-            status: ExitStatus::from_raw(code << 8),
-            stdout: stdout.to_vec(),
-            stderr: stderr.to_owned(),
+    fn types(types: &[&str]) -> Vec<String> {
+        types.iter().map(|mime| (*mime).to_owned()).collect()
+    }
+
+    const USERS: [&str; 3] = ["text/html", "text/plain;charset=utf-8", "image/png"];
+
+    #[test]
+    fn a_copy_its_owner_marks_secret_is_withheld() {
+        let mut offered = types(&USERS);
+        offered.push(HINT.to_owned());
+        assert_eq!(pick(&offered, Some(SECRET)), Err("secret"));
+    }
+
+    /// A hint of another value, such as KDE's `public`, or none at all, is no secret.
+    #[test]
+    fn other_hints_and_no_hint_read_the_text() {
+        let mut offered = types(&USERS);
+        assert_eq!(pick(&offered, None), Ok("text/plain;charset=utf-8"));
+        offered.push(HINT.to_owned());
+        assert_eq!(
+            pick(&offered, Some(b"public")),
+            Ok("text/plain;charset=utf-8")
+        );
+        assert_eq!(
+            pick(&offered, Some(b"secret\n")),
+            Ok("text/plain;charset=utf-8")
+        );
+    }
+
+    /// The text a paste's keeper kept serving is withheld like a password manager's.
+    #[test]
+    fn a_kept_paste_is_withheld() {
+        let offered = types(&keeper::offered());
+        let hint = offers_hint(&offered).then_some(SECRET);
+        assert_eq!(pick(&offered, hint), Err("secret"));
+    }
+
+    #[test]
+    fn the_text_type_is_the_one_wl_paste_reads() {
+        assert_eq!(
+            text_type(&types(&["text/plain", "text/plain;charset=utf-8"])),
+            Some("text/plain;charset=utf-8")
+        );
+        assert_eq!(
+            text_type(&types(&["UTF8_STRING", "text/html", "text/plain"])),
+            Some("text/plain")
+        );
+        assert_eq!(
+            text_type(&types(&["image/png", "application/json", "STRING"])),
+            Some("application/json")
+        );
+        assert_eq!(text_type(&types(&["image/png", "application/x-ncu"])), None);
+        assert_eq!(pick(&types(&["image/png"]), None), Err("no_text"));
+    }
+
+    #[test]
+    fn text_types_are_wl_clipboards() {
+        for mime in [
+            "text/uri-list",
+            "TEXT",
+            "STRING",
+            "UTF8_STRING",
+            "application/ld+json",
+            "application/javascript",
+            "application/xml",
+            "application/x-yaml",
+            "text/csv",
+            "application/x-ini",
+            "application/pgp-keys",
+            "application/vnd.ms-publisher",
+        ] {
+            assert!(is_text(mime), "{mime}");
         }
-    }
-
-    #[test]
-    fn text_empty_clipboards_and_non_text_are_results() {
-        assert_eq!(
-            interpret(finished(0, "héllo".as_bytes(), "")),
-            Ok(Clipboard {
-                text: Some("héllo".to_owned()),
-                reason: None
-            })
-        );
-        assert_eq!(
-            interpret(finished(1, b"", "Nothing is copied\n"))
-                .unwrap()
-                .reason,
-            Some("nothing_copied")
-        );
-        let no_text = "Clipboard content is not available as requested type \"text\"\nUse \"wl-paste --list-types\" to view available types.\n";
-        assert_eq!(
-            interpret(finished(1, b"", no_text)).unwrap().reason,
-            Some("no_text")
-        );
-    }
-
-    #[test]
-    fn other_failures_and_invalid_text_are_upstream_errors() {
-        let failed = interpret(finished(1, b"", "Failed to connect to a Wayland server\n"));
-        assert_eq!(
-            failed.unwrap_err(),
-            ToolError::new(
-                ErrorName::UpstreamError,
-                "wl-paste exited with exit status: 1: Failed to connect to a Wayland server"
-            )
-        );
-        assert_eq!(
-            interpret(finished(0, &[0xFF, 0xFE], "")).unwrap_err().name,
-            ErrorName::UpstreamError
-        );
+        for mime in ["image/png", "application/octet-stream", HINT, "Text"] {
+            assert!(!is_text(mime), "{mime}");
+        }
     }
 }

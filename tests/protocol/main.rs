@@ -10,6 +10,8 @@ mod atspi;
 #[cfg(test)]
 mod client;
 #[cfg(test)]
+mod clipboard;
+#[cfg(test)]
 mod fixture;
 #[cfg(test)]
 mod holds;

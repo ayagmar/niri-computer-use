@@ -18,7 +18,7 @@ use crate::policy::{self, Facts, Loaded, PolicyStatus, Unrestricted, Unrestricte
 use crate::{Env, a11y, discover};
 
 /// Programs the server runs, reported as found on `PATH` or not.
-const BINARIES: [&str; 4] = ["grim", "wtype", "wl-paste", "loginctl"];
+const BINARIES: [&str; 3] = ["grim", "wtype", "loginctl"];
 
 #[derive(Debug, Serialize)]
 pub(crate) struct Status {
@@ -267,7 +267,7 @@ mod tests {
                 },
                 "unrestricted": {"enabled": false, "source": null, "error": null},
                 "binaries": {
-                    "grim": false, "loginctl": false, "wl-paste": false, "wtype": false
+                    "grim": false, "loginctl": false, "wtype": false
                 }
             })
         );

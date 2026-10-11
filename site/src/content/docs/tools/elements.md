@@ -88,6 +88,7 @@ They don't need a screenshot, and they work on elements with no `layout_box`, su
 | `expect` (required) | the element's window |
 | `action` | one of the element's `actions`; default: its first of `click`, `press`, `activate` or `toggle`, in any case |
 | `screenshot` | with `true`, a screenshot taken once the screen stopped changing |
+| `element_changes` | default false; with true, [element changes](#element-changes) for the element's window |
 
 An app's answer only says it took the request, so 300 ms later the server looks at the element again. GTK buttons show an activation as a 250 ms press before they act; the wait ends at once if the window closes. `observed` is:
 
@@ -106,8 +107,27 @@ An app's answer only says it took the request, so 300 ms later the server looks 
 | `text` (required) | the new text, up to 64 KiB of UTF-8, which replaces all of it; empty clears the field |
 | `expect` (required) | the element's window |
 | `screenshot` | with `true`, a screenshot taken once the screen stopped changing |
+| `element_changes` | default false; with true, [element changes](#element-changes) for the element's window |
 
-The field's whole text is replaced with no key events, so the app's autocompletion and Enter don't happen; use `type_text` for those. Afterwards the server asks the field how many characters it holds: `observed` is `matched` when that equals the text's, `differs` when it doesn't, with the count as `element.characters`, as when an app filters what it is given or caps its length (a GTK entry keeps at most 65534 bytes), and `unknown` when it couldn't be read. As for `activate_element`, a reply lost after the text went out is `uncertain` with `accepted: null`. For both tools, `focused_window` is the focused window when the look afterwards ended, a lost reply included; when niri's event stream was lost meanwhile, the outcome is `uncertain` with no `focused_window` and the stream's loss in `detail`, with `accepted: true`, or `null` when the reply was lost too. A field marked as a password field is refused with `secret_field`, and text over 64 KiB with `text_too_long`. An element without editable text is an argument mistake.
+The field's whole text is replaced with no key events, so the app's autocompletion and Enter don't happen; use `type_text` for those. Afterwards the server asks the field how many characters it holds: `observed` is `matched` when that equals the text's, `differs` when it doesn't, with the count as `element.characters`, as when an app filters what it is given or caps its length (a GTK entry keeps at most 65534 bytes), and `unknown` when it couldn't be read. As for `activate_element`, a reply lost after the text went out is `uncertain` with `accepted: null`. For both tools, `focused_window` is the focused window when the change report ended, a lost reply included; when niri's event stream was lost meanwhile, the outcome is `uncertain` with no `focused_window` and the stream's loss in `detail`, with `accepted: true`, or `null` when the reply was lost too. A field marked as a password field is refused with `secret_field`, and text over 64 KiB with `text_too_long`. An element without editable text is an argument mistake.
+
+## Element changes
+
+`activate_element`, `set_element_text`, `click` with an `element`, `key`, `type_text` and `paste` take `element_changes`, default false. With true, the result's `changes` also has `elements`: what changed among one window's accessible elements, the element's window or, for the keyboard tools, the window focused when the call starts. The server walks that window as `elements` does without filters, every showing element with a name or an action, up to 2000 objects within three seconds: once before the action, after the checks every action passes and before anything is sent, and once after `changes`' wait. A walk before every report, rather than diffing against the last `elements` call, because that listing may be filtered, cut at its `limit`, or old, and the diff would show changes the action didn't make.
+
+An element is the same element when the object paths from the window's accessible frame down to it are the same, so one whose index changes because something was inserted above it hasn't changed, and one moved under another parent is one removed and one added. `elements` has:
+
+| Field | Value |
+|---|---|
+| `window_id` | the window walked |
+| `added` | each as `{"element_ref", "role", "name", "states"}`, in the window's order |
+| `removed` | each as `{"role", "name"}` |
+| `changed` | elements whose role, name or states changed, each as `{"element_ref", "role", "name", "was", "states_set", "states_cleared"}`, with `was`, its name before, only when the name changed |
+| `truncated` | how many entries were left out: the three lists hold 20 together |
+
+`elements` is left out when nothing changed. Names are cut at 100 characters, with `…`. While the server holds the lease, each added or changed element gets an `element_ref`, as if `elements` had listed it: a changed name makes an older ref stale. When a walk fails or stops early, `elements` is `{"window_id", "unknown", "detail"}` instead, with `unknown` one of `window_gone` (the window closed, which `changes.closed` says too), `no_window` (no window had focus), `node_cap` or `budget_exhausted` (the walk stopped at 2000 objects or three seconds, so a diff could show elements that are only past the cut), or an error name such as `not_accessible`, `app_denied` or `deadline_exceeded`. The action has happened all the same; `unknown` never fails it. A failure's `detail` names the call and the D-Bus error's name, never the app's message, as for the element actions. The walks read names, roles, states and actions, as `elements` does, and never a field's text. The audit log keeps how many elements were added, removed and changed, or the `unknown` name, never a name.
+
+The walk after the action runs once the stop race is over, like the screenshot that comes with a result, so a stop arriving then waits for it, at most three seconds.
 
 ## Which apps work
 

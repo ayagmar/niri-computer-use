@@ -4,6 +4,7 @@ mod a11y;
 mod act;
 mod audit;
 mod bridge;
+mod changes;
 mod cli;
 mod clipboard;
 mod control;
