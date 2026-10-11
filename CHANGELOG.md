@@ -57,7 +57,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - A shared engine per niri instance, with `shared = true` or `NIRI_COMPUTER_USE_SHARED=1`: each client's `serve` relays to one `niri-computer-use engine`, which holds one desk, guardian, event stream and accessibility connection for every client, while policy, `unrestricted`, keyboard backend and home stay per client.
 - The documentation site, with `llms.txt` and a Markdown address for every page.
 - `niri-computer-use --version`.
-- `elements` returns one line per element as its text, `element_ref role "name" [states] (actions) x,y,w,h`, and lists only elements with an action or editable text by default. `interactive_only: false` lists labels too, and `format: "json"` gives the full objects as text; `structuredContent` always has them.
+- `elements` returns one line per element as its text, `element_ref role "name" [states] ("action" …) x,y,w,h`, and lists only elements with an action or editable text by default. `interactive_only: false` lists labels too, and `format: "json"` gives the full objects as text; `structuredContent` always has them.
 - Every tool has a `title` and `openWorldHint: false`. `status`, `desktop_state` and `screenshot` carry `_meta["anthropic/alwaysLoad"]: true`, so Claude Code loads them without a tool search.
 - Tool profiles: `tools = "observe"`, `"act"` or `"full"` in the policy file, or `NIRI_COMPUTER_USE_TOOLS` for one client. `observe` lists only `status`, `desktop_state`, `screenshot`, `elements` and `wait_for`; `act` leaves out `niri_action`, `noctalia` and `shell_panel`. The default, `full`, lists every tool as before. `status.tools` reports the profile.
 

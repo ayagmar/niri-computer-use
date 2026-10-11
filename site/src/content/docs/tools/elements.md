@@ -37,12 +37,12 @@ In `compact` format, the text is a line about the walk, then one line per elemen
 
 ```text
 window 12: 3 elements, 41 objects walked
-elem-5e1a90c2-1 button "Save" [focused] (click) 1210,84,80,32
-elem-5e1a90c2-2 entry "File name" [editable] (activate) 420,84,600,32
-elem-5e1a90c2-3 check_box "Hidden files" [checkable] (click) unmappable:not_showing
+elem-5e1a90c2-1 button "Save" [focused] ("click") 1210,84,80,32
+elem-5e1a90c2-2 entry "File name" [editable] ("activate") 420,84,600,32
+elem-5e1a90c2-3 check_box "Hidden files" [checkable] ("click") unmappable:not_showing
 ```
 
-Each line is `element_ref role "name" [states] (actions) x,y,width,height`, with `-` for no `element_ref` without the lease and `unmappable:<why>` when there is no box. The name is quoted and escaped, so a newline in it can't start a line of its own. The states leave out `enabled`, `focusable`, `sensitive`, `showing` and `visible`, which most elements have, and add `disabled` for an element that isn't `sensitive`. The walk line adds `; more match past the limit` when `truncated`, and `; walk cut short: <capped_reason>` when `capped`. In `json` format, the text is the same JSON as `structuredContent`.
+Each line is `element_ref role "name" [states] ("action" …) x,y,width,height`, with `-` for no `element_ref` without the lease and `unmappable:<why>` when there is no box. The name and each action name are the app's text, so they are quoted and escaped, with `\n`, `\"` and `\\` as in a JSON string: a newline, quote or space in one can't start a line of its own or run into the next. Pass `activate_element` the action as `structuredContent` has it, unescaped. The states leave out `enabled`, `focusable`, `sensitive`, `showing` and `visible`, which most elements have, and add `disabled` for an element that isn't `sensitive`. The walk line adds `; more match past the limit` when `truncated`, and `; walk cut short: <capped_reason>` when `capped`. In `json` format, the text is the same JSON as `structuredContent`.
 
 Each element in the JSON:
 

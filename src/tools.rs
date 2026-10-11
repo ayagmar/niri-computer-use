@@ -1329,7 +1329,7 @@ impl Server {
     }
 
     /// The accessible elements of one window, in document order, one line each:
-    /// `element_ref role "name" [states] (actions) x,y,w,h` in layout coordinates, or
+    /// `element_ref role "name" [states] ("action" …) x,y,w,h` in layout coordinates, or
     /// `unmappable:<why>` when the app's coordinates can't be trusted
     /// (`frame_size_mismatch`) or it isn't showing. `-` is no ref: refs, for the element
     /// tools and the `element` argument of `click`, `pointer_move` and `drag`, need the
