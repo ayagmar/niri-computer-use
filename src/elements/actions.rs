@@ -348,10 +348,13 @@ pub(crate) async fn activate(
         Waited::Timeout => (After::Probed(request.state(element).await), None),
         Waited::Lost(why) => (After::Probed(request.state(element).await), Some(why)),
     };
-    let doubt = match (lost, stream) {
-        (Some(lost), _) => Some(Doubt::Reply(lost)),
-        (None, Some(why)) => Some(Doubt::Stream(why)),
-        (None, None) => caught_up(&mut waiter).await.map(Doubt::Stream),
+    let stream = match stream {
+        Some(why) => Some(why),
+        None => caught_up(&mut waiter).await,
+    };
+    let doubt = Doubt {
+        reply: lost,
+        stream,
     };
     let (observed, changes, detail) = activation(checked.states, after);
     let (states_set, states_cleared) = changes.unwrap_or_default();
@@ -435,9 +438,9 @@ pub(crate) async fn set_text(
             .answered(answered(checked.focus, acted.clone()));
     }
     let count = request.character_count(element).await;
-    let doubt = match lost {
-        Some(lost) => Some(Doubt::Reply(lost)),
-        None => caught_up(&mut waiter).await.map(Doubt::Stream),
+    let doubt = Doubt {
+        reply: lost,
+        stream: caught_up(&mut waiter).await,
     };
     let (observed, characters, detail) = written(text.chars().count(), count);
     let acted = Acted {
@@ -607,32 +610,35 @@ fn written(expected: usize, count: Result<i32, Failed>) -> (Observed, Option<i32
 /// What was observed after the call, and why it is `unknown`.
 type Seen = (Observed, Option<String>);
 
-/// Why an element action's outcome is `uncertain`.
+/// Why an element action's outcome is `uncertain`, if it is.
 #[derive(Debug)]
-enum Doubt {
+struct Doubt {
     /// The call's reply was lost, so whether the app took it is unknown.
-    Reply(String),
-    /// niri's event stream was lost after the app took it, so focus afterwards is unknown.
-    Stream(String),
+    reply: Option<String>,
+    /// niri's event stream was lost after the call, so focus afterwards is unknown.
+    stream: Option<String>,
 }
 
 /// The outcome: what was `seen` afterwards, or, in `doubt`, `uncertain`, saying what was
 /// seen in `detail`: with `accepted: null` when the reply was lost, and with no focused
 /// window when niri's events were.
-fn done(seen: Seen, doubt: Option<Doubt>, view: &View, focus: Focus, acted: Acted) -> Outcome {
+fn done(seen: Seen, doubt: Doubt, view: &View, focus: Focus, acted: Acted) -> Outcome {
     let (observed, detail) = seen;
-    let Some(doubt) = doubt else {
+    if doubt.reply.is_none() && doubt.stream.is_none() {
         return Outcome {
             focus: Some(focus),
             element: Some(acted),
             detail,
             ..Outcome::seen(observed, view, Vec::new())
         };
-    };
-    let (accepted, view, lost) = match doubt {
-        Doubt::Reply(lost) => (None, Some(view), lost),
-        Doubt::Stream(lost) => (Some(true), None, lost),
-    };
+    }
+    let accepted = doubt.reply.is_none().then_some(true);
+    let view = doubt.stream.is_none().then_some(view);
+    let lost = [doubt.reply, doubt.stream]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("; ");
     let afterwards = serde_json::to_value(observed)
         .ok()
         .and_then(|name| name.as_str().map(str::to_owned))

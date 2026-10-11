@@ -674,6 +674,14 @@ enum Change {
 }
 
 impl Desk {
+    /// Closes niri's event stream, seen by the server before this returns.
+    async fn lose_stream(&mut self) {
+        self.stream.close();
+        while self.server.structured("status").await["niri"]["event_stream"] == "connected" {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
     /// Makes `change` happen to the element at `path`, seen by the server before this
     /// returns. Returns the error it must refuse with.
     async fn make(&mut self, change: Change, path: &str) -> &'static str {
@@ -1185,10 +1193,7 @@ async fn a_stream_lost_while_the_call_was_out_leaves_focus_unknown() {
             .start_call(held.tool, held.arguments(&element))
             .await;
         acting.arrived().await;
-        desk.stream.close();
-        while desk.server.structured("status").await["niri"]["event_stream"] == "connected" {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        desk.lose_stream().await;
         acting.release();
         let result = desk.server.response(id).await["result"].clone();
         let outcome = &result["structuredContent"];
@@ -1196,6 +1201,50 @@ async fn a_stream_lost_while_the_call_was_out_leaves_focus_unknown() {
         assert_eq!(outcome["observed"], "uncertain", "{outcome}");
         assert_eq!(outcome["focused_window"], Value::Null, "{outcome}");
         assert_eq!(outcome["element"]["role"], held.role, "{outcome}");
+        assert_eq!(desk.mock.calls(held.acts), 1);
+    }
+}
+
+// Fable's case: the acting call held past its deadline while focus left the window, or while
+// niri's event stream was lost. The reply is lost, so `accepted` is null, and the focused
+// window is the one when the look afterwards ended, or none once the stream was lost, which
+// `detail` says beside the lost reply.
+#[tokio::test]
+async fn a_lost_reply_reports_focus_as_it_is_after_the_look() {
+    for (held, stream_lost) in [
+        (&ACTIVATE, false),
+        (&ACTIVATE, true),
+        (&SET_TEXT, false),
+        (&SET_TEXT, true),
+    ] {
+        let (name, path) = held.element;
+        let tag = format!("el-lost-focus-{}-{}", held.tag(), u8::from(stream_lost));
+        let mut desk = Desk::start(&tag).await;
+        let element = desk.element(name).await;
+        let acting = desk.mock.hold_on(held.acts, path);
+        let id = desk
+            .server
+            .start_call(held.tool, held.arguments(&element))
+            .await;
+        acting.arrived().await;
+        if stream_lost {
+            desk.lose_stream().await;
+        } else {
+            desk.make(Change::FocusMoved, path).await;
+        }
+        let result = desk.server.response(id).await["result"].clone();
+        acting.release();
+        let outcome = &result["structuredContent"];
+        assert_eq!(outcome["accepted"], Value::Null, "{outcome}");
+        assert_eq!(outcome["observed"], "uncertain", "{outcome}");
+        assert_eq!(outcome["focused_window"], Value::Null, "{outcome}");
+        let detail = outcome["detail"].as_str().unwrap();
+        assert!(detail.contains("no answer within"), "{detail}");
+        assert_eq!(
+            detail.contains("niri's event stream"),
+            stream_lost,
+            "{detail}"
+        );
         assert_eq!(desk.mock.calls(held.acts), 1);
     }
 }
