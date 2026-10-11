@@ -659,10 +659,13 @@ pub(crate) struct Server {
 #[tool_router]
 impl Server {
     /// `shell_panel` exists only when `noctalia` is on `PATH`, `noctalia` only when
-    /// `unrestricted` is on as well, and the element tools only with an accessibility bus,
-    /// so the tool list stays fixed for the session.
+    /// `unrestricted` is on as well, the element tools only with an accessibility bus, and
+    /// every tool only in the profiles that list it, so the tool list stays fixed for the
+    /// session. A call to a tool not listed fails as an unknown tool.
     pub(crate) fn new(engine: Arc<Engine>, session: Session) -> Self {
         let mut tool_router = Self::tool_router();
+        let profile = session.settings().tools.profile();
+        tool_router.map.retain(|name, _| profile.lists(name));
         if !engine.noctalia_installed() {
             tool_router.remove_route("shell_panel");
         }
@@ -1953,10 +1956,11 @@ mod tests {
     }
 
     /// A server of `engine` for a session whose environment sets `unrestricted` to `1` or
-    /// not at all, with no policy file.
-    fn server(engine: &Arc<Engine>, unrestricted: bool) -> Server {
+    /// not at all, and names `tools` as its profile, with no policy file.
+    fn server(engine: &Arc<Engine>, unrestricted: bool, tools: Option<&str>) -> Server {
         let given = Given {
             unrestricted: unrestricted.then(|| "1".into()),
+            tools: tools.map(Into::into),
             keyboard: None,
             home: None,
             policy: Source::Missing,
@@ -1978,23 +1982,27 @@ mod tests {
             path: Some(dir.clone().into_os_string()),
             ..Env::default()
         });
-        let missing = server(&engine(Env::default()), false);
-        let restricted = server(&installed, false);
+        let missing = server(&engine(Env::default()), false, None);
+        let restricted = server(&installed, false, None);
         assert!(restricted.tool_router.has_route("shell_panel"));
         assert!(!missing.tool_router.has_route("shell_panel"));
         assert!(missing.tool_router.has_route("status"));
         // The passthrough also needs unrestricted, which one session's variable turns on
         // for that session alone.
-        let unrestricted = server(&installed, true);
+        let unrestricted = server(&installed, true, None);
         assert!(unrestricted.tool_router.has_route("noctalia"));
         assert!(!restricted.tool_router.has_route("noctalia"));
-        assert!(!server(&installed, false).tool_router.has_route("noctalia"));
+        assert!(
+            !server(&installed, false, None)
+                .tool_router
+                .has_route("noctalia")
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn the_server_names_itself_and_gives_instructions() {
-        let server = server(&engine(Env::default()), false);
+        let server = server(&engine(Env::default()), false, None);
         let info = server.get_info();
         assert_eq!(info.server_info.name, "niri-computer-use");
         assert!(
@@ -2008,15 +2016,15 @@ mod tests {
     /// rest without a word, which would cut the last rules short.
     #[test]
     fn the_instructions_fit_what_clients_keep() {
-        let server = server(&engine(Env::default()), false);
+        let server = server(&engine(Env::default()), false, None);
         let instructions = server.get_info().instructions.unwrap_or_default();
         let length = instructions.chars().count();
         assert!(length <= 1900, "{length} characters");
     }
 
-    /// A server listing every tool: Noctalia installed, `unrestricted` on and an
-    /// accessibility bus, which is only dialled on the first element call.
-    fn listing_everything(name: &str) -> (Server, std::path::PathBuf) {
+    /// A server listing every tool `profile` has: Noctalia installed, `unrestricted` on and
+    /// an accessibility bus, which is only dialled on the first element call.
+    fn listing_everything(name: &str, profile: &str) -> (Server, std::path::PathBuf) {
         use std::os::unix::fs::PermissionsExt as _;
         let dir = crate::test_support::fresh_dir(name);
         let noctalia = dir.join("noctalia");
@@ -2033,14 +2041,14 @@ mod tests {
             reason: None,
         };
         let engine = Arc::new(Engine::new(env, events, Audit::new(None), bus));
-        (server(&engine, true), dir)
+        (server(&engine, true, Some(profile)), dir)
     }
 
     /// Claude Code keeps the first 2048 characters of a tool's description and drops the
     /// rest, the refusals and "never repeat" rules that come last among them.
     #[test]
     fn every_description_fits_what_clients_keep() {
-        let (server, dir) = listing_everything("descriptions");
+        let (server, dir) = listing_everything("descriptions", "full");
         for tool in server.tool_router.list_all() {
             let length = tool
                 .description
@@ -2054,24 +2062,26 @@ mod tests {
     }
 
     /// Clients that load every tool up front pay for the whole list in each conversation.
-    /// Run with `--nocapture` to see the size; raise the ceiling only with a reason.
+    /// Run with `--nocapture` to see the sizes; raise a ceiling only with a reason.
     #[test]
     #[expect(
         clippy::print_stderr,
-        reason = "the test reports the list's size, which the ceiling and the results are set from"
+        reason = "the test reports the list's size, which the ceilings and the results are set from"
     )]
     fn the_tool_list_stays_within_its_budget() {
-        let (server, dir) = listing_everything("budget");
-        let tools = server.tool_router.list_all();
-        let size = serde_json::to_string(&serde_json::json!({ "tools": tools }))
-            .unwrap()
-            .len();
-        eprintln!(
-            "tools/list: {} tools, {size} bytes, ~{} tokens",
-            tools.len(),
-            size / 4
-        );
-        assert!(size <= 32_000, "{size} bytes");
-        std::fs::remove_dir_all(dir).unwrap();
+        for (profile, ceiling) in [("observe", 32_000), ("act", 32_000), ("full", 32_000)] {
+            let (server, dir) = listing_everything(&format!("budget-{profile}"), profile);
+            let tools = server.tool_router.list_all();
+            let size = serde_json::to_string(&serde_json::json!({ "tools": tools }))
+                .unwrap()
+                .len();
+            eprintln!(
+                "tools/list for {profile}: {} tools, {size} bytes, ~{} tokens",
+                tools.len(),
+                size / 4
+            );
+            assert!(size <= ceiling, "{profile}: {size} bytes");
+            std::fs::remove_dir_all(dir).unwrap();
+        }
     }
 }

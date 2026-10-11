@@ -14,7 +14,9 @@ use crate::error::ToolError;
 use crate::niri::events::StreamState;
 use crate::niri::{self, version::Compat};
 use crate::noctalia::{self, Presence};
-use crate::policy::{self, Facts, Loaded, PolicyStatus, Unrestricted, UnrestrictedStatus};
+use crate::policy::{
+    self, Facts, Loaded, PolicyStatus, Tools, ToolsStatus, Unrestricted, UnrestrictedStatus,
+};
 use crate::{Env, a11y, discover};
 
 /// Programs the server runs, reported as found on `PATH` or not.
@@ -51,6 +53,8 @@ pub(crate) struct Status {
     /// Whether gated actions are allowed, and whether the policy file or the environment
     /// allowed them.
     unrestricted: UnrestrictedStatus,
+    /// Which tools this session lists, and what narrowed them.
+    tools: ToolsStatus,
     binaries: BTreeMap<&'static str, bool>,
 }
 
@@ -68,6 +72,7 @@ pub(crate) struct Sources<'a> {
     pub(crate) lease: LeaseStatus,
     pub(crate) policy: &'a Loaded,
     pub(crate) unrestricted: &'a Unrestricted,
+    pub(crate) tools: &'a Tools,
     /// Decided once at startup for the server, whose tool list depends on it.
     pub(crate) accessibility: &'a a11y::Presence,
 }
@@ -130,6 +135,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         lease,
         policy,
         unrestricted,
+        tools,
         accessibility,
     } = sources;
     let socket = &env.niri_socket;
@@ -178,6 +184,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         audit: audit.status(),
         policy: policy.status(),
         unrestricted: unrestricted.status(),
+        tools: tools.status(),
         binaries: BINARIES
             .into_iter()
             .map(|name| (name, env.finds(name)))
@@ -216,6 +223,10 @@ mod tests {
             unrestricted: &Unrestricted {
                 policy: false,
                 env: Ok(false),
+            },
+            tools: &Tools {
+                policy: policy::Profile::Full,
+                env: Ok(None),
             },
             accessibility: &a11y::detect(None).await,
         };
@@ -266,6 +277,7 @@ mod tests {
                     "error": null
                 },
                 "unrestricted": {"enabled": false, "source": null, "error": null},
+                "tools": {"profile": "full", "source": null, "error": null},
                 "binaries": {
                     "grim": false, "loginctl": false, "wtype": false
                 }

@@ -55,6 +55,7 @@ pub(crate) struct Hello {
     niri_socket: PathBuf,
     wayland_socket: Option<PathBuf>,
     unrestricted: Option<String>,
+    tools: Option<String>,
     keyboard: Option<String>,
     home: Option<PathBuf>,
     policy: policy::Source,
@@ -97,6 +98,7 @@ impl Hello {
             niri_socket: niri_socket.to_path_buf(),
             wayland_socket: wayland_socket.map(Path::to_path_buf),
             unrestricted: utf8("NIRI_COMPUTER_USE_UNRESTRICTED", given.unrestricted)?,
+            tools: utf8("NIRI_COMPUTER_USE_TOOLS", given.tools)?,
             keyboard: utf8("NIRI_COMPUTER_USE_KEYBOARD", given.keyboard)?,
             home: given.home,
             policy,
@@ -107,6 +109,7 @@ impl Hello {
     pub(crate) fn given(self) -> Given {
         Given {
             unrestricted: self.unrestricted.map(Into::into),
+            tools: self.tools.map(Into::into),
             keyboard: self.keyboard.map(Into::into),
             home: self.home,
             policy: self.policy,
@@ -212,6 +215,7 @@ mod tests {
             niri_socket: PathBuf::from(niri),
             wayland_socket: display.map(PathBuf::from),
             unrestricted: Some("1".to_owned()),
+            tools: Some("act".to_owned()),
             keyboard: None,
             home: Some(PathBuf::from("/home/me")),
             policy: policy::Source::Text {
@@ -237,6 +241,7 @@ mod tests {
             taken.given(),
             Given {
                 unrestricted: Some("1".into()),
+                tools: Some("act".into()),
                 keyboard: None,
                 home: Some(PathBuf::from("/home/me")),
                 policy: sent.policy,
@@ -282,6 +287,7 @@ mod tests {
         let own = own();
         let given = |text: String| Given {
             unrestricted: None,
+            tools: None,
             keyboard: None,
             home: None,
             policy: policy::Source::Text {

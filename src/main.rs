@@ -235,6 +235,7 @@ async fn main() -> ExitCode {
                 lease: control::desk::status_without_desk(&env),
                 policy: &settings.policy,
                 unrestricted: &settings.unrestricted,
+                tools: &settings.tools,
                 accessibility: &accessibility,
             };
             cli::print_json(&status::collect(&env, sources).await)

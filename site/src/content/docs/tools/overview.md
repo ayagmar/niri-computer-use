@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-The server offers up to 22 tools. `shell_panel` is listed only when Noctalia is installed, `noctalia` only when Noctalia is installed and [`unrestricted`](../../concepts/configuration/#unrestricted) is on, and `elements`, `activate_element` and `set_element_text` only when the session has an accessibility bus, so a session without Noctalia or an accessibility bus has 17.
+The server offers up to 22 tools. `shell_panel` is listed only when Noctalia is installed, `noctalia` only when Noctalia is installed and [`unrestricted`](../../concepts/configuration/#unrestricted) is on, and `elements`, `activate_element` and `set_element_text` only when the session has an accessibility bus, so a session without Noctalia or an accessibility bus has 17. The [tool profile](../../concepts/configuration/#tools) can list fewer: `observe` lists only the tools that look, and `act` leaves out `niri_action`, `noctalia` and `shell_panel`.
 
 ## Every tool
 

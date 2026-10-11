@@ -9,14 +9,16 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, ReadBuf};
 use tokio::sync::{Semaphore, SemaphorePermit, oneshot, watch};
 
-use crate::policy::{self, Loaded, Unrestricted};
+use crate::policy::{self, Loaded, Tools, Unrestricted};
 
-/// What a client's own environment gives its session, and no other: its two variables,
+/// What a client's own environment gives its session, and no other: its three variables,
 /// its home, and the policy file as read from its config directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Given {
     /// `NIRI_COMPUTER_USE_UNRESTRICTED`, as given: `1` turns `unrestricted` on.
     pub(crate) unrestricted: Option<OsString>,
+    /// `NIRI_COMPUTER_USE_TOOLS`, as given: the profile of tools to list.
+    pub(crate) tools: Option<OsString>,
     /// `NIRI_COMPUTER_USE_KEYBOARD`: the experimental backend; absent means wtype.
     pub(crate) keyboard: Option<OsString>,
     /// `$HOME`, for a `capture_dir` under `~/`.
@@ -35,6 +37,7 @@ impl Given {
             .or_else(|| home.as_ref().map(|home| home.join(".config")));
         Self {
             unrestricted: var("NIRI_COMPUTER_USE_UNRESTRICTED"),
+            tools: var("NIRI_COMPUTER_USE_TOOLS"),
             keyboard: var("NIRI_COMPUTER_USE_KEYBOARD"),
             home,
             policy: policy::Source::read(config_dir.as_deref()),
@@ -49,6 +52,8 @@ pub(crate) struct Settings {
     pub(crate) policy: Loaded,
     /// Whether `unrestricted` is on, from the policy file and the session's variable.
     pub(crate) unrestricted: Unrestricted,
+    /// Which tools the session lists, from the policy file and the session's variable.
+    pub(crate) tools: Tools,
     /// The keyboard backend the session asked for.
     pub(crate) keyboard: Option<OsString>,
     /// The session's home, for a `capture_dir` under `~/`.
@@ -64,6 +69,10 @@ impl Settings {
             unrestricted: Unrestricted {
                 policy: policy.unrestricted(),
                 env: env_on,
+            },
+            tools: Tools {
+                policy: policy.tools(),
+                env: Tools::parse_env(given.tools.as_deref()),
             },
             policy,
             keyboard: given.keyboard,

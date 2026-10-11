@@ -293,6 +293,7 @@ impl Engine {
             lease: self.desk.status(session),
             policy: &settings.policy,
             unrestricted: &settings.unrestricted,
+            tools: &settings.tools,
             accessibility: &self.accessibility,
         };
         status::collect(&self.env, sources).await

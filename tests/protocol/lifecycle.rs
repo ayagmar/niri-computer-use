@@ -247,6 +247,33 @@ async fn without_an_accessibility_bus_there_are_no_element_tools_and_status_says
 }
 
 #[tokio::test]
+async fn a_client_that_only_observes_lists_no_tool_that_acts_and_cant_call_one() {
+    let mut fixture = Fixture::new("observe");
+    fixture.program("noctalia", "exit 0");
+    fixture.set("NIRI_COMPUTER_USE_TOOLS", "observe");
+    let mut server = Server::start(&fixture).await;
+    let tools = server.tools().await;
+    assert_eq!(
+        names(&tools),
+        ["desktop_state", "screenshot", "status", "wait_for"]
+    );
+    let status = server.structured("status").await;
+    assert_eq!(
+        status["tools"],
+        json!({"profile": "observe", "source": "env", "error": null})
+    );
+    let id = server.start_call("acquire_desktop", json!({})).await;
+    let response = server.response(id).await;
+    assert!(response["error"]["code"].is_i64(), "{response}");
+    let logged: Vec<Value> = fixture
+        .audit_lines()
+        .iter()
+        .map(|line| line["tool"].clone())
+        .collect();
+    assert_eq!(logged, [json!("status")]);
+}
+
+#[tokio::test]
 async fn an_unknown_tool_is_a_protocol_error() {
     let fixture = Fixture::new("unknown");
     let mut server = Server::start(&fixture).await;

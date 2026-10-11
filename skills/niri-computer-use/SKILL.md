@@ -22,7 +22,11 @@ Take a `screenshot` when you need pixels. To wait for something, a window openin
 
 ## Acting
 
+When `acquire_desktop` isn't listed, `status.tools.profile` is `observe`: the user set this client to look only, so say what you would do instead of doing it.
+
 Acting needs the lease. Take it with `acquire_desktop` only when the user asked you to act, then work in a loop:
+
+
 
 1. Look: `desktop_state`, and a fresh `screenshot` when pixels matter.
 2. Do one action. When you need to see what it did, pass `screenshot: true`: the result then comes with a screenshot taken once the screen stopped changing, and its `screenshot_ref` serves your next click.

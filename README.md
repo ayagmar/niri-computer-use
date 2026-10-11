@@ -6,7 +6,7 @@ An MCP server for AI agents to observe and drive a [niri](https://github.com/nir
 
 Documentation: **https://ayagmar.github.io/niri-computer-use/**, also as plain Markdown for agents ([llms.txt](https://ayagmar.github.io/niri-computer-use/llms.txt)).
 
-**Status: early development.** Up to 27 tools over stdio: reading the desktop, screenshots, accessible elements, and, under a lease, focus, launch, close, niri actions, pointer, keyboard, paste, accessible element actions, three Noctalia panels and, with `unrestricted`, any Noctalia command. The native keyboard backend is experimental and off by default. Acceptance evidence for each milestone is in [docs/results/](docs/results/).
+**Status: early development.** Up to 22 tools over stdio: reading the desktop, screenshots, accessible elements, and, under a lease, focus, launch, close, niri actions, pointer, keyboard, paste, accessible element actions, three Noctalia panels and, with `unrestricted`, any Noctalia command. The native keyboard backend is experimental and off by default. Acceptance evidence for each milestone is in [docs/results/](docs/results/).
 
 ## Install
 
@@ -41,6 +41,8 @@ The lease, the stop key, the lock gate, the policy file and the audit log are gu
 `~/.config/niri-computer-use/policy.toml` holds launch presets, apps that never get input, and where screenshots may be saved. One key, `unrestricted`, is off by default. Agents without a shell of their own, such as desktop apps, rely on that: with it off, the server can't run anything you didn't put in a preset. With `unrestricted = true`, or `NIRI_COMPUTER_USE_UNRESTRICTED=1` in one client's server settings, an agent can run any program through the server: `niri_action` accepts `Spawn`, `Quit` and the other gated niri actions, the `noctalia` tool sends any Noctalia command, and presets may pass arguments to terminals and set `env`. Everything still needs the lease, stops at the stop key and goes to the audit log. See [Configuration](https://ayagmar.github.io/niri-computer-use/concepts/configuration/#unrestricted).
 
 With `shared = true`, or `NIRI_COMPUTER_USE_SHARED=1`, every MCP client of a niri instance is served by one engine process, which the first client starts and which exits two seconds after its last connection, lease and pending input cleanup have ended. Each client keeps its own policy file, `unrestricted`, keyboard backend and home directory. See [Configuration](https://ayagmar.github.io/niri-computer-use/concepts/configuration/#shared).
+
+With `tools = "observe"`, or `NIRI_COMPUTER_USE_TOOLS=observe` for one client, the server lists only the five tools that look and need no lease; `act` leaves out `niri_action`, `noctalia` and `shell_panel`. The default, `full`, lists every tool. See [Configuration](https://ayagmar.github.io/niri-computer-use/concepts/configuration/#tools).
 
 ## Documentation
 
