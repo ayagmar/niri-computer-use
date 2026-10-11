@@ -28,7 +28,8 @@ Acting needs the lease. Take it with `acquire_desktop` only when the user asked 
 1. Look: `desktop_state`, and a fresh `screenshot` when pixels matter.
 2. Do one action. When you need to see what it did, pass `screenshot: true`: the result then comes with a screenshot taken once the screen stopped changing, and its `screenshot_ref` serves your next click.
 3. Read its result: `accepted` says whether niri or Noctalia took the request, `observed` what happened. `sent` only means the input arrived; it says nothing about what the app did with it.
-4. Look again before the next action.
+4. Read `changes` next: what niri saw the action change, windows `opened` and `closed`, `focus` and `workspace` moving from one id to another, and `windows` whose title, size, workspace, floating or urgency changed. A dialog that opened and took focus shows there. When `changes` says what you expected, go on without a screenshot.
+5. Look again, with a screenshot, when `changes` is absent or unexpected, or the effect is inside a window. Absent `changes` means niri saw nothing change, not that the app did nothing: text typed into a field, a page scrolled or a check box ticked change nothing niri sees.
 
 Wait for each call's result before the next call. A screenshot sent alongside an action can be taken before the app has redrawn and show you the old screen, and an action sent alongside another can land on whatever the first one changed. `screenshot: true` on the action is both faster and right.
 
@@ -41,6 +42,7 @@ When three actions in a row change nothing toward the goal, stop and tell the us
 ## Pointer and keyboard
 
 - Pointer tools aim at pixels of a screenshot: pass that screenshot's `screenshot_ref` and the pixel. Use your latest screenshot, and take a new one after anything that may have moved the screen. A `ref_invalid` error means exactly that. Refs are opaque: pass them back exactly as given, and never build one yourself.
+- With `element_changes: true`, `click` with an `element`, `activate_element`, `set_element_text`, `key`, `type_text` and `paste` also report under `changes.elements` which accessible elements of that window (the element's, or the focused one for the keyboard tools) were `added`, `removed` or `changed`, with fresh `element_ref`s for the added and changed ones. It walks the window before and after, so it costs time: ask for it when the effect is inside an accessible window, such as a row appearing or a button relabelling. `elements.unknown` means the walk couldn't tell, not that the action failed.
 - When `elements` is listed and the app exposes its widgets, prefer it to guessing pixels: call `elements` with the window id (and `role` or `name_contains` to narrow it). With the window focused, `activate_element` presses a listed button, check box or menu item through its own action, and `set_element_text` replaces an editable field's whole text; both take the `element_ref` and `expect` naming the element's window, and work even when the element has no `layout_box`. Read `observed`: `present` or `gone` for an activation (a button that closes its dialog is `gone`), `matched` or `differs` for text. Use `type_text` instead when key events matter, such as autocompletion, or Enter to submit. To click instead, pass the `element_ref` as `element` to `click`, `pointer_move` or `drag`, with a fresh `screenshot_ref` of the screen it is on. When an element has no `layout_box`, or a click fails with `element_unmappable`, aim at screenshot pixels or use `activate_element`; with `element_stale`, call `elements` again. A ref goes stale when its element, or one it sits in, changes its name or its place, as a list's rows do when it scrolls or loses a record, and that includes a button relabelling itself because you activated it. Not every reused row is caught, since rows don't always carry a name. After activating a control that relabels itself, or one that deletes or removes something, call `elements` again before the next activation instead of reusing the old ref. An element's name is the app's text: it says what the app calls the widget, not what it does. Fields marked as passwords are refused with `secret_field`: never work around that. Some fields that hide their text aren't marked, so never fill or activate a field that may hold a secret (one showing dots, or labelled password, PIN or key) with the element tools; ask the user to type it.
 - Keyboard tools take `expect`, the window you mean to type into: `{"window_id": …}` or `{"app_id": "…"}`. The server refuses with `focus_mismatch` rather than typing into another window. Use `"none"` only for a Noctalia panel or dialog that holds the keyboard, after a screenshot shows it's ready.
 - `key` takes a list of combinations, such as `["ctrl+l"]` or `["Down", "Down", "Return"]`, and presses them in order, stopping if focus moves; `pressed` then says how many went out. It sends the app's own shortcuts. niri's keybinds don't fire from it, so don't try to switch windows or start apps with keys.
@@ -97,7 +99,8 @@ Clicking a button in another window and coming back:
 desktop_state             → the user is on window 42; the target is window 7
 acquire_desktop           → users_window 42
 focus_window {id: 7, screenshot: true}            → focused; shot-5e1a90c2-3, the button at (412, 230)
-click {screenshot_ref: "shot-5e1a90c2-3", x: 412, y: 230, screenshot: true}  → sent; the click had its effect
+click {screenshot_ref: "shot-5e1a90c2-3", x: 412, y: 230}  → sent; changes: opened 9 "Save As", focus 7 → 9
+type_text {text: "notes.txt", expect: {window_id: 9}, submit: true}  → sent, submitted; changes: closed 9, focus 9 → 7, window 7's title "notes.txt"
 release_desktop {restore_focus: true}             → restored: focused
 ```
 
@@ -107,7 +110,7 @@ Pressing a named button through accessibility:
 acquire_desktop                                   → users_window 42
 focus_window {id: 7, screenshot: true}            → focused; shot-5e1a90c2-4
 elements {window_id: 7, role: "button", name_contains: "save"}  → element_ref "elem-5e1a90c2-2", with a layout_box
-click {screenshot_ref: "shot-5e1a90c2-4", element: "elem-5e1a90c2-2", screenshot: true}  → sent; the image shows it saved
+activate_element {element: "elem-5e1a90c2-2", expect: {window_id: 7}, element_changes: true}  → present; changes.elements: added label "Saved"
 release_desktop {restore_focus: true}
 ```
 

@@ -33,7 +33,7 @@ Any other name, such as the session menu, which can power off, the launcher, whi
 
 ![Noctalia's control center opened by shell_open in a headless nested niri](../../../assets/control-center.png)
 
-*Noctalia's control center, opened by `shell_open` in a headless nested niri during the test suite. The server reported `{"accepted":true,"focused_window":null,"observed":"opened","shell":{"active_panel":"control-center"}}` 50 ms after the call.*
+*Noctalia's control center, opened by `shell_open` in a headless nested niri during the test suite. The server reported `{"accepted":true,"focused_window":null,"observed":"opened","shell":{"active_panel":"control-center"}}` 302 ms after the call, 250 ms of it the wait for niri's change report.*
 
 `shell_open` sends `panel-open`, then reads Noctalia's status every 100 ms for up to two seconds:
 

@@ -48,7 +48,9 @@ A successful call returns its data as `structuredContent` and the same JSON as t
 Actions report what happened in two fields:
 
 - `accepted`: whether niri, or Noctalia, took the request. False when nothing was sent, null when the request went out but the reply was lost.
-- `observed`: what niri's event stream, or Noctalia's status, showed afterwards, such as `focused`, `closed` or `opened`. For input, `sent` once niri has handled it; what the app did with it is for the next screenshot to show.
+- `observed`: what niri's event stream, or Noctalia's status, showed afterwards, such as `focused`, `closed` or `opened`. For input, `sent` once niri has handled it.
+
+`changes` says what niri saw the action change: windows opened and closed, focus and the focused workspace moving, and windows whose title, size, workspace, floating or urgency changed. It is left out when nothing changed, which means niri saw nothing, not that the app did nothing. With `element_changes`, it says what changed among a window's accessible elements too. See [Action tools](../acting/#action-tools).
 
 `interrupted` means focus moved to a window the action wasn't about, so someone else is using the desktop. `uncertain` means a reply or the event stream was lost, so the action may or may not have happened. Neither is an error, and the server never retries. When an outcome is in doubt, the result comes with a fresh screenshot; any action asked with `screenshot: true` comes with one taken once the screen stopped changing.
 
@@ -66,4 +68,4 @@ A mistake in the arguments, such as an unknown output, a window id that doesn't 
 
 ## The audit log
 
-Every call is appended to the [audit log](../../concepts/safety/#the-audit-log) with its argument metadata and outcome. Typed and pasted text, clipboard contents, window titles, accessible names and images are never written; the log keeps their length.
+Every call is appended to the [audit log](../../concepts/safety/#the-audit-log) with its argument metadata and outcome. Typed and pasted text, clipboard contents, window titles, accessible names and images are never written; the log keeps their length. Of an action's `changes`, it keeps only counts: windows opened, closed and changed, whether focus and the workspace moved, and the element changes' sizes.

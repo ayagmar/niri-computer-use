@@ -191,7 +191,10 @@ async fn focus_window_is_accepted_then_observed() {
         .await;
     assert_eq!(
         outcome(&result),
-        json!({"accepted": true, "observed": "focused", "focused_window": 2})
+        json!({
+            "accepted": true, "observed": "focused", "focused_window": 2,
+            "changes": {"focus": {"from": 1, "to": 2}}
+        })
     );
     let unknown = mistake(&desk.server.call("focus_window", json!({"id": 9})).await);
     assert_eq!(
@@ -234,9 +237,13 @@ async fn focus_moving_elsewhere_during_the_wait_is_interrupted() {
             focus_changed(stream, 2);
         })
         .await;
+    // The wait ended at the intruder; the report goes on to where focus came to rest.
     assert_eq!(
         outcome(&result),
-        json!({"accepted": true, "observed": "interrupted", "focused_window": 3})
+        json!({
+            "accepted": true, "observed": "interrupted", "focused_window": 3,
+            "changes": {"focus": {"from": 1, "to": 2}}
+        })
     );
 }
 
@@ -255,7 +262,10 @@ async fn focus_leaving_the_target_workspace_or_a_launch_is_interrupted() {
         .await;
     assert_eq!(
         outcome(&result),
-        json!({"accepted": true, "observed": "interrupted", "focused_window": 3})
+        json!({
+            "accepted": true, "observed": "interrupted", "focused_window": 3,
+            "changes": {"focus": {"from": 1, "to": 3}}
+        })
     );
     let launch = desk
         .act("launch", json!({"preset": "foot"}), |stream, _| {
@@ -264,7 +274,10 @@ async fn focus_leaving_the_target_workspace_or_a_launch_is_interrupted() {
         .await;
     assert_eq!(
         outcome(&launch),
-        json!({"accepted": true, "observed": "interrupted", "focused_window": 2})
+        json!({
+            "accepted": true, "observed": "interrupted", "focused_window": 2,
+            "changes": {"focus": {"from": 3, "to": 2}}
+        })
     );
 }
 
@@ -290,7 +303,10 @@ async fn a_single_instance_app_answers_a_launch_with_its_window() {
     }
     assert_eq!(
         answered,
-        json!({"accepted": true, "observed": "focused", "focused_window": 5, "windows": [5]})
+        json!({
+            "accepted": true, "observed": "focused", "focused_window": 5, "windows": [5],
+            "changes": {"focus": {"from": 1, "to": 5}}
+        })
     );
 }
 
@@ -419,7 +435,10 @@ async fn focus_workspace_waits_for_the_workspace() {
         .await;
     assert_eq!(
         outcome(&result),
-        json!({"accepted": true, "observed": "focused", "focused_window": null})
+        json!({
+            "accepted": true, "observed": "focused", "focused_window": null,
+            "changes": {"focus": {"from": 1, "to": null}, "workspace": {"from": 1, "to": 2}}
+        })
     );
     let unknown = mistake(&desk.server.call("focus_workspace", json!({"id": 7})).await);
     assert!(unknown.contains("no workspace with id 7"), "{unknown}");
@@ -439,7 +458,10 @@ async fn close_window_is_closed_or_pending() {
         .await;
     assert_eq!(
         outcome(&result),
-        json!({"accepted": true, "observed": "closed", "focused_window": 1, "windows": [2]})
+        json!({
+            "accepted": true, "observed": "closed", "focused_window": 1, "windows": [2],
+            "changes": {"closed": [{"id": 2, "app_id": "b"}]}
+        })
     );
     // An app asking about unsaved changes keeps its window open.
     let pending = desk.act("close_window", json!({"id": 3}), |_, _| {}).await;
@@ -476,7 +498,13 @@ async fn launch_spawns_the_presets_argv_and_counts_new_windows() {
         .await;
     assert_eq!(
         outcome(&result),
-        json!({"accepted": true, "observed": "one", "focused_window": 7, "windows": [7]})
+        json!({
+            "accepted": true, "observed": "one", "focused_window": 7, "windows": [7],
+            "changes": {
+                "opened": [{"id": 7, "app_id": "foot", "workspace_id": 1, "title": "t"}],
+                "focus": {"from": 1, "to": 7}
+            }
+        })
     );
     let several = desk
         .act("launch", json!({"preset": "foot"}), |stream, _| {
@@ -488,7 +516,13 @@ async fn launch_spawns_the_presets_argv_and_counts_new_windows() {
         .await;
     assert_eq!(
         outcome(&several),
-        json!({"accepted": true, "observed": "ambiguous", "focused_window": 7, "windows": [8, 9]})
+        json!({
+            "accepted": true, "observed": "ambiguous", "focused_window": 7, "windows": [8, 9],
+            "changes": {"opened": [
+                {"id": 8, "app_id": "foot", "workspace_id": 1, "title": "t"},
+                {"id": 9, "app_id": "foot", "workspace_id": 1, "title": "t"}
+            ]}
+        })
     );
     let (name, detail) = tool_error(&desk.server.call("launch", json!({"preset": "sh"})).await);
     assert_eq!(name, "unknown_preset");
@@ -517,7 +551,10 @@ async fn a_launch_without_a_matching_window_observes_none() {
         .await;
     assert_eq!(
         outcome(&result),
-        json!({"accepted": true, "observed": "none", "focused_window": 1})
+        json!({
+            "accepted": true, "observed": "none", "focused_window": 1,
+            "changes": {"opened": [{"id": 7, "app_id": "other", "workspace_id": 1, "title": "t"}]}
+        })
     );
 }
 
@@ -545,7 +582,10 @@ async fn reuse_spawns_for_none_focuses_one_and_starts_nothing_for_two() {
         .await;
     assert_eq!(
         outcome(&focused),
-        json!({"accepted": true, "observed": "focused", "focused_window": 7, "windows": [7]})
+        json!({
+            "accepted": true, "observed": "focused", "focused_window": 7, "windows": [7],
+            "changes": {"focus": {"from": 1, "to": 7}}
+        })
     );
     let second = window_on(8, Some("foot"), 1, false);
     desk.stream
@@ -1214,6 +1254,32 @@ async fn focus_moved_during_the_first_call(desk: &mut Desk, tool: &str, argument
     desk.server.response(id).await["result"].clone()
 }
 
+// An app answers a key a moment after it went out: the report waits for niri to go quiet,
+// so the window the key opened is in it, though the key's own work had ended.
+#[tokio::test]
+async fn a_window_a_key_opens_a_moment_later_is_in_the_report() {
+    let mut desk = Desk::start("act-key-report", "").await;
+    fake_wtype(&desk.fixture, ": > \"$DIR/typed\"");
+    let keys = json!({"keys": ["ctrl+n"], "expect": {"app_id": "a"}});
+    let id = desk.server.start_call("key", keys).await;
+    while !desk.fixture.path("typed").exists() {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let window = window_on(9, Some("a"), 1, false);
+    desk.stream
+        .send(&json!({"WindowOpenedOrChanged": {"window": window}}));
+    focus_changed(&desk.stream, 9);
+    let result = desk.server.response(id).await["result"].clone();
+    assert_eq!(
+        outcome(&result)["changes"],
+        json!({
+            "opened": [{"id": 9, "app_id": "a", "workspace_id": 1, "title": "t"}],
+            "focus": {"from": 1, "to": 9}
+        })
+    );
+}
+
 #[tokio::test]
 async fn long_text_is_typed_in_parts_of_a_hundred_characters() {
     let mut desk = Desk::start("act-wtype-parts", "").await;
@@ -1248,7 +1314,7 @@ async fn focus_moving_during_a_part_stops_the_rest_of_the_text_and_its_return() 
         outcome(&result),
         json!({
             "accepted": true, "observed": "interrupted", "focused_window": 2, "focus": "matched",
-            "typed": 100, "submitted": false
+            "typed": 100, "submitted": false, "changes": {"focus": {"from": 1, "to": 2}}
         })
     );
     let read = |name: &str| std::fs::read_to_string(desk.fixture.path(name)).unwrap();
@@ -1303,7 +1369,7 @@ async fn focus_moving_stops_the_rest_of_the_keys() {
         outcome(&result),
         json!({
             "accepted": true, "observed": "interrupted", "focused_window": 2, "focus": "matched",
-            "pressed": 1
+            "pressed": 1, "changes": {"focus": {"from": 1, "to": 2}}
         })
     );
     assert_eq!(wtype_calls(&desk.fixture), ["- -k Down"]);
@@ -1857,7 +1923,8 @@ async fn niri_action_reports_the_window_as_niri_shows_it_after() {
                 "id": 2, "workspace_id": 1, "is_focused": false, "is_floating": false,
                 "is_urgent": false, "window_size": [2560, 1440], "tile_size": [2560.0, 1440.0],
                 "pos_in_scrolling_layout": [1, 1]
-            }
+            },
+            "changes": {"windows": [{"id": 2, "size": [2560, 1440]}]}
         })
     );
     let unknown = desk

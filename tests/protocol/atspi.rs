@@ -22,6 +22,7 @@ use crate::fixture::{Fixture, SPAWNING};
 
 pub(crate) const ROOT: &str = "/org/a11y/atspi/accessible/root";
 pub(crate) const FRAME: u32 = 23;
+pub(crate) const LABEL: u32 = 29;
 pub(crate) const PANEL: u32 = 39;
 pub(crate) const PASSWORD_TEXT: u32 = 40;
 pub(crate) const BUTTON: u32 = 43;
@@ -48,6 +49,8 @@ pub(crate) struct Object {
     pub(crate) text: Option<i32>,
     /// A counter button's count, which each `DoAction` adds one to and names it after.
     pub(crate) counter: Option<u32>,
+    /// The objects each `DoAction` shows when hidden and hides when shown.
+    pub(crate) toggles: Vec<String>,
 }
 
 impl Object {
@@ -574,6 +577,9 @@ impl Action {
                 object.name = format!("Count: {count}");
             }
         });
+        for path in self.0.read(|object, _| object.toggles.clone())? {
+            self.0.mock.change(&path, |object| object.states ^= SHOWING);
+        }
         self.0.read(|object, _| {
             usize::try_from(index).is_ok_and(|index| index < object.actions.len())
         })

@@ -25,7 +25,7 @@ use zbus::zvariant::{DynamicType, OwnedObjectPath, OwnedValue};
 
 use crate::error::{ErrorName, ToolError};
 use model::{Extents, Frame, Kept, NoFrame, Picked, Shape, States};
-pub(crate) use walk::{Capped, Child, Node, Want};
+pub(crate) use walk::{Capped, Child, Node, Walked, Want};
 
 /// Each call's deadline.
 const CALL: Duration = Duration::from_secs(1);
@@ -497,7 +497,7 @@ impl Request {
         bus: &str,
         root: &Node,
         want: Want<F>,
-    ) -> Result<walk::Walked, ToolError> {
+    ) -> Result<Walked, ToolError> {
         walk::walk(&AppTree { request: self, bus }, root, NODE_CAP, want).await
     }
 

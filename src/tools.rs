@@ -17,7 +17,7 @@ use crate::act::{self, Outcome};
 use crate::audit::{self, Call, Caller};
 use crate::coords::ImagePx;
 use crate::elements::actions;
-use crate::engine::Engine;
+use crate::engine::{Engine, Report, Watch};
 use crate::error::{CANCELLED, CallError, ToolError};
 use crate::input::keyboard::{self, Expect, Typing};
 use crate::input::paste;
@@ -414,6 +414,11 @@ struct ClickArgs {
     /// false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     screenshot: bool,
+    /// With true, `changes.elements` also says which of `element`'s window's accessible
+    /// elements were added, removed or changed, from a walk before and after. Defaults to
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    element_changes: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -507,6 +512,11 @@ struct KeyArgs {
     /// false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     screenshot: bool,
+    /// With true, `changes.elements` also says which of the focused window's accessible
+    /// elements were added, removed or changed, from a walk before and after. Defaults to
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    element_changes: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -525,6 +535,11 @@ struct TypeTextArgs {
     /// false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     screenshot: bool,
+    /// With true, `changes.elements` also says which of the focused window's accessible
+    /// elements were added, removed or changed, from a walk before and after. Defaults to
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    element_changes: bool,
 }
 
 /// The combination that pastes in the focused app.
@@ -568,6 +583,11 @@ struct PasteArgs {
     /// false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     screenshot: bool,
+    /// With true, `changes.elements` also says which of the focused window's accessible
+    /// elements were added, removed or changed, from a walk before and after. Defaults to
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    element_changes: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -587,6 +607,11 @@ struct ActivateElementArgs {
     /// false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     screenshot: bool,
+    /// With true, `changes.elements` also says which of the element's window's accessible
+    /// elements were added, removed or changed, from a walk before and after. Defaults to
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    element_changes: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -605,6 +630,11 @@ struct SetElementTextArgs {
     /// false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     screenshot: bool,
+    /// With true, `changes.elements` also says which of the element's window's accessible
+    /// elements were added, removed or changed, from a walk before and after. Defaults to
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    element_changes: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -731,7 +761,7 @@ impl Server {
             Asked {
                 tool: "focus_window",
                 logged,
-                shoot: args.screenshot,
+                report: Report::shot(args.screenshot),
             },
             work,
         )
@@ -759,7 +789,7 @@ impl Server {
             Asked {
                 tool: "focus_workspace",
                 logged,
-                shoot: args.screenshot,
+                report: Report::shot(args.screenshot),
             },
             work,
         )
@@ -799,7 +829,7 @@ impl Server {
             Asked {
                 tool: "launch",
                 logged,
-                shoot,
+                report: Report::shot(shoot),
             },
             work,
         )
@@ -829,7 +859,7 @@ impl Server {
             Asked {
                 tool: "close_window",
                 logged,
-                shoot: args.screenshot,
+                report: Report::shot(args.screenshot),
             },
             work,
         )
@@ -889,7 +919,7 @@ impl Server {
             Asked {
                 tool: "niri_action",
                 logged,
-                shoot,
+                report: Report::shot(shoot),
             },
             work,
         )
@@ -919,13 +949,15 @@ impl Server {
             id: args.screenshot_ref,
             shoot: args.screenshot,
             keys: Vec::new(),
+            watch: None,
         };
         self.point(&context, logged, aim, gesture).await
     }
 
     /// Clicks a pixel of a screenshot: moves there, then presses and releases the button
     /// `count` times. Results and failures as for `pointer_move`. A click can change focus
-    /// or do anything the app does on a click; take a screenshot before the next action.
+    /// or do anything the app does on a click; read `changes`, and take a screenshot when it
+    /// doesn't say enough.
     #[tool(annotations(
         read_only_hint = false,
         destructive_hint = true,
@@ -938,15 +970,24 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
-        let gesture = args.at.spot().map(|at| Gesture::Click {
-            at,
-            button: args.button.into(),
-            count: args.count,
-        });
+        let watch = args.at.element.clone().filter(|_| args.element_changes);
+        let gesture = if args.element_changes && watch.is_none() {
+            Err(CallError::InvalidArguments(
+                "`element_changes` needs `element`: the window under a pixel isn't known"
+                    .to_owned(),
+            ))
+        } else {
+            args.at.spot().map(|at| Gesture::Click {
+                at,
+                button: args.button.into(),
+                count: args.count,
+            })
+        };
         let aim = Aim {
             id: args.screenshot_ref,
             shoot: args.screenshot,
             keys: args.keys,
+            watch,
         };
         self.point(&context, logged, aim, gesture).await
     }
@@ -979,6 +1020,7 @@ impl Server {
             id: args.screenshot_ref,
             shoot: args.screenshot,
             keys: args.keys,
+            watch: None,
         };
         self.point(&context, logged, aim, gesture).await
     }
@@ -1009,6 +1051,7 @@ impl Server {
             id: args.screenshot_ref,
             shoot: args.screenshot,
             keys: args.keys,
+            watch: None,
         };
         self.point(&context, logged, aim, gesture).await
     }
@@ -1019,7 +1062,8 @@ impl Server {
     /// them. `expect` names the window or app that must have keyboard focus
     /// (`focus_mismatch` otherwise), or `"none"` to skip the check. `observed` is `sent`, or
     /// `interrupted` if focus moved; then the keys after that aren't pressed and `pressed`
-    /// counts the ones that were. Pass `screenshot: true` to see what the keys did.
+    /// counts the ones that were. `changes` says what niri saw change; pass
+    /// `screenshot: true` to see the rest.
     /// Refused with `app_denied` while the focused app is on the policy's deny list,
     /// even with `expect: "none"`. Requires the lease.
     #[tool(annotations(
@@ -1039,6 +1083,7 @@ impl Server {
             typing,
             expect: args.expect.into(),
             shoot: args.screenshot,
+            element_changes: args.element_changes,
         };
         self.type_input(&context, logged, keying).await
     }
@@ -1069,6 +1114,7 @@ impl Server {
         });
         flag(&mut logged, "submit", args.submit);
         flag(&mut logged, "screenshot", args.screenshot);
+        flag(&mut logged, "element_changes", args.element_changes);
         let typing = Typing::Text {
             text: args.text,
             submit: args.submit,
@@ -1077,6 +1123,7 @@ impl Server {
             typing,
             expect: args.expect.into(),
             shoot: args.screenshot,
+            element_changes: args.element_changes,
         };
         self.type_input(&context, logged, keying).await
     }
@@ -1091,7 +1138,7 @@ impl Server {
     /// after the key; `paste.clipboard` is `restored`, `cleared` (it was empty, or held
     /// an earlier paste's text, as `detail` says), `replaced` (someone copied meanwhile,
     /// so theirs stays), `failed`, `kept` (the pasted text stays) or `unknown`, with
-    /// `detail`. Check the result with a screenshot; never paste again on your own. The
+    /// `detail`. Check `changes` or a screenshot; never paste again on your own. The
     /// text is never logged. Requires the lease.
     #[tool(annotations(
         read_only_hint = false,
@@ -1111,6 +1158,7 @@ impl Server {
             "expect": args.expect,
         });
         flag(&mut logged, "screenshot", args.screenshot);
+        flag(&mut logged, "element_changes", args.element_changes);
         let expect = args.expect.into();
         let work = async {
             let input = self.engine.input(&self.session)?;
@@ -1119,7 +1167,10 @@ impl Server {
         let asked = Asked {
             tool: "paste",
             logged,
-            shoot: args.screenshot,
+            report: Report {
+                shoot: args.screenshot,
+                elements: args.element_changes.then_some(Watch::Focused),
+            },
         };
         self.act(&context, asked, work).await
     }
@@ -1141,8 +1192,9 @@ impl Server {
     /// (it or its window went away, as when a button closes its dialog) or `unknown`
     /// (`detail` says why). An app that declines gives `upstream_error`. When the call went
     /// out and its reply was lost, `accepted` is null and `observed` `uncertain`, with a
-    /// screenshot: it may have happened. Take a screenshot to see the effect; never repeat
-    /// an activation on your own. Requires the lease.
+    /// screenshot: it may have happened. `changes` says what niri saw change, and with
+    /// `element_changes` what changed among the window's elements; take a screenshot when
+    /// that isn't enough. Never repeat an activation on your own. Requires the lease.
     #[tool(annotations(
         read_only_hint = false,
         destructive_hint = true,
@@ -1164,6 +1216,7 @@ impl Server {
             &expect,
         );
         flag(&mut logged, "screenshot", args.screenshot);
+        flag(&mut logged, "element_changes", args.element_changes);
         let work = async {
             let input = self.engine.input(&self.session)?;
             let element = self.engine.element(&self.session, &args.element)?;
@@ -1177,7 +1230,12 @@ impl Server {
         let asked = Asked {
             tool: "activate_element",
             logged,
-            shoot: args.screenshot,
+            report: Report {
+                shoot: args.screenshot,
+                elements: args
+                    .element_changes
+                    .then_some(Watch::Element(&args.element)),
+            },
         };
         self.act(&context, asked, work).await
     }
@@ -1212,6 +1270,7 @@ impl Server {
         let text_len = Some(args.text.chars().count());
         let mut logged = actions::logged(&args.element, kept.as_ref(), None, text_len, &expect);
         flag(&mut logged, "screenshot", args.screenshot);
+        flag(&mut logged, "element_changes", args.element_changes);
         let work = async {
             let input = self.engine.input(&self.session)?;
             let element = self.engine.element(&self.session, &args.element)?;
@@ -1225,7 +1284,12 @@ impl Server {
         let asked = Asked {
             tool: "set_element_text",
             logged,
-            shoot: args.screenshot,
+            report: Report {
+                shoot: args.screenshot,
+                elements: args
+                    .element_changes
+                    .then_some(Watch::Element(&args.element)),
+            },
         };
         self.act(&context, asked, work).await
     }
@@ -1419,7 +1483,7 @@ impl Server {
             Asked {
                 tool: "shell_open",
                 logged,
-                shoot,
+                report: Report::shot(shoot),
             },
             work,
         )
@@ -1449,7 +1513,7 @@ impl Server {
             Asked {
                 tool: "shell_close",
                 logged,
-                shoot,
+                report: Report::shot(shoot),
             },
             work,
         )
@@ -1491,7 +1555,7 @@ impl Server {
             Asked {
                 tool: "noctalia",
                 logged,
-                shoot,
+                report: Report::shot(shoot),
             },
             work,
         )
@@ -1534,7 +1598,10 @@ impl Server {
             Asked {
                 tool,
                 logged,
-                shoot: aim.shoot,
+                report: Report {
+                    shoot: aim.shoot,
+                    elements: aim.watch.as_deref().map(Watch::Element),
+                },
             },
             work,
         )
@@ -1552,6 +1619,7 @@ impl Server {
             typing,
             expect,
             shoot,
+            element_changes,
         } = keying;
         let tool = typing.tool();
         let work = async {
@@ -1563,15 +1631,19 @@ impl Server {
             Asked {
                 tool,
                 logged,
-                shoot,
+                report: Report {
+                    shoot,
+                    elements: element_changes.then_some(Watch::Focused),
+                },
             },
             work,
         )
         .await
     }
 
-    /// Runs one action through the desk's gate, with a screenshot when `shoot` asks for
-    /// one or its outcome is in doubt, and logs it with what was accepted and observed.
+    /// Runs one action through the desk's gate, with a screenshot when `report` asks for
+    /// one or its outcome is in doubt and the report of what it changed, and logs it with
+    /// what was accepted and observed.
     async fn act(
         &self,
         context: &RequestContext<RoleServer>,
@@ -1581,12 +1653,12 @@ impl Server {
         let Asked {
             tool,
             logged,
-            shoot,
+            report,
         } = asked;
         // Boxed, because the readiness report, the action's work and its wait make large
         // futures.
         Box::pin(self.record(context, Call::action(tool), logged, async {
-            match self.engine.act(&self.session, shoot, work).await {
+            match self.engine.act(&self.session, report, work).await {
                 Ok(evidenced) => outcome(&evidenced),
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
                 Err(CallError::Tool(error)) => Ok(error.into_result()),
@@ -1693,27 +1765,29 @@ fn waited_result(
 }
 
 /// An action call as the agent made it: the tool, its arguments as the audit log keeps
-/// them, and whether it asked for a screenshot of the result.
+/// them, and what it asked to see of the result.
 struct Asked<'a> {
     tool: &'a str,
     logged: Value,
-    shoot: bool,
+    report: Report<'a>,
 }
 
-/// A pointer tool's screenshot ref, whether it asked for a screenshot after, and the
-/// modifiers it holds.
+/// A pointer tool's screenshot ref, whether it asked for a screenshot after, the
+/// modifiers it holds, and the element ref whose window's elements it asked to compare.
 struct Aim {
     id: String,
     shoot: bool,
     keys: Vec<String>,
+    watch: Option<String>,
 }
 
 /// A keyboard tool's call: what to type, where, and whether it asked for a screenshot
-/// after.
+/// and the focused window's element changes after.
 struct Keying {
     typing: Typing,
     expect: Expect,
     shoot: bool,
+    element_changes: bool,
 }
 
 /// The tools that exist only with Noctalia installed.
@@ -1765,7 +1839,7 @@ fn invalid(message: &str) -> CallToolResult {
 #[tool_handler(
     router = self.tool_router,
     name = "niri-computer-use",
-    instructions = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `elements`, when listed, gives one window's accessible elements and where they are, and `activate_element` and `set_element_text` press them and fill them in without the pointer once their window has focus. `clipboard_read` returns the clipboard's text, and `shell_status`, when Noctalia is installed, its panel and lock state. To act, call `acquire_desktop`, then one action at a time (`focus_window`, `focus_workspace`, `launch`, `close_window`, `niri_action` for window layout such as fullscreen, floating and widths, with Noctalia `shell_open` and `shell_close`, and for input `pointer_move`, `click`, `drag` and `scroll` with a fresh `screenshot_ref`, or `key`, `type_text` and `paste` with `expect`), reading `accepted` and `observed` before the next call. To see an action's result, pass it `screenshot: true` rather than sending a `screenshot` alongside it, and use `wait_for` rather than repeated screenshots to wait for a window or for the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter, and start apps through `launch` presets; with no preset for the app, use `niri_action` `Spawn` with the program's argv (never a shell or `SpawnSh`) when `status.unrestricted.enabled` is true, then find its window with `wait_for` or `desktop_state` (its `app_id` may differ from the program's name) and never repeat the `Spawn`; otherwise ask the user to add a preset. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
+    instructions = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `elements`, when listed, gives one window's accessible elements and where they are, and `activate_element` and `set_element_text` press them and fill them in without the pointer once their window has focus. `clipboard_read` returns the clipboard's text, and `shell_status`, when Noctalia is installed, its panel and lock state. To act, call `acquire_desktop`, then one action at a time (`focus_window`, `focus_workspace`, `launch`, `close_window`, `niri_action` for window layout such as fullscreen, floating and widths, with Noctalia `shell_open` and `shell_close`, and for input `pointer_move`, `click`, `drag` and `scroll` with a fresh `screenshot_ref`, or `key`, `type_text` and `paste` with `expect`), reading `accepted` and `observed` before the next call. A result's `changes` says what niri saw the action change (windows opened or closed, focus, workspace, titles, sizes), and is absent when nothing did: read it first, and take a screenshot only when it is empty or unexpected or you need pixels. To see an action's result, pass it `screenshot: true` rather than sending a `screenshot` alongside it, and use `wait_for` rather than repeated screenshots to wait for a window or for the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter, and start apps through `launch` presets; with no preset for the app, use `niri_action` `Spawn` with the program's argv (never a shell or `SpawnSh`) when `status.unrestricted.enabled` is true, then find its window with `wait_for` or `desktop_state` (its `app_id` may differ from the program's name) and never repeat the `Spawn`; otherwise ask the user to add a preset. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
 )]
 impl ServerHandler for Server {}
 

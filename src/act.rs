@@ -12,6 +12,7 @@ use std::time::Duration;
 use niri_ipc::{Action, Window, WorkspaceReferenceArg};
 use serde::Serialize;
 
+use crate::changes::Changes;
 use crate::control::desk::Worked;
 use crate::elements::actions::Acted;
 use crate::error::{CallError, ErrorName, ToolError, Unanswered};
@@ -25,6 +26,7 @@ use crate::policy::{self, Loaded, Preset};
 use crate::settle;
 
 pub(crate) mod compositor;
+pub(crate) mod record;
 pub(crate) mod shell;
 
 /// How long an action waits for its effect.
@@ -123,6 +125,11 @@ pub(crate) struct Outcome {
     /// Element actions: the element's role and what the action did to it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) element: Option<Acted>,
+    /// What niri reported changing from the start of the action until its report ended,
+    /// and with `element_changes` what changed among a window's elements; absent when
+    /// nothing did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) changes: Option<Changes>,
     /// Why the outcome is uncertain.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) detail: Option<String>,
@@ -158,6 +165,7 @@ impl Outcome {
             window: None,
             paste: None,
             element: None,
+            changes: None,
             detail: None,
             screenshot: None,
             screenshot_error: None,
@@ -179,6 +187,7 @@ impl Outcome {
             window: None,
             paste: None,
             element: None,
+            changes: None,
             detail: Some(detail),
             screenshot: None,
             screenshot_error: None,
