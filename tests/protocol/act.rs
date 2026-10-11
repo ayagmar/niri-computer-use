@@ -1006,26 +1006,28 @@ async fn keyboard_tools_check_their_text_focus_and_app_before_typing() {
 }
 
 #[tokio::test]
-async fn paste_checks_its_text_focus_app_and_clipboard_before_the_key() {
+async fn a_paste_checks_its_text_focus_app_and_clipboard_before_the_key() {
     let mut desk = Desk::start("act-paste", r#"deny_input_app_ids = ["b"]"#).await;
     fake_wtype(&desk.fixture, "exit 0");
-    let paste =
-        |text: &str, expect: Value| json!({"text": text, "keys": "ctrl+v", "expect": expect});
+    let paste = |text: &str, expect: Value| json!({"text": text, "via": "paste", "paste_keys": "ctrl+v", "expect": expect});
     let long = desk
         .server
-        .call("paste", paste(&"a".repeat(1024 * 1024 + 1), json!("none")))
+        .call(
+            "type_text",
+            paste(&"a".repeat(1024 * 1024 + 1), json!("none")),
+        )
         .await;
     assert_eq!(tool_error(&long).0, "text_too_long");
     let elsewhere = desk
         .server
-        .call("paste", paste("x", json!({"window_id": 2})))
+        .call("type_text", paste("x", json!({"window_id": 2})))
         .await;
     assert_eq!(tool_error(&elsewhere).0, "focus_mismatch");
     // Nothing serves the fixture's Wayland display, so the clipboard isn't touched.
     desk.unplug_display();
     let unserved = desk
         .server
-        .call("paste", paste("pasted words", json!({"app_id": "a"})))
+        .call("type_text", paste("pasted words", json!({"app_id": "a"})))
         .await;
     let (name, detail) = tool_error(&unserved);
     assert_eq!(name, "upstream_error");
@@ -1041,7 +1043,7 @@ async fn paste_checks_its_text_focus_app_and_clipboard_before_the_key() {
     }
     let denied = desk
         .server
-        .call("paste", paste("x", json!({"app_id": "b"})))
+        .call("type_text", paste("x", json!({"app_id": "b"})))
         .await;
     assert_eq!(tool_error(&denied).0, "app_denied");
     let audit = std::fs::read_to_string(desk.fixture.audit_log()).unwrap();
@@ -1049,10 +1051,10 @@ async fn paste_checks_its_text_focus_app_and_clipboard_before_the_key() {
     assert_eq!(
         desk.audited(),
         [
-            json!(["paste", {"text_len": 1024 * 1024 + 1, "keys": "ctrl+v", "expect": "none"}, null, null, "text_too_long"]),
-            json!(["paste", {"text_len": 1, "keys": "ctrl+v", "expect": {"window_id": 2}}, null, null, "focus_mismatch"]),
-            json!(["paste", {"text_len": 12, "keys": "ctrl+v", "expect": {"app_id": "a"}}, null, null, "upstream_error"]),
-            json!(["paste", {"text_len": 1, "keys": "ctrl+v", "expect": {"app_id": "b"}}, null, null, "app_denied"]),
+            json!(["type_text", {"text_len": 1024 * 1024 + 1, "via": "paste", "paste_keys": "ctrl+v", "expect": "none"}, null, null, "text_too_long"]),
+            json!(["type_text", {"text_len": 1, "via": "paste", "paste_keys": "ctrl+v", "expect": {"window_id": 2}}, null, null, "focus_mismatch"]),
+            json!(["type_text", {"text_len": 12, "via": "paste", "paste_keys": "ctrl+v", "expect": {"app_id": "a"}}, null, null, "upstream_error"]),
+            json!(["type_text", {"text_len": 1, "via": "paste", "paste_keys": "ctrl+v", "expect": {"app_id": "b"}}, null, null, "app_denied"]),
         ]
     );
 }

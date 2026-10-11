@@ -190,8 +190,8 @@ fn after_kept(session: &mut Session<'_>, owner: &mut Client) -> Result<()> {
         ));
     }
     withheld(session, owner, TEXT, "copied_before_lease")?;
-    let args = json!({"text": AFTER, "keys": "ctrl+v", "expect": {"app_id": APP_ID}});
-    let pasted = structured(&owner.call(session, "paste", args)?)?;
+    let args = json!({"text": AFTER, "via": "paste", "paste_keys": "ctrl+v", "expect": {"app_id": APP_ID}});
+    let pasted = structured(&owner.call(session, "type_text", args)?)?;
     entry_shows(session, AFTER)?;
     let dropped = field(&pasted, "/detail")
         .as_str()
@@ -322,8 +322,8 @@ impl Pasting {
 
     fn paste(client: &mut Client, owner: Process, copied: Offered) -> Result<Self> {
         let id = client.start_call(
-            "paste",
-            json!({"text": TEXT, "keys": "ctrl+v", "expect": {"app_id": APP_ID}}),
+            "type_text",
+            json!({"text": TEXT, "via": "paste", "paste_keys": "ctrl+v", "expect": {"app_id": APP_ID}}),
         )?;
         Ok(Self { owner, copied, id })
     }

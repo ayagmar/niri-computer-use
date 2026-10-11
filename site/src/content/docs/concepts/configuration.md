@@ -58,7 +58,7 @@ With this file, `status` reports:
 
 ### `deny_input_app_ids`
 
-A list of `app_id`s, default empty. While the window with keyboard focus has one of them, `click`, `drag`, `scroll`, `pointer_move`, `key`, `type_text` and `paste` refuse with `app_denied`, even with `expect: "none"`. `elements`, `activate_element` and `set_element_text` refuse for a window of a denied app whatever has focus, and so do `close_window` and `niri_action`'s `CloseWindow`, for the window they name or the focused one. Focus and layout actions aren't checked.
+A list of `app_id`s, default empty. While the window with keyboard focus has one of them, `click`, `drag`, `scroll`, `pointer_move`, `key` and `type_text` refuse with `app_denied`, even with `expect: "none"`. `elements`, `activate_element` and `set_element_text` refuse for a window of a denied app whatever has focus, and so do `close_window` and `niri_action`'s `CloseWindow`, for the window they name or the focused one. Focus and layout actions aren't checked.
 
 The check follows keyboard focus, and apps choose their own `app_id`, so this guards against mistakes. A click can still land on a denied window while an allowed app has focus. `desktop_state` shows each window's `app_id`.
 
@@ -123,7 +123,7 @@ The server reads these once, at startup. When `XDG_RUNTIME_DIR`, `NIRI_SOCKET` o
 |---|---|
 | `NIRI_SOCKET` | niri's IPC socket. With every symlink resolved, it also names the niri instance that the lease, the stop flag and the input-dirty marker belong to: they are in `niri-computer-use/<instance>/` beside the socket, where `<instance>` is its file name without `.sock`. A socket with a hard link, which would be another name for the same niri, gets no lease by any name |
 | `XDG_RUNTIME_DIR` | finding niri's socket, the display and the session bus |
-| `WAYLAND_DISPLAY` | the pointer tools, `paste`, `clipboard_read`, and finding Noctalia's socket |
+| `WAYLAND_DISPLAY` | the pointer tools, pasting, `clipboard_read`, and finding Noctalia's socket |
 | `DBUS_SESSION_BUS_ADDRESS` | finding the accessibility bus for `elements`; without it, `$XDG_RUNTIME_DIR/bus` |
 | `PATH` | `grim`, `wtype`, `loginctl` and `noctalia` |
 | `XDG_CONFIG_HOME`, else `HOME` | the policy file |

@@ -77,7 +77,7 @@ fn offers_hint(types: &[String]) -> bool {
 /// says so, whatever else it offers, else the type `wl-paste --type text` reads, or
 /// `no_text`. A paste's own text, which its keeper serves until another copy when it can't
 /// put the clipboard back, carries the hint too, and stays withheld: it may be another
-/// client's paste on a shared engine, or a password typed through `paste`, and the agent
+/// client's paste on a shared engine, or a password pasted by `type_text`, and the agent
 /// that pasted it already has it.
 fn pick<'a>(types: &'a [String], hint: Option<&[u8]>) -> Result<&'a str, &'static str> {
     if hint == Some(SECRET) {

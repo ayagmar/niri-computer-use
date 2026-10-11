@@ -121,7 +121,8 @@ pub(super) fn secret(session: &mut Session<'_>, client: &mut Client) -> Result<(
         WAIT,
         |session| Ok((offered(session)? == expected).then_some(())),
     )?;
-    let args = json!({"text": "x", "keys": "ctrl+v", "expect": {"app_id": APP_ID}});
+    let args =
+        json!({"text": "x", "via": "paste", "paste_keys": "ctrl+v", "expect": {"app_id": APP_ID}});
     refused(session, client, args, "clipboard_unsaved")?;
     entry_shows(session, "")?;
     withheld(session, client, OWNERS_TEXT, "secret")?;
@@ -187,11 +188,11 @@ fn refusals(
     server: &str,
     copied: &Offered,
 ) -> Result<()> {
-    let elsewhere =
-        json!({"text": "x", "keys": "ctrl+v", "expect": {"app_id": "org.ncu.Elsewhere"}});
+    let elsewhere = json!({"text": "x", "via": "paste", "paste_keys": "ctrl+v", "expect": {"app_id": "org.ncu.Elsewhere"}});
     refused(session, client, elsewhere, "focus_mismatch")?;
     session.run(server, &["stop".into()])?;
-    let here = json!({"text": "x", "keys": "ctrl+v", "expect": {"app_id": APP_ID}});
+    let here =
+        json!({"text": "x", "via": "paste", "paste_keys": "ctrl+v", "expect": {"app_id": APP_ID}});
     refused(session, client, here, "stopped")?;
     stop::resume(session, client, server)?;
     entry_shows(session, "")?;
@@ -204,7 +205,7 @@ fn refusals(
 }
 
 fn refused(session: &mut Session<'_>, client: &mut Client, args: Value, error: &str) -> Result<()> {
-    let result = client.call(session, "paste", args)?;
+    let result = client.call(session, "type_text", args)?;
     if field(&result, "/structuredContent/error") != error {
         return Err(Failure::new(format!(
             "M7 paste: expected {error}, saw {result}"
@@ -214,8 +215,9 @@ fn refused(session: &mut Session<'_>, client: &mut Client, args: Value, error: &
 }
 
 fn paste(session: &mut Session<'_>, client: &mut Client, text: &str) -> Result<Value> {
-    let args = json!({"text": text, "keys": "ctrl+v", "expect": {"app_id": APP_ID}});
-    structured(&client.call(session, "paste", args)?)
+    let args =
+        json!({"text": text, "via": "paste", "paste_keys": "ctrl+v", "expect": {"app_id": APP_ID}});
+    structured(&client.call(session, "type_text", args)?)
 }
 
 fn expect_outcome(result: &Value, clipboard: &str) -> Result<()> {

@@ -511,12 +511,22 @@ struct KeyArgs {
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct TypeTextArgs {
-    /// 1 to 1000 characters.
+    /// Up to 1000 characters to type, or 1 MiB to paste.
     text: String,
     /// The window that must have keyboard focus: `{"window_id": <id>}`, `{"app_id":
     /// "<app_id>"}`, or `"none"` to skip the check, as for a shell panel.
     expect: ExpectArg,
-    /// Press `Return` after the text, only if all of it went out and focus stayed.
+    /// `keys` types the text; `paste` pastes it through the clipboard, for long text, and
+    /// then puts the user's clipboard back.
+    #[serde(default)]
+    via: ViaArg,
+    /// With `via: "paste"`: the combination that pastes in that app, `ctrl+v`, or
+    /// `ctrl+shift+v` in terminals; `shift+Insert` where neither does.
+    #[schemars(with = "PasteKeys", default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    paste_keys: Option<PasteKeys>,
+    /// Press `Return` after the text, only if all of it went out and focus stayed. Typing
+    /// only.
     #[serde(default)]
     submit: bool,
     /// Also return a screenshot of the focused output once the screen settles.
@@ -528,17 +538,63 @@ struct TypeTextArgs {
     element_changes: bool,
 }
 
+impl TypeTextArgs {
+    /// The combination to paste with, or none to type; `paste_keys` and `submit` each fit
+    /// only one of the two.
+    fn paste_keys(&self) -> Result<Option<PasteKeys>, CallError> {
+        let mistake = |message: &str| Err(CallError::InvalidArguments(message.to_owned()));
+        match (self.via, self.paste_keys) {
+            (ViaArg::Keys, None) => Ok(None),
+            (ViaArg::Keys, Some(_)) => mistake("`paste_keys` needs `via: \"paste\"`"),
+            (ViaArg::Paste, None) => mistake(
+                "`via: \"paste\"` needs `paste_keys`: `ctrl+v` in most apps, `ctrl+shift+v` in terminals",
+            ),
+            (ViaArg::Paste, Some(_)) if self.submit => mistake(
+                "`submit` needs `via: \"keys\"`; after a paste, look at the result, then press `Return` with `key`",
+            ),
+            (ViaArg::Paste, Some(keys)) => Ok(Some(keys)),
+        }
+    }
+
+    /// The arguments for the audit log: the text's length, never the text.
+    fn logged(&self) -> Value {
+        let mut logged = serde_json::json!({
+            "text_len": self.text.chars().count(),
+            "expect": self.expect,
+        });
+        if let (ViaArg::Paste, Some(fields)) = (self.via, logged.as_object_mut()) {
+            fields.insert("via".to_owned(), Value::from("paste"));
+        }
+        if let (Some(keys), Some(fields)) = (self.paste_keys, logged.as_object_mut()) {
+            fields.insert("paste_keys".to_owned(), Value::from(keys.combo()));
+        }
+        flag(&mut logged, "submit", self.submit);
+        flag(&mut logged, "screenshot", self.screenshot);
+        flag(&mut logged, "element_changes", self.element_changes);
+        logged
+    }
+}
+
+/// How `type_text` puts its text in.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema,
+)]
+#[schemars(crate = "rmcp::schemars", inline)]
+#[serde(rename_all = "lowercase")]
+enum ViaArg {
+    #[default]
+    Keys,
+    Paste,
+}
+
 /// The combination that pastes in the focused app.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, schemars::JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars", inline)]
 enum PasteKeys {
-    /// Most apps.
     #[serde(rename = "ctrl+v")]
     CtrlV,
-    /// Terminals, such as foot, kitty, Alacritty and Ghostty.
     #[serde(rename = "ctrl+shift+v")]
     CtrlShiftV,
-    /// Apps where neither of the others pastes, such as some terminals and X11 apps.
     #[serde(rename = "shift+Insert")]
     ShiftInsert,
 }
@@ -551,26 +607,6 @@ impl PasteKeys {
             Self::ShiftInsert => "shift+Insert",
         }
     }
-}
-
-#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-struct PasteArgs {
-    /// The text to paste, up to 1 MiB.
-    text: String,
-    /// The combination that pastes in the focused app: `ctrl+v` in most apps,
-    /// `ctrl+shift+v` in terminals.
-    keys: PasteKeys,
-    /// The window that must have keyboard focus: `{"window_id": <id>}`, `{"app_id":
-    /// "<app_id>"}`, or `"none"` to skip the check, as for a shell panel.
-    expect: ExpectArg,
-    /// Also return a screenshot of the focused output once the screen settles.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    screenshot: bool,
-    /// Also list which of the focused window's accessible elements changed, in
-    /// `changes.elements`; slower.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    element_changes: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -1033,14 +1069,19 @@ impl Server {
         self.type_input(&context, logged, keying).await
     }
 
-    /// Types text into the focused app, up to 1000 characters, sent in parts of 100.
-    /// `expect`, the results and the refusals are as for `key`. If focus moves during a
-    /// part, the rest isn't typed: `observed` is `interrupted` and `typed` counts the
-    /// characters sent. A failed call's detail says how much was typed before it; text
-    /// over the limit is refused with `text_too_long` and nothing is typed. To send a
-    /// message, pass `submit: true`: `Return` is pressed only once all of the text went out,
-    /// and `submitted` says whether it was; never press Enter yourself after a call that
-    /// stopped early. The text is never logged. Requires the lease.
+    /// Types text into the focused app. `expect` must name the focused window or app
+    /// (`focus_mismatch` otherwise); refused with `app_denied` while the focused app is on
+    /// the deny list, even with `expect: "none"`. By default up to 1000 characters go out
+    /// as key events, in parts: if focus moves, the rest isn't typed, `observed` is
+    /// `interrupted` and `typed` counts what went out. To send a message, pass `submit:
+    /// true`: `Return` is pressed only once all of it went out (`submitted`); never press
+    /// Enter yourself after a call that stopped early. `via: "paste"` with `paste_keys`
+    /// pastes up to 1 MiB through the clipboard and puts the user's clipboard back; one it
+    /// can't save whole, or that its owner marked secret, is refused with
+    /// `clipboard_unsaved` and nothing changes. `paste.read` says whether the app read the
+    /// text, `paste.clipboard` what became of the clipboard. Longer text is
+    /// `text_too_long`, with nothing typed. Never repeat a call on your own. The text is
+    /// never logged. Requires the lease.
     #[tool(annotations(
         read_only_hint = false,
         destructive_hint = true,
@@ -1052,65 +1093,31 @@ impl Server {
         Parameters(args): Parameters<TypeTextArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        // The length, never the text.
-        let mut logged = serde_json::json!({
-            "text_len": args.text.chars().count(),
-            "expect": args.expect,
-        });
-        flag(&mut logged, "submit", args.submit);
-        flag(&mut logged, "screenshot", args.screenshot);
-        flag(&mut logged, "element_changes", args.element_changes);
-        let typing = Typing::Text {
-            text: args.text,
-            submit: args.submit,
+        let logged = args.logged();
+        let paste_keys = match args.paste_keys() {
+            Ok(Some(keys)) => Ok(keys),
+            Err(mistake) => Err(mistake),
+            Ok(None) => {
+                let keying = Keying {
+                    typing: Typing::Text {
+                        text: args.text,
+                        submit: args.submit,
+                    },
+                    expect: args.expect.into(),
+                    shoot: args.screenshot,
+                    element_changes: args.element_changes,
+                };
+                return self.type_input(&context, logged, keying).await;
+            }
         };
-        let keying = Keying {
-            typing,
-            expect: args.expect.into(),
-            shoot: args.screenshot,
-            element_changes: args.element_changes,
-        };
-        self.type_input(&context, logged, keying).await
-    }
-
-    /// Pastes text into the focused app through the clipboard, for text too long for
-    /// `type_text` (up to 1 MiB), then puts the user's clipboard back. The clipboard is
-    /// saved whole first, every type it offers, or the call is refused with
-    /// `clipboard_unsaved` and nothing changes; a clipboard its owner marked as a secret is
-    /// refused too. Pass the combination that pastes in that app as `keys`: `ctrl+v`, or
-    /// `ctrl+shift+v` in terminals. `expect` and the refusals are as for `key`, checked
-    /// before the clipboard is touched. `paste.read` says whether an app read the text
-    /// after the key; `paste.clipboard` is `restored`, `cleared` (it was empty, or held
-    /// an earlier paste's text, as `detail` says), `replaced` (someone copied meanwhile,
-    /// so theirs stays), `failed`, `kept` (the pasted text stays) or `unknown`, with
-    /// `detail`. Check `changes` or a screenshot; never paste again on your own. The
-    /// text is never logged. Requires the lease.
-    #[tool(annotations(
-        read_only_hint = false,
-        destructive_hint = true,
-        idempotent_hint = false,
-        open_world_hint = false
-    ))]
-    async fn paste(
-        &self,
-        Parameters(args): Parameters<PasteArgs>,
-        context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, ErrorData> {
-        // The length, never the text.
-        let mut logged = serde_json::json!({
-            "text_len": args.text.chars().count(),
-            "keys": args.keys,
-            "expect": args.expect,
-        });
-        flag(&mut logged, "screenshot", args.screenshot);
-        flag(&mut logged, "element_changes", args.element_changes);
         let expect = args.expect.into();
         let work = async {
+            let keys = paste_keys?;
             let input = self.engine.input(&self.session)?;
-            paste::paste(input, &args.text, args.keys.combo(), expect).await
+            paste::paste(input, &args.text, keys.combo(), expect).await
         };
         let asked = Asked {
-            tool: "paste",
+            tool: "type_text",
             logged,
             report: Report {
                 shoot: args.screenshot,
@@ -1712,7 +1719,7 @@ fn invalid(message: &str) -> CallToolResult {
 #[tool_handler(
     router = self.tool_router,
     name = "niri-computer-use",
-    instructions = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows, workspaces and monitors; take a `screenshot` only when you need to see pixels. `elements`, when listed, gives a window's accessible elements, which `activate_element` and `set_element_text` act on without the pointer once their window has focus. To act, call `acquire_desktop`, then one action at a time (pointer tools with a fresh `screenshot_ref`, `key`, `type_text` and `paste` with `expect`, `niri_action` for window layout), reading `accepted` and `observed` before the next call. A result's `changes` says what niri saw the action change and is absent when nothing did: read it first, and take a screenshot only when it is empty or unexpected. To see an action's result, pass it `screenshot: true` rather than sending a `screenshot` alongside it, and use `wait_for` rather than repeated screenshots to wait for a window or for the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter, and start apps through `launch` presets; with no preset for the app, use `niri_action` `Spawn` with the program's argv (never a shell or `SpawnSh`) when `status.unrestricted.enabled` is true, then find its window with `wait_for` or `desktop_state` (its `app_id` may differ from the program's name) and never repeat the `Spawn`; otherwise ask the user to add a preset. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
+    instructions = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows, workspaces and monitors; take a `screenshot` only when you need to see pixels. `elements`, when listed, gives a window's accessible elements, which `activate_element` and `set_element_text` act on without the pointer once their window has focus. To act, call `acquire_desktop`, then one action at a time (pointer tools with a fresh `screenshot_ref`, `key` and `type_text` with `expect`, `niri_action` for window layout), reading `accepted` and `observed` before the next call. A result's `changes` says what niri saw the action change and is absent when nothing did: read it first, and take a screenshot only when it is empty or unexpected. To see an action's result, pass it `screenshot: true` rather than sending a `screenshot` alongside it, and use `wait_for` rather than repeated screenshots to wait for a window or for the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter, and start apps through `launch` presets; with no preset for the app, use `niri_action` `Spawn` with the program's argv (never a shell or `SpawnSh`) when `status.unrestricted.enabled` is true, then find its window with `wait_for` or `desktop_state` (its `app_id` may differ from the program's name) and never repeat the `Spawn`; otherwise ask the user to add a preset. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
 )]
 impl ServerHandler for Server {}
 
@@ -1769,7 +1776,6 @@ mod tests {
             (Server::scroll_tool_attr(), (no, no, no)),
             (Server::key_tool_attr(), (no, yes, no)),
             (Server::type_text_tool_attr(), (no, yes, no)),
-            (Server::paste_tool_attr(), (no, yes, no)),
             (Server::activate_element_tool_attr(), (no, yes, no)),
             (Server::set_element_text_tool_attr(), (no, yes, yes)),
             (Server::shell_panel_tool_attr(), (no, no, yes)),
@@ -1910,6 +1916,29 @@ mod tests {
             target(serde_json::json!({"window_id": 7, "workspace_id": 2})),
             None
         );
+    }
+
+    #[test]
+    fn type_text_pastes_only_with_paste_keys_and_submits_only_when_typing() {
+        let keys = |args: Value| {
+            let mut args = args;
+            args["text"] = Value::from("hi");
+            args["expect"] = Value::from("none");
+            serde_json::from_value::<TypeTextArgs>(args)
+                .unwrap()
+                .paste_keys()
+                .map_err(|_| ())
+        };
+        assert_eq!(keys(serde_json::json!({})), Ok(None));
+        assert_eq!(keys(serde_json::json!({"submit": true})), Ok(None));
+        assert_eq!(
+            keys(serde_json::json!({"via": "paste", "paste_keys": "ctrl+shift+v"})),
+            Ok(Some(PasteKeys::CtrlShiftV))
+        );
+        assert_eq!(keys(serde_json::json!({"via": "paste"})), Err(()));
+        assert_eq!(keys(serde_json::json!({"paste_keys": "ctrl+v"})), Err(()));
+        let submitted = serde_json::json!({"via": "paste", "paste_keys": "ctrl+v", "submit": true});
+        assert_eq!(keys(submitted), Err(()));
     }
 
     /// An engine for `env`, without niri or an accessibility bus.

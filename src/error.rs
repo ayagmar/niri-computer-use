@@ -45,14 +45,14 @@ pub(crate) enum ErrorName {
     AppDenied,
     /// A keyboard tool's `expect` doesn't match the focused window.
     FocusMismatch,
-    /// `type_text` over 1000 characters, or `paste` over 1 MiB.
+    /// `type_text` over 1000 characters, or over 1 MiB with `via: "paste"`.
     TextTooLong,
     /// A screenshot ref that is unknown, expired, for a changed output, or a pixel outside
     /// its image.
     RefInvalid,
     /// `shell_panel` named a panel outside the allowlist.
     PanelNotAllowed,
-    /// `paste` couldn't save the clipboard whole, so it pasted nothing.
+    /// A paste couldn't save the clipboard whole, so it pasted nothing.
     ClipboardUnsaved,
     /// `screenshot` was asked to save without a `capture_dir` in the policy file.
     SaveNotEnabled,

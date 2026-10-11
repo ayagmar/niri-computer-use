@@ -147,7 +147,7 @@ fn check_text(text: &str) -> Result<(), CallError> {
     if length > MAX_TEXT {
         return Err(ToolError::new(
             ErrorName::TextTooLong,
-            format!("{length} characters; at most {MAX_TEXT} per call, so split the text; nothing was typed"),
+            format!("{length} characters; at most {MAX_TEXT} per call, so split the text or pass `via: \"paste\"`; nothing was typed"),
         )
         .into());
     }

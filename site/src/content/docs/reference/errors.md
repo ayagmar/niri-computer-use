@@ -95,15 +95,15 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 ### `text_too_long`
 
-**Cause:** `type_text` with over 1000 characters, `paste` with over 1 MiB, or `set_element_text` with over 64 KiB of UTF-8. Nothing was typed or set.
+**Cause:** `type_text` with over 1000 characters, or over 1 MiB with `via: "paste"`, or `set_element_text` with over 64 KiB of UTF-8. Nothing was typed or set.
 
-**What to do:** split the text into calls of at most 1000 characters, or use `paste`.
+**What to do:** split the text into calls of at most 1000 characters, or pass `via: "paste"`.
 
 ### `clipboard_unsaved`
 
-**Cause:** `paste` couldn't save the clipboard whole before replacing it: every type it offers, over 16 MiB in all, or not read within two seconds. Or the clipboard holds what its owner marked as a secret (`x-kde-passwordManagerHint`), or something else was copied while it was being saved. Nothing changed. An earlier paste's text, which a `kept` outcome leaves on the clipboard marked as a secret, isn't refused: the next `paste` replaces it and reports `clipboard: cleared`.
+**Cause:** a paste (`type_text` with `via: "paste"`) couldn't save the clipboard whole before replacing it: every type it offers, over 16 MiB in all, or not read within two seconds. Or the clipboard holds what its owner marked as a secret (`x-kde-passwordManagerHint`), or something else was copied while it was being saved. Nothing changed. An earlier paste's text, which a `kept` outcome leaves on the clipboard marked as a secret, isn't refused: the next paste replaces it and reports `clipboard: cleared`.
 
-**What to do:** type the text with `type_text` instead, in parts of at most 1000 characters.
+**What to do:** type the text with `type_text` and `via: "keys"` instead, in parts of at most 1000 characters.
 
 ### `save_not_enabled`
 

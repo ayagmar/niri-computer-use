@@ -140,7 +140,7 @@ impl Session {
     }
 }
 
-/// The longest line a client may send, newline included: `paste`'s 1 MiB of text, at up
+/// The longest line a client may send, newline included: a paste's 1 MiB of text, at up
 /// to six bytes a character in JSON, with room to spare.
 pub(crate) const MAX_LINE: usize = 16 * 1024 * 1024;
 

@@ -66,10 +66,6 @@ fn expected(name: &str) -> (Value, Value) {
             json!(["screenshot_ref", "x", "y"]),
         ),
         "key" => (json!([false, true, false]), json!(["keys", "expect"])),
-        "paste" => (
-            json!([false, true, false]),
-            json!(["text", "keys", "expect"]),
-        ),
         "shell_panel" => (json!([false, false, true]), json!(["panel", "open"])),
         "type_text" => (json!([false, true, false]), json!(["text", "expect"])),
         _ => read_only,
@@ -95,7 +91,6 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
             "key",
             "launch",
             "niri_action",
-            "paste",
             "pointer_move",
             "release_desktop",
             "screenshot",
@@ -128,7 +123,7 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
 }
 
 /// How many arguments each tool takes; tools not listed take none.
-const PROPERTIES: [(&str, usize); 15] = [
+const PROPERTIES: [(&str, usize); 14] = [
     ("screenshot", 5),
     ("launch", 3),
     ("niri_action", 2),
@@ -139,8 +134,7 @@ const PROPERTIES: [(&str, usize); 15] = [
     ("drag", 6),
     ("scroll", 7),
     ("key", 4),
-    ("type_text", 5),
-    ("paste", 5),
+    ("type_text", 7),
     ("shell_panel", 3),
     ("release_desktop", 1),
     ("wait_for", 3),
@@ -148,7 +142,7 @@ const PROPERTIES: [(&str, usize); 15] = [
 
 /// `(tool, JSON pointer into its properties, expected value)`: advertised defaults and
 /// bounds. Null means the field has no default.
-fn advertised() -> [(&'static str, &'static str, Value); 18] {
+fn advertised() -> [(&'static str, &'static str, Value); 20] {
     [
         ("screenshot", "/max_width/default", json!(1280)),
         ("screenshot", "/format/default", json!("jpeg")),
@@ -167,6 +161,8 @@ fn advertised() -> [(&'static str, &'static str, Value); 18] {
         ("key", "/keys/minItems", json!(1)),
         ("key", "/keys/maxItems", json!(16)),
         ("type_text", "/submit/default", json!(false)),
+        ("type_text", "/via/default", json!("keys")),
+        ("type_text", "/paste_keys/default", Value::Null),
         ("wait_for", "/timeout_ms/default", json!(10000)),
     ]
 }
@@ -210,7 +206,6 @@ async fn without_noctalia_on_path_there_are_no_shell_tools() {
             "key",
             "launch",
             "niri_action",
-            "paste",
             "pointer_move",
             "release_desktop",
             "screenshot",
