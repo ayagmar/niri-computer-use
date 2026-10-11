@@ -502,6 +502,45 @@ async fn an_element_moved_to_another_window_of_its_app_is_stale() {
     refused(&mut desk, &moved, 3, "focus_mismatch").await;
 }
 
+// Sol's mixed case: window 1's own frame is larger than niri's window, as with client-side
+// decorations, and the app's other window has window 1's size. The size points at the other
+// frame and the title at the right one, so window 1's elements aren't listed, and nothing of
+// the other window is acted on through window 1.
+#[tokio::test]
+async fn a_frame_of_the_right_size_with_another_windows_title_is_never_taken() {
+    let mut objects = objects();
+    objects[0].1 = Object::frame("Mock", (850, 650), &["/panel"]);
+    objects.extend([
+        ("/frame2", Object::frame("Other", (800, 600), &["/panel2"])),
+        ("/panel2", Object::panel(&["/other"])),
+        ("/other", Object::button("Other safe", &["click"])),
+    ]);
+    let mut second = app_window(3, false);
+    second["title"] = json!("Other");
+    let windows = [app_window(WINDOW, true), second];
+    let mut desk =
+        Desk::start_with("el-mixed-csd", &["/frame", "/frame2"], objects, &windows).await;
+    let refused = desk
+        .server
+        .call("elements", json!({"window_id": WINDOW}))
+        .await;
+    assert_eq!(tool_error(&refused).0, "ambiguous_window", "{refused}");
+    let listing = desk
+        .server
+        .structured_with("elements", json!({"window_id": 3}))
+        .await;
+    let other = listing["elements"][0]["element_ref"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    for window in [WINDOW, 3] {
+        let arguments = json!({"element": other, "expect": {"window_id": window}});
+        let result = desk.server.call("activate_element", arguments).await;
+        assert_eq!(tool_error(&result).0, "focus_mismatch", "{result}");
+    }
+    assert_eq!(desk.mock.calls("DoAction"), 0);
+}
+
 /// What changes while an element action is still reading the element.
 #[derive(Debug, Clone, Copy)]
 enum Change {

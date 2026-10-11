@@ -423,6 +423,12 @@ impl Request {
                     format!("{count} of the application's accessible windows could be this window"),
                 ));
             }
+            Err(NoFrame::Contradicted) => {
+                return Err(ToolError::new(
+                    ErrorName::AmbiguousWindow,
+                    "the application's accessible window of this window's size doesn't have its title, and another of its accessible windows does",
+                ));
+            }
         };
         let node = candidates
             .get(picked)

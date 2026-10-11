@@ -39,7 +39,7 @@ These are the user's decisions. Don't call the refused action again and don't tr
 | `clipboard_unsaved` | `paste` couldn't save the user's clipboard whole (too large, an owner that didn't answer, something its owner marked secret other than an earlier paste's text, or a copy made while it saved), so it changed nothing. Use `type_text` instead, in parts of at most 1000 characters. |
 | `save_not_enabled` | `screenshot`'s `save_path` needs a `capture_dir` in the user's policy file, and there is none. Ask the user to add one; don't save the image another way. |
 | `not_accessible` | The window's app isn't on the accessibility bus, or has no accessible window that is this one. Use screenshots for that window. |
-| `ambiguous_window` | The app has several accessible windows that could be this one. Use screenshots for that window. |
+| `ambiguous_window` | The app has several accessible windows that could be this one, or the one of this window's size has another window's title. Use screenshots for that window. |
 | `panel_not_allowed` | Only `control-center`, `wallpaper` and `tray-drawer` can be opened. Don't reach another panel some other way. |
 
 ## Report and don't loop

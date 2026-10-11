@@ -371,11 +371,17 @@ pub(crate) enum NoFrame {
     None,
     /// Several frames fit, and the title doesn't tell them apart.
     Ambiguous(usize),
+    /// The frame of the window's size doesn't have the window's title, and another frame
+    /// does: the size and the title point at different frames.
+    Contradicted,
 }
 
 /// Picks the frame that is niri's window among an application's frames: the one that
 /// passes the frame guard, or failing that the only frame. When several qualify, only the
-/// one whose name is the window's title is taken.
+/// one whose name is the window's title is taken. A size match never overrides the title:
+/// a frame of the window's size without its title, beside another frame with it, is
+/// `Contradicted`, as when the window's own frame is larger, with client-side decorations,
+/// and another window of the app happens to have its size.
 pub(crate) fn pick_frame(
     frames: &[Frame<'_>],
     window_size: (i32, i32),
@@ -389,10 +395,23 @@ pub(crate) fn pick_frame(
         })
         .collect();
     if !fitting.is_empty() {
-        return only(frames, &fitting, title).map(Picked::Fits);
+        let picked = only(frames, &fitting, title)?;
+        if titled_elsewhere(frames, picked, title) {
+            return Err(NoFrame::Contradicted);
+        }
+        return Ok(Picked::Fits(picked));
     }
     let all: Vec<usize> = (0..frames.len()).collect();
     only(frames, &all, title).map(Picked::Mismatch)
+}
+
+/// Whether the frame at `picked` lacks `title` while another frame has it.
+fn titled_elsewhere(frames: &[Frame<'_>], picked: usize, title: Option<&str>) -> bool {
+    let Some(title) = title else {
+        return false;
+    };
+    let named = |index: usize| frames.get(index).is_some_and(|frame| frame.name == title);
+    !named(picked) && (0..frames.len()).any(named)
 }
 
 /// The one candidate, or the one whose name is `title`.
@@ -652,6 +671,19 @@ mod tests {
             Err(NoFrame::Ambiguous(2))
         );
         assert_eq!(pick_frame(&twins, size, None), Err(NoFrame::Ambiguous(2)));
+        // Two windows of one app: this one's frame is larger than niri's window, as with
+        // client-side decorations, and the other's frame has this window's size.
+        let mixed = [frame(450, 350, "this"), frame(400, 300, "other")];
+        assert_eq!(
+            pick_frame(&mixed, size, Some("this")),
+            Err(NoFrame::Contradicted)
+        );
+        assert_eq!(pick_frame(&mixed, size, Some("other")), Ok(Picked::Fits(1)));
+        // A title no frame has leaves the size to decide.
+        assert_eq!(
+            pick_frame(&mixed, size, Some("renamed")),
+            Ok(Picked::Fits(1))
+        );
         let unfit = [frame(10, 10, "a"), frame(20, 20, "b")];
         assert_eq!(pick_frame(&unfit, size, Some("b")), Ok(Picked::Mismatch(1)));
         assert_eq!(pick_frame(&[], size, None), Err(NoFrame::None));
