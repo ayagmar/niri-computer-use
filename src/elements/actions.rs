@@ -738,6 +738,7 @@ mod tests {
                 window(3, Some("app"), 1, focused == 3),
                 window(4, Some("secret"), 1, focused == 4),
                 window(5, Some("other"), 1, focused == 5),
+                window(6, Some("app"), 1, focused == 6),
             ])
         };
         let check = |focused: u64, element: &ElementRef, expect: Expect| {
@@ -760,6 +761,12 @@ mod tests {
         );
         assert_eq!(
             error(check(0, &mine, Expect::Window(3))),
+            ErrorName::FocusMismatch
+        );
+        // Another window of the element's app has focus: `expect` naming the app matches it,
+        // but the element's own window must be the focused one.
+        assert_eq!(
+            error(check(6, &mine, Expect::App("app".to_owned()))),
             ErrorName::FocusMismatch
         );
         // The element's window has focus, but `expect` names another.
