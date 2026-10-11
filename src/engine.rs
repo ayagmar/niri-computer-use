@@ -543,7 +543,7 @@ impl Engine {
         };
         let wait = if shoot { Wait::Settled } else { Wait::Quiet };
         let mut changes = match recorder {
-            Some(recorder) => recorder.finish(wait).await,
+            Some(recorder) => recorder.finish(wait, &mut evidenced.outcome).await,
             None => Changes::default(),
         };
         if let Some(before) = before {

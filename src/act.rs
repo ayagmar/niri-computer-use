@@ -90,8 +90,10 @@ pub(crate) struct Outcome {
     /// request was sent but its reply was lost.
     pub(crate) accepted: Option<bool>,
     pub(crate) observed: Observed,
-    /// The window with keyboard focus when the observation ended; null when focus isn't on
-    /// a window, or when the reply was lost before observing.
+    /// The window with keyboard focus when the change report ended, or without a report
+    /// when the observation ended; null when focus isn't on a window, when niri's event
+    /// stream was lost during the report, or without a report when the reply was lost
+    /// before observing.
     pub(crate) focused_window: Option<u64>,
     /// The windows the outcome is about: the one launched or reused, or the candidates.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -116,7 +118,8 @@ pub(crate) struct Outcome {
     /// `noctalia`: Noctalia's reply.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) noctalia: Option<crate::noctalia::Reply>,
-    /// `niri_action`: the window the action is about, as niri reports it at the end.
+    /// `niri_action`: the window the action is about, as niri reports it at the end; once
+    /// closed, as last seen, without focus.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) window: Option<compositor::WindowState>,
     /// `paste`: whether the text was read, and what became of the clipboard.
@@ -150,6 +153,18 @@ pub(crate) struct Evidenced {
 }
 
 impl Outcome {
+    /// Focus, and the window the outcome is about, as `view` has them: the view an action's
+    /// change report ended at, which can be later than the observation.
+    pub(crate) fn caught_up(&mut self, view: &View) {
+        self.focused_window = view.focused_window();
+        if let Some(window) = &mut self.window {
+            match view.windows().get(&window.id) {
+                Some(now) => *window = now.into(),
+                None => window.is_focused = false,
+            }
+        }
+    }
+
     pub(crate) fn seen(observed: Observed, view: &View, windows: Vec<u64>) -> Self {
         Self {
             accepted: Some(true),

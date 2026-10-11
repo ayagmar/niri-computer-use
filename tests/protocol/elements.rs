@@ -1159,7 +1159,7 @@ async fn a_stop_or_lost_lease_after_the_call_went_out_leaves_it_uncertain() {
 }
 
 // Sol's held `SetTextContents`: focus left the window while the app held its answer. The
-// result's focused window is the one when the look afterwards ended.
+// result's focused window is the one when the change report ended.
 #[tokio::test]
 async fn focus_that_moved_while_the_text_went_out_is_reported_as_it_is_afterwards() {
     let mut desk = Desk::start("el-text-focus").await;
@@ -1207,7 +1207,7 @@ async fn a_stream_lost_while_the_call_was_out_leaves_focus_unknown() {
 
 // Fable's case: the acting call held past its deadline while focus left the window, or while
 // niri's event stream was lost. The reply is lost, so `accepted` is null, and the focused
-// window is the one when the look afterwards ended, or none once the stream was lost, which
+// window is the one when the change report ended, or none once the stream was lost, which
 // `detail` says beside the lost reply.
 #[tokio::test]
 async fn a_lost_reply_reports_focus_as_it_is_after_the_look() {

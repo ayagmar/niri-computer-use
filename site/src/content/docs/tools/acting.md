@@ -50,7 +50,7 @@ An unknown window or workspace id is an argument mistake, and nothing is sent. O
 |---|---|
 | `accepted` | true once niri acknowledged the request; false when nothing was sent; null when the request was sent but niri's reply was lost |
 | `observed` | what niri's event stream showed afterwards; the values are listed under each tool |
-| `focused_window` | the window with keyboard focus when the observation ended, or null when focus isn't on a window or the reply was lost |
+| `focused_window` | the window with keyboard focus when `changes` ended, the same view `changes.focus.to` comes from; null when focus isn't on a window or niri's event stream was lost meanwhile |
 | `windows` | the windows the outcome is about, when there are any |
 | `changes` | what niri saw the action change, as above; absent when nothing did |
 | `detail` | why the outcome is `uncertain` |
@@ -59,7 +59,7 @@ An unknown window or workspace id is an argument mistake, and nothing is sent. O
 
 Every action waits up to five seconds for its effect. Two outcomes can end any of them:
 
-- `interrupted`: focus moved to a window that was neither focused before nor the expected target, so someone else is using the desktop. `focused_window` says where focus went.
+- `interrupted`: focus moved to a window that was neither focused before nor the expected target, so someone else is using the desktop. `focused_window` says where focus came to rest.
 - `uncertain`: niri's reply or event stream was lost, so the action may or may not have happened. `accepted` is null when the reply was lost.
 
 None of these outcomes is an error, and the server never retries an action. `timeout`, `pending`, `none`, `interrupted` and `uncertain` are outcomes in doubt: the result comes with a fresh screenshot of the focused output, 1280 pixels wide, so the agent can see the desktop without another call.
@@ -118,7 +118,7 @@ For window layout and other compositor actions that have no tool of their own. F
 
 An `id` of null means the focused window. `CloseWindow` with a null id goes out naming the focused window by its id, so focus moving meanwhile can't redirect it, and with no window focused it sends nothing and is an argument mistake. JSON that isn't a niri action is an argument mistake carrying serde's message, and so is a window id that doesn't exist. niri's refusal is `upstream_error` with niri's message.
 
-For an action about one window, the one it names or the focused one, the server waits up to a second for niri to report a change in that window, then 200 ms more for a resize that comes in steps. `observed` is `changed`, `unchanged` or `closed`, `windows` holds the id, and `window` is the window as niri then reports it:
+For an action about one window, the one it names or the focused one, the server waits up to a second for niri to report a change in that window, then 200 ms more for a resize that comes in steps. `observed` is `changed`, `unchanged` or `closed`, `windows` holds the id, and `window` is the window as niri reports it when `changes` ended, or as last seen once it closed:
 
 | Field | Value |
 |---|---|

@@ -9,6 +9,7 @@ use std::time::Duration;
 use niri_ipc::Window;
 use tokio::time::Instant;
 
+use super::Outcome;
 use crate::changes::{self, Changes, Scene};
 use crate::niri::waiter::{Waited, Waiter};
 use crate::niri::{self, Events};
@@ -70,14 +71,21 @@ impl Recorder {
         work.await
     }
 
-    /// Applies niri's events as `wait` says, then what changed since the start; with
-    /// `lost` saying why when the stream ended first.
-    pub(crate) async fn finish(mut self, wait: Wait) -> Changes {
+    /// Applies niri's events as `wait` says, then brings `outcome`'s focus up to the view
+    /// the report ends at, so a result never names two focused windows, and says what
+    /// changed since the start; with `lost` saying why when the stream ended first, and
+    /// then focus unknown.
+    pub(crate) async fn finish(mut self, wait: Wait, outcome: &mut Outcome) -> Changes {
         if wait == Wait::Quiet {
             self.quiet().await;
         }
         self.drain().await;
         let view = self.waiter.view();
+        if self.lost.is_some() {
+            outcome.focused_window = None;
+        } else {
+            outcome.caught_up(view);
+        }
         let mut changes = changes::desktop(&self.before, &Scene::of(view), &self.passing);
         changes.lost = self.lost;
         changes
@@ -141,13 +149,16 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::act::Observed;
     use crate::niri::waiter::Update;
     use crate::niri::waiter::tests::{view, waiter, window};
 
     type Sender = tokio::sync::broadcast::Sender<Update>;
 
-    fn watching(windows: Vec<Window>) -> (Recorder, Sender) {
+    /// A watch started now on `windows`, and the outcome of an action that observed them.
+    fn watching(windows: Vec<Window>) -> (Recorder, Outcome, Sender) {
         let (waiter, sender) = waiter(view(windows), 0);
+        let outcome = Outcome::seen(Observed::Sent, waiter.view(), Vec::new());
         let before = Scene::of(waiter.view());
         let recorder = Recorder {
             waiter,
@@ -156,7 +167,7 @@ mod tests {
             last: Instant::now(),
             lost: None,
         };
-        (recorder, sender)
+        (recorder, outcome, sender)
     }
 
     fn event(sender: &Sender, seq: u64, event: Event) {
@@ -169,7 +180,8 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_dialog_that_opens_a_moment_after_the_action_is_in_the_report() {
-        let (recorder, sender) = watching(vec![app()]);
+        let (recorder, mut outcome, sender) = watching(vec![app()]);
+        outcome.window = Some((&app()).into());
         let opens = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(100)).await;
             let dialog = window(5, Some("app"), 1, true);
@@ -182,7 +194,7 @@ mod tests {
             sender
         });
         let started = Instant::now();
-        let changes = recorder.finish(Wait::Quiet).await;
+        let changes = recorder.finish(Wait::Quiet, &mut outcome).await;
         assert_eq!(started.elapsed(), Duration::from_millis(200) + QUIET);
         assert_eq!(
             serde_json::to_value(&changes).unwrap(),
@@ -195,18 +207,21 @@ mod tests {
                 "focus": {"from": 1, "to": 5},
             })
         );
+        // The outcome names the same focused window as the report, not the one it saw.
+        assert_eq!(outcome.focused_window, Some(5));
+        assert_eq!(outcome.window.map(|window| window.is_focused), Some(false));
         drop(opens.await.unwrap());
     }
 
     #[tokio::test(start_paused = true)]
     async fn quiet_during_the_actions_own_wait_counts_and_only_the_rest_is_added() {
-        let (mut recorder, _sender) = watching(vec![app()]);
+        let (mut recorder, mut outcome, _sender) = watching(vec![app()]);
         recorder.follow(tokio::time::sleep(QUIET)).await;
         let started = Instant::now();
-        recorder.finish(Wait::Quiet).await;
+        recorder.finish(Wait::Quiet, &mut outcome).await;
         assert_eq!(started.elapsed(), Duration::ZERO);
 
-        let (mut later, sender) = watching(vec![app()]);
+        let (mut later, mut later_outcome, sender) = watching(vec![app()]);
         let work = async {
             tokio::time::sleep(Duration::from_millis(200)).await;
             event(
@@ -221,7 +236,7 @@ mod tests {
         };
         later.follow(work).await;
         let ended = Instant::now();
-        let changes = later.finish(Wait::Quiet).await;
+        let changes = later.finish(Wait::Quiet, &mut later_outcome).await;
         assert_eq!(ended.elapsed(), Duration::from_millis(150));
         assert_eq!(
             changes.windows.first().and_then(|window| window.urgent),
@@ -243,10 +258,10 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_busy_niri_ends_the_report_at_its_limit() {
-        let (recorder, sender) = watching(vec![app()]);
+        let (recorder, mut outcome, sender) = watching(vec![app()]);
         let busy = tokio::spawn(busy(sender));
         let started = Instant::now();
-        let changes = recorder.finish(Wait::Quiet).await;
+        let changes = recorder.finish(Wait::Quiet, &mut outcome).await;
         assert_eq!(started.elapsed(), EXTRA);
         assert_eq!(
             changes.windows.first().and_then(|window| window.urgent),
@@ -257,25 +272,28 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn after_a_settled_screenshot_the_report_waits_for_nothing() {
-        let (recorder, sender) = watching(vec![app()]);
+        let (recorder, mut outcome, sender) = watching(vec![app()]);
         event(&sender, 1, Event::WindowFocusChanged { id: None });
         let started = Instant::now();
-        let changes = recorder.finish(Wait::Settled).await;
+        let changes = recorder.finish(Wait::Settled, &mut outcome).await;
         assert_eq!(started.elapsed(), Duration::ZERO);
         assert_eq!(
             serde_json::to_value(&changes).unwrap(),
             json!({"focus": {"from": 1, "to": null}})
         );
+        assert_eq!(outcome.focused_window, None);
     }
 
     #[tokio::test(start_paused = true)]
     async fn a_stream_lost_during_the_report_keeps_what_was_seen_and_says_why() {
-        let (recorder, sender) = watching(vec![app()]);
+        let (recorder, mut outcome, sender) = watching(vec![app()]);
         let opened = window(2, Some("app"), 1, true);
         event(&sender, 1, Event::WindowOpenedOrChanged { window: opened });
         sender.send(Update::Reset(2)).unwrap();
-        let changes = recorder.finish(Wait::Quiet).await;
+        let changes = recorder.finish(Wait::Quiet, &mut outcome).await;
         assert_eq!(changes.opened.len(), 1);
         assert!(changes.lost.unwrap().contains("disconnected"));
+        // Focus may have moved on since: unknown, not window 2.
+        assert_eq!(outcome.focused_window, None);
     }
 }

@@ -237,11 +237,11 @@ async fn focus_moving_elsewhere_during_the_wait_is_interrupted() {
             focus_changed(stream, 2);
         })
         .await;
-    // The wait ended at the intruder; the report goes on to where focus came to rest.
+    // The wait ended at the intruder; the result goes on to where focus came to rest.
     assert_eq!(
         outcome(&result),
         json!({
-            "accepted": true, "observed": "interrupted", "focused_window": 3,
+            "accepted": true, "observed": "interrupted", "focused_window": 2,
             "changes": {"focus": {"from": 1, "to": 2}}
         })
     );
@@ -411,6 +411,8 @@ async fn a_lost_reply_is_uncertain() {
     assert_eq!(outcome["observed"], "uncertain");
     let detail = outcome["detail"].as_str().unwrap();
     assert!(detail.contains("no reply within 2s"), "{detail}");
+    // niri's event stream still says where focus is when the change report ends.
+    assert_eq!(outcome["focused_window"], 1);
 }
 
 #[tokio::test]
@@ -1278,6 +1280,8 @@ async fn a_window_a_key_opens_a_moment_later_is_in_the_report() {
             "focus": {"from": 1, "to": 9}
         })
     );
+    // One result names one focused window: the one the report ends with.
+    assert_eq!(outcome(&result)["focused_window"], 9);
 }
 
 #[tokio::test]
