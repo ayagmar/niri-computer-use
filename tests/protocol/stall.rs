@@ -37,8 +37,9 @@ use crate::fixture::{Fixture, jpeg};
 use crate::holds::{Passed, Points};
 use crate::niri::{Niri, Stream, window_on};
 use crate::noctalia::{self, LOCKED, UNLOCKED};
+use crate::session::{self, NiriProcess};
 
-/// The server's bound on the age of what the element actions' last gate read.
+/// The server's bound on the age of the answers a call that acts relies on.
 const LAST_GATE: Duration = Duration::from_millis(250);
 /// A hold this long makes a last gate pass run over.
 const PAST_THE_LAST_GATE: Duration = Duration::from_millis(300);
@@ -305,13 +306,16 @@ fn effects(action: &Action, closed: &Closed) -> Vec<Value> {
 
 /// A desktop for every tool: the mock app's windows 1 and 3 with their accessible
 /// elements, another app's window 2, Noctalia, `wtype`, grim, and a policy that denies
-/// `DENIED` and has the preset `foot`. The server holds the lease.
+/// `DENIED` and has the preset `foot`. The server holds the lease. Exploring the lock,
+/// niri runs in a logind session and logind's answer, from `loginctl`, is a point too.
 ///
 /// Fields drop in this order: the server first, so it can't react to the rest going away,
 /// and the fixture last.
 struct World {
     server: Server,
     _niri: Niri,
+    /// The niri in a logind session that relays to the fake niri, exploring the lock.
+    _relay: Option<NiriProcess>,
     stream: Stream,
     noctalia: noctalia::Reply,
     _bus: Bus,
@@ -326,7 +330,7 @@ struct World {
 }
 
 impl World {
-    async fn start(name: &str) -> Self {
+    async fn start(name: &str, fact: Fact) -> Self {
         let mut fixture = Fixture::new(name);
         fixture.set("NIRI_COMPUTER_USE_KEYBOARD", "wtype");
         std::fs::create_dir_all(fixture.path("config/niri-computer-use")).unwrap();
@@ -344,11 +348,23 @@ impl World {
         ]);
         let (bus, mock) = atspi::start(&mut fixture, &["/frame", "/frame2"], objects).await;
         let noctalia = noctalia::start(&fixture, UNLOCKED);
-        let mut niri = Niri::start(&fixture);
+        let backend = fixture.path("run/backend.sock");
+        let mut niri = if fact == Fact::ScreenLocked {
+            Niri::behind(&fixture, &backend)
+        } else {
+            Niri::start(&fixture)
+        };
         niri.set_windows(&windows(), &[workspace()]);
         let closed = Closed::default();
         let closing = Arc::clone(&closed);
         niri.effects(move |action| effects(action, &closing));
+        let relay = if fact == Fact::ScreenLocked {
+            session::held_loginctl(&fixture);
+            fixture.serve_programs();
+            Some(NiriProcess::in_session(&fixture, &backend).await)
+        } else {
+            None
+        };
         let mut server = Server::start(&fixture).await;
         let stream = niri.stream().await;
         stream.initial(&windows());
@@ -356,6 +372,7 @@ impl World {
         Self {
             server,
             _niri: niri,
+            _relay: relay,
             stream,
             noctalia,
             _bus: bus,
@@ -377,6 +394,7 @@ impl World {
             std::fs::remove_file(runtime.join(flag)).ok();
         }
         self.noctalia.set(UNLOCKED);
+        std::fs::remove_file(self.fixture.path("locked")).ok();
         self.taken = None;
         self.closed.lock().unwrap().clear();
         for (path, object) in self.saved.drain(..) {
@@ -467,7 +485,10 @@ impl World {
                     .await;
             }
             Fact::InputDirty => std::fs::write(runtime.join("input-dirty"), "").unwrap(),
-            Fact::ScreenLocked => self.noctalia.set(LOCKED),
+            Fact::ScreenLocked => {
+                self.noctalia.set(LOCKED);
+                std::fs::write(self.fixture.path("locked"), "").unwrap();
+            }
             Fact::Stopped => std::fs::write(runtime.join("stop"), "").unwrap(),
             Fact::LeaseTaken => {
                 let lease = runtime.join("lease");
@@ -731,7 +752,7 @@ async fn explore_fact(tool: Tool, fact: Fact, shard: usize) -> (usize, Vec<Strin
     let tag = format!("st{shard}-{}-{fact:?}", tool.name());
     let tag: String = tag.chars().take(24).collect();
     let _turn = WORLDS.acquire().await.unwrap();
-    let mut world = World::start(&tag).await;
+    let mut world = World::start(&tag, fact).await;
     let trace = world.baseline(tool).await;
     let sends = trace
         .iter()

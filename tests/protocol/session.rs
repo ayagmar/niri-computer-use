@@ -19,7 +19,7 @@ use std::process::Stdio;
 use std::sync::PoisonError;
 use std::time::Duration;
 
-use crate::fixture::{Fixture, SPAWNING, eventually};
+use crate::fixture::{DISPLAY, Fixture, SPAWNING, eventually};
 
 /// Where it listens; `<pid>` stands for its process ID.
 const SOCKET: &str = "NCU_FAKE_NIRI_SOCKET";
@@ -105,6 +105,26 @@ impl NiriProcess {
             .0
     }
 
+    /// `niri --session` in session `c4`, on the fixture's `NIRI_SOCKET` and display,
+    /// relaying every connection to the socket `to`: the fake niri, with the server asking
+    /// logind, through the fixture's `loginctl`, whether the screen is locked.
+    pub(crate) async fn in_session(fixture: &Fixture, to: &Path) -> Self {
+        std::fs::remove_file(fixture.niri_socket()).ok();
+        let display = fixture.path(&format!("run/{DISPLAY}"));
+        // The fixture's own display, served by the test's process instead.
+        std::fs::remove_file(&display).ok();
+        let program = std::env::current_exe().unwrap();
+        let mut command = command(&program);
+        command
+            .env(SOCKET, fixture.niri_socket())
+            .env(RELAY, to)
+            .env(DISPLAY_SOCKET, &display);
+        let (process, _) =
+            Self::spawn(command, &fixture.niri_socket(), Some("c4"), &["--session"]).await;
+        assert!(eventually(Duration::from_secs(10), || display.exists()).await);
+        process
+    }
+
     /// A process called `niri` that serves `run/<display>` and relays every connection on
     /// `run/niri.<display>.<pid>.sock` to the socket `to`: a running niri as discovery
     /// finds it. Returns the socket's name too.
@@ -149,6 +169,17 @@ impl NiriProcess {
         fixture.program("loginctl", "echo no");
         Self::start(fixture, Some("c4")).await
     }
+}
+
+/// A `loginctl` that reads the hint first, says `yes` once `$DIR/locked` exists, and waits
+/// at the hold point `loginctl` before answering, as a logind answer that comes late does.
+pub(crate) fn held_loginctl(fixture: &Fixture) {
+    fixture.program(
+        "loginctl",
+        r#"if [ -e "$DIR/locked" ]; then hint=yes; else hint=no; fi
+pass loginctl
+echo "$hint""#,
+    );
 }
 
 /// The test binary at `program`, with an empty environment.

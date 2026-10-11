@@ -111,17 +111,25 @@ pub(crate) fn active_panel(status: &Map<String, Value>) -> Result<Option<String>
 
 /// Sends `panel-open` or `panel-close` and requires Noctalia's `ok`. Noctalia carries the
 /// command out before it replies (`PanelManager::registerIpc`), so a lost reply leaves the
-/// panel's state unknown.
-pub(crate) async fn change_panel(env: &Env, command: Command) -> Result<(), Unanswered> {
-    acknowledged(&deliver(env, &command.payload()).await?)
+/// panel's state unknown. `sending` is called as for `deliver`.
+pub(crate) async fn change_panel(
+    env: &Env,
+    command: Command,
+    sending: impl FnOnce() -> Result<(), ToolError>,
+) -> Result<(), Unanswered> {
+    acknowledged(&deliver(env, &command.payload(), sending).await?)
 }
 
 /// Sends `args` joined with spaces, as `noctalia msg` does, and returns Noctalia's reply.
 /// A reply starting `error:`, which makes `noctalia msg` exit 1, is a refusal with
 /// Noctalia's text. Noctalia carries a command out before it replies, so a lost reply
-/// leaves its effect unknown.
-pub(crate) async fn message(env: &Env, args: &[String]) -> Result<Reply, Unanswered> {
-    let mut reply = deliver(env, &payload(args)).await?;
+/// leaves its effect unknown. `sending` is called as for `deliver`.
+pub(crate) async fn message(
+    env: &Env,
+    args: &[String],
+    sending: impl FnOnce() -> Result<(), ToolError>,
+) -> Result<Reply, Unanswered> {
+    let mut reply = deliver(env, &payload(args), sending).await?;
     if reply.starts_with(b"error:") {
         let text = String::from_utf8_lossy(&reply);
         return Err(Unanswered::Refused(ToolError::new(
@@ -143,8 +151,13 @@ fn payload(args: &[String]) -> Vec<u8> {
 }
 
 /// Sends `payload` to Noctalia within the deadline and returns up to one byte more than
-/// `MAX_REPLY` of its reply.
-async fn deliver(env: &Env, payload: &[u8]) -> Result<Vec<u8>, Unanswered> {
+/// `MAX_REPLY` of its reply. `sending` is called once connected, right before the payload
+/// is written, and its error refuses the command with nothing written.
+async fn deliver(
+    env: &Env,
+    payload: &[u8],
+    sending: impl FnOnce() -> Result<(), ToolError>,
+) -> Result<Vec<u8>, Unanswered> {
     let socket = socket(env).ok_or_else(|| {
         Unanswered::Refused(unavailable(
             "WAYLAND_DISPLAY or XDG_RUNTIME_DIR doesn't name a Noctalia socket",
@@ -158,6 +171,7 @@ async fn deliver(env: &Env, payload: &[u8]) -> Result<Vec<u8>, Unanswered> {
                 socket.display()
             )))
         })?;
+        sending().map_err(Unanswered::Refused)?;
         exchange(stream, payload)
             .await
             .map_err(|error| Unanswered::Lost(lost(format!("{}: {error}", socket.display()))))
@@ -333,15 +347,15 @@ mod tests {
         tokio::spawn(answer_each(listener, answers));
         let args = ["x".to_owned()];
         assert_eq!(
-            message(&env, &args).await.unwrap(),
+            message(&env, &args, || Ok(())).await.unwrap(),
             Reply {
                 reply: "ok\n".to_owned(),
                 truncated: false
             }
         );
-        let long = message(&env, &args).await.unwrap();
+        let long = message(&env, &args, || Ok(())).await.unwrap();
         assert_eq!((long.reply.len(), long.truncated), (64 * 1024, true));
-        let Err(Unanswered::Refused(error)) = message(&env, &args).await else {
+        let Err(Unanswered::Refused(error)) = message(&env, &args, || Ok(())).await else {
             panic!("an error: reply is a refusal");
         };
         assert_eq!(

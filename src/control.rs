@@ -23,7 +23,7 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use crate::niri::Socket;
-use crate::{niri, runner};
+use crate::{Env, niri, noctalia, runner};
 
 const LOGINCTL_DEADLINE: Duration = Duration::from_secs(2);
 
@@ -56,6 +56,26 @@ pub(crate) struct Lock {
 impl Lock {
     pub(crate) const fn state(&self) -> LockState {
         self.state
+    }
+}
+
+/// Where the lock state is read: logind's hint for niri's session, and Noctalia's status
+/// when Noctalia is installed.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LockSources<'a> {
+    pub(crate) env: &'a Env,
+    pub(crate) noctalia: bool,
+}
+
+impl LockSources<'_> {
+    /// The lock state from reads started now: Noctalia's status, then logind's hint.
+    pub(crate) async fn read(self) -> Lock {
+        let status = if self.noctalia {
+            noctalia::status(self.env).await.ok()
+        } else {
+            None
+        };
+        lock(&self.env.niri_socket, status.as_ref()).await
     }
 }
 

@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 use tokio::sync::{Mutex, watch};
+use tokio::time::Instant;
 
 use super::lease::{self, Holder, Lease, Refused};
 use super::runtime::RuntimeDir;
@@ -29,6 +30,12 @@ use crate::session::{Session, SessionId};
 const CHECK: Duration = Duration::from_secs(1);
 /// How often a running action checks the same.
 const MOVED_CHECK: Duration = Duration::from_millis(100);
+/// The oldest an answer the action gate relies on may be when the call that acts goes out:
+/// the lock state for every action, and for an element action every answer its last gate
+/// read. The gate takes 8 to 15 ms in the protocol tests; niri, Noctalia, logind or an app
+/// that takes this long is busy, and what it said may have changed since (see
+/// docs/decisions.md).
+pub(crate) const LAST_GATE: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone)]
 pub(crate) struct Desk {
@@ -57,6 +64,9 @@ struct Seat {
     /// The running action's outcome as far as it is known once the app answered that
     /// call (`Desk::answered`). Cleared with `sending`.
     answered: std::sync::Mutex<Option<Outcome>>,
+    /// When the latest read of the lock state began (`Desk::lock_read`). Cleared when an
+    /// action starts, before its readiness report.
+    lock_read: std::sync::Mutex<Option<Instant>>,
 }
 
 /// The lease, held for one session.
@@ -81,6 +91,13 @@ impl Seat {
     /// No code panics while holding the lock, so a poisoned one still holds a sound value.
     fn answer(&self) -> std::sync::MutexGuard<'_, Option<Outcome>> {
         self.answered.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The same.
+    fn lock_read(&self) -> std::sync::MutexGuard<'_, Option<Instant>> {
+        self.lock_read
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     fn put(&self, held: &mut Option<Grant>, grant: Grant, users_window: Option<u64>) {
@@ -163,6 +180,7 @@ impl Desk {
             refs: std::sync::Mutex::new(Refs::default()),
             sending: AtomicBool::new(false),
             answered: std::sync::Mutex::new(None),
+            lock_read: std::sync::Mutex::new(None),
         });
         let runtime = RuntimeDir::of(env).map_err(|detail| {
             let name = if env.instance.socket().is_err() {
@@ -297,6 +315,7 @@ impl Desk {
         let Some(grant) = held.as_ref().filter(|grant| grant.owner == session.id()) else {
             return Err(lease_required().into());
         };
+        self.seat.lock_read().take();
         if let Some(refusal) = refusal.await {
             return Err(refusal.into());
         }
@@ -342,9 +361,40 @@ impl Desk {
 
     /// Says the running action's one call that acts is going out, so a stop or a moved
     /// lease that cancels the action from now on reports it as uncertain rather than
-    /// refused. Only the action holding the action mutex calls it, from its work.
-    pub(crate) fn sending(&self) {
+    /// refused. It may go out only as `fresh` says, and is refused like it otherwise, with
+    /// nothing marked. Only the action holding the action mutex calls it, from its work.
+    pub(crate) fn sending(&self) -> Result<(), ToolError> {
+        self.fresh()?;
         self.seat.sending.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Whether a call that acts may go out now: the latest read of the lock state began at
+    /// most `LAST_GATE` ago. Otherwise `screen_locked`, since that read may no longer hold.
+    pub(crate) fn fresh(&self) -> Result<(), ToolError> {
+        if self.lock_fresh() {
+            return Ok(());
+        }
+        Err(ToolError::new(
+            ErrorName::ScreenLocked,
+            format!(
+                "the lock state was read over {} ms before the call that acts could go out, so it isn't known to be unlocked now; nothing was sent",
+                LAST_GATE.as_millis()
+            ),
+        ))
+    }
+
+    /// Whether the latest read of the lock state began at most `LAST_GATE` ago.
+    pub(crate) fn lock_fresh(&self) -> bool {
+        self.seat
+            .lock_read()
+            .is_some_and(|began| began.elapsed() <= LAST_GATE)
+    }
+
+    /// Notes that a read of the lock state began at `began`, for the action holding the
+    /// action mutex, or for `acquire`'s refusal.
+    pub(crate) fn lock_read(&self, began: Instant) {
+        *self.seat.lock_read() = Some(began);
     }
 
     /// Says the app or niri answered the running action's call that acts, with `outcome` as
@@ -836,6 +886,34 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    #[tokio::test]
+    async fn a_call_that_acts_goes_out_only_within_the_last_gate_of_the_lock_read() {
+        let me = session(1);
+        let dir = crate::test_support::fresh_dir("desk-lock-age");
+        let desk = Desk::start(&env(&dir));
+        desk.acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
+        let send = || async { desk.sending().map_err(CallError::from) };
+        let late = async {
+            tokio::time::sleep(LAST_GATE + Duration::from_millis(20)).await;
+            send().await
+        };
+        let refused = desk.act(&me, read_lock(&desk), late, done).await;
+        assert!(
+            matches!(&refused, Err(CallError::Tool(error)) if error.name == ErrorName::ScreenLocked),
+            "{refused:?}"
+        );
+        // A refusal that read no lock state lets nothing go out either.
+        let unread = desk.act(&me, ready(None), send(), done).await;
+        assert!(
+            matches!(&unread, Err(CallError::Tool(error)) if error.name == ErrorName::ScreenLocked),
+            "{unread:?}"
+        );
+        desk.act(&me, read_lock(&desk), send(), done).await.unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     /// `finish` for work that is never cut short after sending: its own result.
     fn done<T>(worked: Worked<T>) -> std::future::Ready<T> {
         match worked {
@@ -1081,6 +1159,17 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// A refusal that reads the lock state, once the action asks it, and finds nothing to
+    /// refuse.
+    #[expect(
+        clippy::unused_async,
+        reason = "the desk clears the last lock read before it polls the refusal, so the read must happen when the refusal is polled, not when it is made"
+    )]
+    async fn read_lock(desk: &Desk) -> Option<ToolError> {
+        desk.lock_read(Instant::now());
+        None
+    }
+
     /// Runs an action whose work says its call is going out when `sends`, then waits,
     /// while `cut` stops it or moves the lease. Returns how it ended.
     async fn cut_short(
@@ -1092,10 +1181,10 @@ mod tests {
         let (started, running) = tokio::sync::oneshot::channel::<()>();
         let action = desk.act(
             &me,
-            async { None },
+            read_lock(desk),
             async move {
                 if sends {
-                    desk.sending();
+                    desk.sending().unwrap();
                 }
                 started.send(()).unwrap();
                 std::future::pending::<Result<(), CallError>>().await
@@ -1129,11 +1218,11 @@ mod tests {
         take().await;
         // An action that sent, was answered and finished leaves nothing for the next one.
         let sends = async {
-            desk.sending();
+            desk.sending().unwrap();
             desk.answered(Outcome::uncertain(Some(true), None, String::new()));
             Ok(())
         };
-        desk.act(&me, async { None }, sends, done).await.unwrap();
+        desk.act(&me, read_lock(&desk), sends, done).await.unwrap();
         let unsent = cut_short(&desk, false, replace_lease(&runtime, &other)).await;
         assert!(
             matches!(&unsent, Err(CallError::Tool(error)) if error.name == ErrorName::LeaseRequired),

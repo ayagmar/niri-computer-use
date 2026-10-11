@@ -101,6 +101,12 @@ impl Niri {
         Self::listen_with(socket, Points::default())
     }
 
+    /// The same, listening on `socket`, which a `NiriProcess` relays the fixture's
+    /// `NIRI_SOCKET` to, passing the fixture's hold points.
+    pub(crate) fn behind(fixture: &Fixture, socket: &std::path::Path) -> Self {
+        Self::listen_with(socket, fixture.points())
+    }
+
     fn listen_with(socket: &std::path::Path, points: Points) -> Self {
         // In place of the socket file the fixture leaves, as a restarted niri does.
         std::fs::remove_file(socket).ok();

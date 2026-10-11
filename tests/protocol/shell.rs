@@ -3,13 +3,15 @@
 
 use std::time::Duration;
 
+use niri_ipc::Action;
 use serde_json::{Value, json};
 
 use crate::client::{Server, run, tool_error};
 use crate::clipboard::{Contents, HINT, Leased};
 use crate::fixture::Fixture;
+use crate::niri::{Niri, Stream, window_on};
 use crate::noctalia::{self, LOCKED, UNLOCKED};
-use crate::session::NiriProcess;
+use crate::session::{self, NiriProcess};
 
 /// A loginctl that records its arguments and prints `hint`.
 fn loginctl(fixture: &Fixture, hint: &str) {
@@ -140,6 +142,81 @@ async fn a_niri_without_session_is_not_asked_about_through_logind() {
     assert!(!fixture.path("loginctl.args").exists());
     let (name, _) = tool_error(&server.call("acquire_desktop", json!({})).await);
     assert_eq!(name, "screen_locked");
+}
+
+/// Moves the focus back to window 1, and waits until the server has seen it.
+async fn focus_back(server: &mut Server, stream: &Stream) {
+    stream.send(&json!({"WindowFocusChanged": {"id": 1}}));
+    while server.structured("desktop_state").await["focused_window"] != 1 {
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+}
+
+/// Noctalia says unlocked, then logind's answer, unlocked too, is held while the screen
+/// locks and released past the last gate. The stale answer doesn't let `focus_window` or
+/// `key` go out: the lock is read again and the call is refused.
+#[tokio::test]
+async fn a_lock_while_loginds_answer_is_held_refuses_the_call() {
+    let mut fixture = Fixture::new("lock-held-logind");
+    fixture.set("NIRI_COMPUTER_USE_KEYBOARD", "wtype");
+    fixture.program("noctalia", "exit 0");
+    fixture.program("wtype", r#"echo "$*" >> "$DIR/wtype.calls""#);
+    session::held_loginctl(&fixture);
+    let noctalia = noctalia::start(&fixture, UNLOCKED);
+    let backend = fixture.path("run/backend.sock");
+    let mut niri = Niri::listen(&backend);
+    niri.effects(|action| {
+        let Action::FocusWindow { id } = action else {
+            return Vec::new();
+        };
+        vec![json!({"WindowFocusChanged": {"id": id}})]
+    });
+    let _relay = NiriProcess::in_session(&fixture, &backend).await;
+    let mut server = Server::start(&fixture).await;
+    let stream = niri.stream().await;
+    stream.initial(&[
+        window_on(1, Some("a"), 1, true),
+        window_on(2, Some("b"), 1, false),
+    ]);
+    fixture.serve_programs();
+    let points = fixture.points();
+    // `key` first, as `focus_window` moves the focus `key` expects.
+    for (tool, arguments) in [
+        ("key", json!({"keys": ["Down"], "expect": {"window_id": 1}})),
+        ("focus_window", json!({"id": 2})),
+    ] {
+        noctalia.set(UNLOCKED);
+        std::fs::remove_file(fixture.path("locked")).ok();
+        server.structured("acquire_desktop").await;
+        // The last lock read before the call acts, as a call with nothing held reads it.
+        points.start();
+        let result = server.call(tool, arguments.clone()).await;
+        assert_eq!(result["isError"], false, "{tool}: {result}");
+        points.idle().await;
+        let reads = points
+            .trace()
+            .iter()
+            .filter(|passed| passed.point == "loginctl")
+            .count();
+        if tool == "focus_window" {
+            niri.action().await;
+            focus_back(&mut server, &stream).await;
+        }
+        std::fs::remove_file(fixture.path("wtype.calls")).ok();
+        points.start();
+        let held = points.hold("loginctl", reads);
+        let id = server.start_call(tool, arguments).await;
+        held.arrived().await;
+        noctalia.set(LOCKED);
+        std::fs::write(fixture.path("locked"), "").unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        held.release();
+        let response = server.response(id).await;
+        let (name, detail) = tool_error(&response["result"]);
+        assert_eq!(name, "screen_locked", "{tool}: {detail}");
+        assert!(!niri.sent_action(), "{tool}");
+        assert!(!fixture.path("wtype.calls").exists(), "{tool}");
+    }
 }
 
 /// What the user copied: markup, then text, then an image, as a browser offers them.

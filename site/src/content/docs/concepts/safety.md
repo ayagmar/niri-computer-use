@@ -39,7 +39,7 @@ Each standalone `serve`, and each shared engine, starts a small guardian process
 
 ## The lock gate
 
-The server acts only on a screen it knows is unlocked. It asks logind for niri's session's `LockedHint` and, when Noctalia runs, Noctalia's own lock state. If either says locked, or neither can answer, `acquire_desktop` and every action refuse with `screen_locked`. The state is checked again before each action, because the screen can lock while an agent holds the lease.
+The server acts only on a screen it knows is unlocked. It asks logind for niri's session's `LockedHint` and, when Noctalia runs, Noctalia's own lock state. If either says locked, or neither can answer, `acquire_desktop` and every action refuse with `screen_locked`. The state is checked again before each action, because the screen can lock while an agent holds the lease, and an action's request, input or command goes out at most 250 ms after that check began. When the check is older by then, it runs again, and an action that still can't go out in time is refused with `screen_locked`.
 
 logind only knows the lock state when niri runs as `niri --session`. Without that and without Noctalia, the state is `unknown` and the server won't act.
 

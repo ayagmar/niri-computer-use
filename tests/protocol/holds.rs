@@ -3,9 +3,11 @@
 //! `niri:Action:FocusWindow`, `noctalia:status`, `atspi:GetRole:/button`. The points passed
 //! since `start` are the trace of the calls in between, in order, so a test can find every
 //! reply a call awaited instead of listing them, and hold any one of them back until it
-//! releases it. Every fake started on a fixture passes the fixture's points.
+//! releases it. Every fake started on a fixture passes the fixture's points, and a fake
+//! program can too: `loginctl` or `wtype` as the program's name.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -148,6 +150,47 @@ impl Points {
             assert!(start.elapsed() < WAIT, "a fake is still busy with a reply");
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
+    }
+
+    /// Passes the points fake programs reach in `dir`: a program writes
+    /// `<point>.<pid>.<n>.arrived` there and waits for `.go`, written once the point is
+    /// passed. The program is busy until its process has exited. Ends with `dir`.
+    pub(crate) fn serve_programs(&self, dir: PathBuf) {
+        tokio::spawn(self.clone().watch_programs(dir));
+    }
+
+    async fn watch_programs(self, dir: PathBuf) {
+        let mut seen = BTreeSet::new();
+        while let Ok(entries) = std::fs::read_dir(&dir) {
+            let arrived = entries
+                .flatten()
+                .filter_map(|entry| {
+                    let name = entry.file_name().into_string().ok()?;
+                    name.strip_suffix(".arrived").map(str::to_owned)
+                })
+                .filter(|mark| seen.insert(mark.clone()));
+            for mark in arrived {
+                tokio::spawn(self.clone().pass_program(dir.clone(), mark));
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    }
+
+    /// Passes the point a program's `mark`, `<point>.<pid>.<n>`, names, lets the program
+    /// go on, and stays busy until it has exited, within `WAIT`.
+    async fn pass_program(self, dir: PathBuf, mark: String) {
+        let mut parts = mark.split('.');
+        let (Some(point), Some(pid)) = (parts.next(), parts.next()) else {
+            return;
+        };
+        let passing = self.pass(point.to_owned()).await;
+        std::fs::write(dir.join(format!("{mark}.go")), "").ok();
+        let process = PathBuf::from(format!("/proc/{pid}"));
+        let start = Instant::now();
+        while process.exists() && start.elapsed() < WAIT {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        drop(passing);
     }
 
     /// A test that panicked while holding the lock leaves a sound trace.

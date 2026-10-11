@@ -79,8 +79,8 @@ impl elements::actions::Recheck for Recheck<'_> {
         self.engine.desk.checkpoint(self.session)
     }
 
-    fn sending(&self) {
-        self.engine.desk.sending();
+    fn sending(&self) -> Result<(), ToolError> {
+        self.engine.desk.sending()
     }
 
     fn answered(&self, outcome: Outcome) {
@@ -211,6 +211,7 @@ impl Engine {
             socket: &self.env.niri_socket,
             events: self.events.as_ref(),
             desk: &self.desk,
+            locks: self.lock_sources(),
         }
     }
 
@@ -547,15 +548,12 @@ impl Engine {
         Ok(shot)
     }
 
-    /// The lock state from reads started now: Noctalia's status, when it's installed,
-    /// and logind's hint.
-    async fn lock(&self) -> control::Lock {
-        let noctalia = if self.noctalia_installed {
-            noctalia::status(&self.env).await.ok()
-        } else {
-            None
-        };
-        control::lock(&self.env.niri_socket, noctalia.as_ref()).await
+    /// Where the lock state is read.
+    const fn lock_sources(&self) -> control::LockSources<'_> {
+        control::LockSources {
+            env: &self.env,
+            noctalia: self.noctalia_installed,
+        }
     }
 
     /// Why `session` may not take the lease or act now, from the readiness report.
@@ -565,8 +563,12 @@ impl Engine {
             return Some(refused);
         }
         // The report asks Noctalia beside niri, so its answer may be older than niri's.
-        // The lock decision comes from reads started once the report is done.
-        policy::refuse_lock(self.lock().await.state())
+        // The lock decision comes from reads started once the report is done, and a call
+        // that acts goes out only within `LAST_GATE` of when they began.
+        let began = Instant::now();
+        let lock = self.lock_sources().read().await;
+        self.desk.lock_read(began);
+        policy::refuse_lock(lock.state())
     }
 
     /// The outcome with the screenshot `shoot` asks for, or the one an outcome in doubt

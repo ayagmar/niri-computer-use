@@ -31,6 +31,21 @@ const AWAIT_FILE: &str = r#"await_file() {
     done
 }"#;
 
+/// The fake programs' hold point: `pass <point>` waits there while the test holds the
+/// point, once a test serves the fixture's points to programs (`Fixture::serve_programs`).
+/// It polls more often than `await_file`, as every pass waits for the test.
+const PASS_POINT: &str = r#"pass() {
+    passed=$((passed + 1))
+    mark="$DIR/points/$1.$$.$passed"
+    : > "$mark.arrived"
+    polls=0
+    while [ ! -e "$mark.go" ]; do
+        if [ ! -d "$DIR" ] || [ "$polls" -ge 5000 ]; then exit 1; fi
+        polls=$((polls + 1))
+        sleep 0.002
+    done
+}"#;
+
 /// Whether the suite runs its servers in shared mode: `NCU_PROTOCOL_MODE=shared`.
 pub(crate) fn shared_mode() -> bool {
     std::env::var_os("NCU_PROTOCOL_MODE").is_some_and(|mode| mode == "shared")
@@ -69,7 +84,7 @@ impl Fixture {
         // limit on Unix socket paths.
         let dir = Path::new("/tmp").join(format!("ncu-{name}-{}-{nanos}", std::process::id()));
         std::fs::create_dir(&dir).unwrap();
-        for sub in ["bin", "utils", "run", "state", "config"] {
+        for sub in ["bin", "utils", "run", "state", "config", "points"] {
             std::fs::create_dir(dir.join(sub)).unwrap();
         }
         // niri's runtime directory is private, and the server trusts no other.
@@ -117,6 +132,12 @@ impl Fixture {
     /// The hold points of the fakes started here.
     pub(crate) fn points(&self) -> Points {
         self.points.clone()
+    }
+
+    /// From now on, passes the points the fake programs reach with `pass` in the fixture's
+    /// points, on the current runtime.
+    pub(crate) fn serve_programs(&self) {
+        self.points.serve_programs(self.path("points"));
     }
 
     pub(crate) fn env(&self) -> &BTreeMap<&'static str, OsString> {
@@ -179,7 +200,7 @@ impl Fixture {
     /// or once the test directory is gone: a `SIGKILL`ed server leaves its children running.
     pub(crate) fn program(&self, name: &str, body: &str) {
         let script = format!(
-            "#!/bin/sh\nPATH='{}'\nDIR='{}'\n{AWAIT_FILE}\n{body}\n",
+            "#!/bin/sh\nPATH='{}'\nDIR='{}'\n{AWAIT_FILE}\n{PASS_POINT}\n{body}\n",
             self.dir.join("utils").display(),
             self.dir.display()
         );

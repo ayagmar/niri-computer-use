@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use crate::act::{Observed, Outcome};
+use crate::act::{self, Observed, Outcome};
 use crate::control::cleanup;
 use crate::control::marker::{Child, Marker, Phase, Written};
 use crate::control::procs;
@@ -197,6 +197,15 @@ impl Sent {
         }
     }
 
+    /// Counts one native key: a character, or a key that types none.
+    pub(super) const fn add_key(&mut self, character: bool) {
+        if character {
+            self.chars += 1;
+        } else {
+            self.keys += 1;
+        }
+    }
+
     const fn nothing(self) -> bool {
         self.chars == 0 && self.keys == 0
     }
@@ -321,15 +330,17 @@ pub(crate) async fn type_input_then(
             .checked(input.niri.socket)
             .await
             .map_err(|error| partly(error, &typing, sent))?;
-        run_wtype(
-            input.runtime,
-            typing.tool(),
-            &stroke.args()?,
-            stroke.stdin(),
-            aftercare,
-        )
-        .await
-        .map_err(|error| partly(error, &typing, sent))?;
+        act::fresh_lock(input.niri)
+            .await
+            .map_err(|error| partly(error, &typing, sent))?;
+        let wtype = Wtype {
+            tool: typing.tool(),
+            args: &stroke.args()?,
+            stdin: stroke.stdin(),
+        };
+        run_wtype(input.runtime, wtype, aftercare, || input.niri.desk.fresh())
+            .await
+            .map_err(|error| partly(error, &typing, sent))?;
         sent.add(&stroke);
         let moved = waiter
             .until(Duration::ZERO, |view| {
@@ -369,7 +380,7 @@ pub(super) fn ended(outcome: Outcome, focus: Focus, typing: &Typing, sent: Sent)
 }
 
 /// A stroke's failure, saying how much went out before it.
-fn partly(error: ToolError, typing: &Typing, sent: Sent) -> ToolError {
+pub(super) fn partly(error: ToolError, typing: &Typing, sent: Sent) -> ToolError {
     if sent.nothing() {
         return error;
     }
@@ -379,15 +390,23 @@ fn partly(error: ToolError, typing: &Typing, sent: Sent) -> ToolError {
     )
 }
 
-/// Writes the marker, starts wtype behind the gate, records its PID, then feeds it in a
-/// task that outlives this call if the call is dropped. That task takes `aftercare`.
+/// One `wtype` call: the tool it types for, its arguments and what it reads.
+struct Wtype<'a> {
+    tool: &'a str,
+    args: &'a [String],
+    stdin: Vec<u8>,
+}
+
+/// Writes the marker, starts wtype behind the gate, records its PID, then, once `go` lets
+/// it, feeds it in a task that outlives this call if the call is dropped. That task takes
+/// `aftercare`.
 async fn run_wtype(
     runtime: &RuntimeDir,
-    tool: &str,
-    args: &[String],
-    stdin: Vec<u8>,
+    wtype: Wtype<'_>,
     aftercare: &mut Option<Aftercare>,
+    go: impl FnOnce() -> Result<(), ToolError>,
 ) -> Result<(), ToolError> {
+    let Wtype { tool, args, stdin } = wtype;
     let mut marker = Written::write(runtime, Marker::pending(tool, Vec::new()))
         .await
         .map_err(|error| marker_error("write", &error))?;
@@ -417,6 +436,10 @@ async fn run_wtype(
         // Still waiting at the gate: killing it now types nothing.
         drop(gated);
         let error = ToolError::new(ErrorName::UpstreamError, detail);
+        return Err(cleared(marker, error).await);
+    }
+    if let Err(error) = go() {
+        drop(gated);
         return Err(cleared(marker, error).await);
     }
     // A task of its own, so wtype finishes and the marker comes off even if the call is

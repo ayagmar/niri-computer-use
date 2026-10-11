@@ -23,7 +23,7 @@ use super::{
 };
 use crate::a11y::model::Unmappable;
 use crate::a11y::{self, ElementRef};
-use crate::act::{Observed, Outcome};
+use crate::act::{self, Observed, Outcome};
 use crate::control::cleanup;
 use crate::control::marker::{Marker, Written};
 use crate::control::runtime::RuntimeDir;
@@ -278,9 +278,11 @@ pub(crate) async fn point(
         .collect::<Result<Vec<_>, _>>()?;
     let display = input.display.path().map_err(Clone::clone)?;
     let held = Held::prepare(input, waiter.view(), keys).await?;
+    act::fresh_lock(input.niri).await?;
     let pointer = Pointer::bind(display, niri::pid(socket).await?, &shot.output).await?;
     let pressing = Pressing { tool, button };
     let mut device = Device::new(pointer, input.runtime, pressing, &shot.output, held).await?;
+    input.niri.desk.fresh()?;
     if let Err(error) = device.run(plan(&located, &aimed)).await {
         // Nothing reached niri: an error like any other before input.
         if !device.sent() {

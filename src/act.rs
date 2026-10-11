@@ -13,6 +13,7 @@ use niri_ipc::{Action, Window, WorkspaceReferenceArg};
 use serde::Serialize;
 
 use crate::changes::Changes;
+use crate::control;
 use crate::control::desk::{Desk, Worked};
 use crate::elements::actions::Acted;
 use crate::error::{CallError, ErrorName, ToolError, Unanswered};
@@ -296,6 +297,22 @@ pub(crate) struct Niri<'a> {
     pub(crate) events: niri::Events<'a>,
     /// Told when the action goes out and when niri answered it.
     pub(crate) desk: &'a Desk,
+    /// Read again right before a call that acts when the last read is too old.
+    pub(crate) locks: control::LockSources<'a>,
+}
+
+/// Makes sure the lock state was read at most `LAST_GATE` before a call that acts: reads it
+/// again when the latest read is older, and refuses unless the screen is unlocked. The
+/// call still asks `Desk::fresh` or `Desk::sending` right before it goes out, since this
+/// read takes time too.
+pub(crate) async fn fresh_lock(niri: Niri<'_>) -> Result<(), ToolError> {
+    if niri.desk.lock_fresh() {
+        return Ok(());
+    }
+    let began = tokio::time::Instant::now();
+    let lock = niri.locks.read().await;
+    niri.desk.lock_read(began);
+    policy::refuse_lock(lock.state()).map_or(Ok(()), Err)
 }
 
 pub(crate) async fn focus_window(niri: Niri<'_>, id: u64) -> Result<Outcome, CallError> {
@@ -472,6 +489,7 @@ fn unsent(observed: Observed, view: &View, windows: Vec<u64>) -> Outcome {
 /// desk hears when the request goes out and when niri accepted it, so a stop or a moved
 /// lease after that reports the action as `uncertain` rather than refused.
 async fn send(niri: Niri<'_>, action: Action) -> Result<Option<Outcome>, CallError> {
+    fresh_lock(niri).await?;
     match niri::act(niri.socket, action, || niri.desk.sending()).await {
         Ok(()) => {
             let accepted = Outcome::uncertain(Some(true), None, String::new());

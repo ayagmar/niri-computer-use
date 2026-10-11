@@ -69,7 +69,8 @@ async fn change(
         };
         return Ok(outcome(Some(false), observed, Some(shell), niri).await);
     }
-    match noctalia::change_panel(env, command).await {
+    super::fresh_lock(niri).await?;
+    match noctalia::change_panel(env, command, || niri.desk.fresh()).await {
         Ok(()) => {}
         Err(Unanswered::Refused(error)) => return Err(error.into()),
         Err(Unanswered::Lost(error)) => {
@@ -90,7 +91,8 @@ pub(crate) async fn message(
     niri: Niri<'_>,
     args: &[String],
 ) -> Result<Outcome, CallError> {
-    match noctalia::message(env, args).await {
+    super::fresh_lock(niri).await?;
+    match noctalia::message(env, args, || niri.desk.fresh()).await {
         Ok(reply) => {
             let mut sent = outcome(Some(true), Observed::Sent, None, niri).await;
             sent.noctalia = Some(reply);

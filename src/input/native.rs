@@ -9,11 +9,11 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
-use super::keyboard::{Expect, Sent, Typing, check_expect, ended};
+use super::keyboard::{Expect, Sent, Typing, check_expect, ended, partly};
 use super::keymap::{Key, plan};
 use super::paste::Aftercare;
 use super::{Input, focused_app_id};
-use crate::act::{Observed, Outcome};
+use crate::act::{self, Observed, Outcome};
 use crate::control::cleanup;
 use crate::control::marker::{Marker, Native, Written};
 use crate::error::{CallError, ErrorName, ToolError};
@@ -57,27 +57,10 @@ pub(super) async fn type_input(
             device.finish(waiter.view().keyboard_group()).await?;
             return Ok(ended(outcome, focus, &typing, sent));
         }
-        if input
-            .runtime
-            .stopped()
-            .map_err(|error| upstream(&format!("read stop flag: {error}")))?
-        {
-            return Err(ToolError::new(
-                ErrorName::Stopped,
-                format!(
-                    "stopped after {} characters and {} keys",
-                    sent.chars, sent.keys
-                ),
-            )
-            .into());
-        }
+        may_press(input, &typing, sent).await?;
         device.commit(aftercare).await?;
         device.stroke(key).await?;
-        if key.character {
-            sent.chars += 1;
-        } else {
-            sent.keys += 1;
-        }
+        sent.add_key(key.character);
         if device.revision()? != revision {
             device.finish(waiter.view().keyboard_group()).await?;
             return Ok(ended(
@@ -97,6 +80,29 @@ pub(super) async fn type_input(
         .await
         .unwrap_or_else(|| Outcome::seen(Observed::Sent, waiter.view(), Vec::new()));
     Ok(ended(outcome, focus, &typing, sent))
+}
+
+/// Whether the next key may go out: the stop flag isn't set, and the lock state was read
+/// at most `LAST_GATE` ago, or is read again and says unlocked.
+async fn may_press(input: Input<'_>, typing: &Typing, sent: Sent) -> Result<(), ToolError> {
+    if input
+        .runtime
+        .stopped()
+        .map_err(|error| upstream(&format!("read stop flag: {error}")))?
+    {
+        return Err(ToolError::new(
+            ErrorName::Stopped,
+            format!(
+                "stopped after {} characters and {} keys",
+                sent.chars, sent.keys
+            ),
+        ));
+    }
+    let unlocked = async {
+        act::fresh_lock(input.niri).await?;
+        input.niri.desk.fresh()
+    };
+    unlocked.await.map_err(|error| partly(error, typing, sent))
 }
 
 async fn interrupted(waiter: &mut Waiter, before: Option<u64>, group: u32) -> Option<Outcome> {

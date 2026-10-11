@@ -83,6 +83,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- Every acting tool sends its request, input or command within 250 ms of when its last read of the lock state began, and reads the lock state again first when that read is older. A read asks Noctalia and then logind, so a lock that came while logind's answer was on its way let `focus_window`, `key` and the other niri, input and Noctalia tools act after the screen locked. A call that can't go out within 250 ms of a read is refused with `screen_locked`.
 - Standalone screenshots and `wait_for` capture sequences hold the action mutex throughout capture, excluding subsequent server actions and lease changes.
 - Settled capture budgets include the initial delay and capture work. A timed-out later capture returns the last completed sample unsettled; no completed sample gives `deadline_exceeded`.
 - Fractional-scale pointer motion uses niri's ceiled physical-mode space rather than truncated IPC dimensions. Unknown or changed pointer geometry refuses input.

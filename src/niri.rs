@@ -163,12 +163,13 @@ pub(crate) async fn waiter(events: Events<'_>) -> Result<Waiter, ToolError> {
     events.map_err(Clone::clone)?.waiter().await
 }
 
-/// Asks niri to carry out `action`, calling `sending` right before the request is written.
+/// Asks niri to carry out `action`, calling `sending` right before the request is written,
+/// which may still refuse it.
 /// niri replies once it has.
 pub(crate) async fn act(
     socket: &Socket,
     action: Action,
-    sending: impl FnOnce(),
+    sending: impl FnOnce() -> Result<(), ToolError>,
 ) -> Result<(), Unanswered> {
     let socket = known(socket).map_err(Unanswered::Refused)?;
     let Response::Handled = request::dispatch(socket, &Request::Action(action), sending).await?

@@ -17,6 +17,7 @@ use tokio::time::{Instant, timeout_at};
 use crate::a11y::model::{self, State, States};
 use crate::a11y::{self, A11y, Dispatched, ElementRef, Failed, Request};
 use crate::act::{Observed, Outcome};
+use crate::control::desk::LAST_GATE;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::input::Input;
 use crate::input::keyboard::{self, Expect, Focus};
@@ -32,11 +33,6 @@ use super::{Names, gone_is_stale, identify, stale};
 /// 250 ms (`ACTIVATE_TIMEOUT` in `gtkbutton.c`), then clicked. Qt acts at once. The
 /// window closing ends the wait sooner.
 const SETTLE: Duration = Duration::from_millis(300);
-/// The longest the last gate may take, from its first read to the call that acts going
-/// out, which bounds how old an answer it relies on can be. It takes 8 to 15 ms in the
-/// protocol tests; an app, niri or Noctalia that takes this long is busy, and what it said
-/// may have changed since (see docs/decisions.md).
-const LAST_GATE: Duration = Duration::from_millis(250);
 /// `set_element_text`'s most text, in bytes of UTF-8 (see docs/decisions.md).
 pub(crate) const MAX_TEXT: usize = 64 * 1024;
 
@@ -187,8 +183,9 @@ pub(crate) trait Recheck: Sync {
     /// The desk's: the stop flag, the input-dirty marker and the lease.
     fn desk(&self) -> Result<(), ToolError>;
     /// Tells the desk the call that acts is going out, so a stop or a moved lease from now
-    /// on leaves the action `uncertain` instead of refused.
-    fn sending(&self);
+    /// on leaves the action `uncertain` instead of refused, or refuses it, with nothing
+    /// sent, when the lock state was read too long ago.
+    fn sending(&self) -> Result<(), ToolError>;
     /// Tells the desk the app took that call, with the outcome as far as it is known, which
     /// a stop or a moved lease from now on reports.
     fn answered(&self, outcome: Outcome);
@@ -256,7 +253,7 @@ impl<R: Recheck> Gate<'_, R> {
             let took = format!("ended over {} ms after they began", LAST_GATE.as_millis());
             return Err(busy(&took).into());
         }
-        self.recheck.sending();
+        self.recheck.sending()?;
         Ok(())
     }
 
@@ -742,8 +739,9 @@ mod tests {
             Ok(())
         }
 
-        fn sending(&self) {
+        fn sending(&self) -> Result<(), ToolError> {
             self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Ok(())
         }
 
         fn answered(&self, _: Outcome) {}
