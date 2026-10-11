@@ -34,9 +34,10 @@ pub(crate) fn shared_mode() -> bool {
     std::env::var_os("NCU_PROTOCOL_MODE").is_some_and(|mode| mode == "shared")
 }
 
-/// Held while writing a fake program and while starting a server. A child forked during a
-/// write would inherit the open file until it execs, and running the program meanwhile
-/// fails with "Text file busy".
+/// Held while writing a fake program and while starting any child: a server, a fake
+/// program, the fake niri, the mock app's bus. A child forked during a write would inherit
+/// the open file until it execs, and running the program meanwhile fails with "Text file
+/// busy".
 pub(crate) static SPAWNING: Mutex<()> = Mutex::new(());
 pub(crate) const SESSION: &str = "7";
 

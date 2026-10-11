@@ -16,9 +16,10 @@ use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::PoisonError;
 use std::time::Duration;
 
-use crate::fixture::{Fixture, eventually};
+use crate::fixture::{Fixture, SPAWNING, eventually};
 
 /// Where it listens; `<pid>` stands for its process ID.
 const SOCKET: &str = "NCU_FAKE_NIRI_SOCKET";
@@ -82,7 +83,10 @@ impl NiriProcess {
         if let Some(session) = session {
             command.env("XDG_SESSION_ID", session);
         }
-        let child = command.spawn().unwrap();
+        let child = {
+            let _spawning = SPAWNING.lock().unwrap_or_else(PoisonError::into_inner);
+            command.spawn().unwrap()
+        };
         let pid = child.id().unwrap().to_string();
         let socket = PathBuf::from(listen.to_str().unwrap().replace("<pid>", &pid));
         assert!(eventually(Duration::from_secs(10), || socket.exists()).await);

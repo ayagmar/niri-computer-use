@@ -18,7 +18,7 @@ use zbus::zvariant::OwnedObjectPath;
 use zbus::{Connection, fdo, interface};
 
 use crate::client::WAIT;
-use crate::fixture::Fixture;
+use crate::fixture::{Fixture, SPAWNING};
 
 pub(crate) const ROOT: &str = "/org/a11y/atspi/accessible/root";
 pub(crate) const FRAME: u32 = 23;
@@ -419,6 +419,7 @@ async fn daemon(fixture: &Fixture) -> (Child, String) {
         fixture.path("bus").display()
     );
     std::fs::write(&config, config_text).unwrap();
+    let spawning = SPAWNING.lock().unwrap_or_else(PoisonError::into_inner);
     let mut daemon = Command::new("dbus-daemon")
         .arg(format!("--config-file={}", config.display()))
         .args(["--nofork", "--print-address"])
@@ -428,6 +429,7 @@ async fn daemon(fixture: &Fixture) -> (Child, String) {
         .kill_on_drop(true)
         .spawn()
         .unwrap();
+    drop(spawning);
     let mut stdout = BufReader::new(daemon.stdout.take().unwrap()).lines();
     let address = tokio::time::timeout(WAIT, stdout.next_line())
         .await

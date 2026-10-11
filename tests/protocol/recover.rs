@@ -2,12 +2,13 @@
 //! a marker naming a running child, and the human's answer.
 
 use std::process::Stdio;
+use std::sync::PoisonError;
 
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 
 use crate::client::{Server, WAIT, answer, run, subcommand, tool_error};
-use crate::fixture::{Fixture, eventually, exited};
+use crate::fixture::{Fixture, SPAWNING, eventually, exited};
 use crate::session::NiriProcess;
 
 const DIR: &str = "run/niri-computer-use/niri.test";
@@ -28,6 +29,7 @@ fn marker_exists(fixture: &Fixture) -> bool {
 /// A child in a process group of its own that ignores SIGTERM, as a stuck input child
 /// might, and its start time from `/proc`.
 fn stubborn_child() -> (tokio::process::Child, u32, u64) {
+    let spawning = SPAWNING.lock().unwrap_or_else(PoisonError::into_inner);
     let child = command()
         .args(["-c", "trap '' TERM; exec sleep 60"])
         .stdin(Stdio::null())
@@ -35,6 +37,7 @@ fn stubborn_child() -> (tokio::process::Child, u32, u64) {
         .kill_on_drop(true)
         .spawn()
         .unwrap();
+    drop(spawning);
     let pid = child.id().unwrap();
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
     let (_, rest) = stat.rsplit_once(") ").unwrap();
