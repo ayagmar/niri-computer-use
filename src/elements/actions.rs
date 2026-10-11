@@ -202,19 +202,25 @@ pub(crate) struct Gate<'a, R> {
     pub(crate) recheck: &'a R,
 }
 
-/// What the last gate saw, with what the tool's own read of the element found.
+/// What the last gate saw, with what the tool's own read of the element found, and when
+/// the answers it relies on become too old to act on.
 struct Checked<T> {
     read: T,
     role: u32,
     states: States,
     focus: Focus,
+    by: Instant,
 }
+
+/// What a pass of the last gate saw: the tool's own read, the element's role and states,
+/// and the focus.
+type Passed<T> = (T, u32, States, Focus);
 
 impl<R: Recheck> Gate<'_, R> {
     /// The last checks before the call that acts, `pass`, done within `LAST_GATE` of
-    /// their first read, so no answer they rely on is older when the call goes out. A pass
-    /// that runs over is done once more from the start; a second one that runs over is
-    /// `element_busy`. A change inside that window can still be missed.
+    /// their first read; `send` checks no answer they rely on is older when the call goes
+    /// out. A pass that runs over is done once more from the start; a second one that runs
+    /// over is `element_busy`. A change inside that window can still be missed.
     async fn last<T, F>(
         &self,
         element: &ElementRef,
@@ -226,22 +232,32 @@ impl<R: Recheck> Gate<'_, R> {
         F: Future<Output = Result<T, CallError>>,
     {
         for _ in 0..2 {
-            let deadline = Instant::now() + LAST_GATE;
+            let by = Instant::now() + LAST_GATE;
             let pass = self.pass(element, request, waiter, read());
-            match timeout_at(deadline, pass).await {
-                Ok(Err(refused)) => return Err(refused),
-                Ok(Ok(checked)) if Instant::now() <= deadline => return Ok(checked),
-                Ok(Ok(_)) | Err(_) => {}
+            if let Ok(passed) = timeout_at(by, pass).await {
+                let (found, role, states, focus) = passed?;
+                return Ok(Checked {
+                    read: found,
+                    role,
+                    states,
+                    focus,
+                    by,
+                });
             }
         }
-        Err(ToolError::new(
-            ErrorName::ElementBusy,
-            format!(
-                "the app or the desktop answered too slowly to check the element: its last checks took over {} ms twice; nothing was sent",
-                LAST_GATE.as_millis()
-            ),
-        )
-        .into())
+        let took = format!("took over {} ms twice", LAST_GATE.as_millis());
+        Err(busy(&took).into())
+    }
+
+    /// Tells the desk the call that acts goes out, if the answers the last gate relied on
+    /// are still at most `LAST_GATE` old: this is the moment before it goes out.
+    fn send<T>(&self, checked: &Checked<T>) -> Result<(), CallError> {
+        if Instant::now() > checked.by {
+            let took = format!("ended over {} ms after they began", LAST_GATE.as_millis());
+            return Err(busy(&took).into());
+        }
+        self.recheck.sending();
+        Ok(())
     }
 
     /// One pass of the last checks. The app's answers come first, one call at a time: the
@@ -258,7 +274,7 @@ impl<R: Recheck> Gate<'_, R> {
         request: &Request,
         waiter: &mut Waiter,
         read: impl Future<Output = Result<T, CallError>>,
-    ) -> Result<Checked<T>, CallError> {
+    ) -> Result<Passed<T>, CallError> {
         let view = waiter.view();
         identify(
             request,
@@ -280,13 +296,18 @@ impl<R: Recheck> Gate<'_, R> {
         }
         let focus = owner_focused(self.policy, waiter.view(), element, &self.expect)?;
         self.recheck.desk()?;
-        Ok(Checked {
-            read,
-            role,
-            states,
-            focus,
-        })
+        Ok((read, role, states, focus))
     }
+}
+
+/// `element_busy`: the last gate's checks `took` too long.
+fn busy(took: &str) -> ToolError {
+    ToolError::new(
+        ErrorName::ElementBusy,
+        format!(
+            "the app or the desktop answered too slowly to check the element: its last checks {took}; nothing was sent"
+        ),
+    )
 }
 
 /// Takes the element's action `requested`, or its default one, and looks at the element
@@ -326,7 +347,7 @@ pub(crate) async fn activate(
             offered(&request, element, action)
         })
         .await?;
-    gate.recheck.sending();
+    gate.send(&checked)?;
     let dispatched = request
         .do_action(element, checked.read)
         .await
@@ -426,7 +447,7 @@ pub(crate) async fn set_text(
             "the element isn't in the `editable` state, so its text can't be set".to_owned(),
         ));
     }
-    gate.recheck.sending();
+    gate.send(&checked)?;
     let dispatched = request
         .set_text(element, text)
         .await
@@ -706,6 +727,57 @@ mod tests {
                 lineage: Vec::new(),
             },
         }
+    }
+
+    /// The action gate's checks, all passing, counting the calls that went out.
+    #[derive(Default)]
+    struct Sent(std::sync::atomic::AtomicUsize);
+
+    impl Recheck for Sent {
+        fn control(&self) -> impl Future<Output = Result<(), ToolError>> + Send {
+            std::future::ready(Ok(()))
+        }
+
+        fn desk(&self) -> Result<(), ToolError> {
+            Ok(())
+        }
+
+        fn sending(&self) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+
+        fn answered(&self, _: Outcome) {}
+    }
+
+    #[test]
+    fn a_call_goes_out_only_while_the_last_gates_answers_are_young_enough() {
+        let policy = Loaded::Valid(parse("", false).unwrap());
+        let sent = Sent::default();
+        let gate = Gate {
+            expect: Expect::Window(3),
+            policy: &policy,
+            recheck: &sent,
+        };
+        let checked = |by| Checked {
+            read: (),
+            role: 43,
+            states: States::from_words(&[]),
+            focus: Focus::Matched,
+            by,
+        };
+        let now = Instant::now();
+        assert!(gate.send(&checked(now + LAST_GATE)).is_ok());
+        let late = now.checked_sub(Duration::from_millis(1)).unwrap();
+        let Err(CallError::Tool(refused)) = gate.send(&checked(late)) else {
+            panic!("a late call went out");
+        };
+        assert_eq!(refused.name, ErrorName::ElementBusy);
+        assert!(
+            refused.detail.ends_with("nothing was sent"),
+            "{}",
+            refused.detail
+        );
+        assert_eq!(sent.0.into_inner(), 1);
     }
 
     #[test]
