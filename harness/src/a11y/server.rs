@@ -182,10 +182,27 @@ impl Checks<'_, '_> {
             .log("M9: moved by (+37, +11), the element listed before still hit")
     }
 
-    /// A button that removes itself: once it is gone its ref is stale.
+    /// A button that removes itself: the click's `element_changes` says it was removed,
+    /// and once it is gone its ref is stale.
     fn vanished(&mut self, window: u64) -> Result<()> {
         let vanish = self.button(window, "Vanish")?;
-        self.click(&vanish.id)?;
+        let shot = self.screenshot_ref()?;
+        let arguments =
+            json!({"screenshot_ref": shot, "element": vanish.id, "element_changes": true});
+        let outcome = self.call("click", arguments)?;
+        expect(
+            field(&outcome, "/observed") == "sent",
+            "the click sent",
+            &outcome,
+        )?;
+        let told = "click with element_changes: GTK 4's Vanish button removed itself";
+        crate::changes::told(self.session, told, &outcome, |changes| {
+            field(changes, "/elements/removed")
+                .as_array()
+                .is_some_and(|removed| {
+                    removed.contains(&json!({"role": "button", "name": "Vanish"}))
+                })
+        })?;
         let what = "the Vanish button gone from elements";
         self.session
             .wait_until("m9-vanished", what, WAIT, |session| {

@@ -1,6 +1,7 @@
 //! M9b's acceptance: `activate_element` and `set_element_text` on each toolkit's fixture,
 //! counted and read back by the fixture itself, and each refusal checked to have sent
-//! nothing by the same counters. The text is synthetic, so reading it back is safe.
+//! nothing by the same counters. The text is synthetic, so reading it back is safe. Some
+//! of them ask for `element_changes`, which must tell what the action did.
 
 use std::fs;
 use std::time::{Duration, Instant};
@@ -9,6 +10,7 @@ use serde_json::{Value, json};
 
 use super::{Checks, element_ref, expect, read_count};
 use crate::a11y::{Bus, Fixture, Toolkit, rows};
+use crate::changes::{lists, logged, told};
 use crate::failure::{Context as _, Failure, Result};
 use crate::mcp::field;
 
@@ -62,6 +64,15 @@ const fn files(toolkit: Toolkit) -> Files {
     }
 }
 
+/// Whether a report has a button that changed its name.
+fn relabelled(changes: &Value) -> bool {
+    field(changes, "/elements/changed")
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|element| field(element, "/role") == "button" && field(element, "/was").is_string())
+}
+
 impl Checks<'_, '_> {
     /// Every toolkit's element actions and refusals, then the deny list on GTK 4.
     pub(super) fn element_actions(&mut self, bus: &Bus, server: &str) -> Result<()> {
@@ -85,6 +96,9 @@ impl Checks<'_, '_> {
         }
         let button = self.activated(toolkit, window, &files)?;
         self.set_text(toolkit, window, files.entry)?;
+        if toolkit == Toolkit::Gtk4 {
+            self.dialog(window)?;
+        }
         for (name, changes) in files.passwords {
             self.secret(window, *name, changes)?;
         }
@@ -128,9 +142,24 @@ impl Checks<'_, '_> {
         let mut button = String::new();
         for count in 1..=ACTIVATIONS {
             button = self.named(window, Some("button"), files.button)?;
+            // The first asks what changed, so its time isn't among the others'.
+            let watching = count == 1;
+            let arguments = if watching {
+                watched(&button, window)
+            } else {
+                activation(&button, window)
+            };
             let asked = Instant::now();
-            let outcome = self.call("activate_element", activation(&button, window))?;
-            took.push(asked.elapsed().as_millis());
+            let outcome = self.call("activate_element", arguments)?;
+            let elapsed = asked.elapsed().as_millis();
+            if watching {
+                let what = format!(
+                    "{toolkit:?} activation with element_changes in {elapsed} ms: the button relabelled"
+                );
+                told(self.session, &what, &outcome, relabelled)?;
+            } else {
+                took.push(elapsed);
+            }
             on_return += u32::from(read_count(self.session, files.count)? == Some(count));
             expect(
                 field(&outcome, "/accepted") == true
@@ -145,7 +174,7 @@ impl Checks<'_, '_> {
         }
         took.sort_unstable();
         self.session.log(&format!(
-            "M9b: {toolkit:?} {ACTIVATIONS}/{ACTIVATIONS} activations, each listed first, counted once and present ({on_return} already counted when the call returned), in {:?}; activate_element ms min {:?} median {:?} max {:?}",
+            "M9b: {toolkit:?} {ACTIVATIONS}/{ACTIVATIONS} activations, each listed first, counted once and present ({on_return} already counted when the call returned), in {:?}; activate_element ms, all but the first, min {:?} median {:?} max {:?}",
             started.elapsed(),
             took.first(),
             took.get(took.len() / 2),
@@ -171,7 +200,7 @@ impl Checks<'_, '_> {
         let asked = Instant::now();
         let outcome = self.call(
             "set_element_text",
-            json!({"element": entry, "text": text, "expect": {"window_id": window}}),
+            json!({"element": entry, "text": text, "expect": {"window_id": window}, "element_changes": true}),
         )?;
         let took = asked.elapsed();
         expect(
@@ -180,6 +209,10 @@ impl Checks<'_, '_> {
             "set_element_text matched",
             &outcome,
         )?;
+        let what = format!(
+            "{toolkit:?} set_element_text with element_changes: the text, which `observed` tells"
+        );
+        logged(self.session, &what, &outcome)?;
         let path = self.session.test_dir().root().join(file);
         let session = &mut *self.session;
         session.wait_until("m9b-entry", "the entry's text read back", WAIT, |_| {
@@ -311,12 +344,17 @@ impl Checks<'_, '_> {
     /// `Dismiss` closes its window: `gone`. Then a ref of that window is stale.
     fn dismissed(&mut self, window: u64, button: &str) -> Result<()> {
         let dismiss = self.named(window, Some("button"), "Dismiss")?;
-        let outcome = self.call("activate_element", activation(&dismiss, window))?;
+        let outcome = self.call("activate_element", watched(&dismiss, window))?;
         expect(
             field(&outcome, "/observed") == "gone",
             "gone after a button that closes its window",
             &outcome,
         )?;
+        let what = "activation with element_changes: Dismiss closed its window";
+        told(self.session, what, &outcome, |changes| {
+            lists(field(changes, "/closed"), &json!(window))
+                && field(changes, "/elements/unknown") == "window_gone"
+        })?;
         let refused = self.refused("activate_element", activation(button, window))?;
         expect(
             field(&refused, "/error") == "element_stale",
@@ -327,6 +365,37 @@ impl Checks<'_, '_> {
             "M9b: Dismiss observed {}, then the window's element refused: {refused}",
             field(&outcome, "/observed")
         ))
+    }
+
+    /// GTK 4's `Open dialog` opens a window over its own, which takes focus; closing it
+    /// gives focus back.
+    fn dialog(&mut self, window: u64) -> Result<()> {
+        let open = self.named(window, Some("button"), "Open dialog")?;
+        let outcome = self.call("activate_element", watched(&open, window))?;
+        expect(
+            field(&outcome, "/accepted") == true,
+            "Open dialog accepted",
+            &outcome,
+        )?;
+        let dialog = field(&outcome, "/changes/opened/0/id").clone();
+        told(
+            self.session,
+            "activation: a dialog opened and took focus",
+            &outcome,
+            |changes| {
+                field(changes, "/opened").as_array().map(Vec::len) == Some(1)
+                    && field(changes, "/focus/from") == window
+                    && field(changes, "/focus/to") == &dialog
+            },
+        )?;
+        let closed = self.call("close_window", json!({"id": dialog}))?;
+        told(
+            self.session,
+            "close_window: the dialog closed",
+            &closed,
+            |changes| lists(field(changes, "/closed"), &dialog),
+        )?;
+        self.call("focus_window", json!({"id": window})).map(drop)
     }
 
     /// GTK 4's `Rename` gives its window a denied `app_id`: the next activation in it is
@@ -486,7 +555,7 @@ impl Checks<'_, '_> {
         fs::write(self.session.artifact("audit-m9b.jsonl"), &audit)
             .context("copy the audit log")?;
         let secrets = [
-            "ncu m9b", "xxxxxxxx", "entry", "Primary", "Dismiss", "Rename",
+            "ncu m9b", "xxxxxxxx", "entry", "Primary", "Dismiss", "Rename", "dialog", "Dialog",
         ];
         let mut acted: u32 = 0;
         for line in audit.lines() {
@@ -611,4 +680,9 @@ fn listed(listing: &Value) -> Value {
 
 fn activation(element: &str, window: u64) -> Value {
     json!({"element": element, "expect": {"window_id": window}})
+}
+
+/// An activation that asks for `element_changes`.
+fn watched(element: &str, window: u64) -> Value {
+    json!({"element": element, "expect": {"window_id": window}, "element_changes": true})
 }

@@ -3,6 +3,7 @@
 mod a11y;
 mod actions;
 mod capture;
+mod changes;
 mod clipboard;
 mod config;
 mod control;

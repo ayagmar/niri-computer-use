@@ -7,7 +7,8 @@ every change, and each activation (Enter) with the text it submitted, then clear
 the `Plain entry`, which reports its text in `a11y-entry-text`, the `Password entry` and
 `Pin entry` (an entry for a PIN that hides it), which count their changes in
 `password-changes` and `pin-changes` without their text, the `Hidden entry`, which
-only hides its synthetic text, as a free-form entry can, a `Vanish` button that
+only hides its synthetic text, as a free-form entry can, an `Open dialog` button that
+opens a 240x120 `Dialog fixture` window over it, a `Vanish` button that
 removes itself when clicked, a `Dismiss` button that closes the window, and a `Rename`
 button that changes the window's Wayland app_id to `org.ncu.Denied`. `list` is a 400x300
 window with `Step` and `Jump` buttons above a `Gtk.ListView` of 200 synthetic records,
@@ -117,6 +118,13 @@ def labelled(widget, label):
     return widget
 
 
+def dialog(parent):
+    window = Gtk.Window(transient_for=parent, title="Dialog fixture")
+    window.set_default_size(240, 120)
+    window.set_child(Gtk.Label(label="Synthetic dialog"))
+    window.present()
+
+
 def a11y_window(window):
     grid = Gtk.Grid(row_spacing=6, column_spacing=6, column_homogeneous=True)
     for side in ("top", "bottom", "start", "end"):
@@ -140,7 +148,10 @@ def a11y_window(window):
         grid.attach(secret, column, 3, 1, 1)
         report(f"{key}-changes", "0")
     hidden = labelled(Gtk.Entry(visibility=False, text="ncu hidden"), "Hidden entry")
-    grid.attach(hidden, 0, 5, 2, 1)
+    grid.attach(hidden, 0, 5, 1, 1)
+    opener = Gtk.Button(label="Open dialog")
+    opener.connect("clicked", lambda button: dialog(window))
+    grid.attach(opener, 1, 5, 1, 1)
     vanish = Gtk.Button(label="Vanish")
     vanish.connect("clicked", lambda button: grid.remove(button))
     grid.attach(vanish, 1, 2, 1, 1)

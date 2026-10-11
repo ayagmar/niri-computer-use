@@ -6,7 +6,8 @@
 //! `pending` with its screenshot, and `interrupted` when the harness moves focus during a
 //! launch's wait. `niri_action` fullscreens and restores a window, floats it and sets its
 //! width, refuses `Spawn`, and a second server whose policy turns on `unrestricted` spawns
-//! a fixture with it. Everything the run creates lives under `TEST_DIR`.
+//! a fixture with it. Each action's `changes` is checked to tell what it did, or logged
+//! where only a look can. Everything the run creates lives under `TEST_DIR`.
 
 use std::fs;
 use std::path::Path;
@@ -15,6 +16,7 @@ use std::time::Duration;
 use niri_ipc::{Action, Request};
 use serde_json::{Value, json};
 
+use crate::changes::{lists, logged, told};
 use crate::failure::{Context as _, Failure, Result};
 use crate::mcp::{self, Client, field, structured};
 use crate::session::Session;
@@ -197,6 +199,9 @@ fn launches(session: &mut Session<'_>, client: &mut Client) -> Result<u64> {
         &late.to_string(),
     )?;
     session.log(&format!("M3: launch with a late app_id: {late}"))?;
+    told(session, "launch: the window opened", &late, |changes| {
+        lists(field(changes, "/opened"), &json!(id)) && field(changes, "/focus/to") == id
+    })?;
     let two = act(session, client, "launch", json!({"preset": "two"}))?;
     expect_outcome(&two, "ambiguous", "launch of two windows")?;
     expect(
@@ -204,6 +209,14 @@ fn launches(session: &mut Session<'_>, client: &mut Client) -> Result<u64> {
         "two windows reported",
         &two.to_string(),
     )?;
+    told(session, "launch: two windows opened", &two, |changes| {
+        let ids = field(&two, "/windows")
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        ids.iter()
+            .all(|opened| lists(field(changes, "/opened"), opened))
+    })?;
     session.log(&format!("M3: launch of two windows: {two}"))?;
     Ok(id)
 }
@@ -227,6 +240,12 @@ fn reuses(session: &mut Session<'_>, client: &mut Client, other: u64) -> Result<
         count(session, client, "reuse")? == 1,
         "reuse with one window started nothing",
         &again.to_string(),
+    )?;
+    told(
+        session,
+        "launch with reuse: focus moved",
+        &again,
+        |changes| field(changes, "/focus/to") == id && field(changes, "/opened").is_null(),
     )?;
     session.log(&format!(
         "M3: reuse with zero, then one window: {first}, {again}"
@@ -276,6 +295,16 @@ fn focuses(session: &mut Session<'_>, client: &mut Client, id: u64) -> Result<()
         "no window focused on the empty workspace",
         &away.to_string(),
     )?;
+    told(
+        session,
+        "focus_workspace: an empty workspace",
+        &away,
+        |changes| {
+            field(changes, "/workspace/to") == &other
+                && field(changes, "/focus/from") == id
+                && field(changes, "/focus/to").is_null()
+        },
+    )?;
     let back = act(session, client, "focus_workspace", json!({"id": focused}))?;
     expect_outcome(&back, "focused", "focus_workspace back")?;
     expect(
@@ -283,6 +312,9 @@ fn focuses(session: &mut Session<'_>, client: &mut Client, id: u64) -> Result<()
         "focus back on the window it left",
         &back.to_string(),
     )?;
+    told(session, "focus_workspace: back", &back, |changes| {
+        field(changes, "/workspace/to") == &focused && field(changes, "/focus/to") == id
+    })?;
     session.log(&format!(
         "M3: focus_workspace {other} and back: {away}, {back}"
     ))
@@ -293,14 +325,16 @@ fn focuses(session: &mut Session<'_>, client: &mut Client, id: u64) -> Result<()
 fn closes(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
     let plain = act(session, client, "launch", json!({"preset": "plain"}))?;
     expect_outcome(&plain, "one", "launch plain")?;
-    let closed = act(
-        session,
-        client,
-        "close_window",
-        json!({"id": only_window(&plain)?}),
-    )?;
+    let id = only_window(&plain)?;
+    let closed = act(session, client, "close_window", json!({"id": id}))?;
     expect_outcome(&closed, "closed", "close_window")?;
     session.log(&format!("M3: close_window: {closed}"))?;
+    told(
+        session,
+        "close_window: the window closed",
+        &closed,
+        |changes| lists(field(changes, "/closed"), &json!(id)),
+    )?;
     let keep = act(session, client, "launch", json!({"preset": "keep"}))?;
     expect_outcome(&keep, "one", "launch keep")?;
     let result = client.call(session, "close_window", json!({"id": only_window(&keep)?}))?;
@@ -312,7 +346,8 @@ fn closes(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
     )?;
     session.log(&format!(
         "M3: close_window pending, with a screenshot: {pending}"
-    ))
+    ))?;
+    logged(session, "close_window: a window that stays open", &pending)
 }
 
 /// The harness moves focus to `target` while `launch` waits for the slow fixture.
@@ -334,7 +369,13 @@ fn interrupted(session: &mut Session<'_>, client: &mut Client, target: u64) -> R
     )?;
     session.log(&format!(
         "M3: launch interrupted, with a screenshot: {outcome}"
-    ))
+    ))?;
+    told(
+        session,
+        "launch interrupted: where focus went",
+        &outcome,
+        |changes| field(changes, "/focus/to") == target,
+    )
 }
 
 /// `niri_action` on a fixture that takes the size niri configures: fullscreen fills the
@@ -366,6 +407,12 @@ fn layout(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
     session.log(&format!(
         "M3: niri_action fullscreen and back: {full}, {back}"
     ))?;
+    told(session, "niri_action: fullscreen", &full, |changes| {
+        resized(changes, id, &screen)
+    })?;
+    told(session, "niri_action: fullscreen again", &back, |changes| {
+        resized(changes, id, &tiled)
+    })?;
     let float = json!({"action": {"ToggleWindowFloating": {"id": id}}});
     let floating = act(session, client, "niri_action", float)?;
     expect_outcome(&floating, "changed", "ToggleWindowFloating")?;
@@ -385,6 +432,12 @@ fn layout(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
     session.log(&format!(
         "M3: niri_action float and width: {floating}, {wide}"
     ))?;
+    told(session, "niri_action: floating", &floating, |changes| {
+        changed(changes, id).is_some_and(|window| field(window, "/floating") == true)
+    })?;
+    told(session, "niri_action: a fixed width", &wide, |changes| {
+        changed(changes, id).is_some_and(|window| field(window, "/size/0") == 400)
+    })?;
     let spawn = json!({"action": {"Spawn": {"command": ["true"]}}});
     let refused = client.call(session, "niri_action", spawn)?;
     expect(
@@ -394,6 +447,12 @@ fn layout(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
     )?;
     let closed = act(session, client, "close_window", json!({"id": id}))?;
     expect_outcome(&closed, "closed", "close the sized window")?;
+    told(
+        session,
+        "close_window: the sized window closed",
+        &closed,
+        |changes| lists(field(changes, "/closed"), &json!(id)),
+    )?;
     session.log(&format!("M3: niri_action Spawn refused: {refused}"))
 }
 
@@ -410,6 +469,11 @@ fn unrestricted(session: &mut Session<'_>, server: &str) -> Result<()> {
     let spawn = json!({"action": {"Spawn": {"command": command}}});
     let spawned = act(session, &mut client, "niri_action", spawn)?;
     expect_outcome(&spawned, "sent", "Spawn with unrestricted")?;
+    logged(
+        session,
+        "niri_action: Spawn, its window found by wait_for",
+        &spawned,
+    )?;
     let until = json!({"until": {"window": {"app_id": "spawned"}}, "timeout_ms": 5000});
     let seen = structured(&client.call(session, "wait_for", until)?)?;
     let id = match field(&seen, "/windows").as_array().map(Vec::as_slice) {
@@ -452,6 +516,19 @@ fn noctalia(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
         &unknown.to_string(),
     )?;
     session.log(&format!("M3: noctalia passthrough: {status}, {unknown}"))
+}
+
+/// The entry for window `id` in a report's `windows`.
+fn changed(changes: &Value, id: u64) -> Option<&Value> {
+    field(changes, "/windows")
+        .as_array()?
+        .iter()
+        .find(|window| field(window, "/id") == id)
+}
+
+/// Whether the report has window `id` at `size`.
+fn resized(changes: &Value, id: u64, size: &Value) -> bool {
+    changed(changes, id).is_some_and(|window| field(window, "/size") == size)
 }
 
 fn focus(session: &mut Session<'_>, client: &mut Client, id: u64) -> Result<()> {
