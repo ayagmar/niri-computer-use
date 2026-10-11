@@ -44,7 +44,7 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `policy.capture_dir` | where `screenshot` saves, as the file writes it, or null when saving is off |
 | `unrestricted.enabled`, `unrestricted.source`, `unrestricted.error` | whether gated `niri_action`s and unrestricted presets are allowed, whether the policy file, `NIRI_COMPUTER_USE_UNRESTRICTED` or both allowed them, and why the variable was ignored |
 | `audit.path`, `audit.last_error` | the audit log and the last failure to write it |
-| `binaries` | whether `grim`, `wl-paste`, `wtype` and `loginctl` are on `PATH` |
+| `binaries` | whether `grim`, `wtype` and `loginctl` are on `PATH` |
 
 ## `desktop_state`
 
@@ -64,7 +64,13 @@ No arguments. niri's outputs by connector name, such as `DP-1`, as niri reports 
 
 ## `clipboard_read`
 
-No arguments. Runs `wl-paste --no-newline --type text` and returns `{"text": ..., "reason": null}`, or `text: null` with `reason` `nothing_copied` or `no_text`. Text over 1 MiB or not valid UTF-8 is an `upstream_error`. The text is never logged.
+No arguments. Reads the clipboard through wlr data-control, on a Wayland connection of its own to niri, and returns `{"text": ..., "reason": null}`, or `text: null` with a `reason`:
+
+- `nothing_copied`: the clipboard is empty.
+- `no_text`: nothing copied is text.
+- `secret`: the clipboard's owner marked it `x-kde-passwordManagerHint: secret`, as KeePassXC does for a copied password. Its text is never read. Text that `paste` left on the clipboard because it couldn't put the user's copy back carries the same mark, so it is `secret` too.
+
+The hint and the text come from the same copy, so a copy made in between can't pass a secret off as plain text. The text is read as `wl-paste --type text` reads it: as `text/plain;charset=utf-8` if offered, else `text/plain`, else the first other text type. Text over 1 MiB or not valid UTF-8 is an `upstream_error`. The text is never logged.
 
 ## `wait_for`
 

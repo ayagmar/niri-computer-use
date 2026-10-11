@@ -49,8 +49,9 @@ pub(crate) struct Fixture {
     /// or its audit log could create the directory again.
     servers: Mutex<Vec<u32>>,
     /// The Wayland display, served by the test's process like the fake niri, so the server
-    /// takes it as niri's. Nothing speaks Wayland on it.
-    _display: UnixListener,
+    /// takes it as niri's. Nothing speaks Wayland on it unless a test starts a fake
+    /// clipboard owner there.
+    display: UnixListener,
 }
 
 impl Fixture {
@@ -92,7 +93,7 @@ impl Fixture {
             dir,
             env,
             servers: Mutex::new(Vec::new()),
-            _display: display,
+            display,
         };
         if shared_mode() {
             fixture.set("NIRI_COMPUTER_USE_SHARED", "1");
@@ -103,6 +104,11 @@ impl Fixture {
             "fixture name {name:?} makes socket paths too long"
         );
         fixture
+    }
+
+    /// The display's listener, for a fake clipboard owner to serve.
+    pub(crate) fn display(&self) -> UnixListener {
+        self.display.try_clone().unwrap()
     }
 
     pub(crate) fn env(&self) -> &BTreeMap<&'static str, OsString> {

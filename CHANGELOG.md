@@ -8,6 +8,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - Before upgrading, end every running `niri-computer-use` process, servers, bridges and shared engines alike, then start your clients again. `pgrep -a '^niri-computer-u'` lists them. Older builds keep their runtime directory under `XDG_RUNTIME_DIR` rather than beside niri's socket, so an old and a new server on one niri share neither the lease nor the stop flag, and they don't take the input-dirty marker's lock.
 
+### Security
+
+- `clipboard_read` no longer returns what the clipboard's owner marked `x-kde-passwordManagerHint: secret`, such as a password copied from KeePassXC, or text a `paste` left behind: `text` is null with the new reason `secret`, and the text is never read. The hint and the text come from the same copy, read over data-control in the server rather than with `wl-paste`.
+
 ### Added
 
 - Optional GTK 4 button-activation acceptance in `make nested-input`: 100 actual activations with observed-counter latency percentiles.
@@ -15,7 +19,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - `niri-computer-use serve`: an MCP server over stdio with two read-only tools, `status` and `outputs`.
 - `niri-computer-use status`: prints the same readiness report as the `status` tool.
 - `screenshot` tool: one output or a region inside one output, through grim, as JPEG or PNG with its geometry and scale.
-- `clipboard_read` tool: the clipboard's text through `wl-paste`.
+- `clipboard_read` tool: the clipboard's text.
 - An audit log of every tool call at `$XDG_STATE_HOME/niri-computer-use/audit.jsonl`, with argument metadata and outcomes but no contents. `status` reports its path and last write error.
 - `shell_status` tool, present when Noctalia is installed. `status` reports whether Noctalia is running and the lock state from logind and Noctalia; the screen counts as locked if either says so. logind is asked about the session niri itself runs in, read from niri's environment, so the answer doesn't depend on where the server was started, and only when niri runs as `niri --session`, the only niri that sets logind's hint.
 - `desktop_state` tool: windows, workspaces, focus, overview and keyboard layouts from niri's event stream. `status` reports whether the stream is connected.

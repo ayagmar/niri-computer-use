@@ -2,7 +2,7 @@
 //! three types with different contents: afterwards the same types offer the same bytes.
 //! A focus mismatch and the stop flag refuse before the clipboard is touched: the owner
 //! keeps the selection and the entry stays empty. With nothing copied, nothing is copied
-//! afterwards.
+//! afterwards. `clipboard_read` reads the owner's text, and withholds a copy marked secret.
 
 use std::ffi::OsString;
 use std::fs;
@@ -37,6 +37,7 @@ pub(super) fn run(
 ) -> Result<()> {
     let text = CORPUS.repeat(REPEATS);
     let (owner, copied) = own(session, backend)?;
+    read_back(session, client, &copied)?;
     refusals(session, client, server, &copied)?;
     let start = Instant::now();
     let pasted = paste(session, client, &text)?;
@@ -122,6 +123,7 @@ pub(super) fn secret(session: &mut Session<'_>, client: &mut Client) -> Result<(
     let args = json!({"text": "x", "keys": "ctrl+v", "expect": {"app_id": APP_ID}});
     refused(session, client, args, "clipboard_unsaved")?;
     entry_shows(session, "")?;
+    withheld(session, client, OWNERS_TEXT)?;
     if session.test_dir().root().join(CANCELLED).exists() || offered(session)? != expected {
         return Err(Failure::new(
             "M7 paste: a refused secret clipboard changed the clipboard",
@@ -129,8 +131,47 @@ pub(super) fn secret(session: &mut Session<'_>, client: &mut Client) -> Result<(
     }
     owner.stop()?;
     session.log(
-        "M7 paste with a clipboard marked secret: clipboard_unsaved, the owner kept the selection and the entry stayed empty",
+        "M7 paste with a clipboard marked secret: clipboard_unsaved, the owner kept the selection and the entry stayed empty; clipboard_read withheld it as secret, with the text in neither its result nor the audit log",
     )
+}
+
+/// The start of what the owner copies as text, with no character JSON escapes.
+const OWNERS_TEXT: &str = "The user's own copy";
+
+/// `clipboard_read` returns the owner's copy as `wl-paste --type text` reads it: its
+/// `text/plain;charset=utf-8`, not its markup.
+fn read_back(session: &mut Session<'_>, client: &mut Client, copied: &Offered) -> Result<()> {
+    let read = structured(&client.call(session, "clipboard_read", json!({}))?)?;
+    let text = copied
+        .iter()
+        .find(|(mime, _)| mime == "text/plain;charset=utf-8")
+        .map(|(_, bytes)| String::from_utf8_lossy(bytes).into_owned());
+    if read != json!({"text": text, "reason": null}) {
+        return Err(Failure::new(format!(
+            "M7 clipboard_read: {read}, not the owner's text {text:?}"
+        )));
+    }
+    Ok(())
+}
+
+/// `clipboard_read` withholds the clipboard as `secret`, and neither its result nor the
+/// audit log holds `text`.
+pub(super) fn withheld(session: &mut Session<'_>, client: &mut Client, text: &str) -> Result<()> {
+    let result = client.call(session, "clipboard_read", json!({}))?;
+    let path = session
+        .test_dir()
+        .state()
+        .join("niri-computer-use/audit.jsonl");
+    let audit = fs::read_to_string(&path).context(format!("read {}", path.display()))?;
+    if structured(&result)? != json!({"text": null, "reason": "secret"})
+        || result.to_string().contains(text)
+        || audit.contains(text)
+    {
+        return Err(Failure::new(format!(
+            "M7 clipboard_read of a secret: {result}, or the audit log holds its text"
+        )));
+    }
+    Ok(())
 }
 
 /// A wrong `expect` and the stop flag both refuse, and leave everything as it was.
@@ -191,6 +232,12 @@ pub(super) fn empty(session: &mut Session<'_>, client: &mut Client, backend: &st
         return Err(Failure::new(
             "M7 paste: something was copied before the empty-clipboard check",
         ));
+    }
+    let read = structured(&client.call(session, "clipboard_read", json!({}))?)?;
+    if read != json!({"text": null, "reason": "nothing_copied"}) {
+        return Err(Failure::new(format!(
+            "M7 clipboard_read with nothing copied: {read}"
+        )));
     }
     let pasted = paste(session, client, CORPUS)?;
     entry_shows(session, CORPUS)?;

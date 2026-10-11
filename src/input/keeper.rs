@@ -25,6 +25,7 @@ use tokio::task::JoinSet;
 use tokio::time::Instant;
 
 use super::paste::{Clipboard, MAX_TEXT, Report};
+use crate::clipboard::{HINT, SECRET};
 use crate::niri::selection::{self, Contents, Event, Selection, SourceId};
 use crate::{Env, niri};
 
@@ -36,9 +37,6 @@ const TEXT_TYPES: [&str; 5] = [
     "STRING",
     "TEXT",
 ];
-/// The hint KDE's and other clipboard managers honour: don't keep this in the history.
-const HINT: &str = "x-kde-passwordManagerHint";
-const SECRET: &[u8] = b"secret";
 /// A type of our own beside the text, so that a later paste knows the selection for a
 /// keeper's text, which a `kept` outcome left behind, rather than the user's.
 const PASTE: &str = "application/x-niri-computer-use-paste";
@@ -151,13 +149,18 @@ async fn take(env: &Env) -> Result<(Selection, Previous, SourceId), String> {
         .await
         .map_err(|error| error.detail)?;
     let previous = previous(saved.contents, current)?;
-    let mut types = TEXT_TYPES.to_vec();
-    types.extend([HINT, PASTE]);
     let paste = selection
-        .offer(&types)
+        .offer(&offered())
         .await
         .map_err(|error| error.detail)?;
     Ok((selection, previous, paste))
+}
+
+/// The types the text's source offers: the text's, the secret hint and `PASTE`.
+pub(crate) fn offered() -> Vec<&'static str> {
+    let mut types = TEXT_TYPES.to_vec();
+    types.extend([HINT, PASTE]);
+    types
 }
 
 /// What the clipboard held before the paste, as the restore treats it.

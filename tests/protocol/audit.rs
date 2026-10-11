@@ -6,6 +6,7 @@ use base64::Engine as _;
 use serde_json::{Value, json};
 
 use crate::client::{CLIENT, Server};
+use crate::clipboard::Owner;
 use crate::fixture::{Fixture, jpeg};
 use crate::niri::{Niri, window};
 use crate::noctalia::{self, UNLOCKED};
@@ -16,7 +17,10 @@ async fn every_call_is_one_line_of_metadata_without_content() {
     let mut niri = Niri::start(&fixture);
     fixture.program("noctalia", "exit 0");
     fixture.program("loginctl", "echo no");
-    fixture.program("wl-paste", "printf clipboard-secret");
+    let _owner = Owner::serve(
+        &fixture,
+        Some(vec![("text/plain", b"clipboard-secret".to_vec())]),
+    );
     noctalia::start(&fixture, UNLOCKED);
     let image = jpeg(1280, 720, b"pixel-secret");
     fixture.grim(&image);

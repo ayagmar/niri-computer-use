@@ -37,7 +37,8 @@ use crate::error::{ErrorName, ToolError};
 /// A selection's contents: each MIME type with its bytes, in the order it was offered.
 pub(crate) type Contents = Vec<(String, Arc<[u8]>)>;
 
-/// The longest each of `bind`, `save`, `unchanged_since`, `offer` and `clear` takes.
+/// The longest each of `bind`, `save`, `unchanged_since`, `offer` and `clear` takes, and
+/// the deadline to give an `Offer`'s reads together.
 pub(crate) const STEP: Duration = DEADLINE;
 
 /// A selection as saved: its contents, `None` when nothing was selected, and which of
@@ -177,27 +178,37 @@ impl Selection {
     /// The current selection's contents; `None` when nothing is selected.
     async fn contents(&self, max: usize) -> Result<Option<Contents>, ToolError> {
         let deadline = Instant::now() + DEADLINE;
-        let Current::Offer(offer) = self.state.selection.clone() else {
+        let Some(offer) = self.current() else {
             return Ok(None);
+        };
+        let mut contents = Contents::new();
+        let mut left = max;
+        for mime in offer.types() {
+            let bytes = offer.receive(mime, left, deadline).await?;
+            left -= bytes.len();
+            contents.push((mime.clone(), bytes.into()));
+        }
+        Ok(Some(contents))
+    }
+
+    /// The selection niri announced last; `None` when nothing is selected or it offers no
+    /// type, which `wl-paste` reports as nothing copied too.
+    pub(crate) fn current(&self) -> Option<Offer<'_>> {
+        let Current::Offer(offer) = &self.state.selection else {
+            return None;
         };
         let types = self
             .state
             .offers
             .iter()
-            .find(|(known, _)| *known == offer)
-            .map(|(_, types)| types.clone())
-            .unwrap_or_default();
-        if types.is_empty() {
-            return Ok(None);
-        }
-        let mut contents = Contents::new();
-        let mut left = max;
-        for mime in types {
-            let bytes = self.receive(&offer, &mime, left, deadline).await?;
-            left -= bytes.len();
-            contents.push((mime, bytes.into()));
-        }
-        Ok(Some(contents))
+            .find(|(known, _)| known == offer)
+            .map(|(_, types)| types.as_slice())
+            .filter(|types| !types.is_empty())?;
+        Some(Offer {
+            selection: self,
+            proxy: offer,
+            types,
+        })
     }
 
     async fn receive(
@@ -291,6 +302,34 @@ impl Selection {
             return Err(upstream("niri ended the data-control device"));
         }
         Ok(())
+    }
+}
+
+/// One selection as niri offered it: its MIME types, in the order offered, and reads of
+/// them. While it lives, the `Selection` it borrows handles no event, so every read goes
+/// to this offer's owner, whatever is copied meanwhile.
+#[derive(Debug)]
+pub(crate) struct Offer<'a> {
+    selection: &'a Selection,
+    proxy: &'a ZwlrDataControlOfferV1,
+    types: &'a [String],
+}
+
+impl Offer<'_> {
+    pub(crate) const fn types(&self) -> &[String] {
+        self.types
+    }
+
+    /// Reads `mime` from the offer's owner within `deadline`, if it is at most `max` bytes.
+    pub(crate) async fn receive(
+        &self,
+        mime: &str,
+        max: usize,
+        deadline: Instant,
+    ) -> Result<Vec<u8>, ToolError> {
+        self.selection
+            .receive(self.proxy, mime, max, deadline)
+            .await
     }
 }
 

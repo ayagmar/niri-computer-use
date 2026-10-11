@@ -1498,8 +1498,9 @@ impl Server {
         .await
     }
 
-    /// The clipboard's text, read with `wl-paste`. `text` is null, with a `reason`, when
-    /// nothing is copied (`nothing_copied`) or nothing copied is text (`no_text`).
+    /// The clipboard's text. `text` is null, with a `reason`, when nothing is copied
+    /// (`nothing_copied`), nothing copied is text (`no_text`), or its owner, such as a
+    /// password manager, marked it as a secret (`secret`).
     #[tool(annotations(read_only_hint = true))]
     async fn clipboard_read(
         &self,

@@ -66,7 +66,7 @@ Every tool call is appended to `~/.local/state/niri-computer-use/audit.jsonl` (o
 
 ## What isn't a boundary
 
-- Screenshots, window titles, accessible names and the clipboard reach any connected agent without a lease, even while the screen is locked. Connect only agents you trust with what is on your screen.
+- Screenshots, window titles, accessible names and the clipboard reach any connected agent without a lease, even while the screen is locked. Connect only agents you trust with what is on your screen. The exception is a copy its owner marks as a secret, such as a password from KeePassXC: `clipboard_read` withholds it with `reason: "secret"`. A password manager that doesn't mark its copies gets no such protection.
 - The deny list follows keyboard focus, and a click lands wherever the pointer is: it can hit a denied window while an allowed app has focus.
 - Apps choose their own `app_id`, so any app can call itself anything.
 - The preset rules refuse shells, interpreters and terminals with arguments, but a wrapper script gets past any list. With `unrestricted` on there are no preset rules.

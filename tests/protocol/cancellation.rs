@@ -6,6 +6,7 @@ use std::time::Duration;
 use serde_json::json;
 
 use crate::client::Server;
+use crate::clipboard::Owner;
 use crate::fixture::{Fixture, exited, jpeg, pid_in};
 use crate::niri::Niri;
 
@@ -65,9 +66,23 @@ async fn cancelling_a_screenshot_kills_grim_and_its_group() {
     .await;
 }
 
+/// The server reads the clipboard on a Wayland connection of its own, which a cancel
+/// closes while the owner still holds the read.
 #[tokio::test]
-async fn cancelling_clipboard_read_kills_wl_paste_and_its_group() {
-    cancel_while_running("cancel-paste", "wl-paste", "clipboard_read", json!({})).await;
+async fn cancelling_clipboard_read_closes_its_connection() {
+    let fixture = Fixture::new("cancel-paste");
+    let _niri = Niri::start(&fixture);
+    let mut owner = Owner::serve(&fixture, Some(vec![("text/plain", b"text".to_vec())]));
+    owner.hold("text/plain");
+    let mut server = Server::start(&fixture).await;
+    let id = server.start_call("clipboard_read", json!({})).await;
+    owner.held().await;
+    server.cancel(id).await;
+    // Well inside the two-second read deadline.
+    assert!(owner.closed_within(Duration::from_millis(500)).await);
+    server.structured("outputs").await;
+    assert!(!server.answered().contains(&id));
+    assert_eq!(fixture.audit_lines()[0]["error"], "cancelled");
 }
 
 #[tokio::test]
@@ -119,7 +134,7 @@ async fn concurrent_calls_are_answered_as_each_finishes() {
     let image = jpeg(1280, 720, &[]);
     std::fs::write(fixture.path("grim.out"), &image).unwrap();
     fixture.program("grim", r#"sleep 1; cat "$DIR/grim.out""#);
-    fixture.program("wl-paste", "printf text");
+    let _owner = Owner::serve(&fixture, Some(vec![("text/plain", b"text".to_vec())]));
     let mut server = Server::start(&fixture).await;
     let stream = niri.stream().await;
     stream.initial(&[crate::niri::window(1, "a")]);

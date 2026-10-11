@@ -4,6 +4,7 @@
 use serde_json::{Value, json};
 
 use crate::client::{Server, mistake, tool_error};
+use crate::clipboard::Owner;
 use crate::fixture::{Fixture, jpeg};
 use crate::niri::{Niri, output};
 
@@ -158,13 +159,13 @@ async fn an_image_of_the_wrong_size_is_an_upstream_error() {
 async fn clipboard_text_over_one_mebibyte_is_an_upstream_error() {
     let fixture = Fixture::new("big-clipboard");
     let _niri = Niri::start(&fixture);
-    fixture.program("wl-paste", "head -c 1048577 /dev/zero | tr '\\0' x");
+    let text = vec![b'x'; 1024 * 1024 + 1];
+    let _owner = Owner::serve(&fixture, Some(vec![("text/plain", text)]));
     let mut server = Server::start(&fixture).await;
     let (name, detail) = tool_error(&server.call("clipboard_read", json!({})).await);
-    assert_eq!(name, "upstream_error");
-    assert!(
-        detail.starts_with("wl-paste wrote more than 1048576 bytes and exited with"),
-        "{detail}"
+    assert_eq!(
+        (name.as_str(), detail.as_str()),
+        ("upstream_error", "the selection is larger than the cap")
     );
 }
 

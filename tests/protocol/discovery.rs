@@ -7,7 +7,8 @@ use std::os::unix::net::UnixListener;
 use serde_json::{Value, json};
 
 use crate::client::{Server, tool_error};
-use crate::fixture::{DISPLAY, Fixture};
+use crate::clipboard::Owner;
+use crate::fixture::{DISPLAY, Fixture, jpeg};
 use crate::niri::{Niri, window_on};
 use crate::noctalia::{self, UNLOCKED};
 use crate::session::NiriProcess;
@@ -36,17 +37,34 @@ async fn without_the_session_variables_the_server_finds_the_running_niri() {
     assert_eq!(status["niri"]["version"], "26.04 (protocol-test)");
     assert_eq!(status["outputs"]["pointer_supported"], true);
 
-    // Programs such as grim, wtype and wl-paste reach the display through these.
-    fixture.program(
-        "wl-paste",
-        r#"printf '%s %s %s' "$XDG_RUNTIME_DIR" "$WAYLAND_DISPLAY" "$NIRI_SOCKET""#,
+    // Programs such as grim and wtype reach the display through these.
+    probe(
+        &fixture,
+        r#"'%s %s %s' "$XDG_RUNTIME_DIR" "$WAYLAND_DISPLAY" "$NIRI_SOCKET""#,
     );
+    screenshot(&mut server).await;
     let run = fixture.path("run");
     let passed = format!("{} {DISPLAY} {}", run.display(), run.join(&name).display());
     assert_eq!(
-        server.structured("clipboard_read").await,
-        json!({"text": passed, "reason": null})
+        std::fs::read_to_string(fixture.path("grim.env")).unwrap(),
+        passed
     );
+}
+
+/// A grim that writes what `printf` makes of `arguments` to `grim.env`.
+fn probe(fixture: &Fixture, arguments: &str) {
+    std::fs::write(fixture.path("grim.out"), jpeg(1280, 720, &[])).unwrap();
+    fixture.program(
+        "grim",
+        &format!(r#"printf {arguments} > "$DIR/grim.env"; cat "$DIR/grim.out""#),
+    );
+}
+
+async fn screenshot(server: &mut Server) {
+    let shot = server
+        .call("screenshot", json!({"target": "focused_output"}))
+        .await;
+    assert_eq!(shot["isError"], false, "{shot}");
 }
 
 #[tokio::test]
@@ -74,14 +92,15 @@ async fn children_never_inherit_a_wayland_socket() {
     let mut fixture = Fixture::new("wayland-socket");
     fixture.set("WAYLAND_SOCKET", "3");
     let _niri = Niri::start(&fixture);
-    fixture.program(
-        "wl-paste",
-        r#"printf '%s %s' "${WAYLAND_SOCKET-unset}" "$WAYLAND_DISPLAY""#,
+    probe(
+        &fixture,
+        r#"'%s %s' "${WAYLAND_SOCKET-unset}" "$WAYLAND_DISPLAY""#,
     );
     let mut server = Server::start(&fixture).await;
+    screenshot(&mut server).await;
     assert_eq!(
-        server.structured("clipboard_read").await,
-        json!({"text": format!("unset {DISPLAY}"), "reason": null})
+        std::fs::read_to_string(fixture.path("grim.env")).unwrap(),
+        format!("unset {DISPLAY}")
     );
 }
 
@@ -132,9 +151,10 @@ async fn a_display_niri_doesnt_serve_refuses_input_screenshots_and_the_clipboard
     let _relay = NiriProcess::relaying(&fixture, &backend).await;
     fixture.program("noctalia", "exit 0");
     let _noctalia = noctalia::start(&fixture, UNLOCKED);
-    for program in ["wtype", "grim", "wl-paste"] {
+    for program in ["wtype", "grim"] {
         fixture.program(program, &format!(": > \"$DIR/{program}.ran\""));
     }
+    let mut owner = Owner::serve(&fixture, Some(vec![("text/plain", b"copied".to_vec())]));
     let mut server = Server::start(&fixture).await;
     let stream = niri.stream().await;
     stream.initial(&[window_on(1, Some("a"), 1, true)]);
@@ -169,12 +189,13 @@ async fn a_display_niri_doesnt_serve_refuses_input_screenshots_and_the_clipboard
             ("session_mismatch", detail)
         );
     }
-    for program in ["wtype", "grim", "wl-paste"] {
+    for program in ["wtype", "grim"] {
         assert!(
             !fixture.path(&format!("{program}.ran")).exists(),
             "{program} ran"
         );
     }
+    assert_eq!(owner.reads(), Vec::<String>::new());
 }
 
 /// Sol's lifetime case: the display passes the check at startup, then is served by another
@@ -189,7 +210,7 @@ async fn a_display_replaced_after_startup_refuses_input_screenshots_and_the_clip
     let (process, name) = NiriProcess::discoverable(&fixture, DISPLAY, &backend).await;
     fixture.program("noctalia", "exit 0");
     let _noctalia = noctalia::start(&fixture, UNLOCKED);
-    for program in ["wtype", "grim", "wl-paste"] {
+    for program in ["wtype", "grim"] {
         fixture.program(program, &format!(": > \"$DIR/{program}.ran\""));
     }
     let mut server = Server::start(&fixture).await;
@@ -203,18 +224,22 @@ async fn a_display_replaced_after_startup_refuses_input_screenshots_and_the_clip
 
     let display = fixture.path(&format!("run/{DISPLAY}"));
     std::fs::remove_file(&display).unwrap();
-    let _replacement = UnixListener::bind(&display).unwrap();
+    let mut replacement = Owner::on(
+        UnixListener::bind(&display).unwrap(),
+        Some(vec![("text/plain", b"copied".to_vec())]),
+    );
     refuses_what_reaches_the_display(&mut server, "session_mismatch").await;
 
     drop(process);
     std::fs::remove_file(fixture.path(&format!("run/{name}"))).unwrap();
     refuses_what_reaches_the_display(&mut server, "niri_unavailable").await;
-    for program in ["wtype", "grim", "wl-paste"] {
+    for program in ["wtype", "grim"] {
         assert!(
             !fixture.path(&format!("{program}.ran")).exists(),
             "{program} ran"
         );
     }
+    assert_eq!(replacement.reads(), Vec::<String>::new());
 }
 
 /// `status` shows `expected` under `display_error`, and input, a screenshot and a clipboard

@@ -1,9 +1,10 @@
 //! Noctalia running, stopped and absent; the lock state from logind and Noctalia; and the
-//! clipboard's three outcomes.
+//! clipboard's four outcomes.
 
 use serde_json::{Value, json};
 
 use crate::client::{Server, tool_error};
+use crate::clipboard::{Contents, HINT, Owner};
 use crate::fixture::Fixture;
 use crate::niri::Niri;
 use crate::noctalia::{self, LOCKED, UNLOCKED};
@@ -140,31 +141,75 @@ async fn a_niri_without_session_is_not_asked_about_through_logind() {
     assert_eq!(name, "screen_locked");
 }
 
+/// What the user copied: markup, then text, then an image, as a browser offers them.
+fn copied(text: &str) -> Contents {
+    vec![
+        ("text/html", b"<b>markup</b>".to_vec()),
+        ("text/plain;charset=utf-8", text.as_bytes().to_vec()),
+        ("image/png", vec![0x89, b'P', b'N', b'G']),
+    ]
+}
+
 #[tokio::test]
 async fn the_clipboard_is_text_nothing_copied_or_no_text() {
     let fixture = Fixture::new("clipboard");
     let _niri = Niri::start(&fixture);
+    let mut owner = Owner::serve(&fixture, Some(copied("héllo\nworld")));
     let mut server = Server::start(&fixture).await;
-    fixture.program(
-        "wl-paste",
-        r#"printf '%s\n' "$@" > "$DIR/wl-paste.args"; printf 'héllo\nworld'"#,
-    );
     assert_eq!(
         server.structured("clipboard_read").await,
         json!({"text": "héllo\nworld", "reason": null})
     );
-    assert_eq!(fixture.args("wl-paste"), ["--no-newline", "--type", "text"]);
-    fixture.program("wl-paste", "echo 'Nothing is copied' >&2; exit 1");
-    assert_eq!(
-        server.structured("clipboard_read").await,
-        json!({"text": null, "reason": "nothing_copied"})
-    );
-    fixture.program(
-        "wl-paste",
-        r#"echo 'Clipboard content is not available as requested type "text"' >&2; exit 1"#,
-    );
+    assert_eq!(owner.reads(), ["text/plain;charset=utf-8"]);
+    for nothing in [None, Some(Vec::new())] {
+        owner.copy(nothing);
+        assert_eq!(
+            server.structured("clipboard_read").await,
+            json!({"text": null, "reason": "nothing_copied"})
+        );
+    }
+    owner.copy(Some(vec![("image/png", vec![0x89, b'P', b'N', b'G'])]));
     assert_eq!(
         server.structured("clipboard_read").await,
         json!({"text": null, "reason": "no_text"})
     );
+    assert_eq!(owner.reads(), Vec::<String>::new());
+}
+
+/// What a password manager copies is withheld without its text ever being read, and the
+/// audit log holds neither. A hint of any other value hides nothing.
+#[tokio::test]
+async fn a_copy_marked_secret_is_withheld_unread() {
+    let fixture = Fixture::new("clipboard-secret");
+    let _niri = Niri::start(&fixture);
+    let mut secret = copied("synthetic-password-7f3k");
+    secret.push((HINT, b"secret".to_vec()));
+    let mut owner = Owner::serve(&fixture, Some(secret));
+    let mut server = Server::start(&fixture).await;
+    assert_eq!(
+        server.structured("clipboard_read").await,
+        json!({"text": null, "reason": "secret"})
+    );
+    assert_eq!(owner.reads(), [HINT]);
+
+    let mut public = copied("a public note");
+    public.push((HINT, b"public".to_vec()));
+    owner.copy(Some(public));
+    assert_eq!(
+        server.structured("clipboard_read").await,
+        json!({"text": "a public note", "reason": null})
+    );
+
+    // A hint that can't be read is no answer: the call fails rather than read the text.
+    let mut unreadable = copied("synthetic-password-7f3k");
+    unreadable.push((HINT, [b"secret".as_slice(), &[b' '; 64]].concat()));
+    owner.copy(Some(unreadable));
+    owner.reads();
+    let (name, _) = tool_error(&server.call("clipboard_read", json!({})).await);
+    assert_eq!(name, "upstream_error");
+    assert_eq!(owner.reads(), [HINT]);
+
+    let audit = std::fs::read_to_string(fixture.audit_log()).unwrap();
+    assert!(!audit.contains("synthetic-password-7f3k"), "{audit}");
+    assert!(!audit.contains("a public note"), "{audit}");
 }
