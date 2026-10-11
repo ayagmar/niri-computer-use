@@ -3,7 +3,8 @@
 //! line and closes it by dropping it. Actions are answered `Handled`, or held unanswered,
 //! and handed to the test, which sends the events the action would cause, unless the test
 //! set the fake to send them itself. Each request's reply passes the fixture's hold point
-//! `niri:<request>`, and the events the fake sends for an action pass `niri:effect`.
+//! `niri:<request>`, and the events the fake sends for an action pass `niri:effect` once the server read
+//! its answer.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -365,6 +366,10 @@ async fn respond(
     if let Some(answer) = answer {
         reply(&mut write, &answer).await;
         if let Request::Action(action) = request {
+            // The server closes the connection once it read the answer, so from here on it
+            // knows niri carried the action out.
+            let mut rest = Vec::new();
+            read.read_to_end(&mut rest).await.ok();
             effect(channels, action).await;
         }
         return;
@@ -397,7 +402,7 @@ fn name(value: &Value) -> String {
 }
 
 /// Sends the events the test set for `action` on every open event stream, past the hold
-/// point `niri:effect`.
+/// point `niri:effect`, once the server has read the answer.
 async fn effect(channels: &Channels, action: &Action) {
     let effects = channels.config.lock().unwrap().effects.clone();
     let Some(effects) = effects else { return };
