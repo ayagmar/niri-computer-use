@@ -39,7 +39,7 @@ Every action's result also says what niri saw it change, as `changes`, so the ag
 | `workspace` | `{"from", "to"}`: the focused workspace before and afterwards |
 | `windows` | windows open before and afterwards whose `title`, `app_id`, `workspace_id`, `floating`, `size` (niri's `window_size`) or `urgent` changed, each as its `id` with the new values of the fields that changed. niri 26.04 has no fullscreen flag, so fullscreen shows as a size. Positions in the scrolling layout aren't reported: opening a column moves every column to its right |
 | `truncated` | how many window entries were left out: `opened`, `closed` and `windows` hold 12 together |
-| `lost` | niri's event stream ended before the report did; what is there was seen before |
+| `lost` | why the report is incomplete, with niri's reason: its event stream ended before the report did, and what is there was seen before, or it couldn't be watched at all, and nothing else is there |
 | `elements` | with `element_changes`, what changed among a window's accessible elements: see [Element changes](../elements/#element-changes) |
 
 Titles are cut at 100 characters, with `…`. A stop or another server taking the lease during the action leaves `changes` out, as it leaves out the screenshot.

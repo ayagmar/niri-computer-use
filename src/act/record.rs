@@ -11,6 +11,7 @@ use tokio::time::Instant;
 
 use super::Outcome;
 use crate::changes::{self, Changes, Scene};
+use crate::error::ToolError;
 use crate::niri::waiter::{Waited, Waiter};
 use crate::niri::{self, Events};
 
@@ -44,11 +45,11 @@ pub(crate) enum Wait {
 }
 
 impl Recorder {
-    /// Starts watching, or none without an event stream: then there is no report.
-    pub(crate) async fn start(events: Events<'_>) -> Option<Self> {
-        let waiter = niri::waiter(events).await.ok()?;
+    /// Starts watching, or says why niri's event stream can't be watched.
+    pub(crate) async fn start(events: Events<'_>) -> Result<Self, ToolError> {
+        let waiter = niri::waiter(events).await?;
         let before = Scene::of(waiter.view());
-        Some(Self {
+        Ok(Self {
             waiter,
             before,
             passing: BTreeMap::new(),

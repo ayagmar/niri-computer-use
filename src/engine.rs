@@ -332,8 +332,8 @@ impl Engine {
             };
             let mut recorder = Recorder::start(self.events.as_ref()).await;
             let outcome = match &mut recorder {
-                Some(recorder) => recorder.follow(work).await?,
-                None => work.await?,
+                Ok(recorder) => recorder.follow(work).await?,
+                Err(_) => work.await?,
             };
             Ok(Watched {
                 outcome,
@@ -538,13 +538,17 @@ impl Engine {
         let capture = |request| self.capture(session, request);
         let evidence = act::with_evidence(outcome, shoot, capture);
         let mut evidenced = match &mut recorder {
-            Some(recorder) => recorder.follow(evidence).await,
-            None => evidence.await,
+            Ok(recorder) => recorder.follow(evidence).await,
+            Err(_) => evidence.await,
         };
         let wait = if shoot { Wait::Settled } else { Wait::Quiet };
         let mut changes = match recorder {
-            Some(recorder) => recorder.finish(wait, &mut evidenced.outcome).await,
-            None => Changes::default(),
+            Ok(recorder) => recorder.finish(wait, &mut evidenced.outcome).await,
+            // Nothing was watched, so an empty report would read as "nothing changed".
+            Err(error) => Changes {
+                lost: Some(error.detail),
+                ..Changes::default()
+            },
         };
         if let Some(before) = before {
             changes.elements = Box::pin(self.survey_after(session, before)).await;
@@ -640,11 +644,12 @@ pub(crate) enum Watch<'a> {
 /// A window's elements before an action, or why they aren't known.
 type Surveyed = Result<(u64, Vec<Seen>), Unknown>;
 
-/// An action's outcome, with the watch on niri and the elements from before it.
+/// An action's outcome, with the watch on niri, or why it couldn't start, and the elements
+/// from before it.
 #[derive(Debug)]
 struct Watched {
     outcome: Outcome,
-    recorder: Option<Recorder>,
+    recorder: Result<Recorder, ToolError>,
     before: Option<Surveyed>,
 }
 

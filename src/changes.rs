@@ -73,7 +73,8 @@ pub(crate) struct Changes {
     /// Window entries left out past the cap.
     #[serde(skip_serializing_if = "is_zero")]
     pub(crate) truncated: usize,
-    /// The event stream ended before the report did: what is here was seen before that.
+    /// Why the report is incomplete: niri's event stream ended before the report did, and
+    /// what is here was seen before that, or it couldn't be watched at all, and nothing is.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) lost: Option<String>,
     /// With `element_changes`: what changed among the window's accessible elements.

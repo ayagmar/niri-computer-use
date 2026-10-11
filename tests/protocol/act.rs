@@ -1630,6 +1630,28 @@ async fn shell_open_and_close_watch_noctalias_active_panel() {
     );
 }
 
+// niri's event stream reconnected but sent no state, so the change report can't start. The
+// panel still opens, as Noctalia needs no stream, and the report says why it has nothing
+// rather than reading as "nothing changed".
+#[tokio::test]
+async fn a_report_that_cannot_start_says_why() {
+    let mut desk = Desk::start("act-shell-unwatched", "").await;
+    desk.stream.close();
+    let _silent = desk.niri.stream().await;
+    let opened = desk
+        .server
+        .call("shell_open", json!({"panel": "control-center"}))
+        .await;
+    assert_eq!(
+        outcome(&opened),
+        json!({
+            "accepted": true, "observed": "opened", "focused_window": null,
+            "shell": {"active_panel": "control-center"},
+            "changes": {"lost": "niri's event stream sent no initial state within 2s"}
+        })
+    );
+}
+
 #[tokio::test]
 async fn panels_outside_the_allowlist_are_refused_without_asking_noctalia() {
     let mut desk = Desk::start("act-shell-refused", "").await;
