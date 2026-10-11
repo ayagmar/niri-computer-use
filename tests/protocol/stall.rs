@@ -1,8 +1,8 @@
 //! The stall-point explorer. Every review of the element actions found one shape of bug:
 //! hold one reply back, from niri, Noctalia or the app, change one fact the gate had
 //! already read, release, and the action went out on a stale answer. The explorer searches
-//! for that shape instead of waiting for a review. It calls each acting tool once and
-//! keeps the trace of the hold points the fakes passed, every reply the call awaited, so a
+//! for that shape instead of waiting for a review. It calls each acting tool and keeps
+//! the trace of the hold points the fakes passed, every reply the call awaited, so a
 //! new await in the server is explored without new test code. Then, for each point of the
 //! trace and each fact the tool's gates depend on, it calls the tool again, holds that
 //! reply, changes the fact, waits for the server to see the change, releases the reply, a
@@ -28,6 +28,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use niri_ipc::Action;
 use serde_json::{Value, json};
+use tokio::sync::Semaphore;
 
 use crate::atspi::{self, Bus, Mock, Object, PASSWORD_TEXT};
 use crate::client::{Server, WAIT};
@@ -503,8 +504,33 @@ impl World {
         self.mock.change(path, change);
     }
 
-    /// Calls `tool` once with nothing held, and returns the trace of its call.
+    /// Calls `tool` with nothing held until two calls in a row pass the same points, and
+    /// returns that trace. Their order can differ, as the readiness report asks niri and
+    /// Noctalia at once. On a loaded machine a pass of the element actions' last gate can run
+    /// over and be done again, which adds points the next calls don't pass.
     async fn baseline(&mut self, tool: Tool) -> Vec<Passed> {
+        let points = |trace: &[Passed]| -> BTreeSet<(String, usize)> {
+            trace
+                .iter()
+                .map(|passed| (passed.point.clone(), passed.nth))
+                .collect()
+        };
+        let mut last = self.trace(tool).await;
+        for _ in 0..5 {
+            let trace = self.trace(tool).await;
+            if points(&trace) == points(&last) {
+                return trace;
+            }
+            last = trace;
+        }
+        panic!(
+            "{}: no two calls in a row passed the same points",
+            tool.name()
+        );
+    }
+
+    /// Calls `tool` once with nothing held, and returns the trace of its call.
+    async fn trace(&mut self, tool: Tool) -> Vec<Passed> {
         let arguments = self.reset(tool).await;
         let result = self.server.call(tool.name(), arguments).await;
         let trace = self.points.trace();
@@ -689,11 +715,22 @@ fn after_send(case: &Case<'_>, ran: &Ran) -> Result<(), String> {
     Ok(())
 }
 
-/// Explores `tool` against `fact` in a world of its own: every point of the trace, held
-/// briefly and, before the call that acts, past `LAST_GATE`. Returns the broken cases.
-async fn explore_fact(tool: Tool, fact: Fact) -> (usize, Vec<String>) {
-    let tag = format!("st-{}-{fact:?}", tool.name());
+/// How many worlds explore each tool against each fact, each taking every `SHARDS`th
+/// point of the trace. A case mostly waits for the server and its holds, so worlds side by
+/// side finish sooner even on few cores.
+const SHARDS: usize = 8;
+/// The most worlds exploring at once, across the fact tests libtest runs side by side. With
+/// a world for every shard, a 4-core machine got so busy that the element actions' last
+/// gate ran over twice on a call with nothing held.
+static WORLDS: Semaphore = Semaphore::const_new(16);
+
+/// Explores `tool` against `fact` in a world of its own: every `SHARDS`th point of the
+/// trace from `shard` on, held briefly and, before the call that acts, past `LAST_GATE`.
+/// Returns the broken cases.
+async fn explore_fact(tool: Tool, fact: Fact, shard: usize) -> (usize, Vec<String>) {
+    let tag = format!("st{shard}-{}-{fact:?}", tool.name());
     let tag: String = tag.chars().take(24).collect();
+    let _turn = WORLDS.acquire().await.unwrap();
     let mut world = World::start(&tag).await;
     let trace = world.baseline(tool).await;
     let sends = trace
@@ -702,7 +739,7 @@ async fn explore_fact(tool: Tool, fact: Fact) -> (usize, Vec<String>) {
         .unwrap_or(trace.len());
     let mut broken = Vec::new();
     let mut runs = 0;
-    for (index, at) in trace.iter().enumerate() {
+    for (index, at) in trace.iter().enumerate().skip(shard).step_by(SHARDS) {
         for hold in [Hold::Short, Hold::Long] {
             let case = Case {
                 tool,
@@ -744,21 +781,35 @@ const TOOLS: [Tool; 8] = [
     Tool::TypeText,
 ];
 
-/// Explores every tool that depends on `fact`, each on a thread and a desktop of its own,
-/// and fails with every broken case.
+/// The tools `make check` explores, one of each kind. They catch every bug the explorer
+/// found; `NCU_STALL=full` explores all of `TOOLS`, as `make stall` does.
+const SAMPLE: [Tool; 3] = [Tool::Activate, Tool::FocusWindow, Tool::Key];
+
+fn tools() -> &'static [Tool] {
+    if std::env::var_os("NCU_STALL").is_some_and(|scope| scope == "full") {
+        &TOOLS
+    } else {
+        &SAMPLE
+    }
+}
+
+/// Explores every tool that depends on `fact`, each shard on a thread and a desktop of its
+/// own, and fails with every broken case.
 fn explore(fact: Fact) {
-    let threads: Vec<_> = TOOLS
-        .into_iter()
+    let threads: Vec<_> = tools()
+        .iter()
+        .copied()
         .filter(|tool| fact.refusals(*tool).is_some())
-        .map(|tool| {
+        .flat_map(|tool| (0..SHARDS).map(move |shard| (tool, shard)))
+        .map(|(tool, shard)| {
             std::thread::Builder::new()
-                .name(format!("{}-{fact:?}", tool.name()))
+                .name(format!("{}-{fact:?}-{shard}", tool.name()))
                 .spawn(move || {
                     tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build()
                         .unwrap()
-                        .block_on(explore_fact(tool, fact))
+                        .block_on(explore_fact(tool, fact, shard))
                 })
                 .unwrap()
         })

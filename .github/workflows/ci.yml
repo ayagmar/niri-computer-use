@@ -27,6 +27,20 @@ jobs:
       - name: Run checks
         run: make check
 
+  stall:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install libxkbcommon and dbus-daemon
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libxkbcommon-dev dbus-daemon
+
+      - name: Explore every stall point
+        run: make stall
+
   site:
     runs-on: ubuntu-latest
     steps:
