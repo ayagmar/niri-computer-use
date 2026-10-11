@@ -2,9 +2,9 @@
 //! Noctalia. The nested niri runs without a logind session, so the lock state comes from
 //! Noctalia. Each allowlisted panel opens and closes as observed, and the panels outside
 //! the allowlist return `panel_not_allowed` without opening anything. With Noctalia
-//! stopped, `shell_status` is `noctalia_unavailable` and, with no lock source left, the
-//! shell tools are refused as `screen_locked`. A server whose `PATH` has no `noctalia`
-//! lists no shell tools and reports Noctalia as not installed.
+//! stopped, `desktop_state`'s `shell` is `noctalia_unavailable` and, with no lock source
+//! left, `shell_panel` is refused as `screen_locked`. A server whose `PATH` has no
+//! `noctalia` lists no shell tools and reports Noctalia as not installed.
 
 use std::ffi::OsString;
 use std::fs;
@@ -84,7 +84,7 @@ fn refused(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
     session.log(&format!("M5: panel_not_allowed for {}", REFUSED.join(", ")))
 }
 
-/// With Noctalia stopped there is neither `shell_status` nor a lock state.
+/// With Noctalia stopped there is neither Noctalia's status nor a lock state.
 fn stopped(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
     let status = session.wait_until(
         "m5-stopped",
@@ -101,11 +101,11 @@ fn stopped(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
         "an unknown lock state without Noctalia",
         &lock.to_string(),
     )?;
-    let shell_status = client.call(session, "shell_status", json!({}))?;
+    let state = structured(&client.call(session, "desktop_state", json!({}))?)?;
     expect(
-        error(&shell_status) == "noctalia_unavailable",
-        "shell_status without Noctalia",
-        &shell_status.to_string(),
+        field(&state, "/shell/error") == "noctalia_unavailable",
+        "desktop_state's shell without Noctalia",
+        &field(&state, "/shell").to_string(),
     )?;
     let open = client.call(
         session,
@@ -118,7 +118,7 @@ fn stopped(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
         &open.to_string(),
     )?;
     session.log(&format!(
-        "M5: Noctalia stopped: lock {lock}, shell_status noctalia_unavailable, shell_panel screen_locked"
+        "M5: Noctalia stopped: lock {lock}, shell noctalia_unavailable, shell_panel screen_locked"
     ))
 }
 

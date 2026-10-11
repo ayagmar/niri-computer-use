@@ -5,20 +5,18 @@ sidebar:
   order: 1
 ---
 
-The server offers up to 25 tools. `shell_status` and `shell_panel` are listed only when Noctalia is installed, `noctalia` only when Noctalia is installed and [`unrestricted`](../../concepts/configuration/#unrestricted) is on, and `elements`, `activate_element` and `set_element_text` only when the session has an accessibility bus, so a session without Noctalia or an accessibility bus has 19.
+The server offers up to 23 tools. `shell_panel` is listed only when Noctalia is installed, `noctalia` only when Noctalia is installed and [`unrestricted`](../../concepts/configuration/#unrestricted) is on, and `elements`, `activate_element` and `set_element_text` only when the session has an accessibility bus, so a session without Noctalia or an accessibility bus has 18.
 
 ## Every tool
 
 | Tool | Lease | What it does | Page |
 |---|---|---|---|
 | `status` | no | the readiness report | [Looking](../looking/#status) |
-| `desktop_state` | no | windows, workspaces, the focused window, the overview, keyboard layouts | [Looking](../looking/#desktop_state) |
-| `outputs` | no | monitors: position, size, scale, transform | [Looking](../looking/#outputs) |
+| `desktop_state` | no | windows, workspaces, the focused window, the overview, keyboard layouts, monitors, Noctalia's state | [Looking](../looking/#desktop_state) |
 | `clipboard_read` | yes | the clipboard's text, if copied during the lease | [Looking](../looking/#clipboard_read) |
 | `wait_for` | no | waits for a window to appear, close or change title, or for the screen to settle | [Looking](../looking/#wait_for) |
 | `screenshot` | no | an image of an output or a region, with its geometry; optionally saved as a PNG | [Screenshots](../screenshots/) |
 | `elements` | no | one window's accessible elements and where they are | [Elements](../elements/) |
-| `shell_status` | no | Noctalia's bar, panel and lock state | [Noctalia](../../concepts/noctalia/) |
 | `acquire_desktop` | takes it | takes the lease and notes the user's window | [Acting](../acting/#acquire_desktop) |
 | `release_desktop` | gives it up | gives the lease up, optionally restoring focus | [Acting](../acting/#release_desktop) |
 | `focus` | yes | focuses a window or a workspace by id | [Acting](../acting/#focus) |

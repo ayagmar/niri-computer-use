@@ -56,15 +56,16 @@ pub(crate) fn start(session: &Session<'_>, deadline: Duration) -> Result<Process
     session.start("noctalia", &[], session.artifact("noctalia.log"), deadline)
 }
 
-/// `shell_status` reports no open panel.
+/// `desktop_state`'s `shell` reports no open panel.
 pub(crate) fn no_panel_open(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
-    let status = structured(&client.call(session, "shell_status", json!({}))?)?;
-    if !field(&status, "/activePanelId").is_null() {
+    let state = structured(&client.call(session, "desktop_state", json!({}))?)?;
+    let status = field(&state, "/shell");
+    if !field(status, "/activePanelId").is_null() {
         return Err(Failure::new(format!(
-            "expected no open panel; shell_status says {status}"
+            "expected no open panel; desktop_state's shell says {status}"
         )));
     }
-    session.log(&format!("shell_status, no panel open: {status}"))
+    session.log(&format!("shell, no panel open: {status}"))
 }
 
 /// Opens `panel` with `shell_panel` and closes it again, each seen in

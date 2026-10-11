@@ -11,7 +11,7 @@ Prefer `desktop_state` when structured data answers the question; take a screens
 
 | Argument | Value |
 |---|---|
-| `target` (required) | `focused_output`, `output:<name>` with a name from `outputs`, or `region` |
+| `target` (required) | `focused_output`, `output:<name>` with a name from `desktop_state`'s `outputs`, or `region` |
 | `region` | with target `region`: `{x, y, width, height}` in layout coordinates, inside one output |
 | `max_width` | the widest image to return, in pixels; default 1280 |
 | `format` | `jpeg` (default, quality 80) or `png` |

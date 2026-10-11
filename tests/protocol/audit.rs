@@ -22,7 +22,7 @@ async fn every_call_is_one_line_of_metadata_without_content() {
     let mut server = Server::start(&fixture).await;
     let stream = niri.stream().await;
     stream.initial(&[window(1, "title-secret")]);
-    let tools = ["status", "outputs", "desktop_state", "shell_status"];
+    let tools = ["status", "desktop_state"];
     for tool in tools {
         server.structured(tool).await;
     }
@@ -46,7 +46,7 @@ async fn every_call_is_one_line_of_metadata_without_content() {
         assert!(line["duration_ms"].is_u64());
         assert!(line["ts"].as_str().unwrap().ends_with('Z'));
     }
-    assert_eq!(lines[4]["args"]["target"], "focused_output");
+    assert_eq!(lines[2]["args"]["target"], "focused_output");
 
     let text = std::fs::read_to_string(fixture.audit_log()).unwrap();
     let encoded = base64::engine::general_purpose::STANDARD.encode(&image);
@@ -65,8 +65,8 @@ async fn a_failed_write_shows_in_status_and_the_call_still_succeeds() {
     // A file where the log's directory should be.
     std::fs::write(fixture.path("state/niri-computer-use"), "").unwrap();
     let mut server = Server::start(&fixture).await;
-    let outputs = server.structured("outputs").await;
-    assert!(outputs.get("DP-1").is_some());
+    let status = server.structured("status").await;
+    assert_eq!(status["outputs"]["pointer_supported"], true);
     let audit = &server.structured("status").await["audit"];
     assert_eq!(audit["path"], fixture.audit_log().to_str().unwrap());
     let error = audit["last_error"].as_str().unwrap();

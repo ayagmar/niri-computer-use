@@ -83,6 +83,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - Shorter tool descriptions and schemas, with no change in behaviour: the input schemas drop `$schema`, field text no longer repeats defaults and ranges the schema states, and the long descriptions keep their refusals and rules while the mechanics live in the docs.
 - `focus_window` and `focus_workspace` are one tool, `focus`, which takes `window_id` or `workspace_id`.
 - `shell_open` and `shell_close` are one tool, `shell_panel`, which takes the panel and `open: true` or `false`.
+- `outputs` and `shell_status` are gone: `desktop_state` has `outputs`, each with its name, make, model and `logical` position, size, scale and transform, and with Noctalia installed `shell`, Noctalia's status or `noctalia_unavailable`.
 
 ### Fixed
 

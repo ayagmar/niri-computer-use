@@ -55,12 +55,10 @@ No arguments. One snapshot of niri's event stream:
 - `focused_window`: the focused window's id, or null while keyboard focus is outside the window layout, for example on a shell panel, the lock screen or the overview
 - `overview_open`
 - `keyboard_layouts`: the layout names and the current index
+- `outputs`, by connector name, such as `DP-1`: each output's `name`, `make` and `model`, and under `logical` its position and size in layout coordinates, its scale and its transform. A disabled output has `logical: null`. niri's mode lists and hardware details are left out.
+- `shell`, only when Noctalia is installed: Noctalia's own status, `barVisible`, `panelOpen`, `activePanelId` and `locked`, or `{"error": "noctalia_unavailable", "detail": ...}` when Noctalia isn't answering. Its absence or error doesn't fail the call.
 
-Right after the server starts or reconnects, it waits up to two seconds for niri's initial state.
-
-## `outputs`
-
-No arguments. niri's outputs by connector name, such as `DP-1`, as niri reports them: make, model, modes, and under `logical` the position and size in layout coordinates, the scale and the transform. A disabled output has `logical: null`.
+Right after the server starts or reconnects, it waits up to two seconds for niri's initial state. The outputs come from a separate niri request and Noctalia's status from its socket, both asked at the same time as the snapshot, each with a two-second deadline.
 
 ## `clipboard_read`
 

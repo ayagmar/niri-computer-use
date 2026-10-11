@@ -5,18 +5,18 @@ sidebar:
   order: 3
 ---
 
-[Noctalia](https://github.com/noctalia-dev/noctalia-shell) is optional. Without it, everything except the two shell tools works the same.
+[Noctalia](https://github.com/noctalia-dev/noctalia-shell) is optional. Without it, everything except `shell_panel` works the same.
 
 ## Detection
 
-When the server starts, it looks for `noctalia` on `PATH`. If it is there, the server lists two more tools, `shell_status` and `shell_panel`, and a third, `noctalia`, when [`unrestricted`](../configuration/#unrestricted) is on. The tool list is fixed for the session, so install Noctalia before starting the agent.
+When the server starts, it looks for `noctalia` on `PATH`. If it is there, the server lists `shell_panel`, `desktop_state` gains a `shell` field, and the server lists `noctalia` too when [`unrestricted`](../configuration/#unrestricted) is on. The tool list is fixed for the session, so install Noctalia before starting the agent.
 
 The server talks to Noctalia over its socket, `$XDG_RUNTIME_DIR/noctalia-$WAYLAND_DISPLAY.sock`, with a two-second deadline. `status` reports `noctalia` as `running`, `not_running` with the reason in `noctalia_error`, or `not_installed`.
 
 ## What it adds
 
 - Noctalia's `locked` is a second source for the [lock gate](../safety/#the-lock-gate), next to logind's, so the server knows the lock state even when niri isn't started with `--session`.
-- `shell_status` returns Noctalia's own status: `barVisible`, `panelOpen`, `activePanelId` and `locked`. It is read-only.
+- `desktop_state`'s `shell` is Noctalia's own status: `barVisible`, `panelOpen`, `activePanelId` and `locked`, or `noctalia_unavailable` when Noctalia isn't answering.
 - `shell_panel` opens and closes a panel, under the lease and the same checks as every action.
 
 ## Panels

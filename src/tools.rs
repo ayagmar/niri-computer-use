@@ -34,7 +34,8 @@ use crate::{elements, observe, wait};
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct ScreenshotArgs {
-    /// `focused_output`, `output:<name>` with a name from `outputs`, or `region`.
+    /// `focused_output`, `output:<name>` with a name from `desktop_state`'s `outputs`, or
+    /// `region`.
     target: String,
     /// Required with target `region`: a rectangle in layout coordinates that lies inside
     /// one output.
@@ -621,15 +622,13 @@ pub(crate) struct Server {
 
 #[tool_router]
 impl Server {
-    /// The `shell_*` tools exist only when `noctalia` is on `PATH`, `noctalia` only when
+    /// `shell_panel` exists only when `noctalia` is on `PATH`, `noctalia` only when
     /// `unrestricted` is on as well, and the element tools only with an accessibility bus,
     /// so the tool list stays fixed for the session.
     pub(crate) fn new(engine: Arc<Engine>, session: Session) -> Self {
         let mut tool_router = Self::tool_router();
         if !engine.noctalia_installed() {
-            for tool in SHELL_TOOLS {
-                tool_router.remove_route(tool);
-            }
+            tool_router.remove_route("shell_panel");
         }
         if !engine.noctalia_installed() || !session.settings().unrestricted.enabled() {
             tool_router.remove_route("noctalia");
@@ -1226,24 +1225,12 @@ impl Server {
         self.act(&context, asked, work).await
     }
 
-    /// niri's outputs (monitors) by connector name: modes, logical position and size,
-    /// scale and transform, as niri reports them.
-    #[tool(annotations(read_only_hint = true))]
-    async fn outputs(
-        &self,
-        context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, ErrorData> {
-        self.audited(&context, "outputs", Value::Null, async {
-            answer(self.engine.outputs().await)
-        })
-        .await
-    }
-
-    /// The desktop right now, as one snapshot of niri's event stream: windows (id,
-    /// title, `app_id`, pid, workspace, floating, urgent, layout), workspaces, the focused
-    /// window id, whether the overview is open, and the keyboard layouts. The focused
-    /// window is null while keyboard focus is outside the window layout, for example on
-    /// a shell panel, the lock screen or the overview.
+    /// The desktop right now: windows (id, title, `app_id`, pid, workspace, floating,
+    /// urgent, layout), workspaces, the focused window id (null while keyboard focus is
+    /// outside the windows, as on a shell panel, the lock screen or the overview), the
+    /// overview, keyboard layouts, `outputs` (monitors by name, with their position, size,
+    /// scale and transform in the layout), and with Noctalia, `shell`: its bar, open panel
+    /// and lock state, or why it isn't answering.
     #[tool(annotations(read_only_hint = true))]
     async fn desktop_state(
         &self,
@@ -1361,19 +1348,6 @@ impl Server {
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
                 Err(CallError::Tool(error)) => Ok(error.into_result()),
             }
-        })
-        .await
-    }
-
-    /// Noctalia's status: whether its bar is visible, which panel is open, and whether
-    /// its lock screen is up. `noctalia_unavailable` when Noctalia isn't answering.
-    #[tool(annotations(read_only_hint = true))]
-    async fn shell_status(
-        &self,
-        context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, ErrorData> {
-        self.audited(&context, "shell_status", Value::Null, async {
-            answer(self.engine.shell_status().await)
         })
         .await
     }
@@ -1691,8 +1665,6 @@ struct Keying {
     element_changes: bool,
 }
 
-/// The tools that exist only with Noctalia installed.
-const SHELL_TOOLS: [&str; 2] = ["shell_status", "shell_panel"];
 const ELEMENT_TOOLS: [&str; 3] = ["elements", "activate_element", "set_element_text"];
 
 fn answer(result: Result<impl Serialize, ToolError>) -> Result<CallToolResult, ErrorData> {
@@ -1740,7 +1712,7 @@ fn invalid(message: &str) -> CallToolResult {
 #[tool_handler(
     router = self.tool_router,
     name = "niri-computer-use",
-    instructions = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `elements`, when listed, gives a window's accessible elements, which `activate_element` and `set_element_text` act on without the pointer once their window has focus. To act, call `acquire_desktop`, then one action at a time (pointer tools with a fresh `screenshot_ref`, `key`, `type_text` and `paste` with `expect`, `niri_action` for window layout), reading `accepted` and `observed` before the next call. A result's `changes` says what niri saw the action change and is absent when nothing did: read it first, and take a screenshot only when it is empty or unexpected. To see an action's result, pass it `screenshot: true` rather than sending a `screenshot` alongside it, and use `wait_for` rather than repeated screenshots to wait for a window or for the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter, and start apps through `launch` presets; with no preset for the app, use `niri_action` `Spawn` with the program's argv (never a shell or `SpawnSh`) when `status.unrestricted.enabled` is true, then find its window with `wait_for` or `desktop_state` (its `app_id` may differ from the program's name) and never repeat the `Spawn`; otherwise ask the user to add a preset. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
+    instructions = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows, workspaces and monitors; take a `screenshot` only when you need to see pixels. `elements`, when listed, gives a window's accessible elements, which `activate_element` and `set_element_text` act on without the pointer once their window has focus. To act, call `acquire_desktop`, then one action at a time (pointer tools with a fresh `screenshot_ref`, `key`, `type_text` and `paste` with `expect`, `niri_action` for window layout), reading `accepted` and `observed` before the next call. A result's `changes` says what niri saw the action change and is absent when nothing did: read it first, and take a screenshot only when it is empty or unexpected. To see an action's result, pass it `screenshot: true` rather than sending a `screenshot` alongside it, and use `wait_for` rather than repeated screenshots to wait for a window or for the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter, and start apps through `launch` presets; with no preset for the app, use `niri_action` `Spawn` with the program's argv (never a shell or `SpawnSh`) when `status.unrestricted.enabled` is true, then find its window with `wait_for` or `desktop_state` (its `app_id` may differ from the program's name) and never repeat the `Spawn`; otherwise ask the user to add a preset. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
 )]
 impl ServerHandler for Server {}
 
@@ -1808,11 +1780,9 @@ mod tests {
         }
         for tool in [
             Server::status_tool_attr(),
-            Server::outputs_tool_attr(),
             Server::desktop_state_tool_attr(),
             Server::screenshot_tool_attr(),
             Server::clipboard_read_tool_attr(),
-            Server::shell_status_tool_attr(),
             Server::elements_tool_attr(),
             Server::wait_for_tool_attr(),
         ] {
@@ -1969,7 +1939,7 @@ mod tests {
     }
 
     #[test]
-    fn the_shell_tools_exist_only_with_noctalia_installed() {
+    fn the_shell_panel_exists_only_with_noctalia_installed() {
         use std::os::unix::fs::PermissionsExt as _;
         let dir = crate::test_support::fresh_dir("noctalia");
         let noctalia = dir.join("noctalia");
@@ -1981,10 +1951,8 @@ mod tests {
         });
         let missing = server(&engine(Env::default()), false);
         let restricted = server(&installed, false);
-        for tool in SHELL_TOOLS {
-            assert!(restricted.tool_router.has_route(tool), "{tool}");
-            assert!(!missing.tool_router.has_route(tool), "{tool}");
-        }
+        assert!(restricted.tool_router.has_route("shell_panel"));
+        assert!(!missing.tool_router.has_route("shell_panel"));
         assert!(missing.tool_router.has_route("status"));
         // The passthrough also needs unrestricted, which one session's variable turns on
         // for that session alone.

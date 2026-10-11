@@ -26,7 +26,8 @@ use crate::control::desk::{Desk, Worked};
 use crate::control::lease::Holder;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::input::Input;
-use crate::niri::events::{EventStream, StreamState};
+use crate::niri::OutputSummary;
+use crate::niri::events::{DesktopState, EventStream, StreamState};
 use crate::observe;
 use crate::policy::{self, SaveTarget};
 use crate::refs::Shot;
@@ -89,6 +90,26 @@ impl elements::actions::Recheck for Recheck<'_> {
     fn answered(&self, outcome: Outcome) {
         self.engine.desk.answered(outcome);
     }
+}
+
+/// What `desktop_state` returns.
+#[derive(Debug, Serialize)]
+pub(crate) struct Desktop {
+    #[serde(flatten)]
+    state: DesktopState,
+    /// By name.
+    outputs: Vec<OutputSummary>,
+    /// Only when Noctalia is installed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    shell: Option<Shell>,
+}
+
+/// Noctalia's status as it gave it, or why it gave none.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub(crate) enum Shell {
+    Status(serde_json::Map<String, Value>),
+    Unavailable(ToolError),
 }
 
 /// What `release_desktop` returns.
@@ -392,19 +413,29 @@ impl Engine {
         .await
     }
 
-    /// niri's outputs.
-    pub(crate) async fn outputs(&self) -> Result<impl Serialize, ToolError> {
-        niri::outputs(&self.env.niri_socket).await
-    }
-
-    /// One snapshot of the event stream.
-    pub(crate) async fn desktop(&self) -> Result<impl Serialize, ToolError> {
-        niri::desktop(self.events.as_ref()).await
-    }
-
-    /// Noctalia's status.
-    pub(crate) async fn shell_status(&self) -> Result<impl Serialize, ToolError> {
-        noctalia::status(&self.env).await
+    /// One snapshot of the event stream, with niri's outputs and, when Noctalia is
+    /// installed, its status or why it has none.
+    pub(crate) async fn desktop(&self) -> Result<Desktop, ToolError> {
+        let shell = async {
+            if self.noctalia_installed {
+                Some(noctalia::status(&self.env).await)
+            } else {
+                None
+            }
+        };
+        let (state, outputs, shell) = tokio::join!(
+            niri::desktop(self.events.as_ref()),
+            niri::outputs(&self.env.niri_socket),
+            shell
+        );
+        Ok(Desktop {
+            state: state?,
+            outputs: outputs?.into_values().map(Into::into).collect(),
+            shell: shell.map(|status| match status {
+                Ok(status) => Shell::Status(status),
+                Err(error) => Shell::Unavailable(error),
+            }),
+        })
     }
 
     /// The clipboard's text, if it was copied during `session`'s lease.

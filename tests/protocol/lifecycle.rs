@@ -95,14 +95,12 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
             "key",
             "launch",
             "niri_action",
-            "outputs",
             "paste",
             "pointer_move",
             "release_desktop",
             "screenshot",
             "scroll",
             "shell_panel",
-            "shell_status",
             "status",
             "type_text",
             "wait_for"
@@ -212,7 +210,6 @@ async fn without_noctalia_on_path_there_are_no_shell_tools() {
             "key",
             "launch",
             "niri_action",
-            "outputs",
             "paste",
             "pointer_move",
             "release_desktop",
@@ -223,14 +220,15 @@ async fn without_noctalia_on_path_there_are_no_shell_tools() {
             "wait_for"
         ]
     );
-    for tool in ["shell_status", "shell_panel"] {
-        let id = server
-            .start_call(tool, json!({"panel": "control-center"}))
-            .await;
-        let response = server.response(id).await;
-        assert!(response["error"]["code"].is_i64(), "{response}");
-        assert_eq!(response.get("result"), None);
-    }
+    let id = server
+        .start_call(
+            "shell_panel",
+            json!({"panel": "control-center", "open": true}),
+        )
+        .await;
+    let response = server.response(id).await;
+    assert!(response["error"]["code"].is_i64(), "{response}");
+    assert_eq!(response.get("result"), None);
 }
 
 #[tokio::test]

@@ -138,8 +138,7 @@ fn ready(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
 /// `save_path` writes a PNG at the output's own scale whatever `max_width` is, and a
 /// second save to the same name is refused, leaving the first.
 fn saves(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
-    let outputs = structured(&client.call(session, "outputs", json!({}))?)?;
-    let logical = field(&outputs, "/winit/logical");
+    let logical = &nested_output(session, client)?;
     let expected = (scaled(logical, "width")?, scaled(logical, "height")?);
     let args = json!({"target": "focused_output", "max_width": 320, "save_path": "full.png"});
     let shot = structured(&client.call(session, "screenshot", args.clone())?)?;
@@ -171,6 +170,16 @@ fn saves(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
 }
 
 /// One side of a logical output in image pixels at its own scale, truncated as grim does.
+/// The nested niri's one output, `winit`, as `desktop_state` lists it: its `logical`.
+fn nested_output(session: &mut Session<'_>, client: &mut Client) -> Result<Value> {
+    let state = structured(&client.call(session, "desktop_state", json!({}))?)?;
+    field(&state, "/outputs")
+        .as_array()
+        .and_then(|outputs| outputs.iter().find(|output| output["name"] == "winit"))
+        .map(|output| output["logical"].clone())
+        .ok_or_else(|| Failure::new(format!("desktop_state has no output winit: {state}")))
+}
+
 #[expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -382,8 +391,7 @@ fn interrupted(session: &mut Session<'_>, client: &mut Client, target: u64) -> R
 /// output and a second toggle gives the old size back, floating is reported, and a fixed
 /// width is the window's width. `Spawn` is refused without `unrestricted`.
 fn layout(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
-    let outputs = structured(&client.call(session, "outputs", json!({}))?)?;
-    let logical = field(&outputs, "/winit/logical");
+    let logical = &nested_output(session, client)?;
     let screen = json!([field(logical, "/width"), field(logical, "/height")]);
     let sized = act(session, client, "launch", json!({"preset": "sized"}))?;
     expect_outcome(&sized, "one", "launch sized")?;

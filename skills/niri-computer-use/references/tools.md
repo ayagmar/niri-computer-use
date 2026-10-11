@@ -15,11 +15,9 @@
 | Tool | Arguments | Returns |
 |---|---|---|
 | `status` | none | readiness: niri's version and event stream, who holds the lease, the stop flag, the input-dirty marker, lock state, whether the outputs suit the pointer (`outputs.pointer_supported`), Noctalia, the policy file and its preset names, the audit log, programs on `PATH` |
-| `desktop_state` | none | one snapshot: windows, workspaces, `focused_window`, `overview_open`, keyboard layouts |
-| `outputs` | none | outputs by connector name, with logical position, size, scale and transform |
+| `desktop_state` | none | one snapshot: windows, workspaces, `focused_window`, `overview_open`, keyboard layouts, `outputs` (by name, with `logical` position, size, scale and transform, or null when off), and with Noctalia installed `shell`: its `barVisible`, `panelOpen`, `activePanelId` and `locked`, or `error: noctalia_unavailable` |
 | `screenshot` | `target`, and optionally `region`, `max_width`, `format`, `save_path` | an image, then metadata: output, captured rectangle in layout coordinates, scale, image size, and `screenshot_ref` while you hold the lease; with `save_path`, `saved`: the PNG's path and pixel size |
 | `clipboard_read` | none; needs the lease | `text` copied since you took the lease, or `text: null` with `reason` `copied_before_lease` (the user's earlier clipboard, or nothing copied since), `nothing_copied`, `no_text` or `secret` (a password manager's copy, or text a `paste` left behind; ask the user for what you need rather than work around it) |
-| `shell_status` | none | Noctalia's `barVisible`, `panelOpen`, `activePanelId` and `locked`. Listed only when Noctalia is installed |
 | `elements` | `window_id`, optionally `role`, `name_contains`, `limit` (1 to 500, default 50) | that window's accessible elements: `element_ref` (`elem-<tag>-N`, while you hold the lease), `role`, `name`, `states`, `actions`, and `layout_box` in layout coordinates, or null with `unmappable`; `truncated`, `walked`, `capped` with `capped_reason` (`node_cap`, or `budget_exhausted` when a large tree took over 3 s: narrow it with `role`, `name_contains` or `limit`). Listed only when the session has an accessibility bus |
 | `wait_for` | `until`, optionally `timeout_ms` (100 to 30000, default 10000) and `screenshot` | `observed`: `met` with the matching `windows`, `timeout`, or `uncertain`; `focused_window`; `waited_ms` |
 
@@ -102,8 +100,8 @@ Each action waits up to five seconds, the shell tools two, and `niri_action` one
 ## Screenshot targets
 
 - `focused_output`: the output with keyboard focus.
-- `output:<name>`: an output by name from `outputs`, such as `output:DP-1`.
-- `region`, with `region: {x, y, width, height}` in layout coordinates (the coordinates `outputs` uses). The rectangle must lie inside one output.
+- `output:<name>`: an output by name from `desktop_state`'s `outputs`, such as `output:DP-1`.
+- `region`, with `region: {x, y, width, height}` in layout coordinates (the coordinates of `outputs[].logical`). The rectangle must lie inside one output.
 
 Images are JPEG at most 1280 pixels wide by default. `max_width` can go higher for a region wider than that, and a region keeps the output's native scale when it fits. `format` is `jpeg` (the default) or `png`.
 

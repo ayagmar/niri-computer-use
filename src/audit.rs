@@ -321,7 +321,7 @@ mod tests {
         let args = serde_json::json!({"target": "focused_output"});
         audit.write(&record("screenshot", &args, None));
         audit.write(&record(
-            "outputs",
+            "desktop_state",
             &args,
             Some("niri_unavailable".to_owned()),
         ));
@@ -438,7 +438,7 @@ mod tests {
             "accepted": true, "observed": "focused", "focused_window": 4
         }));
         audit.finish(&Call::action("focus"), caller, &args, &Ok(done.clone()));
-        audit.finish(&Call::start("shell_status"), caller, &args, &Ok(done));
+        audit.finish(&Call::start("desktop_state"), caller, &args, &Ok(done));
         let refused = ToolError::new(ErrorName::LeaseRequired, "no").into_result();
         audit.finish(&Call::action("focus"), caller, &args, &Ok(refused));
         let lines: Vec<Value> = std::fs::read_to_string(dir.join("niri-computer-use/audit.jsonl"))

@@ -11,13 +11,11 @@ use crate::wev::Pointer;
 use crate::wev::keyboard::Trace;
 
 /// Tools that only read; every other tool acts on the desktop.
-const READS: [&str; 9] = [
+const READS: [&str; 7] = [
     "status",
     "desktop_state",
-    "outputs",
     "screenshot",
     "clipboard_read",
-    "shell_status",
     "wait_for",
     "acquire_desktop",
     "release_desktop",
