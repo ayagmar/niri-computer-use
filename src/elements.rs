@@ -56,7 +56,7 @@ pub(crate) struct Listed {
 }
 
 /// A window as niri reports it right now, where its geometry starts in the layout, and
-/// its application's other windows.
+/// niri's other windows.
 #[derive(Debug)]
 struct Placed {
     window: Window,
@@ -76,10 +76,6 @@ async fn placed(socket: &Socket, id: u64) -> Result<Option<Placed>, ToolError> {
     let Some(window) = window.into_iter().next() else {
         return Ok(None);
     };
-    let others = others
-        .into_iter()
-        .filter(|other| same_app(&window, other))
-        .collect();
     let output = window
         .workspace_id
         .and_then(|workspace| workspaces.ok()?.into_iter().find(|w| w.id == workspace))

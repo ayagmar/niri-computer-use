@@ -256,10 +256,10 @@ impl Request {
     }
 
     /// Calls `member`, which acts on the application, once. Nothing goes out when less than
-    /// the call's own deadline is left of the budget or the connection is closed already. Once the call may have gone
-    /// out, no reply within the deadline, a lost connection, the bus's `NoReply` and a reply
-    /// that can't be read are `Lost`, since the application may have acted; an error the
-    /// application answered is its answer, as `Failed`.
+    /// the call's own deadline is left of the budget or the connection is closed already.
+    /// Once the call may have gone out, no reply within the deadline, a lost connection, the
+    /// bus's `NoReply` and a reply that can't be read are `Lost`, since the application may
+    /// have acted; an error the application answered is its answer, as `Failed`.
     async fn dispatch<B, R>(
         &self,
         target: (&str, &str),
