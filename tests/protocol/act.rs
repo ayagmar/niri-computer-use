@@ -157,31 +157,31 @@ fn focus_changed(stream: &Stream, id: u64) {
 async fn actions_need_the_lease_and_check_the_lock_each_time() {
     let mut desk = Desk::start("act-gate", "").await;
     desk.noctalia.set(LOCKED);
-    let (name, _) = tool_error(&desk.server.call("focus_window", json!({"id": 2})).await);
+    let (name, _) = tool_error(&desk.server.call("focus", json!({"window_id": 2})).await);
     assert_eq!(name, "screen_locked");
     desk.noctalia.set(UNLOCKED);
     desk.server
         .structured_with("release_desktop", json!({"restore_focus": false}))
         .await;
-    let (unheld, detail) = tool_error(&desk.server.call("focus_window", json!({"id": 2})).await);
+    let (unheld, detail) = tool_error(&desk.server.call("focus", json!({"window_id": 2})).await);
     assert_eq!(unheld, "lease_required");
     assert!(detail.contains("acquire_desktop"), "{detail}");
     assert!(!desk.niri.sent_action());
     assert_eq!(
         desk.audited(),
         [
-            json!(["focus_window", {"id": 2}, null, null, "screen_locked"]),
+            json!(["focus", {"window_id": 2}, null, null, "screen_locked"]),
             json!(["release_desktop", {"restore_focus": false}, null, null, null]),
-            json!(["focus_window", {"id": 2}, null, null, "lease_required"]),
+            json!(["focus", {"window_id": 2}, null, null, "lease_required"]),
         ]
     );
 }
 
 #[tokio::test]
-async fn focus_window_is_accepted_then_observed() {
+async fn focusing_a_window_is_accepted_then_observed() {
     let mut desk = Desk::start("act-focus", "").await;
     let result = desk
-        .act("focus_window", json!({"id": 2}), |stream, action| {
+        .act("focus", json!({"window_id": 2}), |stream, action| {
             assert!(
                 matches!(action, Action::FocusWindow { id: 2 }),
                 "{action:?}"
@@ -196,7 +196,7 @@ async fn focus_window_is_accepted_then_observed() {
             "changes": {"focus": {"from": 1, "to": 2}}
         })
     );
-    let unknown = mistake(&desk.server.call("focus_window", json!({"id": 9})).await);
+    let unknown = mistake(&desk.server.call("focus", json!({"window_id": 9})).await);
     assert_eq!(
         unknown,
         "invalid arguments: no window with id 9; desktop_state lists them"
@@ -205,8 +205,8 @@ async fn focus_window_is_accepted_then_observed() {
     assert_eq!(
         desk.audited(),
         [
-            json!(["focus_window", {"id": 2}, true, "focused", null]),
-            json!(["focus_window", {"id": 9}, null, null, "invalid_arguments"]),
+            json!(["focus", {"window_id": 2}, true, "focused", null]),
+            json!(["focus", {"window_id": 9}, null, null, "invalid_arguments"]),
         ]
     );
 }
@@ -214,13 +214,13 @@ async fn focus_window_is_accepted_then_observed() {
 #[tokio::test]
 async fn a_target_that_already_has_focus_sends_nothing() {
     let mut desk = Desk::start("act-focused", "").await;
-    let window = desk.server.call("focus_window", json!({"id": 1})).await;
+    let window = desk.server.call("focus", json!({"window_id": 1})).await;
     assert_eq!(
         outcome(&window),
         json!({"accepted": false, "observed": "focused", "focused_window": 1})
     );
     // niri's `workspace-auto-back-and-forth` would switch away from it.
-    let workspace = desk.server.call("focus_workspace", json!({"id": 1})).await;
+    let workspace = desk.server.call("focus", json!({"workspace_id": 1})).await;
     assert_eq!(
         outcome(&workspace),
         json!({"accepted": false, "observed": "focused", "focused_window": 1})
@@ -232,7 +232,7 @@ async fn a_target_that_already_has_focus_sends_nothing() {
 async fn focus_moving_elsewhere_during_the_wait_is_interrupted() {
     let mut desk = Desk::start("act-interrupt", "").await;
     let result = desk
-        .act("focus_window", json!({"id": 2}), |stream, _| {
+        .act("focus", json!({"window_id": 2}), |stream, _| {
             focus_changed(stream, 3);
             focus_changed(stream, 2);
         })
@@ -255,7 +255,7 @@ async fn focus_leaving_the_target_workspace_or_a_launch_is_interrupted() {
         .send(&json!({"WindowOpenedOrChanged": {"window": window}}));
     // A window on workspace 2 is where focus may go; window 3, on workspace 1, isn't.
     let result = desk
-        .act("focus_workspace", json!({"id": 2}), |stream, _| {
+        .act("focus", json!({"workspace_id": 2}), |stream, _| {
             focus_changed(stream, 4);
             focus_changed(stream, 3);
         })
@@ -313,7 +313,7 @@ async fn a_single_instance_app_answers_a_launch_with_its_window() {
 #[tokio::test]
 async fn focus_without_its_event_times_out() {
     let mut desk = Desk::start("act-timeout", "").await;
-    let result = desk.act("focus_window", json!({"id": 2}), |_, _| {}).await;
+    let result = desk.act("focus", json!({"window_id": 2}), |_, _| {}).await;
     assert_eq!(
         outcome(&result),
         json!({"accepted": true, "observed": "timeout", "focused_window": 1})
@@ -332,7 +332,7 @@ async fn screenshots_under_the_lease_are_refs_of_that_lease() {
         .and_then(|id| id.strip_prefix("shot-")?.strip_suffix("-1"))
         .unwrap()
         .to_owned();
-    let evidence = desk.act("focus_window", json!({"id": 2}), |_, _| {}).await;
+    let evidence = desk.act("focus", json!({"window_id": 2}), |_, _| {}).await;
     assert_eq!(
         evidence["structuredContent"]["screenshot"]["screenshot_ref"],
         format!("shot-{tag}-2")
@@ -366,7 +366,7 @@ async fn a_failed_capture_keeps_the_outcome_and_says_why() {
     let mut desk = Desk::start("act-no-shot", "").await;
     desk.fixture
         .program("grim", "echo 'compositor gone' >&2; exit 1");
-    let result = desk.act("focus_window", json!({"id": 2}), |_, _| {}).await;
+    let result = desk.act("focus", json!({"window_id": 2}), |_, _| {}).await;
     assert_eq!(result["isError"], false, "{result}");
     assert_eq!(result["content"].as_array().unwrap().len(), 1, "{result}");
     let outcome = &result["structuredContent"];
@@ -376,7 +376,7 @@ async fn a_failed_capture_keeps_the_outcome_and_says_why() {
     assert!(detail.contains("compositor gone"), "{detail}");
     assert_eq!(
         desk.audited(),
-        [json!(["focus_window", {"id": 2}, true, "timeout", null])]
+        [json!(["focus", {"window_id": 2}, true, "timeout", null])]
     );
 }
 
@@ -387,7 +387,7 @@ async fn another_client_is_refused_at_once_while_the_owner_acts_and_niri_is_slow
     desk.niri.hold_actions(true);
     let id = desk
         .server
-        .start_call("focus_window", json!({"id": 2}))
+        .start_call("focus", json!({"window_id": 2}))
         .await;
     desk.niri.action().await;
     // The readiness report asks niri, which now answers nothing until its deadline.
@@ -405,7 +405,7 @@ async fn another_client_is_refused_at_once_while_the_owner_acts_and_niri_is_slow
 async fn a_lost_reply_is_uncertain() {
     let mut desk = Desk::start("act-lost", "").await;
     desk.niri.hold_actions(true);
-    let result = desk.act("focus_window", json!({"id": 2}), |_, _| {}).await;
+    let result = desk.act("focus", json!({"window_id": 2}), |_, _| {}).await;
     let outcome = outcome(&result);
     assert_eq!(outcome["accepted"], Value::Null);
     assert_eq!(outcome["observed"], "uncertain");
@@ -416,10 +416,10 @@ async fn a_lost_reply_is_uncertain() {
 }
 
 #[tokio::test]
-async fn focus_workspace_waits_for_the_workspace() {
+async fn focusing_a_workspace_waits_for_the_workspace() {
     let mut desk = Desk::start("act-workspace", "").await;
     let result = desk
-        .act("focus_workspace", json!({"id": 2}), |stream, action| {
+        .act("focus", json!({"workspace_id": 2}), |stream, action| {
             assert!(
                 matches!(
                     action,
@@ -442,7 +442,7 @@ async fn focus_workspace_waits_for_the_workspace() {
             "changes": {"focus": {"from": 1, "to": null}, "workspace": {"from": 1, "to": 2}}
         })
     );
-    let unknown = mistake(&desk.server.call("focus_workspace", json!({"id": 7})).await);
+    let unknown = mistake(&desk.server.call("focus", json!({"workspace_id": 7})).await);
     assert!(unknown.contains("no workspace with id 7"), "{unknown}");
 }
 
@@ -615,7 +615,7 @@ async fn a_stop_cancels_the_running_action_and_takes_the_lease_back() {
     let mut desk = Desk::start("act-stop", "").await;
     let id = desk
         .server
-        .start_call("focus_window", json!({"id": 2}))
+        .start_call("focus", json!({"window_id": 2}))
         .await;
     desk.niri.action().await;
     assert!(run(&desk.fixture, "stop").await.status.success());
@@ -632,7 +632,7 @@ async fn a_stop_cancels_the_running_action_and_takes_the_lease_back() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert!(released, "the stop didn't take the lease back");
-    let (after, _) = tool_error(&desk.server.call("focus_window", json!({"id": 2})).await);
+    let (after, _) = tool_error(&desk.server.call("focus", json!({"window_id": 2})).await);
     assert_eq!(after, "stopped");
 }
 
@@ -736,7 +736,7 @@ async fn denial_is_focus_based_and_unchecked_expect_does_not_bypass_it() {
         .await;
     assert_eq!(allowed["isError"], false);
     let focused = desk
-        .act("focus_window", json!({"id": 2}), |stream, _| {
+        .act("focus", json!({"window_id": 2}), |stream, _| {
             focus_changed(stream, 2);
         })
         .await;
@@ -1439,7 +1439,7 @@ async fn captures_exclude_the_next_action_until_completion_or_cancellation() {
         );
         let action = desk
             .server
-            .start_call("focus_window", json!({"id": 2}))
+            .start_call("focus", json!({"window_id": 2}))
             .await;
         assert!(
             tokio::time::timeout(Duration::from_millis(200), desk.niri.action())
@@ -1479,7 +1479,7 @@ async fn captures_exclude_the_next_action_until_completion_or_cancellation() {
     );
     desk.server.cancel(capture).await;
     let result = desk
-        .act("focus_window", json!({"id": 2}), |stream, _| {
+        .act("focus", json!({"window_id": 2}), |stream, _| {
             focus_changed(stream, 2);
         })
         .await;
@@ -1517,7 +1517,7 @@ async fn unsettled_read_only_waits_allow_actions_and_release_between_captures() 
         );
         let action = desk
             .server
-            .start_call("focus_window", json!({"id": 2}))
+            .start_call("focus", json!({"window_id": 2}))
             .await;
         let sent = tokio::time::timeout(Duration::from_millis(500), desk.niri.action())
             .await
@@ -1764,8 +1764,8 @@ async fn an_action_asked_for_a_screenshot_returns_the_screen_once_it_stopped_cha
     };
     let still = desk
         .act(
-            "focus_window",
-            json!({"id": 2, "screenshot": true}),
+            "focus",
+            json!({"window_id": 2, "screenshot": true}),
             |stream, _| {
                 focus_changed(stream, 2);
             },
@@ -1781,8 +1781,8 @@ async fn an_action_asked_for_a_screenshot_returns_the_screen_once_it_stopped_cha
     let started = Instant::now();
     let moving = desk
         .act(
-            "focus_window",
-            json!({"id": 1, "screenshot": true}),
+            "focus",
+            json!({"window_id": 1, "screenshot": true}),
             |stream, _| {
                 focus_changed(stream, 1);
             },
@@ -1806,7 +1806,7 @@ async fn release_desktop_can_give_focus_back_to_the_users_window() {
     }
     let acquired = desk.server.structured("acquire_desktop").await;
     assert_eq!(acquired["users_window"], 1, "{acquired}");
-    desk.act("focus_window", json!({"id": 3}), |stream, _| {
+    desk.act("focus", json!({"window_id": 3}), |stream, _| {
         focus_changed(stream, 3);
     })
     .await;
@@ -1853,7 +1853,7 @@ async fn a_client_that_goes_mid_action_frees_the_lease_at_once() {
         r#": > "$DIR/grim.started"; await_file grim.go; cat "$DIR/grim.out""#,
     );
     desk.server
-        .start_call("focus_window", json!({"id": 2, "screenshot": true}))
+        .start_call("focus", json!({"window_id": 2, "screenshot": true}))
         .await;
     assert!(matches!(
         desk.niri.action().await,

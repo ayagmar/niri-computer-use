@@ -437,15 +437,10 @@ mod tests {
         let done = CallToolResult::structured(serde_json::json!({
             "accepted": true, "observed": "focused", "focused_window": 4
         }));
-        audit.finish(
-            &Call::action("focus_window"),
-            caller,
-            &args,
-            &Ok(done.clone()),
-        );
+        audit.finish(&Call::action("focus"), caller, &args, &Ok(done.clone()));
         audit.finish(&Call::start("shell_status"), caller, &args, &Ok(done));
         let refused = ToolError::new(ErrorName::LeaseRequired, "no").into_result();
-        audit.finish(&Call::action("focus_window"), caller, &args, &Ok(refused));
+        audit.finish(&Call::action("focus"), caller, &args, &Ok(refused));
         let lines: Vec<Value> = std::fs::read_to_string(dir.join("niri-computer-use/audit.jsonl"))
             .unwrap()
             .lines()

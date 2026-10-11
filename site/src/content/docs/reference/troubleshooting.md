@@ -69,7 +69,7 @@ The pixel is outside the screenshot. In testing this happened with a tiled windo
 
 ## Typing fails with `focus_mismatch`
 
-The window the agent named in `expect` lost keyboard focus before typing started, often to a dialog or a notification. Nothing was typed. The agent should look at what took focus, focus its window again with `focus_window`, and type again.
+The window the agent named in `expect` lost keyboard focus before typing started, often to a dialog or a notification. Nothing was typed. The agent should look at what took focus, focus its window again with `focus`, and type again.
 
 ## `paste` fails with `clipboard_unsaved`
 

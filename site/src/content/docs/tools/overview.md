@@ -21,8 +21,7 @@ The server offers up to 27 tools. `shell_status`, `shell_open` and `shell_close`
 | `shell_status` | no | Noctalia's bar, panel and lock state | [Noctalia](../../concepts/noctalia/) |
 | `acquire_desktop` | takes it | takes the lease and notes the user's window | [Acting](../acting/#acquire_desktop) |
 | `release_desktop` | gives it up | gives the lease up, optionally restoring focus | [Acting](../acting/#release_desktop) |
-| `focus_window` | yes | focuses a window by id | [Acting](../acting/#focus_window) |
-| `focus_workspace` | yes | focuses a workspace by id | [Acting](../acting/#focus_workspace) |
+| `focus` | yes | focuses a window or a workspace by id | [Acting](../acting/#focus) |
 | `launch` | yes | starts a preset from the policy file | [Acting](../acting/#launch) |
 | `close_window` | yes | asks a window to close | [Acting](../acting/#close_window) |
 | `niri_action` | yes | sends any niri action, such as fullscreen, floating or a window width | [Acting](../acting/#niri_action) |

@@ -48,10 +48,9 @@ async fn an_unknown_protocol_version_gets_the_newest_supported_one() {
 fn expected(name: &str) -> (Value, Value) {
     let read_only = (json!([true, null, null]), json!(null));
     match name {
-        "acquire_desktop" => (json!([false, false, true]), json!(null)),
+        "acquire_desktop" | "focus" => (json!([false, false, true]), json!(null)),
         "release_desktop" => (json!([false, false, true]), json!(["restore_focus"])),
         "wait_for" => (json!([true, null, null]), json!(["until"])),
-        "focus_window" | "focus_workspace" => (json!([false, false, true]), json!(["id"])),
         "close_window" => (json!([false, true, false]), json!(["id"])),
         "launch" => (json!([false, false, false]), json!(["preset"])),
         "niri_action" => (json!([false, true, false]), json!(["action"])),
@@ -92,8 +91,7 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
             "close_window",
             "desktop_state",
             "drag",
-            "focus_window",
-            "focus_workspace",
+            "focus",
             "key",
             "launch",
             "niri_action",
@@ -133,12 +131,11 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
 }
 
 /// How many arguments each tool takes; tools not listed take none.
-const PROPERTIES: [(&str, usize); 17] = [
+const PROPERTIES: [(&str, usize); 16] = [
     ("screenshot", 5),
     ("launch", 3),
     ("niri_action", 2),
-    ("focus_window", 2),
-    ("focus_workspace", 2),
+    ("focus", 3),
     ("close_window", 2),
     ("pointer_move", 5),
     ("click", 9),
@@ -213,8 +210,7 @@ async fn without_noctalia_on_path_there_are_no_shell_tools() {
             "close_window",
             "desktop_state",
             "drag",
-            "focus_window",
-            "focus_workspace",
+            "focus",
             "key",
             "launch",
             "niri_action",

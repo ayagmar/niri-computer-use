@@ -5,7 +5,7 @@ sidebar:
   order: 4
 ---
 
-Acting needs the lease. Prefer the structured actions, which go through niri's IPC and can't land on the wrong thing: `focus_window`, `focus_workspace`, `launch` and `close_window`. Use the pointer for what happens inside an app, and the [keyboard tools](../keyboard/) for typing. The Noctalia tools are on the [Noctalia page](../../concepts/noctalia/).
+Acting needs the lease. Prefer the structured actions, which go through niri's IPC and can't land on the wrong thing: `focus`, `launch` and `close_window`. Use the pointer for what happens inside an app, and the [keyboard tools](../keyboard/) for typing. The Noctalia tools are on the [Noctalia page](../../concepts/noctalia/).
 
 ## The lease
 
@@ -21,11 +21,11 @@ Refused with `lease_held` while another server holds it, `stopped` while the sto
 |---|---|
 | `restore_focus` (required) | true to give keyboard focus back to `users_window` before giving the lease up |
 
-Returns `{"users_window": <id>, "released": true}`, or `released: false` if this server didn't hold it. With `restore_focus` and a `users_window`, it first focuses that window as `focus_window` would, through the same checks, and adds `restored`: that action's result, with `observed: closed` and `accepted: false` if the window is gone, or `{"error", "detail"}` if the action was refused. The lease is given up either way. While its own action runs, it waits for that action to end. Each step of an action has its own deadline, but the action as a whole has none, so the wait is at worst the sum of its steps, such as 16 `wtype` calls of up to three seconds each for a `key` call. The stop key doesn't wait. The lease is also given up when the stop flag appears and when the server exits.
+Returns `{"users_window": <id>, "released": true}`, or `released: false` if this server didn't hold it. With `restore_focus` and a `users_window`, it first focuses that window as `focus` would, through the same checks, and adds `restored`: that action's result, with `observed: closed` and `accepted: false` if the window is gone, or `{"error", "detail"}` if the action was refused. The lease is given up either way. While its own action runs, it waits for that action to end. Each step of an action has its own deadline, but the action as a whole has none, so the wait is at worst the sum of its steps, such as 16 `wtype` calls of up to three seconds each for a `key` call. The stop key doesn't wait. The lease is also given up when the stop flag appears and when the server exits.
 
 ## Action tools
 
-`focus_window`, `focus_workspace`, `launch`, `close_window` and `niri_action` act on the desktop through niri's IPC, and the pointer and keyboard tools send input. Before each action the server checks, in this order, the stop flag (`stopped`), the input-dirty marker (`recovery_required`), the lease (`lease_required`), then niri's version, the policy file and the lock state, as `acquire_desktop` does. One action runs at a time; an action or `release_desktop` called meanwhile waits for it. A stop during an action cancels it with `stopped`, and anything niri had already accepted may have taken effect. So does the lease file being removed or replaced, with `lease_required`. Cancelling the MCP request cancels the action and keeps the lease.
+`focus`, `launch`, `close_window` and `niri_action` act on the desktop through niri's IPC, and the pointer and keyboard tools send input. Before each action the server checks, in this order, the stop flag (`stopped`), the input-dirty marker (`recovery_required`), the lease (`lease_required`), then niri's version, the policy file and the lock state, as `acquire_desktop` does. One action runs at a time; an action or `release_desktop` called meanwhile waits for it. A stop during an action cancels it with `stopped`, and anything niri had already accepted may have taken effect. So does the lease file being removed or replaced, with `lease_required`. Cancelling the MCP request cancels the action and keeps the lease.
 
 Every action tool also takes `screenshot`, default false. With true, the result comes with a screenshot of the focused output taken once the screen stopped changing: the server looks 50 ms after the action, then captures every 100 ms until two captures in a row are the same image, for at most 1.5 seconds, and `settled` in its metadata says whether they were. The screenshot is taken before the next action can start, so it shows this action's result, and its `screenshot_ref` serves the pointer tools.
 
@@ -64,21 +64,18 @@ Every action waits up to five seconds for its effect. Two outcomes can end any o
 
 None of these outcomes is an error, and the server never retries an action. `timeout`, `pending`, `none`, `interrupted` and `uncertain` are outcomes in doubt: the result comes with a fresh screenshot of the focused output, 1280 pixels wide, so the agent can see the desktop without another call.
 
-## `focus_window`
+## `focus`
 
 | Argument | Value |
 |---|---|
-| `id` (required) | a window id from `desktop_state` |
+| `window_id` | a window id from `desktop_state` |
+| `workspace_id` | instead of `window_id`: a workspace id from `desktop_state`, not its index |
 
-`observed` is `focused` once the window has keyboard focus, or `timeout`. If the window already has focus, nothing is sent: `observed` is `focused` with `accepted: false`.
+Give exactly one of the two; both or neither is an argument mistake.
 
-## `focus_workspace`
+For a window, `observed` is `focused` once the window has keyboard focus, or `timeout`. If the window already has focus, nothing is sent: `observed` is `focused` with `accepted: false`.
 
-| Argument | Value |
-|---|---|
-| `id` (required) | a workspace id from `desktop_state`, not its index |
-
-`observed` is `focused` once the workspace has focus, on whichever output it is, and keyboard focus is on the workspace's active window, or on no window when it is empty; otherwise `timeout`. While the overview, the screenshot UI or a shell surface that keeps keyboard focus is open, focus stays off every window, so a switch that happened still reports `timeout` with `focused_window` null; the screenshot shows why. Focus moving to one of the workspace's own windows is expected, not an interruption. If the workspace already has focus, nothing is sent: `observed` is `focused` with `accepted: false`. Sending it would let niri's `workspace-auto-back-and-forth` switch to the previous workspace.
+For a workspace, `observed` is `focused` once the workspace has focus, on whichever output it is, and keyboard focus is on the workspace's active window, or on no window when it is empty; otherwise `timeout`. While the overview, the screenshot UI or a shell surface that keeps keyboard focus is open, focus stays off every window, so a switch that happened still reports `timeout` with `focused_window` null; the screenshot shows why. Focus moving to one of the workspace's own windows is expected, not an interruption. If the workspace already has focus, nothing is sent: `observed` is `focused` with `accepted: false`. Sending it would let niri's `workspace-auto-back-and-forth` switch to the previous workspace.
 
 ## `launch`
 
@@ -130,7 +127,7 @@ For an action about one window, the one it names or the focused one, the server 
 
 niri 26.04 reports no fullscreen or maximized flag; a fullscreen window's `window_size` is its output's logical size. Any other action, such as focusing a column or opening the overview, gives `sent` once niri handled it.
 
-Prefer `focus_window`, `focus_workspace`, `close_window`, `launch` and `screenshot` where they fit, since they watch for their effect. Some actions are gated: `Spawn` and `SpawnSh` run programs, `Quit` ends the session, `PowerOffMonitors` and `PowerOnMonitors` switch the monitors, `LoadConfigFile` loads a config that can bind keys and start programs, niri's `Screenshot` actions write files and replace the clipboard, `ToggleKeyboardShortcutsInhibit` can keep the stop key's bind from reaching niri, `SwitchLayout` changes the layout the user types with, the cast actions change what a screencast shows, the debug toggles change niri's rendering, and `DoScreenTransition` freezes what every output and screencast shows for up to 65 seconds. They fail with `unrestricted_required` unless the user turned on [`unrestricted`](../../concepts/configuration/#unrestricted). Every action, gated or not, needs the lease, stops at the stop key and is written to the audit log as metadata: the action's name and field names, its numbers and booleans, and every string as its length in bytes, so a `Spawn` command or a workspace name isn't kept. JSON that isn't a niri action is logged as `invalid_action` with its size.
+Prefer `focus`, `close_window`, `launch` and `screenshot` where they fit, since they watch for their effect. Some actions are gated: `Spawn` and `SpawnSh` run programs, `Quit` ends the session, `PowerOffMonitors` and `PowerOnMonitors` switch the monitors, `LoadConfigFile` loads a config that can bind keys and start programs, niri's `Screenshot` actions write files and replace the clipboard, `ToggleKeyboardShortcutsInhibit` can keep the stop key's bind from reaching niri, `SwitchLayout` changes the layout the user types with, the cast actions change what a screencast shows, the debug toggles change niri's rendering, and `DoScreenTransition` freezes what every output and screencast shows for up to 65 seconds. They fail with `unrestricted_required` unless the user turned on [`unrestricted`](../../concepts/configuration/#unrestricted). Every action, gated or not, needs the lease, stops at the stop key and is written to the audit log as metadata: the action's name and field names, its numbers and booleans, and every string as its length in bytes, so a `Spawn` command or a workspace name isn't kept. JSON that isn't a niri action is logged as `invalid_action` with its size.
 
 ## Pointer tools
 

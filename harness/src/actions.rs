@@ -2,7 +2,7 @@
 //! niri, with the nested Noctalia as the lock source, and launches, focuses and closes
 //! fixture windows (`harness window`) through launch presets. Covered: `launch` giving
 //! `one` with a late `app_id` and `ambiguous`, `reuse` with zero, one and two existing
-//! windows, `focus_window` and `focus_workspace`, `close_window` giving `closed` and
+//! windows, `focus` on a window and a workspace, `close_window` giving `closed` and
 //! `pending` with its screenshot, and `interrupted` when the harness moves focus during a
 //! launch's wait. `niri_action` fullscreens and restores a window, floats it and sets its
 //! width, refuses `Spawn`, and a second server whose policy turns on `unrestricted` spawns
@@ -264,7 +264,7 @@ fn reuses(session: &mut Session<'_>, client: &mut Client, other: u64) -> Result<
     session.log(&format!("M3: reuse with two windows: {both}"))
 }
 
-/// `focus_window` and `focus_workspace` are seen to take effect, with keyboard focus where
+/// `focus` on a window and on a workspace is seen to take effect, with keyboard focus where
 /// niri puts it.
 fn focuses(session: &mut Session<'_>, client: &mut Client, id: u64) -> Result<()> {
     focus(session, client, id)?;
@@ -288,8 +288,8 @@ fn focuses(session: &mut Session<'_>, client: &mut Client, id: u64) -> Result<()
         )));
     };
     // The fixtures all open on the focused workspace, so the other one is empty.
-    let away = act(session, client, "focus_workspace", json!({"id": other}))?;
-    expect_outcome(&away, "focused", "focus_workspace")?;
+    let away = act(session, client, "focus", json!({"workspace_id": other}))?;
+    expect_outcome(&away, "focused", "focus workspace")?;
     expect(
         field(&away, "/focused_window").is_null(),
         "no window focused on the empty workspace",
@@ -297,7 +297,7 @@ fn focuses(session: &mut Session<'_>, client: &mut Client, id: u64) -> Result<()
     )?;
     told(
         session,
-        "focus_workspace: an empty workspace",
+        "focus workspace: an empty workspace",
         &away,
         |changes| {
             field(changes, "/workspace/to") == &other
@@ -305,18 +305,18 @@ fn focuses(session: &mut Session<'_>, client: &mut Client, id: u64) -> Result<()
                 && field(changes, "/focus/to").is_null()
         },
     )?;
-    let back = act(session, client, "focus_workspace", json!({"id": focused}))?;
-    expect_outcome(&back, "focused", "focus_workspace back")?;
+    let back = act(session, client, "focus", json!({"workspace_id": focused}))?;
+    expect_outcome(&back, "focused", "focus workspace back")?;
     expect(
         field(&back, "/focused_window") == id,
         "focus back on the window it left",
         &back.to_string(),
     )?;
-    told(session, "focus_workspace: back", &back, |changes| {
+    told(session, "focus workspace: back", &back, |changes| {
         field(changes, "/workspace/to") == &focused && field(changes, "/focus/to") == id
     })?;
     session.log(&format!(
-        "M3: focus_workspace {other} and back: {away}, {back}"
+        "M3: focus workspace {other} and back: {away}, {back}"
     ))
 }
 
@@ -532,9 +532,9 @@ fn resized(changes: &Value, id: u64, size: &Value) -> bool {
 }
 
 fn focus(session: &mut Session<'_>, client: &mut Client, id: u64) -> Result<()> {
-    let focused = act(session, client, "focus_window", json!({"id": id}))?;
-    expect_outcome(&focused, "focused", "focus_window")?;
-    session.log(&format!("M3: focus_window {id}: {focused}"))
+    let focused = act(session, client, "focus", json!({"window_id": id}))?;
+    expect_outcome(&focused, "focused", "focus window")?;
+    session.log(&format!("M3: focus window {id}: {focused}"))
 }
 
 /// An action that must succeed without a screenshot, as outcomes that aren't in doubt do.

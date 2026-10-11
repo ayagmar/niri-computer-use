@@ -33,7 +33,7 @@ Acting needs the lease. Take it with `acquire_desktop` only when the user asked 
 
 Wait for each call's result before the next call. A screenshot sent alongside an action can be taken before the app has redrawn and show you the old screen, and an action sent alongside another can land on whatever the first one changed. `screenshot: true` on the action is both faster and right.
 
-Prefer structured actions to input, because they can't land on the wrong thing: `focus_window` and `focus_workspace` with ids from `desktop_state`, `launch` with a preset name, `close_window`, `shell_open` and `shell_close`. Use the pointer and keyboard for what happens inside an app.
+Prefer structured actions to input, because they can't land on the wrong thing: `focus` with a window or workspace id from `desktop_state`, `launch` with a preset name, `close_window`, `shell_open` and `shell_close`. Use the pointer and keyboard for what happens inside an app.
 
 For window layout and other compositor actions, such as fullscreen, floating, a window's width or moving it to another workspace, use `niri_action` with niri's action JSON, such as `{"FullscreenWindow": {"id": 12}}`. Never press niri's keybinds for these: they don't fire from `key`. Its result gives the window's new `window_size` and `is_floating`. When `noctalia` is listed, use it for Noctalia shell and plugin commands, such as the user's screen-recording toggle.
 
@@ -100,7 +100,7 @@ Clicking a button in another window and coming back:
 ```
 desktop_state             → the user is on window 42; the target is window 7
 acquire_desktop           → users_window 42
-focus_window {id: 7, screenshot: true}            → focused; shot-5e1a90c2-3, the button at (412, 230)
+focus {window_id: 7, screenshot: true}     → focused; shot-5e1a90c2-3, the button at (412, 230)
 click {screenshot_ref: "shot-5e1a90c2-3", x: 412, y: 230}  → sent; changes: opened 9 "Save As", focus 7 → 9
 type_text {text: "notes.txt", expect: {window_id: 9}, submit: true}  → sent, submitted; changes: closed 9, focus 9 → 7, window 7's title "notes.txt"
 release_desktop {restore_focus: true}             → restored: focused
@@ -110,7 +110,7 @@ Pressing a named button through accessibility:
 
 ```
 acquire_desktop                                   → users_window 42
-focus_window {id: 7, screenshot: true}            → focused; shot-5e1a90c2-4
+focus {window_id: 7, screenshot: true}     → focused; shot-5e1a90c2-4
 elements {window_id: 7, role: "button", name_contains: "save"}  → element_ref "elem-5e1a90c2-2", with a layout_box
 activate_element {element: "elem-5e1a90c2-2", expect: {window_id: 7}, element_changes: true}  → present; changes.elements: added label "Saved"
 release_desktop {restore_focus: true}

@@ -235,12 +235,38 @@ struct ReleaseArgs {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-struct WorkspaceArgs {
-    /// A workspace id from `desktop_state`, not its index.
-    id: u64,
+struct FocusArgs {
+    /// A window id from `desktop_state`.
+    #[schemars(with = "u64", default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    window_id: Option<u64>,
+    /// Instead of `window_id`: a workspace id from `desktop_state`, not its index.
+    #[schemars(with = "u64", default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspace_id: Option<u64>,
     /// Also return a screenshot of the focused output once the screen settles.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     screenshot: bool,
+}
+
+/// What `focus` focuses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Focus {
+    Window(u64),
+    Workspace(u64),
+}
+
+impl FocusArgs {
+    /// Exactly one of the two ids.
+    fn target(&self) -> Result<Focus, CallError> {
+        match (self.window_id, self.workspace_id) {
+            (Some(id), None) => Ok(Focus::Window(id)),
+            (None, Some(id)) => Ok(Focus::Workspace(id)),
+            _ => Err(CallError::InvalidArguments(
+                "give either `window_id` or `workspace_id`".to_owned(),
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -690,55 +716,35 @@ impl Server {
         .await
     }
 
-    /// Focuses a window. `accepted` says whether niri took the request; `observed` is
-    /// `focused` once the window has keyboard focus, `timeout` if it didn't get it within
-    /// five seconds, `interrupted` if focus went to another window meanwhile, or
-    /// `uncertain` if niri's reply or event stream was lost. Requires the lease.
+    /// Focuses a window, or a workspace on whichever output it is, by its id from
+    /// `desktop_state`. `observed` is `focused` once it has keyboard focus, `timeout` after
+    /// five seconds, `interrupted` if focus went elsewhere meanwhile, or `uncertain` if
+    /// niri's reply or event stream was lost; a workspace's own window taking focus is
+    /// expected. Requires the lease.
     #[tool(annotations(
         read_only_hint = false,
         destructive_hint = false,
         idempotent_hint = true,
         open_world_hint = false
     ))]
-    async fn focus_window(
+    async fn focus(
         &self,
-        Parameters(args): Parameters<WindowArgs>,
+        Parameters(args): Parameters<FocusArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
-        let work = act::focus_window(self.engine.niri(), args.id);
+        let niri = self.engine.niri();
+        let target = args.target();
+        let work = async move {
+            match target? {
+                Focus::Window(id) => act::focus_window(niri, id).await,
+                Focus::Workspace(id) => act::focus_workspace(niri, id).await,
+            }
+        };
         self.act(
             &context,
             Asked {
-                tool: "focus_window",
-                logged,
-                report: Report::shot(args.screenshot),
-            },
-            work,
-        )
-        .await
-    }
-
-    /// Focuses a workspace by its id, on whichever output it is. Results as for
-    /// `focus_window`; focus moving to one of the workspace's own windows is expected.
-    /// Requires the lease.
-    #[tool(annotations(
-        read_only_hint = false,
-        destructive_hint = false,
-        idempotent_hint = true,
-        open_world_hint = false
-    ))]
-    async fn focus_workspace(
-        &self,
-        Parameters(args): Parameters<WorkspaceArgs>,
-        context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
-        let work = act::focus_workspace(self.engine.niri(), args.id);
-        self.act(
-            &context,
-            Asked {
-                tool: "focus_workspace",
+                tool: "focus",
                 logged,
                 report: Report::shot(args.screenshot),
             },
@@ -817,8 +823,8 @@ impl Server {
     /// Sends one niri action for layout and compositor actions with no tool here:
     /// fullscreen, floating, widths and heights, columns, moving windows between
     /// workspaces, the overview. Never press niri's keybinds with `key` instead; they don't
-    /// fire. Prefer `focus_window`, `focus_workspace`, `close_window` and `launch` where
-    /// they fit: they watch for their effect. For an action on one window (the one named,
+    /// fire. Prefer `focus`, `close_window` and `launch` where they fit: they watch for
+    /// their effect. For an action on one window (the one named,
     /// or the focused one), `observed` is `changed`, `unchanged` (within a second) or
     /// `closed`, and `window` gives its `window_size`, `tile_size`, `is_floating`,
     /// `is_focused` and `workspace_id`; niri has no fullscreen flag. Other actions give
@@ -1802,8 +1808,7 @@ mod tests {
         for (tool, expected) in [
             (Server::acquire_desktop_tool_attr(), (no, no, yes)),
             (Server::release_desktop_tool_attr(), (no, no, yes)),
-            (Server::focus_window_tool_attr(), (no, no, yes)),
-            (Server::focus_workspace_tool_attr(), (no, no, yes)),
+            (Server::focus_tool_attr(), (no, no, yes)),
             (Server::launch_tool_attr(), (no, no, no)),
             (Server::close_window_tool_attr(), (no, yes, no)),
             (Server::niri_action_tool_attr(), (no, yes, no)),
@@ -1934,6 +1939,29 @@ mod tests {
         assert!(typo.contains("unknown role"), "{typo}");
         assert!(args(None, 0).ask().is_err());
         assert!(args(None, 501).ask().is_err());
+    }
+
+    #[test]
+    fn focus_takes_a_window_or_a_workspace_but_not_both() {
+        let target = |args: Value| {
+            serde_json::from_value::<FocusArgs>(args)
+                .unwrap()
+                .target()
+                .ok()
+        };
+        assert_eq!(
+            target(serde_json::json!({"window_id": 7})),
+            Some(Focus::Window(7))
+        );
+        assert_eq!(
+            target(serde_json::json!({"workspace_id": 2})),
+            Some(Focus::Workspace(2))
+        );
+        assert_eq!(target(serde_json::json!({})), None);
+        assert_eq!(
+            target(serde_json::json!({"window_id": 7, "workspace_id": 2})),
+            None
+        );
     }
 
     /// An engine for `env`, without niri or an accessibility bus.

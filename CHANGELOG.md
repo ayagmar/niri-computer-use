@@ -81,6 +81,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - `stop` and `resume` find niri's socket without connecting to it, so the stop key works while niri hangs.
 - A client that stops reading its server's output loses its session and the lease: once 32 lines wait for it, or one has waited 30 seconds, the bridge exits. So does a client that sends more than 32 MiB the shared engine hasn't taken yet, so its closed stdin can't go unseen behind that input.
 - Shorter tool descriptions and schemas, with no change in behaviour: the input schemas drop `$schema`, field text no longer repeats defaults and ranges the schema states, and the long descriptions keep their refusals and rules while the mechanics live in the docs.
+- `focus_window` and `focus_workspace` are one tool, `focus`, which takes `window_id` or `workspace_id`.
 
 ### Fixed
 

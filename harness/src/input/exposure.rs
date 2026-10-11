@@ -45,7 +45,7 @@ pub(super) fn run(
                 .copied())
         },
     )?;
-    structured(&client.call(session, "focus_window", json!({"id": original}))?)?;
+    structured(&client.call(session, "focus", json!({"window_id": original}))?)?;
     let offset = wev.offset()?;
     let other_offset = keyboard::offset(&observer_log)?;
     let id = client.start_call(
@@ -78,7 +78,7 @@ pub(super) fn run(
     session.log(&format!("M7 {backend} focus takeover: {landed} characters landed in second wev after focus change, {source_count} in original, no Return; {} tool-completed characters", field(&result, "/typed")))?;
     super::stop::marker_gone(session)?;
     observer.stop()?;
-    structured(&client.call(session, "focus_window", json!({"id": original}))?)?;
+    structured(&client.call(session, "focus", json!({"window_id": original}))?)?;
     Ok(())
 }
 

@@ -91,7 +91,7 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 **Cause:** a keyboard tool's `expect` doesn't match the window with keyboard focus, or for `activate_element` and `set_element_text`, the element's window doesn't have keyboard focus or `expect` doesn't name it. The `detail` says what has focus. Often a dialog or notification took focus; an open Noctalia panel leaves no window focused. Nothing was typed or sent.
 
-**What to do:** look at `desktop_state` and a screenshot, focus the intended window with `focus_window` if that is what was meant, then type again.
+**What to do:** look at `desktop_state` and a screenshot, focus the intended window with `focus` if that is what was meant, then type again.
 
 ### `text_too_long`
 

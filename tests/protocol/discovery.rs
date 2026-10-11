@@ -287,7 +287,7 @@ async fn a_niri_socket_link_retargeted_later_leaves_the_server_on_its_niri() {
     std::fs::remove_file(&link).unwrap();
     std::os::unix::fs::symlink(fixture.path("run/niri.other.sock"), &link).unwrap();
     server.structured("acquire_desktop").await;
-    let (result, action) = tokio::join!(server.call("focus_window", json!({"id": 2})), async {
+    let (result, action) = tokio::join!(server.call("focus", json!({"window_id": 2})), async {
         let action = first.action().await;
         stream.send(&json!({"WindowFocusChanged": {"id": 2}}));
         action

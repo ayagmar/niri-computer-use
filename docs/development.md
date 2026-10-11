@@ -206,14 +206,14 @@ One server holds the lease for the whole run. The supervisor keeps its stdin ope
 
 1. `launch late` gives `one`, and `desktop_state` shows the window with its late `app_id`.
 2. `launch two` gives `ambiguous` with two windows.
-3. `launch reuse` with `reuse: true` gives `one`; after `focus_window` on another window, the same call gives `focused` on that window and starts nothing; after a second plain launch, it gives `ambiguous` with `accepted: false`, and still nothing new starts.
-4. `focus_window`, then `focus_workspace` to the empty workspace, with no window focused, and back, with focus on the window it left, each `focused`.
+3. `launch reuse` with `reuse: true` gives `one`; after `focus` on another window, the same call gives `focused` on that window and starts nothing; after a second plain launch, it gives `ambiguous` with `accepted: false`, and still nothing new starts.
+4. `focus` on a window, then on the empty workspace, with no window focused, and back, with focus on the window it left, each `focused`.
 5. `close_window` on a `plain` window gives `closed`; on a `keep` window, `pending` with a screenshot of the output in the result.
 6. `launch slow`, and as soon as the marker appears the supervisor focuses the `late` window through its own niri connection: the launch gives `interrupted` naming that window, with a screenshot.
 7. On a `sized` window, `niri_action` `FullscreenWindow` gives `changed` with `window.window_size` equal to the output's logical size, and again gives the tiled size back; `ToggleWindowFloating` gives `is_floating: true`; `SetWindowWidth` with `SetFixed: 400` gives a window 400 wide. `Spawn` is refused with `unrestricted_required`.
 8. After the first server stops, the supervisor rewrites the policy file to `unrestricted = true` and starts a second server, which spawns `harness window … spawned` through `niri_action` `Spawn`; `wait_for` sees the window, and `close_window` closes it. Through the same server, `noctalia` `["status"]` returns the nested Noctalia's unlocked status as its reply, and `["no-such-command"]` gives `upstream_error` with Noctalia's message.
 
-Each action's `changes` must also tell what it did: the window `launch late` opened and focused, both windows of `launch two`, the focus `launch reuse` moved, the workspace and focus `focus_workspace` changed each way, the window `close_window` closed, where the interrupted launch's focus went, the window's new size after each `FullscreenWindow`, `floating` after `ToggleWindowFloating` and a width of 400 after `SetWindowWidth`. The `pending` close's and the `Spawn`'s reports are only logged. Each report is logged as `changes: <what>: checked <bool>, <bytes> bytes: <json>`.
+Each action's `changes` must also tell what it did: the window `launch late` opened and focused, both windows of `launch two`, the focus `launch reuse` moved, the workspace and focus `focus` on a workspace changed each way, the window `close_window` closed, where the interrupted launch's focus went, the window's new size after each `FullscreenWindow`, `floating` after `ToggleWindowFloating` and a width of 400 after `SetWindowWidth`. The `pending` close's and the `Spawn`'s reports are only logged. Each report is logged as `changes: <what>: checked <bool>, <bytes> bytes: <json>`.
 
 The run has a 130-second deadline. Its files are in `target/e2e/<run>/`, including `policy.toml`, the server's replies and Noctalia's log.
 
