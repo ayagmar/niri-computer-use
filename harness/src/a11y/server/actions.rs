@@ -82,8 +82,7 @@ impl Checks<'_, '_> {
         if toolkit == Toolkit::Gtk4 {
             crate::a11y::hidden::record(self.session, bus, fixture.pid())?;
         }
-        let button = self.named(window, Some("button"), files.button)?;
-        self.activated(toolkit, window, &button, files.count)?;
+        let button = self.activated(toolkit, window, &files)?;
         self.set_text(toolkit, window, files.entry)?;
         for (name, changes) in files.passwords {
             self.secret(window, *name, changes)?;
@@ -117,22 +116,21 @@ impl Checks<'_, '_> {
         ))
     }
 
-    /// Twenty activations, each counted once by the fixture and observed `present`.
-    fn activated(
-        &mut self,
-        toolkit: Toolkit,
-        window: u64,
-        button: &str,
-        counter: &str,
-    ) -> Result<()> {
+    /// Twenty activations, each counted once by the fixture and observed `present`. Each
+    /// relabels the button, which makes its ref stale, so each is listed again first; the
+    /// last ref, relabelled by the last activation, must then be `element_stale` with
+    /// nothing sent. Returns a ref listed after it.
+    fn activated(&mut self, toolkit: Toolkit, window: u64, files: &Files) -> Result<String> {
         let started = Instant::now();
         let mut took = Vec::new();
         let mut on_return = 0;
+        let mut button = String::new();
         for count in 1..=ACTIVATIONS {
+            button = self.named(window, Some("button"), files.button)?;
             let asked = Instant::now();
-            let outcome = self.call("activate_element", activation(button, window))?;
+            let outcome = self.call("activate_element", activation(&button, window))?;
             took.push(asked.elapsed().as_millis());
-            on_return += u32::from(read_count(self.session, counter)? == Some(count));
+            on_return += u32::from(read_count(self.session, files.count)? == Some(count));
             expect(
                 field(&outcome, "/accepted") == true
                     && field(&outcome, "/observed") == "present"
@@ -142,16 +140,27 @@ impl Checks<'_, '_> {
                 "an activation observed present",
                 &outcome,
             )?;
-            self.counted(counter, count)?;
+            self.counted(files.count, count)?;
         }
         took.sort_unstable();
         self.session.log(&format!(
-            "M9b: {toolkit:?} {ACTIVATIONS}/{ACTIVATIONS} activations counted once and present ({on_return} already counted when the call returned), in {:?}; call ms min {:?} median {:?} max {:?}",
+            "M9b: {toolkit:?} {ACTIVATIONS}/{ACTIVATIONS} activations, each listed first, counted once and present ({on_return} already counted when the call returned), in {:?}; activate_element ms min {:?} median {:?} max {:?}",
             started.elapsed(),
             took.first(),
             took.get(took.len() / 2),
             took.last()
-        ))
+        ))?;
+        let relabelled = self.refused("activate_element", activation(&button, window))?;
+        expect(
+            field(&relabelled, "/error") == "element_stale",
+            "element_stale for a button its activation relabelled",
+            &relabelled,
+        )?;
+        self.unchanged(files.count, ACTIVATIONS)?;
+        self.session.log(&format!(
+            "M9b: {toolkit:?} the relabelled button's old ref refused, nothing sent: {relabelled}"
+        ))?;
+        self.named(window, Some("button"), files.button)
     }
 
     /// The plain entry gets synthetic text, which the fixture reads back whole.

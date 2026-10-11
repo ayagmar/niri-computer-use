@@ -414,11 +414,11 @@ async fn a_parent_renamed_in_place_makes_its_elements_stale_for_every_tool() {
     );
 }
 
-// A counter's activation relabels it; the ref keeps the name read after each one. A name
-// that changes on its own makes the ref stale, but a pointer aim doesn't check the
-// element's own name, since a click doesn't read it afterwards.
+// A counter's activation relabels it, and the server can't tell that from the object being
+// reused for another record, so its ref is stale afterwards and the agent lists again. A
+// pointer aim doesn't check the element's own name, since a click doesn't read it.
 #[tokio::test]
-async fn a_counter_stays_valid_through_its_own_relabelling_and_only_through_that() {
+async fn a_counter_relabelled_by_its_activation_is_stale_for_the_next_one() {
     let mut objects = objects();
     objects.push((
         "/counter",
@@ -437,26 +437,50 @@ async fn a_counter_stays_valid_through_its_own_relabelling_and_only_through_that
     let mut desk = Desk::start_with("el-counter", &["/frame"], objects, &windows).await;
     let counter = desk.element("Count: 0").await;
     let shot = desk.screenshot_ref().await;
-    let arguments = ACTIVATE.arguments(&counter);
-    for count in 1..=20 {
-        let result = desk
-            .server
-            .call("activate_element", arguments.clone())
-            .await;
-        assert_eq!(
-            result["structuredContent"]["accepted"], true,
-            "{count}: {result}"
-        );
-        assert_eq!(desk.mock.object("/counter").name, format!("Count: {count}"));
-    }
-    desk.mock.change("/counter", |object| {
-        object.name = "Count: 99".to_owned();
-    });
+    let result = desk
+        .server
+        .call("activate_element", ACTIVATE.arguments(&counter))
+        .await;
+    assert_eq!(result["structuredContent"]["accepted"], true, "{result}");
+    assert_eq!(desk.mock.object("/counter").name, "Count: 1");
     let aimed = json!({"screenshot_ref": shot, "element": counter});
     let moved = desk.server.call("pointer_move", aimed).await;
     // Past the element's checks: the mock's button can't be placed on the fake desktop.
     assert_eq!(tool_error(&moved).0, "element_unmappable", "{moved}");
     stale(&mut desk, &ACTIVATE, &counter).await;
+    let relisted = desk.element("Count: 1").await;
+    let again = desk
+        .server
+        .call("activate_element", ACTIVATE.arguments(&relisted))
+        .await;
+    assert_eq!(again["structuredContent"]["accepted"], true, "{again}");
+    assert_eq!(desk.mock.calls("DoAction"), 2);
+}
+
+// Sol's reproduction: the app reuses the object in place for another record while the
+// call is out. The name read afterwards is not adopted, so the old ref can't act on the
+// new record.
+#[tokio::test]
+async fn an_object_reused_while_its_call_was_out_is_stale_afterwards() {
+    for held in [&ACTIVATE, &SET_TEXT] {
+        let (name, path) = held.element;
+        let mut desk = Desk::start(&format!("el-reused-out-{}", held.tag())).await;
+        let element = desk.element(name).await;
+        let acting = desk.mock.hold_on(held.acts, path);
+        let id = desk
+            .server
+            .start_call(held.tool, held.arguments(&element))
+            .await;
+        acting.arrived().await;
+        desk.mock.change(path, |object| {
+            object.name = "Different record".to_owned();
+        });
+        acting.release();
+        let first = desk.server.response(id).await["result"].clone();
+        assert_eq!(first["structuredContent"]["accepted"], true, "{first}");
+        stale(&mut desk, held, &element).await;
+        assert_eq!(desk.mock.calls(held.acts), 1);
+    }
 }
 
 #[tokio::test]

@@ -217,7 +217,8 @@ pub(crate) enum Names {
     /// click doesn't read the element again afterwards and a counter relabels itself on
     /// every click.
     Parents,
-    /// The element's own too: the element actions, which read it again after acting.
+    /// The element's own too: the element actions. A button that relabels itself when
+    /// activated, as a counter does, is stale afterwards, and the agent lists it again.
     All,
 }
 

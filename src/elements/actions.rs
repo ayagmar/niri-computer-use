@@ -14,7 +14,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::time::{Instant, timeout_at};
 
-use crate::a11y::model::{self, NameHash, State, States};
+use crate::a11y::model::{self, State, States};
 use crate::a11y::{self, A11y, Dispatched, ElementRef, Failed, Request};
 use crate::act::{Observed, Outcome};
 use crate::error::{CallError, ErrorName, ToolError};
@@ -98,15 +98,6 @@ pub(crate) struct Acted {
     /// `set_element_text`: the characters the element says it holds now.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) characters: Option<i32>,
-}
-
-/// An element action's outcome, and the hash of the element's name right after it, for
-/// its ref to keep: the action may have relabelled the element, as a counter does.
-#[derive(Debug)]
-pub(crate) struct Done {
-    pub(crate) outcome: Outcome,
-    /// None when the name couldn't be read.
-    pub(crate) name: Option<NameHash>,
 }
 
 /// The index of the action `activate_element` takes among the element's `advertised`
@@ -281,7 +272,7 @@ pub(crate) async fn activate(
     element: &ElementRef,
     requested: Option<&str>,
     gate: Gate<'_, impl Recheck>,
-) -> Result<Done, CallError> {
+) -> Result<Outcome, CallError> {
     let a11y = accessible(input)?;
     let index =
         choose_action(&element.kept.actions, requested).map_err(CallError::InvalidArguments)?;
@@ -326,10 +317,6 @@ pub(crate) async fn activate(
         Waited::Done(()) => After::WindowGone,
         Waited::Timeout | Waited::Lost(_) => After::Probed(request.state(element).await),
     };
-    let name = match after {
-        After::Probed(Ok(_)) => own_name(&request, element).await,
-        After::WindowGone | After::Probed(Err(_)) => None,
-    };
     let (observed, changes, detail) = activation(checked.states, after);
     let (states_set, states_cleared) = changes.unwrap_or_default();
     let acted = Acted {
@@ -339,16 +326,13 @@ pub(crate) async fn activate(
         states_cleared,
         characters: None,
     };
-    Ok(Done {
-        outcome: done(
-            (observed, detail),
-            lost,
-            waiter.view(),
-            checked.focus,
-            acted,
-        ),
-        name,
-    })
+    Ok(done(
+        (observed, detail),
+        lost,
+        waiter.view(),
+        checked.focus,
+        acted,
+    ))
 }
 
 /// The index to ask the app for `action`: it must still be the element's action of that
@@ -379,7 +363,7 @@ pub(crate) async fn set_text(
     element: &ElementRef,
     text: &str,
     gate: Gate<'_, impl Recheck>,
-) -> Result<Done, CallError> {
+) -> Result<Outcome, CallError> {
     check_text(text)?;
     let a11y = accessible(input)?;
     let mut waiter = niri::waiter(input.niri.events).await?;
@@ -411,7 +395,6 @@ pub(crate) async fn set_text(
         .map_err(gone_is_stale)?;
     let lost = taken(dispatched, "the new text")?;
     let count = request.character_count(element).await;
-    let name = own_name(&request, element).await;
     let (observed, characters, detail) = written(text.chars().count(), count);
     let acted = Acted {
         role: model::role_name(checked.role),
@@ -420,22 +403,13 @@ pub(crate) async fn set_text(
         states_cleared: Vec::new(),
         characters,
     };
-    Ok(Done {
-        outcome: done(
-            (observed, detail),
-            lost,
-            waiter.view(),
-            checked.focus,
-            acted,
-        ),
-        name,
-    })
-}
-
-/// The hash of the element's name now, if it can be read.
-async fn own_name(request: &Request, element: &ElementRef) -> Option<NameHash> {
-    let name = request.name(element.at()).await.ok()?;
-    Some(NameHash::of(&name))
+    Ok(done(
+        (observed, detail),
+        lost,
+        waiter.view(),
+        checked.focus,
+        acted,
+    ))
 }
 
 /// Checks the element has an `EditableText` interface, or its text can't be set.
