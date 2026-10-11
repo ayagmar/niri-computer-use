@@ -215,6 +215,11 @@ impl Stream {
         self.lines.send(event.to_string()).unwrap();
     }
 
+    /// Closes the connection, as niri does when it exits.
+    pub(crate) fn close(&mut self) {
+        self.lines = mpsc::unbounded_channel().0;
+    }
+
     /// niri's initial burst: workspaces, the given windows, keyboard layouts and the
     /// overview state, which makes the server's replica complete.
     pub(crate) fn initial(&self, windows: &[Value]) {

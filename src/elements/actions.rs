@@ -247,7 +247,7 @@ impl<R: Recheck> Gate<'_, R> {
         let read = read.await?;
         let (role, states) = current(request, element).await?;
         self.recheck.control().await?;
-        if let Waited::Lost(why) = waiter.until(Duration::ZERO, |_| None::<()>).await {
+        if let Some(why) = caught_up(waiter).await {
             return Err(ToolError::new(
                 ErrorName::NiriUnavailable,
                 format!("{why}; nothing was sent"),
@@ -308,14 +308,20 @@ pub(crate) async fn activate(
         .map_err(gone_is_stale)?;
     let lost = taken(dispatched, &format!("its {} action", action.kind.name()))?;
     let window = element.kept.window;
-    let after = match waiter
+    let (after, stream) = match waiter
         .until(SETTLE, |view| {
             (!view.windows().contains_key(&window)).then_some(())
         })
         .await
     {
-        Waited::Done(()) => After::WindowGone,
-        Waited::Timeout | Waited::Lost(_) => After::Probed(request.state(element).await),
+        Waited::Done(()) => (After::WindowGone, None),
+        Waited::Timeout => (After::Probed(request.state(element).await), None),
+        Waited::Lost(why) => (After::Probed(request.state(element).await), Some(why)),
+    };
+    let doubt = match (lost, stream) {
+        (Some(lost), _) => Some(Doubt::Reply(lost)),
+        (None, Some(why)) => Some(Doubt::Stream(why)),
+        (None, None) => caught_up(&mut waiter).await.map(Doubt::Stream),
     };
     let (observed, changes, detail) = activation(checked.states, after);
     let (states_set, states_cleared) = changes.unwrap_or_default();
@@ -328,7 +334,7 @@ pub(crate) async fn activate(
     };
     Ok(done(
         (observed, detail),
-        lost,
+        doubt,
         waiter.view(),
         checked.focus,
         acted,
@@ -395,6 +401,10 @@ pub(crate) async fn set_text(
         .map_err(gone_is_stale)?;
     let lost = taken(dispatched, "the new text")?;
     let count = request.character_count(element).await;
+    let doubt = match lost {
+        Some(lost) => Some(Doubt::Reply(lost)),
+        None => caught_up(&mut waiter).await.map(Doubt::Stream),
+    };
     let (observed, characters, detail) = written(text.chars().count(), count);
     let acted = Acted {
         role: model::role_name(checked.role),
@@ -405,11 +415,20 @@ pub(crate) async fn set_text(
     };
     Ok(done(
         (observed, detail),
-        lost,
+        doubt,
         waiter.view(),
         checked.focus,
         acted,
     ))
+}
+
+/// Applies niri's events received so far to the waiter's view, so its focus is the one now;
+/// why not, when the stream was lost.
+async fn caught_up(waiter: &mut Waiter) -> Option<String> {
+    match waiter.until(Duration::ZERO, |_| None::<()>).await {
+        Waited::Lost(why) => Some(why),
+        Waited::Done(()) | Waited::Timeout => None,
+    }
 }
 
 /// Checks the element has an `EditableText` interface, or its text can't be set.
@@ -557,17 +576,31 @@ fn written(expected: usize, count: Result<i32, Failed>) -> (Observed, Option<i32
 /// What was observed after the call, and why it is `unknown`.
 type Seen = (Observed, Option<String>);
 
-/// The outcome: what was `seen` afterwards, or, when the call's reply was `lost`,
-/// `uncertain` with `accepted: null`, saying what was seen in `detail`.
-fn done(seen: Seen, lost: Option<String>, view: &View, focus: Focus, acted: Acted) -> Outcome {
+/// Why an element action's outcome is `uncertain`.
+#[derive(Debug)]
+enum Doubt {
+    /// The call's reply was lost, so whether the app took it is unknown.
+    Reply(String),
+    /// niri's event stream was lost after the app took it, so focus afterwards is unknown.
+    Stream(String),
+}
+
+/// The outcome: what was `seen` afterwards, or, in `doubt`, `uncertain`, saying what was
+/// seen in `detail`: with `accepted: null` when the reply was lost, and with no focused
+/// window when niri's events were.
+fn done(seen: Seen, doubt: Option<Doubt>, view: &View, focus: Focus, acted: Acted) -> Outcome {
     let (observed, detail) = seen;
-    let Some(lost) = lost else {
+    let Some(doubt) = doubt else {
         return Outcome {
             focus: Some(focus),
             element: Some(acted),
             detail,
             ..Outcome::seen(observed, view, Vec::new())
         };
+    };
+    let (accepted, view, lost) = match doubt {
+        Doubt::Reply(lost) => (None, Some(view), lost),
+        Doubt::Stream(lost) => (Some(true), None, lost),
     };
     let afterwards = serde_json::to_value(observed)
         .ok()
@@ -578,8 +611,8 @@ fn done(seen: Seen, lost: Option<String>, view: &View, focus: Focus, acted: Acte
         focus: Some(focus),
         element: Some(acted),
         ..Outcome::uncertain(
-            None,
-            Some(view),
+            accepted,
+            view,
             format!("{lost}; afterwards: {afterwards}{why}"),
         )
     }

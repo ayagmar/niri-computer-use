@@ -1087,6 +1087,64 @@ async fn a_stop_or_lost_lease_after_the_call_went_out_leaves_it_uncertain() {
     }
 }
 
+// Sol's held `SetTextContents`: focus left the window while the app held its answer. The
+// result's focused window is the one when the look afterwards ended.
+#[tokio::test]
+async fn focus_that_moved_while_the_text_went_out_is_reported_as_it_is_afterwards() {
+    let mut desk = Desk::start("el-text-focus").await;
+    let entry = desk.element("Field").await;
+    let acting = desk.mock.hold_on("SetTextContents", "/entry");
+    let id = desk
+        .server
+        .start_call("set_element_text", SET_TEXT.arguments(&entry))
+        .await;
+    acting.arrived().await;
+    desk.make(Change::FocusMoved, "/entry").await;
+    acting.release();
+    let result = desk.server.response(id).await["result"].clone();
+    let outcome = &result["structuredContent"];
+    assert_eq!(outcome["observed"], "matched", "{outcome}");
+    assert_eq!(outcome["focus"], "matched", "{outcome}");
+    assert_eq!(outcome["focused_window"], Value::Null, "{outcome}");
+}
+
+// niri's event stream lost while the call was out: the app took it, so `accepted` stays
+// true, but focus afterwards is unknown, so the outcome is `uncertain` with none.
+#[tokio::test]
+async fn a_stream_lost_while_the_call_was_out_leaves_focus_unknown() {
+    for held in [&ACTIVATE, &SET_TEXT] {
+        let (name, path) = held.element;
+        let mut desk = Desk::start(&format!("el-stream-{}", held.tag())).await;
+        let element = desk.element(name).await;
+        let acting = desk.mock.hold_on(held.acts, path);
+        let id = desk
+            .server
+            .start_call(held.tool, held.arguments(&element))
+            .await;
+        acting.arrived().await;
+        desk.stream.close();
+        while desk.server.structured("status").await["niri"]["event_stream"] == "connected" {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        acting.release();
+        let result = desk.server.response(id).await["result"].clone();
+        let outcome = &result["structuredContent"];
+        assert_eq!(outcome["accepted"], true, "{outcome}");
+        assert_eq!(outcome["observed"], "uncertain", "{outcome}");
+        assert_eq!(outcome["focused_window"], Value::Null, "{outcome}");
+        assert_eq!(
+            outcome["element"]["role"],
+            if held.tool == "activate_element" {
+                "button"
+            } else {
+                "text"
+            },
+            "{outcome}"
+        );
+        assert_eq!(desk.mock.calls(held.acts), 1);
+    }
+}
+
 #[tokio::test]
 async fn a_password_field_is_never_activated() {
     let mut desk = Desk::start("el-password-activate").await;

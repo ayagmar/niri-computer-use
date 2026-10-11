@@ -165,8 +165,8 @@ pub(crate) struct Request {
     /// Cleared when a call fails other than with a D-Bus error, so the next request
     /// connects again.
     shared: Arc<tokio::sync::Mutex<Option<Connection>>>,
-    /// Whether a failure says only the D-Bus error's name, never the message the
-    /// application wrote with it.
+    /// Whether a failure says only the D-Bus error's name, and only a standard one, never
+    /// the message the application wrote with it.
     names_only: bool,
 }
 
