@@ -1256,22 +1256,21 @@ async fn focus_moved_during_the_first_call(desk: &mut Desk, tool: &str, argument
     desk.server.response(id).await["result"].clone()
 }
 
-// An app answers a key a moment after it went out: the report waits for niri to go quiet,
-// so the window the key opened is in it, though the key's own work had ended.
+// A key opens a window while it goes out: the report has the window and the focus it took.
+// `act::record`'s tests check, with paused time, that one opening after the work is in it.
 #[tokio::test]
-async fn a_window_a_key_opens_a_moment_later_is_in_the_report() {
+async fn a_window_a_key_opens_is_in_the_report() {
     let mut desk = Desk::start("act-key-report", "").await;
-    fake_wtype(&desk.fixture, ": > \"$DIR/typed\"");
+    fake_wtype(&desk.fixture, ": > \"$DIR/typed\"; await_file go");
     let keys = json!({"keys": ["ctrl+n"], "expect": {"app_id": "a"}});
     let id = desk.server.start_call("key", keys).await;
-    while !desk.fixture.path("typed").exists() {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let typed = desk.fixture.path("typed");
+    assert!(crate::fixture::eventually(Duration::from_secs(2), || typed.exists()).await);
     let window = window_on(9, Some("a"), 1, false);
     desk.stream
         .send(&json!({"WindowOpenedOrChanged": {"window": window}}));
     focus_changed(&desk.stream, 9);
+    std::fs::write(desk.fixture.path("go"), "").unwrap();
     let result = desk.server.response(id).await["result"].clone();
     assert_eq!(
         outcome(&result)["changes"],
