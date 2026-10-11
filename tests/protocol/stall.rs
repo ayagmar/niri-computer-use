@@ -32,7 +32,7 @@ use crate::elements::{WINDOW, app_window, objects, workspace};
 use crate::fixture::{Fixture, jpeg};
 use crate::holds::{Passed, Points};
 use crate::niri::{Niri, Stream, window_on};
-use crate::noctalia::{self, UNLOCKED};
+use crate::noctalia::{self, LOCKED, UNLOCKED};
 
 /// The server's bound on the age of what the element actions' last gate read.
 const LAST_GATE: Duration = Duration::from_millis(250);
@@ -142,6 +142,8 @@ enum Fact {
     WindowClosed,
     /// Another server's input may be stuck.
     InputDirty,
+    /// Noctalia locks the screen.
+    ScreenLocked,
     /// The window takes an `app_id` the policy denies. The policy is read once per session,
     /// so this is how a denial can appear while a call runs.
     DenyListed,
@@ -167,6 +169,7 @@ impl Fact {
         let element = kind == Kind::Element;
         match self {
             Self::InputDirty => Some(&["recovery_required"]),
+            Self::ScreenLocked => Some(&["screen_locked"]),
             Self::FocusMoved => (kind != Kind::Niri).then_some(&["focus_mismatch"]),
             Self::WindowClosed => match kind {
                 Kind::Element => Some(&["element_stale"]),
@@ -277,7 +280,7 @@ struct World {
     server: Server,
     _niri: Niri,
     stream: Stream,
-    _noctalia: noctalia::Reply,
+    noctalia: noctalia::Reply,
     _bus: Bus,
     mock: Mock,
     points: Points,
@@ -319,7 +322,7 @@ impl World {
             server,
             _niri: niri,
             stream,
-            _noctalia: noctalia,
+            noctalia,
             _bus: bus,
             mock,
             points: fixture.points(),
@@ -335,6 +338,7 @@ impl World {
         self.points.idle().await;
         let marker = self.fixture.runtime_dir().join("input-dirty");
         std::fs::remove_file(marker).ok();
+        self.noctalia.set(UNLOCKED);
         self.closed.lock().unwrap().clear();
         for (path, object) in self.saved.drain(..) {
             self.mock.change(path, |now| *now = object);
@@ -412,6 +416,7 @@ impl World {
                 let marker = self.fixture.runtime_dir().join("input-dirty");
                 std::fs::write(marker, "").unwrap();
             }
+            Fact::ScreenLocked => self.noctalia.set(LOCKED),
             Fact::BecamePassword => self.change_object(path, |object| object.role = PASSWORD_TEXT),
             Fact::Renamed => self.change_object(path, |object| {
                 object.name = "Different record".to_owned();
@@ -695,6 +700,11 @@ fn the_window_closing_while_a_reply_is_held() {
 #[test]
 fn a_marker_set_while_a_reply_is_held() {
     explore(Fact::InputDirty);
+}
+
+#[test]
+fn the_screen_locking_while_a_reply_is_held() {
+    explore(Fact::ScreenLocked);
 }
 
 #[test]

@@ -65,12 +65,9 @@ pub(crate) struct Recheck<'a> {
 impl elements::actions::Recheck for Recheck<'_> {
     async fn control(&self) -> Result<(), ToolError> {
         // Boxed, because the readiness report makes a large future.
-        if let Some(refused) = Box::pin(self.engine.refusal(self.session)).await {
-            return Err(refused);
-        }
-        // The report asks Noctalia beside niri, so its answer may be older than niri's.
-        // The lock decision comes from reads started once the report is done.
-        policy::refuse_lock(self.engine.lock().await.state()).map_or(Ok(()), Err)
+        Box::pin(self.engine.refusal(self.session))
+            .await
+            .map_or(Ok(()), Err)
     }
 
     fn desk(&self) -> Result<(), ToolError> {
@@ -490,7 +487,12 @@ impl Engine {
     /// Why `session` may not take the lease or act now, from the readiness report.
     async fn refusal(&self, session: &Session) -> Option<ToolError> {
         let report = self.status(session).await;
-        policy::refuse_control(report.facts(&session.settings().policy))
+        if let Some(refused) = policy::refuse_control(report.facts(&session.settings().policy)) {
+            return Some(refused);
+        }
+        // The report asks Noctalia beside niri, so its answer may be older than niri's.
+        // The lock decision comes from reads started once the report is done.
+        policy::refuse_lock(self.lock().await.state())
     }
 
     /// The outcome with the screenshot `shoot` asks for, or the one an outcome in doubt gets.
