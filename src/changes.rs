@@ -74,7 +74,8 @@ pub(crate) struct Changes {
     #[serde(skip_serializing_if = "is_zero")]
     pub(crate) truncated: usize,
     /// Why the report is incomplete: niri's event stream ended before the report did, and
-    /// what is here was seen before that, or it couldn't be watched at all, and nothing is.
+    /// what is here was seen before that, or it couldn't be watched at all, and only
+    /// `elements`, from walks of their own, can be here.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) lost: Option<String>,
     /// With `element_changes`: what changed among the window's accessible elements.
