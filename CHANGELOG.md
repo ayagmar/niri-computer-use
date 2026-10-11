@@ -59,6 +59,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
+- wl-clipboard is no longer needed at run time: nothing the server runs uses `wl-paste` any more, and `status.binaries` no longer lists it.
+
 - Automatic nested suites run inside isolated headless cage by default, without host snapshots. `VISIBLE=1` or `--visible` keeps the human path; sittings remain visible.
 - Safety documentation explicitly distinguishes focus-based app denial from pointer-target isolation, and sensitive read-only observations from private data.
 

@@ -44,4 +44,4 @@ That builds the server and registers it in Claude Code. [Client setup](start/cli
 
 ## Requirements
 
-niri 26.04, Rust 1.99.0 through rustup, and `grim`, `wl-clipboard`, `wtype` and `loginctl`. Noctalia 5.2 and an accessibility bus are optional. Details are on the [Install](start/install/) page.
+niri 26.04, Rust 1.99.0 through rustup, and `grim`, `wtype` and `loginctl`. Noctalia 5.2 and an accessibility bus are optional. Details are on the [Install](start/install/) page.

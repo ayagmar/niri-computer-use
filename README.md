@@ -10,7 +10,7 @@ Documentation: **https://ayagmar.github.io/niri-computer-use/**, also as plain M
 
 ## Install
 
-Needs niri 26.04, Rust 1.99.0 through rustup, libxkbcommon, and `grim`, `wl-clipboard`, `wtype` and `loginctl` at run time. From a shell inside your niri session:
+Needs niri 26.04, Rust 1.99.0 through rustup, libxkbcommon, and `grim`, `wtype` and `loginctl` at run time. From a shell inside your niri session:
 
 ```sh
 git clone https://github.com/ayagmar/niri-computer-use.git
