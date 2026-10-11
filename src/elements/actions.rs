@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::{Value, json};
+use tokio::time::{Instant, timeout_at};
 
 use crate::a11y::model::{self, NameHash, State, States};
 use crate::a11y::{self, A11y, Dispatched, ElementRef, Failed, Request};
@@ -31,6 +32,11 @@ use super::{Names, gone_is_stale, identify, stale};
 /// 250 ms (`ACTIVATE_TIMEOUT` in `gtkbutton.c`), then clicked. Qt acts at once. The
 /// window closing ends the wait sooner.
 const SETTLE: Duration = Duration::from_millis(300);
+/// The longest the last gate may take, from its first read to the call that acts going
+/// out, which bounds how old an answer it relies on can be. It takes 8 to 15 ms in the
+/// protocol tests; an app, niri or Noctalia that takes this long is busy, and what it said
+/// may have changed since (see docs/decisions.md).
+const LAST_GATE: Duration = Duration::from_millis(250);
 /// `set_element_text`'s most text, in bytes of UTF-8 (see docs/decisions.md).
 pub(crate) const MAX_TEXT: usize = 64 * 1024;
 
@@ -172,7 +178,7 @@ pub(crate) fn logged(
 /// since reading the element takes time.
 pub(crate) trait Recheck: Sync {
     /// The policy's answer from a fresh readiness report: niri, the policy file and the
-    /// lock screen.
+    /// lock screen, whose state is read once more after the rest of the report.
     fn control(&self) -> impl Future<Output = Result<(), ToolError>> + Send;
     /// The desk's: the stop flag, the input-dirty marker and the lease.
     fn desk(&self) -> Result<(), ToolError>;
@@ -198,17 +204,48 @@ struct Checked<T> {
 }
 
 impl<R: Recheck> Gate<'_, R> {
-    /// The last checks before the call that acts. The app's answers come first, one call at
-    /// a time: the element is still the one listed, then `read`, the tool's own read of it,
-    /// then its states, then its role, so a field that became a password field meanwhile is
-    /// refused. Then ours, none of which waits on the app: the action gate's checks again,
-    /// niri's events received so far, failing if the stream was lost, the window's focus,
-    /// deny list and `expect` on them, and the desk last. An app that holds a reply back
-    /// only delays its own answers; it can't make ours stale. The app can still change the
-    /// element after answering, and anything can change between these checks and the app
-    /// taking the call: niri, the desk and the app are asked apart, and nothing makes those
-    /// reads one step.
-    async fn last<T>(
+    /// The last checks before the call that acts, `pass`, done within `LAST_GATE` of
+    /// their first read, so no answer they rely on is older when the call goes out. A pass
+    /// that runs over is done once more from the start; a second one that runs over is
+    /// `element_busy`. A change inside that window can still be missed.
+    async fn last<T, F>(
+        &self,
+        element: &ElementRef,
+        request: &Request,
+        waiter: &mut Waiter,
+        read: impl Fn() -> F,
+    ) -> Result<Checked<T>, CallError>
+    where
+        F: Future<Output = Result<T, CallError>>,
+    {
+        for _ in 0..2 {
+            let deadline = Instant::now() + LAST_GATE;
+            let pass = self.pass(element, request, waiter, read());
+            match timeout_at(deadline, pass).await {
+                Ok(Err(refused)) => return Err(refused),
+                Ok(Ok(checked)) if Instant::now() <= deadline => return Ok(checked),
+                Ok(Ok(_)) | Err(_) => {}
+            }
+        }
+        Err(ToolError::new(
+            ErrorName::ElementBusy,
+            format!(
+                "the app or the desktop answered too slowly to check the element: its last checks took over {} ms twice; nothing was sent",
+                LAST_GATE.as_millis()
+            ),
+        )
+        .into())
+    }
+
+    /// One pass of the last checks. The app's answers come first, one call at a time: the
+    /// element is still the one listed, then `read`, the tool's own read of it, then its
+    /// states, then its role, so a field that became a password field meanwhile is
+    /// refused. Then ours, none of which waits on the app: the action gate's checks again
+    /// with the lock state read last, niri's events received so far, failing if the
+    /// stream was lost, the window's focus, deny list and `expect` on them, and the desk
+    /// last. niri, Noctalia, the desk and the app are asked apart, and nothing makes those
+    /// reads one step: `last` bounds how old they are.
+    async fn pass<T>(
         &self,
         element: &ElementRef,
         request: &Request,
@@ -269,12 +306,9 @@ pub(crate) async fn activate(
     .await?;
     offered(&request, element, action).await?;
     let checked = gate
-        .last(
-            element,
-            &request,
-            &mut waiter,
-            offered(&request, element, action),
-        )
+        .last(element, &request, &mut waiter, || {
+            offered(&request, element, action)
+        })
         .await?;
     gate.recheck.sending();
     let dispatched = request
@@ -361,7 +395,9 @@ pub(crate) async fn set_text(
     .await?;
     editable(&request, element).await?;
     let checked = gate
-        .last(element, &request, &mut waiter, editable(&request, element))
+        .last(element, &request, &mut waiter, || {
+            editable(&request, element)
+        })
         .await?;
     if !checked.states.has(State::Editable) {
         return Err(CallError::InvalidArguments(

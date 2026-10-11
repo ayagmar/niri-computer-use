@@ -67,6 +67,9 @@ pub(crate) enum ErrorName {
     ElementUnmappable,
     /// `set_element_text` on a password field: it is never written.
     SecretField,
+    /// An element action's last checks before its call took too long, twice, so what they
+    /// read may have changed: nothing was sent.
+    ElementBusy,
     /// A gated `niri_action` while the policy's `unrestricted` is off.
     UnrestrictedRequired,
     /// The shared engine ended while the call was in flight, or since the last call.

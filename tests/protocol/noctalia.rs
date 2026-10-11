@@ -75,6 +75,16 @@ impl Reply {
             .collect()
     }
 
+    /// How many `status` requests were answered so far.
+    pub(crate) fn status_requests(&self) -> usize {
+        let state = self.0.lock().unwrap();
+        state
+            .commands
+            .iter()
+            .filter(|command| *command == "status")
+            .count()
+    }
+
     fn answer(&self, command: &str) -> String {
         let mut state = self.0.lock().unwrap();
         state.commands.push(command.to_owned());

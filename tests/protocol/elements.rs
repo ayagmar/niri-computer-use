@@ -25,7 +25,7 @@ const WINDOW: u64 = 1;
 /// and the fixture last.
 struct Desk {
     server: Server,
-    _niri: Niri,
+    niri: Niri,
     stream: Stream,
     noctalia: noctalia::Reply,
     bus: Bus,
@@ -95,7 +95,7 @@ impl Desk {
         server.structured("acquire_desktop").await;
         Self {
             server,
-            _niri: niri,
+            niri,
             stream,
             noctalia,
             bus,
@@ -648,6 +648,167 @@ async fn setting_text_is_refused_when_anything_changed_while_the_app_held_its_la
 async fn a_field_that_becomes_a_password_field_while_its_states_are_read_is_refused() {
     for held in [&ACTIVATE, &SET_TEXT] {
         refused_at_the_last_gate(&held.reading("GetState"), Change::BecamePassword).await;
+    }
+}
+
+/// Longer than the server's last gate, 250 ms, which it then does once more.
+const PAST_THE_LAST_GATE: Duration = Duration::from_millis(400);
+
+/// What happens to the element while the app holds back its role at the last gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Swap {
+    /// The object is reused in place for another record.
+    Renamed,
+    /// It moves into the app's other window, which isn't focused.
+    Moved,
+    /// Its actions are reordered, so its listed index names another action.
+    Reordered,
+}
+
+impl Desk {
+    /// Holds the last gate's role read of `held`'s element, makes `swap` meanwhile, and
+    /// releases the read `after` that. Returns the call's result.
+    async fn swapped(&mut self, held: &Held, element: &str, swap: Swap, after: Duration) -> Value {
+        let (_, path) = held.element;
+        let role = self.mock.hold_on("GetRole", path);
+        let id = self
+            .server
+            .start_call(held.tool, held.arguments(element))
+            .await;
+        role.arrived().await;
+        match swap {
+            Swap::Renamed => self.mock.change(path, |object| {
+                object.name = "Different record".to_owned();
+            }),
+            Swap::Moved => self.move_element(path, Moved::ToTheOtherWindow),
+            Swap::Reordered => self.mock.change(path, |object| {
+                object.actions = vec!["delete".to_owned(), "click".to_owned()];
+            }),
+        }
+        tokio::time::sleep(after).await;
+        role.release();
+        self.server.response(id).await["result"].clone()
+    }
+}
+
+/// The swaps that apply to `held`'s tool: only `activate_element` sends an action index.
+fn swaps(held: &Held) -> Vec<Swap> {
+    let mut swaps = vec![Swap::Renamed, Swap::Moved];
+    if held.tool == "activate_element" {
+        swaps.push(Swap::Reordered);
+    }
+    swaps
+}
+
+// The last gate is done within 250 ms of its first read. One that an app's held answer
+// makes run over is done again from the start, and that pass sees the change.
+#[tokio::test]
+async fn an_element_changed_while_its_role_was_held_past_the_last_gate_is_stale() {
+    for held in [&ACTIVATE, &SET_TEXT] {
+        for swap in swaps(held) {
+            let mut desk = two_windows(&format!("el-past-{}-{}", held.tag(), swap as u8)).await;
+            let element = desk.element(held.element.0).await;
+            let result = desk.swapped(held, &element, swap, PAST_THE_LAST_GATE).await;
+            assert_eq!(tool_error(&result).0, "element_stale", "{swap:?}: {result}");
+            assert_eq!(desk.mock.calls(held.acts), 0, "{swap:?}");
+        }
+    }
+}
+
+// The bound, not more: a change inside the last gate's 250 ms can be missed.
+#[tokio::test]
+async fn a_change_inside_the_last_gate_can_be_missed() {
+    for held in [&ACTIVATE, &SET_TEXT] {
+        let mut desk = Desk::start(&format!("el-inside-{}", held.tag())).await;
+        let element = desk.element(held.element.0).await;
+        let result = desk
+            .swapped(held, &element, Swap::Renamed, Duration::ZERO)
+            .await;
+        assert_eq!(result["structuredContent"]["accepted"], true, "{result}");
+        assert_eq!(desk.mock.calls(held.acts), 1);
+    }
+}
+
+// Sol's held niri `Version`: Noctalia answered `unlocked` beside it, then the screen
+// locked. The lock decision comes from a read after the rest of the report.
+#[tokio::test]
+async fn the_lock_is_read_again_once_the_readiness_report_is_done() {
+    for held in [&ACTIVATE, &SET_TEXT] {
+        let (name, path) = held.element;
+        let mut desk = Desk::start(&format!("el-lock-{}", held.tag())).await;
+        let element = desk.element(name).await;
+        let role = desk.mock.hold_on("GetRole", path);
+        let id = desk
+            .server
+            .start_call(held.tool, held.arguments(&element))
+            .await;
+        role.arrived().await;
+        let version = desk.niri.hold_version();
+        let asked = desk.noctalia.status_requests();
+        role.release();
+        desk.niri.held().await;
+        while desk.noctalia.status_requests() == asked {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        desk.noctalia.set(LOCKED);
+        version.send(()).ok();
+        let result = desk.server.response(id).await["result"].clone();
+        assert_eq!(tool_error(&result).0, "screen_locked", "{result}");
+        assert_eq!(desk.mock.calls(held.acts), 0);
+    }
+}
+
+// The role read is no older than the last gate either: a field that becomes a password
+// field while niri holds its answer back past the gate is refused by the pass after.
+#[tokio::test]
+async fn a_field_that_becomes_a_password_field_after_its_role_was_read_is_refused() {
+    for held in [&ACTIVATE, &SET_TEXT] {
+        let (name, path) = held.element;
+        let mut desk = Desk::start(&format!("el-pw-late-{}", held.tag())).await;
+        let element = desk.element(name).await;
+        let role = desk.mock.hold_on("GetRole", path);
+        let id = desk
+            .server
+            .start_call(held.tool, held.arguments(&element))
+            .await;
+        role.arrived().await;
+        let version = desk.niri.hold_version();
+        role.release();
+        desk.niri.held().await;
+        desk.mock.change(path, |object| object.role = PASSWORD_TEXT);
+        tokio::time::sleep(PAST_THE_LAST_GATE).await;
+        version.send(()).ok();
+        let result = desk.server.response(id).await["result"].clone();
+        assert_eq!(tool_error(&result).0, "secret_field", "{result}");
+        assert_eq!(desk.mock.calls(held.acts), 0);
+    }
+}
+
+/// Makes the app's role reads of `held`'s element, or niri's `Version`, slower than the last
+/// gate on every pass, and checks the call is `element_busy` with nothing sent.
+async fn busy(held: &Held, app: bool) {
+    let slow = Duration::from_millis(300);
+    let (name, path) = held.element;
+    let mut desk = Desk::start(&format!("el-busy-{}-{app}", held.tag())).await;
+    let element = desk.element(name).await;
+    if app {
+        desk.mock.slow_on("GetRole", path, slow);
+    } else {
+        desk.niri.delay_version(slow);
+    }
+    let result = desk.server.call(held.tool, held.arguments(&element)).await;
+    let (error, detail) = tool_error(&result);
+    assert_eq!(error, "element_busy", "{result}");
+    assert!(detail.contains("nothing was sent"), "{detail}");
+    assert_eq!(desk.mock.calls(held.acts), 0);
+}
+
+#[tokio::test]
+async fn an_app_or_niri_slower_than_the_last_gate_twice_is_element_busy() {
+    for held in [&ACTIVATE, &SET_TEXT] {
+        for app in [true, false] {
+            busy(held, app).await;
+        }
     }
 }
 

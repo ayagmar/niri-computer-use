@@ -126,6 +126,8 @@ struct State {
     app: String,
     /// By method, and the object's path when only that object's call is meant.
     next: BTreeMap<(&'static str, Option<String>), Next>,
+    /// How much later every call of a method on an object is answered.
+    slow: BTreeMap<(&'static str, String), Duration>,
     calls: BTreeMap<&'static str, usize>,
     /// The index each `DoAction` asked for, in the order they arrived.
     done: Vec<i32>,
@@ -179,6 +181,12 @@ impl Mock {
         self.set_next((member, None), Next::Delay(delay));
     }
 
+    /// Answers every call of `member` on the object at `path` `delay` later, from now on.
+    pub(crate) fn slow_on(&self, member: &'static str, path: &str, delay: Duration) {
+        let mut state = self.0.lock().unwrap();
+        state.slow.insert((member, path.to_owned()), delay);
+    }
+
     /// Fails the next call of `member` with `message`.
     pub(crate) fn fail(&self, member: &'static str, message: &str) {
         self.set_next((member, None), Next::Fail(message.to_owned()));
@@ -215,20 +223,22 @@ impl Mock {
     }
 
     /// Counts a call of `member` on the object at `path` and takes what the test set for
-    /// it: for that object first, else for any.
-    fn count(&self, member: &'static str, path: &str) -> Option<Next> {
+    /// it: for that object first, else for any; and how slow its calls are.
+    fn count(&self, member: &'static str, path: &str) -> (Option<Next>, Duration) {
         let mut state = self.0.lock().unwrap();
         *state.calls.entry(member).or_default() += 1;
         let next = state.next.remove(&(member, Some(path.to_owned())));
         let next = next.or_else(|| state.next.remove(&(member, None)));
+        let slow = state.slow.get(&(member, path.to_owned())).copied();
         drop(state);
-        next
+        (next, slow.unwrap_or_default())
     }
 
     /// Counts a call of `member` on the object at `path` and applies what the test set for
     /// it: for that object first, else for any.
     async fn called(&self, member: &'static str, path: &str) -> fdo::Result<()> {
-        let next = self.count(member, path);
+        let (next, slow) = self.count(member, path);
+        tokio::time::sleep(slow).await;
         match next {
             None => {}
             Some(Next::Hold(arrived, released)) => {

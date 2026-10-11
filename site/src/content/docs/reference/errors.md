@@ -147,6 +147,12 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 **What to do:** have the user type it. A field that only hides its text may not be marked: a GTK 4 entry that hides its text without a password purpose is a plain `text` and isn't refused, so don't fill or activate a field that may hold a secret.
 
+### `element_busy`
+
+**Cause:** `activate_element` or `set_element_text` checks everything again right before its call, and every answer it relies on must be at most 250 ms old when the call goes out. The app, niri or Noctalia answered so slowly that the checks took longer than that twice in a row. Nothing was sent.
+
+**What to do:** the app or the desktop is busy. Take a screenshot to see what it is doing, then try once more; if it stays busy, use the pointer or the keyboard, or ask the user.
+
 ### `unrestricted_required`
 
 **Cause:** `niri_action` was given a gated action, such as `Spawn`, `Quit` or `LoadConfigFile`, and the user's policy doesn't turn on `unrestricted`. The `detail` names the action and why it is gated. Nothing was sent.

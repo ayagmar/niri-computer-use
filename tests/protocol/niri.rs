@@ -30,6 +30,10 @@ struct Config {
     silent: bool,
     /// Read actions but never answer them.
     hold_actions: bool,
+    /// Holds the next `Version` until the test releases it.
+    version_hold: Option<oneshot::Receiver<()>>,
+    /// How much later every `Version` is answered.
+    version_delay: Duration,
 }
 
 #[derive(Debug)]
@@ -80,6 +84,8 @@ impl Niri {
             workspaces: Vec::new(),
             silent: false,
             hold_actions: false,
+            version_hold: None,
+            version_delay: Duration::ZERO,
         }));
         let (streams_to, streams) = mpsc::unbounded_channel();
         let (abandoned_to, abandoned) = mpsc::unbounded_channel();
@@ -111,6 +117,19 @@ impl Niri {
 
     pub(crate) fn hold_actions(&self, hold: bool) {
         self.config.lock().unwrap().hold_actions = hold;
+    }
+
+    /// Holds the next `Version` request, which `held` then waits for, until the returned
+    /// sender sends or drops.
+    pub(crate) fn hold_version(&self) -> oneshot::Sender<()> {
+        let (release, released) = oneshot::channel();
+        self.config.lock().unwrap().version_hold = Some(released);
+        release
+    }
+
+    /// Answers every `Version` request `delay` later.
+    pub(crate) fn delay_version(&self, delay: Duration) {
+        self.config.lock().unwrap().version_delay = delay;
     }
 
     /// The next action the server sent, within `WAIT`.
@@ -291,6 +310,9 @@ async fn serve(connection: UnixStream, channels: Channels) {
         stream(read, write, &channels.streams).await;
         return;
     }
+    if matches!(request, Request::Version) {
+        version_wait(&channels).await;
+    }
     let answer = {
         let config = channels.config.lock().unwrap();
         if let Request::Action(action) = &request {
@@ -308,6 +330,20 @@ async fn serve(connection: UnixStream, channels: Channels) {
     let mut rest = Vec::new();
     read.read_to_end(&mut rest).await.ok();
     channels.abandoned.send(()).ok();
+}
+
+/// Waits as the test set for a `Version` request: until it releases a hold, then the
+/// delay.
+async fn version_wait(channels: &Channels) {
+    let (hold, delay) = {
+        let mut config = channels.config.lock().unwrap();
+        (config.version_hold.take(), config.version_delay)
+    };
+    if let Some(released) = hold {
+        channels.held.send(()).ok();
+        released.await.ok();
+    }
+    tokio::time::sleep(delay).await;
 }
 
 #[expect(

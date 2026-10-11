@@ -526,7 +526,12 @@ pub(crate) fn refuse_control(facts: Facts<'_>) -> Option<ToolError> {
     if let Loaded::Invalid(error) = facts.policy {
         return read_only(format!("the policy file is invalid: {error}"));
     }
-    match facts.lock {
+    refuse_lock(facts.lock)
+}
+
+/// `screen_locked` unless the screen is known to be unlocked.
+pub(crate) fn refuse_lock(lock: LockState) -> Option<ToolError> {
+    match lock {
         LockState::Unlocked => None,
         LockState::Locked => Some(ToolError::new(
             ErrorName::ScreenLocked,

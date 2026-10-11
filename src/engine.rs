@@ -19,6 +19,7 @@ use crate::a11y::model::NameHash;
 use crate::a11y::{self, A11y, Presence};
 use crate::act::{self, Outcome};
 use crate::audit::Audit;
+use crate::control;
 use crate::control::desk::{Desk, Worked};
 use crate::control::lease::Holder;
 use crate::error::{CallError, ErrorName, ToolError};
@@ -65,9 +66,12 @@ pub(crate) struct Recheck<'a> {
 impl elements::actions::Recheck for Recheck<'_> {
     async fn control(&self) -> Result<(), ToolError> {
         // Boxed, because the readiness report makes a large future.
-        Box::pin(self.engine.refusal(self.session))
-            .await
-            .map_or(Ok(()), Err)
+        if let Some(refused) = Box::pin(self.engine.refusal(self.session)).await {
+            return Err(refused);
+        }
+        // The report asks Noctalia beside niri, so its answer may be older than niri's.
+        // The lock decision comes from reads started once the report is done.
+        policy::refuse_lock(self.engine.lock().await.state()).map_or(Ok(()), Err)
     }
 
     fn desk(&self) -> Result<(), ToolError> {
@@ -167,7 +171,7 @@ impl Engine {
     /// Whether the engine has nothing to finish: no session holds the lease and no input
     /// cleanup is pending.
     pub(crate) fn settled(&self) -> bool {
-        !self.desk.held() && crate::control::cleanup::pending() == 0
+        !self.desk.held() && control::cleanup::pending() == 0
     }
 
     /// Returns once the stop watcher has ended, for good: never, without a watcher.
@@ -473,6 +477,17 @@ impl Engine {
         let mut shot = self.capture(session, request).await?;
         shot.metadata.saved = saved;
         Ok(shot)
+    }
+
+    /// The lock state from reads started now: Noctalia's status, when it's installed,
+    /// and logind's hint.
+    async fn lock(&self) -> control::Lock {
+        let noctalia = if self.noctalia_installed {
+            noctalia::status(&self.env).await.ok()
+        } else {
+            None
+        };
+        control::lock(&self.env.niri_socket, noctalia.as_ref()).await
     }
 
     /// Why `session` may not take the lease or act now, from the readiness report.

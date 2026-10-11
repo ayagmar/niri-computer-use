@@ -1133,7 +1133,9 @@ impl Server {
     /// `app_denied` for a denied app, `element_stale` once the element or its window is
     /// gone or changed, `element_unmappable` while it isn't showing, and `secret_field`
     /// for a field marked as a password (role `password_text`). All of it is checked
-    /// again right before the call, with the lock screen and the stop flag. The app's answer
+    /// again right before the call, with the lock screen and the stop flag, and every
+    /// answer it acts on is at most 250 ms old; an app or desktop too slow for that, twice,
+    /// is `element_busy`, with nothing sent. The app's answer
     /// only means it took the request, so the element is looked at again a moment later:
     /// `observed` is `present` (with `element.states_set` and `states_cleared`), `gone`
     /// (it or its window went away, as when a button closes its dialog) or `unknown`
