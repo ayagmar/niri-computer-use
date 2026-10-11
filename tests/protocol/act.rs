@@ -622,14 +622,18 @@ async fn a_stop_or_a_replaced_lease_before_the_action_goes_out_sends_nothing() {
     }
 }
 
-/// Runs `focus_window`, makes `cut` once niri got the action, and returns the outcome
-/// after checking it is `uncertain` with the cut's reason, without a screenshot.
-async fn cut_after_sending(desk: &mut Desk, cut: Cut) -> Value {
+/// Runs `focus_window`, makes `cut` once niri got the action, and once the server read
+/// niri's answer when `answered`, and returns the outcome after checking it is `uncertain`
+/// with the cut's reason, without a screenshot.
+async fn cut_after_sending(desk: &mut Desk, cut: Cut, answered: bool) -> Value {
     let id = desk
         .server
         .start_call("focus_window", json!({"id": 2}))
         .await;
     desk.niri.action().await;
+    if answered {
+        desk.niri.answer_read().await;
+    }
     cut.make(desk).await;
     let result = desk.server.response(id).await["result"].clone();
     assert_eq!(result["isError"], false, "{cut:?}: {result}");
@@ -646,7 +650,7 @@ async fn a_stop_or_a_replaced_lease_before_niri_answers_is_uncertain() {
     for cut in CUTS {
         let mut desk = Desk::start(&format!("act-cut-unanswered-{cut:?}"), "").await;
         desk.niri.hold_actions(true);
-        let outcome = cut_after_sending(&mut desk, cut).await;
+        let outcome = cut_after_sending(&mut desk, cut, false).await;
         assert_eq!(outcome["accepted"], Value::Null, "{outcome}");
         assert_eq!(
             desk.audited(),
@@ -658,7 +662,7 @@ async fn a_stop_or_a_replaced_lease_before_niri_answers_is_uncertain() {
 #[tokio::test]
 async fn a_replaced_lease_after_niri_accepted_is_uncertain_and_gives_the_lease_up() {
     let mut desk = Desk::start("act-cut-lease", "").await;
-    let outcome = cut_after_sending(&mut desk, Cut::Lease).await;
+    let outcome = cut_after_sending(&mut desk, Cut::Lease, true).await;
     assert_eq!(outcome["accepted"], true, "{outcome}");
     assert_eq!(
         desk.audited(),
@@ -676,7 +680,7 @@ async fn a_replaced_lease_after_niri_accepted_is_uncertain_and_gives_the_lease_u
 #[tokio::test]
 async fn a_stop_cancels_the_running_action_and_takes_the_lease_back() {
     let mut desk = Desk::start("act-stop", "").await;
-    let outcome = cut_after_sending(&mut desk, Cut::Stop).await;
+    let outcome = cut_after_sending(&mut desk, Cut::Stop, true).await;
     assert_eq!(outcome["accepted"], true, "{outcome}");
     assert_eq!(
         desk.audited(),

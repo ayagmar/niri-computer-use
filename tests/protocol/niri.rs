@@ -53,6 +53,8 @@ pub(crate) struct Niri {
     /// One message per request the fake received but doesn't answer.
     held: mpsc::UnboundedReceiver<()>,
     actions: mpsc::UnboundedReceiver<Action>,
+    /// One message per answered action, once the server read the answer.
+    answers_read: mpsc::UnboundedReceiver<()>,
     /// The process ID of every connection's peer, in order.
     peers: Arc<Mutex<Vec<i32>>>,
     points: Points,
@@ -73,6 +75,7 @@ struct Channels {
     abandoned: mpsc::UnboundedSender<()>,
     held: mpsc::UnboundedSender<()>,
     actions: mpsc::UnboundedSender<Action>,
+    answers_read: mpsc::UnboundedSender<()>,
     points: Points,
 }
 
@@ -107,12 +110,14 @@ impl Niri {
         let (abandoned_to, abandoned) = mpsc::unbounded_channel();
         let (held_to, held) = mpsc::unbounded_channel();
         let (actions_to, actions) = mpsc::unbounded_channel();
+        let (answers_read_to, answers_read) = mpsc::unbounded_channel();
         let channels = Channels {
             config: Arc::clone(&config),
             streams: streams_to,
             abandoned: abandoned_to,
             held: held_to,
             actions: actions_to,
+            answers_read: answers_read_to,
             points: points.clone(),
         };
         let peers = Arc::new(Mutex::new(Vec::new()));
@@ -123,6 +128,7 @@ impl Niri {
             abandoned,
             held,
             actions,
+            answers_read,
             peers,
             points,
         }
@@ -159,6 +165,15 @@ impl Niri {
             .await
             .expect("the server sent no action")
             .unwrap()
+    }
+
+    /// Waits until the server read niri's answer to the next action, within `WAIT`. The
+    /// test gets the action as it arrives, before it is answered.
+    pub(crate) async fn answer_read(&mut self) {
+        tokio::time::timeout(WAIT, self.answers_read.recv())
+            .await
+            .expect("the server read no answer to an action")
+            .unwrap();
     }
 
     /// Whether the server has sent an action the test hasn't taken yet.
@@ -370,6 +385,7 @@ async fn respond(
             // knows niri carried the action out.
             let mut rest = Vec::new();
             read.read_to_end(&mut rest).await.ok();
+            channels.answers_read.send(()).ok();
             effect(channels, action).await;
         }
         return;
