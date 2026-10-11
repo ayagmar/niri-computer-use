@@ -1498,16 +1498,18 @@ impl Server {
         .await
     }
 
-    /// The clipboard's text. `text` is null, with a `reason`, when nothing is copied
-    /// (`nothing_copied`), nothing copied is text (`no_text`), or its owner, such as a
-    /// password manager, marked it as a secret (`secret`).
+    /// The clipboard's text, only if it was copied since you took the lease, such as by an
+    /// app's "Copy link" button you pressed. `text` is null, with a `reason`, when the
+    /// clipboard still holds what was there before (`copied_before_lease`), nothing is
+    /// copied (`nothing_copied`), nothing copied is text (`no_text`), or its owner, such as
+    /// a password manager, marked it as a secret (`secret`). Requires the lease.
     #[tool(annotations(read_only_hint = true))]
     async fn clipboard_read(
         &self,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         self.audited(&context, "clipboard_read", Value::Null, async {
-            answer(self.engine.clipboard().await)
+            answer(self.engine.clipboard(&self.session).await)
         })
         .await
     }
@@ -1766,7 +1768,7 @@ fn invalid(message: &str) -> CallToolResult {
 #[tool_handler(
     router = self.tool_router,
     name = "niri-computer-use",
-    instructions = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `elements`, when listed, gives one window's accessible elements and where they are, and `activate_element` and `set_element_text` press them and fill them in without the pointer once their window has focus. `clipboard_read` returns the clipboard's text, and `shell_status`, when Noctalia is installed, its panel and lock state. To act, call `acquire_desktop`, then one action at a time (`focus_window`, `focus_workspace`, `launch`, `close_window`, `niri_action` for window layout such as fullscreen, floating and widths, with Noctalia `shell_open` and `shell_close`, and for input `pointer_move`, `click`, `drag` and `scroll` with a fresh `screenshot_ref`, or `key`, `type_text` and `paste` with `expect`), reading `accepted` and `observed` before the next call. To see an action's result, pass it `screenshot: true` rather than sending a `screenshot` alongside it, and use `wait_for` rather than repeated screenshots to wait for a window or for the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter, and start apps through `launch` presets; with no preset for the app, use `niri_action` `Spawn` with the program's argv (never a shell or `SpawnSh`) when `status.unrestricted.enabled` is true, then find its window with `wait_for` or `desktop_state` (its `app_id` may differ from the program's name) and never repeat the `Spawn`; otherwise ask the user to add a preset. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
+    instructions = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `elements`, when listed, gives one window's accessible elements and where they are, and `activate_element` and `set_element_text` press them and fill them in without the pointer once their window has focus. `clipboard_read` returns what you copied, and `shell_status`, when Noctalia is installed, its panel and lock state. To act, call `acquire_desktop`, then one action at a time (`focus_window`, `focus_workspace`, `launch`, `close_window`, `niri_action` for window layout such as fullscreen, floating and widths, with Noctalia `shell_open` and `shell_close`, and for input `pointer_move`, `click`, `drag` and `scroll` with a fresh `screenshot_ref`, or `key`, `type_text` and `paste` with `expect`), reading `accepted` and `observed` before the next call. To see an action's result, pass it `screenshot: true` rather than sending a `screenshot` alongside it, and use `wait_for` rather than repeated screenshots to wait for a window or for the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter, and start apps through `launch` presets; with no preset for the app, use `niri_action` `Spawn` with the program's argv (never a shell or `SpawnSh`) when `status.unrestricted.enabled` is true, then find its window with `wait_for` or `desktop_state` (its `app_id` may differ from the program's name) and never repeat the `Spawn`; otherwise ask the user to add a preset. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
 )]
 impl ServerHandler for Server {}
 

@@ -1,12 +1,13 @@
 //! Noctalia running, stopped and absent; the lock state from logind and Noctalia; and the
-//! clipboard's four outcomes.
+//! clipboard as one lease sees it.
+
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use crate::client::{Server, tool_error};
-use crate::clipboard::{Contents, HINT, Owner};
+use crate::client::{Server, run, tool_error};
+use crate::clipboard::{Contents, HINT, Leased};
 use crate::fixture::Fixture;
-use crate::niri::Niri;
 use crate::noctalia::{self, LOCKED, UNLOCKED};
 use crate::session::NiriProcess;
 
@@ -150,66 +151,98 @@ fn copied(text: &str) -> Contents {
     ]
 }
 
+/// The clipboard the lease began with is never read, nor is anything without the lease:
+/// only what was copied since, such as a link an app's button copied.
 #[tokio::test]
-async fn the_clipboard_is_text_nothing_copied_or_no_text() {
-    let fixture = Fixture::new("clipboard");
-    let _niri = Niri::start(&fixture);
-    let mut owner = Owner::serve(&fixture, Some(copied("héllo\nworld")));
-    let mut server = Server::start(&fixture).await;
+async fn only_what_was_copied_during_the_lease_is_read() {
+    let mut leased = Leased::start("clipboard", Some(copied("the user's earlier copy"))).await;
+    let before = json!({"text": null, "reason": "copied_before_lease"});
+    assert_eq!(leased.read().await, before);
+
+    leased.owner().copy(Some(copied("héllo\nworld")));
     assert_eq!(
-        server.structured("clipboard_read").await,
+        leased.read().await,
         json!({"text": "héllo\nworld", "reason": null})
     );
-    assert_eq!(owner.reads(), ["text/plain;charset=utf-8"]);
     for nothing in [None, Some(Vec::new())] {
-        owner.copy(nothing);
+        leased.owner().copy(nothing);
         assert_eq!(
-            server.structured("clipboard_read").await,
+            leased.read().await,
             json!({"text": null, "reason": "nothing_copied"})
         );
     }
-    owner.copy(Some(vec![("image/png", vec![0x89, b'P', b'N', b'G'])]));
+    leased
+        .owner()
+        .copy(Some(vec![("image/png", vec![0x89, b'P', b'N', b'G'])]));
     assert_eq!(
-        server.structured("clipboard_read").await,
+        leased.read().await,
         json!({"text": null, "reason": "no_text"})
     );
-    assert_eq!(owner.reads(), Vec::<String>::new());
+    assert_eq!(leased.owner().reads(), ["text/plain;charset=utf-8"]);
+
+    leased
+        .owner()
+        .copy(Some(copied("copied during the first lease")));
+    let release = json!({"restore_focus": false});
+    leased
+        .server
+        .structured_with("release_desktop", release)
+        .await;
+    let (name, _) = tool_error(&leased.server.call("clipboard_read", json!({})).await);
+    assert_eq!(name, "lease_required");
+    leased.server.structured("acquire_desktop").await;
+    assert_eq!(leased.read().await, before, "a new lease starts afresh");
+    assert_eq!(leased.owner().reads(), Vec::<String>::new());
+}
+
+/// The clipboard watcher a lease starts ends with the lease: at its release, and soon after
+/// a stop takes the lease back.
+#[tokio::test]
+async fn the_clipboard_watcher_ends_with_the_lease() {
+    let mut leased = Leased::start("clipboard-ends", None).await;
+    let release = json!({"restore_focus": false});
+    leased
+        .server
+        .structured_with("release_desktop", release)
+        .await;
+    assert!(leased.owner().closed_within(Duration::from_secs(1)).await);
+    leased.server.structured("acquire_desktop").await;
+    assert!(run(&leased.fixture, "stop").await.status.success());
+    assert!(leased.owner().closed_within(Duration::from_secs(1)).await);
 }
 
 /// What a password manager copies is withheld without its text ever being read, and the
 /// audit log holds neither. A hint of any other value hides nothing.
 #[tokio::test]
 async fn a_copy_marked_secret_is_withheld_unread() {
-    let fixture = Fixture::new("clipboard-secret");
-    let _niri = Niri::start(&fixture);
+    let mut leased = Leased::start("clipboard-secret", None).await;
     let mut secret = copied("synthetic-password-7f3k");
     secret.push((HINT, b"secret".to_vec()));
-    let mut owner = Owner::serve(&fixture, Some(secret));
-    let mut server = Server::start(&fixture).await;
+    leased.owner().copy(Some(secret));
     assert_eq!(
-        server.structured("clipboard_read").await,
+        leased.read().await,
         json!({"text": null, "reason": "secret"})
     );
-    assert_eq!(owner.reads(), [HINT]);
+    assert_eq!(leased.owner().reads(), [HINT]);
 
     let mut public = copied("a public note");
     public.push((HINT, b"public".to_vec()));
-    owner.copy(Some(public));
+    leased.owner().copy(Some(public));
     assert_eq!(
-        server.structured("clipboard_read").await,
+        leased.read().await,
         json!({"text": "a public note", "reason": null})
     );
 
     // A hint that can't be read is no answer: the call fails rather than read the text.
     let mut unreadable = copied("synthetic-password-7f3k");
     unreadable.push((HINT, [b"secret".as_slice(), &[b' '; 64]].concat()));
-    owner.copy(Some(unreadable));
-    owner.reads();
-    let (name, _) = tool_error(&server.call("clipboard_read", json!({})).await);
+    leased.owner().copy(Some(unreadable));
+    leased.owner().reads();
+    let (name, _) = tool_error(&leased.server.call("clipboard_read", json!({})).await);
     assert_eq!(name, "upstream_error");
-    assert_eq!(owner.reads(), [HINT]);
+    assert_eq!(leased.owner().reads(), [HINT]);
 
-    let audit = std::fs::read_to_string(fixture.audit_log()).unwrap();
+    let audit = std::fs::read_to_string(leased.fixture.audit_log()).unwrap();
     assert!(!audit.contains("synthetic-password-7f3k"), "{audit}");
     assert!(!audit.contains("a public note"), "{audit}");
 }

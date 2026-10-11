@@ -145,7 +145,7 @@ async fn a_given_display_rules_out_a_niri_on_another_display() {
 /// policy, lock and lease all pass; only the display's peer is wrong.
 #[tokio::test]
 async fn a_display_niri_doesnt_serve_refuses_input_screenshots_and_the_clipboard() {
-    let fixture = Fixture::new("discover-mismatch");
+    let mut fixture = Fixture::new("discover-mismatch");
     let backend = fixture.path("run/backend.sock");
     let mut niri = Niri::listen(&backend);
     let _relay = NiriProcess::relaying(&fixture, &backend).await;
@@ -154,7 +154,9 @@ async fn a_display_niri_doesnt_serve_refuses_input_screenshots_and_the_clipboard
     for program in ["wtype", "grim"] {
         fixture.program(program, &format!(": > \"$DIR/{program}.ran\""));
     }
-    let mut owner = Owner::serve(&fixture, Some(vec![("text/plain", b"copied".to_vec())]));
+    fixture
+        .clipboard
+        .copy(Some(vec![("text/plain", b"copied".to_vec())]));
     let mut server = Server::start(&fixture).await;
     let stream = niri.stream().await;
     stream.initial(&[window_on(1, Some("a"), 1, true)]);
@@ -195,7 +197,7 @@ async fn a_display_niri_doesnt_serve_refuses_input_screenshots_and_the_clipboard
             "{program} ran"
         );
     }
-    assert_eq!(owner.reads(), Vec::<String>::new());
+    assert_eq!(fixture.clipboard.reads(), Vec::<String>::new());
 }
 
 /// Sol's lifetime case: the display passes the check at startup, then is served by another
@@ -242,8 +244,9 @@ async fn a_display_replaced_after_startup_refuses_input_screenshots_and_the_clip
     assert_eq!(replacement.reads(), Vec::<String>::new());
 }
 
-/// `status` shows `expected` under `display_error`, and input, a screenshot and a clipboard
-/// read are refused with it.
+/// `status` shows `expected` under `display_error`, and input and a screenshot are refused
+/// with it. The clipboard is read on the connection the lease's watcher made to niri's
+/// display when the lease was taken, so a replacement never sees it.
 async fn refuses_what_reaches_the_display(server: &mut Server, expected: &str) {
     assert_eq!(
         server.structured("status").await["display_error"]["error"],
@@ -255,7 +258,6 @@ async fn refuses_what_reaches_the_display(server: &mut Server, expected: &str) {
             json!({"text": "secret", "expect": {"app_id": "a"}}),
         ),
         ("screenshot", json!({"target": "focused_output"})),
-        ("clipboard_read", json!({})),
     ] {
         let (refused, detail) = tool_error(&server.call(tool, arguments).await);
         assert_eq!(refused, expected, "{tool}: {detail}");

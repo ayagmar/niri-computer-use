@@ -90,6 +90,9 @@ struct State {
     selection: Current,
     /// How many selections niri has announced.
     announcements: u64,
+    /// Once `record` asked for it, each selection announced since the last `announced`:
+    /// its MIME types, or `None` for nothing selected.
+    history: Option<Vec<Option<Vec<String>>>>,
     /// Whether niri has ended the data device.
     finished: bool,
     events: VecDeque<Event>,
@@ -282,13 +285,48 @@ impl Selection {
             .ok_or_else(|| upstream("niri ended the data-control device"))
     }
 
+    /// Keeps the MIME types of every selection niri announces from now on, for
+    /// `announced`.
+    pub(crate) fn record(&mut self) {
+        self.state.history = Some(Vec::new());
+    }
+
+    /// The MIME types of each selection announced since `record` or the last call, oldest
+    /// first; `None` for nothing selected.
+    pub(crate) fn announced(&mut self) -> Vec<Option<Vec<String>>> {
+        self.state
+            .history
+            .as_mut()
+            .map(std::mem::take)
+            .unwrap_or_default()
+    }
+
+    /// Waits, without a deadline, until niri announces another selection. A data device
+    /// niri ended is an error. Dropping the future loses nothing.
+    pub(crate) async fn changed(&mut self) -> Result<(), ToolError> {
+        let seen = self.state.announcements;
+        dispatch_until(
+            &mut self.queue,
+            &mut self.state,
+            &self.readable,
+            None,
+            |state| state.finished || state.announcements != seen,
+        )
+        .await?;
+        if self.state.finished {
+            return Err(upstream("niri ended the data-control device"));
+        }
+        Ok(())
+    }
+
     /// The reads and ends of our sources that niri sent before now, in order.
     pub(crate) async fn pending(&mut self) -> Result<Vec<Event>, ToolError> {
         self.sync().await?;
         Ok(self.state.events.drain(..).collect())
     }
 
-    async fn sync(&mut self) -> Result<(), ToolError> {
+    /// Handles every event niri sent before now.
+    pub(crate) async fn sync(&mut self) -> Result<(), ToolError> {
         let deadline = Instant::now() + DEADLINE;
         roundtrip(
             &self.connection,
@@ -351,6 +389,16 @@ pub(crate) async fn write(fd: OwnedFd, bytes: &[u8], deadline: Duration) -> Resu
 impl State {
     /// Keeps the selection's offer and destroys the others, which are no use any more.
     fn select(&mut self, selected: Option<ZwlrDataControlOfferV1>) {
+        if let Some(history) = &mut self.history {
+            let types = selected.as_ref().map(|selected| {
+                self.offers
+                    .iter()
+                    .find(|(offer, _)| offer == selected)
+                    .map(|(_, types)| types.clone())
+                    .unwrap_or_default()
+            });
+            history.push(types);
+        }
         for (offer, _) in &self.offers {
             if selected.as_ref() != Some(offer) {
                 offer.destroy();

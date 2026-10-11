@@ -6,7 +6,6 @@ use base64::Engine as _;
 use serde_json::{Value, json};
 
 use crate::client::{CLIENT, Server};
-use crate::clipboard::Owner;
 use crate::fixture::{Fixture, jpeg};
 use crate::niri::{Niri, window};
 use crate::noctalia::{self, UNLOCKED};
@@ -17,23 +16,13 @@ async fn every_call_is_one_line_of_metadata_without_content() {
     let mut niri = Niri::start(&fixture);
     fixture.program("noctalia", "exit 0");
     fixture.program("loginctl", "echo no");
-    let _owner = Owner::serve(
-        &fixture,
-        Some(vec![("text/plain", b"clipboard-secret".to_vec())]),
-    );
     noctalia::start(&fixture, UNLOCKED);
     let image = jpeg(1280, 720, b"pixel-secret");
     fixture.grim(&image);
     let mut server = Server::start(&fixture).await;
     let stream = niri.stream().await;
     stream.initial(&[window(1, "title-secret")]);
-    let tools = [
-        "status",
-        "outputs",
-        "desktop_state",
-        "shell_status",
-        "clipboard_read",
-    ];
+    let tools = ["status", "outputs", "desktop_state", "shell_status"];
     for tool in tools {
         server.structured(tool).await;
     }
@@ -57,11 +46,11 @@ async fn every_call_is_one_line_of_metadata_without_content() {
         assert!(line["duration_ms"].is_u64());
         assert!(line["ts"].as_str().unwrap().ends_with('Z'));
     }
-    assert_eq!(lines[5]["args"]["target"], "focused_output");
+    assert_eq!(lines[4]["args"]["target"], "focused_output");
 
     let text = std::fs::read_to_string(fixture.audit_log()).unwrap();
     let encoded = base64::engine::general_purpose::STANDARD.encode(&image);
-    for secret in ["clipboard-secret", "title-secret", "pixel-secret", &encoded] {
+    for secret in ["title-secret", "pixel-secret", &encoded] {
         assert!(!text.contains(secret), "the log holds {secret}");
     }
     let mode = |path: &std::path::Path| path.metadata().unwrap().permissions().mode() & 0o777;

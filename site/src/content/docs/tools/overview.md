@@ -14,7 +14,7 @@ The server offers up to 27 tools. `shell_status`, `shell_open` and `shell_close`
 | `status` | no | the readiness report | [Looking](../looking/#status) |
 | `desktop_state` | no | windows, workspaces, the focused window, the overview, keyboard layouts | [Looking](../looking/#desktop_state) |
 | `outputs` | no | monitors: position, size, scale, transform | [Looking](../looking/#outputs) |
-| `clipboard_read` | no | the clipboard's text | [Looking](../looking/#clipboard_read) |
+| `clipboard_read` | yes | the clipboard's text, if copied during the lease | [Looking](../looking/#clipboard_read) |
 | `wait_for` | no | waits for a window to appear, close or change title, or for the screen to settle | [Looking](../looking/#wait_for) |
 | `screenshot` | no | an image of an output or a region, with its geometry; optionally saved as a PNG | [Screenshots](../screenshots/) |
 | `elements` | no | one window's accessible elements and where they are | [Elements](../elements/) |

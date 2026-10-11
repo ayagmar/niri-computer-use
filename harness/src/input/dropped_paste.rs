@@ -179,9 +179,9 @@ fn died(session: &mut Session<'_>, owner: &mut Client, server: &str, wrapper: &P
     crash::recover(session, owner, server, "has already exited")
 }
 
-/// A paste after `died`'s `kept`: the dead server's keeper still offers its text, marked
-/// as a secret, which `clipboard_read` withholds, and the next paste replaces rather than
-/// refuses, and clears afterwards rather than put back.
+/// A paste after `died`'s `kept`: the dead server's keeper still offers its text, copied
+/// before this lease, which `clipboard_read` withholds, and the next paste replaces rather
+/// than refuses, and clears afterwards rather than put back.
 fn after_kept(session: &mut Session<'_>, owner: &mut Client) -> Result<()> {
     structured(&owner.call(session, "acquire_desktop", json!({}))?)?;
     if !listed(session)?.iter().any(|mime| mime == PASTE_TYPE) {
@@ -189,7 +189,7 @@ fn after_kept(session: &mut Session<'_>, owner: &mut Client) -> Result<()> {
             "M7 paste after kept: the kept text isn't marked as a paste's",
         ));
     }
-    withheld(session, owner, TEXT)?;
+    withheld(session, owner, TEXT, "copied_before_lease")?;
     let args = json!({"text": AFTER, "keys": "ctrl+v", "expect": {"app_id": APP_ID}});
     let pasted = structured(&owner.call(session, "paste", args)?)?;
     entry_shows(session, AFTER)?;

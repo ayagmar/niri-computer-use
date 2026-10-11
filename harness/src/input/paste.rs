@@ -2,7 +2,8 @@
 //! three types with different contents: afterwards the same types offer the same bytes.
 //! A focus mismatch and the stop flag refuse before the clipboard is touched: the owner
 //! keeps the selection and the entry stays empty. With nothing copied, nothing is copied
-//! afterwards. `clipboard_read` reads the owner's text, and withholds a copy marked secret.
+//! afterwards. `clipboard_read` reads the owner's text, copied during the lease, and withholds
+//! a copy marked secret.
 
 use std::ffi::OsString;
 use std::fs;
@@ -123,7 +124,7 @@ pub(super) fn secret(session: &mut Session<'_>, client: &mut Client) -> Result<(
     let args = json!({"text": "x", "keys": "ctrl+v", "expect": {"app_id": APP_ID}});
     refused(session, client, args, "clipboard_unsaved")?;
     entry_shows(session, "")?;
-    withheld(session, client, OWNERS_TEXT)?;
+    withheld(session, client, OWNERS_TEXT, "secret")?;
     if session.test_dir().root().join(CANCELLED).exists() || offered(session)? != expected {
         return Err(Failure::new(
             "M7 paste: a refused secret clipboard changed the clipboard",
@@ -136,7 +137,7 @@ pub(super) fn secret(session: &mut Session<'_>, client: &mut Client) -> Result<(
 }
 
 /// The start of what the owner copies as text, with no character JSON escapes.
-const OWNERS_TEXT: &str = "The user's own copy";
+pub(super) const OWNERS_TEXT: &str = "The user's own copy";
 
 /// `clipboard_read` returns the owner's copy as `wl-paste --type text` reads it: its
 /// `text/plain;charset=utf-8`, not its markup.
@@ -154,21 +155,26 @@ fn read_back(session: &mut Session<'_>, client: &mut Client, copied: &Offered) -
     Ok(())
 }
 
-/// `clipboard_read` withholds the clipboard as `secret`, and neither its result nor the
+/// `clipboard_read` withholds the clipboard for `reason`, and neither its result nor the
 /// audit log holds `text`.
-pub(super) fn withheld(session: &mut Session<'_>, client: &mut Client, text: &str) -> Result<()> {
+pub(super) fn withheld(
+    session: &mut Session<'_>,
+    client: &mut Client,
+    text: &str,
+    reason: &str,
+) -> Result<()> {
     let result = client.call(session, "clipboard_read", json!({}))?;
     let path = session
         .test_dir()
         .state()
         .join("niri-computer-use/audit.jsonl");
     let audit = fs::read_to_string(&path).context(format!("read {}", path.display()))?;
-    if structured(&result)? != json!({"text": null, "reason": "secret"})
+    if structured(&result)? != json!({"text": null, "reason": reason})
         || result.to_string().contains(text)
         || audit.contains(text)
     {
         return Err(Failure::new(format!(
-            "M7 clipboard_read of a secret: {result}, or the audit log holds its text"
+            "M7 clipboard_read withheld as {reason}: {result}, or the audit log holds its text"
         )));
     }
     Ok(())
@@ -223,9 +229,10 @@ fn expect_outcome(result: &Value, clipboard: &str) -> Result<()> {
     Ok(())
 }
 
-/// With nothing copied yet in the session, `paste` leaves nothing copied. Only before the
-/// first copy: once something was copied, Noctalia's clipboard service adopts the last
-/// selection whenever the clipboard goes empty. It ignores the pasted text, which carries
+/// With nothing copied yet in the session, `clipboard_read` has no copy of the lease's to
+/// read, and `paste` leaves nothing copied. Only before the first copy: once something was
+/// copied, Noctalia's clipboard service adopts the last selection whenever the clipboard
+/// goes empty. It ignores the pasted text, which carries
 /// the password-manager hint, so it has nothing of it to adopt.
 pub(super) fn empty(session: &mut Session<'_>, client: &mut Client, backend: &str) -> Result<()> {
     if !offered(session)?.is_empty() {
@@ -234,7 +241,7 @@ pub(super) fn empty(session: &mut Session<'_>, client: &mut Client, backend: &st
         ));
     }
     let read = structured(&client.call(session, "clipboard_read", json!({}))?)?;
-    if read != json!({"text": null, "reason": "nothing_copied"}) {
+    if read != json!({"text": null, "reason": "copied_before_lease"}) {
         return Err(Failure::new(format!(
             "M7 clipboard_read with nothing copied: {read}"
         )));

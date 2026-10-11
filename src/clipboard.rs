@@ -1,13 +1,15 @@
 //! The clipboard's text, read through wlr data-control on a Wayland connection of its own
-//! to niri, so it needs no keyboard focus and works without Noctalia. What its owner marked
-//! as a secret isn't read.
+//! to niri, so it needs no keyboard focus and works without Noctalia. Only what was copied
+//! during the lease is read (see `watch`), and never what its owner marked as a secret.
+
+mod watch;
 
 use serde::Serialize;
 use tokio::time::Instant;
 
+pub(crate) use self::watch::Watch;
 use crate::error::{ErrorName, ToolError};
 use crate::niri::selection::{self, Offer, Selection};
-use crate::niri::{self, Display, Socket};
 
 /// The hint KDE's and other clipboard managers honour: don't keep this in the history.
 /// Password managers such as `KeePassXC` mark what they copy with it.
@@ -22,7 +24,7 @@ const MAX_HINT: usize = 64;
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct Clipboard {
     text: Option<String>,
-    /// `nothing_copied`, `no_text` or `secret` when `text` is null.
+    /// `copied_before_lease`, `nothing_copied`, `no_text` or `secret` when `text` is null.
     reason: Option<&'static str>,
 }
 
@@ -35,12 +37,9 @@ impl Clipboard {
     }
 }
 
-/// Reads the hint and the text from one offer, so a copy made between the two can't pass
-/// a secret off as plain text: niri's PID, binding, then both reads, each within its own
-/// deadline. The connection's peer must be niri's PID.
-pub(crate) async fn read_text(socket: &Socket, display: &Display) -> Result<Clipboard, ToolError> {
-    let display = display.path().map_err(Clone::clone)?;
-    let selection = Selection::bind(display, niri::pid(socket).await?).await?;
+/// Reads the current selection's hint and text from its one offer, so a copy made between
+/// the two can't pass a secret off as plain text: both reads within one step's deadline.
+async fn read(selection: &Selection) -> Result<Clipboard, ToolError> {
     let Some(offer) = selection.current() else {
         return Ok(Clipboard::withheld("nothing_copied"));
     };

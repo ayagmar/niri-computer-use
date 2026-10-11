@@ -39,7 +39,7 @@ const TEXT_TYPES: [&str; 5] = [
 ];
 /// A type of our own beside the text, so that a later paste knows the selection for a
 /// keeper's text, which a `kept` outcome left behind, rather than the user's.
-const PASTE: &str = "application/x-niri-computer-use-paste";
+pub(crate) const PASTE: &str = "application/x-niri-computer-use-paste";
 /// The saved selection, all types together.
 const MAX_SAVED: usize = 16 * 1024 * 1024;
 /// From the start to the text, and from the text to `p` or `n`: the key's whole call.

@@ -11,6 +11,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Security
 
 - `clipboard_read` no longer returns what the clipboard's owner marked `x-kde-passwordManagerHint: secret`, such as a password copied from KeePassXC, or text a `paste` left behind: `text` is null with the new reason `secret`, and the text is never read. The hint and the text come from the same copy, read over data-control in the server rather than with `wl-paste`.
+- `clipboard_read` needs the lease and returns only what was copied while it was held, such as a link an app's "Copy link" button put there: what you copied before `acquire_desktop` is withheld with the new reason `copied_before_lease`, and never read. Without the lease it refuses with `lease_required`. `make inspect-check` now expects that refusal.
 
 ### Added
 

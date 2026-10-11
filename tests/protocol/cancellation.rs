@@ -6,7 +6,7 @@ use std::time::Duration;
 use serde_json::json;
 
 use crate::client::Server;
-use crate::clipboard::Owner;
+use crate::clipboard::Leased;
 use crate::fixture::{Fixture, exited, jpeg, pid_in};
 use crate::niri::Niri;
 
@@ -66,23 +66,31 @@ async fn cancelling_a_screenshot_kills_grim_and_its_group() {
     .await;
 }
 
-/// The server reads the clipboard on a Wayland connection of its own, which a cancel
-/// closes while the owner still holds the read.
+/// The lease's clipboard watcher drops a read whose call was cancelled while the owner
+/// still holds it, so the next read doesn't wait out the first one's deadline.
 #[tokio::test]
-async fn cancelling_clipboard_read_closes_its_connection() {
-    let fixture = Fixture::new("cancel-paste");
-    let _niri = Niri::start(&fixture);
-    let mut owner = Owner::serve(&fixture, Some(vec![("text/plain", b"text".to_vec())]));
-    owner.hold("text/plain");
-    let mut server = Server::start(&fixture).await;
-    let id = server.start_call("clipboard_read", json!({})).await;
-    owner.held().await;
-    server.cancel(id).await;
+async fn cancelling_clipboard_read_drops_its_read() {
+    let mut leased = Leased::start("cancel-paste", None).await;
+    leased.owner().hold("text/plain");
+    leased
+        .owner()
+        .copy(Some(vec![("text/plain", b"held".to_vec())]));
+    let id = leased.server.start_call("clipboard_read", json!({})).await;
+    leased.owner().held().await;
+    leased.server.cancel(id).await;
+    let answered = vec![("text/plain;charset=utf-8", b"answered".to_vec())];
+    leased.owner().copy(Some(answered));
+    let started = std::time::Instant::now();
+    assert_eq!(
+        leased.server.structured("clipboard_read").await,
+        json!({"text": "answered", "reason": null})
+    );
     // Well inside the two-second read deadline.
-    assert!(owner.closed_within(Duration::from_millis(500)).await);
-    server.structured("outputs").await;
-    assert!(!server.answered().contains(&id));
-    assert_eq!(fixture.audit_lines()[0]["error"], "cancelled");
+    assert!(started.elapsed() < Duration::from_millis(500));
+    assert!(!leased.server.answered().contains(&id));
+    let lines = leased.fixture.audit_lines();
+    assert_eq!(lines[1]["tool"], "clipboard_read");
+    assert_eq!(lines[1]["error"], "cancelled");
 }
 
 #[tokio::test]
@@ -134,7 +142,6 @@ async fn concurrent_calls_are_answered_as_each_finishes() {
     let image = jpeg(1280, 720, &[]);
     std::fs::write(fixture.path("grim.out"), &image).unwrap();
     fixture.program("grim", r#"sleep 1; cat "$DIR/grim.out""#);
-    let _owner = Owner::serve(&fixture, Some(vec![("text/plain", b"text".to_vec())]));
     let mut server = Server::start(&fixture).await;
     let stream = niri.stream().await;
     stream.initial(&[crate::niri::window(1, "a")]);
@@ -142,7 +149,7 @@ async fn concurrent_calls_are_answered_as_each_finishes() {
         .start_call("screenshot", json!({"target": "focused_output"}))
         .await;
     let mut fast = Vec::new();
-    for tool in ["status", "outputs", "desktop_state", "clipboard_read"] {
+    for tool in ["status", "outputs", "desktop_state"] {
         fast.push(server.start_call(tool, json!({})).await);
     }
     for id in &fast {

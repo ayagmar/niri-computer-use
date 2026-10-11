@@ -17,7 +17,7 @@
 | `session.rs` | One client of the engine: its label in the audit log and the lease record, and the settings its own environment gives it: the policy file, read from its config directory when the session starts, its `HOME` for `capture_dir`, and its `NIRI_COMPUTER_USE_UNRESTRICTED` and `NIRI_COMPUTER_USE_KEYBOARD`. |
 | `niri.rs`, `niri/request.rs`, `niri/events.rs` | The only code that talks to niri: one connection per request, one long-lived event stream, and the virtual pointer's Wayland connection. |
 | `niri/pointer.rs` | The virtual pointer: its own Wayland connection to niri, bound to one output. |
-| `niri/selection.rs` | The clipboard through wlr data-control on its own Wayland connection to niri: saving every type of the selection, taking it with a source, and the reads of that source. |
+| `niri/selection.rs` | The clipboard through wlr data-control on its own Wayland connection to niri: saving every type of the selection, taking it with a source, the reads of that source, and the selections niri announces. |
 | `niri/waiter.rs` | Waiters: how an action watches the event stream, event by event, for its effect. |
 | `act.rs` | The action tools' work: check the arguments against niri's state, dispatch one niri action, observe its effect. |
 | `niri/version.rs` | The version rule (pure). |
@@ -41,7 +41,7 @@
 | `observe.rs` | Screenshots: picks the output, plans grim's arguments and the image size they must produce, and checks the result. |
 | `refs.rs` | Screenshot refs and element refs: what each screenshot taken under the lease captured, and each element `elements` listed, kept per lease. |
 | `save.rs` | Writes a saved screenshot inside the policy's `capture_dir`, refusing symlinks and existing files. |
-| `clipboard.rs` | Reads the clipboard's text through data-control, and withholds what its owner marks as a secret. |
+| `clipboard.rs` | Reads the clipboard's text through data-control, and withholds what its owner marks as a secret. `clipboard/watch.rs` watches the clipboard for one lease, from `acquire_desktop` until the lease is gone, so `clipboard_read` returns only what was copied during it. |
 | `noctalia.rs` | The only code that talks to Noctalia: `status`, `panel-open` and `panel-close` over the IPC socket. |
 | `control.rs` | The lock state: logind's `LockedHint`, then Noctalia. |
 | `control/runtime.rs` | The per-instance runtime directory and its stop flag. |

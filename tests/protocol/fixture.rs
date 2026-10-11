@@ -12,6 +12,7 @@ use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use crate::client::WAIT;
+use crate::clipboard::Owner;
 
 /// Programs the fake programs may use. They run with their own `PATH`, so the server's
 /// `PATH` holds nothing but the fakes.
@@ -48,10 +49,10 @@ pub(crate) struct Fixture {
     /// The servers started here. Each must have exited before the directory is removed,
     /// or its audit log could create the directory again.
     servers: Mutex<Vec<u32>>,
-    /// The Wayland display, served by the test's process like the fake niri, so the server
-    /// takes it as niri's. Nothing speaks Wayland on it unless a test starts a fake
-    /// clipboard owner there.
-    display: UnixListener,
+    /// The Wayland display's clipboard. The display is served by the test's process like
+    /// the fake niri, so the server takes it as niri's, and answers as a display with
+    /// nothing copied until a test copies something.
+    pub(crate) clipboard: Owner,
 }
 
 impl Fixture {
@@ -85,7 +86,10 @@ impl Fixture {
             ("XDG_STATE_HOME", dir.join("state").into_os_string()),
             ("XDG_CONFIG_HOME", dir.join("config").into_os_string()),
         ]);
-        let display = UnixListener::bind(dir.join("run").join(DISPLAY)).unwrap();
+        let clipboard = Owner::on(
+            UnixListener::bind(dir.join("run").join(DISPLAY)).unwrap(),
+            None,
+        );
         // niri's socket, which nothing listens on until a test starts a fake niri; the
         // server needs it to resolve the instance its lease and flags belong to.
         drop(UnixListener::bind(dir.join("run/niri.test.sock")).unwrap());
@@ -93,7 +97,7 @@ impl Fixture {
             dir,
             env,
             servers: Mutex::new(Vec::new()),
-            display,
+            clipboard,
         };
         if shared_mode() {
             fixture.set("NIRI_COMPUTER_USE_SHARED", "1");
@@ -104,11 +108,6 @@ impl Fixture {
             "fixture name {name:?} makes socket paths too long"
         );
         fixture
-    }
-
-    /// The display's listener, for a fake clipboard owner to serve.
-    pub(crate) fn display(&self) -> UnixListener {
-        self.display.try_clone().unwrap()
     }
 
     pub(crate) fn env(&self) -> &BTreeMap<&'static str, OsString> {

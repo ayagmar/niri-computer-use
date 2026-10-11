@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-These tools change nothing and need no lease. Any connected agent can call them, even while the screen is locked, so they can show it what is on your screen. Screenshots have [their own page](../screenshots/), and accessible elements [theirs](../elements/).
+These tools change nothing, and all but `clipboard_read` need no lease. Any connected agent can call the others, even while the screen is locked, so they can show it what is on your screen. Screenshots have [their own page](../screenshots/), and accessible elements [theirs](../elements/).
 
 ## `status`
 
@@ -64,13 +64,16 @@ No arguments. niri's outputs by connector name, such as `DP-1`, as niri reports 
 
 ## `clipboard_read`
 
-No arguments. Reads the clipboard through wlr data-control, on a Wayland connection of its own to niri, and returns `{"text": ..., "reason": null}`, or `text: null` with a `reason`:
+No arguments. Needs the lease, and refuses with [`lease_required`](../../reference/errors/#lease_required) without it. Returns the clipboard's text only if it was copied while this lease was held, such as a link an app's "Copy link" button put there after the agent pressed it: text that never appears on screen. Returns `{"text": ..., "reason": null}`, or `text: null` with a `reason`:
 
-- `nothing_copied`: the clipboard is empty.
+- `copied_before_lease`: the clipboard still holds what was there when the lease was taken, or nothing was copied since. Your earlier clipboard is never read.
+- `nothing_copied`: something copied during the lease was cleared, and the clipboard is empty.
 - `no_text`: nothing copied is text.
 - `secret`: the clipboard's owner marked it `x-kde-passwordManagerHint: secret`, as KeePassXC does for a copied password. Its text is never read. Text that `paste` left on the clipboard because it couldn't put the user's copy back carries the same mark, so it is `secret` too.
 
-The hint and the text come from the same copy, so a copy made in between can't pass a secret off as plain text. The text is read as `wl-paste --type text` reads it: as `text/plain;charset=utf-8` if offered, else `text/plain`, else the first other text type. Text over 1 MiB or not valid UTF-8 is an `upstream_error`. The text is never logged.
+`acquire_desktop` starts a watcher on a Wayland connection of its own to niri, through wlr data-control, and returns once it is bound, so anything copied after `acquire_desktop` returns counts. The watcher notes every selection niri announces and ends within a quarter of a second of the lease's end: `release_desktop`, a stop, or the session's end. A copy you make yourself while an agent holds the lease counts as made during the lease. `paste` puts your earlier clipboard back after its text; that restore still counts as copied before the lease, while a copy the agent made before a `paste` counts as its own once restored.
+
+The hint and the text come from the same copy, so a copy made in between can't pass a secret off as plain text. The text is read as `wl-paste --type text` reads it: as `text/plain;charset=utf-8` if offered, else `text/plain`, else the first other text type. Text over 1 MiB or not valid UTF-8 is an `upstream_error`. If the watcher couldn't bind or lost its connection, reads fail with its error, such as `upstream_error` with niri's message, until the lease is released and taken again. The text is never logged.
 
 ## `wait_for`
 

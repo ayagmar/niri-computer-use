@@ -34,7 +34,7 @@ binds {
 
 ## Safety
 
-The lease, the stop key, the lock gate, the policy file and the audit log are guardrails, not a sandbox. An agent holding the lease can do anything you could with a mouse and keyboard, and any connected agent can see your screen, window titles and clipboard. Read [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/) before letting an agent act, and [SECURITY.md](SECURITY.md) to report a problem.
+The lease, the stop key, the lock gate, the policy file and the audit log are guardrails, not a sandbox. An agent holding the lease can do anything you could with a mouse and keyboard, any connected agent can see your screen and window titles, and the lease holder can read what is copied while it holds the lease. Read [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/) before letting an agent act, and [SECURITY.md](SECURITY.md) to report a problem.
 
 ## Policy
 
