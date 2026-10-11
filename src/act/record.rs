@@ -74,17 +74,16 @@ impl Recorder {
     /// Applies niri's events as `wait` says, then brings `outcome`'s focus up to the view
     /// the report ends at, so a result never names two focused windows, and says what
     /// changed since the start; with `lost` saying why when the stream ended first, and
-    /// then focus unknown.
+    /// then `focused_window` unknown, as focus may have moved since.
     pub(crate) async fn finish(mut self, wait: Wait, outcome: &mut Outcome) -> Changes {
         if wait == Wait::Quiet {
             self.quiet().await;
         }
         self.drain().await;
         let view = self.waiter.view();
+        outcome.caught_up(view);
         if self.lost.is_some() {
             outcome.focused_window = None;
-        } else {
-            outcome.caught_up(view);
         }
         let mut changes = changes::desktop(&self.before, &Scene::of(view), &self.passing);
         changes.lost = self.lost;
@@ -292,14 +291,18 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_stream_lost_during_the_report_keeps_what_was_seen_and_says_why() {
         let (recorder, mut outcome, sender) = watching(vec![app()]);
+        outcome.window = Some((&app()).into());
         let opened = window(2, Some("app"), 1, true);
         event(&sender, 1, Event::WindowOpenedOrChanged { window: opened });
         sender.send(Update::Reset(2)).unwrap();
         let changes = recorder.finish(Wait::Quiet, &mut outcome).await;
         assert_eq!(changes.opened.len(), 1);
+        assert_eq!(changes.focus.map(|focus| focus.to), Some(Some(2)));
         assert!(changes.lost.unwrap().contains("disconnected"));
         // Focus may have moved on since: unknown, not window 2.
         assert_eq!(outcome.focused_window, None);
+        // The window the action is about agrees with the report: it lost focus.
+        assert_eq!(outcome.window.map(|window| window.is_focused), Some(false));
     }
 
     /// Marks window 1 urgent on odd sequence numbers and not on even ones.
