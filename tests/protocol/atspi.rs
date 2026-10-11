@@ -2,7 +2,8 @@
 //! the accessibility bus, and a mock application on it that answers AT-SPI the way a
 //! toolkit does. The test changes the mock's objects, and holds, delays or fails a method's
 //! next reply, to check the element tools against an application without any desktop's
-//! accessibility bus. Every name and text is synthetic.
+//! accessibility bus. Each reply, the `Name` property's included, passes the fixture's
+//! hold point `atspi:<member>:<path>`. Every name and text is synthetic.
 
 use std::collections::BTreeMap;
 use std::process::Stdio;
@@ -11,7 +12,6 @@ use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{Notify, oneshot};
 use zbus::message::{Header, Message};
 use zbus::names::ErrorName;
 use zbus::zvariant::OwnedObjectPath;
@@ -19,6 +19,7 @@ use zbus::{Connection, fdo, interface};
 
 use crate::client::WAIT;
 use crate::fixture::{Fixture, SPAWNING};
+use crate::holds::{Held, Points};
 
 pub(crate) const ROOT: &str = "/org/a11y/atspi/accessible/root";
 pub(crate) const FRAME: u32 = 23;
@@ -113,8 +114,6 @@ impl Object {
 /// What a method's next call gets instead of its answer.
 #[derive(Debug)]
 enum Next {
-    /// Its reply waits until the test releases it.
-    Hold(Arc<Notify>, oneshot::Receiver<()>),
     /// Its reply comes this much later.
     Delay(Duration),
     /// `org.freedesktop.DBus.Error.Failed` with this message.
@@ -197,45 +196,16 @@ struct State {
 
 /// The mock application, which the test changes.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct Mock(Arc<Mutex<State>>);
-
-/// A call held until the test releases it.
-#[derive(Debug)]
-pub(crate) struct Held {
-    arrived: Arc<Notify>,
-    release: oneshot::Sender<()>,
-}
-
-impl Held {
-    /// Waits, within `WAIT`, until the call arrives.
-    pub(crate) async fn arrived(&self) {
-        tokio::time::timeout(WAIT, self.arrived.notified())
-            .await
-            .expect("the held call never came");
-    }
-
-    pub(crate) fn release(self) {
-        self.release.send(()).ok();
-    }
+pub(crate) struct Mock {
+    state: Arc<Mutex<State>>,
+    points: Points,
 }
 
 impl Mock {
-    /// Holds the next call of `member` until the returned handle releases it.
-    pub(crate) fn hold(&self, member: &'static str) -> Held {
-        self.hold_at(member, None)
-    }
-
     /// Holds the next call of `member` on the object at `path` until the returned handle
     /// releases it.
     pub(crate) fn hold_on(&self, member: &'static str, path: &str) -> Held {
-        self.hold_at(member, Some(path.to_owned()))
-    }
-
-    fn hold_at(&self, member: &'static str, path: Option<String>) -> Held {
-        let arrived = Arc::new(Notify::new());
-        let (release, released) = oneshot::channel();
-        self.set_next((member, path), Next::Hold(Arc::clone(&arrived), released));
-        Held { arrived, release }
+        self.points.hold_next(&point(member, path))
     }
 
     /// Answers the next call of `member` after `delay`.
@@ -245,7 +215,7 @@ impl Mock {
 
     /// Answers every call of `member` on the object at `path` `delay` later, from now on.
     pub(crate) fn slow_on(&self, member: &'static str, path: &str, delay: Duration) {
-        let mut state = self.0.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
         state.slow.insert((member, path.to_owned()), delay);
     }
 
@@ -262,12 +232,12 @@ impl Mock {
 
     /// The index each `DoAction` asked for, in order.
     pub(crate) fn done(&self) -> Vec<i32> {
-        self.0.lock().unwrap().done.clone()
+        self.state.lock().unwrap().done.clone()
     }
 
     /// How many calls of `member` arrived.
     pub(crate) fn calls(&self, member: &str) -> usize {
-        self.0
+        self.state
             .lock()
             .unwrap()
             .calls
@@ -278,22 +248,22 @@ impl Mock {
 
     /// Changes the object at `path`.
     pub(crate) fn change(&self, path: &str, change: impl FnOnce(&mut Object)) {
-        change(self.0.lock().unwrap().objects.get_mut(path).unwrap());
+        change(self.state.lock().unwrap().objects.get_mut(path).unwrap());
     }
 
     /// The object at `path` as it is now.
     pub(crate) fn object(&self, path: &str) -> Object {
-        self.0.lock().unwrap().objects[path].clone()
+        self.state.lock().unwrap().objects[path].clone()
     }
 
     fn set_next(&self, at: (&'static str, Option<String>), next: Next) {
-        self.0.lock().unwrap().next.insert(at, next);
+        self.state.lock().unwrap().next.insert(at, next);
     }
 
     /// Counts a call of `member` on the object at `path` and takes what the test set for
     /// it: for that object first, else for any; and how slow its calls are.
     fn count(&self, member: &'static str, path: &str) -> (Option<Next>, Duration) {
-        let mut state = self.0.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
         *state.calls.entry(member).or_default() += 1;
         let next = state.next.remove(&(member, Some(path.to_owned())));
         let next = next.or_else(|| state.next.remove(&(member, None)));
@@ -302,17 +272,14 @@ impl Mock {
         (next, slow.unwrap_or_default())
     }
 
-    /// Counts a call of `member` on the object at `path` and applies what the test set for
-    /// it: for that object first, else for any.
+    /// Counts a call of `member` on the object at `path`, passes its hold point, and applies
+    /// what the test set for it: for that object first, else for any.
     async fn called(&self, member: &'static str, path: &str) -> answer::Result<()> {
         let (next, slow) = self.count(member, path);
+        let _busy = self.points.pass(point(member, path)).await;
         tokio::time::sleep(slow).await;
         match next {
             None => {}
-            Some(Next::Hold(arrived, released)) => {
-                arrived.notify_one();
-                released.await.ok();
-            }
             Some(Next::Delay(delay)) => tokio::time::sleep(delay).await,
             Some(Next::Fail(message)) => return Err(fdo::Error::Failed(message).into()),
             Some(Next::FailNamed(name)) => return Err(Refusal::Named(name)),
@@ -321,13 +288,18 @@ impl Mock {
     }
 
     fn read<T>(&self, path: &str, read: impl FnOnce(&Object, &str) -> T) -> fdo::Result<T> {
-        let state = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         state
             .objects
             .get(path)
             .map(|object| read(object, &state.app))
             .ok_or_else(|| fdo::Error::UnknownObject(format!("no object at {path}")))
     }
+}
+
+/// The hold point of a call of `member` on the object at `path`.
+fn point(member: &str, path: &str) -> String {
+    format!("atspi:{member}:{path}")
 }
 
 /// The daemon and the mock's connections. Dropping it kills the daemon.
@@ -354,7 +326,10 @@ pub(crate) async fn start(
 ) -> (Bus, Mock) {
     let (daemon, address) = daemon(fixture).await;
     fixture.set("DBUS_SESSION_BUS_ADDRESS", &address);
-    let mock = Mock::default();
+    let mock = Mock {
+        state: Arc::default(),
+        points: fixture.points(),
+    };
     let app = connect(&address).await;
     let unique = app.unique_name().unwrap().to_string();
     let root = Object {
@@ -364,14 +339,21 @@ pub(crate) async fn start(
         ..Object::default()
     };
     {
-        let mut state = mock.0.lock().unwrap();
+        let mut state = mock.state.lock().unwrap();
         state.app.clone_from(&unique);
         state.objects.insert(ROOT.to_owned(), root);
         for (path, object) in objects {
             state.objects.insert(path.to_owned(), object);
         }
     }
-    let paths: Vec<(String, Object)> = mock.0.lock().unwrap().objects.clone().into_iter().collect();
+    let paths: Vec<(String, Object)> = mock
+        .state
+        .lock()
+        .unwrap()
+        .objects
+        .clone()
+        .into_iter()
+        .collect();
     for (path, object) in paths {
         serve(&app, &mock, &path, &object).await;
     }
@@ -532,7 +514,8 @@ impl Accessible {
     }
 
     #[zbus(property, name = "Name")]
-    fn accessible_name(&self) -> fdo::Result<String> {
+    async fn accessible_name(&self) -> fdo::Result<String> {
+        self.0.called("Name").await?;
         Ok(self.0.read(|object, _| object.name.clone())?)
     }
 }
@@ -566,7 +549,7 @@ impl Action {
     }
 
     async fn do_action(&self, index: i32) -> answer::Result<bool> {
-        self.0.mock.0.lock().unwrap().done.push(index);
+        self.0.mock.state.lock().unwrap().done.push(index);
         self.0.called("DoAction").await?;
         self.0.mock.change(&self.0.path, |object| {
             if let Some(count) = object.counter.as_mut() {

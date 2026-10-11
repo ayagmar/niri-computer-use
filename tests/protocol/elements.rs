@@ -16,7 +16,7 @@ use crate::noctalia::{self, LOCKED, UNLOCKED};
 const ODD_ACTION: &str = "open ACTION-SENTINEL";
 
 /// The mock application's window.
-const WINDOW: u64 = 1;
+pub(crate) const WINDOW: u64 = 1;
 
 /// A server holding the lease on a fake niri, whose focused window 1 is the mock
 /// application's, beside window 2 of another app.
@@ -35,7 +35,7 @@ struct Desk {
 
 /// The mock's objects: a frame of 800x600 holding a panel with a button, a text field and
 /// a password field.
-fn objects() -> Vec<(&'static str, Object)> {
+pub(crate) fn objects() -> Vec<(&'static str, Object)> {
     vec![
         ("/frame", Object::frame("Mock", (800, 600), &["/panel"])),
         (
@@ -50,7 +50,7 @@ fn objects() -> Vec<(&'static str, Object)> {
 }
 
 /// A window of the mock application, the test's own process.
-fn app_window(id: u64, focused: bool) -> Value {
+pub(crate) fn app_window(id: u64, focused: bool) -> Value {
     let mut window = window_on(id, Some("org.ncu.Mock"), 1, focused);
     window["pid"] = json!(std::process::id());
     window["title"] = json!("Mock");
@@ -58,7 +58,7 @@ fn app_window(id: u64, focused: bool) -> Value {
 }
 
 /// Workspace 1 on `DP-1`, as `initial` sends it.
-fn workspace() -> Value {
+pub(crate) fn workspace() -> Value {
     json!({
         "id": 1, "idx": 1, "name": null, "output": "DP-1", "is_urgent": false,
         "is_active": true, "is_focused": true, "active_window_id": null
@@ -195,7 +195,7 @@ async fn the_apps_error_messages_reach_neither_the_result_nor_the_audit_log() {
         };
         results.push(desk.server.call(tool, arguments.clone()).await);
     }
-    let held = desk.mock.hold("DoAction");
+    let held = desk.mock.hold_on("DoAction", "/button");
     let id = desk.server.start_call("activate_element", activate).await;
     held.arrived().await;
     desk.mock.fail("GetState", &message);
@@ -377,7 +377,12 @@ async fn a_bus_lost_after_the_call_went_out_is_uncertain() {
             "Field"
         };
         let element = desk.element(name).await;
-        let held = desk.mock.hold(member);
+        let path = if tool == "activate_element" {
+            "/button"
+        } else {
+            "/entry"
+        };
+        let held = desk.mock.hold_on(member, path);
         let arguments = json!({"element": element, "text": "abc", "expect": {"window_id": WINDOW}});
         let id = desk.server.start_call(tool, arguments).await;
         held.arrived().await;
@@ -938,12 +943,12 @@ async fn the_lock_is_read_again_once_the_readiness_report_is_done() {
         let version = desk.niri.hold_version();
         let asked = desk.noctalia.status_requests();
         role.release();
-        desk.niri.held().await;
+        version.arrived().await;
         while desk.noctalia.status_requests() == asked {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
         desk.noctalia.set(LOCKED);
-        version.send(()).ok();
+        version.release();
         let result = desk.server.response(id).await["result"].clone();
         assert_eq!(tool_error(&result).0, "screen_locked", "{result}");
         assert_eq!(desk.mock.calls(held.acts), 0);
@@ -966,10 +971,10 @@ async fn a_field_that_becomes_a_password_field_after_its_role_was_read_is_refuse
         role.arrived().await;
         let version = desk.niri.hold_version();
         role.release();
-        desk.niri.held().await;
+        version.arrived().await;
         desk.mock.change(path, |object| object.role = PASSWORD_TEXT);
         tokio::time::sleep(PAST_THE_LAST_GATE).await;
-        version.send(()).ok();
+        version.release();
         let result = desk.server.response(id).await["result"].clone();
         assert_eq!(tool_error(&result).0, "secret_field", "{result}");
         assert_eq!(desk.mock.calls(held.acts), 0);

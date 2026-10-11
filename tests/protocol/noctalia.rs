@@ -1,14 +1,16 @@
 //! A fake Noctalia on the fixture's socket. It answers `status` with a reply the test
 //! sets, and `panel-open` and `panel-close` the way Noctalia 5.2.1 does, keeping the open
-//! panel in its `activePanelId`.
+//! panel in its `activePanelId`. Each reply passes the fixture's hold point
+//! `noctalia:<command>`, named by the command's first word.
 
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-use tokio::net::UnixListener;
+use tokio::net::{UnixListener, UnixStream};
 
 use crate::fixture::Fixture;
+use crate::holds::Points;
 
 #[derive(Debug)]
 struct State {
@@ -94,7 +96,8 @@ impl Reply {
     }
 }
 
-/// Answers every connection, after checking the request has the `/\x1e` prefix.
+/// Answers every connection, after checking the request has the `/\x1e` prefix, each in a
+/// task of its own so a held reply holds no other.
 pub(crate) fn start(fixture: &Fixture, reply: &'static str) -> Reply {
     let listener = UnixListener::bind(fixture.noctalia_socket()).unwrap();
     let current = Reply(Arc::new(Mutex::new(State {
@@ -105,17 +108,25 @@ pub(crate) fn start(fixture: &Fixture, reply: &'static str) -> Reply {
         commands: Vec::new(),
     })));
     let state = current.clone();
+    let points = fixture.points();
     tokio::spawn(async move {
-        while let Ok((mut connection, _)) = listener.accept().await {
-            let mut request = Vec::new();
-            connection.read_to_end(&mut request).await.unwrap();
-            let command = request.strip_prefix(b"/\x1e").unwrap();
-            let command = String::from_utf8(command.to_vec()).unwrap();
-            let answer = state.answer(&command);
-            connection.write_all(answer.as_bytes()).await.unwrap();
+        while let Ok((connection, _)) = listener.accept().await {
+            tokio::spawn(serve(connection, state.clone(), points.clone()));
         }
     });
     current
+}
+
+async fn serve(mut connection: UnixStream, state: Reply, points: Points) {
+    let mut request = Vec::new();
+    connection.read_to_end(&mut request).await.unwrap();
+    let command = request.strip_prefix(b"/\x1e").unwrap();
+    let command = String::from_utf8(command.to_vec()).unwrap();
+    let word = command.split(' ').next().unwrap_or_default();
+    let _busy = points.pass(format!("noctalia:{word}")).await;
+    let answer = state.answer(&command);
+    // The server may have given up on a held reply.
+    connection.write_all(answer.as_bytes()).await.ok();
 }
 
 /// `reply` with `activePanelId` and `panelOpen` set from the open panel.

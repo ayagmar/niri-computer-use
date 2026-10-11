@@ -1,7 +1,9 @@
 //! A fake niri on the fixture's socket. Single requests are answered from a shared
 //! configuration; each event stream is handed to the test, which writes its events line by
 //! line and closes it by dropping it. Actions are answered `Handled`, or held unanswered,
-//! and handed to the test, which sends the events the action would cause.
+//! and handed to the test, which sends the events the action would cause, unless the test
+//! set the fake to send them itself. Each request's reply passes the fixture's hold point
+//! `niri:<request>`, and the events the fake sends for an action pass `niri:effect`.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -18,8 +20,12 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::client::WAIT;
 use crate::fixture::Fixture;
+use crate::holds::{Held, Points};
 
-#[derive(Debug, Default)]
+/// The events niri would send after carrying out an action.
+type Effects = Arc<dyn Fn(&Action) -> Vec<Value> + Send + Sync>;
+
+#[derive(Default)]
 struct Config {
     outputs: Vec<Output>,
     focused: Option<String>,
@@ -30,13 +36,14 @@ struct Config {
     silent: bool,
     /// Read actions but never answer them.
     hold_actions: bool,
-    /// Holds the next `Version` until the test releases it.
-    version_hold: Option<oneshot::Receiver<()>>,
     /// How much later every `Version` is answered.
     version_delay: Duration,
+    /// What the fake sends on every open event stream once it answered an action.
+    effects: Option<Effects>,
+    /// The event streams' lines, for the effects, which don't keep a stream open.
+    streams: Vec<mpsc::WeakUnboundedSender<String>>,
 }
 
-#[derive(Debug)]
 pub(crate) struct Niri {
     config: Arc<Mutex<Config>>,
     streams: mpsc::UnboundedReceiver<Stream>,
@@ -47,6 +54,7 @@ pub(crate) struct Niri {
     actions: mpsc::UnboundedReceiver<Action>,
     /// The process ID of every connection's peer, in order.
     peers: Arc<Mutex<Vec<i32>>>,
+    points: Points,
 }
 
 /// An event stream the server opened. Dropping it closes the connection.
@@ -57,23 +65,29 @@ pub(crate) struct Stream {
 }
 
 /// The fake's ends of the channels to the test.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct Channels {
     config: Arc<Mutex<Config>>,
     streams: mpsc::UnboundedSender<Stream>,
     abandoned: mpsc::UnboundedSender<()>,
     held: mpsc::UnboundedSender<()>,
     actions: mpsc::UnboundedSender<Action>,
+    points: Points,
 }
 
 impl Niri {
-    /// Listens on the fixture's `NIRI_SOCKET` with one output, `DP-1`, focused.
+    /// Listens on the fixture's `NIRI_SOCKET` with one output, `DP-1`, focused, passing the
+    /// fixture's hold points.
     pub(crate) fn start(fixture: &Fixture) -> Self {
-        Self::listen(&fixture.niri_socket())
+        Self::listen_with(&fixture.niri_socket(), fixture.points())
     }
 
-    /// The same, listening on `socket`.
+    /// The same, listening on `socket`, with hold points of its own.
     pub(crate) fn listen(socket: &std::path::Path) -> Self {
+        Self::listen_with(socket, Points::default())
+    }
+
+    fn listen_with(socket: &std::path::Path, points: Points) -> Self {
         // In place of the socket file the fixture leaves, as a restarted niri does.
         std::fs::remove_file(socket).ok();
         let listener = UnixListener::bind(socket).unwrap();
@@ -84,8 +98,9 @@ impl Niri {
             workspaces: Vec::new(),
             silent: false,
             hold_actions: false,
-            version_hold: None,
             version_delay: Duration::ZERO,
+            effects: None,
+            streams: Vec::new(),
         }));
         let (streams_to, streams) = mpsc::unbounded_channel();
         let (abandoned_to, abandoned) = mpsc::unbounded_channel();
@@ -97,6 +112,7 @@ impl Niri {
             abandoned: abandoned_to,
             held: held_to,
             actions: actions_to,
+            points: points.clone(),
         };
         let peers = Arc::new(Mutex::new(Vec::new()));
         tokio::spawn(accept(listener, channels, Arc::clone(&peers)));
@@ -107,6 +123,7 @@ impl Niri {
             held,
             actions,
             peers,
+            points,
         }
     }
 
@@ -119,12 +136,15 @@ impl Niri {
         self.config.lock().unwrap().hold_actions = hold;
     }
 
-    /// Holds the next `Version` request, which `held` then waits for, until the returned
-    /// sender sends or drops.
-    pub(crate) fn hold_version(&self) -> oneshot::Sender<()> {
-        let (release, released) = oneshot::channel();
-        self.config.lock().unwrap().version_hold = Some(released);
-        release
+    /// Holds the reply to the next `Version` request until the test releases it.
+    pub(crate) fn hold_version(&self) -> Held {
+        self.points.hold_next("niri:Version")
+    }
+
+    /// From now on, sends `effects`' events for each action on every open event stream
+    /// once it answered the action, as niri would after carrying it out.
+    pub(crate) fn effects(&self, effects: impl Fn(&Action) -> Vec<Value> + Send + Sync + 'static) {
+        self.config.lock().unwrap().effects = Some(Arc::new(effects));
     }
 
     /// Answers every `Version` request `delay` later.
@@ -312,23 +332,41 @@ async fn serve(connection: UnixStream, channels: Channels) {
     let request: Request = serde_json::from_str(&line).unwrap();
     if matches!(request, Request::EventStream) {
         reply(&mut write, &Ok(Response::Handled)).await;
-        stream(read, write, &channels.streams).await;
+        stream(read, write, &channels).await;
         return;
     }
+    respond(read, write, &channels, &request).await;
+}
+
+/// Answers one request that isn't the event stream, or holds it unanswered until the server
+/// closes the connection.
+async fn respond(
+    mut read: BufReader<OwnedReadHalf>,
+    mut write: OwnedWriteHalf,
+    channels: &Channels,
+    request: &Request,
+) {
+    if let Request::Action(action) = request {
+        channels.actions.send(action.clone()).ok();
+    }
+    let _busy = channels.points.pass(point(request)).await;
     if matches!(request, Request::Version) {
-        version_wait(&channels).await;
+        let delay = channels.config.lock().unwrap().version_delay;
+        tokio::time::sleep(delay).await;
     }
     let answer = {
         let config = channels.config.lock().unwrap();
-        if let Request::Action(action) = &request {
-            channels.actions.send(action.clone()).ok();
+        if let Request::Action(_) = request {
             (!config.hold_actions).then_some(Ok(Response::Handled))
         } else {
-            (!config.silent).then(|| answer(&config, &request))
+            (!config.silent).then(|| answer(&config, request))
         }
     };
     if let Some(answer) = answer {
         reply(&mut write, &answer).await;
+        if let Request::Action(action) = request {
+            effect(channels, action).await;
+        }
         return;
     }
     channels.held.send(()).ok();
@@ -337,18 +375,44 @@ async fn serve(connection: UnixStream, channels: Channels) {
     channels.abandoned.send(()).ok();
 }
 
-/// Waits as the test set for a `Version` request: until it releases a hold, then the
-/// delay.
-async fn version_wait(channels: &Channels) {
-    let (hold, delay) = {
-        let mut config = channels.config.lock().unwrap();
-        (config.version_hold.take(), config.version_delay)
-    };
-    if let Some(released) = hold {
-        channels.held.send(()).ok();
-        released.await.ok();
+/// The hold point `request`'s reply passes: `niri:` and the request's name, with the
+/// action's for an action, as `niri:Action:FocusWindow`.
+fn point(request: &Request) -> String {
+    let request = serde_json::to_value(request).unwrap();
+    let named = name(&request);
+    let action = request.get("Action").map(name);
+    action.map_or_else(
+        || format!("niri:{named}"),
+        |action| format!("niri:{named}:{action}"),
+    )
+}
+
+/// The variant a serialized niri enum names: the string itself, or the object's one key.
+fn name(value: &Value) -> String {
+    match value {
+        Value::String(name) => name.clone(),
+        Value::Object(object) => object.keys().next().cloned().unwrap_or_default(),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) => String::new(),
     }
-    tokio::time::sleep(delay).await;
+}
+
+/// Sends the events the test set for `action` on every open event stream, past the hold
+/// point `niri:effect`.
+async fn effect(channels: &Channels, action: &Action) {
+    let effects = channels.config.lock().unwrap().effects.clone();
+    let Some(effects) = effects else { return };
+    let events = effects(action);
+    let _busy = channels.points.pass("niri:effect".to_owned()).await;
+    let config = channels.config.lock().unwrap();
+    for event in events {
+        for lines in config
+            .streams
+            .iter()
+            .filter_map(mpsc::WeakUnboundedSender::upgrade)
+        {
+            lines.send(event.to_string()).ok();
+        }
+    }
 }
 
 #[expect(
@@ -389,11 +453,18 @@ async fn reply(write: &mut OwnedWriteHalf, reply: &Reply) {
 async fn stream(
     mut read: BufReader<OwnedReadHalf>,
     mut write: OwnedWriteHalf,
-    streams: &mpsc::UnboundedSender<Stream>,
+    channels: &Channels,
 ) {
     let (lines_to, mut lines) = mpsc::unbounded_channel::<String>();
     let (closed_to, closed) = oneshot::channel();
-    if streams
+    channels
+        .config
+        .lock()
+        .unwrap()
+        .streams
+        .push(lines_to.downgrade());
+    if channels
+        .streams
         .send(Stream {
             lines: lines_to,
             closed,

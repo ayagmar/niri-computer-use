@@ -12,6 +12,7 @@ use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use crate::client::WAIT;
+use crate::holds::Points;
 
 /// Programs the fake programs may use. They run with their own `PATH`, so the server's
 /// `PATH` holds nothing but the fakes.
@@ -48,6 +49,8 @@ pub(crate) struct Fixture {
     /// The servers started here. Each must have exited before the directory is removed,
     /// or its audit log could create the directory again.
     servers: Mutex<Vec<u32>>,
+    /// The hold points every fake started here passes.
+    points: Points,
     /// The Wayland display, served by the test's process like the fake niri, so the server
     /// takes it as niri's. Nothing speaks Wayland on it.
     _display: UnixListener,
@@ -92,6 +95,7 @@ impl Fixture {
             dir,
             env,
             servers: Mutex::new(Vec::new()),
+            points: Points::default(),
             _display: display,
         };
         if shared_mode() {
@@ -103,6 +107,11 @@ impl Fixture {
             "fixture name {name:?} makes socket paths too long"
         );
         fixture
+    }
+
+    /// The hold points of the fakes started here.
+    pub(crate) fn points(&self) -> Points {
+        self.points.clone()
     }
 
     pub(crate) fn env(&self) -> &BTreeMap<&'static str, OsString> {

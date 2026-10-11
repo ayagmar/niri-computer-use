@@ -12,6 +12,8 @@ mod client;
 #[cfg(test)]
 mod fixture;
 #[cfg(test)]
+mod holds;
+#[cfg(test)]
 mod niri;
 #[cfg(test)]
 mod noctalia;
@@ -55,5 +57,7 @@ mod session;
 mod shared;
 #[cfg(test)]
 mod shell;
+#[cfg(test)]
+mod stall;
 #[cfg(test)]
 mod wait;
