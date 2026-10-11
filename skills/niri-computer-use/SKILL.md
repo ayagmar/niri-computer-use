@@ -24,7 +24,7 @@ Take a `screenshot` when you need pixels. To wait for something, a window openin
 
 When `acquire_desktop` isn't listed, `status.tools.profile` is `observe`: the user set this client to look only, so say what you would do instead of doing it.
 
-Acting needs the lease. Take it with `acquire_desktop` only when the user asked you to act, then work in a loop:
+Acting needs the lease. Take it with `acquire_desktop` only when the user asked you to act, wait for its result, then work in a loop:
 
 
 
@@ -84,7 +84,7 @@ If no launch preset fits the app the user wants (`status` lists `policy.preset_n
 
 ## Giving the desktop back
 
-`acquire_desktop` returns `users_window`, the window the user was on. When you are done, close any shell panel you opened and call `release_desktop` with `restore_focus: true`: focus goes back to that window, and `restored` says how it went. Pass false only when the task was to leave another window in front. The user is often away from the screen while you work and comes back to whatever you left focused.
+`acquire_desktop` returns `users_window`, the window the user was on. When you are done, close any shell panel you opened and call `release_desktop` with `restore_focus: true`: focus goes back to that window, and `restored` says how it went. Pass false only when the task was to leave another window in front; a window your clicks or keys focused on the way doesn't count. The user is often away from the screen while you work and comes back to whatever you left focused.
 
 ## Examples
 

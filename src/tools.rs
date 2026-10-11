@@ -253,8 +253,9 @@ struct WaitForArgs {
 #[schemars(crate = "rmcp::schemars")]
 struct ReleaseArgs {
     /// true to give keyboard focus back to `users_window`, the window that had it when you
-    /// took the lease, before releasing; false to leave focus where your task put it, such
-    /// as on an app the user asked you to open.
+    /// took the lease, before releasing; false only when the user asked for another window
+    /// to stay in front, such as an app they asked you to open. A window your clicks or
+    /// keys focused on the way doesn't count.
     restore_focus: bool,
 }
 
@@ -737,7 +738,8 @@ impl Server {
     /// stuck, `read_only` when this build doesn't support the running niri or the policy
     /// file is invalid, and `screen_locked` while the screen is locked. Returns the holder
     /// and `users_window`, the window that had keyboard focus, which `release_desktop` can
-    /// give focus back to; calling it again while holding the lease returns the same.
+    /// give focus back to; calling it again while holding the lease returns the same. Wait
+    /// for its result before your next call.
     #[tool(
         title = "Take the desktop lease",
         annotations(
