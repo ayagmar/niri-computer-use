@@ -9,7 +9,7 @@ use niri_ipc::Window;
 use serde::Serialize;
 
 use crate::a11y::model::{
-    self, Extents, Filter, Fresh, LayoutBox, Link, NameHash, Placement, Refused, Unmappable,
+    self, Extents, Filter, Fresh, LayoutBox, Link, NameHash, Placement, Refused, Shape, Unmappable,
 };
 use crate::a11y::{self, A11y, Capped, ElementRef, Failed, Node, Want};
 use crate::coords::LayoutPt;
@@ -55,11 +55,13 @@ pub(crate) struct Listed {
     pub(crate) unmappable: Option<Unmappable>,
 }
 
-/// A window as niri reports it right now, and where its geometry starts in the layout.
+/// A window as niri reports it right now, where its geometry starts in the layout, and
+/// its application's other windows.
 #[derive(Debug)]
 struct Placed {
     window: Window,
     origin: Option<LayoutPt>,
+    others: Vec<Window>,
 }
 
 /// niri's window `id` right now, with its place in the layout, from fresh requests.
@@ -69,16 +71,49 @@ async fn placed(socket: &Socket, id: u64) -> Result<Option<Placed>, ToolError> {
         niri::workspaces(socket),
         niri::outputs(socket)
     );
-    let Some(window) = windows?.into_iter().find(|window| window.id == id) else {
+    let (window, others): (Vec<Window>, Vec<Window>) =
+        windows?.into_iter().partition(|window| window.id == id);
+    let Some(window) = window.into_iter().next() else {
         return Ok(None);
     };
+    let others = others
+        .into_iter()
+        .filter(|other| same_app(&window, other))
+        .collect();
     let output = window
         .workspace_id
         .and_then(|workspace| workspaces.ok()?.into_iter().find(|w| w.id == workspace))
         .and_then(|workspace| workspace.output)
         .and_then(|name| outputs.ok()?.remove(&name)?.logical);
     let origin = output.and_then(|output| model::window_origin(&output, &window.layout));
-    Ok(Some(Placed { window, origin }))
+    Ok(Some(Placed {
+        window,
+        origin,
+        others,
+    }))
+}
+
+/// Whether `other` is another niri window of `window`'s application.
+fn same_app(window: &Window, other: &Window) -> bool {
+    other.id != window.id && other.pid.is_some() && other.pid == window.pid
+}
+
+/// How frames are matched to niri's `window`.
+fn shape(window: &Window) -> Shape<'_> {
+    Shape {
+        size: window.layout.window_size,
+        title: window.title.as_deref(),
+    }
+}
+
+/// The application's other windows among `windows`, as frames are matched to them, so its
+/// frames are decided for all of them together.
+fn others<'a>(window: &Window, windows: impl IntoIterator<Item = &'a Window>) -> Vec<Shape<'a>> {
+    windows
+        .into_iter()
+        .filter(|other| same_app(window, other))
+        .map(shape)
+        .collect()
 }
 
 /// Lists the accessible elements of window `ask.window_id`, keeping a ref of each through
@@ -103,7 +138,7 @@ pub(crate) async fn list(
     let request = a11y.request(a11y::BUDGET).await?;
     let app = request.app(pid).await?;
     let frame = request
-        .frame(&app, window.layout.window_size, window.title.as_deref())
+        .frame(&app, shape(window), &others(window, &placed.others))
         .await?;
     let want = Want {
         wanted: ask.limit,
@@ -188,7 +223,7 @@ pub(crate) async fn aim(
         return Err(refused);
     }
     let request = a11y.request(a11y::BUDGET).await?.names_only();
-    identify(&request, element, window, Names::Parents).await?;
+    identify(&request, element, window, &placed.others, Names::Parents).await?;
     let probe = match request.probe(element).await {
         Ok(probe) => probe,
         Err(Failed::Gone(detail)) => return Err(stale(&detail)),
@@ -223,16 +258,17 @@ pub(crate) enum Names {
 }
 
 /// Checks that `element` is still the object `elements` listed, not another that took its
-/// path: its application still has niri's `window`, whose accessible frame, found again,
-/// is the ref's; each object from that frame down to the element is still at the index
+/// path: its application still has niri's `window`, whose accessible frame, found again
+/// with the app's other windows among niri's `windows`, is the ref's; each object from that frame down to the element is still at the index
 /// it had among its parent's children, as the parent says; and each has the name it was
 /// listed with, the element's own as `names` says. A list that reuses a row for another
 /// record keeps its place and path but not its name. Otherwise `element_stale`. Its role
 /// is checked by the caller.
-pub(crate) async fn identify(
+pub(crate) async fn identify<'a>(
     request: &a11y::Request,
     element: &ElementRef,
     window: &Window,
+    windows: impl IntoIterator<Item = &'a Window>,
     names: Names,
 ) -> Result<(), ToolError> {
     let app = request.app(element.kept.pid).await.map_err(|error| {
@@ -248,7 +284,7 @@ pub(crate) async fn identify(
         ));
     }
     let frame = request
-        .frame(&app, window.layout.window_size, window.title.as_deref())
+        .frame(&app, shape(window), &others(window, windows))
         .await?;
     if frame.node.path != element.frame {
         return Err(stale(&format!(

@@ -599,6 +599,64 @@ async fn a_frame_of_the_right_size_with_another_windows_title_is_never_taken() {
     assert_eq!(desk.mock.calls("DoAction"), 0);
 }
 
+// Fable's case: the same mixed setup with one title on both windows, as two "Untitled"
+// documents have, or no title on this one. Either window could be the frame of their size,
+// so neither is listed, and a ref listed before the second window opened is refused once it
+// has.
+#[tokio::test]
+async fn a_frame_another_window_of_the_app_could_be_is_never_taken() {
+    for title in [json!("Mock"), Value::Null] {
+        let mut objects = objects();
+        objects[0].1 = Object::frame("Mock", (850, 650), &["/panel"]);
+        objects.extend([
+            ("/frame2", Object::frame("Mock", (800, 600), &["/panel2"])),
+            ("/panel2", Object::panel(&["/other"])),
+            ("/other", Object::button("Other safe", &["click"])),
+        ]);
+        let mut first = app_window(WINDOW, true);
+        first["title"] = title;
+        let mut desk = Desk::start_with(
+            "el-same-title",
+            &["/frame", "/frame2"],
+            objects,
+            &[first.clone()],
+        )
+        .await;
+        let listing = desk
+            .server
+            .structured_with("elements", json!({"window_id": WINDOW}))
+            .await;
+        let other = listing["elements"][0]["element_ref"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let second = app_window(3, false);
+        desk.niri
+            .set_windows(&[first, second.clone()], &[workspace()]);
+        desk.stream
+            .send(&json!({"WindowOpenedOrChanged": {"window": second}}));
+        while desk.server.structured("desktop_state").await["windows"]
+            .as_array()
+            .unwrap()
+            .len()
+            < 2
+        {
+            tokio::task::yield_now().await;
+        }
+        for window in [WINDOW, 3] {
+            let refused = desk
+                .server
+                .call("elements", json!({"window_id": window}))
+                .await;
+            assert_eq!(tool_error(&refused).0, "ambiguous_window", "{refused}");
+        }
+        let arguments = json!({"element": other, "expect": {"window_id": WINDOW}});
+        let result = desk.server.call("activate_element", arguments).await;
+        assert_eq!(tool_error(&result).0, "ambiguous_window", "{result}");
+        assert_eq!(desk.mock.calls("DoAction"), 0);
+    }
+}
+
 /// What changes while an element action is still reading the element.
 #[derive(Debug, Clone, Copy)]
 enum Change {

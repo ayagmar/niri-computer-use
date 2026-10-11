@@ -259,7 +259,15 @@ impl<R: Recheck> Gate<'_, R> {
         waiter: &mut Waiter,
         read: impl Future<Output = Result<T, CallError>>,
     ) -> Result<Checked<T>, CallError> {
-        identify(request, element, owner(waiter.view(), element)?, Names::All).await?;
+        let view = waiter.view();
+        identify(
+            request,
+            element,
+            owner(view, element)?,
+            view.windows().values(),
+            Names::All,
+        )
+        .await?;
         let read = read.await?;
         let (role, states) = current(request, element).await?;
         self.recheck.control().await?;
@@ -308,6 +316,7 @@ pub(crate) async fn activate(
         &request,
         element,
         owner(waiter.view(), element)?,
+        waiter.view().windows().values(),
         Names::All,
     )
     .await?;
@@ -399,6 +408,7 @@ pub(crate) async fn set_text(
         &request,
         element,
         owner(waiter.view(), element)?,
+        waiter.view().windows().values(),
         Names::All,
     )
     .await?;

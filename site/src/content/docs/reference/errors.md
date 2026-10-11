@@ -125,7 +125,7 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 ### `ambiguous_window`
 
-**Cause:** the app has several accessible windows that could be the one asked about, or the one the size of the window asked about has another of its windows' titles, so the server won't guess.
+**Cause:** the app has several accessible windows that could be the one asked about, the one the size of the window asked about has another of its windows' titles, or another of the app's windows could be that accessible window as well: it has no accessible window of its own size, and the titles don't tell the two apart (the same title, as two "Untitled" documents have, or one of them unknown). The server won't guess.
 
 **What to do:** aim at screenshot pixels for that window.
 

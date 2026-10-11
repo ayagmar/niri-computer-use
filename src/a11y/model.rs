@@ -364,6 +364,13 @@ pub(crate) enum Picked {
     Mismatch(usize),
 }
 
+/// One of niri's windows of the application, as frames are matched to it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Shape<'a> {
+    pub(crate) size: (i32, i32),
+    pub(crate) title: Option<&'a str>,
+}
+
 /// Why no frame is niri's window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NoFrame {
@@ -374,35 +381,50 @@ pub(crate) enum NoFrame {
     /// The frame of the window's size doesn't have the window's title, and another frame
     /// does: the size and the title point at different frames.
     Contradicted,
+    /// Another of the application's windows could be the picked frame as well: no other
+    /// frame has its size, and the titles don't tell the two windows apart.
+    Shared,
 }
 
-/// Picks the frame that is niri's window among an application's frames: the one that
-/// passes the frame guard, or failing that the only frame. When several qualify, only the
-/// one whose name is the window's title is taken. A size match never overrides the title:
-/// a frame of the window's size without its title, beside another frame with it, is
-/// `Contradicted`, as when the window's own frame is larger, with client-side decorations,
-/// and another window of the app happens to have its size.
+/// Picks the frame that is niri's `window` among an application's frames, deciding for
+/// the app's `others` windows together: the one that passes the frame guard, or failing
+/// that the only frame. When several qualify, only the one whose name is the window's
+/// title is taken. A size match never overrides the title: a frame of the window's size
+/// without its title, beside another frame with it, is `Contradicted`, as when the
+/// window's own frame is larger, with client-side decorations, and another window of the
+/// app happens to have its size. Nor does it bind a frame another window could own, with
+/// the same title or one of the titles unknown, as two "Untitled" documents are: that is
+/// `Shared`.
 pub(crate) fn pick_frame(
     frames: &[Frame<'_>],
-    window_size: (i32, i32),
-    title: Option<&str>,
+    window: Shape<'_>,
+    others: &[Shape<'_>],
 ) -> Result<Picked, NoFrame> {
     let fitting: Vec<usize> = (0..frames.len())
         .filter(|&index| {
             frames
                 .get(index)
-                .is_some_and(|frame| frame_fits(frame.extents, window_size))
+                .is_some_and(|frame| frame_fits(frame.extents, window.size))
         })
         .collect();
-    if !fitting.is_empty() {
-        let picked = only(frames, &fitting, title)?;
-        if titled_elsewhere(frames, picked, title) {
+    let picked = if fitting.is_empty() {
+        let all: Vec<usize> = (0..frames.len()).collect();
+        Picked::Mismatch(only(frames, &all, window.title)?)
+    } else {
+        let picked = only(frames, &fitting, window.title)?;
+        if titled_elsewhere(frames, picked, window.title) {
             return Err(NoFrame::Contradicted);
         }
-        return Ok(Picked::Fits(picked));
+        Picked::Fits(picked)
+    };
+    let (Picked::Fits(index) | Picked::Mismatch(index)) = picked;
+    if others
+        .iter()
+        .any(|other| could_own(frames, index, window.title, *other))
+    {
+        return Err(NoFrame::Shared);
     }
-    let all: Vec<usize> = (0..frames.len()).collect();
-    only(frames, &all, title).map(Picked::Mismatch)
+    Ok(picked)
 }
 
 /// Whether the frame at `picked` lacks `title` while another frame has it.
@@ -412,6 +434,21 @@ fn titled_elsewhere(frames: &[Frame<'_>], picked: usize, title: Option<&str>) ->
     };
     let named = |index: usize| frames.get(index).is_some_and(|frame| frame.name == title);
     !named(picked) && (0..frames.len()).any(named)
+}
+
+/// Whether `other`, another window of the app, could be the frame at `picked` instead of
+/// the window titled `title`: no other frame has its size, and the titles are the same or
+/// one of them is unknown.
+fn could_own(frames: &[Frame<'_>], picked: usize, title: Option<&str>, other: Shape<'_>) -> bool {
+    let alike = match (title, other.title) {
+        (Some(title), Some(other)) => title == other,
+        _ => true,
+    };
+    alike
+        && !frames
+            .iter()
+            .enumerate()
+            .any(|(index, frame)| index != picked && frame_fits(frame.extents, other.size))
 }
 
 /// The one candidate, or the one whose name is `title`.
@@ -651,42 +688,77 @@ mod tests {
             name,
         };
         let size = (400, 300);
+        let window = |title| Shape { size, title };
+        let pick = |frames: &[Frame<'_>], title| pick_frame(frames, window(title), &[]);
         assert_eq!(
-            pick_frame(
-                &[frame(200, 100, "about"), frame(400, 300, "main")],
-                size,
-                None
-            ),
+            pick(&[frame(200, 100, "about"), frame(400, 300, "main")], None),
             Ok(Picked::Fits(1))
         );
         // One frame that fails the guard is still the window, but unmappable.
         assert_eq!(
-            pick_frame(&[frame(452, 352, "gtk3")], size, Some("gtk3")),
+            pick(&[frame(452, 352, "gtk3")], Some("gtk3")),
             Ok(Picked::Mismatch(0))
         );
         let twins = [frame(400, 300, "one"), frame(400, 300, "two")];
-        assert_eq!(pick_frame(&twins, size, Some("two")), Ok(Picked::Fits(1)));
-        assert_eq!(
-            pick_frame(&twins, size, Some("three")),
-            Err(NoFrame::Ambiguous(2))
-        );
-        assert_eq!(pick_frame(&twins, size, None), Err(NoFrame::Ambiguous(2)));
+        assert_eq!(pick(&twins, Some("two")), Ok(Picked::Fits(1)));
+        assert_eq!(pick(&twins, Some("three")), Err(NoFrame::Ambiguous(2)));
+        assert_eq!(pick(&twins, None), Err(NoFrame::Ambiguous(2)));
         // Two windows of one app: this one's frame is larger than niri's window, as with
         // client-side decorations, and the other's frame has this window's size.
         let mixed = [frame(450, 350, "this"), frame(400, 300, "other")];
-        assert_eq!(
-            pick_frame(&mixed, size, Some("this")),
-            Err(NoFrame::Contradicted)
-        );
-        assert_eq!(pick_frame(&mixed, size, Some("other")), Ok(Picked::Fits(1)));
+        assert_eq!(pick(&mixed, Some("this")), Err(NoFrame::Contradicted));
+        assert_eq!(pick(&mixed, Some("other")), Ok(Picked::Fits(1)));
         // A title no frame has leaves the size to decide.
+        assert_eq!(pick(&mixed, Some("renamed")), Ok(Picked::Fits(1)));
+        let unfit = [frame(10, 10, "a"), frame(20, 20, "b")];
+        assert_eq!(pick(&unfit, Some("b")), Ok(Picked::Mismatch(1)));
+        assert_eq!(pick(&[], None), Err(NoFrame::None));
+    }
+
+    #[test]
+    fn a_frame_another_window_of_the_app_could_be_is_never_bound() {
+        let frame = |width, height, name| Frame {
+            extents: extents(0, 0, width, height),
+            name,
+        };
+        let shape = |size, title| Shape { size, title };
+        let this = shape((400, 300), Some("Untitled"));
+        // The mixed case with one title: this window's frame is larger than niri's window,
+        // as with client-side decorations, and the other window's frame has its size.
+        let csd = [frame(450, 350, "Untitled"), frame(400, 300, "Untitled")];
+        let other = shape((400, 300), Some("Untitled"));
+        assert_eq!(pick_frame(&csd, this, &[other]), Err(NoFrame::Shared));
+        assert_eq!(pick_frame(&csd, other, &[this]), Err(NoFrame::Shared));
+        // Without a title on either side, the titles don't tell the windows apart either.
+        let unnamed = [frame(450, 350, ""), frame(400, 300, "")];
+        let untitled = shape((400, 300), None);
         assert_eq!(
-            pick_frame(&mixed, size, Some("renamed")),
+            pick_frame(&unnamed, untitled, &[other]),
+            Err(NoFrame::Shared)
+        );
+        assert_eq!(pick_frame(&csd, this, &[untitled]), Err(NoFrame::Shared));
+        // An only frame that fails the guard could be the other window's as well.
+        let lone = [frame(450, 350, "Untitled")];
+        assert_eq!(
+            pick_frame(&lone, this, &[shape((300, 200), Some("Untitled"))]),
+            Err(NoFrame::Shared)
+        );
+        // Windows with server-side decorations, one title and different sizes each have a
+        // frame of their own size, so each binds its own.
+        let ssd = [frame(400, 300, "Untitled"), frame(300, 200, "Untitled")];
+        let smaller = shape((300, 200), Some("Untitled"));
+        assert_eq!(pick_frame(&ssd, this, &[smaller]), Ok(Picked::Fits(0)));
+        assert_eq!(pick_frame(&ssd, smaller, &[this]), Ok(Picked::Fits(1)));
+        // Distinct titles keep the title rule.
+        let named = shape((400, 300), Some("Other"));
+        assert_eq!(
+            pick_frame(
+                &[frame(450, 350, "x"), frame(400, 300, "Other")],
+                named,
+                &[this]
+            ),
             Ok(Picked::Fits(1))
         );
-        let unfit = [frame(10, 10, "a"), frame(20, 20, "b")];
-        assert_eq!(pick_frame(&unfit, size, Some("b")), Ok(Picked::Mismatch(1)));
-        assert_eq!(pick_frame(&[], size, None), Err(NoFrame::None));
     }
 
     #[test]

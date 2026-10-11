@@ -24,7 +24,7 @@ use zbus::names::OwnedErrorName;
 use zbus::zvariant::{DynamicType, OwnedObjectPath, OwnedValue};
 
 use crate::error::{ErrorName, ToolError};
-use model::{Extents, Frame, Kept, NoFrame, Picked, States};
+use model::{Extents, Frame, Kept, NoFrame, Picked, Shape, States};
 pub(crate) use walk::{Capped, Child, Node, Want};
 
 /// Each call's deadline.
@@ -380,12 +380,13 @@ impl Request {
             })
     }
 
-    /// The application's frame that is niri's window of `window_size` and `title`.
+    /// The application's frame that is niri's `window`, decided with the app's `others`
+    /// windows in niri.
     pub(crate) async fn frame(
         &self,
         app: &App,
-        window_size: (i32, i32),
-        title: Option<&str>,
+        window: Shape<'_>,
+        others: &[Shape<'_>],
     ) -> Result<FoundFrame, ToolError> {
         let root = self
             .node(&app.bus, ROOT)
@@ -413,7 +414,7 @@ impl Request {
             })
             .collect();
         let listed: Vec<Frame<'_>> = candidates.iter().map(|(_, frame)| *frame).collect();
-        let (picked, fits) = match model::pick_frame(&listed, window_size, title) {
+        let (picked, fits) = match model::pick_frame(&listed, window, others) {
             Ok(Picked::Fits(index)) => (index, true),
             Ok(Picked::Mismatch(index)) => (index, false),
             Err(NoFrame::None) => {
@@ -432,6 +433,12 @@ impl Request {
                 return Err(ToolError::new(
                     ErrorName::AmbiguousWindow,
                     "the application's accessible window of this window's size doesn't have its title, and another of its accessible windows does",
+                ));
+            }
+            Err(NoFrame::Shared) => {
+                return Err(ToolError::new(
+                    ErrorName::AmbiguousWindow,
+                    "another of the application's windows could be this window's accessible window: it has no accessible window of its own size, and its title doesn't tell the two apart",
                 ));
             }
         };
