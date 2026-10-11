@@ -716,7 +716,11 @@ impl Server {
     /// supports it, whether niri's event stream is connected, the lock state, whether
     /// Noctalia is running, the audit log, and which required programs are on PATH. Call
     /// this first.
-    #[tool(annotations(read_only_hint = true))]
+    #[tool(
+        title = "Readiness status",
+        annotations(read_only_hint = true, open_world_hint = false),
+        meta = always_load()
+    )]
     async fn status(
         &self,
         context: RequestContext<RoleServer>,
@@ -734,12 +738,15 @@ impl Server {
     /// file is invalid, and `screen_locked` while the screen is locked. Returns the holder
     /// and `users_window`, the window that had keyboard focus, which `release_desktop` can
     /// give focus back to; calling it again while holding the lease returns the same.
-    #[tool(annotations(
-        read_only_hint = false,
-        destructive_hint = false,
-        idempotent_hint = true,
-        open_world_hint = false
-    ))]
+    #[tool(
+        title = "Take the desktop lease",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
     async fn acquire_desktop(
         &self,
         context: RequestContext<RoleServer>,
@@ -762,12 +769,15 @@ impl Server {
     /// `users_window`, the window the user was on when you took the lease, and `restored`
     /// says how that went (`focused`, `closed` if the window is gone, or an error). Restore
     /// focus unless the task was to leave another window in front.
-    #[tool(annotations(
-        read_only_hint = false,
-        destructive_hint = false,
-        idempotent_hint = true,
-        open_world_hint = false
-    ))]
+    #[tool(
+        title = "Release the desktop lease",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
     async fn release_desktop(
         &self,
         Parameters(args): Parameters<ReleaseArgs>,
@@ -785,12 +795,15 @@ impl Server {
     /// five seconds, `interrupted` if focus went elsewhere meanwhile, or `uncertain` if
     /// niri's reply or event stream was lost; a workspace's own window taking focus is
     /// expected. Requires the lease.
-    #[tool(annotations(
-        read_only_hint = false,
-        destructive_hint = false,
-        idempotent_hint = true,
-        open_world_hint = false
-    ))]
+    #[tool(
+        title = "Focus a window or workspace",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
     async fn focus(
         &self,
         Parameters(args): Parameters<FocusArgs>,
@@ -826,12 +839,15 @@ impl Server {
     /// ["<program>", ...]}}`, never a shell or `SpawnSh`, then find its window with
     /// `wait_for` or `desktop_state` (its `app_id` is often not the program's name) and
     /// never `Spawn` again; otherwise ask the user to add a preset. Requires the lease.
-    #[tool(annotations(
-        read_only_hint = false,
-        destructive_hint = false,
-        idempotent_hint = false,
-        open_world_hint = false
-    ))]
+    #[tool(
+        title = "Launch a preset app",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
     async fn launch(
         &self,
         Parameters(args): Parameters<LaunchArgs>,
@@ -858,12 +874,15 @@ impl Server {
     /// `pending` if it is still open after five seconds, for example behind an
     /// unsaved-changes dialog; nothing forces it. Refused with `app_denied` when the
     /// window's app is on the policy's deny list. Requires the lease.
-    #[tool(annotations(
-        read_only_hint = false,
-        destructive_hint = true,
-        idempotent_hint = false,
-        open_world_hint = false
-    ))]
+    #[tool(
+        title = "Close a window",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
     async fn close_window(
         &self,
         Parameters(args): Parameters<WindowArgs>,
@@ -897,12 +916,15 @@ impl Server {
     /// (`Spawn`, `SpawnSh`, `Quit`, `LoadConfigFile`, screenshots, monitor power, casts)
     /// fail with `unrestricted_required` unless the user set `unrestricted = true`: tell
     /// the user rather than work around it. Requires the lease.
-    #[tool(annotations(
-        read_only_hint = false,
-        destructive_hint = true,
-        idempotent_hint = false,
-        open_world_hint = false
-    ))]
+    #[tool(
+        title = "Run a niri action",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
     async fn niri_action(
         &self,
         Parameters(args): Parameters<NiriActionArgs>,
@@ -944,12 +966,15 @@ impl Server {
     /// `ref_invalid` if the ref is unknown, over a minute old, its output changed, or the
     /// pixel is outside its image. `app_denied` while the focused window's app is denied;
     /// the app under the pointer isn't checked.
-    #[tool(annotations(
-        read_only_hint = false,
-        destructive_hint = false,
-        idempotent_hint = true,
-        open_world_hint = false
-    ))]
+    #[tool(
+        title = "Move the pointer",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
     async fn pointer_move(
         &self,
         Parameters(args): Parameters<PointArgs>,
@@ -970,12 +995,15 @@ impl Server {
     /// `count` times. Results and failures as for `pointer_move`. A click can change focus
     /// or do anything the app does on a click; read `changes`, and take a screenshot when it
     /// doesn't say enough.
-    #[tool(annotations(
-        read_only_hint = false,
-        destructive_hint = true,
-        idempotent_hint = false,
-        open_world_hint = false
-    ))]
+    #[tool(
+        title = "Click",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
     async fn click(
         &self,
         Parameters(args): Parameters<ClickArgs>,
@@ -1007,12 +1035,15 @@ impl Server {
     /// Drags from one pixel of a screenshot to another: presses the button at `from`,
     /// moves to `to` in ten steps over about a quarter of a second, and releases it there.
     /// Results and failures as for `pointer_move`.
-    #[tool(annotations(
-        read_only_hint = false,
-        destructive_hint = true,
-        idempotent_hint = false,
-        open_world_hint = false
-    ))]
+    #[tool(
+        title = "Drag",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
     async fn drag(
         &self,
         Parameters(args): Parameters<DragArgs>,
@@ -1039,12 +1070,15 @@ impl Server {
 
     /// Scrolls with the mouse wheel over a pixel of a screenshot, by whole notches, as a
     /// wheel does. Results and failures as for `pointer_move`.
-    #[tool(annotations(
-        read_only_hint = false,
-        destructive_hint = false,
-        idempotent_hint = false,
-        open_world_hint = false
-    ))]
+    #[tool(
+        title = "Scroll",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
     async fn scroll(
         &self,
         Parameters(args): Parameters<ScrollArgs>,
@@ -1074,12 +1108,15 @@ impl Server {
     /// otherwise). `observed` is `sent`, or `interrupted` if focus moved, and then the rest
     /// isn't pressed and `pressed` counts what was. Refused with `app_denied` while the
     /// focused app is on the deny list, even with `expect: "none"`. Requires the lease.
-    #[tool(annotations(
-        read_only_hint = false,
-        destructive_hint = true,
-        idempotent_hint = false,
-        open_world_hint = false
-    ))]
+    #[tool(
+        title = "Press keys",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
     async fn key(
         &self,
         Parameters(args): Parameters<KeyArgs>,
@@ -1109,12 +1146,15 @@ impl Server {
     /// text, `paste.clipboard` what became of the clipboard. Longer text is
     /// `text_too_long`, with nothing typed. Never repeat a call on your own. The text is
     /// never logged. Requires the lease.
-    #[tool(annotations(
-        read_only_hint = false,
-        destructive_hint = true,
-        idempotent_hint = false,
-        open_world_hint = false
-    ))]
+    #[tool(
+        title = "Type or paste text",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
     async fn type_text(
         &self,
         Parameters(args): Parameters<TypeTextArgs>,
@@ -1165,12 +1205,15 @@ impl Server {
     /// dialog) or `unknown`; `uncertain`, with `accepted` null and a screenshot, when the
     /// reply was lost: it may have happened. Never repeat an activation on your own.
     /// Requires the lease.
-    #[tool(annotations(
-        read_only_hint = false,
-        destructive_hint = true,
-        idempotent_hint = false,
-        open_world_hint = false
-    ))]
+    #[tool(
+        title = "Activate an element",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
     async fn activate_element(
         &self,
         Parameters(args): Parameters<ActivateElementArgs>,
@@ -1218,12 +1261,15 @@ impl Server {
     /// holds as many characters as were set, `differs` (`element.characters`) when the app
     /// filtered them, or `unknown`; `uncertain`, with `accepted` null, when the reply was
     /// lost after the text went out. The text is never logged. Requires the lease.
-    #[tool(annotations(
-        read_only_hint = false,
-        destructive_hint = true,
-        idempotent_hint = true,
-        open_world_hint = false
-    ))]
+    #[tool(
+        title = "Set an element's text",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
     async fn set_element_text(
         &self,
         Parameters(args): Parameters<SetElementTextArgs>,
@@ -1265,7 +1311,11 @@ impl Server {
     /// overview, keyboard layouts, `outputs` (monitors by name, with their position, size,
     /// scale and transform in the layout), and with Noctalia, `shell`: its bar, open panel
     /// and lock state, or why it isn't answering.
-    #[tool(annotations(read_only_hint = true))]
+    #[tool(
+        title = "Desktop state",
+        annotations(read_only_hint = true, open_world_hint = false),
+        meta = always_load()
+    )]
     async fn desktop_state(
         &self,
         context: RequestContext<RoleServer>,
@@ -1286,7 +1336,10 @@ impl Server {
     /// Fails with `not_accessible`, `ambiguous_window` (several windows fit), `app_denied`
     /// or `deadline_exceeded` (a hung app); a walk out of time gives what it read, cut
     /// short. Needs no lease.
-    #[tool(annotations(read_only_hint = true))]
+    #[tool(
+        title = "Accessible elements",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
     async fn elements(
         &self,
         Parameters(args): Parameters<ElementsArgs>,
@@ -1319,7 +1372,11 @@ impl Server {
     /// full-resolution PNG is also saved (`saved`), or `save_not_enabled` without a
     /// `capture_dir`. To see an action's effect, pass it `screenshot: true` rather than
     /// calling this alongside it. Prefer `desktop_state` when structured data answers.
-    #[tool(annotations(read_only_hint = true))]
+    #[tool(
+        title = "Screenshot",
+        annotations(read_only_hint = true, open_world_hint = false),
+        meta = always_load()
+    )]
     async fn screenshot(
         &self,
         Parameters(args): Parameters<ScreenshotArgs>,
@@ -1359,7 +1416,10 @@ impl Server {
     /// instead of polling with screenshots; a condition already true returns at once.
     /// `observed` is `met` (with the matching `windows`), `timeout`, or `uncertain` if
     /// niri's event stream was lost. Needs no lease.
-    #[tool(annotations(read_only_hint = true))]
+    #[tool(
+        title = "Wait for a change",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
     async fn wait_for(
         &self,
         Parameters(args): Parameters<WaitForArgs>,
@@ -1394,12 +1454,15 @@ impl Server {
     /// if Noctalia's reply was lost; `shell.active_panel` is the panel open at the end. An
     /// open panel holds keyboard focus, so type into it with `expect: "none"`. Fails with
     /// `noctalia_unavailable` when Noctalia isn't answering. Requires the lease.
-    #[tool(annotations(
-        read_only_hint = false,
-        destructive_hint = false,
-        idempotent_hint = true,
-        open_world_hint = false
-    ))]
+    #[tool(
+        title = "Open or close a shell panel",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
     async fn shell_panel(
         &self,
         Parameters(args): Parameters<PanelArgs>,
@@ -1435,12 +1498,15 @@ impl Server {
     /// back as `upstream_error` with Noctalia's text. Noctalia acts before it replies, so
     /// `uncertain` means the command may have run. Listed only when the user set
     /// `unrestricted = true`. Requires the lease.
-    #[tool(annotations(
-        read_only_hint = false,
-        destructive_hint = true,
-        idempotent_hint = false,
-        open_world_hint = false
-    ))]
+    #[tool(
+        title = "Run a Noctalia command",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
     async fn noctalia(
         &self,
         Parameters(args): Parameters<NoctaliaArgs>,
@@ -1475,7 +1541,10 @@ impl Server {
     /// clipboard still holds what was there before (`copied_before_lease`), nothing is
     /// copied (`nothing_copied`), nothing copied is text (`no_text`), or its owner, such as
     /// a password manager, marked it as a secret (`secret`). Requires the lease.
-    #[tool(annotations(read_only_hint = true))]
+    #[tool(
+        title = "Read the clipboard",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
     async fn clipboard_read(
         &self,
         context: RequestContext<RoleServer>,
@@ -1765,6 +1834,14 @@ async fn unless_cancelled<T>(
     }
 }
 
+/// Asks clients that defer loading tools until they search for one, such as Claude Code,
+/// to load this one up front: the tools nearly every task starts with.
+fn always_load() -> rmcp::model::MetaObject {
+    let mut meta = serde_json::Map::new();
+    meta.insert("anthropic/alwaysLoad".to_owned(), Value::Bool(true));
+    rmcp::model::MetaObject(meta)
+}
+
 /// `listing` as `structuredContent`, with its text in `format`.
 fn listed(listing: &elements::Listing, format: ListingArg) -> Result<CallToolResult, ErrorData> {
     let mut result = structured(listing)?;
@@ -1832,8 +1909,35 @@ mod tests {
         ] {
             let annotations = tool.annotations.unwrap();
             assert_eq!(annotations.read_only_hint, Some(true), "{}", tool.name);
+            assert_eq!(annotations.open_world_hint, Some(false), "{}", tool.name);
             assert!(tool.description.is_some_and(|text| !text.is_empty()));
         }
+    }
+
+    /// Clients that load tools only when a search finds them, as Claude Code does, still
+    /// load the three that nearly every task starts with; marking more would undo the
+    /// deferral.
+    #[test]
+    fn every_tool_has_a_title_and_only_the_starting_tools_load_up_front() {
+        let (server, dir) = listing_everything("titles", "full");
+        let mut loaded = Vec::new();
+        for tool in server.tool_router.list_all() {
+            assert!(
+                tool.title.is_some_and(|title| !title.is_empty()),
+                "{}",
+                tool.name
+            );
+            let always = tool
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.0.get("anthropic/alwaysLoad"));
+            if always == Some(&Value::Bool(true)) {
+                loaded.push(tool.name.to_string());
+            }
+        }
+        loaded.sort_unstable();
+        assert_eq!(loaded, ["desktop_state", "screenshot", "status"]);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

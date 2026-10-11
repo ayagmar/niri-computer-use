@@ -34,7 +34,7 @@ The server offers up to 22 tools. `shell_panel` is listed only when Noctalia is 
 | `shell_panel` | yes | opens or closes one of three Noctalia panels | [Noctalia](../../concepts/noctalia/#panels) |
 | `noctalia` | yes | sends any Noctalia command; only with `unrestricted` | [Noctalia](../../concepts/noctalia/#any-command) |
 
-The reading tools carry MCP's `readOnlyHint`, and `close_window`, `niri_action`, `click`, `drag`, `key`, `type_text`, `activate_element`, `set_element_text` and `noctalia` carry `destructiveHint`.
+The reading tools carry MCP's `readOnlyHint`, and `close_window`, `niri_action`, `click`, `drag`, `key`, `type_text`, `activate_element`, `set_element_text` and `noctalia` carry `destructiveHint`. Every tool has a `title` and `openWorldHint: false`, since each acts only on this desktop. `status`, `desktop_state` and `screenshot` carry `_meta["anthropic/alwaysLoad"]: true`, so clients that load tools only when a search finds them, such as Claude Code, load these three up front.
 
 ## Results
 

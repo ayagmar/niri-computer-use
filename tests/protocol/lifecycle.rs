@@ -113,6 +113,11 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
         assert_eq!(hints, want_hints, "{name}");
         assert_eq!(tool["inputSchema"]["required"], required, "{name}");
         assert!(!tool["description"].as_str().unwrap().is_empty(), "{name}");
+        assert!(tool["title"].is_string(), "{name}");
+        assert_eq!(annotations["openWorldHint"], false, "{name}");
+        let always_loaded = tool["_meta"]["anthropic/alwaysLoad"] == true;
+        let starts_tasks = matches!(name, "status" | "desktop_state" | "screenshot");
+        assert_eq!(always_loaded, starts_tasks, "{name}");
         assert_eq!(tool["inputSchema"]["type"], "object", "{name}");
         // Optional arguments are absent or a value, never typed as nullable, and advertise
         // their real defaults.

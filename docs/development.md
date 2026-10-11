@@ -39,7 +39,7 @@ Nothing reaches your desktop, clipboard, session or audit log.
 The tests check:
 
 - the handshake, version negotiation, the server's instructions, and requests before `initialize`
-- the tool list with and without `noctalia` on `PATH`, with each tool's schema and read-only annotation
+- the tool list with and without `noctalia` on `PATH`, with each tool's schema, title, annotations and `_meta`
 - that every line on stdout is a JSON-RPC message
 - both error shapes: argument mistakes as plain text, and execution failures with their stable name and upstream detail
 - screenshots: the image block, its metadata, and grim's arguments for each target, format and scale
