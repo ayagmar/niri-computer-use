@@ -105,3 +105,21 @@ Runs at `23891c5`, the last code commit, each with C1's host snapshot unchanged,
 | `make nested-a11y SSD=1 SHARED=1` | 1791680273-3201259 | pass |
 
 Activations took a median of 315–329 ms per call, as before; the last gate now reads the element's lineage, names, actions, states and role again, one call at a time, beside the readiness report.
+
+## After the third review
+
+The third round of fixes bounds the age of every answer the last gate relies on to 250 ms, refusing with `element_busy` when the checks run over twice, reads the lock state again after the readiness report, stops rebinding a ref to the element's new name after an action, refuses a frame whose size and title disagree, names only standard D-Bus errors, reports focus as it is after the look, and keeps what the app answered when a stop cuts an action. Each finding has a protocol test against the mock application. The nested runs list the counter button before each of the 20 activations per toolkit and require the ref the last one relabelled to be `element_stale`.
+
+The GTK 4 fixture gained a list of 200 records with a `Delete` button on each row. In GTK 4.24.1 the rows are unnamed `list_item`s and the record's name is on a label beside the button. Deleting a record removed its row's objects and moved the rows below up an index; a 120-pixel scroll kept the paths of the rows still in view at new indexes, and the rows scrolling in were new objects; no kept path showed another name. Every old ref tried afterwards was `element_stale`, and only the record deleted on purpose was gone.
+
+Runs at `bf1014b`, the last code commit, each with C1's host snapshot unchanged, no host journal entries from the run and no leftover processes:
+
+| Command | Run | Result |
+|---|---|---|
+| `make check` | before every commit | pass: 296 server, 127 harness and 208 protocol tests, one protocol test ignored |
+| `make nested-a11y` | 1791722604-427698 | pass |
+| `make nested-a11y SHARED=1` | 1791722660-437227 | pass |
+| `make nested-a11y SSD=1` | 1791722717-448837 | pass |
+| `make nested-a11y SSD=1 SHARED=1` | 1791722788-456957 | pass |
+
+Activations took a median of 318–344 ms per call, as before; the gate's deadline adds one clock read per pass. An earlier run, 1791722209-376414, failed reading the Qt fixture's counter while the fixture was rewriting it, fixed in `c01d79f`.
