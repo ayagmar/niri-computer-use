@@ -418,10 +418,7 @@ pub(crate) fn pick_frame(
         Picked::Fits(picked)
     };
     let (Picked::Fits(index) | Picked::Mismatch(index)) = picked;
-    if others
-        .iter()
-        .any(|other| could_own(frames, index, window.title, *other))
-    {
+    if shared(frames, index, window.title, others) {
         return Err(NoFrame::Shared);
     }
     Ok(picked)
@@ -436,19 +433,28 @@ fn titled_elsewhere(frames: &[Frame<'_>], picked: usize, title: Option<&str>) ->
     !named(picked) && (0..frames.len()).any(named)
 }
 
-/// Whether `other`, another window of the app, could be the frame at `picked` instead of
-/// the window titled `title`: no other frame has its size, and the titles are the same or
-/// one of them is unknown.
-fn could_own(frames: &[Frame<'_>], picked: usize, title: Option<&str>, other: Shape<'_>) -> bool {
-    let alike = match (title, other.title) {
-        (Some(title), Some(other)) => title == other,
-        _ => true,
-    };
-    alike
-        && !frames
+/// Whether another window of the app could be the frame at `picked` instead of the
+/// window titled `title`. Only `others` whose titles are the same or unknown count. For
+/// each of their sizes, when more of them have that size than other frames fit it, one of
+/// them has no frame of its own and could be the picked one.
+fn shared(frames: &[Frame<'_>], picked: usize, title: Option<&str>, others: &[Shape<'_>]) -> bool {
+    let alike: Vec<(i32, i32)> = others
+        .iter()
+        .filter(|other| match (title, other.title) {
+            (Some(title), Some(other)) => title == other,
+            _ => true,
+        })
+        .map(|other| other.size)
+        .collect();
+    alike.iter().any(|&size| {
+        let need = alike.iter().filter(|&&other| other == size).count();
+        let have = frames
             .iter()
             .enumerate()
-            .any(|(index, frame)| index != picked && frame_fits(frame.extents, other.size))
+            .filter(|(index, frame)| *index != picked && frame_fits(frame.extents, size))
+            .count();
+        need > have
+    })
 }
 
 /// The one candidate, or the one whose name is `title`.
@@ -749,6 +755,16 @@ mod tests {
         let smaller = shape((300, 200), Some("Untitled"));
         assert_eq!(pick_frame(&ssd, this, &[smaller]), Ok(Picked::Fits(0)));
         assert_eq!(pick_frame(&ssd, smaller, &[this]), Ok(Picked::Fits(1)));
+        // Two other windows of one size and one frame of that size left: one of them has
+        // no frame of its own and could be the picked one.
+        let three = [
+            frame(450, 350, ""),
+            frame(400, 300, ""),
+            frame(350, 250, ""),
+        ];
+        let floating = shape((400, 300), None);
+        let twins = [shape((350, 250), None), shape((350, 250), None)];
+        assert_eq!(pick_frame(&three, floating, &twins), Err(NoFrame::Shared));
         // Distinct titles keep the title rule.
         let named = shape((400, 300), Some("Other"));
         assert_eq!(
