@@ -19,6 +19,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::time::Instant;
 use zbus::Connection;
+use zbus::message::Message;
+use zbus::names::OwnedErrorName;
 use zbus::zvariant::{DynamicType, OwnedObjectPath, OwnedValue};
 
 use crate::error::{ErrorName, ToolError};
@@ -47,6 +49,9 @@ const GONE: [&str; 4] = [
     "org.freedesktop.DBus.Error.UnknownObject",
     "org.freedesktop.DBus.Error.UnknownMethod",
 ];
+
+/// What a failure says in place of an error name an application made up.
+const APPLICATION_ERROR: &str = "application_error";
 
 /// What the bus answers in place of a reply when the application left without sending one.
 const NO_REPLY: &str = "org.freedesktop.DBus.Error.NoReply";
@@ -319,13 +324,13 @@ impl Request {
     }
 
     /// `upstream_error` for a failed call: the whole error, or with `names_only` its
-    /// name alone.
+    /// name alone, when it is one of D-Bus's standard ones.
     fn upstream(&self, what: &str, error: &zbus::Error) -> ToolError {
         if !self.names_only {
             return upstream(what, error);
         }
-        let named = if let zbus::Error::MethodError(name, _, _) = error {
-            name.to_string()
+        let named = if let zbus::Error::MethodError(name, _, reply) = error {
+            standard_name(name, reply)
         } else if let zbus::Error::InputOutput(error) = error {
             error.to_string()
         } else {
@@ -699,6 +704,17 @@ fn late(what: &str, left: Duration) -> ToolError {
         )
     };
     ToolError::new(ErrorName::DeadlineExceeded, detail)
+}
+
+/// A D-Bus error's name when it is one the D-Bus specification defines, as zbus lists them,
+/// or `application_error`: an application names its own errors, and may put anything that
+/// fits in a name, such as a record's identifier.
+fn standard_name(name: &OwnedErrorName, reply: &Message) -> String {
+    let known = zbus::fdo::Error::from(zbus::Error::MethodError(name.clone(), None, reply.clone()));
+    if matches!(known, zbus::fdo::Error::ZBus(_)) {
+        return APPLICATION_ERROR.to_owned();
+    }
+    name.to_string()
 }
 
 fn upstream(what: &str, error: &zbus::Error) -> ToolError {

@@ -12,6 +12,8 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{Notify, oneshot};
+use zbus::message::{Header, Message};
+use zbus::names::ErrorName;
 use zbus::zvariant::OwnedObjectPath;
 use zbus::{Connection, fdo, interface};
 
@@ -117,6 +119,66 @@ enum Next {
     Delay(Duration),
     /// `org.freedesktop.DBus.Error.Failed` with this message.
     Fail(String),
+    /// An error whose name the application made up.
+    FailNamed(&'static str),
+}
+
+/// What a method answers with instead of its reply: one of D-Bus's standard errors, or one
+/// whose name an application made up, which may hold anything a name can.
+#[derive(Debug)]
+pub(crate) enum Refusal {
+    Standard(fdo::Error),
+    Named(&'static str),
+}
+
+impl From<fdo::Error> for Refusal {
+    fn from(error: fdo::Error) -> Self {
+        Self::Standard(error)
+    }
+}
+
+/// A property's getter can only answer D-Bus's standard errors.
+impl From<Refusal> for fdo::Error {
+    fn from(refusal: Refusal) -> Self {
+        match refusal {
+            Refusal::Standard(error) => error,
+            Refusal::Named(_) => Self::Failed("refused".to_owned()),
+        }
+    }
+}
+
+impl From<zbus::Error> for Refusal {
+    fn from(error: zbus::Error) -> Self {
+        Self::Standard(error.into())
+    }
+}
+
+impl zbus::DBusError for Refusal {
+    fn create_reply(&self, call: &Header<'_>) -> zbus::Result<Message> {
+        match self {
+            Self::Standard(error) => error.create_reply(call),
+            Self::Named(_) => Message::error(call, self.name())?.build(&("refused",)),
+        }
+    }
+
+    fn name(&self) -> ErrorName<'_> {
+        match self {
+            Self::Standard(error) => error.name(),
+            Self::Named(name) => ErrorName::from_static_str_unchecked(name),
+        }
+    }
+
+    fn description(&self) -> Option<&str> {
+        match self {
+            Self::Standard(error) => error.description(),
+            Self::Named(_) => Some("refused"),
+        }
+    }
+}
+
+/// A method's reply, or why not. Named `Result` so zbus's `interface` sees an error type.
+mod answer {
+    pub(crate) type Result<T> = std::result::Result<T, super::Refusal>;
 }
 
 #[derive(Debug, Default)]
@@ -192,6 +254,12 @@ impl Mock {
         self.set_next((member, None), Next::Fail(message.to_owned()));
     }
 
+    /// Fails the next call of `member` on the object at `path` with an error named `name`,
+    /// a name the application made up.
+    pub(crate) fn fail_named(&self, member: &'static str, path: &str, name: &'static str) {
+        self.set_next((member, Some(path.to_owned())), Next::FailNamed(name));
+    }
+
     /// The index each `DoAction` asked for, in order.
     pub(crate) fn done(&self) -> Vec<i32> {
         self.0.lock().unwrap().done.clone()
@@ -236,7 +304,7 @@ impl Mock {
 
     /// Counts a call of `member` on the object at `path` and applies what the test set for
     /// it: for that object first, else for any.
-    async fn called(&self, member: &'static str, path: &str) -> fdo::Result<()> {
+    async fn called(&self, member: &'static str, path: &str) -> answer::Result<()> {
         let (next, slow) = self.count(member, path);
         tokio::time::sleep(slow).await;
         match next {
@@ -246,7 +314,8 @@ impl Mock {
                 released.await.ok();
             }
             Some(Next::Delay(delay)) => tokio::time::sleep(delay).await,
-            Some(Next::Fail(message)) => return Err(fdo::Error::Failed(message)),
+            Some(Next::Fail(message)) => return Err(fdo::Error::Failed(message).into()),
+            Some(Next::FailNamed(name)) => return Err(Refusal::Named(name)),
         }
         Ok(())
     }
@@ -404,11 +473,11 @@ struct Node {
 }
 
 impl Node {
-    fn read<T>(&self, read: impl FnOnce(&Object, &str) -> T) -> fdo::Result<T> {
-        self.mock.read(&self.path, read)
+    fn read<T>(&self, read: impl FnOnce(&Object, &str) -> T) -> answer::Result<T> {
+        Ok(self.mock.read(&self.path, read)?)
     }
 
-    async fn called(&self, member: &'static str) -> fdo::Result<()> {
+    async fn called(&self, member: &'static str) -> answer::Result<()> {
         self.mock.called(member, &self.path).await
     }
 }
@@ -421,17 +490,17 @@ struct Accessible(Node);
 
 #[interface(name = "org.a11y.atspi.Accessible")]
 impl Accessible {
-    async fn get_role(&self) -> fdo::Result<u32> {
+    async fn get_role(&self) -> answer::Result<u32> {
         self.0.called("GetRole").await?;
         self.0.read(|object, _| object.role)
     }
 
-    async fn get_state(&self) -> fdo::Result<Vec<u32>> {
+    async fn get_state(&self) -> answer::Result<Vec<u32>> {
         self.0.called("GetState").await?;
         self.0.read(|object, _| vec![object.states, 0])
     }
 
-    async fn get_children(&self) -> fdo::Result<Vec<(String, OwnedObjectPath)>> {
+    async fn get_children(&self) -> answer::Result<Vec<(String, OwnedObjectPath)>> {
         self.0.called("GetChildren").await?;
         self.0.read(|object, app| {
             object
@@ -442,7 +511,7 @@ impl Accessible {
         })
     }
 
-    async fn get_child_at_index(&self, index: i32) -> fdo::Result<(String, OwnedObjectPath)> {
+    async fn get_child_at_index(&self, index: i32) -> answer::Result<(String, OwnedObjectPath)> {
         self.0.called("GetChildAtIndex").await?;
         self.0.read(|object, app| {
             let child = usize::try_from(index)
@@ -455,14 +524,14 @@ impl Accessible {
         })
     }
 
-    async fn get_interfaces(&self) -> fdo::Result<Vec<String>> {
+    async fn get_interfaces(&self) -> answer::Result<Vec<String>> {
         self.0.called("GetInterfaces").await?;
         self.0.read(|object, _| object.interfaces())
     }
 
     #[zbus(property, name = "Name")]
     fn accessible_name(&self) -> fdo::Result<String> {
-        self.0.read(|object, _| object.name.clone())
+        Ok(self.0.read(|object, _| object.name.clone())?)
     }
 }
 
@@ -470,12 +539,10 @@ struct Component(Node);
 
 #[interface(name = "org.a11y.atspi.Component")]
 impl Component {
-    async fn get_extents(&self, coord_type: u32) -> fdo::Result<(i32, i32, i32, i32)> {
+    async fn get_extents(&self, coord_type: u32) -> answer::Result<(i32, i32, i32, i32)> {
         self.0.called("GetExtents").await?;
         if coord_type != WINDOW_COORDS {
-            return Err(fdo::Error::InvalidArgs(
-                "only WINDOW coordinates".to_owned(),
-            ));
+            return Err(fdo::Error::InvalidArgs("only WINDOW coordinates".to_owned()).into());
         }
         self.0.read(|object, _| object.extents.unwrap_or_default())
     }
@@ -485,7 +552,7 @@ struct Action(Node);
 
 #[interface(name = "org.a11y.atspi.Action")]
 impl Action {
-    async fn get_actions(&self) -> fdo::Result<Vec<(String, String, String)>> {
+    async fn get_actions(&self) -> answer::Result<Vec<(String, String, String)>> {
         self.0.called("GetActions").await?;
         self.0.read(|object, _| {
             object
@@ -496,7 +563,7 @@ impl Action {
         })
     }
 
-    async fn do_action(&self, index: i32) -> fdo::Result<bool> {
+    async fn do_action(&self, index: i32) -> answer::Result<bool> {
         self.0.mock.0.lock().unwrap().done.push(index);
         self.0.called("DoAction").await?;
         self.0.mock.change(&self.0.path, |object| {
@@ -518,7 +585,7 @@ impl Text {
     #[zbus(property)]
     async fn character_count(&self) -> fdo::Result<i32> {
         self.0.called("CharacterCount").await?;
-        self.0.read(|object, _| object.text.unwrap_or_default())
+        Ok(self.0.read(|object, _| object.text.unwrap_or_default())?)
     }
 }
 
@@ -526,7 +593,7 @@ struct EditableText(Node);
 
 #[interface(name = "org.a11y.atspi.EditableText")]
 impl EditableText {
-    async fn set_text_contents(&self, text: String) -> fdo::Result<bool> {
+    async fn set_text_contents(&self, text: String) -> answer::Result<bool> {
         self.0.called("SetTextContents").await?;
         let characters = i32::try_from(text.chars().count()).unwrap();
         self.0

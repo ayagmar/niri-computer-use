@@ -187,7 +187,7 @@ pub(crate) async fn aim(
     if let Some(refused) = policy::refuse_window(policy, window.id, window.app_id.as_deref()) {
         return Err(refused);
     }
-    let request = a11y.request(a11y::BUDGET).await?;
+    let request = a11y.request(a11y::BUDGET).await?.names_only();
     identify(&request, element, window, Names::Parents).await?;
     let probe = match request.probe(element).await {
         Ok(probe) => probe,

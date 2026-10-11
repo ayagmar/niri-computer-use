@@ -217,6 +217,64 @@ async fn the_apps_error_messages_reach_neither_the_result_nor_the_audit_log() {
     assert!(!audit.contains(SENTINEL), "{audit}");
 }
 
+/// An error name an application made up, which may hold anything a name can.
+const NAMED: &str = "org.ncu.PRIVATE_REVIEW_SENTINEL";
+
+// Sol's custom error name: only D-Bus's standard error names are repeated, at the checks
+// before the call, the call itself and the look afterwards, and when a pointer aims at an
+// element.
+#[tokio::test]
+async fn an_apps_own_error_names_reach_neither_the_result_nor_the_audit_log() {
+    let mut desk = Desk::start("el-named").await;
+    let button = desk.element("Safe").await;
+    let entry = desk.element("Field").await;
+    let shot = desk.screenshot_ref().await;
+    let mut results = Vec::new();
+    for (held, member) in [
+        (&ACTIVATE, "GetActions"),
+        (&ACTIVATE, "DoAction"),
+        (&SET_TEXT, "GetInterfaces"),
+        (&SET_TEXT, "SetTextContents"),
+    ] {
+        let (_, path) = held.element;
+        desk.mock.fail_named(member, path, NAMED);
+        let element = if held.tool == "activate_element" {
+            &button
+        } else {
+            &entry
+        };
+        let result = desk.server.call(held.tool, held.arguments(element)).await;
+        let (error, detail) = tool_error(&result);
+        assert_eq!(error, "upstream_error", "{member}: {result}");
+        assert!(
+            detail.ends_with(": application_error"),
+            "{member}: {detail}"
+        );
+        results.push(result);
+    }
+    let acting = desk.mock.hold_on("DoAction", "/button");
+    let id = desk
+        .server
+        .start_call("activate_element", ACTIVATE.arguments(&button))
+        .await;
+    acting.arrived().await;
+    desk.mock.fail_named("GetState", "/button", NAMED);
+    acting.release();
+    let after = desk.server.response(id).await["result"].clone();
+    assert_eq!(after["structuredContent"]["observed"], "unknown", "{after}");
+    results.push(after);
+    desk.mock.fail_named("GetRole", "/button", NAMED);
+    let aimed = json!({"screenshot_ref": shot, "element": button});
+    let aimed = desk.server.call("pointer_move", aimed).await;
+    assert_eq!(tool_error(&aimed).0, "upstream_error", "{aimed}");
+    results.push(aimed);
+    for result in &results {
+        assert!(!result.to_string().contains("SENTINEL"), "{result}");
+    }
+    let audit = std::fs::read_to_string(desk.fixture.audit_log()).unwrap();
+    assert!(!audit.contains("SENTINEL"), "{audit}");
+}
+
 #[tokio::test]
 async fn an_apps_action_names_reach_neither_errors_nor_the_audit_log() {
     let mut desk = Desk::start("el-names").await;
