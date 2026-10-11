@@ -13,6 +13,7 @@ use niri_ipc::{Request, Response, Window};
 use serde_json::Value;
 
 mod hidden;
+mod rows;
 mod server;
 
 use crate::config::Decorations;
@@ -322,15 +323,25 @@ impl Fixture {
         Ok(Self { toolkit, process })
     }
 
+    /// The GTK 4 fixture's 400x300 window with a long list and a `Delete` on each row.
+    pub(crate) fn start_list(session: &Session<'_>) -> Result<Self> {
+        Self::start_gtk(session, "list", "fixture-list.log")
+    }
+
     /// A GTK 4 window that isn't a fixture of the checks, to take focus from them.
     pub(crate) fn start_decoy(session: &Session<'_>) -> Result<Self> {
+        Self::start_gtk(session, "button", "fixture-decoy.log")
+    }
+
+    /// Writes the GTK 4 fixture into `TEST_DIR` and starts it in `mode`, its output kept
+    /// as the artifact `log`.
+    fn start_gtk(session: &Session<'_>, mode: &str, log: &str) -> Result<Self> {
         let root = session.test_dir().root();
         let file = root.join("gtk.py");
         fs::write(&file, include_str!("../fixtures/gtk.py"))
             .context(format!("write {}", file.display()))?;
-        let args = vec!["-I".into(), file.into(), root.into(), "button".into()];
-        let log = session.artifact("fixture-decoy.log");
-        let process = session.start("python3", &args, log, FIXTURE_DEADLINE)?;
+        let args = vec!["-I".into(), file.into(), root.into(), mode.into()];
+        let process = session.start("python3", &args, session.artifact(log), FIXTURE_DEADLINE)?;
         Ok(Self {
             toolkit: Toolkit::Gtk4,
             process,

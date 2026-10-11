@@ -73,6 +73,7 @@ window-rule {{
 
 window-rule {{
     match app-id="^org\\.ncu\\.A11y$"
+    match app-id="^org\\.ncu\\.List$"
     match app-id="^org\\.ncu\\.Gtk3$"
     match app-id="^org\\.qt-project\\.qml6?$"
     open-floating true

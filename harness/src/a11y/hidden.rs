@@ -11,7 +11,7 @@ use crate::failure::{Failure, Result};
 use crate::mcp::field;
 use crate::session::Session;
 
-const ACCESSIBLE: &str = "org.a11y.atspi.Accessible";
+pub(super) const ACCESSIBLE: &str = "org.a11y.atspi.Accessible";
 const TEXT_INTERFACE: &str = "org.a11y.atspi.Text";
 /// AT-SPI's role `text`.
 const TEXT: u64 = 61;
@@ -45,7 +45,7 @@ pub(crate) fn record(session: &mut Session<'_>, bus: &Bus, pid: i32) -> Result<(
 }
 
 /// The fixture's connection on the bus.
-fn app(session: &Session<'_>, bus: &Bus, pid: i32) -> Result<String> {
+pub(super) fn app(session: &Session<'_>, bus: &Bus, pid: i32) -> Result<String> {
     for app in bus.apps(session)? {
         if bus.pid(session, &app)? == pid {
             return Ok(app);
@@ -87,7 +87,7 @@ fn walk(
     Ok(())
 }
 
-fn name(session: &Session<'_>, bus: &Bus, app: &str, path: &str) -> Result<String> {
+pub(super) fn name(session: &Session<'_>, bus: &Bus, app: &str, path: &str) -> Result<String> {
     let args = [
         format!("--address={}", bus.address),
         "--json=short".to_owned(),
@@ -127,7 +127,13 @@ fn describe(session: &Session<'_>, bus: &Bus, app: &str, path: &str) -> Value {
     })
 }
 
-fn call(session: &Session<'_>, bus: &Bus, app: &str, path: &str, call: &[&str]) -> Result<Value> {
+pub(super) fn call(
+    session: &Session<'_>,
+    bus: &Bus,
+    app: &str,
+    path: &str,
+    call: &[&str],
+) -> Result<Value> {
     let mut args = vec![app, path];
     args.extend_from_slice(call);
     busctl(session, &bus.address, &args)

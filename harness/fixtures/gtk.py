@@ -9,7 +9,11 @@ the `Plain entry`, which reports its text in `a11y-entry-text`, the `Password en
 `password-changes` and `pin-changes` without their text, the `Hidden entry`, which
 only hides its synthetic text, as a free-form entry can, a `Vanish` button that
 removes itself when clicked, a `Dismiss` button that closes the window, and a `Rename`
-button that changes the window's Wayland app_id to `org.ncu.Denied`.
+button that changes the window's Wayland app_id to `org.ncu.Denied`. `list` is a 400x300
+window with `Step` and `Jump` buttons above a `Gtk.ListView` of 200 synthetic records,
+`Record 001` to `Record 200`, each row a label and a `Delete` button. `Step` scrolls
+the list 120 pixels down, `Jump` brings `Record 101` into view, and each `Delete`
+removes the record its row shows then and appends it to `list-deletes`.
 """
 
 import json
@@ -19,7 +23,7 @@ import sys
 
 root = Path(sys.argv[1]).resolve(strict=True)
 mode = sys.argv[2]
-if mode not in ("button", "entry", "a11y"):
+if mode not in ("button", "entry", "a11y", "list"):
     raise RuntimeError(f"unknown fixture {mode}")
 run = root / "run"
 for name in ("NIRI_SOCKET", "WAYLAND_DISPLAY"):
@@ -40,7 +44,12 @@ gi.require_version("GdkWayland", "4.0")
 from gi.repository import GdkWayland, Gio, GLib, Gtk
 
 counter = root / "activations"
-app_id = {"button": "org.ncu.Activation", "entry": "org.ncu.Entry", "a11y": "org.ncu.A11y"}[mode]
+app_id = {
+    "button": "org.ncu.Activation",
+    "entry": "org.ncu.Entry",
+    "a11y": "org.ncu.A11y",
+    "list": "org.ncu.List",
+}[mode]
 app = Gtk.Application(application_id=app_id, flags=Gio.ApplicationFlags.NON_UNIQUE)
 clicks = 0
 submits = 0
@@ -149,14 +158,69 @@ def a11y_window(window):
     window.set_child(grid)
 
 
+deletes = []
+
+
+def deleted(records, item):
+    deletes.append(item.get_item().get_string())
+    records.remove(item.get_position())
+    report("list-deletes", json.dumps(deletes))
+
+
+def list_row(_factory, item, records):
+    row = Gtk.Box(spacing=6)
+    row.append(Gtk.Label(hexpand=True, xalign=0))
+    delete = Gtk.Button(label="Delete")
+    delete.connect("clicked", lambda button: deleted(records, item))
+    row.append(delete)
+    item.set_child(row)
+
+
+def list_bind(_factory, item):
+    item.get_child().get_first_child().set_label(item.get_item().get_string())
+
+
+def list_window(window):
+    records = Gtk.StringList.new([f"Record {n:03}" for n in range(1, 201)])
+    factory = Gtk.SignalListItemFactory()
+    factory.connect("setup", list_row, records)
+    factory.connect("bind", list_bind)
+    view = Gtk.ListView(model=Gtk.NoSelection(model=records), factory=factory)
+    scrolled = Gtk.ScrolledWindow(vexpand=True)
+    scrolled.set_child(view)
+    adjustment = scrolled.get_vadjustment()
+    step = Gtk.Button(label="Step", hexpand=True)
+    step.connect(
+        "clicked", lambda button: adjustment.set_value(adjustment.get_value() + 120)
+    )
+    jump = Gtk.Button(label="Jump", hexpand=True)
+    jump.connect(
+        "clicked", lambda button: view.scroll_to(100, Gtk.ListScrollFlags.NONE, None)
+    )
+    buttons = Gtk.Box(spacing=6)
+    buttons.append(step)
+    buttons.append(jump)
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+    box.append(buttons)
+    box.append(scrolled)
+    window.set_child(box)
+    report("list-deletes", "[]")
+
+
 def activate(application):
     window = Gtk.ApplicationWindow(application=application)
-    window.set_default_size(*((400, 300) if mode == "a11y" else (320, 240)))
+    window.set_default_size(*((400, 300) if mode in ("a11y", "list") else (320, 240)))
     window.set_title(f"{mode} fixture")
-    {"button": button_window, "entry": entry_window, "a11y": a11y_window}[mode](window)
+    windows = {
+        "button": button_window,
+        "entry": entry_window,
+        "a11y": a11y_window,
+        "list": list_window,
+    }
+    windows[mode](window)
     window.present()
 
 
 app.connect("activate", activate)
-GLib.timeout_add_seconds(240 if mode == "a11y" else 45, app.quit)
+GLib.timeout_add_seconds(240 if mode in ("a11y", "list") else 45, app.quit)
 app.run([])
