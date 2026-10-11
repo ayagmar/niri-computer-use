@@ -330,8 +330,11 @@ impl Engine {
                 Some(target) => Some(Box::pin(self.survey_before(session, target)).await),
                 None => None,
             };
-            let recorder = Recorder::start(self.events.as_ref()).await;
-            let outcome = work.await?;
+            let mut recorder = Recorder::start(self.events.as_ref()).await;
+            let outcome = match &mut recorder {
+                Some(recorder) => recorder.follow(work).await?,
+                None => work.await?,
+            };
             Ok(Watched {
                 outcome,
                 recorder,
@@ -527,14 +530,23 @@ impl Engine {
                 };
             }
         };
+        let Watched {
+            outcome,
+            mut recorder,
+            before,
+        } = watched;
         let capture = |request| self.capture(session, request);
-        let mut evidenced = act::with_evidence(watched.outcome, shoot, capture).await;
+        let evidence = act::with_evidence(outcome, shoot, capture);
+        let mut evidenced = match &mut recorder {
+            Some(recorder) => recorder.follow(evidence).await,
+            None => evidence.await,
+        };
         let wait = if shoot { Wait::Settled } else { Wait::Quiet };
-        let mut changes = match watched.recorder {
+        let mut changes = match recorder {
             Some(recorder) => recorder.finish(wait).await,
             None => Changes::default(),
         };
-        if let Some(before) = watched.before {
+        if let Some(before) = before {
             changes.elements = Box::pin(self.survey_after(session, before)).await;
         }
         evidenced.outcome.changes = (!changes.is_empty()).then_some(changes);

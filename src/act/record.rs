@@ -1,6 +1,7 @@
 //! The change report's watch on niri's event stream: a waiter registered as an action's
-//! work starts, which afterwards applies every event niri sent since and says what changed
-//! (`changes::desktop`). It reads only the event stream, never asks niri anything.
+//! work starts, which follows niri's events while the work and its evidence run and
+//! afterwards says what changed (`changes::desktop`). It reads only the event stream, never
+//! asks niri anything.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -9,14 +10,15 @@ use niri_ipc::Window;
 use tokio::time::Instant;
 
 use crate::changes::{self, Changes, Scene};
-use crate::niri::waiter::{View, Waited, Waiter};
+use crate::niri::waiter::{Waited, Waiter};
 use crate::niri::{self, Events};
 
-/// The report ends once this long passes without an event from niri, so an effect that
-/// comes a moment after the action, such as a dialog opening after a click, is in it.
+/// The report ends once niri has sent no event for this long, counted from the start of
+/// the action, so an effect that comes a moment after the input, such as a dialog
+/// opening after a click, is in it. The action's own wait counts towards it.
 pub(crate) const QUIET: Duration = Duration::from_millis(250);
-/// At most this long after the work ended, however busy niri is.
-const QUIET_LIMIT: Duration = Duration::from_secs(1);
+/// At most this long after the action's own wait and its evidence, however busy niri is.
+const EXTRA: Duration = Duration::from_millis(500);
 
 /// A watch on niri's events from the start of an action.
 #[derive(Debug)]
@@ -25,6 +27,10 @@ pub(crate) struct Recorder {
     before: Scene,
     /// Every window seen since that wasn't open before, as last seen.
     passing: BTreeMap<u64, Window>,
+    /// When the last event came, or the watch started.
+    last: Instant,
+    /// Why the event stream ended, once it did.
+    lost: Option<String>,
 }
 
 /// How long the report waits once the work ended.
@@ -45,67 +51,86 @@ impl Recorder {
             waiter,
             before,
             passing: BTreeMap::new(),
+            last: Instant::now(),
+            lost: None,
         })
+    }
+
+    /// Runs `work`, applying niri's events as they come meanwhile, so that the time it
+    /// spends with niri quiet counts towards `QUIET`.
+    pub(crate) async fn follow<T>(&mut self, work: impl Future<Output = T>) -> T {
+        let mut work = std::pin::pin!(work);
+        while self.lost.is_none() {
+            tokio::select! {
+                biased;
+                done = &mut work => return done,
+                _ = self.next(QUIET) => {}
+            }
+        }
+        work.await
     }
 
     /// Applies niri's events as `wait` says, then what changed since the start; with
     /// `lost` saying why when the stream ended first.
-    pub(crate) async fn finish(self, wait: Wait) -> Changes {
-        let Self {
-            mut waiter,
-            before,
-            mut passing,
-        } = self;
-        let mut record = |view: &View| {
-            let new = view.windows().iter().filter(|(id, _)| !before.has(**id));
-            passing.extend(new.map(|(id, window)| (*id, window.clone())));
-        };
-        let lost = match wait {
-            Wait::Settled => drain(&mut waiter, &mut record).await,
-            Wait::Quiet => quiet(&mut waiter, &mut record).await,
-        };
-        let mut changes = changes::desktop(&before, &Scene::of(waiter.view()), &passing);
-        changes.lost = lost;
+    pub(crate) async fn finish(mut self, wait: Wait) -> Changes {
+        if wait == Wait::Quiet {
+            self.quiet().await;
+        }
+        self.drain().await;
+        let view = self.waiter.view();
+        let mut changes = changes::desktop(&self.before, &Scene::of(view), &self.passing);
+        changes.lost = self.lost;
         changes
     }
-}
 
-/// Applies the events already received, passing each view to `record`.
-async fn drain(waiter: &mut Waiter, record: &mut impl FnMut(&View)) -> Option<String> {
-    let ended = waiter
-        .until(Duration::ZERO, |view| {
-            record(view);
-            None::<()>
-        })
-        .await;
-    match ended {
-        Waited::Lost(reason) => Some(reason),
-        Waited::Done(()) | Waited::Timeout => None,
-    }
-}
-
-/// Applies events until `QUIET` passes without one, or `QUIET_LIMIT` after the start,
-/// passing each view to `record`.
-async fn quiet(waiter: &mut Waiter, record: &mut impl FnMut(&View)) -> Option<String> {
-    let deadline = Instant::now() + QUIET_LIMIT;
-    loop {
-        let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return drain(waiter, record).await;
+    /// Applies events until `QUIET` passed since the last one, or `EXTRA` from now.
+    async fn quiet(&mut self) {
+        let limit = Instant::now() + EXTRA;
+        while self.lost.is_none() {
+            let left = (self.last + QUIET)
+                .min(limit)
+                .saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return;
+            }
+            self.next(left).await;
         }
-        // The first check sees the view as it is; any later one follows a new event.
+    }
+
+    /// Applies the events already received.
+    async fn drain(&mut self) {
+        while self.lost.is_none() && self.next(Duration::ZERO).await {}
+    }
+
+    /// Applies the next event, waiting at most `limit` for it: whether one came. The
+    /// stream ending sets `lost`.
+    async fn next(&mut self, limit: Duration) -> bool {
+        let Self {
+            waiter,
+            before,
+            passing,
+            ..
+        } = self;
+        // The first check sees the view as it is; the second follows a new event.
         let mut checks = 0;
         let ended = waiter
-            .until(QUIET.min(left), |view| {
-                record(view);
+            .until(limit, |view| {
+                let new = view.windows().iter().filter(|(id, _)| !before.has(**id));
+                passing.extend(new.map(|(id, window)| (*id, window.clone())));
                 checks += 1;
                 (checks > 1).then_some(())
             })
             .await;
         match ended {
-            Waited::Done(()) => {}
-            Waited::Timeout => return None,
-            Waited::Lost(reason) => return Some(reason),
+            Waited::Done(()) => {
+                self.last = Instant::now();
+                true
+            }
+            Waited::Timeout => false,
+            Waited::Lost(reason) => {
+                self.lost = Some(reason);
+                false
+            }
         }
     }
 }
@@ -119,30 +144,38 @@ mod tests {
     use crate::niri::waiter::Update;
     use crate::niri::waiter::tests::{view, waiter, window};
 
-    fn watching(windows: Vec<Window>) -> (Recorder, tokio::sync::broadcast::Sender<Update>) {
+    type Sender = tokio::sync::broadcast::Sender<Update>;
+
+    fn watching(windows: Vec<Window>) -> (Recorder, Sender) {
         let (waiter, sender) = waiter(view(windows), 0);
         let before = Scene::of(waiter.view());
         let recorder = Recorder {
             waiter,
             before,
             passing: BTreeMap::new(),
+            last: Instant::now(),
+            lost: None,
         };
         (recorder, sender)
     }
 
-    fn event(sender: &tokio::sync::broadcast::Sender<Update>, seq: u64, event: Event) {
+    fn event(sender: &Sender, seq: u64, event: Event) {
         sender.send(Update::Event(seq, Box::new(event))).unwrap();
+    }
+
+    fn app() -> Window {
+        window(1, Some("app"), 1, true)
     }
 
     #[tokio::test(start_paused = true)]
     async fn a_dialog_that_opens_a_moment_after_the_action_is_in_the_report() {
-        let (recorder, sender) = watching(vec![window(1, Some("app"), 1, true)]);
+        let (recorder, sender) = watching(vec![app()]);
         let opens = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
             let dialog = window(5, Some("app"), 1, true);
             event(&sender, 1, Event::WindowOpenedOrChanged { window: dialog });
             // A window that comes and goes again within the report.
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
             let toast = window(6, Some("toast"), 1, false);
             event(&sender, 2, Event::WindowOpenedOrChanged { window: toast });
             event(&sender, 3, Event::WindowClosed { id: 6 });
@@ -150,7 +183,7 @@ mod tests {
         });
         let started = Instant::now();
         let changes = recorder.finish(Wait::Quiet).await;
-        assert_eq!(started.elapsed(), Duration::from_millis(650));
+        assert_eq!(started.elapsed(), Duration::from_millis(200) + QUIET);
         assert_eq!(
             serde_json::to_value(&changes).unwrap(),
             json!({
@@ -165,8 +198,39 @@ mod tests {
         drop(opens.await.unwrap());
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn quiet_during_the_actions_own_wait_counts_and_only_the_rest_is_added() {
+        let (mut recorder, _sender) = watching(vec![app()]);
+        recorder.follow(tokio::time::sleep(QUIET)).await;
+        let started = Instant::now();
+        recorder.finish(Wait::Quiet).await;
+        assert_eq!(started.elapsed(), Duration::ZERO);
+
+        let (mut later, sender) = watching(vec![app()]);
+        let work = async {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            event(
+                &sender,
+                1,
+                Event::WindowUrgencyChanged {
+                    id: 1,
+                    urgent: true,
+                },
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+        later.follow(work).await;
+        let ended = Instant::now();
+        let changes = later.finish(Wait::Quiet).await;
+        assert_eq!(ended.elapsed(), Duration::from_millis(150));
+        assert_eq!(
+            changes.windows.first().and_then(|window| window.urgent),
+            Some(true)
+        );
+    }
+
     /// Marks window 1 urgent every 100 ms, forty times.
-    async fn busy(sender: tokio::sync::broadcast::Sender<Update>) {
+    async fn busy(sender: Sender) {
         for seq in 1..=40 {
             tokio::time::sleep(Duration::from_millis(100)).await;
             let urgent = Event::WindowUrgencyChanged {
@@ -179,11 +243,11 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_busy_niri_ends_the_report_at_its_limit() {
-        let (recorder, sender) = watching(vec![window(1, Some("app"), 1, true)]);
+        let (recorder, sender) = watching(vec![app()]);
         let busy = tokio::spawn(busy(sender));
         let started = Instant::now();
         let changes = recorder.finish(Wait::Quiet).await;
-        assert_eq!(started.elapsed(), QUIET_LIMIT);
+        assert_eq!(started.elapsed(), EXTRA);
         assert_eq!(
             changes.windows.first().and_then(|window| window.urgent),
             Some(true)
@@ -193,7 +257,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn after_a_settled_screenshot_the_report_waits_for_nothing() {
-        let (recorder, sender) = watching(vec![window(1, Some("app"), 1, true)]);
+        let (recorder, sender) = watching(vec![app()]);
         event(&sender, 1, Event::WindowFocusChanged { id: None });
         let started = Instant::now();
         let changes = recorder.finish(Wait::Settled).await;
@@ -206,11 +270,12 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_stream_lost_during_the_report_keeps_what_was_seen_and_says_why() {
-        let (recorder, sender) = watching(vec![window(1, Some("app"), 1, true)]);
-        event(&sender, 1, Event::WindowClosed { id: 1 });
+        let (recorder, sender) = watching(vec![app()]);
+        let opened = window(2, Some("app"), 1, true);
+        event(&sender, 1, Event::WindowOpenedOrChanged { window: opened });
         sender.send(Update::Reset(2)).unwrap();
         let changes = recorder.finish(Wait::Quiet).await;
-        assert_eq!(changes.closed.len(), 1);
+        assert_eq!(changes.opened.len(), 1);
         assert!(changes.lost.unwrap().contains("disconnected"));
     }
 }
