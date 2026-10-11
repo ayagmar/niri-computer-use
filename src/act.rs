@@ -12,7 +12,7 @@ use std::time::Duration;
 use niri_ipc::{Action, Window, WorkspaceReferenceArg};
 use serde::Serialize;
 
-use crate::control::desk::Worked;
+use crate::control::desk::{Desk, Worked};
 use crate::elements::actions::Acted;
 use crate::error::{CallError, ErrorName, ToolError, Unanswered};
 use crate::input::keyboard::Focus;
@@ -270,6 +270,8 @@ where
 pub(crate) struct Niri<'a> {
     pub(crate) socket: &'a Socket,
     pub(crate) events: niri::Events<'a>,
+    /// Told when the action goes out and when niri answered it.
+    pub(crate) desk: &'a Desk,
 }
 
 pub(crate) async fn focus_window(niri: Niri<'_>, id: u64) -> Result<Outcome, CallError> {
@@ -277,7 +279,7 @@ pub(crate) async fn focus_window(niri: Niri<'_>, id: u64) -> Result<Outcome, Cal
     if !waiter.view().windows().contains_key(&id) {
         return Err(no_window(id));
     }
-    focus(niri.socket, &mut waiter, id, Vec::new()).await
+    focus(niri, &mut waiter, id, Vec::new()).await
 }
 
 /// Gives focus back to the user's window `id` before the lease is released: `closed`, with
@@ -287,7 +289,7 @@ pub(crate) async fn refocus(niri: Niri<'_>, id: u64) -> Result<Outcome, CallErro
     if !waiter.view().windows().contains_key(&id) {
         return Ok(unsent(Observed::Closed, waiter.view(), vec![id]));
     }
-    focus(niri.socket, &mut waiter, id, vec![id]).await
+    focus(niri, &mut waiter, id, vec![id]).await
 }
 
 /// `id` is a workspace id from `desktop_state`.
@@ -312,7 +314,7 @@ pub(crate) async fn focus_workspace(niri: Niri<'_>, id: u64) -> Result<Outcome, 
     let action = Action::FocusWorkspace {
         reference: WorkspaceReferenceArg::Id(id),
     };
-    if let Some(lost) = send(niri.socket, action).await? {
+    if let Some(lost) = send(niri, action).await? {
         return Ok(lost);
     }
     let ended = waiter
@@ -338,7 +340,7 @@ pub(crate) async fn close_window(
         return Err(no_window(id));
     }
     refuse_close(policy, waiter.view(), id)?;
-    if let Some(lost) = send(niri.socket, Action::CloseWindow { id: Some(id) }).await? {
+    if let Some(lost) = send(niri, Action::CloseWindow { id: Some(id) }).await? {
         return Ok(lost);
     }
     let ended = waiter.until(WAIT, |view| closed(view, id)).await;
@@ -374,7 +376,7 @@ pub(crate) async fn launch(
         let existing = matching(waiter.view(), app_id, &BTreeSet::new());
         match reuse(&existing) {
             Reuse::Spawn => {}
-            Reuse::Focus(id) => return focus(niri.socket, &mut waiter, id, vec![id]).await,
+            Reuse::Focus(id) => return focus(niri, &mut waiter, id, vec![id]).await,
             Reuse::Ambiguous => {
                 return Ok(unsent(Observed::Ambiguous, waiter.view(), existing));
             }
@@ -385,7 +387,7 @@ pub(crate) async fn launch(
     let action = Action::Spawn {
         command: preset.command(),
     };
-    if let Some(lost) = send(niri.socket, action).await? {
+    if let Some(lost) = send(niri, action).await? {
         return Ok(lost);
     }
     let first = waiter
@@ -416,7 +418,7 @@ pub(crate) async fn launch(
 
 /// Focuses `id` and waits until it has focus.
 async fn focus(
-    socket: &Socket,
+    niri: Niri<'_>,
     waiter: &mut Waiter,
     id: u64,
     windows: Vec<u64>,
@@ -425,7 +427,7 @@ async fn focus(
     if before == Some(id) {
         return Ok(unsent(Observed::Focused, waiter.view(), windows));
     }
-    if let Some(lost) = send(socket, Action::FocusWindow { id }).await? {
+    if let Some(lost) = send(niri, Action::FocusWindow { id }).await? {
         return Ok(lost);
     }
     let ended = waiter
@@ -442,10 +444,16 @@ fn unsent(observed: Observed, view: &View, windows: Vec<u64>) -> Outcome {
     }
 }
 
-/// Sends the action. A refusal is an error; a lost reply is the `uncertain` outcome.
-async fn send(socket: &Socket, action: Action) -> Result<Option<Outcome>, CallError> {
-    match niri::act(socket, action).await {
-        Ok(()) => Ok(None),
+/// Sends the action. A refusal is an error; a lost reply is the `uncertain` outcome. The
+/// desk hears when the request goes out and when niri accepted it, so a stop or a moved
+/// lease after that reports the action as `uncertain` rather than refused.
+async fn send(niri: Niri<'_>, action: Action) -> Result<Option<Outcome>, CallError> {
+    match niri::act(niri.socket, action, || niri.desk.sending()).await {
+        Ok(()) => {
+            let accepted = Outcome::uncertain(Some(true), None, String::new());
+            niri.desk.answered(accepted);
+            Ok(None)
+        }
         Err(Unanswered::Refused(error)) => Err(error.into()),
         Err(Unanswered::Lost(error)) => Ok(Some(Outcome::uncertain(None, None, error.detail))),
     }

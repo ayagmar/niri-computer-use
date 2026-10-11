@@ -244,7 +244,7 @@ pub(crate) async fn run(
         action = Action::CloseWindow { id: Some(id) };
     }
     let before = target.and_then(|id| state(waiter.view(), id));
-    if let Some(lost) = send(niri.socket, action).await? {
+    if let Some(lost) = send(niri, action).await? {
         return Ok(lost);
     }
     let Some(before) = before else {

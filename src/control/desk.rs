@@ -347,9 +347,9 @@ impl Desk {
         self.seat.sending.store(true, Ordering::Relaxed);
     }
 
-    /// Says the app answered the running action's call that acts, with `outcome` as far as
-    /// it is known then, which a stop or a moved lease that cancels the action from now on
-    /// reports with its reason. Only the action holding the action mutex calls it.
+    /// Says the app or niri answered the running action's call that acts, with `outcome` as
+    /// far as it is known then, which a stop or a moved lease that cancels the action from
+    /// now on reports with its reason. Only the action holding the action mutex calls it.
     pub(crate) fn answered(&self, outcome: Outcome) {
         *self.seat.answer() = Some(outcome);
     }
@@ -561,7 +561,7 @@ pub(crate) enum Worked<T> {
     Done(T),
     /// A stop or the lease moving cancelled the work after it said its one call that acts
     /// was going out (`Desk::sending`), so that call may have taken effect: why, and the
-    /// outcome so far when the app had answered it (`Desk::answered`).
+    /// outcome so far when the app or niri had answered it (`Desk::answered`).
     CutAfterSending(ToolError, Option<Box<Outcome>>),
 }
 

@@ -11,8 +11,10 @@
 //! - Before the call that acts went out, the change refuses the call with the fact's error
 //!   and nothing acts, or the call went out within `LAST_GATE` of the change, the window
 //!   in which the element actions document that a change can be missed.
-//! - After it went out, the call isn't refused, and its outcome doesn't report focus from
-//!   before the change.
+//! - After it went out, the call isn't refused: a stop or a lost lease makes it `uncertain`,
+//!   `accepted` null until the reply came and true after it, with nothing more asked and no
+//!   screenshot; any other change leaves an outcome that doesn't report focus from before
+//!   the change.
 //! - Nothing acts twice.
 //!
 //! The keyboard tools act through `wtype`, which the fakes see but which passes no point,
@@ -20,6 +22,7 @@
 //! nested runs (see docs/decisions.md).
 
 use std::collections::BTreeSet;
+use std::fs::File;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -144,6 +147,10 @@ enum Fact {
     InputDirty,
     /// Noctalia locks the screen.
     ScreenLocked,
+    /// The user sets the stop flag.
+    Stopped,
+    /// The lease file is replaced and another server locks the new one.
+    LeaseTaken,
     /// The window takes an `app_id` the policy denies. The policy is read once per session,
     /// so this is how a denial can appear while a call runs.
     DenyListed,
@@ -170,6 +177,8 @@ impl Fact {
         match self {
             Self::InputDirty => Some(&["recovery_required"]),
             Self::ScreenLocked => Some(&["screen_locked"]),
+            Self::Stopped => Some(&["stopped"]),
+            Self::LeaseTaken => Some(&["lease_required"]),
             Self::FocusMoved => (kind != Kind::Niri).then_some(&["focus_mismatch"]),
             Self::WindowClosed => match kind {
                 Kind::Element => Some(&["element_stale"]),
@@ -184,6 +193,27 @@ impl Fact {
                 element.then_some(&["element_stale"])
             }
             Self::ActionsReordered => (tool == Tool::Activate).then_some(&["element_stale"]),
+        }
+    }
+
+    /// What `detail` says when the change cut a call short after it went out, for the
+    /// changes that cut a running call short at once instead of being found by the call's
+    /// own checks.
+    const fn cut(self) -> Option<&'static str> {
+        match self {
+            Self::Stopped => Some("the user's stop flag"),
+            Self::LeaseTaken => Some("the lease file was removed or replaced"),
+            Self::FocusMoved
+            | Self::WindowClosed
+            | Self::InputDirty
+            | Self::ScreenLocked
+            | Self::DenyListed
+            | Self::BecamePassword
+            | Self::Renamed
+            | Self::AncestorRenamed
+            | Self::MovedAway
+            | Self::ActionsReordered
+            | Self::Removed => None,
         }
     }
 }
@@ -226,6 +256,8 @@ struct Ran {
     indexes: Vec<i32>,
     /// When the change began.
     changed: Instant,
+    /// The points passed after the change.
+    after: Vec<String>,
 }
 
 /// The windows: the mock app's focused window 1, another app's window 2, and the mock
@@ -287,6 +319,8 @@ struct World {
     closed: Closed,
     /// The mock's objects as they were before the last change.
     saved: Vec<(&'static str, Object)>,
+    /// The lease file another server locked, while it holds it.
+    taken: Option<File>,
     fixture: Fixture,
 }
 
@@ -328,17 +362,21 @@ impl World {
             points: fixture.points(),
             closed,
             saved: Vec::new(),
+            taken: None,
             fixture,
         }
     }
 
-    /// Puts every fact back as it was and returns `tool`'s arguments with a fresh element
-    /// ref. The trace starts afterwards.
+    /// Puts every fact back as it was, takes the lease again if it was lost, and returns
+    /// `tool`'s arguments with a fresh element ref. The trace starts afterwards.
     async fn reset(&mut self, tool: Tool) -> Value {
         self.points.idle().await;
-        let marker = self.fixture.runtime_dir().join("input-dirty");
-        std::fs::remove_file(marker).ok();
+        let runtime = self.fixture.runtime_dir();
+        for flag in ["stop", "input-dirty"] {
+            std::fs::remove_file(runtime.join(flag)).ok();
+        }
         self.noctalia.set(UNLOCKED);
+        self.taken = None;
         self.closed.lock().unwrap().clear();
         for (path, object) in self.saved.drain(..) {
             self.mock.change(path, |now| *now = object);
@@ -346,6 +384,7 @@ impl World {
         self.stream
             .send(&json!({"WindowsChanged": {"windows": windows()}}));
         self.until_desktop(initial).await;
+        self.acquire().await;
         std::fs::remove_file(self.fixture.path("wtype.calls")).ok();
         let element = if tool.kind() == Kind::Element {
             Some(self.element(tool.element().0).await)
@@ -354,6 +393,19 @@ impl World {
         };
         self.points.start();
         tool.arguments(element.as_deref())
+    }
+
+    /// Takes the lease, once the server has seen the stop flag cleared.
+    async fn acquire(&mut self) {
+        let start = Instant::now();
+        loop {
+            let result = self.server.call("acquire_desktop", json!({})).await;
+            if result["isError"] == false {
+                return;
+            }
+            assert!(start.elapsed() < WAIT, "{result}");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
     }
 
     /// The `element_ref` of the element named `name` in window 1.
@@ -391,6 +443,7 @@ impl World {
             WINDOW
         };
         let (_, path) = tool.element();
+        let runtime = self.fixture.runtime_dir();
         match fact {
             Fact::FocusMoved => {
                 self.stream
@@ -412,11 +465,16 @@ impl World {
                 self.until_desktop(|desktop| app_id(desktop, window).as_deref() == Some(DENIED))
                     .await;
             }
-            Fact::InputDirty => {
-                let marker = self.fixture.runtime_dir().join("input-dirty");
-                std::fs::write(marker, "").unwrap();
-            }
+            Fact::InputDirty => std::fs::write(runtime.join("input-dirty"), "").unwrap(),
             Fact::ScreenLocked => self.noctalia.set(LOCKED),
+            Fact::Stopped => std::fs::write(runtime.join("stop"), "").unwrap(),
+            Fact::LeaseTaken => {
+                let lease = runtime.join("lease");
+                std::fs::remove_file(&lease).unwrap();
+                let file = File::create(&lease).unwrap();
+                file.try_lock().unwrap();
+                self.taken = Some(file);
+            }
             Fact::BecamePassword => self.change_object(path, |object| object.role = PASSWORD_TEXT),
             Fact::Renamed => self.change_object(path, |object| {
                 object.name = "Different record".to_owned();
@@ -497,14 +555,30 @@ impl World {
         if case.hold == Hold::Long {
             tokio::time::sleep(PAST_THE_LAST_GATE).await;
         }
+        // A cut answers the call without waiting for the held reply.
+        let early = if case.fact.cut().is_some() {
+            tokio::time::timeout(PAST_THE_LAST_GATE, self.server.response(id))
+                .await
+                .ok()
+        } else {
+            None
+        };
         held.release();
-        let response = self.server.response(id).await;
+        let response = match early {
+            Some(response) => response,
+            None => self.server.response(id).await,
+        };
         let trace = self.points.trace();
         Ok(Ran {
             result: response["result"].clone(),
             acts: self.acts(case.tool, &trace),
             indexes: self.mock.done()[done_before..].to_vec(),
             changed,
+            after: trace
+                .iter()
+                .filter(|passed| passed.at > changed)
+                .map(|passed| passed.point.clone())
+                .collect(),
         })
     }
 }
@@ -582,8 +656,9 @@ fn before_send(case: &Case<'_>, ran: &Ran) -> Result<(), String> {
     }
 }
 
-/// The change came once the call that acts went out: no error, and no focus from before
-/// the change reported as the focus afterwards.
+/// The change came once the call that acts went out: no error. A stop or a lost lease
+/// leaves it `uncertain`, accepted only once its reply came, with nothing more asked; any
+/// other change leaves no focus from before the change reported as the focus afterwards.
 fn after_send(case: &Case<'_>, ran: &Ran) -> Result<(), String> {
     if ran.acts.len() != 1 {
         return Err("the call that acts didn't go out".to_owned());
@@ -592,6 +667,24 @@ fn after_send(case: &Case<'_>, ran: &Ran) -> Result<(), String> {
     let outcome = &result["structuredContent"];
     if case.fact == Fact::FocusMoved && outcome["focused_window"] == WINDOW {
         return Err(format!("reported focus from before the change: {outcome}"));
+    }
+    let Some(why) = case.fact.cut() else {
+        return Ok(());
+    };
+    let replied = case.index > case.sends;
+    let detail = outcome["detail"].as_str().unwrap_or_default();
+    let accepted = if replied { json!(true) } else { Value::Null };
+    if outcome["observed"] != "uncertain"
+        || outcome["accepted"] != accepted
+        || !detail.contains(why)
+    {
+        return Err(format!("not uncertain with accepted {accepted}: {outcome}"));
+    }
+    if result["content"].as_array().map(Vec::len) != Some(1) {
+        return Err("took a screenshot after the cut".to_owned());
+    }
+    if !ran.after.is_empty() {
+        return Err(format!("asked {:?} after the cut", ran.after));
     }
     Ok(())
 }
@@ -705,6 +798,16 @@ fn a_marker_set_while_a_reply_is_held() {
 #[test]
 fn the_screen_locking_while_a_reply_is_held() {
     explore(Fact::ScreenLocked);
+}
+
+#[test]
+fn a_stop_while_a_reply_is_held() {
+    explore(Fact::Stopped);
+}
+
+#[test]
+fn the_lease_taken_while_a_reply_is_held() {
+    explore(Fact::LeaseTaken);
 }
 
 #[test]

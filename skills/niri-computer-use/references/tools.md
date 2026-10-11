@@ -90,7 +90,7 @@ Listed with `elements`, when the session has an accessibility bus. Both need the
 
 ## Fields every action result has
 
-- `accepted`: true once niri or Noctalia took the request, false when nothing was sent (already in that state), null when the reply was lost.
+- `accepted`: true once niri or Noctalia took the request, false when nothing was sent (already in that state), null when the reply was lost or a stop or lost lease cut the action before it came. When `observed` is `uncertain` and `detail` says the stop flag or the lease cut it short, there is no screenshot: stop and tell the user, as for `stopped` or `lease_required`.
 - `observed`: what the server saw by the end of its wait, as in the tables above, or `interrupted` (someone else moved focus) or `uncertain`.
 - `focused_window` when the observation ended.
 - `typed`, for `type_text` that stopped early: the characters sent; `pressed` likewise for `key`; `submitted` with `submit`; `paste` for `paste`; `window` for `niri_action`; `noctalia` for `noctalia`; `element` for the element actions.

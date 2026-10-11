@@ -64,15 +64,21 @@ pub(crate) async fn peer_pid(socket: &Path, limit: Duration) -> Result<u32, Tool
 }
 
 /// Sends one request that changes something, on a new connection, within two seconds,
-/// and says whether niri can have carried it out when there is no answer.
-pub(crate) async fn dispatch(socket: &Path, request: &Request) -> Result<Response, Unanswered> {
-    dispatch_within(DEADLINE, socket, request).await
+/// and says whether niri can have carried it out when there is no answer. `sending` is
+/// called once connected, right before the request is written.
+pub(crate) async fn dispatch(
+    socket: &Path,
+    request: &Request,
+    sending: impl FnOnce(),
+) -> Result<Response, Unanswered> {
+    dispatch_within(DEADLINE, socket, request, sending).await
 }
 
 async fn dispatch_within(
     limit: Duration,
     socket: &Path,
     request: &Request,
+    sending: impl FnOnce(),
 ) -> Result<Response, Unanswered> {
     let deadline = tokio::time::Instant::now() + limit;
     let doing = format!("niri {request:?}");
@@ -92,6 +98,7 @@ async fn dispatch_within(
             ))
         })?;
     let mut stream = BufReader::new(stream);
+    sending();
     tokio::time::timeout_at(deadline, write(&mut stream, request))
         .await
         .map_err(|_| Unanswered::Refused(late("the request couldn't be sent")))?
@@ -307,18 +314,19 @@ mod tests {
         let limit = Duration::from_millis(200);
         let handled = niri("handled", Some("{\"Ok\":\"Handled\"}\n"));
         assert!(matches!(
-            dispatch_within(limit, &handled, &focus).await,
+            dispatch_within(limit, &handled, &focus, || ()).await,
             Ok(Response::Handled)
         ));
         let refused = niri("refused", Some("{\"Err\":\"no\"}\n"));
-        let Err(Unanswered::Refused(error)) = dispatch_within(limit, &refused, &focus).await else {
+        let Err(Unanswered::Refused(error)) = dispatch_within(limit, &refused, &focus, || ()).await
+        else {
             panic!("niri's refusal isn't Refused");
         };
         assert_eq!(error.name, ErrorName::UpstreamError);
         assert!(error.detail.ends_with("niri replied: no"), "{error:?}");
         let missing = handled.with_file_name("missing.sock");
         assert!(matches!(
-            dispatch_within(limit, &missing, &focus).await,
+            dispatch_within(limit, &missing, &focus, || panic!("nothing was written")).await,
             Err(Unanswered::Refused(ToolError {
                 name: ErrorName::NiriUnavailable,
                 ..
@@ -326,7 +334,7 @@ mod tests {
         ));
         let closed = niri("closed", None);
         assert!(matches!(
-            dispatch_within(limit, &closed, &focus).await,
+            dispatch_within(limit, &closed, &focus, || ()).await,
             Err(Unanswered::Lost(ToolError {
                 name: ErrorName::NiriUnavailable,
                 ..
@@ -334,7 +342,7 @@ mod tests {
         ));
         let silent = niri("silent", Some(""));
         assert!(matches!(
-            dispatch_within(limit, &silent, &focus).await,
+            dispatch_within(limit, &silent, &focus, || ()).await,
             Err(Unanswered::Lost(ToolError {
                 name: ErrorName::DeadlineExceeded,
                 ..
@@ -342,7 +350,7 @@ mod tests {
         ));
         let garbled = niri("garbled", Some("not json\n"));
         assert!(matches!(
-            dispatch_within(limit, &garbled, &focus).await,
+            dispatch_within(limit, &garbled, &focus, || ()).await,
             Err(Unanswered::Lost(ToolError {
                 name: ErrorName::UpstreamError,
                 ..

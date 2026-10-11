@@ -204,6 +204,7 @@ impl Engine {
         act::Niri {
             socket: &self.env.niri_socket,
             events: self.events.as_ref(),
+            desk: &self.desk,
         }
     }
 

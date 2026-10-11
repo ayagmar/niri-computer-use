@@ -568,19 +568,120 @@ async fn reuse_spawns_for_none_focuses_one_and_starts_nothing_for_two() {
     assert!(!desk.niri.sent_action());
 }
 
+/// What takes the action away from the server while it runs.
+#[derive(Debug, Clone, Copy)]
+enum Cut {
+    /// The user's `niri-computer-use stop`.
+    Stop,
+    /// The `lease` file replaced, as another server's cleanup could.
+    Lease,
+}
+
+impl Cut {
+    async fn make(self, desk: &Desk) {
+        match self {
+            Self::Stop => assert!(run(&desk.fixture, "stop").await.status.success()),
+            Self::Lease => {
+                let lease = desk.fixture.runtime_dir().join("lease");
+                std::fs::remove_file(&lease).unwrap();
+                std::fs::write(&lease, "").unwrap();
+            }
+        }
+    }
+
+    /// The error before the action went out, and what `detail` says after.
+    const fn reported(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Stop => ("stopped", "the user's stop flag"),
+            Self::Lease => ("lease_required", "the lease file was removed or replaced"),
+        }
+    }
+}
+
+const CUTS: [Cut; 2] = [Cut::Stop, Cut::Lease];
+
 #[tokio::test]
-async fn a_stop_cancels_the_running_action_and_takes_the_lease_back() {
-    let mut desk = Desk::start("act-stop", "").await;
+async fn a_stop_or_a_replaced_lease_before_the_action_goes_out_sends_nothing() {
+    for cut in CUTS {
+        let mut desk = Desk::start(&format!("act-cut-before-{cut:?}"), "").await;
+        let report = desk.niri.hold_version();
+        let id = desk
+            .server
+            .start_call("focus_window", json!({"id": 2}))
+            .await;
+        report.arrived().await;
+        cut.make(&desk).await;
+        report.release();
+        let (name, detail) = tool_error(&desk.server.response(id).await["result"]);
+        assert_eq!(name, cut.reported().0, "{cut:?}: {detail}");
+        assert!(!desk.niri.sent_action(), "{cut:?}");
+        assert_eq!(
+            desk.audited(),
+            [json!(["focus_window", {"id": 2}, null, null, cut.reported().0])]
+        );
+    }
+}
+
+/// Runs `focus_window`, makes `cut` once niri got the action, and returns the outcome
+/// after checking it is `uncertain` with the cut's reason, without a screenshot.
+async fn cut_after_sending(desk: &mut Desk, cut: Cut) -> Value {
     let id = desk
         .server
         .start_call("focus_window", json!({"id": 2}))
         .await;
     desk.niri.action().await;
-    assert!(run(&desk.fixture, "stop").await.status.success());
-    let response = desk.server.response(id).await;
-    let (name, detail) = tool_error(&response["result"]);
-    assert_eq!(name, "stopped");
-    assert!(detail.contains("cancelled this action"), "{detail}");
+    cut.make(desk).await;
+    let result = desk.server.response(id).await["result"].clone();
+    assert_eq!(result["isError"], false, "{cut:?}: {result}");
+    assert_eq!(result["content"].as_array().unwrap().len(), 1, "{result}");
+    let outcome = result["structuredContent"].clone();
+    assert_eq!(outcome["observed"], "uncertain", "{outcome}");
+    let detail = outcome["detail"].as_str().unwrap();
+    assert!(detail.contains(cut.reported().1), "{detail}");
+    outcome
+}
+
+#[tokio::test]
+async fn a_stop_or_a_replaced_lease_before_niri_answers_is_uncertain() {
+    for cut in CUTS {
+        let mut desk = Desk::start(&format!("act-cut-unanswered-{cut:?}"), "").await;
+        desk.niri.hold_actions(true);
+        let outcome = cut_after_sending(&mut desk, cut).await;
+        assert_eq!(outcome["accepted"], Value::Null, "{outcome}");
+        assert_eq!(
+            desk.audited(),
+            [json!(["focus_window", {"id": 2}, null, "uncertain", null])]
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_replaced_lease_after_niri_accepted_is_uncertain_and_gives_the_lease_up() {
+    let mut desk = Desk::start("act-cut-lease", "").await;
+    let outcome = cut_after_sending(&mut desk, Cut::Lease).await;
+    assert_eq!(outcome["accepted"], true, "{outcome}");
+    assert_eq!(
+        desk.audited(),
+        [json!(["focus_window", {"id": 2}, true, "uncertain", null])]
+    );
+    assert_eq!(
+        desk.server.structured("status").await["lease"]["held_by_me"],
+        false
+    );
+    let (after, _) = tool_error(&desk.server.call("focus_window", json!({"id": 2})).await);
+    assert_eq!(after, "lease_required");
+    assert!(!desk.niri.sent_action());
+}
+
+#[tokio::test]
+async fn a_stop_cancels_the_running_action_and_takes_the_lease_back() {
+    let mut desk = Desk::start("act-stop", "").await;
+    let outcome = cut_after_sending(&mut desk, Cut::Stop).await;
+    assert_eq!(outcome["accepted"], true, "{outcome}");
+    assert_eq!(
+        desk.audited(),
+        [json!(["focus_window", {"id": 2}, true, "uncertain", null])]
+    );
     let mut released = false;
     for _ in 0..250 {
         if desk.server.structured("status").await["lease"]["held_by_me"] == false {
