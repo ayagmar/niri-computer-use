@@ -435,8 +435,8 @@ fn titled_elsewhere(frames: &[Frame<'_>], picked: usize, title: Option<&str>) ->
 
 /// Whether another window of the app could be the frame at `picked` instead of the
 /// window titled `title`. Only `others` whose titles are the same or unknown count. For
-/// each of their sizes, when more of them have that size than other frames fit it, one of
-/// them has no frame of its own and could be the picked one.
+/// each of their sizes, when more of them have that size, within a pixel, than other frames
+/// fit it, one of them has no frame of its own and could be the picked one.
 fn shared(frames: &[Frame<'_>], picked: usize, title: Option<&str>, others: &[Shape<'_>]) -> bool {
     let alike: Vec<(i32, i32)> = others
         .iter()
@@ -447,7 +447,12 @@ fn shared(frames: &[Frame<'_>], picked: usize, title: Option<&str>, others: &[Sh
         .map(|other| other.size)
         .collect();
     alike.iter().any(|&size| {
-        let need = alike.iter().filter(|&&other| other == size).count();
+        // Within a pixel, as the frame guard counts sizes, so tiled siblings whose heights
+        // round apart count as one size.
+        let need = alike
+            .iter()
+            .filter(|other| (other.0 - size.0).abs() <= 1 && (other.1 - size.1).abs() <= 1)
+            .count();
         let have = frames
             .iter()
             .enumerate()
@@ -765,6 +770,8 @@ mod tests {
         let floating = shape((400, 300), None);
         let twins = [shape((350, 250), None), shape((350, 250), None)];
         assert_eq!(pick_frame(&three, floating, &twins), Err(NoFrame::Shared));
+        let rounded = [shape((350, 250), None), shape((350, 251), None)];
+        assert_eq!(pick_frame(&three, floating, &rounded), Err(NoFrame::Shared));
         // Distinct titles keep the title rule.
         let named = shape((400, 300), Some("Other"));
         assert_eq!(
