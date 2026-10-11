@@ -5,6 +5,7 @@
 //! server's mapping. Everything the run creates lives under `TEST_DIR`.
 
 mod activation;
+mod copy;
 mod crash;
 mod dropped_paste;
 mod engine;
@@ -89,6 +90,8 @@ pub(crate) fn run(session: &mut Session<'_>, output: &LogicalOutput, server: &st
     activation::run(session, &mut client)?;
     text_entry::run(session, &mut client, server)?;
     keeper::run(session, server)?;
+    // After `text_entry`, whose empty-clipboard check needs a session that never copied.
+    copy::run(session, &mut client)?;
     client.stop()?;
     noctalia.stop().map(drop)
 }

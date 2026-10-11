@@ -1,6 +1,6 @@
 # Security
 
-niri-computer-use gives an AI agent your desktop. Its guardrails catch mistakes and keep you in control: the lease, the stop key, the lock gate, the policy file and the audit log. They are not a sandbox. An agent that holds the lease can do anything you can do with a mouse and keyboard, and any connected agent can see your screen, window titles and clipboard. [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/) describes what is and isn't enforced.
+niri-computer-use gives an AI agent your desktop. Its guardrails catch mistakes and keep you in control: the lease, the stop key, the lock gate, the policy file and the audit log. They are not a sandbox. An agent that holds the lease can do anything you can do with a mouse and keyboard, any connected agent can see your screen and window titles, and the lease holder can read what is copied while it holds the lease. [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/) describes what is and isn't enforced.
 
 ## Reporting a problem
 

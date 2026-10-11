@@ -1562,15 +1562,18 @@ impl Server {
         .await
     }
 
-    /// The clipboard's text, read with `wl-paste`. `text` is null, with a `reason`, when
-    /// nothing is copied (`nothing_copied`) or nothing copied is text (`no_text`).
+    /// The clipboard's text, only if it was copied since you took the lease, such as by an
+    /// app's "Copy link" button you pressed. `text` is null, with a `reason`, when the
+    /// clipboard still holds what was there before (`copied_before_lease`), nothing is
+    /// copied (`nothing_copied`), nothing copied is text (`no_text`), or its owner, such as
+    /// a password manager, marked it as a secret (`secret`). Requires the lease.
     #[tool(annotations(read_only_hint = true))]
     async fn clipboard_read(
         &self,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         self.audited(&context, "clipboard_read", Value::Null, async {
-            answer(self.engine.clipboard().await)
+            answer(self.engine.clipboard(&self.session).await)
         })
         .await
     }

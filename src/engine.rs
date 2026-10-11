@@ -9,7 +9,7 @@ pub(crate) mod host;
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -48,6 +48,8 @@ pub(crate) struct Engine {
     a11y: Option<A11y>,
     /// The sessions being served, by id.
     sessions: Mutex<BTreeMap<SessionId, Session>>,
+    /// The clipboard as the current lease sees it, from its `acquire` on.
+    clipboard: Mutex<Option<clipboard::Watch>>,
     /// The last session id given out.
     last_session: AtomicU64,
     mode: status::Mode,
@@ -145,6 +147,7 @@ impl Engine {
             accessibility,
             a11y,
             sessions: Mutex::new(BTreeMap::new()),
+            clipboard: Mutex::new(None),
             last_session: AtomicU64::new(0),
             mode: status::Mode::Standalone,
             fallback: None,
@@ -274,10 +277,11 @@ impl Engine {
         status::collect(&self.env, sources).await
     }
 
-    /// Takes the lease for `session`, labelled `label`. Returns the holder and the window
-    /// that had keyboard focus, which `release` can give focus back to.
+    /// Takes the lease for `session`, labelled `label`, and watches the clipboard from
+    /// then on. Returns the holder and the window that had keyboard focus, which `release`
+    /// can give focus back to.
     pub(crate) async fn acquire(
-        &self,
+        self: &Arc<Self>,
         session: &Session,
         label: &str,
     ) -> Result<(Holder, Option<u64>), ToolError> {
@@ -290,6 +294,9 @@ impl Engine {
                 .and_then(|waiter| waiter.view().focused_window())
         };
         let holder = self.desk.acquire(session, label, refusal, focused).await?;
+        if let Some(lease) = self.desk.ref_lease(session) {
+            self.watch_clipboard(session, lease).await;
+        }
         Ok((holder, self.desk.users_window(session)))
     }
 
@@ -400,9 +407,56 @@ impl Engine {
         noctalia::status(&self.env).await
     }
 
-    /// The clipboard's text.
-    pub(crate) async fn clipboard(&self) -> Result<impl Serialize, ToolError> {
-        clipboard::read_text(&self.env.niri_socket, &self.env.display).await
+    /// The clipboard's text, if it was copied during `session`'s lease.
+    pub(crate) async fn clipboard(&self, session: &Session) -> Result<impl Serialize, ToolError> {
+        let lease = self.desk.ref_lease(session).ok_or_else(|| {
+            ToolError::new(
+                ErrorName::LeaseRequired,
+                "this session doesn't hold the lease; call acquire_desktop first",
+            )
+        })?;
+        let reader = self
+            .watch()
+            .as_ref()
+            .filter(|watch| watch.lease() == lease)
+            .map(clipboard::Watch::reader)
+            .ok_or_else(|| {
+                ToolError::new(
+                    ErrorName::UpstreamError,
+                    "nothing watches the clipboard for this lease; release the desktop and acquire it again",
+                )
+            })?;
+        reader.read().await
+    }
+
+    /// Watches the clipboard for `session`'s `lease` from now on, unless something already
+    /// does. The watch ends itself once the lease is gone, however it went: released, taken
+    /// back by a stop, lost, or its session ended. A later lease replaces it.
+    async fn watch_clipboard(self: &Arc<Self>, session: &Session, lease: u64) {
+        if self
+            .watch()
+            .as_ref()
+            .is_some_and(|watch| watch.lease() == lease)
+        {
+            return;
+        }
+        let engine = Arc::downgrade(self);
+        let owner = session.clone();
+        let holds = move || {
+            !owner.has_ended()
+                && engine
+                    .upgrade()
+                    .is_some_and(|engine| engine.desk.ref_lease(&owner) == Some(lease))
+        };
+        let (socket, display) = (self.env.niri_socket.clone(), self.env.display.clone());
+        let watch = clipboard::Watch::start(socket, display, lease, holds).await;
+        *self.watch() = Some(watch);
+    }
+
+    fn watch(&self) -> std::sync::MutexGuard<'_, Option<clipboard::Watch>> {
+        self.clipboard
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Waits for `until`, then with `screenshot` adds one taken once the screen stopped

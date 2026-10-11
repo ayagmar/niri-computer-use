@@ -132,9 +132,8 @@ check_observation() {
         or .error == "not_accessible" or .error == "ambiguous_window"' "${work}/elements.json"
   fi
   call clipboard_read clipboard_read
-  check "clipboard_read: text or a reason" \
-    '.result.structuredContent | keys == ["reason","text"] and ((.text == null) != (.reason == null))' \
-    "${work}/clipboard_read.json"
+  check "clipboard_read: lease_required, since the script never takes the lease" \
+    '.result.structuredContent.error == "lease_required"' "${work}/clipboard_read.json"
   if command -v noctalia >/dev/null; then
     call shell_status shell_status
     check "shell_status: Noctalia's status, or noctalia_unavailable" \

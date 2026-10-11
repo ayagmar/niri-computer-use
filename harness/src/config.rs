@@ -65,6 +65,7 @@ window-rule {{
 
 window-rule {{
     match app-id="^org\\.ncu\\.Activation$"
+    match app-id="^org\\.ncu\\.Copy$"
     open-floating true
     default-floating-position x=0 y=0 relative-to="top-left"
     default-column-width {{ fixed 320; }}

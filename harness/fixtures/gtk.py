@@ -14,7 +14,9 @@ button that changes the window's Wayland app_id to `org.ncu.Denied`. `list` is a
 window with `Step` and `Jump` buttons above a `Gtk.ListView` of 200 synthetic records,
 `Record 001` to `Record 200`, each row a label and a `Delete` button. `Step` scrolls
 the list 120 pixels down, `Jump` brings `Record 101` into view, and each `Delete`
-removes the record its row shows then and appends it to `list-deletes`.
+removes the record its row shows then and appends it to `list-deletes`. `copy` is a
+`Copy link` button that puts a synthetic link on the clipboard, as an app's copy-link
+button does, and counts its copies in `copies`.
 """
 
 import json
@@ -24,7 +26,7 @@ import sys
 
 root = Path(sys.argv[1]).resolve(strict=True)
 mode = sys.argv[2]
-if mode not in ("button", "entry", "a11y", "list"):
+if mode not in ("button", "entry", "a11y", "list", "copy"):
     raise RuntimeError(f"unknown fixture {mode}")
 run = root / "run"
 for name in ("NIRI_SOCKET", "WAYLAND_DISPLAY"):
@@ -50,6 +52,7 @@ app_id = {
     "entry": "org.ncu.Entry",
     "a11y": "org.ncu.A11y",
     "list": "org.ncu.List",
+    "copy": "org.ncu.Copy",
 }[mode]
 app = Gtk.Application(application_id=app_id, flags=Gio.ApplicationFlags.NON_UNIQUE)
 clicks = 0
@@ -218,6 +221,24 @@ def list_window(window):
     report("list-deletes", "[]")
 
 
+LINK = "https://example.invalid/ncu-copied-link"
+copies = 0
+
+
+def copied(button):
+    global copies
+    copies += 1
+    button.get_clipboard().set(LINK)
+    report("copies", str(copies))
+
+
+def copy_window(window):
+    button = Gtk.Button(label="Copy link")
+    button.connect("clicked", copied)
+    window.set_child(button)
+    report("copies", "0")
+
+
 def activate(application):
     window = Gtk.ApplicationWindow(application=application)
     window.set_default_size(*((400, 300) if mode in ("a11y", "list") else (320, 240)))
@@ -227,6 +248,7 @@ def activate(application):
         "entry": entry_window,
         "a11y": a11y_window,
         "list": list_window,
+        "copy": copy_window,
     }
     windows[mode](window)
     window.present()

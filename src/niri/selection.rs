@@ -37,7 +37,8 @@ use crate::error::{ErrorName, ToolError};
 /// A selection's contents: each MIME type with its bytes, in the order it was offered.
 pub(crate) type Contents = Vec<(String, Arc<[u8]>)>;
 
-/// The longest each of `bind`, `save`, `unchanged_since`, `offer` and `clear` takes.
+/// The longest each of `bind`, `save`, `unchanged_since`, `offer` and `clear` takes, and
+/// the deadline to give an `Offer`'s reads together.
 pub(crate) const STEP: Duration = DEADLINE;
 
 /// A selection as saved: its contents, `None` when nothing was selected, and which of
@@ -89,6 +90,9 @@ struct State {
     selection: Current,
     /// How many selections niri has announced.
     announcements: u64,
+    /// Once `record` asked for it, each selection announced since the last `announced`:
+    /// its MIME types, or `None` for nothing selected.
+    history: Option<Vec<Option<Vec<String>>>>,
     /// Whether niri has ended the data device.
     finished: bool,
     events: VecDeque<Event>,
@@ -177,27 +181,37 @@ impl Selection {
     /// The current selection's contents; `None` when nothing is selected.
     async fn contents(&self, max: usize) -> Result<Option<Contents>, ToolError> {
         let deadline = Instant::now() + DEADLINE;
-        let Current::Offer(offer) = self.state.selection.clone() else {
+        let Some(offer) = self.current() else {
             return Ok(None);
+        };
+        let mut contents = Contents::new();
+        let mut left = max;
+        for mime in offer.types() {
+            let bytes = offer.receive(mime, left, deadline).await?;
+            left -= bytes.len();
+            contents.push((mime.clone(), bytes.into()));
+        }
+        Ok(Some(contents))
+    }
+
+    /// The selection niri announced last; `None` when nothing is selected or it offers no
+    /// type, which `wl-paste` reports as nothing copied too.
+    pub(crate) fn current(&self) -> Option<Offer<'_>> {
+        let Current::Offer(offer) = &self.state.selection else {
+            return None;
         };
         let types = self
             .state
             .offers
             .iter()
-            .find(|(known, _)| *known == offer)
-            .map(|(_, types)| types.clone())
-            .unwrap_or_default();
-        if types.is_empty() {
-            return Ok(None);
-        }
-        let mut contents = Contents::new();
-        let mut left = max;
-        for mime in types {
-            let bytes = self.receive(&offer, &mime, left, deadline).await?;
-            left -= bytes.len();
-            contents.push((mime, bytes.into()));
-        }
-        Ok(Some(contents))
+            .find(|(known, _)| known == offer)
+            .map(|(_, types)| types.as_slice())
+            .filter(|types| !types.is_empty())?;
+        Some(Offer {
+            selection: self,
+            proxy: offer,
+            types,
+        })
     }
 
     async fn receive(
@@ -271,13 +285,48 @@ impl Selection {
             .ok_or_else(|| upstream("niri ended the data-control device"))
     }
 
+    /// Keeps the MIME types of every selection niri announces from now on, for
+    /// `announced`.
+    pub(crate) fn record(&mut self) {
+        self.state.history = Some(Vec::new());
+    }
+
+    /// The MIME types of each selection announced since `record` or the last call, oldest
+    /// first; `None` for nothing selected.
+    pub(crate) fn announced(&mut self) -> Vec<Option<Vec<String>>> {
+        self.state
+            .history
+            .as_mut()
+            .map(std::mem::take)
+            .unwrap_or_default()
+    }
+
+    /// Waits, without a deadline, until niri announces another selection. A data device
+    /// niri ended is an error. Dropping the future loses nothing.
+    pub(crate) async fn changed(&mut self) -> Result<(), ToolError> {
+        let seen = self.state.announcements;
+        dispatch_until(
+            &mut self.queue,
+            &mut self.state,
+            &self.readable,
+            None,
+            |state| state.finished || state.announcements != seen,
+        )
+        .await?;
+        if self.state.finished {
+            return Err(upstream("niri ended the data-control device"));
+        }
+        Ok(())
+    }
+
     /// The reads and ends of our sources that niri sent before now, in order.
     pub(crate) async fn pending(&mut self) -> Result<Vec<Event>, ToolError> {
         self.sync().await?;
         Ok(self.state.events.drain(..).collect())
     }
 
-    async fn sync(&mut self) -> Result<(), ToolError> {
+    /// Handles every event niri sent before now.
+    pub(crate) async fn sync(&mut self) -> Result<(), ToolError> {
         let deadline = Instant::now() + DEADLINE;
         roundtrip(
             &self.connection,
@@ -291,6 +340,34 @@ impl Selection {
             return Err(upstream("niri ended the data-control device"));
         }
         Ok(())
+    }
+}
+
+/// One selection as niri offered it: its MIME types, in the order offered, and reads of
+/// them. While it lives, the `Selection` it borrows handles no event, so every read goes
+/// to this offer's owner, whatever is copied meanwhile.
+#[derive(Debug)]
+pub(crate) struct Offer<'a> {
+    selection: &'a Selection,
+    proxy: &'a ZwlrDataControlOfferV1,
+    types: &'a [String],
+}
+
+impl Offer<'_> {
+    pub(crate) const fn types(&self) -> &[String] {
+        self.types
+    }
+
+    /// Reads `mime` from the offer's owner within `deadline`, if it is at most `max` bytes.
+    pub(crate) async fn receive(
+        &self,
+        mime: &str,
+        max: usize,
+        deadline: Instant,
+    ) -> Result<Vec<u8>, ToolError> {
+        self.selection
+            .receive(self.proxy, mime, max, deadline)
+            .await
     }
 }
 
@@ -312,6 +389,16 @@ pub(crate) async fn write(fd: OwnedFd, bytes: &[u8], deadline: Duration) -> Resu
 impl State {
     /// Keeps the selection's offer and destroys the others, which are no use any more.
     fn select(&mut self, selected: Option<ZwlrDataControlOfferV1>) {
+        if let Some(history) = &mut self.history {
+            let types = selected.as_ref().map(|selected| {
+                self.offers
+                    .iter()
+                    .find(|(offer, _)| offer == selected)
+                    .map(|(_, types)| types.clone())
+                    .unwrap_or_default()
+            });
+            history.push(types);
+        }
         for (offer, _) in &self.offers {
             if selected.as_ref() != Some(offer) {
                 offer.destroy();
