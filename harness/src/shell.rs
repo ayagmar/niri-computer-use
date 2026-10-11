@@ -70,11 +70,12 @@ fn lock_from_noctalia(session: &mut Session<'_>, client: &mut Client) -> Result<
 /// Every panel outside the allowlist is refused, and none opened.
 fn refused(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
     for panel in REFUSED {
-        for tool in ["shell_open", "shell_close"] {
-            let result = client.call(session, tool, json!({"panel": panel}))?;
+        for open in [true, false] {
+            let args = json!({"panel": panel, "open": open});
+            let result = client.call(session, "shell_panel", args)?;
             expect(
                 error(&result) == "panel_not_allowed",
-                &format!("{tool} {panel} refused"),
+                &format!("shell_panel {panel} open: {open} refused"),
                 &result.to_string(),
             )?;
         }
@@ -106,14 +107,18 @@ fn stopped(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
         "shell_status without Noctalia",
         &shell_status.to_string(),
     )?;
-    let open = client.call(session, "shell_open", json!({"panel": "control-center"}))?;
+    let open = client.call(
+        session,
+        "shell_panel",
+        json!({"panel": "control-center", "open": true}),
+    )?;
     expect(
         error(&open) == "screen_locked",
-        "shell_open with the lock state unknown",
+        "shell_panel with the lock state unknown",
         &open.to_string(),
     )?;
     session.log(&format!(
-        "M5: Noctalia stopped: lock {lock}, shell_status noctalia_unavailable, shell_open screen_locked"
+        "M5: Noctalia stopped: lock {lock}, shell_status noctalia_unavailable, shell_panel screen_locked"
     ))
 }
 

@@ -26,7 +26,7 @@
 | `act/record.rs` | The change report's watch on niri's event stream: a waiter registered as an action's work starts, which afterwards applies every event since and says what changed. |
 | `changes.rs` | What an action changed on the desktop, from niri's windows and focused workspace before and after it (pure). |
 | `changes/elements.rs` | What an action changed among a window's accessible elements, from a walk before and after it (pure). |
-| `act/shell.rs` | `shell_open` and `shell_close`: a panel command, then polling Noctalia's status for the change. `noctalia`: any command, with Noctalia's reply. |
+| `act/shell.rs` | `shell_panel`: a panel command, then polling Noctalia's status for the change. `noctalia`: any command, with Noctalia's reply. |
 | `status.rs` | Builds the readiness report shared by the tool and the subcommand. |
 | `input.rs` | What the input tools share: their context and the focused window's `app_id`. |
 | `input/pointer.rs` | The pointer tools' work: the checks before input, the steps of each gesture, and the marker around a button press. |
@@ -140,7 +140,7 @@ Downscaling happens in grim and costs time: on a 2560x1440 output, JPEG took abo
 
 ## Noctalia and the lock state
 
-Noctalia counts as installed when `noctalia` is an executable on `PATH` at startup. Only then does the server list `shell_status`, `shell_open` and `shell_close`, and `status` reports the same answer for the whole session, so the two never disagree. It counts as running when its socket, `$XDG_RUNTIME_DIR/noctalia-$WAYLAND_DISPLAY.sock`, answers `status` with a JSON object within two seconds. The server writes the whole fixed payload `/\x1estatus`, shuts down its write half and reads to the end, as Noctalia's own client does. Only the `noctalia` tool sends text from a tool's arguments (see below). Anything other than a JSON object is `noctalia_unavailable`, except an `error:` reply, which keeps Noctalia's text as `upstream_error`. `status` checks again on every call, so a Noctalia restart shows up.
+Noctalia counts as installed when `noctalia` is an executable on `PATH` at startup. Only then does the server list `shell_status` and `shell_panel`, and `status` reports the same answer for the whole session, so the two never disagree. It counts as running when its socket, `$XDG_RUNTIME_DIR/noctalia-$WAYLAND_DISPLAY.sock`, answers `status` with a JSON object within two seconds. The server writes the whole fixed payload `/\x1estatus`, shuts down its write half and reads to the end, as Noctalia's own client does. Only the `noctalia` tool sends text from a tool's arguments (see below). Anything other than a JSON object is `noctalia_unavailable`, except an `error:` reply, which keeps Noctalia's text as `upstream_error`. `status` checks again on every call, so a Noctalia restart shows up.
 
 The shell tools send `panel-open <id>` or `panel-close <id>` the same way. Every command is a `noctalia::Command` built from fixed words, and the only panel ids are those of `policy::Panel`: `control-center`, `wallpaper` and `tray-drawer`. Any other name, whatever Noctalia has, is `panel_not_allowed` before anything is sent; that keeps out the session menu, the launcher, which runs what is typed into it, polkit's prompt, the clipboard history, the setup wizard and the test panel. Noctalia carries a panel command out before it replies `ok`. A failed connect or an `error:` reply means nothing happened; a reply lost after the connect, or anything else, is `uncertain` with `accepted: null`. Noctalia sends no events, so the tool then reads `status` every 100 ms for up to two seconds until `activePanelId` shows the change.
 
@@ -192,7 +192,7 @@ A session ends when its client closes the server's stdin, reading it fails, or t
 
 `niri_action` runs through `Desk::act` like the others. Its JSON becomes a `niri_ipc::Action`, or an argument mistake; then `policy::refuse_action` refuses a gated action with `unrestricted_required` unless `unrestricted` is on, after the lease, stop and lock checks, so the refusal is audited like any outcome. `policy::action_gate` and the window-target match in `act/compositor.rs` are exhaustive matches without a wildcard arm, so a niri-ipc upgrade that adds an action fails to compile until both place it.
 
-`shell_open`, `shell_close` and `noctalia` run through `Desk::act` too, but talk to Noctalia instead of niri: see Noctalia and the lock state. They send no input, so they write no marker.
+`shell_panel` and `noctalia` run through `Desk::act` too, but talk to Noctalia instead of niri: see Noctalia and the lock state. They send no input, so they write no marker.
 
 Each niri action follows the waiting pattern of plan §7:
 

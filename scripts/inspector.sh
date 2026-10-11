@@ -73,7 +73,7 @@ readonly READ_ONLY='["clipboard_read","desktop_state","elements","outputs","scre
 list_tools() {
   local expected="${TOOLS}"
   if command -v noctalia >/dev/null; then
-    expected="${expected} + [\"shell_close\",\"shell_open\",\"shell_status\"]"
+    expected="${expected} + [\"shell_panel\",\"shell_status\"]"
   fi
   if jq -e '.result.structuredContent.accessibility.available' "${work}/status.json" >/dev/null; then
     expected="${expected} + [\"activate_element\",\"elements\",\"set_element_text\"]"

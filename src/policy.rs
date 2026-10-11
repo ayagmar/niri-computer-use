@@ -788,10 +788,10 @@ pub(crate) fn refuse_action(action: &Action, unrestricted: bool) -> Option<ToolE
     ))
 }
 
-/// The Noctalia panels `shell_open` and `shell_close` may name (plan §6.1). Never the
-/// session menu, which powers off; the launcher, which runs whatever is typed into it;
-/// polkit's authentication prompt; the clipboard history, which may hold secrets; the
-/// setup wizard; or Noctalia's test panel.
+/// The Noctalia panels `shell_panel` may name (plan §6.1). Never the session menu, which
+/// powers off; the launcher, which runs whatever is typed into it; polkit's authentication
+/// prompt; the clipboard history, which may hold secrets; the setup wizard; or Noctalia's
+/// test panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Panel {
     ControlCenter,

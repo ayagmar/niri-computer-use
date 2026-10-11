@@ -312,6 +312,8 @@ struct NoctaliaArgs {
 struct PanelArgs {
     /// A Noctalia panel: `control-center`, `wallpaper` or `tray-drawer`.
     panel: String,
+    /// true to open the panel, false to close it.
+    open: bool,
     /// Also return a screenshot of the focused output once the screen settles.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     screenshot: bool,
@@ -1376,10 +1378,10 @@ impl Server {
         .await
     }
 
-    /// Opens a Noctalia panel: `control-center`, `wallpaper` or `tray-drawer`; any other
-    /// panel is refused with `panel_not_allowed`. `observed` is `opened` once Noctalia
-    /// reports it open, `timeout` if it doesn't within two seconds, or `uncertain` if
-    /// Noctalia's reply was lost; `shell.active_panel` is the panel open at the end. An
+    /// Opens (`open: true`) or closes a Noctalia panel: `control-center`, `wallpaper` or
+    /// `tray-drawer`; any other is refused with `panel_not_allowed`. `observed` is `opened`
+    /// or `closed` once Noctalia reports it so, `timeout` after two seconds, or `uncertain`
+    /// if Noctalia's reply was lost; `shell.active_panel` is the panel open at the end. An
     /// open panel holds keyboard focus, so type into it with `expect: "none"`. Fails with
     /// `noctalia_unavailable` when Noctalia isn't answering. Requires the lease.
     #[tool(annotations(
@@ -1388,7 +1390,7 @@ impl Server {
         idempotent_hint = true,
         open_world_hint = false
     ))]
-    async fn shell_open(
+    async fn shell_panel(
         &self,
         Parameters(args): Parameters<PanelArgs>,
         context: RequestContext<RoleServer>,
@@ -1396,41 +1398,18 @@ impl Server {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
         let (env, niri) = (self.engine.env(), self.engine.niri());
         let shoot = args.screenshot;
-        let work = async move { act::shell::open(env, niri, policy::panel(&args.panel)?).await };
+        let work = async move {
+            let panel = policy::panel(&args.panel)?;
+            if args.open {
+                act::shell::open(env, niri, panel).await
+            } else {
+                act::shell::close(env, niri, panel).await
+            }
+        };
         self.act(
             &context,
             Asked {
-                tool: "shell_open",
-                logged,
-                report: Report::shot(shoot),
-            },
-            work,
-        )
-        .await
-    }
-
-    /// Closes a Noctalia panel opened with `shell_open`. `observed` is `closed` once
-    /// Noctalia no longer reports it open; otherwise as for `shell_open`. Requires the
-    /// lease.
-    #[tool(annotations(
-        read_only_hint = false,
-        destructive_hint = false,
-        idempotent_hint = true,
-        open_world_hint = false
-    ))]
-    async fn shell_close(
-        &self,
-        Parameters(args): Parameters<PanelArgs>,
-        context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
-        let (env, niri) = (self.engine.env(), self.engine.niri());
-        let shoot = args.screenshot;
-        let work = async move { act::shell::close(env, niri, policy::panel(&args.panel)?).await };
-        self.act(
-            &context,
-            Asked {
-                tool: "shell_close",
+                tool: "shell_panel",
                 logged,
                 report: Report::shot(shoot),
             },
@@ -1713,7 +1692,7 @@ struct Keying {
 }
 
 /// The tools that exist only with Noctalia installed.
-const SHELL_TOOLS: [&str; 3] = ["shell_status", "shell_open", "shell_close"];
+const SHELL_TOOLS: [&str; 2] = ["shell_status", "shell_panel"];
 const ELEMENT_TOOLS: [&str; 3] = ["elements", "activate_element", "set_element_text"];
 
 fn answer(result: Result<impl Serialize, ToolError>) -> Result<CallToolResult, ErrorData> {
@@ -1821,8 +1800,7 @@ mod tests {
             (Server::paste_tool_attr(), (no, yes, no)),
             (Server::activate_element_tool_attr(), (no, yes, no)),
             (Server::set_element_text_tool_attr(), (no, yes, yes)),
-            (Server::shell_open_tool_attr(), (no, no, yes)),
-            (Server::shell_close_tool_attr(), (no, no, yes)),
+            (Server::shell_panel_tool_attr(), (no, no, yes)),
             (Server::noctalia_tool_attr(), (no, yes, no)),
         ] {
             let name = tool.name.clone();

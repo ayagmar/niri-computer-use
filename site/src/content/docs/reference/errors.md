@@ -113,7 +113,7 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 ### `panel_not_allowed`
 
-**Cause:** `shell_open` or `shell_close` named a panel other than `control-center`, `wallpaper` or `tray-drawer`. Nothing was sent.
+**Cause:** `shell_panel` named a panel other than `control-center`, `wallpaper` or `tray-drawer`. Nothing was sent.
 
 **What to do:** use one of those three. The others, such as the session menu and the launcher, are deliberately out of reach.
 

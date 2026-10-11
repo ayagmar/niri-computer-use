@@ -1585,11 +1585,14 @@ async fn a_wtype_past_its_deadline_is_killed_and_leaves_the_marker() {
 }
 
 #[tokio::test]
-async fn shell_open_and_close_watch_noctalias_active_panel() {
+async fn shell_panel_opens_and_closes_watching_noctalias_active_panel() {
     let mut desk = Desk::start("act-shell", "").await;
     let opened = desk
         .server
-        .call("shell_open", json!({"panel": "control-center"}))
+        .call(
+            "shell_panel",
+            json!({"panel": "control-center", "open": true}),
+        )
         .await;
     assert_eq!(
         outcome(&opened),
@@ -1601,12 +1604,18 @@ async fn shell_open_and_close_watch_noctalias_active_panel() {
     // Already open: nothing is sent.
     let again = desk
         .server
-        .call("shell_open", json!({"panel": "control-center"}))
+        .call(
+            "shell_panel",
+            json!({"panel": "control-center", "open": true}),
+        )
         .await;
     assert_eq!(outcome(&again)["accepted"], false);
     let closed = desk
         .server
-        .call("shell_close", json!({"panel": "control-center"}))
+        .call(
+            "shell_panel",
+            json!({"panel": "control-center", "open": false}),
+        )
         .await;
     assert_eq!(
         outcome(&closed),
@@ -1622,9 +1631,9 @@ async fn shell_open_and_close_watch_noctalias_active_panel() {
     assert_eq!(
         desk.audited(),
         [
-            json!(["shell_open", {"panel": "control-center"}, true, "opened", null]),
-            json!(["shell_open", {"panel": "control-center"}, false, "opened", null]),
-            json!(["shell_close", {"panel": "control-center"}, true, "closed", null]),
+            json!(["shell_panel", {"panel": "control-center", "open": true}, true, "opened", null]),
+            json!(["shell_panel", {"panel": "control-center", "open": true}, false, "opened", null]),
+            json!(["shell_panel", {"panel": "control-center", "open": false}, true, "closed", null]),
         ]
     );
 }
@@ -1639,7 +1648,10 @@ async fn a_report_that_cannot_start_says_why() {
     let _silent = desk.niri.stream().await;
     let opened = desk
         .server
-        .call("shell_open", json!({"panel": "control-center"}))
+        .call(
+            "shell_panel",
+            json!({"panel": "control-center", "open": true}),
+        )
         .await;
     assert_eq!(
         outcome(&opened),
@@ -1655,10 +1667,11 @@ async fn a_report_that_cannot_start_says_why() {
 async fn panels_outside_the_allowlist_are_refused_without_asking_noctalia() {
     let mut desk = Desk::start("act-shell-refused", "").await;
     for panel in ["launcher", "session", "polkit", "clipboard", "nope"] {
-        for tool in ["shell_open", "shell_close"] {
-            let refused = desk.server.call(tool, json!({"panel": panel})).await;
+        for open in [true, false] {
+            let args = json!({"panel": panel, "open": open});
+            let refused = desk.server.call("shell_panel", args).await;
             let (name, detail) = tool_error(&refused);
-            assert_eq!(name, "panel_not_allowed", "{tool} {panel}");
+            assert_eq!(name, "panel_not_allowed", "{open} {panel}");
             assert!(detail.contains(panel), "{detail}");
         }
     }
@@ -1672,7 +1685,7 @@ async fn a_panel_that_never_opens_times_out_with_a_screenshot() {
     let started = Instant::now();
     let stuck = desk
         .server
-        .call("shell_open", json!({"panel": "wallpaper"}))
+        .call("shell_panel", json!({"panel": "wallpaper", "open": true}))
         .await;
     assert_eq!(
         outcome(&stuck),
@@ -1691,7 +1704,10 @@ async fn shell_tools_need_the_lease_and_an_unlocked_screen() {
     desk.noctalia.set(LOCKED);
     let locked = desk
         .server
-        .call("shell_open", json!({"panel": "control-center"}))
+        .call(
+            "shell_panel",
+            json!({"panel": "control-center", "open": true}),
+        )
         .await;
     assert_eq!(tool_error(&locked).0, "screen_locked");
     desk.noctalia.set(UNLOCKED);
@@ -1700,7 +1716,10 @@ async fn shell_tools_need_the_lease_and_an_unlocked_screen() {
         .await;
     let unheld = desk
         .server
-        .call("shell_close", json!({"panel": "control-center"}))
+        .call(
+            "shell_panel",
+            json!({"panel": "control-center", "open": false}),
+        )
         .await;
     assert_eq!(tool_error(&unheld).0, "lease_required");
     assert_eq!(desk.noctalia.panel_commands(), Vec::<String>::new());
@@ -1712,7 +1731,10 @@ async fn a_lost_panel_reply_is_uncertain_with_a_screenshot() {
     desk.noctalia.panel_reply("");
     let lost = desk
         .server
-        .call("shell_open", json!({"panel": "control-center"}))
+        .call(
+            "shell_panel",
+            json!({"panel": "control-center", "open": true}),
+        )
         .await;
     assert_eq!(
         outcome(&lost),
@@ -1726,16 +1748,27 @@ async fn a_lost_panel_reply_is_uncertain_with_a_screenshot() {
 #[tokio::test]
 async fn only_one_panel_is_open_at_a_time() {
     let mut desk = Desk::start("act-shell-other", "").await;
-    let open = |panel: &str| json!({"panel": panel});
-    outcome(&desk.server.call("shell_open", open("wallpaper")).await);
+    let open = |panel: &str, open: bool| json!({"panel": panel, "open": open});
+    outcome(
+        &desk
+            .server
+            .call("shell_panel", open("wallpaper", true))
+            .await,
+    );
     // Opening another panel replaces it.
-    let replaced = desk.server.call("shell_open", open("tray-drawer")).await;
+    let replaced = desk
+        .server
+        .call("shell_panel", open("tray-drawer", true))
+        .await;
     assert_eq!(
         outcome(&replaced)["shell"],
         json!({"active_panel": "tray-drawer"})
     );
     // Closing a panel that another one replaced sends nothing.
-    let closed = desk.server.call("shell_close", open("wallpaper")).await;
+    let closed = desk
+        .server
+        .call("shell_panel", open("wallpaper", false))
+        .await;
     assert_eq!(
         outcome(&closed),
         json!({

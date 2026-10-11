@@ -1,4 +1,4 @@
-//! `shell_open` and `shell_close`: change which Noctalia panel is open, then poll
+//! `shell_panel`: change which Noctalia panel is open, then poll
 //! Noctalia's `status` until `activePanelId` shows the change (plan §6.1). Noctalia sends
 //! no events, so polling is the only way to observe it. Nothing is retried. Also the
 //! `noctalia` tool, which sends any command and reports Noctalia's reply.

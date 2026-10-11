@@ -70,7 +70,7 @@ fn expected(name: &str) -> (Value, Value) {
             json!([false, true, false]),
             json!(["text", "keys", "expect"]),
         ),
-        "shell_open" | "shell_close" => (json!([false, false, true]), json!(["panel"])),
+        "shell_panel" => (json!([false, false, true]), json!(["panel", "open"])),
         "type_text" => (json!([false, true, false]), json!(["text", "expect"])),
         _ => read_only,
     }
@@ -101,8 +101,7 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
             "release_desktop",
             "screenshot",
             "scroll",
-            "shell_close",
-            "shell_open",
+            "shell_panel",
             "shell_status",
             "status",
             "type_text",
@@ -131,7 +130,7 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
 }
 
 /// How many arguments each tool takes; tools not listed take none.
-const PROPERTIES: [(&str, usize); 16] = [
+const PROPERTIES: [(&str, usize); 15] = [
     ("screenshot", 5),
     ("launch", 3),
     ("niri_action", 2),
@@ -144,8 +143,7 @@ const PROPERTIES: [(&str, usize); 16] = [
     ("key", 4),
     ("type_text", 5),
     ("paste", 5),
-    ("shell_open", 2),
-    ("shell_close", 2),
+    ("shell_panel", 3),
     ("release_desktop", 1),
     ("wait_for", 3),
 ];
@@ -225,7 +223,7 @@ async fn without_noctalia_on_path_there_are_no_shell_tools() {
             "wait_for"
         ]
     );
-    for tool in ["shell_status", "shell_open", "shell_close"] {
+    for tool in ["shell_status", "shell_panel"] {
         let id = server
             .start_call(tool, json!({"panel": "control-center"}))
             .await;

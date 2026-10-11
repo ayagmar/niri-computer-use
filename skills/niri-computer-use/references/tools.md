@@ -46,13 +46,12 @@ Watching the desktop never needs the lease.
 | `launch` | `preset`, optionally `reuse` | `one`, `ambiguous` or `none`, with the new window ids in `windows`, or `focused` when a single-instance app showed the window it had. With `reuse: true`: `focused` for one existing window, or `ambiguous` with several and nothing started |
 | `close_window` | `id`: a window id | `closed`, or `pending` when the window is still open after five seconds, for example behind an unsaved-changes dialog |
 | `niri_action` | `action`: one niri action in niri's JSON, such as `{"FullscreenWindow": {"id": 12}}`, `{"SetWindowWidth": {"id": 12, "change": {"SetFixed": 1600}}}`, `{"ToggleWindowFloating": {"id": null}}` (null: the focused window) or `{"MaximizeColumn": {}}` | for an action about one window, `changed`, `unchanged` (within a second) or `closed`, with `window`: `window_size`, `tile_size`, `is_floating`, `is_focused`, `workspace_id`; otherwise `sent`. No fullscreen flag: a fullscreen window's `window_size` is its output's size |
-| `shell_open` | `panel`: `control-center`, `wallpaper` or `tray-drawer` | `opened` or `timeout` within two seconds, with `shell.active_panel`; `accepted: false` when it was already open. Listed only with Noctalia |
-| `shell_close` | `panel`, as for `shell_open` | `closed` or `timeout`; `accepted: false` when it wasn't open |
+| `shell_panel` | `panel`: `control-center`, `wallpaper` or `tray-drawer`; `open`: true to open it, false to close it | `opened` or `closed`, or `timeout` within two seconds, with `shell.active_panel`; `accepted: false` when it already was. Listed only with Noctalia |
 | `noctalia` | `args`: a Noctalia command and its arguments, as after `noctalia msg`, such as `["plugin", "<plugin>:<entry>", "all", "<command>"]`; `["--help"]` lists them | `sent`, with `noctalia.reply`, Noctalia's answer. Its `error:` reply is `upstream_error`. Listed only with Noctalia and `unrestricted` |
 
 Use `launch` with `reuse: true` unless the user asked for another window of the app. With no preset for the app and `status.unrestricted.enabled` true, start it with `niri_action {"Spawn": {"command": ["<program>", ...]}}`, never a shell or `SpawnSh`. It returns only `sent`: `wait_for` its window by an `app_id` you know, or find it in a fresh `desktop_state`, since the `app_id` is often not the program's name. Don't `Spawn` again after `uncertain` or a timeout. With `unrestricted` off, ask the user for a preset.
 
-An open panel holds keyboard focus, so `focused_window` is null while it is open. To type into it, use `expect: "none"` after a screenshot shows it ready, and close it with `shell_close` when you're done.
+An open panel holds keyboard focus, so `focused_window` is null while it is open. To type into it, use `expect: "none"` after a screenshot shows it ready, and close it with `shell_panel` and `open: false` when you're done.
 
 ## Pointer and keyboard
 

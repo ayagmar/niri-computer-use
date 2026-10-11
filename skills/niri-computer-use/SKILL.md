@@ -33,7 +33,7 @@ Acting needs the lease. Take it with `acquire_desktop` only when the user asked 
 
 Wait for each call's result before the next call. A screenshot sent alongside an action can be taken before the app has redrawn and show you the old screen, and an action sent alongside another can land on whatever the first one changed. `screenshot: true` on the action is both faster and right.
 
-Prefer structured actions to input, because they can't land on the wrong thing: `focus` with a window or workspace id from `desktop_state`, `launch` with a preset name, `close_window`, `shell_open` and `shell_close`. Use the pointer and keyboard for what happens inside an app.
+Prefer structured actions to input, because they can't land on the wrong thing: `focus` with a window or workspace id from `desktop_state`, `launch` with a preset name, `close_window` and `shell_panel`. Use the pointer and keyboard for what happens inside an app.
 
 For window layout and other compositor actions, such as fullscreen, floating, a window's width or moving it to another workspace, use `niri_action` with niri's action JSON, such as `{"FullscreenWindow": {"id": 12}}`. Never press niri's keybinds for these: they don't fire from `key`. Its result gives the window's new `window_size` and `is_floating`. When `noctalia` is listed, use it for Noctalia shell and plugin commands, such as the user's screen-recording toggle.
 

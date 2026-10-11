@@ -50,7 +50,7 @@ pub(crate) enum ErrorName {
     /// A screenshot ref that is unknown, expired, for a changed output, or a pixel outside
     /// its image.
     RefInvalid,
-    /// `shell_open` or `shell_close` named a panel outside the allowlist.
+    /// `shell_panel` named a panel outside the allowlist.
     PanelNotAllowed,
     /// `paste` couldn't save the clipboard whole, so it pasted nothing.
     ClipboardUnsaved,

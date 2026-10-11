@@ -52,7 +52,7 @@ Before each action the server checks, in this order: the stop flag (`stopped`), 
 - The pointer and keyboard tools refuse with `app_denied` while the focused window's `app_id` is on your deny list. `elements`, `activate_element` and `set_element_text` refuse a denied app's window, and `close_window` and `niri_action`'s `CloseWindow` refuse to close one, whether named or focused. Focus and layout actions, such as `focus` or making a window fullscreen, still reach a denied window: they move it, not what is in it.
 - The keyboard tools need `expect`, the window the agent means to type into, and refuse with `focus_mismatch` rather than type elsewhere. They stop if focus moves while they type.
 - The pointer tools aim only at pixels of a screenshot the agent took under its lease, at most a minute old, of an output that hasn't changed since. They run only on one monitor at transform `Normal`.
-- `shell_open` and `shell_close` open only three Noctalia panels.
+- `shell_panel` opens and closes only three Noctalia panels.
 
 A refusal sends nothing. The [error reference](../../reference/errors/) lists every refusal.
 

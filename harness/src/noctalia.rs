@@ -67,7 +67,7 @@ pub(crate) fn no_panel_open(session: &mut Session<'_>, client: &mut Client) -> R
     session.log(&format!("shell_status, no panel open: {status}"))
 }
 
-/// Opens `panel` with `shell_open` and closes it with `shell_close`, each seen in
+/// Opens `panel` with `shell_panel` and closes it again, each seen in
 /// `activePanelId` within the server's two seconds. With `closed`, a capture with no panel
 /// open, it also checks the panel is drawn and then gone.
 pub(crate) fn cycle(
@@ -76,7 +76,7 @@ pub(crate) fn cycle(
     panel: &str,
     closed: Option<&[u8]>,
 ) -> Result<()> {
-    change(session, client, "shell_open", panel, Some(panel))?;
+    change(session, client, panel, Some(panel))?;
     if let Some(closed) = closed {
         drawn(session, closed, panel, true)?;
     }
@@ -86,34 +86,37 @@ pub(crate) fn cycle(
     if panel == PANEL {
         ocr(session, CONTROL_CENTER_WORD)?;
     }
-    change(session, client, "shell_close", panel, None)?;
+    change(session, client, panel, None)?;
     match closed {
         Some(closed) => drawn(session, closed, panel, false),
         None => session.log(&format!("{panel}: no pixel check")),
     }
 }
 
-/// Calls `tool` on `panel` and requires that Noctalia accepted it and the server saw
+/// Opens `panel` with `shell_panel`, or closes it when `expected` is none, and requires that Noctalia accepted it and the server saw
 /// `activePanelId` become `expected`. The server finds Noctalia's socket from NESTED, so
 /// first the socket must resolve under `TEST_DIR/run`: a panel command never reaches the
 /// host's Noctalia.
 fn change(
     session: &mut Session<'_>,
     client: &mut Client,
-    tool: &str,
     panel: &str,
     expected: Option<&str>,
 ) -> Result<()> {
-    let observed = if expected.is_some() {
-        "opened"
+    let (observed, tool) = if expected.is_some() {
+        ("opened", "open")
     } else {
-        "closed"
+        ("closed", "close")
     };
     session
         .noctalia_socket()?
         .ok_or_else(|| Failure::new("the nested Noctalia's socket is gone"))?;
     let sent = Instant::now();
-    let outcome = structured(&client.call(session, tool, json!({"panel": panel}))?)?;
+    let outcome = structured(&client.call(
+        session,
+        "shell_panel",
+        json!({"panel": panel, "open": expected.is_some()}),
+    )?)?;
     let seen = field(&outcome, "/accepted") == true
         && field(&outcome, "/observed") == observed
         && field(&outcome, "/shell/active_panel").as_str() == expected;

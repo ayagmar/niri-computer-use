@@ -43,7 +43,7 @@ niri-computer-use: a server holds the lease: PID … (…); end that agent or it
 
 ## The shell tools are missing, or `shell_status` fails
 
-`shell_status`, `shell_open` and `shell_close` are listed only when `noctalia` was on `PATH` when the server started. Install Noctalia and restart the agent's session.
+`shell_status` and `shell_panel` are listed only when `noctalia` was on `PATH` when the server started. Install Noctalia and restart the agent's session.
 
 If they are listed but fail with `noctalia_unavailable`, Noctalia isn't running: `status` shows `noctalia: not_running` and a `noctalia_error` such as `…/noctalia-wayland-1.sock: connect: No such file or directory`. Start Noctalia. While it isn't running, the lock state depends on logind alone, so without `niri --session` the lease is refused.
 
