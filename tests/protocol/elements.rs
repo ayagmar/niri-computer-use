@@ -166,6 +166,60 @@ async fn an_element_of_the_focused_window_is_activated_and_its_text_set_once_eac
     assert_eq!(desk.mock.calls("SetTextContents"), 1);
 }
 
+#[tokio::test]
+async fn elements_gives_one_line_per_interactive_element_unless_asked_for_more() {
+    let mut objects = objects();
+    objects[0] = (
+        "/frame",
+        Object::frame("Mock", (800, 600), &["/panel", "/heading"]),
+    );
+    let heading = Object {
+        name: "Heading".to_owned(),
+        ..Object::panel(&[])
+    };
+    objects.push(("/heading", heading));
+    let windows = [
+        app_window(WINDOW, true),
+        window_on(2, Some("other"), 1, false),
+    ];
+    let mut desk = Desk::start_with("el-compact", &["/frame"], objects, &windows).await;
+    let listed = desk
+        .server
+        .call("elements", json!({"window_id": WINDOW}))
+        .await;
+    let text = listed["content"][0]["text"].as_str().unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[0].starts_with("window 1: 4 elements, "), "{text}");
+    assert_eq!(lines.len(), 5, "{text}");
+    let element_refs = &listed["structuredContent"]["elements"];
+    let safe = element_refs[0]["element_ref"].as_str().unwrap();
+    assert_eq!(
+        lines[1],
+        format!("{safe} button \"Safe\" [] (click) unmappable:not_showing"),
+        "{text}"
+    );
+    assert!(
+        lines[3].contains(" \"Field\" [editable] (activate) "),
+        "{text}"
+    );
+    assert!(!text.contains("Heading"), "{text}");
+
+    let everything = desk
+        .server
+        .structured_with(
+            "elements",
+            json!({"window_id": WINDOW, "interactive_only": false, "format": "json"}),
+        )
+        .await;
+    let names: Vec<&str> = everything["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|element| element["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["Safe", "Odd", "Field", "Secret", "Heading"]);
+}
+
 /// Text an application put in its error messages, which must reach neither the agent nor
 /// the audit log.
 const SENTINEL: &str = "PRIVATE-REVIEW-SENTINEL";

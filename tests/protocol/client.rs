@@ -153,14 +153,20 @@ impl Server {
         self.structured_with(tool, json!({})).await
     }
 
-    /// A successful tool's structured content, called with `arguments`.
+    /// A successful tool's structured content, called with `arguments`. Its text is the
+    /// same JSON, except for `elements`' compact lines.
     pub(crate) async fn structured_with(&mut self, tool: &str, arguments: Value) -> Value {
+        let compact = tool == "elements" && arguments["format"] != "json";
         let result = self.call(tool, arguments).await;
         assert_eq!(result["isError"], false, "{tool}: {result}");
-        let text: Value =
-            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(text, result["structuredContent"], "{tool}");
-        text
+        let text = result["content"][0]["text"].as_str().unwrap();
+        if compact {
+            assert!(text.starts_with("window "), "{text}");
+        } else {
+            let text: Value = serde_json::from_str(text).unwrap();
+            assert_eq!(text, result["structuredContent"], "{tool}");
+        }
+        result["structuredContent"].clone()
     }
 
     pub(crate) async fn tools(&mut self) -> Vec<Value> {

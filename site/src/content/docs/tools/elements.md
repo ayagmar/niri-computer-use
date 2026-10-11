@@ -19,8 +19,10 @@ Many apps describe their widgets to screen readers over the accessibility bus (A
 | `role` | only elements with this role, such as `button`, `check_box`, `entry`, `link`, `menu_item` or `text`: AT-SPI's role names in snake case |
 | `name_contains` | only elements whose name contains this text, ignoring case |
 | `limit` | the most elements to return, 1 to 500; default 50 |
+| `interactive_only` | default true: only elements with an action or editable text. With false, every element with a name or an action, labels included. With `role`, every element of that role either way |
+| `format` | `compact` (default) or `json`: what the result's text is. `structuredContent` always has the full JSON |
 
-Read-only, and needs no lease. Without `role`, it lists the showing elements that have a name or an action, in the app's order; with `role`, every showing element of that role. The walk counts only elements that pass every filter, and stops as soon as it found one more than `limit`, so a narrow `role`, `name_contains` or `limit` also makes it faster. It still looks inside showing elements that don't match, and reads at most 2000 objects however few match. The result:
+Read-only, and needs no lease. It lists showing elements in the app's order: by default those with an action or editable text; with `interactive_only: false`, those with a name or an action; with `role`, every showing element of that role. The walk counts only elements that pass every filter, and stops as soon as it found one more than `limit`, so a narrow `role`, `name_contains` or `limit` also makes it faster. It still looks inside showing elements that don't match, and reads at most 2000 objects however few match. The result:
 
 | Field | Value |
 |---|---|
@@ -31,7 +33,18 @@ Read-only, and needs no lease. Without `role`, it lists the showing elements tha
 | `capped` | the walk stopped early, so elements further on are missing |
 | `capped_reason` | why: `node_cap` at its cap of 2000 objects, or `budget_exhausted` when the three seconds ran out; null when not capped |
 
-Each element:
+In `compact` format, the text is a line about the walk, then one line per element:
+
+```text
+window 12: 3 elements, 41 objects walked
+elem-5e1a90c2-1 button "Save" [focused] (click) 1210,84,80,32
+elem-5e1a90c2-2 entry "File name" [editable] (activate) 420,84,600,32
+elem-5e1a90c2-3 check_box "Hidden files" [checkable] (click) unmappable:not_showing
+```
+
+Each line is `element_ref role "name" [states] (actions) x,y,width,height`, with `-` for no `element_ref` without the lease and `unmappable:<why>` when there is no box. The name is quoted and escaped, so a newline in it can't start a line of its own. The states leave out `enabled`, `focusable`, `sensitive`, `showing` and `visible`, which most elements have, and add `disabled` for an element that isn't `sensitive`. The walk line adds `; more match past the limit` when `truncated`, and `; walk cut short: <capped_reason>` when `capped`. In `json` format, the text is the same JSON as `structuredContent`.
+
+Each element in the JSON:
 
 | Field | Value |
 |---|---|
