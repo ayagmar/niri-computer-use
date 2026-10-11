@@ -1839,7 +1839,7 @@ fn invalid(message: &str) -> CallToolResult {
 #[tool_handler(
     router = self.tool_router,
     name = "niri-computer-use",
-    instructions = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `elements`, when listed, gives one window's accessible elements and where they are, and `activate_element` and `set_element_text` press them and fill them in without the pointer once their window has focus. `clipboard_read` returns the clipboard's text, and `shell_status`, when Noctalia is installed, its panel and lock state. To act, call `acquire_desktop`, then one action at a time (`focus_window`, `focus_workspace`, `launch`, `close_window`, `niri_action` for window layout such as fullscreen, floating and widths, with Noctalia `shell_open` and `shell_close`, and for input `pointer_move`, `click`, `drag` and `scroll` with a fresh `screenshot_ref`, or `key`, `type_text` and `paste` with `expect`), reading `accepted` and `observed` before the next call. A result's `changes` says what niri saw the action change (windows opened or closed, focus, workspace, titles, sizes), and is absent when nothing did: read it first, and take a screenshot only when it is empty or unexpected or you need pixels. To see an action's result, pass it `screenshot: true` rather than sending a `screenshot` alongside it, and use `wait_for` rather than repeated screenshots to wait for a window or for the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter, and start apps through `launch` presets; with no preset for the app, use `niri_action` `Spawn` with the program's argv (never a shell or `SpawnSh`) when `status.unrestricted.enabled` is true, then find its window with `wait_for` or `desktop_state` (its `app_id` may differ from the program's name) and never repeat the `Spawn`; otherwise ask the user to add a preset. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
+    instructions = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows and workspaces and `outputs` for the monitor layout; take a `screenshot` only when you need to see pixels. `elements`, when listed, gives a window's accessible elements, which `activate_element` and `set_element_text` act on without the pointer once their window has focus. To act, call `acquire_desktop`, then one action at a time (pointer tools with a fresh `screenshot_ref`, `key`, `type_text` and `paste` with `expect`, `niri_action` for window layout), reading `accepted` and `observed` before the next call. A result's `changes` says what niri saw the action change and is absent when nothing did: read it first, and take a screenshot only when it is empty or unexpected. To see an action's result, pass it `screenshot: true` rather than sending a `screenshot` alongside it, and use `wait_for` rather than repeated screenshots to wait for a window or for the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter, and start apps through `launch` presets; with no preset for the app, use `niri_action` `Spawn` with the program's argv (never a shell or `SpawnSh`) when `status.unrestricted.enabled` is true, then find its window with `wait_for` or `desktop_state` (its `app_id` may differ from the program's name) and never repeat the `Spawn`; otherwise ask the user to add a preset. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
 )]
 impl ServerHandler for Server {}
 
@@ -2083,5 +2083,15 @@ mod tests {
                 .is_some_and(|text| text.contains("status"))
         );
         assert!(info.capabilities.tools.is_some());
+    }
+
+    /// Claude Code keeps the first 2048 characters of a server's instructions and drops the
+    /// rest without a word, which would cut the last rules short.
+    #[test]
+    fn the_instructions_fit_what_clients_keep() {
+        let server = server(&engine(Env::default()), false);
+        let instructions = server.get_info().instructions.unwrap_or_default();
+        let length = instructions.chars().count();
+        assert!(length <= 1900, "{length} characters");
     }
 }
