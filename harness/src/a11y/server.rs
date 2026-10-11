@@ -409,14 +409,21 @@ fn signal(session: &Session<'_>, fixture: &Fixture, signal: &str) -> Result<()> 
 fn read_count(session: &Session<'_>, counter: &str) -> Result<Option<u32>> {
     let path = session.test_dir().root().join(counter);
     match fs::read_to_string(&path) {
-        Ok(text) => text
-            .trim()
-            .parse()
-            .map(Some)
-            .context(format!("parse {}", path.display())),
+        Ok(text) => count(&text).context(format!("parse {}", path.display())),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(Failure::new(format!("read {}: {error}", path.display()))),
     }
+}
+
+/// The count in a counter file's `text`. The Qt fixture writes its counter with an
+/// `XMLHttpRequest` `PUT`, which empties the file before writing it, so an empty file is
+/// one being written: no count yet.
+fn count(text: &str) -> std::result::Result<Option<u32>, std::num::ParseIntError> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    text.parse().map(Some)
 }
 
 /// The duration of the server's last logged call, from its audit log, which is kept with
@@ -445,5 +452,17 @@ fn expect(holds: bool, what: &str, saw: &Value) -> Result<()> {
         Ok(())
     } else {
         Err(Failure::new(format!("M9: expected {what}; saw {saw}")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_counter_file_caught_while_qt_rewrites_it_has_no_count_yet() {
+        assert_eq!(count(""), Ok(None));
+        assert_eq!(count("12\n"), Ok(Some(12)));
+        assert!(count("1x").is_err());
     }
 }
