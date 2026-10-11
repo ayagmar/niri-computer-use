@@ -80,6 +80,10 @@ impl elements::actions::Recheck for Recheck<'_> {
     fn sending(&self) {
         self.engine.desk.sending();
     }
+
+    fn answered(&self, outcome: Outcome) {
+        self.engine.desk.answered(outcome);
+    }
 }
 
 /// What `release_desktop` returns.

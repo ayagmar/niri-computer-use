@@ -185,12 +185,17 @@ impl Outcome {
         }
     }
 
-    /// The outcome of work the desk ran: its own, or `uncertain` with `accepted: null` and
-    /// why, when a stop or a moved lease cut it short after its call went out.
+    /// The outcome of work the desk ran: its own, or `uncertain` with why, when a stop or
+    /// a moved lease cut it short after its call went out: with what was known once the
+    /// app answered that call, or else `accepted: null`.
     pub(crate) fn concluded(worked: Worked<Self>) -> Self {
         match worked {
             Worked::Done(outcome) => outcome,
-            Worked::CutAfterSending(cut) => Self::uncertain(None, None, cut.detail),
+            Worked::CutAfterSending(cut, Some(answered)) => Self {
+                detail: Some(cut.detail),
+                ..*answered
+            },
+            Worked::CutAfterSending(cut, None) => Self::uncertain(None, None, cut.detail),
         }
     }
 

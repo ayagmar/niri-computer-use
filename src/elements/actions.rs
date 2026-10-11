@@ -100,6 +100,19 @@ pub(crate) struct Acted {
     pub(crate) characters: Option<i32>,
 }
 
+impl Acted {
+    /// An element of `role` the app took `action` of, or its text, before anything was seen.
+    fn new(role: u32, action: Option<Chosen>) -> Self {
+        Self {
+            role: model::role_name(role),
+            action,
+            states_set: Vec::new(),
+            states_cleared: Vec::new(),
+            characters: None,
+        }
+    }
+}
+
 /// The index of the action `activate_element` takes among the element's `advertised`
 /// ones: `requested`, which must be one of them, or by default the first of them whose
 /// kind is click, press, activate or toggle. A mistake says how many actions there are
@@ -176,6 +189,9 @@ pub(crate) trait Recheck: Sync {
     /// Tells the desk the call that acts is going out, so a stop or a moved lease from now
     /// on leaves the action `uncertain` instead of refused.
     fn sending(&self);
+    /// Tells the desk the app took that call, with the outcome as far as it is known, which
+    /// a stop or a moved lease from now on reports.
+    fn answered(&self, outcome: Outcome);
 }
 
 /// What an element action's last gate checks: `expect`, the policy's deny list, and the
@@ -307,6 +323,11 @@ pub(crate) async fn activate(
         .await
         .map_err(gone_is_stale)?;
     let lost = taken(dispatched, &format!("its {} action", action.kind.name()))?;
+    let acted = Acted::new(checked.role, Some(action));
+    if lost.is_none() {
+        gate.recheck
+            .answered(answered(checked.focus, acted.clone()));
+    }
     let window = element.kept.window;
     let (after, stream) = match waiter
         .until(SETTLE, |view| {
@@ -326,11 +347,9 @@ pub(crate) async fn activate(
     let (observed, changes, detail) = activation(checked.states, after);
     let (states_set, states_cleared) = changes.unwrap_or_default();
     let acted = Acted {
-        role: model::role_name(checked.role),
-        action: Some(action),
         states_set,
         states_cleared,
-        characters: None,
+        ..acted
     };
     Ok(done(
         (observed, detail),
@@ -400,6 +419,11 @@ pub(crate) async fn set_text(
         .await
         .map_err(gone_is_stale)?;
     let lost = taken(dispatched, "the new text")?;
+    let acted = Acted::new(checked.role, None);
+    if lost.is_none() {
+        gate.recheck
+            .answered(answered(checked.focus, acted.clone()));
+    }
     let count = request.character_count(element).await;
     let doubt = match lost {
         Some(lost) => Some(Doubt::Reply(lost)),
@@ -407,11 +431,8 @@ pub(crate) async fn set_text(
     };
     let (observed, characters, detail) = written(text.chars().count(), count);
     let acted = Acted {
-        role: model::role_name(checked.role),
-        action: None,
-        states_set: Vec::new(),
-        states_cleared: Vec::new(),
         characters,
+        ..acted
     };
     Ok(done(
         (observed, detail),
@@ -615,6 +636,16 @@ fn done(seen: Seen, doubt: Option<Doubt>, view: &View, focus: Focus, acted: Acte
             view,
             format!("{lost}; afterwards: {afterwards}{why}"),
         )
+    }
+}
+
+/// The outcome as far as it is known once the app took the call: accepted, and the look
+/// afterwards still to come. A stop or a moved lease from then on reports it, with why.
+fn answered(focus: Focus, acted: Acted) -> Outcome {
+    Outcome {
+        focus: Some(focus),
+        element: Some(acted),
+        ..Outcome::uncertain(Some(true), None, String::new())
     }
 }
 

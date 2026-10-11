@@ -20,6 +20,7 @@ use super::stop;
 use super::{marker, procs};
 use crate::Env;
 use crate::a11y::ElementRef;
+use crate::act::Outcome;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::refs::{Refs, Shot};
 use crate::session::{Session, SessionId};
@@ -53,6 +54,9 @@ struct Seat {
     /// Whether the running action's one call that acts may have gone out
     /// (`Desk::sending`). Cleared when an action starts, under the action mutex.
     sending: AtomicBool,
+    /// The running action's outcome as far as it is known once the app answered that
+    /// call (`Desk::answered`). Cleared with `sending`.
+    answered: std::sync::Mutex<Option<Outcome>>,
 }
 
 /// The lease, held for one session.
@@ -74,6 +78,11 @@ struct Owner {
 }
 
 impl Seat {
+    /// No code panics while holding the lock, so a poisoned one still holds a sound value.
+    fn answer(&self) -> std::sync::MutexGuard<'_, Option<Outcome>> {
+        self.answered.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     fn put(&self, held: &mut Option<Grant>, grant: Grant, users_window: Option<u64>) {
         self.owner.send_replace(Some(Owner {
             session: grant.owner,
@@ -153,6 +162,7 @@ impl Desk {
             owner: watch::Sender::new(None),
             refs: std::sync::Mutex::new(Refs::default()),
             sending: AtomicBool::new(false),
+            answered: std::sync::Mutex::new(None),
         });
         let runtime = RuntimeDir::of(env).map_err(|detail| {
             let name = if env.instance.socket().is_err() {
@@ -290,6 +300,7 @@ impl Desk {
             return Err(refusal.into());
         }
         self.seat.sending.store(false, Ordering::Relaxed);
+        self.seat.answer().take();
         let ended = if grant.lease.intact() {
             tokio::select! {
                 biased;
@@ -322,7 +333,8 @@ impl Desk {
         if !sending {
             return Err(cut.into());
         }
-        Ok(finish(Worked::CutAfterSending(cut)).await)
+        let answered = self.seat.answer().take().map(Box::new);
+        Ok(finish(Worked::CutAfterSending(cut, answered)).await)
     }
 
     /// Says the running action's one call that acts is going out, so a stop or a moved
@@ -330,6 +342,13 @@ impl Desk {
     /// refused. Only the action holding the action mutex calls it, from its work.
     pub(crate) fn sending(&self) {
         self.seat.sending.store(true, Ordering::Relaxed);
+    }
+
+    /// Says the app answered the running action's call that acts, with `outcome` as far as
+    /// it is known then, which a stop or a moved lease that cancels the action from now on
+    /// reports with its reason. Only the action holding the action mutex calls it.
+    pub(crate) fn answered(&self, outcome: Outcome) {
+        *self.seat.answer() = Some(outcome);
     }
 
     /// The desk's checks before an action, asked again while `session`'s action runs, as an
@@ -538,8 +557,9 @@ async fn release_loop(mut stopped: watch::Receiver<bool>, seat: Weak<Seat>) {
 pub(crate) enum Worked<T> {
     Done(T),
     /// A stop or the lease moving cancelled the work after it said its one call that acts
-    /// was going out (`Desk::sending`), so that call may have taken effect: why.
-    CutAfterSending(ToolError),
+    /// was going out (`Desk::sending`), so that call may have taken effect: why, and the
+    /// outcome so far when the app had answered it (`Desk::answered`).
+    CutAfterSending(ToolError, Option<Box<Outcome>>),
 }
 
 /// How an action's work ended.
@@ -817,7 +837,7 @@ mod tests {
     fn done<T>(worked: Worked<T>) -> std::future::Ready<T> {
         match worked {
             Worked::Done(done) => ready(done),
-            Worked::CutAfterSending(cut) => panic!("{cut:?}"),
+            Worked::CutAfterSending(cut, _) => panic!("{cut:?}"),
         }
     }
 
@@ -1104,9 +1124,10 @@ mod tests {
                 .unwrap();
         };
         take().await;
-        // An action that sent and finished leaves nothing for the next one.
+        // An action that sent, was answered and finished leaves nothing for the next one.
         let sends = async {
             desk.sending();
+            desk.answered(Outcome::uncertain(Some(true), None, String::new()));
             Ok(())
         };
         desk.act(&me, async { None }, sends, done).await.unwrap();
@@ -1117,7 +1138,7 @@ mod tests {
         );
         take().await;
         let replaced = cut_short(&desk, true, replace_lease(&runtime, &other)).await;
-        let Ok(Worked::CutAfterSending(moved)) = replaced else {
+        let Ok(Worked::CutAfterSending(moved, None)) = replaced else {
             panic!("{replaced:?}");
         };
         assert_eq!(moved.name, ErrorName::LeaseRequired);
@@ -1126,7 +1147,7 @@ mod tests {
         take().await;
         let stop = async { runtime.stop().unwrap() };
         let stopped = cut_short(&desk, true, stop).await;
-        let Ok(Worked::CutAfterSending(error)) = stopped else {
+        let Ok(Worked::CutAfterSending(error, None)) = stopped else {
             panic!("{stopped:?}");
         };
         assert_eq!(error.name, ErrorName::Stopped);

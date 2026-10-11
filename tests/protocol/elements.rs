@@ -668,6 +668,8 @@ const CHANGES: [Change; 6] = [
 struct Held {
     tool: &'static str,
     element: (&'static str, &'static str),
+    /// The element's role.
+    role: &'static str,
     read: &'static str,
     acts: &'static str,
 }
@@ -676,6 +678,7 @@ struct Held {
 const ACTIVATE: Held = Held {
     tool: "activate_element",
     element: ("Safe", "/button"),
+    role: "button",
     read: "GetActions",
     acts: "DoAction",
 };
@@ -684,6 +687,7 @@ const ACTIVATE: Held = Held {
 const SET_TEXT: Held = Held {
     tool: "set_element_text",
     element: ("Field", "/entry"),
+    role: "text",
     read: "GetInterfaces",
     acts: "SetTextContents",
 };
@@ -694,6 +698,7 @@ impl Held {
         Self {
             tool: self.tool,
             element: self.element,
+            role: self.role,
             read,
             acts: self.acts,
         }
@@ -1132,16 +1137,44 @@ async fn a_stream_lost_while_the_call_was_out_leaves_focus_unknown() {
         assert_eq!(outcome["accepted"], true, "{outcome}");
         assert_eq!(outcome["observed"], "uncertain", "{outcome}");
         assert_eq!(outcome["focused_window"], Value::Null, "{outcome}");
-        assert_eq!(
-            outcome["element"]["role"],
-            if held.tool == "activate_element" {
-                "button"
-            } else {
-                "text"
-            },
-            "{outcome}"
-        );
+        assert_eq!(outcome["element"]["role"], held.role, "{outcome}");
         assert_eq!(desk.mock.calls(held.acts), 1);
+    }
+}
+
+// Fable's case: the app had answered the call when the stop or the lease change came, during
+// the look afterwards. The result keeps what the answer said: accepted, and the element.
+#[tokio::test]
+async fn a_stop_or_lost_lease_after_the_app_answered_keeps_what_it_answered() {
+    for (held, look) in [(&ACTIVATE, "GetState"), (&SET_TEXT, "CharacterCount")] {
+        for change in [Change::Stopped, Change::LeaseReplaced] {
+            let (name, path) = held.element;
+            let mut desk =
+                Desk::start(&format!("el-cut-ans-{}-{}", held.tag(), change as u8)).await;
+            let element = desk.element(name).await;
+            let acting = desk.mock.hold_on(held.acts, path);
+            let id = desk
+                .server
+                .start_call(held.tool, held.arguments(&element))
+                .await;
+            acting.arrived().await;
+            let looking = desk.mock.hold_on(look, path);
+            acting.release();
+            looking.arrived().await;
+            desk.make(change, path).await;
+            let result = desk.server.response(id).await["result"].clone();
+            looking.release();
+            let outcome = &result["structuredContent"];
+            assert_eq!(outcome["accepted"], true, "{outcome}");
+            assert_eq!(outcome["observed"], "uncertain", "{outcome}");
+            assert_eq!(outcome["focus"], "matched", "{outcome}");
+            assert_eq!(outcome["element"]["role"], held.role, "{outcome}");
+            let detail = outcome["detail"].as_str().unwrap();
+            assert!(detail.contains("may have taken effect"), "{detail}");
+            let line = desk.fixture.audit_lines().pop().unwrap();
+            assert_eq!(line["accepted"], true, "{line}");
+            assert_eq!(line["observed"], "uncertain", "{line}");
+        }
     }
 }
 
