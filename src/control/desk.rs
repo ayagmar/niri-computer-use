@@ -602,14 +602,26 @@ impl Desk {
         self.seat.refs().insert(lease, shot)
     }
 
-    /// Keeps `shot`, which `session` took without the lease, as a ref only a zoom takes,
-    /// and returns its id, unless `session` holds the lease by now.
-    pub(crate) fn remember_view(&self, session: &Session, shot: Shot) -> Option<String> {
+    /// The stretch without the lease that a screenshot of `session` starting now would keep
+    /// its ref in.
+    pub(crate) fn stretch(&self, session: &Session) -> u64 {
+        self.seat.refs().stretch(session.id())
+    }
+
+    /// Keeps `shot`, which `session` took without the lease during `stretch`, as a ref only a
+    /// zoom takes, and returns its id, unless `session` has ended, holds the lease by now,
+    /// or has taken it since the capture started.
+    pub(crate) fn remember_view(
+        &self,
+        session: &Session,
+        stretch: u64,
+        shot: Shot,
+    ) -> Option<String> {
         let mut refs = self.seat.refs();
-        if self.seat.owned_by(session.id()).is_some() {
+        if session.has_ended() || self.seat.owned_by(session.id()).is_some() {
             return None;
         }
-        Some(refs.insert_view(session.id(), shot))
+        refs.insert_view(session.id(), stretch, shot)
     }
 
     /// The ref named `id` that a zoom of `session` takes: one of the lease it holds, or,
@@ -1906,6 +1918,31 @@ mod tests {
             released = others => assert_eq!(released, Ok(false)),
         }
         assert!(desk.status(&me).held_by_me);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A screenshot without the lease can take longer than an acquire and a release: one
+    /// that started before the session took the lease belongs to no stretch it still has,
+    /// and one that ends after the session did gets no ref either.
+    #[tokio::test]
+    async fn a_screenshot_started_before_the_lease_gets_no_ref_after_it() {
+        let me = session(1);
+        let dir = crate::test_support::fresh_dir("desk-view-stretch");
+        let desk = Desk::start(&env(&dir));
+        let shot = crate::test_support::shot;
+        let started = desk.stretch(&me);
+        desk.acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
+        assert!(desk.release(&me).await);
+        assert_eq!(desk.remember_view(&me, started, shot()), None);
+        let id = desk.remember_view(&me, desk.stretch(&me), shot()).unwrap();
+        assert!(desk.zoomable(&me, &id).is_ok());
+        // A session that never took the lease is still in its first stretch when it ends.
+        let other = session(2);
+        let late = desk.stretch(&other);
+        desk.end_session(&other).await;
+        assert_eq!(desk.remember_view(&other, late, shot()), None);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

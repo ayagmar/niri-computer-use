@@ -74,11 +74,52 @@ impl Target {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Request {
     pub(crate) target: Target,
     pub(crate) max_width: Option<u32>,
     pub(crate) format: Format,
+    /// For a zoom, the output its region must be captured from.
+    pub(crate) pin: Option<Pin>,
+}
+
+/// The output a zoom's region lies on, as the earlier screenshot saw it. The capture takes
+/// that output only while its geometry is unchanged, rather than whichever output holds the
+/// region by then.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Pin {
+    pub(crate) output: String,
+    pub(crate) geometry: LogicalOutput,
+}
+
+impl Pin {
+    /// The pinned output among `outputs`, or `ref_invalid` if it is gone or has moved,
+    /// been resized, rescaled or rotated.
+    fn find<'a>(
+        &self,
+        mut outputs: impl Iterator<Item = &'a Output>,
+    ) -> Result<Picked<'a>, ToolError> {
+        let now = outputs
+            .find(|output| output.name == self.output)
+            .and_then(|output| {
+                output.logical.as_ref().map(|logical| Picked {
+                    name: &output.name,
+                    logical,
+                })
+            });
+        match now {
+            Some(picked) if *picked.logical == self.geometry => Ok(picked),
+            now => Err(crate::refs::invalid(
+                "output_changed",
+                &format!(
+                    "output {} was {:?} at the screenshot and is {:?} now; take a new one",
+                    self.output,
+                    self.geometry,
+                    now.map(|picked| *picked.logical)
+                ),
+            )),
+        }
+    }
 }
 
 impl Request {
@@ -88,6 +129,7 @@ impl Request {
             target: Target::FocusedOutput,
             max_width: Some(DEFAULT_MAX_WIDTH),
             format: Format::Jpeg,
+            pin: None,
         }
     }
 }
@@ -153,8 +195,11 @@ pub(crate) async fn screenshot(
             .map(|output| output.name),
         Target::Output(_) | Target::Region(_) => None,
     };
-    let output = pick(&request.target, outputs.values(), focused.as_deref())
-        .map_err(CallError::InvalidArguments)?;
+    let output = match &request.pin {
+        Some(pin) => pin.find(outputs.values())?,
+        None => pick(&request.target, outputs.values(), focused.as_deref())
+            .map_err(CallError::InvalidArguments)?,
+    };
     let plan = plan(output, &request.target, request.max_width, request.format)
         .map_err(CallError::InvalidArguments)?;
     display.checked(socket).await?;
@@ -202,19 +247,19 @@ pub(crate) async fn screenshot(
     })
 }
 
-/// Captures `target` as a PNG at its output's own scale, whatever the returned image's
-/// `max_width`, and writes it to `save`. grim is found in `place`, the session's.
+/// Captures `request`'s target as a PNG at its output's own scale, whatever the returned
+/// image's `max_width`, and writes it to `save`. grim is found in `place`, the session's.
 pub(crate) async fn save(
     socket: &Socket,
     display: &Display,
     place: Place<'_>,
-    target: &Target,
+    request: &Request,
     save: &SaveTarget,
 ) -> Result<Saved, CallError> {
     let request = Request {
-        target: target.clone(),
         max_width: None,
         format: Format::Png,
+        ..request.clone()
     };
     let shot = screenshot(socket, display, place, &request).await?;
     let path = save::write(save, &shot.image)?;

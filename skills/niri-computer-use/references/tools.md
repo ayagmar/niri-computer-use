@@ -103,8 +103,8 @@ Each action waits up to five seconds, the shell tools two, and `niri_action` one
 - `output:<name>`: an output by name from `desktop_state`'s `outputs`, such as `output:DP-1`.
 - `region`, with `region: {x, y, width, height}` in layout coordinates (the coordinates of `outputs[].logical`). The rectangle must lie inside one output.
 
-To zoom in, such as to read small text, pass an earlier screenshot's `screenshot_ref` with target `region` and `region` in that image's pixels: `{"target": "region", "screenshot_ref": "<ref>", "region": {"x": 600, "y": 40, "width": 200, "height": 60}}`. That part comes back at the output's own scale, as a new screenshot with its own ref; the earlier ref still works. It needs no lease.
+To zoom in, such as to read small text, pass an earlier screenshot's `screenshot_ref` with target `region` and `region` in that image's pixels: `{"target": "region", "screenshot_ref": "<ref>", "region": {"x": 600, "y": 40, "width": 200, "height": 60}}`. That part comes back at the output's own scale, with no width limit unless you pass `max_width`, as a new screenshot with its own ref; the earlier ref still works. It needs no lease.
 
-Images are JPEG at most 1280 pixels wide by default. `max_width` can go higher for a region wider than that, and a region keeps the output's native scale when it fits. `format` is `jpeg` (the default) or `png`.
+Images other than zooms are JPEG at most 1280 pixels wide by default. `max_width` can go higher for a region wider than that, and a region keeps the output's native scale when it fits. `format` is `jpeg` (the default) or `png`.
 
 `save_path` writes a full-resolution PNG, whatever `max_width` is, to a new file relative to the user's `capture_dir`, such as `readme/editor.png`. It works only when the user set `capture_dir` in the policy file (`status` shows `policy.capture_dir`); otherwise it fails with `save_not_enabled`. The path must be relative, without `..`, and end in `.png`; its directories must exist; an existing file is never replaced, so pick a new name rather than retrying the same one.

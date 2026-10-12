@@ -266,19 +266,18 @@ impl Engine {
         self.desk.shot(session, id)
     }
 
-    /// The layout rectangle that `pixels` of the screenshot ref `id` show, for a zoom into
-    /// them: a ref of the lease `session` holds, or, without the lease, one `session` took
-    /// since it last held it.
-    pub(crate) async fn zoom(
+    /// The layout rectangle that `pixels` of the screenshot ref `id` show, and the output
+    /// to capture it from, for a zoom into them: a ref of the lease `session` holds, or,
+    /// without the lease, one `session` took since it last held it.
+    pub(crate) fn zoom(
         &self,
         session: &Session,
         id: &str,
         pixels: ImageRect,
-    ) -> Result<Rect, ToolError> {
+    ) -> Result<(Rect, observe::Pin), ToolError> {
         let shot = self.desk.zoomable(session, id)?;
-        let outputs = niri::outputs(&self.env.niri_socket).await?;
         let connection = self.events.as_ref().ok().and_then(EventStream::connection);
-        shot.zoom(pixels, Instant::now(), &outputs, connection)
+        shot.zoom(pixels, Instant::now(), connection)
     }
 
     /// The element ref named `id` of the lease `session` holds.
@@ -619,6 +618,7 @@ impl Engine {
         request: observe::Request,
     ) -> Result<observe::Screenshot, CallError> {
         let lease = self.desk.ref_lease(session);
+        let stretch = self.desk.stretch(session);
         let connection = self.events.as_ref().ok().and_then(EventStream::connection);
         let taken = Instant::now();
         let place = session.settings().place();
@@ -630,7 +630,7 @@ impl Engine {
         let kept = Shot::of(&shot, taken, connection);
         shot.metadata.screenshot_ref = match lease {
             Some(lease) => self.desk.remember(lease, kept),
-            None => self.desk.remember_view(session, kept),
+            None => self.desk.remember_view(session, stretch, kept),
         };
         Ok(shot)
     }
@@ -647,7 +647,7 @@ impl Engine {
             Some(save) => {
                 let (socket, display) = (&self.env.niri_socket, &self.env.display);
                 let place = session.settings().place();
-                Some(observe::save(socket, display, place, &request.target, save).await?)
+                Some(observe::save(socket, display, place, &request, save).await?)
             }
             None => None,
         };

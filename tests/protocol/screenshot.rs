@@ -4,7 +4,7 @@
 use base64::Engine as _;
 use serde_json::{Value, json};
 
-use crate::client::{Server, mistake};
+use crate::client::{Server, mistake, tool_error};
 use crate::fixture::{Fixture, jpeg, png};
 use crate::niri::{Niri, output};
 
@@ -273,16 +273,7 @@ async fn a_zoom_captures_a_region_of_an_earlier_screenshot_at_full_resolution() 
     fixture.set("NIRI_COMPUTER_USE_TOOLS", "observe");
     let mut niri = Niri::start(&fixture);
     let (small, zoomed) = (jpeg(1280, 720, b"small"), jpeg(128, 64, b"zoomed"));
-    std::fs::write(fixture.path("small.jpg"), &small).unwrap();
-    std::fs::write(fixture.path("zoomed.jpg"), &zoomed).unwrap();
-    fixture.program(
-        "grim",
-        r#"echo "$*" >> "$DIR/grim.calls"
-case "$*" in
-  *" -g "*) cat "$DIR/zoomed.jpg" ;;
-  *) cat "$DIR/small.jpg" ;;
-esac"#,
-    );
+    zooming_grim(&fixture, &small, &zoomed);
     let mut server = Server::start(&fixture).await;
     // A ref needs the event stream, so that a reconnect can expire it.
     let stream = niri.stream().await;
@@ -330,5 +321,138 @@ esac"#,
     let whole_again = json!({"target": "focused_output", "screenshot_ref": first});
     let message = mistake(&server.call("screenshot", whole_again).await);
     assert!(message.contains("needs target `region`"), "{message}");
+    let negative = json!({
+        "target": "region",
+        "screenshot_ref": first,
+        "region": {"x": -1, "y": 0, "width": 64, "height": 32},
+    });
+    let negative = mistake(&server.call("screenshot", negative).await);
+    assert!(negative.contains("can't be negative"), "{negative}");
     assert_eq!(grim_calls(&fixture).len(), 3);
+}
+
+/// A grim that records its arguments and writes `zoomed` for a region, `whole` otherwise.
+fn zooming_grim(fixture: &Fixture, whole: &[u8], zoomed: &[u8]) {
+    std::fs::write(fixture.path("whole.jpg"), whole).unwrap();
+    std::fs::write(fixture.path("zoomed.jpg"), zoomed).unwrap();
+    fixture.program(
+        "grim",
+        r#"echo "$*" >> "$DIR/grim.calls"
+case "$*" in
+  *" -g "*) cat "$DIR/zoomed.jpg" ;;
+  *) cat "$DIR/whole.jpg" ;;
+esac"#,
+    );
+}
+
+/// The ref of a screenshot of `target`, once the server follows niri's event stream, which
+/// a ref needs.
+async fn screenshot_ref(server: &mut Server, target: &str) -> String {
+    server.structured("desktop_state").await;
+    let whole = server.call("screenshot", json!({"target": target})).await;
+    assert_eq!(whole["isError"], false, "{whole}");
+    whole["structuredContent"]["screenshot_ref"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// A zoom is at the output's own scale unless `max_width` caps it, even when that is wider
+/// than the 1280 pixels a screenshot gets by default, and it lands on the screenshot's
+/// output wherever that output sits in the layout.
+#[tokio::test]
+async fn a_zoom_is_at_its_outputs_own_scale_wherever_the_output_is() {
+    let fixture = Fixture::new("shot-zoom-native");
+    let mut niri = Niri::start(&fixture);
+    niri.set_outputs(
+        vec![
+            output("DP-1", Some((0, 0, 1920, 1080, 1.0))),
+            output("DP-2", Some((1920, 0, 1600, 900, 2.0))),
+        ],
+        Some("DP-1"),
+    );
+    let zoomed = jpeg(3000, 1000, b"zoomed");
+    zooming_grim(&fixture, &jpeg(1280, 720, b"whole"), &zoomed);
+    let mut server = Server::start(&fixture).await;
+    let stream = niri.stream().await;
+    stream.initial(&[]);
+    let first = screenshot_ref(&mut server, "output:DP-2").await;
+
+    let zoom = json!({
+        "target": "region",
+        "screenshot_ref": first,
+        "region": {"x": 0, "y": 0, "width": 1200, "height": 400},
+    });
+    let metadata = delivered(
+        &server.call("screenshot", zoom).await,
+        &zoomed,
+        "image/jpeg",
+    );
+    assert_eq!(metadata["output"], "DP-2");
+    assert_eq!(
+        metadata["captured"],
+        json!({"x": 1920, "y": 0, "width": 1500, "height": 500})
+    );
+    assert_eq!(
+        (&metadata["scale"], &metadata["width"]),
+        (&json!(2.0), &json!(3000))
+    );
+    assert_eq!(
+        grim_calls(&fixture)[1],
+        "-t jpeg -q 80 -s 2 -g 1920,0 1500x500 -"
+    );
+}
+
+/// A zoom captures the output its screenshot showed. Outputs that move after the ref was
+/// checked, so that the region now lies on another output, refuse the zoom rather than
+/// capture that output: here they swap places at the capture's own read of the outputs.
+#[tokio::test]
+async fn a_zoom_whose_output_moves_before_the_capture_is_refused() {
+    let fixture = Fixture::new("shot-zoom-moved");
+    let mut niri = Niri::start(&fixture);
+    let side_by_side = |left: &str, right: &str| {
+        vec![
+            output(left, Some((0, 0, 1280, 720, 1.0))),
+            output(right, Some((1280, 0, 1280, 720, 1.0))),
+        ]
+    };
+    niri.set_outputs(side_by_side("DP-1", "DP-2"), Some("DP-1"));
+    zooming_grim(
+        &fixture,
+        &jpeg(1280, 720, b"whole"),
+        &jpeg(64, 32, b"zoomed"),
+    );
+    let mut server = Server::start(&fixture).await;
+    let stream = niri.stream().await;
+    stream.initial(&[]);
+    let first = screenshot_ref(&mut server, "output:DP-1").await;
+    let zoom = json!({
+        "target": "region",
+        "screenshot_ref": first,
+        "region": {"x": 100, "y": 50, "width": 64, "height": 32},
+    });
+    let points = fixture.points();
+    points.start();
+    assert_eq!(
+        server.call("screenshot", zoom.clone()).await["isError"],
+        false
+    );
+    points.idle().await;
+    let reads = points
+        .trace()
+        .iter()
+        .filter(|passed| passed.point == "niri:Outputs")
+        .count();
+
+    points.start();
+    let held = points.hold("niri:Outputs", reads);
+    let id = server.start_call("screenshot", zoom).await;
+    held.arrived().await;
+    niri.set_outputs(side_by_side("DP-2", "DP-1"), Some("DP-1"));
+    held.release();
+    let response = server.response(id).await;
+    let (name, detail) = tool_error(&response["result"]);
+    assert_eq!(name, "ref_invalid", "{detail}");
+    assert!(detail.starts_with("output_changed"), "{detail}");
+    assert_eq!(grim_calls(&fixture).len(), 2);
 }

@@ -46,9 +46,9 @@ struct ScreenshotArgs {
     #[schemars(with = "String", default, skip_serializing_if = "Option::is_none")]
     #[serde(skip_serializing_if = "Option::is_none")]
     screenshot_ref: Option<String>,
-    /// The widest image to return, in pixels; a wider capture is scaled down. To read small
-    /// text, zoom with `screenshot_ref`.
-    #[schemars(with = "u32", default = "default_max_width")]
+    /// The widest image to return, in pixels: 1280 by default, none for a zoom. A wider
+    /// capture is scaled down. To read small text, zoom with `screenshot_ref`.
+    #[schemars(with = "u32", default, skip_serializing_if = "Option::is_none")]
     max_width: Option<u32>,
     #[schemars(with = "FormatArg", default = "default_format")]
     format: Option<FormatArg>,
@@ -74,14 +74,6 @@ struct RegionArgs {
 enum FormatArg {
     Png,
     Jpeg,
-}
-
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "schemars serializes the default as the field's type, `Option<u32>`"
-)]
-const fn default_max_width() -> Option<u32> {
-    Some(DEFAULT_MAX_WIDTH)
 }
 
 #[expect(
@@ -146,11 +138,16 @@ impl ScreenshotArgs {
         });
         Ok(observe::Request {
             target: Target::parse(&self.target, region)?,
-            max_width: Some(self.max_width.unwrap_or(DEFAULT_MAX_WIDTH)),
+            // A zoom is for detail, so it is at the output's own scale unless capped.
+            max_width: match self.screenshot_ref {
+                Some(_) => self.max_width,
+                None => Some(self.max_width.unwrap_or(DEFAULT_MAX_WIDTH)),
+            },
             format: match self.format {
                 Some(FormatArg::Png) => Format::Png,
                 Some(FormatArg::Jpeg) | None => Format::Jpeg,
             },
+            pin: None,
         })
     }
 }
@@ -1487,8 +1484,11 @@ impl Server {
                 Err(message) => return Ok(invalid(&message)),
             };
             if let Some((id, pixels)) = zoom {
-                match self.engine.zoom(&self.session, &id, pixels).await {
-                    Ok(rect) => request.target = Target::Region(rect),
+                match self.engine.zoom(&self.session, &id, pixels) {
+                    Ok((rect, pin)) => {
+                        request.target = Target::Region(rect);
+                        request.pin = Some(pin);
+                    }
                     Err(error) => return Ok(error.into_result()),
                 }
             }
@@ -2087,6 +2087,7 @@ mod tests {
                 }),
                 max_width: Some(1280),
                 format: Format::Jpeg,
+                pin: None,
             })
         );
         let png: ScreenshotArgs = serde_json::from_value(

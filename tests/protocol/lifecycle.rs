@@ -149,7 +149,8 @@ const PROPERTIES: [(&str, usize); 14] = [
 /// bounds. Null means the field has no default.
 fn advertised() -> [(&'static str, &'static str, Value); 21] {
     [
-        ("screenshot", "/max_width/default", json!(1280)),
+        // 1280, but none for a zoom, so the description says so instead.
+        ("screenshot", "/max_width/default", Value::Null),
         ("screenshot", "/format/default", json!("jpeg")),
         ("screenshot", "/region/default", Value::Null),
         ("screenshot", "/save_path/default", Value::Null),
