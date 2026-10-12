@@ -2132,11 +2132,12 @@ async fn a_floating_window_on_a_workspace_not_shown_is_never_aimed_at() {
     assert_eq!(relisted["unmappable"], "not_showing", "{relisted}");
 }
 
-// A failed `Workspaces` or `Outputs` request fails the listing and the ref's aim with
-// niri's error, instead of passing for a window that isn't shown.
+// A failed `Workspaces`, `Outputs` or `OverviewState` request fails the listing and the
+// ref's aim with niri's error, instead of passing for a window that isn't shown or taking
+// the overview as closed.
 #[tokio::test]
-async fn a_failed_workspaces_or_outputs_request_fails_with_niris_error() {
-    for request in ["Workspaces", "Outputs"] {
+async fn a_failed_placing_request_fails_with_niris_error() {
+    for request in ["Workspaces", "Outputs", "OverviewState"] {
         let mut desk = Desk::start(&format!("el-failed-{request}")).await;
         let button = desk.element("Safe").await;
         let shot = desk.screenshot_ref().await;
