@@ -1,7 +1,9 @@
 //! A fake clipboard owner on a Wayland display, the fixture's or another: just enough of the Wayland wire
 //! protocol and of wlr data-control for the server to bind, see one selection and read its
 //! types. The selection is a list of MIME types with their bytes, or none for nothing
-//! copied, the same for every connection, and a copy announces a new one on each.
+//! copied, the same for every connection, and a copy announces a new one on each. The
+//! display also offers output `DP-1` and wlr virtual pointers, and hands the test every
+//! motion and button a pointer sends.
 
 use std::io::{IoSliceMut, Write as _};
 use std::mem::MaybeUninit;
@@ -30,6 +32,19 @@ const OFFER: u32 = 0xff00_0000;
 const SEAT: u32 = 1;
 const MANAGER: u32 = 2;
 const MANAGER_INTERFACE: &str = "zwlr_data_control_manager_v1";
+/// The registry names of the output and the virtual pointer manager the pointer binds.
+const OUTPUT: u32 = 3;
+const POINTERS: u32 = 4;
+/// The output's name, the fake niri's output.
+const OUTPUT_NAME: &str = "DP-1";
+
+/// What a virtual pointer sent: an absolute motion, as `(x, y, x_extent, y_extent)`, or a
+/// button, as `(button, state)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Pointed {
+    Motion(u32, u32, u32, u32),
+    Button(u32, u32),
+}
 
 #[derive(Debug)]
 pub(crate) struct Owner {
@@ -43,6 +58,8 @@ pub(crate) struct Owner {
     closed: mpsc::UnboundedReceiver<()>,
     /// The types each read asked for, in order.
     reads: mpsc::UnboundedReceiver<String>,
+    /// What every virtual pointer sent, in order.
+    pointed: mpsc::UnboundedReceiver<Pointed>,
 }
 
 /// The fake's ends of the channels to the test.
@@ -53,6 +70,7 @@ struct Channels {
     held: mpsc::UnboundedSender<()>,
     closed: mpsc::UnboundedSender<()>,
     reads: mpsc::UnboundedSender<String>,
+    pointed: mpsc::UnboundedSender<Pointed>,
 }
 
 impl Owner {
@@ -68,12 +86,14 @@ impl Owner {
         let (held, held_rx) = mpsc::unbounded_channel();
         let (closed, closed_rx) = mpsc::unbounded_channel();
         let (reads, reads_rx) = mpsc::unbounded_channel();
+        let (pointed, pointed_rx) = mpsc::unbounded_channel();
         let channels = Channels {
             selection: selected,
             hold: Arc::clone(&held_type),
             held,
             closed,
             reads,
+            pointed,
         };
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
@@ -86,6 +106,7 @@ impl Owner {
             held: held_rx,
             closed: closed_rx,
             reads: reads_rx,
+            pointed: pointed_rx,
         }
     }
 
@@ -118,6 +139,11 @@ impl Owner {
     /// The types read so far, in order.
     pub(crate) fn reads(&mut self) -> Vec<String> {
         std::iter::from_fn(|| self.reads.try_recv().ok()).collect()
+    }
+
+    /// What virtual pointers sent since the last call, in order.
+    pub(crate) fn pointed(&mut self) -> Vec<Pointed> {
+        std::iter::from_fn(|| self.pointed.try_recv().ok()).collect()
     }
 }
 
@@ -167,6 +193,9 @@ enum Object {
     Display,
     Registry,
     Manager,
+    Output,
+    Pointers,
+    Pointer,
     /// The offer with this index among the connection's.
     Offer(usize),
     Other,
@@ -316,11 +345,16 @@ impl Connection {
             (Object::Display, 1) => {
                 let registry = args.uint();
                 self.objects.push((registry, Object::Registry));
-                for (name, interface) in [(SEAT, "wl_seat"), (MANAGER, MANAGER_INTERFACE)] {
+                for (name, interface, version) in [
+                    (SEAT, "wl_seat", 1),
+                    (MANAGER, MANAGER_INTERFACE, 1),
+                    (OUTPUT, "wl_output", 4),
+                    (POINTERS, "zwlr_virtual_pointer_manager_v1", 2),
+                ] {
                     events.extend(event(
                         registry,
                         0,
-                        &[Arg::Uint(name), Arg::Str(interface), Arg::Uint(1)],
+                        &[Arg::Uint(name), Arg::Str(interface), Arg::Uint(version)],
                     ));
                 }
             }
@@ -329,12 +363,38 @@ impl Connection {
                 let name = args.uint();
                 args.string();
                 args.uint();
-                let bound = if name == MANAGER {
-                    Object::Manager
-                } else {
-                    Object::Other
+                let bound = match name {
+                    MANAGER => Object::Manager,
+                    OUTPUT => Object::Output,
+                    POINTERS => Object::Pointers,
+                    _ => Object::Other,
                 };
-                self.objects.push((args.uint(), bound));
+                let new = args.uint();
+                self.objects.push((new, bound));
+                if bound == Object::Output {
+                    // wl_output.name, then wl_output.done
+                    events.extend(event(new, 4, &[Arg::Str(OUTPUT_NAME)]));
+                    events.extend(event(new, 2, &[]));
+                }
+            }
+            // zwlr_virtual_pointer_manager_v1.create_virtual_pointer_with_output
+            (Object::Pointers, 2) => {
+                args.uint();
+                args.uint();
+                self.objects.push((args.uint(), Object::Pointer));
+            }
+            // zwlr_virtual_pointer_v1.motion_absolute
+            (Object::Pointer, 1) => {
+                args.uint();
+                let (x, y) = (args.uint(), args.uint());
+                let motion = Pointed::Motion(x, y, args.uint(), args.uint());
+                self.channels.pointed.send(motion).ok();
+            }
+            // zwlr_virtual_pointer_v1.button
+            (Object::Pointer, 2) => {
+                args.uint();
+                let button = Pointed::Button(args.uint(), args.uint());
+                self.channels.pointed.send(button).ok();
             }
             // zwlr_data_control_manager_v1.get_data_device
             (Object::Manager, 1) => {

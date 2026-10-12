@@ -160,14 +160,11 @@ async fn placed(socket: &Socket, id: u64) -> Result<Option<Placed>, ToolError> {
     let Some(window) = window.into_iter().next() else {
         return Ok(None);
     };
-    let output = window
-        .workspace_id
-        .and_then(|workspace| workspaces.ok()?.into_iter().find(|w| w.id == workspace))
-        .and_then(|workspace| workspace.output)
-        .and_then(|name| outputs.ok()?.remove(&name)?.logical);
-    let origin = output
-        .ok_or(Unmappable::NotShowing)
-        .and_then(|output| model::window_origin(&output, &window.layout));
+    let origin = model::origin(
+        &window,
+        &workspaces.unwrap_or_default(),
+        &outputs.unwrap_or_default(),
+    );
     Ok(Some(Placed {
         window,
         origin,

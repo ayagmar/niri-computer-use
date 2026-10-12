@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 
 use crate::atspi::{self, Bus, LIST_ITEM, Mock, Object, PANEL, PASSWORD_TEXT, TEXT};
 use crate::client::{Server, mistake, tool_error};
+use crate::clipboard::Pointed;
 use crate::fixture::{Fixture, jpeg};
 use crate::niri::{Niri, Stream, window_on};
 use crate::noctalia::{self, LOCKED, UNLOCKED};
@@ -2057,4 +2058,76 @@ async fn names_the_server_knows_reach_the_audit_log_as_they_are() {
         logged[4],
         json!({"screenshot_ref": shot, "element": button})
     );
+}
+
+/// The mock application's window floating at (20, 20) on workspace 1.
+fn floating_window() -> Value {
+    let mut window = app_window(WINDOW, true);
+    window["is_floating"] = json!(true);
+    window["layout"]["pos_in_scrolling_layout"] = Value::Null;
+    window["layout"]["tile_pos_in_workspace_view"] = json!([20.0, 20.0]);
+    window
+}
+
+/// Workspace `id` on `DP-1`, the active one there or not.
+fn workspace_on_dp1(id: u64, active: bool) -> Value {
+    let mut workspace = workspace();
+    workspace["id"] = json!(id);
+    workspace["idx"] = json!(id);
+    workspace["is_active"] = json!(active);
+    workspace["is_focused"] = json!(active);
+    workspace
+}
+
+/// The `Safe` button as `elements` lists it now.
+async fn safe(desk: &mut Desk) -> Value {
+    let listing = desk
+        .server
+        .structured_with(
+            "elements",
+            json!({"window_id": WINDOW, "name_contains": "Safe"}),
+        )
+        .await;
+    listing["elements"][0].clone()
+}
+
+// niri reports a floating window's place on every workspace, shown or not. Once its
+// workspace isn't the active one on its output, the shown workspace's windows are where its
+// elements would be, so they have no box and a ref listed while it was shown sends the
+// pointer nothing.
+#[tokio::test]
+async fn a_floating_window_on_a_workspace_not_shown_is_never_aimed_at() {
+    let windows = [floating_window(), window_on(2, Some("other"), 2, false)];
+    let mut desk = Desk::start_with("el-unshown", &["/frame"], objects(), &windows).await;
+    let shown = [workspace_on_dp1(1, true), workspace_on_dp1(2, false)];
+    desk.niri.set_windows(&windows, &shown);
+    let listed = safe(&mut desk).await;
+    let placed = json!({"x": 30.0, "y": 30.0, "width": 80.0, "height": 30.0});
+    assert_eq!(listed["layout_box"], placed, "{listed}");
+    let button = listed["element_ref"].as_str().unwrap().to_owned();
+    let shot = desk.screenshot_ref().await;
+    let aimed = json!({"screenshot_ref": shot, "element": button});
+    let moved = desk.server.call("pointer_move", aimed).await;
+    assert_eq!(moved["isError"], false, "{moved}");
+    let sent = desk.fixture.clipboard.pointed();
+    // The box's centre, (70, 45), on the 2560x1440 output, in thousandths of a pixel.
+    assert_eq!(
+        sent,
+        [Pointed::Motion(70_000, 45_000, 2_560_000, 1_440_000)]
+    );
+
+    let switched = [workspace_on_dp1(1, false), workspace_on_dp1(2, true)];
+    desk.niri.set_windows(&windows, &switched);
+    let later = desk.screenshot_ref().await;
+    for tool in ["pointer_move", "click"] {
+        let behind = json!({"screenshot_ref": later, "element": button});
+        let refused = desk.server.call(tool, behind).await;
+        let (name, detail) = tool_error(&refused);
+        assert_eq!(name, "element_unmappable", "{tool}: {refused}");
+        assert!(detail.starts_with("not_showing: "), "{tool}: {detail}");
+        assert_eq!(desk.fixture.clipboard.pointed(), [], "{tool}");
+    }
+    let relisted = safe(&mut desk).await;
+    assert_eq!(relisted["layout_box"], Value::Null, "{relisted}");
+    assert_eq!(relisted["unmappable"], "not_showing", "{relisted}");
 }

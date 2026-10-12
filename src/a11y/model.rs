@@ -7,9 +7,10 @@
 //! `window_size`. GTK 3 measures from its surface's shadow and Qt from inside its own
 //! decorations, and both fail the guard with client-side decorations.
 
+use std::collections::BTreeMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-use niri_ipc::{LogicalOutput, WindowLayout};
+use niri_ipc::{LogicalOutput, Output, Window, WindowLayout, Workspace};
 use serde::Serialize;
 
 use crate::coords::LayoutPt;
@@ -285,8 +286,8 @@ pub(crate) enum Unmappable {
     /// The window's accessible frame isn't the size niri gives the window, so the
     /// toolkit's window coordinates start elsewhere.
     FrameSizeMismatch,
-    /// The element isn't showing and visible, or niri has no place for its floating window
-    /// in its workspace's view, as on a workspace that isn't shown.
+    /// The element isn't showing and visible, or its floating window's workspace isn't the
+    /// one shown on its output.
     NotShowing,
     /// The window is tiled: niri 26.04 gives only floating windows a place in their
     /// workspace's view, so where a tiled one is on screen isn't known.
@@ -297,15 +298,29 @@ pub(crate) enum Unmappable {
     OutsideScreenshot,
 }
 
+/// Where `window`'s geometry starts in the layout, from niri's workspaces and outputs read
+/// for the call, or why it isn't known. Only a window on the active workspace of its
+/// output is placed: niri reports a floating window's place on every workspace, shown or
+/// not, and the shown workspace's windows are where a hidden one's would be.
+pub(crate) fn origin(
+    window: &Window,
+    workspaces: &[Workspace],
+    outputs: &BTreeMap<String, Output>,
+) -> Result<LayoutPt, Unmappable> {
+    let output = window
+        .workspace_id
+        .and_then(|id| workspaces.iter().find(|workspace| workspace.id == id))
+        .filter(|workspace| workspace.is_active)
+        .and_then(|workspace| outputs.get(workspace.output.as_deref()?)?.logical.as_ref())
+        .ok_or(Unmappable::NotShowing)?;
+    window_origin(output, &window.layout)
+}
+
 /// Where the window's geometry starts in the layout: the output's origin, plus the tile's
 /// place in the workspace's view, plus the window's offset in its tile. A tile in the
 /// scrolling layout is never placed (`Tiled`): niri 26.04 gives it no place, and a place
-/// derived from where the view is heading would be wrong while the view scrolls. A
-/// floating tile has none on a workspace that isn't shown (`NotShowing`).
-pub(crate) fn window_origin(
-    output: &LogicalOutput,
-    layout: &WindowLayout,
-) -> Result<LayoutPt, Unmappable> {
+/// derived from where the view is heading would be wrong while the view scrolls.
+fn window_origin(output: &LogicalOutput, layout: &WindowLayout) -> Result<LayoutPt, Unmappable> {
     if layout.pos_in_scrolling_layout.is_some() {
         return Err(Unmappable::Tiled);
     }
@@ -730,13 +745,103 @@ mod tests {
             ..placement(extents(66, 131, 320, 34), origin)
         };
         assert_eq!(place(mismatch), Err(Unmappable::FrameSizeMismatch));
-        // A floating window on a workspace that isn't shown has no place in the view.
+        // A floating window niri gives no place has none in the view.
         let unshown = window_origin(&output(0, 0, 1.0), &layout(None, (0.0, 0.0)));
         assert_eq!(unshown, Err(Unmappable::NotShowing));
         assert_eq!(
             place(placement(extents(1, 1, 10, 10), unshown)),
             Err(Unmappable::NotShowing)
         );
+    }
+
+    fn window_on(workspace: Option<u64>, layout: WindowLayout) -> Window {
+        Window {
+            id: 1,
+            title: None,
+            app_id: None,
+            pid: None,
+            workspace_id: workspace,
+            is_focused: false,
+            is_floating: layout.pos_in_scrolling_layout.is_none(),
+            is_urgent: false,
+            layout,
+            focus_timestamp: None,
+        }
+    }
+
+    fn workspace(id: u64, output: Option<&str>, active: bool) -> Workspace {
+        Workspace {
+            id,
+            idx: 1,
+            name: None,
+            output: output.map(str::to_owned),
+            is_urgent: false,
+            is_active: active,
+            is_focused: active,
+            active_window_id: None,
+        }
+    }
+
+    /// Outputs by name, each on at `(x, y)` or off.
+    fn outputs(outputs: &[(&str, Option<(i32, i32)>)]) -> BTreeMap<String, Output> {
+        outputs
+            .iter()
+            .map(|&(name, at)| {
+                let output = Output {
+                    name: name.to_owned(),
+                    make: String::new(),
+                    model: String::new(),
+                    serial: None,
+                    physical_size: None,
+                    modes: Vec::new(),
+                    current_mode: None,
+                    is_custom_mode: false,
+                    vrr_supported: false,
+                    vrr_enabled: false,
+                    logical: at.map(|(x, y)| output(x, y, 1.0)),
+                };
+                (name.to_owned(), output)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_floating_window_is_placed_only_on_the_workspace_its_output_shows() {
+        let floating = layout(Some((20.0, 30.0)), (0.0, 0.0));
+        let screens = outputs(&[("DP-1", Some((0, 0))), ("HDMI-A-1", Some((960, 0)))]);
+        let shown = [
+            workspace(1, Some("DP-1"), true),
+            workspace(2, Some("HDMI-A-1"), true),
+        ];
+        let at = |id| origin(&window_on(Some(id), floating.clone()), &shown, &screens);
+        assert_eq!(at(1), Ok(LayoutPt { x: 20.0, y: 30.0 }));
+        assert_eq!(at(2), Ok(LayoutPt { x: 980.0, y: 30.0 }));
+        // niri still reports the window's place once another workspace is shown on its
+        // output, where that workspace's windows now are.
+        let hidden = [
+            workspace(1, Some("DP-1"), false),
+            workspace(3, Some("DP-1"), true),
+        ];
+        let behind = window_on(Some(1), floating.clone());
+        assert_eq!(
+            origin(&behind, &hidden, &screens),
+            Err(Unmappable::NotShowing)
+        );
+        // No workspace, an unknown one, one on no output or on an output that is off.
+        let off = outputs(&[("DP-1", None)]);
+        let nowhere = [workspace(1, None, true)];
+        for (unplaced, workspaces, on) in [
+            (window_on(None, floating.clone()), &shown[..], &screens),
+            (window_on(Some(9), floating.clone()), &shown[..], &screens),
+            (window_on(Some(1), floating.clone()), &nowhere[..], &screens),
+            (window_on(Some(1), floating.clone()), &shown[..], &off),
+        ] {
+            assert_eq!(
+                origin(&unplaced, workspaces, on),
+                Err(Unmappable::NotShowing),
+                "{unplaced:?}"
+            );
+        }
     }
 
     #[test]
