@@ -1057,12 +1057,159 @@ mod tests {
     /// An engine for `env` with no event stream and no accessibility bus.
     fn without_niri(env: Env) -> Engine {
         let events = Err(ToolError::new(ErrorName::NiriUnavailable, "no niri"));
+        without_a11y(env, events)
+    }
+
+    fn without_a11y(env: Env, events: Result<EventStream, ToolError>) -> Engine {
         let absent = Presence {
             available: false,
             address: None,
             reason: Some("no session bus".to_owned()),
         };
         Engine::new(env, events, Audit::new(None), absent)
+    }
+
+    /// An empty desktop, as niri's event stream starts.
+    const EMPTY_DESKTOP: &str = concat!(
+        "{\"Ok\":\"Handled\"}\n",
+        "{\"WorkspacesChanged\":{\"workspaces\":[]}}\n",
+        "{\"WindowsChanged\":{\"windows\":[]}}\n",
+        "{\"OverviewOpenedOrClosed\":{\"is_open\":false}}\n",
+    );
+
+    /// An engine whose event stream comes from a niri that serves nothing else: each
+    /// connection gets an empty desktop and stays open until the returned `Notify` cuts
+    /// it. The engine's other niri requests fail.
+    async fn with_event_stream(dir: &std::path::Path) -> (Engine, Arc<tokio::sync::Notify>) {
+        use tokio::io::AsyncWriteExt as _;
+
+        let socket = dir.join("events.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        let cut = Arc::new(tokio::sync::Notify::new());
+        let cutting = Arc::clone(&cut);
+        tokio::spawn(async move {
+            while let Ok((mut connection, _)) = listener.accept().await {
+                connection
+                    .write_all(EMPTY_DESKTOP.as_bytes())
+                    .await
+                    .unwrap();
+                cutting.notified().await;
+            }
+        });
+        let events = Ok(EventStream::spawn(socket));
+        let engine = without_a11y(crate::test_support::niri_env(dir), events);
+        until(|| engine.connection() == Some(1)).await;
+        (engine, cut)
+    }
+
+    impl Engine {
+        fn connection(&self) -> Option<u64> {
+            self.events.as_ref().ok().and_then(EventStream::connection)
+        }
+    }
+
+    /// Polls `call` as far as its first wait, which must not be its end. A call waiting for
+    /// the action mutex is queued there by then, behind the calls polled before it.
+    async fn queue(call: &mut (impl Future + Unpin)) {
+        tokio::select! {
+            biased;
+            _ = call => panic!("the call ended instead of waiting"),
+            () = ready(()) => {}
+        }
+    }
+
+    /// A zoom of the first pixels of the screenshot ref `id`.
+    fn zoom_into(id: String) -> Zoom {
+        let pixels = ImageRect {
+            origin: crate::coords::ImagePx { x: 0, y: 0 },
+            width: 10,
+            height: 10,
+        };
+        Zoom { id, pixels }
+    }
+
+    /// Gives `owner` the lease and one screenshot ref, whose id it returns, and starts an
+    /// observation of `owner` that holds the action mutex until the returned sender says.
+    async fn owner_observing<'a>(
+        engine: &'a Engine,
+        owner: &'a Session,
+    ) -> (
+        String,
+        impl Future<Output = Result<(), CallError>> + Unpin + 'a,
+        tokio::sync::oneshot::Sender<()>,
+    ) {
+        let desk = &engine.desk;
+        desk.acquire(owner, "owner/1", ready(None), ready(None))
+            .await
+            .unwrap();
+        let lease = desk.ref_lease(owner).unwrap();
+        let id = desk.remember(lease, crate::test_support::shot()).unwrap();
+        let (go, wait) = tokio::sync::oneshot::channel::<()>();
+        let mut observing = Box::pin(desk.observe(owner, async {
+            wait.await.ok();
+            Ok(())
+        }));
+        queue(&mut observing).await;
+        (id, observing, go)
+    }
+
+    /// A zoom waits behind the owner's running screenshot or action, and its ref is looked
+    /// up once its turn comes: a release and a new lease queued ahead of it have dropped
+    /// the ref by then.
+    #[tokio::test]
+    async fn a_queued_zoom_takes_its_ref_from_the_lease_of_its_turn() {
+        let dir = crate::test_support::fresh_dir("engine-queued-zoom-lease");
+        let (engine, _cut) = with_event_stream(&dir).await;
+        let owner = crate::test_support::session(1);
+        let (id, observing, go) = owner_observing(&engine, &owner).await;
+        let mut release = Box::pin(engine.release(&owner, false));
+        queue(&mut release).await;
+        let mut acquire = Box::pin(engine.desk.acquire(
+            &owner,
+            "owner/1",
+            ready(None),
+            ready(None),
+        ));
+        queue(&mut acquire).await;
+        let request = observe::Request::focused();
+        let mut zoom = Box::pin(engine.screenshot(&owner, request, None, Some(zoom_into(id))));
+        queue(&mut zoom).await;
+        go.send(()).unwrap();
+        observing.await.unwrap();
+        assert!(release.await.released);
+        acquire.await.unwrap();
+        let Err(CallError::Tool(refused)) = zoom.await else {
+            panic!("the zoom wasn't refused for its ref");
+        };
+        assert_eq!(refused.name, ErrorName::RefInvalid);
+        assert!(
+            refused.detail.contains("isn't a screenshot of this lease"),
+            "{refused:?}"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A ref checked once a queued zoom's turn comes is checked against the event stream
+    /// of then: a reconnect while the zoom waited refuses it.
+    #[tokio::test]
+    async fn a_queued_zoom_checks_its_ref_against_the_event_stream_of_its_turn() {
+        let dir = crate::test_support::fresh_dir("engine-queued-zoom-stream");
+        let (engine, cut) = with_event_stream(&dir).await;
+        let owner = crate::test_support::session(1);
+        let (id, observing, go) = owner_observing(&engine, &owner).await;
+        let request = observe::Request::focused();
+        let mut zoom = Box::pin(engine.screenshot(&owner, request, None, Some(zoom_into(id))));
+        queue(&mut zoom).await;
+        cut.notify_one();
+        until(|| engine.connection() == Some(2)).await;
+        go.send(()).unwrap();
+        observing.await.unwrap();
+        let Err(CallError::Tool(refused)) = zoom.await else {
+            panic!("the zoom wasn't refused for its ref");
+        };
+        assert_eq!(refused.name, ErrorName::RefInvalid);
+        assert!(refused.detail.contains("reconnected"), "{refused:?}");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// Waits until `done`, for at most five seconds.
