@@ -10,6 +10,7 @@ mod copy;
 mod crash;
 mod dropped_paste;
 mod engine;
+mod engine_scope;
 mod exposure;
 mod guardian;
 mod keeper;
@@ -127,6 +128,7 @@ pub(crate) fn run_engine(
     for client in clients {
         client.stop()?;
     }
+    engine_scope::run(session, server)?;
     noctalia.stop().map(drop)
 }
 

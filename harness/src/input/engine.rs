@@ -1,6 +1,7 @@
 //! The shared engine against the nested niri (plan §6): ten clients on one engine (E1), a
 //! client killed mid-drag (E3), a stop during typing while nine clients keep calling (E4),
-//! and the engine killed mid-drag (E5). Every server here bridges to the engine.
+//! and the engine killed mid-drag (E5). Every server here bridges to the engine. E6, the
+//! engine's own systemd scope, is in `engine_scope`.
 
 use std::fs;
 use std::time::{Duration, Instant};
@@ -79,7 +80,7 @@ fn one_engine(session: &mut Session<'_>, clients: &mut [Client]) -> Result<u64> 
     Ok(*engine)
 }
 
-fn engine_pid(status: &Value) -> Result<u64> {
+pub(super) fn engine_pid(status: &Value) -> Result<u64> {
     field(status, "/engine/pid")
         .as_u64()
         .ok_or_else(|| Failure::new(format!("no engine PID in {status}")))
@@ -87,7 +88,12 @@ fn engine_pid(status: &Value) -> Result<u64> {
 
 /// How many processes run `guard <engine>`.
 fn guardians(engine: u64) -> Result<usize> {
-    let mut found = 0;
+    Ok(guardian_pids(engine)?.len())
+}
+
+/// The processes that run `guard <engine>`.
+pub(super) fn guardian_pids(engine: u64) -> Result<Vec<String>> {
+    let mut found = Vec::new();
     for entry in
         fs::read_dir("/proc").map_err(|error| Failure::new(format!("list /proc: {error}")))?
     {
@@ -100,7 +106,7 @@ fn guardians(engine: u64) -> Result<usize> {
         if args.get(1) == Some(&b"guard".as_slice())
             && args.get(2) == Some(&engine.to_string().as_bytes())
         {
-            found += 1;
+            found.push(entry.file_name().to_string_lossy().into_owned());
         }
     }
     Ok(found)
