@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::policy;
 use crate::session::Given;
 
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 /// A hello line, newline included. The policy file's text, at most `MAX_POLICY`, can grow
 /// up to six times in JSON.
 pub(crate) const MAX_LINE: usize = 512 * 1024;
@@ -343,10 +343,17 @@ mod tests {
         };
         assert_eq!(refusal(&own, &elsewhere), Refusal::SessionMismatch);
         let newer = Hello {
-            version: 2,
+            version: VERSION + 1,
             ..hello(own.exe, NIRI, DISPLAY)
         };
         assert_eq!(refusal(&own, &newer), Refusal::EngineVersion);
+        // A bridge from before `desktop_path` speaks hello 1, an older version, not a
+        // malformed hello.
+        let mut previous = serde_json::to_value(hello(own.exe, NIRI, DISPLAY)).unwrap();
+        previous["hello"] = 1.into();
+        previous.as_object_mut().unwrap().remove("desktop_path");
+        let previous = serde_json::to_vec(&previous).unwrap();
+        assert_eq!(own.take(&previous).unwrap_err().0, Refusal::EngineVersion);
         assert_eq!(
             own.take(b"GET / HTTP/1.1").unwrap_err().0,
             Refusal::BadHello

@@ -78,7 +78,9 @@ fn executable(file: &Path) -> bool {
 /// `PATH` never decides them, since in shared mode they serve every client.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct Desktop {
-    /// The directories searched, in order; only absolute ones count.
+    /// The directories searched, in order, as `find` reads them: absolute and UTF-8, each
+    /// once, without trailing or repeated slashes. Two spellings of one search compare
+    /// equal.
     pub(crate) search: String,
     pub(crate) loginctl: Option<PathBuf>,
     pub(crate) noctalia: Option<PathBuf>,
@@ -87,18 +89,28 @@ pub(crate) struct Desktop {
 impl Desktop {
     /// Looks in `search`'s absolute directories for the first file of each name that this
     /// process may execute. A relative directory would depend on the working directory,
-    /// which is the first client's in an engine it started.
+    /// which is the first client's in an engine it started. A directory whose name isn't
+    /// UTF-8 is skipped too, since the hello compares the search as text.
     pub(crate) fn find(search: &OsStr) -> Self {
+        let mut dirs: Vec<String> = Vec::new();
+        for dir in std::env::split_paths(search).filter(|dir| dir.is_absolute()) {
+            let dir: PathBuf = dir.components().collect();
+            if let Some(dir) = dir
+                .to_str()
+                .filter(|dir| !dirs.iter().any(|seen| seen == dir))
+            {
+                dirs.push(dir.to_owned());
+            }
+        }
         let locate = |program| {
-            std::env::split_paths(search)
-                .filter(|dir| dir.is_absolute())
-                .map(|dir| dir.join(program))
+            dirs.iter()
+                .map(|dir| Path::new(dir).join(program))
                 .find(|file| executable(file))
         };
         Self {
-            search: search.to_string_lossy().into_owned(),
             loginctl: locate("loginctl"),
             noctalia: locate("noctalia"),
+            search: dirs.join(":"),
         }
     }
 }
@@ -685,7 +697,19 @@ mod tests {
         let found = Desktop::find(&search);
         assert_eq!(found.loginctl, Some(dir.join("second/loginctl")));
         assert_eq!(found.noctalia, Some(dir.join("second/noctalia")));
-        assert_eq!(found.search, search.to_string_lossy());
+        // The same directories in the same order, spelled another way, are the same search.
+        let respelled = format!(
+            "{}/:{}//second:{}:{}:",
+            dir.join("missing").display(),
+            dir.display(),
+            dir.join("missing").display(),
+            dir.join("third").display(),
+        );
+        let respelled = Desktop::find(OsStr::new(&respelled));
+        let plain =
+            std::env::join_paths([dir.join("missing"), dir.join("second"), dir.join("third")]);
+        assert_eq!(respelled.search, Desktop::find(&plain.unwrap()).search);
+        assert_ne!(respelled.search, Desktop::find(&search).search);
         let empty = Desktop::find(dir.join("missing").as_os_str());
         assert_eq!((empty.loginctl, empty.noctalia), (None, None));
         std::fs::remove_dir_all(dir).unwrap();

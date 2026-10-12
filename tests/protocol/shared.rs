@@ -213,8 +213,8 @@ async fn unrestricted_per_client(first: bool) {
 }
 
 /// The engine's `loginctl` and `noctalia` come from the desktop's directories, not from
-/// the `PATH` of the client that starts it, and a client that names other directories is
-/// served standalone with what it found, leaving the engine's clients theirs.
+/// the `PATH` of the client that starts it. A client that names the same directories
+/// spelled another way joins it, and one that names other directories is served standalone with what it found, leaving the engine's clients theirs.
 #[tokio::test]
 async fn the_first_clients_path_decides_nothing_for_the_desktop() {
     let mut fixture = shared("shared-desktop-path");
@@ -228,10 +228,14 @@ async fn the_first_clients_path_decides_nothing_for_the_desktop() {
     let engine = engine(&fixture).await;
     fixture.set("PATH", fixture.path("bin"));
     let mut joined = Server::start(&fixture).await;
+    let mut respelled = format!("{}/:relative:", fixture.path("bin").display());
+    respelled.insert(0, '/');
+    fixture.set("NIRI_COMPUTER_USE_DESKTOP_PATH", respelled);
+    let mut same_dirs = Server::start(&fixture).await;
     fixture.set("NIRI_COMPUTER_USE_DESKTOP_PATH", fixture.path("empty"));
     let mut elsewhere = Server::start(&fixture).await;
     assert_eq!(engines(&fixture), [engine]);
-    for server in [&mut narrow, &mut joined] {
+    for server in [&mut narrow, &mut joined, &mut same_dirs] {
         assert_eq!(i32::try_from(server.serving_pid().await).unwrap(), engine);
         let status = server.structured("status").await;
         assert_eq!(status["noctalia"], "running", "{status}");

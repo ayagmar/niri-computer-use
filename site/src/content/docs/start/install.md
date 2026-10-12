@@ -51,6 +51,7 @@ It prints the readiness report as JSON. Look at these fields:
 | `outputs.pointer_supported` | `true` for the pointer tools |
 | `binaries` | every program `true` |
 | `desktop_programs.loginctl` | a path such as `/usr/bin/loginctl` |
+| `desktop_programs.noctalia` | with Noctalia installed, a path such as `/usr/bin/noctalia`; `null` when it is installed elsewhere, such as a Nix user profile or `~/.local/bin`: set [`NIRI_COMPUTER_USE_DESKTOP_PATH`](../../concepts/configuration/#environment) to its directories, the same for every client |
 
 Every field is described under [`status`](../../tools/looking/#status).
 

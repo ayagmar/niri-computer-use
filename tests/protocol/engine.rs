@@ -24,7 +24,7 @@ fn socket(fixture: &Fixture) -> PathBuf {
 fn hello(fixture: &Fixture) -> Value {
     let exe = std::fs::metadata(env!("CARGO_BIN_EXE_niri-computer-use")).unwrap();
     json!({
-        "hello": 1,
+        "hello": 2,
         "exe": {
             "dev": exe.dev(), "ino": exe.ino(), "size": exe.size(),
             "mtime": exe.mtime(), "mtime_nsec": exe.mtime_nsec()
@@ -139,7 +139,7 @@ async fn the_engine_takes_a_matching_hello_and_refuses_the_rest() {
     };
     for (sent, error) in [
         (
-            refused(hello(&fixture), &|hello| hello["hello"] = 2.into()),
+            refused(hello(&fixture), &|hello| hello["hello"] = 3.into()),
             "engine_version",
         ),
         (
@@ -154,7 +154,7 @@ async fn the_engine_takes_a_matching_hello_and_refuses_the_rest() {
             }),
             "session_mismatch",
         ),
-        (json!({"hello": 1}), "bad_hello"),
+        (json!({"hello": 2}), "bad_hello"),
     ] {
         let (mut connection, reply) = Connection::open(&fixture, &sent).await;
         assert_eq!(reply["refused"]["error"], error, "{reply}");

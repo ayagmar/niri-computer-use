@@ -43,7 +43,7 @@ niri-computer-use: a server holds the lease: PID … (…); end that agent or it
 
 ## `shell_panel` is missing, or Noctalia is unavailable
 
-`shell_panel` is listed, and `desktop_state` has `shell`, only when the server found `noctalia` when it started; `status.desktop_programs` shows where it looked. Install Noctalia and restart the agent's session. If it is installed outside those directories, set [`NIRI_COMPUTER_USE_DESKTOP_PATH`](../../concepts/configuration/#environment) for every client.
+`shell_panel` is listed, and `desktop_state` has `shell`, only when the server found `noctalia` when it started; `status.desktop_programs` shows where it looked. Install Noctalia and restart the agent's session. If it is installed outside those directories, such as in a Nix user profile or `~/.local/bin`, set [`NIRI_COMPUTER_USE_DESKTOP_PATH`](../../concepts/configuration/#environment) to the same directories for every client. In shared mode, a client that sets other directories is served standalone, and its bridge says so on stderr: `refused this client (session_mismatch): the bridge looks for loginctl and noctalia in …`.
 
 If `shell_panel` fails, or `desktop_state`'s `shell` is, `noctalia_unavailable`, Noctalia isn't running: `status` shows `noctalia: not_running` and a `noctalia_error` such as `…/noctalia-wayland-1.sock: connect: No such file or directory`. Start Noctalia. While it isn't running, the lock state depends on logind alone, so without `niri --session` the lease is refused.
 
