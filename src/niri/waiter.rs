@@ -233,17 +233,21 @@ impl Waiter {
     }
 }
 
+/// Whether niri moved, resized or floated a window between `old` and `new`, or moved it to
+/// another workspace.
+pub(super) fn relaid(old: &Window, new: &Window) -> bool {
+    old.layout != new.layout
+        || old.workspace_id != new.workspace_id
+        || old.is_floating != new.is_floating
+}
+
 /// Whether `event`, on top of `view`, can change what is shown where (see `Waiter::moved`).
 fn moves(view: &View, event: &Event) -> bool {
     match event {
-        Event::WindowOpenedOrChanged { window } => {
-            view.windows().get(&window.id).is_none_or(|old| {
-                old.layout != window.layout
-                    || old.workspace_id != window.workspace_id
-                    || old.is_floating != window.is_floating
-                    || old.is_focused != window.is_focused
-            })
-        }
+        Event::WindowOpenedOrChanged { window } => view
+            .windows()
+            .get(&window.id)
+            .is_none_or(|old| relaid(old, window) || old.is_focused != window.is_focused),
         Event::WorkspacesChanged { .. }
         | Event::WorkspaceActivated { .. }
         | Event::WorkspaceActiveWindowChanged { .. }

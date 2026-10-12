@@ -153,8 +153,10 @@ impl Checks<'_, '_> {
     }
 
     /// Clicks `button` a hundred times, each counted once by the fixture, starting from
-    /// `from` activations.
+    /// `from` activations. niri may have opened or placed the window a moment ago, so the
+    /// first click waits for the view to settle.
     fn activations(&mut self, button: &Listed, counter: &str, from: u32) -> Result<()> {
+        pause(VIEW_SETTLE);
         let started = Instant::now();
         for count in from + 1..=from + ROUNDS {
             self.click(&button.id)?;
@@ -168,8 +170,9 @@ impl Checks<'_, '_> {
         ))
     }
 
-    /// niri moves the floating window; the element listed before still hits, placed from
-    /// niri's geometry now.
+    /// niri moves the floating window. Right away the view may still be moving, so the
+    /// element listed before is refused; a moment later it hits, placed from niri's geometry
+    /// now.
     fn moved(&mut self, window: &Window, primary: &Listed) -> Result<()> {
         let before = window.layout.tile_pos_in_workspace_view;
         self.session
@@ -187,10 +190,21 @@ impl Checks<'_, '_> {
                 Ok(moved)
             })?;
         self.shot = None;
+        let moving = self.refused_click(&primary.id)?;
+        expect(
+            field(&moving, "/error") == "element_unmappable"
+                && field(&moving, "/detail").as_str().is_some_and(|detail| {
+                    detail.starts_with("not_showing: the view may still be moving")
+                }),
+            "element_unmappable: the view may still be moving, just after the move",
+            &moving,
+        )?;
+        pause(VIEW_SETTLE);
         self.click(&primary.id)?;
         self.counted("primary-count", ROUNDS + 1)?;
-        self.session
-            .log("M9: moved by (+37, +11), the element listed before still hit")
+        self.session.log(&format!(
+            "M9: moved by (+37, +11), refused at once: {moving}; a moment later the element listed before hit"
+        ))
     }
 
     /// Tiled, the window has no place niri reports: its elements are `tiled`, and the ref
@@ -218,6 +232,7 @@ impl Checks<'_, '_> {
         self.primary_until(window, "Primary with a box", |element| {
             !field(element, "/layout_box").is_null()
         })?;
+        pause(VIEW_SETTLE);
         let floating = self.button(window, "Primary")?;
         self.shot = None;
         self.click(&floating.id)?;

@@ -2303,9 +2303,12 @@ async fn a_floating_window_behind_a_fullscreen_one_is_never_aimed_at() {
     assert_eq!(desk.fixture.clipboard.pointed().len(), 1);
 }
 
-/// The events after which niri's view may still be moving on `DP-1`: a workspace switch,
-/// the overview opening or closing.
-fn view_moves() -> [(&'static str, Value); 2] {
+/// The events after which niri's view may still be moving on `DP-1`, or the floating
+/// mock window on it: a workspace switch, the overview opening or closing, the window
+/// moving to (40, 20).
+fn view_moves() -> [(&'static str, Value); 3] {
+    let mut moved = floating_window();
+    moved["layout"]["tile_pos_in_workspace_view"] = json!([40.0, 20.0]);
     [
         (
             "switch",
@@ -2314,6 +2317,10 @@ fn view_moves() -> [(&'static str, Value); 2] {
         (
             "overview",
             json!({"OverviewOpenedOrClosed": {"is_open": false}}),
+        ),
+        (
+            "layout",
+            json!({"WindowLayoutsChanged": {"changes": [[WINDOW, moved["layout"]]]}}),
         ),
     ]
 }
@@ -2346,9 +2353,10 @@ fn refused_moving(result: &Value, tag: &str) {
     );
 }
 
-// niri reports a workspace switch or the overview opening or closing as done at once,
-// while its animation still moves the view. For a second after either, an element ref on
-// that output is refused and the pointer is sent nothing; after it, the same ref goes out.
+// niri reports a workspace switch, the overview opening or closing, or a floating window's
+// new place as done at once, while its animation still moves the view. For a second after
+// any of them, an element ref on that output, or in that window, is refused and the
+// pointer is sent nothing; after it, the same ref goes out.
 #[tokio::test]
 async fn an_element_is_not_aimed_at_just_after_the_view_moved() {
     for (tag, event) in view_moves() {
@@ -2436,10 +2444,7 @@ async fn a_switch_reported_with_the_whole_workspace_list_is_settled_too() {
 // layout or a workspace's active window, refuses the aim, and nothing is sent.
 #[tokio::test]
 async fn an_element_aim_is_refused_when_the_view_moved_before_it_went_out() {
-    let [switch, overview] = view_moves().map(|(_, event)| event);
-    let mut resized = floating_window();
-    resized["layout"]["tile_size"] = json!([900.0, 700.0]);
-    let layouts = json!({"WindowLayoutsChanged": {"changes": [[WINDOW, resized["layout"]]]}});
+    let [switch, overview, layouts] = view_moves().map(|(_, event)| event);
     let active =
         json!({"WorkspaceActiveWindowChanged": {"workspace_id": 1, "active_window_id": null}});
     for (tag, event) in [

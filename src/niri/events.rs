@@ -21,7 +21,7 @@ use tokio::net::UnixStream;
 use tokio::sync::{broadcast, watch};
 use tokio::time::Instant;
 
-use super::waiter::{Numbers, Update, View, Waiter};
+use super::waiter::{Numbers, Update, View, Waiter, relaid};
 use crate::error::{ErrorName, ToolError};
 
 /// For connecting, the request's reply, and a tool waiting for the initial state.
@@ -63,6 +63,10 @@ struct Replica {
     /// which workspaces an output has, since the initial state: each starts an animation
     /// whose end niri doesn't report.
     activated: HashMap<String, Instant>,
+    /// When niri last moved, resized or floated each window, by id, moved it to another
+    /// workspace or opened it, since the initial state: a floating window animates to the
+    /// place niri reports at once.
+    relaid: HashMap<u64, Instant>,
     /// When niri last opened or closed the overview, which animates every output, or when
     /// this replica got its initial state after a reconnect: a switch may have started
     /// while the stream was down.
@@ -111,11 +115,56 @@ impl Replica {
         if matches!(event, Event::OverviewOpenedOrClosed { .. }) {
             self.everywhere = Some(now);
         }
+        for id in self.relaid_by(event) {
+            self.relaid.insert(id, now);
+        }
+        if let Event::WindowClosed { id } = event {
+            self.relaid.remove(id);
+        }
     }
 
-    /// When the view on `output` last started to move, as far as niri reported it.
-    fn animated(&self, output: &str) -> Option<Instant> {
-        self.activated.get(output).copied().max(self.everywhere)
+    /// The windows `event` moves, resizes, floats, moves to another workspace or opens.
+    fn relaid_by(&self, event: &Event) -> Vec<u64> {
+        let known = &self.state.windows.windows;
+        let changed = |window: &Window| known.get(&window.id).is_none_or(|old| relaid(old, window));
+        match event {
+            Event::WindowsChanged { windows } => windows
+                .iter()
+                .filter(|window| changed(window))
+                .map(|window| window.id)
+                .collect(),
+            Event::WindowOpenedOrChanged { window } => {
+                changed(window).then_some(window.id).into_iter().collect()
+            }
+            Event::WindowLayoutsChanged { changes } => changes
+                .iter()
+                .filter(|(id, layout)| known.get(id).is_none_or(|old| old.layout != *layout))
+                .map(|(id, _)| *id)
+                .collect(),
+            Event::WorkspacesChanged { .. }
+            | Event::WorkspaceUrgencyChanged { .. }
+            | Event::WorkspaceActivated { .. }
+            | Event::WorkspaceActiveWindowChanged { .. }
+            | Event::WindowClosed { .. }
+            | Event::WindowFocusChanged { .. }
+            | Event::WindowFocusTimestampChanged { .. }
+            | Event::WindowUrgencyChanged { .. }
+            | Event::KeyboardLayoutsChanged { .. }
+            | Event::KeyboardLayoutSwitched { .. }
+            | Event::OverviewOpenedOrClosed { .. }
+            | Event::ConfigLoaded { .. }
+            | Event::ScreenshotCaptured { .. }
+            | Event::CastsChanged { .. }
+            | Event::CastStartedOrChanged { .. }
+            | Event::CastStopped { .. } => Vec::new(),
+        }
+    }
+
+    /// When the view on `output`, or `window` on it, last started to move, as far as niri
+    /// reported it.
+    fn animated(&self, output: &str, window: u64) -> Option<Instant> {
+        let latest = self.activated.get(output).copied().max(self.everywhere);
+        latest.max(self.relaid.get(&window).copied())
     }
 }
 
@@ -239,13 +288,14 @@ impl EventStream {
         }
     }
 
-    /// Whether niri activated a workspace on `output`, or opened or closed the overview,
-    /// within `settle`, so that the view there may still be moving. True while the stream
-    /// holds no initialized state, since then it can't tell.
-    pub(crate) fn animating(&self, output: &str, settle: Duration) -> bool {
+    /// Whether niri activated a workspace on `output`, opened or closed the overview, or
+    /// moved, resized, floated or opened `window` within `settle`, so that the view there
+    /// may still be moving. True while the stream holds no initialized state, since then
+    /// it can't tell.
+    pub(crate) fn animating(&self, output: &str, window: u64, settle: Duration) -> bool {
         match &*self.connection.borrow() {
             Connection::Connected(replica) if replica.initialized() => replica
-                .animated(output)
+                .animated(output, window)
                 .is_some_and(|at| at.elapsed() < settle),
             Connection::Connected(_)
             | Connection::Connecting { .. }
@@ -555,7 +605,7 @@ mod tests {
         replica.apply(1, Event::WorkspacesChanged { workspaces });
         replica.apply(2, Event::WindowsChanged { windows: vec![] });
         replica.apply(3, Event::OverviewOpenedOrClosed { is_open: false });
-        assert_eq!(replica.animated("DP-1"), None);
+        assert_eq!(replica.animated("DP-1", 9), None);
         let switched = Instant::now();
         replica.apply(
             4,
@@ -564,13 +614,13 @@ mod tests {
                 focused: true,
             },
         );
-        assert_eq!(replica.animated("DP-1"), Some(switched));
-        assert_eq!(replica.animated("HDMI-A-1"), None);
+        assert_eq!(replica.animated("DP-1", 9), Some(switched));
+        assert_eq!(replica.animated("HDMI-A-1", 9), None);
         tokio::time::advance(Duration::from_secs(5)).await;
         let toggled = Instant::now();
         replica.apply(5, Event::OverviewOpenedOrClosed { is_open: true });
-        assert_eq!(replica.animated("DP-1"), Some(toggled));
-        assert_eq!(replica.animated("HDMI-A-1"), Some(toggled));
+        assert_eq!(replica.animated("DP-1", 9), Some(toggled));
+        assert_eq!(replica.animated("HDMI-A-1", 9), Some(toggled));
 
         // After a reconnect, a switch may have started while the stream was down, so the
         // initial state counts as a change on every output.
@@ -582,10 +632,47 @@ mod tests {
         let shown = vec![workspace_on(1, "DP-1", true)];
         rebuilt.apply(6, Event::WorkspacesChanged { workspaces: shown });
         rebuilt.apply(7, Event::WindowsChanged { windows: vec![] });
-        assert_eq!(rebuilt.animated("DP-1"), None);
+        assert_eq!(rebuilt.animated("DP-1", 9), None);
         rebuilt.apply(8, Event::OverviewOpenedOrClosed { is_open: false });
-        assert_eq!(rebuilt.animated("DP-1"), Some(Instant::now()));
-        assert_eq!(rebuilt.animated("HDMI-A-1"), Some(Instant::now()));
+        assert_eq!(rebuilt.animated("DP-1", 9), Some(Instant::now()));
+        assert_eq!(rebuilt.animated("HDMI-A-1", 9), Some(Instant::now()));
+    }
+
+    // niri reports a floating window's new place at once and animates it there: a move,
+    // resize, float or workspace change of a window, or its opening, marks that window and
+    // no other. A title or focus change doesn't, and a closed window is forgotten.
+    #[tokio::test(start_paused = true)]
+    async fn moving_a_window_animates_that_window_only() {
+        use crate::niri::waiter::tests::window;
+        let mut replica = Replica::default();
+        let shown = vec![workspace_on(1, "DP-1", true)];
+        replica.apply(1, Event::WorkspacesChanged { workspaces: shown });
+        let first = window(7, None, 1, true);
+        let windows = vec![first.clone()];
+        replica.apply(2, Event::WindowsChanged { windows });
+        replica.apply(3, Event::OverviewOpenedOrClosed { is_open: false });
+        let retitled = Window {
+            title: Some("another".to_owned()),
+            is_focused: false,
+            ..first.clone()
+        };
+        replica.apply(4, Event::WindowOpenedOrChanged { window: retitled });
+        assert_eq!(replica.animated("DP-1", 7), None);
+        let moved = Instant::now();
+        let mut layout = first.layout.clone();
+        layout.tile_pos_in_workspace_view = Some((40.0, 0.0));
+        let changes = vec![(7, layout)];
+        replica.apply(5, Event::WindowLayoutsChanged { changes });
+        assert_eq!(replica.animated("DP-1", 7), Some(moved));
+        assert_eq!(replica.animated("DP-1", 8), None);
+        tokio::time::advance(Duration::from_secs(5)).await;
+        let opened = Instant::now();
+        let second = window(8, None, 1, false);
+        replica.apply(6, Event::WindowOpenedOrChanged { window: second });
+        assert_eq!(replica.animated("DP-1", 8), Some(opened));
+        assert_eq!(replica.animated("DP-1", 7), Some(moved));
+        replica.apply(7, Event::WindowClosed { id: 8 });
+        assert_eq!(replica.animated("DP-1", 8), None);
     }
 
     // niri reports a switch inside `WorkspacesChanged` when a workspace was also added,
@@ -609,16 +696,16 @@ mod tests {
         replica.apply(2, Event::WindowsChanged { windows: vec![] });
         replica.apply(3, Event::OverviewOpenedOrClosed { is_open: false });
         replica.apply(4, workspaces(1, false));
-        assert_eq!(replica.animated("DP-1"), None);
+        assert_eq!(replica.animated("DP-1", 9), None);
         let switched = Instant::now();
         replica.apply(5, workspaces(2, false));
-        assert_eq!(replica.animated("DP-1"), Some(switched));
-        assert_eq!(replica.animated("HDMI-A-1"), None);
+        assert_eq!(replica.animated("DP-1", 9), Some(switched));
+        assert_eq!(replica.animated("HDMI-A-1", 9), None);
         tokio::time::advance(Duration::from_secs(5)).await;
         let added = Instant::now();
         replica.apply(6, workspaces(2, true));
-        assert_eq!(replica.animated("DP-1"), Some(switched));
-        assert_eq!(replica.animated("HDMI-A-1"), Some(added));
+        assert_eq!(replica.animated("DP-1", 9), Some(switched));
+        assert_eq!(replica.animated("HDMI-A-1", 9), Some(added));
     }
 
     const HANDLED: &str = "{\"Ok\":\"Handled\"}\n";

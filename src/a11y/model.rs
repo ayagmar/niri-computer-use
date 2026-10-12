@@ -293,9 +293,9 @@ pub(crate) enum Unmappable {
     /// floating windows while its active window is a fullscreen tiled one.
     #[serde(rename = "not_showing")]
     Covered,
-    /// niri switched a workspace or opened or closed the overview a moment ago, or changed
-    /// what is shown since the element was placed, so the view may still be moving. Only
-    /// an aim gives it.
+    /// niri switched a workspace, opened or closed the overview, or moved, resized,
+    /// floated or opened the element's window a moment ago, or changed what is shown since
+    /// the element was placed, so the view may still be moving. Only an aim gives it.
     #[serde(rename = "not_showing")]
     Moving,
     /// The window is tiled: niri 26.04 gives only floating windows a place in their

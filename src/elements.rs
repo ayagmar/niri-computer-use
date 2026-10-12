@@ -597,7 +597,7 @@ pub(crate) fn unmappable(why: Unmappable) -> ToolError {
         ),
         Unmappable::Moving => (
             "not_showing",
-            "the view may still be moving: niri switched a workspace, opened or closed the overview or changed the layout a moment ago; take a screenshot and try again",
+            "the view may still be moving: niri switched a workspace, opened or closed the overview, or moved, resized or opened a window a moment ago; take a screenshot and try again",
         ),
         Unmappable::Tiled => (
             "tiled",
