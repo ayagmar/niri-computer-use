@@ -473,7 +473,9 @@ impl Engine {
     /// released, taken back by a stop, lost, or its session ended. A later lease replaces
     /// it. Binding takes time, so the watch is kept only if `session` still holds that
     /// lease once it is bound, checked with the watch slot locked, so another lease's watch
-    /// can't be replaced; otherwise `session` is told its lease is gone.
+    /// can't be replaced; otherwise `session` is told its lease is gone. A watch another
+    /// call bound for the same lease meanwhile stays, with what it has noted, and this one
+    /// is dropped.
     async fn watch_clipboard(self: &Arc<Self>, session: &Session) -> Result<(), ToolError> {
         let lease = self
             .desk
@@ -501,7 +503,12 @@ impl Engine {
         if !still() {
             return Err(lease_gone(session));
         }
-        *current = Some(watch);
+        if current
+            .as_ref()
+            .is_none_or(|watching| watching.lease() != lease)
+        {
+            *current = Some(watch);
+        }
         drop(current);
         Ok(())
     }
@@ -842,10 +849,7 @@ mod tests {
         );
         granted(&engine, &first).await.unwrap();
         niri.hold_client().await;
-        let late = tokio::spawn({
-            let (engine, first) = (Arc::clone(&engine), first.clone());
-            async move { engine.watch_clipboard(&first).await }
-        });
+        let late = watch_apart(&engine, &first);
         until(|| niri.seen().holding).await;
         end_lease(&engine, &runtime, &first, ending).await;
         for _ in 0..500 {
@@ -861,6 +865,46 @@ mod tests {
         let read = engine.clipboard(&second).await.map(|_| ());
         assert_eq!(read, Ok(()), "{ending:?}");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Two acquisitions by one session bind two watches for one lease. The one bound last
+    /// doesn't replace the one already watching, so a copy noted in between stays readable.
+    #[tokio::test]
+    async fn a_second_watch_for_the_same_lease_keeps_what_the_first_noted() {
+        use crate::test_support::wayland::Compositor;
+
+        let dir = crate::test_support::fresh_dir("engine-same-lease");
+        let niri = Compositor::start(&dir, include_str!("../tests/fixtures/us-de.xkb"));
+        RuntimeDir::of(&niri.env(&dir)).unwrap().create().unwrap();
+        let engine = Arc::new(without_niri(niri.env(&dir)));
+        let session = crate::test_support::session(1);
+        granted(&engine, &session).await.unwrap();
+        niri.hold_client().await;
+        let late = watch_apart(&engine, &session);
+        until(|| niri.seen().holding).await;
+        granted(&engine, &session).await.unwrap();
+        engine.watch_clipboard(&session).await.unwrap();
+        let text = "text/plain;charset=utf-8".to_owned();
+        niri.copy(Some(vec![(text, b"copied".to_vec())])).await;
+        let read = || async {
+            let read = engine.clipboard(&session).await.unwrap();
+            serde_json::to_value(read).unwrap()
+        };
+        let copied = serde_json::json!({"text": "copied", "reason": null});
+        assert_eq!(read().await, copied);
+        niri.serve_held().await;
+        late.await.unwrap().unwrap();
+        assert_eq!(read().await, copied);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// `Engine::watch_clipboard` for `session`, in a task of its own.
+    fn watch_apart(
+        engine: &Arc<Engine>,
+        session: &Session,
+    ) -> tokio::task::JoinHandle<Result<(), ToolError>> {
+        let (engine, session) = (Arc::clone(engine), session.clone());
+        tokio::spawn(async move { engine.watch_clipboard(&session).await })
     }
 
     /// An engine for `env` with no event stream and no accessibility bus.
