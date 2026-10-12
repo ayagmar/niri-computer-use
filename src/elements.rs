@@ -148,7 +148,8 @@ struct Placed {
     others: Vec<Window>,
 }
 
-/// niri's window `id` right now, with its place in the layout, from fresh requests.
+/// niri's window `id` right now, with its place in the layout, from fresh requests. Any of
+/// them failing fails the call with niri's error.
 async fn placed(socket: &Socket, id: u64) -> Result<Option<Placed>, ToolError> {
     let (windows, workspaces, outputs) = tokio::join!(
         niri::windows(socket),
@@ -160,11 +161,7 @@ async fn placed(socket: &Socket, id: u64) -> Result<Option<Placed>, ToolError> {
     let Some(window) = window.into_iter().next() else {
         return Ok(None);
     };
-    let origin = model::origin(
-        &window,
-        &workspaces.unwrap_or_default(),
-        &outputs.unwrap_or_default(),
-    );
+    let origin = model::origin(&window, &workspaces?, &outputs?);
     Ok(Some(Placed {
         window,
         origin,

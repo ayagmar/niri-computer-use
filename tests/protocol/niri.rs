@@ -44,6 +44,8 @@ struct Config {
     workspaces: Vec<Workspace>,
     /// Read requests but never answer them.
     silent: bool,
+    /// Requests answered with niri's error, by name, with the error's text.
+    failing: HashMap<String, String>,
     /// Read actions but never answer them.
     hold_actions: bool,
     /// How much later every `Version` is answered.
@@ -117,6 +119,7 @@ impl Niri {
             windows: Vec::new(),
             workspaces: Vec::new(),
             silent: false,
+            failing: HashMap::new(),
             hold_actions: false,
             version_delay: Duration::ZERO,
             effects: None,
@@ -209,6 +212,14 @@ impl Niri {
         let mut config = self.config.lock().unwrap();
         config.windows = parsed(windows);
         config.workspaces = parsed(workspaces);
+    }
+
+    /// Answers every later `request`, such as `Workspaces`, with niri's error `message`.
+    pub(crate) fn fail(&self, request: &str, message: &str) {
+        let mut config = self.config.lock().unwrap();
+        config
+            .failing
+            .insert(request.to_owned(), message.to_owned());
     }
 
     pub(crate) fn set_silent(&self, silent: bool) {
@@ -391,7 +402,8 @@ async fn respond(
         if let Request::Action(_) = request {
             (!config.hold_actions).then_some(Ok(Response::Handled))
         } else {
-            (!config.silent).then(|| answer(&config, request))
+            (!config.silent)
+                .then(|| failure(&config, request).unwrap_or_else(|| answer(&config, request)))
         }
     };
     if let Some(answer) = answer {
@@ -410,6 +422,13 @@ async fn respond(
     let mut rest = Vec::new();
     read.read_to_end(&mut rest).await.ok();
     channels.abandoned.send(()).ok();
+}
+
+/// niri's error for `request`, if the test made it fail.
+fn failure(config: &Config, request: &Request) -> Option<Reply> {
+    let named = point(request);
+    let message = config.failing.get(named.strip_prefix("niri:")?)?;
+    Some(Err(message.clone()))
 }
 
 /// The hold point `request`'s reply passes: `niri:` and the request's name, with the

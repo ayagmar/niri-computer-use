@@ -2131,3 +2131,57 @@ async fn a_floating_window_on_a_workspace_not_shown_is_never_aimed_at() {
     assert_eq!(relisted["layout_box"], Value::Null, "{relisted}");
     assert_eq!(relisted["unmappable"], "not_showing", "{relisted}");
 }
+
+// A failed `Workspaces` or `Outputs` request fails the listing and the ref's aim with
+// niri's error, instead of passing for a window that isn't shown.
+#[tokio::test]
+async fn a_failed_workspaces_or_outputs_request_fails_with_niris_error() {
+    for request in ["Workspaces", "Outputs"] {
+        let mut desk = Desk::start(&format!("el-failed-{request}")).await;
+        let button = desk.element("Safe").await;
+        let shot = desk.screenshot_ref().await;
+        let message = format!("synthetic {request} failure");
+        desk.niri.fail(request, &message);
+        let listing = desk
+            .server
+            .call("elements", json!({"window_id": WINDOW}))
+            .await;
+        let aimed = json!({"screenshot_ref": shot, "element": button});
+        let moved = desk.server.call("pointer_move", aimed).await;
+        for result in [&listing, &moved] {
+            let (name, detail) = tool_error(result);
+            assert_eq!(name, "upstream_error", "{request}: {result}");
+            assert!(detail.contains(&message), "{request}: {detail}");
+        }
+        assert_eq!(desk.fixture.clipboard.pointed(), [], "{request}");
+    }
+}
+
+// A window whose workspace is on no output, as with every monitor off: tiled, its
+// elements are still `tiled`; floating, they are `not_showing`. The listing and the ref's
+// aim say the same, and nothing is sent.
+#[tokio::test]
+async fn a_window_on_no_output_says_the_same_in_the_listing_and_for_its_ref() {
+    let mut nowhere = workspace();
+    nowhere["output"] = Value::Null;
+    for (window, reason) in [
+        (app_window(WINDOW, true), "tiled"),
+        (floating_window(), "not_showing"),
+    ] {
+        let windows = [window];
+        let name = format!("el-no-output-{reason}");
+        let mut desk = Desk::start_with(&name, &["/frame"], objects(), &windows).await;
+        desk.niri.set_windows(&windows, &[nowhere.clone()]);
+        let listed = safe(&mut desk).await;
+        assert_eq!(listed["unmappable"], reason, "{listed}");
+        assert_eq!(listed["layout_box"], Value::Null, "{listed}");
+        let button = listed["element_ref"].as_str().unwrap().to_owned();
+        let shot = desk.screenshot_ref().await;
+        let aimed = json!({"screenshot_ref": shot, "element": button});
+        let moved = desk.server.call("pointer_move", aimed).await;
+        let (error, detail) = tool_error(&moved);
+        assert_eq!(error, "element_unmappable", "{moved}");
+        assert!(detail.starts_with(&format!("{reason}: ")), "{detail}");
+        assert_eq!(desk.fixture.clipboard.pointed(), [], "{reason}");
+    }
+}
