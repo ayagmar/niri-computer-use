@@ -91,26 +91,9 @@ The change report waits until 250 ms have passed, counted from the start of the 
 
 niri sets a window's focus timestamp once it has kept focus for a while, so that quick switching doesn't mark the windows passed through as recently used. Here that came about 750 ms after `focus` gave the fixture focus, which in all 30 rounds fell inside `type_text`'s report and restarted its 250 ms. The report shows no focus timestamps, so that wait bought nothing. Since this branch only an event that changes something the report shows restarts it (`act::record`), and `type_text` ends at 250 ms like `click` and `key`. The panel's focus changes do show in the report, so `shell_panel` keeps its wait.
 
-## What is left
-
-With the waste gone, what remains for most calls is the quiet wait itself, by design: it gives an app 250 ms from the start of the action to answer, so that a dialog a click opens is in `changes`. After this branch, the time each call spends in it, at the median, is its round trip after less the gate and work before:
-
-| Call | Quiet wait | Of its round trip |
-|---|---|---|
-| `click` | about 250 | 99% |
-| `focus` | about 250 after the focus event | 89 to 99% |
-| `key` | about 177 | 70% |
-| `type_text` | about 138 | 53% |
-| `shell_panel` open | about 363, from focus moving to the panel at 129 | 95% |
-| `shell_panel` close | about 206, from focus coming back at 260 | 40% |
-| `niri_action` | about 50 | 19% |
-| `activate_element` | none: its own 300 ms look covers it | 0% |
-
-`screenshot: true` replaces the quiet wait with the screenshot's own settle, which looks 50 ms after the action and then every 100 ms until two captures match.
-
 ## No quiet wait for `focus` and `niri_action`
 
-The user chose to skip the quiet wait for `focus` and `niri_action` once their own wait saw niri's event for the action, and always for `niri_action`'s `Spawn` and `SpawnSh`. The same `make nested-latency` rounds, against a release build of that change, compared with the two runs above it:
+The user chose to skip the quiet wait for `focus` and `niri_action` once their own wait ended with `focused`, `changed` or `closed`, or after `unchanged`'s full second, and always for `niri_action`'s `Spawn` and `SpawnSh`. The same `make nested-latency` rounds, against a release build of that change, compared with the two runs above it:
 
 | Run | Build | Run id |
 |---|---|---|
@@ -132,3 +115,44 @@ The user chose to skip the quiet wait for `focus` and `niri_action` once their o
 Every call came back with the same `observed` as before in all 30 rounds. A round of the nine calls took about 2,750 ms before and 2,300 ms after: `focus` saves about 190 to 250 ms a call, `niri_action` about 50 ms, the rest of its own 200 ms wait for a resize in steps.
 
 `click` became 31 ms slower. The timing marks, on the skipping build (run 1791836047-1060338), show why: after the workspace switch, niri answered every request about 30 ms late for a while. `focus` on the fixture paid 31 ms in its gate, and `click`, right after it, 31 ms in its gate and 64 ms in its work, which aims and sends the click through niri, against 0.3 and 2 ms before. The quiet wait of `focus` used to take that time. `click`'s quiet wait counts from the start of its work, so it covers most of the slower work, and only the gate's 31 ms is added. `key` and `type_text` moved 8 ms each, in opposite directions. niri's `WindowFocusTimestampChanged`, about 750 ms after the focus, now comes during `key` instead of `type_text`, and still restarts nothing; the 8 ms weren't traced further.
+
+## After the review fixes
+
+Opus's review of the branch led to two changes in the report and two in the harness. A report that skips the quiet wait still reads the rest of niri's batch, until no event came for 10 ms, at most 50 ms, so that the urgency niri clears on a window that took focus is in `focus`'s `changes`, and the quiet wait applies events already received before it checks the time. `make nested-latency` now also counts which `changes` keys each call returned, and picks the empty workspace below the fixture's, on the same output. The same rounds:
+
+| Run | Build | Run id |
+|---|---|---|
+| before 3 | `8aac368` | 1791837760-1422393 |
+| fixes 1 | this branch, after the review | 1791838058-1475861 |
+| fixes 2 | this branch, after the review | 1791838333-1522340 |
+
+| Call | before 3 | skip 1 | skip 2 | fixes 1 | fixes 2 |
+|---|---|---|---|---|---|
+| `focus` on the empty workspace | 280 (298) | 41 (49) | 31 (51) | 42 (59) | 42 (59) |
+| `focus` on the fixture | 252 (256) | 64 (64) | 64 (64) | 64 (64) | 64 (64) |
+| `click` on the entry, by element | 252 (253) | 283 (284) | 283 (299) | 272 (274) | 272 (273) |
+| `type_text` `"ab"` | 497 (500) | 252 (253) | 252 (253) | 253 (253) | 252 (253) |
+| `key` `BackSpace` twice | 258 (260) | 260 (262) | 260 (276) | 260 (261) | 260 (262) |
+| `activate_element` | 304 (305) | 304 (305) | 304 (306) | 304 (305) | 304 (306) |
+| `niri_action` `SetWindowHeight` | 262 (265) | 213 (215) | 212 (215) | 223 (225) | 223 (225) |
+| `shell_panel` open | 382 (383) | 382 (383) | 382 (383) | 382 (382) | 382 (383) |
+| `shell_panel` close | 512 (513) | 512 (527) | 512 (514) | 513 (519) | 512 (514) |
+
+In all three runs every call came back with the same `observed` and the same `changes` keys in all 30 rounds, and the two builds agreed: `focus+workspace` for both `focus` calls, `windows` for `niri_action`, `focus` for both `shell_panel` calls, and none for `click`, `type_text`, `key` and `activate_element`, whose effects in the fixture niri doesn't report. `niri_action` pays the batch's 10 ms: its own wait ends after 200 ms without an event, and the report then waits 10 ms more for one. `focus` on the fixture didn't move, and `focus` on the empty workspace stayed within the spread of the skip runs. `click` came back 11 ms faster than in the skip runs; that wasn't traced.
+
+## What is left
+
+What remains for most calls is the quiet wait itself, by design: it gives an app 250 ms from the start of the action to answer, so that a dialog a click opens is in `changes`. The time each call spends in it, at the median, from the timing marks of the two builds and the runs above:
+
+| Call | Quiet wait | Of its round trip |
+|---|---|---|
+| `click` | about 250 | over 90% |
+| `key` | about 177 | 70% |
+| `type_text` | about 138 | 53% |
+| `shell_panel` open | about 363, from focus moving to the panel at 129 | 95% |
+| `shell_panel` close | about 206, from focus coming back at 260 | 40% |
+| `focus` | none once focus moved; 10 to 50 ms for the rest of niri's batch | not measured |
+| `niri_action` | none once its window changed or a second passed; 10 ms for the rest of niri's batch | 4% |
+| `activate_element` | none: its own 300 ms look covers it | 0% |
+
+`screenshot: true` replaces the quiet wait with the screenshot's own settle, which looks 50 ms after the action and then every 100 ms until two captures match.
