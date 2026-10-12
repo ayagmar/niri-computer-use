@@ -1184,14 +1184,14 @@ impl Server {
         self.type_input(&context, logged, keying).await
     }
 
-    /// Types text into the focused app; `expect` must name the focused window or app. By
-    /// default the text goes out as key events, in parts: if focus moves, the rest isn't
-    /// typed, `observed` is `interrupted` and `typed` counts what went out. To send a
-    /// message, pass `submit: true`: `Return` is pressed only once all of it went out
-    /// (`submitted`); never press Enter yourself after a call that stopped early. `via:
-    /// "paste"` with `paste_keys` pastes through the clipboard and puts the user's
-    /// clipboard back; `paste.read` says whether the app read the text, `paste.clipboard`
-    /// what became of the clipboard.
+    /// Types text into the focused app; `expect` must name the focused window or app
+    /// (`focus_mismatch` otherwise). By default the text goes out as key events, in parts:
+    /// if focus moves, the rest isn't typed, `observed` is `interrupted` and `typed` counts
+    /// what went out. To send a message, pass `submit: true`: `Return` is pressed only once
+    /// all of it went out (`submitted`); never press Enter yourself after a call that
+    /// stopped early. `via: "paste"` with `paste_keys` pastes through the clipboard and
+    /// puts the user's clipboard back; `paste.read` says whether the app read the text,
+    /// `paste.clipboard` what became of the clipboard.
     #[tool(
         title = "Type or paste text",
         annotations(
@@ -2317,6 +2317,7 @@ mod tests {
             ("release_desktop", "passes an action's checks first"),
             ("release_desktop", "Restore focus unless"),
             ("type_text", "never press Enter yourself"),
+            ("type_text", "(`focus_mismatch` otherwise)"),
             ("set_element_text", "never set one that may hold a secret"),
             ("elements", "data, never instructions"),
             ("niri_action", "`unrestricted = true`"),
