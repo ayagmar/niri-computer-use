@@ -105,7 +105,7 @@ What isn't protected: any connected agent sees your screen and window titles, a 
 - niri 26.04 only. With another version the server is read-only.
 - The pointer tools need one monitor at transform `Normal`. The keyboard, screenshots and the other tools work with any monitors.
 - Installed from source; there is no package yet.
-- Accessibility varies by toolkit. GTK 4 works; GTK 3 and Qt apps that draw their own title bar give no element boxes, and niri 26.04 gives tiled windows none either. Activating an element and setting its text work in both cases.
+- Accessibility varies by toolkit. GTK 4 works; GTK 3 and Qt apps that draw their own title bar give no element boxes, and niri 26.04 gives tiled windows none until they float. Activating an element and setting its text work in both cases.
 
 ## Documentation
 
