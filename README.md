@@ -93,12 +93,12 @@ What `launch` answered:
 
 - One agent at a time holds the lease, and only the lease holder acts. Looking needs no lease.
 - The stop key cancels the running action and takes the lease back. An agent can't press it.
-- No input goes out while the screen is locked or its lock state is unknown.
-- It won't type into a window the agent didn't name, send input to apps you deny, fill or press a password field, or start apps you didn't list as presets, unless you turn on `unrestricted`.
-- Every call goes to an audit log, without the text typed, the clipboard, window titles or images.
-- What isn't protected: any connected agent sees your screen and window titles, and a click or a key can do anything you could do.
+- Each action is refused when the last read of the lock state says locked or unknown. Input goes out at most 250 ms after that read.
+- Typing goes only to the window the agent names in `expect`, unless it passes `"none"`. Pointer and keyboard input is refused while an app on your deny list has focus, and element actions on its windows.
+- Element actions refuse fields the toolkit marks as password fields. Apps start only from presets you write; `unrestricted` lifts that and allows niri's gated actions such as `Spawn`.
+- Calls that reach a tool go to an audit log, without the text typed, the clipboard, window titles or images.
 
-Read [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/) before letting an agent act, and [SECURITY.md](SECURITY.md) to report a problem.
+What isn't protected: any connected agent sees your screen and window titles, a click can land on a denied window that doesn't have focus, typing and clicking don't check for password fields, and a lock in the last 250 ms isn't caught. A click or a key can do anything you could do. Read [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/#what-isnt-a-boundary) before letting an agent act, and [SECURITY.md](SECURITY.md) to report a problem.
 
 ## Limits
 

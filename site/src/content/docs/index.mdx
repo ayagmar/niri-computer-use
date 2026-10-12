@@ -88,13 +88,15 @@ Your agent starts the server over stdio, and every client on one niri shares one
 
 - One agent at a time holds the lease, and only the lease holder acts. Looking needs no lease.
 - A key bound to `niri-computer-use stop` cancels the running action and takes the lease back. An agent can't press it.
-- No input goes out while the screen is locked or its lock state is unknown. The server won't type into a window the agent didn't name, send input to apps you deny, or click at pixels of a stale screenshot.
-- It starts apps only from presets you write, unless you turn on [`unrestricted`](concepts/configuration/#unrestricted).
-- It won't fill or press a password field, and it withholds clipboard copies a password manager marks as secret.
+- Each action is refused when the last read of the lock state says locked or unknown. Input goes out at most 250 ms after that read, so a lock in between isn't caught.
+- Typing goes only to the window the agent names in `expect`, unless it passes `"none"`. Pointer and keyboard input is refused while an app on your deny list has focus, and element actions on its windows. A click can still land on a denied window that doesn't have focus.
+- Clicks aim at a screenshot taken under the lease, at most a minute old, of an output that hasn't changed since. Windows may have moved in that time.
+- Element actions refuse fields the toolkit marks as password fields; typing and clicking don't check. Clipboard copies a password manager marks as secret are withheld.
+- Apps start only from presets you write. Turning on [`unrestricted`](concepts/configuration/#unrestricted) lifts that and allows niri's gated actions such as `Spawn`.
 - Every action reports `accepted`, whether niri took the request, and `observed`, what niri saw afterwards. Nothing is retried.
-- Every call goes to an audit log, without the text typed, the clipboard, window titles or images.
+- Calls that reach a tool go to an audit log, without the text typed, the clipboard, window titles or images.
 
-None of this is a sandbox. A click or a key can do anything you could do, and screenshots show the agent whatever is on your screen. Read [Safety](concepts/safety/) before you let an agent act.
+None of this is a sandbox. A click or a key can do anything you could do, and screenshots show the agent whatever is on your screen. Read [what isn't a boundary](concepts/safety/#what-isnt-a-boundary) before you let an agent act.
 
 </div>
 <div class="column">
