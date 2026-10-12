@@ -8,10 +8,13 @@ Every nested run below ran in the private headless cage, with its own session bu
 
 ## Acceptance
 
-The nested runs used `target/debug/harness run` directly, with the flags the `make` targets pass, after one `cargo build`. They ran on the final tree, after the row check was reworked (below), first on `main` at `c3a7e0a` and then, for `make check` and the a11y suite in both modes, once more after rebasing onto `main` at `dbfe457`.
+The nested runs used `target/debug/harness run` directly, with the flags the `make` targets pass, after one `cargo build`. They ran after the row check was reworked (below), first on `main` at `c3a7e0a` and then, for `make check` and the a11y suite in both modes, once more after rebasing onto `main` at `dbfe457`. The rework was then replaced by the named-row rule (below), and `make check` and the a11y suite in both modes ran again on that.
 
 | Command | Run | Result |
 |---|---|---|
+| `make check` | named-row rule on `dbfe457` | pass: 356 server, 132 harness and 250 protocol tests (one ignored), in both protocol modes |
+| `harness run --scale 1 --a11y` | named-row rule, 1791782877-3551010, 1791783323-3650663 | pass, list outcomes as below, longest pass 4.6 and 7.4 ms |
+| `harness run --shared --scale 1 --a11y` | named-row rule, 1791783527-3701020 | pass, list outcomes as below, longest pass 12.4 ms |
 | `make check` | final tree on `c3a7e0a` | pass: 343 server, 130 harness and 231 protocol tests (one ignored), in both protocol modes; formatting, Clippy, rustdoc, cargo-deny, cargo-machete, typos and ShellCheck pass |
 | `make check` | rebased onto `main` at `dbfe457` | pass: 359 server, 132 harness and 249 protocol tests (one ignored), in both protocol modes |
 | `harness run --scale 1 --a11y` | rebased, 1791779385-2743645 | pass, list outcomes as below, longest pass 4.2 ms |
@@ -63,18 +66,23 @@ With `main`'s server, a ref to `Record 112`'s `Delete`, pressed again after a `S
 
 The first fix kept the objects between the element and its nearest look-alike elements, up to 16, and checked their names. It passed the nested runs, but a blind review reproduced three ways an old ref still acted on a row showing another record: a second button of the same name in the row, a row whose record label was past the 16th object, and a listing stopped by its limit, object cap or budget before the label. It also showed that a bare row's ref went stale when the next row's label changed, and that working out the rows took 11.8 s on a wide tree. Each is now a protocol test in `tests/protocol/elements.rs`, and the check was reworked to refuse what it can't pin down (`docs/decisions.md`).
 
-On the reworked server, each run's outcomes, the same in all nine a11y runs:
+The rework refused every Qt `Delete` ref, fresh or old, since no structural rule told where one of Qt's bare rows ends. A second blind review found it still unsound: a row holding two wrapped `Delete` buttons passed its inner wrapper off as the row, a list showing a single reused row looked like a control of its own, and named rows of different shapes, or with a changing elapsed time, were refused. Inferring a row from the tree's shape was dropped for a rule on what the bus states (`docs/decisions.md`): a ref is bound to its record by the element's nearest `list_item`, `table_row` or `tree_item` with a name. A control in an unnamed row, or outside any row while other elements of its role and name were listed, is marked `unbound` and refused with `element_unbound`. The GTK fixture gained a second list whose rows are labelled with their record through `GtkListItem:accessible-label`.
 
-| List | Fresh refs accepted, own record deleted | Refused: moved | Refused: no row of their own | Deleted another record |
-|---|---|---|---|---|
-| GTK 4 | 4 | 10 | 0 | 0 |
-| Qt, three lists | 0 | 0 | 24 | 0 |
+With the named-row rule, each run's outcomes, the same in the a11y runs listed above:
 
-Every Qt `Delete` ref, fresh or old, is refused with `element_stale` and the detail that its look-alike elements sit beside it with no row of their own, ending "aim at screenshot pixels instead, not at this ref". That also keeps refs off the deleted rows Qt holds on the bus. GTK 4's rows each sit in a `list_item`, so its fresh refs work, and its old refs are stale because the row moved or is a new object.
+| List | Rows on the bus | Fresh refs accepted, own record deleted | Refused: `element_stale` | Refused: `element_unbound` | Deleted another record |
+|---|---|---|---|---|---|
+| GTK 4 `Record` | unnamed `list_item` | 0 | 0 | 8, `unnamed_row` | 0 |
+| GTK 4 `Labelled` | named `list_item` | 4 | 10 | 0 | 0 |
+| Qt `Record` | a `filler` for some rows, none for the rest | 0 | 0 | 8, `repeated` | 0 |
+| Qt `Item` | an unnamed `list_item` for some rows, none for the rest | 0 | 0 | 8: 5 `unnamed_row`, 3 `repeated` | 0 |
+| Qt `Named` | a named `list_item` for some rows, none for the rest | 1 | 4 | 3, `repeated` | 0 |
+
+In every Qt list, the refs to rows Qt put on the bus without a row role are `repeated`. In the `Named` list, the third record's label was renamed in place from `Named 003` to `Named 023` once its row lost the named `list_item`, and its old ref was stale because its parent changed. A lone reused Qt row without a row role, or one whose look-alike elements `elements` didn't reach, still isn't caught, and the docs say so.
 
 ## The last gate's bound
 
-Each element action's audit entry now has `gate`: each pass's time and the answers' age when the call went out. On the reworked server, 86 element actions per a11y run ran the gate; 81 per run went out, and the other 5 were refused inside the pass with `secret_field`. Refusals before the gate, such as `element_stale`, don't run it, and that now includes every Qt list `Delete`.
+Each element action's audit entry now has `gate`: each pass's time and the answers' age when the call went out. On the reworked server, 86 element actions per a11y run ran the gate; 81 per run went out, and the other 5 were refused inside the pass with `secret_field`. With the named-row rule, 87 ran it and 82 went out, the Qt `Named` list's accepted ref among them. Refusals before the gate, such as `element_stale` and `element_unbound`, don't run it.
 
 | Run | Second passes | `element_busy` | Pass ms, median | p95 | max | Share of 250 ms |
 |---|---|---|---|---|---|---|
@@ -85,10 +93,13 @@ Each element action's audit entry now has `gate`: each pass's time and the answe
 | SSD and shared, 1791777362-2107619 | 0 | 0 | 2.0 | 4.0 | 7.3 | 2.9% |
 | scale 1.5, 1791777527-2187449 | 0 | 0 | 2.0 | 4.2 | 27.7 | 11.1% |
 | eight busy loops, 1791778592-2490785 | 0 | 0 | 8.9 | 14.4 | 19.8 | 7.9% |
+| named-row rule, default, 1791782877-3551010 | 0 | 0 | 2.0 | 3.0 | 4.6 | 1.8% |
+| named-row rule, default, 1791783323-3650663 | 0 | 0 | 2.4 | 5.6 | 7.4 | 3.0% |
+| named-row rule, shared, 1791783527-3701020 | 0 | 0 | 2.3 | 3.3 | 12.4 | 5.0% |
 
 The first fix's eight runs, 736 gated actions, gave the same picture: no second pass, no `element_busy`, the longest pass 28.9 ms. The bound stays at 250 ms. An action's answers are as old as its pass took, at most 30.7 ms here. A tighter bound would refuse slow passes without making fast ones fresher, and large apps on a real desktop weren't measured (`docs/decisions.md`).
 
 ## Not covered here
 
 - Large apps on the user's desktop, such as Firefox or LibreOffice: how long their passes take, and whether their lists reuse rows in place. These need the real session.
-- Lists in other toolkits and apps: whether their rows sit in containers of their own on the bus, which decides whether their refs work or are refused.
+- Lists in other toolkits and apps: whether their rows have a row role and a name on the bus, which decides whether their refs bind or are `unbound`.
