@@ -48,7 +48,7 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `policy.capture_dir` | where `screenshot` saves, as the file writes it, or null when saving is off |
 | `unrestricted.enabled`, `unrestricted.source`, `unrestricted.error` | whether gated `niri_action`s and unrestricted presets are allowed, whether the policy file, `NIRI_COMPUTER_USE_UNRESTRICTED` or both allowed them, and why the variable was ignored |
 | `audit.path`, `audit.last_error` | the audit log and the last failure to write it |
-| `binaries` | whether `grim`, `wtype` and `loginctl` are on `PATH` |
+| `binaries` | whether `grim` and `wtype` are on this client's `PATH`, and `loginctl` on the serving process's |
 
 ## `desktop_state`
 

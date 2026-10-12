@@ -46,6 +46,7 @@ pub(crate) fn session(id: u64) -> crate::session::Session {
         tools: None,
         keyboard: None,
         home: None,
+        path: None,
         policy: crate::policy::Source::Missing,
     };
     crate::session::Session::new(

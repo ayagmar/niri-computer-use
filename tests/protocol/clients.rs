@@ -570,3 +570,36 @@ async fn each_session_runs_sixteen_calls_whatever_the_others_run() {
         }
     }
 }
+
+/// A session's `grim` and `wtype` come from its own `PATH`, as with a standalone server.
+/// A client whose `PATH` has neither, starting the engine, doesn't hide them from a client
+/// whose `PATH` has them, and doesn't get them from it either.
+#[tokio::test]
+async fn each_client_finds_grim_and_wtype_on_its_own_path() {
+    let mut fixture = shared("many-path");
+    let mut desktop = Desktop::new(&fixture);
+    two_sizes(&fixture);
+    fixture.program("wtype", "cat > /dev/null");
+    let empty = fixture.path("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    fixture.set("PATH", &empty);
+    let mut narrow = Server::start(&fixture).await;
+    fixture.set("PATH", fixture.path("bin"));
+    let mut full = Server::start(&fixture).await;
+    let _stream = desktop.stream().await;
+    let narrow_status = narrow.structured("status").await;
+    let full_status = full.structured("status").await;
+    assert_eq!(narrow_status["engine"]["pid"], full_status["engine"]["pid"]);
+    assert_eq!(
+        narrow_status["binaries"],
+        json!({"grim": false, "wtype": false, "loginctl": false})
+    );
+    assert_eq!(full_status["binaries"]["grim"], true, "{full_status}");
+    assert_eq!(full_status["binaries"]["wtype"], true, "{full_status}");
+    let shot = json!({"target": "focused_output"});
+    let taken = full.call("screenshot", shot.clone()).await;
+    assert_eq!(taken["structuredContent"]["width"], 1280, "{taken}");
+    let (name, detail) = tool_error(&narrow.call("screenshot", shot).await);
+    assert_eq!(name, "upstream_error");
+    assert!(detail.starts_with("start grim: "), "{detail}");
+}

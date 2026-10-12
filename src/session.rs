@@ -23,6 +23,8 @@ pub(crate) struct Given {
     pub(crate) keyboard: Option<OsString>,
     /// `$HOME`, for a `capture_dir` under `~/`.
     pub(crate) home: Option<PathBuf>,
+    /// `$PATH`, where the session's own programs, `grim` and `wtype`, are found.
+    pub(crate) path: Option<OsString>,
     pub(crate) policy: policy::Source,
 }
 
@@ -40,6 +42,7 @@ impl Given {
             tools: var("NIRI_COMPUTER_USE_TOOLS"),
             keyboard: var("NIRI_COMPUTER_USE_KEYBOARD"),
             home,
+            path: var("PATH"),
             policy: policy::Source::read(config_dir.as_deref()),
         }
     }
@@ -58,6 +61,8 @@ pub(crate) struct Settings {
     pub(crate) keyboard: Option<OsString>,
     /// The session's home, for a `capture_dir` under `~/`.
     pub(crate) home: Option<PathBuf>,
+    /// The session's `PATH`, where `grim` and `wtype` are found for its calls.
+    pub(crate) path: Option<OsString>,
 }
 
 impl Settings {
@@ -77,6 +82,7 @@ impl Settings {
             policy,
             keyboard: given.keyboard,
             home: given.home,
+            path: given.path,
         }
     }
 }

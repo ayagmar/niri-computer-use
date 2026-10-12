@@ -23,7 +23,8 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use crate::niri::Socket;
-use crate::{Env, niri, noctalia, runner};
+use crate::runner::{self, Search};
+use crate::{Env, niri, noctalia};
 
 const LOGINCTL_DEADLINE: Duration = Duration::from_secs(2);
 
@@ -125,7 +126,8 @@ async fn locked_hint(id: &str) -> Result<bool, String> {
         return Err(format!("XDG_SESSION_ID {id:?} isn't a logind session ID"));
     }
     let args = ["show-session", id, "-p", "LockedHint", "--value"].map(str::to_owned);
-    let done = runner::run("loginctl", &args, LOGINCTL_DEADLINE, 1024)
+    // The lock is the desktop's, asked about for every client, so on the engine's `PATH`.
+    let done = runner::run("loginctl", Search::Own, &args, LOGINCTL_DEADLINE, 1024)
         .await
         .map_err(|error| error.detail)?;
     if !done.status.success() {

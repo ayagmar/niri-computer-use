@@ -84,7 +84,7 @@ Turning it on never skips the lease, the stop key or the audit log: every gated 
 
 ### `shared`
 
-`true` or `false`, default `true`. With `true`, the server serves its client through the one shared engine of its niri instance, starting the engine if none runs, instead of on its own. Every client then shares one crash guardian, one niri event stream and one accessibility connection, while its policy, `unrestricted`, keyboard backend and `HOME` stay its own, read from its own environment as before.
+`true` or `false`, default `true`. With `true`, the server serves its client through the one shared engine of its niri instance, starting the engine if none runs, instead of on its own. Every client then shares one crash guardian, one niri event stream and one accessibility connection, while its policy, `unrestricted`, keyboard backend, `HOME` and `PATH` stay its own, read from its own environment as before.
 
 With `false`, each server serves its own client, with a guardian, event stream and accessibility connection of its own. `NIRI_COMPUTER_USE_SHARED=1` or `0` in the server's environment overrides the file for that one client. Any other non-empty value serves the client on its own, and [`status.engine.fallback`](../../tools/looking/) and the server's stderr say why.
 
@@ -139,7 +139,7 @@ The server reads these once, at startup. When `XDG_RUNTIME_DIR`, `NIRI_SOCKET` o
 | `XDG_RUNTIME_DIR` | finding niri's socket, the display and the session bus |
 | `WAYLAND_DISPLAY` | the pointer tools, pasting, `clipboard_read`, and finding Noctalia's socket |
 | `DBUS_SESSION_BUS_ADDRESS` | finding the accessibility bus for `elements`; without it, `$XDG_RUNTIME_DIR/bus` |
-| `PATH` | `grim`, `wtype`, `loginctl` and `noctalia` |
+| `PATH` | `grim` and `wtype` for this client's calls; `loginctl` and `noctalia` for the server, or in [shared](#shared) mode for the engine, from the `PATH` of the client that started it |
 | `XDG_CONFIG_HOME`, else `HOME` | the policy file |
 | `XDG_STATE_HOME`, else `HOME` | the audit log |
 | `HOME` | a `capture_dir` that starts with `~/` |

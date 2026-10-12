@@ -91,6 +91,7 @@ pub(crate) struct Hello {
     tools: Option<String>,
     keyboard: Option<String>,
     home: Option<PathBuf>,
+    path: Option<String>,
     policy: policy::Source,
 }
 
@@ -134,6 +135,7 @@ impl Hello {
             tools: utf8("NIRI_COMPUTER_USE_TOOLS", given.tools)?,
             keyboard: utf8("NIRI_COMPUTER_USE_KEYBOARD", given.keyboard)?,
             home: given.home,
+            path: utf8("PATH", given.path)?,
             policy,
         })
     }
@@ -145,6 +147,7 @@ impl Hello {
             tools: self.tools.map(Into::into),
             keyboard: self.keyboard.map(Into::into),
             home: self.home,
+            path: self.path.map(Into::into),
             policy: self.policy,
         }
     }
@@ -256,6 +259,7 @@ mod tests {
             tools: Some("act".to_owned()),
             keyboard: None,
             home: Some(PathBuf::from("/home/me")),
+            path: Some("/home/me/bin:/usr/bin".to_owned()),
             policy: policy::Source::Text {
                 path: PathBuf::from("/home/me/.config/niri-computer-use/policy.toml"),
                 text: "unrestricted = true\n".to_owned(),
@@ -282,6 +286,7 @@ mod tests {
                 tools: Some("act".into()),
                 keyboard: None,
                 home: Some(PathBuf::from("/home/me")),
+                path: Some("/home/me/bin:/usr/bin".into()),
                 policy: sent.policy,
             }
         );
@@ -328,6 +333,7 @@ mod tests {
             tools: None,
             keyboard: None,
             home: None,
+            path: None,
             policy: policy::Source::Text {
                 path: PathBuf::from("/p.toml"),
                 text,

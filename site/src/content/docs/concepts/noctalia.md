@@ -9,7 +9,7 @@ sidebar:
 
 ## Detection
 
-When the server starts, it looks for `noctalia` on `PATH`. If it is there, the server lists `shell_panel`, `desktop_state` gains a `shell` field, and the server lists `noctalia` too when [`unrestricted`](../configuration/#unrestricted) is on. The tool list is fixed for the session, so install Noctalia before starting the agent.
+When the server starts, it looks for `noctalia` on `PATH`; a shared engine looks once, on the `PATH` of the client that started it. If it is there, the server lists `shell_panel`, `desktop_state` gains a `shell` field, and the server lists `noctalia` too when [`unrestricted`](../configuration/#unrestricted) is on. The tool list is fixed for the session, so install Noctalia before starting the agent.
 
 The server talks to Noctalia over its socket, `$XDG_RUNTIME_DIR/noctalia-$WAYLAND_DISPLAY.sock`, with a two-second deadline. `status` reports `noctalia` as `running`, `not_running` with the reason in `noctalia_error`, or `not_installed`.
 

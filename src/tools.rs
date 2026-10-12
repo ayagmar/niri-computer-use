@@ -2131,6 +2131,7 @@ mod tests {
             tools: tools.map(Into::into),
             keyboard: None,
             home: None,
+            path: None,
             policy: Source::Missing,
         };
         Server::new(

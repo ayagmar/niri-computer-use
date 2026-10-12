@@ -1,6 +1,7 @@
 //! The readiness report shared by the `status` tool and the `status` subcommand.
 
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 
 use niri_ipc::Output;
 use serde::Serialize;
@@ -20,8 +21,10 @@ use crate::policy::{
 };
 use crate::{Env, a11y, discover};
 
-/// Programs the server runs, reported as found on `PATH` or not.
-const BINARIES: [&str; 3] = ["grim", "wtype", "loginctl"];
+/// Programs the server runs for the session asking, found on its `PATH` or not.
+const SESSION_BINARIES: [&str; 2] = ["grim", "wtype"];
+/// Programs the server runs for every session, found on its own `PATH` or not.
+const OWN_BINARIES: [&str; 1] = ["loginctl"];
 
 #[derive(Debug, Serialize)]
 pub(crate) struct Status {
@@ -74,6 +77,8 @@ pub(crate) struct Sources<'a> {
     pub(crate) policy: &'a Loaded,
     pub(crate) unrestricted: &'a Unrestricted,
     pub(crate) tools: &'a Tools,
+    /// The session's `PATH`.
+    pub(crate) path: Option<&'a OsStr>,
     /// Decided once at startup for the server, whose tool list depends on it.
     pub(crate) accessibility: &'a a11y::Presence,
 }
@@ -157,6 +162,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         policy,
         unrestricted,
         tools,
+        path,
         accessibility,
     } = sources;
     let socket = &env.niri_socket;
@@ -206,9 +212,10 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         policy: policy.status(),
         unrestricted: unrestricted.status(),
         tools: tools.status(),
-        binaries: BINARIES
+        binaries: SESSION_BINARIES
+            .map(|name| (name, crate::on_path(path, name)))
             .into_iter()
-            .map(|name| (name, env.finds(name)))
+            .chain(OWN_BINARIES.map(|name| (name, env.finds(name))))
             .collect(),
     }
 }
@@ -249,6 +256,7 @@ mod tests {
                 policy: policy::Profile::Full,
                 env: Ok(None),
             },
+            path: None,
             accessibility: &a11y::detect(None).await,
         };
         let status = serde_json::to_value(collect(&Env::default(), sources).await).unwrap();

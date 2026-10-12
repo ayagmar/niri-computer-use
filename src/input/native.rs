@@ -601,6 +601,7 @@ mod tests {
             runtime: &runtime,
             policy: &Loaded::Missing,
             keyboard: None,
+            path: None,
             a11y: None,
         };
         let typing = Typing::Text {
@@ -694,6 +695,7 @@ mod tests {
             runtime: &runtime,
             policy: &Loaded::Missing,
             keyboard: None,
+            path: None,
             a11y: None,
         };
         let typing = Typing::Text {

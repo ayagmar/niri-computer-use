@@ -4,7 +4,7 @@
 //! is killed. A child that is still unreaped keeps its process ID, and with it the group
 //! ID, from being reused, so the kill can't reach another group.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::sync::OnceLock;
@@ -27,6 +27,30 @@ static SESSION: OnceLock<Vec<(&'static str, OsString)>> = OnceLock::new();
 /// makes it once, before any child starts.
 pub(crate) fn pass_on(session: Vec<(&'static str, OsString)>) {
     SESSION.get_or_init(|| session);
+}
+
+/// Where a child is looked up, and the `PATH` it gets.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Search<'a> {
+    /// This process's own `PATH`, for what an engine runs for every client.
+    Own,
+    /// A client's `PATH`, `None` when its environment had none, for what runs for that
+    /// client alone: a shared engine then finds what the client's standalone server would.
+    Client(Option<&'a OsStr>),
+}
+
+impl Search<'_> {
+    fn apply(self, command: &mut Command) {
+        match self {
+            Self::Own => {}
+            Self::Client(Some(path)) => {
+                command.env("PATH", path);
+            }
+            Self::Client(None) => {
+                command.env_remove("PATH");
+            }
+        }
+    }
 }
 
 /// How much stderr an error keeps. The rest is read and discarded, so a verbose child
@@ -60,11 +84,14 @@ impl Finished {
 /// report ordinary outcomes that way.
 pub(crate) async fn run(
     program: &str,
+    search: Search<'_>,
     args: &[String],
     deadline: Duration,
     max_stdout: u64,
 ) -> Result<Finished, ToolError> {
-    let child = command(program)
+    let mut command = command(program);
+    search.apply(&mut command);
+    let child = command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -105,11 +132,14 @@ pub(crate) struct Gated {
 /// `deadline` covers the whole run, from now until the child is reaped.
 pub(crate) fn gated(
     program: &str,
+    search: Search<'_>,
     args: &[String],
     env: &[(&str, &str)],
     deadline: Duration,
 ) -> Result<Gated, ToolError> {
-    let mut child = command(program)
+    let mut command = command(program);
+    search.apply(&mut command);
+    let mut child = command
         .args(args)
         .envs(env.iter().copied())
         .stdin(Stdio::piped())
@@ -445,6 +475,7 @@ mod tests {
     async fn collects_output_and_exit_status() {
         let done = run(
             "sh",
+            Search::Own,
             &args(&["-c", "printf out; printf err >&2; exit 3"]),
             DEADLINE,
             64,
@@ -468,7 +499,7 @@ mod tests {
     async fn long_stderr_is_drained_and_truncated() {
         for (code, status) in [("0", Some(0)), ("4", Some(4))] {
             let script = format!("yes e | head -c 200000 >&2 && printf ok; exit {code}");
-            let done = run("sh", &args(&["-c", &script]), DEADLINE, 64)
+            let done = run("sh", Search::Own, &args(&["-c", &script]), DEADLINE, 64)
                 .await
                 .unwrap();
             assert_eq!(done.status.code(), status);
@@ -481,7 +512,7 @@ mod tests {
     #[tokio::test]
     async fn too_much_stdout_is_an_error_that_keeps_the_exit_and_stderr() {
         let script = "printf 12345; echo 'no frame' >&2; exit 2";
-        let error = run("sh", &args(&["-c", script]), DEADLINE, 4)
+        let error = run("sh", Search::Own, &args(&["-c", script]), DEADLINE, 4)
             .await
             .unwrap_err();
         assert_eq!(
@@ -495,9 +526,15 @@ mod tests {
 
     #[tokio::test]
     async fn a_missing_program_keeps_the_os_error() {
-        let error = run("niri-computer-use-no-such-program", &[], DEADLINE, 64)
-            .await
-            .unwrap_err();
+        let error = run(
+            "niri-computer-use-no-such-program",
+            Search::Own,
+            &[],
+            DEADLINE,
+            64,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(error.name, ErrorName::UpstreamError);
         assert!(error.detail.contains("No such file"), "{error:?}");
     }
@@ -571,7 +608,7 @@ mod tests {
         let dir = crate::test_support::fresh_dir("gated");
         let seen = dir.join("seen");
         let script = format!("cat > '{}'; printf done", seen.display());
-        let gated = gated("sh", &args(&["-c", &script]), &[], DEADLINE).unwrap();
+        let gated = gated("sh", Search::Own, &args(&["-c", &script]), &[], DEADLINE).unwrap();
         assert!(gated.pid().is_some());
         tokio::time::sleep(Duration::from_millis(100)).await;
         // `cat` waits at the open pipe, so nothing is written yet.
@@ -587,6 +624,7 @@ mod tests {
         let script = "echo 'no display' >&2; exit 1";
         let gated = gated(
             "sh",
+            Search::Own,
             &args(&["-c", script]),
             &[("LC_ALL", "C.UTF-8")],
             DEADLINE,
@@ -602,7 +640,14 @@ mod tests {
     #[tokio::test]
     async fn a_gated_child_past_its_deadline_is_killed_with_its_group() {
         let grandchild = Grandchild::new("gated-timeout", "wait");
-        let gated = gated("sh", &grandchild.args, &[], Duration::from_secs(1)).unwrap();
+        let gated = gated(
+            "sh",
+            Search::Own,
+            &grandchild.args,
+            &[],
+            Duration::from_secs(1),
+        )
+        .unwrap();
         let error = gated.feed(b"", 64).await.unwrap_err();
         assert_eq!(error.name, ErrorName::DeadlineExceeded);
         grandchild.assert_dead().await;
@@ -611,9 +656,15 @@ mod tests {
     #[tokio::test]
     async fn a_timeout_kills_the_whole_group() {
         let grandchild = Grandchild::new("timeout", "wait");
-        let error = run("sh", &grandchild.args, Duration::from_secs(1), 64)
-            .await
-            .unwrap_err();
+        let error = run(
+            "sh",
+            Search::Own,
+            &grandchild.args,
+            Duration::from_secs(1),
+            64,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(error.name, ErrorName::DeadlineExceeded);
         grandchild.assert_dead().await;
     }
@@ -623,9 +674,15 @@ mod tests {
     #[tokio::test]
     async fn an_exited_leader_with_a_descendant_holding_stdout_times_out() {
         let grandchild = Grandchild::new("leader", "exit 0");
-        let error = run("sh", &grandchild.args, Duration::from_secs(1), 64)
-            .await
-            .unwrap_err();
+        let error = run(
+            "sh",
+            Search::Own,
+            &grandchild.args,
+            Duration::from_secs(1),
+            64,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(error.name, ErrorName::DeadlineExceeded);
         grandchild.assert_dead().await;
     }
@@ -634,7 +691,7 @@ mod tests {
     async fn dropping_a_call_kills_the_whole_group() {
         let grandchild = Grandchild::new("drop", "wait");
         let args = grandchild.args.clone();
-        let mut call = Box::pin(run("sh", &args, DEADLINE, 64));
+        let mut call = Box::pin(run("sh", Search::Own, &args, DEADLINE, 64));
         tokio::select! {
             _ = &mut call => panic!("the call finished before it was dropped"),
             _ = grandchild.pid() => {}

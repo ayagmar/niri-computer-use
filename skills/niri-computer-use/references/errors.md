@@ -45,7 +45,7 @@ These are the user's decisions. Don't call the refused action again and don't tr
 
 ## Report and don't loop
 
-`niri_unavailable`, `deadline_exceeded`, `upstream_error` and `noctalia_unavailable` mean niri, a helper program, Noctalia or an app on the accessibility bus didn't answer as expected; for an element action, `upstream_error` can mean the app refused it, and its detail names only the D-Bus error, not the app's message. Tell the user the name and detail. Don't repeat the same call in a loop.
+`niri_unavailable`, `deadline_exceeded`, `upstream_error` and `noctalia_unavailable` mean niri, a helper program, Noctalia or an app on the accessibility bus didn't answer as expected; for an element action, `upstream_error` can mean the app refused it, and its detail names only the D-Bus error, not the app's message. A detail starting `start grim:` or `start wtype:` means that program isn't on your client's `PATH`; `status.binaries` says which are. Tell the user the name and detail. Don't repeat the same call in a loop.
 
 ## Shared mode
 

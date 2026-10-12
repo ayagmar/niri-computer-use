@@ -622,7 +622,7 @@ These match the versions installed locally.
   | The policy file | session: the bridge reads its own and sends the text, at most 64 KiB, or that it is missing or unreadable | A client sees policy edits made before it started and keeps its snapshot, as in standalone. An invalid file makes that session alone `read_only`. |
   | `NIRI_COMPUTER_USE_KEYBOARD` | session, from the hello | The backend applies per call, and only the lease owner types. |
   | `HOME`, for `capture_dir` | session, from the hello | `~/` resolves against the client's own home, as in standalone. |
-  | `PATH` | engine | See below. |
+  | `PATH` | engine | See below. Since 2026-10-12 the session's, for `grim` and `wtype`: see "each client's own `PATH`". |
   | `XDG_STATE_HOME` (the audit log), the session bus | engine, from the environment of the bridge that started it | They describe the user's session, not the client. |
   | `XDG_RUNTIME_DIR`, `NIRI_SOCKET`, `WAYLAND_DISPLAY` | must match | The hello carries the bridge's niri socket and Wayland socket; a mismatch is refused with `session_mismatch`, and the bridge serves standalone. |
 
@@ -983,4 +983,12 @@ These match the versions installed locally.
   - Stopping the starting client's systemd scope ended the engine. The engine now gets a scope of its own whenever `systemd-run` reaches the user's manager; otherwise this is the crash path above.
   - After a reinstall, new clients run standalone until the old engine exits. `status.engine.replaced` and the fallback's PID now show it.
   - With one client, shared mode costs a third process and about 0.7 MiB more PSS; from three clients on it uses less, and the relay adds no head-of-line blocking and at most a tenth of a millisecond to a median round trip. The first client waits about 65 ms instead of 2.4 ms while it starts the engine, plus about 3 ms for the scope; later clients don't (`docs/results/engine.md`, `docs/results/daemon.md`).
-- Residual risk: the engine runs programs from the `PATH` of the client that started it, so a client with a narrow `PATH` narrows it for every client until the engine exits. `status.binaries` shows what the engine found. Real clients on a real session haven't been run through a shared engine yet; the bridge relays their lines unchanged.
+- A client with a narrow `PATH` no longer narrows it for the others: see "each client's own `PATH`". Real clients on a real session haven't been run through a shared engine yet; the bridge relays their lines unchanged.
+
+## 2026-10-12: each client's own `PATH`
+
+- The hello carries the client's `PATH`, and the engine looks up `grim` and `wtype` for a session's calls on it, with `Command::env("PATH", ...)`, so the child gets it too. A client without `PATH` starts them with none, as its standalone server would. `status.binaries` checks `grim` and `wtype` on the session's `PATH`.
+- Before, the engine used its own `PATH`, the first bridge's, for everyone: a client started from a narrow environment, such as a desktop app, left `grim` missing for every client until the engine exited, and a client whose `PATH` lacked `grim` could still take screenshots through an engine another client started. Now a shared session finds exactly what its standalone server would.
+- `loginctl` and `noctalia` stay on the engine's `PATH`. The lock state and Noctalia's presence describe the desktop and are checked once for every session ("Noctalia's presence belongs to the engine"), so no one session's `PATH` should decide them.
+- Rejected: the systemd user manager's environment. It is one `PATH` for every client again, often narrower than a terminal's, and only there when the manager is reachable. Also rejected: merging every client's `PATH`, which would hand one client programs only another client's `PATH` has.
+- `runner::Search` makes the choice explicit at each call: `Own` for the engine's `PATH`, `Client` for a session's.

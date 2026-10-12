@@ -4,6 +4,7 @@
 //! (`render.c:145–146`), which truncates. The expected size follows the same rule, and a
 //! capture whose header disagrees is an error rather than an image with unknown geometry.
 
+use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -13,7 +14,8 @@ use serde::Serialize;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::{Display, Socket};
 use crate::policy::SaveTarget;
-use crate::{image_header, niri, runner, save};
+use crate::runner::{self, Search};
+use crate::{image_header, niri, save};
 
 /// The slowest capture in M0 (C15) took 275 ms.
 const GRIM_DEADLINE: Duration = Duration::from_secs(5);
@@ -137,11 +139,13 @@ pub(crate) struct Screenshot {
     pub(crate) image: Vec<u8>,
 }
 
-/// Captures with grim, which finds the display by name alone, so only right after the
-/// niri on `socket` is found serving `display`.
+/// Captures with grim, found on `search_path`, the session's `PATH`. grim finds the
+/// display by name alone, so it runs only right after the niri on `socket` is found
+/// serving `display`.
 pub(crate) async fn screenshot(
     socket: &Socket,
     display: &Display,
+    search_path: Option<&OsStr>,
     request: &Request,
 ) -> Result<Screenshot, CallError> {
     let outputs = niri::outputs(socket).await?;
@@ -160,7 +164,14 @@ pub(crate) async fn screenshot(
     let captured_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_millis());
-    let done = runner::run("grim", &plan.args, GRIM_DEADLINE, MAX_IMAGE).await?;
+    let done = runner::run(
+        "grim",
+        Search::Client(search_path),
+        &plan.args,
+        GRIM_DEADLINE,
+        MAX_IMAGE,
+    )
+    .await?;
     if !done.status.success() {
         return Err(done.failure("grim").into());
     }
@@ -194,10 +205,12 @@ pub(crate) async fn screenshot(
 }
 
 /// Captures `target` as a PNG at its output's own scale, whatever the returned image's
-/// `max_width`, and writes it to `save`.
+/// `max_width`, and writes it to `save`. grim is found on `search_path`, the session's
+/// `PATH`.
 pub(crate) async fn save(
     socket: &Socket,
     display: &Display,
+    search_path: Option<&OsStr>,
     target: &Target,
     save: &SaveTarget,
 ) -> Result<Saved, CallError> {
@@ -206,7 +219,7 @@ pub(crate) async fn save(
         max_width: None,
         format: Format::Png,
     };
-    let shot = screenshot(socket, display, &request).await?;
+    let shot = screenshot(socket, display, search_path, &request).await?;
     let path = save::write(save, &shot.image)?;
     Ok(Saved {
         path,

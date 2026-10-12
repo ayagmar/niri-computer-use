@@ -172,12 +172,17 @@ impl Env {
 
     /// Whether `PATH` has an executable file called `program`.
     pub(crate) fn finds(&self, program: &str) -> bool {
-        let dirs = self.path.iter().flat_map(std::env::split_paths);
-        dirs.map(|dir| dir.join(program)).any(|file| {
-            file.metadata()
-                .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
-        })
+        on_path(self.path.as_deref(), program)
     }
+}
+
+/// Whether `path`, a `PATH`, has an executable file called `program`.
+pub(crate) fn on_path(path: Option<&std::ffi::OsStr>, program: &str) -> bool {
+    let dirs = path.iter().flat_map(std::env::split_paths);
+    dirs.map(|dir| dir.join(program)).any(|file| {
+        file.metadata()
+            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+    })
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -241,6 +246,7 @@ async fn main() -> ExitCode {
                 policy: &settings.policy,
                 unrestricted: &settings.unrestricted,
                 tools: &settings.tools,
+                path: settings.path.as_deref(),
                 accessibility: &accessibility,
             };
             cli::print_json(&status::collect(&env, sources).await)
