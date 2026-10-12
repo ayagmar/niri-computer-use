@@ -253,7 +253,10 @@ impl Keeper {
             Report::Ready => Ok(keeper),
             Report::Refused { detail } => Err(ToolError::new(
                 ErrorName::ClipboardUnsaved,
-                format!("{detail}; the clipboard is unchanged and nothing was pasted"),
+                format!(
+                    "{detail}; the clipboard is unchanged and nothing was pasted: type the text instead, in calls of at most {} characters with `submit: true` only on the last; typed text can't hold line breaks, so ask the user about text with several lines",
+                    keyboard::MAX_TEXT
+                ),
             )),
             other @ (Report::Armed | Report::Done { .. }) => Err(unexpected(&other)),
         }
@@ -459,6 +462,24 @@ mod tests {
                 }
             ),
             "{report:?}"
+        );
+    }
+
+    /// A keeper that couldn't save the clipboard whole says what to do instead of pasting.
+    #[tokio::test]
+    async fn a_clipboard_that_cant_be_saved_is_left_alone_and_the_text_typed_instead() {
+        let script = r#"dd bs=1 count=9 status=none >/dev/null; echo '{"report":"refused","detail":"the selection is too large"}'"#;
+        let started = runner::companion("sh", &["-c".to_owned(), script.to_owned()]).unwrap();
+        let Err(error) = Keeper::ready(started, b"x").await else {
+            panic!("a keeper that couldn't save the clipboard was used");
+        };
+        assert_eq!(error.name, ErrorName::ClipboardUnsaved);
+        assert!(
+            error.detail.starts_with("the selection is too large; ")
+                && error.detail.contains("nothing was pasted")
+                && error.detail.contains("type the text instead"),
+            "{}",
+            error.detail
         );
     }
 

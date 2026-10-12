@@ -989,7 +989,9 @@ pub(crate) fn refuse_action(action: &Action, unrestricted: bool) -> Option<ToolE
         .unwrap_or_default();
     Some(ToolError::new(
         ErrorName::UnrestrictedRequired,
-        format!("{name} needs unrestricted = true in the user's policy file: {reason}"),
+        format!(
+            "{name} needs unrestricted = true in the user's policy file: {reason}; tell the user rather than reach the same result another way"
+        ),
     ))
 }
 
@@ -1581,7 +1583,7 @@ app_id = "foot"
         assert_eq!(refused.name, ErrorName::UnrestrictedRequired);
         assert_eq!(
             refused.detail,
-            "Spawn needs unrestricted = true in the user's policy file: it runs any program"
+            "Spawn needs unrestricted = true in the user's policy file: it runs any program; tell the user rather than reach the same result another way"
         );
         assert_eq!(refuse_action(&spawn, true), None);
         let float = action(serde_json::json!({"ToggleWindowFloating": {"id": null}}));

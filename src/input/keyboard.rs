@@ -36,7 +36,7 @@ const MAX_PART: usize = 100;
 /// `key`'s combinations per call.
 pub(crate) const MAX_KEYS: usize = 16;
 /// Ten parts, each with its own deadline: under fifteen seconds at C10's slowest rate.
-const MAX_TEXT: usize = 1000;
+pub(crate) const MAX_TEXT: usize = 1000;
 /// wtype prints nothing on success.
 const MAX_STDOUT: u64 = 64 * 1024;
 /// wtype decodes stdin with the locale's `mbstowcs`; outside a UTF-8 locale it stops at
