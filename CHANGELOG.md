@@ -70,6 +70,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
+- Elements of a tiled window report `unmappable: tiled`, and a pointer tool aimed at one fails with `element_unmappable` and a detail starting `tiled:`, where both said `not_showing`. niri 26.04 gives only floating windows a place on screen, so the element is there but can't be placed. `not_showing` now means only an element that isn't showing or a floating window with no place, as on a workspace that isn't shown.
 - The audit log's `activate_element` and `set_element_text` entries have `gate` once the last check ran: how long each pass took and how old its answers were when the call went out, in milliseconds.
 - wl-clipboard is no longer needed at run time: nothing the server runs uses `wl-paste` any more, and `status.binaries` no longer lists it.
 

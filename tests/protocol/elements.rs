@@ -195,7 +195,7 @@ async fn elements_gives_one_line_per_interactive_element_unless_asked_for_more()
     let safe = element_refs[0]["element_ref"].as_str().unwrap();
     assert_eq!(
         lines[1],
-        format!("{safe} button \"Safe\" [] (\"click\") unmappable:not_showing"),
+        format!("{safe} button \"Safe\" [] (\"click\") unmappable:tiled"),
         "{text}"
     );
     assert!(
@@ -598,8 +598,11 @@ async fn a_counter_relabelled_by_its_activation_is_stale_for_the_next_one() {
     assert_eq!(desk.mock.object("/counter").name, "Count: 1");
     let aimed = json!({"screenshot_ref": shot, "element": counter});
     let moved = desk.server.call("pointer_move", aimed).await;
-    // Past the element's checks: the mock's button can't be placed on the fake desktop.
-    assert_eq!(tool_error(&moved).0, "element_unmappable", "{moved}");
+    // Past the element's checks: the fake desktop's window is tiled, so niri gives it no
+    // place and the pointer can't aim at the button.
+    let (name, detail) = tool_error(&moved);
+    assert_eq!(name, "element_unmappable", "{moved}");
+    assert!(detail.starts_with("tiled: "), "{detail}");
     stale(&mut desk, &ACTIVATE, &counter).await;
     let relisted = desk.element("Count: 1").await;
     let again = desk

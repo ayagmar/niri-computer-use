@@ -285,9 +285,12 @@ pub(crate) enum Unmappable {
     /// The window's accessible frame isn't the size niri gives the window, so the
     /// toolkit's window coordinates start elsewhere.
     FrameSizeMismatch,
-    /// The element isn't showing and visible, or niri has no place for the window in its
-    /// workspace's view, as on a workspace that isn't shown.
+    /// The element isn't showing and visible, or niri has no place for its floating window
+    /// in its workspace's view, as on a workspace that isn't shown.
     NotShowing,
+    /// The window is tiled: niri 26.04 gives only floating windows a place in their
+    /// workspace's view, so where a tiled one is on screen isn't known.
+    Tiled,
     /// The element has no area.
     Empty,
     /// The element's centre is outside the screenshot the pointer aims through.
@@ -295,12 +298,22 @@ pub(crate) enum Unmappable {
 }
 
 /// Where the window's geometry starts in the layout: the output's origin, plus the tile's
-/// place in the workspace's view, plus the window's offset in its tile. None while niri
-/// gives the tile no place, as on a workspace that isn't shown.
-pub(crate) fn window_origin(output: &LogicalOutput, layout: &WindowLayout) -> Option<LayoutPt> {
-    let (tile_x, tile_y) = layout.tile_pos_in_workspace_view?;
+/// place in the workspace's view, plus the window's offset in its tile. A tile in the
+/// scrolling layout is never placed (`Tiled`): niri 26.04 gives it no place, and a place
+/// derived from where the view is heading would be wrong while the view scrolls. A
+/// floating tile has none on a workspace that isn't shown (`NotShowing`).
+pub(crate) fn window_origin(
+    output: &LogicalOutput,
+    layout: &WindowLayout,
+) -> Result<LayoutPt, Unmappable> {
+    if layout.pos_in_scrolling_layout.is_some() {
+        return Err(Unmappable::Tiled);
+    }
+    let (tile_x, tile_y) = layout
+        .tile_pos_in_workspace_view
+        .ok_or(Unmappable::NotShowing)?;
     let (offset_x, offset_y) = layout.window_offset_in_tile;
-    Some(LayoutPt {
+    Ok(LayoutPt {
         x: f64::from(output.x) + tile_x + offset_x,
         y: f64::from(output.y) + tile_y + offset_y,
     })
@@ -318,7 +331,7 @@ pub(crate) struct Placement {
     pub(crate) states: States,
     pub(crate) extents: Extents,
     pub(crate) frame_fits: bool,
-    pub(crate) origin: Option<LayoutPt>,
+    pub(crate) origin: Result<LayoutPt, Unmappable>,
 }
 
 /// The element's box in the layout, or why it has none.
@@ -338,7 +351,7 @@ pub(crate) fn place(placement: Placement) -> Result<LayoutBox, Unmappable> {
     if !frame_fits {
         return Err(Unmappable::FrameSizeMismatch);
     }
-    let origin = origin.ok_or(Unmappable::NotShowing)?;
+    let origin = origin?;
     Ok(LayoutBox {
         x: origin.x + f64::from(extents.x),
         y: origin.y + f64::from(extents.y),
@@ -647,7 +660,7 @@ mod tests {
         }
     }
 
-    fn placement(extents: Extents, origin: Option<LayoutPt>) -> Placement {
+    fn placement(extents: Extents, origin: Result<LayoutPt, Unmappable>) -> Placement {
         Placement {
             states: SHOWN,
             extents,
@@ -681,7 +694,7 @@ mod tests {
             &layout(Some((57.333_333, 65.333_333)), (1.5, 2.25)),
         )
         .unwrap();
-        let found = place(placement(extents(40, 70, 320, 34), Some(origin))).unwrap();
+        let found = place(placement(extents(40, 70, 320, 34), Ok(origin))).unwrap();
         assert!((found.x - (-1280.0 + 57.333_333 + 1.5 + 40.0)).abs() < 1e-9);
         assert!((found.y - (100.0 + 65.333_333 + 2.25 + 70.0)).abs() < 1e-9);
         assert!((found.centre().x - (found.x + 160.0)).abs() < 1e-9);
@@ -701,7 +714,7 @@ mod tests {
 
     #[test]
     fn hidden_empty_and_unplaced_elements_have_no_box() {
-        let origin = Some(LayoutPt { x: 0.0, y: 0.0 });
+        let origin = Ok(LayoutPt { x: 0.0, y: 0.0 });
         let hidden = Placement {
             states: States(1 << 30),
             ..placement(extents(1, 1, 10, 10), origin)
@@ -717,15 +730,40 @@ mod tests {
             ..placement(extents(66, 131, 320, 34), origin)
         };
         assert_eq!(place(mismatch), Err(Unmappable::FrameSizeMismatch));
-        // A window on a workspace that isn't shown has no place in the view.
+        // A floating window on a workspace that isn't shown has no place in the view.
+        let unshown = window_origin(&output(0, 0, 1.0), &layout(None, (0.0, 0.0)));
+        assert_eq!(unshown, Err(Unmappable::NotShowing));
         assert_eq!(
-            window_origin(&output(0, 0, 1.0), &layout(None, (0.0, 0.0))),
-            None
-        );
-        assert_eq!(
-            place(placement(extents(1, 1, 10, 10), None)),
+            place(placement(extents(1, 1, 10, 10), unshown)),
             Err(Unmappable::NotShowing)
         );
+    }
+
+    #[test]
+    fn a_tiled_window_is_never_placed_and_says_it_is_tiled() {
+        let tiled = |tile| WindowLayout {
+            pos_in_scrolling_layout: Some((2, 1)),
+            ..layout(tile, (0.0, 0.0))
+        };
+        // niri 26.04 gives a tiled window no place in the view: the element is on
+        // screen, so `not_showing` would send the agent looking for it.
+        let origin = window_origin(&output(0, 0, 1.0), &tiled(None));
+        assert_eq!(origin, Err(Unmappable::Tiled));
+        assert_eq!(
+            place(placement(extents(40, 70, 320, 34), origin)),
+            Err(Unmappable::Tiled)
+        );
+        // A place niri gives a tiled window isn't trusted either.
+        assert_eq!(
+            window_origin(&output(0, 0, 1.0), &tiled(Some((16.0, 16.0)))),
+            Err(Unmappable::Tiled)
+        );
+        // A frame that doesn't fit says so first: floating the window wouldn't fix it.
+        let mismatch = Placement {
+            frame_fits: false,
+            ..placement(extents(40, 70, 320, 34), origin)
+        };
+        assert_eq!(place(mismatch), Err(Unmappable::FrameSizeMismatch));
     }
 
     #[test]
@@ -865,10 +903,7 @@ mod tests {
             lineage: Vec::new(),
             row: Row::Lineage,
         };
-        let shown = placement(
-            extents(40, 70, 320, 34),
-            Some(LayoutPt { x: 20.0, y: 20.0 }),
-        );
+        let shown = placement(extents(40, 70, 320, 34), Ok(LayoutPt { x: 20.0, y: 20.0 }));
         let fresh = |role, placement| Fresh { role, placement };
         assert_eq!(
             recheck(&kept, fresh(43, shown)).map(LayoutBox::centre),

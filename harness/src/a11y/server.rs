@@ -109,6 +109,7 @@ impl Checks<'_, '_> {
         let primary = self.button(window.id, "Primary")?;
         self.activations(&primary, "primary-count", 0)?;
         self.moved(&window, &primary)?;
+        self.tiled(window.id, &primary)?;
         self.vanished(window.id)?;
         let qt = Fixture::start(self.session, Toolkit::Qt)?;
         let qt_window = qt.window(self.session, bus)?;
@@ -182,6 +183,74 @@ impl Checks<'_, '_> {
         self.counted("primary-count", ROUNDS + 1)?;
         self.session
             .log("M9: moved by (+37, +11), the element listed before still hit")
+    }
+
+    /// Tiled, the window has no place niri reports: its elements are `tiled`, and the ref
+    /// listed while it floated is refused without a click. Floating again, it hits.
+    fn tiled(&mut self, window: u64, primary: &Listed) -> Result<()> {
+        self.floating(window, false)?;
+        let listed = self.primary_until(window, "Primary unmappable: tiled", |element| {
+            field(element, "/unmappable") == "tiled"
+        })?;
+        expect(field(&listed, "/layout_box").is_null(), "no box", &listed)?;
+        let refused = self.refused_click(&primary.id)?;
+        expect(
+            field(&refused, "/error") == "element_unmappable"
+                && field(&refused, "/detail")
+                    .as_str()
+                    .is_some_and(|detail| detail.starts_with("tiled: ")),
+            "element_unmappable: tiled for a click",
+            &refused,
+        )?;
+        let session = &*self.session;
+        session.still_absent("m9-tiled-no-activation", SETTLE, || {
+            Ok(read_count(session, "primary-count")? != Some(ROUNDS + 1))
+        })?;
+        self.floating(window, true)?;
+        self.primary_until(window, "Primary with a box", |element| {
+            !field(element, "/layout_box").is_null()
+        })?;
+        let floating = self.button(window, "Primary")?;
+        self.shot = None;
+        self.click(&floating.id)?;
+        self.counted("primary-count", ROUNDS + 2)?;
+        self.session.log(&format!(
+            "M9: tiled, Primary unmappable and its click refused: {refused}; floating again, it hit"
+        ))
+    }
+
+    /// Lists `window`'s `Primary` until it `holds`, as the window settles in its new
+    /// layout; returns the element.
+    fn primary_until(
+        &mut self,
+        window: u64,
+        what: &str,
+        holds: impl Fn(&Value) -> bool,
+    ) -> Result<Value> {
+        let client = &mut self.client;
+        self.session
+            .wait_until("m9-layout-listed", what, WAIT, |session| {
+                let listing = elements(session, client, window, "Primary")?;
+                let element = field(&listing, "/elements/0");
+                Ok(holds(element).then(|| element.clone()))
+            })
+    }
+
+    /// Moves `window` to the floating layout or the scrolling one, and waits until niri
+    /// reports it there.
+    fn floating(&mut self, window: u64, floating: bool) -> Result<()> {
+        let id = Some(window);
+        let action = if floating {
+            Action::MoveWindowToFloating { id }
+        } else {
+            Action::MoveWindowToTiling { id }
+        };
+        self.session.request(&Request::Action(action))?;
+        self.session
+            .wait_until("m9-layout", "the window's layout", WAIT, |session| {
+                let now = super::window(session, window)?;
+                Ok(now.filter(|now| now.is_floating == floating).map(drop))
+            })
     }
 
     /// A button that removes itself: the click's `element_changes` says it was removed,

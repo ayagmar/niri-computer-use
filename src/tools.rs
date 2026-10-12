@@ -1416,7 +1416,8 @@ impl Server {
     /// The accessible elements of one window, in document order, one line each:
     /// `element_ref role "name" [states] ("action" …) x,y,w,h` in layout coordinates, or
     /// `unmappable:<why>` when the app's coordinates can't be trusted
-    /// (`frame_size_mismatch`) or it isn't showing, then `unbound:<why>` for a list row's
+    /// (`frame_size_mismatch`), it isn't showing, or niri gives its window no position
+    /// (`tiled`), then `unbound:<why>` for a list row's
     /// element whose ref every tool refuses: aim at its pixels. `-` is no ref: refs, for
     /// the element tools and the `element` argument of `click`, `pointer_move` and `drag`,
     /// need the lease. States leave out `enabled`, `focusable`, `sensitive`, `showing` and

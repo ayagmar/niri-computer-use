@@ -139,12 +139,12 @@ fn word(value: impl Serialize) -> String {
         .unwrap_or_default()
 }
 
-/// A window as niri reports it right now, where its geometry starts in the layout, and
-/// niri's other windows.
+/// A window as niri reports it right now, where its geometry starts in the layout or why
+/// that isn't known, and niri's other windows.
 #[derive(Debug)]
 struct Placed {
     window: Window,
-    origin: Option<LayoutPt>,
+    origin: Result<LayoutPt, Unmappable>,
     others: Vec<Window>,
 }
 
@@ -165,7 +165,9 @@ async fn placed(socket: &Socket, id: u64) -> Result<Option<Placed>, ToolError> {
         .and_then(|workspace| workspaces.ok()?.into_iter().find(|w| w.id == workspace))
         .and_then(|workspace| workspace.output)
         .and_then(|name| outputs.ok()?.remove(&name)?.logical);
-    let origin = output.and_then(|output| model::window_origin(&output, &window.layout));
+    let origin = output
+        .ok_or(Unmappable::NotShowing)
+        .and_then(|output| model::window_origin(&output, &window.layout));
     Ok(Some(Placed {
         window,
         origin,
@@ -577,6 +579,10 @@ pub(crate) fn unmappable(why: Unmappable) -> ToolError {
         Unmappable::NotShowing => (
             "not_showing",
             "the element or its window isn't showing; bring it into view and call elements again",
+        ),
+        Unmappable::Tiled => (
+            "tiled",
+            "niri 26.04 gives a tiled window no position on screen; activate_element and set_element_text still work, or aim with a screenshot pixel, or float the window with niri_action and call elements again",
         ),
         Unmappable::Empty => ("empty", "the element has no area"),
         Unmappable::OutsideScreenshot => (
