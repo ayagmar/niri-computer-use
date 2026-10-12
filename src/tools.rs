@@ -15,7 +15,7 @@ use serde_json::Value;
 use crate::a11y::model;
 use crate::act::{self, Outcome};
 use crate::audit::{self, Call, Caller};
-use crate::coords::ImagePx;
+use crate::coords::{ImagePx, ImageRect};
 use crate::elements::actions;
 use crate::engine::{Engine, Report, Watch};
 use crate::error::{CANCELLED, CallError, ToolError};
@@ -38,11 +38,16 @@ struct ScreenshotArgs {
     /// `region`.
     target: String,
     /// Required with target `region`: a rectangle in layout coordinates that lies inside
-    /// one output.
+    /// one output, or in `screenshot_ref`'s pixels.
     #[schemars(with = "RegionArgs", default, skip_serializing_if = "Option::is_none")]
     region: Option<RegionArgs>,
+    /// With target `region`: an earlier screenshot's ref, to zoom into `region` of it at
+    /// full resolution. That ref still works.
+    #[schemars(with = "String", default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    screenshot_ref: Option<String>,
     /// The widest image to return, in pixels; a wider capture is scaled down. To read small
-    /// text, capture a small region around it, or raise this.
+    /// text, zoom with `screenshot_ref`.
     #[schemars(with = "u32", default = "default_max_width")]
     max_width: Option<u32>,
     #[schemars(with = "FormatArg", default = "default_format")]
@@ -102,7 +107,34 @@ impl ScreenshotArgs {
             "max_width": self.max_width,
             "format": self.format,
             "save_path_len": self.save_path.as_deref().map(str::len),
+            "screenshot_ref": self.screenshot_ref.as_deref().map(audit::ref_id),
         })
+    }
+
+    /// The ref to zoom into and the pixels of its image that `region` names, when
+    /// `screenshot_ref` is given, which needs target `region`.
+    fn zoom(&self) -> Result<Option<(String, ImageRect)>, String> {
+        let Some(id) = &self.screenshot_ref else {
+            return Ok(None);
+        };
+        let (Some(region), "region") = (self.region, self.target.as_str()) else {
+            return Err(
+                "`screenshot_ref` needs target `region`, with `region` in that screenshot's pixels"
+                    .to_owned(),
+            );
+        };
+        let (Ok(x), Ok(y)) = (u32::try_from(region.x), u32::try_from(region.y)) else {
+            return Err(
+                "with `screenshot_ref`, `region` is in image pixels, which can't be negative"
+                    .to_owned(),
+            );
+        };
+        let pixels = ImageRect {
+            origin: ImagePx { x, y },
+            width: region.width,
+            height: region.height,
+        };
+        Ok(Some((id.clone(), pixels)))
     }
 
     fn request(self) -> Result<observe::Request, String> {
@@ -1417,7 +1449,7 @@ impl Server {
 
     /// A screenshot of one output, or of a region inside one, with its metadata: the
     /// output, the captured rectangle in layout coordinates, the scale to image pixels,
-    /// and under the lease a `screenshot_ref` for the pointer tools. With `save_path`, a
+    /// and a `screenshot_ref` (for the pointer tools under the lease). With `save_path`, a
     /// full-resolution PNG is also saved (`saved`), or `save_not_enabled` without a
     /// `capture_dir`. To see an action's effect, pass it `screenshot: true` rather than
     /// calling this alongside it. Prefer `desktop_state` when structured data answers.
@@ -1446,10 +1478,20 @@ impl Server {
                 Err(CallError::InvalidArguments(message)) => return Ok(invalid(&message)),
                 Err(CallError::Tool(error)) => return Ok(error.into_result()),
             };
-            let request = match args.request() {
+            let zoom = match args.zoom() {
+                Ok(zoom) => zoom,
+                Err(message) => return Ok(invalid(&message)),
+            };
+            let mut request = match args.request() {
                 Ok(request) => request,
                 Err(message) => return Ok(invalid(&message)),
             };
+            if let Some((id, pixels)) = zoom {
+                match self.engine.zoom(&self.session, &id, pixels).await {
+                    Ok(rect) => request.target = Target::Region(rect),
+                    Err(error) => return Ok(error.into_result()),
+                }
+            }
             match self.engine.screenshot(&self.session, request, save).await {
                 Ok(shot) => image(&shot),
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),

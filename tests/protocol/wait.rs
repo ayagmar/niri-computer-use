@@ -175,11 +175,9 @@ async fn a_still_screen_is_met_with_its_screenshot() {
     let report = &result["structuredContent"];
     assert_eq!(report["observed"], "met", "{report}");
     assert_eq!(report["screenshot"]["settled"], true, "{report}");
-    assert_eq!(
-        report["screenshot"]["screenshot_ref"],
-        Value::Null,
-        "{report}"
-    );
+    // Without the lease, the ref is only for zooming.
+    let id = report["screenshot"]["screenshot_ref"].as_str().unwrap();
+    assert!(id.starts_with("shot-"), "{report}");
     let content = result["content"].as_array().unwrap();
     assert_eq!(content.len(), 2, "{result}");
     assert_eq!(content[1]["type"], "image", "{result}");

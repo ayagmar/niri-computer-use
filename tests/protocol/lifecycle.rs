@@ -129,7 +129,7 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
 
 /// How many arguments each tool takes; tools not listed take none.
 const PROPERTIES: [(&str, usize); 14] = [
-    ("screenshot", 5),
+    ("screenshot", 6),
     ("launch", 3),
     ("niri_action", 2),
     ("focus", 3),
@@ -147,12 +147,13 @@ const PROPERTIES: [(&str, usize); 14] = [
 
 /// `(tool, JSON pointer into its properties, expected value)`: advertised defaults and
 /// bounds. Null means the field has no default.
-fn advertised() -> [(&'static str, &'static str, Value); 20] {
+fn advertised() -> [(&'static str, &'static str, Value); 21] {
     [
         ("screenshot", "/max_width/default", json!(1280)),
         ("screenshot", "/format/default", json!("jpeg")),
         ("screenshot", "/region/default", Value::Null),
         ("screenshot", "/save_path/default", Value::Null),
+        ("screenshot", "/screenshot_ref/default", Value::Null),
         ("launch", "/reuse/default", json!(false)),
         ("click", "/button/default", json!("left")),
         ("click", "/count/default", json!(1)),

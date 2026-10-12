@@ -24,11 +24,12 @@ use crate::changes::elements::{self as element_changes, Seen, Unknown};
 use crate::control;
 use crate::control::desk::{Desk, Prepared, Worked};
 use crate::control::lease::Holder;
+use crate::coords::ImageRect;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::input::Input;
 use crate::niri::OutputSummary;
 use crate::niri::events::{DesktopState, EventStream, StreamState};
-use crate::observe;
+use crate::observe::{self, Rect};
 use crate::policy::{self, SaveTarget};
 use crate::refs::Shot;
 use crate::session::{Session, SessionId, Settings};
@@ -263,6 +264,21 @@ impl Engine {
     /// The screenshot ref named `id` of the lease `session` holds.
     pub(crate) fn shot(&self, session: &Session, id: &str) -> Result<Shot, ToolError> {
         self.desk.shot(session, id)
+    }
+
+    /// The layout rectangle that `pixels` of the screenshot ref `id` show, for a zoom into
+    /// them: a ref of the lease `session` holds, or, without the lease, one `session` took
+    /// since it last held it.
+    pub(crate) async fn zoom(
+        &self,
+        session: &Session,
+        id: &str,
+        pixels: ImageRect,
+    ) -> Result<Rect, ToolError> {
+        let shot = self.desk.zoomable(session, id)?;
+        let outputs = niri::outputs(&self.env.niri_socket).await?;
+        let connection = self.events.as_ref().ok().and_then(EventStream::connection);
+        shot.zoom(pixels, Instant::now(), &outputs, connection)
     }
 
     /// The element ref named `id` of the lease `session` holds.
@@ -595,8 +611,8 @@ impl Engine {
         restored.unwrap_or(Value::Null)
     }
 
-    /// Takes a screenshot and, while this engine holds the lease, keeps it as a ref that
-    /// the result names.
+    /// Takes a screenshot and keeps it as a ref that the result names: one of the lease
+    /// while `session` holds it, and otherwise one that only a zoom takes.
     async fn capture(
         &self,
         session: &Session,
@@ -608,10 +624,14 @@ impl Engine {
         let place = session.settings().place();
         let mut shot =
             observe::screenshot(&self.env.niri_socket, &self.env.display, place, &request).await?;
-        if let (Some(lease), Some(connection)) = (lease, connection) {
-            let kept = Shot::of(&shot, taken, connection);
-            shot.metadata.screenshot_ref = self.desk.remember(lease, kept);
-        }
+        let Some(connection) = connection else {
+            return Ok(shot);
+        };
+        let kept = Shot::of(&shot, taken, connection);
+        shot.metadata.screenshot_ref = match lease {
+            Some(lease) => self.desk.remember(lease, kept),
+            None => self.desk.remember_view(session, kept),
+        };
         Ok(shot)
     }
 

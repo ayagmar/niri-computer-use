@@ -4,7 +4,7 @@
 use base64::Engine as _;
 use serde_json::{Value, json};
 
-use crate::client::Server;
+use crate::client::{Server, mistake};
 use crate::fixture::{Fixture, jpeg, png};
 use crate::niri::{Niri, output};
 
@@ -262,4 +262,73 @@ async fn a_session_runs_at_most_sixteen_tool_calls_at_once() {
         assert_eq!(server.response(id).await["result"]["isError"], false);
     }
     assert_eq!(server.call("screenshot", target).await["isError"], false);
+}
+
+/// Zooming is read-only, so it works in the `observe` profile, where no lease is ever
+/// held: a screenshot gets a ref anyway, and a region of its pixels comes back at the
+/// output's own scale, with a ref of its own, while the first ref still works.
+#[tokio::test]
+async fn a_zoom_captures_a_region_of_an_earlier_screenshot_at_full_resolution() {
+    let mut fixture = Fixture::new("shot-zoom");
+    fixture.set("NIRI_COMPUTER_USE_TOOLS", "observe");
+    let mut niri = Niri::start(&fixture);
+    let (small, zoomed) = (jpeg(1280, 720, b"small"), jpeg(128, 64, b"zoomed"));
+    std::fs::write(fixture.path("small.jpg"), &small).unwrap();
+    std::fs::write(fixture.path("zoomed.jpg"), &zoomed).unwrap();
+    fixture.program(
+        "grim",
+        r#"echo "$*" >> "$DIR/grim.calls"
+case "$*" in
+  *" -g "*) cat "$DIR/zoomed.jpg" ;;
+  *) cat "$DIR/small.jpg" ;;
+esac"#,
+    );
+    let mut server = Server::start(&fixture).await;
+    // A ref needs the event stream, so that a reconnect can expire it.
+    let stream = niri.stream().await;
+    stream.initial(&[]);
+    server.structured("desktop_state").await;
+    let whole = server
+        .call("screenshot", json!({"target": "focused_output"}))
+        .await;
+    let whole = delivered(&whole, &small, "image/jpeg");
+    assert_eq!(whole["scale"], 0.5);
+    let first = whole["screenshot_ref"].as_str().unwrap().to_owned();
+
+    let zoom = json!({
+        "target": "region",
+        "screenshot_ref": first,
+        "region": {"x": 100, "y": 50, "width": 64, "height": 32},
+    });
+    let zoomed_in = server.call("screenshot", zoom.clone()).await;
+    let metadata = delivered(&zoomed_in, &zoomed, "image/jpeg");
+    assert_eq!(
+        metadata["captured"],
+        json!({"x": 200, "y": 100, "width": 128, "height": 64})
+    );
+    assert_eq!(metadata["scale"], 1.0);
+    let own = metadata["screenshot_ref"].as_str().unwrap();
+    assert_ne!(own, first);
+    let again = server.call("screenshot", zoom).await;
+    delivered(&again, &zoomed, "image/jpeg");
+    assert_eq!(
+        grim_calls(&fixture)[1],
+        "-t jpeg -q 80 -s 1 -g 200,100 128x64 -"
+    );
+
+    let outside = json!({
+        "target": "region",
+        "screenshot_ref": first,
+        "region": {"x": 1270, "y": 0, "width": 64, "height": 32},
+    });
+    let refused = server.call("screenshot", outside).await;
+    assert_eq!(
+        refused["structuredContent"]["error"], "ref_invalid",
+        "{refused}"
+    );
+    // A ref with another target would be ignored, so it is a mistake instead.
+    let whole_again = json!({"target": "focused_output", "screenshot_ref": first});
+    let message = mistake(&server.call("screenshot", whole_again).await);
+    assert!(message.contains("needs target `region`"), "{message}");
+    assert_eq!(grim_calls(&fixture).len(), 3);
 }

@@ -340,11 +340,17 @@ async fn screenshots_under_the_lease_are_refs_of_that_lease() {
     desk.server
         .structured_with("release_desktop", json!({"restore_focus": false}))
         .await;
+    // Without the lease, a screenshot's ref is only for zooming: taking the lease again
+    // drops it, so the pointer can't aim with it.
     let unleased = desk.server.call("screenshot", shot.clone()).await;
-    assert_eq!(screenshot_ref(unleased), Value::Null);
+    let view = format!("shot-{tag}-3");
+    assert_eq!(screenshot_ref(unleased), view.as_str());
     desk.server.structured("acquire_desktop").await;
     let again = desk.server.call("screenshot", shot).await;
-    assert_eq!(screenshot_ref(again), format!("shot-{tag}-3"));
+    assert_eq!(screenshot_ref(again), format!("shot-{tag}-4"));
+    let at = json!({"screenshot_ref": view, "x": 10, "y": 10});
+    let moved = desk.server.call("pointer_move", at).await;
+    assert_eq!(reason(&moved), ("ref_invalid", "unknown_ref".to_owned()));
 }
 
 /// A client whose server was restarted, or a bridge reconnected to a new engine, may still

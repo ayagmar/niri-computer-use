@@ -108,8 +108,8 @@ pub(crate) struct Metadata {
     pub(crate) mime_type: &'static str,
     pub(crate) captured_at_unix_ms: u128,
     pub(crate) capture_ms: u128,
-    /// What pointer tools take to aim at a pixel of this image; null unless this server
-    /// holds the lease.
+    /// What a zoom takes to name pixels of this image, and, taken under the lease, what
+    /// pointer tools take to aim at one; null without niri's event stream.
     pub(crate) screenshot_ref: Option<String>,
     /// For a screenshot that waited for the screen to stop changing: whether it did within
     /// the wait.

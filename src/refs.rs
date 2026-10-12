@@ -15,9 +15,10 @@ use niri_ipc::{LogicalOutput, Output};
 use tokio::time::Instant;
 
 use crate::a11y::ElementRef;
-use crate::coords::{self, Capture, ImagePx, LayoutPt, ProtocolPt};
+use crate::coords::{self, Capture, ImagePx, ImageRect, LayoutPt, ProtocolPt};
 use crate::error::{ErrorName, ToolError};
 use crate::observe::{Rect, Screenshot};
+use crate::session::SessionId;
 
 /// How many refs a lease keeps; older ones are dropped first.
 const KEPT: usize = 64;
@@ -132,6 +133,70 @@ impl Shot {
         outputs: &BTreeMap<String, Output>,
         connection: Option<u64>,
     ) -> Result<LogicalOutput, ToolError> {
+        self.unchanged(now, outputs, connection)?;
+        let motion = self.motion_geometry.ok_or_else(|| {
+            invalid(
+                "unknown_geometry",
+                "the screenshot output has no usable physical mode; take a new screenshot",
+            )
+        })?;
+        let now_motion = outputs.get(&self.output).and_then(coords::motion_geometry);
+        if now_motion != Some(motion) {
+            return Err(invalid(
+                "output_changed",
+                "the output's pointer space changed since capture; take a new screenshot",
+            ));
+        }
+        Ok(motion)
+    }
+
+    /// The layout rectangle, in whole logical pixels, that covers `pixels` of this image,
+    /// for a zoom into it, provided the ref is fresh, the event stream is still on the
+    /// capture's connection, the output's layout is unchanged, and `pixels` lies inside
+    /// the image.
+    pub(crate) fn zoom(
+        &self,
+        pixels: ImageRect,
+        now: Instant,
+        outputs: &BTreeMap<String, Output>,
+        connection: Option<u64>,
+    ) -> Result<Rect, ToolError> {
+        self.unchanged(now, outputs, connection)?;
+        let ImageRect {
+            origin,
+            width,
+            height,
+        } = pixels;
+        let fits = |start: u32, extent: u32, image: u32| {
+            extent > 0 && u64::from(start) + u64::from(extent) <= u64::from(image)
+        };
+        if !fits(origin.x, width, self.width) || !fits(origin.y, height, self.height) {
+            return Err(invalid(
+                "out_of_bounds",
+                &format!(
+                    "region {},{} {width}x{height} isn't inside the {}x{} image",
+                    origin.x, origin.y, self.width, self.height
+                ),
+            ));
+        }
+        let (left, right) = logical_span(origin.x, width, self.scale, self.captured.width);
+        let (top, bottom) = logical_span(origin.y, height, self.scale, self.captured.height);
+        Ok(Rect {
+            x: self.captured.x.saturating_add_unsigned(left),
+            y: self.captured.y.saturating_add_unsigned(top),
+            width: right - left,
+            height: bottom - top,
+        })
+    }
+
+    /// The ref is fresh, the event stream is still on the capture's connection, and the
+    /// output's layout is unchanged.
+    fn unchanged(
+        &self,
+        now: Instant,
+        outputs: &BTreeMap<String, Output>,
+        connection: Option<u64>,
+    ) -> Result<(), ToolError> {
         let age = now.saturating_duration_since(self.taken);
         if age > MAX_AGE {
             return Err(invalid(
@@ -155,20 +220,7 @@ impl Shot {
                 ),
             ));
         }
-        let motion = self.motion_geometry.ok_or_else(|| {
-            invalid(
-                "unknown_geometry",
-                "the screenshot output has no usable physical mode; take a new screenshot",
-            )
-        })?;
-        let now_motion = outputs.get(&self.output).and_then(coords::motion_geometry);
-        if now_motion != Some(motion) {
-            return Err(invalid(
-                "output_changed",
-                "the output's pointer space changed since capture; take a new screenshot",
-            ));
-        }
-        Ok(motion)
+        Ok(())
     }
 
     fn encode(&self, point: LayoutPt, motion: &LogicalOutput) -> Result<ProtocolPt, ToolError> {
@@ -182,6 +234,22 @@ impl Shot {
             )
         })
     }
+}
+
+/// The whole logical pixels, as offsets from the captured rectangle's edge, that cover image
+/// pixels `start` to `start + extent` at `scale`, within the `captured` logical pixels.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "both ends lie in 0..=captured, a u32, once the pixels are inside the image"
+)]
+fn logical_span(start: u32, extent: u32, scale: f64, captured: u32) -> (u32, u32) {
+    let low = (f64::from(start) / scale).floor() as u32;
+    let high = (f64::from(start + extent) / scale).ceil() as u32;
+    (
+        low.min(captured.saturating_sub(1)),
+        high.clamp(low + 1, captured),
+    )
 }
 
 /// `ref_invalid`, with the reason first.
@@ -206,7 +274,8 @@ pub(crate) fn well_formed(id: &str) -> bool {
         && number.parse::<u64>().is_ok_and(|n| n.to_string() == number)
 }
 
-/// The refs of the current lease.
+/// The refs of the current lease, and the screenshot refs of sessions without it, which
+/// only a zoom takes.
 #[derive(Debug)]
 pub(crate) struct Refs {
     /// In every id, between the kind and the number.
@@ -217,6 +286,8 @@ pub(crate) struct Refs {
     /// The lease the kept refs belong to, while one is held.
     lease: Option<u64>,
     shots: VecDeque<(u64, Shot)>,
+    /// Each session's screenshots taken without the lease, numbered with the lease's.
+    views: BTreeMap<SessionId, VecDeque<(u64, Shot)>>,
     elements_issued: u64,
     elements: VecDeque<(u64, ElementRef)>,
 }
@@ -247,6 +318,7 @@ impl Refs {
             issued: 0,
             lease: None,
             shots: VecDeque::new(),
+            views: BTreeMap::new(),
             elements_issued: 0,
             elements: VecDeque::new(),
         }
@@ -261,8 +333,10 @@ impl Refs {
             .ok()
     }
 
-    /// A new lease: earlier refs are dropped.
-    pub(crate) fn start(&mut self) {
+    /// A new lease, for `owner`: earlier refs of the lease and `owner`'s refs from before
+    /// it are dropped.
+    pub(crate) fn start(&mut self, owner: SessionId) {
+        self.views.remove(&owner);
         self.leases += 1;
         self.lease = Some(self.leases);
         self.shots.clear();
@@ -297,6 +371,37 @@ impl Refs {
         }
         self.shots.push_back((self.issued, shot));
         Some(format!("shot-{}-{}", self.tag, self.issued))
+    }
+
+    /// Keeps `shot`, which `session` took without the lease, and returns its id.
+    pub(crate) fn insert_view(&mut self, session: SessionId, shot: Shot) -> String {
+        self.issued += 1;
+        let views = self.views.entry(session).or_default();
+        if views.len() == KEPT {
+            views.pop_front();
+        }
+        views.push_back((self.issued, shot));
+        format!("shot-{}-{}", self.tag, self.issued)
+    }
+
+    /// Drops the refs `session` took without the lease, once it has ended.
+    pub(crate) fn forget(&mut self, session: SessionId) {
+        self.views.remove(&session);
+    }
+
+    /// The ref named `id` that `session` took without the lease.
+    pub(crate) fn view(&self, session: SessionId, id: &str) -> Result<Shot, ToolError> {
+        let wanted = self.number(id, "shot");
+        self.views
+            .get(&session)
+            .and_then(|views| views.iter().find(|(issued, _)| Some(*issued) == wanted))
+            .map(|(_, shot)| shot.clone())
+            .ok_or_else(|| {
+                invalid(
+                    "unknown_ref",
+                    &format!("{id:?} isn't a screenshot this session still keeps; take a new one"),
+                )
+            })
     }
 
     /// Keeps `element` and returns its id, `elem-<tag>-N`, if `lease` is still the current
@@ -505,14 +610,115 @@ mod tests {
     async fn an_id_from_another_process_names_nothing_here() {
         let mut earlier = Refs::new("0a1b2c3d".to_owned());
         let mut now = Refs::new("4e5f6a7b".to_owned());
-        earlier.start();
-        now.start();
+        earlier.start(SessionId(1));
+        now.start(SessionId(1));
         let old = earlier.insert(earlier.lease().unwrap(), shot()).unwrap();
         let new = now.insert(now.lease().unwrap(), shot()).unwrap();
         assert_ne!(old, new);
         assert!(now.get(&new).is_ok());
         let error = now.get(&old).unwrap_err();
         assert!(error.detail.starts_with("unknown_ref"), "{}", error.detail);
+    }
+
+    /// Whether `rect` holds the first and last of `pixels` of `shot`'s image.
+    fn covers(shot: &Shot, pixels: ImageRect, rect: Rect) {
+        let zoomed = Shot {
+            captured: rect,
+            ..shot.clone()
+        };
+        let ImageRect { origin, .. } = pixels;
+        let last = ImagePx {
+            x: origin.x + pixels.width - 1,
+            y: origin.y + pixels.height - 1,
+        };
+        for pixel in [origin, last] {
+            let point = shot.layout_of(pixel).unwrap();
+            assert!(
+                zoomed.contains(point),
+                "{pixel:?} of {pixels:?} not in {rect:?}"
+            );
+        }
+    }
+
+    /// A zoom must capture every pixel the agent pointed at, at the screenshot's own place
+    /// in the layout, whatever the scale rounds to, and nothing outside the screenshot.
+    #[tokio::test(start_paused = true)]
+    async fn a_zoom_covers_the_pixels_asked_for_and_stays_inside_the_screenshot() {
+        let mut shot = shot();
+        shot.captured = Rect {
+            x: 100,
+            y: 40,
+            width: 301,
+            height: 201,
+        };
+        (shot.width, shot.height) = (451, 301);
+        let now = outputs(shot.geometry);
+        let regions = [
+            (0, 0, 1, 1),
+            (1, 1, 1, 1),
+            (150, 31, 30, 15),
+            (449, 299, 2, 2),
+        ];
+        for (x, y, width, height) in regions {
+            let pixels = ImageRect {
+                origin: ImagePx { x, y },
+                width,
+                height,
+            };
+            let rect = shot.zoom(pixels, Instant::now(), &now, Some(1)).unwrap();
+            covers(&shot, pixels, rect);
+            assert!(rect.x >= 100 && rect.y >= 40, "{rect:?}");
+            assert!(
+                rect.x + i32::try_from(rect.width).unwrap() <= 401,
+                "{rect:?}"
+            );
+            assert!(
+                rect.y + i32::try_from(rect.height).unwrap() <= 241,
+                "{rect:?}"
+            );
+        }
+        let at = |x, y| ImageRect {
+            origin: ImagePx { x, y },
+            width: 2,
+            height: 2,
+        };
+        assert_eq!(
+            shot.zoom(at(150, 30), Instant::now(), &now, Some(1)),
+            Ok(Rect {
+                x: 200,
+                y: 60,
+                width: 2,
+                height: 2,
+            })
+        );
+        let outside = shot.zoom(at(450, 0), Instant::now(), &now, Some(1));
+        assert!(outside.unwrap_err().detail.starts_with("out_of_bounds"));
+        let mut moved = now;
+        moved.get_mut("winit").unwrap().logical.as_mut().unwrap().x = 960;
+        let changed = shot.zoom(at(0, 0), Instant::now(), &moved, Some(1));
+        assert!(changed.unwrap_err().detail.starts_with("output_changed"));
+    }
+
+    /// A screenshot taken without the lease is only for zooming, by the session that took
+    /// it, until that session takes the lease.
+    #[tokio::test]
+    async fn a_ref_taken_without_the_lease_is_its_sessions_own_until_it_takes_the_lease() {
+        let (me, other) = (SessionId(1), SessionId(2));
+        let mut refs = Refs::new("t".to_owned());
+        let mine = refs.insert_view(me, shot());
+        assert!(refs.view(me, &mine).is_ok());
+        assert!(refs.view(other, &mine).is_err());
+        // Pointer tools look only at the lease's refs.
+        refs.start(other);
+        assert!(refs.get(&mine).is_err());
+        assert!(refs.view(me, &mine).is_ok());
+        refs.end();
+        refs.start(me);
+        let error = refs.view(me, &mine).unwrap_err();
+        assert!(error.detail.starts_with("unknown_ref"), "{}", error.detail);
+        let theirs = refs.insert_view(other, shot());
+        refs.forget(other);
+        assert!(refs.view(other, &theirs).is_err());
     }
 
     #[test]
@@ -533,14 +739,14 @@ mod tests {
         let stale = |refs: &Refs, id: &str| refs.element(id).unwrap_err().name;
         let mut refs = Refs::new("t".to_owned());
         assert_eq!(refs.insert_element(1, element()), None);
-        refs.start();
+        refs.start(SessionId(1));
         let first = refs.lease().unwrap();
         assert_eq!(
             refs.insert_element(first, element()).as_deref(),
             Some("elem-t-1")
         );
         assert_eq!(refs.element("elem-t-1"), Ok(element()));
-        refs.start();
+        refs.start(SessionId(1));
         let second = refs.lease().unwrap();
         assert_eq!(stale(&refs, "elem-t-1"), ErrorName::ElementStale);
         assert_eq!(refs.insert_element(first, element()), None);
@@ -557,13 +763,13 @@ mod tests {
         let mut refs = Refs::new("t".to_owned());
         assert_eq!(refs.lease(), None);
         assert_eq!(refs.insert(1, shot()), None);
-        refs.start();
+        refs.start(SessionId(1));
         let first = refs.lease().unwrap();
         assert_eq!(refs.insert(first, shot()).as_deref(), Some("shot-t-1"));
         refs.end();
         // A capture that started under the old lease isn't kept.
         assert_eq!(refs.insert(first, shot()), None);
-        refs.start();
+        refs.start(SessionId(1));
         let second = refs.lease().unwrap();
         assert_ne!(first, second);
         assert_eq!(refs.insert(first, shot()), None);

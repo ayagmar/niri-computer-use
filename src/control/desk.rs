@@ -107,7 +107,7 @@ impl Seat {
             locked: grant.lease.locked().clone(),
             users_window,
         }));
-        self.refs().start();
+        self.refs().start(grant.owner);
         *held = Some(grant);
     }
 
@@ -518,6 +518,7 @@ impl Desk {
     pub(crate) async fn end_session(&self, session: &Session) {
         session.end();
         self.seat.give_up(Some(session.id())).await;
+        self.seat.refs().forget(session.id());
     }
 
     /// Serializes an observation of `session` with this server's actions and lease changes
@@ -569,6 +570,26 @@ impl Desk {
     /// since the capture started.
     pub(crate) fn remember(&self, lease: u64, shot: Shot) -> Option<String> {
         self.seat.refs().insert(lease, shot)
+    }
+
+    /// Keeps `shot`, which `session` took without the lease, as a ref only a zoom takes,
+    /// and returns its id, unless `session` holds the lease by now.
+    pub(crate) fn remember_view(&self, session: &Session, shot: Shot) -> Option<String> {
+        let mut refs = self.seat.refs();
+        if self.seat.owned_by(session.id()).is_some() {
+            return None;
+        }
+        Some(refs.insert_view(session.id(), shot))
+    }
+
+    /// The ref named `id` that a zoom of `session` takes: one of the lease it holds, or,
+    /// without the lease, one it took since it last held it.
+    pub(crate) fn zoomable(&self, session: &Session, id: &str) -> Result<Shot, ToolError> {
+        let refs = self.seat.refs();
+        if self.seat.owned_by(session.id()).is_some() {
+            return refs.get(id);
+        }
+        refs.view(session.id(), id)
     }
 
     /// Keeps `element` as an element ref of `lease` and returns its id, unless that lease

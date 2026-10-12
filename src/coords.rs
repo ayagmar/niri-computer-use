@@ -52,6 +52,15 @@ pub(crate) struct ImagePx {
     pub(crate) y: u32,
 }
 
+/// A rectangle of a captured image's pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ImageRect {
+    /// Its top-left pixel.
+    pub(crate) origin: ImagePx,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+}
+
 /// A point in niri's layout space, in logical pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct LayoutPt {
