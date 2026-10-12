@@ -340,6 +340,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_the_spawns_skip_the_quiet_whatever_niri_reports() {
+        let spawn = Action::Spawn {
+            command: vec!["foot".to_owned()],
+        };
+        let shell = Action::SpawnSh {
+            command: "foot".to_owned(),
+        };
+        assert_eq!(quiet(Some(&spawn)), Quiet::Never);
+        assert_eq!(quiet(Some(&shell)), Quiet::Never);
+        let window = Action::FullscreenWindow { id: Some(2) };
+        let workspace = Action::FocusWorkspaceDown {};
+        assert_eq!(quiet(Some(&window)), Quiet::UnlessSeen);
+        assert_eq!(quiet(Some(&workspace)), Quiet::UnlessSeen);
+    }
+
+    #[test]
     fn an_action_that_names_no_window_is_pinned_to_the_focused_one() {
         let json = |action: &Action| serde_json::to_value(action).unwrap();
         let pinned =

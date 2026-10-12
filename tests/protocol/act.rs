@@ -2267,12 +2267,8 @@ async fn niri_action_names_the_window_focused_at_the_check() {
     .await;
 }
 
-/// How long an action's change report waits for an app's answer, from the start of the
-/// action, unless its own wait saw niri's event for it.
-const QUIET: Duration = Duration::from_millis(250);
-
 #[tokio::test]
-async fn focus_and_spawn_answer_without_waiting_for_quiet_but_a_sent_action_waits() {
+async fn focus_and_spawn_answer_well_before_an_action_that_waits_for_quiet() {
     let mut desk = Desk::start("act-quiet", "unrestricted = true").await;
     let started = Instant::now();
     desk.act("focus", json!({"window_id": 2}), |stream, _| {
@@ -2280,16 +2276,15 @@ async fn focus_and_spawn_answer_without_waiting_for_quiet_but_a_sent_action_wait
     })
     .await;
     let focused = started.elapsed();
-    assert!(focused < QUIET, "focus took {focused:?}");
     // `Spawn`'s window comes later than the quiet wait would cover; `wait_for` finds it.
     let spawning = Instant::now();
     let spawn = json!({"action": {"Spawn": {"command": ["foot"]}}});
     desk.act("niri_action", spawn, |_, _| {}).await;
     let spawned = spawning.elapsed();
-    assert!(spawned < QUIET, "Spawn took {spawned:?}");
 
     // A workspace switch is only `sent`: its own wait saw nothing, so the report waits,
     // and what niri reports a moment after its reply is in it.
+    let switching = Instant::now();
     let down = json!({"action": {"FocusWorkspaceDown": {}}});
     let id = desk.server.start_call("niri_action", down).await;
     desk.niri.action().await;
@@ -2299,11 +2294,50 @@ async fn focus_and_spawn_answer_without_waiting_for_quiet_but_a_sent_action_wait
     desk.stream
         .send(&json!({"WindowFocusChanged": {"id": null}}));
     let result = desk.server.response(id).await["result"].clone();
+    let switched = switching.elapsed();
     assert_eq!(
         outcome(&result),
         json!({
             "accepted": true, "observed": "sent", "focused_window": null,
             "changes": {"focus": {"from": 2, "to": null}, "workspace": {"from": 1, "to": 2}}
+        })
+    );
+    // The switch waited at least 100 ms and then the 250 ms quiet; waiting for quiet too,
+    // `focus` and `Spawn` would each take at least 250 ms, over half of that.
+    assert!(
+        focused * 2 < switched && spawned * 2 < switched,
+        "focus {focused:?}, Spawn {spawned:?}, the switch {switched:?}"
+    );
+}
+
+#[tokio::test]
+async fn focus_on_another_workspace_reports_the_switch_and_the_cleared_urgency() {
+    let mut desk = Desk::start("act-focus-across", "").await;
+    let mut urgent = window_on(4, Some("chat"), 2, false);
+    urgent["is_urgent"] = json!(true);
+    desk.stream
+        .send(&json!({"WindowOpenedOrChanged": {"window": urgent}}));
+    let has_it = |state: &Value| state["windows"].as_array().unwrap().len() == 4;
+    while !has_it(&desk.server.structured("desktop_state").await) {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let result = desk
+        .act("focus", json!({"window_id": 4}), |stream, _| {
+            // niri's order within one refresh, each event its own write.
+            stream.send(&json!({"WorkspaceActivated": {"id": 2, "focused": true}}));
+            focus_changed(stream, 4);
+            stream.send(&json!({"WindowUrgencyChanged": {"id": 4, "urgent": false}}));
+        })
+        .await;
+    assert_eq!(
+        outcome(&result),
+        json!({
+            "accepted": true, "observed": "focused", "focused_window": 4,
+            "changes": {
+                "focus": {"from": 1, "to": 4},
+                "workspace": {"from": 1, "to": 2},
+                "windows": [{"id": 4, "urgent": false}]
+            }
         })
     );
 }
