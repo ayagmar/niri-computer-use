@@ -42,7 +42,7 @@ For each combination, presses the modifiers, presses and releases the key, then 
 
 | Argument | Value |
 |---|---|
-| `text` (required) | 1 to 1000 characters, or up to 1 MiB with `via: "paste"`. Typed text with a line break (`\n`, `\r`) or a tab is an argument mistake: they would be pressed as Return or Tab, so a message would go out before the rest of it, or the rest would land in another field. Use `submit`, `key` with `Return` or `Tab`, or `via: "paste"` for text with several lines |
+| `text` (required) | 1 to 1000 characters, or up to 1 MiB with `via: "paste"`. Typed text with a control character is an argument mistake. A line break (`\n`, `\r`) or a tab would be pressed as Return or Tab, so a message would go out before the rest of it, or the rest would land in another field, and the others as keys such as BackSpace (`\u0008`), Escape (`\u001b`) or Delete (`\u007f`). Use `submit`, `key` with `Return` or `Tab`, or `via: "paste"` for text with several lines |
 | `expect` (required) | see above |
 | `via` | `keys`, the default, types the text; `paste` pastes it, see [Pasting](#pasting) |
 | `paste_keys` | with `via: "paste"`, required: the combination that pastes in the focused app, `ctrl+v`, `ctrl+shift+v` (terminals) or `shift+Insert`; with `via: "keys"`, an argument mistake |

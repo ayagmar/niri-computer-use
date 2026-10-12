@@ -75,7 +75,7 @@ fn resolve(keymap: &xkb::Keymap, group: u32, typing: &Typing) -> Result<Vec<Key>
     }
 }
 
-/// The keysym that types `c`. `Typing::check` has refused line breaks and tabs, which
+/// The keysym that types `c`. `Typing::check` has refused control characters, which
 /// would be keys rather than characters.
 fn text_sym(c: char) -> xkb::Keysym {
     xkb::utf32_to_keysym(u32::from(c))

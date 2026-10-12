@@ -145,11 +145,12 @@ fn check_text(text: &str) -> Result<(), CallError> {
             "`text` must not be empty".to_owned(),
         ));
     }
-    // Typed, they are Return and Tab: one sends a message before the rest of it, the other
-    // moves to another field of the same window, where `expect` can't see it.
-    if let Some(at) = text.chars().position(|c| matches!(c, '\n' | '\r' | '\t')) {
+    // Typed, control characters are keys: a line break is Return, which sends a message
+    // before the rest of it, a tab moves to another field of the same window, where
+    // `expect` can't see it, and others are BackSpace, Escape, Clear or Delete.
+    if let Some(at) = text.chars().position(char::is_control) {
         return Err(CallError::InvalidArguments(format!(
-            "`text` holds a line break or a tab at character {at}, which would be typed as Return or Tab; pass `submit: true` to press Return once all of the text went out, press Return or Tab with `key`, or pass `via: \"paste\"` for text with several lines; nothing was typed"
+            "`text` holds a control character at character {at}, such as a line break or a tab, which would be pressed as a key such as Return, Tab, BackSpace or Escape; pass `submit: true` to press Return once all of the text went out, press keys with `key`, or pass `via: \"paste\"` for text with several lines; nothing was typed"
         )));
     }
     if length > MAX_TEXT {
