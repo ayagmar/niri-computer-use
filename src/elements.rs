@@ -593,7 +593,7 @@ pub(crate) fn unmappable(why: Unmappable) -> ToolError {
         ),
         Unmappable::Covered => (
             "not_showing",
-            "a fullscreen window covers it; focus its window or leave fullscreen, and call elements again",
+            "a tiled window as large as the output, likely fullscreen, covers it; focus the element's window or leave fullscreen, and call elements again",
         ),
         Unmappable::Moving => (
             "not_showing",

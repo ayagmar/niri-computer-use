@@ -2286,7 +2286,9 @@ async fn a_floating_window_behind_a_fullscreen_one_is_never_aimed_at() {
         let (name, detail) = tool_error(&refused);
         assert_eq!(name, "element_unmappable", "{tool}: {refused}");
         assert!(
-            detail.starts_with("not_showing: a fullscreen window covers it"),
+            detail.starts_with(
+                "not_showing: a tiled window as large as the output, likely fullscreen"
+            ),
             "{tool}: {detail}"
         );
         assert_eq!(desk.fixture.clipboard.pointed(), [], "{tool}");

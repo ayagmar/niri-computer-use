@@ -319,7 +319,7 @@ impl Checks<'_, '_> {
     }
 
     /// A fullscreen tiled window, focused on the same workspace, hides the floating one:
-    /// `Primary` is `not_showing` because a fullscreen window covers it, and its ref is
+    /// `Primary` is `not_showing` because a tiled window as large as the output covers it, and its ref is
     /// refused without a click. With that window closed, it hits.
     fn covered(&mut self, window: u64) -> Result<()> {
         let decoy = Fixture::start_decoy(self.session)?;
@@ -352,9 +352,9 @@ impl Checks<'_, '_> {
         expect(
             field(&refused, "/error") == "element_unmappable"
                 && field(&refused, "/detail").as_str().is_some_and(|detail| {
-                    detail.starts_with("not_showing: a fullscreen window covers it")
+                    detail.starts_with("not_showing: a tiled window as large as the output")
                 }),
-            "element_unmappable: a fullscreen window covers it",
+            "element_unmappable: a tiled window as large as the output covers it",
             &refused,
         )?;
         let session = &*self.session;

@@ -1134,7 +1134,7 @@ These match the versions installed locally.
 
 - niri draws no floating window of a workspace whose active column is fullscreen while its view is still, unless a floating window is focused or raised, and `Workspace::window_under` skips them, so the pointer goes to the fullscreen window (`Workspace::is_floating_visible`, `ScrollingSpace::render_above_top_layer`, niri `8ed0da4`). The floating window's place is still reported, its workspace is active and its widgets still say they are showing, so its elements had boxes over the fullscreen window. Opus's second review found it.
 - IPC 26.04 has no fullscreen flag. `model::origin` refuses a floating window when its workspace's `active_window_id` is a tiled window whose `tile_size` is the output's logical size, within a pixel for fractional scales. A tiled window that fills the output another way, such as one maximized to the edges with no bar, is refused too, and so is a floating window niri shows raised above a fullscreen one. Both refuse a click that would have landed; neither lets a wrong one through.
-- The reason stays `not_showing`, so the listing's vocabulary doesn't grow, but the variant is its own (`Unmappable::Covered`), so the detail says "a fullscreen window covers it" and what to do.
+- The reason stays `not_showing`, so the listing's vocabulary doesn't grow, but the variant is its own (`Unmappable::Covered`), so the detail says what covers it and what to do: "a tiled window as large as the output, likely fullscreen, covers it". The first wording said "a fullscreen window", which the rule can't know; Opus's third review asked for the change.
 
 ## 2026-10-12: element aims wait for the view to settle
 
