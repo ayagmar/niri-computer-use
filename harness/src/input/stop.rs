@@ -1,8 +1,9 @@
 //! The stop flag during input (plan §11): a stop cancels the running call, a drag's button
-//! is released on the way out, and a `wtype` already typing finishes. Either way the
-//! input-dirty marker is gone afterwards, and the lease can be taken again after `resume`.
+//! is released on the way out, and a `wtype` already typing finishes. A drag ends
+//! `stopped`; typing whose input went out ends `uncertain`. Either way the input-dirty
+//! marker is gone afterwards, and the lease can be taken again after `resume`.
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::{Shot, WAIT, Wev};
 use crate::failure::{Context as _, Failure, Result};
@@ -87,7 +88,16 @@ fn released_and_clear(session: &mut Session<'_>, wev: &Wev<'_>, offset: usize) -
     marker_gone(session)
 }
 
-/// A stop while `wtype` types: the call says `stopped`, and `wtype` still types the whole
+/// Whether a stop cut the typing call `result` short once its input went out: `uncertain`,
+/// with the stop in `detail`.
+pub(super) fn cut_by_stop(result: &Value) -> bool {
+    field(result, "/structuredContent/observed") == "uncertain"
+        && field(result, "/structuredContent/detail")
+            .as_str()
+            .is_some_and(|detail| detail.contains("the user's stop flag"))
+}
+
+/// A stop while `wtype` types: the call says `uncertain`, and `wtype` still types the whole
 /// text, then removes the marker. wtype types 100 characters in about 0.4 s, so a stop
 /// that lands after it proves nothing, and the check tries again.
 fn mid_typing(
@@ -115,14 +125,14 @@ fn mid_typing(
             .filter(|key| key.pressed)
             .count();
         let result = client.result(session, id)?;
-        let stopped = field(&result, "/structuredContent/error") == "stopped";
+        let stopped = cut_by_stop(&result);
         let seen = keyboard::observed(session, wev.log, offset, text.chars().count(), false)?;
         keyboard::text(&wev::keyboard::trace(&seen)?, &text)?;
         marker_gone(session)?;
         resume(session, client, server)?;
         if stopped {
             return session.log(&format!(
-                "M4 stop mid-typing (attempt {attempt}): stopped, wtype typed all 100 characters ({} after stop-command acknowledgement observation), marker gone, lease taken again", text.chars().count().saturating_sub(at_ack)
+                "M4 stop mid-typing (attempt {attempt}): uncertain, wtype typed all 100 characters ({} after stop-command acknowledgement observation), marker gone, lease taken again", text.chars().count().saturating_sub(at_ack)
             ));
         }
         session.log(&format!(

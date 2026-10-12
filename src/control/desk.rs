@@ -327,7 +327,7 @@ impl Desk {
             tokio::select! {
                 biased;
                 _ = stopped.wait_for(|stopped| *stopped) => Ended::Stopped,
-                () = moved(&grant.lease) => Ended::Moved("cancelled the action; anything niri had already accepted may have taken effect"),
+                () = moved(&grant.lease) => Ended::Moved("cancelled the action; anything already sent may have taken effect"),
                 done = work => Ended::Done(done),
             }
         } else {
@@ -361,9 +361,19 @@ impl Desk {
 
     /// Says the running action's one call that acts is going out, so a stop or a moved
     /// lease that cancels the action from now on reports it as uncertain rather than
-    /// refused. It may go out only as `fresh` says, and is refused like it otherwise, with
-    /// nothing marked. Only the action holding the action mutex calls it, from its work.
+    /// refused. It may go out only while neither the stop flag nor the input-dirty marker is
+    /// set, since the work may have waited on Noctalia or the app since the desk checked, and
+    /// as `fresh` says; it is refused otherwise, with nothing marked. Only the action holding
+    /// the action mutex calls it, from its work.
     pub(crate) fn sending(&self) -> Result<(), ToolError> {
+        let runtime = self.runtime.as_ref().map_err(Clone::clone)?;
+        self.unblocked(runtime)?;
+        self.sending_input()
+    }
+
+    /// `sending`, for input whose own input-dirty marker is set by now: only the lock
+    /// state's age is checked.
+    pub(crate) fn sending_input(&self) -> Result<(), ToolError> {
         self.fresh()?;
         self.seat.sending.store(true, Ordering::Relaxed);
         Ok(())
@@ -692,7 +702,7 @@ fn cancelled(stopped: &watch::Receiver<bool>, sending: bool) -> ToolError {
     let what = if sending {
         AFTER_SENDING
     } else {
-        "cancelled this action; anything niri had already accepted may have taken effect"
+        "cancelled this action; anything already sent may have taken effect"
     };
     ToolError::new(ErrorName::Stopped, format!("the user's stop flag {what}"))
 }
@@ -911,6 +921,27 @@ mod tests {
             "{unread:?}"
         );
         desk.act(&me, read_lock(&desk), send(), done).await.unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_marker_set_while_an_action_runs_keeps_its_call_from_going_out() {
+        let me = session(1);
+        let dir = crate::test_support::fresh_dir("desk-marker-send");
+        let desk = Desk::start(&env(&dir));
+        let runtime = RuntimeDir::of(&env(&dir)).unwrap();
+        desk.acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
+        let marked = async {
+            std::fs::write(runtime.path().join("input-dirty"), "").unwrap();
+            desk.sending().map_err(CallError::from)
+        };
+        let refused = desk.act(&me, read_lock(&desk), marked, done).await;
+        assert!(
+            matches!(&refused, Err(CallError::Tool(error)) if error.name == ErrorName::RecoveryRequired),
+            "{refused:?}"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 

@@ -9,20 +9,25 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
-use super::keyboard::{Expect, Sent, Typing, check_expect, ended, partly};
-use super::keymap::{Key, plan};
+use super::keyboard::{Expect, Sent, Typing, check_expect, ended, partly, typed_so_far};
+use super::keymap::{Key, Plan, plan};
 use super::paste::Aftercare;
 use super::{Input, focused_app_id};
 use crate::act::{self, Observed, Outcome};
 use crate::control::cleanup;
-use crate::control::marker::{Marker, Native, Written};
+use crate::control::marker::{self, Marker, Native, Written};
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::{
     self, Socket,
     keyboard::Keyboard,
-    waiter::{Waited, Waiter},
+    waiter::{View, Waited, Waiter},
 };
 use crate::policy;
+
+/// Past how long a key loop that found the stop flag set stops waiting for the desk's stop
+/// watcher, which reads the flag on every change in the runtime directory and once a
+/// second.
+const STOP_SEEN: Duration = Duration::from_secs(2);
 
 pub(super) async fn type_input(
     input: Input<'_>,
@@ -35,15 +40,7 @@ pub(super) async fn type_input(
     if let Some(refused) = policy::refuse_input(input.policy, focused_app_id(waiter.view())) {
         return Err(refused.into());
     }
-    let display = input.display.path().map_err(Clone::clone)?;
-    let keyboard = Keyboard::bind(display, niri::pid(input.niri.socket).await?).await?;
-    let group = waiter.view().keyboard_group().ok_or_else(|| {
-        ToolError::new(
-            ErrorName::NiriUnavailable,
-            "the active keyboard layout is unknown",
-        )
-    })?;
-    let plan = plan(keyboard.map()?, group, &typing)?;
+    let (keyboard, group, plan) = bind(input, waiter.view(), &typing).await?;
     let keys = plan.keys;
     let revision = keyboard.revision();
     let before = waiter.view().focused_window();
@@ -51,28 +48,28 @@ pub(super) async fn type_input(
     if let Some(map) = &plan.extended {
         device.keyboard()?.extend(map)?;
     }
+    // `paste`'s keeper reports whether its key went out; the keyboard tools tell the desk.
+    let marks = aftercare.is_none();
     let mut sent = Sent::default();
     for key in keys {
+        act::fresh_lock(input.niri)
+            .await
+            .map_err(|error| partly(error, &typing, sent))?;
+        // niri's events since the lock was read or the last key, right before this one.
         if let Some(outcome) = interrupted(&mut waiter, before, group).await {
             device.finish(waiter.view().keyboard_group()).await?;
             return Ok(ended(outcome, focus, &typing, sent));
         }
-        may_press(input, &typing, sent).await?;
+        may_press(input, waiter.view(), &typing, sent, marks).await?;
         device.commit(aftercare).await?;
         device.stroke(key).await?;
         sent.add_key(key.character);
+        // Counts only once `may_press` told the desk the key was going out.
+        let answered = typed_so_far(waiter.view(), focus, &typing, sent);
+        input.niri.desk.answered(answered);
         if device.revision()? != revision {
             device.finish(waiter.view().keyboard_group()).await?;
-            return Ok(ended(
-                Outcome::uncertain(
-                    Some(true),
-                    Some(waiter.view()),
-                    "the compositor keymap changed during typing".into(),
-                ),
-                focus,
-                &typing,
-                sent,
-            ));
+            return Ok(ended(keymap_changed(waiter.view()), focus, &typing, sent));
         }
     }
     device.finish(waiter.view().keyboard_group()).await?;
@@ -82,14 +79,54 @@ pub(super) async fn type_input(
     Ok(ended(outcome, focus, &typing, sent))
 }
 
-/// Whether the next key may go out: the stop flag isn't set, and the lock state was read
-/// at most `LAST_GATE` ago, or is read again and says unlocked.
-async fn may_press(input: Input<'_>, typing: &Typing, sent: Sent) -> Result<(), ToolError> {
+/// Binds a virtual keyboard on niri's display and plans `typing`'s keys in the layout
+/// niri has active, which it returns too.
+async fn bind(
+    input: Input<'_>,
+    view: &View,
+    typing: &Typing,
+) -> Result<(Keyboard, u32, Plan), CallError> {
+    let display = input.display.path().map_err(Clone::clone)?;
+    let keyboard = Keyboard::bind(display, niri::pid(input.niri.socket).await?).await?;
+    let group = view.keyboard_group().ok_or_else(|| {
+        ToolError::new(
+            ErrorName::NiriUnavailable,
+            "the active keyboard layout is unknown",
+        )
+    })?;
+    let plan = plan(keyboard.map()?, group, typing)?;
+    Ok((keyboard, group, plan))
+}
+
+/// The outcome once the compositor's keymap changed while keys went out.
+fn keymap_changed(view: &View) -> Outcome {
+    Outcome::uncertain(
+        Some(true),
+        Some(view),
+        "the compositor keymap changed during typing".into(),
+    )
+}
+
+/// Whether the next key may go out: the stop flag isn't set, the focused app in `view` isn't
+/// denied, and the lock state was read at most `LAST_GATE` ago. With `marks`, tells the
+/// desk the key is going out.
+async fn may_press(
+    input: Input<'_>,
+    view: &View,
+    typing: &Typing,
+    sent: Sent,
+    marks: bool,
+) -> Result<(), ToolError> {
     if input
         .runtime
         .stopped()
         .map_err(|error| upstream(&format!("read stop flag: {error}")))?
     {
+        if marks && !sent.nothing() {
+            // Keys went out, so the call ends `uncertain`, as the desk's stop watcher ends
+            // it once it sees the same flag.
+            tokio::time::sleep(STOP_SEEN).await;
+        }
         return Err(ToolError::new(
             ErrorName::Stopped,
             format!(
@@ -98,11 +135,15 @@ async fn may_press(input: Input<'_>, typing: &Typing, sent: Sent) -> Result<(), 
             ),
         ));
     }
-    let unlocked = async {
-        act::fresh_lock(input.niri).await?;
+    if let Some(refused) = policy::refuse_input(input.policy, focused_app_id(view)) {
+        return Err(partly(refused, typing, sent));
+    }
+    let unlocked = if marks {
+        input.niri.desk.sending_input()
+    } else {
         input.niri.desk.fresh()
     };
-    unlocked.await.map_err(|error| partly(error, typing, sent))
+    unlocked.map_err(|error| partly(error, typing, sent))
 }
 
 async fn interrupted(waiter: &mut Waiter, before: Option<u64>, group: u32) -> Option<Outcome> {
@@ -153,7 +194,7 @@ impl Device {
         });
         let marker = Written::write(input.runtime, marker)
             .await
-            .map_err(|error| upstream(&format!("write native input-dirty marker: {error}")))?;
+            .map_err(|error| marker::unwritten(&error))?;
         Ok(Self {
             keyboard: Some(keyboard),
             marker: Some(marker),

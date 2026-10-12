@@ -15,11 +15,11 @@ use serde::Serialize;
 
 use crate::act::{self, Observed, Outcome};
 use crate::control::cleanup;
-use crate::control::marker::{Child, Marker, Phase, Written};
+use crate::control::marker::{self, Child, Marker, Phase, Written};
 use crate::control::procs;
 use crate::control::runtime::RuntimeDir;
 use crate::error::{CallError, ErrorName, ToolError};
-use crate::niri::waiter::View;
+use crate::niri::waiter::{View, Waiter};
 use crate::niri::{self, waiter::Waited};
 use crate::policy;
 use crate::runner::{self, Finished, Gated};
@@ -206,7 +206,7 @@ impl Sent {
         }
     }
 
-    const fn nothing(self) -> bool {
+    pub(super) const fn nothing(self) -> bool {
         self.chars == 0 && self.keys == 0
     }
 
@@ -322,6 +322,9 @@ pub(crate) async fn type_input_then(
         return Err(refused.into());
     }
     let before = waiter.view().focused_window();
+    let desk = input.niri.desk;
+    // `paste`'s keeper reports whether its key went out; the keyboard tools tell the desk.
+    let marks = aftercare.is_none();
     let mut sent = Sent::default();
     for stroke in typing.strokes() {
         // wtype finds the display by name alone, so who serves it is checked right before.
@@ -333,30 +336,84 @@ pub(crate) async fn type_input_then(
         act::fresh_lock(input.niri)
             .await
             .map_err(|error| partly(error, &typing, sent))?;
+        // niri's events since the checks above or the last stroke, right before this one.
+        let halted = moved(&mut waiter, before, sent)
+            .await
+            .map_err(|error| partly(error, &typing, sent))?;
+        if let Some(outcome) = halted {
+            return Ok(ended(outcome, focus, &typing, sent));
+        }
+        if let Some(refused) =
+            policy::refuse_input(input.policy, super::focused_app_id(waiter.view()))
+        {
+            return Err(partly(refused, &typing, sent).into());
+        }
         let wtype = Wtype {
             tool: typing.tool(),
             args: &stroke.args()?,
             stdin: stroke.stdin(),
         };
-        run_wtype(input.runtime, wtype, aftercare, || input.niri.desk.fresh())
+        let go = || {
+            if marks {
+                desk.sending_input()
+            } else {
+                desk.fresh()
+            }
+        };
+        run_wtype(input.runtime, wtype, aftercare, go)
             .await
             .map_err(|error| partly(error, &typing, sent))?;
         sent.add(&stroke);
-        let moved = waiter
-            .until(Duration::ZERO, |view| {
-                (view.focused_window() != before).then_some(())
-            })
-            .await;
-        let outcome = match moved {
-            Waited::Timeout => continue,
-            Waited::Done(()) => Outcome::seen(Observed::Interrupted, waiter.view(), Vec::new()),
-            // wtype typed, but where focus went meanwhile is unknown.
-            Waited::Lost(reason) => Outcome::uncertain(Some(true), Some(waiter.view()), reason),
-        };
-        return Ok(ended(outcome, focus, &typing, sent));
+        // Counts only once `go` told the desk the stroke was going out.
+        desk.answered(typed_so_far(waiter.view(), focus, &typing, sent));
     }
-    let done = Outcome::seen(Observed::Sent, waiter.view(), Vec::new());
+    let done = moved(&mut waiter, before, sent)
+        .await?
+        .unwrap_or_else(|| Outcome::seen(Observed::Sent, waiter.view(), Vec::new()));
     Ok(ended(done, focus, &typing, sent))
+}
+
+/// Applies niri's events received by now. Focus that moved off `before`, the window that
+/// had it, refuses the call with `focus_mismatch` before anything was typed, and ends it
+/// `interrupted` after; a lost event stream refuses it or ends it `uncertain` the same way.
+async fn moved(
+    waiter: &mut Waiter,
+    before: Option<u64>,
+    sent: Sent,
+) -> Result<Option<Outcome>, ToolError> {
+    let moved = waiter
+        .until(Duration::ZERO, |view| {
+            (view.focused_window() != before).then_some(())
+        })
+        .await;
+    match moved {
+        Waited::Timeout => Ok(None),
+        Waited::Done(()) if sent.nothing() => Err(ToolError::new(
+            ErrorName::FocusMismatch,
+            "keyboard focus moved before anything was typed; nothing was",
+        )),
+        Waited::Done(()) => Ok(Some(Outcome::seen(
+            Observed::Interrupted,
+            waiter.view(),
+            Vec::new(),
+        ))),
+        Waited::Lost(reason) if sent.nothing() => {
+            Err(ToolError::new(ErrorName::NiriUnavailable, reason))
+        }
+        // wtype typed, but where focus went meanwhile is unknown.
+        Waited::Lost(reason) => Ok(Some(Outcome::uncertain(
+            Some(true),
+            Some(waiter.view()),
+            reason,
+        ))),
+    }
+}
+
+/// What a stop or a moved lease reports once `sent` went out: `uncertain`, with what was
+/// typed. A stroke under way then finishes too, so more may go out.
+pub(super) fn typed_so_far(view: &View, focus: Focus, typing: &Typing, sent: Sent) -> Outcome {
+    let answered = Outcome::uncertain(Some(true), Some(view), String::new());
+    ended(answered, focus, typing, sent)
 }
 
 /// The outcome with what went out: for a call that stopped early, how many characters or
@@ -409,7 +466,7 @@ async fn run_wtype(
     let Wtype { tool, args, stdin } = wtype;
     let mut marker = Written::write(runtime, Marker::pending(tool, Vec::new()))
         .await
-        .map_err(|error| marker_error("write", &error))?;
+        .map_err(|error| marker::unwritten(&error))?;
     let gated = match runner::gated("wtype", args, &UTF8, WTYPE_DEADLINE) {
         Ok(gated) => gated,
         // Nothing started, so nothing was typed.

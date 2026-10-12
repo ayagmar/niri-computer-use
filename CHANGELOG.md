@@ -83,6 +83,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- A stop or a lost lease once `key` or `type_text` started typing, or once `shell_open`, `shell_close` or `noctalia` sent its command, ends the call `uncertain` with the reason in `detail`, as for the niri and element actions, instead of `stopped` or `lease_required`: the input or the command may have taken effect. `typed` and `pressed` count what `wtype` finished. `paste` and the pointer tools still return the error.
+- `type_text` stops before its next part when the focused app goes on the deny list during the call, with `app_denied` saying how much was typed, and refuses with `focus_mismatch` when focus moves before anything was typed.
+- `shell_open` and `shell_close` no longer send their command when the input-dirty marker or the stop flag was set while they read Noctalia's open panel.
+- Input that finds another input's marker set when it writes its own refuses with `recovery_required`, as an action does, instead of `upstream_error`.
 - Every acting tool sends its request, input or command within 250 ms of when its last read of the lock state began, and reads the lock state again first when that read is older. A read asks Noctalia and then logind, so a lock that came while logind's answer was on its way let `focus_window`, `key` and the other niri, input and Noctalia tools act after the screen locked. A call that can't go out within 250 ms of a read is refused with `screen_locked`.
 - Standalone screenshots and `wait_for` capture sequences hold the action mutex throughout capture, excluding subsequent server actions and lease changes.
 - Settled capture budgets include the initial delay and capture work. A timed-out later capture returns the last completed sample unsettled; no completed sample gives `deadline_exceeded`.

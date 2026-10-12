@@ -7,7 +7,7 @@ use serde_json::json;
 use super::{SERVER_DEADLINE, WAIT, Wev, stop};
 use crate::failure::{Failure, Result};
 use crate::keyboard;
-use crate::mcp::{Client, field, structured};
+use crate::mcp::{Client, structured};
 use crate::session::Session;
 use crate::wev::keyboard::{Modifiers, trace};
 
@@ -152,7 +152,7 @@ fn interruption(
         .count();
     if !cancel {
         let result = client.result(session, id)?;
-        if field(&result, "/structuredContent/error") != "stopped" {
+        if !stop::cut_by_stop(&result) {
             return Err(Failure::new(format!("M7: stop missed typing: {result}")));
         }
     }

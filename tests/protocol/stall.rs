@@ -8,23 +8,25 @@
 //! reply, changes the fact, waits for the server to see the change, releases the reply, a
 //! moment later or past `LAST_GATE`, and checks the contract on what the fakes received:
 //!
-//! - Before the call that acts went out, the change refuses the call with the fact's error
-//!   and nothing acts, or the call went out within `LAST_GATE` of the change, the window
-//!   in which the element actions document that a change can be missed.
+//! - Every call that acts after the change went out within `LAST_GATE` of it, the window in
+//!   which the gates document that a change can be missed, and no more went out than with
+//!   nothing held.
+//! - Before the first call that acts went out, the change refuses the call with the fact's
+//!   error, or the call went out within that window.
 //! - After it went out, the call isn't refused: a stop or a lost lease makes it `uncertain`,
 //!   `accepted` null until the reply came and true after it, with nothing more asked and no
 //!   screenshot; any other change leaves an outcome that doesn't report focus from before
-//!   the change.
-//! - Nothing acts twice.
+//!   the change. With more calls to come, `type_text`'s strokes, a later one may be refused
+//!   with the fact's error, saying what went out before it.
 //!
-//! The keyboard tools act through `wtype`, which the fakes see but which passes no point,
-//! so every point is before their send. The pointer and `paste` act through Wayland only in
-//! nested runs (see docs/decisions.md).
+//! The keyboard tools act through the fake `wtype`, whose point `wtype` is a stroke read and
+//! going out. The pointer and `paste` act through Wayland only in nested runs (see
+//! docs/decisions.md).
 
 use std::collections::BTreeSet;
 use std::fs::File;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use niri_ipc::Action;
 use serde_json::{Value, json};
@@ -55,6 +57,11 @@ app_id = "foot"
 "#;
 /// The window of another app, which niri actions are about.
 const TARGET: u64 = 2;
+/// Ten characters, of which `type_text` types 150 and submits them: two `wtype` calls for
+/// the text, at most 100 characters each, and one for `Return`.
+const TEXT: &str = "abcdefghij";
+/// The Noctalia panel the shell tools open and close.
+const PANEL: &str = "wallpaper";
 
 /// The acting tools the explorer calls.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +74,9 @@ enum Tool {
     Launch,
     Key,
     TypeText,
+    ShellOpen,
+    ShellClose,
+    Noctalia,
 }
 
 /// How a tool's call reaches the desktop.
@@ -75,6 +85,7 @@ enum Kind {
     Element,
     Niri,
     Keyboard,
+    Shell,
 }
 
 impl Tool {
@@ -88,6 +99,9 @@ impl Tool {
             Self::Launch => "launch",
             Self::Key => "key",
             Self::TypeText => "type_text",
+            Self::ShellOpen => "shell_open",
+            Self::ShellClose => "shell_close",
+            Self::Noctalia => "noctalia",
         }
     }
 
@@ -96,6 +110,7 @@ impl Tool {
             Self::Activate | Self::SetText => Kind::Element,
             Self::FocusWindow | Self::CloseWindow | Self::NiriAction | Self::Launch => Kind::Niri,
             Self::Key | Self::TypeText => Kind::Keyboard,
+            Self::ShellOpen | Self::ShellClose | Self::Noctalia => Kind::Shell,
         }
     }
 
@@ -109,17 +124,23 @@ impl Tool {
             | Self::NiriAction
             | Self::Launch
             | Self::Key
-            | Self::TypeText => ("Safe", "/button"),
+            | Self::TypeText
+            | Self::ShellOpen
+            | Self::ShellClose
+            | Self::Noctalia => ("Safe", "/button"),
         }
     }
 
-    /// Whether the hold point `point` is the call that acts reaching niri or the app.
+    /// Whether the hold point `point` is a call that acts reaching niri, the app or
+    /// Noctalia, or `wtype` having read a stroke.
     fn acts(self, point: &str) -> bool {
         match self.kind() {
             Kind::Element if self == Self::Activate => point.starts_with("atspi:DoAction:"),
             Kind::Element => point.starts_with("atspi:SetTextContents:"),
             Kind::Niri => point.starts_with("niri:Action:"),
-            Kind::Keyboard => false,
+            Kind::Keyboard => point == "wtype",
+            Kind::Shell if self == Self::ShellClose => point == "noctalia:panel-close",
+            Kind::Shell => point == "noctalia:panel-open",
         }
     }
 
@@ -133,7 +154,9 @@ impl Tool {
             Self::NiriAction => json!({"action": {"ToggleWindowFloating": {"id": TARGET}}}),
             Self::Launch => json!({"preset": "foot"}),
             Self::Key => json!({"keys": ["Down"], "expect": expect}),
-            Self::TypeText => json!({"text": "abc", "expect": expect}),
+            Self::TypeText => json!({"text": TEXT.repeat(15), "submit": true, "expect": expect}),
+            Self::ShellOpen | Self::ShellClose => json!({"panel": PANEL}),
+            Self::Noctalia => json!({"args": ["panel-open", PANEL]}),
         }
     }
 }
@@ -181,14 +204,18 @@ impl Fact {
             Self::ScreenLocked => Some(&["screen_locked"]),
             Self::Stopped => Some(&["stopped"]),
             Self::LeaseTaken => Some(&["lease_required"]),
-            Self::FocusMoved => (kind != Kind::Niri).then_some(&["focus_mismatch"]),
+            Self::FocusMoved => {
+                matches!(kind, Kind::Element | Kind::Keyboard).then_some(&["focus_mismatch"])
+            }
             Self::WindowClosed => match kind {
                 Kind::Element => Some(&["element_stale"]),
                 Kind::Keyboard => Some(&["focus_mismatch"]),
                 Kind::Niri => (tool != Tool::Launch).then_some(&["invalid_arguments"]),
+                Kind::Shell => None,
             },
             Self::DenyListed => {
-                (kind != Kind::Niri || tool == Tool::CloseWindow).then_some(&["app_denied"])
+                let input = matches!(kind, Kind::Element | Kind::Keyboard);
+                (input || tool == Tool::CloseWindow).then_some(&["app_denied"])
             }
             Self::BecamePassword => element.then_some(&["secret_field"]),
             Self::Renamed | Self::AncestorRenamed | Self::MovedAway | Self::Removed => {
@@ -236,8 +263,12 @@ struct Case<'a> {
     tool: Tool,
     fact: Fact,
     at: &'a Passed,
-    /// Where the call that acts is in the trace: the trace's length for the keyboard tools.
+    /// Where the first call that acts is in the trace.
     sends: usize,
+    /// Where the last is.
+    last: usize,
+    /// How many calls act with nothing held.
+    acts: usize,
     index: usize,
     hold: Hold,
 }
@@ -245,6 +276,11 @@ struct Case<'a> {
 impl Case<'_> {
     const fn before_send(&self) -> bool {
         self.index < self.sends
+    }
+
+    /// Whether a call that acts comes after the point held.
+    const fn acts_later(&self) -> bool {
+        self.index < self.last
     }
 }
 
@@ -306,7 +342,8 @@ fn effects(action: &Action, closed: &Closed) -> Vec<Value> {
 
 /// A desktop for every tool: the mock app's windows 1 and 3 with their accessible
 /// elements, another app's window 2, Noctalia, `wtype`, grim, and a policy that denies
-/// `DENIED` and has the preset `foot`. The server holds the lease. Exploring the lock,
+/// `DENIED` and has the preset `foot`, with `unrestricted` on. The server holds the lease.
+/// Exploring the lock in the full matrix,
 /// niri runs in a logind session and logind's answer, from `loginctl`, is a point too.
 ///
 /// Fields drop in this order: the server first, so it can't react to the rest going away,
@@ -333,13 +370,12 @@ impl World {
     async fn start(name: &str, fact: Fact) -> Self {
         let mut fixture = Fixture::new(name);
         fixture.set("NIRI_COMPUTER_USE_KEYBOARD", "wtype");
+        fixture.set("NIRI_COMPUTER_USE_UNRESTRICTED", "1");
         std::fs::create_dir_all(fixture.path("config/niri-computer-use")).unwrap();
         std::fs::write(fixture.path("config/niri-computer-use/policy.toml"), POLICY).unwrap();
         fixture.program("noctalia", "exit 0");
-        fixture.program(
-            "wtype",
-            "cat >> \"$DIR/wtype.in\"\necho \"$*\" >> \"$DIR/wtype.calls\"",
-        );
+        // The point once it read the stroke, which then goes out as wtype exits.
+        fixture.program("wtype", "cat > /dev/null\npass wtype");
         fixture.grim(&jpeg(1280, 720, b"evidence"));
         let mut objects = objects();
         objects.extend([
@@ -349,7 +385,10 @@ impl World {
         let (bus, mock) = atspi::start(&mut fixture, &["/frame", "/frame2"], objects).await;
         let noctalia = noctalia::start(&fixture, UNLOCKED);
         let backend = fixture.path("run/backend.sock");
-        let mut niri = if fact == Fact::ScreenLocked {
+        // logind's answer for every tool costs `make check` 5 s on 4 cores, where
+        // `shell::a_lock_while_loginds_answer_is_held_refuses_the_call` holds it instead.
+        let session = fact == Fact::ScreenLocked && full();
+        let mut niri = if session {
             Niri::behind(&fixture, &backend)
         } else {
             Niri::start(&fixture)
@@ -358,9 +397,9 @@ impl World {
         let closed = Closed::default();
         let closing = Arc::clone(&closed);
         niri.effects(move |action| effects(action, &closing));
-        let relay = if fact == Fact::ScreenLocked {
+        fixture.serve_programs();
+        let relay = if session {
             session::held_loginctl(&fixture);
-            fixture.serve_programs();
             Some(NiriProcess::in_session(&fixture, &backend).await)
         } else {
             None
@@ -394,6 +433,8 @@ impl World {
             std::fs::remove_file(runtime.join(flag)).ok();
         }
         self.noctalia.set(UNLOCKED);
+        self.noctalia
+            .open_panel((tool == Tool::ShellClose).then_some(PANEL));
         std::fs::remove_file(self.fixture.path("locked")).ok();
         self.taken = None;
         self.closed.lock().unwrap().clear();
@@ -404,7 +445,6 @@ impl World {
             .send(&json!({"WindowsChanged": {"windows": windows()}}));
         self.until_desktop(initial).await;
         self.acquire().await;
-        std::fs::remove_file(self.fixture.path("wtype.calls")).ok();
         let element = if tool.kind() == Kind::Element {
             Some(self.element(tool.element().0).await)
         } else {
@@ -556,33 +596,14 @@ impl World {
         let result = self.server.call(tool.name(), arguments).await;
         let trace = self.points.trace();
         assert_eq!(result["isError"], false, "{}: {result}", tool.name());
+        let strokes = if tool == Tool::TypeText { 3 } else { 1 };
         assert_eq!(
-            self.acts(tool, &trace).len(),
-            1,
+            acts(tool, &trace).len(),
+            strokes,
             "{}: {trace:?}",
             tool.name()
         );
         trace
-    }
-
-    /// When each call that acts reached the fakes: from `trace`, or `wtype`'s calls.
-    fn acts(&self, tool: Tool, trace: &[Passed]) -> Vec<Instant> {
-        if tool.kind() != Kind::Keyboard {
-            return trace
-                .iter()
-                .filter(|passed| tool.acts(&passed.point))
-                .map(|passed| passed.at)
-                .collect();
-        }
-        let calls = self.fixture.path("wtype.calls");
-        let Ok(text) = std::fs::read_to_string(&calls) else {
-            return Vec::new();
-        };
-        let written = std::fs::metadata(&calls).unwrap().modified().unwrap();
-        let ago = SystemTime::now()
-            .duration_since(written)
-            .unwrap_or_default();
-        vec![Instant::now().checked_sub(ago).unwrap(); text.lines().count()]
     }
 
     /// Runs `case`, or says why its point wasn't reached.
@@ -618,7 +639,7 @@ impl World {
         let trace = self.points.trace();
         Ok(Ran {
             result: response["result"].clone(),
-            acts: self.acts(case.tool, &trace),
+            acts: acts(case.tool, &trace),
             indexes: self.mock.done()[done_before..].to_vec(),
             changed,
             after: trace
@@ -628,6 +649,15 @@ impl World {
                 .collect(),
         })
     }
+}
+
+/// When each call that acts in `trace` reached the fakes.
+fn acts(tool: Tool, trace: &[Passed]) -> Vec<Instant> {
+    trace
+        .iter()
+        .filter(|passed| tool.acts(&passed.point))
+        .map(|passed| passed.at)
+        .collect()
 }
 
 /// Whether niri's view is the world's own again.
@@ -663,8 +693,16 @@ fn verdict(result: &Value) -> Result<&Value, String> {
 
 /// Checks the contract on what `case` came to, and says how it broke it.
 fn judge(case: &Case<'_>, ran: &Ran) -> Result<(), String> {
-    if ran.acts.len() > 1 {
-        return Err(format!("acted {} times", ran.acts.len()));
+    if ran.acts.len() > case.acts {
+        return Err(format!("acted {} times, not {}", ran.acts.len(), case.acts));
+    }
+    let late = ran
+        .acts
+        .iter()
+        .map(|acted| acted.saturating_duration_since(ran.changed))
+        .find(|age| *age >= LAST_GATE);
+    if let Some(age) = late {
+        return Err(format!("acted {} ms after the change", age.as_millis()));
     }
     if ran.indexes.iter().any(|&index| index != 0) {
         return Err(format!(
@@ -679,38 +717,55 @@ fn judge(case: &Case<'_>, ran: &Ran) -> Result<(), String> {
     }
 }
 
-/// The change came before the call that acts: refused with the fact's error and nothing
-/// acted, or it acted within `LAST_GATE` of the change.
+/// The change came before the first call that acts: refused with the fact's error and
+/// nothing acted, or it acted within `LAST_GATE` of the change, which `judge` checked.
 fn before_send(case: &Case<'_>, ran: &Ran) -> Result<(), String> {
-    let refusals = case.fact.refusals(case.tool).unwrap_or_default();
-    match (verdict(&ran.result), ran.acts.first()) {
-        (Err(name), None) => {
+    match (verdict(&ran.result), ran.acts.is_empty()) {
+        (Err(name), true) => {
             let busy = case.tool.kind() == Kind::Element && name == "element_busy";
-            if busy || refusals.contains(&name.as_str()) {
+            if busy {
                 return Ok(());
             }
-            Err(format!("refused with {name}, not {refusals:?}"))
+            refused_with_the_facts_error(case, &name)
         }
-        (Err(name), Some(_)) => Err(format!("refused with {name} after the call acted")),
-        (Ok(_), Some(&acted)) => {
-            let age = acted.saturating_duration_since(ran.changed);
-            if age < LAST_GATE {
-                return Ok(());
-            }
-            Err(format!("acted {} ms after the change", age.as_millis()))
-        }
-        (Ok(result), None) => Err(format!("neither refused nor acted: {result}")),
+        (Err(name), false) => refused_partway(case, ran, &name),
+        (Ok(_), false) => Ok(()),
+        (Ok(result), true) => Err(format!("neither refused nor acted: {result}")),
     }
+}
+
+fn refused_with_the_facts_error(case: &Case<'_>, name: &str) -> Result<(), String> {
+    let refusals = case.fact.refusals(case.tool).unwrap_or_default();
+    if refusals.contains(&name) {
+        return Ok(());
+    }
+    Err(format!("refused with {name}, not {refusals:?}"))
+}
+
+/// A call that acts went out, and a later one was refused: with the fact's error, saying
+/// what went out before it, and never for a stop or a lost lease, which leave the call
+/// `uncertain`.
+fn refused_partway(case: &Case<'_>, ran: &Ran, name: &str) -> Result<(), String> {
+    let detail = ran.result["structuredContent"]["detail"]
+        .as_str()
+        .unwrap_or_default();
+    if case.fact.cut().is_some() || !detail.contains("before this") {
+        return Err(format!("refused with {name} after a call acted: {detail}"));
+    }
+    refused_with_the_facts_error(case, name)
 }
 
 /// The change came once the call that acts went out: no error. A stop or a lost lease
 /// leaves it `uncertain`, accepted only once its reply came, with nothing more asked; any
 /// other change leaves no focus from before the change reported as the focus afterwards.
 fn after_send(case: &Case<'_>, ran: &Ran) -> Result<(), String> {
-    if ran.acts.len() != 1 {
+    if ran.acts.is_empty() {
         return Err("the call that acts didn't go out".to_owned());
     }
-    let result = verdict(&ran.result).map_err(|name| format!("refused with {name}"))?;
+    let result = match verdict(&ran.result) {
+        Ok(result) => result,
+        Err(name) => return refused_partway(case, ran, &name),
+    };
     let outcome = &result["structuredContent"];
     if case.fact == Fact::FocusMoved && outcome["focused_window"] == WINDOW {
         return Err(format!("reported focus from before the change: {outcome}"));
@@ -754,10 +809,12 @@ async fn explore_fact(tool: Tool, fact: Fact, shard: usize) -> (usize, Vec<Strin
     let _turn = WORLDS.acquire().await.unwrap();
     let mut world = World::start(&tag, fact).await;
     let trace = world.baseline(tool).await;
-    let sends = trace
-        .iter()
-        .position(|passed| tool.acts(&passed.point))
-        .unwrap_or(trace.len());
+    let acting: Vec<usize> = (0..trace.len())
+        .filter(|&index| tool.acts(&trace[index].point))
+        .collect();
+    let (Some(&sends), Some(&last)) = (acting.first(), acting.last()) else {
+        panic!("{}: nothing acted in {trace:?}", tool.name());
+    };
     let mut broken = Vec::new();
     let mut runs = 0;
     for (index, at) in trace.iter().enumerate().skip(shard).step_by(SHARDS) {
@@ -767,10 +824,12 @@ async fn explore_fact(tool: Tool, fact: Fact, shard: usize) -> (usize, Vec<Strin
                 fact,
                 at,
                 sends,
+                last,
+                acts: acting.len(),
                 index,
                 hold,
             };
-            if hold == Hold::Long && !case.before_send() {
+            if hold == Hold::Long && !case.acts_later() {
                 continue;
             }
             runs += 1;
@@ -791,7 +850,7 @@ async fn explore_fact(tool: Tool, fact: Fact, shard: usize) -> (usize, Vec<Strin
     (runs, broken)
 }
 
-const TOOLS: [Tool; 8] = [
+const TOOLS: [Tool; 11] = [
     Tool::Activate,
     Tool::SetText,
     Tool::FocusWindow,
@@ -800,18 +859,28 @@ const TOOLS: [Tool; 8] = [
     Tool::Launch,
     Tool::Key,
     Tool::TypeText,
+    Tool::ShellOpen,
+    Tool::ShellClose,
+    Tool::Noctalia,
 ];
 
 /// The tools `make check` explores, one of each kind. They catch every bug the explorer
-/// found; `NCU_STALL=full` explores all of `TOOLS`, as `make stall` does.
-const SAMPLE: [Tool; 3] = [Tool::Activate, Tool::FocusWindow, Tool::Key];
+/// found but one between `type_text`'s strokes; `NCU_STALL=full` explores all of `TOOLS`,
+/// as `make stall` does.
+const SAMPLE: [Tool; 4] = [
+    Tool::Activate,
+    Tool::FocusWindow,
+    Tool::Key,
+    Tool::ShellOpen,
+];
+
+/// Whether `NCU_STALL=full` asks for the full matrix.
+fn full() -> bool {
+    std::env::var_os("NCU_STALL").is_some_and(|scope| scope == "full")
+}
 
 fn tools() -> &'static [Tool] {
-    if std::env::var_os("NCU_STALL").is_some_and(|scope| scope == "full") {
-        &TOOLS
-    } else {
-        &SAMPLE
-    }
+    if full() { &TOOLS } else { &SAMPLE }
 }
 
 /// Explores every tool that depends on `fact`, each shard on a thread and a desktop of its

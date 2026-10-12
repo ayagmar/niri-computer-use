@@ -758,7 +758,18 @@ async fn a_stop_ends_the_owners_queued_actions_and_frees_the_lease_within_a_seco
     tokio::time::sleep(Duration::from_millis(200)).await;
     let stopped = Instant::now();
     assert!(run(&desk.fixture, "stop").await.status.success());
-    for id in calls {
+    // The running key went out to wtype, so it may have been typed.
+    let running = desk.server.response(calls[0]).await;
+    let cut = &running["result"]["structuredContent"];
+    assert_eq!(cut["observed"], "uncertain", "{running}");
+    assert_eq!(cut["accepted"], Value::Null, "{running}");
+    assert!(
+        cut["detail"]
+            .as_str()
+            .unwrap()
+            .contains("the user's stop flag")
+    );
+    for &id in &calls[1..] {
         let (name, detail) = tool_error(&desk.server.response(id).await["result"]);
         assert_eq!(name, "stopped", "{detail}");
     }

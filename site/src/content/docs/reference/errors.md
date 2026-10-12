@@ -15,7 +15,7 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 ### `stopped`
 
-**Cause:** the stop flag is set for this niri instance, by the stop key or `niri-computer-use stop`. A stop during an action cancels it with this error. A niri action whose request had already gone out, or an `activate_element` or `set_element_text` whose call to the app had, isn't an error: it ends `uncertain`, with the stop in `detail` and `accepted: true` if niri or the app had answered, `null` if not. For input and Noctalia actions, anything already sent may have taken effect. A runtime directory that can't be read also counts as stopped.
+**Cause:** the stop flag is set for this niri instance, by the stop key or `niri-computer-use stop`. A stop during an action cancels it with this error. A niri action whose request had already gone out, a Noctalia command, an `activate_element` or `set_element_text` whose call to the app had, or `key` or `type_text` once a stroke had, isn't an error: it ends `uncertain`, with the stop in `detail` and `accepted: true` if niri, Noctalia or the app had answered or a stroke had been typed, `null` if not. For the pointer tools and `paste`, anything already sent may have taken effect. A runtime directory that can't be read also counts as stopped.
 
 **What to do:** when you want agents to act again, run `niri-computer-use resume`. If `status` shows `input_dirty`, run `niri-computer-use recover` first.
 

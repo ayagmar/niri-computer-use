@@ -1,7 +1,9 @@
 //! `shell_open` and `shell_close`: change which Noctalia panel is open, then poll
 //! Noctalia's `status` until `activePanelId` shows the change (plan §6.1). Noctalia sends
 //! no events, so polling is the only way to observe it. Nothing is retried. Also the
-//! `noctalia` tool, which sends any command and reports Noctalia's reply.
+//! `noctalia` tool, which sends any command and reports Noctalia's reply. The desk hears
+//! when a command goes out and when Noctalia replied, as for a niri action, so a stop or a
+//! moved lease after that reports it as `uncertain` rather than refused.
 
 use std::time::Duration;
 
@@ -70,8 +72,8 @@ async fn change(
         return Ok(outcome(Some(false), observed, Some(shell), niri).await);
     }
     super::fresh_lock(niri).await?;
-    match noctalia::change_panel(env, command, || niri.desk.fresh()).await {
-        Ok(()) => {}
+    match noctalia::change_panel(env, command, || niri.desk.sending()).await {
+        Ok(()) => answered(niri),
         Err(Unanswered::Refused(error)) => return Err(error.into()),
         Err(Unanswered::Lost(error)) => {
             let mut lost = outcome(None, Observed::Uncertain, None, niri).await;
@@ -92,8 +94,9 @@ pub(crate) async fn message(
     args: &[String],
 ) -> Result<Outcome, CallError> {
     super::fresh_lock(niri).await?;
-    match noctalia::message(env, args, || niri.desk.fresh()).await {
+    match noctalia::message(env, args, || niri.desk.sending()).await {
         Ok(reply) => {
+            answered(niri);
             let mut sent = outcome(Some(true), Observed::Sent, None, niri).await;
             sent.noctalia = Some(reply);
             Ok(sent)
@@ -105,6 +108,12 @@ pub(crate) async fn message(
             Ok(lost)
         }
     }
+}
+
+/// Tells the desk Noctalia replied to the command, which it carries out before it replies.
+fn answered(niri: Niri<'_>) {
+    niri.desk
+        .answered(Outcome::uncertain(Some(true), None, String::new()));
 }
 
 async fn active_panel(env: &Env) -> Result<Option<String>, ToolError> {

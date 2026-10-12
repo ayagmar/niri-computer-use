@@ -26,6 +26,7 @@ use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::runtime::{INPUT_DIRTY, RuntimeDir};
+use crate::error::{ErrorName, ToolError};
 
 /// Taken around every change to the marker.
 const LOCK: &str = "input-dirty.lock";
@@ -142,6 +143,17 @@ pub(crate) fn now() -> String {
 pub(crate) struct Written {
     dir: PathBuf,
     marker: Marker,
+}
+
+/// A failed `Written::write`: `recovery_required` when another input's marker is set, as
+/// the desk refuses an action then, or else `upstream_error`.
+pub(crate) fn unwritten(error: &std::io::Error) -> ToolError {
+    let name = if error.kind() == std::io::ErrorKind::AlreadyExists {
+        ErrorName::RecoveryRequired
+    } else {
+        ErrorName::UpstreamError
+    };
+    ToolError::new(name, format!("write the input-dirty marker: {error}"))
 }
 
 impl Written {

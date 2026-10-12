@@ -55,6 +55,11 @@ impl Reply {
         self.0.lock().unwrap().status = reply;
     }
 
+    /// Makes `panel` the open panel, or none.
+    pub(crate) fn open_panel(&self, panel: Option<&str>) {
+        self.0.lock().unwrap().active_panel = panel.map(str::to_owned);
+    }
+
     /// With false, panel commands are answered `ok` and change nothing.
     pub(crate) fn panels_follow(&self, follow: bool) {
         self.0.lock().unwrap().panels_follow = follow;
@@ -120,6 +125,10 @@ pub(crate) fn start(fixture: &Fixture, reply: &'static str) -> Reply {
 async fn serve(mut connection: UnixStream, state: Reply, points: Points) {
     let mut request = Vec::new();
     connection.read_to_end(&mut request).await.unwrap();
+    // The server refused the command once connected, and sent nothing.
+    if request.is_empty() {
+        return;
+    }
     let command = request.strip_prefix(b"/\x1e").unwrap();
     let command = String::from_utf8(command.to_vec()).unwrap();
     let word = command.split(' ').next().unwrap_or_default();

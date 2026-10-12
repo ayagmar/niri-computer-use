@@ -25,7 +25,7 @@ use crate::a11y::model::Unmappable;
 use crate::a11y::{self, ElementRef};
 use crate::act::{self, Observed, Outcome};
 use crate::control::cleanup;
-use crate::control::marker::{Marker, Written};
+use crate::control::marker::{self, Marker, Written};
 use crate::control::runtime::RuntimeDir;
 use crate::coords::{ImagePx, LayoutPt, ProtocolPt};
 use crate::error::{CallError, ErrorName, ToolError};
@@ -355,12 +355,9 @@ impl Device {
             let mut marker = Marker::pending(pressing.tool, buttons);
             marker.output = Some(output.to_owned());
             marker.keyboard = held.as_ref().map(Held::marker);
-            let written = Written::write(runtime, marker).await.map_err(|error| {
-                ToolError::new(
-                    ErrorName::UpstreamError,
-                    format!("write the input-dirty marker: {error}"),
-                )
-            })?;
+            let written = Written::write(runtime, marker)
+                .await
+                .map_err(|error| marker::unwritten(&error))?;
             Some(written)
         } else {
             None

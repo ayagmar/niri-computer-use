@@ -42,7 +42,7 @@ Any other name, such as the session menu, which can power off, the launcher, whi
 | `opened` | `activePanelId` is the panel |
 | `closed` | (`shell_close`) it isn't any more |
 | `timeout` | neither happened within two seconds |
-| `uncertain` | Noctalia's reply, or a later status, was lost |
+| `uncertain` | Noctalia's reply, or a later status, was lost, or a stop or a lost lease cut the call short once the command went out |
 
 When the panel is already open, or already closed, nothing is sent and `accepted` is false. The result has `shell.active_panel`, the open panel when the observation ended.
 

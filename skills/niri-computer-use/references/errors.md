@@ -12,7 +12,7 @@ These are the user's decisions. Don't call the refused action again and don't tr
 
 | Error | Cause |
 |---|---|
-| `stopped` | The user pressed the stop key or ran `niri-computer-use stop`; it also cancels a running action. A niri or element action already sent ends `uncertain` instead, with the stop in `detail`: stop there too. Only the user's `niri-computer-use resume` clears it. |
+| `stopped` | The user pressed the stop key or ran `niri-computer-use stop`; it also cancels a running action. A niri, Noctalia or element action already sent, or typing already under way, ends `uncertain` instead, with the stop in `detail`: stop there too. Only the user's `niri-computer-use resume` clears it. |
 | `recovery_required` | Input may be stuck from an earlier crash. Only the user's `niri-computer-use recover` clears it, and it needs the lease: call `release_desktop` first. The exception: when the `detail` says input is still finishing, or another server's may still be finishing, wait a few seconds and try once more. |
 | `screen_locked` | The screen is locked, or no source can say it isn't. |
 | `session_mismatch` | The server's `WAYLAND_DISPLAY` and `NIRI_SOCKET` belong to two different compositors, so input, screenshots and clipboard reads are refused. The user has to fix the client's environment. |

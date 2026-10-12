@@ -218,7 +218,7 @@ fn stop_under_load(
     session.run(server, &["stop".into()])?;
     let result = a.result(session, id)?;
     let took = stopped.elapsed();
-    if field(&result, "/structuredContent/error") != "stopped" {
+    if !super::stop::cut_by_stop(&result) {
         return Err(Failure::new(format!(
             "E4: the stop landed after the typing; A's call: {result}"
         )));
