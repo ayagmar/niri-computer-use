@@ -75,7 +75,7 @@ pub(super) fn run(session: &mut Session<'_>, owner: &mut Client, server: &str) -
     Ok(())
 }
 
-fn focused_app(desktop: &Value) -> Option<String> {
+pub(super) fn focused_app(desktop: &Value) -> Option<String> {
     let focused = field(desktop, "/focused_window").as_u64()?;
     field(desktop, "/windows")
         .as_array()?
