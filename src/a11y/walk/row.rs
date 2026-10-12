@@ -5,7 +5,8 @@
 //! row or tree item. A named row binds the record, since the lineage compares its name;
 //! an unnamed one binds nothing. Without a row, an element whose role and name other
 //! elements read share may be one of a list's rows put on the bus without containers, so
-//! nothing binds it either. Nothing here guesses a row from the tree's shape.
+//! nothing binds it either. Nothing here guesses a row from the tree's shape. A ref left
+//! unbound here can still be bound through a label the app names (`elements::labelled`).
 
 use super::Walked;
 use crate::a11y::model::{Row, Unbound};

@@ -977,10 +977,10 @@ async fn a_listing_stopped_before_the_rows_record_still_binds_or_refuses_by_the_
     assert_eq!(refused["unbound"], "unnamed_row", "{refused}");
 }
 
-// The documented limit: in rows with no row role, a control whose look-alike elements
-// the walk never read can't be told from a control of its own, so its ref keeps only
-// the lineage check, and a row reused in place isn't caught. The docs and the skill say
-// to aim the pointer tools at a list record's pixels instead.
+// The documented limit: in rows with no row role, a control with no label of its own
+// whose look-alike elements the walk never read can't be told from a control of its own,
+// so its ref keeps only the lineage check, and a row reused in place isn't caught. The
+// docs and the skill say to aim the pointer tools at a list record's pixels instead.
 #[tokio::test]
 async fn a_control_outside_rows_whose_look_alike_elements_went_unread_keeps_its_ref() {
     let mut desk = list_desk("el-row-cut-panels", long_rows(Rows::Panels)).await;
@@ -989,6 +989,154 @@ async fn a_control_outside_rows_whose_look_alike_elements_went_unread_keeps_its_
     reuse_first_row(&desk, Rows::Panels);
     let result = activate(&mut desk, delete["element_ref"].as_str().unwrap()).await;
     assert_eq!(result["structuredContent"]["accepted"], true, "{result}");
+}
+
+/// Record `n`'s row with its `Delete` labelled by the record's label, which labels the
+/// button alone, as a Qt Quick delegate's `Accessible.labelledBy` says on the bus.
+fn labelled_row(n: usize) -> Vec<(String, Object)> {
+    let mut objects = record_row(n);
+    objects[0].1.label_for = vec![format!("/delete{n}")];
+    objects[1].1.labelled_by = vec![format!("/label{n}")];
+    objects
+}
+
+// Rows the bus leaves unnamed or out, as Qt Quick does, whose `Delete` the app labels with
+// the record's label: the label binds each ref, even the list's only row, so a row reused
+// in place is stale for every tool, and another row's ref still acts.
+#[tokio::test]
+async fn a_control_labelled_by_its_records_label_alone_is_bound_through_it() {
+    let layouts = [
+        ("flat", Rows::Flat),
+        ("panels", Rows::Panels),
+        ("unnamed", Rows::Unnamed),
+    ];
+    for (name, rows) in layouts {
+        for count in [3, 1] {
+            let objects = list(rows, count, labelled_row, Vec::new());
+            let mut desk = list_desk(&format!("el-label-{name}-{count}"), objects).await;
+            reused_rows_are_stale(&mut desk, rows).await;
+        }
+    }
+}
+
+/// Reuses the first row of `desk`'s list in place, then checks that its `Delete` ref is
+/// stale for every tool and that the next row's, if any, still acts.
+async fn reused_rows_are_stale(desk: &mut Desk, rows: Rows) {
+    let deletes = bound(desk, "Delete").await;
+    let shot = desk.screenshot_ref().await;
+    reuse_first_row(desk, rows);
+    stale(desk, &ACTIVATE, &deletes[0]).await;
+    let aimed = json!({"screenshot_ref": shot, "element": deletes[0]});
+    let moved = desk.server.call("pointer_move", aimed).await;
+    assert_eq!(tool_error(&moved).0, "element_stale", "{moved}");
+    if let Some(other) = deletes.get(1) {
+        let result = activate(desk, other).await;
+        assert_eq!(result["structuredContent"]["accepted"], true, "{result}");
+        assert_eq!(desk.mock.calls("DoAction"), 1);
+    }
+}
+
+/// Record `n`'s row with its `Delete` labelled by its own text, a label inside it, as GTK 4
+/// labels a button by its child.
+fn own_text_row(n: usize) -> Vec<(String, Object)> {
+    let mut objects = record_row(n);
+    let text = format!("/text{n}");
+    objects[1].1.labelled_by = vec![text.clone()];
+    objects[1].1.children = vec![text.clone()];
+    let label = Object {
+        label_for: vec![format!("/delete{n}")],
+        ..Object::label("Delete")
+    };
+    objects.push((text, label));
+    objects
+}
+
+// A control's own text names no record: in unnamed rows it binds nothing, and a lone
+// control relabelling itself, as a counter does, keeps its ref for the pointer tools, which
+// leave an element's own name to the agent.
+#[tokio::test]
+async fn a_label_inside_the_control_is_its_own_text_and_binds_nothing() {
+    let unnamed = list(Rows::Unnamed, 2, own_text_row, Vec::new());
+    let mut rows = list_desk("el-label-own-rows", unnamed).await;
+    unbound(&mut rows, "Delete", "unnamed_row").await;
+    let alone = list(Rows::Flat, 1, own_text_row, Vec::new());
+    let mut desk = list_desk("el-label-own-alone", alone).await;
+    let delete = bound(&mut desk, "Delete").await;
+    let shot = desk.screenshot_ref().await;
+    for path in ["/delete1", "/text1"] {
+        desk.mock
+            .change(path, |object| object.name = "Deleting".to_owned());
+    }
+    let aimed = json!({"screenshot_ref": shot, "element": delete[0]});
+    let moved = desk.server.call("pointer_move", aimed).await;
+    // Past the element's checks: the mock's button can't be placed on the fake desktop.
+    assert_eq!(tool_error(&moved).0, "element_unmappable", "{moved}");
+}
+
+// A label that labels every row's control, as a column header would, stays the same when
+// a row is reused, so it binds none of them.
+#[tokio::test]
+async fn a_label_shared_by_several_controls_binds_none_of_them() {
+    let deletes: Vec<String> = (1..=3).map(|n| format!("/delete{n}")).collect();
+    let header = Object {
+        label_for: deletes.clone(),
+        ..Object::label("Actions")
+    };
+    let row = |n: usize| {
+        let mut objects = record_row(n);
+        objects[1].1.labelled_by = vec!["/header".to_owned()];
+        objects
+    };
+    let objects = list(Rows::Flat, 3, row, vec![("/header", header)]);
+    let mut desk = list_desk("el-label-shared", objects).await;
+    unbound(&mut desk, "Delete", "repeated").await;
+}
+
+// An action's change report hands out refs to the controls it showed, bound through their
+// labels as the listing's are: one beside a look-alike still acts, and is stale once its
+// row is reused.
+#[tokio::test]
+async fn a_change_reports_ref_to_a_labelled_control_is_bound_through_its_label() {
+    let more = Object {
+        toggles: vec!["/label2".to_owned(), "/delete2".to_owned()],
+        ..Object::button("More", &["click"])
+    };
+    let mut objects = list(Rows::Flat, 2, labelled_row, vec![("/more", more)]);
+    for (path, object) in &mut objects {
+        if ["/label2", "/delete2"].contains(path) {
+            object.states = 0;
+        }
+    }
+    let mut desk = list_desk("el-label-report", objects).await;
+    let toggle = bound(&mut desk, "More").await;
+    let shown = activate_watching(&mut desk, &toggle[0]).await;
+    let added = shown["changes"]["elements"]["added"].as_array().unwrap();
+    let delete = added
+        .iter()
+        .find(|element| element["name"] == "Delete")
+        .and_then(|element| element["element_ref"].as_str())
+        .unwrap_or_else(|| panic!("no Delete added: {shown}"));
+    let result = activate(&mut desk, delete).await;
+    assert_eq!(result["structuredContent"]["accepted"], true, "{result}");
+    desk.mock
+        .change("/label2", |object| object.name = record(23));
+    stale(&mut desk, &ACTIVATE, delete).await;
+}
+
+// The app pointing a labelled control at another label, or at none, after the listing
+// leaves its ref without the label that bound it.
+#[tokio::test]
+async fn a_control_whose_label_relation_changed_is_stale() {
+    let objects = list(Rows::Flat, 2, labelled_row, Vec::new());
+    let mut desk = list_desk("el-label-moved", objects).await;
+    let deletes = bound(&mut desk, "Delete").await;
+    desk.mock.change("/delete1", |object| {
+        object.labelled_by = vec!["/label2".to_owned()];
+    });
+    stale(&mut desk, &ACTIVATE, &deletes[0]).await;
+    desk.mock
+        .change("/delete2", |object| object.labelled_by.clear());
+    stale(&mut desk, &ACTIVATE, &deletes[1]).await;
 }
 
 // A control whose role and name tell it apart from everything beside it keeps its ref

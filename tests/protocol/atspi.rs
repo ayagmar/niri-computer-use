@@ -30,6 +30,9 @@ pub(crate) const PASSWORD_TEXT: u32 = 40;
 pub(crate) const BUTTON: u32 = 43;
 pub(crate) const TEXT: u32 = 61;
 const APPLICATION: u32 = 75;
+/// `ATSPI_RELATION_LABEL_FOR` and `ATSPI_RELATION_LABELLED_BY`.
+const LABEL_FOR: u32 = 1;
+const LABELLED_BY: u32 = 2;
 /// `ATSPI_COORD_TYPE_WINDOW`, the only coordinates the server asks for.
 const WINDOW_COORDS: u32 = 1;
 /// `enabled`, `sensitive`, `showing` and `visible`.
@@ -53,6 +56,9 @@ pub(crate) struct Object {
     pub(crate) counter: Option<u32>,
     /// The objects each `DoAction` shows when hidden and hides when shown.
     pub(crate) toggles: Vec<String>,
+    /// The paths of the objects that label it, and that it labels, in its application.
+    pub(crate) labelled_by: Vec<String>,
+    pub(crate) label_for: Vec<String>,
 }
 
 impl Object {
@@ -519,6 +525,29 @@ impl Accessible {
                 || reference("", "/org/a11y/atspi/null"),
                 |child| reference(app, child),
             )
+        })
+    }
+
+    /// `labelled_by` and `label_for` as relations of their own, when they have targets.
+    async fn get_relation_set(&self) -> answer::Result<Vec<(u32, Vec<(String, OwnedObjectPath)>)>> {
+        self.0.called("GetRelationSet").await?;
+        self.0.read(|object, app| {
+            [
+                (LABELLED_BY, &object.labelled_by),
+                (LABEL_FOR, &object.label_for),
+            ]
+            .into_iter()
+            .filter(|(_, targets)| !targets.is_empty())
+            .map(|(kind, targets)| {
+                (
+                    kind,
+                    targets
+                        .iter()
+                        .map(|target| reference(app, target))
+                        .collect(),
+                )
+            })
+            .collect()
         })
     }
 

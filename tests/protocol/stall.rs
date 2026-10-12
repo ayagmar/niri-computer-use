@@ -190,6 +190,9 @@ enum Fact {
     BecamePassword,
     /// The element is reused in place for another record.
     Renamed,
+    /// The label that binds `Safe` to its record is, as a list reusing the row's objects
+    /// renames it.
+    LabelRenamed,
     /// Its parent is.
     AncestorRenamed,
     /// It moves into the app's other window, which isn't focused.
@@ -228,7 +231,9 @@ impl Fact {
             Self::Renamed | Self::AncestorRenamed | Self::MovedAway | Self::Removed => {
                 element.then_some(&["element_stale"])
             }
-            Self::ActionsReordered => (tool == Tool::Activate).then_some(&["element_stale"]),
+            Self::ActionsReordered | Self::LabelRenamed => {
+                (tool == Tool::Activate).then_some(&["element_stale"])
+            }
         }
     }
 
@@ -246,6 +251,7 @@ impl Fact {
             | Self::DenyListed
             | Self::BecamePassword
             | Self::Renamed
+            | Self::LabelRenamed
             | Self::AncestorRenamed
             | Self::MovedAway
             | Self::ActionsReordered
@@ -385,7 +391,21 @@ impl World {
         fixture.program("wtype", "cat > /dev/null\npass wtype");
         fixture.grim(&jpeg(1280, 720, b"evidence"));
         let mut objects = objects();
+        // `Safe` is bound to its record through a label, so every call on it reads the
+        // label's relations and name too.
+        for (path, object) in &mut objects {
+            match *path {
+                "/button" => object.labelled_by = vec!["/caption".to_owned()],
+                "/panel" => object.children.push("/caption".to_owned()),
+                _ => {}
+            }
+        }
+        let caption = Object {
+            label_for: vec!["/button".to_owned()],
+            ..Object::label("Record 1")
+        };
         objects.extend([
+            ("/caption", caption),
             ("/frame2", Object::frame("Other", (640, 480), &["/panel2"])),
             ("/panel2", Object::panel(&[])),
         ]);
@@ -547,6 +567,9 @@ impl World {
             Fact::BecamePassword => self.change_object(path, |object| object.role = PASSWORD_TEXT),
             Fact::Renamed => self.change_object(path, |object| {
                 object.name = "Different record".to_owned();
+            }),
+            Fact::LabelRenamed => self.change_object("/caption", |object| {
+                object.name = "Another record".to_owned();
             }),
             Fact::AncestorRenamed => self.change_object("/panel", |object| {
                 object.name = "Another record".to_owned();
@@ -980,6 +1003,11 @@ fn the_element_becoming_a_password_field_while_a_reply_is_held() {
 #[test]
 fn the_element_reused_for_another_record_while_a_reply_is_held() {
     explore(Fact::Renamed);
+}
+
+#[test]
+fn the_elements_label_reused_while_a_reply_is_held() {
+    explore(Fact::LabelRenamed);
 }
 
 #[test]

@@ -24,7 +24,7 @@ use zbus::names::OwnedErrorName;
 use zbus::zvariant::{DynamicType, OwnedObjectPath, OwnedValue};
 
 use crate::error::{ErrorName, ToolError};
-use model::{Extents, Frame, Kept, NoFrame, Picked, Shape, States};
+use model::{Extents, Frame, Kept, Label, NameHash, NoFrame, Picked, Relations, Shape, States};
 pub(crate) use walk::{Capped, Child, Node, Walked, Want};
 
 /// Each call's deadline.
@@ -33,6 +33,9 @@ const CALL: Duration = Duration::from_secs(1);
 pub(crate) const BUDGET: Duration = Duration::from_secs(3);
 /// The most nodes one walk reads.
 pub(crate) const NODE_CAP: usize = 2000;
+/// The most objects of an element's own subtree read to tell a label of its own, such as
+/// the text of a GTK 4 button, from one beside it.
+const SUBTREE: usize = 64;
 const REGISTRY: &str = "org.a11y.atspi.Registry";
 const ROOT: &str = "/org/a11y/atspi/accessible/root";
 const ACCESSIBLE: &str = "org.a11y.atspi.Accessible";
@@ -513,6 +516,85 @@ impl Request {
         Ok(String::try_from(value).unwrap_or_default())
     }
 
+    /// The relation set of the object at `at`.
+    pub(crate) async fn relations(&self, at: (&str, &str)) -> Result<Relations, Failed> {
+        let set: Vec<(u32, Vec<(String, OwnedObjectPath)>)> =
+            self.call(at, (ACCESSIBLE, "GetRelationSet"), &()).await?;
+        Ok(Relations(
+            set.into_iter()
+                .map(|(kind, targets)| {
+                    let targets = targets
+                        .into_iter()
+                        .map(|(bus, path)| (bus, path.to_string()))
+                        .collect();
+                    (kind, targets)
+                })
+                .collect(),
+        ))
+    }
+
+    /// The label that binds the element at `element` to its record, read now: the one
+    /// object the element is labelled by, in its application, when that object labels the
+    /// element alone, sits outside the element and has a name. A label inside the element
+    /// is its own text, as GTK 4 labels a button by its child, which names no record.
+    /// `None` when the element or the label is gone or answers no relations.
+    pub(crate) async fn label(&self, element: (&str, &str)) -> Result<Option<Label>, ToolError> {
+        let Some(own) = optional(self.relations(element).await)? else {
+            return Ok(None);
+        };
+        let Some(path) = model::sole_label(element, &own) else {
+            return Ok(None);
+        };
+        let at = (element.0, path);
+        let Some(label) = optional(self.relations(at).await)? else {
+            return Ok(None);
+        };
+        if !model::labels_only(element, &label) || self.holds(element, path).await? != Some(false) {
+            return Ok(None);
+        }
+        let Some(name) = optional(self.name(at).await)? else {
+            return Ok(None);
+        };
+        Ok((!name.trim().is_empty()).then(|| Label {
+            path: path.to_owned(),
+            name: NameHash::of(&name),
+        }))
+    }
+
+    /// Whether the object at `path` is in the subtree under the element at `element`, in
+    /// its application, read down from the element. `None` once more than `SUBTREE`
+    /// objects were read without finding it.
+    async fn holds(&self, element: (&str, &str), path: &str) -> Result<Option<bool>, ToolError> {
+        let mut pending = vec![element.1.to_owned()];
+        let mut read = 0;
+        while let Some(parent) = pending.pop() {
+            let children: Option<Vec<(String, OwnedObjectPath)>> = optional(
+                self.call((element.0, &parent), (ACCESSIBLE, "GetChildren"), &())
+                    .await,
+            )?;
+            let children: Vec<String> = children
+                .into_iter()
+                .flatten()
+                .filter(|(bus, _)| bus == element.0)
+                .map(|(_, child)| child.to_string())
+                .collect();
+            if children.iter().any(|child| child == path) {
+                return Ok(Some(true));
+            }
+            read += children.len();
+            if read > SUBTREE {
+                return Ok(None);
+            }
+            pending.extend(children);
+        }
+        Ok(Some(false))
+    }
+
+    /// Whether the request's whole budget is used up, as opposed to one call's deadline.
+    pub(crate) fn spent(&self) -> bool {
+        Instant::now() >= self.deadline
+    }
+
     /// The child at `index` among all the children of the object at `parent` in
     /// application `bus`: its bus name and path.
     pub(crate) async fn child_at(
@@ -635,7 +717,7 @@ impl walk::Source for AppTree<'_> {
     }
 
     fn spent(&self) -> bool {
-        Instant::now() >= self.request.deadline
+        self.request.spent()
     }
 }
 

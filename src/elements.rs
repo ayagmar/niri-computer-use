@@ -197,8 +197,9 @@ fn others<'a>(window: &Window, windows: impl IntoIterator<Item = &'a Window>) ->
 }
 
 /// One walk of a window's tree: the window as niri placed it, its application's process,
-/// bus name and frame, and the objects under the frame.
+/// bus name and frame, the objects under the frame, and the request that read them.
 struct Read {
+    request: a11y::Request,
     placed: Placed,
     pid: i32,
     bus: String,
@@ -278,6 +279,7 @@ async fn read(
     };
     let walked = request.walk(&app.bus, &frame.node, want).await?;
     Ok(Some(Read {
+        request,
         placed,
         pid,
         bus: app.bus,
@@ -320,10 +322,11 @@ pub(crate) async fn list(
             origin: read.placed.origin,
         };
         let placed_box = model::place(placement);
-        let element = read.element(at, node);
+        let mut element = read.element(at, node);
+        labelled(&read.request, &mut element).await?;
         let unbound = match element.kept.row {
             Row::Unbound(why) => Some(why),
-            Row::Lineage | Row::Own => None,
+            Row::Lineage | Row::Own | Row::Labelled(_) => None,
         };
         elements.push(Listed {
             element_ref: remember(element),
@@ -346,6 +349,34 @@ pub(crate) async fn list(
     })
 }
 
+/// Binds `element` through its label when the bus says it has one label that labels it
+/// alone (`a11y::Request::label`), unless it is a named row itself. That binds a control
+/// in a row the bus leaves unnamed or out, and adds the label to the lineage's check of
+/// one bound otherwise, such as the one row of a list reused in place. Left as it was once
+/// the request's budget is spent, as the walk leaves nodes unread then.
+async fn labelled(request: &a11y::Request, element: &mut ElementRef) -> Result<(), ToolError> {
+    if element.kept.row == Row::Own || request.spent() {
+        return Ok(());
+    }
+    match request.label(element.at()).await {
+        Ok(Some(label)) => element.kept.row = Row::Labelled(label),
+        Ok(None) => {}
+        Err(error) if error.name == ErrorName::DeadlineExceeded && request.spent() => {}
+        Err(error) => return Err(error),
+    }
+    Ok(())
+}
+
+/// Which of an action's two surveys of a window's elements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Survey {
+    /// Before the action: compared with the one after, its refs never handed out.
+    Before,
+    /// After it: the change report hands out refs to what it added or changed, so they are
+    /// bound through their labels as `elements` binds them.
+    After,
+}
+
 /// Every element of window `window_id` that `elements` would list without filters, for
 /// an action's change report: `Unknown` when the walk fails, stops early, or the window is
 /// gone. Its failures leave the app's error messages out, as an element action's do.
@@ -354,6 +385,7 @@ pub(crate) async fn survey(
     a11y: &A11y,
     policy: &Loaded,
     window_id: u64,
+    when: Survey,
 ) -> Result<Vec<Seen>, Unknown> {
     let filter = Filter::default();
     let walk = Walk {
@@ -368,14 +400,21 @@ pub(crate) async fn survey(
     if let Some(capped) = read.walked.capped {
         return Err(Unknown::capped(window_id, capped));
     }
-    Ok(read
-        .listed(&filter)
-        .map(|(at, node)| Seen {
-            element: read.element(at, node),
+    let mut seen = Vec::new();
+    for (at, node) in read.listed(&filter) {
+        let mut element = read.element(at, node);
+        if when == Survey::After {
+            labelled(&read.request, &mut element)
+                .await
+                .map_err(|error| Unknown::failed(Some(window_id), error))?;
+        }
+        seen.push(Seen {
+            element,
             name: node.name.clone(),
             states: node.states,
-        })
-        .collect())
+        });
+    }
+    Ok(seen)
 }
 
 /// Whether `elements` lists `node`: showing, matching the filter, and unless a role was
@@ -450,8 +489,9 @@ pub(crate) enum Names {
 /// with the app's other windows among niri's `windows`, is the ref's; each object from that frame down to the element is still at the index
 /// it had among its parent's children, as the parent says; and each has the name it was
 /// listed with, the element's own as `names` says. A list that reuses a row for another
-/// record keeps its place and path but not its name. Otherwise `element_stale`. Its role
-/// is checked by the caller.
+/// record keeps its place and path but not its name. A ref bound through its label also
+/// needs the element labelled by that label alone, which has the name it was listed with.
+/// Otherwise `element_stale`. Its role is checked by the caller.
 pub(crate) async fn identify<'a>(
     request: &a11y::Request,
     element: &ElementRef,
@@ -459,10 +499,13 @@ pub(crate) async fn identify<'a>(
     windows: impl IntoIterator<Item = &'a Window>,
     names: Names,
 ) -> Result<(), ToolError> {
-    let names = match element.kept.row {
-        Row::Lineage => names,
-        Row::Own => Names::All,
-        Row::Unbound(why) => return Err(ToolError::new(ErrorName::ElementUnbound, unbound(why))),
+    let (names, label) = match &element.kept.row {
+        Row::Lineage => (names, None),
+        Row::Own => (Names::All, None),
+        Row::Labelled(label) => (names, Some(label)),
+        Row::Unbound(why) => {
+            return Err(ToolError::new(ErrorName::ElementUnbound, unbound(*why)));
+        }
     };
     let app = request.app(element.kept.pid).await.map_err(|error| {
         if error.name == ErrorName::NotAccessible {
@@ -495,7 +538,12 @@ pub(crate) async fn identify<'a>(
         }
         parent = &link.path;
     }
-    Ok(())
+    match label {
+        Some(label) if request.label(element.at()).await?.as_ref() != Some(label) => Err(stale(
+            "the element's label changed since `elements` listed it, as when a list reuses a row for another record",
+        )),
+        Some(_) | None => Ok(()),
+    }
 }
 
 /// Why nothing binds a ref to the record its element acts on. Listing again gives the
