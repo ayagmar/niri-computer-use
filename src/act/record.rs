@@ -22,8 +22,8 @@ use crate::niri::{self, Events};
 pub(crate) const QUIET: Duration = Duration::from_millis(250);
 /// At most this long after the action's own wait and its evidence, however busy niri is.
 const EXTRA: Duration = Duration::from_millis(500);
-/// After an action whose own wait saw niri's event, the rest of niri's batch has come once
-/// niri sent no event of any kind for this long.
+/// When a report skips the quiet wait, the rest of niri's batch has come once niri sent no
+/// event of any kind for this long.
 const GAP: Duration = Duration::from_millis(10);
 /// At most this long for the rest of niri's batch.
 const BATCH: Duration = Duration::from_millis(50);
@@ -48,10 +48,9 @@ pub(crate) struct Recorder {
 pub(crate) enum Wait {
     /// Until niri has been quiet for `QUIET`: nothing else waited for the screen.
     Quiet,
-    /// Until the rest of the batch the action's own wait saw niri's event in: no event for
-    /// `GAP`, at most `BATCH`. niri writes a refresh's events one at a time, and some come
-    /// after the one a wait looks for, such as the urgency it clears on a window that took
-    /// focus.
+    /// Until the rest of niri's batch: no event for `GAP`, at most `BATCH`. niri writes a
+    /// refresh's events one at a time, and some come after the one a wait looks for, such
+    /// as the urgency it clears on a window that took focus.
     Batch,
     /// Only for what niri already sent, after a settled screenshot waited for the screen.
     Received,
@@ -62,8 +61,9 @@ pub(crate) enum Wait {
 pub(crate) enum Quiet {
     /// Always: input's effect is the app's to show, a moment after niri handled it.
     Always,
-    /// Unless the action's own wait saw niri's event for it, as `focused`, `changed`,
-    /// `unchanged` or `closed`: `focus`, and `niri_action`, whose actions are niri's own.
+    /// Unless the action's own wait ended with `focused`, `changed` or `closed`, or after
+    /// `unchanged`'s full second without a change: `focus`, and `niri_action`, whose
+    /// actions are niri's own.
     UnlessSeen,
     /// Never: `niri_action`'s `Spawn` and `SpawnSh`, whose window comes later than this
     /// wait would cover; `wait_for` is for that.

@@ -20,8 +20,8 @@ const OBSERVE: Duration = Duration::from_secs(1);
 /// steps: niri's layout first, then the app's new size.
 const SETTLE: Duration = Duration::from_millis(200);
 
-/// Whether `action`'s change report waits for quiet: not once its own wait saw niri's
-/// event, and never for `Spawn` and `SpawnSh`, whose window comes later than that wait
+/// Whether `action`'s change report waits for quiet: not once its own wait ended with
+/// `changed` or `closed`, or after `unchanged`'s full second, and never for `Spawn` and `SpawnSh`, whose window comes later than that wait
 /// would cover. An action that isn't one is refused before the report.
 pub(crate) const fn quiet(action: Option<&Action>) -> Quiet {
     match action {
