@@ -139,9 +139,11 @@ impl Recorder {
     }
 
     /// Applies events until `QUIET` passed since the last one that changed what the report
-    /// shows, or `EXTRA` from now.
+    /// shows, or `EXTRA` from now. Those already received come first, so one that arrived
+    /// as the work ended, after `QUIET` had passed, still restarts it.
     async fn quiet(&mut self) {
         let limit = Instant::now() + EXTRA;
+        self.drain().await;
         while self.lost.is_none() {
             let left = (self.last + QUIET)
                 .min(limit)
@@ -361,6 +363,31 @@ mod tests {
             })
         );
         drop(clears.await.unwrap());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_dialog_that_came_as_a_long_wait_ended_restarts_the_quiet() {
+        let (recorder, mut outcome, sender) = watching(vec![app()]);
+        // Ready as the action's own 300 ms wait ended, and not applied yet.
+        tokio::time::advance(Duration::from_millis(300)).await;
+        let dialog = window(5, Some("app"), 1, true);
+        event(&sender, 1, Event::WindowOpenedOrChanged { window: dialog });
+        let titles = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let mut titled = window(5, Some("app"), 1, true);
+            titled.title = Some("Save changes?".to_owned());
+            event(&sender, 2, Event::WindowOpenedOrChanged { window: titled });
+            sender
+        });
+        let started = Instant::now();
+        let changes = recorder.finish(Wait::Quiet, &mut outcome).await;
+        assert_eq!(started.elapsed(), Duration::from_millis(100) + QUIET);
+        let opened = changes
+            .opened
+            .first()
+            .and_then(|window| window.title.clone());
+        assert_eq!(opened.as_deref(), Some("Save changes?"));
+        drop(titles.await.unwrap());
     }
 
     #[tokio::test(start_paused = true)]
