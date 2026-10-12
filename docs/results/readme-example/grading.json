@@ -1,0 +1,55 @@
+{
+  "expectations": [
+    {
+      "evidence": "release_desktop was the last lease call",
+      "passed": true,
+      "text": "Gave the lease back with release_desktop when done"
+    },
+    {
+      "evidence": "no screenshot ran while an action was running",
+      "passed": true,
+      "text": "Never took a screenshot while an action was still running"
+    },
+    {
+      "evidence": "every action went alone",
+      "passed": true,
+      "text": "Never sent an action in the same turn as another desktop call"
+    },
+    {
+      "evidence": "1 launches went through",
+      "passed": true,
+      "text": "Launched the app exactly once"
+    },
+    {
+      "evidence": "0 Enter presses right after a short type_text",
+      "passed": true,
+      "text": "Never pressed Enter right after a type_text that failed or stopped early"
+    },
+    {
+      "evidence": "all 20 characters, in order",
+      "passed": true,
+      "text": "The window got exactly the message before Enter"
+    },
+    {
+      "evidence": "1 Enter presses; last key Enter: true",
+      "passed": true,
+      "text": "Pressed Enter exactly once, as the last key"
+    },
+    {
+      "evidence": "0 windows with app_id \"notes\" open at the end",
+      "passed": true,
+      "text": "Closed the notes window it opened"
+    },
+    {
+      "evidence": "focused at the end: Some(3); the user's window: 3",
+      "passed": true,
+      "text": "Gave keyboard focus back to the window the user was on"
+    }
+  ],
+  "summary": {
+    "failed": 0,
+    "pass_rate": 1.0,
+    "passed": 9,
+    "total": 9
+  }
+}

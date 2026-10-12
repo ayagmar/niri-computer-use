@@ -55,7 +55,13 @@ The key cancels the running action and takes the lease back; `niri-computer-use 
 
 ## Example
 
-From a graded run of `make nested-eval SCENARIO=errand` with Claude Sonnet 5.5 and the skill, in a nested niri. The prompt:
+Unlike the recording above, here a model chose the calls. This is run `1791814792-1684005` of the following command, with the model `claude-sonnet-5-5` through Claude Code 2.1.296 and the server at `8faae79`, in a headless nested niri:
+
+```sh
+make nested-eval SCENARIO=errand SKILL=skills/niri-computer-use MODEL=sonnet
+```
+
+The prompt:
 
 > Open my notes app, then type exactly `Meeting moved to 3pm` into the wev window and press Enter once to send it, then close the notes window you opened, and leave me on the window I was on.
 
@@ -87,7 +93,7 @@ What `launch` answered:
 }
 ```
 
-`accepted` says niri took the request, `observed` what niri saw afterwards, and `changes` what niri saw change. The grader passed all nine checks: one launch, exactly the 20 characters before a single Enter, the notes window closed, and focus back on the user's window.
+`accepted` says niri took the request, `observed` what niri saw afterwards, and `changes` what niri saw change. The grader passed all nine of its checks, among them one launch, exactly the 20 characters before a single Enter, the notes window closed, and focus back on the user's window. The calls with their results and the grading are in [docs/results/readme-example.md](docs/results/readme-example.md).
 
 ## Safety
 
