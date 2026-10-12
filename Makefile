@@ -1,4 +1,4 @@
-.PHONY: check stall lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-eval sitting host-capture
+.PHONY: check stall perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-eval sitting host-capture
 
 SCALE ?= 1
 NESTED_FLAGS = $(if $(VISIBLE),--visible) $(if $(SHARED),--shared)
@@ -18,6 +18,10 @@ check:
 stall:
 	NCU_STALL=full cargo test --test protocol --locked stall::
 	NCU_STALL=full NCU_PROTOCOL_MODE=shared cargo test --test protocol --locked stall::
+
+# Unit tests that also check how long their calls take, which a loaded machine can miss.
+perf:
+	NCU_PERF=1 cargo test --bins --locked
 
 lint:
 	cargo fmt --check

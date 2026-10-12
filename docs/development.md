@@ -6,6 +6,7 @@ The repository pins Rust 1.99.0 with rustfmt and Clippy. Cargo builds both the m
 
 - `make lint` runs rustfmt and Clippy. The pre-commit hook runs this target.
 - `make check` runs formatting, Clippy, rustdoc, tests, cargo-deny, cargo-machete, typos, and ShellCheck.
+- `make perf` runs the unit tests with `NCU_PERF=1`, which also checks how long a zero-length event wait takes. `make check` leaves that bound out, because a loaded machine can miss it without a bug.
 - `make coverage` invokes cargo-llvm-cov. Install that optional tool before using the target.
 
 Run `make check` before each commit. Enable the tracked hook with:

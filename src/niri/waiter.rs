@@ -319,7 +319,9 @@ pub(crate) mod tests {
     }
 
     /// Native typing checks focus before every key pair; a timer tick per check cost about
-    /// a millisecond each, most of a 100-key call.
+    /// a millisecond each, most of a 100-key call. How long the calls take is checked only
+    /// with `NCU_PERF=1`: a loaded machine can take 20 ms without any tick, and the paused
+    /// clock fires a timer that is already due without moving, so it can't tell either.
     #[tokio::test]
     async fn a_zero_wait_answers_without_a_timer_tick() {
         let (mut waiter, sender) = waiter(view(vec![window(1, None, 1, true)]), 0);
@@ -336,11 +338,10 @@ pub(crate) mod tests {
             );
             assert_eq!(waiter.view().focused_window(), None);
         }
-        assert!(
-            started.elapsed() < Duration::from_millis(20),
-            "{:?}",
-            started.elapsed()
-        );
+        if std::env::var_os("NCU_PERF").is_some_and(|perf| perf == "1") {
+            let took = started.elapsed();
+            assert!(took < Duration::from_millis(20), "{took:?}");
+        }
     }
 
     /// The stream's task must get a turn first: an event it has already read but not yet

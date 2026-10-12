@@ -428,6 +428,10 @@ mod tests {
     use super::*;
     use crate::act::Observed;
 
+    // The two tests below are the regression tests for `READY` and `DONE`, the budgets a
+    // slow niri gets. Their 5.5 s sleeps are the point: they are longer than the old fixed
+    // five-second wait and inside the budget. The keeper is a real process sleeping in real
+    // time, so the paused clock can't stand in for them; don't shorten the sleeps.
     #[tokio::test]
     async fn a_keeper_that_takes_the_selection_slowly_is_still_waited_for() {
         // Five and a half seconds: past the old fixed wait, inside `keeper::TAKE`.
@@ -438,7 +442,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_keeper_whose_restore_is_slow_still_reports_what_it_did() {
-        // After `p`: no read for two seconds, then two slow round trips to niri.
+        // After `p`: no read for two seconds, then two slow round trips to niri, inside
+        // `DONE`.
         let (aftercare, done) = fake_aftercare(
             r#"dd bs=1 count=1 status=none >/dev/null; sleep 5.5; echo '{"report":"done","read":false,"clipboard":"cleared"}'; exec cat >/dev/null"#,
         )
