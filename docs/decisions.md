@@ -974,3 +974,13 @@ These match the versions installed locally.
 
 - An engine looks for `noctalia` on its `PATH` once, at startup, and every session it serves gets the result: `status.noctalia`, `desktop_state.shell` and whether `shell_panel` and `noctalia` are listed. Noctalia is part of the desktop session, not of one client, so it is decided where the other programs the engine runs are, on the engine's `PATH` (see "one shared engine per niri instance" above). A client whose own `PATH` lacks `noctalia` still gets the shell tools from an engine that found it, and the other way round.
 - `make nested-shell SHARED=1` failed on this: its last check starts a server with no `noctalia` on `PATH` right after the previous client stopped, and that server joined the engine still in its idle grace, which had found Noctalia. The check now waits for that engine to exit, so its server starts an engine with the narrow `PATH`. In a standalone run there is no engine to wait for.
+
+## 2026-10-12: shared mode by default
+
+- `shared` defaults to `true`. `shared = false` in the policy file, or `NIRI_COMPUTER_USE_SHARED=0` for one client, serves each client from a process of its own. Any other non-empty value of the variable serves the client standalone and puts the reason in `status.engine.fallback`, so a typo shows where the agent looks instead of only on stderr.
+- Shared mode was opt-in for reasons that no longer hold:
+  - A crash reaches every client. It is contained: calls in flight fail with `engine_lost`, the guardian releases held input, a call's ref tags keep stale screenshot refs out of the new engine, and the input-dirty marker blocks actions until recovery. The protocol suite and `make nested-engine` cover it.
+  - Stopping the starting client's systemd scope ended the engine. The engine now gets a scope of its own whenever `systemd-run` reaches the user's manager; otherwise this is the crash path above.
+  - After a reinstall, new clients run standalone until the old engine exits. `status.engine.replaced` and the fallback's PID now show it.
+  - With one client, shared mode costs a third process and about 0.6 MiB more PSS; from two clients on it uses less, and the relay adds no head-of-line blocking (`docs/results/engine.md`).
+- Residual risk: the engine runs programs from the `PATH` of the client that started it, so a client with a narrow `PATH` narrows it for every client until the engine exits. `status.binaries` shows what the engine found. Real clients on a real session haven't been run through a shared engine yet; the bridge relays their lines unchanged.

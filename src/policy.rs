@@ -96,9 +96,10 @@ pub(crate) struct Policy {
     /// turns it on.
     #[serde(default)]
     pub(crate) unrestricted: bool,
-    /// Serves this client through the instance's shared engine.
+    /// `false` serves this client standalone rather than through the instance's shared
+    /// engine; unset, it is shared.
     #[serde(default)]
-    pub(crate) shared: bool,
+    pub(crate) shared: Option<bool>,
     /// Which tools to list: `observe`, `act` or `full`.
     #[serde(default)]
     pub(crate) tools: Profile,
@@ -439,18 +440,22 @@ pub(crate) struct Unrestricted {
     pub(crate) env: Result<bool, String>,
 }
 
-/// Whether `serve` bridges its client to the shared engine: the policy file's `shared`, or
-/// `NIRI_COMPUTER_USE_SHARED` set to `1`, given as `env`. Any other value of the variable
-/// leaves it as the file says, and is the error when that is off.
+/// Whether `serve` bridges its client to the shared engine: `NIRI_COMPUTER_USE_SHARED`,
+/// given as `env`, when it is `0` or `1`, otherwise the policy file's `shared`, which is
+/// on unless the file turns it off. Any other value of the variable is the error, and the
+/// client is served standalone with it as the reason.
 pub(crate) fn shared(policy: &Loaded, env: Option<&std::ffi::OsStr>) -> Result<bool, String> {
-    let from_file = matches!(policy, Loaded::Valid(policy) if policy.shared);
-    match env {
+    match env.filter(|value| !value.is_empty()) {
         Some(value) if value == "1" => Ok(true),
-        Some(value) if !value.is_empty() && !from_file => Err(format!(
-            "NIRI_COMPUTER_USE_SHARED is \"{}\"; only 1 turns shared mode on",
+        Some(value) if value == "0" => Ok(false),
+        Some(value) => Err(format!(
+            "NIRI_COMPUTER_USE_SHARED is \"{}\"; it takes 1 for shared or 0 for standalone",
             value.display()
         )),
-        _ => Ok(from_file),
+        None => Ok(match policy {
+            Loaded::Valid(policy) => policy.shared.unwrap_or(true),
+            Loaded::Missing | Loaded::Invalid(_) => true,
+        }),
     }
 }
 
@@ -982,7 +987,7 @@ app_id = "foot"
 "#;
 
     #[test]
-    fn shared_mode_comes_from_the_file_or_the_variable_set_to_one() {
+    fn shared_mode_is_on_unless_the_variable_or_the_file_turns_it_off() {
         let file = |shared| {
             Loaded::Valid(Policy {
                 shared,
@@ -990,29 +995,27 @@ app_id = "foot"
             })
         };
         let env = |value: &'static str| Some(std::ffi::OsStr::new(value));
-        assert_eq!(shared(&Loaded::Missing, None), Ok(false));
-        assert_eq!(shared(&file(true), None), Ok(true));
-        assert_eq!(shared(&file(false), env("1")), Ok(true));
-        assert_eq!(
-            shared(&Loaded::Invalid("bad".to_owned()), env("1")),
-            Ok(true)
-        );
-        assert_eq!(shared(&file(false), env("")), Ok(false));
+        assert_eq!(shared(&Loaded::Missing, None), Ok(true));
+        assert_eq!(shared(&Loaded::Invalid("bad".to_owned()), None), Ok(true));
+        assert_eq!(shared(&file(None), None), Ok(true));
+        assert_eq!(shared(&file(Some(false)), None), Ok(false));
+        assert_eq!(shared(&file(Some(false)), env("1")), Ok(true));
+        assert_eq!(shared(&file(None), env("0")), Ok(false));
+        assert_eq!(shared(&file(Some(false)), env("")), Ok(false));
         assert!(
-            shared(&file(false), env("yes"))
+            shared(&file(None), env("yes"))
                 .unwrap_err()
                 .contains("\"yes\"")
         );
-        assert_eq!(shared(&file(true), env("yes")), Ok(true));
         assert_eq!(
             Loaded::from_source(
                 &Source::Text {
                     path: "/p.toml".into(),
-                    text: "shared = true".to_owned()
+                    text: "shared = false".to_owned()
                 },
                 false
             ),
-            file(true)
+            file(Some(false))
         );
     }
 

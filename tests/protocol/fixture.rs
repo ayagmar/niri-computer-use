@@ -118,8 +118,9 @@ impl Fixture {
             points: Points::default(),
             clipboard,
         };
-        if shared_mode() {
-            fixture.set("NIRI_COMPUTER_USE_SHARED", "1");
+        // Shared is the default, so the standalone run turns it off.
+        if !shared_mode() {
+            fixture.set("NIRI_COMPUTER_USE_SHARED", "0");
         }
         let longest = fixture.runtime_dir().join("engine.sock").as_os_str().len();
         assert!(

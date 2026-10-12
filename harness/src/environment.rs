@@ -16,7 +16,8 @@ pub(crate) type Env = BTreeMap<&'static str, OsString>;
 /// Kept from the user's session as they are.
 const KEPT: [&str; 4] = ["HOME", "PATH", "LANG", SHARED];
 
-/// Set to `1` by `--shared`, so that every server runs in shared mode.
+/// Set to `0` without `--shared`, so that every server runs standalone; `--shared` leaves
+/// it unset, so that servers run in shared mode by default.
 const SHARED: &str = "NIRI_COMPUTER_USE_SHARED";
 
 /// The one path that may point outside `TEST_DIR`: the host Wayland socket nested niri
@@ -82,7 +83,7 @@ fn required(name: &str) -> Result<OsString> {
 
 /// Builds PARENT. `NIRI_SOCKET`, `WAYLAND_SOCKET`, `DISPLAY`, `XDG_SESSION_ID` and
 /// `DBUS_SESSION_BUS_ADDRESS` are left out, as is everything else not listed here.
-/// `shared` sets `NIRI_COMPUTER_USE_SHARED=1`.
+/// Without `shared`, `NIRI_COMPUTER_USE_SHARED=0` turns shared mode off.
 pub(crate) fn parent(test_dir: &TestDir, host: &Host, display: &Path, shared: bool) -> Env {
     let mut env = Env::from([
         ("XDG_RUNTIME_DIR", test_dir.run().into_os_string()),
@@ -110,8 +111,8 @@ pub(crate) fn parent(test_dir: &TestDir, host: &Host, display: &Path, shared: bo
     if let Some(lang) = &host.lang {
         env.insert("LANG", lang.clone());
     }
-    if shared {
-        env.insert(SHARED, "1".into());
+    if !shared {
+        env.insert(SHARED, "0".into());
     }
     env
 }
@@ -206,8 +207,8 @@ mod tests {
     #[test]
     fn parent_leaves_out_host_endpoints() {
         let (test_dir, base) = test_dir("parent");
-        let env = parent(&test_dir, &host(), Path::new("/fake/wayland-1"), true);
-        assert_eq!(env.get(SHARED), Some(&OsString::from("1")));
+        let env = parent(&test_dir, &host(), Path::new("/fake/wayland-1"), false);
+        assert_eq!(env.get(SHARED), Some(&OsString::from("0")));
         for name in [
             "NIRI_SOCKET",
             "WAYLAND_SOCKET",

@@ -14,10 +14,10 @@ use crate::niri::{Niri, Stream, window_on};
 use crate::noctalia::{self, UNLOCKED};
 use crate::session::NiriProcess;
 
-/// A fixture whose servers run in shared mode.
+/// A fixture whose servers run in shared mode, the default.
 pub(crate) fn shared(name: &str) -> Fixture {
     let mut fixture = Fixture::new(name);
-    fixture.set("NIRI_COMPUTER_USE_SHARED", "1");
+    fixture.unset("NIRI_COMPUTER_USE_SHARED");
     fixture
 }
 
@@ -106,11 +106,28 @@ impl Desktop {
     }
 }
 
+/// `shared = false` in the policy file, with the variable unset, serves the client
+/// standalone; so does an unknown value of the variable, which says why.
 #[tokio::test]
-async fn a_server_without_shared_mode_serves_its_one_client_itself() {
+async fn a_server_with_shared_mode_off_serves_its_one_client_itself() {
     let mut fixture = Fixture::new("standalone");
-    fixture.unset("NIRI_COMPUTER_USE_SHARED");
+    fixture.set("NIRI_COMPUTER_USE_SHARED", "yes");
     let _niri = Niri::start(&fixture);
+    let mut typo = Server::start(&fixture).await;
+    let refused = typo.structured("status").await["engine"].clone();
+    assert_eq!(refused["mode"], "standalone", "{refused}");
+    let fallback = refused["fallback"].as_str().unwrap();
+    assert!(
+        fallback.contains("NIRI_COMPUTER_USE_SHARED is \"yes\""),
+        "{fallback}"
+    );
+    fixture.unset("NIRI_COMPUTER_USE_SHARED");
+    std::fs::create_dir_all(fixture.path("config/niri-computer-use")).unwrap();
+    std::fs::write(
+        fixture.path("config/niri-computer-use/policy.toml"),
+        "shared = false\n",
+    )
+    .unwrap();
     let mut server = Server::start(&fixture).await;
     let engine = server.structured("status").await["engine"].clone();
     assert_eq!(engine["pid"], server.pid, "{engine}");
@@ -468,7 +485,7 @@ async fn a_bridge_and_a_standalone_server_share_one_lease() {
     let mut desktop = Desktop::new(&fixture);
     let mut bridged = Server::start(&fixture).await;
     let _engine_stream = desktop.stream().await;
-    fixture.unset("NIRI_COMPUTER_USE_SHARED");
+    fixture.set("NIRI_COMPUTER_USE_SHARED", "0");
     let mut standalone = Server::start(&fixture).await;
     let _own_stream = desktop.stream().await;
     holds_alone(&mut bridged, &mut standalone).await;
@@ -488,7 +505,7 @@ async fn servers_reaching_one_niri_through_other_paths_share_its_lease_and_stop_
     std::os::unix::fs::symlink(fixture.path("run"), &alias).unwrap();
     std::os::unix::fs::symlink(alias.join("niri.test.sock"), fixture.path("run/niri")).unwrap();
     let runtime = fixture.env()["XDG_RUNTIME_DIR"].clone();
-    fixture.unset("NIRI_COMPUTER_USE_SHARED");
+    fixture.set("NIRI_COMPUTER_USE_SHARED", "0");
     fixture.set("XDG_RUNTIME_DIR", &alias);
     fixture.set("NIRI_SOCKET", alias.join("niri"));
     let mut standalone = Server::start(&fixture).await;
@@ -515,7 +532,7 @@ async fn a_niri_socket_with_a_hard_link_takes_no_lease_by_either_name() {
     std::fs::hard_link(fixture.niri_socket(), &alias).unwrap();
     let mut original = Server::start(&fixture).await;
     let _original_stream = desktop.stream().await;
-    fixture.unset("NIRI_COMPUTER_USE_SHARED");
+    fixture.set("NIRI_COMPUTER_USE_SHARED", "0");
     fixture.set("NIRI_SOCKET", &alias);
     let mut linked = Server::start(&fixture).await;
     let _linked_stream = desktop.stream().await;

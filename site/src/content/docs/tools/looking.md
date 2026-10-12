@@ -17,7 +17,7 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `discovery.runtime_dir`, `discovery.niri_socket`, `discovery.wayland_display` | where each came from: `{"source": "environment"}`, `{"source": "discovered"}`, or `{"source": "missing", "detail": …}` with why (see [Session variables](../../start/clients/#session-variables)) |
 | `engine.pid`, `engine.mode` | the process serving this client, and how: `standalone` serves one client over stdin and stdout, `shared` is the instance's [shared engine](../../concepts/configuration/#shared); `engine` is null from the `status` subcommand |
 | `engine.sessions` | how many clients that process serves, this one included |
-| `engine.fallback` | why a client that asked for shared mode is served standalone, or null |
+| `engine.fallback` | why a client in shared mode is served standalone, such as a `NIRI_COMPUTER_USE_SHARED` other than `1` or `0`, or null |
 | `engine.version`, `engine.exe` | that process's version and the file it was started from |
 | `engine.replaced` | `true` once `engine.exe` holds another build, as after a reinstall: the process still runs the build it started with until its clients restart |
 | `engine.cgroup` | that process's cgroup; a shared engine has a scope of its own when its bridge could reach the user's systemd |

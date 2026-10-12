@@ -84,9 +84,9 @@ Turning it on never skips the lease, the stop key or the audit log: every gated 
 
 ### `shared`
 
-`true` or `false`, default `false`. With `true`, the server serves its client through the one shared engine of its niri instance, starting the engine if none runs, instead of on its own. Every client then shares one crash guardian, one niri event stream and one accessibility connection, while its policy, `unrestricted`, keyboard backend and `HOME` stay its own, read from its own environment as before.
+`true` or `false`, default `true`. With `true`, the server serves its client through the one shared engine of its niri instance, starting the engine if none runs, instead of on its own. Every client then shares one crash guardian, one niri event stream and one accessibility connection, while its policy, `unrestricted`, keyboard backend and `HOME` stay its own, read from its own environment as before.
 
-`NIRI_COMPUTER_USE_SHARED=1` in the server's environment turns it on too. Any other non-empty value, with the file's `shared` off, leaves it off and is noted on the server's stderr.
+With `false`, each server serves its own client, with a guardian, event stream and accessibility connection of its own. `NIRI_COMPUTER_USE_SHARED=1` or `0` in the server's environment overrides the file for that one client. Any other non-empty value serves the client on its own, and [`status.engine.fallback`](../../tools/looking/) and the server's stderr say why.
 
 The server decides before it reads anything from its client. If no engine answers within five seconds, the engine's socket path in the runtime directory is over the 108 bytes a Unix socket allows, or the engine refuses it, for example because the engine runs another build of `niri-computer-use` or another `WAYLAND_DISPLAY`, it serves its client on its own and says why on stderr. Once it is relaying, it stays a relay: if the engine ends, calls in flight fail with [`engine_lost`](../../reference/errors/#engine_lost), the session's next call reaches a new engine, and while none can be reached calls fail with [`engine_unavailable`](../../reference/errors/#engine_unavailable). The engine writes its errors to `engine.log` in the runtime directory and exits two seconds after its last connection, lease and pending input cleanup have ended. A client that stops reading its server's output loses its server, and with it the lease: once 32 lines wait for it, or one line has waited 30 seconds, the server ends that client's session and exits, saying why on stderr. The same happens to a client that sends more than 32 MiB the engine hasn't taken yet.
 
@@ -145,7 +145,7 @@ The server reads these once, at startup. When `XDG_RUNTIME_DIR`, `NIRI_SOCKET` o
 | `HOME` | a `capture_dir` that starts with `~/` |
 | `NIRI_COMPUTER_USE_UNRESTRICTED` | `1` turns on [`unrestricted`](#unrestricted) for this server; unset or empty leaves the policy file to decide |
 | `NIRI_COMPUTER_USE_TOOLS` | `observe`, `act` or `full`: the [tool profile](#tools) for this server; unset or empty leaves the policy file to decide |
-| `NIRI_COMPUTER_USE_SHARED` | `1` turns on [`shared`](#shared) mode for this server; unset or empty leaves the policy file to decide |
+| `NIRI_COMPUTER_USE_SHARED` | `1` turns on [`shared`](#shared) mode for this server and `0` turns it off; unset or empty leaves the policy file to decide |
 | `NIRI_COMPUTER_USE_KEYBOARD` | the keyboard backend: unset or `wtype` for the default, `native` for the [experimental native backend](../../tools/keyboard/#the-native-backend) |
 
 The lock state comes from logind's session for niri's own process, which the server finds through niri's socket, so the server's own `XDG_SESSION_ID` doesn't matter.

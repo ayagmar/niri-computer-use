@@ -68,7 +68,7 @@ The tests check:
 
 The `grim` deadline test takes five seconds, the length of that deadline.
 
-`make check` runs the suite twice: standalone, then in shared mode, where every server the tests start bridges to the fixture's shared engine:
+`make check` runs the suite twice: standalone, with `NIRI_COMPUTER_USE_SHARED=0` in every fixture, then in shared mode, where every server the tests start bridges to the fixture's shared engine:
 
 ```sh
 NCU_PROTOCOL_MODE=shared cargo test --locked --test protocol
@@ -302,7 +302,7 @@ Every call on a bus from the harness goes through `busctl --address=… --json=s
 
 ## Nested shared-engine checks
 
-`SHARED=1` (or `harness run --shared`) runs any of the server checks in shared mode: the nested session's environment gets `NIRI_COMPUTER_USE_SHARED=1`, so every server the supervisor starts bridges its client to the nested niri's one engine. The kill checks of `make nested-input` then kill the engine that `status.engine.pid` names, since its guardian is the one that releases input, and the clients connected to it must report `engine_lost` once before their next call reaches a new engine. After the nested session, the run fails if any server's log says it served its client standalone, or if the engine's socket is still there five seconds later.
+`SHARED=1` (or `harness run --shared`) runs any of the server checks in shared mode: the nested session's environment leaves `NIRI_COMPUTER_USE_SHARED` unset, so every server the supervisor starts bridges its client to the nested niri's one engine. Without it the variable is `0` and every server serves its client itself. The kill checks of `make nested-input` then kill the engine that `status.engine.pid` names, since its guardian is the one that releases input, and the clients connected to it must report `engine_lost` once before their next call reaches a new engine. After the nested session, the run fails if any server's log says it served its client standalone, or if the engine's socket is still there five seconds later.
 
 ```sh
 make nested-actions SHARED=1
