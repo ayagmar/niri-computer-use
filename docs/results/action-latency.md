@@ -138,7 +138,31 @@ Opus's review of the branch led to two changes in the report and two in the harn
 | `shell_panel` open | 382 (383) | 382 (383) | 382 (383) | 382 (382) | 382 (383) |
 | `shell_panel` close | 512 (513) | 512 (527) | 512 (514) | 513 (519) | 512 (514) |
 
-In all three runs every call came back with the same `observed` and the same `changes` keys in all 30 rounds, and the two builds agreed: `focus+workspace` for both `focus` calls, `windows` for `niri_action`, `focus` for both `shell_panel` calls, and none for `click`, `type_text`, `key` and `activate_element`, whose effects in the fixture niri doesn't report. `niri_action` pays the batch's 10 ms: its own wait ends after 200 ms without an event, and the report then waits 10 ms more for one. `focus` on the fixture didn't move, and `focus` on the empty workspace stayed within the spread of the skip runs. `click` came back 11 ms faster than in the skip runs; that wasn't traced.
+In all three runs every call came back with the same `observed` and the same `changes` keys in all 30 rounds, and the two builds agreed: `focus+workspace` for both `focus` calls, `windows` for `niri_action`, `focus` for both `shell_panel` calls, and none for `click`, `type_text`, `key` and `activate_element`, whose effects in the fixture niri doesn't report. `niri_action` paid the batch's 10 ms: its own wait ends a fixed 200 ms after the first change, and the report then waited 10 ms more for an event. The second review took that away again, below. `focus` on the fixture didn't move, and `focus` on the empty workspace stayed within the spread of the skip runs. `click` came back 11 ms faster than in the skip runs; that wasn't traced.
+
+## After the second review
+
+Opus's second review led to two more changes. Only `focus` reads the rest of niri's batch now, since `niri_action`'s own wait ends on a timeout long after niri's batch. And `make nested-latency` counts the fields of `changes.windows` too, as in `windows[size]`, not just the keys. The same rounds:
+
+| Run | Build | Run id |
+|---|---|---|
+| before 4 | `8aac368` | 1791839688-1715777 |
+| final 1 | this branch, after the second review | 1791839940-1760685 |
+| final 2 | this branch, after the second review | 1791840032-1773146 |
+
+| Call | before 4 | fixes 1 | fixes 2 | final 1 | final 2 |
+|---|---|---|---|---|---|
+| `focus` on the empty workspace | 282 (299) | 42 (59) | 42 (59) | 42 (72) | 41 (56) |
+| `focus` on the fixture | 253 (258) | 64 (64) | 64 (64) | 64 (64) | 64 (64) |
+| `click` on the entry, by element | 252 (253) | 272 (274) | 272 (273) | 272 (288) | 272 (288) |
+| `type_text` `"ab"` | 497 (500) | 253 (253) | 252 (253) | 253 (253) | 252 (253) |
+| `key` `BackSpace` twice | 258 (260) | 260 (261) | 260 (262) | 260 (261) | 260 (261) |
+| `activate_element` | 304 (305) | 304 (305) | 304 (306) | 304 (306) | 304 (306) |
+| `niri_action` `SetWindowHeight` | 262 (264) | 223 (225) | 223 (225) | 212 (214) | 212 (215) |
+| `shell_panel` open | 382 (382) | 382 (382) | 382 (383) | 382 (383) | 382 (384) |
+| `shell_panel` close | 512 (514) | 513 (519) | 512 (514) | 512 (514) | 512 (514) |
+
+`niri_action` is back to 212 ms. In all three runs every call came back with the same `observed` and the same `changes` in all 30 rounds, down to the fields of `windows`, and the two builds agreed: `focus+workspace` for both `focus` calls, `windows[size]` for `niri_action`, `focus` for both `shell_panel` calls, and none for the rest. Skipping the quiet wait lost nothing these rounds report.
 
 ## What is left
 
@@ -152,7 +176,7 @@ What remains for most calls is the quiet wait itself, by design: it gives an app
 | `shell_panel` open | about 363, from focus moving to the panel at 129 | 95% |
 | `shell_panel` close | about 206, from focus coming back at 260 | 40% |
 | `focus` | none once focus moved; 10 to 50 ms for the rest of niri's batch | not measured |
-| `niri_action` | none once its window changed or a second passed; 10 ms for the rest of niri's batch | 4% |
+| `niri_action` | none: its own wait ends a fixed 200 ms after the first change, or after a second without one | 0% |
 | `activate_element` | none: its own 300 ms look covers it | 0% |
 
 `screenshot: true` replaces the quiet wait with the screenshot's own settle, which looks 50 ms after the action and then every 100 ms until two captures match.
