@@ -329,7 +329,10 @@ pub(crate) async fn answer(
 ) -> std::process::Output {
     let mut child = subcommand(fixture, subcommand_name);
     let mut stdin = child.stdin.take().unwrap();
-    stdin.write_all(input.as_bytes()).await.unwrap();
+    // A subcommand that refuses before asking anything exits without reading its answers.
+    if let Err(error) = stdin.write_all(input.as_bytes()).await {
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe, "{error}");
+    }
     drop(stdin);
     tokio::time::timeout(WAIT, child.wait_with_output())
         .await

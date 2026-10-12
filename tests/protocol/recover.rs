@@ -72,7 +72,8 @@ async fn recover_refuses_while_a_server_holds_the_lease() {
         &json!({"operation": "key", "phase": "pending", "server_pid": 1, "since": "t"}),
     );
     let holder = server.serving_pid().await;
-    let out = answer(&fixture, "recover", "yes\n").await;
+    // More answers than a pipe holds: recover refuses before it reads any of them.
+    let out = answer(&fixture, "recover", &"yes\n".repeat(32 * 1024)).await;
     assert!(!out.status.success());
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.contains(&format!("PID {holder}")), "{stderr}");
