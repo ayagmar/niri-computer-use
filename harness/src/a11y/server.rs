@@ -18,7 +18,7 @@ use super::{Bus, Fixture, Toolkit};
 use crate::config::Decorations;
 use crate::failure::{Context as _, Failure, Result};
 use crate::mcp::{self, Client, field, structured};
-use crate::session::Session;
+use crate::session::{Session, pause};
 
 /// Within what is left of the run's deadline.
 const NOCTALIA_DEADLINE: Duration = Duration::from_secs(225);
@@ -32,6 +32,11 @@ const ROUNDS: u32 = 100;
 const SHOT_AGE: Duration = Duration::from_secs(30);
 /// How long a refused click has to show up as an activation anyway.
 const SETTLE: Duration = Duration::from_millis(500);
+/// Longer than the server refuses element aims on an output after niri switches its
+/// workspace or opens or closes the overview.
+const VIEW_SETTLE: Duration = Duration::from_millis(1100);
+/// The start of a refusal's detail for an element whose window isn't shown.
+const UNSHOWN: &str = "not_showing: the element or its window isn't showing";
 /// The server's budget for a request on the accessibility bus.
 const BUDGET: Duration = Duration::from_secs(3);
 /// How soon a closed window's element must be refused, by the server's own clock.
@@ -226,6 +231,7 @@ impl Checks<'_, '_> {
     /// `not_showing`, and its ref is refused without a click. Closed again, it hits.
     fn overview(&mut self, window: u64) -> Result<()> {
         self.overview_open(true)?;
+        pause(VIEW_SETTLE);
         let listed = self.primary_until(window, "Primary unmappable: not_showing", |element| {
             field(element, "/unmappable") == "not_showing"
         })?;
@@ -234,7 +240,7 @@ impl Checks<'_, '_> {
             field(&refused, "/error") == "element_unmappable"
                 && field(&refused, "/detail")
                     .as_str()
-                    .is_some_and(|detail| detail.starts_with("not_showing: ")),
+                    .is_some_and(|detail| detail.starts_with(UNSHOWN)),
             "element_unmappable: not_showing for a click in the overview",
             &refused,
         )?;
@@ -243,6 +249,7 @@ impl Checks<'_, '_> {
             Ok(read_count(session, "primary-count")? != Some(ROUNDS + 2))
         })?;
         self.overview_open(false)?;
+        pause(VIEW_SETTLE);
         let closed = self.button(window, "Primary")?;
         self.shot = None;
         self.click(&closed.id)?;
@@ -254,9 +261,11 @@ impl Checks<'_, '_> {
 
     /// On a workspace that isn't shown, niri still reports the floating window's place, where
     /// the shown workspace is: `Primary` is `not_showing`, and the ref listed while it was
-    /// shown is refused without a click. Shown again, it hits.
+    /// shown is refused without a click. Shown again, the view may still be moving, so the
+    /// same ref is refused at once; a moment later it hits.
     fn unshown(&mut self, window: u64, primary: &Listed) -> Result<()> {
         let place = self.workspace_shown(window, false)?;
+        pause(VIEW_SETTLE);
         let listed = self.primary_until(window, "Primary unmappable: not_showing", |element| {
             field(element, "/unmappable") == "not_showing"
         })?;
@@ -266,7 +275,7 @@ impl Checks<'_, '_> {
             field(&refused, "/error") == "element_unmappable"
                 && field(&refused, "/detail")
                     .as_str()
-                    .is_some_and(|detail| detail.starts_with("not_showing: ")),
+                    .is_some_and(|detail| detail.starts_with(UNSHOWN)),
             "element_unmappable: not_showing for a click on a workspace not shown",
             &refused,
         )?;
@@ -275,12 +284,22 @@ impl Checks<'_, '_> {
             Ok(read_count(session, "primary-count")? != Some(ROUNDS + 3))
         })?;
         self.workspace_shown(window, true)?;
+        let moving = self.refused_click(&primary.id)?;
+        expect(
+            field(&moving, "/error") == "element_unmappable"
+                && field(&moving, "/detail").as_str().is_some_and(|detail| {
+                    detail.starts_with("not_showing: the view may still be moving")
+                }),
+            "element_unmappable: the view may still be moving, just after the switch",
+            &moving,
+        )?;
+        pause(VIEW_SETTLE);
         let shown = self.button(window, "Primary")?;
         self.shot = None;
         self.click(&shown.id)?;
         self.counted("primary-count", ROUNDS + 4)?;
         self.session.log(&format!(
-            "M9: on a workspace not shown, niri reported the window at {place:?}; Primary unmappable and its click refused: {refused}; shown again, it hit"
+            "M9: on a workspace not shown, niri reported the window at {place:?}; Primary unmappable and its click refused: {refused}; shown again, refused at once: {moving}; a moment later, it hit"
         ))
     }
 

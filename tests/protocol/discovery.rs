@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use crate::client::{Server, tool_error};
 use crate::clipboard::Owner;
 use crate::fixture::{DISPLAY, Fixture, jpeg};
+use crate::holds::Points;
 use crate::niri::{Niri, window_on};
 use crate::noctalia::{self, UNLOCKED};
 use crate::session::NiriProcess;
@@ -229,6 +230,7 @@ async fn a_display_replaced_after_startup_refuses_input_screenshots_and_the_clip
     let mut replacement = Owner::on(
         UnixListener::bind(&display).unwrap(),
         Some(vec![("text/plain", b"copied".to_vec())]),
+        Points::default(),
     );
     refuses_what_reaches_the_display(&mut server, "session_mismatch").await;
 

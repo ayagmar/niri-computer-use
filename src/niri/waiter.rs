@@ -142,14 +142,39 @@ impl Waiter {
             if let Some(done) = check(&self.view) {
                 return Waited::Done(done);
             }
-            if let Err(reason) = self.next(deadline).await {
+            if let Err(reason) = self.next(deadline, |_, _| {}).await {
                 return reason;
             }
         }
     }
 
-    /// Applies the next event the view doesn't hold yet.
-    async fn next<T>(&mut self, deadline: Instant) -> Result<(), Waited<T>> {
+    /// Applies every event already received, and says whether any of them can change what
+    /// is shown where: a workspace activated or changed, the overview opened or closed, a
+    /// window opened, closed, focused or made its workspace's active one, or a window's
+    /// layout, workspace or floating changed. A title or urgency changing doesn't count.
+    /// `Err` with the reason when the stream can't say.
+    pub(crate) async fn moved(&mut self) -> Result<bool, String> {
+        let mut moved = false;
+        loop {
+            let applied = self
+                .next::<()>(Instant::now(), |view, event| moved |= moves(view, event))
+                .await;
+            match applied {
+                Ok(()) => {}
+                // `next` never finishes a wait: only a timeout ends this one.
+                Err(Waited::Timeout | Waited::Done(())) => return Ok(moved),
+                Err(Waited::Lost(reason)) => return Err(reason),
+            }
+        }
+    }
+
+    /// Applies the next event the view doesn't hold yet, showing it to `seen` with the view
+    /// before it.
+    async fn next<T>(
+        &mut self,
+        deadline: Instant,
+        mut seen: impl FnMut(&View, &Event),
+    ) -> Result<(), Waited<T>> {
         loop {
             let update = match self.receive(deadline).await {
                 None => return Err(Waited::Timeout),
@@ -174,6 +199,7 @@ impl Waiter {
                 Update::Event(seq, _) if seq <= self.numbers.seq => {}
                 Update::Event(seq, event) => {
                     self.numbers.seq = seq;
+                    seen(&self.view, &event);
                     self.view.apply(*event);
                     return Ok(());
                 }
@@ -204,6 +230,38 @@ impl Waiter {
                 Some(Err(broadcast::error::RecvError::Closed))
             }
         }
+    }
+}
+
+/// Whether `event`, on top of `view`, can change what is shown where (see `Waiter::moved`).
+fn moves(view: &View, event: &Event) -> bool {
+    match event {
+        Event::WindowOpenedOrChanged { window } => {
+            view.windows().get(&window.id).is_none_or(|old| {
+                old.layout != window.layout
+                    || old.workspace_id != window.workspace_id
+                    || old.is_floating != window.is_floating
+                    || old.is_focused != window.is_focused
+            })
+        }
+        Event::WorkspacesChanged { .. }
+        | Event::WorkspaceActivated { .. }
+        | Event::WorkspaceActiveWindowChanged { .. }
+        | Event::WindowsChanged { .. }
+        | Event::WindowClosed { .. }
+        | Event::WindowFocusChanged { .. }
+        | Event::WindowLayoutsChanged { .. }
+        | Event::OverviewOpenedOrClosed { .. } => true,
+        Event::WorkspaceUrgencyChanged { .. }
+        | Event::WindowFocusTimestampChanged { .. }
+        | Event::WindowUrgencyChanged { .. }
+        | Event::KeyboardLayoutsChanged { .. }
+        | Event::KeyboardLayoutSwitched { .. }
+        | Event::ConfigLoaded { .. }
+        | Event::ScreenshotCaptured { .. }
+        | Event::CastsChanged { .. }
+        | Event::CastStartedOrChanged { .. }
+        | Event::CastStopped { .. } => false,
     }
 }
 
@@ -290,6 +348,66 @@ pub(crate) mod tests {
         assert_eq!(ended, Waited::Done(()));
         // 2 and 3 aren't windows yet when focus moves to them, so nothing is focused.
         assert_eq!(seen, [Some(1), None, None, Some(3)]);
+    }
+
+    // Before an element aim goes out, any event that can change what is shown where
+    // refuses it; a title or urgency changing doesn't.
+    #[tokio::test]
+    async fn a_change_to_what_is_shown_where_counts_as_moved_and_a_title_does_not() {
+        let floating = || {
+            let mut window = window(1, None, 1, true);
+            window.layout.tile_pos_in_workspace_view = Some((20.0, 30.0));
+            window
+        };
+        let retitled = Event::WindowOpenedOrChanged {
+            window: Window {
+                title: Some("another".to_owned()),
+                ..floating()
+            },
+        };
+        let moved_by = |pos| {
+            let mut window = floating();
+            window.layout.tile_pos_in_workspace_view = Some(pos);
+            Event::WindowOpenedOrChanged { window }
+        };
+        let quiet = [
+            retitled,
+            Event::WindowUrgencyChanged {
+                id: 1,
+                urgent: true,
+            },
+        ];
+        let moving = [
+            moved_by((40.0, 30.0)),
+            Event::WindowOpenedOrChanged {
+                window: window(2, None, 1, false),
+            },
+            Event::WorkspaceActivated {
+                id: 2,
+                focused: true,
+            },
+            Event::WorkspaceActiveWindowChanged {
+                workspace_id: 1,
+                active_window_id: Some(2),
+            },
+            Event::OverviewOpenedOrClosed { is_open: true },
+            Event::WindowClosed { id: 1 },
+        ];
+        let (mut watched, sender) = waiter(view(vec![floating()]), 0);
+        for (seq, event) in (1..).zip(quiet) {
+            sender.send(Update::Event(seq, Box::new(event))).unwrap();
+        }
+        assert_eq!(watched.moved().await, Ok(false));
+        for event in moving {
+            let (mut fresh, updates) = waiter(view(vec![floating()]), 0);
+            let what = format!("{event:?}");
+            updates.send(Update::Event(1, Box::new(event))).unwrap();
+            assert_eq!(fresh.moved().await, Ok(true), "{what}");
+            // Each event counts once: nothing new has come since.
+            assert_eq!(fresh.moved().await, Ok(false), "{what}");
+        }
+        sender.send(Update::Reset(2)).unwrap();
+        assert!(watched.moved().await.is_err());
     }
 
     #[tokio::test(start_paused = true)]

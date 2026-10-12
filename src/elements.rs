@@ -585,6 +585,10 @@ pub(crate) fn unmappable(why: Unmappable) -> ToolError {
             "not_showing",
             "a fullscreen window covers it; focus its window or leave fullscreen, and call elements again",
         ),
+        Unmappable::Moving => (
+            "not_showing",
+            "the view may still be moving: niri switched a workspace, opened or closed the overview or changed the layout a moment ago; take a screenshot and try again",
+        ),
         Unmappable::Tiled => (
             "tiled",
             "niri 26.04 gives a tiled window no position on screen; activate_element and set_element_text still work, or aim with a screenshot pixel, or float the window with niri_action and call elements again",

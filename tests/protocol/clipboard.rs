@@ -3,7 +3,8 @@
 //! types. The selection is a list of MIME types with their bytes, or none for nothing
 //! copied, the same for every connection, and a copy announces a new one on each. The
 //! display also offers output `DP-1` and wlr virtual pointers, and hands the test every
-//! motion and button a pointer sends.
+//! motion and button a pointer sends. Each connection's registry request passes the hold
+//! point `wayland:get_registry`.
 
 use std::io::{IoSliceMut, Write as _};
 use std::mem::MaybeUninit;
@@ -17,6 +18,7 @@ use tokio::sync::{mpsc, watch};
 
 use crate::client::Server;
 use crate::fixture::Fixture;
+use crate::holds::Points;
 use crate::niri::{self, Niri};
 use crate::noctalia::{self, UNLOCKED};
 
@@ -71,13 +73,15 @@ struct Channels {
     closed: mpsc::UnboundedSender<()>,
     reads: mpsc::UnboundedSender<String>,
     pointed: mpsc::UnboundedSender<Pointed>,
+    points: Points,
 }
 
 impl Owner {
-    /// Serves `selection` on `listener`.
+    /// Serves `selection` on `listener`, passing `points`.
     pub(crate) fn on(
         listener: std::os::unix::net::UnixListener,
         selection: Option<Contents>,
+        points: Points,
     ) -> Self {
         listener.set_nonblocking(true).unwrap();
         let listener = UnixListener::from_std(listener).unwrap();
@@ -94,6 +98,7 @@ impl Owner {
             closed,
             reads,
             pointed,
+            points,
         };
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
@@ -240,6 +245,9 @@ async fn serve(mut stream: UnixStream, channels: Channels) {
                     Vec::new()
                 };
                 while let Some((message, rest)) = split(&bytes) {
+                    if let Some(point) = point(&message) {
+                        drop(connection.channels.points.pass(point.to_owned()).await);
+                    }
                     events.extend(connection.handle(&message));
                     bytes = rest;
                 }
@@ -286,6 +294,14 @@ async fn receive(stream: &UnixStream, fds: &mut Vec<OwnedFd>) -> Option<Vec<u8>>
     }
     buffer.truncate(received.bytes);
     Some(buffer)
+}
+
+/// The hold point a request passes before it is answered, if any. The server waits for
+/// the registry's answer, so a held one holds the server.
+fn point(message: &[u8]) -> Option<&'static str> {
+    let id = word(message, 0)?;
+    let opcode = word(message, 4)? & 0xffff;
+    (id == 1 && opcode == 1).then_some("wayland:get_registry")
 }
 
 /// A whole message off the front of `bytes`, and what follows it.

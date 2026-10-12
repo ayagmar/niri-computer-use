@@ -2301,3 +2301,107 @@ async fn a_floating_window_behind_a_fullscreen_one_is_never_aimed_at() {
     assert_eq!(moved["isError"], false, "{moved}");
     assert_eq!(desk.fixture.clipboard.pointed().len(), 1);
 }
+
+/// The events after which niri's view may still be moving on `DP-1`: a workspace switch,
+/// the overview opening or closing.
+fn view_moves() -> [(&'static str, Value); 2] {
+    [
+        (
+            "switch",
+            json!({"WorkspaceActivated": {"id": 1, "focused": true}}),
+        ),
+        (
+            "overview",
+            json!({"OverviewOpenedOrClosed": {"is_open": false}}),
+        ),
+    ]
+}
+
+impl Desk {
+    /// Sends `event` on niri's event stream, seen by the server before this returns: a
+    /// window marked urgent after it shows that the server applied both.
+    async fn moved(&mut self, event: &Value) {
+        self.stream.send(event);
+        self.stream
+            .send(&json!({"WindowUrgencyChanged": {"id": WINDOW, "urgent": true}}));
+        while !self.server.structured("desktop_state").await["windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|window| window["is_urgent"] == true)
+        {
+            tokio::task::yield_now().await;
+        }
+    }
+}
+
+/// Asserts that `result` refused an element aim because the view may still be moving.
+fn refused_moving(result: &Value, tag: &str) {
+    let (name, detail) = tool_error(result);
+    assert_eq!(name, "element_unmappable", "{tag}: {result}");
+    assert!(
+        detail.starts_with("not_showing: the view may still be moving"),
+        "{tag}: {detail}"
+    );
+}
+
+// niri reports a workspace switch or the overview opening or closing as done at once,
+// while its animation still moves the view. For a second after either, an element ref on
+// that output is refused and the pointer is sent nothing; after it, the same ref goes out.
+#[tokio::test]
+async fn an_element_is_not_aimed_at_just_after_the_view_moved() {
+    for (tag, event) in view_moves() {
+        let windows = [floating_window()];
+        let name = format!("el-settle-{tag}");
+        let mut desk = Desk::start_with(&name, &["/frame"], objects(), &windows).await;
+        let button = desk.element("Safe").await;
+        let shot = desk.screenshot_ref().await;
+        desk.moved(&event).await;
+        let aimed = json!({"screenshot_ref": shot, "element": button});
+        for tool in ["pointer_move", "click"] {
+            let refused = desk.server.call(tool, aimed.clone()).await;
+            refused_moving(&refused, &format!("{tag} {tool}"));
+            assert_eq!(desk.fixture.clipboard.pointed(), [], "{tag} {tool}");
+        }
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        let moved = desk.server.call("pointer_move", aimed).await;
+        assert_eq!(moved["isError"], false, "{tag}: {moved}");
+        assert_eq!(desk.fixture.clipboard.pointed().len(), 1, "{tag}");
+    }
+}
+
+// The view can move after an element was aimed at and before the pointer goes out. A
+// change niri reports in that time, to the shown workspace, the overview, a window's
+// layout or a workspace's active window, refuses the aim, and nothing is sent.
+#[tokio::test]
+async fn an_element_aim_is_refused_when_the_view_moved_before_it_went_out() {
+    let [switch, overview] = view_moves().map(|(_, event)| event);
+    let mut resized = floating_window();
+    resized["layout"]["tile_size"] = json!([900.0, 700.0]);
+    let layouts = json!({"WindowLayoutsChanged": {"changes": [[WINDOW, resized["layout"]]]}});
+    let active =
+        json!({"WorkspaceActiveWindowChanged": {"workspace_id": 1, "active_window_id": null}});
+    for (tag, event) in [
+        ("switch", switch),
+        ("overview", overview),
+        ("layout", layouts),
+        ("active", active),
+    ] {
+        let windows = [floating_window()];
+        let name = format!("el-gap-{tag}");
+        let mut desk = Desk::start_with(&name, &["/frame"], objects(), &windows).await;
+        let button = desk.element("Safe").await;
+        let shot = desk.screenshot_ref().await;
+        let points = desk.fixture.points();
+        points.start();
+        let held = points.hold("wayland:get_registry", 1);
+        let aimed = json!({"screenshot_ref": shot, "element": button});
+        let id = desk.server.start_call("pointer_move", aimed).await;
+        held.arrived().await;
+        desk.moved(&event).await;
+        held.release();
+        let response = desk.server.response(id).await;
+        refused_moving(&response["result"], tag);
+        assert_eq!(desk.fixture.clipboard.pointed(), [], "{tag}");
+    }
+}

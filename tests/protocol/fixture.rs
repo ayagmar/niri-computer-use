@@ -111,9 +111,11 @@ impl Fixture {
             ("XDG_STATE_HOME", dir.join("state").into_os_string()),
             ("XDG_CONFIG_HOME", dir.join("config").into_os_string()),
         ]);
+        let points = Points::default();
         let clipboard = Owner::on(
             UnixListener::bind(dir.join("run").join(DISPLAY)).unwrap(),
             None,
+            points.clone(),
         );
         // niri's socket, which nothing listens on until a test starts a fake niri; the
         // server needs it to resolve the instance its lease and flags belong to.
@@ -123,7 +125,7 @@ impl Fixture {
             env,
             cwd: None,
             servers: Mutex::new(Vec::new()),
-            points: Points::default(),
+            points,
             clipboard,
         };
         // Shared is the default, so the standalone run turns it off.

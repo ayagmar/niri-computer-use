@@ -42,6 +42,10 @@ const HOVER: Duration = Duration::from_millis(50);
 const DRAG_STEPS: u32 = 10;
 const DRAG_STEP: Duration = Duration::from_millis(20);
 const MAX_CLICKS: u8 = 3;
+/// How long after niri activates a workspace or opens or closes the overview no element
+/// is aimed at on that output: niri reports the state it is heading to at once, and never
+/// when its animation ends. Its default animations take about 0.3 s.
+const SETTLE: Duration = Duration::from_secs(1);
 const MAX_NOTCHES: i32 = 10;
 /// The wheel notches one call may turn each way.
 const NOTCHES: RangeInclusive<i32> = -MAX_NOTCHES..=MAX_NOTCHES;
@@ -169,6 +173,17 @@ impl<P> Gesture<P> {
     }
 }
 
+impl Gesture<Spot> {
+    /// Whether any of its points is an element ref.
+    fn aims_at_element(&self) -> bool {
+        let element = |spot: &Spot| matches!(spot, Spot::Element(_));
+        match self {
+            Self::Move(at) | Self::Click { at, .. } | Self::Scroll { at, .. } => element(at),
+            Self::Drag { from, to, .. } => element(from) || element(to),
+        }
+    }
+}
+
 impl Gesture<LayoutPt> {
     /// The points the gesture goes through, in order. A drag goes from its start to its
     /// end in even steps.
@@ -267,6 +282,7 @@ pub(crate) async fn point(
     shot.check(Instant::now(), &outputs, connection)?;
     let tool = gesture.tool();
     let button = gesture.button();
+    let at_element = gesture.aims_at_element();
     let located = gesture
         .located(|spot| locate(input, &shot, spot, &element))
         .await?;
@@ -283,6 +299,9 @@ pub(crate) async fn point(
     let pressing = Pressing { tool, button };
     let mut device = Device::new(pointer, input.runtime, pressing, &shot.output, held).await?;
     input.niri.desk.fresh()?;
+    if at_element {
+        unmoved(&mut waiter).await?;
+    }
     if let Err(error) = device.run(plan(&located, &aimed)).await {
         // Nothing reached niri: an error like any other before input.
         if !device.sent() {
@@ -315,10 +334,28 @@ async fn locate(
         .a11y
         .ok_or_else(|| a11y::not_accessible("this session has no accessibility bus".to_owned()))?;
     let point = elements::aim(input.niri.socket, a11y, input.policy, &kept).await?;
+    let events = input.niri.events.map_err(Clone::clone)?;
+    if events.animating(&shot.output, SETTLE) {
+        return Err(elements::unmappable(Unmappable::Moving));
+    }
     if shot.contains(point) {
         Ok(point)
     } else {
         Err(elements::unmappable(Unmappable::OutsideScreenshot))
+    }
+}
+
+/// Refuses an element aim when niri reported a change to what is shown where since the
+/// call's first look, before its element was placed: the box may no longer be where the
+/// element is.
+async fn unmoved(waiter: &mut niri::waiter::Waiter) -> Result<(), ToolError> {
+    match waiter.moved().await {
+        Ok(false) => Ok(()),
+        Ok(true) => Err(elements::unmappable(Unmappable::Moving)),
+        Err(reason) => Err(ToolError::new(
+            ErrorName::UpstreamError,
+            format!("{reason}; nothing was sent"),
+        )),
     }
 }
 

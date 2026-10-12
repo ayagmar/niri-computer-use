@@ -9,6 +9,7 @@
 //! Besides the replica, the task passes every event it applies, numbered, to the action
 //! tools' waiters (`waiter.rs`), and tells them when a connection ends.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -18,6 +19,7 @@ use serde::Serialize;
 use tokio::io::{AsyncBufReadExt as _, AsyncRead, AsyncWrite, AsyncWriteExt as _, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::{broadcast, watch};
+use tokio::time::Instant;
 
 use super::waiter::{Numbers, Update, View, Waiter};
 use crate::error::{ErrorName, ToolError};
@@ -38,7 +40,7 @@ enum Connection {
     Connecting {
         last_error: Option<ToolError>,
     },
-    Connected(Replica),
+    Connected(Box<Replica>),
     SchemaIncompatible {
         event: String,
     },
@@ -57,10 +59,18 @@ struct Replica {
     seq: u64,
     /// Which connection, counted from 1, this replica comes from.
     connection: u64,
+    /// When niri last activated a workspace on each output, by output name, and last
+    /// opened or closed the overview, since the initial state: both start an animation
+    /// whose end niri doesn't report.
+    activated: HashMap<String, Instant>,
+    overview_toggled: Option<Instant>,
 }
 
 impl Replica {
     fn apply(&mut self, seq: u64, event: Event) {
+        if self.initialized() {
+            self.note_animation(&event);
+        }
         self.workspaces |= matches!(event, Event::WorkspacesChanged { .. });
         self.windows |= matches!(event, Event::WindowsChanged { .. });
         self.overview |= matches!(event, Event::OverviewOpenedOrClosed { .. });
@@ -70,6 +80,32 @@ impl Replica {
 
     const fn initialized(&self) -> bool {
         self.workspaces && self.windows && self.overview
+    }
+
+    fn note_animation(&mut self, event: &Event) {
+        let now = Instant::now();
+        if let Event::WorkspaceActivated { id, .. } = event
+            && let Some(output) = self
+                .state
+                .workspaces
+                .workspaces
+                .get(id)
+                .and_then(|workspace| workspace.output.clone())
+        {
+            self.activated.insert(output, now);
+        }
+        if matches!(event, Event::OverviewOpenedOrClosed { .. }) {
+            self.overview_toggled = Some(now);
+        }
+    }
+
+    /// When niri last activated a workspace on `output` or opened or closed the overview,
+    /// whichever came later.
+    fn animated(&self, output: &str) -> Option<Instant> {
+        self.activated
+            .get(output)
+            .copied()
+            .max(self.overview_toggled)
     }
 }
 
@@ -156,6 +192,20 @@ impl EventStream {
             Connection::Connected(_)
             | Connection::Connecting { .. }
             | Connection::SchemaIncompatible { .. } => None,
+        }
+    }
+
+    /// Whether niri activated a workspace on `output`, or opened or closed the overview,
+    /// within `settle`, so that the view there may still be moving. True while the stream
+    /// holds no initialized state, since then it can't tell.
+    pub(crate) fn animating(&self, output: &str, settle: Duration) -> bool {
+        match &*self.connection.borrow() {
+            Connection::Connected(replica) if replica.initialized() => replica
+                .animated(output)
+                .is_some_and(|at| at.elapsed() < settle),
+            Connection::Connected(_)
+            | Connection::Connecting { .. }
+            | Connection::SchemaIncompatible { .. } => true,
         }
     }
 
@@ -339,11 +389,11 @@ async fn read(
     numbers.connection += 1;
     senders
         .connection
-        .send_replace(Connection::Connected(Replica {
+        .send_replace(Connection::Connected(Box::new(Replica {
             seq: numbers.seq,
             connection: numbers.connection,
             ..Replica::default()
-        }));
+        })));
     let mut line = String::new();
     loop {
         line.clear();
@@ -438,6 +488,46 @@ mod tests {
     use tokio::io::{AsyncReadExt as _, DuplexStream, duplex};
 
     use super::*;
+
+    /// A workspace on `output`, shown or not.
+    fn workspace_on(id: u64, output: &str, active: bool) -> Workspace {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "idx": 1, "name": null, "output": output, "is_urgent": false,
+            "is_active": active, "is_focused": active, "active_window_id": null
+        }))
+        .unwrap()
+    }
+
+    // A workspace switch animates on its own output, the overview on every output, and
+    // niri's initial state isn't a change.
+    #[tokio::test(start_paused = true)]
+    async fn a_workspace_switch_or_the_overview_animates_the_outputs_it_moves() {
+        let mut replica = Replica::default();
+        let workspaces = vec![
+            workspace_on(1, "DP-1", true),
+            workspace_on(2, "DP-1", false),
+            workspace_on(3, "HDMI-A-1", true),
+        ];
+        replica.apply(1, Event::WorkspacesChanged { workspaces });
+        replica.apply(2, Event::WindowsChanged { windows: vec![] });
+        replica.apply(3, Event::OverviewOpenedOrClosed { is_open: false });
+        assert_eq!(replica.animated("DP-1"), None);
+        let switched = Instant::now();
+        replica.apply(
+            4,
+            Event::WorkspaceActivated {
+                id: 2,
+                focused: true,
+            },
+        );
+        assert_eq!(replica.animated("DP-1"), Some(switched));
+        assert_eq!(replica.animated("HDMI-A-1"), None);
+        tokio::time::advance(Duration::from_secs(5)).await;
+        let toggled = Instant::now();
+        replica.apply(5, Event::OverviewOpenedOrClosed { is_open: true });
+        assert_eq!(replica.animated("DP-1"), Some(toggled));
+        assert_eq!(replica.animated("HDMI-A-1"), Some(toggled));
+    }
 
     const HANDLED: &str = "{\"Ok\":\"Handled\"}\n";
     const WORKSPACES: &str = "{\"WorkspacesChanged\":{\"workspaces\":[{\"id\":2,\"idx\":2,\"name\":null,\"output\":\"DP-1\",\"is_urgent\":false,\"is_active\":false,\"is_focused\":false,\"active_window_id\":null},{\"id\":1,\"idx\":1,\"name\":null,\"output\":\"DP-1\",\"is_urgent\":false,\"is_active\":true,\"is_focused\":true,\"active_window_id\":7}]}}\n";
