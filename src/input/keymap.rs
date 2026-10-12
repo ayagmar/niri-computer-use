@@ -206,12 +206,28 @@ fn inert(map: &xkb::Keymap, code: xkb::Keycode) -> bool {
         && state.serialize_layout(xkb::STATE_LAYOUT_EFFECTIVE) == 0
 }
 
-/// Whether `combo` is modifiers a combination may hold and a keysym name XKB knows, in
-/// any case, as wtype looks keys up.
+/// The first Unicode keysym: from here on, a keysym is a character's code point.
+const UNICODE_KEYSYMS: u32 = 0x0100_0000;
+
+/// Whether `combo` is modifiers a combination may hold and a keysym XKB knows by name, in
+/// any case, as wtype looks keys up. A name in the `U<hex>` or `0x<hex>` form, or one for
+/// a Unicode keysym, is left out: such names spell any text, one character each.
 pub(crate) fn known_combo(combo: &str) -> bool {
     parse_combo(combo).is_ok_and(|(_, keysym_name)| {
-        xkb::keysym_from_name(keysym_name, xkb::KEYSYM_CASE_INSENSITIVE) != xkb::Keysym::NoSymbol
+        let keysym = xkb::keysym_from_name(keysym_name, xkb::KEYSYM_CASE_INSENSITIVE);
+        keysym != xkb::Keysym::NoSymbol
+            && keysym.raw() < UNICODE_KEYSYMS
+            && !numeric_name(keysym_name)
     })
+}
+
+/// A keysym named by its number, `U` and a code point or `0x` and a keysym, in hex.
+fn numeric_name(name: &str) -> bool {
+    let digits = name
+        .strip_prefix(['U', 'u'])
+        .or_else(|| name.strip_prefix("0x"))
+        .or_else(|| name.strip_prefix("0X"));
+    digits.is_some_and(|digits| !digits.is_empty() && digits.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 fn combo_key(map: &xkb::Keymap, group: u32, combo: &str) -> Result<Key, CallError> {

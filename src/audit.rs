@@ -237,7 +237,8 @@ pub(crate) fn ref_id(id: &str) -> Value {
     known(id, crate::refs::well_formed(id), "invalid_ref")
 }
 
-/// `key`'s combinations as they are when XKB knows every one, otherwise only how many.
+/// `key`'s combinations as they are when XKB knows every one by name, otherwise only how
+/// many, as for names that give a keysym's number, which can spell any text.
 pub(crate) fn keys(keys: &[String]) -> Value {
     if keys.iter().all(|combo| keymap::known_combo(combo)) {
         return json!(keys);
@@ -504,6 +505,29 @@ mod tests {
             })
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn keys_named_by_number_are_logged_as_a_count() {
+        let named = [
+            "ctrl+Escape".to_owned(),
+            "a".to_owned(),
+            "Return".to_owned(),
+        ];
+        assert_eq!(keys(&named), json!(named));
+        // "SECR" spelled as code points and keysym numbers, as XKB resolves them.
+        for spelled in [
+            ["U0053", "U0045", "U0043", "u0052"],
+            ["0x1000053", "0x1000045", "0x1000043", "0x1000052"],
+            ["0x53", "0x45", "0x43", "0x52"],
+        ] {
+            let spelled = spelled.map(str::to_owned);
+            assert_eq!(
+                keys(&spelled),
+                json!({"category": "invalid_keys", "count": 4}),
+                "{spelled:?}"
+            );
+        }
     }
 
     #[test]
