@@ -63,7 +63,10 @@ pub(super) async fn type_input(
             .map_err(|error| partly(error, &typing, sent))?;
         // niri's events since the lock was read or the last key, right before this one.
         if let Some(outcome) = interrupted(&mut waiter, before, group).await {
-            device.finish(waiter.view().keyboard_group()).await?;
+            device
+                .finish(waiter.view().keyboard_group())
+                .await
+                .map_err(|error| partly(error, &typing, sent))?;
             return Ok(ended(outcome, focus, &typing, sent));
         }
         may_press(input, waiter.view(), &call, sent).await?;
@@ -78,11 +81,17 @@ pub(super) async fn type_input(
         let answered = typed_so_far(waiter.view(), focus, &typing, sent);
         input.niri.desk.answered(answered);
         if device.revision()? != revision {
-            device.finish(waiter.view().keyboard_group()).await?;
+            device
+                .finish(waiter.view().keyboard_group())
+                .await
+                .map_err(|error| partly(error, &typing, sent))?;
             return Ok(ended(keymap_changed(waiter.view()), focus, &typing, sent));
         }
     }
-    device.finish(waiter.view().keyboard_group()).await?;
+    device
+        .finish(waiter.view().keyboard_group())
+        .await
+        .map_err(|error| partly(error, &typing, sent))?;
     let outcome = interrupted(&mut waiter, before, group)
         .await
         .unwrap_or_else(|| Outcome::seen(Observed::Sent, waiter.view(), Vec::new()));
@@ -668,6 +677,31 @@ mod tests {
             seen.last_modifiers().map(|(depressed, _)| depressed),
             Some(0)
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The first key sent to niri but not acknowledged within the round trip's two seconds
+    /// may still go out, and does here: the error says so though nothing was counted.
+    #[tokio::test]
+    async fn a_first_key_niri_didnt_acknowledge_may_have_gone_out() {
+        let dir = fresh_dir("native-first-late");
+        let niri = Compositor::start(&dir, BASE);
+        niri.slow_keys(Duration::from_millis(2100)).await;
+        let Err(CallError::Tool(error)) = type_through(&niri, &dir, "a").await else {
+            panic!("the call ended in time");
+        };
+        assert_eq!(error.name, ErrorName::DeadlineExceeded);
+        assert!(
+            error
+                .detail
+                .starts_with("typed 0 of 1 characters, and more may have gone out; then "),
+            "{}",
+            error.detail
+        );
+        assert!(error.may_have_sent);
+        niri.slow_keys(Duration::ZERO).await;
+        marker_cleared(&niri, &dir).await;
+        assert_eq!(niri.seen().keys, [(A, true), (A, false)]);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

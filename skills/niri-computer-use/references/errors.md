@@ -4,7 +4,7 @@ A failed call comes back with `isError`. There are two shapes.
 
 **Argument mistakes**, such as an unknown output or a window id that doesn't exist, are plain text starting `invalid arguments:`. Nothing was done. Fix the arguments and call again.
 
-**Everything else** is `{"error": <name>, "detail": <upstream detail>}`. Quote the `detail` when you tell the user; it carries niri's or Noctalia's own message.
+**Everything else** is `{"error": <name>, "detail": <upstream detail>}`. Quote the `detail` when you tell the user; it carries niri's or Noctalia's own message. A `key` or `type_text` failure after some of its input went out, or may have, adds `"may_have_sent": true`, and its detail says how much: `typed 0 of 2 characters, and more may have gone out` means the first stroke may have reached the window. Look at a screenshot before typing again, and don't repeat the call as if nothing happened.
 
 ## Stop and tell the user
 

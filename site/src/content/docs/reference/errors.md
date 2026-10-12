@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-A failed call sets `isError` and returns `{"error": <name>, "detail": <upstream detail>}`. The names below are a stable contract; the `detail` carries niri's, Noctalia's or a program's own message, so quote it when you report a problem. This list is checked against `ErrorName` in [`src/error.rs`](https://github.com/ayagmar/niri-computer-use/blob/main/src/error.rs) when the site builds.
+A failed call sets `isError` and returns `{"error": <name>, "detail": <upstream detail>}`, with `"may_have_sent": true` added when `key` or `type_text` failed after some of its input went out, or may have. The names below are a stable contract; the `detail` carries niri's, Noctalia's or a program's own message, so quote it when you report a problem. This list is checked against `ErrorName` in [`src/error.rs`](https://github.com/ayagmar/niri-computer-use/blob/main/src/error.rs) when the site builds.
 
 A mistake in the arguments isn't one of these: it comes back as plain text starting `invalid arguments:`, and nothing was done.
 

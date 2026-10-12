@@ -183,10 +183,10 @@ fn combined(
             detail: joined(outcome.detail, detail),
             ..outcome
         }),
-        Err(CallError::Tool(error)) => Err(ToolError::new(
-            error.name,
-            format!("{}; {}", error.detail, said(pasted, detail.as_deref())),
-        )
+        Err(CallError::Tool(error)) => Err(ToolError {
+            detail: format!("{}; {}", error.detail, said(pasted, detail.as_deref())),
+            ..error
+        }
         .into()),
         Err(mistake @ CallError::InvalidArguments(_)) => Err(mistake),
     }

@@ -45,6 +45,9 @@ struct Record<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     changes: Option<Value>,
     error: Option<String>,
+    /// For a failure after some of its input went out, or may have: true, from its result.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    may_have_sent: bool,
     duration_ms: u128,
 }
 
@@ -134,6 +137,7 @@ impl Audit {
             observed,
             changes,
             error: outcome(result),
+            may_have_sent: may_have_sent(result),
             duration_ms: call.started.elapsed().as_millis(),
         });
     }
@@ -240,6 +244,19 @@ fn outcome(result: &Result<CallToolResult, ErrorData>) -> Option<String> {
     Some(name.unwrap_or("invalid_arguments").to_owned())
 }
 
+/// Whether a failure says some of its input went out, or may have: only that boolean of
+/// its result is read.
+fn may_have_sent(result: &Result<CallToolResult, ErrorData>) -> bool {
+    result
+        .as_ref()
+        .ok()
+        .filter(|result| result.is_error == Some(true))
+        .and_then(|result| result.structured_content.as_ref())
+        .and_then(|content| content.get("may_have_sent"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
 /// An action's `accepted` and `observed` fields, which hold only booleans and outcome
 /// names, and its change report as counts. Failures have none of them.
 fn effect(
@@ -310,6 +327,7 @@ mod tests {
             observed: None,
             changes: None,
             error,
+            may_have_sent: false,
             duration_ms: 12,
         }
     }

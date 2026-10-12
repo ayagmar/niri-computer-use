@@ -1477,9 +1477,11 @@ async fn a_submit_whose_wtype_fails_after_reading_it_may_have_gone_out() {
         &desk.fixture,
         r#"case "$*" in *Return*) echo 'lost the display' >&2; exit 1;; esac"#,
     );
-    let (name, detail) = tool_error(&desk.server.call("type_text", message.clone()).await);
+    let failed = desk.server.call("type_text", message.clone()).await;
+    let (name, detail) = tool_error(&failed);
     assert_eq!(name, "upstream_error");
     assert!(detail.starts_with(may_have), "{detail}");
+    assert_eq!(failed["structuredContent"]["may_have_sent"], true);
     assert!(detail.contains("lost the display"), "{detail}");
     assert_eq!(wtype_calls(&desk.fixture), ["-", "-", "- -k Return"]);
 
@@ -1492,6 +1494,58 @@ async fn a_submit_whose_wtype_fails_after_reading_it_may_have_gone_out() {
     assert_eq!(killed_name, "upstream_error");
     assert!(killed_detail.starts_with(may_have), "{killed_detail}");
     assert!(killed_detail.contains("marker stays"), "{killed_detail}");
+}
+
+/// A first stroke that fails once wtype read it may have gone out, even though nothing was
+/// counted yet: the error says so and carries `may_have_sent`, which the audit log keeps. A
+/// refusal before any stroke carries neither.
+#[tokio::test]
+async fn a_first_stroke_that_fails_after_wtype_read_it_may_have_gone_out() {
+    let mut desk = Desk::start("act-first-fails", "").await;
+    recording_wtype(&desk.fixture, "echo 'lost the display' >&2; exit 1");
+    let elsewhere = json!({"keys": ["Return"], "expect": {"window_id": 2}});
+    let refused = desk.server.call("key", elsewhere).await;
+    assert_eq!(tool_error(&refused).0, "focus_mismatch");
+    assert_eq!(refused["structuredContent"].get("may_have_sent"), None);
+
+    let keys = json!({"keys": ["Return"], "expect": {"window_id": 1}});
+    let key = desk.server.call("key", keys).await;
+    let (name, detail) = tool_error(&key);
+    assert_eq!(name, "upstream_error");
+    assert!(
+        detail.starts_with("pressed 0 of 1 keys, and more may have gone out; then "),
+        "{detail}"
+    );
+    assert_eq!(key["structuredContent"]["may_have_sent"], true);
+
+    let message = json!({"text": "hi", "expect": {"window_id": 1}, "submit": true});
+    let typed = desk.server.call("type_text", message).await;
+    let (typed_name, typed_detail) = tool_error(&typed);
+    assert_eq!(typed_name, "upstream_error");
+    assert!(
+        typed_detail.starts_with(
+            "typed 0 of 2 characters, and more may have gone out, not yet the submitting Return; then "
+        ),
+        "{typed_detail}"
+    );
+    assert_eq!(typed["structuredContent"]["may_have_sent"], true);
+    assert_eq!(wtype_calls(&desk.fixture), ["- -k Return", "-"]);
+
+    let audited: Vec<Value> = desk
+        .fixture
+        .audit_lines()
+        .into_iter()
+        .filter(|line| ["key", "type_text"].contains(&line["tool"].as_str().unwrap()))
+        .map(|line| json!([line["error"], line["may_have_sent"]]))
+        .collect();
+    assert_eq!(
+        audited,
+        [
+            json!(["focus_mismatch", null]),
+            json!(["upstream_error", true]),
+            json!(["upstream_error", true])
+        ]
+    );
 }
 
 #[tokio::test]

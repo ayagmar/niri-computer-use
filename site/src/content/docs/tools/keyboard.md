@@ -36,7 +36,7 @@ Before `wtype` starts, the server writes the input-dirty marker (`pending`), and
 | `screenshot` | see Action tools |
 | `element_changes` | default false; with true, [element changes](../elements/#element-changes) for the window focused when the call starts |
 
-For each combination, presses the modifiers, presses and releases the key, then releases the modifiers in reverse order. If focus moves after one, the rest aren't pressed: `observed` is `interrupted` and `pressed` gives the number that were. A combination that fails ends the call with that error, its `detail` starting with how many were pressed before it.
+For each combination, presses the modifiers, presses and releases the key, then releases the modifiers in reverse order. If focus moves after one, the rest aren't pressed: `observed` is `interrupted` and `pressed` gives the number that were. A combination that fails ends the call with that error, its `detail` starting with how many were pressed before it, and saying so when the failed one may have gone out too, even if it was the first: `pressed 0 of 1 keys, and more may have gone out; then …`.
 
 ### `type_text`
 
@@ -50,7 +50,7 @@ For each combination, presses the modifiers, presses and releases the key, then 
 | `screenshot` | see Action tools |
 | `element_changes` | default false; with true, [element changes](../elements/#element-changes) for the window focused when the call starts |
 
-The text goes out in parts of 100 characters. If focus moved after a part, the rest isn't typed: `observed` is `interrupted` and `typed` gives the number of characters sent. A part that fails ends the call with that error, its `detail` starting with how many characters were typed before it and, with `submit`, whether `Return` was pressed, as in `typed 150 of 150 characters, not yet the submitting Return; then …`. A part or `Return` that failed once `wtype` had started on it may still have gone out, and the detail says so: `typed 150 of 150 characters, and the submitting Return may have gone out; then …`. A result without `typed` means the whole text went out. With `submit`, the result has `submitted`: true once `Return` was pressed, false when the text stopped early and `Return` wasn't pressed.
+The text goes out in parts of 100 characters. If focus moved after a part, the rest isn't typed: `observed` is `interrupted` and `typed` gives the number of characters sent. A part that fails ends the call with that error, its `detail` starting with how many characters were typed before it and, with `submit`, whether `Return` was pressed, as in `typed 150 of 150 characters, not yet the submitting Return; then …`. A part or `Return` that failed once `wtype` had started on it may still have gone out, and the detail says so: `typed 150 of 150 characters, and the submitting Return may have gone out; then …`. That holds for the first part too: `typed 0 of 2 characters, and more may have gone out`. Every failure whose `detail` has such a count also has `may_have_sent: true`. A result without `typed` means the whole text went out. With `submit`, the result has `submitted`: true once `Return` was pressed, false when the text stopped early and `Return` wasn't pressed.
 
 ### Pasting
 

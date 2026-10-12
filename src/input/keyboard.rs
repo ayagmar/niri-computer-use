@@ -471,15 +471,16 @@ pub(super) fn ended(outcome: Outcome, focus: Focus, typing: &Typing, sent: Sent)
     }
 }
 
-/// A stroke's failure, saying how much went out before it.
+/// A stroke's failure, saying how much went out before it, or may have.
 pub(super) fn partly(error: ToolError, typing: &Typing, sent: Sent) -> ToolError {
-    if sent.nothing() {
+    if sent.nothing() && !sent.underway {
         return error;
     }
-    ToolError::new(
-        error.name,
-        format!("{}; then {}", sent.describe(typing), error.detail),
-    )
+    ToolError {
+        detail: format!("{}; then {}", sent.describe(typing), error.detail),
+        may_have_sent: true,
+        ..error
+    }
 }
 
 /// A `wtype` run that failed, and whether wtype was let past its gate first, after which

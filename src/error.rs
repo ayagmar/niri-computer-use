@@ -81,12 +81,17 @@ pub(crate) enum ErrorName {
     EngineUnavailable,
 }
 
-/// A failure, serialized as `{"error": <name>, "detail": <upstream detail>}`.
+/// A failure, serialized as `{"error": <name>, "detail": <upstream detail>}`, with
+/// `"may_have_sent": true` added when input went out, or may have, before it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct ToolError {
     #[serde(rename = "error")]
     pub(crate) name: ErrorName,
     pub(crate) detail: String,
+    /// Some of the call's input went out, or may have, before it failed; the detail says
+    /// how much. The audit log keeps it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) may_have_sent: bool,
 }
 
 impl ToolError {
@@ -94,6 +99,7 @@ impl ToolError {
         Self {
             name,
             detail: detail.into(),
+            may_have_sent: false,
         }
     }
 
