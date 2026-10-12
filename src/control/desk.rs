@@ -15,7 +15,7 @@ use serde::Serialize;
 use tokio::sync::{Mutex, watch};
 use tokio::time::Instant;
 
-use super::lease::{self, Holder, Lease, Refused};
+use super::lease::{self, Holder, Lease, Refused, Unpublished};
 use super::runtime::RuntimeDir;
 use super::stop;
 use super::{marker, procs};
@@ -323,9 +323,10 @@ impl Desk {
             return Err(session_ended());
         }
         self.unblocked(runtime)?;
-        lease
-            .publish()
-            .map_err(|detail| ToolError::new(ErrorName::UpstreamError, detail))?;
+        lease.publish().map_err(|unpublished| match unpublished {
+            Unpublished::Moved => lease_moved("granted nothing; call acquire_desktop again"),
+            Unpublished::Io(detail) => ToolError::new(ErrorName::UpstreamError, detail),
+        })?;
         let holder = lease.holder().clone();
         let grant = Grant {
             owner: session.id(),
@@ -1918,6 +1919,37 @@ mod tests {
             released = others => assert_eq!(released, Ok(false)),
         }
         assert!(desk.status(&me).held_by_me);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The lease file can be replaced while the user is asked, and another server can take
+    /// the new one. An Allow then grants nothing and leaves that server's record alone.
+    #[tokio::test]
+    async fn an_allow_after_the_lease_file_was_replaced_grants_nothing() {
+        let me = session(1);
+        let dir = crate::test_support::fresh_dir("desk-acquire-replaced");
+        let desk = Desk::start(&env(&dir));
+        let other = Desk::start(&env(&dir));
+        let runtime = RuntimeDir::of(&env(&dir)).unwrap();
+        let (allow, allowed) = tokio::sync::oneshot::channel::<()>();
+        let (asked, waiting) = tokio::sync::oneshot::channel();
+        let refusal = async move {
+            asked.send(()).unwrap();
+            allowed.await.ok();
+            None
+        };
+        let acquire = desk.acquire(&me, "me/1", refusal, ready(None));
+        let replace = async {
+            waiting.await.unwrap();
+            replace_lease(&runtime, &other).await;
+            allow.send(()).unwrap();
+        };
+        let (granted, ()) = tokio::join!(acquire, replace);
+        let error = granted.unwrap_err();
+        assert!(error.detail.contains("removed or replaced"), "{error:?}");
+        assert!(!desk.status(&me).held_by_me);
+        let holder = lease::holder(&runtime).unwrap();
+        assert_eq!((holder.label.as_str(), holder.pending), ("other/2", false));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

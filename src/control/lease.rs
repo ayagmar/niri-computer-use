@@ -58,6 +58,15 @@ impl Locked {
     }
 }
 
+/// Why `Lease::publish` recorded nothing.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Unpublished {
+    /// `lease` no longer names the locked file, so another server may hold the new one and
+    /// own the record.
+    Moved,
+    Io(String),
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Refused {
     /// Another process holds the lock; its record, if it left a readable one.
@@ -111,15 +120,20 @@ impl Lease {
         })
     }
 
-    /// Records the lease as granted, from now.
-    pub(crate) fn publish(&mut self) -> Result<(), String> {
+    /// Records the lease as granted, from now, if `lease` still names the locked file: the
+    /// record is the current holder's, as `drop` keeps it.
+    pub(crate) fn publish(&mut self) -> Result<(), Unpublished> {
+        if !self.intact() {
+            return Err(Unpublished::Moved);
+        }
         let granted = Holder {
             since: now(),
             pending: false,
             ..self.holder.clone()
         };
-        write_record(&self.record, Some(&granted))
-            .map_err(|error| format!("write {}: {error}", self.record.display()))?;
+        write_record(&self.record, Some(&granted)).map_err(|error| {
+            Unpublished::Io(format!("write {}: {error}", self.record.display()))
+        })?;
         self.holder = granted;
         Ok(())
     }
