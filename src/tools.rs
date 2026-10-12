@@ -884,7 +884,7 @@ impl Server {
                 tool: "focus",
                 logged,
                 gate: None,
-                report: Report::quiet(args.screenshot, Quiet::UnlessSeen),
+                report: Report::quiet(args.screenshot, act::FOCUS_QUIET),
             },
             work,
         )

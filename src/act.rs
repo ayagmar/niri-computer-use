@@ -315,6 +315,10 @@ pub(crate) async fn fresh_lock(niri: Niri<'_>) -> Result<(), ToolError> {
     policy::refuse_lock(lock.state()).map_or(Ok(()), Err)
 }
 
+/// Whether `focus`'s change report waits for quiet: not once its own wait saw niri move
+/// focus, since focus is niri's own and that wait watched it.
+pub(crate) const FOCUS_QUIET: record::Quiet = record::Quiet::UnlessSeen;
+
 pub(crate) async fn focus_window(niri: Niri<'_>, id: u64) -> Result<Outcome, CallError> {
     let mut waiter = niri::waiter(niri.events).await?;
     if !waiter.view().windows().contains_key(&id) {
