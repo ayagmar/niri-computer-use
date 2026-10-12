@@ -18,7 +18,8 @@ const TEXT: &str = "0123456789";
 
 pub(super) fn run(session: &mut Session<'_>, wev: &Wev<'_>, server: &str) -> Result<()> {
     mid_typing(session, wev, server)?;
-    mid_drag(session, wev, server)
+    mid_drag(session, wev, server)?;
+    guardian_killed_too(session, wev, server)
 }
 
 /// Starts server A with the lease.
@@ -82,8 +83,15 @@ fn mid_typing(session: &mut Session<'_>, wev: &Wev<'_>, server: &str) -> Result<
     session.log("M4 crash mid-typing: B refused with recovery_required, wtype typed everything, recover cleared the marker, B took the lease")
 }
 
-fn mid_drag(session: &mut Session<'_>, wev: &Wev<'_>, server: &str) -> Result<()> {
-    let mut a = server_a(session, server, "harness-m4-c")?;
+/// Starts a drag with server `name` and waits for its press in `wev`. Returns the client
+/// and the log offset from before the drag.
+fn pressed(
+    session: &mut Session<'_>,
+    wev: &Wev<'_>,
+    server: &str,
+    name: &str,
+) -> Result<(Client, usize)> {
+    let mut a = server_a(session, server, name)?;
     let shot = Shot::take(session, &mut a, 4000)?;
     let from = shot.pixel(wev.in_layout((50.0, 50.0)));
     let to = shot.pixel(wev.in_layout((350.0, 250.0)));
@@ -100,18 +108,24 @@ fn mid_drag(session: &mut Session<'_>, wev: &Wev<'_>, server: &str) -> Result<()
         code: 272,
         pressed: true,
     };
-    let release = Pointer::Button {
-        code: 272,
-        pressed: false,
-    };
     session.wait_until("m4-crash-drag", "the drag's press in wev", WAIT, |_| {
         Ok(wev.since(offset)?.contains(&press).then_some(()))
     })?;
+    Ok((a, offset))
+}
+
+const RELEASE: Pointer = Pointer::Button {
+    code: 272,
+    pressed: false,
+};
+
+fn mid_drag(session: &mut Session<'_>, wev: &Wev<'_>, server: &str) -> Result<()> {
+    let (a, offset) = pressed(session, wev, server, "harness-m4-c")?;
     let killed = super::guardian::kill(session, a)?;
     let mut b = refused(session, server, "harness-m4-d")?;
     // niri releases nothing when a pointer goes (C8): A's guardian sends the release.
     super::guardian::released(session, killed, "M4 drag button", || {
-        Ok(wev.since(offset)?.contains(&release))
+        Ok(wev.since(offset)?.contains(&RELEASE))
     })?;
     recover(
         session,
@@ -120,8 +134,37 @@ fn mid_drag(session: &mut Session<'_>, wev: &Wev<'_>, server: &str) -> Result<()
         "Sent the release of pointer buttons [272]",
     )?;
     session.wait_until("m4-crash-release", "recover's release in wev", WAIT, |_| {
-        Ok(wev.since(offset)?.contains(&release).then_some(()))
+        Ok(wev.since(offset)?.contains(&RELEASE).then_some(()))
     })?;
     b.stop()?;
     session.log("M4 crash mid-drag: the guardian released the button, B refused with recovery_required until recover, which sent the release again, B took the lease")
+}
+
+/// Server A's guardian, then A, are killed with SIGKILL mid-drag, as a signal to a whole service
+/// would end both: server B's guardian releases the button as it starts, without
+/// `recover`, and the marker stays for `recover`.
+fn guardian_killed_too(session: &mut Session<'_>, wev: &Wev<'_>, server: &str) -> Result<()> {
+    let (mut a, offset) = pressed(session, wev, server, "harness-m4-e")?;
+    let engine = super::guardian::engine(session, &mut a)?;
+    let watched = match engine {
+        Some(pid) => u32::try_from(pid).map_err(|_| Failure::new("the engine's PID"))?,
+        None => u32::try_from(a.pid()).map_err(|_| Failure::new("server A's PID"))?,
+    };
+    crate::runner::kill_pid(super::guardian::of(watched)?)?;
+    let killed = super::guardian::kill_known(a, engine)?;
+    let mut b = refused(session, server, "harness-m4-f")?;
+    super::guardian::released(
+        session,
+        killed,
+        "M4 drag button, its guardian killed too, released by the next server's",
+        || Ok(wev.since(offset)?.contains(&RELEASE)),
+    )?;
+    recover(
+        session,
+        &mut b,
+        server,
+        "Sent the release of pointer buttons [272]",
+    )?;
+    b.stop()?;
+    session.log("M4 crash mid-drag with the guardian killed too: the next server's guardian released the button, B refused with recovery_required until recover")
 }

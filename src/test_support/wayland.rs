@@ -15,7 +15,7 @@
 //!
 //! The focused client is implicit: what the focus was sent is in `Seen`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::Write as _;
 use std::os::fd::{AsFd as _, OwnedFd};
@@ -23,7 +23,7 @@ use std::os::unix::fs::FileExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use niri_ipc::{KeyboardLayouts, Reply, Request, Response};
+use niri_ipc::{KeyboardLayouts, LogicalOutput, Output, Reply, Request, Response, Transform};
 use rustix::fs::{MemfdFlags, memfd_create};
 use tokio::io::unix::AsyncFd;
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
@@ -83,6 +83,11 @@ impl Seen {
     /// Keys pressed and not released since.
     pub(crate) fn held_keys(&self) -> Vec<u32> {
         held(&self.keys)
+    }
+
+    /// Buttons pressed and not released since.
+    pub(crate) fn held_buttons(&self) -> Vec<u32> {
+        held(&self.buttons)
     }
 
     /// The modifiers the focus was sent last, if any.
@@ -275,7 +280,31 @@ async fn serve(
     }
 }
 
-/// Answers one niri request: the keyboard layouts, with `group` active.
+/// The output the fake's display offers, 1920×1080 at scale 1.
+fn output() -> Output {
+    Output {
+        name: OUTPUT.to_owned(),
+        make: "Fake".to_owned(),
+        model: "Fake".to_owned(),
+        serial: None,
+        physical_size: None,
+        modes: vec![super::output_mode::from_logical(1920, 1080, 1.0)],
+        current_mode: Some(0),
+        is_custom_mode: false,
+        vrr_supported: false,
+        vrr_enabled: false,
+        logical: Some(LogicalOutput {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+            scale: 1.0,
+            transform: Transform::Normal,
+        }),
+    }
+}
+
+/// Answers one niri request: the keyboard layouts, with `group` active, or the outputs.
 async fn answer(stream: tokio::net::UnixStream, group: u32) {
     let (reader, mut writer) = stream.into_split();
     let mut line = String::new();
@@ -287,7 +316,11 @@ async fn answer(stream: tokio::net::UnixStream, group: u32) {
             names: vec!["first".into(), "second".into()],
             current_idx: u8::try_from(group).unwrap(),
         })),
-        _ => Err("the fake answers only KeyboardLayouts".into()),
+        Ok(Request::Outputs) => Ok(Response::Outputs(HashMap::from([(
+            OUTPUT.to_owned(),
+            output(),
+        )]))),
+        _ => Err("the fake answers only KeyboardLayouts and Outputs".into()),
     };
     let mut reply = serde_json::to_string(&reply).unwrap();
     reply.push('\n');

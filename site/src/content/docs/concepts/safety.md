@@ -37,6 +37,8 @@ If the input can't be released, or its cleanup ended without removing the marker
 
 Each standalone `serve`, and each shared engine, starts a small guardian process. If the server or engine dies while it holds input, for example after `kill -9`, the guardian at once releases the native keyboard's keys and the pointer buttons that the marker records. It leaves alone a `wtype` call, which outlives the server and finishes on its own, and a marker it can't read, and a release can fail or time out. The marker still stays until you run `recover`.
 
+If the guardian dies too, as when the whole service is killed at once, the next server or engine to start on the same niri sends those releases as it starts. It skips a marker whose server's process ID is in use again.
+
 ## The lock gate
 
 The server acts only on a screen it knows is unlocked. It asks logind for niri's session's `LockedHint` and, when Noctalia runs, Noctalia's own lock state. If either says locked, or neither can answer, `acquire_desktop` and every action refuse with `screen_locked`. The state is checked again before each action, because the screen can lock while an agent holds the lease, and an action's request, input or command goes out at most 250 ms after that check began. When the check is older by then, it runs again, and an action that still can't go out in time is refused with `screen_locked`.

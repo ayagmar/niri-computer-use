@@ -7,16 +7,24 @@
 //! devices whose peer must be the niri serving `NIRI_SOCKET`, under the lease and within
 //! one deadline. The marker stays, with
 //! the time of the releases, until a human runs `recover`.
+//!
+//! At its start, before it waits, it does the same for a marker a dead server left and
+//! nothing released: that server's own guardian died with it, as when a signal or the OOM
+//! killer ends a whole service, or couldn't finish. So the next server to start releases it.
 
+use std::path::Path;
 use std::time::Duration;
 
 use tokio::time::Instant;
 
 use super::lease::{Lease, Refused};
 use super::marker::{self, Found, Marker};
+use super::procs;
 use super::recover;
 use super::runtime::RuntimeDir;
 use crate::{Env, cli};
+
+const PROC: &str = "/proc";
 
 /// Everything after the server's end: the lease, niri's PID, binding and both releases.
 const DEADLINE: Duration = Duration::from_secs(10);
@@ -26,6 +34,11 @@ const LEASE_WAIT: Duration = Duration::from_secs(2);
 const LEASE_RETRY: Duration = Duration::from_millis(20);
 
 pub(crate) async fn run(env: &Env, server: u32) -> Result<(), String> {
+    if let Ok(runtime) = RuntimeDir::of(env)
+        && let Err(error) = left_behind(env, &runtime, server, Path::new(PROC)).await
+    {
+        cli::print_error(&format!("the input a dead server left held: {error}"));
+    }
     // Nothing else runs in this process: blocking until the server's end is the point.
     std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink())
         .map_err(|error| format!("watch server {server}: {error}"))?;
@@ -39,6 +52,34 @@ pub(crate) async fn run(env: &Env, server: u32) -> Result<(), String> {
     tokio::time::timeout(DEADLINE, release(env, &runtime, server))
         .await
         .map_err(|_| format!("releases for server {server} didn't finish within {DEADLINE:?}"))?
+}
+
+/// Releases what the marker names when the server that wrote it isn't `server` and no
+/// longer runs, as `proc_root` tells, and nothing released it yet, within the deadline.
+async fn left_behind(
+    env: &Env,
+    runtime: &RuntimeDir,
+    server: u32,
+    proc_root: &Path,
+) -> Result<(), String> {
+    let Some(dead) = orphan(marker::read(runtime).as_ref(), server, proc_root) else {
+        return Ok(());
+    };
+    tokio::time::timeout(DEADLINE, release(env, runtime, dead))
+        .await
+        .map_err(|_| format!("releases for server {dead} didn't finish within {DEADLINE:?}"))?
+}
+
+/// The dead server whose input `found` names and nothing released: one other than `server`
+/// that `proc_root` lists as exited or not at all. The marker records no start time, so a
+/// PID reused since reads as running, and its input waits for `recover`.
+fn orphan(found: Option<&Found>, server: u32, proc_root: &Path) -> Option<u32> {
+    let Some(Found::Marker(marker)) = found else {
+        return None;
+    };
+    let writer = marker.server_pid;
+    let dead = procs::stat(proc_root, writer).is_none_or(procs::Stat::exited);
+    (writer != server && dead && releases(found, writer).is_some()).then_some(writer)
 }
 
 async fn release(env: &Env, runtime: &RuntimeDir, server: u32) -> Result<(), String> {
@@ -104,6 +145,98 @@ fn releases(found: Option<&Found>, server: u32) -> Option<&Marker> {
 mod tests {
     use super::*;
     use crate::control::marker::{Child, Native};
+    use crate::test_support::{fresh_dir, wayland::Compositor};
+
+    const KEYMAP: &str = include_str!("../../tests/fixtures/us-de.xkb");
+
+    /// Writes `/proc/<pid>/stat` under `proc_root` for a process in `state`.
+    fn process(proc_root: &Path, pid: u32, state: char) {
+        let process = proc_root.join(pid.to_string());
+        std::fs::create_dir_all(&process).unwrap();
+        let stat = format!(
+            "{pid} (niri-computer-u) {state} 1 {pid} {pid} 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 98765 0 0"
+        );
+        std::fs::write(process.join("stat"), stat).unwrap();
+    }
+
+    #[test]
+    fn a_dead_servers_unreleased_input_is_left_behind() {
+        let proc_root = fresh_dir("guard-orphan-proc");
+        let mut keys = marker(7);
+        keys.keyboard = Some(Native {
+            codes: vec![38],
+            group: 0,
+        });
+        let found = Found::Marker(keys.clone());
+        assert_eq!(orphan(Some(&found), 8, &proc_root), Some(7), "not listed");
+        process(&proc_root, 7, 'Z');
+        assert_eq!(orphan(Some(&found), 8, &proc_root), Some(7), "a zombie");
+        process(&proc_root, 7, 'S');
+        assert_eq!(orphan(Some(&found), 8, &proc_root), None, "it runs");
+        std::fs::remove_dir_all(proc_root.join("7")).unwrap();
+        assert_eq!(
+            orphan(Some(&found), 7, &proc_root),
+            None,
+            "its own server's"
+        );
+        keys.released = Some("t".into());
+        assert_eq!(orphan(Some(&Found::Marker(keys)), 8, &proc_root), None);
+        assert_eq!(orphan(None, 8, &proc_root), None);
+        std::fs::remove_dir_all(proc_root).unwrap();
+    }
+
+    /// A server killed with its guardian, mid-text in an extended keymap and with a
+    /// button held: the next guardian to start releases the key and the button, zeroes
+    /// the modifiers in niri's active layout and puts the compositor's keymap back, then
+    /// notes the releases in the marker, which stays for `recover`.
+    #[tokio::test]
+    async fn the_next_guardian_releases_what_a_dead_server_left_held() {
+        let dir = fresh_dir("guard-left-behind");
+        let proc_root = fresh_dir("guard-left-behind-proc");
+        let niri = Compositor::start(&dir, KEYMAP);
+        let env = niri.env(&dir);
+        let runtime = RuntimeDir::of(&env).unwrap();
+        runtime.create().unwrap();
+        // What the dead server sent before it died: an extension and a key pressed. Its
+        // connection closing releases nothing in niri.
+        let mut keyboard =
+            crate::niri::keyboard::Keyboard::bind(niri.display(), std::process::id())
+                .await
+                .unwrap();
+        keyboard
+            .extend(&KEYMAP.replace(
+                "    modifier_map Shift",
+                "    key <I60> { [eacute] };\n    modifier_map Shift",
+            ))
+            .unwrap();
+        keyboard.key(52, true).unwrap();
+        keyboard.sync().await.unwrap();
+        drop(keyboard);
+        std::fs::write(
+            runtime.path().join(super::super::runtime::INPUT_DIRTY),
+            format!(
+                r#"{{"operation":"drag","phase":"pending","server_pid":7,"since":"t","buttons":[272],"output":"{}","keyboard":{{"codes":[52],"group":0}}}}"#,
+                crate::test_support::wayland::OUTPUT
+            ),
+        )
+        .unwrap();
+        niri.switch(1).await;
+        left_behind(&env, &runtime, std::process::id(), &proc_root)
+            .await
+            .unwrap();
+        let seen = niri.seen();
+        assert!(seen.held_keys().is_empty(), "{:?}", seen.keys);
+        assert_eq!(seen.held_buttons(), Vec::<u32>::new());
+        assert!(seen.buttons.contains(&(272, false)));
+        assert_eq!(seen.active, seen.compositor);
+        assert_eq!(seen.last_modifiers(), Some((0, 1)));
+        let Some(Found::Marker(left)) = marker::read(&runtime) else {
+            panic!("the marker went")
+        };
+        assert!(left.released.is_some());
+        std::fs::remove_dir_all(dir).unwrap();
+        std::fs::remove_dir_all(proc_root).unwrap();
+    }
 
     fn marker(server: u32) -> Marker {
         let mut marker = Marker::pending("type_text", Vec::new());

@@ -65,6 +65,32 @@ pub(super) fn kill_known(client: Client, engine: Option<u64>) -> Result<Killed> 
     Ok(killed)
 }
 
+/// The crash guardian watching `pid`, the process whose command line is
+/// `<binary> guard <pid>`.
+pub(super) fn of(pid: u32) -> Result<u32> {
+    let wanted = pid.to_string();
+    for entry in fs::read_dir("/proc").context("list /proc")? {
+        let Some(candidate) = entry
+            .ok()
+            .and_then(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        // A process that exited meanwhile has no command line to read.
+        let Ok(cmdline) = fs::read(format!("/proc/{candidate}/cmdline")) else {
+            continue;
+        };
+        let args: Vec<&[u8]> = cmdline.split(|byte| *byte == 0).collect();
+        if let [_, guard, watched, ..] = args.as_slice()
+            && *guard == b"guard"
+            && *watched == wanted.as_bytes()
+        {
+            return Ok(candidate);
+        }
+    }
+    Err(Failure::new(format!("no crash guardian watches PID {pid}")))
+}
+
 /// SIGKILLs the shared engine `pid`.
 pub(super) fn kill_engine(pid: u64) -> Result<Killed> {
     let killed = Killed::now();
