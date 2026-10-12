@@ -97,6 +97,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- A `wtype` stroke is let past its gate only while the server's last read of the lock state is under 250 ms old, checked again right where the gate opens. The task that opens it can run after the action's own check, for example while a shared engine serves another client, and could send the stroke on an older read.
 - A stop or a lost lease once `key` or `type_text` started typing, or once `shell_panel` or `noctalia` sent its command, ends the call `uncertain` with the reason in `detail`, as for the niri and element actions, instead of `stopped` or `lease_required`: the input or the command may have taken effect. `typed` and `pressed` count what `wtype` finished. A paste and the pointer tools still return the error.
 - `type_text` stops before its next part when the focused app goes on the deny list during the call, with `app_denied` saying how much was typed, and refuses with `focus_mismatch` when focus moves before anything was typed.
 - `shell_panel` no longer sends its command when the input-dirty marker or the stop flag was set while they read Noctalia's open panel.

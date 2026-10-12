@@ -586,7 +586,8 @@ async fn run_wtype(
 
 /// Lets wtype past its gate and feeds it, between arming `aftercare` against `desk`'s lock
 /// read and saying the stroke went out, which it says even after a failure, since wtype
-/// may have typed some.
+/// may have typed some. Without `aftercare`, the lock read's age is checked again right
+/// before the gate opens, since this task may run well after `go`'s check.
 async fn feed(
     gated: Gated,
     stdin: &[u8],
@@ -595,6 +596,11 @@ async fn feed(
     desk: &Desk,
 ) -> Result<(), Failed> {
     let Some(aftercare) = aftercare else {
+        if let Err(error) = desk.fresh() {
+            // Still waiting at the gate: killing it now types nothing.
+            drop(gated);
+            return Err(Failed::unsent(cleared(marker, error).await));
+        }
         let fed = gated.feed(stdin, MAX_STDOUT).await;
         return finish(fed, marker).await.map_err(Failed::released);
     };
@@ -938,6 +944,50 @@ mod tests {
                 detail: Some("after n".to_owned())
             }
         );
+        assert!(!runtime.input_dirty().unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The task that lets wtype past its gate may run well after `go`, as when the shared
+    /// engine is busy with another client's call. Once the lock read is older than
+    /// `LAST_GATE` by then, wtype is killed at its gate and its marker comes off.
+    #[tokio::test]
+    async fn a_stroke_whose_gate_opens_after_the_lock_read_aged_is_never_let_through() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = crate::test_support::fresh_dir("feed-late");
+        let runtime = RuntimeDir::of(&crate::test_support::niri_env(&dir)).unwrap();
+        runtime.create().unwrap();
+        let typed = dir.join("typed");
+        let bin = dir.join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let wtype = bin.join("wtype");
+        std::fs::write(&wtype, format!("#!/bin/sh\ncat > '{}'\n", typed.display())).unwrap();
+        std::fs::set_permissions(&wtype, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let desk = crate::input::paste::desk_read(&dir, Duration::ZERO);
+        // `go` passes on a fresh read, which has aged past `LAST_GATE` before the gate opens.
+        let go = async {
+            desk.sending_input()?;
+            tokio::time::sleep(crate::control::desk::LAST_GATE + Duration::from_millis(50)).await;
+            Ok(())
+        };
+        let stroke = Wtype {
+            tool: "type_text",
+            args: &["-".to_owned()],
+            stdin: b"hi".to_vec(),
+            place: Place {
+                path: Some(bin.as_os_str()),
+                cwd: None,
+            },
+        };
+        let Failed { error, released } = run_wtype(&runtime, stroke, &mut None, go, &desk)
+            .await
+            .unwrap_err();
+        assert!(!released, "{}", error.detail);
+        assert_eq!(error.name, ErrorName::ScreenLocked, "{}", error.detail);
+        // Killed at its gate, the stand-in for wtype read nothing.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(std::fs::read(&typed).unwrap_or_default(), b"");
         assert!(!runtime.input_dirty().unwrap());
         std::fs::remove_dir_all(dir).unwrap();
     }
