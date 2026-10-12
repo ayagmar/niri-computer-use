@@ -85,8 +85,11 @@ pub(crate) struct EngineStatus {
     pub(crate) mode: Mode,
     /// The sessions it serves, this one included.
     pub(crate) sessions: usize,
-    /// Why a client that asked for shared mode is served standalone.
+    /// Why a client in shared mode is served standalone.
     pub(crate) fallback: Option<String>,
+    /// Why a shared engine runs without a scope of its own: what its bridge's
+    /// `systemd-run` said, or why it was killed.
+    pub(crate) unscoped: Option<String>,
     pub(crate) version: &'static str,
     #[serde(flatten)]
     pub(crate) build: Build,

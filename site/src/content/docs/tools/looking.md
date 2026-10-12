@@ -21,6 +21,7 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `engine.version`, `engine.exe` | that process's version and the file it was started from |
 | `engine.replaced` | `true` once `engine.exe` holds another build, as after a reinstall: the process still runs the build it started with until its clients restart |
 | `engine.cgroup` | that process's cgroup; a shared engine has a scope of its own when its bridge could reach the user's systemd |
+| `engine.unscoped` | why a shared engine has no scope of its own: what `systemd-run` said when it failed, or that it hung and was killed; null otherwise |
 | `display_error` | null when the Wayland display is niri's right now, checked on every call; otherwise why input, screenshots and clipboard reads are refused, such as [`session_mismatch`](../../reference/errors/#session_mismatch) |
 | `discovery.warning` | null, or why the given variables might not fit together, such as `NIRI_SOCKET` outside `XDG_RUNTIME_DIR` |
 | `niri.version` | niri's version string, such as `26.04 (8ed0da4)` |

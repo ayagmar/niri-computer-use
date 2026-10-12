@@ -5,6 +5,7 @@
 //! ID, from being reused, so the kill can't reach another group.
 
 use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -254,9 +255,48 @@ pub(crate) struct Daemon {
 }
 
 impl Daemon {
-    /// Whether it has exited; one that has is reaped.
-    pub(crate) fn exited(&mut self) -> bool {
-        !matches!(self.child.try_wait(), Ok(None))
+    /// How it exited, once it has; one that has is reaped. A failed wait counts as an exit,
+    /// with its error.
+    pub(crate) fn exited(&mut self) -> Option<Result<ExitStatus, String>> {
+        match self.child.try_wait() {
+            Ok(None) => None,
+            Ok(Some(status)) => Some(Ok(status)),
+            Err(error) => Some(Err(format!("wait: {error}"))),
+        }
+    }
+
+    /// Kills its process group and reaps it within `deadline`, unless it now runs the file
+    /// `exe` runs, as `systemd-run --scope` does once its scope exists. Returns whether it
+    /// was killed. Between the check and the kill it could still exec `exe`; a child that
+    /// hasn't by `deadline` is taken as stuck.
+    pub(crate) async fn kill_unless_running(
+        &mut self,
+        exe: &Path,
+        deadline: Duration,
+    ) -> Result<bool, String> {
+        let Some(pid) = self.child.id() else {
+            return Ok(false);
+        };
+        if same_file(&PathBuf::from(format!("/proc/{pid}/exe")), exe) {
+            return Ok(false);
+        }
+        let group = Pid::from_raw(pid.cast_signed()).ok_or("process ID 0")?;
+        // It may have exited since, so a missing group is fine.
+        kill_process_group(group, Signal::KILL).ok();
+        match tokio::time::timeout(deadline, self.child.wait()).await {
+            Ok(Ok(_)) => Ok(true),
+            Ok(Err(error)) => Err(format!("reap it: {error}")),
+            Err(_) => Err(format!("it didn't exit within {deadline:?} of SIGKILL")),
+        }
+    }
+}
+
+/// Whether `a` and `b` name one file, following symlinks such as `/proc/<pid>/exe`.
+fn same_file(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    match (std::fs::metadata(a), std::fs::metadata(b)) {
+        (Ok(a), Ok(b)) => (a.dev(), a.ino()) == (b.dev(), b.ino()),
+        _ => false,
     }
 }
 
@@ -465,7 +505,7 @@ mod tests {
     /// A shell whose background `sleep` writes its PID to a file, so a test can check that
     /// the grandchild died with its group. The `sleep` keeps the shell's stdout open.
     struct Grandchild {
-        dir: std::path::PathBuf,
+        dir: PathBuf,
         args: Vec<String>,
     }
 
@@ -499,7 +539,7 @@ mod tests {
         }
     }
 
-    async fn until_written(file: &std::path::Path) -> String {
+    async fn until_written(file: &Path) -> String {
         loop {
             if let Some(pid) = std::fs::read_to_string(file)
                 .ok()

@@ -64,7 +64,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - `elements` marks an element whose ref nothing on the accessibility bus binds to the record it acts on: `unbound` in its JSON, `unnamed_row` or `repeated`, and `unbound:<why>` at the end of its line. Every tool taking an `element` refuses such a ref with the new error `element_unbound`, whose detail says to aim the pointer tools at its pixels.
 
 - `status.engine` reports the serving process's `version`, the file it was started from (`exe`), whether that file has been replaced since (`replaced`, as after a reinstall), and its `cgroup`.
-- A bridge starts the shared engine through `systemd-run --user --scope`, so the engine has a scope of its own and stopping the scope of the client that started it no longer ends it for every client. Without systemd, or when the manager refuses, the engine starts as before.
+- A bridge starts the shared engine through `systemd-run --user --scope`, so the engine has a scope of its own and stopping the scope of the client that started it no longer ends it for every client. Without systemd, or when the manager refuses, the engine starts as before, and `status.engine.unscoped` says why it has no scope of its own. A `systemd-run` that hangs is killed after two seconds.
 
 ### Changed
 

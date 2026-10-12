@@ -56,6 +56,9 @@ pub(crate) struct Engine {
     mode: status::Mode,
     /// Why a standalone engine's client isn't served by the shared engine it asked for.
     fallback: Option<String>,
+    /// Why a shared engine runs without a scope of its own, as the bridge that started it
+    /// said.
+    unscoped: Option<String>,
     /// Lives as long as the engine; see `control::guard`.
     _guardian: Option<runner::Watcher>,
 }
@@ -169,6 +172,7 @@ impl Engine {
             last_session: AtomicU64::new(0),
             mode: status::Mode::Standalone,
             fallback: None,
+            unscoped: None,
             _guardian: None,
         }
     }
@@ -283,6 +287,7 @@ impl Engine {
             mode: self.mode,
             sessions: self.sessions().len(),
             fallback: self.fallback.clone(),
+            unscoped: self.unscoped.clone(),
             version: env!("CARGO_PKG_VERSION"),
             build: hello::Build::current(),
             cgroup: status::own_cgroup(),

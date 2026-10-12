@@ -11,8 +11,10 @@ pub(crate) mod envelope;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions, TryLockError};
+use std::io::{Read as _, Seek as _, SeekFrom};
 use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::Path;
+use std::process::ExitStatus;
 use std::time::Duration;
 
 use serde_json::Value;
@@ -27,7 +29,7 @@ use tokio::time::Instant;
 
 use crate::control::runtime::RuntimeDir;
 use crate::engine::hello::{self, Exe, Hello, Reply};
-use crate::engine::host::{LOG, SOCKET};
+use crate::engine::host::{LOG, RUNTIME_DIR_DISCOVERED, SOCKET, UNSCOPED};
 use crate::error::{ErrorName, ToolError};
 use crate::session::{Given, LineLimit, MAX_LINE};
 use crate::{Env, cli, runner};
@@ -56,14 +58,20 @@ const ENGINE_WRITE: Duration = Duration::from_secs(5);
 /// Starts the engine in a scope of its own, as the user's systemd manager's child, so that
 /// stopping the scope of the client whose bridge started it doesn't end it.
 const SYSTEMD_RUN: &str = "systemd-run";
+/// How long a killed `systemd-run` gets to be reaped.
+const REAP: Duration = Duration::from_secs(1);
+/// The most of what `systemd-run` wrote that an engine started without it is told.
+const MAX_SCOPE_ERROR: u64 = 2048;
+/// Why a bridge's second or third start skips `systemd-run`.
+const EARLIER: &str = "the engine an earlier start ran through systemd-run never listened";
 
-/// The engine a bridge reaches, the hello it sends, and what `systemd-run` needs beyond the
-/// bridge's environment to reach the user's systemd manager.
+/// The engine a bridge reaches, the hello it sends, and the runtime directory the bridge
+/// discovered, which `systemd-run` needs beyond the bridge's environment.
 #[derive(Debug)]
 pub(crate) struct Target {
     runtime: RuntimeDir,
     hello: Vec<u8>,
-    systemd_env: Vec<(&'static str, OsString)>,
+    discovered_runtime_dir: Option<OsString>,
 }
 
 impl Target {
@@ -80,20 +88,17 @@ impl Target {
         Ok(Self {
             runtime,
             hello: line,
-            systemd_env: systemd_env(env),
+            discovered_runtime_dir: discovered_runtime_dir(env),
         })
     }
 }
 
 /// `systemd-run` finds the manager through `XDG_RUNTIME_DIR`, which clients such as Codex
-/// don't pass on; then it gets the directory the bridge discovered. The engine it becomes
-/// inherits that too, so its `status` reports the directory as given.
-fn systemd_env(env: &Env) -> Vec<(&'static str, OsString)> {
+/// don't pass on; then it gets the directory the bridge discovered.
+fn discovered_runtime_dir(env: &Env) -> Option<OsString> {
     match (&env.discovery.runtime_dir, &env.runtime_dir) {
-        (crate::discover::Source::Discovered, Some(dir)) => {
-            vec![("XDG_RUNTIME_DIR", dir.clone().into_os_string())]
-        }
-        _ => Vec::new(),
+        (crate::discover::Source::Discovered, Some(dir)) => Some(dir.clone().into_os_string()),
+        _ => None,
     }
 }
 
@@ -264,9 +269,10 @@ impl Link {
 }
 
 /// Starts an engine, unless another bridge has meanwhile, and waits for it to listen: when
-/// `scoped`, through `systemd-run`, and directly once that ends without an engine. The
-/// runtime directory is created first: it may never have existed, or have been removed
-/// since, which ended the engine this bridge served.
+/// `scoped`, through `systemd-run`, and directly once that ends without an engine, telling
+/// that engine why it has no scope of its own. The runtime directory is created first: it
+/// may never have existed, or have been removed since, which ended the engine this bridge
+/// served.
 async fn start(target: &Target, deadline: Instant, scoped: bool) -> Result<(), String> {
     let runtime = target.runtime.path();
     target
@@ -285,15 +291,16 @@ async fn start(target: &Target, deadline: Instant, scoped: bool) -> Result<(), S
             .mode(0o600)
             .open(&path)
             .map_err(|error| format!("open {}: {error}", path.display()))?;
-        let listening = deadline.min(Instant::now() + LISTENING);
-        let started = if scoped {
-            start_scoped(target, &log, &socket, listening).await
+        let unscoped = if scoped {
+            let until = deadline.min(Instant::now() + LISTENING);
+            start_scoped(target, &log, &path, &socket, until).await
         } else {
-            Scoped::Ended
+            Some(EARLIER.to_owned())
         };
-        if started == Scoped::Ended {
-            runner::daemon("/proc/self/exe", &["engine".to_owned()], &[], log)
-                .map_err(|error| error.detail)?;
+        if let Some(reason) = unscoped {
+            let args = ["engine", UNSCOPED, &reason].map(str::to_owned);
+            runner::daemon("/proc/self/exe", &args, &[], log).map_err(|error| error.detail)?;
+            let listening = deadline.min(Instant::now() + LISTENING);
             while UnixStream::connect(&socket).await.is_err() && Instant::now() < listening {
                 tokio::time::sleep(RETRY_FIRST).await;
             }
@@ -303,52 +310,103 @@ async fn start(target: &Target, deadline: Instant, scoped: bool) -> Result<(), S
     Ok(())
 }
 
-/// How a start through `systemd-run` went.
-#[derive(Debug, PartialEq, Eq)]
-enum Scoped {
-    Listening,
-    /// It ended, or never started, and nothing listens: systemd can't be reached, refused,
-    /// or the engine it became left.
-    Ended,
-    /// Neither, by the deadline.
-    Waiting,
-}
-
 /// Starts the engine through `systemd-run --user --scope`, which moves itself into a new
 /// scope and then becomes the engine, running this process's own binary even if its file
 /// has been replaced since. Waits until the engine listens or `systemd-run` ends, up to
-/// `until`. The engine's stderr is `log`.
-async fn start_scoped(target: &Target, log: &File, socket: &Path, until: Instant) -> Scoped {
+/// `until`; one still running then that hasn't become the engine is killed. The engine's
+/// stderr is `log`, the file at `path`. Returns why there is no engine in a scope of its
+/// own: `systemd-run`'s exit and what it wrote, or `None` when one listens or still starts.
+async fn start_scoped(
+    target: &Target,
+    log: &File,
+    path: &Path,
+    socket: &Path,
+    until: Instant,
+) -> Option<String> {
     let exe = format!("/proc/{}/exe", std::process::id());
-    let args = [
+    let (args, env) = scope_command(&exe, target.discovered_runtime_dir.as_ref());
+    let offset = log.metadata().map_or(0, |meta| meta.len());
+    let stderr = match log.try_clone() {
+        Ok(stderr) => stderr,
+        Err(error) => return Some(format!("open {} again: {error}", path.display())),
+    };
+    let mut child = match runner::daemon(SYSTEMD_RUN, &args, &env, stderr) {
+        Ok(child) => child,
+        Err(error) => return Some(error.detail),
+    };
+    loop {
+        let exited = child.exited();
+        if UnixStream::connect(socket).await.is_ok() {
+            return None;
+        }
+        if let Some(exited) = exited {
+            return Some(ended(exited, path, offset));
+        }
+        if Instant::now() >= until {
+            return stuck(&mut child, &exe).await;
+        }
+        tokio::time::sleep(RETRY_FIRST).await;
+    }
+}
+
+/// The arguments and the environment beyond the bridge's of `systemd-run`, which runs the
+/// engine from `exe`. A runtime directory the bridge discovered goes to `systemd-run`, and
+/// the engine, which inherits it, is told it was discovered.
+fn scope_command(
+    exe: &str,
+    discovered_runtime_dir: Option<&OsString>,
+) -> (Vec<String>, Vec<(&'static str, OsString)>) {
+    let mut args = [
         "--user",
         "--scope",
         "--collect",
         "--quiet",
         "--description=niri-computer-use shared engine",
         "--",
-        &exe,
+        exe,
         "engine",
     ]
-    .map(str::to_owned);
-    let Ok(stderr) = log.try_clone() else {
-        return Scoped::Ended;
+    .map(str::to_owned)
+    .to_vec();
+    let mut env = Vec::new();
+    if let Some(dir) = discovered_runtime_dir {
+        env.push(("XDG_RUNTIME_DIR", dir.clone()));
+        args.push(RUNTIME_DIR_DISCOVERED.to_owned());
+    }
+    (args, env)
+}
+
+/// Why `systemd-run` gave no engine: how it exited, and what it wrote to the log at `path`
+/// after `offset`, its first `MAX_SCOPE_ERROR` bytes.
+fn ended(exited: Result<ExitStatus, String>, path: &Path, offset: u64) -> String {
+    let how = match exited {
+        Ok(status) => format!("{SYSTEMD_RUN} exited with {status}"),
+        Err(error) => format!("{SYSTEMD_RUN}: {error}"),
     };
-    let Ok(mut child) = runner::daemon(SYSTEMD_RUN, &args, &target.systemd_env, stderr) else {
-        return Scoped::Ended;
-    };
-    loop {
-        let ended = child.exited();
-        if UnixStream::connect(socket).await.is_ok() {
-            return Scoped::Listening;
-        }
-        if ended {
-            return Scoped::Ended;
-        }
-        if Instant::now() >= until {
-            return Scoped::Waiting;
-        }
-        tokio::time::sleep(RETRY_FIRST).await;
+    let mut said = Vec::new();
+    let read = File::open(path).and_then(|mut file| {
+        file.seek(SeekFrom::Start(offset))?;
+        file.take(MAX_SCOPE_ERROR).read_to_end(&mut said)
+    });
+    let said = String::from_utf8_lossy(&said);
+    match read {
+        Ok(_) if !said.trim().is_empty() => format!("{how}: {}", said.trim()),
+        Ok(_) => how,
+        Err(error) => format!("{how}; read {}: {error}", path.display()),
+    }
+}
+
+/// `systemd-run` neither ended nor gave a listening engine in time: kills it unless it
+/// has become the engine, which may still be starting.
+async fn stuck(child: &mut runner::Daemon, exe: &str) -> Option<String> {
+    let late = format!(
+        "{SYSTEMD_RUN} didn't start the engine within {} s",
+        LISTENING.as_secs()
+    );
+    match child.kill_unless_running(Path::new(exe), REAP).await {
+        Ok(false) => None,
+        Ok(true) => Some(format!("{late}, so it was killed")),
+        Err(error) => Some(format!("{late}, and killing it failed: {error}")),
     }
 }
 
@@ -744,6 +802,20 @@ mod tests {
     use super::*;
     use client::{QUEUE, WRITE};
 
+    #[test]
+    fn a_discovered_runtime_dir_goes_to_systemd_run_and_the_engine_hears_so() {
+        let dir = OsString::from("/run/user/1000");
+        let (args, env) = scope_command("/proc/7/exe", Some(&dir));
+        assert_eq!(env, [("XDG_RUNTIME_DIR", dir)]);
+        assert_eq!(
+            args[args.len() - 3..],
+            ["/proc/7/exe", "engine", RUNTIME_DIR_DISCOVERED]
+        );
+        let (given, without) = scope_command("/proc/7/exe", None);
+        assert_eq!(without, []);
+        assert_eq!(given.last().map(String::as_str), Some("engine"));
+    }
+
     /// A relay to the engine at the other end of `engine`, ending when `client` says, that
     /// writes the client's lines to `stdout`.
     fn relay(
@@ -758,7 +830,7 @@ mod tests {
             target: Target {
                 runtime: RuntimeDir::of(&crate::test_support::niri_env(dir)).unwrap(),
                 hello: Vec::new(),
-                systemd_env: Vec::new(),
+                discovered_runtime_dir: None,
             },
             engine: Some(Link::new(1, BufReader::new(input), output)),
             in_flight: BTreeMap::new(),

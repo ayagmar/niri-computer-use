@@ -194,7 +194,7 @@ enum Command {
     Recover,
     /// The shared engine a bridge starts: serve every client of this niri instance on its
     /// socket.
-    Engine,
+    Engine(engine::host::Start),
     /// The crash guardian `serve` starts: after the server's end, release what its marker
     /// names.
     Guard(u32),
@@ -218,7 +218,12 @@ async fn main() -> ExitCode {
         Some(Command::Stop | Command::Resume) => discover::Probe::Offline,
         _ => discover::Probe::Connect,
     };
-    let env = Env::read(probe).await;
+    let mut env = Env::read(probe).await;
+    if let Some(Command::Engine(start)) = &command
+        && start.runtime_dir_discovered
+    {
+        env.discovery.runtime_dir = discover::Source::Discovered;
+    }
     let given = session::Given::read(|name| std::env::var_os(name));
     runner::pass_on(env.session_vars());
     let result = match command {
@@ -248,7 +253,7 @@ async fn main() -> ExitCode {
         }),
         Some(Command::Resume) => RuntimeDir::of(&env).and_then(|runtime| runtime.resume()),
         Some(Command::Recover) => control::recover::run(&env).await,
-        Some(Command::Engine) => engine::host::run(env).await,
+        Some(Command::Engine(start)) => engine::host::run(env, start.unscoped).await,
         Some(Command::Guard(server)) => control::guard::run(&env, server).await,
         Some(Command::PasteKeeper) => input::keeper::run(&env).await,
         Some(Command::Version) | None => Err(USAGE.to_owned()),
@@ -270,7 +275,19 @@ fn command(args: &[OsString]) -> Option<Command> {
         [only] if only == "resume" => Some(Command::Resume),
         [only] if only == "recover" => Some(Command::Recover),
         [only] if only == "paste-keeper" => Some(Command::PasteKeeper),
-        [only] if only == "engine" => Some(Command::Engine),
+        [only] if only == "engine" => Some(Command::Engine(engine::host::Start::default())),
+        [engine, flag] if engine == "engine" && flag == engine::host::RUNTIME_DIR_DISCOVERED => {
+            Some(Command::Engine(engine::host::Start {
+                runtime_dir_discovered: true,
+                unscoped: None,
+            }))
+        }
+        [engine, flag, reason] if engine == "engine" && flag == engine::host::UNSCOPED => {
+            Some(Command::Engine(engine::host::Start {
+                unscoped: Some(reason.to_str()?.to_owned()),
+                runtime_dir_discovered: false,
+            }))
+        }
         [only] if only == "--version" => Some(Command::Version),
         [guard, server] if guard == "guard" => server.to_str()?.parse().ok().map(Command::Guard),
         _ => None,
@@ -491,6 +508,8 @@ mod tests {
             &["--help"],
             &["guard"],
             &["guard", "-1"],
+            &["engine", "--unscoped"],
+            &["engine", "--runtime-dir-discovered", "x"],
         ] {
             assert_eq!(command(&args(bad)), None, "{bad:?}");
         }

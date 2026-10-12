@@ -38,7 +38,23 @@ const IDLE_CHECK: Duration = Duration::from_millis(100);
 const ACCEPT_RETRY: Duration = Duration::from_millis(100);
 
 /// Runs the engine for the niri instance `env` names, unless another one does already.
-pub(crate) async fn run(env: Env) -> Result<(), String> {
+/// How a bridge started the engine: `engine`, `engine --runtime-dir-discovered` or
+/// `engine --unscoped <reason>`.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Start {
+    /// Why it runs without a scope of its own: the bridge's `systemd-run` gave no engine.
+    pub(crate) unscoped: Option<String>,
+    /// The bridge discovered `XDG_RUNTIME_DIR` and handed it to `systemd-run`, so the
+    /// engine's own value counts as discovered.
+    pub(crate) runtime_dir_discovered: bool,
+}
+
+/// The flag of `Start::unscoped`, followed by the reason.
+pub(crate) const UNSCOPED: &str = "--unscoped";
+/// The flag of `Start::runtime_dir_discovered`.
+pub(crate) const RUNTIME_DIR_DISCOVERED: &str = "--runtime-dir-discovered";
+
+pub(crate) async fn run(env: Env, unscoped: Option<String>) -> Result<(), String> {
     let runtime = RuntimeDir::of(&env)?;
     runtime
         .create()
@@ -55,7 +71,9 @@ pub(crate) async fn run(env: Env) -> Result<(), String> {
         niri_socket: env.instance.socket().map_err(Clone::clone)?.to_path_buf(),
         wayland_socket: env.display.path().ok().map(hello::resolved),
     };
-    let engine = Arc::new(Engine::start(env, Mode::Shared, None).await?);
+    let mut engine = Engine::start(env, Mode::Shared, None).await?;
+    engine.unscoped = unscoped;
+    let engine = Arc::new(engine);
     let served = accept(&listener, &engine, &Arc::new(own)).await;
     drop(listener);
     unlink_own_socket(&runtime, bound);
