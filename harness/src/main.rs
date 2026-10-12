@@ -7,6 +7,7 @@ mod changes;
 mod clipboard;
 mod config;
 mod control;
+mod demo;
 mod environment;
 mod eval;
 mod failure;
@@ -48,13 +49,13 @@ use scale::Scale;
 use supervise::Probes;
 use test_dir::TestDir;
 
-const USAGE: &str = "usage: harness run [--visible] [--shared] [--server <path>] [--scale <scale>] [--ssd] [--noctalia | --sitting | --control | --actions | --input | --shell | --a11y | --engine | --measure | --eval <scenario> --skill <dir|none> --model <model>]
+const USAGE: &str = "usage: harness run [--visible] [--shared] [--server <path>] [--scale <scale>] [--ssd] [--noctalia | --sitting | --control | --actions | --input | --shell | --a11y | --engine | --measure | --eval <scenario> --skill <dir|none> --model <model> | --demo <scene>]
        harness host-capture <output>
        harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--started <file>]
        harness keymaps <TEST_DIR> <directory> <deadline-ms>
        harness clipboard <TEST_DIR> <deadline-ms> [--secret]
        harness slow-reader <TEST_DIR> <delay-ms> <deadline-ms>
-       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--ssd] [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --a11y <server> | --engine <server> | --measure <server> | --eval <server> <scenario> <skill|none> <model>]";
+       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--ssd] [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --a11y <server> | --engine <server> | --measure <server> | --eval <server> <scenario> <skill|none> <model> | --demo <server> <scene>]";
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -102,9 +103,11 @@ fn dispatch(args: &[OsString]) -> Result<()> {
                 sitting: false,
                 server: None,
                 eval: None,
+                demo: None,
             };
             match rest {
                 [] => {}
+                ["--demo", server, scene] => probes.demo = Some((scene_option(scene)?, *server)),
                 ["--eval", server, scenario, skill, model] => {
                     probes.eval = Some((eval_options(scenario, skill, model)?, *server));
                 }
@@ -138,6 +141,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
         sitting: false,
         server: None,
         eval: None,
+        demo: None,
         mode: run::ServerMode::Standalone,
         binary: None,
     };
@@ -169,6 +173,11 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
             "--eval" => scenario = Some(*args.next().ok_or_else(|| Failure::new(USAGE))?),
             "--skill" => skill = Some(*args.next().ok_or_else(|| Failure::new(USAGE))?),
             "--model" => model = Some(*args.next().ok_or_else(|| Failure::new(USAGE))?),
+            "--demo" => {
+                options.demo = Some(scene_option(
+                    args.next().ok_or_else(|| Failure::new(USAGE))?,
+                )?);
+            }
             _ => return Err(Failure::new(USAGE)),
         }
     }
@@ -181,14 +190,26 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
         + usize::from(options.noctalia)
         + usize::from(options.server.is_some())
         + usize::from(options.eval.is_some())
+        + usize::from(options.demo.is_some())
         > 1
     {
         return Err(Failure::new(
-            "--sitting, --noctalia, --control, --actions, --input, --shell, --a11y, --engine, --measure and --eval cannot be combined",
+            "--sitting, --noctalia, --control, --actions, --input, --shell, --a11y, --engine, --measure, --eval and --demo cannot be combined",
         ));
     }
     options.visible |= options.sitting;
     Ok(options)
+}
+
+/// A known demo scene.
+fn scene_option(name: &str) -> Result<demo::Scene> {
+    demo::Scene::from_name(name).ok_or_else(|| {
+        let names: Vec<_> = demo::Scene::ALL.iter().map(|s| s.name()).collect();
+        Failure::new(format!(
+            "unknown demo scene {name:?}; one of {}",
+            names.join(", ")
+        ))
+    })
 }
 
 /// A known scenario, an existing skill directory (made absolute) or `none`, and a model.
@@ -260,6 +281,21 @@ mod tests {
         );
         assert!(run_options(&["--sitting", "--noctalia"]).is_err());
         assert!(run_options(&["--sitting-from-c8"]).is_err());
+    }
+
+    #[test]
+    fn a_demo_names_a_known_scene_and_runs_alone() {
+        let demo = run_options(&["--demo", "errand"]).unwrap();
+        assert_eq!(demo.demo, Some(demo::Scene::Errand));
+        assert!(!demo.visible);
+        let unknown = run_options(&["--demo", "hero"]).unwrap_err().to_string();
+        assert!(
+            unknown.contains("one of errand, layout, keyboard, stop"),
+            "{unknown}"
+        );
+        assert!(run_options(&["--demo"]).is_err());
+        assert!(run_options(&["--demo", "errand", "--input"]).is_err());
+        assert!(run_options(&["--demo", "errand", "--noctalia"]).is_err());
     }
 
     #[test]

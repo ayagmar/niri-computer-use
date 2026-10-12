@@ -38,6 +38,8 @@ pub(crate) struct Probes<'a> {
     /// Which server checks to run, with the `niri-computer-use` binary.
     pub(crate) server: Option<(ServerChecks, &'a str)>,
     pub(crate) eval: Option<(crate::eval::Options, &'a str)>,
+    /// A demo recording, with the `niri-computer-use` binary.
+    pub(crate) demo: Option<(crate::demo::Scene, &'a str)>,
 }
 
 pub(crate) fn supervise(
@@ -66,6 +68,8 @@ pub(crate) fn supervise(
     let outcome = c2.and_then(|()| {
         if probes.sitting {
             crate::sitting::run(&mut session)
+        } else if let Some((scene, server)) = probes.demo {
+            crate::demo::run(&mut session, server, scene)
         } else if let Some((options, server)) = &probes.eval {
             crate::eval::run(&mut session, server, options)
         } else if let Some((checks, server)) = probes.server {

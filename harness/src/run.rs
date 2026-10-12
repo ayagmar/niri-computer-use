@@ -33,6 +33,8 @@ const ENGINE_DEADLINE: Duration = Duration::from_secs(150);
 const MEASURE_DEADLINE: Duration = Duration::from_secs(300);
 /// The agent's twelve minutes, with the fixtures and Noctalia around it.
 const EVAL_DEADLINE: Duration = Duration::from_mins(15);
+/// A scene with its desktop around it.
+const DEMO_DEADLINE: Duration = Duration::from_mins(3);
 /// All `noctalia config validate` prints for a config without warnings. It exits 0 even
 /// when it warns, for example about an unknown key.
 const NOCTALIA_VALID: &str = "\u{2713} Config is valid\n";
@@ -52,6 +54,8 @@ pub(crate) struct Options {
     pub(crate) server: Option<ServerChecks>,
     /// Run one skill eval: an agent doing one task through `niri-computer-use`.
     pub(crate) eval: Option<eval::Options>,
+    /// Record one demo scene with the demo config.
+    pub(crate) demo: Option<crate::demo::Scene>,
     pub(crate) mode: ServerMode,
     /// The server under test, instead of this checkout's debug build.
     pub(crate) binary: Option<PathBuf>,
@@ -287,7 +291,11 @@ fn preflight(
     options: &Options,
     display: &Path,
 ) -> Result<Env> {
-    let niri_config = config::niri(options.scale, &test_dir.bind_marker(), options.decorations);
+    let niri_config = if options.demo.is_some() {
+        config::demo_niri(options.scale)
+    } else {
+        config::niri(options.scale, &test_dir.bind_marker(), options.decorations)
+    };
     write(&test_dir.niri_config(), &niri_config)?;
     write(&artifacts.join("niri.kdl"), &niri_config)?;
     write(&test_dir.dbus_config(), &config::dbus(&test_dir.run()))?;
@@ -306,20 +314,33 @@ fn preflight(
         group: Group::Own,
         deadline: VALIDATE_DEADLINE,
     })?;
-    if options.noctalia || options.server.is_some() || options.eval.is_some() {
-        write_noctalia_config(&env, test_dir, artifacts)?;
+    if options.noctalia
+        || options.server.is_some()
+        || options.eval.is_some()
+        || options.demo.is_some()
+    {
+        write_noctalia_config(&env, test_dir, artifacts, options.demo.is_some())?;
     }
     Ok(env)
 }
 
-fn write_noctalia_config(env: &Env, test_dir: &TestDir, artifacts: &Path) -> Result<()> {
+fn write_noctalia_config(
+    env: &Env,
+    test_dir: &TestDir,
+    artifacts: &Path,
+    demo: bool,
+) -> Result<()> {
     let path = test_dir.noctalia_config();
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).context(format!("create {}", dir.display()))?;
     }
     let wallpapers = test_dir.data().join("wallpapers");
     fs::create_dir_all(&wallpapers).context(format!("create {}", wallpapers.display()))?;
-    let config = config::noctalia(&wallpapers);
+    let config = if demo {
+        config::noctalia_demo(&wallpapers)
+    } else {
+        config::noctalia(&wallpapers)
+    };
     write(&path, &config)?;
     write(&artifacts.join("noctalia.toml"), &config)?;
     let output = runner::run(&Invocation {
@@ -376,6 +397,10 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: &Optio
         args.push(server(options)?.into());
     } else if let Some(eval) = &options.eval {
         args.extend(eval_args(eval, options)?);
+    } else if let Some(scene) = options.demo {
+        args.push("--demo".into());
+        args.push(server(options)?.into());
+        args.push(scene.name().into());
     }
     runner::run(&Invocation {
         program: "dbus-run-session",
@@ -396,6 +421,9 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: &Optio
 }
 
 const fn deadline(options: &Options) -> Duration {
+    if options.demo.is_some() {
+        return DEMO_DEADLINE;
+    }
     match (options.sitting, options.server, &options.eval) {
         (true, _, _) => crate::sitting::RUN_DEADLINE,
         (false, Some(checks), _) => checks.deadline(),

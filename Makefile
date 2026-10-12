@@ -1,4 +1,4 @@
-.PHONY: check stall perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-eval sitting host-capture
+.PHONY: check stall perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-eval nested-demo sitting host-capture
 
 SCALE ?= 1
 NESTED_FLAGS = $(if $(VISIBLE),--visible) $(if $(SHARED),--shared)
@@ -79,3 +79,8 @@ host-capture:
 
 sitting:
 	cargo run --locked -p harness -- run --scale 1.5 --sitting
+
+# A demo recording in the nested niri: make nested-demo SCENE=errand; then scripts/demo-encode.py
+nested-demo:
+	cargo build --locked -p niri-computer-use
+	cargo run --locked -p harness -- run $(NESTED_FLAGS) --demo $(SCENE)
