@@ -221,28 +221,43 @@ pub(crate) fn companion(program: &str, args: &[String]) -> Result<Companion, Too
 
 /// Starts a child that outlives the server: in a process group of its own, with stdin and
 /// stdout closed and `stderr` as its stderr. The server never kills or waits for it:
-/// dropping the child hands it to tokio, which reaps it once it exits. It
-/// gets the server's environment without the session's variables `main` discovered, so it
-/// finds the session as the server did.
+/// dropping the handle hands it to tokio, which reaps it once it exits. It gets the
+/// server's environment without the session's variables `main` discovered, so it finds the
+/// session as the server did, plus `env`.
 pub(crate) fn daemon(
     program: &str,
     args: &[String],
+    env: &[(&str, OsString)],
     stderr: std::fs::File,
-) -> Result<(), ToolError> {
+) -> Result<Daemon, ToolError> {
     own_command(program)
         .args(args)
+        .envs(env.iter().map(|(name, value)| (name, value)))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(stderr)
         .process_group(0)
         .spawn()
-        .map(drop)
+        .map(|child| Daemon { child })
         .map_err(|error| {
             ToolError::new(
                 ErrorName::UpstreamError,
                 format!("start {program}: {error}"),
             )
         })
+}
+
+/// A child `daemon` started.
+#[derive(Debug)]
+pub(crate) struct Daemon {
+    child: Child,
+}
+
+impl Daemon {
+    /// Whether it has exited; one that has is reaped.
+    pub(crate) fn exited(&mut self) -> bool {
+        !matches!(self.child.try_wait(), Ok(None))
+    }
 }
 
 /// Starts a child with a pipe as its stdin, in a process group of its own, not killed on

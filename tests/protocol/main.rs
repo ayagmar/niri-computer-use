@@ -54,6 +54,8 @@ mod lifecycle;
 #[cfg(test)]
 mod recover;
 #[cfg(test)]
+mod scope;
+#[cfg(test)]
 mod screenshot;
 #[cfg(test)]
 mod session;

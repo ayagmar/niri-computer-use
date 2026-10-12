@@ -9,6 +9,7 @@ mod client;
 pub(crate) mod envelope;
 
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::Path;
@@ -52,11 +53,17 @@ const DRAIN: Duration = Duration::from_secs(6);
 /// nothing for this long, stopped or stuck, counts as lost.
 const ENGINE_WRITE: Duration = Duration::from_secs(5);
 
-/// The engine a bridge reaches, and the hello it sends.
+/// Starts the engine in a scope of its own, as the user's systemd manager's child, so that
+/// stopping the scope of the client whose bridge started it doesn't end it.
+const SYSTEMD_RUN: &str = "systemd-run";
+
+/// The engine a bridge reaches, the hello it sends, and what `systemd-run` needs beyond the
+/// bridge's environment to reach the user's systemd manager.
 #[derive(Debug)]
 pub(crate) struct Target {
     runtime: RuntimeDir,
     hello: Vec<u8>,
+    systemd_env: Vec<(&'static str, OsString)>,
 }
 
 impl Target {
@@ -73,7 +80,20 @@ impl Target {
         Ok(Self {
             runtime,
             hello: line,
+            systemd_env: systemd_env(env),
         })
+    }
+}
+
+/// `systemd-run` finds the manager through `XDG_RUNTIME_DIR`, which clients such as Codex
+/// don't pass on; then it gets the directory the bridge discovered. The engine it becomes
+/// inherits that too, so its `status` reports the directory as given.
+fn systemd_env(env: &Env) -> Vec<(&'static str, OsString)> {
+    match (&env.discovery.runtime_dir, &env.runtime_dir) {
+        (crate::discover::Source::Discovered, Some(dir)) => {
+            vec![("XDG_RUNTIME_DIR", dir.clone().into_os_string())]
+        }
+        _ => Vec::new(),
     }
 }
 
@@ -122,8 +142,9 @@ pub(crate) async fn connect(target: &Target) -> Result<Link, String> {
             Ok(link) => return Ok(link),
             Err(Failed::Refused(detail)) => return Err(detail),
             Err(Failed::Absent(detail)) if starts < MAX_STARTS => {
+                // Only the first start tries `systemd-run`, which may still be at work.
+                start(target, deadline, starts == 0).await?;
                 starts += 1;
-                start(target, deadline).await?;
                 detail
             }
             Err(Failed::Absent(detail) | Failed::Retry(detail)) => detail,
@@ -242,10 +263,11 @@ impl Link {
     }
 }
 
-/// Starts an engine, unless another bridge has meanwhile, and waits for it to listen. The
+/// Starts an engine, unless another bridge has meanwhile, and waits for it to listen: when
+/// `scoped`, through `systemd-run`, and directly once that ends without an engine. The
 /// runtime directory is created first: it may never have existed, or have been removed
 /// since, which ended the engine this bridge served.
-async fn start(target: &Target, deadline: Instant) -> Result<(), String> {
+async fn start(target: &Target, deadline: Instant, scoped: bool) -> Result<(), String> {
     let runtime = target.runtime.path();
     target
         .runtime
@@ -254,24 +276,80 @@ async fn start(target: &Target, deadline: Instant) -> Result<(), String> {
     let Some(lock) = start_lock(&target.runtime, deadline).await? else {
         return Ok(());
     };
-    let socket = target.runtime.path().join(SOCKET);
+    let socket = runtime.join(SOCKET);
     if UnixStream::connect(&socket).await.is_err() {
-        let path = target.runtime.path().join(LOG);
+        let path = runtime.join(LOG);
         let log = OpenOptions::new()
             .append(true)
             .create(true)
             .mode(0o600)
             .open(&path)
             .map_err(|error| format!("open {}: {error}", path.display()))?;
-        runner::daemon("/proc/self/exe", &["engine".to_owned()], log)
-            .map_err(|error| error.detail)?;
         let listening = deadline.min(Instant::now() + LISTENING);
-        while UnixStream::connect(&socket).await.is_err() && Instant::now() < listening {
-            tokio::time::sleep(RETRY_FIRST).await;
+        let started = if scoped {
+            start_scoped(target, &log, &socket, listening).await
+        } else {
+            Scoped::Ended
+        };
+        if started == Scoped::Ended {
+            runner::daemon("/proc/self/exe", &["engine".to_owned()], &[], log)
+                .map_err(|error| error.detail)?;
+            while UnixStream::connect(&socket).await.is_err() && Instant::now() < listening {
+                tokio::time::sleep(RETRY_FIRST).await;
+            }
         }
     }
     drop(lock);
     Ok(())
+}
+
+/// How a start through `systemd-run` went.
+#[derive(Debug, PartialEq, Eq)]
+enum Scoped {
+    Listening,
+    /// It ended, or never started, and nothing listens: systemd can't be reached, refused,
+    /// or the engine it became left.
+    Ended,
+    /// Neither, by the deadline.
+    Waiting,
+}
+
+/// Starts the engine through `systemd-run --user --scope`, which moves itself into a new
+/// scope and then becomes the engine, running this process's own binary even if its file
+/// has been replaced since. Waits until the engine listens or `systemd-run` ends, up to
+/// `until`. The engine's stderr is `log`.
+async fn start_scoped(target: &Target, log: &File, socket: &Path, until: Instant) -> Scoped {
+    let exe = format!("/proc/{}/exe", std::process::id());
+    let args = [
+        "--user",
+        "--scope",
+        "--collect",
+        "--quiet",
+        "--description=niri-computer-use shared engine",
+        "--",
+        &exe,
+        "engine",
+    ]
+    .map(str::to_owned);
+    let Ok(stderr) = log.try_clone() else {
+        return Scoped::Ended;
+    };
+    let Ok(mut child) = runner::daemon(SYSTEMD_RUN, &args, &target.systemd_env, stderr) else {
+        return Scoped::Ended;
+    };
+    loop {
+        let ended = child.exited();
+        if UnixStream::connect(socket).await.is_ok() {
+            return Scoped::Listening;
+        }
+        if ended {
+            return Scoped::Ended;
+        }
+        if Instant::now() >= until {
+            return Scoped::Waiting;
+        }
+        tokio::time::sleep(RETRY_FIRST).await;
+    }
 }
 
 /// Takes `engine.start.lock`, or `None` once `deadline` has passed.
@@ -680,6 +758,7 @@ mod tests {
             target: Target {
                 runtime: RuntimeDir::of(&crate::test_support::niri_env(dir)).unwrap(),
                 hello: Vec::new(),
+                systemd_env: Vec::new(),
             },
             engine: Some(Link::new(1, BufReader::new(input), output)),
             in_flight: BTreeMap::new(),
