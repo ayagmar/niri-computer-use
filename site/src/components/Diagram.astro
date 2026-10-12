@@ -1,7 +1,8 @@
 ---
 // How a call travels: from the agent over stdio to the engine, then to niri, grim,
-// the virtual input devices, the accessibility bus or Noctalia. Acting passes the gate;
-// looking doesn't. Drawn in the page's colours, so it follows the theme.
+// the virtual input devices, the accessibility bus or Noctalia. Acting passes the gate and
+// then the tool's own checks; looking doesn't. Drawn in the page's colours, so it follows
+// the theme.
 const backends = [
 	['niri IPC and event stream', 'windows, focus, layout, changes'],
 	['grim', 'screenshots'],
@@ -20,9 +21,9 @@ const backends = [
 	>
 		<title id="ncu-diagram-title">How a call reaches the desktop</title>
 		<desc id="ncu-diagram-desc">
-			Your agent starts niri-computer-use over stdio. One engine per niri serves every client.
+			Your agent starts niri-computer-use over stdio. By default one engine per niri serves every client.
 			Calls that look go straight to niri, grim, the accessibility bus or Noctalia. Calls that act
-			first pass the gate: the lease, the stop flag, the lock state and the deny list.
+			first pass the gate: the stop flag, the lease and the lock state, then the tool's own checks.
 		</desc>
 		<defs>
 			<marker id="ncu-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto">
@@ -43,8 +44,8 @@ const backends = [
 
 		<rect x="264" y="120" width="210" height="120" rx="10" class="box" />
 		<text x="283" y="160" class="title">niri-computer-use</text>
-		<text x="283" y="188" class="small">one engine per niri,</text>
-		<text x="283" y="208" class="small">shared by every client</text>
+		<text x="283" y="188" class="small">one engine per niri</text>
+		<text x="283" y="208" class="small">for all, by default</text>
 
 		<path d="M474 150 H 688" class="wire" marker-end="url(#ncu-arrow)" />
 		<text x="490" y="140" class="small">look: no lease</text>
@@ -54,8 +55,8 @@ const backends = [
 		<rect x="590" y="186" width="60" height="48" rx="6" class="gate" />
 		<text x="620" y="215" class="gate-label" text-anchor="middle">gate</text>
 		<path d="M650 210 H 688" class="wire act" marker-end="url(#ncu-arrow-act)" />
-		<text x="620" y="258" class="tiny" text-anchor="middle">lease · stop</text>
-		<text x="620" y="274" class="tiny" text-anchor="middle">lock · deny list</text>
+		<text x="620" y="258" class="tiny" text-anchor="middle">stop · lease · lock</text>
+		<text x="620" y="274" class="tiny" text-anchor="middle">then tool checks</text>
 
 		{
 			backends.map(([name, what], index) => (
@@ -69,10 +70,10 @@ const backends = [
 	</svg>
 	<ol class="flow">
 		<li><strong>your agent</strong> starts the server over stdio</li>
-		<li><strong>niri-computer-use</strong>: one engine per niri, shared by every client</li>
+		<li><strong>niri-computer-use</strong>: by default one engine per niri, shared by every client</li>
 		<li>
 			<strong>look</strong> goes straight through; <strong class="act-label">act</strong> passes the
-			gate: lease, stop, lock, deny list. Then one of:
+			gate: stop, lease, lock, then the tool's own checks. Then one of:
 			<ul>
 				{
 					backends.map(([name, what]) => (

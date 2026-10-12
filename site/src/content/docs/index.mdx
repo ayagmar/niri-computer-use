@@ -71,9 +71,9 @@ The test suite runs niri, Noctalia and real apps in a headless nested session an
 
 <Workspace id="how-it-works">
 
-## One engine, one gate before every action
+## One gate before every action
 
-Your agent starts the server over stdio, and every client on one niri shares one engine. Looking goes straight to niri, `grim`, the accessibility bus or Noctalia. Acting passes the gate first: the lease, the stop flag, the screen's lock state and your deny list.
+Your agent starts the server over stdio. By default every client on one niri is served by one engine; a client in [standalone mode](concepts/configuration/#shared) runs its own and still shares the lease and the stop flag. Looking goes straight to niri, `grim`, the accessibility bus or Noctalia. Acting passes the gate first: the stop flag, the lease and the screen's lock state. Then each tool makes its own checks, such as the deny list, `expect` or a screenshot ref.
 
 <Diagram />
 
