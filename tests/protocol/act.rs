@@ -2321,14 +2321,20 @@ async fn focus_on_another_workspace_reports_the_switch_and_the_cleared_urgency()
     while !has_it(&desk.server.structured("desktop_state").await) {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    let result = desk
-        .act("focus", json!({"window_id": 4}), |stream, _| {
-            // niri's order within one refresh, each event its own write.
-            stream.send(&json!({"WorkspaceActivated": {"id": 2, "focused": true}}));
-            focus_changed(stream, 4);
-            stream.send(&json!({"WindowUrgencyChanged": {"id": 4, "urgent": false}}));
-        })
+    let id = desk
+        .server
+        .start_call("focus", json!({"window_id": 4}))
         .await;
+    desk.niri.action().await;
+    // niri's order within one refresh. The urgency comes a moment after the focus event,
+    // after the focus has returned on it, as when the server reads between niri's writes.
+    desk.stream
+        .send(&json!({"WorkspaceActivated": {"id": 2, "focused": true}}));
+    focus_changed(&desk.stream, 4);
+    tokio::time::sleep(Duration::from_millis(2)).await;
+    desk.stream
+        .send(&json!({"WindowUrgencyChanged": {"id": 4, "urgent": false}}));
+    let result = desk.server.response(id).await["result"].clone();
     assert_eq!(
         outcome(&result),
         json!({
