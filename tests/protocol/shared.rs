@@ -434,6 +434,24 @@ fn fds(pid: i32) -> usize {
         .count()
 }
 
+/// The engine's open file descriptors once the count has held for half a second: a client
+/// that just left can keep a few open a moment longer, as its clipboard watcher does until
+/// its next 250 ms tick, and counting those would make every later count look short.
+async fn settled_fds(pid: i32) -> usize {
+    let start = Instant::now();
+    let mut last = fds(pid);
+    let mut since = Instant::now();
+    while since.elapsed() < Duration::from_millis(500) && start.elapsed() < WAIT {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let now = fds(pid);
+        if now != last {
+            last = now;
+            since = Instant::now();
+        }
+    }
+    last
+}
+
 /// How many sessions the engine serves, once its count has stopped changing.
 async fn sessions(server: &mut Server) -> u64 {
     let mut last = 0;
@@ -469,7 +487,7 @@ async fn fifty_clients_coming_and_going_leave_the_engine_as_it_was() {
     // The first visit opens what the engine keeps for good, such as niri's event stream.
     visit(&fixture).await;
     assert_eq!(sessions(&mut anchor).await, 1);
-    let before = fds(engine);
+    let before = settled_fds(engine).await;
     for _ in 0..50 {
         visit(&fixture).await;
     }
