@@ -60,15 +60,19 @@ struct Replica {
     /// Which connection, counted from 1, this replica comes from.
     connection: u64,
     /// When niri last activated a workspace on each output, by output name, or changed
-    /// which workspaces an output has, and when it last opened or closed the overview,
-    /// since the initial state: each starts an animation whose end niri doesn't report.
+    /// which workspaces an output has, since the initial state: each starts an animation
+    /// whose end niri doesn't report.
     activated: HashMap<String, Instant>,
-    overview_toggled: Option<Instant>,
+    /// When niri last opened or closed the overview, which animates every output, or when
+    /// this replica got its initial state after a reconnect: a switch may have started
+    /// while the stream was down.
+    everywhere: Option<Instant>,
 }
 
 impl Replica {
     fn apply(&mut self, seq: u64, event: Event) {
-        if self.initialized() {
+        let initialized = self.initialized();
+        if initialized {
             self.note_animation(&event);
         }
         self.workspaces |= matches!(event, Event::WorkspacesChanged { .. });
@@ -76,6 +80,9 @@ impl Replica {
         self.overview |= matches!(event, Event::OverviewOpenedOrClosed { .. });
         self.state.apply(event);
         self.seq = seq;
+        if !initialized && self.initialized() && self.connection > 1 {
+            self.everywhere = Some(Instant::now());
+        }
     }
 
     const fn initialized(&self) -> bool {
@@ -102,17 +109,13 @@ impl Replica {
             }
         }
         if matches!(event, Event::OverviewOpenedOrClosed { .. }) {
-            self.overview_toggled = Some(now);
+            self.everywhere = Some(now);
         }
     }
 
-    /// When niri last activated a workspace on `output` or opened or closed the overview,
-    /// whichever came later.
+    /// When the view on `output` last started to move, as far as niri reported it.
     fn animated(&self, output: &str) -> Option<Instant> {
-        self.activated
-            .get(output)
-            .copied()
-            .max(self.overview_toggled)
+        self.activated.get(output).copied().max(self.everywhere)
     }
 }
 
@@ -540,7 +543,7 @@ mod tests {
     }
 
     // A workspace switch animates on its own output, the overview on every output, and
-    // niri's initial state isn't a change.
+    // niri's initial state is a change only after a reconnect.
     #[tokio::test(start_paused = true)]
     async fn a_workspace_switch_or_the_overview_animates_the_outputs_it_moves() {
         let mut replica = Replica::default();
@@ -568,6 +571,21 @@ mod tests {
         replica.apply(5, Event::OverviewOpenedOrClosed { is_open: true });
         assert_eq!(replica.animated("DP-1"), Some(toggled));
         assert_eq!(replica.animated("HDMI-A-1"), Some(toggled));
+
+        // After a reconnect, a switch may have started while the stream was down, so the
+        // initial state counts as a change on every output.
+        tokio::time::advance(Duration::from_secs(5)).await;
+        let mut rebuilt = Replica {
+            connection: 2,
+            ..Replica::default()
+        };
+        let shown = vec![workspace_on(1, "DP-1", true)];
+        rebuilt.apply(6, Event::WorkspacesChanged { workspaces: shown });
+        rebuilt.apply(7, Event::WindowsChanged { windows: vec![] });
+        assert_eq!(rebuilt.animated("DP-1"), None);
+        rebuilt.apply(8, Event::OverviewOpenedOrClosed { is_open: false });
+        assert_eq!(rebuilt.animated("DP-1"), Some(Instant::now()));
+        assert_eq!(rebuilt.animated("HDMI-A-1"), Some(Instant::now()));
     }
 
     // niri reports a switch inside `WorkspacesChanged` when a workspace was also added,
