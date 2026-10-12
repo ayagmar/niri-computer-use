@@ -38,9 +38,27 @@ pub(super) fn median<T: Ord + Copy>(values: &[T]) -> Option<T> {
     sorted.get(sorted.len().checked_sub(1)? / 2).copied()
 }
 
+/// The 95th percentile of `values` by nearest rank: the smallest value that at least 95%
+/// of them don't exceed.
+pub(super) fn p95<T: Ord + Copy>(values: &[T]) -> Option<T> {
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    sorted
+        .get((sorted.len() * 95).div_ceil(100).checked_sub(1)?)
+        .copied()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_95th_percentile_leaves_out_the_slowest_twentieth() {
+        let fifty: Vec<u32> = (1..=50).rev().collect();
+        assert_eq!(p95(&fifty), Some(48));
+        assert_eq!(p95(&[7]), Some(7));
+        assert_eq!(p95::<u32>(&[]), None);
+    }
 
     #[test]
     fn cpu_time_counts_fields_after_a_command_name_with_spaces_and_parentheses() {

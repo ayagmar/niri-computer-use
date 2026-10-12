@@ -236,8 +236,8 @@ fn guardians(watched: &[i32]) -> Result<Vec<i32>> {
     Ok(found)
 }
 
-/// With `count` clients connected, the first one's median `status` and `screenshot`
-/// round trips over `CALLS` calls each.
+/// With `count` clients connected, the first one's median and 95th percentile `status` and
+/// `screenshot` round trips over `CALLS` calls each.
 fn latency(session: &mut Session<'_>, server: &str, count: usize, shared: bool) -> Result<Value> {
     let (mut clients, _) = start(session, server, &format!("latency{count}"), count)?;
     let first = clients
@@ -249,15 +249,16 @@ fn latency(session: &mut Session<'_>, server: &str, count: usize, shared: bool) 
     Ok(json!({"status": status, "screenshot": shot}))
 }
 
-/// The median of `CALLS` round trips of `tool`, in milliseconds.
-fn round_trips(client: &mut Client, tool: &str, arguments: &Value) -> Result<f64> {
+/// The median and 95th percentile of `CALLS` round trips of `tool`, in milliseconds.
+fn round_trips(client: &mut Client, tool: &str, arguments: &Value) -> Result<Value> {
     let mut times = Vec::new();
     for _ in 0..CALLS {
         let (result, round_trip) = client.timed_call(tool, arguments.clone())?;
         structured(&result)?;
         times.push(round_trip);
     }
-    median_millis(&times)
+    let p95 = proc::p95(&times).ok_or_else(|| Failure::new("no round trips"))?;
+    Ok(json!({"median": median_millis(&times)?, "p95": as_millis(p95)}))
 }
 
 fn median_millis(took: &[Duration]) -> Result<f64> {
