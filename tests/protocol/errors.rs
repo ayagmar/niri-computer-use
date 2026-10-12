@@ -84,11 +84,9 @@ async fn arguments_that_dont_fit_the_desktop_are_text_and_logged_as_such() {
 async fn without_niri_calls_fail_as_niri_unavailable() {
     let fixture = Fixture::new("no-niri");
     let mut server = Server::start(&fixture).await;
-    for tool in ["outputs", "desktop_state"] {
-        let (name, detail) = tool_error(&server.call(tool, json!({})).await);
-        assert_eq!(name, "niri_unavailable", "{tool}: {detail}");
-        assert_ne!(detail, "");
-    }
+    let (name, detail) = tool_error(&server.call("desktop_state", json!({})).await);
+    assert_eq!(name, "niri_unavailable", "{detail}");
+    assert_ne!(detail, "");
     let status = server.structured("status").await;
     assert_eq!(status["niri"]["error"]["error"], "niri_unavailable");
     assert_eq!(status["niri"]["event_stream"], "disconnected");
@@ -97,14 +95,7 @@ async fn without_niri_calls_fail_as_niri_unavailable() {
         .into_iter()
         .map(|line| line["error"].clone())
         .collect();
-    assert_eq!(
-        errors,
-        [
-            json!("niri_unavailable"),
-            json!("niri_unavailable"),
-            Value::Null
-        ]
-    );
+    assert_eq!(errors, [json!("niri_unavailable"), Value::Null]);
 }
 
 #[tokio::test]

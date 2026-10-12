@@ -41,11 +41,11 @@ niri-computer-use: a server holds the lease: PID … (…); end that agent or it
 
 `recover` won't run while an agent holds the lease. End that agent's session, or press the stop key, which takes the lease back, then run `recover` again.
 
-## The shell tools are missing, or `shell_status` fails
+## `shell_panel` is missing, or Noctalia is unavailable
 
-`shell_status`, `shell_open` and `shell_close` are listed only when `noctalia` was on `PATH` when the server started. Install Noctalia and restart the agent's session.
+`shell_panel` is listed, and `desktop_state` has `shell`, only when `noctalia` was on `PATH` when the server started. Install Noctalia and restart the agent's session.
 
-If they are listed but fail with `noctalia_unavailable`, Noctalia isn't running: `status` shows `noctalia: not_running` and a `noctalia_error` such as `…/noctalia-wayland-1.sock: connect: No such file or directory`. Start Noctalia. While it isn't running, the lock state depends on logind alone, so without `niri --session` the lease is refused.
+If `shell_panel` fails, or `desktop_state`'s `shell` is, `noctalia_unavailable`, Noctalia isn't running: `status` shows `noctalia: not_running` and a `noctalia_error` such as `…/noctalia-wayland-1.sock: connect: No such file or directory`. Start Noctalia. While it isn't running, the lock state depends on logind alone, so without `niri --session` the lease is refused.
 
 ## `elements` and the element actions aren't listed
 
@@ -69,11 +69,11 @@ The pixel is outside the screenshot. In testing this happened with a tiled windo
 
 ## Typing fails with `focus_mismatch`
 
-The window the agent named in `expect` lost keyboard focus before typing started, often to a dialog or a notification. Nothing was typed. The agent should look at what took focus, focus its window again with `focus_window`, and type again.
+The window the agent named in `expect` lost keyboard focus before typing started, often to a dialog or a notification. Nothing was typed. The agent should look at what took focus, focus its window again with `focus`, and type again.
 
-## `paste` fails with `clipboard_unsaved`
+## A paste fails with `clipboard_unsaved`
 
-The clipboard couldn't be saved whole: it held over 16 MiB, its owner didn't answer within two seconds, a password manager marked its contents as secret, or something else was copied while it was being saved. Nothing changed. Type the text with `type_text` instead. A paste's own text, left on the clipboard by a `kept` outcome, doesn't cause this: the next paste replaces it.
+The clipboard couldn't be saved whole: it held over 16 MiB, its owner didn't answer within two seconds, a password manager marked its contents as secret, or something else was copied while it was being saved. Nothing changed. Type the text with `type_text` and `via: "keys"` instead. A paste's own text, left on the clipboard by a `kept` outcome, doesn't cause this: the next paste replaces it.
 
 ## Actions fail after the runtime directory was cleaned
 

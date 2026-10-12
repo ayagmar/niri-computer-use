@@ -25,9 +25,9 @@ The flag stays until you run `niri-computer-use resume`. An agent can't press th
 
 ## Input that may be stuck, and `recover`
 
-Before `click`, `drag`, `key`, `type_text` or `paste` send any input, the server writes an input-dirty marker, and it removes the marker once the input is released. `paste` takes the clipboard before it writes its marker, and its keeper process, not the marker, puts the clipboard back (see [`paste`](../../tools/keyboard/#paste)).
+Before `click`, `drag`, `key` or `type_text` send any input, the server writes an input-dirty marker, and it removes the marker once the input is released. A paste takes the clipboard before it writes its marker, and its keeper process, not the marker, puts the clipboard back (see [Pasting](../../tools/keyboard/#pasting)).
 
-If the call is cancelled midway, the server releases any held button or key. A `wtype` already typing, or a paste key already sent, isn't stopped: it finishes after the cancellation, and the marker stays until it has, for `paste` until the keeper has reported. Meanwhile other calls refuse with `recovery_required` and a `detail` saying a cancelled call's input is still finishing; they can try again within seconds.
+If the call is cancelled midway, the server releases any held button or key. A `wtype` already typing, or a paste key already sent, isn't stopped: it finishes after the cancellation, and the marker stays until it has, for a paste until the keeper has reported. Meanwhile other calls refuse with `recovery_required` and a `detail` saying a cancelled call's input is still finishing; they can try again within seconds.
 
 If the input can't be released, or its cleanup ended without removing the marker, for example because `wtype` was killed by a signal, the marker stays. Every action then refuses with `recovery_required`, and the `detail` tells the agent to call `release_desktop` and you to run `niri-computer-use recover`, which needs the lease. A server can only tell whether its own input is still finishing: for a marker another server wrote, such as a shared engine's seen by a standalone server, while that server still runs, the `detail` says that input may still be finishing and to try again in a few seconds before `recover`. A marker whose server has exited, or whose crash guardian has sent its releases, gets the `recover` wording at once.
 
@@ -49,10 +49,10 @@ Before each action the server checks, in this order: the stop flag (`stopped`), 
 
 - `launch` starts only presets from your [policy file](../configuration/), never a command the agent writes.
 - `niri_action` refuses niri's actions that run programs, write files or reach past the window layout, such as `Spawn`, `Quit` and `LoadConfigFile`, with `unrestricted_required`, and the `noctalia` tool isn't listed, unless you turn on [`unrestricted`](../configuration/#unrestricted). Turning it on lets an agent run any program through the server; every call still needs the lease, stops at the stop key and is logged.
-- The pointer and keyboard tools refuse with `app_denied` while the focused window's `app_id` is on your deny list. `elements`, `activate_element` and `set_element_text` refuse a denied app's window, and `close_window` and `niri_action`'s `CloseWindow` refuse to close one, whether named or focused. Focus and layout actions, such as `focus_window` or making a window fullscreen, still reach a denied window: they move it, not what is in it.
+- The pointer and keyboard tools refuse with `app_denied` while the focused window's `app_id` is on your deny list. `elements`, `activate_element` and `set_element_text` refuse a denied app's window, and `close_window` and `niri_action`'s `CloseWindow` refuse to close one, whether named or focused. Focus and layout actions, such as `focus` or making a window fullscreen, still reach a denied window: they move it, not what is in it.
 - The keyboard tools need `expect`, the window the agent means to type into, and refuse with `focus_mismatch` rather than type elsewhere. They stop if focus moves while they type.
 - The pointer tools aim only at pixels of a screenshot the agent took under its lease, at most a minute old, of an output that hasn't changed since. They run only on one monitor at transform `Normal`.
-- `shell_open` and `shell_close` open only three Noctalia panels.
+- `shell_panel` opens and closes only three Noctalia panels.
 
 A refusal sends nothing. The [error reference](../../reference/errors/) lists every refusal.
 

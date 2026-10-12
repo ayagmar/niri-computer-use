@@ -22,7 +22,7 @@ fn loginctl(fixture: &Fixture, hint: &str) {
 }
 
 #[tokio::test]
-async fn noctalia_running_answers_shell_status() {
+async fn noctalia_running_is_reported_running() {
     let fixture = Fixture::new("noctalia-up");
     fixture.program("noctalia", "exit 0");
     loginctl(&fixture, "no");
@@ -31,8 +31,6 @@ async fn noctalia_running_answers_shell_status() {
     let status = server.structured("status").await;
     assert_eq!(status["noctalia"], "running");
     assert_eq!(status["noctalia_error"], Value::Null);
-    let shell = server.structured("shell_status").await;
-    assert_eq!(shell, serde_json::from_str::<Value>(UNLOCKED).unwrap());
 }
 
 #[tokio::test]
@@ -46,8 +44,6 @@ async fn noctalia_stopped_is_not_running_with_the_reason() {
     assert_eq!(status["noctalia_error"]["error"], "noctalia_unavailable");
     let detail = status["noctalia_error"]["detail"].as_str().unwrap();
     assert!(detail.contains("connect"), "{detail}");
-    let (name, _) = tool_error(&server.call("shell_status", json!({})).await);
-    assert_eq!(name, "noctalia_unavailable");
 }
 
 #[tokio::test]
@@ -153,7 +149,7 @@ async fn focus_back(server: &mut Server, stream: &Stream) {
 }
 
 /// Noctalia says unlocked, then logind's answer, unlocked too, is held while the screen
-/// locks and released past the last gate. The stale answer doesn't let `focus_window` or
+/// locks and released past the last gate. The stale answer doesn't let `focus` or
 /// `key` go out: the lock is read again and the call is refused.
 #[tokio::test]
 async fn a_lock_while_loginds_answer_is_held_refuses_the_call() {
@@ -180,10 +176,10 @@ async fn a_lock_while_loginds_answer_is_held_refuses_the_call() {
     ]);
     fixture.serve_programs();
     let points = fixture.points();
-    // `key` first, as `focus_window` moves the focus `key` expects.
+    // `key` first, as `focus` moves the focus `key` expects.
     for (tool, arguments) in [
         ("key", json!({"keys": ["Down"], "expect": {"window_id": 1}})),
-        ("focus_window", json!({"id": 2})),
+        ("focus", json!({"window_id": 2})),
     ] {
         noctalia.set(UNLOCKED);
         std::fs::remove_file(fixture.path("locked")).ok();
@@ -198,7 +194,7 @@ async fn a_lock_while_loginds_answer_is_held_refuses_the_call() {
             .iter()
             .filter(|passed| passed.point == "loginctl")
             .count();
-        if tool == "focus_window" {
+        if tool == "focus" {
             niri.action().await;
             focus_back(&mut server, &stream).await;
         }

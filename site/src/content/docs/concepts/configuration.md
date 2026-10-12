@@ -19,7 +19,7 @@ The server reads `~/.config/niri-computer-use/policy.toml`, or `$XDG_CONFIG_HOME
 | `capture_dir` | as the file writes it, or null when saving is off |
 | `error` | why the file is invalid |
 
-`status` also shows `unrestricted`: `enabled`, `source` (`policy`, `env`, `both`, or null while off) and `error`, which explains a `NIRI_COMPUTER_USE_UNRESTRICTED` value other than `1`.
+`status` also shows `unrestricted`: `enabled`, `source` (`policy`, `env`, `both`, or null while off) and `error`, which explains a `NIRI_COMPUTER_USE_UNRESTRICTED` value other than `1`. Its `tools` shows the [tool profile](#tools): `profile`, `source` (`policy`, `env`, `both`, or null for `full`) and `error`, which explains a `NIRI_COMPUTER_USE_TOOLS` value that names no profile.
 
 An invalid file doesn't stop the server, but `acquire_desktop` and every action refuse with `read_only` until you fix it and restart. A file with an unknown key is invalid too.
 
@@ -58,7 +58,7 @@ With this file, `status` reports:
 
 ### `deny_input_app_ids`
 
-A list of `app_id`s, default empty. While the window with keyboard focus has one of them, `click`, `drag`, `scroll`, `pointer_move`, `key`, `type_text` and `paste` refuse with `app_denied`, even with `expect: "none"`. `elements`, `activate_element` and `set_element_text` refuse for a window of a denied app whatever has focus, and so do `close_window` and `niri_action`'s `CloseWindow`, for the window they name or the focused one. Focus and layout actions aren't checked.
+A list of `app_id`s, default empty. While the window with keyboard focus has one of them, `click`, `drag`, `scroll`, `pointer_move`, `key` and `type_text` refuse with `app_denied`, even with `expect: "none"`. `elements`, `activate_element` and `set_element_text` refuse for a window of a denied app whatever has focus, and so do `close_window` and `niri_action`'s `CloseWindow`, for the window they name or the focused one. Focus and layout actions aren't checked.
 
 The check follows keyboard focus, and apps choose their own `app_id`, so this guards against mistakes. A click can still land on a denied window while an allowed app has focus. `desktop_state` shows each window's `app_id`.
 
@@ -89,6 +89,20 @@ Turning it on never skips the lease, the stop key or the audit log: every gated 
 `NIRI_COMPUTER_USE_SHARED=1` in the server's environment turns it on too. Any other non-empty value, with the file's `shared` off, leaves it off and is noted on the server's stderr.
 
 The server decides before it reads anything from its client. If no engine answers within five seconds, the engine's socket path in the runtime directory is over the 108 bytes a Unix socket allows, or the engine refuses it, for example because the engine runs another build of `niri-computer-use` or another `WAYLAND_DISPLAY`, it serves its client on its own and says why on stderr. Once it is relaying, it stays a relay: if the engine ends, calls in flight fail with [`engine_lost`](../../reference/errors/#engine_lost), the session's next call reaches a new engine, and while none can be reached calls fail with [`engine_unavailable`](../../reference/errors/#engine_unavailable). The engine writes its errors to `engine.log` in the runtime directory and exits two seconds after its last connection, lease and pending input cleanup have ended. A client that stops reading its server's output loses its server, and with it the lease: once 32 lines wait for it, or one line has waited 30 seconds, the server ends that client's session and exits, saying why on stderr. The same happens to a client that sends more than 32 MiB the engine hasn't taken yet.
+
+### `tools`
+
+`"observe"`, `"act"` or `"full"`, default `"full"`. It decides which tools the server lists. A tool left out isn't in the client's tool list, so it costs no context, and calling it fails as an unknown tool.
+
+| Profile | Tools |
+|---|---|
+| `observe` | `status`, `desktop_state`, `screenshot`, `wait_for`, and `elements` when there is an accessibility bus. None of them needs the lease, so the agent can look but can't act |
+| `act` | every tool but `niri_action`, `noctalia` and `shell_panel` |
+| `full` | every tool, as Noctalia, `unrestricted` and the accessibility bus allow |
+
+`clipboard_read` isn't in `observe` because it needs the lease, which `observe` can't take.
+
+`NIRI_COMPUTER_USE_TOOLS` in the server's environment names a profile too, so one MCP client can list fewer tools than another. The narrower of the file's profile and the variable's wins: either can take tools away and neither can add them back. A value other than `observe`, `act` or `full` lists only `observe`'s tools and shows up as `status.tools.error`.
 
 ### `[[preset]]`
 
@@ -123,13 +137,14 @@ The server reads these once, at startup. When `XDG_RUNTIME_DIR`, `NIRI_SOCKET` o
 |---|---|
 | `NIRI_SOCKET` | niri's IPC socket. With every symlink resolved, it also names the niri instance that the lease, the stop flag and the input-dirty marker belong to: they are in `niri-computer-use/<instance>/` beside the socket, where `<instance>` is its file name without `.sock`. A socket with a hard link, which would be another name for the same niri, gets no lease by any name |
 | `XDG_RUNTIME_DIR` | finding niri's socket, the display and the session bus |
-| `WAYLAND_DISPLAY` | the pointer tools, `paste`, `clipboard_read`, and finding Noctalia's socket |
+| `WAYLAND_DISPLAY` | the pointer tools, pasting, `clipboard_read`, and finding Noctalia's socket |
 | `DBUS_SESSION_BUS_ADDRESS` | finding the accessibility bus for `elements`; without it, `$XDG_RUNTIME_DIR/bus` |
 | `PATH` | `grim`, `wtype`, `loginctl` and `noctalia` |
 | `XDG_CONFIG_HOME`, else `HOME` | the policy file |
 | `XDG_STATE_HOME`, else `HOME` | the audit log |
 | `HOME` | a `capture_dir` that starts with `~/` |
 | `NIRI_COMPUTER_USE_UNRESTRICTED` | `1` turns on [`unrestricted`](#unrestricted) for this server; unset or empty leaves the policy file to decide |
+| `NIRI_COMPUTER_USE_TOOLS` | `observe`, `act` or `full`: the [tool profile](#tools) for this server; unset or empty leaves the policy file to decide |
 | `NIRI_COMPUTER_USE_SHARED` | `1` turns on [`shared`](#shared) mode for this server; unset or empty leaves the policy file to decide |
 | `NIRI_COMPUTER_USE_KEYBOARD` | the keyboard backend: unset or `wtype` for the default, `native` for the [experimental native backend](../../tools/keyboard/#the-native-backend) |
 

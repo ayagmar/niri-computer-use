@@ -55,12 +55,10 @@ No arguments. One snapshot of niri's event stream:
 - `focused_window`: the focused window's id, or null while keyboard focus is outside the window layout, for example on a shell panel, the lock screen or the overview
 - `overview_open`
 - `keyboard_layouts`: the layout names and the current index
+- `outputs`, by connector name, such as `DP-1`: each output's `name`, `make` and `model`, and under `logical` its position and size in layout coordinates, its scale and its transform. A disabled output has `logical: null`. niri's mode lists and hardware details are left out.
+- `shell`, only when Noctalia is installed: Noctalia's own status, `barVisible`, `panelOpen`, `activePanelId` and `locked`, or `{"error": "noctalia_unavailable", "detail": ...}` when Noctalia isn't answering. Its absence or error doesn't fail the call.
 
-Right after the server starts or reconnects, it waits up to two seconds for niri's initial state.
-
-## `outputs`
-
-No arguments. niri's outputs by connector name, such as `DP-1`, as niri reports them: make, model, modes, and under `logical` the position and size in layout coordinates, the scale and the transform. A disabled output has `logical: null`.
+Right after the server starts or reconnects, it waits up to two seconds for niri's initial state. The outputs come from a separate niri request and Noctalia's status from its socket, both asked at the same time as the snapshot, each with a two-second deadline.
 
 ## `clipboard_read`
 
@@ -69,9 +67,9 @@ No arguments. Needs the lease, and refuses with [`lease_required`](../../referen
 - `copied_before_lease`: the clipboard still holds what was there when the lease was taken, or nothing was copied since. Your earlier clipboard is never read.
 - `nothing_copied`: something copied during the lease was cleared, and the clipboard is empty.
 - `no_text`: nothing copied is text.
-- `secret`: the clipboard's owner marked it `x-kde-passwordManagerHint: secret`, as KeePassXC does for a copied password. Its text is never read. Text that `paste` left on the clipboard because it couldn't put the user's copy back carries the same mark, so it is `secret` too.
+- `secret`: the clipboard's owner marked it `x-kde-passwordManagerHint: secret`, as KeePassXC does for a copied password. Its text is never read. Text that a paste left on the clipboard because it couldn't put the user's copy back carries the same mark, so it is `secret` too.
 
-`acquire_desktop` starts a watcher on a Wayland connection of its own to niri, through wlr data-control, and returns once it is bound, so anything copied after `acquire_desktop` returns counts. The watcher notes every selection niri announces and ends within a quarter of a second of the lease's end: `release_desktop`, a stop, or the session's end. A copy you make yourself while an agent holds the lease counts as made during the lease. `paste` puts your earlier clipboard back after its text; that restore still counts as copied before the lease, while a copy the agent made before a `paste` counts as its own once restored.
+`acquire_desktop` starts a watcher on a Wayland connection of its own to niri, through wlr data-control, and returns once it is bound, so anything copied after `acquire_desktop` returns counts. The watcher notes every selection niri announces and ends within a quarter of a second of the lease's end: `release_desktop`, a stop, or the session's end. A copy you make yourself while an agent holds the lease counts as made during the lease. A paste puts your earlier clipboard back after its text; that restore still counts as copied before the lease, while a copy the agent made before a paste counts as its own once restored.
 
 The hint and the text come from the same copy, so a copy made in between can't pass a secret off as plain text. The text is read as `wl-paste --type text` reads it: as `text/plain;charset=utf-8` if offered, else `text/plain`, else the first other text type. Text over 1 MiB or not valid UTF-8 is an `upstream_error`. If the watcher couldn't bind or lost its connection, reads fail with its error, such as `upstream_error` with niri's message, until the lease is released and taken again. The text is never logged.
 

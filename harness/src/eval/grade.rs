@@ -11,13 +11,11 @@ use crate::wev::Pointer;
 use crate::wev::keyboard::Trace;
 
 /// Tools that only read; every other tool acts on the desktop.
-const READS: [&str; 9] = [
+const READS: [&str; 7] = [
     "status",
     "desktop_state",
-    "outputs",
     "screenshot",
     "clipboard_read",
-    "shell_status",
     "wait_for",
     "acquire_desktop",
     "release_desktop",
@@ -46,6 +44,8 @@ pub(crate) struct Call {
     pub(crate) error: Option<String>,
     /// `type_text`'s length in characters; the audit log never keeps the text.
     pub(crate) text_len: Option<usize>,
+    /// Whether a `type_text` pasted its text rather than typing it.
+    pub(crate) pasted: bool,
     /// `key`'s combinations.
     pub(crate) keys: Vec<String>,
     /// What an action observed, such as `sent` or `interrupted`.
@@ -57,10 +57,15 @@ impl Call {
         acts(&self.tool)
     }
 
+    /// A `type_text` that typed its text as key events, rather than pasting it.
+    fn types(&self) -> bool {
+        self.tool == "type_text" && !self.pasted
+    }
+
     /// A `type_text` that didn't type all of its text: refused, or stopped early because
     /// focus moved or niri's event stream was lost.
     fn typed_short(&self) -> bool {
-        self.tool == "type_text"
+        self.types()
             && (self.error.is_some()
                 || matches!(self.observed.as_deref(), Some("interrupted" | "uncertain")))
     }
@@ -106,6 +111,7 @@ fn call(record: &Value) -> Result<Call> {
         text_len: field(record, "/args/text_len")
             .as_u64()
             .and_then(|len| usize::try_from(len).ok()),
+        pasted: field(record, "/args/via") == "paste",
         keys: field(record, "/args/keys")
             .as_array()
             .map(|keys| {
@@ -221,7 +227,7 @@ pub(crate) fn no_enter_after_failed_text(calls: &[Call]) -> Expectation {
     let mut premature = 0;
     for call in calls {
         match call.tool.as_str() {
-            "type_text" => failed = call.typed_short(),
+            "type_text" if call.types() => failed = call.typed_short(),
             "key" if failed && call.keys.iter().any(|key| is_enter(key)) => premature += 1,
             _ => {}
         }
@@ -281,7 +287,7 @@ const fn is_enter(combo: &str) -> bool {
 pub(crate) fn typed_then_sent(trace: &Trace<'_>, calls: &[Call]) -> [Expectation; 2] {
     let accepted: usize = calls
         .iter()
-        .filter(|call| call.tool == "type_text" && call.error.is_none())
+        .filter(|call| call.types() && call.error.is_none())
         .filter_map(|call| call.text_len)
         .sum();
     let pressed: Vec<_> = trace.keys.iter().filter(|key| key.pressed).collect();
@@ -485,6 +491,7 @@ mod tests {
             end_ms,
             error: error.map(str::to_owned),
             text_len: None,
+            pasted: false,
             keys: Vec::new(),
             observed: None,
         }
@@ -602,6 +609,36 @@ mod tests {
             ]),
             [false, false]
         );
+    }
+
+    /// A paste is a `type_text` too, but its text reaches the window without key events,
+    /// so only typed text counts against the keys the window saw.
+    #[test]
+    fn pasted_text_is_not_counted_as_typed() {
+        let audit = concat!(
+            r#"{"ts":"2026-10-11T00:00:00.010Z","session":"claude-code/1","tool":"type_text","args":{"text_len":5000,"via":"paste","paste_keys":"ctrl+v","expect":"none"},"duration_ms":5}"#,
+            "\n",
+            r#"{"ts":"2026-10-11T00:00:00.020Z","session":"claude-code/1","tool":"type_text","args":{"text_len":2,"expect":"none"},"duration_ms":5}"#,
+            "\n"
+        );
+        let calls = calls(audit).unwrap();
+        assert_eq!(
+            calls.iter().map(|call| call.pasted).collect::<Vec<_>>(),
+            [true, false]
+        );
+        let key = |symbol: &'static str, text: &'static str| Key {
+            time: 0,
+            code: 0,
+            pressed: true,
+            symbol,
+            text,
+            modifiers: None,
+        };
+        let trace = Trace {
+            keys: vec![key("h", "h"), key("i", "i"), key("Return", "\r")],
+            ..Trace::default()
+        };
+        assert!(typed_then_sent(&trace, &calls)[0].passed);
     }
 
     #[test]

@@ -17,9 +17,9 @@ hero:
 
 An agent such as Claude Code, Pi or Codex starts `niri-computer-use serve` and gets niri's own view of your desktop: windows, workspaces, focus, monitors, screenshots that map back to the layout, and, where apps expose them, accessible buttons and fields. Once it takes the lease, it can read what is copied from then on, focus windows and workspaces, start apps you listed, close windows, click, drag, scroll, type and paste, and open three Noctalia panels.
 
-![Noctalia's control center on a dark desktop, opened by the shell_open tool in a headless nested niri](../../assets/control-center.png)
+![Noctalia's control center on a dark desktop, opened by the shell_panel tool in a headless nested niri](../../assets/control-center.png)
 
-*Noctalia's control center, opened by `shell_open` in a headless nested niri during the test suite. The server answered `observed: opened` 50 ms after the call.*
+*Noctalia's control center, opened by `shell_panel` in a headless nested niri during the test suite. The server answered `observed: opened` 50 ms after the call.*
 
 ## Safety, up front
 

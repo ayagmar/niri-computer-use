@@ -89,7 +89,7 @@ impl Checks<'_, '_> {
         let window = fixture.window(self.session, bus)?.id;
         let files = files(toolkit);
         self.counted(files.count, 0)?;
-        self.call("focus_window", json!({"id": window}))?;
+        self.call("focus", json!({"window_id": window}))?;
         self.describe(toolkit, window)?;
         if toolkit == Toolkit::Gtk4 {
             crate::a11y::hidden::record(self.session, bus, fixture.pid())?;
@@ -280,7 +280,7 @@ impl Checks<'_, '_> {
     fn unfocused(&mut self, window: u64, button: &str, counter: &str) -> Result<()> {
         let decoy = Fixture::start_decoy(self.session)?;
         let decoy_window = decoy.decoy_window(self.session)?;
-        self.call("focus_window", json!({"id": decoy_window}))?;
+        self.call("focus", json!({"window_id": decoy_window}))?;
         let refused = self.refused("activate_element", activation(button, window))?;
         expect(
             field(&refused, "/error") == "focus_mismatch",
@@ -289,7 +289,7 @@ impl Checks<'_, '_> {
         )?;
         self.unchanged(counter, ACTIVATIONS)?;
         decoy.stop()?;
-        self.call("focus_window", json!({"id": window}))?;
+        self.call("focus", json!({"window_id": window}))?;
         self.session.log(&format!(
             "M9b: unfocused window refused, nothing sent: {refused}"
         ))
@@ -395,7 +395,7 @@ impl Checks<'_, '_> {
             &closed,
             |changes| lists(field(changes, "/closed"), &dialog),
         )?;
-        self.call("focus_window", json!({"id": window})).map(drop)
+        self.call("focus", json!({"window_id": window})).map(drop)
     }
 
     /// GTK 4's `Rename` gives its window a denied `app_id`: the next activation in it is
@@ -404,7 +404,7 @@ impl Checks<'_, '_> {
         let fixture = Fixture::start(self.session, Toolkit::Gtk4)?;
         let window = fixture.window(self.session, bus)?.id;
         self.counted("primary-count", 0)?;
-        self.call("focus_window", json!({"id": window}))?;
+        self.call("focus", json!({"window_id": window}))?;
         let primary = self.named(window, Some("button"), "Primary")?;
         let rename = self.named(window, Some("button"), "Rename")?;
         let renamed = self.call("activate_element", activation(&rename, window))?;
@@ -445,7 +445,7 @@ impl Checks<'_, '_> {
             window: fixture.window(self.session, bus)?.id,
             pid: fixture.pid(),
         };
-        self.call("focus_window", json!({"id": list.window}))?;
+        self.call("focus", json!({"window_id": list.window}))?;
         let listing = self.list(list.window, None, None)?;
         let rows = deletes(&listing)?;
         let [first, _, third, _, fifth, _, seventh, ..] = rows.as_slice() else {

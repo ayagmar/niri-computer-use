@@ -63,17 +63,17 @@ call() {
 
 # Every tool listed with niri reachable; Noctalia and the accessibility bus add the rest.
 readonly TOOLS='["acquire_desktop","click","clipboard_read","close_window","desktop_state",
-  "drag","focus_window","focus_workspace","key","launch","niri_action","outputs","paste","pointer_move",
+  "drag","focus","key","launch","niri_action","pointer_move",
   "release_desktop","screenshot","scroll","status","type_text","wait_for"]'
 # Tools that only read; every other tool changes the desktop or the lease.
-readonly READ_ONLY='["clipboard_read","desktop_state","elements","outputs","screenshot",
-  "shell_status","status","wait_for"]'
+readonly READ_ONLY='["clipboard_read","desktop_state","elements","screenshot",
+  "status","wait_for"]'
 
 # Runs after check_status, whose result says whether the accessibility bus was found.
 list_tools() {
   local expected="${TOOLS}"
   if command -v noctalia >/dev/null; then
-    expected="${expected} + [\"shell_close\",\"shell_open\",\"shell_status\"]"
+    expected="${expected} + [\"shell_panel\"]"
   fi
   if jq -e '.result.structuredContent.accessibility.available' "${work}/status.json" >/dev/null; then
     expected="${expected} + [\"activate_element\",\"elements\",\"set_element_text\"]"
@@ -114,13 +114,15 @@ check_status() {
 }
 
 check_observation() {
-  call outputs outputs
-  check "outputs: at least one enabled output" \
-    '[.result.structuredContent[] | select(.logical != null)] | length > 0' \
-    "${work}/outputs.json"
   call desktop_state desktop_state
+  local fields='["focused_window","keyboard_layouts","outputs","overview_open","windows","workspaces"]'
+  if command -v noctalia >/dev/null; then
+    fields='["focused_window","keyboard_layouts","outputs","overview_open","shell","windows","workspaces"]'
+  fi
   check "desktop_state: one snapshot with every field" \
-    '.result.structuredContent | keys == ["focused_window","keyboard_layouts","overview_open","windows","workspaces"]' \
+    ".result.structuredContent | keys == ${fields}" "${work}/desktop_state.json"
+  check "desktop_state: at least one enabled output" \
+    '[.result.structuredContent.outputs[] | select(.logical != null)] | length > 0' \
     "${work}/desktop_state.json"
   local focused
   focused=$(jq '.result.structuredContent.focused_window' "${work}/desktop_state.json")
@@ -135,10 +137,9 @@ check_observation() {
   check "clipboard_read: lease_required, since the script never takes the lease" \
     '.result.structuredContent.error == "lease_required"' "${work}/clipboard_read.json"
   if command -v noctalia >/dev/null; then
-    call shell_status shell_status
-    check "shell_status: Noctalia's status, or noctalia_unavailable" \
-      '.result.structuredContent | has("locked") or .error == "noctalia_unavailable"' \
-      "${work}/shell_status.json"
+    check "desktop_state: Noctalia's status, or noctalia_unavailable" \
+      '.result.structuredContent.shell | has("locked") or .error == "noctalia_unavailable"' \
+      "${work}/desktop_state.json"
   fi
 }
 

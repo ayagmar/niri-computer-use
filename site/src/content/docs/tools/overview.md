@@ -5,24 +5,21 @@ sidebar:
   order: 1
 ---
 
-The server offers up to 27 tools. `shell_status`, `shell_open` and `shell_close` are listed only when Noctalia is installed, `noctalia` only when Noctalia is installed and [`unrestricted`](../../concepts/configuration/#unrestricted) is on, and `elements`, `activate_element` and `set_element_text` only when the session has an accessibility bus, so a session without Noctalia or an accessibility bus has 20.
+The server offers up to 22 tools. `shell_panel` is listed only when Noctalia is installed, `noctalia` only when Noctalia is installed and [`unrestricted`](../../concepts/configuration/#unrestricted) is on, and `elements`, `activate_element` and `set_element_text` only when the session has an accessibility bus, so a session without Noctalia or an accessibility bus has 17. The [tool profile](../../concepts/configuration/#tools) can list fewer: `observe` lists only the tools that look, and `act` leaves out `niri_action`, `noctalia` and `shell_panel`.
 
 ## Every tool
 
 | Tool | Lease | What it does | Page |
 |---|---|---|---|
 | `status` | no | the readiness report | [Looking](../looking/#status) |
-| `desktop_state` | no | windows, workspaces, the focused window, the overview, keyboard layouts | [Looking](../looking/#desktop_state) |
-| `outputs` | no | monitors: position, size, scale, transform | [Looking](../looking/#outputs) |
+| `desktop_state` | no | windows, workspaces, the focused window, the overview, keyboard layouts, monitors, Noctalia's state | [Looking](../looking/#desktop_state) |
 | `clipboard_read` | yes | the clipboard's text, if copied during the lease | [Looking](../looking/#clipboard_read) |
 | `wait_for` | no | waits for a window to appear, close or change title, or for the screen to settle | [Looking](../looking/#wait_for) |
 | `screenshot` | no | an image of an output or a region, with its geometry; optionally saved as a PNG | [Screenshots](../screenshots/) |
 | `elements` | no | one window's accessible elements and where they are | [Elements](../elements/) |
-| `shell_status` | no | Noctalia's bar, panel and lock state | [Noctalia](../../concepts/noctalia/) |
 | `acquire_desktop` | takes it | takes the lease and notes the user's window | [Acting](../acting/#acquire_desktop) |
 | `release_desktop` | gives it up | gives the lease up, optionally restoring focus | [Acting](../acting/#release_desktop) |
-| `focus_window` | yes | focuses a window by id | [Acting](../acting/#focus_window) |
-| `focus_workspace` | yes | focuses a workspace by id | [Acting](../acting/#focus_workspace) |
+| `focus` | yes | focuses a window or a workspace by id | [Acting](../acting/#focus) |
 | `launch` | yes | starts a preset from the policy file | [Acting](../acting/#launch) |
 | `close_window` | yes | asks a window to close | [Acting](../acting/#close_window) |
 | `niri_action` | yes | sends any niri action, such as fullscreen, floating or a window width | [Acting](../acting/#niri_action) |
@@ -31,15 +28,13 @@ The server offers up to 27 tools. `shell_status`, `shell_open` and `shell_close`
 | `drag` | yes | drags from one point to another | [Acting](../acting/#drag) |
 | `scroll` | yes | turns the wheel at a pixel | [Acting](../acting/#scroll) |
 | `key` | yes | presses up to 16 key combinations | [Keyboard](../keyboard/#key) |
-| `type_text` | yes | types up to 1000 characters, optionally pressing Enter | [Keyboard](../keyboard/#type_text) |
-| `paste` | yes | pastes up to 1 MiB through the clipboard, then restores it | [Keyboard](../keyboard/#paste) |
+| `type_text` | yes | types up to 1000 characters, optionally pressing Enter, or pastes up to 1 MiB through the clipboard and restores it | [Keyboard](../keyboard/#type_text) |
 | `activate_element` | yes | does an accessible element's own action, such as pressing a button | [Elements](../elements/#activate_element) |
 | `set_element_text` | yes | replaces an editable field's text through the accessibility bus | [Elements](../elements/#set_element_text) |
-| `shell_open` | yes | opens one of three Noctalia panels | [Noctalia](../../concepts/noctalia/#panels) |
-| `shell_close` | yes | closes it | [Noctalia](../../concepts/noctalia/#panels) |
+| `shell_panel` | yes | opens or closes one of three Noctalia panels | [Noctalia](../../concepts/noctalia/#panels) |
 | `noctalia` | yes | sends any Noctalia command; only with `unrestricted` | [Noctalia](../../concepts/noctalia/#any-command) |
 
-The reading tools carry MCP's `readOnlyHint`, and `close_window`, `niri_action`, `click`, `drag`, `key`, `type_text`, `paste`, `activate_element`, `set_element_text` and `noctalia` carry `destructiveHint`.
+The reading tools carry MCP's `readOnlyHint`, and `close_window`, `niri_action`, `click`, `drag`, `key`, `type_text`, `activate_element`, `set_element_text` and `noctalia` carry `destructiveHint`. Every tool has a `title` and `openWorldHint: false`, since each acts only on this desktop. `status`, `desktop_state` and `screenshot` carry `_meta["anthropic/alwaysLoad"]: true`, so clients that load tools only when a search finds them, such as Claude Code, load these three up front.
 
 ## Results
 

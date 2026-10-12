@@ -57,6 +57,9 @@ All notable changes to this project are documented here. The format follows [Kee
 - A shared engine per niri instance, with `shared = true` or `NIRI_COMPUTER_USE_SHARED=1`: each client's `serve` relays to one `niri-computer-use engine`, which holds one desk, guardian, event stream and accessibility connection for every client, while policy, `unrestricted`, keyboard backend and home stay per client.
 - The documentation site, with `llms.txt` and a Markdown address for every page.
 - `niri-computer-use --version`.
+- `elements` returns one line per element as its text, `element_ref role "name" [states] ("action" …) x,y,w,h`, and lists only elements with an action or editable text by default. `interactive_only: false` lists labels too, and `format: "json"` gives the full objects as text; `structuredContent` always has them.
+- Every tool has a `title` and `openWorldHint: false`. `status`, `desktop_state` and `screenshot` carry `_meta["anthropic/alwaysLoad"]: true`, so Claude Code loads them without a tool search.
+- Tool profiles: `tools = "observe"`, `"act"` or `"full"` in the policy file, or `NIRI_COMPUTER_USE_TOOLS` for one client. `observe` lists only `status`, `desktop_state`, `screenshot`, `elements` and `wait_for`; `act` leaves out `niri_action`, `noctalia` and `shell_panel`. The default, `full`, lists every tool as before. `status.tools` reports the profile.
 
 ### Changed
 
@@ -80,14 +83,19 @@ All notable changes to this project are documented here. The format follows [Kee
 - The runtime directory that holds the lease, the stop flag and the input-dirty marker is `niri-computer-use/<instance>/` beside niri's socket with every symlink resolved, no longer under `XDG_RUNTIME_DIR`. A socket that doesn't resolve to the user's own leaves the server with no runtime directory rather than one picked another way.
 - `stop` and `resume` find niri's socket without connecting to it, so the stop key works while niri hangs.
 - A client that stops reading its server's output loses its session and the lease: once 32 lines wait for it, or one has waited 30 seconds, the bridge exits. So does a client that sends more than 32 MiB the shared engine hasn't taken yet, so its closed stdin can't go unseen behind that input.
+- Shorter tool descriptions and schemas, with no change in behaviour: the input schemas drop `$schema`, field text no longer repeats defaults and ranges the schema states, and the long descriptions keep their refusals and rules while the mechanics live in the docs.
+- `focus_window` and `focus_workspace` are one tool, `focus`, which takes `window_id` or `workspace_id`.
+- `shell_open` and `shell_close` are one tool, `shell_panel`, which takes the panel and `open: true` or `false`.
+- `outputs` and `shell_status` are gone: `desktop_state` has `outputs`, each with its name, make, model and `logical` position, size, scale and transform, and with Noctalia installed `shell`, Noctalia's status or `noctalia_unavailable`.
+- `paste` is gone: `type_text` takes `via: "paste"` with `paste_keys` (`ctrl+v`, `ctrl+shift+v` or `shift+Insert`) to paste up to 1 MiB through the clipboard, with the same results. `submit` with a paste is an argument mistake.
 
 ### Fixed
 
-- A stop or a lost lease once `key` or `type_text` started typing, or once `shell_open`, `shell_close` or `noctalia` sent its command, ends the call `uncertain` with the reason in `detail`, as for the niri and element actions, instead of `stopped` or `lease_required`: the input or the command may have taken effect. `typed` and `pressed` count what `wtype` finished. `paste` and the pointer tools still return the error.
+- A stop or a lost lease once `key` or `type_text` started typing, or once `shell_panel` or `noctalia` sent its command, ends the call `uncertain` with the reason in `detail`, as for the niri and element actions, instead of `stopped` or `lease_required`: the input or the command may have taken effect. `typed` and `pressed` count what `wtype` finished. A paste and the pointer tools still return the error.
 - `type_text` stops before its next part when the focused app goes on the deny list during the call, with `app_denied` saying how much was typed, and refuses with `focus_mismatch` when focus moves before anything was typed.
-- `shell_open` and `shell_close` no longer send their command when the input-dirty marker or the stop flag was set while they read Noctalia's open panel.
+- `shell_panel` no longer sends its command when the input-dirty marker or the stop flag was set while they read Noctalia's open panel.
 - Input that finds another input's marker set when it writes its own refuses with `recovery_required`, as an action does, instead of `upstream_error`.
-- Every acting tool sends its request, input or command within 250 ms of when its last read of the lock state began, and reads the lock state again first when that read is older. A read asks Noctalia and then logind, so a lock that came while logind's answer was on its way let `focus_window`, `key` and the other niri, input and Noctalia tools act after the screen locked. A call that can't go out within 250 ms of a read is refused with `screen_locked`.
+- Every acting tool sends its request, input or command within 250 ms of when its last read of the lock state began, and reads the lock state again first when that read is older. A read asks Noctalia and then logind, so a lock that came while logind's answer was on its way let `focus`, `key` and the other niri, input and Noctalia tools act after the screen locked. A call that can't go out within 250 ms of a read is refused with `screen_locked`.
 - Standalone screenshots and `wait_for` capture sequences hold the action mutex throughout capture, excluding subsequent server actions and lease changes.
 - Settled capture budgets include the initial delay and capture work. A timed-out later capture returns the last completed sample unsettled; no completed sample gives `deadline_exceeded`.
 - Fractional-scale pointer motion uses niri's ceiled physical-mode space rather than truncated IPC dimensions. Unknown or changed pointer geometry refuses input.

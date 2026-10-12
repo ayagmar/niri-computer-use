@@ -48,10 +48,9 @@ async fn an_unknown_protocol_version_gets_the_newest_supported_one() {
 fn expected(name: &str) -> (Value, Value) {
     let read_only = (json!([true, null, null]), json!(null));
     match name {
-        "acquire_desktop" => (json!([false, false, true]), json!(null)),
+        "acquire_desktop" | "focus" => (json!([false, false, true]), json!(null)),
         "release_desktop" => (json!([false, false, true]), json!(["restore_focus"])),
         "wait_for" => (json!([true, null, null]), json!(["until"])),
-        "focus_window" | "focus_workspace" => (json!([false, false, true]), json!(["id"])),
         "close_window" => (json!([false, true, false]), json!(["id"])),
         "launch" => (json!([false, false, false]), json!(["preset"])),
         "niri_action" => (json!([false, true, false]), json!(["action"])),
@@ -67,11 +66,7 @@ fn expected(name: &str) -> (Value, Value) {
             json!(["screenshot_ref", "x", "y"]),
         ),
         "key" => (json!([false, true, false]), json!(["keys", "expect"])),
-        "paste" => (
-            json!([false, true, false]),
-            json!(["text", "keys", "expect"]),
-        ),
-        "shell_open" | "shell_close" => (json!([false, false, true]), json!(["panel"])),
+        "shell_panel" => (json!([false, false, true]), json!(["panel", "open"])),
         "type_text" => (json!([false, true, false]), json!(["text", "expect"])),
         _ => read_only,
     }
@@ -92,20 +87,15 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
             "close_window",
             "desktop_state",
             "drag",
-            "focus_window",
-            "focus_workspace",
+            "focus",
             "key",
             "launch",
             "niri_action",
-            "outputs",
-            "paste",
             "pointer_move",
             "release_desktop",
             "screenshot",
             "scroll",
-            "shell_close",
-            "shell_open",
-            "shell_status",
+            "shell_panel",
             "status",
             "type_text",
             "wait_for"
@@ -123,6 +113,11 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
         assert_eq!(hints, want_hints, "{name}");
         assert_eq!(tool["inputSchema"]["required"], required, "{name}");
         assert!(!tool["description"].as_str().unwrap().is_empty(), "{name}");
+        assert!(tool["title"].is_string(), "{name}");
+        assert_eq!(annotations["openWorldHint"], false, "{name}");
+        let always_loaded = tool["_meta"]["anthropic/alwaysLoad"] == true;
+        let starts_tasks = matches!(name, "status" | "desktop_state" | "screenshot");
+        assert_eq!(always_loaded, starts_tasks, "{name}");
         assert_eq!(tool["inputSchema"]["type"], "object", "{name}");
         // Optional arguments are absent or a value, never typed as nullable, and advertise
         // their real defaults.
@@ -133,29 +128,26 @@ async fn the_tools_say_what_they_change_and_what_they_take() {
 }
 
 /// How many arguments each tool takes; tools not listed take none.
-const PROPERTIES: [(&str, usize); 17] = [
+const PROPERTIES: [(&str, usize); 14] = [
     ("screenshot", 5),
     ("launch", 3),
     ("niri_action", 2),
-    ("focus_window", 2),
-    ("focus_workspace", 2),
+    ("focus", 3),
     ("close_window", 2),
     ("pointer_move", 5),
     ("click", 9),
     ("drag", 6),
     ("scroll", 7),
     ("key", 4),
-    ("type_text", 5),
-    ("paste", 5),
-    ("shell_open", 2),
-    ("shell_close", 2),
+    ("type_text", 7),
+    ("shell_panel", 3),
     ("release_desktop", 1),
     ("wait_for", 3),
 ];
 
 /// `(tool, JSON pointer into its properties, expected value)`: advertised defaults and
 /// bounds. Null means the field has no default.
-fn advertised() -> [(&'static str, &'static str, Value); 18] {
+fn advertised() -> [(&'static str, &'static str, Value); 20] {
     [
         ("screenshot", "/max_width/default", json!(1280)),
         ("screenshot", "/format/default", json!("jpeg")),
@@ -174,6 +166,8 @@ fn advertised() -> [(&'static str, &'static str, Value); 18] {
         ("key", "/keys/minItems", json!(1)),
         ("key", "/keys/maxItems", json!(16)),
         ("type_text", "/submit/default", json!(false)),
+        ("type_text", "/via/default", json!("keys")),
+        ("type_text", "/paste_keys/default", Value::Null),
         ("wait_for", "/timeout_ms/default", json!(10000)),
     ]
 }
@@ -213,13 +207,10 @@ async fn without_noctalia_on_path_there_are_no_shell_tools() {
             "close_window",
             "desktop_state",
             "drag",
-            "focus_window",
-            "focus_workspace",
+            "focus",
             "key",
             "launch",
             "niri_action",
-            "outputs",
-            "paste",
             "pointer_move",
             "release_desktop",
             "screenshot",
@@ -229,14 +220,15 @@ async fn without_noctalia_on_path_there_are_no_shell_tools() {
             "wait_for"
         ]
     );
-    for tool in ["shell_status", "shell_open", "shell_close"] {
-        let id = server
-            .start_call(tool, json!({"panel": "control-center"}))
-            .await;
-        let response = server.response(id).await;
-        assert!(response["error"]["code"].is_i64(), "{response}");
-        assert_eq!(response.get("result"), None);
-    }
+    let id = server
+        .start_call(
+            "shell_panel",
+            json!({"panel": "control-center", "open": true}),
+        )
+        .await;
+    let response = server.response(id).await;
+    assert!(response["error"]["code"].is_i64(), "{response}");
+    assert_eq!(response.get("result"), None);
 }
 
 #[tokio::test]
@@ -257,6 +249,33 @@ async fn without_an_accessibility_bus_there_are_no_element_tools_and_status_says
     let id = server.start_call("elements", json!({"window_id": 1})).await;
     let response = server.response(id).await;
     assert!(response["error"]["code"].is_i64(), "{response}");
+}
+
+#[tokio::test]
+async fn a_client_that_only_observes_lists_no_tool_that_acts_and_cant_call_one() {
+    let mut fixture = Fixture::new("observe");
+    fixture.program("noctalia", "exit 0");
+    fixture.set("NIRI_COMPUTER_USE_TOOLS", "observe");
+    let mut server = Server::start(&fixture).await;
+    let tools = server.tools().await;
+    assert_eq!(
+        names(&tools),
+        ["desktop_state", "screenshot", "status", "wait_for"]
+    );
+    let status = server.structured("status").await;
+    assert_eq!(
+        status["tools"],
+        json!({"profile": "observe", "source": "env", "error": null})
+    );
+    let id = server.start_call("acquire_desktop", json!({})).await;
+    let response = server.response(id).await;
+    assert!(response["error"]["code"].is_i64(), "{response}");
+    let logged: Vec<Value> = fixture
+        .audit_lines()
+        .iter()
+        .map(|line| line["tool"].clone())
+        .collect();
+    assert_eq!(logged, [json!("status")]);
 }
 
 #[tokio::test]

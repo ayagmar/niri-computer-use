@@ -39,7 +39,7 @@ Ask for something that changes the desktop:
 
 > Focus my browser window, then put focus back where it was.
 
-The agent calls `acquire_desktop`, which notes the window you were on, then `focus_window`, then `release_desktop` with `restore_focus: true`. Each action's result says whether niri accepted it and what niri saw happen.
+The agent calls `acquire_desktop`, which notes the window you were on, then `focus`, then `release_desktop` with `restore_focus: true`. Each action's result says whether niri accepted it and what niri saw happen.
 
 If `acquire_desktop` fails, its error says why; the [error reference](../../reference/errors/) says what to do. The most common first-run refusal is `screen_locked` while the screen is unlocked; see [Troubleshooting](../../reference/troubleshooting/#the-lease-is-refused-with-screen_locked-while-the-screen-is-unlocked).
 

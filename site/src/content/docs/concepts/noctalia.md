@@ -5,19 +5,19 @@ sidebar:
   order: 3
 ---
 
-[Noctalia](https://github.com/noctalia-dev/noctalia-shell) is optional. Without it, everything except the three shell tools works the same.
+[Noctalia](https://github.com/noctalia-dev/noctalia-shell) is optional. Without it, everything except `shell_panel` works the same.
 
 ## Detection
 
-When the server starts, it looks for `noctalia` on `PATH`. If it is there, the server lists three more tools: `shell_status`, `shell_open` and `shell_close`, and a fourth, `noctalia`, when [`unrestricted`](../configuration/#unrestricted) is on. The tool list is fixed for the session, so install Noctalia before starting the agent.
+When the server starts, it looks for `noctalia` on `PATH`. If it is there, the server lists `shell_panel`, `desktop_state` gains a `shell` field, and the server lists `noctalia` too when [`unrestricted`](../configuration/#unrestricted) is on. The tool list is fixed for the session, so install Noctalia before starting the agent.
 
 The server talks to Noctalia over its socket, `$XDG_RUNTIME_DIR/noctalia-$WAYLAND_DISPLAY.sock`, with a two-second deadline. `status` reports `noctalia` as `running`, `not_running` with the reason in `noctalia_error`, or `not_installed`.
 
 ## What it adds
 
 - Noctalia's `locked` is a second source for the [lock gate](../safety/#the-lock-gate), next to logind's, so the server knows the lock state even when niri isn't started with `--session`.
-- `shell_status` returns Noctalia's own status: `barVisible`, `panelOpen`, `activePanelId` and `locked`. It is read-only.
-- `shell_open` and `shell_close` open and close a panel, under the lease and the same checks as every action.
+- `desktop_state`'s `shell` is Noctalia's own status: `barVisible`, `panelOpen`, `activePanelId` and `locked`, or `noctalia_unavailable` when Noctalia isn't answering.
+- `shell_panel` opens and closes a panel, under the lease and the same checks as every action.
 
 ## Panels
 
@@ -31,16 +31,16 @@ Only three panels can be opened or closed:
 
 Any other name, such as the session menu, which can power off, the launcher, which runs what is typed into it, polkit's password prompt or the clipboard history, is refused with `panel_not_allowed`, and nothing is sent.
 
-![Noctalia's control center opened by shell_open in a headless nested niri](../../../assets/control-center.png)
+![Noctalia's control center opened by shell_panel in a headless nested niri](../../../assets/control-center.png)
 
-*Noctalia's control center, opened by `shell_open` in a headless nested niri during the test suite. The server reported `{"accepted":true,"focused_window":null,"observed":"opened","shell":{"active_panel":"control-center"}}` 302 ms after the call: Noctalia reported the panel open within about 50 ms, and the change report then waited until niri had been quiet for 250 ms.*
+*Noctalia's control center, opened by `shell_panel` in a headless nested niri during the test suite. The server reported `{"accepted":true,"focused_window":null,"observed":"opened","shell":{"active_panel":"control-center"}}` 302 ms after the call: Noctalia reported the panel open within about 50 ms, and the change report then waited until niri had been quiet for 250 ms.*
 
-`shell_open` sends `panel-open`, then reads Noctalia's status every 100 ms for up to two seconds:
+`shell_panel` sends `panel-open`, or `panel-close` with `open: false`, then reads Noctalia's status every 100 ms for up to two seconds:
 
 | `observed` | Means |
 |---|---|
 | `opened` | `activePanelId` is the panel |
-| `closed` | (`shell_close`) it isn't any more |
+| `closed` | (closing) it isn't any more |
 | `timeout` | neither happened within two seconds |
 | `uncertain` | Noctalia's reply, or a later status, was lost, or a stop or a lost lease cut the call short once the command went out |
 
@@ -63,7 +63,7 @@ The server joins `args` with spaces and sends them over the same socket, with th
 | `reply` | what `noctalia msg` would print, cut at 64 KiB |
 | `truncated` | whether it was cut |
 
-It reaches every command `noctalia msg` does, not only panels and plugins. Noctalia 5.2.1's include `session logout`, `reboot`, `shutdown`, `suspend` and `lock-and-suspend`; `dpms-off`; `screenshot-fullscreen` and `screenshot-region`, which write files and the clipboard; `clipboard-copy` and `clipboard-clear`, which replace or empty your clipboard with no restore and no secret hint, unlike `paste`; `config-reload`, `log-level-set` and `plugins`; and opening any panel, the launcher, the session menu and the clipboard history among them. It has no unlock command, so the tool can't get past `screen_locked`.
+It reaches every command `noctalia msg` does, not only panels and plugins. Noctalia 5.2.1's include `session logout`, `reboot`, `shutdown`, `suspend` and `lock-and-suspend`; `dpms-off`; `screenshot-fullscreen` and `screenshot-region`, which write files and the clipboard; `clipboard-copy` and `clipboard-clear`, which replace or empty your clipboard with no restore and no secret hint, unlike a paste through `type_text`; `config-reload`, `log-level-set` and `plugins`; and opening any panel, the launcher, the session menu and the clipboard history among them. It has no unlock command, so the tool can't get past `screen_locked`.
 
 A reply starting `error:`, which makes `noctalia msg` exit 1, comes back as `upstream_error` with Noctalia's text, such as `Noctalia replied: error: unknown command (try: noctalia msg --help)`. A lost reply is `uncertain`: Noctalia acts before it answers. The tool needs the lease, stops at the stop key and is written to the audit log as the number of arguments and their lengths in bytes, never their text.
 
@@ -75,4 +75,4 @@ This is how an agent can start a screen recording with Noctalia's OBS plugin, as
 
 ## Paste and clipboard history
 
-`paste` marks the text it puts on the clipboard with `x-kde-passwordManagerHint: secret`, so clipboard managers that honour the hint, Noctalia's among them, keep it out of their history. See [Keyboard and paste](../../tools/keyboard/#paste).
+A paste through `type_text` marks the text it puts on the clipboard with `x-kde-passwordManagerHint: secret`, so clipboard managers that honour the hint, Noctalia's among them, keep it out of their history. See [Pasting](../../tools/keyboard/#pasting).

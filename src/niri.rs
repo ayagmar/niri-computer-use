@@ -13,7 +13,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use niri_ipc::{Action, Output, Request, Response, Window, Workspace};
+use niri_ipc::{Action, LogicalOutput, Output, Request, Response, Window, Workspace};
+use serde::Serialize;
 
 use crate::error::{ErrorName, ToolError, Unanswered};
 use events::{DesktopState, EventStream};
@@ -111,6 +112,28 @@ pub(crate) async fn outputs(socket: &Socket) -> Result<BTreeMap<String, Output>,
         return Err(unexpected("Outputs"));
     };
     Ok(outputs.into_iter().collect())
+}
+
+/// An output as `desktop_state` lists it: its connector name, what it is, and where it sits
+/// in the layout, without niri's modes and hardware details.
+#[derive(Debug, PartialEq, Serialize)]
+pub(crate) struct OutputSummary {
+    name: String,
+    make: String,
+    model: String,
+    /// Position, logical size, scale and transform; null while the output is off.
+    logical: Option<LogicalOutput>,
+}
+
+impl From<Output> for OutputSummary {
+    fn from(output: Output) -> Self {
+        Self {
+            name: output.name,
+            make: output.make,
+            model: output.model,
+            logical: output.logical,
+        }
+    }
 }
 
 /// The keyboard layout niri has active right now, as an index into its layouts: the one

@@ -7,7 +7,8 @@ use serde_json::{Value, json};
 
 use crate::client::{Server, tool_error};
 use crate::fixture::Fixture;
-use crate::niri::{Niri, window};
+use crate::niri::{Niri, output, window};
+use crate::noctalia::{self, UNLOCKED};
 
 fn titles(state: &Value) -> Vec<&str> {
     state["windows"]
@@ -44,6 +45,59 @@ async fn desktop_state_is_one_snapshot_of_the_stream() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert!(closed, "the closed window stayed in the snapshot");
+}
+
+/// One call gives the monitors and Noctalia's state with the windows: each output's name
+/// and place in the layout, without niri's modes, and Noctalia's status, or why it isn't
+/// answering.
+#[tokio::test]
+async fn desktop_state_has_the_outputs_and_noctalias_status() {
+    let fixture = Fixture::new("desktop-outputs");
+    let mut niri = Niri::start(&fixture);
+    niri.set_outputs(
+        vec![
+            output("DP-1", Some((0, 0, 2560, 1440, 1.0))),
+            output("HDMI-A-1", None),
+        ],
+        Some("DP-1"),
+    );
+    fixture.program("noctalia", "exit 0");
+    let mut server = Server::start(&fixture).await;
+    let stream = niri.stream().await;
+    stream.initial(&[window(1, "one")]);
+    let stopped = server.structured("desktop_state").await;
+    assert_eq!(
+        stopped["outputs"],
+        json!([
+            {"name": "DP-1", "make": "Test", "model": "Fake", "logical": {
+                "x": 0, "y": 0, "width": 2560, "height": 1440, "scale": 1.0,
+                "transform": "Normal"
+            }},
+            {"name": "HDMI-A-1", "make": "Test", "model": "Fake", "logical": null}
+        ])
+    );
+    assert_eq!(
+        stopped["shell"]["error"], "noctalia_unavailable",
+        "{stopped}"
+    );
+    let _noctalia = noctalia::start(&fixture, UNLOCKED);
+    let running = server.structured("desktop_state").await;
+    assert_eq!(
+        running["shell"],
+        serde_json::from_str::<Value>(UNLOCKED).unwrap()
+    );
+}
+
+#[tokio::test]
+async fn without_noctalia_desktop_state_has_no_shell() {
+    let fixture = Fixture::new("desktop-no-noctalia");
+    let mut niri = Niri::start(&fixture);
+    let mut server = Server::start(&fixture).await;
+    let stream = niri.stream().await;
+    stream.initial(&[]);
+    let state = server.structured("desktop_state").await;
+    assert_eq!(state["outputs"][0]["name"], "DP-1");
+    assert_eq!(state.get("shell"), None);
 }
 
 #[tokio::test]

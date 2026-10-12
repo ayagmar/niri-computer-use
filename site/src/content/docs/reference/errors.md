@@ -15,7 +15,7 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 ### `stopped`
 
-**Cause:** the stop flag is set for this niri instance, by the stop key or `niri-computer-use stop`. A stop during an action cancels it with this error. A niri action whose request had already gone out, a Noctalia command, an `activate_element` or `set_element_text` whose call to the app had, or `key` or `type_text` once a stroke had, isn't an error: it ends `uncertain`, with the stop in `detail` and `accepted: true` if niri, Noctalia or the app had answered or a stroke had been typed, `null` if not. For the pointer tools and `paste`, anything already sent may have taken effect. A runtime directory that can't be read also counts as stopped.
+**Cause:** the stop flag is set for this niri instance, by the stop key or `niri-computer-use stop`. A stop during an action cancels it with this error. A niri action whose request had already gone out, a Noctalia command, an `activate_element` or `set_element_text` whose call to the app had, or `key` or `type_text` once a stroke had, isn't an error: it ends `uncertain`, with the stop in `detail` and `accepted: true` if niri, Noctalia or the app had answered or a stroke had been typed, `null` if not. For the pointer tools and a paste, anything already sent may have taken effect. A runtime directory that can't be read also counts as stopped.
 
 **What to do:** when you want agents to act again, run `niri-computer-use resume`. If `status` shows `input_dirty`, run `niri-computer-use recover` first.
 
@@ -91,19 +91,19 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 **Cause:** a keyboard tool's `expect` doesn't match the window with keyboard focus, or for `activate_element` and `set_element_text`, the element's window doesn't have keyboard focus or `expect` doesn't name it. The `detail` says what has focus. Often a dialog or notification took focus; an open Noctalia panel leaves no window focused. Nothing was typed or sent.
 
-**What to do:** look at `desktop_state` and a screenshot, focus the intended window with `focus_window` if that is what was meant, then type again.
+**What to do:** look at `desktop_state` and a screenshot, focus the intended window with `focus` if that is what was meant, then type again.
 
 ### `text_too_long`
 
-**Cause:** `type_text` with over 1000 characters, `paste` with over 1 MiB, or `set_element_text` with over 64 KiB of UTF-8. Nothing was typed or set.
+**Cause:** `type_text` with over 1000 characters, or over 1 MiB with `via: "paste"`, or `set_element_text` with over 64 KiB of UTF-8. Nothing was typed or set.
 
-**What to do:** split the text into calls of at most 1000 characters, or use `paste`.
+**What to do:** split the text into calls of at most 1000 characters, or pass `via: "paste"`.
 
 ### `clipboard_unsaved`
 
-**Cause:** `paste` couldn't save the clipboard whole before replacing it: every type it offers, over 16 MiB in all, or not read within two seconds. Or the clipboard holds what its owner marked as a secret (`x-kde-passwordManagerHint`), or something else was copied while it was being saved. Nothing changed. An earlier paste's text, which a `kept` outcome leaves on the clipboard marked as a secret, isn't refused: the next `paste` replaces it and reports `clipboard: cleared`.
+**Cause:** a paste (`type_text` with `via: "paste"`) couldn't save the clipboard whole before replacing it: every type it offers, over 16 MiB in all, or not read within two seconds. Or the clipboard holds what its owner marked as a secret (`x-kde-passwordManagerHint`), or something else was copied while it was being saved. Nothing changed. An earlier paste's text, which a `kept` outcome leaves on the clipboard marked as a secret, isn't refused: the next paste replaces it and reports `clipboard: cleared`.
 
-**What to do:** type the text with `type_text` instead, in parts of at most 1000 characters.
+**What to do:** type the text with `type_text` and `via: "keys"` instead, in parts of at most 1000 characters.
 
 ### `save_not_enabled`
 
@@ -113,7 +113,7 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 ### `panel_not_allowed`
 
-**Cause:** `shell_open` or `shell_close` named a panel other than `control-center`, `wallpaper` or `tray-drawer`. Nothing was sent.
+**Cause:** `shell_panel` named a panel other than `control-center`, `wallpaper` or `tray-drawer`. Nothing was sent.
 
 **What to do:** use one of those three. The others, such as the session menu and the launcher, are deliberately out of reach.
 

@@ -99,6 +99,9 @@ pub(crate) struct Policy {
     /// Serves this client through the instance's shared engine.
     #[serde(default)]
     pub(crate) shared: bool,
+    /// Which tools to list: `observe`, `act` or `full`.
+    #[serde(default)]
+    pub(crate) tools: Profile,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -237,6 +240,14 @@ impl Loaded {
         match self {
             Self::Valid(policy) => policy.unrestricted,
             Self::Missing | Self::Invalid(_) => false,
+        }
+    }
+
+    /// The profile the file names; `full` when it names none or is missing or invalid.
+    pub(crate) const fn tools(&self) -> Profile {
+        match self {
+            Self::Valid(policy) => policy.tools,
+            Self::Missing | Self::Invalid(_) => Profile::Full,
         }
     }
 
@@ -480,6 +491,106 @@ impl Unrestricted {
         };
         UnrestrictedStatus {
             enabled: self.enabled(),
+            source,
+            error: self.env.clone().err(),
+        }
+    }
+}
+
+/// Which tools a session lists. A client that only looks can leave the acting tools out
+/// of its context, and can't call them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Profile {
+    /// The tools that look and need no lease.
+    Observe,
+    /// Every tool but `niri_action`, `noctalia` and `shell_panel`.
+    Act,
+    #[default]
+    Full,
+}
+
+/// What `observe` lists. Every other tool acts or needs the lease, as `clipboard_read` does.
+const OBSERVE: [&str; 5] = [
+    "status",
+    "desktop_state",
+    "screenshot",
+    "elements",
+    "wait_for",
+];
+
+/// What `act` leaves out: the passthroughs to niri and Noctalia, and the shell's panels.
+const FULL_ONLY: [&str; 3] = ["niri_action", "noctalia", "shell_panel"];
+
+impl Profile {
+    pub(crate) fn lists(self, tool: &str) -> bool {
+        match self {
+            Self::Observe => OBSERVE.contains(&tool),
+            Self::Act => !FULL_ONLY.contains(&tool),
+            Self::Full => true,
+        }
+    }
+}
+
+/// The profile a session lists, from the policy file's `tools` and
+/// `NIRI_COMPUTER_USE_TOOLS`. Either can narrow the list and neither can widen it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Tools {
+    /// The policy file's key.
+    pub(crate) policy: Profile,
+    /// The variable: none when unset or empty, and an error for a value that names no
+    /// profile, which lists only `observe`'s tools.
+    pub(crate) env: Result<Option<Profile>, String>,
+}
+
+/// What `status` reports about the tool profile.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct ToolsStatus {
+    profile: Profile,
+    /// `policy`, `env` or `both`: what narrowed the list; null for `full`.
+    source: Option<&'static str>,
+    /// Why the variable was refused.
+    error: Option<String>,
+}
+
+impl Tools {
+    /// The variable's value, read as `Tools::env` says.
+    pub(crate) fn parse_env(value: Option<&std::ffi::OsStr>) -> Result<Option<Profile>, String> {
+        let Some(value) = value.filter(|value| !value.is_empty()) else {
+            return Ok(None);
+        };
+        match value.to_str() {
+            Some("observe") => Ok(Some(Profile::Observe)),
+            Some("act") => Ok(Some(Profile::Act)),
+            Some("full") => Ok(Some(Profile::Full)),
+            _ => Err(format!(
+                "NIRI_COMPUTER_USE_TOOLS is \"{}\"; only observe, act and full name a profile, so only observe's tools are listed",
+                value.display()
+            )),
+        }
+    }
+
+    pub(crate) fn profile(&self) -> Profile {
+        self.env.as_ref().map_or(Profile::Observe, |env| {
+            self.policy.min(env.unwrap_or_default())
+        })
+    }
+
+    pub(crate) fn status(&self) -> ToolsStatus {
+        let profile = self.profile();
+        let narrowed = |source: Profile| source == profile && profile != Profile::Full;
+        let from_env = self
+            .env
+            .as_ref()
+            .map_or(true, |env| narrowed(env.unwrap_or_default()));
+        let source = match (narrowed(self.policy), from_env) {
+            (true, true) => Some("both"),
+            (true, false) => Some("policy"),
+            (false, true) => Some("env"),
+            (false, false) => None,
+        };
+        ToolsStatus {
+            profile,
             source,
             error: self.env.clone().err(),
         }
@@ -788,10 +899,10 @@ pub(crate) fn refuse_action(action: &Action, unrestricted: bool) -> Option<ToolE
     ))
 }
 
-/// The Noctalia panels `shell_open` and `shell_close` may name (plan §6.1). Never the
-/// session menu, which powers off; the launcher, which runs whatever is typed into it;
-/// polkit's authentication prompt; the clipboard history, which may hold secrets; the
-/// setup wizard; or Noctalia's test panel.
+/// The Noctalia panels `shell_panel` may name (plan §6.1). Never the session menu, which
+/// powers off; the launcher, which runs whatever is typed into it; polkit's authentication
+/// prompt; the clipboard history, which may hold secrets; the setup wizard; or Noctalia's
+/// test panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Panel {
     ControlCenter,
@@ -1420,6 +1531,66 @@ app_id = "foot"
                 &serde_json::json!("bad")
             )
         );
+    }
+
+    #[test]
+    fn observe_lists_only_tools_that_look_and_act_leaves_out_the_passthroughs() {
+        let acting = [
+            "acquire_desktop",
+            "click",
+            "type_text",
+            "activate_element",
+            "launch",
+            "clipboard_read",
+        ];
+        for tool in acting {
+            assert!(!Profile::Observe.lists(tool), "{tool}");
+            assert!(Profile::Act.lists(tool), "{tool}");
+        }
+        for tool in ["niri_action", "noctalia", "shell_panel"] {
+            assert!(!Profile::Act.lists(tool), "{tool}");
+            assert!(Profile::Full.lists(tool), "{tool}");
+        }
+        assert!(Profile::Observe.lists("screenshot"));
+        assert!(Profile::Observe.lists("elements"));
+    }
+
+    #[test]
+    fn the_file_or_the_variable_can_narrow_the_tools_but_not_widen_them() {
+        use std::ffi::OsStr;
+        let tools = |policy, env: Option<&str>| Tools {
+            policy,
+            env: Tools::parse_env(env.map(OsStr::new)),
+        };
+        let status = |given: &Tools| serde_json::to_value(given.status()).unwrap();
+        assert_eq!(
+            status(&tools(Profile::Full, None)),
+            serde_json::json!({"profile": "full", "source": null, "error": null})
+        );
+        assert_eq!(tools(Profile::Full, Some("")).profile(), Profile::Full);
+        assert_eq!(status(&tools(Profile::Full, Some("act")))["source"], "env");
+        let observed = tools(Profile::Observe, Some("full"));
+        assert_eq!(observed.profile(), Profile::Observe);
+        assert_eq!(status(&observed)["source"], "policy");
+        assert_eq!(status(&tools(Profile::Act, Some("act")))["source"], "both");
+        assert_eq!(
+            parse("tools = \"act\"", false).map(|policy| policy.tools),
+            Ok(Profile::Act)
+        );
+        assert!(parse("tools = \"none\"", false).is_err());
+        // A value that names no profile lists the fewest tools, even under the file's full.
+        for wrong in ["Observe", "read-only", "1", " act"] {
+            let refused = tools(Profile::Full, Some(wrong));
+            assert_eq!(refused.profile(), Profile::Observe, "{wrong}");
+            let error = status(&refused)["error"].clone();
+            assert!(
+                error
+                    .as_str()
+                    .unwrap()
+                    .contains("only observe's tools are listed"),
+                "{error}"
+            );
+        }
     }
 
     #[test]

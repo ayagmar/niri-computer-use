@@ -485,19 +485,27 @@ fn only(frames: &[Frame<'_>], candidates: &[usize], title: Option<&str>) -> Resu
     }
 }
 
-/// The `elements` filters: an exact role name, and text the name contains, ignoring case.
+/// The `elements` filters: an exact role name, text the name contains, ignoring case, and
+/// whether only interactive elements count.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Filter {
     pub(crate) role: Option<String>,
     /// Lowercased.
     name_contains: Option<String>,
+    /// Only elements with actions or editable text, unless a role was asked for.
+    pub(crate) interactive_only: bool,
 }
 
 impl Filter {
-    pub(crate) fn new(role: Option<String>, name_contains: Option<&str>) -> Self {
+    pub(crate) fn new(
+        role: Option<String>,
+        name_contains: Option<&str>,
+        interactive_only: bool,
+    ) -> Self {
         Self {
             role,
             name_contains: name_contains.map(str::to_lowercase),
+            interactive_only,
         }
     }
 
@@ -788,7 +796,7 @@ mod tests {
     fn filters_by_exact_role_and_name_text_in_any_case() {
         let all = Filter::default();
         assert!(all.matches("label", ""));
-        let buttons = Filter::new(Some("button".to_owned()), Some("PRIMARY"));
+        let buttons = Filter::new(Some("button".to_owned()), Some("PRIMARY"), false);
         assert!(buttons.matches("button", "Primary: 3"));
         assert!(!buttons.matches("button", "Second: 0"));
         assert!(!buttons.matches("toggle_button", "Primary"));

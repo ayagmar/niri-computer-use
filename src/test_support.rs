@@ -42,6 +42,7 @@ pub(crate) fn niri_env(dir: &std::path::Path) -> crate::Env {
 pub(crate) fn session(id: u64) -> crate::session::Session {
     let given = crate::session::Given {
         unrestricted: None,
+        tools: None,
         keyboard: None,
         home: None,
         policy: crate::policy::Source::Missing,

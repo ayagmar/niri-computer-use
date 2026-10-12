@@ -261,7 +261,7 @@ mod tests {
         assert!(ledger.during, "cleared during the lease");
     }
 
-    /// `paste` puts the user's earlier clipboard back after its text: that restore is a
+    /// A paste puts the user's earlier clipboard back after its text: that restore is a
     /// selection announced during the lease, but still the user's.
     #[test]
     fn a_paste_restore_counts_as_what_the_paste_replaced() {

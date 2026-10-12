@@ -68,7 +68,7 @@ const PANEL: &str = "wallpaper";
 enum Tool {
     Activate,
     SetText,
-    FocusWindow,
+    Focus,
     CloseWindow,
     NiriAction,
     Launch,
@@ -93,22 +93,27 @@ impl Tool {
         match self {
             Self::Activate => "activate_element",
             Self::SetText => "set_element_text",
-            Self::FocusWindow => "focus_window",
+            Self::Focus => "focus",
             Self::CloseWindow => "close_window",
             Self::NiriAction => "niri_action",
             Self::Launch => "launch",
             Self::Key => "key",
             Self::TypeText => "type_text",
-            Self::ShellOpen => "shell_open",
-            Self::ShellClose => "shell_close",
+            Self::ShellOpen | Self::ShellClose => "shell_panel",
             Self::Noctalia => "noctalia",
         }
+    }
+
+    /// The tool's name in what the explorer reports, telling `shell_panel`'s two calls
+    /// apart.
+    fn label(self) -> String {
+        format!("{self:?}")
     }
 
     const fn kind(self) -> Kind {
         match self {
             Self::Activate | Self::SetText => Kind::Element,
-            Self::FocusWindow | Self::CloseWindow | Self::NiriAction | Self::Launch => Kind::Niri,
+            Self::Focus | Self::CloseWindow | Self::NiriAction | Self::Launch => Kind::Niri,
             Self::Key | Self::TypeText => Kind::Keyboard,
             Self::ShellOpen | Self::ShellClose | Self::Noctalia => Kind::Shell,
         }
@@ -119,7 +124,7 @@ impl Tool {
         match self {
             Self::SetText => ("Field", "/entry"),
             Self::Activate
-            | Self::FocusWindow
+            | Self::Focus
             | Self::CloseWindow
             | Self::NiriAction
             | Self::Launch
@@ -150,12 +155,14 @@ impl Tool {
         match self {
             Self::Activate => json!({"element": element, "expect": expect}),
             Self::SetText => json!({"element": element, "text": "abc", "expect": expect}),
-            Self::FocusWindow | Self::CloseWindow => json!({"id": TARGET}),
+            Self::Focus => json!({"window_id": TARGET}),
+            Self::CloseWindow => json!({"id": TARGET}),
             Self::NiriAction => json!({"action": {"ToggleWindowFloating": {"id": TARGET}}}),
             Self::Launch => json!({"preset": "foot"}),
             Self::Key => json!({"keys": ["Down"], "expect": expect}),
             Self::TypeText => json!({"text": TEXT.repeat(15), "submit": true, "expect": expect}),
-            Self::ShellOpen | Self::ShellClose => json!({"panel": PANEL}),
+            Self::ShellOpen => json!({"panel": PANEL, "open": true}),
+            Self::ShellClose => json!({"panel": PANEL, "open": false}),
             Self::Noctalia => json!({"args": ["panel-open", PANEL]}),
         }
     }
@@ -586,7 +593,7 @@ impl World {
         }
         panic!(
             "{}: no two calls in a row passed the same points",
-            tool.name()
+            tool.label()
         );
     }
 
@@ -595,13 +602,13 @@ impl World {
         let arguments = self.reset(tool).await;
         let result = self.server.call(tool.name(), arguments).await;
         let trace = self.points.trace();
-        assert_eq!(result["isError"], false, "{}: {result}", tool.name());
+        assert_eq!(result["isError"], false, "{}: {result}", tool.label());
         let strokes = if tool == Tool::TypeText { 3 } else { 1 };
         assert_eq!(
             acts(tool, &trace).len(),
             strokes,
             "{}: {trace:?}",
-            tool.name()
+            tool.label()
         );
         trace
     }
@@ -804,7 +811,7 @@ static WORLDS: Semaphore = Semaphore::const_new(16);
 /// trace from `shard` on, held briefly and, before the call that acts, past `LAST_GATE`.
 /// Returns the broken cases.
 async fn explore_fact(tool: Tool, fact: Fact, shard: usize) -> (usize, Vec<String>) {
-    let tag = format!("st{shard}-{}-{fact:?}", tool.name());
+    let tag = format!("st{shard}-{}-{fact:?}", tool.label());
     let tag: String = tag.chars().take(24).collect();
     let _turn = WORLDS.acquire().await.unwrap();
     let mut world = World::start(&tag, fact).await;
@@ -813,7 +820,7 @@ async fn explore_fact(tool: Tool, fact: Fact, shard: usize) -> (usize, Vec<Strin
         .filter(|&index| tool.acts(&trace[index].point))
         .collect();
     let (Some(&sends), Some(&last)) = (acting.first(), acting.last()) else {
-        panic!("{}: nothing acted in {trace:?}", tool.name());
+        panic!("{}: nothing acted in {trace:?}", tool.label());
     };
     let mut broken = Vec::new();
     let mut runs = 0;
@@ -840,7 +847,7 @@ async fn explore_fact(tool: Tool, fact: Fact, shard: usize) -> (usize, Vec<Strin
             if let Err(why) = judged {
                 broken.push(format!(
                     "{} {fact:?} held at {} #{} ({hold:?}): {why}",
-                    tool.name(),
+                    tool.label(),
                     at.point,
                     at.nth
                 ));
@@ -853,7 +860,7 @@ async fn explore_fact(tool: Tool, fact: Fact, shard: usize) -> (usize, Vec<Strin
 const TOOLS: [Tool; 11] = [
     Tool::Activate,
     Tool::SetText,
-    Tool::FocusWindow,
+    Tool::Focus,
     Tool::CloseWindow,
     Tool::NiriAction,
     Tool::Launch,
@@ -867,12 +874,7 @@ const TOOLS: [Tool; 11] = [
 /// The tools `make check` explores, one of each kind. They catch every bug the explorer
 /// found but one between `type_text`'s strokes; `NCU_STALL=full` explores all of `TOOLS`,
 /// as `make stall` does.
-const SAMPLE: [Tool; 4] = [
-    Tool::Activate,
-    Tool::FocusWindow,
-    Tool::Key,
-    Tool::ShellOpen,
-];
+const SAMPLE: [Tool; 4] = [Tool::Activate, Tool::Focus, Tool::Key, Tool::ShellOpen];
 
 /// Whether `NCU_STALL=full` asks for the full matrix.
 fn full() -> bool {
@@ -893,7 +895,7 @@ fn explore(fact: Fact) {
         .flat_map(|tool| (0..SHARDS).map(move |shard| (tool, shard)))
         .map(|(tool, shard)| {
             std::thread::Builder::new()
-                .name(format!("{}-{fact:?}-{shard}", tool.name()))
+                .name(format!("{}-{fact:?}-{shard}", tool.label()))
                 .spawn(move || {
                     tokio::runtime::Builder::new_current_thread()
                         .enable_all()

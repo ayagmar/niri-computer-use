@@ -41,7 +41,7 @@ async fn cancel_while_running(name: &str, program: &str, tool: &str, arguments: 
         stuck_program_exited(&fixture).await,
         "{tool} left {program} running"
     );
-    server.structured("outputs").await;
+    server.structured("status").await;
     assert!(
         !server.answered().contains(&id),
         "the cancelled {tool} was answered"
@@ -49,7 +49,7 @@ async fn cancel_while_running(name: &str, program: &str, tool: &str, arguments: 
     let lines = fixture.audit_lines();
     assert_eq!(lines[0]["tool"], tool);
     assert_eq!(lines[0]["error"], "cancelled");
-    assert_eq!(lines[1]["tool"], "outputs");
+    assert_eq!(lines[1]["tool"], "status");
     let (status, unread, _) = server.stop().await;
     assert!(status.success());
     assert!(unread.iter().all(|message| message["id"] != id));
@@ -99,14 +99,16 @@ async fn cancelling_a_niri_request_closes_its_connection() {
     let mut niri = Niri::start(&fixture);
     niri.set_silent(true);
     let mut server = Server::start(&fixture).await;
-    let id = server.start_call("outputs", json!({})).await;
+    let stream = niri.stream().await;
+    stream.initial(&[]);
+    let id = server.start_call("desktop_state", json!({})).await;
     niri.held().await;
     server.cancel(id).await;
     // Well inside the two-second request deadline.
     assert!(niri.abandoned_within(Duration::from_millis(500)).await);
     niri.set_silent(false);
-    let outputs = server.structured("outputs").await;
-    assert!(outputs.get("DP-1").is_some(), "{outputs}");
+    let state = server.structured("desktop_state").await;
+    assert_eq!(state["outputs"][0]["name"], "DP-1", "{state}");
     assert!(!server.answered().contains(&id));
 }
 
@@ -128,10 +130,12 @@ async fn a_capture_past_its_deadline_is_killed_with_its_group() {
 #[tokio::test]
 async fn a_held_niri_request_fails_at_its_deadline() {
     let fixture = Fixture::new("niri-deadline");
-    let niri = Niri::start(&fixture);
+    let mut niri = Niri::start(&fixture);
     niri.set_silent(true);
     let mut server = Server::start(&fixture).await;
-    let (name, _) = crate::client::tool_error(&server.call("outputs", json!({})).await);
+    let stream = niri.stream().await;
+    stream.initial(&[]);
+    let (name, _) = crate::client::tool_error(&server.call("desktop_state", json!({})).await);
     assert_eq!(name, "deadline_exceeded");
 }
 
@@ -149,7 +153,7 @@ async fn concurrent_calls_are_answered_as_each_finishes() {
         .start_call("screenshot", json!({"target": "focused_output"}))
         .await;
     let mut fast = Vec::new();
-    for tool in ["status", "outputs", "desktop_state"] {
+    for tool in ["status", "desktop_state"] {
         fast.push(server.start_call(tool, json!({})).await);
     }
     for id in &fast {
