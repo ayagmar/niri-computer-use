@@ -1,8 +1,8 @@
 //! The policy file, `$XDG_CONFIG_HOME/niri-computer-use/policy.toml`, and the decisions it
 //! feeds: launch presets, the app deny list, where screenshots may be saved, whether a
-//! server may take the lease, which niri actions need `unrestricted = true`, and which output
-//! setups the pointer tools may run on. Also the Noctalia panels the shell tools may open,
-//! which no file changes.
+//! server may take the lease and whether the user must allow it first, which niri actions
+//! need `unrestricted = true`, and which output setups the pointer tools may run on. Also
+//! the Noctalia panels the shell tools may open, which no file changes.
 //! Everything here is pure; the caller reads the file. The preset rules catch common
 //! mistakes. They are a guardrail, not a boundary: a wrapper script or a symlink with
 //! another name gets past any list.
@@ -111,6 +111,10 @@ pub(crate) struct Policy {
     /// turns it on.
     #[serde(default)]
     pub(crate) unrestricted: bool,
+    /// Asks the user on the desktop to allow each `acquire_desktop` before the lease is
+    /// granted. Off unless the user turns it on.
+    #[serde(default)]
+    pub(crate) confirm_lease: bool,
     /// `false` serves this client standalone rather than through the instance's shared
     /// engine; unset, it is shared.
     #[serde(default)]
@@ -255,6 +259,14 @@ impl Loaded {
     pub(crate) const fn unrestricted(&self) -> bool {
         match self {
             Self::Valid(policy) => policy.unrestricted,
+            Self::Missing | Self::Invalid(_) => false,
+        }
+    }
+
+    /// Whether the file turns `confirm_lease` on. A missing or invalid file doesn't.
+    pub(crate) const fn confirm_lease(&self) -> bool {
+        match self {
+            Self::Valid(policy) => policy.confirm_lease,
             Self::Missing | Self::Invalid(_) => false,
         }
     }
@@ -445,14 +457,18 @@ fn check_env(preset: &Preset, program: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether `unrestricted` is on, and which source turned it on.
+/// A key the user turns on in the policy file or, for one client, with a variable in that
+/// client's server settings: `unrestricted` or `confirm_lease`. Either source turns it on;
+/// nothing in the environment turns off the file's `true`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Unrestricted {
+pub(crate) struct Switch {
     /// The policy file's key.
     pub(crate) policy: bool,
-    /// `NIRI_COMPUTER_USE_UNRESTRICTED`: on for `1`, off when unset or empty, and an error for
-    /// anything else, which leaves it off.
+    /// The variable: on for `1`, off when unset or empty, and an error for anything else.
     pub(crate) env: Result<bool, String>,
+    /// What the variable's error leaves it as: off for a permission, `unrestricted`, so a
+    /// typo grants nothing, and on for a safeguard, `confirm_lease`, so a typo can't drop it.
+    pub(crate) when_wrong: bool,
 }
 
 /// Whether `serve` bridges its client to the shared engine: `NIRI_COMPUTER_USE_SHARED`,
@@ -474,9 +490,9 @@ pub(crate) fn shared(policy: &Loaded, env: Option<&std::ffi::OsStr>) -> Result<b
     }
 }
 
-/// What `status` reports about `unrestricted`.
+/// What `status` reports about a `Switch`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct UnrestrictedStatus {
+pub(crate) struct SwitchStatus {
     enabled: bool,
     /// `policy`, `env` or `both`; null while off.
     source: Option<&'static str>,
@@ -484,32 +500,51 @@ pub(crate) struct UnrestrictedStatus {
     error: Option<String>,
 }
 
-impl Unrestricted {
-    /// The variable's value, read as `Unrestricted::env` says.
-    pub(crate) fn parse_env(value: Option<&std::ffi::OsStr>) -> Result<bool, String> {
+impl Switch {
+    /// The variable `name`'s value, which turns `key` on, read as `Switch::env` says; the
+    /// error says what `when_wrong` leaves it as.
+    pub(crate) fn parse_env(
+        name: &str,
+        key: &str,
+        when_wrong: bool,
+        value: Option<&std::ffi::OsStr>,
+    ) -> Result<bool, String> {
         match value {
             None => Ok(false),
             Some(value) if value.is_empty() => Ok(false),
             Some(value) if value == "1" => Ok(true),
             Some(value) => Err(format!(
-                "NIRI_COMPUTER_USE_UNRESTRICTED is \"{}\"; only 1 turns unrestricted on, so it stays off",
-                value.display()
+                "{name} is \"{}\"; only 1 turns {key} on, so {}",
+                value.display(),
+                if when_wrong {
+                    "it is on until the value is fixed"
+                } else {
+                    "it stays off"
+                }
             )),
         }
     }
 
-    pub(crate) const fn enabled(&self) -> bool {
-        self.policy || matches!(self.env, Ok(true))
+    /// Whether the variable turns it on, its error as `when_wrong` says.
+    const fn env_on(&self) -> bool {
+        match self.env {
+            Ok(on) => on,
+            Err(_) => self.when_wrong,
+        }
     }
 
-    pub(crate) fn status(&self) -> UnrestrictedStatus {
-        let source = match (self.policy, matches!(self.env, Ok(true))) {
+    pub(crate) const fn enabled(&self) -> bool {
+        self.policy || self.env_on()
+    }
+
+    pub(crate) fn status(&self) -> SwitchStatus {
+        let source = match (self.policy, self.env_on()) {
             (true, true) => Some("both"),
             (true, false) => Some("policy"),
             (false, true) => Some("env"),
             (false, false) => None,
         };
-        UnrestrictedStatus {
+        SwitchStatus {
             enabled: self.enabled(),
             source,
             error: self.env.clone().err(),
@@ -1546,7 +1581,14 @@ app_id = "foot"
     #[test]
     fn the_variable_turns_unrestricted_on_only_with_1() {
         use std::ffi::OsStr;
-        let read = |value: Option<&str>| Unrestricted::parse_env(value.map(OsStr::new));
+        let read = |value: Option<&str>| {
+            Switch::parse_env(
+                "NIRI_COMPUTER_USE_UNRESTRICTED",
+                "unrestricted",
+                false,
+                value.map(OsStr::new),
+            )
+        };
         assert_eq!(read(None), Ok(false));
         assert_eq!(read(Some("")), Ok(false));
         assert_eq!(read(Some("1")), Ok(true));
@@ -1556,8 +1598,18 @@ app_id = "foot"
                 "{wrong}"
             );
         }
-        let status =
-            |policy, env| serde_json::to_value(Unrestricted { policy, env }.status()).unwrap();
+        let status = |policy, env| {
+            let when_wrong = false;
+            serde_json::to_value(
+                Switch {
+                    policy,
+                    env,
+                    when_wrong,
+                }
+                .status(),
+            )
+            .unwrap()
+        };
         assert_eq!(
             status(false, Ok(false)),
             serde_json::json!({"enabled": false, "source": null, "error": null})

@@ -15,6 +15,8 @@ No arguments. Takes the lease on this niri instance and returns `{"holder": {"pi
 
 Refused with `lease_held` while another server holds it. While the holder's own `acquire_desktop` is still starting its watcher, another session's call waits for that to finish before it is refused, which is bounded by the watcher's deadlines but can take seconds when niri is slow. It is also refused with `stopped` while the stop flag is set, `recovery_required` while the input-dirty marker exists, the niri error when niri's version can't be read, `read_only` when this build doesn't support the running niri, niri sent events it can't parse, or the policy file is invalid, and `screen_locked` while the screen is locked or its lock state is unknown. If the runtime directory can't be read, it fails with `upstream_error` rather than assume neither flag is set.
 
+With [`confirm_lease`](../../concepts/configuration/#confirm_lease) on, the call then waits for the user to choose Allow on a desktop notification, after the checks above pass and before the lease is granted. Deny, a dismissed notification or no answer within 60 seconds is `lease_declined`, and the checks run again after an Allow, since the answer can take up to a minute. A stop or the client's end while it waits refuses the call at once. Meanwhile another session of the same engine that calls `acquire_desktop` waits for the answer before it is refused with `lease_held` or gets the lease.
+
 ### `release_desktop`
 
 | Argument | Value |

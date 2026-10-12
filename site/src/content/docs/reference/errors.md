@@ -49,6 +49,12 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 **What to do:** finish or close the other agent's session; its server gives the lease up when it releases or exits. The stop key also takes the lease back.
 
+### `lease_declined`
+
+**Cause:** the user's policy turns on [`confirm_lease`](../../concepts/configuration/#confirm_lease), and the user chose Deny on the desktop's prompt, dismissed it, or didn't answer within 60 seconds. The `detail` says which. No lease was granted.
+
+**What to do:** don't call `acquire_desktop` again on your own. Ask the user whether they want you to use the desktop, and call it again only once they say yes, so they can expect the prompt.
+
 ### `read_only`
 
 **Cause:** this build doesn't support the running niri's major or minor version, niri sent events this build can't parse, or the policy file is invalid. The `detail` says which.

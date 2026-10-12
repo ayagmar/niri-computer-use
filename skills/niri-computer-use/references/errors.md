@@ -17,6 +17,7 @@ These are the user's decisions. Don't call the refused action again and don't tr
 | `screen_locked` | The screen is locked, or no source can say it isn't. |
 | `session_mismatch` | The server's `WAYLAND_DISPLAY` and `NIRI_SOCKET` belong to two different compositors, so input, screenshots and clipboard reads are refused. The user has to fix the client's environment. |
 | `lease_held` | Another agent holds the lease (`acquire_desktop` only). |
+| `lease_declined` | The user's policy asks them to allow each `acquire_desktop` on the desktop, and they chose Deny, dismissed the prompt or let a minute pass. Ask the user before calling it again. |
 | `read_only` | The niri version isn't supported, niri sent events this build can't read, or the policy file is invalid. |
 | `app_denied` | The user's policy denies input to the focused app, or `elements`, element actions or closing for the window named. |
 | `secret_field` | `activate_element` or `set_element_text` was aimed at a field the toolkit marks as a password field (role `password_text`), including Qt's fields that hide their text. Nothing was sent; ask the user to type it themselves. |

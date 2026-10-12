@@ -15,14 +15,12 @@ use crate::error::ToolError;
 use crate::niri::events::StreamState;
 use crate::niri::{self, version::Compat};
 use crate::noctalia::{self, Presence};
-use crate::policy::{
-    self, Facts, Loaded, PolicyStatus, Tools, ToolsStatus, Unrestricted, UnrestrictedStatus,
-};
+use crate::policy::{self, Facts, Loaded, PolicyStatus, Switch, SwitchStatus, Tools, ToolsStatus};
 use crate::runner::{self, Place};
 use crate::{Env, a11y, discover};
 
 /// Programs the server runs for the session asking, found on its `PATH` or not.
-const SESSION_BINARIES: [&str; 2] = ["grim", "wtype"];
+const SESSION_BINARIES: [&str; 3] = ["grim", "notify-send", "wtype"];
 
 #[derive(Debug, Serialize)]
 pub(crate) struct Status {
@@ -54,7 +52,10 @@ pub(crate) struct Status {
     policy: PolicyStatus,
     /// Whether gated actions are allowed, and whether the policy file or the environment
     /// allowed them.
-    unrestricted: UnrestrictedStatus,
+    unrestricted: SwitchStatus,
+    /// Whether `acquire_desktop` waits for the user to allow it on the desktop, and whether
+    /// the policy file or the environment asked for that.
+    confirm_lease: SwitchStatus,
     /// Which tools this session lists, and what narrowed them.
     tools: ToolsStatus,
     binaries: BTreeMap<&'static str, bool>,
@@ -73,7 +74,8 @@ pub(crate) struct Sources<'a> {
     pub(crate) audit: &'a Audit,
     pub(crate) lease: LeaseStatus,
     pub(crate) policy: &'a Loaded,
-    pub(crate) unrestricted: &'a Unrestricted,
+    pub(crate) unrestricted: &'a Switch,
+    pub(crate) confirm_lease: &'a Switch,
     pub(crate) tools: &'a Tools,
     /// Where the session's own programs are found.
     pub(crate) place: Place<'a>,
@@ -158,6 +160,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         lease,
         policy,
         unrestricted,
+        confirm_lease,
         tools,
         place,
         accessibility,
@@ -213,6 +216,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         audit: audit.status(),
         policy: policy.status(),
         unrestricted: unrestricted.status(),
+        confirm_lease: confirm_lease.status(),
         tools: tools.status(),
         binaries: SESSION_BINARIES
             .map(|name| (name, runner::finds(place, name)))
@@ -249,9 +253,15 @@ mod tests {
             audit: &audit,
             lease: status_without_desk(&Env::default()),
             policy: &Loaded::Missing,
-            unrestricted: &Unrestricted {
+            unrestricted: &Switch {
                 policy: false,
                 env: Ok(false),
+                when_wrong: false,
+            },
+            confirm_lease: &Switch {
+                policy: false,
+                env: Ok(false),
+                when_wrong: true,
             },
             tools: &Tools {
                 policy: policy::Profile::Full,
@@ -307,8 +317,9 @@ mod tests {
                     "error": null
                 },
                 "unrestricted": {"enabled": false, "source": null, "error": null},
+                "confirm_lease": {"enabled": false, "source": null, "error": null},
                 "tools": {"profile": "full", "source": null, "error": null},
-                "binaries": {"grim": false, "wtype": false},
+                "binaries": {"grim": false, "notify-send": false, "wtype": false},
                 "desktop_programs": {"search": "", "loginctl": null, "noctalia": null}
             })
         );

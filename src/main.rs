@@ -7,6 +7,7 @@ mod bridge;
 mod changes;
 mod cli;
 mod clipboard;
+mod confirm;
 mod control;
 mod coords;
 mod discover;
@@ -238,6 +239,7 @@ async fn main() -> ExitCode {
                 lease: control::desk::status_without_desk(&env),
                 policy: &settings.policy,
                 unrestricted: &settings.unrestricted,
+                confirm_lease: &settings.confirm_lease,
                 tools: &settings.tools,
                 place: settings.place(),
                 accessibility: &accessibility,

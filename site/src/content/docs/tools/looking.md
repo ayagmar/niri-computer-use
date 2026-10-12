@@ -47,8 +47,9 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `policy.preset_names` | the preset names `launch` takes |
 | `policy.capture_dir` | where `screenshot` saves, as the file writes it, or null when saving is off |
 | `unrestricted.enabled`, `unrestricted.source`, `unrestricted.error` | whether gated `niri_action`s and unrestricted presets are allowed, whether the policy file, `NIRI_COMPUTER_USE_UNRESTRICTED` or both allowed them, and why the variable was ignored |
+| `confirm_lease.enabled`, `confirm_lease.source`, `confirm_lease.error` | whether `acquire_desktop` waits for the user to allow it on the desktop, whether the policy file, `NIRI_COMPUTER_USE_CONFIRM_LEASE` or both asked for that, and why the variable was ignored |
 | `audit.path`, `audit.last_error` | the audit log and the last failure to write it |
-| `binaries` | whether `grim` and `wtype` are on this client's `PATH` |
+| `binaries` | whether `grim`, `notify-send` and `wtype` are on this client's `PATH` |
 | `desktop_programs` | the directories searched for `loginctl` and `noctalia` at startup (`search`), and the path found for each, or null |
 
 ## `desktop_state`

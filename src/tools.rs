@@ -756,10 +756,12 @@ impl Server {
     /// require. Fails with `lease_held` naming the holder if another agent has it,
     /// `stopped` while the user's stop flag is set, `recovery_required` while input may be
     /// stuck, `read_only` when this build doesn't support the running niri or the policy
-    /// file is invalid, and `screen_locked` while the screen is locked. Returns the holder
-    /// and `users_window`, the window that had keyboard focus, which `release_desktop` can
-    /// give focus back to; calling it again while holding the lease returns the same. Wait
-    /// for its result before your next call.
+    /// file is invalid, `screen_locked` while the screen is locked, and `lease_declined` when
+    /// `status.confirm_lease` is on and the user didn't allow it on the desktop within a
+    /// minute; ask the user before calling it again. Returns the holder and
+    /// `users_window`, the window that had keyboard focus, which `release_desktop` can give
+    /// focus back to; calling it again while holding the lease returns the same. Wait for
+    /// its result before your next call.
     #[tool(
         title = "Take the desktop lease",
         annotations(
@@ -2187,6 +2189,7 @@ mod tests {
     fn server(engine: &Arc<Engine>, unrestricted: bool, tools: Option<&str>) -> Server {
         let given = Given {
             unrestricted: unrestricted.then(|| "1".into()),
+            confirm_lease: None,
             tools: tools.map(Into::into),
             keyboard: None,
             home: None,

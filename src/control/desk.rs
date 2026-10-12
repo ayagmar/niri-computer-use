@@ -241,10 +241,11 @@ impl Desk {
     /// for its owner's running action, and another server's lock refuses before anything
     /// slow is asked. `refusal`, the policy's answer, is asked under the action mutex with
     /// the lock taken, after the stop flag and the input-dirty marker, so a wait for the
-    /// mutex can't make it stale; a refusal gives the lock back. `prepare`, asked last with
-    /// the number the lease's refs will have, finds the window with keyboard focus, kept
-    /// with the lease, and makes what must exist before the grant is published, which is
-    /// returned with the holder. A call dropped before then leaves no lease. Since both
+    /// mutex can't make it stale; a refusal gives the lock back. A stop or the session's end
+    /// while `refusal` runs refuses at once, since it may wait for the user. `prepare`, asked
+    /// last with the number the lease's refs will have, finds the window with keyboard
+    /// focus, kept with the lease, and makes what must exist before the grant is published,
+    /// which is returned with the holder. A call dropped before then leaves no lease. Since both
     /// take time, the session's end, the stop flag and the marker are checked again before
     /// the lease is granted. A session that has the lease already gets no new `with`.
     pub(crate) async fn acquire_with<W, F>(
@@ -271,13 +272,22 @@ impl Desk {
         if let Some(grant) = held.as_ref().filter(|grant| grant.owner == session.id()) {
             return Ok((grant.lease.holder().clone(), None));
         }
-        self.unblocked(runtime)?;
+        let mut stopped = self.unblocked(runtime)?;
         // Another session's grant refuses where another server's lock would.
         if let Some(grant) = held.as_ref() {
             return Err(refused(Refused::Held(Some(grant.lease.holder().clone()))));
         }
         let lease = Lease::acquire(runtime, label).map_err(refused)?;
-        if let Some(refusal) = refusal.await {
+        // `refusal` may wait for the user's answer, so a stop or the session's end ends it.
+        let refusal = tokio::select! {
+            biased;
+            () = session.ended() => Some(session_ended()),
+            waited = stopped.wait_for(|stopped| *stopped) => {
+                Some(waited.map_or_else(|_| watcher_ended(), |_| stopped_before_grant()))
+            }
+            answered = refusal => answered,
+        };
+        if let Some(refusal) = refusal {
             return Err(refusal);
         }
         let next = self.seat.refs().next();
@@ -734,6 +744,13 @@ fn lease_required() -> ToolError {
     ToolError::new(
         ErrorName::LeaseRequired,
         "this session doesn't hold the lease; call acquire_desktop first",
+    )
+}
+
+fn stopped_before_grant() -> ToolError {
+    ToolError::new(
+        ErrorName::Stopped,
+        "the user's stop flag was set before the lease was granted",
     )
 }
 
@@ -1705,6 +1722,46 @@ mod tests {
             .unwrap_err();
         assert_eq!(ended.detail, session_ended().detail);
         assert!(desk.seat.owned_by(me.id()).is_none());
+        assert_eq!(lease::holder(&runtime), None);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A refusal can wait up to a minute for the user's answer to the lease prompt; a stop
+    /// or the client leaving meanwhile must end it, not leave it holding the lease's lock.
+    #[tokio::test]
+    async fn a_stop_ends_a_refusal_still_waiting_for_the_user() {
+        let me = session(1);
+        let dir = crate::test_support::fresh_dir("desk-acquire-waiting");
+        let desk = Desk::start(&env(&dir));
+        let runtime = RuntimeDir::of(&env(&dir)).unwrap();
+        let waiting = std::future::pending::<Option<ToolError>>();
+        let acquire = desk.acquire(&me, "me/1", waiting, ready(None));
+        let stop = async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            runtime.stop().unwrap();
+        };
+        let within = Duration::from_secs(5);
+        let (stopped, ()) = tokio::join!(tokio::time::timeout(within, acquire), stop);
+        assert_eq!(stopped.unwrap().unwrap_err().name, ErrorName::Stopped);
+        assert_eq!(lease::holder(&runtime), None);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_sessions_end_ends_a_refusal_still_waiting_for_the_user() {
+        let me = session(1);
+        let within = Duration::from_secs(5);
+        let dir = crate::test_support::fresh_dir("desk-acquire-waiting-end");
+        let desk = Desk::start(&env(&dir));
+        let runtime = RuntimeDir::of(&env(&dir)).unwrap();
+        let waiting = std::future::pending::<Option<ToolError>>();
+        let acquire = desk.acquire(&me, "me/1", waiting, ready(None));
+        let end = async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            me.end();
+        };
+        let (ended, ()) = tokio::join!(tokio::time::timeout(within, acquire), end);
+        assert_eq!(ended.unwrap().unwrap_err().detail, session_ended().detail);
         assert_eq!(lease::holder(&runtime), None);
         std::fs::remove_dir_all(dir).unwrap();
     }

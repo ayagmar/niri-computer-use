@@ -38,7 +38,7 @@ The lease, the stop key, the lock gate, the policy file and the audit log are gu
 
 ## Policy
 
-`~/.config/niri-computer-use/policy.toml` holds launch presets, apps that never get input, and where screenshots may be saved. One key, `unrestricted`, is off by default. Agents without a shell of their own, such as desktop apps, rely on that: with it off, the server can't run anything you didn't put in a preset. With `unrestricted = true`, or `NIRI_COMPUTER_USE_UNRESTRICTED=1` in one client's server settings, an agent can run any program through the server: `niri_action` accepts `Spawn`, `Quit` and the other gated niri actions, the `noctalia` tool sends any Noctalia command, and presets may pass arguments to terminals and set `env`. Everything still needs the lease, stops at the stop key and goes to the audit log. See [Configuration](https://ayagmar.github.io/niri-computer-use/concepts/configuration/#unrestricted).
+`~/.config/niri-computer-use/policy.toml` holds launch presets, apps that never get input, and where screenshots may be saved. One key, `unrestricted`, is off by default. Agents without a shell of their own, such as desktop apps, rely on that: with it off, the server can't run anything you didn't put in a preset. With `unrestricted = true`, or `NIRI_COMPUTER_USE_UNRESTRICTED=1` in one client's server settings, an agent can run any program through the server: `niri_action` accepts `Spawn`, `Quit` and the other gated niri actions, the `noctalia` tool sends any Noctalia command, and presets may pass arguments to terminals and set `env`. Everything still needs the lease, stops at the stop key and goes to the audit log. See [Configuration](https://ayagmar.github.io/niri-computer-use/concepts/configuration/#unrestricted). With `confirm_lease = true`, or `NIRI_COMPUTER_USE_CONFIRM_LEASE=1` for one client, you allow each lease on a desktop notification before the agent gets it, whatever the client approves on its own.
 
 Every MCP client of a niri instance is served by one engine process, which the first client starts and which exits two seconds after its last connection, lease and pending input cleanup have ended. Each client keeps its own policy file, `unrestricted`, keyboard backend, home directory and `PATH`. `shared = false`, or `NIRI_COMPUTER_USE_SHARED=0` for one client, serves each client from its own process instead. See [Configuration](https://ayagmar.github.io/niri-computer-use/concepts/configuration/#shared).
 
@@ -47,7 +47,7 @@ With `tools = "observe"`, or `NIRI_COMPUTER_USE_TOOLS=observe` for one client, t
 ## Documentation
 
 - [Tools](https://ayagmar.github.io/niri-computer-use/tools/overview/): every tool, its arguments and results
-- [Configuration](https://ayagmar.github.io/niri-computer-use/concepts/configuration/): `policy.toml`, launch presets, the deny list, `capture_dir`, `unrestricted`, `shared`
+- [Configuration](https://ayagmar.github.io/niri-computer-use/concepts/configuration/): `policy.toml`, launch presets, the deny list, `capture_dir`, `unrestricted`, `confirm_lease`, `shared`
 - [Error reference](https://ayagmar.github.io/niri-computer-use/reference/errors/) and [Troubleshooting](https://ayagmar.github.io/niri-computer-use/reference/troubleshooting/)
 - [CLI reference](https://ayagmar.github.io/niri-computer-use/reference/cli/): `serve`, `status`, `stop`, `resume`, `recover`
 

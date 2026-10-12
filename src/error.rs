@@ -26,6 +26,9 @@ pub(crate) enum ErrorName {
     NoctaliaUnavailable,
     /// Another server holds the lease.
     LeaseHeld,
+    /// The user didn't allow `acquire_desktop` on the desktop: they denied or dismissed
+    /// the prompt, or didn't answer it in time.
+    LeaseDeclined,
     /// An action tool was called without holding the lease.
     LeaseRequired,
     /// The stop flag is set.

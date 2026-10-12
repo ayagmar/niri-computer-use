@@ -11,6 +11,8 @@ An agent using niri-computer-use works on your real desktop, with your apps and 
 
 Looking needs nothing: any connected agent can call `status`, `desktop_state`, `screenshot` and the other reading tools. Acting needs the lease. An agent takes it with `acquire_desktop` and gives it up with `release_desktop`. One agent session holds it per niri instance; another session's `acquire_desktop` is refused with `lease_held`, and its detail names the holder's PID, client and since when. That holds in [shared mode](../configuration/#shared) too, where one engine serves every client.
 
+With [`confirm_lease`](../configuration/#confirm_lease) on, `acquire_desktop` also waits for you to choose Allow on a notification before the lease is granted, whatever the agent's client approves on its own.
+
 `acquire_desktop` notes the window you were on. `release_desktop` with `restore_focus: true` puts keyboard focus back there. The lease is also given up when the agent's session ends, because its client closed the connection or its server exited, and when you press the stop key.
 
 ## Stop and resume

@@ -90,6 +90,7 @@ pub(crate) struct Hello {
     /// Where the bridge looks for `loginctl` and `noctalia`.
     desktop_path: String,
     unrestricted: Option<String>,
+    confirm_lease: Option<String>,
     tools: Option<String>,
     keyboard: Option<String>,
     home: Option<PathBuf>,
@@ -137,6 +138,7 @@ impl Hello {
             wayland_socket: wayland_socket.map(Path::to_path_buf),
             desktop_path: desktop_path.to_owned(),
             unrestricted: utf8("NIRI_COMPUTER_USE_UNRESTRICTED", given.unrestricted)?,
+            confirm_lease: utf8("NIRI_COMPUTER_USE_CONFIRM_LEASE", given.confirm_lease)?,
             tools: utf8("NIRI_COMPUTER_USE_TOOLS", given.tools)?,
             keyboard: utf8("NIRI_COMPUTER_USE_KEYBOARD", given.keyboard)?,
             home: given.home,
@@ -149,6 +151,7 @@ impl Hello {
     pub(crate) fn given(self) -> Given {
         Given {
             unrestricted: self.unrestricted.map(Into::into),
+            confirm_lease: self.confirm_lease.map(Into::into),
             tools: self.tools.map(Into::into),
             keyboard: self.keyboard.map(Into::into),
             home: self.home,
@@ -279,6 +282,7 @@ mod tests {
             wayland_socket: display.map(PathBuf::from),
             desktop_path: "/usr/bin".to_owned(),
             unrestricted: Some("1".to_owned()),
+            confirm_lease: Some("1".to_owned()),
             tools: Some("act".to_owned()),
             keyboard: None,
             home: Some(PathBuf::from("/home/me")),
@@ -306,6 +310,7 @@ mod tests {
             taken.given(),
             Given {
                 unrestricted: Some("1".into()),
+                confirm_lease: Some("1".into()),
                 tools: Some("act".into()),
                 keyboard: None,
                 home: Some(PathBuf::from("/home/me")),
@@ -365,6 +370,7 @@ mod tests {
         let own = own();
         let given = |text: String| Given {
             unrestricted: None,
+            confirm_lease: None,
             tools: None,
             keyboard: None,
             home: None,

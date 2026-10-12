@@ -19,7 +19,7 @@ The server reads `~/.config/niri-computer-use/policy.toml`, or `$XDG_CONFIG_HOME
 | `capture_dir` | as the file writes it, or null when saving is off |
 | `error` | why the file is invalid |
 
-`status` also shows `unrestricted`: `enabled`, `source` (`policy`, `env`, `both`, or null while off) and `error`, which explains a `NIRI_COMPUTER_USE_UNRESTRICTED` value other than `1`. Its `tools` shows the [tool profile](#tools): `profile`, `source` (`policy`, `env`, `both`, or null for `full`) and `error`, which explains a `NIRI_COMPUTER_USE_TOOLS` value that names no profile.
+`status` also shows `unrestricted` and `confirm_lease`, each with `enabled`, `source` (`policy`, `env`, `both`, or null while off) and `error`, which explains a `NIRI_COMPUTER_USE_UNRESTRICTED` or `NIRI_COMPUTER_USE_CONFIRM_LEASE` value other than `1`. Its `tools` shows the [tool profile](#tools): `profile`, `source` (`policy`, `env`, `both`, or null for `full`) and `error`, which explains a `NIRI_COMPUTER_USE_TOOLS` value that names no profile.
 
 An invalid file doesn't stop the server, but `acquire_desktop` and every action refuse with `read_only` until you fix it and restart. A file with an unknown key is invalid too.
 
@@ -82,6 +82,16 @@ With `true`:
 
 Turning it on never skips the lease, the stop key or the audit log: every gated action still needs the lease, stops at the stop key, and is logged, as metadata like every call.
 
+### `confirm_lease`
+
+`true` or `false`, default `false`. With `true`, every `acquire_desktop` waits for you to allow it on the desktop before the lease is granted. The server shows a notification through `notify-send`, titled "Allow an agent to use this desktop?", that names the client asking and has Deny and Allow buttons. Only Allow grants the lease. Deny, dismissing the notification, or no answer within 60 seconds refuses the call with `lease_declined`. A session that already holds the lease isn't asked again.
+
+The question comes from the desktop, not from the agent's client, so it still applies when the client approves tool calls on its own, as in Claude Code's bypass mode or Codex's `--yolo`. The agent can't answer it through this server either: until you allow it, it has no lease, so no tool that clicks, types or sends Noctalia commands will run. An agent that has a shell can still reach the notification server or inject input by other means, as it could with any prompt on your desktop.
+
+The notification needs `notify-send` (libnotify) on the client's `PATH` and a notification server that shows actions, such as Noctalia's; `status.binaries` says whether `notify-send` was found. Without one, `acquire_desktop` fails with the `upstream_error` `notify-send` gave, and no lease is granted. Press the stop key, or close the client, while the notification is up and the call is refused at once. The notification then stays up until it expires, and answering it does nothing.
+
+`NIRI_COMPUTER_USE_CONFIRM_LEASE=1` in one client's server settings turns it on for that client only. As with `unrestricted`, either source turns it on and nothing in the environment turns off a file's `true`. Any other value of the variable, such as `true`, shows up as `status.confirm_lease.error` and, unlike `unrestricted`, turns the prompt on: a typo shouldn't drop a safeguard you meant to add.
+
 ### `shared`
 
 `true` or `false`, default `true`. With `true`, the server serves its client through the one shared engine of its niri instance, starting the engine if none runs, instead of on its own. Every client then shares one crash guardian, one niri event stream and one accessibility connection, while its policy, `unrestricted`, keyboard backend, `HOME` and `PATH` stay its own, read from its own environment as before. Its `grim` and `wtype` run in its own working directory, as a standalone server's would, even after that directory is renamed or removed, so relative entries on its `PATH` work as they do in its shell.
@@ -139,12 +149,13 @@ The server reads these once, at startup. When `XDG_RUNTIME_DIR`, `NIRI_SOCKET` o
 | `XDG_RUNTIME_DIR` | finding niri's socket, the display and the session bus |
 | `WAYLAND_DISPLAY` | the pointer tools, pasting, `clipboard_read`, and finding Noctalia's socket |
 | `DBUS_SESSION_BUS_ADDRESS` | finding the accessibility bus for `elements`; without it, `$XDG_RUNTIME_DIR/bus` |
-| `PATH` | `grim` and `wtype` for this client's calls |
+| `PATH` | `grim`, `wtype` and, with [`confirm_lease`](#confirm_lease), `notify-send` for this client's calls |
 | `NIRI_COMPUTER_USE_DESKTOP_PATH` | where to look for `loginctl` and `noctalia`, as a `PATH`-style list of absolute directories; unset or empty looks in `/usr/local/bin:/usr/bin:/bin:/run/current-system/sw/bin`. Only absolute directories count, each once, and a trailing slash makes no difference. In [shared](#shared) mode, a client that sets other directories than the engine's, or the same ones in another order, is served standalone |
 | `XDG_CONFIG_HOME`, else `HOME` | the policy file |
 | `XDG_STATE_HOME`, else `HOME` | the audit log |
 | `HOME` | a `capture_dir` that starts with `~/` |
 | `NIRI_COMPUTER_USE_UNRESTRICTED` | `1` turns on [`unrestricted`](#unrestricted) for this server; unset or empty leaves the policy file to decide |
+| `NIRI_COMPUTER_USE_CONFIRM_LEASE` | `1` turns on [`confirm_lease`](#confirm_lease) for this server; unset or empty leaves the policy file to decide |
 | `NIRI_COMPUTER_USE_TOOLS` | `observe`, `act` or `full`: the [tool profile](#tools) for this server; unset or empty leaves the policy file to decide |
 | `NIRI_COMPUTER_USE_SHARED` | `1` turns on [`shared`](#shared) mode for this server and `0` turns it off; unset or empty leaves the policy file to decide |
 | `NIRI_COMPUTER_USE_KEYBOARD` | the keyboard backend: unset or `wtype` for the default, `native` for the [experimental native backend](../../tools/keyboard/#the-native-backend) |

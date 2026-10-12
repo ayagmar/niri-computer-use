@@ -15,6 +15,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
+- `confirm_lease = true` in the policy file, or `NIRI_COMPUTER_USE_CONFIRM_LEASE=1` for one client: `acquire_desktop` waits for you to choose Allow on a desktop notification, shown with `notify-send`, before the lease is granted, even when the client approves tool calls on its own. Deny, a dismissed notification or no answer within 60 seconds fails with the new error `lease_declined`. Off by default. `status.confirm_lease` reports it, and `status.binaries` whether `notify-send` is found.
 - Optional GTK 4 button-activation acceptance in `make nested-input`: 100 actual activations with observed-counter latency percentiles.
 
 - `niri-computer-use serve`: an MCP server over stdio with two read-only tools, `status` and `outputs`.

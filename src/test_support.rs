@@ -55,6 +55,7 @@ pub(crate) fn no_programs() -> crate::runner::Place<'static> {
 pub(crate) fn session(id: u64) -> crate::session::Session {
     let given = crate::session::Given {
         unrestricted: None,
+        confirm_lease: None,
         tools: None,
         keyboard: None,
         home: None,

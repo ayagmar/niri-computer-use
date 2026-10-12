@@ -11,15 +11,17 @@ use rustix::fs::{Mode, OFlags};
 use tokio::io::{AsyncRead, ReadBuf};
 use tokio::sync::{Semaphore, SemaphorePermit, oneshot, watch};
 
-use crate::policy::{self, Loaded, Tools, Unrestricted};
+use crate::policy::{self, Loaded, Switch, Tools};
 use crate::runner::Place;
 
-/// What a client's own environment gives its session, and no other: its three variables,
+/// What a client's own environment gives its session, and no other: its four variables,
 /// its home, and the policy file as read from its config directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Given {
     /// `NIRI_COMPUTER_USE_UNRESTRICTED`, as given: `1` turns `unrestricted` on.
     pub(crate) unrestricted: Option<OsString>,
+    /// `NIRI_COMPUTER_USE_CONFIRM_LEASE`, as given: `1` turns `confirm_lease` on.
+    pub(crate) confirm_lease: Option<OsString>,
     /// `NIRI_COMPUTER_USE_TOOLS`, as given: the profile of tools to list.
     pub(crate) tools: Option<OsString>,
     /// `NIRI_COMPUTER_USE_KEYBOARD`: the experimental backend; absent means wtype.
@@ -44,6 +46,7 @@ impl Given {
             .or_else(|| home.as_ref().map(|home| home.join(".config")));
         Self {
             unrestricted: var("NIRI_COMPUTER_USE_UNRESTRICTED"),
+            confirm_lease: var("NIRI_COMPUTER_USE_CONFIRM_LEASE"),
             tools: var("NIRI_COMPUTER_USE_TOOLS"),
             keyboard: var("NIRI_COMPUTER_USE_KEYBOARD"),
             home,
@@ -59,7 +62,10 @@ pub(crate) struct Settings {
     /// The policy file, as the session read it when it started.
     pub(crate) policy: Loaded,
     /// Whether `unrestricted` is on, from the policy file and the session's variable.
-    pub(crate) unrestricted: Unrestricted,
+    pub(crate) unrestricted: Switch,
+    /// Whether the user must allow each `acquire_desktop`, from the policy file and the
+    /// session's variable.
+    pub(crate) confirm_lease: Switch,
     /// Which tools the session lists, from the policy file and the session's variable.
     pub(crate) tools: Tools,
     /// The keyboard backend the session asked for.
@@ -77,12 +83,28 @@ pub(crate) struct Settings {
 impl Settings {
     /// Checks what the session's environment gave.
     pub(crate) fn new(given: Given) -> Self {
-        let env_on = Unrestricted::parse_env(given.unrestricted.as_deref());
+        let env_on = Switch::parse_env(
+            "NIRI_COMPUTER_USE_UNRESTRICTED",
+            "unrestricted",
+            false,
+            given.unrestricted.as_deref(),
+        );
         let policy = Loaded::from_source(&given.policy, env_on == Ok(true));
         Self {
-            unrestricted: Unrestricted {
+            unrestricted: Switch {
                 policy: policy.unrestricted(),
                 env: env_on,
+                when_wrong: false,
+            },
+            confirm_lease: Switch {
+                policy: policy.confirm_lease(),
+                env: Switch::parse_env(
+                    "NIRI_COMPUTER_USE_CONFIRM_LEASE",
+                    "confirm_lease",
+                    true,
+                    given.confirm_lease.as_deref(),
+                ),
+                when_wrong: true,
             },
             tools: Tools {
                 policy: policy.tools(),
@@ -367,6 +389,28 @@ mod tests {
         assert!(within(b"abcd"));
         assert!(!within(b"ab\nabcd\nab\n"));
         assert!(within(b"ab\nabc\na\nabc"));
+    }
+
+    /// A typo in the variable that asks for the lease prompt must not drop the prompt, while
+    /// one in the variable that grants `unrestricted` grants nothing.
+    #[test]
+    fn a_wrong_value_keeps_the_prompt_on_and_unrestricted_off() {
+        let settings = Settings::new(Given {
+            unrestricted: Some("true".into()),
+            confirm_lease: Some("true".into()),
+            tools: None,
+            keyboard: None,
+            home: None,
+            path: None,
+            policy: policy::Source::Missing,
+        });
+        assert!(settings.confirm_lease.enabled());
+        assert!(!settings.unrestricted.enabled());
+        let prompt = serde_json::to_value(settings.confirm_lease.status()).unwrap();
+        assert_eq!(prompt["source"], "env");
+        let error = prompt["error"].as_str().unwrap();
+        assert!(error.contains("NIRI_COMPUTER_USE_CONFIRM_LEASE"), "{error}");
+        assert!(error.contains("on until the value is fixed"), "{error}");
     }
 
     #[test]

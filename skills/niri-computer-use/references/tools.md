@@ -31,7 +31,7 @@ If `status` shows a `niri.error` that starts with "NIRI_SOCKET is not set", the 
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `acquire_desktop` | none | `holder`: your PID, label and since when, and `users_window`, the window that had focus; calling it again while you hold it returns the same |
+| `acquire_desktop` | none | `holder`: your PID, label and since when, and `users_window`, the window that had focus; calling it again while you hold it returns the same. With `status.confirm_lease.enabled`, it first waits up to a minute for the user to allow it on the desktop, or fails with `lease_declined` |
 | `release_desktop` | `restore_focus` | `released`: whether you held it, and `users_window`. With `restore_focus: true`, focus first goes back to `users_window` and `restored` is that action's result, `observed: closed` if the window is gone. The user's stop also takes the lease back, and then there is nothing to restore: `users_window` is null |
 
 Watching the desktop never needs the lease.

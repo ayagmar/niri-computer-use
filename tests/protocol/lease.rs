@@ -236,3 +236,99 @@ async fn a_restarted_niri_shares_nothing_with_the_old_instance() {
     assert!(!new_niri.connected_from(guardian));
     assert_eq!(std::fs::read_to_string(&marker).unwrap(), releasable);
 }
+
+/// A `notify-send` that records its arguments and the call, then answers with what
+/// `$DIR/answer` holds: an action key, or nothing for a dismissed prompt.
+fn prompt(fixture: &Fixture) {
+    fixture.program(
+        "notify-send",
+        r#"printf '%s\n' "$@" > "$DIR/notify-send.args"; echo >> "$DIR/notify-send.calls"; cat "$DIR/answer""#,
+    );
+}
+
+fn prompts(fixture: &Fixture) -> usize {
+    std::fs::read_to_string(fixture.path("notify-send.calls"))
+        .unwrap_or_default()
+        .lines()
+        .count()
+}
+
+#[tokio::test]
+async fn with_confirm_lease_only_the_users_allow_grants_the_lease() {
+    let fixture = Fixture::new("lease-confirm");
+    let _niri = NiriProcess::unlocked(&fixture).await;
+    prompt(&fixture);
+    std::fs::create_dir_all(fixture.path("config/niri-computer-use")).unwrap();
+    std::fs::write(
+        fixture.path("config/niri-computer-use/policy.toml"),
+        "confirm_lease = true\n",
+    )
+    .unwrap();
+    let mut server = Server::start(&fixture).await;
+    let status = server.structured("status").await;
+    assert_eq!(
+        status["confirm_lease"],
+        json!({"enabled": true, "source": "policy", "error": null})
+    );
+
+    for answer in ["deny\n", ""] {
+        std::fs::write(fixture.path("answer"), answer).unwrap();
+        let (name, detail) = tool_error(&server.call("acquire_desktop", json!({})).await);
+        assert_eq!(name, "lease_declined", "{answer:?}: {detail}");
+        assert_eq!(
+            server.structured("status").await["lease"]["holder"],
+            Value::Null
+        );
+    }
+    std::fs::write(fixture.path("answer"), "allow\n").unwrap();
+    let held = server.structured("acquire_desktop").await;
+    let label = format!("{CLIENT}/{}", server.pid);
+    assert_eq!(held["holder"]["label"], label.as_str());
+    let body = fixture.args("notify-send").join("\n");
+    assert!(body.contains(&format!("{label:?}")), "{body}");
+    // Asking again while holding the lease asks the user nothing.
+    assert_eq!(server.structured("acquire_desktop").await, held);
+    assert_eq!(prompts(&fixture), 3);
+    let errors: Vec<Value> = fixture
+        .audit_lines()
+        .into_iter()
+        .filter(|line| line["tool"] == "acquire_desktop")
+        .map(|line| line["error"].clone())
+        .collect();
+    assert_eq!(
+        errors,
+        [
+            json!("lease_declined"),
+            json!("lease_declined"),
+            Value::Null,
+            Value::Null
+        ]
+    );
+}
+
+/// In shared mode both clients share one engine, which must ask for the client whose own
+/// settings turn `confirm_lease` on, and only for it.
+#[tokio::test]
+async fn the_variable_asks_for_its_own_clients_lease_only() {
+    let mut fixture = Fixture::new("lease-confirm-env");
+    let _niri = NiriProcess::unlocked(&fixture).await;
+    prompt(&fixture);
+    std::fs::write(fixture.path("answer"), "deny\n").unwrap();
+    fixture.set("NIRI_COMPUTER_USE_CONFIRM_LEASE", "1");
+    let mut asking = Server::start(&fixture).await;
+    fixture.unset("NIRI_COMPUTER_USE_CONFIRM_LEASE");
+    let mut trusting = Server::start(&fixture).await;
+
+    assert_eq!(
+        asking.structured("status").await["confirm_lease"]["source"],
+        "env"
+    );
+    assert_eq!(
+        trusting.structured("status").await["confirm_lease"]["enabled"],
+        false
+    );
+    let (name, _) = tool_error(&asking.call("acquire_desktop", json!({})).await);
+    assert_eq!(name, "lease_declined");
+    trusting.structured("acquire_desktop").await;
+    assert_eq!(prompts(&fixture), 1);
+}
