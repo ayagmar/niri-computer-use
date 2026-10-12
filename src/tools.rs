@@ -17,7 +17,7 @@ use crate::act::{self, Outcome};
 use crate::audit::{self, Call, Caller};
 use crate::coords::{ImagePx, ImageRect};
 use crate::elements::actions;
-use crate::engine::{Engine, Report, Watch};
+use crate::engine::{Engine, Report, Watch, Zoom};
 use crate::error::{CANCELLED, CallError, ToolError};
 use crate::input::keyboard::{self, Expect, Typing};
 use crate::input::paste;
@@ -105,7 +105,7 @@ impl ScreenshotArgs {
 
     /// The ref to zoom into and the pixels of its image that `region` names, when
     /// `screenshot_ref` is given, which needs target `region`.
-    fn zoom(&self) -> Result<Option<(String, ImageRect)>, String> {
+    fn zoom(&self) -> Result<Option<Zoom>, String> {
         let Some(id) = &self.screenshot_ref else {
             return Ok(None);
         };
@@ -126,7 +126,10 @@ impl ScreenshotArgs {
             width: region.width,
             height: region.height,
         };
-        Ok(Some((id.clone(), pixels)))
+        Ok(Some(Zoom {
+            id: id.clone(),
+            pixels,
+        }))
     }
 
     fn request(self) -> Result<observe::Request, String> {
@@ -1479,20 +1482,12 @@ impl Server {
                 Ok(zoom) => zoom,
                 Err(message) => return Ok(invalid(&message)),
             };
-            let mut request = match args.request() {
+            let request = match args.request() {
                 Ok(request) => request,
                 Err(message) => return Ok(invalid(&message)),
             };
-            if let Some((id, pixels)) = zoom {
-                match self.engine.zoom(&self.session, &id, pixels) {
-                    Ok((rect, pin)) => {
-                        request.target = Target::Region(rect);
-                        request.pin = Some(pin);
-                    }
-                    Err(error) => return Ok(error.into_result()),
-                }
-            }
-            match self.engine.screenshot(&self.session, request, save).await {
+            let shot = self.engine.screenshot(&self.session, request, save, zoom);
+            match shot.await {
                 Ok(shot) => image(&shot),
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
                 Err(CallError::Tool(error)) => Ok(error.into_result()),

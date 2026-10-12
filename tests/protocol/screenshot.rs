@@ -403,11 +403,12 @@ async fn a_zoom_is_at_its_outputs_own_scale_wherever_the_output_is() {
     );
 }
 
-/// A zoom captures the output its screenshot showed. Outputs that move after the ref was
-/// checked, so that the region now lies on another output, refuse the zoom rather than
-/// capture that output: here they swap places at the capture's own read of the outputs.
+/// A zoom captures the output its screenshot showed. Outputs that move while it is taken,
+/// so that its region lies on another output, refuse the zoom rather than return that
+/// output's pixels: whether they swap places at the reading the capture is planned from,
+/// or while grim runs, after that reading.
 #[tokio::test]
-async fn a_zoom_whose_output_moves_before_the_capture_is_refused() {
+async fn a_zoom_whose_output_moves_during_the_capture_is_refused() {
     let fixture = Fixture::new("shot-zoom-moved");
     let mut niri = Niri::start(&fixture);
     let side_by_side = |left: &str, right: &str| {
@@ -422,7 +423,18 @@ async fn a_zoom_whose_output_moves_before_the_capture_is_refused() {
         &jpeg(1280, 720, b"whole"),
         &jpeg(64, 32, b"zoomed"),
     );
+    // grim waits at the hold point `grim` once it has started.
+    fixture.program(
+        "grim",
+        r#"echo "$*" >> "$DIR/grim.calls"
+pass grim
+case "$*" in
+  *" -g "*) cat "$DIR/zoomed.jpg" ;;
+  *) cat "$DIR/whole.jpg" ;;
+esac"#,
+    );
     let mut server = Server::start(&fixture).await;
+    fixture.serve_programs();
     let stream = niri.stream().await;
     stream.initial(&[]);
     let first = screenshot_ref(&mut server, "output:DP-1").await;
@@ -432,27 +444,19 @@ async fn a_zoom_whose_output_moves_before_the_capture_is_refused() {
         "region": {"x": 100, "y": 50, "width": 64, "height": 32},
     });
     let points = fixture.points();
-    points.start();
-    assert_eq!(
-        server.call("screenshot", zoom.clone()).await["isError"],
-        false
-    );
-    points.idle().await;
-    let reads = points
-        .trace()
-        .iter()
-        .filter(|passed| passed.point == "niri:Outputs")
-        .count();
-
-    points.start();
-    let held = points.hold("niri:Outputs", reads);
-    let id = server.start_call("screenshot", zoom).await;
-    held.arrived().await;
-    niri.set_outputs(side_by_side("DP-2", "DP-1"), Some("DP-1"));
-    held.release();
-    let response = server.response(id).await;
-    let (name, detail) = tool_error(&response["result"]);
-    assert_eq!(name, "ref_invalid", "{detail}");
-    assert!(detail.starts_with("output_changed"), "{detail}");
-    assert_eq!(grim_calls(&fixture).len(), 2);
+    for (point, grim_ran) in [("niri:Outputs", false), ("grim", true)] {
+        niri.set_outputs(side_by_side("DP-1", "DP-2"), Some("DP-1"));
+        let calls = grim_calls(&fixture).len();
+        points.start();
+        let held = points.hold(point, 1);
+        let id = server.start_call("screenshot", zoom.clone()).await;
+        held.arrived().await;
+        niri.set_outputs(side_by_side("DP-2", "DP-1"), Some("DP-1"));
+        held.release();
+        let response = server.response(id).await;
+        let (name, detail) = tool_error(&response["result"]);
+        assert_eq!(name, "ref_invalid", "{point}: {detail}");
+        assert!(detail.starts_with("output_changed"), "{point}: {detail}");
+        assert_eq!(grim_calls(&fixture).len(), calls + usize::from(grim_ran));
+    }
 }

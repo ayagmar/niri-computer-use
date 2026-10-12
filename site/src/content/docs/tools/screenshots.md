@@ -52,7 +52,7 @@ A downscaled screenshot of a whole output can make small text unreadable. To rea
 
 The server turns those pixels into the layout rectangle that covers them, rounded out to whole logical pixels, and captures it at the output's own scale, from the output the screenshot showed. Unlike other screenshots, a zoom has no width limit unless you pass `max_width`, so a large region comes back large: zoom into the part you need to read. The result is an ordinary screenshot: `captured` is that rectangle, and it has a `screenshot_ref` of its own, so under the lease the pointer tools can aim at the zoomed image directly. The earlier ref keeps working too. A zoom is a new capture, so it shows the screen as it is now, not as it was.
 
-It works without the lease and in the [`observe` profile](../../concepts/configuration/#tools). A region outside the image, or a ref that is unknown, over 60 seconds old, taken before niri's event stream reconnected, or for an output that is gone or has moved or changed size, scale or transform by the time of the capture, fails with `ref_invalid`. A `screenshot_ref` with another target is an argument mistake.
+It works without the lease and in the [`observe` profile](../../concepts/configuration/#tools). A region outside the image, or a ref that is unknown, over 60 seconds old, taken before niri's event stream reconnected, or for an output that is gone or has moved or changed size, scale or transform before or while the zoom is captured, fails with `ref_invalid`. A `screenshot_ref` with another target is an argument mistake.
 
 ## Settled screenshots
 

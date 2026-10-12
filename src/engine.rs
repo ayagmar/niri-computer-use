@@ -29,7 +29,7 @@ use crate::error::{CallError, ErrorName, ToolError};
 use crate::input::Input;
 use crate::niri::OutputSummary;
 use crate::niri::events::{DesktopState, EventStream, StreamState};
-use crate::observe::{self, Rect};
+use crate::observe;
 use crate::policy::{self, SaveTarget};
 use crate::refs::Shot;
 use crate::session::{Session, SessionId, Settings};
@@ -109,6 +109,13 @@ pub(crate) struct Desktop {
 pub(crate) enum Shell {
     Status(serde_json::Map<String, Value>),
     Unavailable(ToolError),
+}
+
+/// A zoom into an earlier screenshot: its ref and the pixels of its image to capture.
+#[derive(Debug)]
+pub(crate) struct Zoom {
+    pub(crate) id: String,
+    pub(crate) pixels: ImageRect,
 }
 
 /// What `release_desktop` returns.
@@ -266,20 +273,6 @@ impl Engine {
         self.desk.shot(session, id)
     }
 
-    /// The layout rectangle that `pixels` of the screenshot ref `id` show, and the output
-    /// to capture it from, for a zoom into them: a ref of the lease `session` holds, or,
-    /// without the lease, one `session` took since it last held it.
-    pub(crate) fn zoom(
-        &self,
-        session: &Session,
-        id: &str,
-        pixels: ImageRect,
-    ) -> Result<(Rect, observe::Pin), ToolError> {
-        let shot = self.desk.zoomable(session, id)?;
-        let connection = self.events.as_ref().ok().and_then(EventStream::connection);
-        shot.zoom(pixels, Instant::now(), connection)
-    }
-
     /// The element ref named `id` of the lease `session` holds.
     pub(crate) fn element(
         &self,
@@ -435,16 +428,38 @@ impl Engine {
     }
 
     /// A screenshot, serialized with this engine's actions. With `save`, a full-resolution
-    /// PNG of the target is written there first.
+    /// PNG of the target is written there first. With `zoom`, the target is the region of
+    /// an earlier screenshot it names, resolved once the screenshot's turn has come.
     pub(crate) async fn screenshot(
         &self,
         session: &Session,
-        request: observe::Request,
+        mut request: observe::Request,
         save: Option<SaveTarget>,
+        zoom: Option<Zoom>,
     ) -> Result<observe::Screenshot, CallError> {
-        // Boxed, because a saved capture makes a large future.
-        let capture = Box::pin(self.capture_saving(session, request, save));
+        let capture = async {
+            if let Some(zoom) = zoom {
+                let (region, pin) = self.zoomed(session, &zoom)?;
+                request.target = observe::Target::Region(region);
+                request.pin = Some(pin);
+            }
+            // Boxed, because a saved capture makes a large future.
+            Box::pin(self.capture_saving(session, request, save)).await
+        };
         self.desk.observe(session, capture).await
+    }
+
+    /// The layout rectangle `zoom` names and the output to capture it from: the ref must be
+    /// one of the lease `session` holds or, without the lease, one `session` took since it
+    /// last held it, and still fresh.
+    fn zoomed(
+        &self,
+        session: &Session,
+        zoom: &Zoom,
+    ) -> Result<(observe::Rect, observe::Pin), ToolError> {
+        let shot = self.desk.zoomable(session, &zoom.id)?;
+        let connection = self.events.as_ref().ok().and_then(EventStream::connection);
+        shot.zoom(zoom.pixels, Instant::now(), connection)
     }
 
     /// The accessible elements `ask` names, each kept as an element ref while the lease is

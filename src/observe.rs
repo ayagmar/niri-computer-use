@@ -232,6 +232,13 @@ pub(crate) async fn screenshot(
         )
         .into());
     }
+    if let Some(pin) = &request.pin {
+        // grim takes a rectangle, never an output with it (`-o and -g are mutually
+        // exclusive`), and reads the layout itself, so an output that moved since the
+        // plan's reading could have put another output under the rectangle.
+        let after = niri::outputs(socket).await?;
+        pin.find(after.values())?;
+    }
     let motion_geometry = outputs
         .get(&plan.metadata.output)
         .and_then(crate::coords::motion_geometry);
