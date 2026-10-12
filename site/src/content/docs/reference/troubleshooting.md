@@ -1,6 +1,6 @@
 ---
 title: Troubleshooting
-description: Problems seen while building and testing niri-computer-use, and what fixes them.
+description: "Fixes for common problems: the lease refused while unlocked, pointer tools refused on a second monitor, a server that finds no niri, and more."
 sidebar:
   order: 3
 ---

@@ -1,6 +1,6 @@
 ---
 title: Looking
-description: "The read-only tools: status, desktop_state, outputs, clipboard_read and wait_for."
+description: "The read-only tools: status, desktop_state, clipboard_read and wait_for."
 sidebar:
   order: 2
 ---
