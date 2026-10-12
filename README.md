@@ -99,12 +99,12 @@ What `launch` answered:
 
 - One agent at a time holds the lease, and only the lease holder acts. Looking needs no lease.
 - The stop key cancels the running action and takes the lease back. An agent can't press it.
-- Each action is refused when the last read of the lock state says locked or unknown. Input goes out at most 250 ms after that read.
-- Typing goes only to the window the agent names in `expect`, unless it passes `"none"`. Pointer and keyboard input is refused while an app on your deny list has focus, and element actions on its windows.
+- An action starts only after a read of the lock state at most 250 ms old says unlocked. Locked or unknown refuses it.
+- Before typing, the server checks that the window the agent names in `expect` has focus, unless it passes `"none"`. Text goes out in parts of up to 100 characters, with focus and the lock read again before each part. Pointer and keyboard input is refused while an app on your deny list has focus, and element actions on its windows.
 - Element actions refuse fields the toolkit marks as password fields. Apps start only from presets you write; `unrestricted` lifts that and allows niri's gated actions such as `Spawn`.
 - Calls that reach a tool go to an audit log, without the text typed, the clipboard, window titles or images.
 
-What isn't protected: any connected agent sees your screen and window titles, a click can land on a denied window that doesn't have focus, typing and clicking don't check for password fields, and a lock in the last 250 ms isn't caught. A click or a key can do anything you could do. Read [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/#what-isnt-a-boundary) before letting an agent act, and [SECURITY.md](SECURITY.md) to report a problem.
+What isn't protected: any connected agent sees your screen and window titles, a click can land on a denied window that doesn't have focus, typing and clicking don't check for password fields, and a lock that comes after the last read isn't caught. With the default `wtype` backend, a part that has started typing finishes even if focus moves, you press the stop key or the screen locks. A click or a key can do anything you could do. Read [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/#what-isnt-a-boundary) before letting an agent act, and [SECURITY.md](SECURITY.md) to report a problem.
 
 ## Limits
 

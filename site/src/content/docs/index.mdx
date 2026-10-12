@@ -88,8 +88,8 @@ Your agent starts the server over stdio. By default every client on one niri is 
 
 - One agent at a time holds the lease, and only the lease holder acts. Looking needs no lease.
 - A key bound to `niri-computer-use stop` cancels the running action and takes the lease back. An agent can't press it.
-- Each action is refused when the last read of the lock state says locked or unknown. Input goes out at most 250 ms after that read, so a lock in between isn't caught.
-- Typing goes only to the window the agent names in `expect`, unless it passes `"none"`. Pointer and keyboard input is refused while an app on your deny list has focus, and element actions on its windows. A click can still land on a denied window that doesn't have focus.
+- An action starts only after a read of the lock state at most 250 ms old says unlocked. A lock after that read isn't caught.
+- Before typing, the server checks that the window the agent names in `expect` has focus, unless it passes `"none"`. Text goes out in parts of up to 100 characters, with focus and the lock read again before each part. With the default `wtype` backend, a part that has started finishes even if focus moves, you press the stop key or the screen locks. Pointer and keyboard input is refused while an app on your deny list has focus, and element actions on its windows. A click can still land on a denied window that doesn't have focus.
 - Clicks aim at a screenshot taken under the lease, at most a minute old, of an output that hasn't changed since. Windows may have moved in that time.
 - Element actions refuse fields the toolkit marks as password fields; typing and clicking don't check. Clipboard copies a password manager marks as secret are withheld.
 - Apps start only from presets you write. Turning on [`unrestricted`](concepts/configuration/#unrestricted) lifts that and allows niri's gated actions such as `Spawn`.
