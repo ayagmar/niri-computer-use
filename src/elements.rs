@@ -4,12 +4,13 @@
 //! returned, never logged. `actions` acts on a listed element without the pointer.
 
 pub(crate) mod actions;
+mod labels;
 
 use niri_ipc::Window;
 use serde::Serialize;
 
 use crate::a11y::model::{
-    self, Extents, Filter, Fresh, LayoutBox, Link, NameHash, Placement, Refused, Row, Shape,
+    self, Extents, Filter, Fresh, Label, LayoutBox, Link, NameHash, Placement, Refused, Row, Shape,
     Unbound, Unmappable,
 };
 use crate::a11y::{self, A11y, Capped, ElementRef, Failed, Node, Want};
@@ -19,6 +20,7 @@ use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri;
 use crate::niri::Socket;
 use crate::policy::{self, Loaded};
+use labels::Labels;
 
 /// What `elements` was asked for.
 #[derive(Debug, Clone)]
@@ -307,6 +309,12 @@ pub(crate) async fn list(
         .ok_or_else(|| {
             CallError::InvalidArguments(format!("no window with id {}", ask.window_id))
         })?;
+    let listed: Vec<usize> = read
+        .listed(&ask.filter)
+        .take(ask.limit)
+        .map(|(at, _)| at)
+        .collect();
+    let labels = Labels::read(&read.request, &read.bus, &read.walked, &listed).await?;
     let mut matching = read.listed(&ask.filter);
     let mut elements = Vec::new();
     for (at, node) in matching.by_ref().take(ask.limit) {
@@ -323,7 +331,7 @@ pub(crate) async fn list(
         };
         let placed_box = model::place(placement);
         let mut element = read.element(at, node);
-        labelled(&read.request, &mut element).await?;
+        element.kept.row = labels.bind(&read.walked, at, element.kept.row);
         let unbound = match element.kept.row {
             Row::Unbound(why) => Some(why),
             Row::Lineage | Row::Own | Row::Labelled(_) => None,
@@ -339,32 +347,18 @@ pub(crate) async fn list(
             unbound,
         });
     }
+    let capped = read
+        .walked
+        .capped
+        .or_else(|| labels.cut.then_some(Capped::BudgetExhausted));
     Ok(Listing {
         window_id: read.placed.window.id,
         truncated: matching.next().is_some(),
         elements,
         walked: read.walked.nodes.len(),
-        capped: read.walked.capped.is_some(),
-        capped_reason: read.walked.capped,
+        capped: capped.is_some(),
+        capped_reason: capped,
     })
-}
-
-/// Binds `element` through its label when the bus says it has one label that labels it
-/// alone (`a11y::Request::label`), unless it is a named row itself. That binds a control
-/// in a row the bus leaves unnamed or out, and adds the label to the lineage's check of
-/// one bound otherwise, such as the one row of a list reused in place. Left as it was once
-/// the request's budget is spent, as the walk leaves nodes unread then.
-async fn labelled(request: &a11y::Request, element: &mut ElementRef) -> Result<(), ToolError> {
-    if element.kept.row == Row::Own || request.spent() {
-        return Ok(());
-    }
-    match request.label(element.at()).await {
-        Ok(Some(label)) => element.kept.row = Row::Labelled(label),
-        Ok(None) => {}
-        Err(error) if error.name == ErrorName::DeadlineExceeded && request.spent() => {}
-        Err(error) => return Err(error),
-    }
-    Ok(())
 }
 
 /// Which of an action's two surveys of a window's elements.
@@ -400,13 +394,24 @@ pub(crate) async fn survey(
     if let Some(capped) = read.walked.capped {
         return Err(Unknown::capped(window_id, capped));
     }
+    let labels = match when {
+        Survey::Before => None,
+        Survey::After => {
+            let listed: Vec<usize> = read.listed(&filter).map(|(at, _)| at).collect();
+            let labels = Labels::read(&read.request, &read.bus, &read.walked, &listed)
+                .await
+                .map_err(|error| Unknown::failed(Some(window_id), error))?;
+            if labels.cut {
+                return Err(Unknown::capped(window_id, Capped::BudgetExhausted));
+            }
+            Some(labels)
+        }
+    };
     let mut seen = Vec::new();
     for (at, node) in read.listed(&filter) {
         let mut element = read.element(at, node);
-        if when == Survey::After {
-            labelled(&read.request, &mut element)
-                .await
-                .map_err(|error| Unknown::failed(Some(window_id), error))?;
+        if let Some(labels) = &labels {
+            element.kept.row = labels.bind(&read.walked, at, element.kept.row);
         }
         seen.push(Seen {
             element,
@@ -539,11 +544,33 @@ pub(crate) async fn identify<'a>(
         parent = &link.path;
     }
     match label {
-        Some(label) if request.label(element.at()).await?.as_ref() != Some(label) => Err(stale(
-            "the element's label changed since `elements` listed it, as when a list reuses a row for another record",
-        )),
-        Some(_) | None => Ok(()),
+        Some(label) => same_label(request, element, label).await,
+        None => Ok(()),
     }
+}
+
+/// Checks that the element is still labelled alone by the label it was bound through, and
+/// that the label still has the name the listing's walk read.
+async fn same_label(
+    request: &a11y::Request,
+    element: &ElementRef,
+    label: &Label,
+) -> Result<(), ToolError> {
+    if request.label(element.at()).await?.as_deref() != Some(label.path.as_str()) {
+        return Err(stale(
+            "the element is labelled by another object, or none, since `elements` listed it",
+        ));
+    }
+    let name = request
+        .name((&element.bus, &label.path))
+        .await
+        .map_err(gone_is_stale)?;
+    if NameHash::of(&name) == label.name {
+        return Ok(());
+    }
+    Err(stale(
+        "the element's label changed its name since `elements` listed it, as when a list reuses a row for another record",
+    ))
 }
 
 /// Why nothing binds a ref to the record its element acts on. Listing again gives the

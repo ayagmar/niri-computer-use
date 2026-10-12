@@ -149,7 +149,7 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 ### `element_unbound`
 
-**Cause:** nothing on the accessibility bus binds the element to the record it acts on, so the server can't tell a list's row reused for another record from the row it listed. The element sits in a list row with no name (`unnamed_row`), as GTK 4's list items have unless the app labels them, or in no row while the walk read other objects of its role and name (`repeated`), as in most of a Qt Quick list, and no label labels it alone. Those objects needn't be listed: the extra match that tells `elements` its `limit` was reached counts too. `elements` marks such an element `unbound`. Nothing was sent.
+**Cause:** nothing on the accessibility bus binds the element to the record it acts on, so the server can't tell a list's row reused for another record from the row it listed. The element sits in a list row with no name (`unnamed_row`), as GTK 4's list items have unless the app labels them, or in no row while the walk read other objects of its role and name (`repeated`), as in most of a Qt Quick list, and no label of its own tells it apart from those lookalikes. Those objects needn't be listed: the extra match that tells `elements` its `limit` was reached counts too. `elements` marks such an element `unbound`. Nothing was sent.
 
 **What to do:** don't list again, which gives the same answer: take a screenshot and aim `click` at the element's pixels in the row you mean.
 
