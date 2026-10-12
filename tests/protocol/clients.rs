@@ -116,8 +116,13 @@ async fn a_stop_during_one_clients_action_holds_every_client_back_until_resume()
     }
     let stopped = Instant::now();
     assert!(run(&fixture, "stop").await.status.success());
-    let (name, detail) = tool_error(&owner.response(key).await["result"]);
-    assert_eq!(name, "stopped", "{detail}");
+    // wtype had started on the key, so it may have gone out: the outcome says so.
+    let cut = owner.response(key).await["result"]["structuredContent"].clone();
+    assert_eq!(cut["observed"], "uncertain", "{cut}");
+    assert!(
+        cut["detail"].as_str().unwrap().contains("stop flag"),
+        "{cut}"
+    );
     assert!(
         stopped.elapsed() < Duration::from_secs(1),
         "{:?}",
