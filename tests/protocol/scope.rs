@@ -4,12 +4,12 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
-use crate::client::Server;
-use crate::fixture::{Fixture, parent, pid_in};
+use crate::client::{Server, WAIT, tool_error};
+use crate::fixture::{Fixture, eventually, exited, kill, parent, pid_in};
 use crate::niri::Niri;
-use crate::shared::shared;
+use crate::shared::{engine, hold_engine_lock, shared};
 
 /// A fake `systemd-run` that records its arguments and PID, then runs `then`.
 fn systemd_run(fixture: &Fixture, then: &str) {
@@ -129,4 +129,68 @@ async fn an_engine_told_its_runtime_dir_was_discovered_reports_it_so() {
         "{status}"
     );
     assert!(status["engine"]["unscoped"].is_null(), "{status}");
+}
+
+/// Kills the engine `client` is served by, and has the client hear of it.
+async fn lose_engine(fixture: &Fixture, client: &mut Server) {
+    kill(u32::try_from(engine(fixture).await).unwrap());
+    let (lost, _) = tool_error(&client.call("status", json!({})).await);
+    assert_eq!(lost, "engine_lost");
+}
+
+/// Has `client`'s next call start a reconnect through a `systemd-run` that runs `then`,
+/// and leaves that call in flight. Returns the `systemd-run`, once it has written its PID.
+async fn reconnecting(fixture: &Fixture, client: &mut Server, then: &str) -> i32 {
+    systemd_run(fixture, then);
+    client.start_call("status", json!({})).await;
+    pid_in(&fixture.path("systemd-run.pid")).await
+}
+
+/// A client that goes while its bridge waits for a hung `systemd-run` to start a new
+/// engine: the bridge exits, and the `systemd-run` goes with it, without its two seconds.
+#[tokio::test]
+async fn a_client_leaving_during_a_reconnect_leaves_no_systemd_run() {
+    let fixture = shared("scope-cancel");
+    let _niri = Niri::start(&fixture);
+    let mut client = Server::start(&fixture).await;
+    lose_engine(&fixture, &mut client).await;
+    let launcher = reconnecting(&fixture, &mut client, "await_file never").await;
+    let left = Instant::now();
+    client.close_stdin();
+    assert!(client.exit_within(WAIT).await.is_some());
+    assert!(
+        eventually(Duration::from_secs(1), || exited(launcher)).await,
+        "systemd-run outlived the bridge"
+    );
+    assert!(
+        left.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        left.elapsed()
+    );
+}
+
+/// The same, once `systemd-run` has become the engine, which still waits for the lock:
+/// the engine is the instance's, not the bridge's, and stays.
+#[tokio::test]
+async fn a_client_leaving_during_a_reconnect_keeps_an_engine_systemd_run_became() {
+    let fixture = shared("scope-became");
+    let _niri = Niri::start(&fixture);
+    let mut client = Server::start(&fixture).await;
+    lose_engine(&fixture, &mut client).await;
+    let lock = hold_engine_lock(&fixture);
+    let becomes = r#"while [ "$1" != "--" ]; do shift; done; shift; exec "$@""#;
+    let launcher = reconnecting(&fixture, &mut client, becomes).await;
+    let exe = std::fs::canonicalize(env!("CARGO_BIN_EXE_niri-computer-use")).unwrap();
+    let became = || std::fs::read_link(format!("/proc/{launcher}/exe")).is_ok_and(|at| at == exe);
+    assert!(
+        eventually(WAIT, became).await,
+        "systemd-run didn't become the engine"
+    );
+    client.close_stdin();
+    assert!(client.exit_within(WAIT).await.is_some());
+    assert!(
+        !exited(launcher),
+        "the bridge killed the engine systemd-run became"
+    );
+    drop(lock);
 }

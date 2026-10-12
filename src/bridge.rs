@@ -299,7 +299,7 @@ async fn start(target: &Target, deadline: Instant, scoped: bool) -> Result<(), S
         };
         if let Some(reason) = unscoped {
             let args = ["engine", UNSCOPED, &reason].map(str::to_owned);
-            runner::daemon("/proc/self/exe", &args, &[], log).map_err(|error| error.detail)?;
+            runner::daemon("/proc/self/exe", &args, log).map_err(|error| error.detail)?;
             let listening = deadline.min(Instant::now() + LISTENING);
             while UnixStream::connect(&socket).await.is_err() && Instant::now() < listening {
                 tokio::time::sleep(RETRY_FIRST).await;
@@ -313,9 +313,10 @@ async fn start(target: &Target, deadline: Instant, scoped: bool) -> Result<(), S
 /// Starts the engine through `systemd-run --user --scope`, which moves itself into a new
 /// scope and then becomes the engine, running this process's own binary even if its file
 /// has been replaced since. Waits until the engine listens or `systemd-run` ends, up to
-/// `until`; one still running then that hasn't become the engine is killed. The engine's
-/// stderr is `log`, the file at `path`. Returns why there is no engine in a scope of its
-/// own: `systemd-run`'s exit and what it wrote, or `None` when one listens or still starts.
+/// `until`; one still running then, or when this call is dropped, that hasn't become the
+/// engine is killed. The engine's stderr is `log`, the file at `path`. Returns why there is
+/// no engine in a scope of its own: `systemd-run`'s exit and what it wrote, or `None` when
+/// one listens or still starts.
 async fn start_scoped(
     target: &Target,
     log: &File,
@@ -330,7 +331,7 @@ async fn start_scoped(
         Ok(stderr) => stderr,
         Err(error) => return Some(format!("open {} again: {error}", path.display())),
     };
-    let mut child = match runner::daemon(SYSTEMD_RUN, &args, &env, stderr) {
+    let mut child = match runner::launcher(SYSTEMD_RUN, &args, &env, stderr, Path::new(&exe)) {
         Ok(child) => child,
         Err(error) => return Some(error.detail),
     };
@@ -343,7 +344,7 @@ async fn start_scoped(
             return Some(ended(exited, path, offset));
         }
         if Instant::now() >= until {
-            return stuck(&mut child, &exe).await;
+            return stuck(&mut child).await;
         }
         tokio::time::sleep(RETRY_FIRST).await;
     }
@@ -398,12 +399,12 @@ fn ended(exited: Result<ExitStatus, String>, path: &Path, offset: u64) -> String
 
 /// `systemd-run` neither ended nor gave a listening engine in time: kills it unless it
 /// has become the engine, which may still be starting.
-async fn stuck(child: &mut runner::Daemon, exe: &str) -> Option<String> {
+async fn stuck(child: &mut runner::Launcher) -> Option<String> {
     let late = format!(
         "{SYSTEMD_RUN} didn't start the engine within {} s",
         LISTENING.as_secs()
     );
-    match child.kill_unless_running(Path::new(exe), REAP).await {
+    match child.stop(REAP).await {
         Ok(false) => None,
         Ok(true) => Some(format!("{late}, so it was killed")),
         Err(error) => Some(format!("{late}, and killing it failed: {error}")),

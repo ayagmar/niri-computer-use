@@ -251,16 +251,41 @@ pub(crate) fn companion(program: &str, args: &[String]) -> Result<Companion, Too
 }
 
 /// Starts a child that outlives the server: in a process group of its own, with stdin and
-/// stdout closed and `stderr` as its stderr. The server never kills or waits for it:
-/// dropping the handle hands it to tokio, which reaps it once it exits. It gets the
-/// server's environment without the session's variables `main` discovered, so it finds the
-/// session as the server did, plus `env`.
+/// stdout closed and `stderr` as its stderr. The server never kills or waits for it: the
+/// handle is dropped at once, which hands it to tokio, which reaps it once it exits. It
+/// gets the server's environment without the session's variables `main` discovered, so it
+/// finds the session as the server did.
 pub(crate) fn daemon(
+    program: &str,
+    args: &[String],
+    stderr: std::fs::File,
+) -> Result<(), ToolError> {
+    detached_child(program, args, &[], stderr).map(drop)
+}
+
+/// Starts `program` as `daemon` does, plus `env`, to become a child that outlives the
+/// server by executing the file `becomes`, as `systemd-run --scope` does once its scope
+/// exists. Until it has, the server owns it: dropping the handle, even in a cancelled
+/// call, kills it unless it has become `becomes` or exited.
+pub(crate) fn launcher(
     program: &str,
     args: &[String],
     env: &[(&str, OsString)],
     stderr: std::fs::File,
-) -> Result<Daemon, ToolError> {
+    becomes: &Path,
+) -> Result<Launcher, ToolError> {
+    detached_child(program, args, env, stderr).map(|child| Launcher {
+        child,
+        becomes: becomes.to_path_buf(),
+    })
+}
+
+fn detached_child(
+    program: &str,
+    args: &[String],
+    env: &[(&str, OsString)],
+    stderr: std::fs::File,
+) -> Result<Child, ToolError> {
     own_command(program)
         .args(args)
         .envs(env.iter().map(|(name, value)| (name, value)))
@@ -269,7 +294,6 @@ pub(crate) fn daemon(
         .stderr(stderr)
         .process_group(0)
         .spawn()
-        .map(|child| Daemon { child })
         .map_err(|error| {
             ToolError::new(
                 ErrorName::UpstreamError,
@@ -278,13 +302,14 @@ pub(crate) fn daemon(
         })
 }
 
-/// A child `daemon` started.
+/// A child `launcher` started.
 #[derive(Debug)]
-pub(crate) struct Daemon {
+pub(crate) struct Launcher {
     child: Child,
+    becomes: PathBuf,
 }
 
-impl Daemon {
+impl Launcher {
     /// How it exited, once it has; one that has is reaped. A failed wait counts as an exit,
     /// with its error.
     pub(crate) fn exited(&mut self) -> Option<Result<ExitStatus, String>> {
@@ -295,29 +320,46 @@ impl Daemon {
         }
     }
 
-    /// Kills its process group and reaps it within `deadline`, unless it now runs the file
-    /// `exe` runs, as `systemd-run --scope` does once its scope exists. Returns whether it
-    /// was killed. Between the check and the kill it could still exec `exe`; a child that
-    /// hasn't by `deadline` is taken as stuck.
-    pub(crate) async fn kill_unless_running(
-        &mut self,
-        exe: &Path,
-        deadline: Duration,
-    ) -> Result<bool, String> {
-        let Some(pid) = self.child.id() else {
-            return Ok(false);
-        };
-        if same_file(&PathBuf::from(format!("/proc/{pid}/exe")), exe) {
+    /// Kills its process group and reaps it within `deadline`, unless it has become what it
+    /// becomes. Returns whether it was killed. Between the check and the kill it could
+    /// still exec; a child that hasn't by now is taken as stuck.
+    pub(crate) async fn stop(&mut self, deadline: Duration) -> Result<bool, String> {
+        if !self.kill() {
             return Ok(false);
         }
-        let group = Pid::from_raw(pid.cast_signed()).ok_or("process ID 0")?;
-        // It may have exited since, so a missing group is fine.
-        kill_process_group(group, Signal::KILL).ok();
         match tokio::time::timeout(deadline, self.child.wait()).await {
             Ok(Ok(_)) => Ok(true),
             Ok(Err(error)) => Err(format!("reap it: {error}")),
             Err(_) => Err(format!("it didn't exit within {deadline:?} of SIGKILL")),
         }
+    }
+
+    /// Sends its process group `SIGKILL` while it runs and hasn't become what it becomes.
+    /// Returns whether it did.
+    fn kill(&mut self) -> bool {
+        if !matches!(self.child.try_wait(), Ok(None)) {
+            return false;
+        }
+        let Some(pid) = self.child.id() else {
+            return false;
+        };
+        if same_file(&PathBuf::from(format!("/proc/{pid}/exe")), &self.becomes) {
+            return false;
+        }
+        let Some(group) = Pid::from_raw(pid.cast_signed()) else {
+            return false;
+        };
+        // It may have exited since, so a missing group is fine.
+        kill_process_group(group, Signal::KILL).ok();
+        true
+    }
+}
+
+impl Drop for Launcher {
+    /// A call that owned it was cancelled or returned: tokio reaps a killed child once it
+    /// exits.
+    fn drop(&mut self) {
+        self.kill();
     }
 }
 
