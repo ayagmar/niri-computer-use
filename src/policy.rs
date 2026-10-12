@@ -19,7 +19,7 @@ use crate::niri::events::StreamState;
 use crate::niri::version::Compat;
 
 /// Programs that run whatever command they are given, so no preset may start them.
-const COMMAND_RUNNERS: [&str; 35] = [
+const COMMAND_RUNNERS: [&str; 50] = [
     "sh",
     "bash",
     "zsh",
@@ -55,6 +55,21 @@ const COMMAND_RUNNERS: [&str; 35] = [
     "uwsm",
     "distrobox",
     "toolbox",
+    "tmux",
+    "screen",
+    "bwrap",
+    "firejail",
+    "unshare",
+    "chroot",
+    "ssh",
+    "flatpak-spawn",
+    "nix",
+    "nix-shell",
+    "strace",
+    "gdb",
+    "script",
+    "docker",
+    "podman",
 ];
 
 /// Terminals run their trailing arguments as a command, so a preset may start one only
@@ -1052,6 +1067,32 @@ app_id = "foot"
         assert!(preset(r#"["flatpak", "run", "--command=sh", "org.x.Y"]"#).contains("--command"));
         assert!(preset("[]").contains("empty argv"));
         assert!(preset(r#"[""]"#).contains("empty argv"));
+    }
+
+    #[test]
+    fn refuses_multiplexers_sandboxes_remote_shells_and_debuggers() {
+        // Each of these runs whatever command follows it.
+        for argv in [
+            r#"["tmux", "new", "sh"]"#,
+            r#"["screen", "sh"]"#,
+            r#"["/usr/bin/bwrap", "--bind", "/", "/", "sh"]"#,
+            r#"["firejail", "sh"]"#,
+            r#"["unshare", "-r", "sh"]"#,
+            r#"["chroot", "/", "sh"]"#,
+            r#"["ssh", "localhost", "sh"]"#,
+            r#"["flatpak-spawn", "--host", "sh"]"#,
+            r#"["nix", "run", "nixpkgs#hello"]"#,
+            r#"["nix-shell", "--run", "sh"]"#,
+            r#"["strace", "sh"]"#,
+            r#"["gdb", "--args", "sh"]"#,
+            r#"["script", "-c", "sh"]"#,
+            r#"["docker", "run", "alpine", "sh"]"#,
+            r#"["podman", "run", "alpine", "sh"]"#,
+        ] {
+            let policy = format!("[[preset]]\nname = \"x\"\nargv = {argv}\napp_id = \"x\"");
+            let refused = parse(&policy, false).unwrap_err();
+            assert!(refused.contains("runs any command"), "{argv}: {refused}");
+        }
     }
 
     #[test]

@@ -117,7 +117,7 @@ One table per app `launch` may start. `name`, `argv` and `app_id` are required:
 
 `launch` takes only the `name`; the agent can't add arguments or variables. Unless `unrestricted` is on, a preset may not start:
 
-- a shell, an interpreter, `env`, `sudo`, `doas`, `pkexec`, `systemd-run`, `nohup`, `setsid`, `xargs`, `timeout`, `nice`, `busybox`, `uwsm`, `distrobox`, `toolbox`, or another program that runs any command it is given; versioned names such as `python3.13` count too
+- a shell, an interpreter, `env`, `sudo`, `doas`, `pkexec`, `systemd-run`, `nohup`, `setsid`, `xargs`, `timeout`, `nice`, `busybox`, `uwsm`, `distrobox`, `toolbox`, `tmux`, `screen`, `bwrap`, `firejail`, `unshare`, `chroot`, `ssh`, `flatpak-spawn`, `nix`, `nix-shell`, `strace`, `gdb`, `script`, `docker`, `podman`, or another program that runs any command it is given; versioned names such as `python3.13` count too
 - `flatpak` with `--command`
 - a terminal with arguments, not even `--app-id`, because terminals run trailing arguments as a command. A terminal without arguments is fine. To give a terminal its own `app_id`, start a desktop file with `gtk-launch`.
 
