@@ -59,7 +59,7 @@ An unknown window or workspace id is an argument mistake, and nothing is sent. O
 | `screenshot` | with `screenshot: true` or an outcome in doubt, the metadata of a screenshot of the focused output, as `screenshot` returns it; the image follows the text in the result's content |
 | `screenshot_error` | `{"error", "detail"}` saying why that screenshot couldn't be taken |
 
-Every action waits up to five seconds for its effect. Two outcomes can end any of them:
+`focus`, `launch` and `close_window` wait up to five seconds for their effect; the other tools' waits are under each tool, and none of them bounds the whole call. Two outcomes can end any action:
 
 - `interrupted`: focus moved to a window that was neither focused before nor the expected target, so someone else is using the desktop. `focused_window` says where focus came to rest.
 - `uncertain`: niri's reply or event stream was lost, so the action may or may not have happened. `accepted` is null when the reply was lost.

@@ -38,7 +38,7 @@ The reading tools carry MCP's `readOnlyHint`, and `close_window`, `niri_action`,
 
 ## Results
 
-A successful call returns its data as `structuredContent` and the same JSON as text. `screenshot` returns an image block first.
+A successful call returns its data as `structuredContent` and the same JSON as text, except `elements`, whose text is one line per element by default; with `format: "json"` its text is the JSON too. `screenshot` returns an image block first.
 
 Actions report what happened in two fields:
 
@@ -63,4 +63,4 @@ A mistake in the arguments, such as an unknown output, a window id that doesn't 
 
 ## The audit log
 
-Every call is appended to the [audit log](../../concepts/safety/#the-audit-log) with its argument metadata and outcome. Typed and pasted text, clipboard contents, window titles, accessible names and images are never written; the log keeps their length. Other strings, such as a preset, a role, a ref, key names or an `expect` app id, are written only when they name something the server knows, and otherwise as a category and their length. Of an action's `changes`, it keeps only counts: windows opened, closed and changed, whether focus and the workspace moved, and the element changes' sizes.
+Each call that reaches a tool is appended to the [audit log](../../concepts/safety/#the-audit-log) with its argument metadata and outcome; a call to an unlisted tool or with arguments that don't match the schema isn't. Typed and pasted text, clipboard contents, window titles, accessible names and images are never written; the log keeps their length. Other strings, such as a preset, a role, a ref, key names or an `expect` app id, are written only when they name something the server knows, and otherwise as a category and their length. Of an action's `changes`, it keeps only counts: windows opened, closed and changed, whether focus and the workspace moved, and the element changes' sizes.
