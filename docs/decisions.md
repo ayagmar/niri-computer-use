@@ -915,7 +915,7 @@ These match the versions installed locally.
 
 ## 2026-10-12: the next guardian releases a dead server's input
 
-- The crash guardian releases what its server held when the server dies, but a guardian killed with its server sends nothing: `systemctl kill` of the engine's scope, a `pkill` that matches both command lines, or the OOM killer. The keys or buttons then stayed down until a human ran `recover`.
+- The crash guardian releases what its server held when the server dies, but a guardian killed with its server sends nothing: `systemctl kill` of a unit both run in, a `pkill` that matches both command lines, or the OOM killer. The keys or buttons then stayed down until a human ran `recover`.
 - Each guardian now checks the marker as it starts, before it waits on its server. A marker another server wrote, naming native keycodes or pointer buttons, with no `released` note, whose server `/proc` lists as exited or not at all, gets the same releases the guardian sends for its own server, under the lease and within the same ten-second deadline. Doing it in the guardian rather than the server keeps the start of `serve` and the engine unchanged, and gives the pass the guardian's own process and deadline.
 - The marker stays for `recover`, as after any guardian's releases (2026-10-10, crash guardian).
 - What it can't do: the marker records no start time for its server, so a PID reused since reads as running and the input waits for `recover`. A guardian that can't take the lease within two seconds, or a niri that doesn't answer, leaves it for the next start or `recover`, with the failure on stderr. A niri that restarted has a new instance and runtime directory; the input it held ended with it.
