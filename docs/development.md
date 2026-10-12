@@ -18,7 +18,7 @@ The dependency gate accepts MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Un
 
 ## Unit tests against a fake niri
 
-The native keyboard, held pointer modifiers, the crash guardian and the paste keeper talk to niri's Wayland display. Their unit tests run against `test_support::wayland::Compositor`, a display and a niri socket served from a thread of the test's own process. It models what niri's Smithay does with virtual keyboards, keymaps and data-control (see [decisions](decisions.md), 2026-10-12), and records what the focused client would have been sent: keys, modifiers, keymaps, buttons and the selection's types. A test can change niri's keyboard configuration, switch its layout, press a physical key, or copy something, including while a client reads the selection.
+The native keyboard, held pointer modifiers, the crash guardian and the paste keeper talk to niri's Wayland display. Their unit tests run against `test_support::wayland::Compositor`, a display and a niri socket served from a thread of the test's own process. It models what niri's Smithay does with virtual keyboards, keymaps and data-control (see [decisions](decisions.md), 2026-10-12), and records what the focused client would have been sent: keys, modifiers, keymaps, buttons and the selection's types. It also serves niri's event stream, with one focused window whose app id is `test_support::wayland::APP_ID`, so a test can type through `type_input`, the native keyboard's entry point. A test can change niri's keyboard configuration, switch its layout, press a physical key, delay niri's acknowledgement of each key, or copy something, including while a client reads the selection.
 
 ## Protocol tests
 

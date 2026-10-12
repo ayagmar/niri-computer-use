@@ -13,7 +13,8 @@
 //! - wlr data-control announces every selection to every data device, reads a client's
 //!   source through its `send` event and cancels a source another selection replaced.
 //!
-//! The focused client is implicit: what the focus was sent is in `Seen`.
+//! The focused client is implicit: what the focus was sent is in `Seen`. niri's event
+//! stream has one workspace with one focused window, `APP_ID`, and the keyboard layouts.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -23,7 +24,12 @@ use std::os::unix::fs::FileExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use niri_ipc::{KeyboardLayouts, LogicalOutput, Output, Reply, Request, Response, Transform};
+use std::time::Duration;
+
+use niri_ipc::{
+    Event, KeyboardLayouts, LogicalOutput, Output, Reply, Request, Response, Transform, Window,
+    WindowLayout, Workspace,
+};
 use rustix::fs::{MemfdFlags, memfd_create};
 use tokio::io::unix::AsyncFd;
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
@@ -55,6 +61,8 @@ use xkbcommon::xkb;
 
 /// The output the fake offers, by name.
 pub(crate) const OUTPUT: &str = "FAKE-1";
+/// The `app_id` of the window niri's event stream has focused.
+pub(crate) const APP_ID: &str = "org.fake.Focused";
 
 /// A selection's contents: each MIME type with its bytes.
 pub(crate) type Contents = Vec<(String, Vec<u8>)>;
@@ -119,6 +127,8 @@ enum Command {
     Copy(Selection),
     /// Copies this once the next read of a selection the fake owns has begun.
     CopyOnRead(Selection),
+    /// Handles each virtual key press only after this long, as a niri busy elsewhere.
+    SlowKeys(Duration),
 }
 
 /// The fake niri, served from a thread of its own until dropped.
@@ -217,6 +227,16 @@ impl Compositor {
             .await;
     }
 
+    /// Makes the fake handle each virtual key press, and what follows it, `delay` late.
+    pub(crate) async fn slow_keys(&self, delay: Duration) {
+        self.send(Command::SlowKeys(delay)).await;
+    }
+
+    /// niri's event stream from the fake's socket.
+    pub(crate) fn events(&self) -> crate::niri::events::EventStream {
+        crate::niri::events::EventStream::spawn(self.socket.clone())
+    }
+
     /// Sends `command` and waits until the fake has sent what it causes.
     async fn send(&self, command: Command) {
         let (done, applied) = oneshot::channel();
@@ -304,27 +324,100 @@ fn output() -> Output {
     }
 }
 
-/// Answers one niri request: the keyboard layouts, with `group` active, or the outputs.
+/// niri's keyboard layouts, with `group` active.
+fn layouts(group: u32) -> KeyboardLayouts {
+    KeyboardLayouts {
+        names: vec!["first".into(), "second".into()],
+        current_idx: u8::try_from(group).unwrap(),
+    }
+}
+
+/// What niri's event stream starts with: one workspace with one focused window, the
+/// keyboard layouts with `group` active, and the overview closed.
+fn initial_events(group: u32) -> Vec<Event> {
+    let workspace = Workspace {
+        id: 1,
+        idx: 1,
+        name: None,
+        output: Some(OUTPUT.to_owned()),
+        is_urgent: false,
+        is_active: true,
+        is_focused: true,
+        active_window_id: Some(1),
+    };
+    let window = Window {
+        id: 1,
+        title: Some("fake".to_owned()),
+        app_id: Some(APP_ID.to_owned()),
+        pid: None,
+        workspace_id: Some(1),
+        is_focused: true,
+        is_floating: false,
+        is_urgent: false,
+        layout: WindowLayout {
+            pos_in_scrolling_layout: Some((1, 1)),
+            tile_size: (1920.0, 1080.0),
+            window_size: (1920, 1080),
+            tile_pos_in_workspace_view: None,
+            window_offset_in_tile: (0.0, 0.0),
+        },
+        focus_timestamp: None,
+    };
+    vec![
+        Event::WorkspacesChanged {
+            workspaces: vec![workspace],
+        },
+        Event::WindowsChanged {
+            windows: vec![window],
+        },
+        Event::KeyboardLayoutsChanged {
+            keyboard_layouts: layouts(group),
+        },
+        Event::OverviewOpenedOrClosed { is_open: false },
+    ]
+}
+
+/// Answers one niri request: the keyboard layouts, with `group` active, the outputs, or
+/// the event stream, which then stays open.
 async fn answer(stream: tokio::net::UnixStream, group: u32) {
     let (reader, mut writer) = stream.into_split();
     let mut line = String::new();
     if BufReader::new(reader).read_line(&mut line).await.is_err() {
         return;
     }
-    let reply: Reply = match serde_json::from_str(&line) {
-        Ok(Request::KeyboardLayouts) => Ok(Response::KeyboardLayouts(KeyboardLayouts {
-            names: vec!["first".into(), "second".into()],
-            current_idx: u8::try_from(group).unwrap(),
-        })),
+    let request = serde_json::from_str(&line);
+    let reply: Reply = match request {
+        Ok(Request::KeyboardLayouts) => Ok(Response::KeyboardLayouts(layouts(group))),
         Ok(Request::Outputs) => Ok(Response::Outputs(HashMap::from([(
             OUTPUT.to_owned(),
             output(),
         )]))),
-        _ => Err("the fake answers only KeyboardLayouts and Outputs".into()),
+        Ok(Request::EventStream) => Ok(Response::Handled),
+        _ => Err("the fake answers only KeyboardLayouts, Outputs and EventStream".into()),
     };
-    let mut reply = serde_json::to_string(&reply).unwrap();
-    reply.push('\n');
-    writer.write_all(reply.as_bytes()).await.ok();
+    let mut lines = vec![serde_json::to_string(&reply).unwrap()];
+    if matches!(request, Ok(Request::EventStream)) {
+        lines.extend(
+            initial_events(group)
+                .iter()
+                .map(|event| serde_json::to_string(event).unwrap()),
+        );
+    }
+    for text in lines {
+        writer.write_all(format!("{text}\n").as_bytes()).await.ok();
+    }
+    if matches!(request, Ok(Request::EventStream)) {
+        std::future::pending::<()>().await;
+    }
+}
+
+/// Holds up the fake's own thread, and with it every client, as a busy niri does.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "this blocks the fake niri's thread on purpose, to delay every answer"
+)]
+fn stall(delay: Duration) {
+    std::thread::sleep(delay);
 }
 
 #[derive(Debug)]
@@ -372,6 +465,8 @@ struct State {
     devices: Vec<ZwlrDataControlDeviceV1>,
     selection: Selection,
     copy_on_read: Option<Selection>,
+    /// How late each virtual key press is handled.
+    key_delay: Duration,
 }
 
 impl State {
@@ -383,6 +478,7 @@ impl State {
             devices: Vec::new(),
             selection: Selection::Empty,
             copy_on_read: None,
+            key_delay: Duration::ZERO,
         }
     }
 
@@ -418,6 +514,7 @@ impl State {
             }
             Command::Copy(selection) => self.select(handle, selection),
             Command::CopyOnRead(selection) => self.copy_on_read = Some(selection),
+            Command::SlowKeys(delay) => self.key_delay = delay,
         }
     }
 
@@ -679,6 +776,9 @@ impl Dispatch<ZwpVirtualKeyboardV1, Mutex<Virtual>> for State {
             ..
         } = request
         {
+            if pressed == 1 {
+                stall(state.key_delay);
+            }
             state.send_keymap(&keymap, data.modifiers);
             state.seen().keys.push((key, pressed == 1));
         } else if let zwp_virtual_keyboard_v1::Request::Modifiers {

@@ -68,9 +68,9 @@ pub(super) async fn type_input(
         }
         may_press(input, waiter.view(), &call, sent).await?;
         device.commit(aftercare, input.niri.desk).await?;
-        // Sent to niri before it failed, the key may still have gone out.
-        device
-            .stroke(key)
+        // Sent to niri before it failed or ran out of time, the key may still have gone out.
+        call.budget
+            .bound(device.stroke(key))
             .await
             .map_err(|error| partly(error, &typing, sent.underway()))?;
         sent.add_key(key.character);
@@ -188,10 +188,12 @@ async fn interrupted(waiter: &mut Waiter, before: Option<u64>, group: u32) -> Op
 /// measured, a nested niri drawing every frame, was two (32 ms).
 const PER_KEY: Duration = Duration::from_millis(50);
 
-/// A call's time: `PER_KEY` for each key, and at least what one `wtype` call gets. Each
-/// round trip has its own deadline, but a niri that answers every one late could
-/// otherwise stretch a call without end. A call past it stops between keys, and the
-/// dropped device's cleanup releases them.
+/// The keys' time: `PER_KEY` for each key, and at least what one `wtype` call gets, from
+/// before the first key until niri has acknowledged the last. Each round trip has its own
+/// deadline, but a niri that answers every one late could otherwise stretch a call
+/// without end. Binding and planning before have their round trips' deadlines, and the
+/// release after runs within the cleanup's. A call out of time stops, before its next key
+/// or while one waits for niri, and the dropped device's cleanup releases the keys.
 struct Budget {
     length: Duration,
     ends: Instant,
@@ -207,14 +209,32 @@ impl Budget {
         }
     }
 
+    /// Refuses to start another key once the time is up.
     fn check(&self) -> Result<(), ToolError> {
         if Instant::now() < self.ends {
             return Ok(());
         }
-        Err(ToolError::new(
+        Err(self.over(""))
+    }
+
+    /// Runs a key's `stroke` until the time is up.
+    async fn bound(
+        &self,
+        stroke: impl Future<Output = Result<(), ToolError>>,
+    ) -> Result<(), ToolError> {
+        tokio::time::timeout_at(self.ends, stroke)
+            .await
+            .unwrap_or_else(|_| Err(self.over(": niri hadn't acknowledged the key last sent")))
+    }
+
+    fn over(&self, pending: &str) -> ToolError {
+        ToolError::new(
             ErrorName::DeadlineExceeded,
-            format!("native typing took longer than its {:?}", self.length),
-        ))
+            format!(
+                "native typing took longer than its {:?}{pending}",
+                self.length
+            ),
+        )
     }
 }
 
@@ -295,21 +315,21 @@ impl Device {
     /// Releases everything and puts the latest compositor keymap back in the layout niri
     /// has active, or without niri's answer in the one its event stream last reported,
     /// `group`, if it reported one: a layout the user switched to meanwhile stays. Then
-    /// clears the marker. With a paste's aftercare, that runs in a task of its own, so a
-    /// dropped call can't leave the keeper without its `p`.
+    /// tells a paste's keeper the key went out and clears the marker. That runs in a
+    /// cleanup task, within the cleanup's deadline, so a dropped call can't cut it short or
+    /// leave the keeper without its `p`.
     async fn finish(mut self, group: Option<u32>) -> Result<(), ToolError> {
         if let Some(group) = group {
             self.group = group;
         }
-        let Some(aftercare) = self.aftercare.take() else {
-            self.release().await?;
-            return self.clear().await;
-        };
+        let aftercare = self.aftercare.take();
         let ends = cleanup::deadline();
         self.ends = Some(ends);
         let finished = cleanup::spawn(ends, async move {
             self.release().await?;
-            aftercare.sent().await;
+            if let Some(aftercare) = aftercare {
+                aftercare.sent().await;
+            }
             self.clear().await
         });
         finished
@@ -415,12 +435,34 @@ mod tests {
     use super::*;
     use crate::control::runtime::RuntimeDir;
     use crate::input::keyboard::Typing;
+    use std::path::Path;
+
+    use crate::act::Niri;
+    use crate::control::LockSources;
+    use crate::error::CallError;
     use crate::input::paste::{
         Clipboard, Report, SLOW_ADMISSION, STOPPED_WAITING, desk_read, fake_aftercare,
     };
-    use crate::test_support::{fresh_dir, wayland::Compositor};
+    use crate::noctalia;
+    use crate::policy::Loaded;
+    use crate::test_support::{
+        fresh_dir,
+        wayland::{APP_ID, Compositor},
+    };
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
     const BASE: &str = include_str!("../../tests/fixtures/us-de.xkb");
+    /// evdev codes in the fixture's first layout: `a`, `z` and Shift.
+    const A: u32 = 40;
+    const Z: u32 = 44;
+    const HELD: u32 = 42;
+
+    /// Each key's press, then its release.
+    fn presses(keys: &[Key]) -> Vec<(u32, bool)> {
+        keys.iter()
+            .flat_map(|key| [(key.code.0, true), (key.code.0, false)])
+            .collect()
+    }
 
     /// A device on the fake niri in `dir`, with `text` planned in layout 0: its extended
     /// keymap uploaded, if the layout lacks some of the text's symbols.
@@ -455,10 +497,13 @@ mod tests {
         let dir = fresh_dir("native-extension");
         let niri = Compositor::start(&dir, BASE);
         let (mut device, keys) = typing(&niri, "é").await;
+        let pairs = presses(&keys);
+        assert_eq!(pairs.len(), 2);
         for key in keys {
             device.stroke(key).await.unwrap();
         }
         let during = niri.seen();
+        assert_eq!(during.keys, pairs, "each key pressed and released once");
         assert_ne!(
             during.active, during.compositor,
             "the extension reached clients"
@@ -493,6 +538,11 @@ mod tests {
                 .unwrap(),
         );
         device.stroke(keys[0]).await.unwrap();
+        // A key still down when the call drops, as between a press and its release.
+        let keyboard = device.keyboard().unwrap();
+        keyboard.key(HELD, true).unwrap();
+        keyboard.sync().await.unwrap();
+        assert_eq!(niri.seen().held_keys(), [HELD]);
         niri.switch(1).await;
         drop(device);
         let until = Instant::now() + cleanup::LIMIT;
@@ -502,11 +552,120 @@ mod tests {
         }
         let seen = niri.seen();
         assert_eq!(seen.active, seen.compositor);
+        assert_eq!(seen.keys.last(), Some(&(HELD, false)), "{:?}", seen.keys);
         assert!(seen.held_keys().is_empty(), "{:?}", seen.keys);
         assert_eq!(
             seen.last_modifiers(),
             Some((0, 1)),
             "not in niri's active layout"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Serves Noctalia's status for `env`, with the screen unlocked, to every read.
+    fn unlocked(env: &crate::Env) {
+        let listener = tokio::net::UnixListener::bind(noctalia::socket(env).unwrap()).unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut request = Vec::new();
+                stream.read_to_end(&mut request).await.ok();
+                stream.write_all(br#"{"locked": false}"#).await.ok();
+            }
+        });
+    }
+
+    /// Types `text` through the entry point with `expect` on the fake's focused window,
+    /// with the screen unlocked.
+    async fn type_through(niri: &Compositor, dir: &Path, text: &str) -> Result<Outcome, CallError> {
+        let env = crate::Env {
+            wayland_display: Some("fake-noctalia".into()),
+            ..niri.env(dir)
+        };
+        unlocked(&env);
+        let runtime = RuntimeDir::of(&env).unwrap();
+        runtime.create().unwrap();
+        let socket = niri.niri_socket();
+        let events = niri.events();
+        let desk = Desk::start(&env);
+        let input = Input {
+            niri: Niri {
+                socket: &socket,
+                events: Ok(&events),
+                desk: &desk,
+                locks: LockSources {
+                    env: &env,
+                    noctalia: true,
+                },
+            },
+            display: &env.display,
+            runtime: &runtime,
+            policy: &Loaded::Missing,
+            keyboard: None,
+            a11y: None,
+        };
+        let typing = Typing::Text {
+            text: text.to_owned(),
+            submit: false,
+        };
+        type_input(input, typing, Expect::App(APP_ID.to_owned()), &mut None).await
+    }
+
+    /// Waits until the call's marker in `dir` is gone, as the cleanup's deadline allows.
+    async fn marker_cleared(niri: &Compositor, dir: &Path) {
+        let runtime = RuntimeDir::of(&niri.env(dir)).unwrap();
+        let until = Instant::now() + cleanup::LIMIT;
+        while marker::read(&runtime).is_some() {
+            assert!(Instant::now() < until, "the marker stayed");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn a_call_types_each_key_once_and_clears_its_marker() {
+        let dir = fresh_dir("native-entry");
+        let niri = Compositor::start(&dir, BASE);
+        let outcome = type_through(&niri, &dir, "az").await.unwrap();
+        assert_eq!(outcome.observed, Observed::Sent);
+        assert_eq!(
+            niri.seen().keys,
+            [(A, true), (A, false), (Z, true), (Z, false)]
+        );
+        marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Each key acknowledged in 1.9 s, inside a round trip's two seconds, but the second
+    /// overruns the two keys' three: the call ends `deadline_exceeded` while niri still
+    /// holds it, says what it typed, and the cleanup releases everything.
+    #[tokio::test]
+    async fn a_call_whose_last_key_overruns_its_time_ends_and_is_released() {
+        let dir = fresh_dir("native-overrun");
+        let niri = Compositor::start(&dir, BASE);
+        niri.slow_keys(Duration::from_millis(1900)).await;
+        let started = Instant::now();
+        let Err(CallError::Tool(error)) = type_through(&niri, &dir, "az").await else {
+            panic!("the call ended in time");
+        };
+        assert!(
+            started.elapsed() < Duration::from_millis(3500),
+            "{:?}",
+            started.elapsed()
+        );
+        assert_eq!(error.name, ErrorName::DeadlineExceeded);
+        assert!(
+            error
+                .detail
+                .contains("typed 1 of 2 characters, and more may have gone out; then native typing took longer than its 3s: niri hadn't acknowledged the key last sent"),
+            "{}",
+            error.detail
+        );
+        niri.slow_keys(Duration::ZERO).await;
+        marker_cleared(&niri, &dir).await;
+        let seen = niri.seen();
+        assert!(seen.held_keys().is_empty(), "{:?}", seen.keys);
+        assert_eq!(
+            seen.last_modifiers().map(|(depressed, _)| depressed),
+            Some(0)
         );
         std::fs::remove_dir_all(dir).unwrap();
     }
