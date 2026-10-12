@@ -32,6 +32,7 @@ use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::oneshot;
 
 use crate::act::Outcome;
+use crate::control::desk::Desk;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri;
 use crate::policy;
@@ -306,12 +307,21 @@ pub(crate) struct Aftercare {
 
 impl Aftercare {
     /// Tells the keeper the key is about to go out, and returns once it has admitted the
-    /// key, within `ADMIT`. Otherwise the key must not go out: the keeper hears `n` unless
-    /// it already reported, its last report goes to the call, and the error says nothing
-    /// was pasted.
-    pub(crate) async fn arm(mut self) -> Result<Self, ToolError> {
+    /// key, within `ADMIT`, while `desk`'s lock read is still fresh. Otherwise the key must
+    /// not go out: the keeper hears `n` unless it already reported, its last report goes to
+    /// the call, and the error says nothing was pasted or why the lock refused it.
+    pub(crate) async fn arm(mut self, desk: &Desk) -> Result<Self, ToolError> {
         let refused = match within(ADMIT, self.keeper.tell(b"k")).await {
-            Ok(Report::Armed) => return Ok(self),
+            Ok(Report::Armed) => {
+                // The admission's round trip may have outlasted the lock read.
+                return match desk.fresh() {
+                    Ok(()) => Ok(self),
+                    Err(error) => {
+                        self.withdraw().await;
+                        Err(error)
+                    }
+                };
+            }
             Ok(done @ Report::Done { .. }) => {
                 self.report.send(Ok(done)).ok();
                 return Err(unadmitted("it had stopped waiting for the key"));
@@ -319,9 +329,15 @@ impl Aftercare {
             Ok(other) => format!("it reported {other:?}"),
             Err(error) => error.detail,
         };
+        self.withdraw().await;
+        Err(unadmitted(&refused))
+    }
+
+    /// Says the key won't go out after all, even if admitted, and hands the keeper's last
+    /// report, once it has restored, to the call.
+    async fn withdraw(self) {
         let done = self.keeper.finish(b"n").await;
         self.report.send(done).ok();
-        Err(unadmitted(&refused))
     }
 
     /// Says the key went out, or may have, and hands the keeper's last report, once it has
@@ -394,6 +410,19 @@ pub(super) async fn fake_aftercare(
 pub(super) const STOPPED_WAITING: &str =
     r#"echo '{"report":"done","read":false,"clipboard":"restored"}'; exec cat >/dev/null"#;
 
+/// A keeper's script that admits the key a tenth of a second after the `k`, then restores
+/// the clipboard and reports which answer it heard next.
+#[cfg(test)]
+pub(super) const SLOW_ADMISSION: &str = r#"dd bs=1 count=1 status=none >/dev/null; sleep 0.1; echo '{"report":"armed"}'; c=$(dd bs=1 count=1 status=none); echo "{\"report\":\"done\",\"read\":false,\"clipboard\":\"restored\",\"detail\":\"after $c\"}""#;
+
+/// A desk in `dir` whose latest read of the lock state began `ago`.
+#[cfg(test)]
+pub(super) fn desk_read(dir: &std::path::Path, ago: Duration) -> Desk {
+    let desk = Desk::start(&crate::test_support::niri_env(dir));
+    desk.lock_read(tokio::time::Instant::now() - ago);
+    desk
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,8 +459,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_keeper_that_stopped_waiting_for_the_key_admits_none() {
+        let dir = crate::test_support::fresh_dir("arm-stopped-waiting");
         let (aftercare, done) = fake_aftercare(STOPPED_WAITING).await;
-        let Err(error) = aftercare.arm().await else {
+        let Err(error) = aftercare.arm(&desk_read(&dir, Duration::ZERO)).await else {
             panic!("a keeper that restored the clipboard admitted the key");
         };
         assert!(
@@ -447,14 +477,16 @@ mod tests {
             "{}",
             error.detail
         );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[tokio::test]
     async fn a_key_the_keeper_admits_too_late_isnt_sent_and_the_keeper_hears_n() {
         // `armed` comes past `ADMIT`; the keeper then restores on `n`.
         let script = r#"dd bs=1 count=1 status=none >/dev/null; sleep 0.8; echo '{"report":"armed"}'; c=$(dd bs=1 count=1 status=none); echo "{\"report\":\"done\",\"read\":false,\"clipboard\":\"restored\",\"detail\":\"after $c\"}""#;
+        let dir = crate::test_support::fresh_dir("arm-too-late");
         let (aftercare, done) = fake_aftercare(script).await;
-        let Err(error) = aftercare.arm().await else {
+        let Err(error) = aftercare.arm(&desk_read(&dir, Duration::ZERO)).await else {
             panic!("a key admitted too late went out");
         };
         assert!(
@@ -470,6 +502,7 @@ mod tests {
                 detail: Some("after n".to_owned())
             }
         );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     fn sent() -> Outcome {

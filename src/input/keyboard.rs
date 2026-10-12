@@ -15,6 +15,7 @@ use serde::Serialize;
 
 use crate::act::{self, Observed, Outcome};
 use crate::control::cleanup;
+use crate::control::desk::Desk;
 use crate::control::marker::{self, Child, Marker, Phase, Written};
 use crate::control::procs;
 use crate::control::runtime::RuntimeDir;
@@ -353,14 +354,16 @@ pub(crate) async fn type_input_then(
             args: &stroke.args()?,
             stdin: stroke.stdin(),
         };
-        let go = || {
+        // The marker and wtype's start may outlast the lock read, so it is read again here.
+        let go = async {
+            act::fresh_lock(input.niri).await?;
             if marks {
                 desk.sending_input()
             } else {
                 desk.fresh()
             }
         };
-        run_wtype(input.runtime, wtype, aftercare, go)
+        run_wtype(input.runtime, wtype, aftercare, go, desk)
             .await
             .map_err(|error| partly(error, &typing, sent))?;
         sent.add(&stroke);
@@ -461,7 +464,8 @@ async fn run_wtype(
     runtime: &RuntimeDir,
     wtype: Wtype<'_>,
     aftercare: &mut Option<Aftercare>,
-    go: impl FnOnce() -> Result<(), ToolError>,
+    go: impl Future<Output = Result<(), ToolError>>,
+    desk: &Desk,
 ) -> Result<(), ToolError> {
     let Wtype { tool, args, stdin } = wtype;
     let mut marker = Written::write(runtime, Marker::pending(tool, Vec::new()))
@@ -495,15 +499,16 @@ async fn run_wtype(
         let error = ToolError::new(ErrorName::UpstreamError, detail);
         return Err(cleared(marker, error).await);
     }
-    if let Err(error) = go() {
+    if let Err(error) = go.await {
         drop(gated);
         return Err(cleared(marker, error).await);
     }
     // A task of its own, so wtype finishes and the marker comes off even if the call is
     // dropped.
     let aftercare = aftercare.take();
+    let desk = desk.clone();
     let typed = cleanup::spawn(cleanup::deadline(), async move {
-        feed(gated, &stdin, marker, aftercare).await
+        feed(gated, &stdin, marker, aftercare, &desk).await
     });
     typed.await.map_err(|error| {
         ToolError::new(
@@ -513,18 +518,20 @@ async fn run_wtype(
     })?
 }
 
-/// Lets wtype past its gate and feeds it, between arming `aftercare` and saying the
-/// stroke went out, which it says even after a failure, since wtype may have typed some.
+/// Lets wtype past its gate and feeds it, between arming `aftercare` against `desk`'s lock
+/// read and saying the stroke went out, which it says even after a failure, since wtype
+/// may have typed some.
 async fn feed(
     gated: Gated,
     stdin: &[u8],
     marker: Written,
     aftercare: Option<Aftercare>,
+    desk: &Desk,
 ) -> Result<(), ToolError> {
     let Some(aftercare) = aftercare else {
         return finish(gated.feed(stdin, MAX_STDOUT).await, marker).await;
     };
-    let aftercare = match aftercare.arm().await {
+    let aftercare = match aftercare.arm(desk).await {
         Ok(armed) => armed,
         Err(error) => {
             // Still waiting at the gate: killing it now types nothing.
@@ -773,7 +780,8 @@ mod tests {
         let gated = runner::gated("sh", &["-c".to_owned(), script], &[], WTYPE_DEADLINE).unwrap();
         let (aftercare, _done) =
             crate::input::paste::fake_aftercare(crate::input::paste::STOPPED_WAITING).await;
-        let error = feed(gated, b"ctrl+v", marker, Some(aftercare))
+        let desk = crate::input::paste::desk_read(&dir, Duration::ZERO);
+        let error = feed(gated, b"ctrl+v", marker, Some(aftercare), &desk)
             .await
             .unwrap_err();
         assert!(
@@ -785,6 +793,41 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(std::fs::read(&typed).unwrap_or_default(), b"");
         // Nothing went out, so the marker is off.
+        assert!(!runtime.input_dirty().unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The keeper's admission may outlast the lock read: the key then stays at the gate,
+    /// and the keeper hears `n` and restores the clipboard.
+    #[tokio::test]
+    async fn a_paste_key_admitted_after_the_lock_read_aged_is_never_let_past_the_gate() {
+        let dir = crate::test_support::fresh_dir("feed-aged-lock");
+        let runtime = RuntimeDir::of(&crate::test_support::niri_env(&dir)).unwrap();
+        runtime.create().unwrap();
+        let marker = Written::write(&runtime, Marker::pending("paste", Vec::new()))
+            .await
+            .unwrap();
+        let typed = dir.join("typed");
+        let script = format!("cat > '{}'", typed.display());
+        let gated = runner::gated("sh", &["-c".to_owned(), script], &[], WTYPE_DEADLINE).unwrap();
+        let (aftercare, done) =
+            crate::input::paste::fake_aftercare(crate::input::paste::SLOW_ADMISSION).await;
+        // Fresh when the `k` goes out, older than `LAST_GATE` once the keeper admits.
+        let desk = crate::input::paste::desk_read(&dir, Duration::from_millis(200));
+        let error = feed(gated, b"ctrl+v", marker, Some(aftercare), &desk)
+            .await
+            .unwrap_err();
+        assert_eq!(error.name, ErrorName::ScreenLocked, "{}", error.detail);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(std::fs::read(&typed).unwrap_or_default(), b"");
+        assert_eq!(
+            done.await.unwrap().unwrap(),
+            crate::input::paste::Report::Done {
+                read: false,
+                clipboard: crate::input::paste::Clipboard::Restored,
+                detail: Some("after n".to_owned())
+            }
+        );
         assert!(!runtime.input_dirty().unwrap());
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -808,7 +851,10 @@ mod tests {
             out.display()
         );
         let (aftercare, done) = crate::input::paste::fake_aftercare(&keeper).await;
-        feed(gated, b"", marker, Some(aftercare)).await.unwrap();
+        let desk = crate::input::paste::desk_read(&dir, Duration::ZERO);
+        feed(gated, b"", marker, Some(aftercare), &desk)
+            .await
+            .unwrap();
         assert_eq!(
             done.await.unwrap().unwrap(),
             crate::input::paste::Report::Done {

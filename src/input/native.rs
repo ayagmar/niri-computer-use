@@ -15,6 +15,7 @@ use super::paste::Aftercare;
 use super::{Input, focused_app_id};
 use crate::act::{self, Observed, Outcome};
 use crate::control::cleanup;
+use crate::control::desk::Desk;
 use crate::control::marker::{self, Marker, Native, Written};
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::{
@@ -61,7 +62,7 @@ pub(super) async fn type_input(
             return Ok(ended(outcome, focus, &typing, sent));
         }
         may_press(input, waiter.view(), &typing, sent, marks).await?;
-        device.commit(aftercare).await?;
+        device.commit(aftercare, input.niri.desk).await?;
         device.stroke(key).await?;
         sent.add_key(key.character);
         // Counts only once `may_press` told the desk the key was going out.
@@ -216,11 +217,15 @@ impl Device {
     }
 
     /// Takes `aftercare`, if it is still there, and arms it.
-    async fn commit(&mut self, aftercare: &mut Option<Aftercare>) -> Result<(), ToolError> {
+    async fn commit(
+        &mut self,
+        aftercare: &mut Option<Aftercare>,
+        desk: &Desk,
+    ) -> Result<(), ToolError> {
         let Some(taken) = aftercare.take() else {
             return Ok(());
         };
-        self.aftercare = Some(taken.arm().await?);
+        self.aftercare = Some(taken.arm(desk).await?);
         Ok(())
     }
 
@@ -354,21 +359,29 @@ fn upstream(detail: &str) -> ToolError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::paste::{STOPPED_WAITING, fake_aftercare};
+    use crate::input::paste::{
+        Clipboard, Report, SLOW_ADMISSION, STOPPED_WAITING, desk_read, fake_aftercare,
+    };
 
-    #[tokio::test]
-    async fn a_paste_key_its_keeper_doesnt_admit_is_never_committed() {
-        let mut device = Device {
+    fn device() -> Device {
+        Device {
             keyboard: None,
             marker: None,
             group: 0,
             socket: Socket::unknown("no niri in this test"),
             aftercare: None,
             ends: None,
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn a_paste_key_its_keeper_doesnt_admit_is_never_committed() {
+        let dir = crate::test_support::fresh_dir("commit-unadmitted");
+        let mut device = device();
         let (aftercare, _done) = fake_aftercare(STOPPED_WAITING).await;
         let mut aftercare = Some(aftercare);
-        let error = device.commit(&mut aftercare).await.unwrap_err();
+        let desk = desk_read(&dir, Duration::ZERO);
+        let error = device.commit(&mut aftercare, &desk).await.unwrap_err();
         assert!(
             error.detail.contains("nothing was pasted"),
             "{}",
@@ -376,5 +389,30 @@ mod tests {
         );
         // The stroke after the commit doesn't run, and nothing says the key went out.
         assert!(aftercare.is_none() && device.aftercare.is_none());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The keeper's admission may outlast the lock read: the key is then never committed,
+    /// and the keeper hears `n` and restores the clipboard.
+    #[tokio::test]
+    async fn a_paste_key_admitted_after_the_lock_read_aged_is_never_committed() {
+        let dir = crate::test_support::fresh_dir("commit-aged-lock");
+        let mut device = device();
+        let (aftercare, done) = fake_aftercare(SLOW_ADMISSION).await;
+        let mut aftercare = Some(aftercare);
+        // Fresh when the `k` goes out, older than `LAST_GATE` once the keeper admits.
+        let desk = desk_read(&dir, Duration::from_millis(200));
+        let error = device.commit(&mut aftercare, &desk).await.unwrap_err();
+        assert_eq!(error.name, ErrorName::ScreenLocked, "{}", error.detail);
+        assert!(aftercare.is_none() && device.aftercare.is_none());
+        assert_eq!(
+            done.await.unwrap().unwrap(),
+            Report::Done {
+                read: false,
+                clipboard: Clipboard::Restored,
+                detail: Some("after n".to_owned())
+            }
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
