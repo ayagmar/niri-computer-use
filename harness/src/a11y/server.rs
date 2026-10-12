@@ -111,6 +111,7 @@ impl Checks<'_, '_> {
         self.moved(&window, &primary)?;
         self.tiled(window.id, &primary)?;
         self.overview(window.id)?;
+        self.unshown(window.id, &primary)?;
         self.vanished(window.id)?;
         let qt = Fixture::start(self.session, Toolkit::Qt)?;
         let qt_window = qt.window(self.session, bus)?;
@@ -248,6 +249,63 @@ impl Checks<'_, '_> {
         self.session.log(&format!(
             "M9: overview open, Primary unmappable and its click refused: {refused}; closed, it hit"
         ))
+    }
+
+    /// On a workspace that isn't shown, niri still reports the floating window's place, where
+    /// the shown workspace is: `Primary` is `not_showing`, and the ref listed while it was
+    /// shown is refused without a click. Shown again, it hits.
+    fn unshown(&mut self, window: u64, primary: &Listed) -> Result<()> {
+        let place = self.workspace_shown(window, false)?;
+        let listed = self.primary_until(window, "Primary unmappable: not_showing", |element| {
+            field(element, "/unmappable") == "not_showing"
+        })?;
+        expect(field(&listed, "/layout_box").is_null(), "no box", &listed)?;
+        let refused = self.refused_click(&primary.id)?;
+        expect(
+            field(&refused, "/error") == "element_unmappable"
+                && field(&refused, "/detail")
+                    .as_str()
+                    .is_some_and(|detail| detail.starts_with("not_showing: ")),
+            "element_unmappable: not_showing for a click on a workspace not shown",
+            &refused,
+        )?;
+        let session = &*self.session;
+        session.still_absent("m9-unshown-no-activation", SETTLE, || {
+            Ok(read_count(session, "primary-count")? != Some(ROUNDS + 3))
+        })?;
+        self.workspace_shown(window, true)?;
+        let shown = self.button(window, "Primary")?;
+        self.shot = None;
+        self.click(&shown.id)?;
+        self.counted("primary-count", ROUNDS + 4)?;
+        self.session.log(&format!(
+            "M9: on a workspace not shown, niri reported the window at {place:?}; Primary unmappable and its click refused: {refused}; shown again, it hit"
+        ))
+    }
+
+    /// Focuses the workspace below `window`'s, or back up to it, and waits until niri
+    /// reports its workspace shown or not; returns the window's place as niri reports it.
+    fn workspace_shown(&mut self, window: u64, shown: bool) -> Result<Option<(f64, f64)>> {
+        let action = if shown {
+            Action::FocusWorkspaceUp {}
+        } else {
+            Action::FocusWorkspaceDown {}
+        };
+        self.session.request(&Request::Action(action))?;
+        self.session
+            .wait_until("m9-workspace", "the window's workspace", WAIT, |session| {
+                let Some(now) = super::window(session, window)? else {
+                    return Ok(None);
+                };
+                let Response::Workspaces(workspaces) = session.request(&Request::Workspaces)?
+                else {
+                    return Ok(None);
+                };
+                let active = workspaces
+                    .iter()
+                    .any(|workspace| Some(workspace.id) == now.workspace_id && workspace.is_active);
+                Ok((active == shown).then_some(now.layout.tile_pos_in_workspace_view))
+            })
     }
 
     /// Opens or closes niri's overview, and waits until niri reports it so.
