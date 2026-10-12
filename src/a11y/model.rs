@@ -530,6 +530,18 @@ pub(crate) struct Kept {
     /// its path, as a virtualized list reuses its rows: each object from the frame's child
     /// down to the element, the element last. Never logged or returned.
     pub(crate) lineage: Vec<Link>,
+    /// The objects beside it that tell it apart from the elements of its role and name
+    /// around it, as a row's label tells its `Delete` button from the next row's; none
+    /// when its role and name alone do. Never logged or returned.
+    pub(crate) beside: Vec<Beside>,
+}
+
+/// An object beside an element: the path of its parent, none for the window's frame, and
+/// its place and name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Beside {
+    pub(crate) parent: Option<String>,
+    pub(crate) link: Link,
 }
 
 /// One object on the way from a window's frame down to an element: its path, its index
@@ -835,6 +847,8 @@ mod tests {
             pid: 4711,
             actions: Vec::new(),
             lineage: Vec::new(),
+
+            beside: Vec::new(),
         };
         let shown = placement(
             extents(40, 70, 320, 34),

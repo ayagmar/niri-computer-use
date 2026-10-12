@@ -9,7 +9,8 @@ use niri_ipc::Window;
 use serde::Serialize;
 
 use crate::a11y::model::{
-    self, Extents, Filter, Fresh, LayoutBox, Link, NameHash, Placement, Refused, Shape, Unmappable,
+    self, Beside, Extents, Filter, Fresh, LayoutBox, Link, NameHash, Placement, Refused, Shape,
+    Unmappable,
 };
 use crate::a11y::{self, A11y, Capped, ElementRef, Failed, Node, Want};
 use crate::changes::elements::{Seen, Unknown};
@@ -209,6 +210,7 @@ impl Read {
                 pid: self.pid,
                 actions: node.actions.clone(),
                 lineage: self.walked.lineage(at),
+                beside: self.walked.beside(at),
             },
         }
     }
@@ -473,7 +475,34 @@ pub(crate) async fn identify<'a>(
         }
         parent = &link.path;
     }
+    for beside in &element.kept.beside {
+        unchanged(request, element, beside).await?;
+    }
     Ok(())
+}
+
+/// Checks that an object beside the element is still at its place with its name, so the
+/// element's row still shows the record it showed when listed.
+async fn unchanged(
+    request: &a11y::Request,
+    element: &ElementRef,
+    beside: &Beside,
+) -> Result<(), ToolError> {
+    let parent = beside.parent.as_deref().unwrap_or(&element.frame);
+    let link = &beside.link;
+    let (bus, child) = request
+        .child_at(&element.bus, parent, link.index)
+        .await
+        .map_err(gone_is_stale)?;
+    let same = bus == element.bus
+        && child == link.path
+        && NameHash::of(&request.name((&bus, &child)).await.map_err(gone_is_stale)?) == link.name;
+    if same {
+        return Ok(());
+    }
+    Err(stale(
+        "the elements beside it changed since `elements` listed it, as a list's row does when it shows another record",
+    ))
 }
 
 /// Checks that `parent` still has the object of `link` at its index among its children.

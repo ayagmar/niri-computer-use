@@ -267,6 +267,14 @@ fn parent_of(stat: &str) -> Option<i32> {
     rest.split_whitespace().nth(1)?.parse().ok()
 }
 
+/// The Qt fixtures' environment: accessibility switched on, logs on stderr instead of the
+/// journal, and file writes from QML for their reports.
+const QT_ENVIRONMENT: [&str; 3] = [
+    "QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1",
+    "QT_FORCE_STDERR_LOGGING=1",
+    "QML_XHR_ALLOW_FILE_WRITE=1",
+];
+
 /// The toolkits of the fixtures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Toolkit {
@@ -288,8 +296,7 @@ pub(crate) struct Fixture {
 
 impl Fixture {
     /// Writes the fixture's source into `TEST_DIR` and starts it. The Qt fixture gets
-    /// accessibility switched on, its logs on stderr instead of the journal, and file
-    /// writes from QML for its counter, in its own environment only.
+    /// `QT_ENVIRONMENT`, in its own environment only.
     pub(crate) fn start(session: &Session<'_>, toolkit: Toolkit) -> Result<Self> {
         let root = session.test_dir().root();
         let (name, source) = match toolkit {
@@ -305,18 +312,11 @@ impl Fixture {
                 vec!["-I".into(), file.into(), root.into(), "a11y".into()],
             ),
             Toolkit::Gtk3 => ("python3", vec!["-I".into(), file.into(), root.into()]),
-            Toolkit::Qt => (
-                "env",
-                vec![
-                    "QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1".into(),
-                    "QT_FORCE_STDERR_LOGGING=1".into(),
-                    "QML_XHR_ALLOW_FILE_WRITE=1".into(),
-                    "qml6".into(),
-                    file.into(),
-                    "--".into(),
-                    root.into(),
-                ],
-            ),
+            Toolkit::Qt => {
+                let mut args: Vec<OsString> = QT_ENVIRONMENT.map(OsString::from).to_vec();
+                args.extend(["qml6".into(), file.into(), "--".into(), root.into()]);
+                ("env", args)
+            }
         };
         let log = session.artifact(&format!("fixture-{toolkit:?}.log").to_lowercase());
         let process = session.start(program, &args, log, FIXTURE_DEADLINE)?;
@@ -326,6 +326,23 @@ impl Fixture {
     /// The GTK 4 fixture's 400x300 window with a long list and a `Delete` on each row.
     pub(crate) fn start_list(session: &Session<'_>) -> Result<Self> {
         Self::start_gtk(session, "list", "fixture-list.log")
+    }
+
+    /// The Qt Quick fixture's 400x300 window with two long lists that reuse their rows,
+    /// a `Delete` on each row. Its environment is the Qt fixture's.
+    pub(crate) fn start_qt_list(session: &Session<'_>) -> Result<Self> {
+        let root = session.test_dir().root();
+        let file = root.join("qt-list.qml");
+        fs::write(&file, include_str!("../fixtures/qt-list.qml"))
+            .context(format!("write {}", file.display()))?;
+        let mut args: Vec<OsString> = QT_ENVIRONMENT.map(OsString::from).to_vec();
+        args.extend(["qml6".into(), file.into(), "--".into(), root.into()]);
+        let log = session.artifact("fixture-qt-list.log");
+        let process = session.start("env", &args, log, FIXTURE_DEADLINE)?;
+        Ok(Self {
+            toolkit: Toolkit::Qt,
+            process,
+        })
     }
 
     /// A GTK 4 window that isn't a fixture of the checks, to take focus from them.

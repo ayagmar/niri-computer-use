@@ -8,8 +8,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+use super::lists::List;
 use super::{Checks, element_ref, expect, read_count};
-use crate::a11y::{Bus, Fixture, Toolkit, rows};
+use crate::a11y::{Bus, Fixture, Toolkit};
 use crate::changes::{lists, logged, told};
 use crate::failure::{Context as _, Failure, Result};
 use crate::mcp::field;
@@ -78,13 +79,16 @@ fn relabelled(changes: &Value) -> bool {
 }
 
 impl Checks<'_, '_> {
-    /// Every toolkit's element actions and refusals, then the deny list on GTK 4.
+    /// Every toolkit's element actions and refusals, the deny list on GTK 4, then the
+    /// lists that reuse their rows.
     pub(super) fn element_actions(&mut self, bus: &Bus, server: &str) -> Result<()> {
         for toolkit in Toolkit::ALL {
             self.toolkit_actions(bus, server, toolkit)?;
         }
         self.denied(bus)?;
-        self.recycled_rows(bus)?;
+        for list in List::ALL {
+            self.recycled_rows(bus, list)?;
+        }
         self.audited()
     }
 
@@ -441,114 +445,6 @@ impl Checks<'_, '_> {
         fixture.stop().map(drop)
     }
 
-    /// GTK 4's list view keeps widgets only for the rows in view. Lists the first rows'
-    /// `Delete` buttons and deletes `Record 003` through its ref; then that ref again,
-    /// `Record 005`'s after the rows below moved up, `Record 001`'s after a short scroll
-    /// and `Record 007`'s after a jump of a hundred rows must each be `element_stale`,
-    /// deleting nothing more. Logs what GTK 4 puts on the bus after each change.
-    fn recycled_rows(&mut self, bus: &Bus) -> Result<()> {
-        let fixture = Fixture::start_list(self.session)?;
-        let list = Shown {
-            window: fixture.window(self.session, bus)?.id,
-            pid: fixture.pid(),
-        };
-        self.call("focus", json!({"window_id": list.window}))?;
-        let listing = self.list(list.window, None, None)?;
-        let rows = deletes(&listing)?;
-        let [first, _, third, _, fifth, _, seventh, ..] = rows.as_slice() else {
-            return Err(Failure::new(format!(
-                "M9b: GTK 4 list: expected seven rows with a Delete button in {listing}"
-            )));
-        };
-        let start = rows::snapshot(self.session, bus, list.pid)?;
-        self.session.log(&format!(
-            "M9b: GTK 4 list: listed (role, name) {}; bus (path, role, name, parent) {}",
-            listed(&listing),
-            rows::described(&start),
-        ))?;
-        let deleted = self.delete_row(&list, third)?;
-        expect(
-            field(&deleted, "/accepted") == true,
-            "Record 003's Delete accepted",
-            &deleted,
-        )?;
-        let removed = self.looked(bus, &list, "Record 003's Delete", &start)?;
-        let mut stale = vec![
-            self.delete_row(&list, third)?,
-            self.delete_row(&list, fifth)?,
-        ];
-        self.press(&list, "Step")?;
-        let stepped = self.looked(bus, &list, "Step", &removed)?;
-        stale.push(self.delete_row(&list, first)?);
-        self.press(&list, "Jump")?;
-        self.looked(bus, &list, "Jump", &stepped)?;
-        stale.push(self.delete_row(&list, seventh)?);
-        self.only_deleted(&stale, "Record 003")?;
-        fixture.stop().map(drop)
-    }
-
-    /// Each refusal in `stale` is `element_stale`, and the fixture deleted `record` only.
-    fn only_deleted(&self, stale: &[Value], record: &str) -> Result<()> {
-        let path = self.session.test_dir().root().join("list-deletes");
-        let deleted = fs::read_to_string(&path).context(format!("read {}", path.display()))?;
-        let deleted: Vec<String> = serde_json::from_str(&deleted)
-            .map_err(|error| Failure::new(format!("M9b: list-deletes {deleted:?}: {error}")))?;
-        let refused = stale
-            .iter()
-            .all(|result| field(result, "/error") == "element_stale");
-        expect(
-            refused && deleted == [record],
-            "every old Delete ref element_stale once the list changed, and one record deleted",
-            &json!({"stale": stale, "deleted": deleted}),
-        )
-    }
-
-    /// Activates the list window's button named `name`.
-    fn press(&mut self, list: &Shown, name: &str) -> Result<()> {
-        let element = self.named(list.window, Some("button"), name)?;
-        self.call("activate_element", activation(&element, list.window))
-            .map(drop)
-    }
-
-    /// The bus after `what`, logged with how many of the paths `before` had it kept and
-    /// which of those now have another name or a parent with another name.
-    fn looked(
-        &mut self,
-        bus: &Bus,
-        list: &Shown,
-        what: &str,
-        before: &[rows::Object],
-    ) -> Result<Vec<rows::Object>> {
-        let after = rows::snapshot(self.session, bus, list.pid)?;
-        let kept = before
-            .iter()
-            .filter(|then| after.iter().any(|now| now.path == then.path))
-            .count();
-        self.session.log(&format!(
-            "M9b: GTK 4 list: after {what}, {kept} of {} paths kept, reused for another name {}; bus {}",
-            before.len(),
-            Value::from(rows::recycled(before, &after)),
-            rows::described(&after)
-        ))?;
-        Ok(after)
-    }
-
-    /// Activates a row's `Delete` through the ref listed for it, `(ref, record)`, and
-    /// returns the result.
-    fn delete_row(&mut self, list: &Shown, row: &(String, String)) -> Result<Value> {
-        let (element, record) = row;
-        let result = self.client.call(
-            self.session,
-            "activate_element",
-            activation(element, list.window),
-        )?;
-        let result = field(&result, "/structuredContent").clone();
-        self.session.log(&format!(
-            "M9b: GTK 4 list: {record}'s Delete through its first ref: {result}"
-        ))?;
-        Ok(result)
-    }
-
     /// The audit log names the role, and the action or the text's length, of each element
     /// action that went through, and never the text set or an element's name. A ref the
     /// stop flag or a release revoked has no role. Kept as `audit-m9b.jsonl`.
@@ -606,7 +502,7 @@ impl Checks<'_, '_> {
     }
 
     /// The one element of `window` whose name contains `name`, with `role` if given.
-    fn named(&mut self, window: u64, role: Option<&str>, name: &str) -> Result<String> {
+    pub(super) fn named(&mut self, window: u64, role: Option<&str>, name: &str) -> Result<String> {
         let listing = self.list(window, role, Some(name))?;
         let found = field(&listing, "/elements")
             .as_array()
@@ -639,7 +535,12 @@ impl Checks<'_, '_> {
         element_ref(element)
     }
 
-    fn list(&mut self, window: u64, role: Option<&str>, name: Option<&str>) -> Result<Value> {
+    pub(super) fn list(
+        &mut self,
+        window: u64,
+        role: Option<&str>,
+        name: Option<&str>,
+    ) -> Result<Value> {
         let mut arguments = serde_json::Map::new();
         arguments.insert("window_id".to_owned(), json!(window));
         arguments.insert("limit".to_owned(), json!(100));
@@ -668,42 +569,7 @@ impl Checks<'_, '_> {
     }
 }
 
-/// The list fixture's window, and its process.
-struct Shown {
-    window: u64,
-    pid: i32,
-}
-
-/// Each `Delete` button of the listing, with the record of the label listed before it.
-fn deletes(listing: &Value) -> Result<Vec<(String, String)>> {
-    let mut record = None;
-    let mut rows = Vec::new();
-    for element in field(listing, "/elements").as_array().into_iter().flatten() {
-        let name = field(element, "/name").as_str().unwrap_or_default();
-        match field(element, "/role").as_str() {
-            Some("label") if name.starts_with("Record ") => record = Some(name.to_owned()),
-            Some("button") if name == "Delete" => {
-                if let Some(record) = record.take() {
-                    rows.push((element_ref(element)?, record));
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(rows)
-}
-
-/// The listing's (role, name) pairs.
-fn listed(listing: &Value) -> Value {
-    field(listing, "/elements")
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|element| json!([field(element, "/role"), field(element, "/name")]))
-        .collect()
-}
-
-fn activation(element: &str, window: u64) -> Value {
+pub(super) fn activation(element: &str, window: u64) -> Value {
     json!({"element": element, "expect": {"window_id": window}})
 }
 

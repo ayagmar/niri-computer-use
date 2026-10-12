@@ -271,6 +271,7 @@ mod tests {
                     pid: 9,
                     actions: Vec::new(),
                     lineage,
+                    beside: Vec::new(),
                 },
             },
             name: name.to_owned(),

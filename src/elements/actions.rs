@@ -722,6 +722,7 @@ mod tests {
                 pid: 1,
                 actions: names(actions),
                 lineage: Vec::new(),
+                beside: Vec::new(),
             },
         }
     }

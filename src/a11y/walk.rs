@@ -11,6 +11,8 @@ use serde::Serialize;
 use super::model::{Extents, Link, NameHash, States};
 use crate::error::{ErrorName, ToolError};
 
+mod beside;
+
 /// One accessible object, as the walk read it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Node {
@@ -60,6 +62,11 @@ pub(crate) struct Walked {
     /// Where each node of `nodes` sits: its parent among them, none under the root, and
     /// its index among the parent's children.
     places: Vec<(Option<usize>, i32)>,
+    /// Where each node's subtree ends in `nodes`: the index past its last descendant.
+    ends: Vec<usize>,
+    /// When the walk stopped with children left to read, their parents: none for the
+    /// root's.
+    unread: Vec<Option<usize>>,
     /// Set when the walk stopped early with nodes left that might have matched.
     pub(crate) capped: Option<Capped>,
 }
@@ -118,6 +125,7 @@ pub(crate) async fn walk<F: Fn(&Node) -> bool + Sync>(
     while let Some((parent, child)) = pending.pop() {
         if walked.nodes.len() == cap {
             walked.capped = Some(Capped::NodeCap);
+            walked.unread.push(parent);
             break;
         }
         let node = match source.node(&child.path).await {
@@ -125,6 +133,7 @@ pub(crate) async fn walk<F: Fn(&Node) -> bool + Sync>(
             Ok(None) => continue,
             Err(error) if error.name == ErrorName::DeadlineExceeded && source.spent() => {
                 walked.capped = Some(Capped::BudgetExhausted);
+                walked.unread.push(parent);
                 break;
             }
             Err(error) => return Err(error),
@@ -145,7 +154,24 @@ pub(crate) async fn walk<F: Fn(&Node) -> bool + Sync>(
             break;
         }
     }
+    walked
+        .unread
+        .extend(pending.into_iter().map(|(parent, _)| parent));
+    walked.ends = ends(&walked.places);
     Ok(walked)
+}
+
+/// Where each node's subtree ends, from the nodes' places in document order: a node's
+/// descendants follow it, so its subtree ends where its last child's does.
+fn ends(places: &[(Option<usize>, i32)]) -> Vec<usize> {
+    let mut ends: Vec<usize> = (1..=places.len()).collect();
+    for (index, (parent, _)) in places.iter().enumerate().rev() {
+        let end = ends.get(index).copied().unwrap_or(index + 1);
+        if let Some(parent_end) = parent.and_then(|parent| ends.get_mut(parent)) {
+            *parent_end = (*parent_end).max(end);
+        }
+    }
+    ends
 }
 
 #[cfg(test)]
@@ -158,19 +184,25 @@ mod tests {
 
     const SHOWING: u32 = (1 << 25) | (1 << 30);
 
-    /// An in-memory tree: path → (showing, children), each node named after its path.
-    /// Missing paths are gone. `/late` times out with the request's budget spent, `/hung`
+    /// An in-memory tree: path → (showing, children), each node named after its path, or
+    /// what follows a `#` in it. Missing paths are gone. `/late` times out with the request's budget spent, `/hung`
     /// times out on its own call with budget left, as a hung app does, and `/lost` fails
     /// as a lost bus connection does.
-    struct Tree {
+    pub(super) struct Tree {
         nodes: BTreeMap<&'static str, (bool, Vec<&'static str>)>,
         spent: AtomicBool,
     }
 
     impl Tree {
-        fn new<const N: usize>(nodes: [(&'static str, (bool, Vec<&'static str>)); N]) -> Self {
+        pub(super) fn new<const N: usize>(
+            nodes: [(&'static str, (bool, Vec<&'static str>)); N],
+        ) -> Self {
+            Self::of(nodes.into())
+        }
+
+        pub(super) fn of(nodes: Vec<(&'static str, (bool, Vec<&'static str>))>) -> Self {
             Self {
-                nodes: BTreeMap::from(nodes),
+                nodes: nodes.into_iter().collect(),
                 spent: AtomicBool::new(false),
             }
         }
@@ -193,7 +225,9 @@ mod tests {
             std::future::ready(Ok(self.nodes.get(path).map(|(showing, children)| Node {
                 path: path.to_owned(),
                 role: 43,
-                name: format!("name of {path}"),
+                name: path
+                    .split_once('#')
+                    .map_or_else(|| format!("name of {path}"), |(_, name)| name.to_owned()),
                 states: States::from_words(&[if *showing { SHOWING } else { 0 }]),
                 extents: None,
                 actions: Vec::new(),
@@ -217,7 +251,7 @@ mod tests {
             .collect()
     }
 
-    fn root(children: &[&str]) -> Node {
+    pub(super) fn root(children: &[&str]) -> Node {
         Node {
             path: "/root".to_owned(),
             role: 23,
@@ -233,7 +267,7 @@ mod tests {
         walked.nodes.iter().map(|node| node.path.as_str()).collect()
     }
 
-    fn everything() -> Want<fn(&Node) -> bool> {
+    pub(super) fn everything() -> Want<fn(&Node) -> bool> {
         Want {
             wanted: usize::MAX,
             matches: |_| true,
@@ -241,7 +275,10 @@ mod tests {
     }
 
     /// Wants `wanted` showing nodes whose path starts with `prefix`.
-    fn showing_under(prefix: &'static str, wanted: usize) -> Want<impl Fn(&Node) -> bool + Sync> {
+    pub(super) fn showing_under(
+        prefix: &'static str,
+        wanted: usize,
+    ) -> Want<impl Fn(&Node) -> bool + Sync> {
         Want {
             wanted,
             matches: move |node: &Node| {

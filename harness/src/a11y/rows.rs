@@ -1,4 +1,4 @@
-//! What GTK 4 puts on the accessibility bus for the list fixture's `Gtk.ListView`: each
+//! What a toolkit puts on the accessibility bus for a list fixture: each
 //! object's path, role, name and parent, before and after a record is deleted or the list
 //! scrolls, so the record of a run shows whether a row's objects keep their path while
 //! showing another record, and whether a row is named after its record. The fixture's

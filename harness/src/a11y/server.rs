@@ -5,6 +5,7 @@
 //! lock source, as in M4.
 
 mod actions;
+mod lists;
 
 use std::fs;
 use std::time::{Duration, Instant};

@@ -76,6 +76,16 @@ impl Object {
         }
     }
 
+    pub(crate) fn label(name: &str) -> Self {
+        Self {
+            role: LABEL,
+            name: name.to_owned(),
+            states: SHOWING,
+            extents: Some((10, 10, 80, 20)),
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn button(name: &str, actions: &[&str]) -> Self {
         Self {
             role: BUTTON,

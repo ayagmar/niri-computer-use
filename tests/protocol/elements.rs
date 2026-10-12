@@ -636,6 +636,113 @@ async fn an_object_reused_while_its_call_was_out_is_stale_afterwards() {
     }
 }
 
+/// A list of three rows, each a label with its record and a `Delete` button named alike:
+/// in unnamed rows, as GTK 4 and Qt Quick's list items are, or `flat`, side by side in the
+/// list as Qt Quick puts a row that is only a layout.
+fn rows(flat: bool) -> Vec<(&'static str, Object)> {
+    let labels = ["/label1", "/label2", "/label3"];
+    let deletes = ["/delete1", "/delete2", "/delete3"];
+    let mut objects = vec![
+        ("/frame", Object::frame("Mock", (800, 600), &["/list"])),
+        ("/list", Object::panel(&[])),
+    ];
+    let rows = ["/row1", "/row2", "/row3"];
+    for (number, (row, (label, delete))) in
+        (1..).zip(rows.into_iter().zip(labels.into_iter().zip(deletes)))
+    {
+        let record = format!("Record 00{number}");
+        objects.push((label, Object::label(&record)));
+        objects.push((delete, Object::button("Delete", &["click"])));
+        if !flat {
+            objects.push((row, Object::panel(&[label, delete])));
+        }
+    }
+    let children: Vec<&str> = if flat {
+        labels
+            .into_iter()
+            .zip(deletes)
+            .flat_map(<[&str; 2]>::from)
+            .collect()
+    } else {
+        rows.to_vec()
+    };
+    if let Some((_, list)) = objects.iter_mut().find(|(path, _)| *path == "/list") {
+        list.children = children.into_iter().map(str::to_owned).collect();
+    }
+    objects
+}
+
+/// The refs of the listed elements named `name`, in the listing's order.
+async fn named(desk: &mut Desk, name: &str) -> Vec<String> {
+    let listing = desk
+        .server
+        .structured_with("elements", json!({"window_id": WINDOW}))
+        .await;
+    listing["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|element| element["name"] == name)
+        .map(|element| element["element_ref"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+// A list reuses a row's objects in place for another record, as Qt Quick's list view with
+// `reuseItems` does: the row, its button and its label keep their paths and places, and
+// only the label's name says the row shows another record. The first row's `Delete` is
+// stale for every tool and nothing is sent; the second row's still acts.
+#[tokio::test]
+async fn a_row_reused_in_place_for_another_record_is_stale_for_every_tool() {
+    for flat in [false, true] {
+        let windows = [
+            app_window(WINDOW, true),
+            window_on(2, Some("other"), 1, false),
+        ];
+        let name = if flat { "el-row-flat" } else { "el-row" };
+        let mut desk = Desk::start_with(name, &["/frame"], rows(flat), &windows).await;
+        let deletes = named(&mut desk, "Delete").await;
+        let shot = desk.screenshot_ref().await;
+        desk.mock.change("/label1", |object| {
+            object.name = "Record 023".to_owned();
+        });
+        stale(&mut desk, &ACTIVATE, &deletes[0]).await;
+        let aimed = json!({"screenshot_ref": shot, "element": deletes[0]});
+        let moved = desk.server.call("pointer_move", aimed).await;
+        assert_eq!(tool_error(&moved).0, "element_stale", "{moved}");
+        let other = desk
+            .server
+            .call("activate_element", ACTIVATE.arguments(&deletes[1]))
+            .await;
+        assert_eq!(other["structuredContent"]["accepted"], true, "{other}");
+        assert_eq!(desk.mock.calls("DoAction"), 1, "flat: {flat}");
+    }
+}
+
+// A control whose role and name tell it apart from everything beside it keeps its ref
+// while a label next to it changes, as a player's elapsed time does beside its button.
+#[tokio::test]
+async fn a_control_unlike_its_neighbours_keeps_its_ref_while_they_change() {
+    let mut objects = objects();
+    objects.push(("/clock", Object::label("0:01")));
+    if let Some((_, panel)) = objects.iter_mut().find(|(path, _)| *path == "/panel") {
+        panel.children.push("/clock".to_owned());
+    }
+    let windows = [
+        app_window(WINDOW, true),
+        window_on(2, Some("other"), 1, false),
+    ];
+    let mut desk = Desk::start_with("el-unlike", &["/frame"], objects, &windows).await;
+    let button = desk.element("Safe").await;
+    desk.mock.change("/clock", |object| {
+        object.name = "0:02".to_owned();
+    });
+    let result = desk
+        .server
+        .call("activate_element", ACTIVATE.arguments(&button))
+        .await;
+    assert_eq!(result["structuredContent"]["accepted"], true, "{result}");
+}
+
 #[tokio::test]
 async fn an_element_moved_to_another_window_of_its_app_is_stale() {
     let mut desk = two_windows("el-moved").await;
