@@ -47,7 +47,9 @@ pub(crate) struct Env {
     /// The compositor instance, resolved once at startup, which names the runtime
     /// directory.
     pub(crate) instance: control::runtime::Instance,
-    pub(crate) path: Option<OsString>,
+    /// `loginctl` and `noctalia`, found by `read` and by no other constructor, so a test's
+    /// environment never searches the host's directories.
+    pub(crate) desktop: runner::Desktop,
     pub(crate) runtime_dir: Option<PathBuf>,
     pub(crate) wayland_display: Option<OsString>,
     /// The Wayland display's socket, checked against niri at each use.
@@ -63,12 +65,19 @@ pub(crate) struct Env {
 
 impl Env {
     async fn read(probe: discover::Probe) -> Self {
-        Self::from_vars(
+        let env = Self::from_vars(
             |name| std::env::var_os(name),
             &discover::Roots::host(),
             probe,
         )
-        .await
+        .await;
+        let search = std::env::var_os("NIRI_COMPUTER_USE_DESKTOP_PATH")
+            .filter(|search| !search.is_empty())
+            .unwrap_or_else(|| runner::DESKTOP_PATH.into());
+        Self {
+            desktop: runner::Desktop::find(&search),
+            ..env
+        }
     }
 
     /// The environment `var` reads, with what it lacks of the session discovered under
@@ -94,7 +103,7 @@ impl Env {
         let mut env = Self {
             niri_socket,
             instance: session.instance,
-            path: var("PATH"),
+            desktop: runner::Desktop::default(),
             wayland_display: session.wayland_display,
             display: niri::Display::default(),
             // Without the variable, D-Bus clients (libdbus, sd-bus, zbus) use the user bus
@@ -168,17 +177,6 @@ impl Env {
         .filter_map(|(name, value)| Some((name, value?)))
         .collect()
     }
-
-    /// Whether `PATH` has a file called `program` that this process may execute.
-    pub(crate) fn finds(&self, program: &str) -> bool {
-        self.path.as_deref().is_some_and(|path| {
-            let place = runner::Place {
-                path: Some(path),
-                cwd: None,
-            };
-            runner::finds(place, program)
-        })
-    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -237,7 +235,6 @@ async fn main() -> ExitCode {
                 engine: None,
                 event_stream: None,
                 audit: &audit,
-                noctalia_installed: env.finds("noctalia"),
                 lease: control::desk::status_without_desk(&env),
                 policy: &settings.policy,
                 unrestricted: &settings.unrestricted,
@@ -353,31 +350,6 @@ mod tests {
     use std::os::unix::fs::PermissionsExt as _;
 
     use super::*;
-
-    #[test]
-    fn finds_only_files_this_process_may_execute_on_path() {
-        use std::fs;
-        let dir = test_support::fresh_dir("path");
-        fs::create_dir_all(dir.join("dir-named-grim/grim")).unwrap();
-        fs::write(dir.join("wtype"), "").unwrap();
-        fs::set_permissions(dir.join("wtype"), fs::Permissions::from_mode(0o755)).unwrap();
-        fs::write(dir.join("loginctl"), "").unwrap();
-        fs::set_permissions(dir.join("loginctl"), fs::Permissions::from_mode(0o644)).unwrap();
-        // Only others may execute it, and this process is its owner.
-        fs::write(dir.join("noctalia"), "").unwrap();
-        fs::set_permissions(dir.join("noctalia"), fs::Permissions::from_mode(0o645)).unwrap();
-        let env = Env {
-            path: Some(std::env::join_paths([dir.join("missing"), dir.clone()]).unwrap()),
-            ..Env::default()
-        };
-        assert!(env.finds("wtype"));
-        assert!(!env.finds("loginctl"));
-        assert!(!env.finds("noctalia"));
-        assert!(!env.finds("grim"));
-        assert!(!env.finds("wl-copy"));
-        assert!(!Env::default().finds("wtype"));
-        fs::remove_dir_all(dir).unwrap();
-    }
 
     #[test]
     fn the_wayland_socket_is_under_the_runtime_directory_unless_absolute() {

@@ -41,8 +41,6 @@ pub(crate) struct Engine {
     events: Result<EventStream, ToolError>,
     audit: Audit,
     desk: Desk,
-    /// Decided once, because the tool list depends on it.
-    noctalia_installed: bool,
     /// Whether there is an accessibility bus, decided once at startup for the same reason.
     accessibility: Presence,
     /// The accessibility bus, when there is one.
@@ -161,7 +159,6 @@ impl Engine {
         let a11y = accessibility.address.clone().map(A11y::new);
         Self {
             desk: Desk::start(&env),
-            noctalia_installed: env.finds("noctalia"),
             env,
             events,
             audit,
@@ -223,8 +220,9 @@ impl Engine {
         &self.audit
     }
 
+    /// Found once at startup, because the tool list depends on it.
     pub(crate) const fn noctalia_installed(&self) -> bool {
-        self.noctalia_installed
+        self.env.desktop.noctalia.is_some()
     }
 
     pub(crate) const fn has_a11y(&self) -> bool {
@@ -297,7 +295,6 @@ impl Engine {
             engine: Some(engine),
             event_stream: Some(event_stream),
             audit: &self.audit,
-            noctalia_installed: self.noctalia_installed,
             lease: self.desk.status(session),
             policy: &settings.policy,
             unrestricted: &settings.unrestricted,
@@ -305,7 +302,7 @@ impl Engine {
             place: settings.place(),
             accessibility: &self.accessibility,
         };
-        status::collect(&self.env, sources).await
+        Box::pin(status::collect(&self.env, sources)).await
     }
 
     /// Takes the lease for `session`, labelled `label`, and watches the clipboard from
@@ -446,7 +443,7 @@ impl Engine {
     /// installed, its status or why it has none.
     pub(crate) async fn desktop(&self) -> Result<Desktop, ToolError> {
         let shell = async {
-            if self.noctalia_installed {
+            if self.noctalia_installed() {
                 Some(noctalia::status(&self.env).await)
             } else {
                 None
@@ -625,7 +622,7 @@ impl Engine {
     const fn lock_sources(&self) -> control::LockSources<'_> {
         control::LockSources {
             env: &self.env,
-            noctalia: self.noctalia_installed,
+            noctalia: self.noctalia_installed(),
         }
     }
 

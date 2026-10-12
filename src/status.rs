@@ -23,8 +23,6 @@ use crate::{Env, a11y, discover};
 
 /// Programs the server runs for the session asking, found on its `PATH` or not.
 const SESSION_BINARIES: [&str; 2] = ["grim", "wtype"];
-/// Programs the server runs for every session, found on its own `PATH` or not.
-const OWN_BINARIES: [&str; 1] = ["loginctl"];
 
 #[derive(Debug, Serialize)]
 pub(crate) struct Status {
@@ -60,19 +58,19 @@ pub(crate) struct Status {
     /// Which tools this session lists, and what narrowed them.
     tools: ToolsStatus,
     binaries: BTreeMap<&'static str, bool>,
+    /// Where `loginctl` and `noctalia` were found at startup, for every session alike.
+    desktop_programs: runner::Desktop,
 }
 
 /// What the caller knows that `status` reports: the event stream's state (none in the
-/// subcommand, which opens no stream), whether Noctalia is installed (decided once at
-/// startup for the server, whose tool list depends on it), the lease (from the server's
-/// desk, or from the runtime directory in the subcommand), and the policy file as loaded.
+/// subcommand, which opens no stream), the lease (from the server's desk, or from the
+/// runtime directory in the subcommand), and the policy file as loaded.
 #[derive(Debug)]
 pub(crate) struct Sources<'a> {
     /// The engine serving the session; none for the `status` subcommand.
     pub(crate) engine: Option<EngineStatus>,
     pub(crate) event_stream: Option<StreamState>,
     pub(crate) audit: &'a Audit,
-    pub(crate) noctalia_installed: bool,
     pub(crate) lease: LeaseStatus,
     pub(crate) policy: &'a Loaded,
     pub(crate) unrestricted: &'a Unrestricted,
@@ -157,7 +155,6 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         engine,
         event_stream,
         audit,
-        noctalia_installed,
         lease,
         policy,
         unrestricted,
@@ -167,7 +164,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
     } = sources;
     let socket = &env.niri_socket;
     let noctalia = async {
-        if noctalia_installed {
+        if env.desktop.noctalia.is_some() {
             Some(noctalia::status(env).await)
         } else {
             None
@@ -177,7 +174,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         niri::version(socket),
         niri::outputs(socket),
         noctalia,
-        control::logind(socket)
+        control::logind(socket, &env.desktop)
     );
     let noctalia_status = noctalia.as_ref().and_then(|reply| reply.as_ref().ok());
     let lock = control::lock(logind, noctalia_status);
@@ -220,8 +217,8 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         binaries: SESSION_BINARIES
             .map(|name| (name, runner::finds(place, name)))
             .into_iter()
-            .chain(OWN_BINARIES.map(|name| (name, env.finds(name))))
             .collect(),
+        desktop_programs: env.desktop.clone(),
     }
 }
 
@@ -250,7 +247,6 @@ mod tests {
             engine: None,
             event_stream: None,
             audit: &audit,
-            noctalia_installed: false,
             lease: status_without_desk(&Env::default()),
             policy: &Loaded::Missing,
             unrestricted: &Unrestricted {
@@ -312,9 +308,8 @@ mod tests {
                 },
                 "unrestricted": {"enabled": false, "source": null, "error": null},
                 "tools": {"profile": "full", "source": null, "error": null},
-                "binaries": {
-                    "grim": false, "loginctl": false, "wtype": false
-                }
+                "binaries": {"grim": false, "wtype": false},
+                "desktop_programs": {"search": "", "loginctl": null, "noctalia": null}
             })
         );
     }

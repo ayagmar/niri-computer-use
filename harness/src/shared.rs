@@ -44,8 +44,8 @@ pub(crate) fn check(test_dir: &TestDir, artifacts: &Path, log: &mut Log) -> Resu
 
 /// Waits for every shared engine under `TEST_DIR` to exit, so that the next server starts
 /// an engine of its own, with its own environment. An engine decides at startup what it
-/// finds on `PATH`, such as Noctalia, for every client it serves. Returns at once in
-/// standalone runs, which start no engine.
+/// finds in the desktop's directories, such as Noctalia, for every client it serves.
+/// Returns at once in standalone runs, which start no engine.
 pub(crate) fn no_engine_left(session: &mut Session<'_>, step: &str) -> Result<()> {
     session.wait_until(step, "the shared engine's exit", ENGINE_EXIT, |session| {
         Ok(engine_sockets(session.test_dir())?.is_empty().then_some(()))

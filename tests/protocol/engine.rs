@@ -31,6 +31,7 @@ fn hello(fixture: &Fixture) -> Value {
         },
         "niri_socket": fixture.niri_socket(),
         "wayland_socket": fixture.path(&format!("run/{DISPLAY}")),
+        "desktop_path": fixture.env()["NIRI_COMPUTER_USE_DESKTOP_PATH"].to_str().unwrap(),
         "unrestricted": null,
         "keyboard": null,
         "home": null,

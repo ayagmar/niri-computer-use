@@ -87,6 +87,8 @@ pub(crate) struct Hello {
     exe: Exe,
     niri_socket: PathBuf,
     wayland_socket: Option<PathBuf>,
+    /// Where the bridge looks for `loginctl` and `noctalia`.
+    desktop_path: String,
     unrestricted: Option<String>,
     tools: Option<String>,
     keyboard: Option<String>,
@@ -97,12 +99,14 @@ pub(crate) struct Hello {
 
 impl Hello {
     /// The hello of a bridge running `exe` for the niri on `niri_socket` and the display
-    /// on `wayland_socket`, for a client whose environment gave `given`. A policy file over
-    /// `MAX_POLICY` is sent as unreadable. Fails on a value that isn't UTF-8.
+    /// on `wayland_socket`, looking for the desktop's programs in `desktop_path`, for a
+    /// client whose environment gave `given`. A policy file over `MAX_POLICY` is sent as
+    /// unreadable. Fails on a value that isn't UTF-8.
     pub(crate) fn new(
         exe: Exe,
         niri_socket: &Path,
         wayland_socket: Option<&Path>,
+        desktop_path: &str,
         given: Given,
     ) -> Result<Self, String> {
         let utf8 = |name: &str, value: Option<std::ffi::OsString>| {
@@ -131,6 +135,7 @@ impl Hello {
             exe,
             niri_socket: niri_socket.to_path_buf(),
             wayland_socket: wayland_socket.map(Path::to_path_buf),
+            desktop_path: desktop_path.to_owned(),
             unrestricted: utf8("NIRI_COMPUTER_USE_UNRESTRICTED", given.unrestricted)?,
             tools: utf8("NIRI_COMPUTER_USE_TOOLS", given.tools)?,
             keyboard: utf8("NIRI_COMPUTER_USE_KEYBOARD", given.keyboard)?,
@@ -164,7 +169,8 @@ pub(crate) enum Reply {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Refusal {
-    /// The bridge found another niri or display than the engine serves.
+    /// The bridge found another niri or display than the engine serves, or looks for the
+    /// desktop's programs elsewhere.
     SessionMismatch,
     /// The bridge runs another build, or speaks another hello.
     EngineVersion,
@@ -184,13 +190,14 @@ pub(crate) fn resolved(display: &Path) -> PathBuf {
 }
 
 /// What the engine compares a hello with: its own build, its resolved niri socket and
-/// display.
+/// display, and where it looked for the desktop's programs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Own {
     pub(crate) pid: u32,
     pub(crate) exe: Exe,
     pub(crate) niri_socket: PathBuf,
     pub(crate) wayland_socket: Option<PathBuf>,
+    pub(crate) desktop_path: String,
 }
 
 impl Own {
@@ -228,6 +235,17 @@ impl Own {
                 ),
             ));
         }
+        // Each client of an engine gets the `loginctl` and `noctalia` it found, so a
+        // client's own setting can't change them for the others.
+        if hello.desktop_path != self.desktop_path {
+            return Err((
+                Refusal::SessionMismatch,
+                format!(
+                    "the bridge looks for loginctl and noctalia in {:?}; this engine looked in {:?}",
+                    hello.desktop_path, self.desktop_path,
+                ),
+            ));
+        }
         Ok(hello)
     }
 }
@@ -248,6 +266,7 @@ mod tests {
             },
             niri_socket: PathBuf::from("/run/user/1000/niri.wayland-1.42.sock"),
             wayland_socket: Some(PathBuf::from("/run/user/1000/wayland-1")),
+            desktop_path: "/usr/bin".to_owned(),
         }
     }
 
@@ -258,6 +277,7 @@ mod tests {
             exe,
             niri_socket: PathBuf::from(niri),
             wayland_socket: display.map(PathBuf::from),
+            desktop_path: "/usr/bin".to_owned(),
             unrestricted: Some("1".to_owned()),
             tools: Some("act".to_owned()),
             keyboard: None,
@@ -317,6 +337,11 @@ mod tests {
             refusal(&own, &hello(own.exe, NIRI, None)),
             Refusal::SessionMismatch
         );
+        let elsewhere = Hello {
+            desktop_path: "/opt/bin".to_owned(),
+            ..hello(own.exe, NIRI, DISPLAY)
+        };
+        assert_eq!(refusal(&own, &elsewhere), Refusal::SessionMismatch);
         let newer = Hello {
             version: 2,
             ..hello(own.exe, NIRI, DISPLAY)
@@ -342,7 +367,16 @@ mod tests {
                 text,
             },
         };
-        let sent = |text| Hello::new(own.exe, &own.niri_socket, None, given(text)).unwrap();
+        let sent = |text| {
+            Hello::new(
+                own.exe,
+                &own.niri_socket,
+                None,
+                &own.desktop_path,
+                given(text),
+            )
+            .unwrap()
+        };
         assert!(matches!(
             sent("#".repeat(MAX_POLICY)).given().policy,
             policy::Source::Text { .. }

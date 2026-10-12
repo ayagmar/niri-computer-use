@@ -14,7 +14,7 @@
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `status` | none | readiness: niri's version and event stream, who holds the lease, the stop flag, the input-dirty marker, lock state, whether the outputs suit the pointer (`outputs.pointer_supported`), Noctalia, the policy file and its preset names, the audit log, programs on `PATH` |
+| `status` | none | readiness: niri's version and event stream, who holds the lease, the stop flag, the input-dirty marker, lock state, whether the outputs suit the pointer (`outputs.pointer_supported`), Noctalia, the policy file and its preset names, the audit log, the programs it found (`binaries`, `desktop_programs`) |
 | `desktop_state` | none | one snapshot: windows, workspaces, `focused_window`, `overview_open`, keyboard layouts, `outputs` (by name, with `logical` position, size, scale and transform, or null when off), and with Noctalia installed `shell`: its `barVisible`, `panelOpen`, `activePanelId` and `locked`, or `error: noctalia_unavailable` |
 | `screenshot` | `target`, and optionally `region`, `max_width`, `format`, `save_path` | an image, then metadata: output, captured rectangle in layout coordinates, scale, image size, and `screenshot_ref` while you hold the lease; with `save_path`, `saved`: the PNG's path and pixel size |
 | `clipboard_read` | none; needs the lease | `text` copied since you took the lease, or `text: null` with `reason` `copied_before_lease` (the user's earlier clipboard, or nothing copied since), `nothing_copied`, `no_text` or `secret` (a password manager's copy, or text a paste left behind; ask the user for what you need rather than work around it) |

@@ -27,7 +27,7 @@ niri-computer-use status
 
 Prints the readiness report as JSON and exits 0, whatever the report says. It is the same report as the `status` tool, except that `niri.event_stream` is null, because the subcommand opens no event stream, and `lease.held_by_me` is false. The fields are described under [`status`](../../tools/looking/#status).
 
-It asks niri for its version and outputs, logind for the lock state and, when `noctalia` is on `PATH`, Noctalia for its status. It changes nothing.
+It asks niri for its version and outputs, logind for the lock state and, when it finds `noctalia`, Noctalia for its status. It changes nothing.
 
 ## `stop`
 

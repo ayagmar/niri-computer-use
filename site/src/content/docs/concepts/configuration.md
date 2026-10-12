@@ -139,7 +139,8 @@ The server reads these once, at startup. When `XDG_RUNTIME_DIR`, `NIRI_SOCKET` o
 | `XDG_RUNTIME_DIR` | finding niri's socket, the display and the session bus |
 | `WAYLAND_DISPLAY` | the pointer tools, pasting, `clipboard_read`, and finding Noctalia's socket |
 | `DBUS_SESSION_BUS_ADDRESS` | finding the accessibility bus for `elements`; without it, `$XDG_RUNTIME_DIR/bus` |
-| `PATH` | `grim` and `wtype` for this client's calls; `loginctl` and `noctalia` for the server, or in [shared](#shared) mode for the engine, from the `PATH` of the client that started it |
+| `PATH` | `grim` and `wtype` for this client's calls |
+| `NIRI_COMPUTER_USE_DESKTOP_PATH` | where to look for `loginctl` and `noctalia`, as a `PATH`-style list of absolute directories; unset or empty looks in `/usr/local/bin:/usr/bin:/bin:/run/current-system/sw/bin`. In [shared](#shared) mode, a client that sets other directories than the engine's is served standalone |
 | `XDG_CONFIG_HOME`, else `HOME` | the policy file |
 | `XDG_STATE_HOME`, else `HOME` | the audit log |
 | `HOME` | a `capture_dir` that starts with `~/` |

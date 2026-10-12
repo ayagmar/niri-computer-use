@@ -4,7 +4,9 @@
 //! the allowlist return `panel_not_allowed` without opening anything. With Noctalia
 //! stopped, `desktop_state`'s `shell` is `noctalia_unavailable` and, with no lock source
 //! left, `shell_panel` is refused as `screen_locked`. A server whose `PATH` has no
-//! `noctalia` lists no shell tools and reports Noctalia as not installed.
+//! `noctalia` still finds it in the desktop's directories, and one whose
+//! `NIRI_COMPUTER_USE_DESKTOP_PATH` has none lists no shell tools and reports Noctalia as
+//! not installed.
 
 use std::ffi::OsString;
 use std::fs;
@@ -52,6 +54,7 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
     noctalia.stop()?;
     stopped(session, &mut client)?;
     client.stop()?;
+    path_without_noctalia(session, server)?;
     not_installed(session, server)
 }
 
@@ -122,22 +125,54 @@ fn stopped(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
     ))
 }
 
-/// A server started with an empty `PATH` directory doesn't find `noctalia`. In a shared
-/// run it starts an engine with that `PATH` once the last one has exited.
-fn not_installed(session: &mut Session<'_>, server: &str) -> Result<()> {
-    crate::shared::no_engine_left(session, "m5-engine-gone")?;
-    let empty = session.test_dir().root().join("path-without-noctalia");
+/// A server started with `variable` set to an empty directory: its tool list and status.
+fn with_empty(
+    session: &mut Session<'_>,
+    server: &str,
+    variable: &str,
+) -> Result<(Vec<String>, Value)> {
+    let empty = session.test_dir().root().join("empty-directory");
     fs::create_dir_all(&empty).context(format!("create {}", empty.display()))?;
-    let mut path = OsString::from("PATH=");
-    path.push(&empty);
-    let args = [path, server.into(), "serve".into()];
-    let mut client = Client::start_command(session, "env", &args, "harness-m5-no-noctalia", READY)?;
+    let mut setting = OsString::from(format!("{variable}="));
+    setting.push(&empty);
+    let args = [setting, server.into(), "serve".into()];
+    let name = format!("harness-m5-empty-{}", variable.to_lowercase());
+    let mut client = Client::start_command(session, "env", &args, &name, READY)?;
     let tools = client.tools(session)?;
     let status = structured(&client.call(session, "status", json!({}))?)?;
     client.stop()?;
+    Ok((tools, status))
+}
+
+/// A server whose `PATH` has no `noctalia` still finds the desktop's, which is stopped by
+/// now, and lists the shell tools. In a shared run it joins the engine.
+fn path_without_noctalia(session: &mut Session<'_>, server: &str) -> Result<()> {
+    let (tools, status) = with_empty(session, server, "PATH")?;
+    expect(
+        tools.contains(&"shell_panel".into()),
+        "the shell tools without noctalia on PATH",
+        &tools.join(", "),
+    )?;
+    expect(
+        field(&status, "/noctalia") == "not_running",
+        "Noctalia installed but stopped without noctalia on PATH",
+        &status.to_string(),
+    )?;
+    session.log(&format!(
+        "M5: without noctalia on PATH: noctalia not_running, found at {}",
+        field(&status, "/desktop_programs/noctalia")
+    ))
+}
+
+/// A server whose desktop directories have no `noctalia` doesn't find it. In a shared run
+/// it starts an engine with them once the last one has exited, since an engine refuses a
+/// client that names other directories.
+fn not_installed(session: &mut Session<'_>, server: &str) -> Result<()> {
+    crate::shared::no_engine_left(session, "m5-engine-gone")?;
+    let (tools, status) = with_empty(session, server, "NIRI_COMPUTER_USE_DESKTOP_PATH")?;
     expect(
         !tools.iter().any(|tool| tool.starts_with("shell_")) && tools.contains(&"status".into()),
-        "no shell tools without noctalia on PATH",
+        "no shell tools without noctalia in the desktop's directories",
         &tools.join(", "),
     )?;
     expect(
@@ -146,7 +181,7 @@ fn not_installed(session: &mut Session<'_>, server: &str) -> Result<()> {
         &status.to_string(),
     )?;
     session.log(&format!(
-        "M5: without noctalia on PATH: noctalia not_installed, tools {}",
+        "M5: without noctalia in the desktop's directories: noctalia not_installed, tools {}",
         tools.join(", ")
     ))
 }

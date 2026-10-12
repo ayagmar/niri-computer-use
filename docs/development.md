@@ -31,7 +31,7 @@ cargo test --locked --test protocol
 
 Each test gets a directory of its own under `/tmp`, whatever `TMPDIR` says, because the fake sockets inside it must fit the 108-byte limit on Unix socket paths. It starts the server with only seven variables set, all pointing into it:
 
-- `PATH` holds fake `grim`, `loginctl` and `noctalia` scripts and nothing else.
+- `PATH` holds fake `grim`, `loginctl` and `noctalia` scripts and nothing else, and `NIRI_COMPUTER_USE_DESKTOP_PATH` names the same directory, so the server never finds the host's `loginctl` or `noctalia`.
 - `NIRI_SOCKET` is a fake niri that answers `Version`, `Outputs`, `FocusedOutput`, `Windows` and `Workspaces` and lets the test write each event stream line by line.
 - `XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY` lead to a fake Noctalia socket when the test starts one, and to the Wayland display, served by a fake clipboard owner (`tests/protocol/clipboard.rs`) with nothing copied, so the clipboard watcher `acquire_desktop` starts can bind: just enough of the Wayland wire protocol and wlr data-control to announce selections and answer their reads. The clipboard tests copy through it.
 - `XDG_SESSION_ID` is `7`. The server ignores it: the lock state asks logind about niri's own session, which the lock tests set by running the fake niri as a process of its own (`tests/protocol/session.rs`).

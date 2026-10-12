@@ -70,6 +70,7 @@ pub(crate) async fn run(env: Env, unscoped: Option<String>) -> Result<(), String
         exe: hello::Exe::current()?,
         niri_socket: env.instance.socket().map_err(Clone::clone)?.to_path_buf(),
         wayland_socket: env.display.path().ok().map(hello::resolved),
+        desktop_path: env.desktop.search.clone(),
     };
     let mut engine = Engine::start(env, Mode::Shared, None).await?;
     engine.unscoped = unscoped;

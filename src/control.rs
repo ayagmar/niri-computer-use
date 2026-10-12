@@ -23,7 +23,7 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use crate::niri::Socket;
-use crate::runner::{self, Search};
+use crate::runner::{self, Desktop, Search};
 use crate::{Env, niri, noctalia};
 
 const LOGINCTL_DEADLINE: Duration = Duration::from_secs(2);
@@ -79,7 +79,8 @@ impl LockSources<'_> {
                 None
             }
         };
-        let (status, logind) = tokio::join!(status, logind(&self.env.niri_socket));
+        let (status, logind) =
+            tokio::join!(status, logind(&self.env.niri_socket, &self.env.desktop));
         lock(logind, status.as_ref())
     }
 }
@@ -91,11 +92,11 @@ pub(crate) struct Logind {
     hint: Result<bool, String>,
 }
 
-/// Asks logind for the locked hint of niri's session.
-pub(crate) async fn logind(niri_socket: &Socket) -> Logind {
+/// Asks logind for the locked hint of niri's session, through the desktop's `loginctl`.
+pub(crate) async fn logind(niri_socket: &Socket, desktop: &Desktop) -> Logind {
     let session = niri_session(niri_socket).await;
     let hint = match &session {
-        Ok(id) => locked_hint(id).await,
+        Ok(id) => locked_hint(desktop, id).await,
         Err(error) => Err(error.clone()),
     };
     Logind { session, hint }
@@ -130,7 +131,7 @@ async fn niri_session(niri_socket: &Socket) -> Result<String, String> {
 }
 
 /// `loginctl show-session <id> -p LockedHint --value`, which prints `yes` or `no`.
-async fn locked_hint(id: &str) -> Result<bool, String> {
+async fn locked_hint(desktop: &Desktop, id: &str) -> Result<bool, String> {
     // logind session IDs are short alphanumeric names such as `3` or `c2`. Anything else
     // could be read as an option, and `self` and `auto` name the caller's session, not
     // niri's.
@@ -141,9 +142,11 @@ async fn locked_hint(id: &str) -> Result<bool, String> {
     {
         return Err(format!("XDG_SESSION_ID {id:?} isn't a logind session ID"));
     }
+    let Some(loginctl) = &desktop.loginctl else {
+        return Err(format!("no loginctl in {}", desktop.search));
+    };
     let args = ["show-session", id, "-p", "LockedHint", "--value"].map(str::to_owned);
-    // The lock is the desktop's, asked about for every client, so on the engine's `PATH`.
-    let done = runner::run("loginctl", Search::Own, &args, LOGINCTL_DEADLINE, 1024)
+    let done = runner::run(loginctl, Search::Own, &args, LOGINCTL_DEADLINE, 1024)
         .await
         .map_err(|error| error.detail)?;
     if !done.status.success() {
@@ -238,7 +241,7 @@ mod tests {
     #[tokio::test]
     async fn a_session_id_that_could_be_an_option_is_refused() {
         for id in ["", "--help", "3 4", "c2;x", "self", "auto"] {
-            let error = locked_hint(id).await.unwrap_err();
+            let error = locked_hint(&Desktop::default(), id).await.unwrap_err();
             assert!(
                 error.contains("isn't a logind session ID"),
                 "{id:?}: {error}"

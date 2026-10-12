@@ -212,6 +212,44 @@ async fn unrestricted_per_client(first: bool) {
     }
 }
 
+/// The engine's `loginctl` and `noctalia` come from the desktop's directories, not from
+/// the `PATH` of the client that starts it, and a client that names other directories is
+/// served standalone with what it found, leaving the engine's clients theirs.
+#[tokio::test]
+async fn the_first_clients_path_decides_nothing_for_the_desktop() {
+    let mut fixture = shared("shared-desktop-path");
+    fixture.program("noctalia", "exit 0");
+    fixture.program("loginctl", "echo no");
+    noctalia::start(&fixture, UNLOCKED);
+    let _niri = NiriProcess::start(&fixture, Some("c4")).await;
+    std::fs::create_dir(fixture.path("empty")).unwrap();
+    fixture.set("PATH", fixture.path("empty"));
+    let mut narrow = Server::start(&fixture).await;
+    let engine = engine(&fixture).await;
+    fixture.set("PATH", fixture.path("bin"));
+    let mut joined = Server::start(&fixture).await;
+    fixture.set("NIRI_COMPUTER_USE_DESKTOP_PATH", fixture.path("empty"));
+    let mut elsewhere = Server::start(&fixture).await;
+    assert_eq!(engines(&fixture), [engine]);
+    for server in [&mut narrow, &mut joined] {
+        assert_eq!(i32::try_from(server.serving_pid().await).unwrap(), engine);
+        let status = server.structured("status").await;
+        assert_eq!(status["noctalia"], "running", "{status}");
+        assert_eq!(status["lock"]["source"], "logind", "{status}");
+    }
+    let status = elsewhere.structured("status").await;
+    assert_eq!(status["noctalia"], "not_installed", "{status}");
+    let logind = status["lock"]["logind_error"].as_str().unwrap();
+    assert!(logind.starts_with("no loginctl in "), "{status}");
+    let (_, _, stderr) = elsewhere.stop().await;
+    assert!(
+        stderr.contains(
+            "refused this client (session_mismatch): the bridge looks for loginctl and noctalia in"
+        ),
+        "{stderr}"
+    );
+}
+
 #[tokio::test]
 async fn a_client_on_another_display_is_served_standalone() {
     let mut fixture = shared("shared-mismatch");

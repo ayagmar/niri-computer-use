@@ -2207,7 +2207,7 @@ mod tests {
         std::fs::write(&noctalia, "").unwrap();
         std::fs::set_permissions(&noctalia, std::fs::Permissions::from_mode(0o755)).unwrap();
         let installed = engine(Env {
-            path: Some(dir.clone().into_os_string()),
+            desktop: crate::runner::Desktop::find(dir.as_os_str()),
             ..Env::default()
         });
         let missing = server(&engine(Env::default()), false, None);
@@ -2259,7 +2259,7 @@ mod tests {
         std::fs::write(&noctalia, "").unwrap();
         std::fs::set_permissions(&noctalia, std::fs::Permissions::from_mode(0o755)).unwrap();
         let env = Env {
-            path: Some(dir.clone().into_os_string()),
+            desktop: crate::runner::Desktop::find(dir.as_os_str()),
             ..Env::default()
         };
         let events = Err(ToolError::new(ErrorName::NiriUnavailable, "no niri"));

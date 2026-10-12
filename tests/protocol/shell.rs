@@ -47,10 +47,10 @@ async fn noctalia_stopped_is_not_running_with_the_reason() {
 }
 
 #[tokio::test]
-async fn noctalia_absent_from_path_is_not_installed() {
+async fn noctalia_absent_from_the_desktop_path_is_not_installed() {
     let fixture = Fixture::new("noctalia-none");
     loginctl(&fixture, "no");
-    // A Noctalia socket alone doesn't count: the tool list depends on `PATH`.
+    // A Noctalia socket alone doesn't count: the tool list depends on the program.
     noctalia::start(&fixture, UNLOCKED);
     let _niri = NiriProcess::start(&fixture, Some("c4")).await;
     let mut server = Server::start(&fixture).await;
@@ -58,6 +58,29 @@ async fn noctalia_absent_from_path_is_not_installed() {
     assert_eq!(status["noctalia"], "not_installed");
     assert_eq!(status["noctalia_error"], Value::Null);
     assert_eq!(status["lock"]["source"], "logind");
+}
+
+/// `loginctl` and `noctalia` describe the desktop, so a client whose `PATH` has neither
+/// still gets logind's lock state and Noctalia's tools, standalone or shared.
+#[tokio::test]
+async fn a_client_path_without_the_desktop_programs_still_finds_them() {
+    let mut fixture = Fixture::new("desktop-path");
+    loginctl(&fixture, "no");
+    fixture.program("noctalia", "exit 0");
+    noctalia::start(&fixture, UNLOCKED);
+    let _niri = NiriProcess::start(&fixture, Some("c4")).await;
+    std::fs::create_dir(fixture.path("empty")).unwrap();
+    fixture.set("PATH", fixture.path("empty"));
+    let mut server = Server::start(&fixture).await;
+    let status = server.structured("status").await;
+    assert_eq!(status["noctalia"], "running", "{status}");
+    assert_eq!(status["lock"]["source"], "logind", "{status}");
+    assert_eq!(
+        status["desktop_programs"]["loginctl"],
+        fixture.path("bin/loginctl").to_str().unwrap()
+    );
+    let tools = server.tools().await;
+    assert!(tools.iter().any(|tool| tool["name"] == "shell_panel"));
 }
 
 /// The `lock` block of `status`, with niri running in the session `session`.

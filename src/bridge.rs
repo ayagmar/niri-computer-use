@@ -81,7 +81,13 @@ impl Target {
         let runtime = RuntimeDir::of(env)?;
         let niri = env.instance.socket().map_err(Clone::clone)?;
         let display = env.display.path().ok().map(hello::resolved);
-        let hello = Hello::new(Exe::current()?, niri, display.as_deref(), given)?;
+        let hello = Hello::new(
+            Exe::current()?,
+            niri,
+            display.as_deref(),
+            &env.desktop.search,
+            given,
+        )?;
         let mut line =
             serde_json::to_vec(&hello).map_err(|error| format!("write the hello: {error}"))?;
         line.push(b'\n');

@@ -52,6 +52,10 @@ pub(crate) struct Place<'a> {
 /// Where `execvp` looks when `PATH` is unset: glibc's `_CS_PATH`.
 const DEFAULT_PATH: &str = "/bin:/usr/bin";
 
+/// Where the desktop's programs are looked for unless `NIRI_COMPUTER_USE_DESKTOP_PATH`
+/// names other directories: the system's own, whatever `PATH` the process got.
+pub(crate) const DESKTOP_PATH: &str = "/usr/local/bin:/usr/bin:/bin:/run/current-system/sw/bin";
+
 /// Whether `place` has a file called `program` that this process may execute. Only for
 /// reporting: the start itself searches, as `execvp` does.
 pub(crate) fn finds(place: Place<'_>, program: &str) -> bool {
@@ -61,14 +65,48 @@ pub(crate) fn finds(place: Place<'_>, program: &str) -> bool {
             Some(cwd) => cwd.join(dir).join(program),
             None => dir.join(program),
         };
-        file.is_file() && rustix::fs::access(&file, rustix::fs::Access::EXEC_OK).is_ok()
+        executable(&file)
     })
+}
+
+fn executable(file: &Path) -> bool {
+    file.is_file() && rustix::fs::access(file, rustix::fs::Access::EXEC_OK).is_ok()
+}
+
+/// The programs that describe the desktop rather than one client, `loginctl` for the lock
+/// state and `noctalia` for the shell, found once at startup in `search`. A client's
+/// `PATH` never decides them, since in shared mode they serve every client.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct Desktop {
+    /// The directories searched, in order; only absolute ones count.
+    pub(crate) search: String,
+    pub(crate) loginctl: Option<PathBuf>,
+    pub(crate) noctalia: Option<PathBuf>,
+}
+
+impl Desktop {
+    /// Looks in `search`'s absolute directories for the first file of each name that this
+    /// process may execute. A relative directory would depend on the working directory,
+    /// which is the first client's in an engine it started.
+    pub(crate) fn find(search: &OsStr) -> Self {
+        let locate = |program| {
+            std::env::split_paths(search)
+                .filter(|dir| dir.is_absolute())
+                .map(|dir| dir.join(program))
+                .find(|file| executable(file))
+        };
+        Self {
+            search: search.to_string_lossy().into_owned(),
+            loginctl: locate("loginctl"),
+            noctalia: locate("noctalia"),
+        }
+    }
 }
 
 /// A command for `program`, to be looked up as `search` says. A client's program gets the
 /// client's `PATH`, or none when it has none, and starts in the client's directory, so the
 /// system's search runs as it would for the client.
-fn searched(program: &str, search: Search<'_>) -> Command {
+fn searched(program: impl AsRef<OsStr>, search: Search<'_>) -> Command {
     let mut command = command(program);
     let Search::Client(place) = search else {
         return command;
@@ -113,12 +151,14 @@ impl Finished {
 /// stderr. A non-zero exit is returned, not treated as an error, because some programs
 /// report ordinary outcomes that way.
 pub(crate) async fn run(
-    program: &str,
+    program: impl AsRef<Path>,
     search: Search<'_>,
     args: &[String],
     deadline: Duration,
     max_stdout: u64,
 ) -> Result<Finished, ToolError> {
+    let program = program.as_ref();
+    let name = program.display();
     let child = searched(program, search)
         .args(args)
         .stdin(Stdio::null())
@@ -128,18 +168,15 @@ pub(crate) async fn run(
         .kill_on_drop(true)
         .spawn()
         .map_err(|error| {
-            ToolError::new(
-                ErrorName::UpstreamError,
-                format!("start {program}: {error}"),
-            )
+            ToolError::new(ErrorName::UpstreamError, format!("start {name}: {error}"))
         })?;
     let mut running = Running::new(child);
-    tokio::time::timeout(deadline, running.finish(program, max_stdout))
+    tokio::time::timeout(deadline, running.finish(&name.to_string(), max_stdout))
         .await
         .unwrap_or_else(|_| {
             Err(ToolError::new(
                 ErrorName::DeadlineExceeded,
-                format!("{program} didn't finish within {deadline:?}"),
+                format!("{name} didn't finish within {deadline:?}"),
             ))
         })
 }
@@ -613,6 +650,46 @@ mod tests {
     }
 
     const DEADLINE: Duration = Duration::from_secs(5);
+
+    /// The desktop's programs come from the system's directories whatever `PATH` the
+    /// process got, so they must be real executables found in a fixed order, and never
+    /// under the working directory, which in an engine is its first client's.
+    #[test]
+    fn the_desktop_programs_are_the_first_executables_in_absolute_directories() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = crate::test_support::fresh_dir("desktop");
+        let program = |file: PathBuf, mode| {
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(&file, "").unwrap();
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        std::fs::create_dir_all(dir.join("first/loginctl")).unwrap();
+        // Only others may execute it, and this process is its owner.
+        program(dir.join("first/noctalia"), 0o645);
+        program(dir.join("relative/loginctl"), 0o755);
+        program(dir.join("second/loginctl"), 0o755);
+        program(dir.join("second/noctalia"), 0o755);
+        program(dir.join("third/noctalia"), 0o755);
+        let cwd = std::env::current_dir().unwrap();
+        let up = "../".repeat(cwd.components().count() - 1);
+        let relative = Path::new(&up).join(dir.join("relative").strip_prefix("/").unwrap());
+        assert!(relative.join("loginctl").is_file());
+        let search = std::env::join_paths([
+            dir.join("missing"),
+            dir.join("first"),
+            relative,
+            dir.join("second"),
+            dir.join("third"),
+        ])
+        .unwrap();
+        let found = Desktop::find(&search);
+        assert_eq!(found.loginctl, Some(dir.join("second/loginctl")));
+        assert_eq!(found.noctalia, Some(dir.join("second/noctalia")));
+        assert_eq!(found.search, search.to_string_lossy());
+        let empty = Desktop::find(dir.join("missing").as_os_str());
+        assert_eq!((empty.loginctl, empty.noctalia), (None, None));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[tokio::test]
     async fn collects_output_and_exit_status() {

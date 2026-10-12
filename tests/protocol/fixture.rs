@@ -96,6 +96,11 @@ impl Fixture {
         }
         let env = BTreeMap::from([
             ("PATH", dir.join("bin").into_os_string()),
+            // Never the host's `loginctl` or `noctalia`.
+            (
+                "NIRI_COMPUTER_USE_DESKTOP_PATH",
+                dir.join("bin").into_os_string(),
+            ),
             (
                 "NIRI_SOCKET",
                 dir.join("run/niri.test.sock").into_os_string(),

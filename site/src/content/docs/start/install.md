@@ -50,6 +50,7 @@ It prints the readiness report as JSON. Look at these fields:
 | `lock.state` | `unlocked`; `unknown` refuses the lease, see [Troubleshooting](../../reference/troubleshooting/#the-lease-is-refused-with-screen_locked-while-the-screen-is-unlocked) |
 | `outputs.pointer_supported` | `true` for the pointer tools |
 | `binaries` | every program `true` |
+| `desktop_programs.loginctl` | a path such as `/usr/bin/loginctl` |
 
 Every field is described under [`status`](../../tools/looking/#status).
 

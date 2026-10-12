@@ -592,10 +592,7 @@ async fn each_client_runs_grim_and_wtype_from_its_own_path_and_directory() {
         let wtype = format!(r#"cat > /dev/null; echo >> "$DIR/wtype-{name}""#);
         fixture.program_at(&fixture.path(&format!("{name}/bin/wtype")), &wtype);
     }
-    // Noctalia, on the fixture's `PATH`, reports the session unlocked, for the lease.
-    let mut path = OsString::from("bin:");
-    path.push(fixture.path("bin"));
-    fixture.set("PATH", path);
+    fixture.set("PATH", "bin");
     let mut clients = Vec::new();
     for name in ["a", "b"] {
         fixture.work_in(fixture.path(name));
@@ -706,13 +703,10 @@ async fn a_grim_that_cant_start_is_passed_over_for_the_next_on_path() {
     }
 }
 
-/// Starts a client in `work` with `bin` and then `extra` on its `PATH`. The fixture's own
-/// `bin`, where Noctalia reports the session unlocked for the lease, comes last.
+/// Starts a client in `work` with `bin` and then `extra` on its `PATH`.
 async fn client_in(fixture: &mut Fixture, work: &str, extra: &str) -> Server {
     let mut path = OsString::from("bin:");
     path.push(fixture.path(extra));
-    path.push(":");
-    path.push(fixture.path("bin"));
     fixture.set("PATH", path);
     fixture.work_in(fixture.path(work));
     Server::start(fixture).await
