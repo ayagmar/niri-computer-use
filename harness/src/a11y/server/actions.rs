@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+use super::gate::Gate;
 use super::lists::List;
 use super::{Checks, element_ref, expect, read_count};
 use crate::a11y::{Bus, Fixture, Toolkit};
@@ -447,7 +448,8 @@ impl Checks<'_, '_> {
 
     /// The audit log names the role, and the action or the text's length, of each element
     /// action that went through, and never the text set or an element's name. A ref the
-    /// stop flag or a release revoked has no role. Kept as `audit-m9b.jsonl`.
+    /// stop flag or a release revoked has no role. Kept as `audit-m9b.jsonl`. Then logs how
+    /// the last gate went.
     fn audited(&mut self) -> Result<()> {
         let path = self
             .session
@@ -498,7 +500,8 @@ impl Checks<'_, '_> {
         }
         self.session.log(&format!(
             "M9b: audit log: {acted} element actions with their role, none with text or a name"
-        ))
+        ))?;
+        self.session.log(&Gate::of(&audit)?.line())
     }
 
     /// The one element of `window` whose name contains `name`, with `role` if given.

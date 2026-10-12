@@ -8,6 +8,7 @@
 //! the result is what was observed afterwards. Names and text are never returned or
 //! logged.
 
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -192,21 +193,66 @@ pub(crate) trait Recheck: Sync {
 }
 
 /// What an element action's last gate checks: `expect`, the policy's deny list, and the
-/// action gate's checks.
+/// action gate's checks; and where it notes how long they took.
 pub(crate) struct Gate<'a, R> {
     pub(crate) expect: Expect,
     pub(crate) policy: &'a Loaded,
     pub(crate) recheck: &'a R,
+    pub(crate) times: &'a GateTimes,
+}
+
+/// How long each pass of an element action's last gate took and how old the answers it
+/// relied on were when the call went out, for the audit log, which shows from them how
+/// much of `LAST_GATE` the checks use.
+#[derive(Debug, Default)]
+pub(crate) struct GateTimes(Mutex<Timed>);
+
+/// The last gate's times, in milliseconds.
+#[derive(Debug, Default, Clone, PartialEq, Serialize)]
+struct Timed {
+    /// Each pass, in order: how long it took, or `LAST_GATE` when the clock cut it short.
+    passes_ms: Vec<f64>,
+    /// How old the answers were when the call went out, or would have gone out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sent_ms: Option<f64>,
+}
+
+impl GateTimes {
+    fn pass(&self, took: Duration) {
+        self.timed().passes_ms.push(millis(took));
+    }
+
+    fn sent(&self, age: Duration) {
+        self.timed().sent_ms = Some(millis(age));
+    }
+
+    fn timed(&self) -> std::sync::MutexGuard<'_, Timed> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The audit log's arguments `logged`, with the times as `gate` once a pass ran.
+    pub(crate) fn logged(&self, mut logged: Value) -> Value {
+        let timed = self.timed().clone();
+        if let (false, Some(fields)) = (timed.passes_ms.is_empty(), logged.as_object_mut()) {
+            fields.insert("gate".to_owned(), json!(timed));
+        }
+        logged
+    }
+}
+
+/// `took` in milliseconds, to a tenth of one.
+fn millis(took: Duration) -> f64 {
+    (took.as_secs_f64() * 10_000.0).round() / 10.0
 }
 
 /// What the last gate saw, with what the tool's own read of the element found, and when
-/// the answers it relies on become too old to act on.
+/// the pass that read the answers it relies on began.
 struct Checked<T> {
     read: T,
     role: u32,
     states: States,
     focus: Focus,
-    by: Instant,
+    began: Instant,
 }
 
 /// What a pass of the last gate saw: the tool's own read, the element's role and states,
@@ -229,16 +275,18 @@ impl<R: Recheck> Gate<'_, R> {
         F: Future<Output = Result<T, CallError>>,
     {
         for _ in 0..2 {
-            let by = Instant::now() + LAST_GATE;
+            let began = Instant::now();
             let pass = self.pass(element, request, waiter, read());
-            if let Ok(passed) = timeout_at(by, pass).await {
+            let passed = timeout_at(began + LAST_GATE, pass).await;
+            self.times.pass(began.elapsed());
+            if let Ok(passed) = passed {
                 let (found, role, states, focus) = passed?;
                 return Ok(Checked {
                     read: found,
                     role,
                     states,
                     focus,
-                    by,
+                    began,
                 });
             }
         }
@@ -249,7 +297,9 @@ impl<R: Recheck> Gate<'_, R> {
     /// Tells the desk the call that acts goes out, if the answers the last gate relied on
     /// are still at most `LAST_GATE` old: this is the moment before it goes out.
     fn send<T>(&self, checked: &Checked<T>) -> Result<(), CallError> {
-        if Instant::now() > checked.by {
+        let age = checked.began.elapsed();
+        self.times.sent(age);
+        if age > LAST_GATE {
             let took = format!("ended over {} ms after they began", LAST_GATE.as_millis());
             return Err(busy(&took).into());
         }
@@ -752,24 +802,35 @@ mod tests {
     fn a_call_goes_out_only_while_the_last_gates_answers_are_young_enough() {
         let policy = Loaded::Valid(parse("", false).unwrap());
         let sent = Sent::default();
+        let times = GateTimes::default();
         let gate = Gate {
             expect: Expect::Window(3),
             policy: &policy,
             recheck: &sent,
+            times: &times,
         };
-        let checked = |by| Checked {
+        let checked = |began| Checked {
             read: (),
             role: 43,
             states: States::from_words(&[]),
             focus: Focus::Matched,
-            by,
+            began,
         };
         let now = Instant::now();
-        assert!(gate.send(&checked(now + LAST_GATE)).is_ok());
-        let late = now.checked_sub(Duration::from_millis(1)).unwrap();
+        assert!(gate.send(&checked(now)).is_ok());
+        let late = now
+            .checked_sub(LAST_GATE + Duration::from_millis(1))
+            .unwrap();
         let Err(CallError::Tool(refused)) = gate.send(&checked(late)) else {
             panic!("a late call went out");
         };
+        // The audit log gets the age of the answers the refused call would have relied on.
+        times.pass(Duration::from_millis(12));
+        let logged = times.logged(json!({"element": "e"}));
+        assert!(
+            logged["gate"]["sent_ms"].as_f64().unwrap() >= 251.0,
+            "{logged}"
+        );
         assert_eq!(refused.name, ErrorName::ElementBusy);
         assert!(
             refused.detail.ends_with("nothing was sent"),

@@ -825,6 +825,7 @@ impl Server {
             Asked {
                 tool: "focus",
                 logged,
+                gate: None,
                 report: Report::shot(args.screenshot),
             },
             work,
@@ -865,6 +866,7 @@ impl Server {
             Asked {
                 tool: "launch",
                 logged,
+                gate: None,
                 report: Report::shot(shoot),
             },
             work,
@@ -898,6 +900,7 @@ impl Server {
             Asked {
                 tool: "close_window",
                 logged,
+                gate: None,
                 report: Report::shot(args.screenshot),
             },
             work,
@@ -956,6 +959,7 @@ impl Server {
             Asked {
                 tool: "niri_action",
                 logged,
+                gate: None,
                 report: Report::shot(shoot),
             },
             work,
@@ -1188,6 +1192,7 @@ impl Server {
         let asked = Asked {
             tool: "type_text",
             logged,
+            gate: None,
             report: Report {
                 shoot: args.screenshot,
                 elements: args.element_changes.then_some(Watch::Focused),
@@ -1232,6 +1237,7 @@ impl Server {
         );
         flag(&mut logged, "screenshot", args.screenshot);
         flag(&mut logged, "element_changes", args.element_changes);
+        let times = actions::GateTimes::default();
         let work = async {
             let input = self.engine.input(&self.session)?;
             let element = self.engine.element(&self.session, &args.element)?;
@@ -1239,12 +1245,14 @@ impl Server {
                 expect: args.expect.into(),
                 policy: input.policy,
                 recheck: &self.engine.recheck(&self.session),
+                times: &times,
             };
             actions::activate(input, &element, args.action.as_deref(), gate).await
         };
         let asked = Asked {
             tool: "activate_element",
             logged,
+            gate: Some(&times),
             report: Report {
                 shoot: args.screenshot,
                 elements: args
@@ -1284,6 +1292,7 @@ impl Server {
         let mut logged = actions::logged(&args.element, kept.as_ref(), None, text_len, &expect);
         flag(&mut logged, "screenshot", args.screenshot);
         flag(&mut logged, "element_changes", args.element_changes);
+        let times = actions::GateTimes::default();
         let work = async {
             let input = self.engine.input(&self.session)?;
             let element = self.engine.element(&self.session, &args.element)?;
@@ -1291,12 +1300,14 @@ impl Server {
                 expect: args.expect.into(),
                 policy: input.policy,
                 recheck: &self.engine.recheck(&self.session),
+                times: &times,
             };
             actions::set_text(input, &element, &args.text, gate).await
         };
         let asked = Asked {
             tool: "set_element_text",
             logged,
+            gate: Some(&times),
             report: Report {
                 shoot: args.screenshot,
                 elements: args
@@ -1486,6 +1497,7 @@ impl Server {
             Asked {
                 tool: "shell_panel",
                 logged,
+                gate: None,
                 report: Report::shot(shoot),
             },
             work,
@@ -1531,6 +1543,7 @@ impl Server {
             Asked {
                 tool: "noctalia",
                 logged,
+                gate: None,
                 report: Report::shot(shoot),
             },
             work,
@@ -1580,6 +1593,7 @@ impl Server {
             Asked {
                 tool,
                 logged,
+                gate: None,
                 report: Report {
                     shoot: aim.shoot,
                     elements: aim.watch.as_deref().map(Watch::Element),
@@ -1613,6 +1627,7 @@ impl Server {
             Asked {
                 tool,
                 logged,
+                gate: None,
                 report: Report {
                     shoot,
                     elements: element_changes.then_some(Watch::Focused),
@@ -1635,8 +1650,13 @@ impl Server {
         let Asked {
             tool,
             logged,
+            gate,
             report,
         } = asked;
+        let logged = move || match gate {
+            Some(gate) => gate.logged(logged),
+            None => logged,
+        };
         // Boxed, because the readiness report, the action's work and its wait make large
         // futures.
         Box::pin(self.record(context, Call::action(tool), logged, async {
@@ -1660,14 +1680,15 @@ impl Server {
         args: Value,
         work: impl Future<Output = Result<CallToolResult, ErrorData>>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.record(context, Call::start(tool), args, work).await
+        self.record(context, Call::start(tool), || args, work).await
     }
 
+    /// Runs `work`, then logs the call with the arguments `args` gives once it is done.
     async fn record(
         &self,
         context: &RequestContext<RoleServer>,
         call: Call<'_>,
-        args: Value,
+        args: impl FnOnce() -> Value,
         work: impl Future<Output = Result<CallToolResult, ErrorData>>,
     ) -> Result<CallToolResult, ErrorData> {
         let Some(_admitted) = self.session.admit() else {
@@ -1687,7 +1708,7 @@ impl Server {
             session: &session,
             instance: instance.as_deref(),
         };
-        self.engine.audit().finish(&call, caller, &args, &result);
+        self.engine.audit().finish(&call, caller, &args(), &result);
         result
     }
 
@@ -1751,6 +1772,8 @@ fn waited_result(
 struct Asked<'a> {
     tool: &'a str,
     logged: Value,
+    /// An element action's last gate times, which the audit log adds to `logged`.
+    gate: Option<&'a actions::GateTimes>,
     report: Report<'a>,
 }
 

@@ -91,7 +91,7 @@ Reading the element takes a few calls to the app, so right before the one call t
 
 niri, Noctalia and the app can't be asked all at once, so what the server guarantees is an age: every answer the call relies on was read within 250 ms of the call going out. These checks take about 15 ms. When they take longer, because the app or the desktop is slow to answer, they start again from the beginning, and if the second time is slow too, the call fails with `element_busy` and nothing is sent. A change inside those 250 ms, such as the app changing the element right after answering, can be missed.
 
-They don't need a screenshot, and they work on elements with no `layout_box`, such as in GTK 3 and Qt windows with client-side decorations. The result's `element` has the element's `role` and never its name or text; the audit log keeps the role, the action and the text's length.
+They don't need a screenshot, and they work on elements with no `layout_box`, such as in GTK 3 and Qt windows with client-side decorations. The result's `element` has the element's `role` and never its name or text; the audit log keeps the role, the action and the text's length, and, once the last check ran, how long each of its passes took and how old its answers were when the call went out, as `gate`.
 
 ### `activate_element`
 

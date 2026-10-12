@@ -5,6 +5,7 @@
 //! lock source, as in M4.
 
 mod actions;
+mod gate;
 mod lists;
 
 use std::fs;
