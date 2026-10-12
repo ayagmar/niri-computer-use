@@ -2408,6 +2408,34 @@ async fn an_element_past_its_outputs_edge_is_never_aimed_at() {
     assert_eq!(desk.fixture.clipboard.pointed(), []);
 }
 
+// A window niri resizes again within a second of the time before may keep doing so, as an
+// app fitting its window to its content does, so waiting may not help: the refusal says
+// so and points at screenshot pixels, and nothing is sent.
+#[tokio::test]
+async fn an_element_of_a_window_that_keeps_resizing_is_refused_toward_pixels() {
+    let windows = [floating_window()];
+    let mut desk = Desk::start_with("el-restless", &["/frame"], objects(), &windows).await;
+    let button = desk.element("Safe").await;
+    let shot = desk.screenshot_ref().await;
+    let resized = |width: f64| {
+        let mut window = floating_window();
+        window["layout"]["tile_size"] = json!([width, 300.0]);
+        json!({"WindowLayoutsChanged": {"changes": [[WINDOW, window["layout"]]]}})
+    };
+    desk.stream.send(&resized(500.0));
+    desk.moved(&resized(520.0)).await;
+    let aimed = json!({"screenshot_ref": shot, "element": button});
+    let refused = desk.server.call("click", aimed).await;
+    let (name, detail) = tool_error(&refused);
+    assert_eq!(name, "element_unmappable", "{refused}");
+    assert!(
+        detail.starts_with("not_showing: the element's window moved or resized again"),
+        "{detail}"
+    );
+    assert!(detail.contains("screenshot pixels"), "{detail}");
+    assert_eq!(desk.fixture.clipboard.pointed(), []);
+}
+
 // niri's event stream lost while an element is aimed at leaves the server unable to tell
 // whether the view is moving: the call fails with the stream's own error rather than
 // telling the agent the view moved, and nothing is sent.

@@ -29,6 +29,7 @@ use crate::control::marker::{self, Marker, Written};
 use crate::control::runtime::RuntimeDir;
 use crate::coords::{ImagePx, LayoutPt, ProtocolPt};
 use crate::error::{CallError, ErrorName, ToolError};
+use crate::niri::events::Motion;
 use crate::niri::pointer::{Axis, Pointer, Step};
 use crate::niri::waiter::Waited;
 use crate::policy;
@@ -340,11 +341,13 @@ async fn locate(
         return Err(elements::unmappable(Unmappable::OtherOutput));
     }
     let events = input.niri.events.map_err(Clone::clone)?;
-    if events
-        .animating(&aimed.output, kept.kept.window, SETTLE)
+    match events
+        .motion(&aimed.output, kept.kept.window, SETTLE)
         .await?
     {
-        return Err(elements::unmappable(Unmappable::Moving));
+        Motion::Settled => {}
+        Motion::Moving => return Err(elements::unmappable(Unmappable::Moving)),
+        Motion::Restless => return Err(elements::unmappable(Unmappable::Restless)),
     }
     if shot.contains(aimed.at) {
         Ok(aimed.at)

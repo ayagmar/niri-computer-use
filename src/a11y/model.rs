@@ -298,6 +298,11 @@ pub(crate) enum Unmappable {
     /// the element was placed, so the view may still be moving. Only an aim gives it.
     #[serde(rename = "not_showing")]
     Moving,
+    /// niri moved or resized the element's window again within the settle interval of
+    /// the time before, so it may keep moving and waiting may not help. Only an aim gives
+    /// it.
+    #[serde(rename = "not_showing")]
+    Restless,
     /// The window is tiled: niri 26.04 gives only floating windows a place in their
     /// workspace's view, so where a tiled one is on screen isn't known.
     Tiled,

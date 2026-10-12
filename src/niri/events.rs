@@ -64,9 +64,9 @@ struct Replica {
     /// whose end niri doesn't report.
     activated: HashMap<String, Instant>,
     /// When niri last moved, resized or floated each window, by id, moved it to another
-    /// workspace or opened it, since the initial state: a floating window animates to the
-    /// place niri reports at once.
-    relaid: HashMap<u64, Instant>,
+    /// workspace or opened it, since the initial state, and the time before: a floating
+    /// window animates to the place niri reports at once.
+    relaid: HashMap<u64, Stamps>,
     /// When niri last opened or closed the overview, which animates every output, or when
     /// this replica got its initial state after a reconnect: a switch may have started
     /// while the stream was down.
@@ -116,7 +116,8 @@ impl Replica {
             self.everywhere = Some(now);
         }
         for id in self.relaid_by(event) {
-            self.relaid.insert(id, now);
+            let before = self.relaid.get(&id).map(|stamps| stamps.last);
+            self.relaid.insert(id, Stamps { last: now, before });
         }
         if let Event::WindowClosed { id } = event {
             self.relaid.remove(id);
@@ -164,8 +165,49 @@ impl Replica {
     /// reported it.
     fn animated(&self, output: &str, window: u64) -> Option<Instant> {
         let latest = self.activated.get(output).copied().max(self.everywhere);
-        latest.max(self.relaid.get(&window).copied())
+        latest.max(self.relaid.get(&window).map(|stamps| stamps.last))
     }
+
+    /// How the view on `output`, or `window` on it, stands `settle` after niri last
+    /// reported it moving.
+    fn motion(&self, output: &str, window: u64, settle: Duration) -> Motion {
+        if self
+            .animated(output, window)
+            .is_none_or(|at| at.elapsed() >= settle)
+        {
+            return Motion::Settled;
+        }
+        let restless = self.relaid.get(&window).is_some_and(|stamps| {
+            stamps.last.elapsed() < settle
+                && stamps
+                    .before
+                    .is_some_and(|before| stamps.last.duration_since(before) < settle)
+        });
+        if restless {
+            Motion::Restless
+        } else {
+            Motion::Moving
+        }
+    }
+}
+
+/// When niri last relaid a window, and the time before that.
+#[derive(Debug, Clone, Copy)]
+struct Stamps {
+    last: Instant,
+    before: Option<Instant>,
+}
+
+/// Whether the view an element is shown in may still be moving.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Motion {
+    /// Nothing niri reported moved it within the settle interval.
+    Settled,
+    /// A workspace switch, the overview, or the element's window moving started within it.
+    Moving,
+    /// niri moved or resized the element's window again within the settle interval of the
+    /// time before, as an app that keeps resizing itself does: waiting may never help.
+    Restless,
 }
 
 /// The outputs whose workspaces, or whose active workspace, differ between `before` and
@@ -290,20 +332,17 @@ impl EventStream {
 
     /// Whether niri activated a workspace on `output`, opened or closed the overview, or
     /// moved, resized, floated or opened `window` within `settle`, so that the view there
-    /// may still be moving. Waits up to two seconds for niri's initial state, as after a
-    /// reconnect, and fails with the stream's error without it.
-    pub(crate) async fn animating(
+    /// may still be moving, and whether the window keeps moving. Waits up to two seconds
+    /// for niri's initial state, as after a reconnect, and fails with the stream's error
+    /// without it.
+    pub(crate) async fn motion(
         &self,
         output: &str,
         window: u64,
         settle: Duration,
-    ) -> Result<bool, ToolError> {
-        self.current(DEADLINE, |replica| {
-            replica
-                .animated(output, window)
-                .is_some_and(|at| at.elapsed() < settle)
-        })
-        .await
+    ) -> Result<Motion, ToolError> {
+        self.current(DEADLINE, |replica| replica.motion(output, window, settle))
+            .await
     }
 
     /// The current desktop. Waits up to two seconds for niri's initial state, for
@@ -676,6 +715,42 @@ mod tests {
         assert_eq!(replica.animated("DP-1", 7), Some(moved));
         replica.apply(7, Event::WindowClosed { id: 8 });
         assert_eq!(replica.animated("DP-1", 8), None);
+    }
+
+    // A window niri moves or resizes again within the settle interval of the time before
+    // may keep doing so, as an app that keeps fitting its window to its content does. One
+    // moved once, or twice far apart, is only moving, and another window is untouched.
+    #[tokio::test(start_paused = true)]
+    async fn a_window_relaid_twice_within_the_settle_interval_is_restless() {
+        use crate::niri::waiter::tests::window;
+        let settle = Duration::from_secs(1);
+        let mut replica = Replica::default();
+        let shown = vec![workspace_on(1, "DP-1", true)];
+        replica.apply(1, Event::WorkspacesChanged { workspaces: shown });
+        let first = window(7, None, 1, true);
+        let resized = |width| {
+            let mut layout = first.layout.clone();
+            layout.tile_size = (width, 1.0);
+            Event::WindowLayoutsChanged {
+                changes: vec![(7, layout)],
+            }
+        };
+        let windows = vec![first.clone(), window(8, None, 1, false)];
+        replica.apply(2, Event::WindowsChanged { windows });
+        replica.apply(3, Event::OverviewOpenedOrClosed { is_open: false });
+        let motion = |held: &Replica, id| held.motion("DP-1", id, settle);
+        replica.apply(4, resized(10.0));
+        assert_eq!(motion(&replica, 7), Motion::Moving);
+        tokio::time::advance(Duration::from_secs(2)).await;
+        assert_eq!(motion(&replica, 7), Motion::Settled);
+        replica.apply(5, resized(20.0));
+        assert_eq!(motion(&replica, 7), Motion::Moving);
+        tokio::time::advance(Duration::from_millis(500)).await;
+        replica.apply(6, resized(30.0));
+        assert_eq!(motion(&replica, 7), Motion::Restless);
+        assert_eq!(motion(&replica, 8), Motion::Settled);
+        tokio::time::advance(settle).await;
+        assert_eq!(motion(&replica, 7), Motion::Settled);
     }
 
     // niri reports a switch inside `WorkspacesChanged` when a workspace was also added,

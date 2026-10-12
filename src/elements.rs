@@ -599,6 +599,10 @@ pub(crate) fn unmappable(why: Unmappable) -> ToolError {
             "not_showing",
             "the view may still be moving: niri switched a workspace, opened or closed the overview, or moved, resized or opened a window a moment ago; take a screenshot and try again",
         ),
+        Unmappable::Restless => (
+            "not_showing",
+            "the element's window moved or resized again within a second of its last change, so it may keep moving; aim at screenshot pixels on a fresh screenshot rather than trying again",
+        ),
         Unmappable::Tiled => (
             "tiled",
             "niri 26.04 gives a tiled window no position on screen; activate_element and set_element_text still work, or aim with a screenshot pixel; only when changing the user's layout is fine, float the window with niri_action and call elements again",
