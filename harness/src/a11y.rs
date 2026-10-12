@@ -328,7 +328,7 @@ impl Fixture {
         Self::start_gtk(session, "list", "fixture-list.log")
     }
 
-    /// The Qt Quick fixture's 520x300 window with four long lists that reuse their rows,
+    /// The Qt Quick fixture's 400x300 window with two long lists that reuse their rows,
     /// a `Delete` on each row. Its environment is the Qt fixture's.
     pub(crate) fn start_qt_list(session: &Session<'_>) -> Result<Self> {
         let root = session.test_dir().root();

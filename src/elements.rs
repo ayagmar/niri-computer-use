@@ -4,13 +4,12 @@
 //! returned, never logged. `actions` acts on a listed element without the pointer.
 
 pub(crate) mod actions;
-mod labels;
 
 use niri_ipc::Window;
 use serde::Serialize;
 
 use crate::a11y::model::{
-    self, Extents, Filter, Fresh, Label, LayoutBox, Link, NameHash, Placement, Refused, Row, Shape,
+    self, Extents, Filter, Fresh, LayoutBox, Link, NameHash, Placement, Refused, Row, Shape,
     Unbound, Unmappable,
 };
 use crate::a11y::{self, A11y, Capped, ElementRef, Failed, Node, Want};
@@ -20,7 +19,6 @@ use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri;
 use crate::niri::Socket;
 use crate::policy::{self, Loaded};
-use labels::Labels;
 
 /// What `elements` was asked for.
 #[derive(Debug, Clone)]
@@ -199,9 +197,8 @@ fn others<'a>(window: &Window, windows: impl IntoIterator<Item = &'a Window>) ->
 }
 
 /// One walk of a window's tree: the window as niri placed it, its application's process,
-/// bus name and frame, the objects under the frame, and the request that read them.
+/// bus name and frame, and the objects under the frame.
 struct Read {
-    request: a11y::Request,
     placed: Placed,
     pid: i32,
     bus: String,
@@ -281,7 +278,6 @@ async fn read(
     };
     let walked = request.walk(&app.bus, &frame.node, want).await?;
     Ok(Some(Read {
-        request,
         placed,
         pid,
         bus: app.bus,
@@ -309,12 +305,6 @@ pub(crate) async fn list(
         .ok_or_else(|| {
             CallError::InvalidArguments(format!("no window with id {}", ask.window_id))
         })?;
-    let listed: Vec<usize> = read
-        .listed(&ask.filter)
-        .take(ask.limit)
-        .map(|(at, _)| at)
-        .collect();
-    let labels = Labels::read(&read.request, &read.bus, &read.walked, &listed).await?;
     let mut matching = read.listed(&ask.filter);
     let mut elements = Vec::new();
     for (at, node) in matching.by_ref().take(ask.limit) {
@@ -330,11 +320,10 @@ pub(crate) async fn list(
             origin: read.placed.origin,
         };
         let placed_box = model::place(placement);
-        let mut element = read.element(at, node);
-        element.kept.row = labels.bind(&read.walked, at, element.kept.row);
+        let element = read.element(at, node);
         let unbound = match element.kept.row {
             Row::Unbound(why) => Some(why),
-            Row::Lineage | Row::Own | Row::Labelled(_) => None,
+            Row::Lineage | Row::Own => None,
         };
         elements.push(Listed {
             element_ref: remember(element),
@@ -347,28 +336,14 @@ pub(crate) async fn list(
             unbound,
         });
     }
-    let capped = read
-        .walked
-        .capped
-        .or_else(|| labels.cut.then_some(Capped::BudgetExhausted));
     Ok(Listing {
         window_id: read.placed.window.id,
         truncated: matching.next().is_some(),
         elements,
         walked: read.walked.nodes.len(),
-        capped: capped.is_some(),
-        capped_reason: capped,
+        capped: read.walked.capped.is_some(),
+        capped_reason: read.walked.capped,
     })
-}
-
-/// Which of an action's two surveys of a window's elements.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Survey {
-    /// Before the action: compared with the one after, its refs never handed out.
-    Before,
-    /// After it: the change report hands out refs to what it added or changed, so they are
-    /// bound through their labels as `elements` binds them.
-    After,
 }
 
 /// Every element of window `window_id` that `elements` would list without filters, for
@@ -379,7 +354,6 @@ pub(crate) async fn survey(
     a11y: &A11y,
     policy: &Loaded,
     window_id: u64,
-    when: Survey,
 ) -> Result<Vec<Seen>, Unknown> {
     let filter = Filter::default();
     let walk = Walk {
@@ -394,32 +368,14 @@ pub(crate) async fn survey(
     if let Some(capped) = read.walked.capped {
         return Err(Unknown::capped(window_id, capped));
     }
-    let labels = match when {
-        Survey::Before => None,
-        Survey::After => {
-            let listed: Vec<usize> = read.listed(&filter).map(|(at, _)| at).collect();
-            let labels = Labels::read(&read.request, &read.bus, &read.walked, &listed)
-                .await
-                .map_err(|error| Unknown::failed(Some(window_id), error))?;
-            if labels.cut {
-                return Err(Unknown::capped(window_id, Capped::BudgetExhausted));
-            }
-            Some(labels)
-        }
-    };
-    let mut seen = Vec::new();
-    for (at, node) in read.listed(&filter) {
-        let mut element = read.element(at, node);
-        if let Some(labels) = &labels {
-            element.kept.row = labels.bind(&read.walked, at, element.kept.row);
-        }
-        seen.push(Seen {
-            element,
+    Ok(read
+        .listed(&filter)
+        .map(|(at, node)| Seen {
+            element: read.element(at, node),
             name: node.name.clone(),
             states: node.states,
-        });
-    }
-    Ok(seen)
+        })
+        .collect())
 }
 
 /// Whether `elements` lists `node`: showing, matching the filter, and unless a role was
@@ -494,9 +450,8 @@ pub(crate) enum Names {
 /// with the app's other windows among niri's `windows`, is the ref's; each object from that frame down to the element is still at the index
 /// it had among its parent's children, as the parent says; and each has the name it was
 /// listed with, the element's own as `names` says. A list that reuses a row for another
-/// record keeps its place and path but not its name. A ref bound through its label also
-/// needs the element labelled by that label alone, which has the name it was listed with.
-/// Otherwise `element_stale`. Its role is checked by the caller.
+/// record keeps its place and path but not its name. Otherwise `element_stale`. Its role
+/// is checked by the caller.
 pub(crate) async fn identify<'a>(
     request: &a11y::Request,
     element: &ElementRef,
@@ -504,13 +459,10 @@ pub(crate) async fn identify<'a>(
     windows: impl IntoIterator<Item = &'a Window>,
     names: Names,
 ) -> Result<(), ToolError> {
-    let (names, label) = match &element.kept.row {
-        Row::Lineage => (names, None),
-        Row::Own => (Names::All, None),
-        Row::Labelled(label) => (names, Some(label)),
-        Row::Unbound(why) => {
-            return Err(ToolError::new(ErrorName::ElementUnbound, unbound(*why)));
-        }
+    let names = match element.kept.row {
+        Row::Lineage => names,
+        Row::Own => Names::All,
+        Row::Unbound(why) => return Err(ToolError::new(ErrorName::ElementUnbound, unbound(why))),
     };
     let app = request.app(element.kept.pid).await.map_err(|error| {
         if error.name == ErrorName::NotAccessible {
@@ -543,34 +495,7 @@ pub(crate) async fn identify<'a>(
         }
         parent = &link.path;
     }
-    match label {
-        Some(label) => same_label(request, element, label).await,
-        None => Ok(()),
-    }
-}
-
-/// Checks that the element is still labelled alone by the label it was bound through, and
-/// that the label still has the name the listing's walk read.
-async fn same_label(
-    request: &a11y::Request,
-    element: &ElementRef,
-    label: &Label,
-) -> Result<(), ToolError> {
-    if request.label(element.at()).await?.as_deref() != Some(label.path.as_str()) {
-        return Err(stale(
-            "the element is labelled by another object, or none, since `elements` listed it",
-        ));
-    }
-    let name = request
-        .name((&element.bus, &label.path))
-        .await
-        .map_err(gone_is_stale)?;
-    if NameHash::of(&name) == label.name {
-        return Ok(());
-    }
-    Err(stale(
-        "the element's label changed its name since `elements` listed it, as when a list reuses a row for another record",
-    ))
+    Ok(())
 }
 
 /// Why nothing binds a ref to the record its element acts on. Listing again gives the

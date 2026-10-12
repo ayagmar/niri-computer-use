@@ -535,9 +535,9 @@ pub(crate) struct Kept {
 }
 
 /// How a ref is bound to the record its element acts on, as a list's `Delete` button
-/// acts on its row's record, from the nearest row around it, a list item, table row or
-/// tree item, or else from the one label the app says it has.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// acts on its row's record, from the nearest row around it: a list item, table row or
+/// tree item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Row {
     /// The lineage binds it: its row has a name, which the lineage keeps as it keeps every
     /// name above the element, or it sits in no row and no other element read has its
@@ -545,60 +545,8 @@ pub(crate) enum Row {
     Lineage,
     /// It is a named row itself, so its own name is compared for the pointer tools too.
     Own,
-    /// Its row binds nothing, but it is labelled by one label that labels it alone, as a
-    /// Qt Quick delegate's `Accessible.labelledBy` says: the label's name is compared too.
-    Labelled(Label),
     /// Nothing on the bus binds it to a record, so the ref is never acted on.
     Unbound(Unbound),
-}
-
-/// The label a ref is bound through: its path, in the element's application, and its
-/// name's hash.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Label {
-    pub(crate) path: String,
-    pub(crate) name: NameHash,
-}
-
-/// `ATSPI_RELATION_LABEL_FOR`: the object labels the targets.
-pub(crate) const LABEL_FOR: u32 = 1;
-/// `ATSPI_RELATION_LABELLED_BY`: the targets label the object.
-pub(crate) const LABELLED_BY: u32 = 2;
-
-/// An object's relation set as `GetRelationSet` answers it: each relation's type, with
-/// its targets' bus names and paths.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct Relations(pub(crate) Vec<(u32, Vec<(String, String)>)>);
-
-impl Relations {
-    /// The one target of the relations of type `kind`, when they have exactly one between
-    /// them.
-    pub(crate) fn sole(&self, kind: u32) -> Option<(&str, &str)> {
-        let mut targets = self
-            .0
-            .iter()
-            .filter(|(each, _)| *each == kind)
-            .flat_map(|(_, targets)| targets);
-        let (bus, path) = targets.next()?;
-        targets
-            .next()
-            .is_none()
-            .then_some((bus.as_str(), path.as_str()))
-    }
-}
-
-/// The one label of the element at `element`, from its relations: the one object it is
-/// labelled by, when that is in its own application.
-pub(crate) fn sole_label<'a>(element: (&str, &str), own: &'a Relations) -> Option<&'a str> {
-    let (bus, path) = own.sole(LABELLED_BY)?;
-    (bus == element.0).then_some(path)
-}
-
-/// Whether a label, by its relations, labels the element at `element` and nothing else.
-/// A label shared by several elements, such as a column header, binds none of them, since
-/// reusing a row would leave it as it was.
-pub(crate) fn labels_only(element: (&str, &str), label: &Relations) -> bool {
-    label.sole(LABEL_FOR) == Some(element)
 }
 
 /// Why nothing binds a ref to its record.
@@ -938,31 +886,5 @@ mod tests {
             recheck(&kept, fresh(43, hidden)),
             Err(Refused::Unmappable(Unmappable::NotShowing))
         );
-    }
-
-    #[test]
-    fn a_label_binds_only_when_each_side_names_the_other_alone() {
-        let element = (":1.5", "/delete1");
-        let target = |path: &str| (":1.5".to_owned(), path.to_owned());
-        let labelled = Relations(vec![(LABELLED_BY, vec![target("/text1")])]);
-        assert_eq!(sole_label(element, &labelled), Some("/text1"));
-        // Two relations of one target each still name two labels.
-        let twice = Relations(vec![
-            (LABELLED_BY, vec![target("/text1")]),
-            (LABELLED_BY, vec![target("/text2")]),
-        ]);
-        assert_eq!(sole_label(element, &twice), None);
-        let elsewhere = Relations(vec![(
-            LABELLED_BY,
-            vec![(":1.9".to_owned(), "/text1".to_owned())],
-        )]);
-        assert_eq!(sole_label(element, &elsewhere), None);
-        let label = Relations(vec![(LABEL_FOR, vec![target("/delete1")])]);
-        assert!(labels_only(element, &label));
-        let header = Relations(vec![(
-            LABEL_FOR,
-            vec![target("/delete1"), target("/delete2")],
-        )]);
-        assert!(!labels_only(element, &header));
     }
 }

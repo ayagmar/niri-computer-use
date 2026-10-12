@@ -119,10 +119,9 @@ impl Unknown {
                 Why::NodeCap,
                 "a walk read as many accessible objects as it may",
             ),
-            Capped::BudgetExhausted => (
-                Why::BudgetExhausted,
-                "a walk, or its reading of the labels, ran out of its three seconds",
-            ),
+            Capped::BudgetExhausted => {
+                (Why::BudgetExhausted, "a walk ran out of its three seconds")
+            }
         };
         Self {
             window_id: Some(window_id),

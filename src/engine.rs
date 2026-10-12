@@ -24,7 +24,6 @@ use crate::changes::elements::{self as element_changes, Seen, Unknown};
 use crate::control;
 use crate::control::desk::{Desk, Prepared, Worked};
 use crate::control::lease::Holder;
-use crate::elements::Survey;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::input::Input;
 use crate::niri::OutputSummary;
@@ -702,7 +701,7 @@ impl Engine {
                 Err(error) => return Err(Unknown::failed(None, error)),
             },
         };
-        let seen = self.survey(session, window, Survey::Before).await?;
+        let seen = self.survey(session, window).await?;
         Ok((window, seen))
     }
 
@@ -716,7 +715,7 @@ impl Engine {
             Ok(before) => before,
             Err(unknown) => return Some(element_changes::Report::Unknown(unknown)),
         };
-        let after = match self.survey(session, window, Survey::After).await {
+        let after = match self.survey(session, window).await {
             Ok(after) => after,
             Err(unknown) => return Some(element_changes::Report::Unknown(unknown)),
         };
@@ -728,12 +727,7 @@ impl Engine {
     }
 
     /// Every element `elements` would list of window `window`.
-    async fn survey(
-        &self,
-        session: &Session,
-        window: u64,
-        when: Survey,
-    ) -> Result<Vec<Seen>, Unknown> {
+    async fn survey(&self, session: &Session, window: u64) -> Result<Vec<Seen>, Unknown> {
         let Some(a11y) = &self.a11y else {
             let none = a11y::not_accessible("this session has no accessibility bus".to_owned());
             return Err(Unknown::failed(Some(window), none));
@@ -744,7 +738,6 @@ impl Engine {
             a11y,
             policy,
             window,
-            when,
         ))
         .await
     }

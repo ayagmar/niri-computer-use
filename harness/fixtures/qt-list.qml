@@ -1,23 +1,21 @@
 // Qt Quick list fixture for the accessibility checks, run with
-// `qml6 qt-list.qml -- <TEST_DIR>` inside the harness's private session. A 520x300 window
-// with `Step` and `Jump` buttons over four lists that reuse their rows' items for other
+// `qml6 qt-list.qml -- <TEST_DIR>` inside the harness's private session. A 400x300 window
+// with `Step` and `Jump` buttons over three lists that reuse their rows' items for other
 // records (`reuseItems`), each row a label and a `Delete` button that removes the record
 // it shows then and appends it to `qt-list-deletes`. The first list's rows are plain
 // layouts, which Qt leaves off the accessibility bus, so their label and button sit
 // straight in the window's panel or in a filler; the second's are unnamed list items, as
-// GTK 4's are; the third's are list items named after their record; the fourth's are
-// plain layouts again, whose `Delete` says it is labelled by its row's label
-// (`Accessible.labelledBy`). Records are synthetic: `Record 001` to `Record 200`, `Item
-// 001` to `Item 200`, `Named 001` to `Named 200` and `Labelled 001` to `Labelled 200`.
-// `Step` scrolls every list 120 pixels down and `Jump` brings each one's 101st record
-// into view. The file is written with an XMLHttpRequest PUT to a file URL,
+// GTK 4's are; the third's are list items named after their record. Records are
+// synthetic: `Record 001` to `Record 200`, `Item 001` to `Item 200` and `Named 001` to
+// `Named 200`. `Step` scrolls every list 120 pixels down and `Jump` brings each one's
+// 101st record into view. The file is written with an XMLHttpRequest PUT to a file URL,
 // which Qt allows only with QML_XHR_ALLOW_FILE_WRITE=1, set for this process alone.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
 ApplicationWindow {
-    width: 520
+    width: 400
     height: 300
     visible: true
     title: "qt list fixture"
@@ -31,7 +29,7 @@ ApplicationWindow {
     }
 
     // A press on a row that shows no record, such as one the list holds for reuse, is
-    // reported as such, so the checks can tell it from a delete.
+    // reported as such, so the checks see it went to the wrong row.
     function deleted(records, index) {
         if (index < 0 || index >= records.count) {
             deletes.push("a row with no record")
@@ -50,7 +48,6 @@ ApplicationWindow {
     ListModel { id: plainRecords }
     ListModel { id: itemRecords }
     ListModel { id: namedRecords }
-    ListModel { id: labelledRecords }
 
     ColumnLayout {
         anchors.fill: parent
@@ -60,7 +57,7 @@ ApplicationWindow {
                 text: "Step"
                 Layout.fillWidth: true
                 onClicked: {
-                    for (const list of [plain, items, named, labelled])
+                    for (const list of [plain, items, named])
                         list.contentY += 120
                 }
             }
@@ -68,7 +65,7 @@ ApplicationWindow {
                 text: "Jump"
                 Layout.fillWidth: true
                 onClicked: {
-                    for (const list of [plain, items, named, labelled])
+                    for (const list of [plain, items, named])
                         list.positionViewAtIndex(100, ListView.Beginning)
                 }
             }
@@ -141,27 +138,6 @@ ApplicationWindow {
                     }
                 }
             }
-            ListView {
-                id: labelled
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                clip: true
-                reuseItems: true
-                model: labelledRecords
-                delegate: RowLayout {
-                    id: labelledRow
-                    required property string record
-                    required property int index
-                    width: ListView.view.width
-                    spacing: 2
-                    Label { id: recordLabel; text: labelledRow.record; Layout.fillWidth: true }
-                    Button {
-                        text: "Delete"
-                        Accessible.labelledBy: recordLabel
-                        onClicked: deleted(labelledRecords, labelledRow.index)
-                    }
-                }
-            }
         }
     }
 
@@ -169,7 +145,6 @@ ApplicationWindow {
         filled(plainRecords, "Record")
         filled(itemRecords, "Item")
         filled(namedRecords, "Named")
-        filled(labelledRecords, "Labelled")
         report("qt-list-deletes", "[]")
     }
     Timer { interval: 240000; running: true; onTriggered: Qt.quit() }

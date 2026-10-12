@@ -157,30 +157,6 @@ pub(crate) async fn walk<F: Fn(&Node) -> bool + Sync>(
 }
 
 impl Walked {
-    /// Whether the node at `at` sits under the node at `above`.
-    pub(crate) fn under(&self, at: usize, above: usize) -> bool {
-        let parent = |of: usize| self.places.get(of).and_then(|(parent, _)| *parent);
-        let mut next = parent(at);
-        while let Some(this) = next {
-            if this == above {
-                return true;
-            }
-            next = parent(this);
-        }
-        false
-    }
-
-    /// The nodes that have the role and name of the node at `at`, itself among them.
-    pub(crate) fn lookalikes(&self, at: usize) -> Vec<usize> {
-        let Some(node) = self.nodes.get(at) else {
-            return Vec::new();
-        };
-        let alike = |other: &Node| other.role == node.role && other.name == node.name;
-        (0..self.nodes.len())
-            .filter(|&other| self.nodes.get(other).is_some_and(alike))
-            .collect()
-    }
-
     /// What `row` asks of every node, worked out once for all of them.
     fn finish(&mut self) {
         self.alike = alike(&self.nodes);

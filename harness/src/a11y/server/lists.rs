@@ -8,9 +8,8 @@
 //! it is refused with `element_unbound`; where it doesn't, a fresh ref deletes its own
 //! record. The marks must be the documented ones: GTK 4's rows have no name unless the app
 //! labels them, and Qt Quick's have a row role and a name only when the delegate gives
-//! them, while a `Delete` the delegate says its record's label labels is bound through
-//! that label. GTK 4's old refs must all be refused, as the docs say. The record of the run
-//! logs what each toolkit puts on the bus after each change.
+//! them. GTK 4's old refs must all be refused, as the docs say. The record of the run logs
+//! what each toolkit puts on the bus after each change.
 
 use std::fs;
 use std::time::Duration;
@@ -33,8 +32,6 @@ const WAIT: Duration = Duration::from_secs(5);
 const REFUSALS: [&str; 3] = ["element_stale", "element_unbound", "element_unmappable"];
 /// How many showing rows of each list are deleted twice through one ref.
 const TWICE: usize = 3;
-/// What the Qt fixture deletes for a press on a row that shows no record.
-const NO_RECORD: &str = "a row with no record";
 /// What an `element_unbound` refusal tells the agent to do instead.
 const POINTER: &str = "aim the pointer tools at its pixels";
 
@@ -45,8 +42,7 @@ pub(super) enum List {
     /// their record, `Labelled 001` on.
     Gtk4,
     /// Qt Quick's list views with `reuseItems`: rows off the bus, records `Record 001` on;
-    /// unnamed list items, `Item 001` on; list items named after their record, `Named 001`
-    /// on; and rows off the bus whose `Delete` is labelled by its record's label, `Labelled
+    /// unnamed list items, `Item 001` on; and list items named after their record, `Named
     /// 001` on.
     Qt,
 }
@@ -65,15 +61,14 @@ impl List {
     const fn prefixes(self) -> &'static [&'static str] {
         match self {
             Self::Gtk4 => &["Record", "Labelled"],
-            Self::Qt => &["Record", "Item", "Named", "Labelled"],
+            Self::Qt => &["Record", "Item", "Named"],
         }
     }
 
     /// How the listing marks the first rows' `Delete` refs in the list whose records start
     /// with `prefix`: GTK 4's list items have no name unless the app labels them, and Qt
     /// Quick's rows have no row role unless the delegate gives one (`Item`, `Named`), nor a
-    /// name unless it gives that too (`Named`). A `Delete` labelled by its record's label is
-    /// bound through it (`Labelled`).
+    /// name unless it gives that too (`Named`).
     fn mark(self, prefix: &str) -> Option<&'static str> {
         match (self, prefix) {
             (Self::Gtk4, "Record") | (Self::Qt, "Item") => Some("unnamed_row"),
@@ -175,26 +170,23 @@ impl Checks<'_, '_> {
         fixture.stop().map(drop)
     }
 
-    /// The first `TWICE` showing rows' `Delete` of each list, each through a ref listed
-    /// just before, since deleting a record may move the rows below it, then those that
-    /// deleted their record through the same ref at once, and again after a step. Qt Quick
-    /// keeps a deleted row's objects on the bus, shown and named as before, until it reuses
-    /// them for a record scrolling in. Logs the bus around the first row's. Returns the
-    /// later tries' results.
+    /// The first `TWICE` showing rows' `Delete` of each list, listed afresh, then those
+    /// that deleted their record through the same ref at once, and again after a step. Qt
+    /// Quick keeps a deleted row's objects on the bus, shown and named as before, until it
+    /// reuses them for a record scrolling in. Logs the bus around the first row's. Returns
+    /// the later tries' results.
     fn deleted_twice(&mut self, bus: &Bus, shown: &Shown) -> Result<Vec<Value>> {
         let listing = self.list(shown.window, None, None)?;
         let mut showing = Vec::new();
         for prefix in shown.list.prefixes() {
             let rows = deletes(&listing, prefix)?;
-            let first = rows.into_iter().filter(|row| row.showing).take(TWICE);
-            showing.extend(first.map(|row| (*prefix, row.record)));
+            showing.extend(rows.into_iter().filter(|row| row.showing).take(TWICE));
         }
         let mut deleted = Vec::new();
         let mut again = Vec::new();
-        for (count, (prefix, record)) in showing.iter().enumerate() {
-            let row = self.relisted(shown, prefix, record)?;
+        for (count, row) in showing.iter().enumerate() {
             let before = (count == 0).then(|| rows::snapshot(self.session, bus, shown.pid));
-            let fresh = self.delete_row(shown, &row)?;
+            let fresh = self.delete_row(shown, row)?;
             if let Some(before) = before {
                 let what = format!("{}'s Delete", row.record);
                 self.looked(bus, shown, &what, &before?)?;
@@ -205,24 +197,15 @@ impl Checks<'_, '_> {
                 &fresh,
             )?;
             if row.unbound.is_none() {
-                again.push(self.delete_row(shown, &row)?);
+                again.push(self.delete_row(shown, row)?);
                 deleted.push(row);
             }
         }
         self.press(shown, "Step")?;
-        for row in &deleted {
+        for row in deleted {
             again.push(self.delete_row(shown, row)?);
         }
         Ok(again)
-    }
-
-    /// The `Delete` of the row showing `record`, listed now.
-    fn relisted(&mut self, shown: &Shown, prefix: &str, record: &str) -> Result<Row> {
-        let listing = self.list(shown.window, None, None)?;
-        deletes(&listing, prefix)?
-            .into_iter()
-            .find(|row| row.record == record)
-            .ok_or_else(|| Failure::new(format!("M9: {record}'s Delete not listed again")))
     }
 
     /// Activates the list window's button named `name`.
@@ -258,11 +241,8 @@ impl Checks<'_, '_> {
 
     /// Activates a row's `Delete` through the ref first listed for it, and returns the
     /// result. Whatever it was, the fixture must have deleted the row's own record or
-    /// nothing: nothing when refused with one of `REFUSALS`. Once the record is gone, Qt
-    /// keeps its row's objects on the bus as they were until it reuses them, so a press
-    /// may reach that row, which shows no record and deletes nothing. A ref the listing
-    /// marked unbound must be refused with `element_unbound`, pointing at the pointer
-    /// tools.
+    /// nothing: nothing when refused with one of `REFUSALS`. A ref the listing marked
+    /// unbound must be refused with `element_unbound`, pointing at the pointer tools.
     fn delete_row(&mut self, shown: &Shown, row: &Row) -> Result<Value> {
         let before = self.deleted(shown.list)?;
         let result = self.client.call(
@@ -279,13 +259,9 @@ impl Checks<'_, '_> {
         )?;
         let what = if refused.is_null() {
             let deleted = self.newly_deleted(shown.list, &before)?;
-            let held = before.contains(&row.record) && deleted == [NO_RECORD];
             expect(
-                deleted == [row.record.as_str()] || held,
-                &format!(
-                    "an accepted Delete for {} to delete it alone, or nothing once it is gone",
-                    row.record
-                ),
+                deleted == [row.record.as_str()],
+                &format!("an accepted Delete for {} to delete it alone", row.record),
                 &json!({"result": result, "deleted": deleted}),
             )?;
             format!("accepted, deleted {deleted:?}")
