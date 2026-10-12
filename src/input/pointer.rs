@@ -302,7 +302,7 @@ pub(crate) async fn point(
     input.niri.desk.fresh()?;
     if at_element && let Err(refused) = unmoved(&mut waiter).await {
         // Nothing was pressed, so the marker goes now, before the next call can see it.
-        device.finish().await?;
+        device.discard().await?;
         return Err(refused.into());
     }
     if let Err(error) = device.run(plan(&located, &aimed)).await {
@@ -445,9 +445,19 @@ impl Device {
         Ok(())
     }
 
-    /// Removes the marker after a gesture niri has handled whole, or one refused before
-    /// anything of it went out.
-    async fn finish(mut self) -> Result<(), ToolError> {
+    /// Removes the marker after a gesture niri has handled whole.
+    async fn finish(self) -> Result<(), ToolError> {
+        self.clear("niri handled the input").await
+    }
+
+    /// Removes the marker of a gesture refused before anything of it went out.
+    async fn discard(self) -> Result<(), ToolError> {
+        self.clear("nothing was sent").await
+    }
+
+    /// Removes the marker; if that fails, the error starts with `done`, what happened to
+    /// the input.
+    async fn clear(mut self, done: &str) -> Result<(), ToolError> {
         let Some(marker) = self.marker.take() else {
             return Ok(());
         };
@@ -455,7 +465,7 @@ impl Device {
             ToolError::new(
                 ErrorName::UpstreamError,
                 format!(
-                    "niri handled the input, but the input-dirty marker couldn't be removed ({error}); actions refuse until the user runs `niri-computer-use recover`"
+                    "{done}, but the input-dirty marker couldn't be removed ({error}); actions refuse until the user runs `niri-computer-use recover`"
                 ),
             )
         })
