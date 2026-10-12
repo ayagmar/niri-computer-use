@@ -22,7 +22,7 @@ use crate::audit::Audit;
 use crate::changes::Changes;
 use crate::changes::elements::{self as element_changes, Seen, Unknown};
 use crate::control;
-use crate::control::desk::{Desk, Worked};
+use crate::control::desk::{Desk, Prepared, Worked};
 use crate::control::lease::Holder;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::input::Input;
@@ -310,7 +310,7 @@ impl Engine {
 
     /// Takes the lease for `session`, labelled `label`, and watches the clipboard from
     /// then on. Returns the holder and the window that had keyboard focus, which `release`
-    /// can give focus back to. A lease given up before the watch is bound fails the call.
+    /// can give focus back to.
     pub(crate) async fn acquire(
         self: &Arc<Self>,
         session: &Session,
@@ -318,14 +318,35 @@ impl Engine {
     ) -> Result<(Holder, Option<u64>), ToolError> {
         // Boxed, because the readiness report makes a large future.
         let refusal = Box::pin(self.refusal(session));
-        let focused = async {
-            niri::waiter(self.events.as_ref())
+        self.grant(session, label, refusal).await
+    }
+
+    /// `acquire` with `refusal` as the policy's answer. The clipboard watcher is bound
+    /// before the lease is granted and kept with no await after the grant, so a call
+    /// dropped at any point leaves either no lease or the lease with its watcher.
+    async fn grant(
+        self: &Arc<Self>,
+        session: &Session,
+        label: &str,
+        refusal: impl Future<Output = Option<ToolError>>,
+    ) -> Result<(Holder, Option<u64>), ToolError> {
+        let prepare = |lease| async move {
+            let users_window = niri::waiter(self.events.as_ref())
                 .await
                 .ok()
-                .and_then(|waiter| waiter.view().focused_window())
+                .and_then(|waiter| waiter.view().focused_window());
+            Prepared {
+                users_window,
+                with: self.bind_watch(session, lease).await,
+            }
         };
-        let holder = self.desk.acquire(session, label, refusal, focused).await?;
-        self.watch_clipboard(session).await?;
+        let (holder, watch) = self
+            .desk
+            .acquire_with(session, label, refusal, prepare)
+            .await?;
+        if let Some(watch) = watch {
+            self.keep_watch(session, watch)?;
+        }
         Ok((holder, self.desk.users_window(session)))
     }
 
@@ -468,47 +489,36 @@ impl Engine {
         reader.read().await
     }
 
-    /// Watches the clipboard for the lease `session` holds from now on, unless something
-    /// already does. The watch ends itself once the lease is gone, however it went:
-    /// released, taken back by a stop, lost, or its session ended. A later lease replaces
-    /// it. Binding takes time, so the watch is kept only if `session` still holds that
-    /// lease once it is bound, checked with the watch slot locked, so another lease's watch
-    /// can't be replaced; otherwise `session` is told its lease is gone. A watch another
-    /// call bound for the same lease meanwhile stays, with what it has noted, and this one
-    /// is dropped.
-    async fn watch_clipboard(self: &Arc<Self>, session: &Session) -> Result<(), ToolError> {
-        let lease = self
-            .desk
-            .ref_lease(session)
-            .ok_or_else(|| lease_gone(session))?;
-        if self
-            .watch()
-            .as_ref()
-            .is_some_and(|watch| watch.lease() == lease)
-        {
-            return Ok(());
-        }
+    /// A clipboard watcher for `session`'s `lease`, bound while the lease is about to be
+    /// granted. It ends itself once the lease is gone, however it went: released, taken back
+    /// by a stop, lost, or its session ended.
+    async fn bind_watch(self: &Arc<Self>, session: &Session, lease: u64) -> clipboard::Watch {
         let engine = Arc::downgrade(self);
         let owner = session.clone();
         let holds = move || {
-            !owner.has_ended()
-                && engine
-                    .upgrade()
-                    .is_some_and(|engine| engine.desk.ref_lease(&owner) == Some(lease))
+            engine
+                .upgrade()
+                .is_some_and(|engine| engine.desk.pending(lease) || engine.holds(&owner, lease))
         };
-        let still = holds.clone();
         let (socket, display) = (self.env.niri_socket.clone(), self.env.display.clone());
-        let watch = clipboard::Watch::start(socket, display, lease, holds).await;
+        clipboard::Watch::start(socket, display, lease, holds).await
+    }
+
+    /// Whether `session` is still served and holds `lease`.
+    fn holds(&self, session: &Session, lease: u64) -> bool {
+        !session.has_ended() && self.desk.ref_lease(session) == Some(lease)
+    }
+
+    /// Keeps `watch` as the clipboard's watcher, in place of an earlier lease's, if
+    /// `session` still holds its lease. Checked with the slot locked, so a watcher for a
+    /// lease that has ended since never replaces a later lease's; `session` is then told
+    /// its lease is gone.
+    fn keep_watch(&self, session: &Session, watch: clipboard::Watch) -> Result<(), ToolError> {
         let mut current = self.watch();
-        if !still() {
+        if !self.holds(session, watch.lease()) {
             return Err(lease_gone(session));
         }
-        if current
-            .as_ref()
-            .is_none_or(|watching| watching.lease() != lease)
-        {
-            *current = Some(watch);
-        }
+        *current = Some(watch);
         drop(current);
         Ok(())
     }
@@ -788,6 +798,7 @@ fn lease_gone(session: &Session) -> ToolError {
 
 #[cfg(test)]
 mod tests {
+    use std::future::ready;
     use std::time::Duration;
 
     use super::*;
@@ -800,12 +811,7 @@ mod tests {
         let owner = crate::test_support::session(1);
         engine
             .desk
-            .acquire(
-                &owner,
-                "owner/1",
-                std::future::ready(None),
-                std::future::ready(Some(5)),
-            )
+            .acquire(&owner, "owner/1", ready(None), ready(Some(5)))
             .await
             .unwrap();
         let other = crate::test_support::session(2);
@@ -818,6 +824,51 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// An acquisition dropped while its clipboard watch binds leaves no lease, so another
+    /// session can take it and read what it copies.
+    #[tokio::test]
+    async fn an_acquire_dropped_while_its_watch_binds_leaves_no_lease() {
+        use crate::test_support::wayland::Compositor;
+
+        let dir = crate::test_support::fresh_dir("engine-dropped-acquire");
+        let niri = Compositor::start(&dir, include_str!("../tests/fixtures/us-de.xkb"));
+        RuntimeDir::of(&niri.env(&dir)).unwrap().create().unwrap();
+        let engine = Arc::new(without_niri(niri.env(&dir)));
+        niri.hold_client().await;
+        let dropped = grant_apart(&engine, &crate::test_support::session(1));
+        until(|| niri.seen().holding).await;
+        dropped.abort();
+        assert!(dropped.await.unwrap_err().is_cancelled());
+        assert!(!engine.desk.held());
+        niri.serve_held().await;
+        let next = crate::test_support::session(2);
+        engine.grant(&next, "next/2", ready(None)).await.unwrap();
+        assert_eq!(copied_and_read(&niri, &engine, &next).await, "copied");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A watch that ticks while its lease is still to be granted keeps watching once it is.
+    #[tokio::test]
+    async fn a_watch_bound_before_its_lease_is_granted_keeps_watching() {
+        use crate::test_support::wayland::Compositor;
+
+        let dir = crate::test_support::fresh_dir("engine-pending-watch");
+        let niri = Compositor::start(&dir, include_str!("../tests/fixtures/us-de.xkb"));
+        RuntimeDir::of(&niri.env(&dir)).unwrap().create().unwrap();
+        let engine = Arc::new(without_niri(niri.env(&dir)));
+        let session = crate::test_support::session(1);
+        let watch = engine.bind_watch(&session, 1).await;
+        // Past the watcher's first two checks of its lease.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let granted = engine
+            .desk
+            .acquire(&session, "test/1", ready(None), ready(None));
+        granted.await.unwrap();
+        engine.keep_watch(&session, watch).unwrap();
+        assert_eq!(copied_and_read(&niri, &engine, &session).await, "copied");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     /// How the first session's lease ends while its clipboard watch is binding.
     #[derive(Debug, Clone, Copy)]
     enum Ending {
@@ -826,85 +877,131 @@ mod tests {
         Stop,
     }
 
-    /// A watch bound after its lease ended is dropped, not kept in place of the next
-    /// lease's, and its acquisition fails.
-    #[tokio::test]
-    async fn a_watch_bound_after_its_lease_ended_leaves_the_next_leases_watch() {
-        for ending in [Ending::Release, Ending::Disconnect, Ending::Stop] {
-            late_bind(ending).await;
+    impl Ending {
+        /// What the acquisition binding meanwhile is refused with: a release waits for it
+        /// and gives the lease up after.
+        const fn refusal(self) -> Option<ErrorName> {
+            match self {
+                Self::Release => None,
+                Self::Disconnect => Some(ErrorName::LeaseRequired),
+                Self::Stop => Some(ErrorName::Stopped),
+            }
         }
     }
 
-    async fn late_bind(ending: Ending) {
+    /// A lease that ends while its acquisition binds the clipboard watch leaves the next
+    /// lease a watch of its own.
+    #[tokio::test]
+    async fn a_lease_ended_while_its_watch_binds_leaves_the_next_lease_a_watch() {
+        for ending in [Ending::Release, Ending::Disconnect, Ending::Stop] {
+            ended_while_binding(ending).await;
+        }
+    }
+
+    async fn ended_while_binding(ending: Ending) {
         use crate::test_support::wayland::Compositor;
 
-        let dir = crate::test_support::fresh_dir(&format!("engine-late-bind-{ending:?}"));
+        let dir = crate::test_support::fresh_dir(&format!("engine-ended-binding-{ending:?}"));
         let niri = Compositor::start(&dir, include_str!("../tests/fixtures/us-de.xkb"));
         let runtime = RuntimeDir::of(&niri.env(&dir)).unwrap();
         runtime.create().unwrap();
         let engine = Arc::new(without_niri(niri.env(&dir)));
-        let (first, second) = (
-            crate::test_support::session(1),
-            crate::test_support::session(2),
-        );
-        granted(&engine, &first).await.unwrap();
+        let first = crate::test_support::session(1);
         niri.hold_client().await;
-        let late = watch_apart(&engine, &first);
+        let binding = grant_apart(&engine, &first);
         until(|| niri.seen().holding).await;
-        end_lease(&engine, &runtime, &first, ending).await;
-        for _ in 0..500 {
-            if granted(&engine, &second).await.is_ok() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        engine.watch_clipboard(&second).await.unwrap();
+        let ender = end_apart(&engine, &runtime, &first, ending).await;
         niri.serve_held().await;
-        let refused = late.await.unwrap().unwrap_err();
-        assert_eq!(refused.name, ErrorName::LeaseRequired, "{ending:?}");
-        let read = engine.clipboard(&second).await.map(|_| ());
-        assert_eq!(read, Ok(()), "{ending:?}");
+        let first_got = binding.await.unwrap().map(|_| ());
+        ender.await.unwrap();
+        if matches!(ending, Ending::Stop) {
+            runtime.resume().unwrap();
+        }
+        let refused = first_got.err().map(|error| error.name);
+        assert_eq!(refused, ending.refusal(), "{ending:?}");
+        assert!(!engine.desk.held(), "{ending:?}");
+        let next = crate::test_support::session(2);
+        granted_soon(&engine, &next).await;
+        assert_eq!(copied_and_read(&niri, &engine, &next).await, "copied");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    /// Two acquisitions by one session bind two watches for one lease. The one bound last
-    /// doesn't replace the one already watching, so a copy noted in between stays readable.
+    /// Starts ending `session`'s lease as `ending` says, in a task of its own, since that
+    /// waits for the desk; returns once a disconnect has ended the session. A release must
+    /// find the lease and give it up.
+    async fn end_apart(
+        engine: &Arc<Engine>,
+        runtime: &RuntimeDir,
+        session: &Session,
+        ending: Ending,
+    ) -> tokio::task::JoinHandle<()> {
+        if matches!(ending, Ending::Stop) {
+            runtime.stop().unwrap();
+        }
+        let (engine, owner) = (Arc::clone(engine), session.clone());
+        let ender = tokio::spawn(async move {
+            match ending {
+                Ending::Release => assert!(engine.release(&owner, false).await.released),
+                Ending::Disconnect => engine.close_session(&owner).await,
+                Ending::Stop => {}
+            }
+        });
+        if matches!(ending, Ending::Disconnect) {
+            until(|| session.has_ended()).await;
+        }
+        ender
+    }
+
+    /// The holder acquiring again keeps the lease's watch, so a copy noted before stays
+    /// readable.
     #[tokio::test]
-    async fn a_second_watch_for_the_same_lease_keeps_what_the_first_noted() {
+    async fn acquiring_again_keeps_what_the_leases_watch_noted() {
         use crate::test_support::wayland::Compositor;
 
-        let dir = crate::test_support::fresh_dir("engine-same-lease");
+        let dir = crate::test_support::fresh_dir("engine-acquire-again");
         let niri = Compositor::start(&dir, include_str!("../tests/fixtures/us-de.xkb"));
         RuntimeDir::of(&niri.env(&dir)).unwrap().create().unwrap();
         let engine = Arc::new(without_niri(niri.env(&dir)));
         let session = crate::test_support::session(1);
-        granted(&engine, &session).await.unwrap();
-        niri.hold_client().await;
-        let late = watch_apart(&engine, &session);
-        until(|| niri.seen().holding).await;
-        granted(&engine, &session).await.unwrap();
-        engine.watch_clipboard(&session).await.unwrap();
-        let text = "text/plain;charset=utf-8".to_owned();
-        niri.copy(Some(vec![(text, b"copied".to_vec())])).await;
-        let read = || async {
-            let read = engine.clipboard(&session).await.unwrap();
-            serde_json::to_value(read).unwrap()
-        };
-        let copied = serde_json::json!({"text": "copied", "reason": null});
-        assert_eq!(read().await, copied);
-        niri.serve_held().await;
-        late.await.unwrap().unwrap();
-        assert_eq!(read().await, copied);
+        engine.grant(&session, "test/1", ready(None)).await.unwrap();
+        assert_eq!(copied_and_read(&niri, &engine, &session).await, "copied");
+        engine.grant(&session, "test/1", ready(None)).await.unwrap();
+        let read = engine.clipboard(&session).await.unwrap();
+        assert_eq!(serde_json::to_value(read).unwrap()["text"], "copied");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    /// `Engine::watch_clipboard` for `session`, in a task of its own.
-    fn watch_apart(
+    /// `Engine::grant` for `session`, with nothing refused, in a task of its own.
+    fn grant_apart(
         engine: &Arc<Engine>,
         session: &Session,
-    ) -> tokio::task::JoinHandle<Result<(), ToolError>> {
+    ) -> tokio::task::JoinHandle<Result<(Holder, Option<u64>), ToolError>> {
         let (engine, session) = (Arc::clone(engine), session.clone());
-        tokio::spawn(async move { engine.watch_clipboard(&session).await })
+        tokio::spawn(async move { engine.grant(&session, "test/1", ready(None)).await })
+    }
+
+    /// Grants `session` the lease once the desk lets it, within five seconds.
+    async fn granted_soon(engine: &Arc<Engine>, session: &Session) {
+        for _ in 0..500 {
+            if engine.grant(session, "next/2", ready(None)).await.is_ok() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("the lease wasn't granted within five seconds");
+    }
+
+    /// Copies "copied" as text, then returns the text `session` reads from the clipboard.
+    async fn copied_and_read(
+        niri: &crate::test_support::wayland::Compositor,
+        engine: &Engine,
+        session: &Session,
+    ) -> String {
+        let text = "text/plain;charset=utf-8".to_owned();
+        niri.copy(Some(vec![(text, b"copied".to_vec())])).await;
+        let read = engine.clipboard(session).await.unwrap();
+        let read = serde_json::to_value(read).unwrap();
+        read["text"].as_str().unwrap().to_owned()
     }
 
     /// An engine for `env` with no event stream and no accessibility bus.
@@ -916,26 +1013,6 @@ mod tests {
             reason: Some("no session bus".to_owned()),
         };
         Engine::new(env, events, Audit::new(None), absent)
-    }
-
-    /// The desk's lease for `session`, with nothing refused and no window focused.
-    async fn granted(engine: &Engine, session: &Session) -> Result<Holder, ToolError> {
-        let label = format!("test/{}", session.id().0);
-        let (refusal, focused) = (std::future::ready(None), std::future::ready(None));
-        engine.desk.acquire(session, &label, refusal, focused).await
-    }
-
-    /// Ends `session`'s lease as `ending` says, ready for another session to take it.
-    async fn end_lease(engine: &Engine, runtime: &RuntimeDir, session: &Session, ending: Ending) {
-        match ending {
-            Ending::Release => assert!(engine.release(session, false).await.released),
-            Ending::Disconnect => engine.close_session(session).await,
-            Ending::Stop => {
-                runtime.stop().unwrap();
-                until(|| !engine.desk.held()).await;
-                runtime.resume().unwrap();
-            }
-        }
     }
 
     /// Waits until `done`, for at most five seconds.

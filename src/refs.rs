@@ -259,6 +259,11 @@ impl Refs {
         self.elements.clear();
     }
 
+    /// The lease the next `start` begins.
+    pub(crate) const fn next(&self) -> u64 {
+        self.leases + 1
+    }
+
     /// The lease a screenshot starting now would belong to.
     pub(crate) const fn lease(&self) -> Option<u64> {
         self.lease

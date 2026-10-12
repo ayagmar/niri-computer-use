@@ -161,6 +161,15 @@ impl Seat {
     }
 }
 
+/// What `Desk::acquire_with` asks for last, before the lease is granted.
+#[derive(Debug)]
+pub(crate) struct Prepared<W> {
+    /// The window with keyboard focus, to give focus back to.
+    pub(crate) users_window: Option<u64>,
+    /// What must exist before the grant is published.
+    pub(crate) with: W,
+}
+
 /// What `status` reports about the lease.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct LeaseStatus {
@@ -208,15 +217,8 @@ impl Desk {
         }
     }
 
-    /// Takes the lease for `session`, labelled `label`, or returns the holder if that
-    /// session has it already. Another session's lease refuses at once, without waiting
-    /// for its owner's running action, and another server's lock refuses before anything
-    /// slow is asked. `refusal`, the policy's answer, is asked under the action mutex with
-    /// the lock taken, after the stop flag and the input-dirty marker, so a wait for the
-    /// mutex can't make it stale; a refusal gives the lock back. `users_window`, asked
-    /// last, finds the window with keyboard focus, kept with the lease. Since both take
-    /// time, the session's end, the stop flag and the marker are checked again before the
-    /// lease is granted.
+    /// `acquire_with`, for a lease that needs nothing prepared but `users_window`.
+    #[cfg(test)]
     pub(crate) async fn acquire(
         &self,
         session: &Session,
@@ -224,6 +226,37 @@ impl Desk {
         refusal: impl Future<Output = Option<ToolError>>,
         users_window: impl Future<Output = Option<u64>>,
     ) -> Result<Holder, ToolError> {
+        let prepare = |_| async {
+            Prepared {
+                users_window: users_window.await,
+                with: (),
+            }
+        };
+        let (holder, _) = self.acquire_with(session, label, refusal, prepare).await?;
+        Ok(holder)
+    }
+
+    /// Takes the lease for `session`, labelled `label`, or returns the holder if that
+    /// session has it already. Another session's lease refuses at once, without waiting
+    /// for its owner's running action, and another server's lock refuses before anything
+    /// slow is asked. `refusal`, the policy's answer, is asked under the action mutex with
+    /// the lock taken, after the stop flag and the input-dirty marker, so a wait for the
+    /// mutex can't make it stale; a refusal gives the lock back. `prepare`, asked last with
+    /// the number the lease's refs will have, finds the window with keyboard focus, kept
+    /// with the lease, and makes what must exist before the grant is published, which is
+    /// returned with the holder. A call dropped before then leaves no lease. Since both
+    /// take time, the session's end, the stop flag and the marker are checked again before
+    /// the lease is granted. A session that has the lease already gets no new `with`.
+    pub(crate) async fn acquire_with<W, F>(
+        &self,
+        session: &Session,
+        label: &str,
+        refusal: impl Future<Output = Option<ToolError>>,
+        prepare: impl FnOnce(u64) -> F,
+    ) -> Result<(Holder, Option<W>), ToolError>
+    where
+        F: Future<Output = Prepared<W>>,
+    {
         let runtime = self.runtime.as_ref().map_err(Clone::clone)?;
         // The same checks, in the same order, as under the mutex.
         self.unblocked(runtime)?;
@@ -236,7 +269,7 @@ impl Desk {
             return Err(session_ended());
         }
         if let Some(grant) = held.as_ref().filter(|grant| grant.owner == session.id()) {
-            return Ok(grant.lease.holder().clone());
+            return Ok((grant.lease.holder().clone(), None));
         }
         self.unblocked(runtime)?;
         // Another session's grant refuses where another server's lock would.
@@ -247,7 +280,8 @@ impl Desk {
         if let Some(refusal) = refusal.await {
             return Err(refusal);
         }
-        let users_window = users_window.await;
+        let next = self.seat.refs().next();
+        let prepared = prepare(next).await;
         if session.has_ended() {
             return Err(session_ended());
         }
@@ -257,9 +291,9 @@ impl Desk {
             owner: session.id(),
             lease,
         };
-        self.seat.put(&mut held, grant, users_window);
+        self.seat.put(&mut held, grant, prepared.users_window);
         drop(held);
-        Ok(holder)
+        Ok((holder, Some(prepared.with)))
     }
 
     /// Runs one action of `session` with the action mutex held. It runs only while neither
@@ -501,6 +535,11 @@ impl Desk {
         self.seat
             .owned_by(session.id())
             .and_then(|owner| owner.users_window)
+    }
+
+    /// Whether `lease` is the next lease, not granted yet.
+    pub(crate) fn pending(&self, lease: u64) -> bool {
+        self.seat.refs().next() == lease
     }
 
     /// The lease a screenshot of `session` starting now would issue its ref under, if
