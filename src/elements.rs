@@ -591,7 +591,7 @@ pub(crate) fn unmappable(why: Unmappable) -> ToolError {
         ),
         Unmappable::Tiled => (
             "tiled",
-            "niri 26.04 gives a tiled window no position on screen; activate_element and set_element_text still work, or aim with a screenshot pixel, or float the window with niri_action and call elements again",
+            "niri 26.04 gives a tiled window no position on screen; activate_element and set_element_text still work, or aim with a screenshot pixel; only when changing the user's layout is fine, float the window with niri_action and call elements again",
         ),
         Unmappable::Empty => ("empty", "the element has no area"),
         Unmappable::OutsideScreenshot => (
