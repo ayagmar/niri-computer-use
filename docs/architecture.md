@@ -296,7 +296,7 @@ With `element_changes` (`engine::Watch`), the outcome's `changes.elements` compa
 
 ## Giving focus back
 
-`acquire_desktop` reads the focused window from the event stream and keeps it with the lease as `users_window`; a new lease forgets it. `release_desktop` with `restore_focus` runs `act::refocus` through `Desk::act`, so it passes the same checks as any action before it focuses that window, then gives the lease up whatever the outcome. A window that closed meanwhile is reported as `closed`, and nothing is sent.
+`acquire_desktop` reads the focused window from the event stream and keeps it with the lease as `users_window`; a new lease forgets it. `release_desktop` with `restore_focus` runs `act::refocus` through `Desk::act`, so it passes the same checks as any action before it focuses that window, then gives the lease up whatever the outcome. Those checks include the readiness report and the second lock read, so the release costs what an action's gate costs. A stop skips it: the stop watcher gives the lease up and `users_window` with it, so there is nothing to focus, and a stop flag the watcher hasn't acted on yet is refused by `Desk::act`'s first check, before the readiness report. A window that closed meanwhile is reported as `closed`, and nothing is sent.
 
 ## The input-dirty marker and `recover`
 

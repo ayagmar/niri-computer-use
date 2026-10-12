@@ -789,8 +789,10 @@ impl Server {
     /// Gives the lease up. `released` says whether this server held it; the user's stop
     /// flag also takes it back. With `restore_focus`, keyboard focus first goes back to
     /// `users_window`, the window the user was on when you took the lease, and `restored`
-    /// says how that went (`focused`, `closed` if the window is gone, or an error). Restore
-    /// focus unless the task was to leave another window in front.
+    /// says how that went (`focused`, `closed` if the window is gone, or an error). That
+    /// passes an action's checks first, so it takes as long as they do; after the user's
+    /// stop it is skipped. Restore focus unless the task was to leave another window in
+    /// front.
     #[tool(
         title = "Release the desktop lease",
         annotations(

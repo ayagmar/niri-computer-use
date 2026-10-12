@@ -2107,6 +2107,39 @@ async fn release_desktop_can_give_focus_back_to_the_users_window() {
     assert!(!desk.niri.sent_action());
 }
 
+/// A user who pressed the stop key wants the desktop back at once: the stop took the lease
+/// and forgot the user's window with it, so giving focus back is skipped without reading
+/// anything, and nothing is sent.
+#[tokio::test]
+async fn after_a_stop_release_desktop_skips_the_restore_and_its_readiness_report() {
+    let mut desk = Desk::start("act-restore-stopped", "").await;
+    let release = |restore: bool| json!({ "restore_focus": restore });
+    desk.server
+        .structured_with("release_desktop", release(false))
+        .await;
+    while desk.server.structured("desktop_state").await["focused_window"] != 1 {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let acquired = desk.server.structured("acquire_desktop").await;
+    assert_eq!(acquired["users_window"], 1, "{acquired}");
+    assert!(run(&desk.fixture, "stop").await.status.success());
+    while !desk.server.structured("status").await["lease"]["holder"].is_null() {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let read = desk.noctalia.status_requests();
+    let released = desk
+        .server
+        .structured_with("release_desktop", release(true))
+        .await;
+    assert_eq!(
+        released,
+        json!({"users_window": null, "released": false}),
+        "{released}"
+    );
+    assert_eq!(desk.noctalia.status_requests(), read);
+    assert!(!desk.niri.sent_action());
+}
+
 #[tokio::test]
 async fn a_client_that_goes_mid_action_frees_the_lease_at_once() {
     use std::time::{Duration, Instant};
