@@ -40,14 +40,24 @@ export function markdownUrl(page: Page): string {
 }
 
 // The page as Markdown: its title and description, then its body, with relative links
-// made absolute so they still work outside the site, and images reduced to their alt
-// text.
+// made absolute so they still work outside the site, images reduced to their alt text,
+// and an MDX page's imports and component tags left out, keeping what they wrap.
 export function markdown(page: Page): string {
 	const base = pageUrl(page);
-	const body = (page.body ?? '')
+	const source = page.filePath?.endsWith('.mdx') ? withoutMdx(page.body ?? '') : (page.body ?? '');
+	const body = source
 		.replace(/!\[([^\]]*)\]\([^)]*\)/g, '[Image: $1]')
 		.replace(/\]\((?!https?:|mailto:|#)([^)\s]+)\)/g, (_, link: string) => `](${new URL(link, base).href})`);
 	return `# ${page.data.title}\n\n> ${page.data.description}\n\n${body.trim()}\n`;
+}
+
+// MDX without its imports and its lines that hold only a component's opening or closing
+// tag.
+function withoutMdx(body: string): string {
+	return body
+		.replace(/^import .*\n/gm, '')
+		.replace(/^[ \t]*<\/?[A-Za-z][^>]*>[ \t]*(\n|$)/gm, '')
+		.replace(/\n{3,}/g, '\n\n');
 }
 
 export function text(body: string, type = 'text/markdown'): Response {

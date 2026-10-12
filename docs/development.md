@@ -100,7 +100,7 @@ npm ci
 npm run build
 ```
 
-The pages are Markdown files in `site/src/content/docs/`, one directory per sidebar group (`site/src/lib/groups.mjs`), ordered by `sidebar.order` in each page's front matter. The build goes to `site/dist/`. Preview it with:
+The pages are Markdown files in `site/src/content/docs/`, except the home page, `index.mdx`, which places the components in `site/src/components/`. There is one directory per sidebar group (`site/src/lib/groups.mjs`), and pages are ordered by `sidebar.order` in their front matter. The build goes to `site/dist/`. Preview it with:
 
 ```sh
 npm run preview

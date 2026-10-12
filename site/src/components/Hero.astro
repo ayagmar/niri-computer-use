@@ -1,0 +1,142 @@
+---
+// The home page's hero: the promise beside the demo recording. Other pages with a hero
+// keep Starlight's.
+import Default from '@astrojs/starlight/components/Hero.astro';
+import Demo from './Demo.astro';
+
+// Starlight's id for the page title, which its skip link names.
+const PAGE_TITLE_ID = '_top';
+
+const { id, entry } = Astro.locals.starlightRoute;
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+const { title = entry.data.title, tagline, actions = [] } = entry.data.hero ?? {};
+---
+
+{
+	id === '' ? (
+		<section class="ncu-hero not-content">
+			<div class="copy">
+				<h1 id={PAGE_TITLE_ID} data-page-title set:html={title} />
+				{tagline && <p class="tagline" set:html={tagline} />}
+				<div class="actions">
+					{actions.map(({ link, text, variant }) => (
+						<a class:list={['button', variant === 'primary' ? 'primary' : 'quiet']} href={link}>
+							{text}
+						</a>
+					))}
+				</div>
+				<p class="needs">
+					niri 26.04 · Linux, Wayland · built from source ·{' '}
+					<a href={`${base}#limits`}>limits</a>
+				</p>
+			</div>
+			<Demo
+				name="errand"
+				label="The agent switches to a chat window, sends a reply through its Message field and Send button, then puts focus back on the editor."
+				log
+			/>
+		</section>
+	) : (
+		<Default />
+	)
+}
+
+<style>
+	.ncu-hero {
+		display: grid;
+		gap: 2.5rem;
+		padding-block: 2rem 3rem;
+	}
+
+	h1 {
+		margin: 0;
+		font-size: clamp(2.1rem, 1.5rem + 1.4vw, 2.7rem);
+		line-height: 1.04;
+		font-weight: 680;
+		letter-spacing: -0.025em;
+		color: var(--sl-color-white);
+		text-wrap: balance;
+	}
+
+	h1 :global(.key) {
+		display: block;
+		color: var(--ncu-ring);
+	}
+
+	.tagline {
+		margin-top: 1.25rem;
+		max-width: 36rem;
+		font-size: clamp(var(--sl-text-base), 0.9rem + 0.4vw, var(--sl-text-lg));
+		line-height: 1.55;
+		color: var(--sl-color-gray-2);
+		text-wrap: pretty;
+	}
+
+	.actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.75rem;
+		margin-top: 2rem;
+	}
+
+	.button {
+		display: inline-flex;
+		align-items: center;
+		min-height: 2.75rem;
+		padding-inline: 1.15rem;
+		border-radius: 8px;
+		font-weight: 600;
+		text-decoration: none;
+		transition: background-color 150ms ease, border-color 150ms ease;
+	}
+
+	.primary {
+		background: var(--ncu-ring);
+		color: var(--sl-color-black);
+	}
+
+	.primary:hover {
+		background: var(--sl-color-accent-high);
+	}
+
+	:root[data-theme='light'] .primary {
+		color: #fff;
+	}
+
+	:root[data-theme='light'] .primary:hover {
+		background: var(--sl-color-accent);
+	}
+
+	.quiet {
+		border: 1px solid var(--ncu-rule);
+		color: var(--sl-color-white);
+	}
+
+	.quiet:hover {
+		border-color: var(--sl-color-gray-3);
+	}
+
+	.needs {
+		margin-top: 1.5rem;
+		font-family: var(--sl-font-mono);
+		font-size: var(--sl-text-xs);
+		color: var(--sl-color-gray-3);
+	}
+
+	.needs a {
+		color: inherit;
+	}
+
+	@media (min-width: 62rem) {
+		.ncu-hero {
+			grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+			align-items: start;
+			gap: 3rem;
+			padding-block: 3.5rem 4rem;
+		}
+
+		.copy {
+			padding-top: 2.5rem;
+		}
+	}
+</style>

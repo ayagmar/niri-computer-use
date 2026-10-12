@@ -18,7 +18,22 @@ export default defineConfig({
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/ayagmar/niri-computer-use' },
 			],
-			customCss: ['./src/styles/theme.css'],
+			customCss: [
+				'@fontsource-variable/archivo/wght.css',
+				'@fontsource-variable/jetbrains-mono/wght.css',
+				'./src/styles/theme.css',
+			],
+			components: { Hero: './src/components/Hero.astro' },
+			// The card link previews show, from the hero demo's recording.
+			head: [
+				{
+					tag: 'meta',
+					attrs: { property: 'og:image', content: 'https://ayagmar.github.io/niri-computer-use/demo/og.png' },
+				},
+				{ tag: 'meta', attrs: { property: 'og:image:width', content: '1280' } },
+				{ tag: 'meta', attrs: { property: 'og:image:height', content: '640' } },
+				{ tag: 'meta', attrs: { name: 'twitter:card', content: 'summary_large_image' } },
+			],
 			sidebar: groups.map(({ label, directory }) => ({ label, items: [{ autogenerate: { directory } }] })),
 		}),
 	],

@@ -1066,3 +1066,13 @@ These match the versions installed locally.
 
 - The recordings come from `make nested-demo`: a headless nested niri with Noctalia, kitty and a GTK 4 chat fixture, recorded by `grim` in a loop. A script makes the calls an agent would make, through the real server, so every answer and timing on screen is the server's. A model-driven run would make each take different and couldn't be re-recorded after a change. The chat window is a test fixture and the site says so.
 - `scripts/demo-encode.py` turns a run into the site's media with ffmpeg, `rsvg-convert` and `avifenc`, which the nested harness or Arch's repos already provide. It needs nothing beyond Python's standard library. The caption band under each recording is drawn from the run's `timeline.jsonl`, never typed by hand.
+
+## 2026-10-12: the landing page
+
+| Package | Version | Published | Why |
+|---|---|---|---|
+| `@fontsource-variable/archivo` | 5.3.0 | 2026-07-19 | Archivo, the site's text face, served from the site rather than a font CDN. OFL-1.1. The Latin weight axis is 35 KB of WOFF2. |
+| `@fontsource-variable/jetbrains-mono` | 5.3.0 | 2026-07-19 | JetBrains Mono for requests, answers and code. OFL-1.1, 40 KB of WOFF2 for Latin. |
+
+- Both are the latest releases and have no dependencies, so `site/package-lock.json` gains only these two packages.
+- The home page is `index.mdx` with Starlight's `splash` template and a `Hero` override that applies only to the home page, so search, navigation and the Markdown and llms files keep working. MDX support comes with Starlight; no package was added for it.

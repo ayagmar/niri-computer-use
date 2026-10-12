@@ -1,0 +1,29 @@
+{
+ "prompt": "Tell #release the review moved to 3pm, then put me back where I was.",
+ "calls": [
+  {
+   "start": 0.2,
+   "request": "elements {\"window_id\": 3}",
+   "answer": "14 elements \u00b7 button \u201cSend\u201d \u00b7 text \u201cMessage\u201d",
+   "error": false,
+   "you": false,
+   "ms": 51
+  },
+  {
+   "start": 2.56,
+   "request": "set_element_text {\"element\": \"elem-8d4bebfc-12\", \"expect\": {\"window_id\": 3}, \"text\": \"The release review moved to 3pm.\"}",
+   "answer": "accepted: true \u00b7 observed: matched",
+   "error": false,
+   "you": false,
+   "ms": 304
+  },
+  {
+   "start": 4.56,
+   "request": "activate_element {\"element\": \"elem-8d4bebfc-13\", \"expect\": {\"window_id\": 3}}",
+   "answer": "accepted: true \u00b7 observed: present",
+   "error": false,
+   "you": false,
+   "ms": 354
+  }
+ ]
+}

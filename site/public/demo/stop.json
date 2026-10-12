@@ -1,0 +1,45 @@
+{
+ "prompt": "Post the release notes in #release.",
+ "calls": [
+  {
+   "start": 1.5,
+   "request": "acquire_desktop",
+   "answer": "lease taken \u00b7 users_window: 2",
+   "error": false,
+   "you": false,
+   "ms": 51
+  },
+  {
+   "start": 2.75,
+   "request": "focus {\"window_id\": 3}",
+   "answer": "accepted: true \u00b7 observed: focused \u00b7 focus 2 \u2192 3",
+   "error": false,
+   "you": false,
+   "ms": 303
+  },
+  {
+   "start": 4.75,
+   "request": "type_text {\"expect\": {\"window_id\": 3}, \"text\": \"Release notes: the stop key now\"}",
+   "answer": "accepted: true \u00b7 observed: sent",
+   "error": false,
+   "you": false,
+   "ms": 302
+  },
+  {
+   "start": 6.26,
+   "request": "niri-computer-use stop",
+   "answer": "the command the stop key runs: the lease is taken back",
+   "error": true,
+   "you": true,
+   "ms": 1
+  },
+  {
+   "start": 7.46,
+   "request": "type_text {\"expect\": {\"window_id\": 3}, \"text\": \" takes the desktop back.\"}",
+   "answer": "refused: stopped",
+   "error": true,
+   "you": false,
+   "ms": 51
+  }
+ ]
+}

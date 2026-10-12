@@ -1,42 +1,60 @@
-/* A restrained theme: system fonts, one teal accent, quieter grays. */
+/* Graphite panels, one amber accent taken from the focus ring, red only for stopped or
+   refused. Archivo for text, JetBrains Mono for requests, answers and code. */
 
 :root {
-	--sl-font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Noto Sans', 'Cantarell', sans-serif;
-	--sl-font-mono: ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'DejaVu Sans Mono', monospace;
+	--sl-font: 'Archivo Variable', ui-sans-serif, system-ui, sans-serif;
+	--sl-font-mono: 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace;
 
-	--sl-color-accent-low: #10302d;
-	--sl-color-accent: #2aa198;
-	--sl-color-accent-high: #a7e3dc;
+	--sl-color-accent-low: #3a2a12;
+	--sl-color-accent: #f2a33a;
+	--sl-color-accent-high: #ffd08a;
 
-	--sl-color-white: #f2f4f5;
-	--sl-color-gray-1: #e0e4e6;
-	--sl-color-gray-2: #b9c0c4;
-	--sl-color-gray-3: #8a9399;
-	--sl-color-gray-4: #555e64;
-	--sl-color-gray-5: #353c41;
-	--sl-color-gray-6: #22282c;
-	--sl-color-black: #151a1d;
+	--sl-color-white: #eef0f1;
+	--sl-color-gray-1: #dde0e2;
+	--sl-color-gray-2: #b4bbc0;
+	--sl-color-gray-3: #8b9399;
+	--sl-color-gray-4: #555c62;
+	--sl-color-gray-5: #2e3337;
+	--sl-color-gray-6: #1c1f22;
+	--sl-color-black: #121416;
+
+	--ncu-ring: #f2a33a;
+	--ncu-stop: #ff6b6b;
+	--ncu-panel: #181b1e;
+	--ncu-rule: #2a2e32;
+	--ncu-gap: 1rem;
+	--ncu-radius: 10px;
 
 	--sl-content-width: 46rem;
 }
 
 :root[data-theme='light'] {
-	--sl-color-accent-low: #d3efeb;
-	--sl-color-accent: #0e756d;
-	--sl-color-accent-high: #0a3d39;
+	--sl-color-accent-low: #f6e3c4;
+	--sl-color-accent: #8a5300;
+	--sl-color-accent-high: #4d2e00;
 
-	--sl-color-white: #151a1d;
-	--sl-color-gray-1: #22282c;
-	--sl-color-gray-2: #353c41;
-	--sl-color-gray-3: #555e64;
-	--sl-color-gray-4: #8a9399;
-	--sl-color-gray-5: #c4cbcf;
-	--sl-color-gray-6: #eef1f2;
-	--sl-color-gray-7: #f7f9f9;
-	--sl-color-black: #ffffff;
+	--sl-color-white: #15181a;
+	--sl-color-gray-1: #23282b;
+	--sl-color-gray-2: #3a4145;
+	--sl-color-gray-3: #555d62;
+	--sl-color-gray-4: #8b9399;
+	--sl-color-gray-5: #c9ced2;
+	--sl-color-gray-6: #e8eaec;
+	--sl-color-gray-7: #f8f9f9;
+	--sl-color-black: #f3f4f5;
+
+	--ncu-ring: #9a5a06;
+	--ncu-stop: #c62828;
+	--ncu-panel: #fbfbfc;
+	--ncu-rule: #d5d9dc;
 }
 
-/* Headings a little tighter and heavier than Starlight's defaults. */
+/* Keyboard focus wears the focus ring. */
+:focus-visible {
+	outline: 2px solid var(--ncu-ring);
+	outline-offset: 2px;
+}
+
 .sl-markdown-content :is(h2, h3) {
 	letter-spacing: -0.01em;
 }
@@ -53,19 +71,13 @@
 	white-space: nowrap;
 }
 
-/* The landing page: a narrower reading column. */
-[data-has-hero] .hero {
-	padding-block: 2.5rem 1.5rem;
-}
-
 /* Stills from nested runs. */
 .sl-markdown-content img {
-	border: 1px solid var(--sl-color-gray-5);
-	border-radius: 0.5rem;
-	box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 0.25);
+	border: 1px solid var(--ncu-rule);
+	border-radius: var(--ncu-radius);
 }
 
-[data-has-hero] .sl-markdown-content {
-	max-width: 46rem;
-	margin-inline: auto;
+/* The home page is wider than a docs page, for the demo beside the headline. */
+[data-has-hero] {
+	--sl-content-width: 76rem;
 }

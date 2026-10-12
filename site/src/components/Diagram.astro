@@ -1,0 +1,192 @@
+---
+// How a call travels: from the agent over stdio to the engine, then to niri, grim,
+// the virtual input devices, the accessibility bus or Noctalia. Acting passes the gate;
+// looking doesn't. Drawn in the page's colours, so it follows the theme.
+const backends = [
+	['niri IPC and event stream', 'windows, focus, layout, changes'],
+	['grim', 'screenshots'],
+	['wtype, virtual pointer', 'keys, text, clicks, scrolls'],
+	['accessibility bus', 'elements by name'],
+	['Noctalia', 'panels, lock state'],
+];
+---
+
+<figure class="ncu-diagram not-content">
+	<svg
+		viewBox="0 0 960 360"
+		role="img"
+		aria-labelledby="ncu-diagram-title ncu-diagram-desc"
+		font-family="var(--sl-font-mono)"
+	>
+		<title id="ncu-diagram-title">How a call reaches the desktop</title>
+		<desc id="ncu-diagram-desc">
+			Your agent starts niri-computer-use over stdio. One engine per niri serves every client.
+			Calls that look go straight to niri, grim, the accessibility bus or Noctalia. Calls that act
+			first pass the gate: the lease, the stop flag, the lock state and the deny list.
+		</desc>
+		<defs>
+			<marker id="ncu-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto">
+				<path d="M0 0 8 4 0 8z" class="head" />
+			</marker>
+			<marker id="ncu-arrow-act" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto">
+				<path d="M0 0 8 4 0 8z" class="head-act" />
+			</marker>
+		</defs>
+
+		<rect x="1" y="120" width="190" height="120" rx="10" class="box" />
+		<text x="20" y="160" class="title">your agent</text>
+		<text x="20" y="188" class="small">Claude Code, Codex,</text>
+		<text x="20" y="208" class="small">Pi or any MCP client</text>
+
+		<line x1="192" y1="180" x2="262" y2="180" class="wire" marker-end="url(#ncu-arrow)" />
+		<text x="204" y="170" class="small">stdio</text>
+
+		<rect x="264" y="120" width="210" height="120" rx="10" class="box" />
+		<text x="283" y="160" class="title">niri-computer-use</text>
+		<text x="283" y="188" class="small">one engine per niri,</text>
+		<text x="283" y="208" class="small">shared by every client</text>
+
+		<path d="M474 150 H 688" class="wire" marker-end="url(#ncu-arrow)" />
+		<text x="490" y="140" class="small">look: no lease</text>
+
+		<path d="M474 210 H 590" class="wire act" />
+		<text x="490" y="200" class="small act-label">act</text>
+		<rect x="590" y="186" width="60" height="48" rx="6" class="gate" />
+		<text x="620" y="215" class="gate-label" text-anchor="middle">gate</text>
+		<path d="M650 210 H 688" class="wire act" marker-end="url(#ncu-arrow-act)" />
+		<text x="620" y="258" class="tiny" text-anchor="middle">lease · stop</text>
+		<text x="620" y="274" class="tiny" text-anchor="middle">lock · deny list</text>
+
+		{
+			backends.map(([name, what], index) => (
+				<g transform={`translate(690 ${20 + index * 66})`}>
+					<rect width="268" height="56" rx="8" class="box" />
+					<text x="16" y="24" class="name">{name}</text>
+					<text x="16" y="43" class="small">{what}</text>
+				</g>
+			))
+		}
+	</svg>
+	<ol class="flow">
+		<li><strong>your agent</strong> starts the server over stdio</li>
+		<li><strong>niri-computer-use</strong>: one engine per niri, shared by every client</li>
+		<li>
+			<strong>look</strong> goes straight through; <strong class="act-label">act</strong> passes the
+			gate: lease, stop, lock, deny list. Then one of:
+			<ul>
+				{
+					backends.map(([name, what]) => (
+						<li>
+							<strong>{name}</strong>: {what}
+						</li>
+					))
+				}
+			</ul>
+		</li>
+	</ol>
+</figure>
+
+<style>
+	.ncu-diagram {
+		margin: 0;
+	}
+
+	svg {
+		display: block;
+		width: 100%;
+		height: auto;
+	}
+
+	/* Below this width the drawing's text would be too small to read, so the same path is
+	   a list. */
+	.flow {
+		display: none;
+		margin: 0;
+		padding-inline-start: 1.25rem;
+		font-family: var(--sl-font-mono);
+		font-size: var(--sl-text-xs);
+		line-height: 1.7;
+		color: var(--sl-color-gray-2);
+	}
+
+	.flow strong {
+		color: var(--sl-color-white);
+	}
+
+	.flow .act-label {
+		color: var(--ncu-ring);
+	}
+
+	@media (max-width: 40rem) {
+		svg {
+			display: none;
+		}
+
+		.flow {
+			display: block;
+		}
+	}
+
+	.box {
+		fill: var(--ncu-panel);
+		stroke: var(--ncu-rule);
+		stroke-width: 1.5;
+	}
+
+	.title {
+		fill: var(--sl-color-white);
+		font-size: 17px;
+		font-weight: 700;
+	}
+
+	.name {
+		fill: var(--sl-color-white);
+		font-size: 14px;
+		font-weight: 600;
+	}
+
+	.small {
+		fill: var(--sl-color-gray-3);
+		font-size: 13px;
+	}
+
+	.tiny {
+		fill: var(--sl-color-gray-3);
+		font-size: 11px;
+	}
+
+	.wire {
+		stroke: var(--sl-color-gray-4);
+		stroke-width: 1.5;
+		fill: none;
+	}
+
+	.wire.act {
+		stroke: var(--ncu-ring);
+	}
+
+	.act-label {
+		fill: var(--ncu-ring);
+	}
+
+	.head {
+		fill: var(--sl-color-gray-4);
+	}
+
+	.head-act {
+		fill: var(--ncu-ring);
+	}
+
+	.gate {
+		fill: none;
+		stroke: var(--ncu-ring);
+		stroke-width: 2;
+		stroke-dasharray: 5 4;
+	}
+
+	.gate-label {
+		fill: var(--ncu-ring);
+		font-size: 13px;
+		font-weight: 600;
+	}
+</style>

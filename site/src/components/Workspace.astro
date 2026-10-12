@@ -1,0 +1,99 @@
+---
+// One section of the home page, drawn as a niri column: its columns sit side by side on a
+// wide screen, and the focus ring lights the section in the middle of the view, moving
+// from section to section as the page scrolls, as niri's moves to the column you scrolled
+// to.
+interface Props {
+	/** The anchor. */
+	id: string;
+}
+
+const { id } = Astro.props;
+---
+
+<section class="ncu-ws" id={id}>
+	<slot />
+</section>
+
+<style>
+	.ncu-ws {
+		position: relative;
+		padding-block: 3rem;
+		border-top: 1px solid var(--ncu-rule);
+	}
+
+	.ncu-ws::after {
+		content: '';
+		position: absolute;
+		inset: 1rem -0.75rem;
+		border: 2px solid var(--ncu-ring);
+		border-radius: calc(var(--ncu-radius) + 4px);
+		opacity: 0;
+		pointer-events: none;
+	}
+
+	@supports (animation-timeline: view()) {
+		@media (prefers-reduced-motion: no-preference) {
+			.ncu-ws::after {
+				animation: ncu-ring linear both;
+				animation-timeline: view();
+				animation-range: cover;
+			}
+		}
+	}
+
+	@keyframes ncu-ring {
+		0%,
+		30% {
+			opacity: 0;
+			transform: scale(0.985);
+		}
+		42%,
+		58% {
+			opacity: 1;
+			transform: scale(1);
+		}
+		70%,
+		100% {
+			opacity: 0;
+			transform: scale(0.985);
+		}
+	}
+
+	.ncu-ws :global(h2) {
+		margin: 0;
+		max-width: 40rem;
+		font-size: clamp(1.6rem, 1.2rem + 1.2vw, 2.25rem);
+		line-height: 1.12;
+		font-weight: 660;
+		letter-spacing: -0.02em;
+		text-wrap: balance;
+	}
+
+	/* Columns: side by side when there's room. */
+	.ncu-ws :global(.columns) {
+		display: grid;
+		gap: var(--ncu-gap);
+		margin-top: 1.75rem;
+	}
+
+	@media (min-width: 50rem) {
+		.ncu-ws :global(.columns) {
+			grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+		}
+	}
+
+	.ncu-ws :global(.column) {
+		min-width: 0;
+		margin: 0;
+		padding: 1.25rem;
+		border: 1px solid var(--ncu-rule);
+		border-radius: var(--ncu-radius);
+		background: var(--ncu-panel);
+	}
+
+	/* A recording in a column leaves the amber to the focus ring. */
+	.ncu-ws :global(.column .plate) {
+		border-color: var(--ncu-rule);
+	}
+</style>

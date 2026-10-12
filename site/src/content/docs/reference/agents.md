@@ -14,7 +14,7 @@ Everything on this site is also available as plain Markdown, for agents and othe
 
 ## Markdown for every page
 
-Every page has a Markdown version at its address with `.md` in place of the trailing slash. This page, for example, is at [`reference/agents.md`](../agents.md), and the home page at [`index.md`](../../index.md). Links in the Markdown are absolute, so they work outside the site.
+Every page has a Markdown version at its address with `.md` in place of the trailing slash. This page, for example, is at [`reference/agents.md`](../agents.md), and the home page at [`index.md`](../../index.md). Links in the Markdown are absolute, so they work outside the site. The home page's Markdown leaves out its recordings and diagram.
 
 ## The skill
 
