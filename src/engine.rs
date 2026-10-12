@@ -249,7 +249,7 @@ impl Engine {
             runtime: self.desk.runtime()?,
             policy: &settings.policy,
             keyboard: settings.keyboard.as_deref(),
-            path: settings.path.as_deref(),
+            place: settings.place(),
             a11y: self.a11y.as_ref(),
         })
     }
@@ -302,7 +302,7 @@ impl Engine {
             policy: &settings.policy,
             unrestricted: &settings.unrestricted,
             tools: &settings.tools,
-            path: settings.path.as_deref(),
+            place: settings.place(),
             accessibility: &self.accessibility,
         };
         status::collect(&self.env, sources).await
@@ -561,9 +561,9 @@ impl Engine {
         let lease = self.desk.ref_lease(session);
         let connection = self.events.as_ref().ok().and_then(EventStream::connection);
         let taken = Instant::now();
-        let path = session.settings().path.as_deref();
+        let place = session.settings().place();
         let mut shot =
-            observe::screenshot(&self.env.niri_socket, &self.env.display, path, &request).await?;
+            observe::screenshot(&self.env.niri_socket, &self.env.display, place, &request).await?;
         if let (Some(lease), Some(connection)) = (lease, connection) {
             let kept = Shot::of(&shot, taken, connection);
             shot.metadata.screenshot_ref = self.desk.remember(lease, kept);
@@ -582,8 +582,8 @@ impl Engine {
         let saved = match &save {
             Some(save) => {
                 let (socket, display) = (&self.env.niri_socket, &self.env.display);
-                let path = session.settings().path.as_deref();
-                Some(observe::save(socket, display, path, &request.target, save).await?)
+                let place = session.settings().place();
+                Some(observe::save(socket, display, place, &request.target, save).await?)
             }
             None => None,
         };

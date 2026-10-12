@@ -1,7 +1,7 @@
 //! One client of the engine, and what its own environment decides for it alone.
 
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -10,6 +10,7 @@ use tokio::io::{AsyncRead, ReadBuf};
 use tokio::sync::{Semaphore, SemaphorePermit, oneshot, watch};
 
 use crate::policy::{self, Loaded, Tools, Unrestricted};
+use crate::runner::Place;
 
 /// What a client's own environment gives its session, and no other: its three variables,
 /// its home, and the policy file as read from its config directory.
@@ -23,18 +24,21 @@ pub(crate) struct Given {
     pub(crate) keyboard: Option<OsString>,
     /// `$HOME`, for a `capture_dir` under `~/`.
     pub(crate) home: Option<PathBuf>,
-    /// `$PATH`, where the session's own programs, `grim` and `wtype`, are found, as
-    /// `search_path` makes it.
-    pub(crate) path: Option<Vec<PathBuf>>,
+    /// `$PATH`, where the session's own programs, `grim` and `wtype`, are found. Empty
+    /// isn't unset: it means the working directory.
+    pub(crate) path: Option<OsString>,
+    /// The client's working directory, where `PATH`'s relative entries are, as its hello
+    /// to a shared engine gives it. `None` in a standalone server, whose programs start in
+    /// its own.
+    pub(crate) cwd: Option<PathBuf>,
     pub(crate) policy: policy::Source,
 }
 
 impl Given {
     /// What `var` reads, with the policy file in `$XDG_CONFIG_HOME`, or `$HOME/.config`,
-    /// read now, and `PATH` made absolute against `cwd`, the working directory. An empty
-    /// variable counts as unset, except `PATH`, where it means the working directory.
-    pub(crate) fn read(var: impl Fn(&str) -> Option<OsString>, cwd: Option<&Path>) -> Self {
-        let path = search_path(var("PATH"), cwd);
+    /// read now. An empty variable counts as unset, except `PATH`.
+    pub(crate) fn read(var: impl Fn(&str) -> Option<OsString>) -> Self {
+        let path = var("PATH");
         let var = |name| var(name).filter(|value| !value.is_empty());
         let home = var("HOME").map(PathBuf::from);
         let config_dir = var("XDG_CONFIG_HOME")
@@ -46,26 +50,10 @@ impl Given {
             keyboard: var("NIRI_COMPUTER_USE_KEYBOARD"),
             home,
             path,
+            cwd: None,
             policy: policy::Source::read(config_dir.as_deref()),
         }
     }
-}
-
-/// `path`, a `PATH`, as absolute directories, the way `execvp` searches it from `cwd`: an
-/// empty entry, as all of an empty `PATH` is, is `cwd`, and a relative one is under it.
-/// Without `cwd`, those are left out. `None` when `PATH` is unset.
-fn search_path(path: Option<OsString>, cwd: Option<&Path>) -> Option<Vec<PathBuf>> {
-    let path = path?;
-    let absolute = |dir: PathBuf| {
-        if dir.is_absolute() {
-            Some(dir)
-        } else if dir.as_os_str().is_empty() {
-            cwd.map(Path::to_path_buf)
-        } else {
-            cwd.map(|cwd| cwd.join(dir))
-        }
-    };
-    Some(std::env::split_paths(&path).filter_map(absolute).collect())
 }
 
 /// A session's settings, fixed when it starts.
@@ -81,8 +69,10 @@ pub(crate) struct Settings {
     pub(crate) keyboard: Option<OsString>,
     /// The session's home, for a `capture_dir` under `~/`.
     pub(crate) home: Option<PathBuf>,
-    /// The session's `PATH`, where `grim` and `wtype` are found for its calls.
-    pub(crate) path: Option<Vec<PathBuf>>,
+    /// The session's `PATH` and working directory, where `grim` and `wtype` are found for
+    /// its calls.
+    pub(crate) path: Option<OsString>,
+    pub(crate) cwd: Option<PathBuf>,
 }
 
 impl Settings {
@@ -103,6 +93,15 @@ impl Settings {
             keyboard: given.keyboard,
             home: given.home,
             path: given.path,
+            cwd: given.cwd,
+        }
+    }
+
+    /// Where the session's own programs are found.
+    pub(crate) fn place(&self) -> Place<'_> {
+        Place {
+            path: self.path.as_deref(),
+            cwd: self.cwd.as_deref(),
         }
     }
 }
@@ -282,20 +281,6 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn a_path_is_searched_from_the_working_directory_as_execvp_searches_it() {
-        let cwd = Path::new("/work");
-        let dirs = |path: &str, from| search_path(Some(path.into()), from);
-        let at = |list: &[&str]| Some(list.iter().map(PathBuf::from).collect::<Vec<_>>());
-        assert_eq!(dirs("", Some(cwd)), at(&["/work"]));
-        assert_eq!(
-            dirs("bin::/usr/bin:.", Some(cwd)),
-            at(&["/work/bin", "/work", "/usr/bin", "/work/."])
-        );
-        assert_eq!(dirs("bin::/usr/bin", None), at(&["/usr/bin"]));
-        assert_eq!(search_path(None, Some(cwd)), None);
-    }
-
     /// Reads all of `input` through `Incoming`. Returns the read's result and whether the
     /// client counts as gone.
     async fn read_all(input: Vec<u8>) -> (std::io::Result<usize>, bool) {
@@ -368,31 +353,22 @@ mod tests {
         };
         let home = dir.join("home").into_os_string();
         let config = dir.join("config").into_os_string();
-        let both = Given::read(
-            |name| match name {
-                "HOME" => Some(home.clone()),
-                "XDG_CONFIG_HOME" => Some(config.clone()),
-                _ => None,
-            },
-            None,
-        );
+        let both = Given::read(|name| match name {
+            "HOME" => Some(home.clone()),
+            "XDG_CONFIG_HOME" => Some(config.clone()),
+            _ => None,
+        });
         assert_eq!(both.home, Some(dir.join("home")));
         assert_eq!(text(both), "# config");
         // An empty variable counts as unset, so the file under `$HOME` is read.
-        let home_only = Given::read(
-            |name| match name {
-                "HOME" => Some(home.clone()),
-                "XDG_CONFIG_HOME" | "NIRI_COMPUTER_USE_UNRESTRICTED" => Some(OsString::new()),
-                _ => None,
-            },
-            None,
-        );
+        let home_only = Given::read(|name| match name {
+            "HOME" => Some(home.clone()),
+            "XDG_CONFIG_HOME" | "NIRI_COMPUTER_USE_UNRESTRICTED" => Some(OsString::new()),
+            _ => None,
+        });
         assert_eq!(home_only.unrestricted, None);
         assert_eq!(text(home_only), "# home/.config");
-        assert_eq!(
-            Given::read(|_| None, None).policy,
-            policy::Source::NoConfigDir
-        );
+        assert_eq!(Given::read(|_| None).policy, policy::Source::NoConfigDir);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

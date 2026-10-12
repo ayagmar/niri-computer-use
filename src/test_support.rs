@@ -39,15 +39,27 @@ pub(crate) fn niri_env(dir: &std::path::Path) -> crate::Env {
     }
 }
 
-/// Session `id` of one process, with no policy file, nothing turned on, and no directory
-/// on its `PATH`, so that nothing on the host runs.
+/// A `PATH` with one directory that can't exist, so that nothing on the host runs.
+pub(crate) const NO_PROGRAMS: &str = "/dev/null/no-programs";
+
+/// Where a test session's programs are found: nowhere.
+pub(crate) fn no_programs() -> crate::runner::Place<'static> {
+    crate::runner::Place {
+        path: Some(std::ffi::OsStr::new(NO_PROGRAMS)),
+        cwd: None,
+    }
+}
+
+/// Session `id` of one process, with no policy file, nothing turned on, and `NO_PROGRAMS`
+/// as its `PATH`.
 pub(crate) fn session(id: u64) -> crate::session::Session {
     let given = crate::session::Given {
         unrestricted: None,
         tools: None,
         keyboard: None,
         home: None,
-        path: Some(Vec::new()),
+        path: Some(NO_PROGRAMS.into()),
+        cwd: None,
         policy: crate::policy::Source::Missing,
     };
     crate::session::Session::new(

@@ -1,7 +1,6 @@
 //! The readiness report shared by the `status` tool and the `status` subcommand.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 use niri_ipc::Output;
 use serde::Serialize;
@@ -19,7 +18,8 @@ use crate::noctalia::{self, Presence};
 use crate::policy::{
     self, Facts, Loaded, PolicyStatus, Tools, ToolsStatus, Unrestricted, UnrestrictedStatus,
 };
-use crate::{Env, a11y, discover, runner};
+use crate::runner::{self, Place};
+use crate::{Env, a11y, discover};
 
 /// Programs the server runs for the session asking, found on its `PATH` or not.
 const SESSION_BINARIES: [&str; 2] = ["grim", "wtype"];
@@ -77,8 +77,8 @@ pub(crate) struct Sources<'a> {
     pub(crate) policy: &'a Loaded,
     pub(crate) unrestricted: &'a Unrestricted,
     pub(crate) tools: &'a Tools,
-    /// The session's `PATH`.
-    pub(crate) path: Option<&'a [PathBuf]>,
+    /// Where the session's own programs are found.
+    pub(crate) place: Place<'a>,
     /// Decided once at startup for the server, whose tool list depends on it.
     pub(crate) accessibility: &'a a11y::Presence,
 }
@@ -162,7 +162,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         policy,
         unrestricted,
         tools,
-        path,
+        place,
         accessibility,
     } = sources;
     let socket = &env.niri_socket;
@@ -213,7 +213,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         unrestricted: unrestricted.status(),
         tools: tools.status(),
         binaries: SESSION_BINARIES
-            .map(|name| (name, runner::find(path, name).is_some()))
+            .map(|name| (name, runner::finds(place, name)))
             .into_iter()
             .chain(OWN_BINARIES.map(|name| (name, env.finds(name))))
             .collect(),
@@ -256,8 +256,7 @@ mod tests {
                 policy: policy::Profile::Full,
                 env: Ok(None),
             },
-            // No directory, rather than no `PATH`, which would search the host's `/usr/bin`.
-            path: Some(&[]),
+            place: crate::test_support::no_programs(),
             accessibility: &a11y::detect(None).await,
         };
         let status = serde_json::to_value(collect(&Env::default(), sources).await).unwrap();

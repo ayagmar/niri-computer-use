@@ -13,7 +13,7 @@ use serde::Serialize;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::{Display, Socket};
 use crate::policy::SaveTarget;
-use crate::runner::{self, Search};
+use crate::runner::{self, Place, Search};
 use crate::{image_header, niri, save};
 
 /// The slowest capture in M0 (C15) took 275 ms.
@@ -138,13 +138,12 @@ pub(crate) struct Screenshot {
     pub(crate) image: Vec<u8>,
 }
 
-/// Captures with grim, found on `search_path`, the session's `PATH`. grim finds the
-/// display by name alone, so it runs only right after the niri on `socket` is found
-/// serving `display`.
+/// Captures with grim, found in `place`, the session's. grim finds the display by name
+/// alone, so it runs only right after the niri on `socket` is found serving `display`.
 pub(crate) async fn screenshot(
     socket: &Socket,
     display: &Display,
-    search_path: Option<&[PathBuf]>,
+    place: Place<'_>,
     request: &Request,
 ) -> Result<Screenshot, CallError> {
     let outputs = niri::outputs(socket).await?;
@@ -165,7 +164,7 @@ pub(crate) async fn screenshot(
         .map_or(0, |since| since.as_millis());
     let done = runner::run(
         "grim",
-        Search::Client(search_path),
+        Search::Client(place),
         &plan.args,
         GRIM_DEADLINE,
         MAX_IMAGE,
@@ -204,12 +203,11 @@ pub(crate) async fn screenshot(
 }
 
 /// Captures `target` as a PNG at its output's own scale, whatever the returned image's
-/// `max_width`, and writes it to `save`. grim is found on `search_path`, the session's
-/// `PATH`.
+/// `max_width`, and writes it to `save`. grim is found in `place`, the session's.
 pub(crate) async fn save(
     socket: &Socket,
     display: &Display,
-    search_path: Option<&[PathBuf]>,
+    place: Place<'_>,
     target: &Target,
     save: &SaveTarget,
 ) -> Result<Saved, CallError> {
@@ -218,7 +216,7 @@ pub(crate) async fn save(
         max_width: None,
         format: Format::Png,
     };
-    let shot = screenshot(socket, display, search_path, &request).await?;
+    let shot = screenshot(socket, display, place, &request).await?;
     let path = save::write(save, &shot.image)?;
     Ok(Saved {
         path,

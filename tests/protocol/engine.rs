@@ -34,6 +34,7 @@ fn hello(fixture: &Fixture) -> Value {
         "unrestricted": null,
         "keyboard": null,
         "home": null,
+        "cwd": fixture.path(""),
         "policy": "missing",
     })
 }

@@ -23,7 +23,7 @@ use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::waiter::{View, Waiter};
 use crate::niri::{self, waiter::Waited};
 use crate::policy;
-use crate::runner::{self, Finished, Gated, Search};
+use crate::runner::{self, Finished, Gated, Place, Search};
 
 use super::Input;
 use super::paste::Aftercare;
@@ -377,7 +377,7 @@ pub(crate) async fn type_input_then(
             tool: typing.tool(),
             args: &stroke.args()?,
             stdin: stroke.stdin(),
-            path: input.path,
+            place: input.place,
         };
         // The marker and wtype's start may outlast the lock read, so it is read again here.
         let go = async {
@@ -507,12 +507,12 @@ impl Failed {
 }
 
 /// One `wtype` call: the tool it types for, its arguments, what it reads, and the
-/// session's `PATH`, where `wtype` is found.
+/// place the session's `wtype` is found in.
 struct Wtype<'a> {
     tool: &'a str,
     args: &'a [String],
     stdin: Vec<u8>,
-    path: Option<&'a [std::path::PathBuf]>,
+    place: Place<'a>,
 }
 
 /// Writes the marker, starts wtype behind the gate, records its PID, then, once `go` lets
@@ -529,12 +529,12 @@ async fn run_wtype(
         tool,
         args,
         stdin,
-        path,
+        place,
     } = wtype;
     let mut marker = Written::write(runtime, Marker::pending(tool, Vec::new()))
         .await
         .map_err(|error| Failed::unsent(marker::unwritten(&error)))?;
-    let gated = match runner::gated("wtype", Search::Client(path), args, &UTF8, WTYPE_DEADLINE) {
+    let gated = match runner::gated("wtype", Search::Client(place), args, &UTF8, WTYPE_DEADLINE) {
         Ok(gated) => gated,
         // Nothing started, so nothing was typed.
         Err(error) => return Err(Failed::unsent(cleared(marker, error).await)),

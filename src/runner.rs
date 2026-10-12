@@ -29,64 +29,56 @@ pub(crate) fn pass_on(session: Vec<(&'static str, OsString)>) {
     SESSION.get_or_init(|| session);
 }
 
-/// Where a child is looked up, and the `PATH` it gets.
+/// Where a child is looked up, and the `PATH` and working directory it gets.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Search<'a> {
-    /// This process's own `PATH`, for what an engine runs for every client.
+    /// This process's own `PATH` and directory, for what an engine runs for every client.
     Own,
-    /// A client's `PATH` as absolute directories, `None` when its environment had none,
-    /// for what runs for that client alone. The runner finds the program there itself and
-    /// runs it by its path, so a shared engine runs what the client's standalone server
-    /// would, whatever the engine's own working directory.
-    Client(Option<&'a [PathBuf]>),
+    /// A client's, for what runs for that client alone.
+    Client(Place<'a>),
+}
+
+/// A client's `PATH`, `None` when its environment had none, and its working directory,
+/// where the relative entries are. A child started there finds what the client's
+/// standalone server would, whatever the engine's own working directory.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Place<'a> {
+    pub(crate) path: Option<&'a OsStr>,
+    pub(crate) cwd: Option<&'a Path>,
 }
 
 /// Where `execvp` looks when `PATH` is unset: glibc's `_CS_PATH`.
-const DEFAULT_PATH: [&str; 2] = ["/bin", "/usr/bin"];
+const DEFAULT_PATH: &str = "/bin:/usr/bin";
 
-/// The executable file called `program` on `path`, a client's `PATH`, or on the default
-/// search path when the client has none.
-pub(crate) fn find(path: Option<&[PathBuf]>, program: &str) -> Option<PathBuf> {
-    let dirs = path.map_or_else(|| DEFAULT_PATH.map(PathBuf::from).to_vec(), <[_]>::to_vec);
-    first_executable(dirs, program)
-}
-
-/// The first executable file called `program` in `dirs`.
-pub(crate) fn first_executable(
-    dirs: impl IntoIterator<Item = PathBuf>,
-    program: &str,
-) -> Option<PathBuf> {
-    use std::os::unix::fs::PermissionsExt as _;
-    dirs.into_iter().map(|dir| dir.join(program)).find(|file| {
-        file.metadata()
-            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+/// Whether `place` has a file called `program` that this process may execute. Only for
+/// reporting: the start itself searches, as `execvp` does.
+pub(crate) fn finds(place: Place<'_>, program: &str) -> bool {
+    let path = place.path.unwrap_or_else(|| OsStr::new(DEFAULT_PATH));
+    std::env::split_paths(path).any(|dir| {
+        let file = match place.cwd {
+            Some(cwd) => cwd.join(dir).join(program),
+            None => dir.join(program),
+        };
+        file.is_file() && rustix::fs::access(&file, rustix::fs::Access::EXEC_OK).is_ok()
     })
 }
 
-/// A command for `program`, found as `search` says. A client's program gets the client's
-/// `PATH`, or none when it has none.
-fn searched(program: &str, search: Search<'_>) -> Result<Command, ToolError> {
-    let Search::Client(path) = search else {
-        return Ok(command(program));
+/// A command for `program`, to be looked up as `search` says. A client's program gets the
+/// client's `PATH`, or none when it has none, and starts in the client's directory, so the
+/// system's search runs as it would for the client.
+fn searched(program: &str, search: Search<'_>) -> Command {
+    let mut command = command(program);
+    let Search::Client(place) = search else {
+        return command;
     };
-    let Some(file) = find(path, program) else {
-        let place = if path.is_some() {
-            "this client's PATH"
-        } else {
-            "/bin or /usr/bin, as this client has no PATH"
-        };
-        return Err(ToolError::new(
-            ErrorName::UpstreamError,
-            format!("start {program}: no executable {program} on {place}"),
-        ));
+    match place.path {
+        Some(path) => command.env("PATH", path),
+        None => command.env_remove("PATH"),
     };
-    let mut command = command(file);
-    // A directory with a `:` in its name can't be written into a `PATH`.
-    match path.map(std::env::join_paths) {
-        Some(Ok(joined)) => command.env("PATH", joined),
-        Some(Err(_)) | None => command.env_remove("PATH"),
-    };
-    Ok(command)
+    if let Some(cwd) = place.cwd {
+        command.current_dir(cwd);
+    }
+    command
 }
 
 /// How much stderr an error keeps. The rest is read and discarded, so a verbose child
@@ -125,7 +117,7 @@ pub(crate) async fn run(
     deadline: Duration,
     max_stdout: u64,
 ) -> Result<Finished, ToolError> {
-    let child = searched(program, search)?
+    let child = searched(program, search)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -171,7 +163,7 @@ pub(crate) fn gated(
     env: &[(&str, &str)],
     deadline: Duration,
 ) -> Result<Gated, ToolError> {
-    let mut child = searched(program, search)?
+    let mut child = searched(program, search)
         .args(args)
         .envs(env.iter().copied())
         .stdin(Stdio::piped())

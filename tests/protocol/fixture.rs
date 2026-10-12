@@ -222,10 +222,7 @@ impl Fixture {
             self.dir.join("utils").display(),
             self.dir.display()
         );
-        let _spawning = SPAWNING.lock().unwrap_or_else(PoisonError::into_inner);
-        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        std::fs::write(file, script).unwrap();
-        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o755)).unwrap();
+        file_at(file, &script, 0o755);
     }
 
     /// The audit log's lines, or none if it doesn't exist.
@@ -270,6 +267,15 @@ impl Drop for Fixture {
             );
         }
     }
+}
+
+/// A file at `file` holding `text`, with `mode`, written as the fake programs are, so that
+/// no child holds it open for writing as it starts.
+pub(crate) fn file_at(file: &Path, text: &str, mode: u32) {
+    let _spawning = SPAWNING.lock().unwrap_or_else(PoisonError::into_inner);
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(file, text).unwrap();
+    std::fs::set_permissions(file, std::fs::Permissions::from_mode(mode)).unwrap();
 }
 
 /// The utility's path on the test's own `PATH`.

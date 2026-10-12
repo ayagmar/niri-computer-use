@@ -81,7 +81,10 @@ impl Target {
         let runtime = RuntimeDir::of(env)?;
         let niri = env.instance.socket().map_err(Clone::clone)?;
         let display = env.display.path().ok().map(hello::resolved);
-        let hello = Hello::new(Exe::current()?, niri, display.as_deref(), given)?;
+        // The engine starts this client's programs here, as a standalone server would.
+        let cwd = std::env::current_dir()
+            .map_err(|error| format!("read the working directory: {error}"))?;
+        let hello = Hello::new(Exe::current()?, niri, display.as_deref(), given, &cwd)?;
         let mut line =
             serde_json::to_vec(&hello).map_err(|error| format!("write the hello: {error}"))?;
         line.push(b'\n');

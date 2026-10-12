@@ -169,10 +169,15 @@ impl Env {
         .collect()
     }
 
-    /// Whether `PATH` has an executable file called `program`.
+    /// Whether `PATH` has a file called `program` that this process may execute.
     pub(crate) fn finds(&self, program: &str) -> bool {
-        let dirs = self.path.iter().flat_map(std::env::split_paths);
-        runner::first_executable(dirs, program).is_some()
+        self.path.as_deref().is_some_and(|path| {
+            let place = runner::Place {
+                path: Some(path),
+                cwd: None,
+            };
+            runner::finds(place, program)
+        })
     }
 }
 
@@ -220,8 +225,7 @@ async fn main() -> ExitCode {
     {
         env.discovery.runtime_dir = discover::Source::Discovered;
     }
-    let cwd = std::env::current_dir().ok();
-    let given = session::Given::read(|name| std::env::var_os(name), cwd.as_deref());
+    let given = session::Given::read(|name| std::env::var_os(name));
     runner::pass_on(env.session_vars());
     let result = match command {
         Some(Command::Serve) => serve(env, given).await,
@@ -238,7 +242,7 @@ async fn main() -> ExitCode {
                 policy: &settings.policy,
                 unrestricted: &settings.unrestricted,
                 tools: &settings.tools,
-                path: settings.path.as_deref(),
+                place: settings.place(),
                 accessibility: &accessibility,
             };
             cli::print_json(&status::collect(&env, sources).await)
@@ -351,7 +355,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn finds_only_executable_files_on_path() {
+    fn finds_only_files_this_process_may_execute_on_path() {
         use std::fs;
         let dir = test_support::fresh_dir("path");
         fs::create_dir_all(dir.join("dir-named-grim/grim")).unwrap();
@@ -359,12 +363,16 @@ mod tests {
         fs::set_permissions(dir.join("wtype"), fs::Permissions::from_mode(0o755)).unwrap();
         fs::write(dir.join("loginctl"), "").unwrap();
         fs::set_permissions(dir.join("loginctl"), fs::Permissions::from_mode(0o644)).unwrap();
+        // Only others may execute it, and this process is its owner.
+        fs::write(dir.join("noctalia"), "").unwrap();
+        fs::set_permissions(dir.join("noctalia"), fs::Permissions::from_mode(0o645)).unwrap();
         let env = Env {
             path: Some(std::env::join_paths([dir.join("missing"), dir.clone()]).unwrap()),
             ..Env::default()
         };
         assert!(env.finds("wtype"));
         assert!(!env.finds("loginctl"));
+        assert!(!env.finds("noctalia"));
         assert!(!env.finds("grim"));
         assert!(!env.finds("wl-copy"));
         assert!(!Env::default().finds("wtype"));

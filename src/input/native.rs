@@ -601,7 +601,7 @@ mod tests {
             runtime: &runtime,
             policy: &Loaded::Missing,
             keyboard: None,
-            path: Some(&[]),
+            place: crate::test_support::no_programs(),
             a11y: None,
         };
         let typing = Typing::Text {
@@ -695,7 +695,7 @@ mod tests {
             runtime: &runtime,
             policy: &Loaded::Missing,
             keyboard: None,
-            path: None,
+            place: crate::test_support::no_programs(),
             a11y: None,
         };
         let typing = Typing::Text {

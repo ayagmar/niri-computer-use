@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 
 use crate::client::{CLIENT, Server, WAIT, run, tool_error};
-use crate::fixture::{Fixture, eventually, exited, jpeg, kill, parent, png};
+use crate::fixture::{Fixture, eventually, exited, file_at, jpeg, kill, parent, png};
 use crate::shared::{
     Desktop, engine, engines, guardians, hold_engine_lock, holds_alone, sessions, shared,
 };
@@ -637,6 +637,98 @@ async fn an_empty_path_finds_grim_in_the_working_directory() {
     let _stream = desktop.stream().await;
     let binaries = client.structured("status").await["binaries"].clone();
     assert_eq!(binaries["grim"], true, "{binaries}");
+    let taken = client
+        .call("screenshot", json!({"target": "focused_output"}))
+        .await;
+    assert_eq!(taken["structuredContent"]["width"], 1280, "{taken}");
+}
+
+/// A working directory whose name has a `:` can't be written into a `PATH`, so it must
+/// not be. A `grim` found through an empty or a relative entry still runs with the
+/// client's `PATH`, and finds its helper there, standalone or shared.
+#[tokio::test]
+async fn a_working_directory_with_a_colon_keeps_the_clients_path() {
+    let mut fixture = Fixture::new("colon-cwd");
+    let mut desktop = Desktop::new(&fixture);
+    std::fs::write(fixture.path("small.jpg"), jpeg(1280, 720, b"small")).unwrap();
+    let mut clients = Vec::new();
+    for (path, cwd, bin) in [
+        ("", "empty:cwd", "empty:cwd"),
+        ("bin", "relative:cwd", "relative:cwd/bin"),
+    ] {
+        let bin = fixture.path(bin);
+        file_at(
+            &bin.join("grim"),
+            "#!/bin/sh\nexec ncu-local-helper\n",
+            0o755,
+        );
+        fixture.program_at(&bin.join("ncu-local-helper"), r#"cat "$DIR/small.jpg""#);
+        fixture.set("PATH", path);
+        fixture.work_in(fixture.path(cwd));
+        clients.push(Server::start(&fixture).await);
+    }
+    let _stream = desktop.stream().await;
+    for client in &mut clients {
+        let taken = client
+            .call("screenshot", json!({"target": "focused_output"}))
+            .await;
+        assert_eq!(taken["structuredContent"]["width"], 1280, "{taken}");
+    }
+}
+
+/// As with `execvp`, a `grim` on `PATH` that can't be started, because only others may
+/// execute it or its interpreter is missing, is passed over for the next one.
+#[tokio::test]
+async fn a_grim_that_cant_start_is_passed_over_for_the_next_on_path() {
+    let mut fixture = Fixture::new("unstartable");
+    let mut desktop = Desktop::new(&fixture);
+    std::fs::write(fixture.path("small.jpg"), jpeg(1280, 720, b"small")).unwrap();
+    fixture.program_at(&fixture.path("good/grim"), r#"cat "$DIR/small.jpg""#);
+    let others = "#!/bin/sh\necho FIRST-grim >&2; exit 1\n";
+    let mut clients = Vec::new();
+    for (first, text, mode) in [
+        ("others", others, 0o645),
+        ("no-interpreter", "#!/dev/null/no-interpreter\n", 0o755),
+    ] {
+        file_at(&fixture.path(first).join("grim"), text, mode);
+        let mut path = fixture.path(first).into_os_string();
+        path.push(":");
+        path.push(fixture.path("good"));
+        fixture.set("PATH", path);
+        clients.push(Server::start(&fixture).await);
+    }
+    let _stream = desktop.stream().await;
+    for client in &mut clients {
+        let taken = client
+            .call("screenshot", json!({"target": "focused_output"}))
+            .await;
+        assert_eq!(taken["structuredContent"]["width"], 1280, "{taken}");
+    }
+}
+
+/// A client whose working directory can't go in the hello is served standalone, saying
+/// why, and its programs still start in its own directory.
+#[tokio::test]
+async fn a_client_whose_directory_cant_be_sent_is_served_standalone() {
+    use std::os::unix::ffi::OsStrExt as _;
+    let mut fixture = shared("cwd-not-utf8");
+    let mut desktop = Desktop::new(&fixture);
+    std::fs::write(fixture.path("small.jpg"), jpeg(1280, 720, b"small")).unwrap();
+    let cwd = fixture
+        .path("")
+        .join(std::ffi::OsStr::from_bytes(b"not-utf8-\xff"));
+    fixture.program_at(&cwd.join("bin/grim"), r#"cat "$DIR/small.jpg""#);
+    fixture.set("PATH", "bin");
+    fixture.work_in(cwd);
+    let mut client = Server::start(&fixture).await;
+    let _stream = desktop.stream().await;
+    let engine = client.structured("status").await["engine"].clone();
+    assert_eq!(engine["mode"], "standalone", "{engine}");
+    let fallback = engine["fallback"].as_str().unwrap();
+    assert!(
+        fallback.contains("working directory isn't UTF-8"),
+        "{fallback}"
+    );
     let taken = client
         .call("screenshot", json!({"target": "focused_output"}))
         .await;
