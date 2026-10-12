@@ -45,4 +45,4 @@ If `acquire_desktop` fails, its error says why; the [error reference](../../refe
 
 ## Let it start apps
 
-`launch` starts only apps you list as presets in the [policy file](../../concepts/configuration/). Without one, the agent can focus, close and type into windows you open, but not start new ones.
+`launch` starts only apps you list as presets in the [policy file](../../concepts/configuration/). Without one, and with [`unrestricted`](../../concepts/configuration/#unrestricted) off, as it is by default, the agent can focus, close and type into windows you open, but not start new ones. `NIRI_COMPUTER_USE_UNRESTRICTED=1` in a client's server settings turns it on without a policy file, and that client's agent can then start any program through `niri_action`'s `Spawn`.

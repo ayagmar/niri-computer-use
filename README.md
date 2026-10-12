@@ -16,7 +16,7 @@ Documentation: **https://ayagmar.github.io/niri-computer-use/**, also as plain M
 ## What it is
 
 - **Your real desktop, not a VM.** The agent looks at and acts on the screen you are working on.
-- **niri only, through niri's own IPC.** Windows, focus and layout come from niri, and buttons and fields from the accessibility bus, so the agent rarely has to guess from pixels. With a niri other than 26.04 the server only looks.
+- **niri only, through niri's own IPC.** Windows, focus and layout come from niri. Where an app exposes its buttons and fields on the accessibility bus, the agent can act on them by name rather than by pixels. With a niri release other than 26.04 the server only looks; a 26.04 patch release works, with a warning in `status`.
 - **Guardrails, not a sandbox.** A lease, a stop key, a lock check and an audit log. An agent holding the lease can do anything you could do with a mouse and keyboard.
 
 It offers up to 22 tools over stdio: reading the desktop, screenshots, accessible elements, and, under the lease, focus, launch, close, niri's layout actions, pointer, keyboard, paste, element actions and three Noctalia panels. It is in early development; acceptance evidence for each milestone is in [docs/results/](docs/results/).
@@ -108,7 +108,7 @@ What isn't protected: any connected agent sees your screen and window titles, a 
 
 ## Limits
 
-- niri 26.04 only. With another version the server is read-only.
+- niri 26.04 only. With another major or minor release the server is read-only.
 - The pointer tools need one monitor at transform `Normal`. The keyboard, screenshots and the other tools work with any monitors.
 - Installed from source; there is no package yet.
 - Accessibility varies by toolkit. GTK 4 works; GTK 3 and Qt apps that draw their own title bar give no element boxes, and niri 26.04 gives tiled windows none until they float. Activating an element and setting its text work in both cases.
