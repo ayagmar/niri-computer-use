@@ -215,12 +215,17 @@ impl Sent {
     fn describe(self, typing: &Typing) -> String {
         match typing {
             Typing::Keys(keys) => format!("pressed {} of {} keys", self.keys, keys.len()),
-            Typing::Text { text, .. } => {
-                format!(
+            Typing::Text { text, submit } => {
+                let typed = format!(
                     "typed {} of {} characters",
                     self.chars,
                     text.chars().count()
-                )
+                );
+                match (submit, self.keys) {
+                    (false, _) => typed,
+                    (true, 0) => format!("{typed}, not yet the submitting Return"),
+                    (true, _) => format!("{typed} and the submitting Return"),
+                }
             }
         }
     }
@@ -446,7 +451,7 @@ pub(super) fn partly(error: ToolError, typing: &Typing, sent: Sent) -> ToolError
     }
     ToolError::new(
         error.name,
-        format!("{} before this: {}", sent.describe(typing), error.detail),
+        format!("{}; then {}", sent.describe(typing), error.detail),
     )
 }
 
@@ -737,7 +742,20 @@ mod tests {
         );
         assert_eq!(
             failed.detail,
-            "typed 200 of 250 characters before this: wtype exited 1"
+            "typed 200 of 250 characters, not yet the submitting Return; then wtype exited 1"
+        );
+        // All the text went out and only `Return` was refused, which the detail must say.
+        let refused = partly(
+            ToolError::new(ErrorName::ScreenLocked, "that call wasn't sent"),
+            &message,
+            Sent {
+                chars: 250,
+                keys: 0,
+            },
+        );
+        assert_eq!(
+            refused.detail,
+            "typed 250 of 250 characters, not yet the submitting Return; then that call wasn't sent"
         );
     }
 

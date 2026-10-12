@@ -50,7 +50,7 @@ For each combination, presses the modifiers, presses and releases the key, then 
 | `screenshot` | see Action tools |
 | `element_changes` | default false; with true, [element changes](../elements/#element-changes) for the window focused when the call starts |
 
-The text goes out in parts of 100 characters. If focus moved after a part, the rest isn't typed: `observed` is `interrupted` and `typed` gives the number of characters sent. A part that fails ends the call with that error, its `detail` starting with how many characters were typed before it. A result without `typed` means the whole text went out. With `submit`, the result has `submitted`: true once `Return` was pressed, false when the text stopped early and `Return` wasn't pressed.
+The text goes out in parts of 100 characters. If focus moved after a part, the rest isn't typed: `observed` is `interrupted` and `typed` gives the number of characters sent. A part that fails ends the call with that error, its `detail` starting with how many characters were typed before it and, with `submit`, whether `Return` was pressed, as in `typed 150 of 150 characters, not yet the submitting Return; then …`. A result without `typed` means the whole text went out. With `submit`, the result has `submitted`: true once `Return` was pressed, false when the text stopped early and `Return` wasn't pressed.
 
 ### Pasting
 

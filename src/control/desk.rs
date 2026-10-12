@@ -388,7 +388,7 @@ impl Desk {
         Err(ToolError::new(
             ErrorName::ScreenLocked,
             format!(
-                "the lock state was read over {} ms before the call that acts could go out, so it isn't known to be unlocked now; nothing was sent",
+                "the lock state was read over {} ms before the call that acts could go out, so it isn't known to be unlocked now, and that call wasn't sent",
                 LAST_GATE.as_millis()
             ),
         ))

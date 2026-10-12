@@ -756,7 +756,7 @@ fn refused_partway(case: &Case<'_>, ran: &Ran, name: &str) -> Result<(), String>
     let detail = ran.result["structuredContent"]["detail"]
         .as_str()
         .unwrap_or_default();
-    if case.fact.cut().is_some() || !detail.contains("before this") {
+    if case.fact.cut().is_some() || !detail.contains("; then ") {
         return Err(format!("refused with {name} after a call acted: {detail}"));
     }
     refused_with_the_facts_error(case, name)
