@@ -87,12 +87,14 @@ async fn change(
     Ok(seen)
 }
 
-/// Sends `args` to Noctalia as `noctalia msg` would: `sent`, with Noctalia's reply.
+/// Sends `args` to Noctalia as `noctalia msg` would: `sent`, with Noctalia's reply. Args
+/// that `noctalia::check_args` refuses are an argument mistake, with nothing sent.
 pub(crate) async fn message(
     env: &Env,
     niri: Niri<'_>,
     args: &[String],
 ) -> Result<Outcome, CallError> {
+    noctalia::check_args(args).map_err(CallError::InvalidArguments)?;
     super::fresh_lock(niri).await?;
     match noctalia::message(env, args, || niri.desk.sending()).await {
         Ok(reply) => {

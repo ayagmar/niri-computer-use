@@ -2402,6 +2402,20 @@ async fn noctalia_sends_any_command_only_when_unrestricted() {
         detail,
         "Noctalia replied: error: unknown command \"plugin x:y all go\""
     );
+    // A record separator would make Noctalia read the rest as the whole command.
+    for framing in ["x\u{1e}panel-close wallpaper", "a\nb", "a\rb"] {
+        let framed = json!({"args": ["panel-open", framing]});
+        let refused = open.server.call("noctalia", framed).await;
+        assert!(
+            mistake(&refused).contains("`args[1]` holds a record separator"),
+            "{refused}"
+        );
+    }
+    // Nothing more reached Noctalia.
+    assert_eq!(
+        open.noctalia.panel_commands(),
+        ["panel-open wallpaper", "plugin x:y all go"]
+    );
     assert_eq!(
         open.audited()[0],
         json!([

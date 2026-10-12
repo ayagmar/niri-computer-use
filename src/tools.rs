@@ -325,7 +325,8 @@ struct NiriActionArgs {
 #[schemars(crate = "rmcp::schemars")]
 struct NoctaliaArgs {
     /// The command and its arguments, as after `noctalia msg`, such as `["plugin",
-    /// "ayagmar/obs-control:controller", "all", "toggle-record"]`; joined with spaces.
+    /// "ayagmar/obs-control:controller", "all", "toggle-record"]`; joined with spaces. None
+    /// may hold U+001E or a line break.
     #[schemars(length(min = 1, max = 64))]
     args: Vec<String>,
     /// Also return a screenshot of the focused output once the screen settles.
@@ -1532,14 +1533,7 @@ impl Server {
         flag(&mut logged, "screenshot", args.screenshot);
         let (env, niri) = (self.engine.env(), self.engine.niri());
         let shoot = args.screenshot;
-        let work = async move {
-            if !(1..=64).contains(&args.args.len()) {
-                return Err(CallError::InvalidArguments(
-                    "`args` must have 1 to 64 items".to_owned(),
-                ));
-            }
-            act::shell::message(env, niri, &args.args).await
-        };
+        let work = async move { act::shell::message(env, niri, &args.args).await };
         self.act(
             &context,
             Asked {

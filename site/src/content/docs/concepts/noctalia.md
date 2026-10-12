@@ -54,7 +54,7 @@ With [`unrestricted`](../configuration/#unrestricted) on, the `noctalia` tool se
 
 | Argument | Value |
 |---|---|
-| `args` (required) | 1 to 64 strings: the command and its arguments, as after `noctalia msg` |
+| `args` (required) | 1 to 64 strings: the command and its arguments, as after `noctalia msg`. A string holding U+001E, which frames Noctalia's message, or a line break is an argument mistake, and nothing is sent |
 
 The server joins `args` with spaces and sends them over the same socket, with the same two-second deadline, as `noctalia msg` does. Noctalia's `notification-show` is the one command `noctalia msg` rewrites (as JSON) before sending; send that JSON yourself. `observed` is `sent` and `noctalia` holds Noctalia's answer:
 

@@ -146,6 +146,23 @@ pub(crate) async fn message(
     })
 }
 
+/// Refuses the `noctalia` tool's `args` unless there are 1 to 64 of them and none holds
+/// `\x1e`, after which Noctalia would read the rest as the whole command, or a line break.
+pub(crate) fn check_args(args: &[String]) -> Result<(), String> {
+    if !(1..=64).contains(&args.len()) {
+        return Err("`args` must have 1 to 64 items".to_owned());
+    }
+    if let Some(index) = args
+        .iter()
+        .position(|arg| arg.contains(['\x1e', '\n', '\r']))
+    {
+        return Err(format!(
+            "`args[{index}]` holds a record separator (U+001E) or a line break, which Noctalia would read as part of its message's framing; nothing was sent"
+        ));
+    }
+    Ok(())
+}
+
 fn payload(args: &[String]) -> Vec<u8> {
     [CWD_PREFIX, args.join(" ").as_bytes()].concat()
 }
