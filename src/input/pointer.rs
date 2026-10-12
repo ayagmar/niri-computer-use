@@ -338,7 +338,10 @@ async fn locate(
         return Err(elements::unmappable(Unmappable::OtherOutput));
     }
     let events = input.niri.events.map_err(Clone::clone)?;
-    if events.animating(&aimed.output, kept.kept.window, SETTLE) {
+    if events
+        .animating(&aimed.output, kept.kept.window, SETTLE)
+        .await?
+    {
         return Err(elements::unmappable(Unmappable::Moving));
     }
     if shot.contains(aimed.at) {

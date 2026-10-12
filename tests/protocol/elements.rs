@@ -2406,6 +2406,28 @@ async fn an_element_past_its_outputs_edge_is_never_aimed_at() {
     assert_eq!(desk.fixture.clipboard.pointed(), []);
 }
 
+// niri's event stream lost while an element is aimed at leaves the server unable to tell
+// whether the view is moving: the call fails with the stream's own error rather than
+// telling the agent the view moved, and nothing is sent.
+#[tokio::test]
+async fn a_stream_lost_during_an_element_aim_fails_with_the_streams_error() {
+    let windows = [floating_window()];
+    let mut desk = Desk::start_with("el-aim-stream", &["/frame"], objects(), &windows).await;
+    let button = desk.element("Safe").await;
+    let shot = desk.screenshot_ref().await;
+    let reading = desk.mock.hold_on("GetRole", "/button");
+    let aimed = json!({"screenshot_ref": shot, "element": button});
+    let id = desk.server.start_call("pointer_move", aimed).await;
+    reading.arrived().await;
+    desk.lose_stream().await;
+    reading.release();
+    let result = desk.server.response(id).await["result"].clone();
+    let (name, detail) = tool_error(&result);
+    assert_ne!(name, "element_unmappable", "{result}");
+    assert!(detail.contains("niri's event stream"), "{detail}");
+    assert_eq!(desk.fixture.clipboard.pointed(), []);
+}
+
 // niri reports a switch inside `WorkspacesChanged`, not as `WorkspaceActivated`, when a
 // workspace was also added in the same refresh, as when a window moves to the empty
 // workspace below and focus follows it. The element is refused for a second all the same,

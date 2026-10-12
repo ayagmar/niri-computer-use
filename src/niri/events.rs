@@ -290,17 +290,20 @@ impl EventStream {
 
     /// Whether niri activated a workspace on `output`, opened or closed the overview, or
     /// moved, resized, floated or opened `window` within `settle`, so that the view there
-    /// may still be moving. True while the stream holds no initialized state, since then
-    /// it can't tell.
-    pub(crate) fn animating(&self, output: &str, window: u64, settle: Duration) -> bool {
-        match &*self.connection.borrow() {
-            Connection::Connected(replica) if replica.initialized() => replica
+    /// may still be moving. Waits up to two seconds for niri's initial state, as after a
+    /// reconnect, and fails with the stream's error without it.
+    pub(crate) async fn animating(
+        &self,
+        output: &str,
+        window: u64,
+        settle: Duration,
+    ) -> Result<bool, ToolError> {
+        self.current(DEADLINE, |replica| {
+            replica
                 .animated(output, window)
-                .is_some_and(|at| at.elapsed() < settle),
-            Connection::Connected(_)
-            | Connection::Connecting { .. }
-            | Connection::SchemaIncompatible { .. } => true,
-        }
+                .is_some_and(|at| at.elapsed() < settle)
+        })
+        .await
     }
 
     /// The current desktop. Waits up to two seconds for niri's initial state, for
