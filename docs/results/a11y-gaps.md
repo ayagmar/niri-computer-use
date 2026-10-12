@@ -8,22 +8,25 @@ Every nested run below ran in the private headless cage, with its own session bu
 
 ## Acceptance
 
-The nested runs used `target/debug/harness run` directly, with the flags the `make` targets pass, after one `cargo build`.
+The nested runs used `target/debug/harness run` directly, with the flags the `make` targets pass, after one `cargo build`. They ran on the final tree, after the row check was reworked (below), first on `main` at `c3a7e0a` and then, for `make check` and the a11y suite in both modes, once more after rebasing onto `main` at `dbfe457`.
 
 | Command | Run | Result |
 |---|---|---|
-| `make check` | final tree | pass: 337 server, 130 harness and 226 protocol tests (one ignored), in both protocol modes; formatting, Clippy, rustdoc, cargo-deny, cargo-machete, typos and ShellCheck pass |
-| `harness run --scale 1 --a11y` | 1791769218-3946882, 1791771316-266585 | pass |
-| `harness run --shared --scale 1 --a11y` | 1791769856-4076742 | fail: C1, the host's `XDG_RUNTIME_DIR` lost `jb.station.sock`, a JetBrains IDE's socket, during the run; every server check passed |
-| `harness run --shared --scale 1 --a11y` | 1791772607-661715 | pass |
-| `harness run --scale 1 --ssd --a11y` | 1791770200-4157902 | pass |
-| `harness run --shared --scale 1 --ssd --a11y` | 1791770597-64203 | pass |
-| `harness run --scale 1.5 --a11y` | 1791771020-167433 | pass |
-| `harness run --scale 1 --a11y`, eight busy loops on its four cores | 1791772869-750086 | pass |
-| `harness run --scale 1 --input` | 1791771692-467850 | pass |
-| `harness run --actions` | 1791772134-537352 | pass |
-| `harness run --shell` | 1791772331-574087 | pass |
-| `harness run --control` | 1791772505-633908 | pass |
+| `make check` | final tree on `c3a7e0a` | pass: 343 server, 130 harness and 231 protocol tests (one ignored), in both protocol modes; formatting, Clippy, rustdoc, cargo-deny, cargo-machete, typos and ShellCheck pass |
+| `make check` | rebased onto `main` at `dbfe457` | pass: 359 server, 132 harness and 249 protocol tests (one ignored), in both protocol modes |
+| `harness run --scale 1 --a11y` | rebased, 1791779385-2743645 | pass, list outcomes as below, longest pass 4.2 ms |
+| `harness run --shared --scale 1 --a11y` | rebased, 1791779657-2823436 | pass, list outcomes as below, longest pass 3.7 ms |
+| `harness run --scale 1 --a11y` | 1791776887-1844269, 1791777660-2253830 | pass |
+| `harness run --shared --scale 1 --a11y` | 1791777049-1958478 | pass |
+| `harness run --scale 1 --ssd --a11y` | 1791777196-2026514 | pass |
+| `harness run --shared --scale 1 --ssd --a11y` | 1791777362-2107619 | pass |
+| `harness run --scale 1.5 --a11y` | 1791777527-2187449 | pass |
+| `harness run --scale 1 --a11y`, eight busy loops on its four cores | 1791778592-2490785 | pass |
+| `harness run --scale 1 --input` | 1791777916-2344326 | fail: `keeper-ending-1-ready`, the keeper's ready report not seen within 5 s, with the host's load average at 8.5; this branch doesn't touch the input suite |
+| `harness run --scale 1 --input` | 1791778761-2543687 | pass |
+| `harness run --actions` | 1791778364-2458974 | pass |
+| `harness run --shell` | 1791778547-2484096 | pass |
+| `harness run --control` | 1791778563-2486370 | pass |
 | `harness run --scale 1 --a11y` with `main`'s server | 1791769572-4007289 | fail, as expected: an old ref to a reused Qt row was accepted (below) |
 
 The input, actions, shell and control suites run no element action, so their audit logs have no last gate to measure.
@@ -53,38 +56,39 @@ The new Qt fixture, `harness/fixtures/qt-list.qml`, has three `ListView`s with `
 What Qt does, from the bus snapshots:
 
 - It reuses a row's objects in place. Once the third records were deleted, the label at `Record 003`'s path read `Record 023`, and likewise in the `Item` and `Named` lists; after `Jump`, the label at `Record 002`'s path read `Record 112`, and the next ones moved on alike; after a later delete, one went from `Record 020` to `Record 129`. The `Delete` buttons kept their paths and names.
-- It creates and drops the accessible objects of rows' delegates as they move, so a row sits under a `filler` or `list_item` one moment and straight in the window's panel the next. Most old refs fail by index for that reason.
-- Until it reuses a deleted row, it keeps the row's objects on the bus, in place, named as before, showing and visible. A press through a fresh ref to a row whose record was just deleted is accepted and reaches the delegate with no record, which the fixture records as `a row with no record`.
+- It puts no container around a list's rows. All three lists' rows sit in the window's content `filler`, beside `Step` and `Jump`: the first ten of each list wrapped in a `filler` (`Record`) or a `list_item` (`Item`, `Named`), the rest as bare label and button pairs. It creates and drops the delegates' accessible objects as they move, so a row is wrapped one moment and bare the next.
+- Until it reuses a deleted row, it keeps the row's objects on the bus, in place, named as before, showing and visible.
 
-Each run's outcomes, the same in all eight runs of this branch's server:
+With `main`'s server, a ref to `Record 112`'s `Delete`, pressed again after a `Step` scrolled its row to another record, was accepted and reached a row that no longer showed `Record 112`, which failed the run.
 
-| List | Fresh refs accepted, own record deleted | Old refs refused: moved | Old refs refused: beside changed | Old refs refused: not showing | Press reaching a held row |
-|---|---|---|---|---|---|
-| GTK 4 | 4 | 10 | 0 | 0 | 0 |
-| Qt, three lists | 4 | 19 | 1 | 1 | 1 |
+The first fix kept the objects between the element and its nearest look-alike elements, up to 16, and checked their names. It passed the nested runs, but a blind review reproduced three ways an old ref still acted on a row showing another record: a second button of the same name in the row, a row whose record label was past the 16th object, and a listing stopped by its limit, object cap or budget before the label. It also showed that a bare row's ref went stale when the next row's label changed, and that working out the rows took 11.8 s on a wide tree. Each is now a protocol test in `tests/protocol/elements.rs`, and the check was reworked to refuse what it can't pin down (`docs/decisions.md`).
 
-The refusal by the new check is the reused row: `Record 112`'s `Delete`, pressed again after a `Step` scrolled its row to another record. With `main`'s server, that press was accepted and reached a row that no longer showed `Record 112`, which failed the run. Nothing deleted another listed record in any run.
+On the reworked server, each run's outcomes, the same in all nine a11y runs:
 
-The press reaching a held row is the documented limit: a ref listed fresh, pressed once to delete its record and pressed again at once. Nothing on the bus tells the held row apart. The docs and the skill say to list again after a control that deletes something and to check the removal on a screenshot.
+| List | Fresh refs accepted, own record deleted | Refused: moved | Refused: no row of their own | Deleted another record |
+|---|---|---|---|---|
+| GTK 4 | 4 | 10 | 0 | 0 |
+| Qt, three lists | 0 | 0 | 24 | 0 |
+
+Every Qt `Delete` ref, fresh or old, is refused with `element_stale` and the detail that its look-alike elements sit beside it with no row of their own, ending "aim at screenshot pixels instead, not at this ref". That also keeps refs off the deleted rows Qt holds on the bus. GTK 4's rows each sit in a `list_item`, so its fresh refs work, and its old refs are stale because the row moved or is a new object.
 
 ## The last gate's bound
 
-Each element action's audit entry now has `gate`: each pass's time and the answers' age when the call went out. Over the eight runs of this branch's server, 92 element actions per run ran the gate, 736 in all; 86 per run went out, and the other 6 were refused inside the pass (5 `secret_field`, 1 `element_unmappable`). Refusals before the gate, such as `element_stale`, don't run it.
+Each element action's audit entry now has `gate`: each pass's time and the answers' age when the call went out. On the reworked server, 86 element actions per a11y run ran the gate; 81 per run went out, and the other 5 were refused inside the pass with `secret_field`. Refusals before the gate, such as `element_stale`, don't run it, and that now includes every Qt list `Delete`.
 
 | Run | Second passes | `element_busy` | Pass ms, median | p95 | max | Share of 250 ms |
 |---|---|---|---|---|---|---|
-| default, 1791769218-3946882 | 0 | 0 | 2.2 | 3.4 | 4.5 | 1.8% |
-| default, 1791771316-266585 | 0 | 0 | 3.8 | 10.8 | 19.7 | 7.9% |
-| shared, 1791769856-4076742 | 0 | 0 | 2.2 | 3.2 | 4.2 | 1.7% |
-| shared, 1791772607-661715 | 0 | 0 | 2.0 | 3.4 | 6.8 | 2.7% |
-| SSD, 1791770200-4157902 | 0 | 0 | 2.5 | 4.1 | 6.0 | 2.4% |
-| SSD and shared, 1791770597-64203 | 0 | 0 | 3.2 | 9.4 | 11.8 | 4.7% |
-| scale 1.5, 1791771020-167433 | 0 | 0 | 2.3 | 6.2 | 18.0 | 7.2% |
-| eight busy loops, 1791772869-750086 | 0 | 0 | 8.7 | 14.8 | 28.9 | 11.6% |
+| default, 1791776887-1844269 | 0 | 0 | 2.0 | 2.8 | 3.5 | 1.4% |
+| default, 1791777660-2253830 | 0 | 0 | 2.7 | 8.0 | 30.7 | 12.3% |
+| shared, 1791777049-1958478 | 0 | 0 | 2.1 | 3.3 | 4.0 | 1.6% |
+| SSD, 1791777196-2026514 | 0 | 0 | 2.9 | 12.8 | 30.1 | 12.0% |
+| SSD and shared, 1791777362-2107619 | 0 | 0 | 2.0 | 4.0 | 7.3 | 2.9% |
+| scale 1.5, 1791777527-2187449 | 0 | 0 | 2.0 | 4.2 | 27.7 | 11.1% |
+| eight busy loops, 1791778592-2490785 | 0 | 0 | 8.9 | 14.4 | 19.8 | 7.9% |
 
-The bound stays at 250 ms. An action's answers are as old as its pass took, at most 28.9 ms here. A tighter bound would refuse slow passes without making fast ones fresher, and large apps on a real desktop weren't measured (`docs/decisions.md`).
+The first fix's eight runs, 736 gated actions, gave the same picture: no second pass, no `element_busy`, the longest pass 28.9 ms. The bound stays at 250 ms. An action's answers are as old as its pass took, at most 30.7 ms here. A tighter bound would refuse slow passes without making fast ones fresher, and large apps on a real desktop weren't measured (`docs/decisions.md`).
 
 ## Not covered here
 
 - Large apps on the user's desktop, such as Firefox or LibreOffice: how long their passes take, and whether their lists reuse rows in place. These need the real session.
-- Qt Quick's held rows stay a gap: an old ref to a row deleted moments ago can reach it.
+- Lists in other toolkits and apps: whether their rows sit in containers of their own on the bus, which decides whether their refs work or are refused.
