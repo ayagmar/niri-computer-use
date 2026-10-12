@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use crate::failure::{Context as _, Failure, Result};
 use crate::log::Log;
-use crate::session;
+use crate::session::{self, Session};
 use crate::test_dir::TestDir;
 
 /// What a server in shared mode writes to stderr when it serves its client itself.
@@ -40,6 +40,16 @@ pub(crate) fn check(test_dir: &TestDir, artifacts: &Path, log: &mut Log) -> Resu
         )));
     }
     log.line("shared engine: every server bridged to it, and it exited")
+}
+
+/// Waits for every shared engine under `TEST_DIR` to exit, so that the next server starts
+/// an engine of its own, with its own environment. An engine decides at startup what it
+/// finds on `PATH`, such as Noctalia, for every client it serves. Returns at once in
+/// standalone runs, which start no engine.
+pub(crate) fn no_engine_left(session: &mut Session<'_>, step: &str) -> Result<()> {
+    session.wait_until(step, "the shared engine's exit", ENGINE_EXIT, |session| {
+        Ok(engine_sockets(session.test_dir())?.is_empty().then_some(()))
+    })
 }
 
 /// The fallback notes in the servers' logs, each with its log's name.

@@ -122,8 +122,10 @@ fn stopped(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
     ))
 }
 
-/// A server started with an empty `PATH` directory doesn't find `noctalia`.
+/// A server started with an empty `PATH` directory doesn't find `noctalia`. In a shared
+/// run it starts an engine with that `PATH` once the last one has exited.
 fn not_installed(session: &mut Session<'_>, server: &str) -> Result<()> {
+    crate::shared::no_engine_left(session, "m5-engine-gone")?;
     let empty = session.test_dir().root().join("path-without-noctalia");
     fs::create_dir_all(&empty).context(format!("create {}", empty.display()))?;
     let mut path = OsString::from("PATH=");
