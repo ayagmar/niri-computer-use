@@ -31,6 +31,7 @@ const SHELL_DEADLINE: Duration = Duration::from_secs(130);
 const A11Y_DEADLINE: Duration = Duration::from_secs(240);
 const ENGINE_DEADLINE: Duration = Duration::from_secs(150);
 const MEASURE_DEADLINE: Duration = Duration::from_secs(300);
+const LATENCY_DEADLINE: Duration = Duration::from_secs(240);
 /// The agent's twelve minutes, with the fixtures and Noctalia around it.
 const EVAL_DEADLINE: Duration = Duration::from_mins(15);
 /// A scene with its desktop around it.
@@ -87,6 +88,8 @@ pub(crate) enum ServerChecks {
     Engine,
     /// What the servers cost, for docs/results/engine.md.
     Measure,
+    /// Each action tool's round trip, for docs/results/action-latency.md.
+    Latency,
 }
 
 impl ServerChecks {
@@ -99,6 +102,7 @@ impl ServerChecks {
             Self::A11y => "--a11y",
             Self::Engine => "--engine",
             Self::Measure => "--measure",
+            Self::Latency => "--latency",
         }
     }
 
@@ -111,6 +115,7 @@ impl ServerChecks {
             Self::A11y,
             Self::Engine,
             Self::Measure,
+            Self::Latency,
         ]
         .into_iter()
         .find(|checks| checks.flag() == flag)
@@ -125,6 +130,7 @@ impl ServerChecks {
             Self::A11y => A11Y_DEADLINE,
             Self::Engine => ENGINE_DEADLINE,
             Self::Measure => MEASURE_DEADLINE,
+            Self::Latency => LATENCY_DEADLINE,
         }
     }
 }

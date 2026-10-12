@@ -329,6 +329,15 @@ make nested-measure SHARED=1
 
 For 1, 3 and 10 clients that each call `status`, `desktop_state` and `screenshot` and then idle, it takes every process's PSS, RSS and open files (the median of three samples a second apart) and its CPU time over ten idle seconds: servers or bridges, the engine and the guardians. It also takes the median and 95th percentile round trip of 50 `status` and 50 `screenshot` calls with 1 and 10 clients connected, the first client's start up to its `initialize` reply, and a `status` round trip while another client's screenshot runs. Round trips are timed by reading the client's log every millisecond. In shared mode it also runs 200 clients one after another, with and without one client connected throughout, sampling the engine's PSS and open files, and checks that no engine, guardian or socket is left afterwards. In shared mode the engine exits between measurements, so each one starts cold, as a standalone server does.
 
+`make nested-latency` times each action tool from request to response, with a release build, Noctalia and the GTK 4 accessibility fixture. It has a 240-second deadline and writes `latency.json` to the run's artifacts. `SERVER=<path>` measures another build, as for `nested-measure`:
+
+```sh
+make nested-latency
+make nested-latency SERVER=/path/to/older/niri-computer-use
+```
+
+One server holds the lease, and 30 rounds each call `focus` on the empty workspace and back on the fixture, `click` on its entry by element, `type_text` of two characters and `key` with two `BackSpace`s into it, `activate_element` on its `Primary` button, `niri_action` setting its height, and `shell_panel` opening and closing the control center, none with a screenshot. For each call it gives the median and 95th percentile round trip and how often each `observed` came back.
+
 ## Skill evals
 
 `make nested-eval` runs an agent against one scenario in a nested niri and grades what it did. It needs `claude` on `PATH` and logged in, and it spends tokens:

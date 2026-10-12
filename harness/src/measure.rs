@@ -4,6 +4,7 @@
 //! behind another client's screenshot; and, in shared mode, 200 clients coming and going.
 //! It writes `measure.json` to the artifacts and a summary to the log.
 
+pub(crate) mod latency;
 mod proc;
 
 use std::collections::BTreeMap;

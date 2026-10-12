@@ -1087,3 +1087,8 @@ These match the versions installed locally.
 - `capture_dir = ""` turns saving off, and `save_path` then fails with `save_not_enabled` before anything is captured. A policy file that doesn't parse turns it off too, since that file might be the one that said `""`.
 - `save::write` already creates the capture directory, and any missing parent, with mode `0700`, for the default and for a directory the user set. That stays as it was.
 - `status.policy.capture_dir` is now the directory in use, `~/Pictures/niri-computer-use` included, and the new `capture_dir_source` is `policy` when the file sets `capture_dir` (`""` included), `default` otherwise, and null while the file is invalid. The `save_path` and `screenshot` descriptions name the default; `tools/list` measures 6,899 bytes for `observe`, 26,808 for `act` and 30,791 for `full`, under the unchanged ceilings.
+
+## 2026-10-12: action latency
+
+- `make nested-latency` times each action tool from request to response: 30 rounds of `focus` away and back, `click`, `type_text`, `key`, `activate_element`, `niri_action` and `shell_panel` open and close, against the GTK 4 accessibility fixture and the nested Noctalia, with a release build or `SERVER=<path>`. It lives in the harness's `measure` module and reuses the accessibility suite's bus and fixture. The decoy fixture quits after 45 seconds, so `focus` goes to the empty workspace and back instead.
+- No dependency was added.
