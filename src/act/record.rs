@@ -9,7 +9,7 @@ use std::time::Duration;
 use niri_ipc::Window;
 use tokio::time::Instant;
 
-use super::Outcome;
+use super::{Observed, Outcome};
 use crate::changes::{self, Changes, Scene};
 use crate::error::ToolError;
 use crate::niri::waiter::{Waited, Waiter};
@@ -43,8 +43,40 @@ pub(crate) struct Recorder {
 pub(crate) enum Wait {
     /// Until niri has been quiet for `QUIET`: nothing else waited for the screen.
     Quiet,
-    /// Only for what niri already sent, after a settled screenshot waited for the screen.
-    Settled,
+    /// Only for what niri already sent: a settled screenshot waited for the screen, or the
+    /// action's own wait saw niri's event for it.
+    Received,
+}
+
+/// Whether an action's report waits for quiet once the work ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Quiet {
+    /// Always: input's effect is the app's to show, a moment after niri handled it.
+    Always,
+    /// Unless the action's own wait saw niri's event for it, as `focused`, `changed`,
+    /// `unchanged` or `closed`: `focus`, and `niri_action`, whose actions are niri's own.
+    UnlessSeen,
+    /// Never: `niri_action`'s `Spawn` and `SpawnSh`, whose window comes later than this
+    /// wait would cover; `wait_for` is for that.
+    Never,
+}
+
+impl Quiet {
+    /// How the report ends after an action that observed `observed`, with a settled
+    /// screenshot when `shot`.
+    pub(crate) const fn wait(self, shot: bool, observed: Observed) -> Wait {
+        if shot {
+            return Wait::Received;
+        }
+        match (self, observed) {
+            (
+                Self::UnlessSeen,
+                Observed::Focused | Observed::Changed | Observed::Unchanged | Observed::Closed,
+            )
+            | (Self::Never, _) => Wait::Received,
+            _ => Wait::Quiet,
+        }
+    }
 }
 
 impl Recorder {
@@ -259,6 +291,26 @@ mod tests {
         drop(sends.await.unwrap());
     }
 
+    #[test]
+    fn only_a_wait_that_saw_niris_event_or_a_screenshot_ends_the_report_early() {
+        let seen = [
+            Observed::Focused,
+            Observed::Changed,
+            Observed::Unchanged,
+            Observed::Closed,
+        ];
+        for observed in seen {
+            assert_eq!(Quiet::UnlessSeen.wait(false, observed), Wait::Received);
+            assert_eq!(Quiet::Always.wait(false, observed), Wait::Quiet);
+        }
+        // A focus that timed out or was interrupted, or an action only sent, saw nothing.
+        for observed in [Observed::Timeout, Observed::Interrupted, Observed::Sent] {
+            assert_eq!(Quiet::UnlessSeen.wait(false, observed), Wait::Quiet);
+        }
+        assert_eq!(Quiet::Never.wait(false, Observed::Sent), Wait::Received);
+        assert_eq!(Quiet::Always.wait(true, Observed::Sent), Wait::Received);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn quiet_during_the_actions_own_wait_counts_and_only_the_rest_is_added() {
         let (mut recorder, mut outcome, _sender) = watching(vec![app()]);
@@ -324,7 +376,7 @@ mod tests {
         let (recorder, mut outcome, sender) = watching(vec![app()]);
         event(&sender, 1, Event::WindowFocusChanged { id: None });
         let started = Instant::now();
-        let changes = recorder.finish(Wait::Settled, &mut outcome).await;
+        let changes = recorder.finish(Wait::Received, &mut outcome).await;
         assert_eq!(started.elapsed(), Duration::ZERO);
         assert_eq!(
             serde_json::to_value(&changes).unwrap(),
@@ -371,7 +423,7 @@ mod tests {
         let (recorder, mut outcome, sender) = watching(vec![app()]);
         event(&sender, 1, urgent(1));
         let sending = tokio::spawn(keeps_sending(sender));
-        let changes = recorder.finish(Wait::Settled, &mut outcome).await;
+        let changes = recorder.finish(Wait::Received, &mut outcome).await;
         assert!(!sending.is_finished());
         sending.abort();
         // The event received before the report ended is in it.

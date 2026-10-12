@@ -16,7 +16,7 @@ use serde_json::Value;
 use tokio::time::Instant;
 
 use crate::a11y::{self, A11y, Presence};
-use crate::act::record::{Recorder, Wait};
+use crate::act::record::{Quiet, Recorder};
 use crate::act::{self, Outcome};
 use crate::audit::Audit;
 use crate::changes::Changes;
@@ -421,7 +421,8 @@ impl Engine {
                 before,
             })
         };
-        let evidence = |worked| Box::pin(self.evidence(session, worked, report.shoot));
+        let evidence =
+            |worked| Box::pin(self.evidence(session, worked, report.shoot, report.quiet));
         self.desk
             .act(session, refusal, Box::pin(watched), evidence)
             .await
@@ -695,13 +696,15 @@ impl Engine {
     }
 
     /// The outcome with the screenshot `shoot` asks for, or the one an outcome in doubt
-    /// gets, then what the action changed. For work cut short after its call went out, the
-    /// outcome alone: after a stop or with the lease gone, nothing more is asked.
+    /// gets, then what the action changed, waiting for quiet as `quiet` says. For work cut
+    /// short after its call went out, the outcome alone: after a stop or with the lease
+    /// gone, nothing more is asked.
     async fn evidence(
         &self,
         session: &Session,
         worked: Worked<Watched>,
         shoot: bool,
+        quiet: Quiet,
     ) -> act::Evidenced {
         let watched = match worked {
             Worked::Done(watched) => watched,
@@ -723,7 +726,7 @@ impl Engine {
             Ok(recorder) => recorder.follow(evidence).await,
             Err(_) => evidence.await,
         };
-        let wait = if shoot { Wait::Settled } else { Wait::Quiet };
+        let wait = quiet.wait(shoot, evidenced.outcome.observed);
         let mut changes = match recorder {
             Ok(recorder) => recorder.finish(wait, &mut evidenced.outcome).await,
             // Nothing was watched, so an empty report would read as "nothing changed".
@@ -796,12 +799,13 @@ impl Engine {
     }
 }
 
-/// What an action's report covers: whether a screenshot was asked for, and the window
-/// whose elements to compare before and after, if any.
+/// What an action's report covers: whether a screenshot was asked for, the window whose
+/// elements to compare before and after, if any, and whether it waits for quiet.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Report<'a> {
     pub(crate) shoot: bool,
     pub(crate) elements: Option<Watch<'a>>,
+    pub(crate) quiet: Quiet,
 }
 
 impl Report<'_> {
@@ -810,6 +814,16 @@ impl Report<'_> {
         Self {
             shoot,
             elements: None,
+            quiet: Quiet::Always,
+        }
+    }
+
+    /// As `shot`, waiting for quiet as `quiet` says.
+    pub(crate) const fn quiet(shoot: bool, quiet: Quiet) -> Self {
+        Self {
+            shoot,
+            elements: None,
+            quiet,
         }
     }
 }

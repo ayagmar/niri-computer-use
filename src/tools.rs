@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::a11y::model;
+use crate::act::record::Quiet;
 use crate::act::{self, Outcome};
 use crate::audit::{self, Call, Caller};
 use crate::coords::{ImagePx, ImageRect};
@@ -883,7 +884,7 @@ impl Server {
                 tool: "focus",
                 logged,
                 gate: None,
-                report: Report::shot(args.screenshot),
+                report: Report::quiet(args.screenshot, Quiet::UnlessSeen),
             },
             work,
         )
@@ -1005,7 +1006,10 @@ impl Server {
         let niri = self.engine.niri();
         let settings = self.session.settings();
         let unrestricted = settings.unrestricted.enabled();
-        let shoot = args.screenshot;
+        let report = Report::quiet(
+            args.screenshot,
+            act::compositor::quiet(action.as_ref().ok()),
+        );
         let work = async move {
             let action = action.map_err(|error| {
                 CallError::InvalidArguments(format!("`action` isn't a niri action: {error}"))
@@ -1021,7 +1025,7 @@ impl Server {
                 tool: "niri_action",
                 logged,
                 gate: None,
-                report: Report::shot(shoot),
+                report,
             },
             work,
         )
@@ -1262,6 +1266,7 @@ impl Server {
             report: Report {
                 shoot: args.screenshot,
                 elements: args.element_changes.then_some(Watch::Focused),
+                quiet: Quiet::Always,
             },
         };
         self.act(&context, asked, work).await
@@ -1325,6 +1330,7 @@ impl Server {
                 elements: args
                     .element_changes
                     .then_some(Watch::Element(&args.element)),
+                quiet: Quiet::Always,
             },
         };
         self.act(&context, asked, work).await
@@ -1380,6 +1386,7 @@ impl Server {
                 elements: args
                     .element_changes
                     .then_some(Watch::Element(&args.element)),
+                quiet: Quiet::Always,
             },
         };
         self.act(&context, asked, work).await
@@ -1667,6 +1674,7 @@ impl Server {
                 report: Report {
                     shoot: aim.shoot,
                     elements: aim.watch.as_deref().map(Watch::Element),
+                    quiet: Quiet::Always,
                 },
             },
             work,
@@ -1701,6 +1709,7 @@ impl Server {
                 report: Report {
                     shoot,
                     elements: element_changes.then_some(Watch::Focused),
+                    quiet: Quiet::Always,
                 },
             },
             work,

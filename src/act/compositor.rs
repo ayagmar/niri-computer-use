@@ -7,6 +7,7 @@ use std::time::Duration;
 use niri_ipc::{Action, Window};
 use serde::Serialize;
 
+use super::record::Quiet;
 use super::{Niri, Observed, Outcome, no_window, refuse_close, send};
 use crate::error::CallError;
 use crate::niri;
@@ -18,6 +19,16 @@ const OBSERVE: Duration = Duration::from_secs(1);
 /// How long to keep reading events after the first change, since a resize can come in
 /// steps: niri's layout first, then the app's new size.
 const SETTLE: Duration = Duration::from_millis(200);
+
+/// Whether `action`'s change report waits for quiet: not once its own wait saw niri's
+/// event, and never for `Spawn` and `SpawnSh`, whose window comes later than that wait
+/// would cover. An action that isn't one is refused before the report.
+pub(crate) const fn quiet(action: Option<&Action>) -> Quiet {
+    match action {
+        Some(Action::Spawn { .. } | Action::SpawnSh { .. }) => Quiet::Never,
+        _ => Quiet::UnlessSeen,
+    }
+}
 
 /// What niri reports about a window's place and size.
 #[derive(Debug, Clone, PartialEq, Serialize)]

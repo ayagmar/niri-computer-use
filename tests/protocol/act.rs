@@ -2267,6 +2267,47 @@ async fn niri_action_names_the_window_focused_at_the_check() {
     .await;
 }
 
+/// How long an action's change report waits for an app's answer, from the start of the
+/// action, unless its own wait saw niri's event for it.
+const QUIET: Duration = Duration::from_millis(250);
+
+#[tokio::test]
+async fn focus_and_spawn_answer_without_waiting_for_quiet_but_a_sent_action_waits() {
+    let mut desk = Desk::start("act-quiet", "unrestricted = true").await;
+    let started = Instant::now();
+    desk.act("focus", json!({"window_id": 2}), |stream, _| {
+        focus_changed(stream, 2);
+    })
+    .await;
+    let focused = started.elapsed();
+    assert!(focused < QUIET, "focus took {focused:?}");
+    // `Spawn`'s window comes later than the quiet wait would cover; `wait_for` finds it.
+    let spawning = Instant::now();
+    let spawn = json!({"action": {"Spawn": {"command": ["foot"]}}});
+    desk.act("niri_action", spawn, |_, _| {}).await;
+    let spawned = spawning.elapsed();
+    assert!(spawned < QUIET, "Spawn took {spawned:?}");
+
+    // A workspace switch is only `sent`: its own wait saw nothing, so the report waits,
+    // and what niri reports a moment after its reply is in it.
+    let down = json!({"action": {"FocusWorkspaceDown": {}}});
+    let id = desk.server.start_call("niri_action", down).await;
+    desk.niri.action().await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    desk.stream
+        .send(&json!({"WorkspaceActivated": {"id": 2, "focused": true}}));
+    desk.stream
+        .send(&json!({"WindowFocusChanged": {"id": null}}));
+    let result = desk.server.response(id).await["result"].clone();
+    assert_eq!(
+        outcome(&result),
+        json!({
+            "accepted": true, "observed": "sent", "focused_window": null,
+            "changes": {"focus": {"from": 2, "to": null}, "workspace": {"from": 1, "to": 2}}
+        })
+    );
+}
+
 #[tokio::test]
 async fn niri_action_reports_the_window_as_niri_shows_it_after() {
     let mut desk = Desk::start("act-niri-action", "").await;
