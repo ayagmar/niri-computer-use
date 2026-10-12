@@ -920,6 +920,7 @@ These match the versions installed locally.
 - The marker stays for `recover`, as after any guardian's releases (2026-10-10, crash guardian).
 - What it can't do: the marker records no start time for its server, so a PID reused since reads as running and the input waits for `recover`. A guardian that can't take the lease within two seconds, or a niri that doesn't answer, leaves it for the next start or `recover`, with the failure on stderr. A niri that restarted has a new instance and runtime directory; the input it held ended with it.
 - Unit tests: which markers count as left behind, against a fake `/proc`; and against the fake niri, a dead server's extension, key and button are released, the modifiers zeroed in the layout niri has active, the compositor's keymap put back, and `released` written. No dependency was added.
+- Review fix (Sol, at `ff32a1c`): a failed key release returned before the button releases were tried, so a niri that stalled the keyboard past a round trip's deadline left the button down even with time left. The guardian now tries both, the key releases within four seconds of the ten, and reports every failure. `released` is written only when both went through. Unit test against the fake niri: a marker with an invalid keycode and button 272 gets the button released, fails naming the key releases, and isn't noted released. Returning on the first failure again fails it.
 
 ## 2026-10-12: native input in Qt and kitty, and keys niri takes for physical ones
 

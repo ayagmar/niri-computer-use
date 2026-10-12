@@ -28,6 +28,9 @@ const PROC: &str = "/proc";
 
 /// Everything after the server's end: the lease, niri's PID, binding and both releases.
 const DEADLINE: Duration = Duration::from_secs(10);
+/// The key releases' share of it, which leaves the button releases time after the lease's
+/// wait even when niri stalls the keyboard.
+const KEYS_DEADLINE: Duration = Duration::from_secs(4);
 /// How long the lease may stay held by someone else, such as a server refused by the
 /// marker or a human's `recover`, which sends the same releases.
 const LEASE_WAIT: Duration = Duration::from_secs(2);
@@ -91,20 +94,42 @@ async fn release(env: &Env, runtime: &RuntimeDir, server: u32) -> Result<(), Str
     let Some(marker) = releases(Some(&snapshot.found), server) else {
         return Ok(());
     };
-    if let Some(keyboard) = &marker.keyboard
-        && let recover::Layout::Marked(why) = recover::send_key_releases(env, keyboard).await?
-    {
-        cli::print_error(&format!("the native key releases: {why}"));
-    }
-    if !marker.buttons.is_empty() {
-        recover::send_releases(env, &marker.buttons, marker.output.as_deref()).await?;
-    }
+    send(env, marker).await?;
     snapshot
         .note_released(runtime)
         .await
         .map_err(|error| format!("note the releases in the input-dirty marker: {error}"))?;
     drop(lease);
     Ok(())
+}
+
+/// Sends the key releases and the button releases `marker` names, each whatever became
+/// of the other, the keys within `KEYS_DEADLINE` so the buttons keep time of their own.
+/// Fails with every failure when either does.
+async fn send(env: &Env, marker: &Marker) -> Result<(), String> {
+    let mut failures = Vec::new();
+    if let Some(keyboard) = &marker.keyboard {
+        match tokio::time::timeout(KEYS_DEADLINE, recover::send_key_releases(env, keyboard)).await {
+            Ok(Ok(recover::Layout::Active(_))) => {}
+            Ok(Ok(recover::Layout::Marked(why))) => {
+                cli::print_error(&format!("the native key releases: {why}"));
+            }
+            Ok(Err(error)) => failures.push(format!("the native key releases: {error}")),
+            Err(_) => failures.push(format!(
+                "the native key releases didn't finish within {KEYS_DEADLINE:?}"
+            )),
+        }
+    }
+    if !marker.buttons.is_empty()
+        && let Err(error) =
+            recover::send_releases(env, &marker.buttons, marker.output.as_deref()).await
+    {
+        failures.push(format!("the button releases: {error}"));
+    }
+    if failures.is_empty() {
+        return Ok(());
+    }
+    Err(failures.join("; "))
 }
 
 async fn lease(runtime: &RuntimeDir) -> Result<Lease, String> {
@@ -234,6 +259,39 @@ mod tests {
             panic!("the marker went")
         };
         assert!(left.released.is_some());
+        std::fs::remove_dir_all(dir).unwrap();
+        std::fs::remove_dir_all(proc_root).unwrap();
+    }
+
+    /// A dead server's marker whose keys can't be released, here because its codes are
+    /// invalid, still gets its button released; the failure names the keys, and without
+    /// all its releases the marker isn't noted released.
+    #[tokio::test]
+    async fn a_key_release_that_fails_still_lets_the_button_go() {
+        let dir = fresh_dir("guard-mixed");
+        let proc_root = fresh_dir("guard-mixed-proc");
+        let niri = Compositor::start(&dir, KEYMAP);
+        let env = niri.env(&dir);
+        let runtime = RuntimeDir::of(&env).unwrap();
+        runtime.create().unwrap();
+        std::fs::write(
+            runtime.path().join(super::super::runtime::INPUT_DIRTY),
+            format!(
+                r#"{{"operation":"drag","phase":"pending","server_pid":7,"since":"t","buttons":[272],"output":"{}","keyboard":{{"codes":[800],"group":0}}}}"#,
+                crate::test_support::wayland::OUTPUT
+            ),
+        )
+        .unwrap();
+        let error = left_behind(&env, &runtime, std::process::id(), &proc_root)
+            .await
+            .unwrap_err();
+        assert!(error.contains("the native key releases"), "{error}");
+        assert!(!error.contains("button"), "{error}");
+        assert_eq!(niri.seen().buttons, [(272, false)]);
+        let Some(Found::Marker(left)) = marker::read(&runtime) else {
+            panic!("the marker went")
+        };
+        assert_eq!(left.released, None);
         std::fs::remove_dir_all(dir).unwrap();
         std::fs::remove_dir_all(proc_root).unwrap();
     }
