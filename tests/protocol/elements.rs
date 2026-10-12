@@ -2371,6 +2371,39 @@ async fn an_element_is_not_aimed_at_just_after_the_view_moved() {
     }
 }
 
+// niri reports a switch inside `WorkspacesChanged`, not as `WorkspaceActivated`, when a
+// workspace was also added in the same refresh, as when a window moves to the empty
+// workspace below and focus follows it. The element is refused for a second all the same,
+// and nothing is sent.
+#[tokio::test]
+async fn a_switch_reported_with_the_whole_workspace_list_is_settled_too() {
+    let mut moved = floating_window();
+    moved["workspace_id"] = json!(2);
+    let windows = [floating_window()];
+    let mut desk = Desk::start_with("el-settle-list", &["/frame"], objects(), &windows).await;
+    let button = desk.element("Safe").await;
+    let shot = desk.screenshot_ref().await;
+    let mut new = workspace_on_dp1(2, true);
+    new["active_window_id"] = json!(WINDOW);
+    let switched = [
+        workspace_on_dp1(1, false),
+        new.clone(),
+        workspace_on_dp1(3, false),
+    ];
+    // Only the workspaces, so the window's own move doesn't settle it.
+    desk.niri.set_windows(&[moved], &switched);
+    desk.moved(&json!({"WorkspacesChanged": {"workspaces": switched}}))
+        .await;
+    let aimed = json!({"screenshot_ref": shot, "element": button});
+    let refused = desk.server.call("click", aimed.clone()).await;
+    refused_moving(&refused, "list");
+    assert_eq!(desk.fixture.clipboard.pointed(), []);
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let settled = desk.server.call("pointer_move", aimed).await;
+    assert_eq!(settled["isError"], false, "{settled}");
+    assert_eq!(desk.fixture.clipboard.pointed().len(), 1);
+}
+
 // The view can move after an element was aimed at and before the pointer goes out. A
 // change niri reports in that time, to the shown workspace, the overview, a window's
 // layout or a workspace's active window, refuses the aim, and nothing is sent.

@@ -9,7 +9,7 @@
 //! Besides the replica, the task passes every event it applies, numbered, to the action
 //! tools' waiters (`waiter.rs`), and tells them when a connection ends.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -59,9 +59,9 @@ struct Replica {
     seq: u64,
     /// Which connection, counted from 1, this replica comes from.
     connection: u64,
-    /// When niri last activated a workspace on each output, by output name, and last
-    /// opened or closed the overview, since the initial state: both start an animation
-    /// whose end niri doesn't report.
+    /// When niri last activated a workspace on each output, by output name, or changed
+    /// which workspaces an output has, and when it last opened or closed the overview,
+    /// since the initial state: each starts an animation whose end niri doesn't report.
     activated: HashMap<String, Instant>,
     overview_toggled: Option<Instant>,
 }
@@ -94,6 +94,13 @@ impl Replica {
         {
             self.activated.insert(output, now);
         }
+        if let Event::WorkspacesChanged { workspaces } = event {
+            // niri sends a switch as part of this event, not as `WorkspaceActivated`, when
+            // a workspace was also added, removed or moved in the same refresh.
+            for output in rearranged(self.state.workspaces.workspaces.values(), workspaces) {
+                self.activated.insert(output, now);
+            }
+        }
         if matches!(event, Event::OverviewOpenedOrClosed { .. }) {
             self.overview_toggled = Some(now);
         }
@@ -107,6 +114,40 @@ impl Replica {
             .copied()
             .max(self.overview_toggled)
     }
+}
+
+/// The outputs whose workspaces, or whose active workspace, differ between `before` and
+/// `after`.
+fn rearranged<'a>(
+    before: impl Iterator<Item = &'a Workspace>,
+    after: &'a [Workspace],
+) -> Vec<String> {
+    let before = by_output(before);
+    let after = by_output(after.iter());
+    let outputs: BTreeSet<&str> = before.keys().chain(after.keys()).copied().collect();
+    outputs
+        .into_iter()
+        .filter(|output| before.get(output) != after.get(output))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Each output's workspaces, and the active one among them.
+fn by_output<'a>(
+    workspaces: impl Iterator<Item = &'a Workspace>,
+) -> BTreeMap<&'a str, (BTreeSet<u64>, Option<u64>)> {
+    let mut outputs: BTreeMap<&str, (BTreeSet<u64>, Option<u64>)> = BTreeMap::new();
+    for workspace in workspaces {
+        let Some(output) = workspace.output.as_deref() else {
+            continue;
+        };
+        let (ids, active) = outputs.entry(output).or_default();
+        ids.insert(workspace.id);
+        if workspace.is_active {
+            *active = Some(workspace.id);
+        }
+    }
+    outputs
 }
 
 /// What `status` reports.
@@ -527,6 +568,39 @@ mod tests {
         replica.apply(5, Event::OverviewOpenedOrClosed { is_open: true });
         assert_eq!(replica.animated("DP-1"), Some(toggled));
         assert_eq!(replica.animated("HDMI-A-1"), Some(toggled));
+    }
+
+    // niri reports a switch inside `WorkspacesChanged` when a workspace was also added,
+    // removed or moved: the outputs whose shown workspace or set of workspaces changed
+    // animate, and the others don't.
+    #[tokio::test(start_paused = true)]
+    async fn a_switch_reported_with_the_whole_workspace_list_animates_its_output() {
+        let mut replica = Replica::default();
+        let workspaces = |active_on_dp1: u64, extra: bool| {
+            let list = [
+                workspace_on(1, "DP-1", active_on_dp1 == 1),
+                workspace_on(2, "DP-1", active_on_dp1 == 2),
+                workspace_on(3, "HDMI-A-1", true),
+            ];
+            let added = extra.then(|| workspace_on(4, "HDMI-A-1", false));
+            Event::WorkspacesChanged {
+                workspaces: list.into_iter().chain(added).collect(),
+            }
+        };
+        replica.apply(1, workspaces(1, false));
+        replica.apply(2, Event::WindowsChanged { windows: vec![] });
+        replica.apply(3, Event::OverviewOpenedOrClosed { is_open: false });
+        replica.apply(4, workspaces(1, false));
+        assert_eq!(replica.animated("DP-1"), None);
+        let switched = Instant::now();
+        replica.apply(5, workspaces(2, false));
+        assert_eq!(replica.animated("DP-1"), Some(switched));
+        assert_eq!(replica.animated("HDMI-A-1"), None);
+        tokio::time::advance(Duration::from_secs(5)).await;
+        let added = Instant::now();
+        replica.apply(6, workspaces(2, true));
+        assert_eq!(replica.animated("DP-1"), Some(switched));
+        assert_eq!(replica.animated("HDMI-A-1"), Some(added));
     }
 
     const HANDLED: &str = "{\"Ok\":\"Handled\"}\n";
