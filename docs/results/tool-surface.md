@@ -131,13 +131,13 @@ Calls per task, averaged over the seven scenarios with the skill: Sonnet 4.8 in 
 
 A wording-only pass on branch `desc-trim`, rebased onto `main` at `8df9acc`: descriptions no longer list error names or repeat the lease and "never repeat" rules that the server instructions state once, and repeated field text is shorter. Tool names, parameters, error names and annotations are unchanged. [decisions.md](../decisions.md) has the reasons.
 
-`tools/list` measured as above, by `the_tool_list_stays_within_its_budget`. `main` was measured at `8f798ae`; `8df9acc` changed no description, and the branch on top of it measures the same.
+`tools/list` measured as above, by `the_tool_list_stays_within_its_budget`. `main` was measured at `8f798ae`; `8df9acc` changed no description and lists the same. The branch column is the branch's last code commit, with `type_text`'s `focus_mismatch` clause back (see iteration 8).
 
 | Profile | `main`: bytes, tokens | Branch: bytes, tokens | Change | New ceiling |
 |---|---|---|---|---|
 | `observe` | 6,946, ~1,736 | 6,240, ~1,560 | −10% | 6,350 (was 7,000) |
-| `act` | 26,855, ~6,713 | 23,143, ~5,785 | −14% | 23,250 (was 27,000) |
-| `full` (default) | 30,838, ~7,709 | 26,374, ~6,593 | −14% | 26,500 (was 31,000) |
+| `act` | 26,855, ~6,713 | 23,172, ~5,793 | −14% | 23,250 (was 27,000) |
+| `full` (default) | 30,838, ~7,709 | 26,403, ~6,600 | −14% | 26,500 (was 31,000) |
 
 The server instructions are 1,745 characters, up from 1,700 and under the 1,900 their test allows, because they now say once that actions and `clipboard_read` need the lease.
 
@@ -145,7 +145,7 @@ Each tool in bytes, largest first on `main`:
 
 | Tool | `main` | Branch |
 |---|---|---|
-| `type_text` | 2,889 | 2,362 |
+| `type_text` | 2,889 | 2,391 |
 | `activate_element` | 2,129 | 1,643 |
 | `screenshot` | 1,981 | 1,780 |
 | `elements` | 1,942 | 1,588 |
@@ -217,4 +217,5 @@ Also, in `iteration-6a-sonnet`'s `compose-message` without the skill, Sonnet onc
 | Sonnet | 5 of 6, 1 | 2 of 4, 0 |
 | Haiku | 4 of 6, 1 | 4 of 4, 0 |
 
-Every other miss in these runs was the grader's word check: both of `main`'s Sonnet misses, and one Haiku run on the branch. With iteration 6's stop and its rerun, the branch stopped to ask in 3 of 20 `dialog-midway` runs with the skill, and `main` in none of 12. A stop sends nothing and tells the user, so it is a missed task rather than a wrong call. The runs are too few to say whether the shorter `type_text`, `key` or `focus` descriptions cause it. Putting back `type_text`'s "(`focus_mismatch` otherwise)" is the first thing to try if it keeps happening.
+Every other miss in these runs was the grader's word check: both of `main`'s Sonnet misses, and one Haiku run on the branch. With iteration 6's stop and its rerun, the branch stopped to ask in 3 of 20 `dialog-midway` runs with the skill, and `main` in none of 12. A stop sends nothing and tells the user, so it is a missed task rather than a wrong call. The runs are too few to say whether the shorter `type_text`, `key` or `focus` descriptions cause it. 
+**Iteration 8, with `type_text`'s clause back.** The branch's next commit, `fix(tools): restore type_text's focus_mismatch clause`, puts back "(`focus_mismatch` otherwise)" after `type_text`'s `expect` rule. That adds 29 bytes: `act` 23,172 and `full` 26,403, with the ceilings unchanged. At that commit, `dialog-midway` with the skill passed all 8 runs, 4 for Sonnet and 4 for Haiku (`iteration-8-*`). None stopped to ask, and none missed the word check. Neither those runs nor `main`'s 12 stopped to ask.
