@@ -336,7 +336,7 @@ make nested-latency
 make nested-latency SERVER=/path/to/older/niri-computer-use
 ```
 
-One server holds the lease, and 30 rounds each call `focus` on the empty workspace below the fixture's and back on the fixture, `click` on its entry by element, `type_text` of two characters and `key` with two `BackSpace`s into it, `activate_element` on its `Primary` button, `niri_action` setting its height, and `shell_panel` opening and closing the control center, none with a screenshot. For each call it gives the median and 95th percentile round trip how often each `observed` came back, and how often each set of `changes` keys came back, such as `focus+workspace` or `none`. The results are in `docs/results/action-latency.md`.
+One server holds the lease, and 30 rounds each call `focus` on the empty workspace below the fixture's and back on the fixture, `click` on its entry by element, `type_text` of two characters and `key` with two `BackSpace`s into it, `activate_element` on its `Primary` button, `niri_action` setting its height, and `shell_panel` opening and closing the control center, none with a screenshot. For each call it gives the median and 95th percentile round trip, how often each `observed` came back, and how often each set of `changes` keys came back, with the fields of its `windows` entries, such as `focus+workspace`, `windows[size]` or `none`. The results are in `docs/results/action-latency.md`.
 
 ## Skill evals
 

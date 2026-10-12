@@ -7,7 +7,7 @@
 //! screenshot. It writes each call's round trips and which `observed` and `changes` keys
 //! came back to `latency.json` in the artifacts, and a summary to the log.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::time::{Duration, Instant};
 
@@ -163,14 +163,32 @@ impl Timings {
     }
 }
 
-/// The keys of an outcome's `changes`, sorted and joined by `+`, or `none`.
+/// The keys of an outcome's `changes`, sorted and joined by `+`, with the fields its
+/// `windows` entries changed, as in `focus+windows[size]`; or `none`.
 fn changed(outcome: &Value) -> String {
     let Some(changes) = outcome.get("changes").and_then(Value::as_object) else {
         return "none".to_owned();
     };
-    let mut keys: Vec<&str> = changes.keys().map(String::as_str).collect();
+    let mut keys: Vec<String> = changes
+        .iter()
+        .map(|(key, value)| match value.as_array() {
+            Some(windows) if key == "windows" => format!("windows[{}]", fields(windows)),
+            _ => key.clone(),
+        })
+        .collect();
     keys.sort_unstable();
     keys.join("+")
+}
+
+/// The fields `windows` entries changed, besides their `id`, sorted and joined by `,`.
+fn fields(windows: &[Value]) -> String {
+    let fields: BTreeSet<&str> = windows
+        .iter()
+        .filter_map(Value::as_object)
+        .flat_map(|window| window.keys().map(String::as_str))
+        .filter(|field| *field != "id")
+        .collect();
+    fields.into_iter().collect::<Vec<_>>().join(",")
 }
 
 /// The ref of the one element of `window`, of `role` if given, whose name contains `name`.
@@ -245,7 +263,7 @@ fn empty_workspace(session: &mut Session<'_>, own: Option<u64>) -> Result<u64> {
         .iter()
         .find(|workspace| {
             workspace.output == own.output
-                && workspace.idx == own.idx + 1
+                && Some(workspace.idx) == own.idx.checked_add(1)
                 && workspace.active_window_id.is_none()
         })
         .map(|workspace| workspace.id)
