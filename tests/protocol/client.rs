@@ -40,7 +40,11 @@ impl Server {
     /// handshake.
     pub(crate) fn spawn_from(fixture: &Fixture, binary: &Path) -> Self {
         let spawning = SPAWNING.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut child = command_for(binary)
+        let mut command = command_for(binary);
+        if let Some(dir) = fixture.cwd() {
+            command.current_dir(dir);
+        }
+        let mut child = command
             .arg("serve")
             .env_clear()
             .envs(fixture.env())

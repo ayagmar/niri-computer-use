@@ -62,6 +62,8 @@ pub(crate) const SESSION: &str = "7";
 pub(crate) struct Fixture {
     pub(crate) dir: PathBuf,
     env: BTreeMap<&'static str, OsString>,
+    /// The working directory servers start in; the test's own when `None`.
+    cwd: Option<PathBuf>,
     /// The servers started here. Each must have exited before the directory is removed,
     /// or its audit log could create the directory again.
     servers: Mutex<Vec<u32>>,
@@ -114,6 +116,7 @@ impl Fixture {
         let mut fixture = Self {
             dir,
             env,
+            cwd: None,
             servers: Mutex::new(Vec::new()),
             points: Points::default(),
             clipboard,
@@ -155,6 +158,15 @@ impl Fixture {
 
     pub(crate) fn set(&mut self, name: &'static str, value: impl Into<OsString>) {
         self.env.insert(name, value.into());
+    }
+
+    /// Starts the next servers in `dir`.
+    pub(crate) fn work_in(&mut self, dir: PathBuf) {
+        self.cwd = Some(dir);
+    }
+
+    pub(crate) fn cwd(&self) -> Option<&Path> {
+        self.cwd.as_deref()
     }
 
     /// Removes a variable from the server's environment, except `XDG_RUNTIME_DIR`: without
@@ -200,15 +212,20 @@ impl Fixture {
     /// `await_file <name>` waits for `$DIR/<name>`, and exits the program after ten seconds
     /// or once the test directory is gone: a `SIGKILL`ed server leaves its children running.
     pub(crate) fn program(&self, name: &str, body: &str) {
+        self.program_at(&self.dir.join("bin").join(name), body);
+    }
+
+    /// A fake program, as `program` makes one, at `file`, a path of the test's choosing.
+    pub(crate) fn program_at(&self, file: &Path, body: &str) {
         let script = format!(
             "#!/bin/sh\nPATH='{}'\nDIR='{}'\n{AWAIT_FILE}\n{PASS_POINT}\n{body}\n",
             self.dir.join("utils").display(),
             self.dir.display()
         );
-        let file = self.dir.join("bin").join(name);
         let _spawning = SPAWNING.lock().unwrap_or_else(PoisonError::into_inner);
-        std::fs::write(&file, script).unwrap();
-        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, script).unwrap();
+        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     /// The audit log's lines, or none if it doesn't exist.

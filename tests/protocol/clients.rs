@@ -4,6 +4,7 @@
 //! only what it held, no setting crossing sessions, and an audit line per call naming the
 //! session that made it.
 
+use std::ffi::OsString;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
@@ -571,35 +572,68 @@ async fn each_session_runs_sixteen_calls_whatever_the_others_run() {
     }
 }
 
-/// A session's `grim` and `wtype` come from its own `PATH`, as with a standalone server.
-/// A client whose `PATH` has neither, starting the engine, doesn't hide them from a client
-/// whose `PATH` has them, and doesn't get them from it either.
+/// A session's `grim` and `wtype` come from its own `PATH`, as with a standalone server,
+/// and relative entries are under the client's own working directory, not the engine's.
+/// A starts the engine, which works in A's directory, where `bin` has a `grim` that fails;
+/// B's `PATH` is `bin` too.
 #[tokio::test]
-async fn each_client_finds_grim_and_wtype_on_its_own_path() {
+async fn each_client_runs_grim_and_wtype_from_its_own_path_and_directory() {
     let mut fixture = shared("many-path");
     let mut desktop = Desktop::new(&fixture);
-    two_sizes(&fixture);
-    fixture.program("wtype", "cat > /dev/null");
-    let empty = fixture.path("empty");
-    std::fs::create_dir_all(&empty).unwrap();
-    fixture.set("PATH", &empty);
-    let mut narrow = Server::start(&fixture).await;
-    fixture.set("PATH", fixture.path("bin"));
-    let mut full = Server::start(&fixture).await;
+    std::fs::write(fixture.path("small.jpg"), jpeg(1280, 720, b"small")).unwrap();
+    fixture.program_at(&fixture.path("a/bin/grim"), "echo A-grim >&2; exit 1");
+    fixture.program_at(&fixture.path("b/bin/grim"), r#"cat "$DIR/small.jpg""#);
+    for name in ["a", "b"] {
+        let wtype = format!(r#"cat > /dev/null; echo >> "$DIR/wtype-{name}""#);
+        fixture.program_at(&fixture.path(&format!("{name}/bin/wtype")), &wtype);
+    }
+    // Noctalia, on the fixture's `PATH`, reports the session unlocked, for the lease.
+    let mut path = OsString::from("bin:");
+    path.push(fixture.path("bin"));
+    fixture.set("PATH", path);
+    let mut clients = Vec::new();
+    for name in ["a", "b"] {
+        fixture.work_in(fixture.path(name));
+        clients.push(Server::start(&fixture).await);
+    }
     let _stream = desktop.stream().await;
-    let narrow_status = narrow.structured("status").await;
-    let full_status = full.structured("status").await;
-    assert_eq!(narrow_status["engine"]["pid"], full_status["engine"]["pid"]);
-    assert_eq!(
-        narrow_status["binaries"],
-        json!({"grim": false, "wtype": false, "loginctl": false})
-    );
-    assert_eq!(full_status["binaries"]["grim"], true, "{full_status}");
-    assert_eq!(full_status["binaries"]["wtype"], true, "{full_status}");
     let shot = json!({"target": "focused_output"});
-    let taken = full.call("screenshot", shot.clone()).await;
+    let (_, detail) = tool_error(&clients[0].call("screenshot", shot.clone()).await);
+    assert!(detail.contains("A-grim"), "{detail}");
+    let taken = clients[1].call("screenshot", shot).await;
     assert_eq!(taken["structuredContent"]["width"], 1280, "{taken}");
-    let (name, detail) = tool_error(&narrow.call("screenshot", shot).await);
-    assert_eq!(name, "upstream_error");
-    assert!(detail.starts_with("start grim: "), "{detail}");
+    let key = json!({"keys": ["Down"], "expect": "none"});
+    for (client, name) in clients.iter_mut().zip(["a", "b"]) {
+        client.structured("acquire_desktop").await;
+        let pressed = client.call("key", key.clone()).await;
+        assert_eq!(
+            pressed["structuredContent"]["observed"], "sent",
+            "{pressed}"
+        );
+        client
+            .structured_with("release_desktop", json!({"restore_focus": false}))
+            .await;
+        let calls = std::fs::read_to_string(fixture.path(&format!("wtype-{name}"))).unwrap();
+        assert_eq!(calls.lines().count(), 1, "{name}");
+    }
+}
+
+/// An empty `PATH` is the working directory, as for `execvp`, not the default search path
+/// an unset one gets, standalone or shared.
+#[tokio::test]
+async fn an_empty_path_finds_grim_in_the_working_directory() {
+    let mut fixture = Fixture::new("empty-path");
+    let mut desktop = Desktop::new(&fixture);
+    std::fs::write(fixture.path("small.jpg"), jpeg(1280, 720, b"small")).unwrap();
+    fixture.program_at(&fixture.path("work/grim"), r#"cat "$DIR/small.jpg""#);
+    fixture.set("PATH", "");
+    fixture.work_in(fixture.path("work"));
+    let mut client = Server::start(&fixture).await;
+    let _stream = desktop.stream().await;
+    let binaries = client.structured("status").await["binaries"].clone();
+    assert_eq!(binaries["grim"], true, "{binaries}");
+    let taken = client
+        .call("screenshot", json!({"target": "focused_output"}))
+        .await;
+    assert_eq!(taken["structuredContent"]["width"], 1280, "{taken}");
 }

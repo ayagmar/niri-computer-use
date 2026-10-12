@@ -27,7 +27,7 @@ pub(crate) struct Input<'a> {
     pub(crate) policy: &'a Loaded,
     pub(crate) keyboard: Option<&'a std::ffi::OsStr>,
     /// The session's `PATH`, where `wtype` is found.
-    pub(crate) path: Option<&'a std::ffi::OsStr>,
+    pub(crate) path: Option<&'a [std::path::PathBuf]>,
     /// The accessibility bus, when this session has one.
     pub(crate) a11y: Option<&'a crate::a11y::A11y>,
 }

@@ -1,7 +1,7 @@
 //! The readiness report shared by the `status` tool and the `status` subcommand.
 
 use std::collections::BTreeMap;
-use std::ffi::OsStr;
+use std::path::PathBuf;
 
 use niri_ipc::Output;
 use serde::Serialize;
@@ -19,7 +19,7 @@ use crate::noctalia::{self, Presence};
 use crate::policy::{
     self, Facts, Loaded, PolicyStatus, Tools, ToolsStatus, Unrestricted, UnrestrictedStatus,
 };
-use crate::{Env, a11y, discover};
+use crate::{Env, a11y, discover, runner};
 
 /// Programs the server runs for the session asking, found on its `PATH` or not.
 const SESSION_BINARIES: [&str; 2] = ["grim", "wtype"];
@@ -78,7 +78,7 @@ pub(crate) struct Sources<'a> {
     pub(crate) unrestricted: &'a Unrestricted,
     pub(crate) tools: &'a Tools,
     /// The session's `PATH`.
-    pub(crate) path: Option<&'a OsStr>,
+    pub(crate) path: Option<&'a [PathBuf]>,
     /// Decided once at startup for the server, whose tool list depends on it.
     pub(crate) accessibility: &'a a11y::Presence,
 }
@@ -213,7 +213,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         unrestricted: unrestricted.status(),
         tools: tools.status(),
         binaries: SESSION_BINARIES
-            .map(|name| (name, crate::on_path(path, name)))
+            .map(|name| (name, runner::find(path, name).is_some()))
             .into_iter()
             .chain(OWN_BINARIES.map(|name| (name, env.finds(name))))
             .collect(),
@@ -256,7 +256,8 @@ mod tests {
                 policy: policy::Profile::Full,
                 env: Ok(None),
             },
-            path: None,
+            // No directory, rather than no `PATH`, which would search the host's `/usr/bin`.
+            path: Some(&[]),
             accessibility: &a11y::detect(None).await,
         };
         let status = serde_json::to_value(collect(&Env::default(), sources).await).unwrap();

@@ -4,7 +4,6 @@
 //! (`render.c:145–146`), which truncates. The expected size follows the same rule, and a
 //! capture whose header disagrees is an error rather than an image with unknown geometry.
 
-use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -145,7 +144,7 @@ pub(crate) struct Screenshot {
 pub(crate) async fn screenshot(
     socket: &Socket,
     display: &Display,
-    search_path: Option<&OsStr>,
+    search_path: Option<&[PathBuf]>,
     request: &Request,
 ) -> Result<Screenshot, CallError> {
     let outputs = niri::outputs(socket).await?;
@@ -210,7 +209,7 @@ pub(crate) async fn screenshot(
 pub(crate) async fn save(
     socket: &Socket,
     display: &Display,
-    search_path: Option<&OsStr>,
+    search_path: Option<&[PathBuf]>,
     target: &Target,
     save: &SaveTarget,
 ) -> Result<Saved, CallError> {

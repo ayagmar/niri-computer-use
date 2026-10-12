@@ -34,23 +34,59 @@ pub(crate) fn pass_on(session: Vec<(&'static str, OsString)>) {
 pub(crate) enum Search<'a> {
     /// This process's own `PATH`, for what an engine runs for every client.
     Own,
-    /// A client's `PATH`, `None` when its environment had none, for what runs for that
-    /// client alone: a shared engine then finds what the client's standalone server would.
-    Client(Option<&'a OsStr>),
+    /// A client's `PATH` as absolute directories, `None` when its environment had none,
+    /// for what runs for that client alone. The runner finds the program there itself and
+    /// runs it by its path, so a shared engine runs what the client's standalone server
+    /// would, whatever the engine's own working directory.
+    Client(Option<&'a [PathBuf]>),
 }
 
-impl Search<'_> {
-    fn apply(self, command: &mut Command) {
-        match self {
-            Self::Own => {}
-            Self::Client(Some(path)) => {
-                command.env("PATH", path);
-            }
-            Self::Client(None) => {
-                command.env_remove("PATH");
-            }
-        }
-    }
+/// Where `execvp` looks when `PATH` is unset: glibc's `_CS_PATH`.
+const DEFAULT_PATH: [&str; 2] = ["/bin", "/usr/bin"];
+
+/// The executable file called `program` on `path`, a client's `PATH`, or on the default
+/// search path when the client has none.
+pub(crate) fn find(path: Option<&[PathBuf]>, program: &str) -> Option<PathBuf> {
+    let dirs = path.map_or_else(|| DEFAULT_PATH.map(PathBuf::from).to_vec(), <[_]>::to_vec);
+    first_executable(dirs, program)
+}
+
+/// The first executable file called `program` in `dirs`.
+pub(crate) fn first_executable(
+    dirs: impl IntoIterator<Item = PathBuf>,
+    program: &str,
+) -> Option<PathBuf> {
+    use std::os::unix::fs::PermissionsExt as _;
+    dirs.into_iter().map(|dir| dir.join(program)).find(|file| {
+        file.metadata()
+            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+    })
+}
+
+/// A command for `program`, found as `search` says. A client's program gets the client's
+/// `PATH`, or none when it has none.
+fn searched(program: &str, search: Search<'_>) -> Result<Command, ToolError> {
+    let Search::Client(path) = search else {
+        return Ok(command(program));
+    };
+    let Some(file) = find(path, program) else {
+        let place = if path.is_some() {
+            "this client's PATH"
+        } else {
+            "/bin or /usr/bin, as this client has no PATH"
+        };
+        return Err(ToolError::new(
+            ErrorName::UpstreamError,
+            format!("start {program}: no executable {program} on {place}"),
+        ));
+    };
+    let mut command = command(file);
+    // A directory with a `:` in its name can't be written into a `PATH`.
+    match path.map(std::env::join_paths) {
+        Some(Ok(joined)) => command.env("PATH", joined),
+        Some(Err(_)) | None => command.env_remove("PATH"),
+    };
+    Ok(command)
 }
 
 /// How much stderr an error keeps. The rest is read and discarded, so a verbose child
@@ -89,9 +125,7 @@ pub(crate) async fn run(
     deadline: Duration,
     max_stdout: u64,
 ) -> Result<Finished, ToolError> {
-    let mut command = command(program);
-    search.apply(&mut command);
-    let child = command
+    let child = searched(program, search)?
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -137,9 +171,7 @@ pub(crate) fn gated(
     env: &[(&str, &str)],
     deadline: Duration,
 ) -> Result<Gated, ToolError> {
-    let mut command = command(program);
-    search.apply(&mut command);
-    let mut child = command
+    let mut child = searched(program, search)?
         .args(args)
         .envs(env.iter().copied())
         .stdin(Stdio::piped())
@@ -403,7 +435,7 @@ fn detached(
     clippy::disallowed_methods,
     reason = "the runner is the one place that starts processes"
 )]
-fn own_command(program: &str) -> Command {
+fn own_command(program: impl AsRef<OsStr>) -> Command {
     let mut command = Command::new(program);
     // libwayland would use an inherited connection before `WAYLAND_DISPLAY`, skipping the
     // display `main` checked is niri's.
@@ -412,7 +444,7 @@ fn own_command(program: &str) -> Command {
 }
 
 /// A command with the session's variables, as `main` resolved them.
-fn command(program: &str) -> Command {
+fn command(program: impl AsRef<OsStr>) -> Command {
     let mut command = own_command(program);
     command.envs(
         SESSION

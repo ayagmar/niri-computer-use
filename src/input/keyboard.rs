@@ -512,7 +512,7 @@ struct Wtype<'a> {
     tool: &'a str,
     args: &'a [String],
     stdin: Vec<u8>,
-    path: Option<&'a std::ffi::OsStr>,
+    path: Option<&'a [std::path::PathBuf]>,
 }
 
 /// Writes the marker, starts wtype behind the gate, records its PID, then, once `go` lets

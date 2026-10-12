@@ -2124,14 +2124,15 @@ mod tests {
     }
 
     /// A server of `engine` for a session whose environment sets `unrestricted` to `1` or
-    /// not at all, and names `tools` as its profile, with no policy file.
+    /// not at all, and names `tools` as its profile, with no policy file and no directory on
+    /// its `PATH`.
     fn server(engine: &Arc<Engine>, unrestricted: bool, tools: Option<&str>) -> Server {
         let given = Given {
             unrestricted: unrestricted.then(|| "1".into()),
             tools: tools.map(Into::into),
             keyboard: None,
             home: None,
-            path: None,
+            path: Some(Vec::new()),
             policy: Source::Missing,
         };
         Server::new(

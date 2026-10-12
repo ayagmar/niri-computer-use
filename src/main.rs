@@ -31,7 +31,6 @@ mod tools;
 mod wait;
 
 use std::ffi::OsString;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -172,17 +171,9 @@ impl Env {
 
     /// Whether `PATH` has an executable file called `program`.
     pub(crate) fn finds(&self, program: &str) -> bool {
-        on_path(self.path.as_deref(), program)
+        let dirs = self.path.iter().flat_map(std::env::split_paths);
+        runner::first_executable(dirs, program).is_some()
     }
-}
-
-/// Whether `path`, a `PATH`, has an executable file called `program`.
-pub(crate) fn on_path(path: Option<&std::ffi::OsStr>, program: &str) -> bool {
-    let dirs = path.iter().flat_map(std::env::split_paths);
-    dirs.map(|dir| dir.join(program)).any(|file| {
-        file.metadata()
-            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
-    })
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -229,7 +220,8 @@ async fn main() -> ExitCode {
     {
         env.discovery.runtime_dir = discover::Source::Discovered;
     }
-    let given = session::Given::read(|name| std::env::var_os(name));
+    let cwd = std::env::current_dir().ok();
+    let given = session::Given::read(|name| std::env::var_os(name), cwd.as_deref());
     runner::pass_on(env.session_vars());
     let result = match command {
         Some(Command::Serve) => serve(env, given).await,
@@ -354,6 +346,8 @@ async fn standalone(
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::PermissionsExt as _;
+
     use super::*;
 
     #[test]

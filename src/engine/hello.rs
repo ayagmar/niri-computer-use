@@ -91,7 +91,7 @@ pub(crate) struct Hello {
     tools: Option<String>,
     keyboard: Option<String>,
     home: Option<PathBuf>,
-    path: Option<String>,
+    path: Option<Vec<String>>,
     policy: policy::Source,
 }
 
@@ -135,7 +135,16 @@ impl Hello {
             tools: utf8("NIRI_COMPUTER_USE_TOOLS", given.tools)?,
             keyboard: utf8("NIRI_COMPUTER_USE_KEYBOARD", given.keyboard)?,
             home: given.home,
-            path: utf8("PATH", given.path)?,
+            path: given
+                .path
+                .map(|dirs| {
+                    dirs.into_iter()
+                        .map(|dir| {
+                            utf8("PATH", Some(dir.into_os_string())).map(Option::unwrap_or_default)
+                        })
+                        .collect::<Result<_, _>>()
+                })
+                .transpose()?,
             policy,
         })
     }
@@ -147,7 +156,9 @@ impl Hello {
             tools: self.tools.map(Into::into),
             keyboard: self.keyboard.map(Into::into),
             home: self.home,
-            path: self.path.map(Into::into),
+            path: self
+                .path
+                .map(|dirs| dirs.into_iter().map(PathBuf::from).collect()),
             policy: self.policy,
         }
     }
@@ -259,7 +270,7 @@ mod tests {
             tools: Some("act".to_owned()),
             keyboard: None,
             home: Some(PathBuf::from("/home/me")),
-            path: Some("/home/me/bin:/usr/bin".to_owned()),
+            path: Some(vec!["/home/me/bin".to_owned(), "/usr/bin".to_owned()]),
             policy: policy::Source::Text {
                 path: PathBuf::from("/home/me/.config/niri-computer-use/policy.toml"),
                 text: "unrestricted = true\n".to_owned(),
@@ -286,7 +297,10 @@ mod tests {
                 tools: Some("act".into()),
                 keyboard: None,
                 home: Some(PathBuf::from("/home/me")),
-                path: Some("/home/me/bin:/usr/bin".into()),
+                path: Some(vec![
+                    PathBuf::from("/home/me/bin"),
+                    PathBuf::from("/usr/bin")
+                ]),
                 policy: sent.policy,
             }
         );

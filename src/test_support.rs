@@ -39,14 +39,15 @@ pub(crate) fn niri_env(dir: &std::path::Path) -> crate::Env {
     }
 }
 
-/// Session `id` of one process, with no policy file and nothing turned on.
+/// Session `id` of one process, with no policy file, nothing turned on, and no directory
+/// on its `PATH`, so that nothing on the host runs.
 pub(crate) fn session(id: u64) -> crate::session::Session {
     let given = crate::session::Given {
         unrestricted: None,
         tools: None,
         keyboard: None,
         home: None,
-        path: None,
+        path: Some(Vec::new()),
         policy: crate::policy::Source::Missing,
     };
     crate::session::Session::new(

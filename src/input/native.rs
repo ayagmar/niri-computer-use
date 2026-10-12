@@ -601,7 +601,7 @@ mod tests {
             runtime: &runtime,
             policy: &Loaded::Missing,
             keyboard: None,
-            path: None,
+            path: Some(&[]),
             a11y: None,
         };
         let typing = Typing::Text {
