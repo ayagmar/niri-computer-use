@@ -15,9 +15,10 @@ use crate::error::ToolError;
 use crate::niri::waiter::{Waited, Waiter};
 use crate::niri::{self, Events};
 
-/// The report ends once niri has sent no event for this long, counted from the start of
-/// the action, so an effect that comes a moment after the input, such as a dialog
-/// opening after a click, is in it. The action's own wait counts towards it.
+/// The report ends once niri has sent no event that changes what it shows for this long,
+/// counted from the start of the action, so an effect that comes a moment after the input,
+/// such as a dialog opening after a click, is in it. The action's own wait counts towards
+/// it.
 pub(crate) const QUIET: Duration = Duration::from_millis(250);
 /// At most this long after the action's own wait and its evidence, however busy niri is.
 const EXTRA: Duration = Duration::from_millis(500);
@@ -27,9 +28,11 @@ const EXTRA: Duration = Duration::from_millis(500);
 pub(crate) struct Recorder {
     waiter: Waiter,
     before: Scene,
+    /// The scene as of the last event applied.
+    now: Scene,
     /// Every window seen since that wasn't open before, as last seen.
     passing: BTreeMap<u64, Window>,
-    /// When the last event came, or the watch started.
+    /// When the last event that changed what the report shows came, or the watch started.
     last: Instant,
     /// Why the event stream ended, once it did.
     lost: Option<String>,
@@ -51,6 +54,7 @@ impl Recorder {
         let before = Scene::of(waiter.view());
         Ok(Self {
             waiter,
+            now: before.clone(),
             before,
             passing: BTreeMap::new(),
             last: Instant::now(),
@@ -91,7 +95,8 @@ impl Recorder {
         changes
     }
 
-    /// Applies events until `QUIET` passed since the last one, or `EXTRA` from now.
+    /// Applies events until `QUIET` passed since the last one that changed what the report
+    /// shows, or `EXTRA` from now.
     async fn quiet(&mut self) {
         let limit = Instant::now() + EXTRA;
         while self.lost.is_none() {
@@ -115,8 +120,10 @@ impl Recorder {
         }
     }
 
-    /// Applies the next event, waiting at most `limit` for it: whether one came. The
-    /// stream ending sets `lost`.
+    /// Applies the next event, waiting at most `limit` for it: whether one came. Only an
+    /// event that changes what the report shows restarts the quiet, so niri's bookkeeping,
+    /// such as a window's focus timestamp a moment after it took focus, can't extend it.
+    /// The stream ending sets `lost`.
     async fn next(&mut self, limit: Duration) -> bool {
         let Self {
             waiter,
@@ -136,7 +143,12 @@ impl Recorder {
             .await;
         match ended {
             Waited::Done(()) => {
-                self.last = Instant::now();
+                let now = Scene::of(self.waiter.view());
+                let shown = changes::desktop(&self.now, &now, &BTreeMap::new());
+                if !shown.is_empty() {
+                    self.last = Instant::now();
+                }
+                self.now = now;
                 true
             }
             Waited::Timeout => false,
@@ -150,7 +162,7 @@ impl Recorder {
 
 #[cfg(test)]
 mod tests {
-    use niri_ipc::Event;
+    use niri_ipc::{Event, Timestamp};
     use serde_json::json;
 
     use super::*;
@@ -167,6 +179,7 @@ mod tests {
         let before = Scene::of(waiter.view());
         let recorder = Recorder {
             waiter,
+            now: before.clone(),
             before,
             passing: BTreeMap::new(),
             last: Instant::now(),
@@ -219,6 +232,34 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn events_that_change_nothing_the_report_shows_dont_extend_it() {
+        let (recorder, mut outcome, sender) = watching(vec![app()]);
+        let sends = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            // niri sets a window's focus timestamp a moment after it took focus.
+            let focus_timestamp = Some(Timestamp { secs: 1, nanos: 0 });
+            let stamped = Event::WindowFocusTimestampChanged {
+                id: 1,
+                focus_timestamp,
+            };
+            event(&sender, 1, stamped);
+            // Positions are left out of the report, so a move alone changes nothing in it.
+            let mut layout = app().layout;
+            layout.tile_pos_in_workspace_view = Some((10.0, 10.0));
+            let moved = Event::WindowLayoutsChanged {
+                changes: vec![(1, layout)],
+            };
+            event(&sender, 2, moved);
+            sender
+        });
+        let started = Instant::now();
+        let changes = recorder.finish(Wait::Quiet, &mut outcome).await;
+        assert_eq!(started.elapsed(), QUIET);
+        assert!(changes.is_empty());
+        drop(sends.await.unwrap());
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn quiet_during_the_actions_own_wait_counts_and_only_the_rest_is_added() {
         let (mut recorder, mut outcome, _sender) = watching(vec![app()]);
         recorder.follow(tokio::time::sleep(QUIET)).await;
@@ -249,15 +290,17 @@ mod tests {
         );
     }
 
-    /// Marks window 1 urgent every 100 ms, forty times.
+    /// Retitles window 1 every 100 ms, forty times, as a page that keeps loading does.
     async fn busy(sender: Sender) {
         for seq in 1..=40 {
             tokio::time::sleep(Duration::from_millis(100)).await;
-            let urgent = Event::WindowUrgencyChanged {
-                id: 1,
-                urgent: true,
-            };
-            event(&sender, seq, urgent);
+            let mut retitled = app();
+            retitled.title = Some(format!("page {seq}"));
+            event(
+                &sender,
+                seq,
+                Event::WindowOpenedOrChanged { window: retitled },
+            );
         }
     }
 
@@ -268,10 +311,11 @@ mod tests {
         let started = Instant::now();
         let changes = recorder.finish(Wait::Quiet, &mut outcome).await;
         assert_eq!(started.elapsed(), EXTRA);
-        assert_eq!(
-            changes.windows.first().and_then(|window| window.urgent),
-            Some(true)
-        );
+        let title = changes
+            .windows
+            .first()
+            .and_then(|window| window.title.clone());
+        assert!(title.is_some_and(|title| title.starts_with("page ")));
         busy.abort();
     }
 
