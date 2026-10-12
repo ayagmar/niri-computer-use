@@ -55,6 +55,8 @@ The server found no accessibility bus when it started; `status` shows why under 
 
 With `unmappable: frame_size_mismatch`, the app draws its own title bar and its coordinates can't be matched to niri's window. GTK 3 and Qt apps do this; with server-side decorations they work. Aim at screenshot pixels for that window, or use `activate_element` and `set_element_text`, which don't need a box. A click on such an element is refused with `element_unmappable` rather than land in the wrong place.
 
+With `unmappable: not_showing` for every element of a window that is on screen, the window is tiled. niri 26.04 gives only floating windows a place in the workspace's view, which the box is measured from. `activate_element` and `set_element_text` work on tiled windows; to click an element by its ref, float the window first with `niri_action` `ToggleWindowFloating`.
+
 ## `elements` fails with `deadline_exceeded`
 
 The app didn't answer one call over the accessibility bus within a second, or the three seconds ran out before the walk began. A stopped or hung app does this; in testing, a stopped Qt app failed after about a second while other apps kept answering. A large tree that is slow to read doesn't fail: it gives what was read in three seconds, with `capped_reason: "budget_exhausted"`.
