@@ -4,7 +4,8 @@
 //! empty workspace and back to the fixture, `click` on the fixture's entry, `type_text` and
 //! `key` into it, `activate_element` on its `Primary` button, `niri_action` resizing the
 //! fixture, and `shell_panel` opening and closing the control center, none of them with a
-//! screenshot. It writes `latency.json` to the artifacts and a summary to the log.
+//! screenshot. It writes each call's round trips and which `observed` and `changes` keys
+//! came back to `latency.json` in the artifacts, and a summary to the log.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -36,8 +37,9 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
         NOCTALIA_DEADLINE,
     )?;
     let fixture = Fixture::start(session, Toolkit::Gtk4)?;
-    let window = fixture.window(session, &bus)?.id;
-    let empty = empty_workspace(session)?;
+    let window = fixture.window(session, &bus)?;
+    let empty = empty_workspace(session, window.workspace_id)?;
+    let window = window.id;
     let mut client = Client::start(session, server, "harness-latency", SERVER_DEADLINE)?;
     mcp::ready(session, &mut client, "latency-ready", READY)?;
     structured(&client.call(session, "acquire_desktop", json!({}))?)?;
@@ -118,30 +120,57 @@ impl Targets {
     }
 }
 
-/// Each label's round trips, and how often each `observed` came back.
+/// Each label's calls.
 #[derive(Default)]
-struct Timings(BTreeMap<&'static str, (Vec<Duration>, BTreeMap<String, usize>)>);
+struct Timings(BTreeMap<&'static str, Calls>);
+
+/// One label's round trips, and how often each `observed` and each set of `changes` keys
+/// came back.
+#[derive(Default)]
+struct Calls {
+    times: Vec<Duration>,
+    observed: BTreeMap<String, usize>,
+    changes: BTreeMap<String, usize>,
+}
 
 impl Timings {
     fn add(&mut self, label: &'static str, took: Duration, outcome: &Value) {
-        let (times, observed) = self.0.entry(label).or_default();
-        times.push(took);
+        let calls = self.0.entry(label).or_default();
+        calls.times.push(took);
         let seen = field(outcome, "/observed").as_str().unwrap_or("none");
-        *observed.entry(seen.to_owned()).or_default() += 1;
+        *calls.observed.entry(seen.to_owned()).or_default() += 1;
+        *calls.changes.entry(changed(outcome)).or_default() += 1;
     }
 
-    /// Each label's median and 95th percentile in milliseconds, and its `observed` counts.
+    /// Each label's median and 95th percentile in milliseconds, its `observed` counts and
+    /// its `changes` counts.
     fn summary(&self) -> Result<Value> {
         let mut summary = serde_json::Map::new();
-        for (label, (times, observed)) in &self.0 {
+        for (label, calls) in &self.0 {
+            let times = &calls.times;
             let p95 = proc::p95(times).ok_or_else(|| Failure::new("no round trips"))?;
             summary.insert(
                 (*label).to_owned(),
-                json!({"median": median_millis(times)?, "p95": as_millis(p95), "observed": observed}),
+                json!({
+                    "median": median_millis(times)?,
+                    "p95": as_millis(p95),
+                    "observed": calls.observed,
+                    "changes": calls.changes,
+                }),
             );
         }
         Ok(Value::Object(summary))
     }
+}
+
+/// The keys of an outcome's `changes`, sorted and joined by `+`, or `none`.
+fn changed(outcome: &Value) -> String {
+    let Some(changes) = outcome.get("changes").and_then(Value::as_object) else {
+        return "none".to_owned();
+    };
+    let mut keys: Vec<&str> = changes.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    keys.join("+")
 }
 
 /// The ref of the one element of `window`, of `role` if given, whose name contains `name`.
@@ -197,16 +226,28 @@ fn screenshot_ref(
     Ok(id)
 }
 
-/// The workspace without windows that niri keeps below the focused one.
-fn empty_workspace(session: &mut Session<'_>) -> Result<u64> {
+/// The workspace without windows that niri keeps below `own`, on the same output.
+fn empty_workspace(session: &mut Session<'_>, own: Option<u64>) -> Result<u64> {
     let Response::Workspaces(workspaces) = session.request(&Request::Workspaces)? else {
         return Err(Failure::new(
             "niri answered Workspaces with another response",
         ));
     };
+    let own = workspaces
+        .iter()
+        .find(|workspace| Some(workspace.id) == own)
+        .ok_or_else(|| {
+            Failure::new(format!(
+                "latency: the fixture has no workspace in {workspaces:?}"
+            ))
+        })?;
     workspaces
         .iter()
-        .find(|workspace| workspace.active_window_id.is_none())
+        .find(|workspace| {
+            workspace.output == own.output
+                && workspace.idx == own.idx + 1
+                && workspace.active_window_id.is_none()
+        })
         .map(|workspace| workspace.id)
-        .ok_or_else(|| Failure::new(format!("latency: no empty workspace in {workspaces:?}")))
+        .ok_or_else(|| Failure::new(format!("latency: no empty workspace below {own:?}")))
 }
