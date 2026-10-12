@@ -131,15 +131,21 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 ### `element_stale`
 
-**Cause:** an element ref's window, app or element is gone; the element is now another kind of element or sits elsewhere in its window's tree; the element, or an element it sits in, has another name than when `elements` listed it (an app may reuse an object for another record, and where a list names its rows after their records, that catches a reused row); the ref is to one of several look-alike elements, such as a list's `Delete` buttons, and an element of its row, such as the row's label, has another name or place; the server can't tell which row such an element belongs to; or the ref isn't from this lease. In GTK 4's list view, a row's ref goes stale once a record above it was removed or the list scrolled. The server refuses a look-alike's ref outright when the accessibility bus gives it no row of its own, as for every `Delete` button in Qt Quick's list view, when its row holds more than 16 objects, or when `elements` stopped reading the window, at its object cap or time budget, too close to it; the `detail` then says why and ends "aim at screenshot pixels instead, not at this ref". `activate_element` and `set_element_text` compare the element's own name too, so a button that relabelled itself when activated, as a counter does, is stale for the next one. The pointer tools compare only the names of the elements it sits in.
+**Cause:** an element ref's window, app or element is gone; the element is now another kind of element or sits elsewhere in its window's tree; the element, or an element it sits in, has another name than when `elements` listed it (an app may reuse an object for another record, and where a list names its rows after their records, that catches a reused row); or the ref isn't from this lease. A list's row named after its record, as GTK 4's labelled list items and Qt Quick's item delegates are, makes its controls' refs stale once the row shows another record. In GTK 4's list view, a row's ref goes stale once a record above it was removed or the list scrolled. `activate_element` and `set_element_text` compare the element's own name too, so a button that relabelled itself when activated, as a counter does, is stale for the next one. The pointer tools compare only the names of the elements it sits in.
 
-**What to do:** call `elements` again and aim from its new list. When the `detail` says to aim at screenshot pixels, listing again gives the same ref: take a screenshot and aim at the element's pixels instead.
+**What to do:** call `elements` again and aim from its new list.
 
 ### `element_unmappable`
 
 **Cause:** the element is still there but can't be aimed at now. The `detail` starts with `frame_size_mismatch` (the app's coordinates for this window can't be trusted), `not_showing`, `empty` or `outside_screenshot` (its centre is outside the screenshot the pointer aims through).
 
 **What to do:** for `frame_size_mismatch`, aim at a screenshot pixel or use `activate_element` instead. For `not_showing`, bring it into view first; for `outside_screenshot`, take a screenshot that shows it.
+
+### `element_unbound`
+
+**Cause:** nothing on the accessibility bus binds the element to the record it acts on, so the server can't tell a list's row reused for another record from the row it listed. The element sits in a list row with no name (`unnamed_row`), as GTK 4's list items have unless the app labels them, or in no row while other elements of its role and name were listed (`repeated`), as in most of a Qt Quick list. `elements` marks such an element `unbound`. Nothing was sent.
+
+**What to do:** don't list again, which gives the same answer: take a screenshot and aim `click` at the element's pixels in the row you mean.
 
 ### `secret_field`
 

@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use crate::atspi::{self, Bus, Mock, Object, PASSWORD_TEXT, TEXT};
+use crate::atspi::{self, Bus, LIST_ITEM, Mock, Object, PANEL, PASSWORD_TEXT, TEXT};
 use crate::client::{Server, mistake, tool_error};
 use crate::fixture::{Fixture, jpeg};
 use crate::niri::{Niri, Stream, window_on};
@@ -640,12 +640,26 @@ fn leak(text: String) -> &'static str {
     Box::leak(text.into_boxed_str())
 }
 
-/// A window whose list has three rows, each holding `row(n)`'s objects for record `n`:
-/// in a container `/rowN` of their own, unnamed as GTK 4's list items are, or `flat`,
-/// side by side in the list as Qt Quick puts rows that are only layouts. `extra` objects
-/// sit in the frame beside the list.
+/// How a list puts its rows on the bus.
+#[derive(Clone, Copy)]
+enum Rows {
+    /// Each row a list item named after its record, as Qt Quick's item delegates are and
+    /// GTK 4's list items with an accessible label.
+    Named,
+    /// Each row an unnamed list item, as GTK 4's list items are by default.
+    Unnamed,
+    /// Each row an unnamed panel, a layout with no row role.
+    Panels,
+    /// No container: the rows' objects side by side in the list, as Qt Quick puts most rows.
+    Flat,
+}
+
+/// A window whose list has `count` rows, row `n` holding `row(n)`'s objects for record
+/// `n`, laid out as `rows` says: those no other object of the row holds sit in the row.
+/// `extra` objects sit in the frame beside the list.
 fn list(
-    flat: bool,
+    rows: Rows,
+    count: usize,
     row: impl Fn(usize) -> Vec<(String, Object)>,
     extra: Vec<(&'static str, Object)>,
 ) -> Vec<(&'static str, Object)> {
@@ -654,32 +668,57 @@ fn list(
     let mut objects = vec![("/frame", Object::frame("Mock", (800, 600), &frame_children))];
     objects.extend(extra);
     let mut items = Vec::new();
-    for n in 1..=3 {
+    for n in 1..=count {
         let children: Vec<(&'static str, Object)> = row(n)
             .into_iter()
             .map(|(path, object)| (leak(path), object))
             .collect();
-        let paths: Vec<&str> = children.iter().map(|(path, _)| *path).collect();
-        if flat {
-            items.extend(paths);
-        } else {
-            let container = leak(format!("/row{n}"));
-            objects.push((container, Object::panel(&paths)));
-            items.push(container);
-        }
+        let held: Vec<&str> = children
+            .iter()
+            .flat_map(|(_, object)| object.children.iter().map(String::as_str))
+            .collect();
+        let paths: Vec<&str> = children
+            .iter()
+            .map(|(path, _)| *path)
+            .filter(|path| !held.contains(path))
+            .collect();
+        let (role, name) = match rows {
+            Rows::Named => (LIST_ITEM, record(n)),
+            Rows::Unnamed => (LIST_ITEM, String::new()),
+            Rows::Panels => (PANEL, String::new()),
+            Rows::Flat => {
+                items.extend(paths);
+                objects.extend(children);
+                continue;
+            }
+        };
+        let container = leak(format!("/row{n}"));
+        objects.push((
+            container,
+            Object {
+                role,
+                name,
+                ..Object::panel(&paths)
+            },
+        ));
+        items.push(container);
         objects.extend(children);
     }
     objects.push(("/list", Object::panel(&items)));
     objects
 }
 
+fn record(n: usize) -> String {
+    format!("Record {n:03}")
+}
+
+/// What a row holds for its record.
+type RowOf = fn(usize) -> Vec<(String, Object)>;
+
 /// Record `n`'s row: its label, then its `Delete` button.
 fn record_row(n: usize) -> Vec<(String, Object)> {
     vec![
-        (
-            format!("/label{n}"),
-            Object::label(&format!("Record 00{n}")),
-        ),
+        (format!("/label{n}"), Object::label(&record(n))),
         (format!("/delete{n}"), Object::button("Delete", &["click"])),
     ]
 }
@@ -692,8 +731,8 @@ async fn list_desk(name: &str, objects: Vec<(&'static str, Object)>) -> Desk {
     Desk::start_with(name, &["/frame"], objects, &windows).await
 }
 
-/// The refs of the listed elements named `name`, in the listing's order.
-async fn named(desk: &mut Desk, name: &str) -> Vec<String> {
+/// The listed elements named `name`, in the listing's order.
+async fn named(desk: &mut Desk, name: &str) -> Vec<Value> {
     let listing = desk
         .server
         .structured_with("elements", json!({"window_id": WINDOW}))
@@ -703,149 +742,252 @@ async fn named(desk: &mut Desk, name: &str) -> Vec<String> {
         .unwrap()
         .iter()
         .filter(|element| element["name"] == name)
-        .map(|element| element["element_ref"].as_str().unwrap().to_owned())
+        .cloned()
         .collect()
 }
 
-/// Shows record 23 in the first row, in place, as a list that reuses its rows does.
-fn reuse_first_row(desk: &Desk) {
-    desk.mock.change("/label1", |object| {
-        object.name = "Record 023".to_owned();
-    });
+/// The refs of the listed elements named `name`, none of them marked unbound.
+async fn bound(desk: &mut Desk, name: &str) -> Vec<String> {
+    named(desk, name)
+        .await
+        .iter()
+        .map(|element| {
+            assert!(element.get("unbound").is_none(), "{element}");
+            element["element_ref"].as_str().unwrap().to_owned()
+        })
+        .collect()
+}
+
+/// Shows record 23 in the first row, in place, as a list that reuses its rows does: its
+/// label, and its container's name where `rows` names it.
+fn reuse_first_row(desk: &Desk, rows: Rows) {
+    let mut paths = vec!["/label1"];
+    if matches!(rows, Rows::Named) {
+        paths.push("/row1");
+    }
+    for path in paths {
+        desk.mock.change(path, |object| object.name = record(23));
+    }
+}
+
+async fn activate(desk: &mut Desk, element: &str) -> Value {
+    desk.server
+        .call("activate_element", ACTIVATE.arguments(element))
+        .await
 }
 
 // A list reuses a row's objects in place for another record, as Qt Quick's list view with
-// `reuseItems` does: the row, its button and its label keep their paths and places, and
-// only the label's name says the row shows another record. The first row's `Delete` is
-// stale for every tool and nothing is sent; the second row's still acts.
+// `reuseItems` does: the row, its button and its label keep their paths and places. Where
+// the row is named after its record, the ref is stale for every tool once the row shows
+// another, even when it is the list's only row; another row's ref still acts.
 #[tokio::test]
-async fn a_row_reused_in_place_for_another_record_is_stale_for_every_tool() {
-    let mut desk = list_desk("el-row", list(false, record_row, Vec::new())).await;
-    let deletes = named(&mut desk, "Delete").await;
-    let shot = desk.screenshot_ref().await;
-    reuse_first_row(&desk);
-    stale(&mut desk, &ACTIVATE, &deletes[0]).await;
-    let aimed = json!({"screenshot_ref": shot, "element": deletes[0]});
-    let moved = desk.server.call("pointer_move", aimed).await;
-    assert_eq!(tool_error(&moved).0, "element_stale", "{moved}");
-    let other = desk
-        .server
-        .call("activate_element", ACTIVATE.arguments(&deletes[1]))
-        .await;
-    assert_eq!(other["structuredContent"]["accepted"], true, "{other}");
-    assert_eq!(desk.mock.calls("DoAction"), 1);
+async fn a_named_row_reused_for_another_record_is_stale_for_every_tool_even_alone() {
+    for count in [3, 1] {
+        let objects = list(Rows::Named, count, record_row, Vec::new());
+        let mut desk = list_desk(&format!("el-row-named-{count}"), objects).await;
+        let deletes = bound(&mut desk, "Delete").await;
+        let shot = desk.screenshot_ref().await;
+        reuse_first_row(&desk, Rows::Named);
+        stale(&mut desk, &ACTIVATE, &deletes[0]).await;
+        let aimed = json!({"screenshot_ref": shot, "element": deletes[0]});
+        let moved = desk.server.call("pointer_move", aimed).await;
+        assert_eq!(tool_error(&moved).0, "element_stale", "{moved}");
+        if let Some(other) = deletes.get(1) {
+            let result = activate(&mut desk, other).await;
+            assert_eq!(result["structuredContent"]["accepted"], true, "{result}");
+            assert_eq!(desk.mock.calls("DoAction"), 1);
+        }
+    }
 }
 
-/// Checks that `element` is refused by every tool, saying to aim at pixels, with nothing
-/// sent: its ref can't be acted on however fresh it is.
-async fn unbound(desk: &mut Desk, element: &str, why: &str) {
+// A named row aimed at itself, as when clicking a list's row opens its record: the pointer
+// tools leave an element's own name to the agent, but a row's name is its record, so a
+// row reused for another record is stale for them too.
+#[tokio::test]
+async fn a_named_row_aimed_at_itself_is_stale_once_it_shows_another_record() {
+    let mut objects = list(Rows::Named, 2, record_row, Vec::new());
+    for (path, object) in &mut objects {
+        if path.starts_with("/row") {
+            object.actions = vec!["click".to_owned()];
+        }
+    }
+    let mut desk = list_desk("el-row-itself", objects).await;
+    let row = bound(&mut desk, &record(1)).await;
+    assert_eq!(row.len(), 1);
     let shot = desk.screenshot_ref().await;
-    let activated = desk
-        .server
-        .call("activate_element", ACTIVATE.arguments(element))
-        .await;
-    let aimed = json!({"screenshot_ref": shot, "element": element});
+    reuse_first_row(&desk, Rows::Named);
+    let aimed = json!({"screenshot_ref": shot, "element": row[0]});
     let moved = desk.server.call("pointer_move", aimed).await;
-    for result in [activated, moved] {
-        let (name, detail) = tool_error(&result);
-        assert_eq!(name, "element_stale", "{result}");
-        assert!(detail.contains(why), "{detail}");
-        assert!(
-            detail.ends_with("aim at screenshot pixels instead, not at this ref"),
-            "{detail}"
-        );
+    assert_eq!(tool_error(&moved).0, "element_stale", "{moved}");
+}
+
+/// Checks that the listing marks every element named `name` unbound for `why`, in its
+/// JSON and on its compact line, and that every tool refuses its ref with
+/// `element_unbound`, pointing at the pointer tools, with nothing sent.
+async fn unbound(desk: &mut Desk, name: &str, why: &str) {
+    let compact = desk
+        .server
+        .call("elements", json!({"window_id": WINDOW}))
+        .await;
+    let text = compact["content"][0]["text"].as_str().unwrap();
+    let quoted = format!(" {name:?} ");
+    let lines: Vec<&str> = text.lines().filter(|line| line.contains(&quoted)).collect();
+    assert_ne!(lines.len(), 0, "{text}");
+    for line in lines {
+        assert!(line.ends_with(&format!(" unbound:{why}")), "{line}");
+    }
+    for element in named(desk, name).await {
+        assert_eq!(element["unbound"], why, "{element}");
+        let element = element["element_ref"].as_str().unwrap();
+        let shot = desk.screenshot_ref().await;
+        let aimed = json!({"screenshot_ref": shot, "element": element});
+        let moved = desk.server.call("pointer_move", aimed).await;
+        for result in [activate(desk, element).await, moved] {
+            let (error, detail) = tool_error(&result);
+            assert_eq!(error, "element_unbound", "{result}");
+            assert!(
+                detail.contains("aim the pointer tools at its pixels"),
+                "{detail}"
+            );
+        }
     }
     assert_eq!(desk.mock.calls("DoAction"), 0);
 }
 
-// Rows side by side in the list with no container of their own: nothing on the bus shows
-// whether a label belongs to the button before it or after it, so no ref to a `Delete` is
-// acted on, before or after the next row shows another record.
+// Unnamed rows, as GTK 4's list items are by default: nothing binds a row to its record,
+// even when the list shows a single row.
 #[tokio::test]
-async fn a_button_beside_its_look_alike_elements_in_rows_without_containers_is_refused() {
-    let mut desk = list_desk("el-row-flat", list(true, record_row, Vec::new())).await;
-    let deletes = named(&mut desk, "Delete").await;
-    unbound(&mut desk, &deletes[0], "no row of their own").await;
-    desk.mock.change("/label2", |object| {
-        object.name = "Record 023".to_owned();
-    });
-    unbound(&mut desk, &deletes[0], "no row of their own").await;
+async fn controls_in_unnamed_rows_are_marked_unbound_and_refused_even_alone() {
+    for count in [3, 1] {
+        let objects = list(Rows::Unnamed, count, record_row, Vec::new());
+        let mut desk = list_desk(&format!("el-row-unnamed-{count}"), objects).await;
+        unbound(&mut desk, "Delete", "unnamed_row").await;
+    }
 }
 
-// Two `Delete` buttons in each row: the second's ref keeps its row's label, not only the
-// button beside it, so a reused row makes both stale.
+// Rows with no row role, side by side or each in a layout, with a record's two `Delete`
+// buttons wrapped apart and one beside a static icon: no wrapper passes for the record,
+// so every `Delete` is unbound, before and after a row shows another record.
 #[tokio::test]
-async fn a_second_button_of_one_name_in_a_reused_row_is_stale() {
-    let row = |n: usize| {
+async fn look_alike_controls_outside_rows_are_unbound_however_they_are_wrapped() {
+    let wrapped = |n: usize| {
         let mut objects = record_row(n);
-        objects.insert(
-            1,
-            (format!("/first{n}"), Object::button("Delete", &["click"])),
-        );
+        let delete = objects.remove(1);
+        let (first, second) = (format!("/first{n}"), format!("/second{n}"));
+        let (icon, again) = (format!("/icon{n}"), format!("/again{n}"));
+        objects.extend([
+            (format!("/actions{n}"), Object::panel(&[&first, &second])),
+            (first, Object::panel(&[&icon, &delete.0])),
+            (icon, Object::label("Static icon")),
+            (second, Object::panel(&[&again])),
+            (again, Object::button("Delete", &["click"])),
+            delete,
+        ]);
         objects
     };
-    let mut desk = list_desk("el-row-two", list(false, row, Vec::new())).await;
-    let deletes = named(&mut desk, "Delete").await;
-    reuse_first_row(&desk);
-    stale(&mut desk, &ACTIVATE, &deletes[1]).await;
-    stale(&mut desk, &ACTIVATE, &deletes[0]).await;
-    assert_eq!(desk.mock.calls("DoAction"), 0);
+    let layouts: [(&str, Rows, RowOf); 3] = [
+        ("flat", Rows::Flat, record_row),
+        ("panels", Rows::Panels, record_row),
+        ("wrapped", Rows::Panels, wrapped),
+    ];
+    for (name, rows, row) in layouts {
+        let mut desk = list_desk(&format!("el-row-{name}"), list(rows, 3, row, Vec::new())).await;
+        unbound(&mut desk, "Delete", "repeated").await;
+        reuse_first_row(&desk, rows);
+        unbound(&mut desk, "Delete", "repeated").await;
+    }
 }
 
-// A row with more objects than a ref checks: keeping some of them could leave out the one
-// that names the record, so the ref isn't acted on at all.
+// Named rows needn't look alike: one holding a warning icon and its button in a panel
+// beside the elapsed time leaves both rows' refs usable, and the elapsed time changing
+// doesn't make a ref stale.
 #[tokio::test]
-async fn a_row_with_more_objects_than_a_ref_checks_is_refused() {
+async fn named_rows_of_different_shapes_and_changing_labels_keep_their_refs() {
     let row = |n: usize| {
         let mut objects = record_row(n);
-        for extra in 0..16 {
-            objects.insert(1, (format!("/static{n}_{extra}"), Object::label("Size")));
+        if n == 2 {
+            let delete = objects.remove(1);
+            objects.extend([
+                (format!("/warning{n}"), Object::label("Warning")),
+                (
+                    format!("/controls{n}"),
+                    Object::panel(&["/elapsed", delete.0.as_str()]),
+                ),
+                ("/elapsed".to_owned(), Object::label("0:01")),
+                delete,
+            ]);
         }
         objects
     };
-    let mut desk = list_desk("el-row-large", list(false, row, Vec::new())).await;
-    let deletes = named(&mut desk, "Delete").await;
-    unbound(&mut desk, &deletes[0], "holds more objects").await;
+    let mut desk = list_desk("el-row-mixed", list(Rows::Named, 2, row, Vec::new())).await;
+    let deletes = bound(&mut desk, "Delete").await;
+    assert_eq!(deletes.len(), 2);
+    desk.mock.change("/elapsed", |object| {
+        object.name = "0:02".to_owned();
+    });
+    for delete in &deletes {
+        let result = activate(&mut desk, delete).await;
+        assert_eq!(result["structuredContent"]["accepted"], true, "{result}");
+    }
+    assert_eq!(desk.mock.calls("DoAction"), 2);
 }
 
-// `elements` stops at its limit after the first row's `More`, before its label: it reads
-// on past it, so the ref keeps the label and a reused row is stale.
-#[tokio::test]
-async fn a_listing_stopped_at_its_limit_still_reads_the_rows_record() {
+/// Unnamed rows of `[Delete, More, 64 static labels, record label]`, listed with `limit:
+/// 1`: the walk stops after the first row's `More`, before its label and the next row.
+fn long_rows(rows: Rows) -> Vec<(&'static str, Object)> {
     let row = |n: usize| {
         let mut objects = record_row(n);
         let label = objects.remove(0);
         objects.push((format!("/more{n}"), Object::button("More", &["click"])));
+        for extra in 0..64 {
+            objects.push((format!("/static{n}_{extra}"), Object::label("Size")));
+        }
         objects.push(label);
         objects
     };
-    let mut desk = list_desk("el-row-limit", list(false, row, Vec::new())).await;
+    list(rows, 2, row, Vec::new())
+}
+
+async fn first_listed(desk: &mut Desk) -> Value {
     let listing = desk
         .server
         .structured_with("elements", json!({"window_id": WINDOW, "limit": 1}))
         .await;
     assert_eq!(listing["truncated"], true, "{listing}");
-    let delete = listing["elements"][0]["element_ref"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    reuse_first_row(&desk);
-    stale(&mut desk, &ACTIVATE, &delete).await;
+    listing["elements"][0].clone()
 }
 
-// A label outside the rows, such as a clock, changing leaves a row's ref alone.
+// A listing stopped at its limit, its object cap or its time budget before the row's
+// record or the next row: a row's role and name are read before anything in it, so a
+// named row still binds the ref and an unnamed one is still refused.
 #[tokio::test]
-async fn a_label_outside_the_row_changing_leaves_its_ref_usable() {
-    let clock = vec![("/clock", Object::label("0:01"))];
-    let mut desk = list_desk("el-row-clock", list(false, record_row, clock)).await;
-    let deletes = named(&mut desk, "Delete").await;
-    desk.mock.change("/clock", |object| {
-        object.name = "0:02".to_owned();
-    });
-    let result = desk
-        .server
-        .call("activate_element", ACTIVATE.arguments(&deletes[0]))
-        .await;
+async fn a_listing_stopped_before_the_rows_record_still_binds_or_refuses_by_the_row() {
+    let mut named = list_desk("el-row-cut-named", long_rows(Rows::Named)).await;
+    let delete = first_listed(&mut named).await;
+    assert!(delete.get("unbound").is_none(), "{delete}");
+    reuse_first_row(&named, Rows::Named);
+    stale(
+        &mut named,
+        &ACTIVATE,
+        delete["element_ref"].as_str().unwrap(),
+    )
+    .await;
+    let mut unnamed = list_desk("el-row-cut-unnamed", long_rows(Rows::Unnamed)).await;
+    let refused = first_listed(&mut unnamed).await;
+    assert_eq!(refused["unbound"], "unnamed_row", "{refused}");
+}
+
+// The documented limit: in rows with no row role, a control whose look-alike elements
+// the walk never read can't be told from a control of its own, so its ref keeps only
+// the lineage check, and a row reused in place isn't caught. The docs and the skill say
+// to aim the pointer tools at a list record's pixels instead.
+#[tokio::test]
+async fn a_control_outside_rows_whose_look_alike_elements_went_unread_keeps_its_ref() {
+    let mut desk = list_desk("el-row-cut-panels", long_rows(Rows::Panels)).await;
+    let delete = first_listed(&mut desk).await;
+    assert!(delete.get("unbound").is_none(), "{delete}");
+    reuse_first_row(&desk, Rows::Panels);
+    let result = activate(&mut desk, delete["element_ref"].as_str().unwrap()).await;
     assert_eq!(result["structuredContent"]["accepted"], true, "{result}");
 }
 

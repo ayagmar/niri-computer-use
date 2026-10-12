@@ -24,6 +24,7 @@ use crate::holds::{Held, Points};
 pub(crate) const ROOT: &str = "/org/a11y/atspi/accessible/root";
 pub(crate) const FRAME: u32 = 23;
 pub(crate) const LABEL: u32 = 29;
+pub(crate) const LIST_ITEM: u32 = 32;
 pub(crate) const PANEL: u32 = 39;
 pub(crate) const PASSWORD_TEXT: u32 = 40;
 pub(crate) const BUTTON: u32 = 43;

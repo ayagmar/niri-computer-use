@@ -772,7 +772,7 @@ mod tests {
                 pid: 1,
                 actions: names(actions),
                 lineage: Vec::new(),
-                row: Row::Alone,
+                row: Row::Lineage,
             },
         }
     }

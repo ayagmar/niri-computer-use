@@ -271,7 +271,7 @@ mod tests {
                     pid: 9,
                     actions: Vec::new(),
                     lineage,
-                    row: Row::Alone,
+                    row: Row::Lineage,
                 },
             },
             name: name.to_owned(),

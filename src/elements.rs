@@ -9,8 +9,8 @@ use niri_ipc::Window;
 use serde::Serialize;
 
 use crate::a11y::model::{
-    self, Beside, Extents, Filter, Fresh, LayoutBox, Link, NameHash, Placement, Refused, Row,
-    Shape, Unbound, Unmappable,
+    self, Extents, Filter, Fresh, LayoutBox, Link, NameHash, Placement, Refused, Row, Shape,
+    Unbound, Unmappable,
 };
 use crate::a11y::{self, A11y, Capped, ElementRef, Failed, Node, Want};
 use crate::changes::elements::{Seen, Unknown};
@@ -55,6 +55,10 @@ pub(crate) struct Listed {
     pub(crate) actions: Vec<String>,
     pub(crate) layout_box: Option<LayoutBox>,
     pub(crate) unmappable: Option<Unmappable>,
+    /// Set when nothing on the bus binds the element to the record it acts on, so its ref
+    /// is refused with `element_unbound`: aim at its pixels instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) unbound: Option<Unbound>,
 }
 
 /// States most elements have, which a compact line leaves out; `disabled` stands for a
@@ -85,8 +89,9 @@ impl Listing {
 }
 
 impl Listed {
-    /// `ref role "name" [states] ("action" …) x,y,w,h`, with `-` for no ref and
-    /// `unmappable:<why>` for no box. The name and each action, the app's text, are quoted
+    /// `ref role "name" [states] ("action" …) x,y,w,h`, with `-` for no ref,
+    /// `unmappable:<why>` for no box, and `unbound:<why>` last for a ref that is refused.
+    /// The name and each action, the app's text, are quoted
     /// and escaped, so they can't start a line of their own or run into each other; the
     /// role and states come from this server's tables.
     fn line(&self) -> String {
@@ -107,8 +112,12 @@ impl Listed {
             (None, Some(why)) => format!("unmappable:{}", word(why)),
             (None, None) => "-".to_owned(),
         };
+        let unbound = self
+            .unbound
+            .map(|why| format!(" unbound:{}", word(why)))
+            .unwrap_or_default();
         format!(
-            "{} {} {:?} [{}] ({}) {place}",
+            "{} {} {:?} [{}] ({}) {place}{unbound}",
             self.element_ref.as_deref().unwrap_or("-"),
             self.role,
             self.name,
@@ -311,14 +320,20 @@ pub(crate) async fn list(
             origin: read.placed.origin,
         };
         let placed_box = model::place(placement);
+        let element = read.element(at, node);
+        let unbound = match element.kept.row {
+            Row::Unbound(why) => Some(why),
+            Row::Lineage | Row::Own => None,
+        };
         elements.push(Listed {
-            element_ref: remember(read.element(at, node)),
+            element_ref: remember(element),
             role: model::role_name(node.role),
             name: node.name.clone(),
             states: node.states.names(),
             actions: node.actions.clone(),
             layout_box: placed_box.ok(),
             unmappable: placed_box.err(),
+            unbound,
         });
     }
     Ok(Listing {
@@ -444,10 +459,10 @@ pub(crate) async fn identify<'a>(
     windows: impl IntoIterator<Item = &'a Window>,
     names: Names,
 ) -> Result<(), ToolError> {
-    let row = match &element.kept.row {
-        Row::Alone => &[][..],
-        Row::Kept(row) => row.as_slice(),
-        Row::Unbound(why) => return Err(ToolError::new(ErrorName::ElementStale, unbound(*why))),
+    let names = match element.kept.row {
+        Row::Lineage => names,
+        Row::Own => Names::All,
+        Row::Unbound(why) => return Err(ToolError::new(ErrorName::ElementUnbound, unbound(why))),
     };
     let app = request.app(element.kept.pid).await.map_err(|error| {
         if error.name == ErrorName::NotAccessible {
@@ -480,50 +495,20 @@ pub(crate) async fn identify<'a>(
         }
         parent = &link.path;
     }
-    for beside in row {
-        unchanged(request, element, beside).await?;
-    }
     Ok(())
 }
 
-/// Why a ref to an element with look-alike elements can't be acted on. Listing again finds the
-/// same row, so the detail says what to do instead of asking for that.
+/// Why nothing binds a ref to the record its element acts on. Listing again gives the
+/// same answer, so the detail says what to do instead.
 const fn unbound(why: Unbound) -> &'static str {
     match why {
-        Unbound::Cut => {
-            "`elements` stopped reading the window, at its object cap or time budget, too close to it to tell it from other elements of its role and name; aim at screenshot pixels instead, not at this ref"
+        Unbound::UnnamedRow => {
+            "it sits in a row with no name on the accessibility bus, so nothing tells which record the row shows; aim the pointer tools at its pixels on a fresh screenshot instead"
         }
-        Unbound::Flat => {
-            "other elements of its role and name sit beside it with no row of their own on the accessibility bus, so the server can't tell which record it belongs to; aim at screenshot pixels instead, not at this ref"
-        }
-        Unbound::Large => {
-            "its row, among others like it, holds more objects than the server checks before acting, so it can't tell the row still shows the same record; aim at screenshot pixels instead, not at this ref"
+        Unbound::Repeated => {
+            "other elements of its role and name sit in no row of their own on the accessibility bus, as a list's rows do in some toolkits, so nothing tells which record it acts on; aim the pointer tools at its pixels on a fresh screenshot instead"
         }
     }
-}
-
-/// Checks that an object of the element's row is still at its place with its name, so the
-/// row still shows the record it showed when listed.
-async fn unchanged(
-    request: &a11y::Request,
-    element: &ElementRef,
-    beside: &Beside,
-) -> Result<(), ToolError> {
-    let parent = beside.parent.as_deref().unwrap_or(&element.frame);
-    let link = &beside.link;
-    let (bus, child) = request
-        .child_at(&element.bus, parent, link.index)
-        .await
-        .map_err(gone_is_stale)?;
-    let same = bus == element.bus
-        && child == link.path
-        && NameHash::of(&request.name((&bus, &child)).await.map_err(gone_is_stale)?) == link.name;
-    if same {
-        return Ok(());
-    }
-    Err(stale(
-        "its row changed since `elements` listed it, as a list's row does when it shows another record",
-    ))
 }
 
 /// Checks that `parent` still has the object of `link` at its index among its children.
@@ -652,6 +637,7 @@ mod tests {
             unmappable: layout_box
                 .is_none()
                 .then_some(Unmappable::FrameSizeMismatch),
+            unbound: None,
         };
         let usual = vec![
             "enabled",
@@ -676,10 +662,15 @@ mod tests {
             "open (x)",
             "next\u{2028}line",
         ];
+        let delete = Listed {
+            unbound: Some(Unbound::Repeated),
+            ..listed("Delete", &["click"], vec!["showing"], Some(placed))
+        };
         let listing = Listing {
             window_id: 7,
             elements: vec![
                 listed("Save", &["click"], usual, Some(placed)),
+                delete,
                 listed("Line\nelem-x-9 forged", &["click"], vec!["showing"], None),
                 listed("Odd", &odd, vec!["showing"], None),
             ],
@@ -691,8 +682,9 @@ mod tests {
         let compact = listing.compact();
         assert_eq!(
             compact,
-            "window 7: 3 elements, 40 objects walked; more match past the limit; walk cut short: budget_exhausted\n\
+            "window 7: 4 elements, 40 objects walked; more match past the limit; walk cut short: budget_exhausted\n\
              elem-a-1 push_button \"Save\" [focused] (\"click\") 10,21,80,32\n\
+             elem-a-1 push_button \"Delete\" [disabled] (\"click\") 10,21,80,32 unbound:repeated\n\
              elem-a-1 push_button \"Line\\nelem-x-9 forged\" [disabled] (\"click\") unmappable:frame_size_mismatch\n\
              elem-a-1 push_button \"Odd\" [disabled] (\"click\\nelem-x-9 push_button \\\"Approve\\\" [] (click) 0,0,10,10\" \"a\\rb\" \"say \\\"hi\\\"\" \"two words\" \"open (x)\" \"next\\u{2028}line\") unmappable:frame_size_mismatch"
         );

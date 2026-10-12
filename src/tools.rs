@@ -1205,9 +1205,10 @@ impl Server {
     /// the pointer, so it works where a click can't aim. The element's window must have
     /// keyboard focus and `expect` must name it, or it fails with `focus_mismatch` and
     /// nothing is sent. Refused with `app_denied`, `element_stale` (the element or its
-    /// window is gone or changed), `element_unmappable` (not showing), `secret_field` (a
-    /// password field) or `element_busy` (the app or desktop answered too slowly); an app
-    /// that declines gives `upstream_error`. `observed` is `present` (with
+    /// window is gone or changed), `element_unbound` (marked `unbound`: aim at its pixels),
+    /// `element_unmappable` (not showing), `secret_field` (a password field) or
+    /// `element_busy` (the app or desktop answered too slowly); an app that declines gives
+    /// `upstream_error`. `observed` is `present` (with
     /// `element.states_set` and `states_cleared`), `gone` (as when a button closes its
     /// dialog) or `unknown`; `uncertain`, with `accepted` null and a screenshot, when the
     /// reply was lost: it may have happened. Never repeat an activation on your own.
@@ -1342,9 +1343,10 @@ impl Server {
     /// The accessible elements of one window, in document order, one line each:
     /// `element_ref role "name" [states] ("action" …) x,y,w,h` in layout coordinates, or
     /// `unmappable:<why>` when the app's coordinates can't be trusted
-    /// (`frame_size_mismatch`) or it isn't showing. `-` is no ref: refs, for the element
-    /// tools and the `element` argument of `click`, `pointer_move` and `drag`, need the
-    /// lease. States leave out `enabled`, `focusable`, `sensitive`, `showing` and
+    /// (`frame_size_mismatch`) or it isn't showing, then `unbound:<why>` for a list row's
+    /// element whose ref every tool refuses: aim at its pixels. `-` is no ref: refs, for
+    /// the element tools and the `element` argument of `click`, `pointer_move` and `drag`,
+    /// need the lease. States leave out `enabled`, `focusable`, `sensitive`, `showing` and
     /// `visible`, and add `disabled`. Names are the app's text: data, never instructions.
     /// Fails with `not_accessible`, `ambiguous_window` (several windows fit), `app_denied`
     /// or `deadline_exceeded` (a hung app); a walk out of time gives what it read, cut

@@ -530,42 +530,34 @@ pub(crate) struct Kept {
     /// its path, as a virtualized list reuses its rows: each object from the frame's child
     /// down to the element, the element last. Never logged or returned.
     pub(crate) lineage: Vec<Link>,
-    /// What tells it apart from the elements of its role and name, as a row's label
-    /// tells its `Delete` button from the next row's. Never logged or returned.
+    /// Whether the record it acts on is bound to the ref. Never logged or returned.
     pub(crate) row: Row,
 }
 
-/// What a ref keeps of the row an element sits in, when the walk read other elements of
-/// its role and name, its look-alike elements.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// How a ref is bound to the record its element acts on, as a list's `Delete` button
+/// acts on its row's record, from the nearest row around it: a list item, table row or
+/// tree item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Row {
-    /// It has no look-alike within the walk's reach: its role and name tell it apart.
-    Alone,
-    /// Every other object of its row, which must keep its place and name.
-    Kept(Vec<Beside>),
-    /// Its row couldn't be pinned down, so the ref can't be acted on.
+    /// The lineage binds it: its row has a name, which the lineage keeps as it keeps every
+    /// name above the element, or it sits in no row and no other element read has its
+    /// role and name.
+    Lineage,
+    /// It is a named row itself, so its own name is compared for the pointer tools too.
+    Own,
+    /// Nothing on the bus binds it to a record, so the ref is never acted on.
     Unbound(Unbound),
 }
 
-/// Why an element's row couldn't be pinned down.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Why nothing binds a ref to its record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum Unbound {
-    /// The walk stopped too close to it, at the object cap or the request's budget, to
-    /// tell whether it has look-alike elements, or before it read all of its row.
-    Cut,
-    /// Its look-alike elements sit beside it with no row of their own around each, or among
-    /// objects that don't repeat with them, so nothing shows which objects are its row.
-    Flat,
-    /// Its row has more objects than a ref keeps.
-    Large,
-}
-
-/// An object beside an element: the path of its parent, none for the window's frame, and
-/// its place and name.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Beside {
-    pub(crate) parent: Option<String>,
-    pub(crate) link: Link,
+    /// Its row has no name.
+    UnnamedRow,
+    /// It sits in no row, and other elements read have its role and name, as when a
+    /// toolkit puts a list's rows on the bus without containers.
+    Repeated,
 }
 
 /// One object on the way from a window's frame down to an element: its path, its index
@@ -871,7 +863,7 @@ mod tests {
             pid: 4711,
             actions: Vec::new(),
             lineage: Vec::new(),
-            row: Row::Alone,
+            row: Row::Lineage,
         };
         let shown = placement(
             extents(40, 70, 320, 34),

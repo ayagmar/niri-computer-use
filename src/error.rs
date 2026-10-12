@@ -65,6 +65,9 @@ pub(crate) enum ErrorName {
     ElementStale,
     /// An element ref that is still there but can't be aimed at now: see `Unmappable`.
     ElementUnmappable,
+    /// An element ref that nothing on the accessibility bus binds to the record it acts
+    /// on, as a list's button in a row with no name: see `Unbound`.
+    ElementUnbound,
     /// `set_element_text` on a password field: it is never written.
     SecretField,
     /// An element action's last checks before its call took too long, twice, so what they

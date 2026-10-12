@@ -11,10 +11,12 @@ only hides its synthetic text, as a free-form entry can, an `Open dialog` button
 opens a 240x120 `Dialog fixture` window over it, a `Vanish` button that
 removes itself when clicked, a `Dismiss` button that closes the window, and a `Rename`
 button that changes the window's Wayland app_id to `org.ncu.Denied`. `list` is a 400x300
-window with `Step` and `Jump` buttons above a `Gtk.ListView` of 200 synthetic records,
-`Record 001` to `Record 200`, each row a label and a `Delete` button. `Step` scrolls
-the list 120 pixels down, `Jump` brings `Record 101` into view, and each `Delete`
-removes the record its row shows then and appends it to `list-deletes`. `copy` is a
+window with `Step` and `Jump` buttons above two `Gtk.ListView`s of 200 synthetic records
+each, side by side: `Record 001` to `Record 200` in rows with no accessible name, as
+GTK 4 makes them, and `Labelled 001` to `Labelled 200` in rows whose accessible label is
+their record. Each row is a label and a `Delete` button. `Step` scrolls both lists 120
+pixels down, `Jump` brings their 101st record into view, and each `Delete` removes the
+record its row shows then and appends it to `list-deletes`. `copy` is a
 `Copy link` button that puts a synthetic link on the clipboard, as an app's copy-link
 button does, and counts its copies in `copies`.
 """
@@ -190,33 +192,51 @@ def list_row(_factory, item, records):
     item.set_child(row)
 
 
-def list_bind(_factory, item):
-    item.get_child().get_first_child().set_label(item.get_item().get_string())
+def list_bind(_factory, item, labelled):
+    record = item.get_item().get_string()
+    item.get_child().get_first_child().set_label(record)
+    if labelled:
+        item.set_accessible_label(record)
+
+
+def list_view(prefix, labelled):
+    """A scrolled list of 200 records named after `prefix`, whose rows' accessible label
+    is their record when `labelled`."""
+    records = Gtk.StringList.new([f"{prefix} {n:03}" for n in range(1, 201)])
+    factory = Gtk.SignalListItemFactory()
+    factory.connect("setup", list_row, records)
+    factory.connect("bind", list_bind, labelled)
+    view = Gtk.ListView(model=Gtk.NoSelection(model=records), factory=factory)
+    scrolled = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
+    scrolled.set_child(view)
+    return view, scrolled
 
 
 def list_window(window):
-    records = Gtk.StringList.new([f"Record {n:03}" for n in range(1, 201)])
-    factory = Gtk.SignalListItemFactory()
-    factory.connect("setup", list_row, records)
-    factory.connect("bind", list_bind)
-    view = Gtk.ListView(model=Gtk.NoSelection(model=records), factory=factory)
-    scrolled = Gtk.ScrolledWindow(vexpand=True)
-    scrolled.set_child(view)
-    adjustment = scrolled.get_vadjustment()
+    views = [list_view("Record", False), list_view("Labelled", True)]
+
+    def stepped(button):
+        for _view, scrolled in views:
+            adjustment = scrolled.get_vadjustment()
+            adjustment.set_value(adjustment.get_value() + 120)
+
+    def jumped(button):
+        for view, _scrolled in views:
+            view.scroll_to(100, Gtk.ListScrollFlags.NONE, None)
+
     step = Gtk.Button(label="Step", hexpand=True)
-    step.connect(
-        "clicked", lambda button: adjustment.set_value(adjustment.get_value() + 120)
-    )
+    step.connect("clicked", stepped)
     jump = Gtk.Button(label="Jump", hexpand=True)
-    jump.connect(
-        "clicked", lambda button: view.scroll_to(100, Gtk.ListScrollFlags.NONE, None)
-    )
+    jump.connect("clicked", jumped)
     buttons = Gtk.Box(spacing=6)
     buttons.append(step)
     buttons.append(jump)
+    lists = Gtk.Box(spacing=6, vexpand=True)
+    for _view, scrolled in views:
+        lists.append(scrolled)
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
     box.append(buttons)
-    box.append(scrolled)
+    box.append(lists)
     window.set_child(box)
     report("list-deletes", "[]")
 
