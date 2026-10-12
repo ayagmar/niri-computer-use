@@ -1,5 +1,5 @@
-// The sidebar's groups, in order. The sidebar and the agent files (llms.txt,
-// llms-full.txt) both follow this list, so they can't disagree about which pages exist.
+// The sidebar's groups, in order. The sidebar and llms-full.txt both follow this list,
+// so they can't disagree about which pages exist.
 export const groups = [
 	{ label: 'Start here', directory: 'start' },
 	{ label: 'Concepts', directory: 'concepts' },

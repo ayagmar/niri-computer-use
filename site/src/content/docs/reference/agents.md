@@ -9,7 +9,7 @@ Everything on this site is also available as plain Markdown, for agents and othe
 
 ## llms.txt
 
-- [`llms.txt`](../../llms.txt) lists every page with a one-line description and a link to its Markdown, following the [llms.txt](https://llmstxt.org/) format.
+- [`llms.txt`](../../llms.txt) lists the skill and every page, each with a one-line description and a link to its Markdown, following the [llms.txt](https://llmstxt.org/) format. What an agent needs to use the tools comes first, then what installing the server needs; the deep reference is under `Optional`.
 - [`llms-full.txt`](../../llms-full.txt) is every page's Markdown in one file, in the order of the sidebar.
 
 ## Markdown for every page
