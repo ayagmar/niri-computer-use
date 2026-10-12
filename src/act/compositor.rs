@@ -21,12 +21,13 @@ const OBSERVE: Duration = Duration::from_secs(1);
 const SETTLE: Duration = Duration::from_millis(200);
 
 /// Whether `action`'s change report waits for quiet: not once its own wait ended with
-/// `changed` or `closed`, or after `unchanged`'s full second, and never for `Spawn` and `SpawnSh`, whose window comes later than that wait
-/// would cover. An action that isn't one is refused before the report.
+/// `changed`, `unchanged` or `closed`, and never for `Spawn` and `SpawnSh`, whose window
+/// comes later than that wait would cover. An action that isn't one is refused before the
+/// report.
 pub(crate) const fn quiet(action: Option<&Action>) -> Quiet {
     match action {
         Some(Action::Spawn { .. } | Action::SpawnSh { .. }) => Quiet::Never,
-        _ => Quiet::UnlessSeen,
+        _ => Quiet::UnlessSettled,
     }
 }
 
@@ -351,8 +352,8 @@ mod tests {
         assert_eq!(quiet(Some(&shell)), Quiet::Never);
         let window = Action::FullscreenWindow { id: Some(2) };
         let workspace = Action::FocusWorkspaceDown {};
-        assert_eq!(quiet(Some(&window)), Quiet::UnlessSeen);
-        assert_eq!(quiet(Some(&workspace)), Quiet::UnlessSeen);
+        assert_eq!(quiet(Some(&window)), Quiet::UnlessSettled);
+        assert_eq!(quiet(Some(&workspace)), Quiet::UnlessSettled);
     }
 
     #[test]

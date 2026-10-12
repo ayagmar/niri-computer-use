@@ -22,8 +22,8 @@ use crate::niri::{self, Events};
 pub(crate) const QUIET: Duration = Duration::from_millis(250);
 /// At most this long after the action's own wait and its evidence, however busy niri is.
 const EXTRA: Duration = Duration::from_millis(500);
-/// When a report skips the quiet wait, the rest of niri's batch has come once niri sent no
-/// event of any kind for this long.
+/// After a wait that returned on niri's event, the rest of niri's batch has come once niri
+/// sent no event of any kind for this long.
 const GAP: Duration = Duration::from_millis(10);
 /// At most this long for the rest of niri's batch.
 const BATCH: Duration = Duration::from_millis(50);
@@ -52,7 +52,8 @@ pub(crate) enum Wait {
     /// refresh's events one at a time, and some come after the one a wait looks for, such
     /// as the urgency it clears on a window that took focus.
     Batch,
-    /// Only for what niri already sent, after a settled screenshot waited for the screen.
+    /// Only for what niri already sent: after a settled screenshot waited for the screen,
+    /// or a wait that ended on a timeout, long after niri's batch.
     Received,
 }
 
@@ -61,10 +62,13 @@ pub(crate) enum Wait {
 pub(crate) enum Quiet {
     /// Always: input's effect is the app's to show, a moment after niri handled it.
     Always,
-    /// Unless the action's own wait ended with `focused`, `changed` or `closed`, or after
-    /// `unchanged`'s full second without a change: `focus`, and `niri_action`, whose
-    /// actions are niri's own.
+    /// `focus`: unless its own wait returned on niri's event, `focused` or `closed`. Focus
+    /// is niri's own, and that wait watched it; the rest of niri's batch follows the event.
     UnlessSeen,
+    /// `niri_action`: unless its own wait ended with `changed` or `closed`, a fixed 200 ms
+    /// after the first change, or with `unchanged`, after a second without one. Its actions
+    /// are niri's own, and niri's batch was in long before.
+    UnlessSettled,
     /// Never: `niri_action`'s `Spawn` and `SpawnSh`, whose window comes later than this
     /// wait would cover; `wait_for` is for that.
     Never,
@@ -78,11 +82,9 @@ impl Quiet {
             return Wait::Received;
         }
         match (self, observed) {
-            (
-                Self::UnlessSeen,
-                Observed::Focused | Observed::Changed | Observed::Unchanged | Observed::Closed,
-            )
-            | (Self::Never, _) => Wait::Batch,
+            (Self::UnlessSeen, Observed::Focused | Observed::Closed) => Wait::Batch,
+            (Self::UnlessSettled, Observed::Changed | Observed::Unchanged | Observed::Closed)
+            | (Self::Never, _) => Wait::Received,
             _ => Wait::Quiet,
         }
     }
@@ -323,22 +325,25 @@ mod tests {
     }
 
     #[test]
-    fn only_a_wait_that_saw_niris_event_or_a_screenshot_ends_the_report_early() {
-        let seen = [
-            Observed::Focused,
-            Observed::Changed,
-            Observed::Unchanged,
-            Observed::Closed,
-        ];
-        for observed in seen {
+    fn only_a_wait_that_saw_niri_or_a_screenshot_ends_the_report_early() {
+        // `focus` returned on the event, so the rest of niri's batch may still be coming.
+        for observed in [Observed::Focused, Observed::Closed] {
             assert_eq!(Quiet::UnlessSeen.wait(false, observed), Wait::Batch);
+        }
+        // `niri_action`'s wait ended on a timeout, long after niri's batch.
+        for observed in [Observed::Changed, Observed::Unchanged, Observed::Closed] {
+            assert_eq!(Quiet::UnlessSettled.wait(false, observed), Wait::Received);
             assert_eq!(Quiet::Always.wait(false, observed), Wait::Quiet);
         }
         // A focus that timed out or was interrupted, or an action only sent, saw nothing.
         for observed in [Observed::Timeout, Observed::Interrupted, Observed::Sent] {
             assert_eq!(Quiet::UnlessSeen.wait(false, observed), Wait::Quiet);
         }
-        assert_eq!(Quiet::Never.wait(false, Observed::Sent), Wait::Batch);
+        assert_eq!(
+            Quiet::UnlessSettled.wait(false, Observed::Sent),
+            Wait::Quiet
+        );
+        assert_eq!(Quiet::Never.wait(false, Observed::Sent), Wait::Received);
         assert_eq!(Quiet::Always.wait(true, Observed::Sent), Wait::Received);
     }
 
