@@ -636,40 +636,60 @@ async fn an_object_reused_while_its_call_was_out_is_stale_afterwards() {
     }
 }
 
-/// A list of three rows, each a label with its record and a `Delete` button named alike:
-/// in unnamed rows, as GTK 4 and Qt Quick's list items are, or `flat`, side by side in the
-/// list as Qt Quick puts a row that is only a layout.
-fn rows(flat: bool) -> Vec<(&'static str, Object)> {
-    let labels = ["/label1", "/label2", "/label3"];
-    let deletes = ["/delete1", "/delete2", "/delete3"];
-    let mut objects = vec![
-        ("/frame", Object::frame("Mock", (800, 600), &["/list"])),
-        ("/list", Object::panel(&[])),
-    ];
-    let rows = ["/row1", "/row2", "/row3"];
-    for (number, (row, (label, delete))) in
-        (1..).zip(rows.into_iter().zip(labels.into_iter().zip(deletes)))
-    {
-        let record = format!("Record 00{number}");
-        objects.push((label, Object::label(&record)));
-        objects.push((delete, Object::button("Delete", &["click"])));
-        if !flat {
-            objects.push((row, Object::panel(&[label, delete])));
-        }
-    }
-    let children: Vec<&str> = if flat {
-        labels
+fn leak(text: String) -> &'static str {
+    Box::leak(text.into_boxed_str())
+}
+
+/// A window whose list has three rows, each holding `row(n)`'s objects for record `n`:
+/// in a container `/rowN` of their own, unnamed as GTK 4's list items are, or `flat`,
+/// side by side in the list as Qt Quick puts rows that are only layouts. `extra` objects
+/// sit in the frame beside the list.
+fn list(
+    flat: bool,
+    row: impl Fn(usize) -> Vec<(String, Object)>,
+    extra: Vec<(&'static str, Object)>,
+) -> Vec<(&'static str, Object)> {
+    let mut frame_children = vec!["/list"];
+    frame_children.extend(extra.iter().map(|(path, _)| *path));
+    let mut objects = vec![("/frame", Object::frame("Mock", (800, 600), &frame_children))];
+    objects.extend(extra);
+    let mut items = Vec::new();
+    for n in 1..=3 {
+        let children: Vec<(&'static str, Object)> = row(n)
             .into_iter()
-            .zip(deletes)
-            .flat_map(<[&str; 2]>::from)
-            .collect()
-    } else {
-        rows.to_vec()
-    };
-    if let Some((_, list)) = objects.iter_mut().find(|(path, _)| *path == "/list") {
-        list.children = children.into_iter().map(str::to_owned).collect();
+            .map(|(path, object)| (leak(path), object))
+            .collect();
+        let paths: Vec<&str> = children.iter().map(|(path, _)| *path).collect();
+        if flat {
+            items.extend(paths);
+        } else {
+            let container = leak(format!("/row{n}"));
+            objects.push((container, Object::panel(&paths)));
+            items.push(container);
+        }
+        objects.extend(children);
     }
+    objects.push(("/list", Object::panel(&items)));
     objects
+}
+
+/// Record `n`'s row: its label, then its `Delete` button.
+fn record_row(n: usize) -> Vec<(String, Object)> {
+    vec![
+        (
+            format!("/label{n}"),
+            Object::label(&format!("Record 00{n}")),
+        ),
+        (format!("/delete{n}"), Object::button("Delete", &["click"])),
+    ]
+}
+
+async fn list_desk(name: &str, objects: Vec<(&'static str, Object)>) -> Desk {
+    let windows = [
+        app_window(WINDOW, true),
+        window_on(2, Some("other"), 1, false),
+    ];
+    Desk::start_with(name, &["/frame"], objects, &windows).await
 }
 
 /// The refs of the listed elements named `name`, in the listing's order.
@@ -687,35 +707,146 @@ async fn named(desk: &mut Desk, name: &str) -> Vec<String> {
         .collect()
 }
 
+/// Shows record 23 in the first row, in place, as a list that reuses its rows does.
+fn reuse_first_row(desk: &Desk) {
+    desk.mock.change("/label1", |object| {
+        object.name = "Record 023".to_owned();
+    });
+}
+
 // A list reuses a row's objects in place for another record, as Qt Quick's list view with
 // `reuseItems` does: the row, its button and its label keep their paths and places, and
 // only the label's name says the row shows another record. The first row's `Delete` is
 // stale for every tool and nothing is sent; the second row's still acts.
 #[tokio::test]
 async fn a_row_reused_in_place_for_another_record_is_stale_for_every_tool() {
-    for flat in [false, true] {
-        let windows = [
-            app_window(WINDOW, true),
-            window_on(2, Some("other"), 1, false),
-        ];
-        let name = if flat { "el-row-flat" } else { "el-row" };
-        let mut desk = Desk::start_with(name, &["/frame"], rows(flat), &windows).await;
-        let deletes = named(&mut desk, "Delete").await;
-        let shot = desk.screenshot_ref().await;
-        desk.mock.change("/label1", |object| {
-            object.name = "Record 023".to_owned();
-        });
-        stale(&mut desk, &ACTIVATE, &deletes[0]).await;
-        let aimed = json!({"screenshot_ref": shot, "element": deletes[0]});
-        let moved = desk.server.call("pointer_move", aimed).await;
-        assert_eq!(tool_error(&moved).0, "element_stale", "{moved}");
-        let other = desk
-            .server
-            .call("activate_element", ACTIVATE.arguments(&deletes[1]))
-            .await;
-        assert_eq!(other["structuredContent"]["accepted"], true, "{other}");
-        assert_eq!(desk.mock.calls("DoAction"), 1, "flat: {flat}");
+    let mut desk = list_desk("el-row", list(false, record_row, Vec::new())).await;
+    let deletes = named(&mut desk, "Delete").await;
+    let shot = desk.screenshot_ref().await;
+    reuse_first_row(&desk);
+    stale(&mut desk, &ACTIVATE, &deletes[0]).await;
+    let aimed = json!({"screenshot_ref": shot, "element": deletes[0]});
+    let moved = desk.server.call("pointer_move", aimed).await;
+    assert_eq!(tool_error(&moved).0, "element_stale", "{moved}");
+    let other = desk
+        .server
+        .call("activate_element", ACTIVATE.arguments(&deletes[1]))
+        .await;
+    assert_eq!(other["structuredContent"]["accepted"], true, "{other}");
+    assert_eq!(desk.mock.calls("DoAction"), 1);
+}
+
+/// Checks that `element` is refused by every tool, saying to aim at pixels, with nothing
+/// sent: its ref can't be acted on however fresh it is.
+async fn unbound(desk: &mut Desk, element: &str, why: &str) {
+    let shot = desk.screenshot_ref().await;
+    let activated = desk
+        .server
+        .call("activate_element", ACTIVATE.arguments(element))
+        .await;
+    let aimed = json!({"screenshot_ref": shot, "element": element});
+    let moved = desk.server.call("pointer_move", aimed).await;
+    for result in [activated, moved] {
+        let (name, detail) = tool_error(&result);
+        assert_eq!(name, "element_stale", "{result}");
+        assert!(detail.contains(why), "{detail}");
+        assert!(
+            detail.ends_with("aim at screenshot pixels instead, not at this ref"),
+            "{detail}"
+        );
     }
+    assert_eq!(desk.mock.calls("DoAction"), 0);
+}
+
+// Rows side by side in the list with no container of their own: nothing on the bus shows
+// whether a label belongs to the button before it or after it, so no ref to a `Delete` is
+// acted on, before or after the next row shows another record.
+#[tokio::test]
+async fn a_button_beside_its_look_alike_elements_in_rows_without_containers_is_refused() {
+    let mut desk = list_desk("el-row-flat", list(true, record_row, Vec::new())).await;
+    let deletes = named(&mut desk, "Delete").await;
+    unbound(&mut desk, &deletes[0], "no row of their own").await;
+    desk.mock.change("/label2", |object| {
+        object.name = "Record 023".to_owned();
+    });
+    unbound(&mut desk, &deletes[0], "no row of their own").await;
+}
+
+// Two `Delete` buttons in each row: the second's ref keeps its row's label, not only the
+// button beside it, so a reused row makes both stale.
+#[tokio::test]
+async fn a_second_button_of_one_name_in_a_reused_row_is_stale() {
+    let row = |n: usize| {
+        let mut objects = record_row(n);
+        objects.insert(
+            1,
+            (format!("/first{n}"), Object::button("Delete", &["click"])),
+        );
+        objects
+    };
+    let mut desk = list_desk("el-row-two", list(false, row, Vec::new())).await;
+    let deletes = named(&mut desk, "Delete").await;
+    reuse_first_row(&desk);
+    stale(&mut desk, &ACTIVATE, &deletes[1]).await;
+    stale(&mut desk, &ACTIVATE, &deletes[0]).await;
+    assert_eq!(desk.mock.calls("DoAction"), 0);
+}
+
+// A row with more objects than a ref checks: keeping some of them could leave out the one
+// that names the record, so the ref isn't acted on at all.
+#[tokio::test]
+async fn a_row_with_more_objects_than_a_ref_checks_is_refused() {
+    let row = |n: usize| {
+        let mut objects = record_row(n);
+        for extra in 0..16 {
+            objects.insert(1, (format!("/static{n}_{extra}"), Object::label("Size")));
+        }
+        objects
+    };
+    let mut desk = list_desk("el-row-large", list(false, row, Vec::new())).await;
+    let deletes = named(&mut desk, "Delete").await;
+    unbound(&mut desk, &deletes[0], "holds more objects").await;
+}
+
+// `elements` stops at its limit after the first row's `More`, before its label: it reads
+// on past it, so the ref keeps the label and a reused row is stale.
+#[tokio::test]
+async fn a_listing_stopped_at_its_limit_still_reads_the_rows_record() {
+    let row = |n: usize| {
+        let mut objects = record_row(n);
+        let label = objects.remove(0);
+        objects.push((format!("/more{n}"), Object::button("More", &["click"])));
+        objects.push(label);
+        objects
+    };
+    let mut desk = list_desk("el-row-limit", list(false, row, Vec::new())).await;
+    let listing = desk
+        .server
+        .structured_with("elements", json!({"window_id": WINDOW, "limit": 1}))
+        .await;
+    assert_eq!(listing["truncated"], true, "{listing}");
+    let delete = listing["elements"][0]["element_ref"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    reuse_first_row(&desk);
+    stale(&mut desk, &ACTIVATE, &delete).await;
+}
+
+// A label outside the rows, such as a clock, changing leaves a row's ref alone.
+#[tokio::test]
+async fn a_label_outside_the_row_changing_leaves_its_ref_usable() {
+    let clock = vec![("/clock", Object::label("0:01"))];
+    let mut desk = list_desk("el-row-clock", list(false, record_row, clock)).await;
+    let deletes = named(&mut desk, "Delete").await;
+    desk.mock.change("/clock", |object| {
+        object.name = "0:02".to_owned();
+    });
+    let result = desk
+        .server
+        .call("activate_element", ACTIVATE.arguments(&deletes[0]))
+        .await;
+    assert_eq!(result["structuredContent"]["accepted"], true, "{result}");
 }
 
 // A control whose role and name tell it apart from everything beside it keeps its ref

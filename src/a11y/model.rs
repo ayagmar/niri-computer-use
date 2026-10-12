@@ -530,10 +530,34 @@ pub(crate) struct Kept {
     /// its path, as a virtualized list reuses its rows: each object from the frame's child
     /// down to the element, the element last. Never logged or returned.
     pub(crate) lineage: Vec<Link>,
-    /// The objects beside it that tell it apart from the elements of its role and name
-    /// around it, as a row's label tells its `Delete` button from the next row's; none
-    /// when its role and name alone do. Never logged or returned.
-    pub(crate) beside: Vec<Beside>,
+    /// What tells it apart from the elements of its role and name, as a row's label
+    /// tells its `Delete` button from the next row's. Never logged or returned.
+    pub(crate) row: Row,
+}
+
+/// What a ref keeps of the row an element sits in, when the walk read other elements of
+/// its role and name, its look-alike elements.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Row {
+    /// It has no look-alike within the walk's reach: its role and name tell it apart.
+    Alone,
+    /// Every other object of its row, which must keep its place and name.
+    Kept(Vec<Beside>),
+    /// Its row couldn't be pinned down, so the ref can't be acted on.
+    Unbound(Unbound),
+}
+
+/// Why an element's row couldn't be pinned down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Unbound {
+    /// The walk stopped too close to it, at the object cap or the request's budget, to
+    /// tell whether it has look-alike elements, or before it read all of its row.
+    Cut,
+    /// Its look-alike elements sit beside it with no row of their own around each, or among
+    /// objects that don't repeat with them, so nothing shows which objects are its row.
+    Flat,
+    /// Its row has more objects than a ref keeps.
+    Large,
 }
 
 /// An object beside an element: the path of its parent, none for the window's frame, and
@@ -847,8 +871,7 @@ mod tests {
             pid: 4711,
             actions: Vec::new(),
             lineage: Vec::new(),
-
-            beside: Vec::new(),
+            row: Row::Alone,
         };
         let shown = placement(
             extents(40, 70, 320, 34),

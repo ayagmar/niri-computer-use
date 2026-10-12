@@ -242,7 +242,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::a11y::model::{Kept, Link, NameHash};
+    use crate::a11y::model::{Kept, Link, NameHash, Row};
 
     const BUTTON: u32 = 43;
     const LABEL: u32 = 29;
@@ -271,7 +271,7 @@ mod tests {
                     pid: 9,
                     actions: Vec::new(),
                     lineage,
-                    beside: Vec::new(),
+                    row: Row::Alone,
                 },
             },
             name: name.to_owned(),

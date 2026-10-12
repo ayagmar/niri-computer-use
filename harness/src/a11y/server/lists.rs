@@ -3,9 +3,10 @@
 //! `reuseItems`. Each fixture's rows hold a label with their record and a `Delete` button
 //! that removes the record the row shows when it is pressed. A ref listed for one record's
 //! `Delete` must never delete another record: after a record was removed, the list
-//! scrolled or it jumped a hundred rows, an old ref is either refused with nothing deleted
-//! or deletes its own record. GTK 4's refs must all be `element_stale`, as the docs say.
-//! The record of the run logs what each toolkit puts on the bus after each change.
+//! scrolled or it jumped a hundred rows, an old ref must be `element_stale`, as the docs
+//! say, with nothing deleted. Qt Quick puts its rows on the bus with no container of
+//! their own, so no ref to its `Delete` buttons may be acted on at all. The record of the
+//! run logs what each toolkit puts on the bus after each change.
 
 use std::fs;
 use std::time::Duration;
@@ -27,17 +28,8 @@ const WAIT: Duration = Duration::from_secs(5);
 const REFUSALS: [&str; 2] = ["element_stale", "element_unmappable"];
 /// How many showing rows of each list are deleted twice through one ref.
 const TWICE: usize = 3;
-/// What the Qt fixture reports for a press on a row that shows no record.
-const POOLED: &str = "a row with no record";
-
-/// What a press through a row's ref may reach.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Reach {
-    /// The row's own record, or nothing.
-    Own,
-    /// Or a row the list holds for reuse, which shows no record.
-    OwnOrPooled,
-}
+/// What the server says of a ref to a `Delete` among rows with no container of their own.
+const UNBOUND: &str = "with no row of their own";
 
 /// A list fixture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,13 +60,11 @@ impl List {
         }
     }
 
-    /// What a press through a deleted row's ref may reach at once: Qt Quick holds the
-    /// row for reuse, shown and named as before (see docs/results/a11y-gaps.md).
-    const fn at_once(self) -> Reach {
-        match self {
-            Self::Gtk4 => Reach::Own,
-            Self::Qt => Reach::OwnOrPooled,
-        }
+    /// Whether the list's rows sit in containers of their own on the bus, so a fresh ref
+    /// to a row's `Delete` may be acted on. Qt Quick's don't, so the server refuses every
+    /// such ref with `UNBOUND`.
+    const fn binds_rows(self) -> bool {
+        matches!(self, Self::Gtk4)
     }
 
     /// The file the fixture appends each deleted record to.
@@ -112,10 +102,10 @@ struct Shown {
 
 impl Checks<'_, '_> {
     /// Lists the first rows' `Delete` buttons of each list and deletes its third record
-    /// through its ref; then tries that ref again, the fifth record's after the rows below
-    /// moved up, the first's after a short scroll and the seventh's after a jump of a
-    /// hundred rows. Each must be refused with nothing deleted, or delete its own record.
-    /// Then, a step further, a few showing rows are deleted twice through one ref.
+    /// through its ref, refused for Qt; then tries that ref again, the fifth record's
+    /// after the rows below moved up, the first's after a short scroll and the seventh's
+    /// after a jump of a hundred rows. Each must be refused `element_stale` with nothing
+    /// deleted. Then, a step further, a few showing rows are deleted twice through one ref.
     pub(super) fn recycled_rows(&mut self, bus: &Bus, list: List) -> Result<()> {
         let fixture = list.start(self.session)?;
         let shown = Shown {
@@ -138,43 +128,41 @@ impl Checks<'_, '_> {
         ))?;
         let mut old = Vec::new();
         for rows in &picked {
-            let deleted = self.delete_row(&shown, &rows.third, Reach::Own)?;
+            let deleted = self.delete_row(&shown, &rows.third)?;
             expect(
-                field(&deleted, "/accepted") == true,
-                "a fresh ref's Delete accepted",
+                (field(&deleted, "/accepted") == true) == list.binds_rows(),
+                "a fresh ref's Delete accepted where the list binds its rows",
                 &deleted,
             )?;
         }
         let removed = self.looked(bus, &shown, "the third records' Delete", &start)?;
         for rows in &picked {
-            old.push(self.delete_row(&shown, &rows.third, Reach::Own)?);
-            old.push(self.delete_row(&shown, &rows.fifth, Reach::Own)?);
+            old.push(self.delete_row(&shown, &rows.third)?);
+            old.push(self.delete_row(&shown, &rows.fifth)?);
         }
         self.press(&shown, "Step")?;
         let stepped = self.looked(bus, &shown, "Step", &removed)?;
         for rows in &picked {
-            old.push(self.delete_row(&shown, &rows.first, Reach::Own)?);
+            old.push(self.delete_row(&shown, &rows.first)?);
         }
         self.press(&shown, "Jump")?;
         let jumped = self.looked(bus, &shown, "Jump", &stepped)?;
         for rows in &picked {
-            old.push(self.delete_row(&shown, &rows.seventh, Reach::Own)?);
+            old.push(self.delete_row(&shown, &rows.seventh)?);
         }
         self.press(&shown, "Step")?;
         self.looked(bus, &shown, "Step after Jump", &jumped)?;
         old.extend(self.deleted_twice(bus, &shown)?);
-        if list == List::Gtk4 {
-            all_stale(&old)?;
-        }
+        all_stale(&old)?;
         fixture.stop().map(drop)
     }
 
     /// The first `TWICE` showing rows' `Delete` of each list, listed afresh, then through
-    /// the same ref at once, and again after a step. Qt Quick keeps a deleted row's
-    /// objects on the bus, shown and named as before, until it reuses them for a record
-    /// scrolling in, so a press at once may reach that row, which shows no record; after
-    /// the step, the row shows another record in the same place. Logs the bus around the
-    /// first row's. Returns the later tries' results.
+    /// the same ref at once, and again after a step; for Qt, only the fresh presses, all
+    /// refused. Qt Quick keeps a deleted row's objects on the bus, shown and named as
+    /// before, until it reuses them for a record scrolling in, which is why its refs can't
+    /// be bound to a row. Logs the bus around the first row's. Returns the later tries'
+    /// results.
     fn deleted_twice(&mut self, bus: &Bus, shown: &Shown) -> Result<Vec<Value>> {
         let listing = self.list(shown.window, None, None)?;
         let mut showing = Vec::new();
@@ -186,24 +174,24 @@ impl Checks<'_, '_> {
         let mut again = Vec::new();
         for (count, row) in showing.iter().enumerate() {
             let before = (count == 0).then(|| rows::snapshot(self.session, bus, shown.pid));
-            let fresh = self.delete_row(shown, row, Reach::Own)?;
+            let fresh = self.delete_row(shown, row)?;
             if let Some(before) = before {
                 let what = format!("{}'s Delete", row.record);
                 self.looked(bus, shown, &what, &before?)?;
             }
             if field(&fresh, "/accepted") == true {
-                again.push(self.delete_row(shown, row, shown.list.at_once())?);
+                again.push(self.delete_row(shown, row)?);
                 deleted.push(row);
             }
         }
         expect(
-            !deleted.is_empty(),
-            "a showing row deleted through a fresh ref",
+            deleted.is_empty() != shown.list.binds_rows(),
+            "a showing row deleted through a fresh ref where the list binds its rows",
             &listing,
         )?;
         self.press(shown, "Step")?;
         for row in deleted {
-            again.push(self.delete_row(shown, row, Reach::Own)?);
+            again.push(self.delete_row(shown, row)?);
         }
         Ok(again)
     }
@@ -240,10 +228,10 @@ impl Checks<'_, '_> {
     }
 
     /// Activates a row's `Delete` through the ref first listed for it, and returns the
-    /// result. Whatever it was, the fixture must have deleted the row's own record, a row
-    /// that shows none where `reach` allows it, or nothing: nothing when refused with one of
-    /// `REFUSALS`.
-    fn delete_row(&mut self, shown: &Shown, row: &Row, reach: Reach) -> Result<Value> {
+    /// result. Whatever it was, the fixture must have deleted the row's own record or
+    /// nothing: nothing when refused with one of `REFUSALS`. A list that doesn't bind its
+    /// rows must refuse it `element_stale` with `UNBOUND`.
+    fn delete_row(&mut self, shown: &Shown, row: &Row) -> Result<Value> {
         let before = self.deleted(shown.list)?;
         let result = self.client.call(
             self.session,
@@ -252,11 +240,15 @@ impl Checks<'_, '_> {
         )?;
         let result = field(&result, "/structuredContent").clone();
         let refused = field(&result, "/error");
+        expect(
+            shown.list.binds_rows() || unbound(&result),
+            "a ref among rows with no container of their own refused as unbound",
+            &result,
+        )?;
         let what = if refused.is_null() {
             let deleted = self.newly_deleted(shown.list, &before)?;
-            let pooled = reach == Reach::OwnOrPooled && deleted == [POOLED];
             expect(
-                deleted == [row.record.as_str()] || pooled,
+                deleted == [row.record.as_str()],
                 &format!("an accepted Delete for {} to delete it alone", row.record),
                 &json!({"result": result, "deleted": deleted}),
             )?;
@@ -322,7 +314,15 @@ fn read_deletes(session: &Session<'_>, list: List) -> Result<Option<Vec<String>>
         .context(format!("parse {}", path.display()))
 }
 
-/// Every refusal in `old` is `element_stale`.
+/// `result` refuses a ref as `element_stale` because its row has no container.
+fn unbound(result: &Value) -> bool {
+    field(result, "/error") == "element_stale"
+        && field(result, "/detail")
+            .as_str()
+            .is_some_and(|detail| detail.contains(UNBOUND))
+}
+
+/// Every result in `old` is `element_stale`.
 fn all_stale(old: &[Value]) -> Result<()> {
     let stale = old
         .iter()

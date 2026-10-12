@@ -1,17 +1,23 @@
 //! The bounded walk of one window's accessible tree, over any source of nodes. It visits
 //! nodes depth first in document order, goes into a node's children only while the node
-//! is showing, and stops after a fixed number of nodes, once it has found more matching
-//! nodes than were asked for, or when the request's budget runs out, so a huge or hidden
-//! tree can't hold the request.
+//! is showing, and stops after a fixed number of nodes, `REACH` nodes after it has found
+//! more matching nodes than were asked for, or when the request's budget runs out, so a
+//! huge or hidden tree can't hold the request.
 
+use std::collections::HashMap;
 use std::future::Future;
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 use serde::Serialize;
 
 use super::model::{Extents, Link, NameHash, States};
 use crate::error::{ErrorName, ToolError};
 
-mod beside;
+mod row;
+
+/// How many nodes the walk reads past the match that stops it, so the elements it lists
+/// have their look-alike elements nearby read, as the next row of a list is (see `row`).
+pub(crate) const REACH: usize = 64;
 
 /// One accessible object, as the walk read it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,9 +70,17 @@ pub(crate) struct Walked {
     places: Vec<(Option<usize>, i32)>,
     /// Where each node's subtree ends in `nodes`: the index past its last descendant.
     ends: Vec<usize>,
-    /// When the walk stopped with children left to read, their parents: none for the
-    /// root's.
-    unread: Vec<Option<usize>>,
+    /// Whether the walk left something under each node unread.
+    open: Vec<bool>,
+    /// Whether the walk read everything under the root that is showing.
+    complete: bool,
+    /// The nodes of each role and name, in document order, and which of them each node
+    /// is in: a node's look-alike elements.
+    alike: Vec<Vec<usize>>,
+    alike_of: Vec<usize>,
+    /// A hash of each node's subtree's roles and shape, never of its names, so rows of
+    /// one list compare equal while showing different records.
+    shapes: Vec<u64>,
     /// Set when the walk stopped early with nodes left that might have matched.
     pub(crate) capped: Option<Capped>,
 }
@@ -103,11 +117,12 @@ pub(crate) struct Want<F> {
 }
 
 /// Reads at most `cap` nodes under `root`, depth first, going into the children of
-/// showing nodes only, matching or not, and stops early once `want` has more matches than
-/// it asked for. A node that is gone by the time it is read is skipped. A deadline once
-/// the request's budget is spent ends the walk with the nodes read so far,
+/// showing nodes only, matching or not, and stops `REACH` nodes after `want` has more
+/// matches than it asked for. A node that is gone by the time it is read is skipped. A
+/// deadline once the request's budget is spent ends the walk with the nodes read so far,
 /// `BudgetExhausted`. One call's own deadline, as for a hung app, and any other failure
-/// end the walk with that error.
+/// end the walk with that error. The cap or the budget past the extra match leaves
+/// `capped` unset: every match the walk was asked for was found.
 pub(crate) async fn walk<F: Fn(&Node) -> bool + Sync>(
     source: &impl Source,
     root: &Node,
@@ -116,6 +131,7 @@ pub(crate) async fn walk<F: Fn(&Node) -> bool + Sync>(
 ) -> Result<Walked, ToolError> {
     let mut walked = Walked::default();
     let mut found = 0;
+    let mut until = cap;
     let mut pending: Vec<(Option<usize>, Child)> = root
         .children
         .iter()
@@ -123,17 +139,22 @@ pub(crate) async fn walk<F: Fn(&Node) -> bool + Sync>(
         .map(|child| (None, child.clone()))
         .collect();
     while let Some((parent, child)) = pending.pop() {
-        if walked.nodes.len() == cap {
-            walked.capped = Some(Capped::NodeCap);
-            walked.unread.push(parent);
+        let past = found > want.wanted;
+        if walked.nodes.len() >= until {
+            if !past {
+                walked.capped = Some(Capped::NodeCap);
+            }
+            pending.push((parent, child));
             break;
         }
         let node = match source.node(&child.path).await {
             Ok(Some(node)) => node,
             Ok(None) => continue,
             Err(error) if error.name == ErrorName::DeadlineExceeded && source.spent() => {
-                walked.capped = Some(Capped::BudgetExhausted);
-                walked.unread.push(parent);
+                if !past {
+                    walked.capped = Some(Capped::BudgetExhausted);
+                }
+                pending.push((parent, child));
                 break;
             }
             Err(error) => return Err(error),
@@ -150,15 +171,80 @@ pub(crate) async fn walk<F: Fn(&Node) -> bool + Sync>(
         found += usize::from((want.matches)(&node));
         walked.nodes.push(node);
         walked.places.push((parent, child.index));
-        if found > want.wanted {
-            break;
+        if !past && found > want.wanted {
+            until = cap.min(walked.nodes.len() + REACH);
         }
     }
-    walked
-        .unread
-        .extend(pending.into_iter().map(|(parent, _)| parent));
-    walked.ends = ends(&walked.places);
+    walked.finish(pending.into_iter().map(|(parent, _)| parent));
     Ok(walked)
+}
+
+impl Walked {
+    /// What the row checks ask of every node, worked out once from the nodes and the
+    /// parents of the children left unread.
+    fn finish(&mut self, unread: impl Iterator<Item = Option<usize>>) {
+        self.ends = ends(&self.places);
+        self.open = vec![false; self.nodes.len()];
+        self.complete = true;
+        for parent in unread {
+            self.complete = false;
+            if let Some(open) = parent.and_then(|parent| self.open.get_mut(parent)) {
+                *open = true;
+            }
+        }
+        for index in (0..self.nodes.len()).rev() {
+            let parent = self.places.get(index).and_then(|(parent, _)| *parent);
+            if self.open.get(index) == Some(&true)
+                && let Some(open) = parent.and_then(|parent| self.open.get_mut(parent))
+            {
+                *open = true;
+            }
+        }
+        self.alike_groups();
+        self.shapes = shapes(&self.nodes, &self.places);
+    }
+
+    fn alike_groups(&mut self) {
+        let mut groups: HashMap<(u32, &str), usize> = HashMap::new();
+        let mut alike: Vec<Vec<usize>> = Vec::new();
+        let mut alike_of = Vec::with_capacity(self.nodes.len());
+        for (index, node) in self.nodes.iter().enumerate() {
+            let group = *groups.entry((node.role, &node.name)).or_insert_with(|| {
+                alike.push(Vec::new());
+                alike.len() - 1
+            });
+            if let Some(members) = alike.get_mut(group) {
+                members.push(index);
+            }
+            alike_of.push(group);
+        }
+        self.alike = alike;
+        self.alike_of = alike_of;
+    }
+}
+
+/// Each node's shape: its role and its children's shapes, in order. A node's children
+/// follow it in document order, so going backwards finds every child's shape first.
+fn shapes(nodes: &[Node], places: &[(Option<usize>, i32)]) -> Vec<u64> {
+    let mut children: Vec<Vec<u64>> = vec![Vec::new(); nodes.len()];
+    let mut shapes = vec![0; nodes.len()];
+    for index in (0..nodes.len()).rev() {
+        let mut hasher = DefaultHasher::new();
+        nodes.get(index).map(|node| node.role).hash(&mut hasher);
+        if let Some(mine) = children.get_mut(index) {
+            mine.reverse();
+            mine.hash(&mut hasher);
+        }
+        let shape = hasher.finish();
+        if let Some(slot) = shapes.get_mut(index) {
+            *slot = shape;
+        }
+        let parent = places.get(index).and_then(|(parent, _)| *parent);
+        if let Some(theirs) = parent.and_then(|parent| children.get_mut(parent)) {
+            theirs.push(shape);
+        }
+    }
+    shapes
 }
 
 /// Where each node's subtree ends, from the nodes' places in document order: a node's
@@ -348,7 +434,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn finds_matches_under_parents_that_dont_match_and_stops_past_the_limit() {
+    async fn finds_matches_under_parents_that_dont_match_and_reads_on_past_the_limit() {
         let tree = Tree::new([
             ("/a", (true, vec!["/a/1", "/b/1"])),
             ("/a/1", (true, vec![])),
@@ -363,12 +449,33 @@ mod tests {
         let walked = walk(&tree, &tree_root, 2000, showing_under("/b", 2))
             .await
             .unwrap();
-        // /b/1 sits under /a, which doesn't match; /b/hidden is never read.
+        // /b/1 sits under /a, which doesn't match; /b/hidden is never read. /b/3 is the
+        // match past the limit, and /b/4 is read on the way to `REACH` past it.
         assert_eq!(
             paths(&walked),
-            ["/a", "/a/1", "/b/1", "/hidden", "/b/2", "/b/3"]
+            ["/a", "/a/1", "/b/1", "/hidden", "/b/2", "/b/3", "/b/4"]
         );
         assert_eq!(walked.capped, None);
+    }
+
+    // Past the match that stops it, the walk reads `REACH` more nodes and no further,
+    // and running into the cap there doesn't count as cut short.
+    #[tokio::test]
+    async fn reads_reach_nodes_past_the_extra_match_and_no_further() {
+        let names: Vec<&'static str> = (0..REACH + 10)
+            .map(|n| &*Box::leak(format!("/n{n:03}").into_boxed_str()))
+            .collect();
+        let tree = Tree::of(names.iter().map(|&path| (path, (true, vec![]))).collect());
+        let walked = walk(&tree, &root(&names), 2000, showing_under("/n000", 0))
+            .await
+            .unwrap();
+        assert_eq!(walked.nodes.len(), 1 + REACH);
+        assert_eq!(walked.capped, None);
+        let capped = walk(&tree, &root(&names), 10, showing_under("/n000", 0))
+            .await
+            .unwrap();
+        assert_eq!(capped.nodes.len(), 10);
+        assert_eq!(capped.capped, None);
     }
 
     #[tokio::test]

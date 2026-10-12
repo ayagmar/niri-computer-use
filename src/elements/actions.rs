@@ -753,7 +753,7 @@ fn refused_by_app(what: &str) -> ToolError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::a11y::model::Kept;
+    use crate::a11y::model::{Kept, Row};
     use crate::niri::waiter::tests::{view, window};
     use crate::policy::parse;
 
@@ -772,7 +772,7 @@ mod tests {
                 pid: 1,
                 actions: names(actions),
                 lineage: Vec::new(),
-                beside: Vec::new(),
+                row: Row::Alone,
             },
         }
     }

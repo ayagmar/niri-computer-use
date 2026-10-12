@@ -9,8 +9,8 @@ use niri_ipc::Window;
 use serde::Serialize;
 
 use crate::a11y::model::{
-    self, Beside, Extents, Filter, Fresh, LayoutBox, Link, NameHash, Placement, Refused, Shape,
-    Unmappable,
+    self, Beside, Extents, Filter, Fresh, LayoutBox, Link, NameHash, Placement, Refused, Row,
+    Shape, Unbound, Unmappable,
 };
 use crate::a11y::{self, A11y, Capped, ElementRef, Failed, Node, Want};
 use crate::changes::elements::{Seen, Unknown};
@@ -210,7 +210,7 @@ impl Read {
                 pid: self.pid,
                 actions: node.actions.clone(),
                 lineage: self.walked.lineage(at),
-                beside: self.walked.beside(at),
+                row: self.walked.row(at),
             },
         }
     }
@@ -444,6 +444,11 @@ pub(crate) async fn identify<'a>(
     windows: impl IntoIterator<Item = &'a Window>,
     names: Names,
 ) -> Result<(), ToolError> {
+    let row = match &element.kept.row {
+        Row::Alone => &[][..],
+        Row::Kept(row) => row.as_slice(),
+        Row::Unbound(why) => return Err(ToolError::new(ErrorName::ElementStale, unbound(*why))),
+    };
     let app = request.app(element.kept.pid).await.map_err(|error| {
         if error.name == ErrorName::NotAccessible {
             stale("the application left the accessibility bus")
@@ -475,14 +480,30 @@ pub(crate) async fn identify<'a>(
         }
         parent = &link.path;
     }
-    for beside in &element.kept.beside {
+    for beside in row {
         unchanged(request, element, beside).await?;
     }
     Ok(())
 }
 
-/// Checks that an object beside the element is still at its place with its name, so the
-/// element's row still shows the record it showed when listed.
+/// Why a ref to an element with look-alike elements can't be acted on. Listing again finds the
+/// same row, so the detail says what to do instead of asking for that.
+const fn unbound(why: Unbound) -> &'static str {
+    match why {
+        Unbound::Cut => {
+            "`elements` stopped reading the window, at its object cap or time budget, too close to it to tell it from other elements of its role and name; aim at screenshot pixels instead, not at this ref"
+        }
+        Unbound::Flat => {
+            "other elements of its role and name sit beside it with no row of their own on the accessibility bus, so the server can't tell which record it belongs to; aim at screenshot pixels instead, not at this ref"
+        }
+        Unbound::Large => {
+            "its row, among others like it, holds more objects than the server checks before acting, so it can't tell the row still shows the same record; aim at screenshot pixels instead, not at this ref"
+        }
+    }
+}
+
+/// Checks that an object of the element's row is still at its place with its name, so the
+/// row still shows the record it showed when listed.
 async fn unchanged(
     request: &a11y::Request,
     element: &ElementRef,
@@ -501,7 +522,7 @@ async fn unchanged(
         return Ok(());
     }
     Err(stale(
-        "the elements beside it changed since `elements` listed it, as a list's row does when it shows another record",
+        "its row changed since `elements` listed it, as a list's row does when it shows another record",
     ))
 }
 
