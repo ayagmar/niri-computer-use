@@ -335,7 +335,7 @@ impl Aftercare {
 
     /// Says the key won't go out after all, even if admitted, and hands the keeper's last
     /// report, once it has restored, to the call.
-    async fn withdraw(self) {
+    pub(crate) async fn withdraw(self) {
         let done = self.keeper.finish(b"n").await;
         self.report.send(done).ok();
     }

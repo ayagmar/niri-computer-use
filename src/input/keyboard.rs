@@ -23,7 +23,7 @@ use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::waiter::{View, Waiter};
 use crate::niri::{self, waiter::Waited};
 use crate::policy;
-use crate::runner::{self, Finished, Gated, Place, Search};
+use crate::runner::{self, Fed, Finished, Gated, Place, Search};
 
 use super::Input;
 use super::paste::Aftercare;
@@ -587,8 +587,9 @@ async fn run_wtype(
 
 /// Lets wtype past its gate and feeds it, between arming `aftercare` against `desk`'s lock
 /// read and saying the stroke went out, which it says even after a failure, since wtype
-/// may have typed some. Without `aftercare`, the lock read's age is checked again right
-/// before the gate opens, since this task may run well after `go`'s check.
+/// may have typed some. The lock read's age is checked again right before each attempt
+/// to send wtype its first bytes, or to close its empty stdin, since this task may run,
+/// and its write may wait for the pipe, well after `go`'s check.
 async fn feed(
     gated: Gated,
     stdin: &[u8],
@@ -596,25 +597,30 @@ async fn feed(
     aftercare: Option<Aftercare>,
     desk: &Desk,
 ) -> Result<(), Failed> {
-    let Some(aftercare) = aftercare else {
-        if let Err(error) = desk.fresh() {
-            // Still waiting at the gate: killing it now types nothing.
-            drop(gated);
+    let aftercare = match aftercare {
+        Some(aftercare) => match aftercare.arm(desk).await {
+            Ok(armed) => Some(armed),
+            Err(error) => {
+                // Still waiting at the gate: killing it now types nothing.
+                drop(gated);
+                return Err(Failed::unsent(cleared(marker, error).await));
+            }
+        },
+        None => None,
+    };
+    let fed = match gated.feed(stdin, MAX_STDOUT, || desk.fresh()).await {
+        Fed::Ran(fed) => fed,
+        // Killed at its gate, so nothing was typed.
+        Fed::Refused(error) => {
+            if let Some(aftercare) = aftercare {
+                aftercare.withdraw().await;
+            }
             return Err(Failed::unsent(cleared(marker, error).await));
         }
-        let fed = gated.feed(stdin, MAX_STDOUT).await;
-        return finish(fed, marker).await.map_err(Failed::released);
     };
-    let aftercare = match aftercare.arm(desk).await {
-        Ok(armed) => armed,
-        Err(error) => {
-            // Still waiting at the gate: killing it now types nothing.
-            drop(gated);
-            return Err(Failed::unsent(cleared(marker, error).await));
-        }
-    };
-    let fed = gated.feed(stdin, MAX_STDOUT).await;
-    aftercare.sent().await;
+    if let Some(aftercare) = aftercare {
+        aftercare.sent().await;
+    }
     finish(fed, marker).await.map_err(Failed::released)
 }
 
@@ -987,6 +993,42 @@ mod tests {
         assert!(!released, "{}", error.detail);
         assert_eq!(error.name, ErrorName::ScreenLocked, "{}", error.detail);
         // Killed at its gate, the stand-in for wtype read nothing.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(std::fs::read(&typed).unwrap_or_default(), b"");
+        assert!(!runtime.input_dirty().unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// wtype's first write may find the pipe not ready and wait. Resumed once the lock read
+    /// is older than `LAST_GATE`, it checks the age again before it sends anything: wtype
+    /// is killed at its gate, having read nothing, and its marker comes off.
+    #[tokio::test]
+    async fn a_first_write_that_waits_past_the_last_gate_sends_nothing() {
+        let dir = crate::test_support::fresh_dir("feed-write-waits");
+        let runtime = RuntimeDir::of(&crate::test_support::niri_env(&dir)).unwrap();
+        runtime.create().unwrap();
+        let marker = Written::write(&runtime, Marker::pending("type_text", Vec::new()))
+            .await
+            .unwrap();
+        let typed = dir.join("typed");
+        let script = format!("cat > '{}'", typed.display());
+        let gated = runner::gated(
+            "sh",
+            Search::Own,
+            &["-c".to_owned(), script],
+            &[],
+            WTYPE_DEADLINE,
+        )
+        .unwrap();
+        let desk = crate::input::paste::desk_read(&dir, Duration::ZERO);
+        let mut fed = std::pin::pin!(feed(gated, b"hi", marker, None, &desk));
+        // The pipe was registered just now, so the first write finds it not ready yet.
+        let first = std::future::poll_fn(|cx| std::task::Poll::Ready(fed.as_mut().poll(cx))).await;
+        assert!(first.is_pending(), "the first write didn't wait");
+        tokio::time::sleep(crate::control::desk::LAST_GATE + Duration::from_millis(50)).await;
+        let Failed { error, released } = fed.await.unwrap_err();
+        assert!(!released, "{}", error.detail);
+        assert_eq!(error.name, ErrorName::ScreenLocked, "{}", error.detail);
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(std::fs::read(&typed).unwrap_or_default(), b"");
         assert!(!runtime.input_dirty().unwrap());

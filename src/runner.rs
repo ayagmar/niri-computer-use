@@ -6,12 +6,14 @@
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::process::{ExitStatus, Stdio};
 use std::sync::OnceLock;
+use std::task::Poll;
 use std::time::Duration;
 
 use rustix::process::{Pid, Signal, kill_process_group};
-use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::time::Instant;
 
@@ -194,38 +196,109 @@ impl Gated {
         self.running.child.id()
     }
 
-    /// Writes `input` to the child's stdin, closes it, and collects the child's output,
-    /// all before the deadline. Past it, the child's group is killed.
+    /// Lets the child past its gate if `allowed` does, then writes the rest of `input`,
+    /// closes stdin, and collects the child's output, all before the deadline. `allowed`
+    /// is asked right before every attempt to write the first bytes, so a write that has
+    /// to wait for the pipe asks again before it sends anything, and for empty `input`
+    /// right before stdin closes. A refusal kills the child's group at its gate. Past the
+    /// deadline, the child's group is killed.
     pub(crate) async fn feed(
         mut self,
         input: &[u8],
         max_stdout: u64,
-    ) -> Result<Finished, ToolError> {
+        allowed: impl Fn() -> Result<(), ToolError> + Sync,
+    ) -> Fed {
         let program = self.program.clone();
         let deadline = self.deadline;
         let run = async {
-            match self.stdin.write_all(input).await {
-                // The child exited without reading; its exit status says why.
-                Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
-                written => written.map_err(|error| {
-                    ToolError::new(
-                        ErrorName::UpstreamError,
-                        format!("write to {program}: {error}"),
-                    )
-                })?,
-            }
-            drop(self.stdin);
-            self.running.finish(&program, max_stdout).await
+            let first = match open_gate(&mut self.stdin, input, &allowed).await {
+                Gate::Refused(error) => {
+                    // Killed before its stdin closes, which would let it past the gate.
+                    self.running.kill();
+                    return Fed::Refused(error);
+                }
+                Gate::Opened(first) => first,
+            };
+            let written = match first {
+                Ok(sent) => {
+                    let rest = input.get(sent..).unwrap_or_default();
+                    self.stdin.write_all(rest).await
+                }
+                Err(error) => Err(error),
+            };
+            Fed::Ran(
+                written_then(&program, written, self.stdin, &mut self.running, max_stdout).await,
+            )
         };
         tokio::time::timeout_at(deadline, run)
             .await
             .unwrap_or_else(|_| {
-                Err(ToolError::new(
+                Fed::Ran(Err(ToolError::new(
                     ErrorName::DeadlineExceeded,
                     format!("{program} didn't finish within its deadline"),
-                ))
+                )))
             })
     }
+}
+
+/// Closes `stdin` once what was `written` went, and collects the child's output.
+async fn written_then(
+    program: &str,
+    written: std::io::Result<()>,
+    stdin: ChildStdin,
+    running: &mut Running,
+    max_stdout: u64,
+) -> Result<Finished, ToolError> {
+    match written {
+        // The child exited without reading; its exit status says why.
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+        written => written.map_err(|error| {
+            ToolError::new(
+                ErrorName::UpstreamError,
+                format!("write to {program}: {error}"),
+            )
+        })?,
+    }
+    drop(stdin);
+    running.finish(program, max_stdout).await
+}
+
+/// What feeding a gated child came to.
+#[derive(Debug)]
+pub(crate) enum Fed {
+    /// Refused before anything reached the child, which was killed at its gate.
+    Refused(ToolError),
+    /// The child was let past its gate, and its run ended so.
+    Ran(Result<Finished, ToolError>),
+}
+
+/// The first write to a gated child's stdin, or its refusal.
+enum Gate {
+    Refused(ToolError),
+    /// How many bytes the first write sent, none for empty input.
+    Opened(std::io::Result<usize>),
+}
+
+/// Asks `allowed` right before each attempt to write the first bytes of `input`: a poll
+/// that finds the pipe not ready sends nothing and returns `Pending`, and the next poll
+/// asks again. Empty input is only asked about.
+async fn open_gate(
+    stdin: &mut ChildStdin,
+    input: &[u8],
+    allowed: &(impl Fn() -> Result<(), ToolError> + Sync),
+) -> Gate {
+    std::future::poll_fn(|cx| {
+        if let Err(error) = allowed() {
+            return Poll::Ready(Gate::Refused(error));
+        }
+        if input.is_empty() {
+            return Poll::Ready(Gate::Opened(Ok(0)));
+        }
+        Pin::new(&mut *stdin)
+            .poll_write(cx, input)
+            .map(Gate::Opened)
+    })
+    .await
 }
 
 /// A child that lives as long as the server and only waits for its stdin to end. The
@@ -456,6 +529,14 @@ struct Running {
 }
 
 impl Running {
+    /// Kills its group while the child is unreaped, so its group ID still belongs to it. It
+    /// may already have exited, so a missing group is fine.
+    fn kill(&self) {
+        if let Some(group) = self.group {
+            kill_process_group(group, Signal::KILL).ok();
+        }
+    }
+
     fn new(child: Child) -> Self {
         let group = child
             .id()
@@ -498,11 +579,7 @@ impl Running {
 
 impl Drop for Running {
     fn drop(&mut self) {
-        if let Some(group) = self.group {
-            // The child is unreaped, so its group ID still belongs to it. It may already
-            // have exited, so a missing group is fine.
-            kill_process_group(group, Signal::KILL).ok();
-        }
+        self.kill();
     }
 }
 
@@ -679,7 +756,10 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
         // `cat` waits at the open pipe, so nothing is written yet.
         assert_eq!(std::fs::read_to_string(&seen).unwrap(), "");
-        let done = gated.feed(b"typed", 64).await.unwrap();
+        let Fed::Ran(done) = gated.feed(b"typed", 64, || Ok(())).await else {
+            panic!("refused");
+        };
+        let done = done.unwrap();
         assert_eq!(done.stdout, b"done");
         assert_eq!(std::fs::read_to_string(&seen).unwrap(), "typed");
         std::fs::remove_dir_all(dir).unwrap();
@@ -698,7 +778,10 @@ mod tests {
         .unwrap();
         tokio::time::sleep(Duration::from_millis(100)).await;
         // A large write meets the closed pipe.
-        let done = gated.feed(&vec![b'x'; 1 << 20], 64).await.unwrap();
+        let Fed::Ran(done) = gated.feed(&vec![b'x'; 1 << 20], 64, || Ok(())).await else {
+            panic!("refused");
+        };
+        let done = done.unwrap();
         assert_eq!(done.status.code(), Some(1));
         assert_eq!(done.stderr.trim(), "no display");
     }
@@ -714,7 +797,10 @@ mod tests {
             Duration::from_secs(1),
         )
         .unwrap();
-        let error = gated.feed(b"", 64).await.unwrap_err();
+        let Fed::Ran(ran) = gated.feed(b"", 64, || Ok(())).await else {
+            panic!("refused");
+        };
+        let error = ran.unwrap_err();
         assert_eq!(error.name, ErrorName::DeadlineExceeded);
         grandchild.assert_dead().await;
     }
