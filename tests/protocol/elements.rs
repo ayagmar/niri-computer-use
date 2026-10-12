@@ -2371,6 +2371,33 @@ async fn an_element_is_not_aimed_at_just_after_the_view_moved() {
     }
 }
 
+// niri lets a floating window reach past its output's edge, and shows that part on no
+// output. An element whose centre is there has no box, and a ref aimed at it is refused
+// as not showing, and nothing is sent.
+#[tokio::test]
+async fn an_element_past_its_outputs_edge_is_never_aimed_at() {
+    let mut past = floating_window();
+    // The Safe button's centre, 50 pixels right of the tile, at x 2580 on the 2560 wide
+    // output.
+    past["layout"]["tile_pos_in_workspace_view"] = json!([2530.0, 20.0]);
+    let windows = [past];
+    let mut desk = Desk::start_with("el-past-edge", &["/frame"], objects(), &windows).await;
+    let listed = safe(&mut desk).await;
+    assert_eq!(listed["unmappable"], "not_showing", "{listed}");
+    assert_eq!(listed["layout_box"], Value::Null, "{listed}");
+    let button = listed["element_ref"].as_str().unwrap().to_owned();
+    let shot = desk.screenshot_ref().await;
+    let aimed = json!({"screenshot_ref": shot, "element": button});
+    let refused = desk.server.call("click", aimed).await;
+    let (name, detail) = tool_error(&refused);
+    assert_eq!(name, "element_unmappable", "{refused}");
+    assert!(
+        detail.starts_with("not_showing: the element's centre is past its output's edge"),
+        "{detail}"
+    );
+    assert_eq!(desk.fixture.clipboard.pointed(), []);
+}
+
 // niri reports a switch inside `WorkspacesChanged`, not as `WorkspaceActivated`, when a
 // workspace was also added in the same refresh, as when a window moves to the empty
 // workspace below and focus follows it. The element is refused for a second all the same,

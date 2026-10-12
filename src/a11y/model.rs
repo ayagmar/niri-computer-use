@@ -301,10 +301,28 @@ pub(crate) enum Unmappable {
     /// The window is tiled: niri 26.04 gives only floating windows a place in their
     /// workspace's view, so where a tiled one is on screen isn't known.
     Tiled,
+    /// The element's centre is off its window's output: niri lets a floating window
+    /// reach past its output's edge, and shows that part nowhere.
+    #[serde(rename = "not_showing")]
+    OffOutput,
     /// The element has no area.
     Empty,
     /// The element's centre is outside the screenshot the pointer aims through.
     OutsideScreenshot,
+    /// The screenshot the pointer aims through is of another output than the element's
+    /// window. Only an aim gives it.
+    #[serde(rename = "outside_screenshot")]
+    OtherOutput,
+}
+
+/// Where a placed window's geometry starts in the layout, and the output it is shown on.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Origin {
+    pub(crate) at: LayoutPt,
+    /// The output's name.
+    pub(crate) output: String,
+    /// The output's place and size in the layout.
+    pub(crate) area: LogicalOutput,
 }
 
 /// What niri reports for the call about where windows are shown: its workspaces, its
@@ -317,8 +335,8 @@ pub(crate) struct Scene<'a> {
     pub(crate) overview_open: bool,
 }
 
-/// Where `window`'s geometry starts in the layout, from the `scene` niri reports, or why it
-/// isn't known. A tile in the scrolling layout is never placed (`Tiled`), wherever its
+/// Where `window`'s geometry starts in the layout and the output it is shown on, from the
+/// `scene` niri reports, or why that isn't known. A tile in the scrolling layout is never placed (`Tiled`), wherever its
 /// workspace is, even on no output: niri 26.04 gives it no place, and a place derived from
 /// where the view is heading would be wrong while the view scrolls. A floating window is
 /// placed only on the active workspace of its output (`NotShowing` otherwise, on no output
@@ -326,7 +344,7 @@ pub(crate) struct Scene<'a> {
 /// workspace's windows are where a hidden one's would be. Nor while the overview is open,
 /// which zooms the workspaces out and leaves that place as it was, nor while a fullscreen
 /// window covers it (`Covered`).
-pub(crate) fn origin(window: &Window, scene: &Scene<'_>) -> Result<LayoutPt, Unmappable> {
+pub(crate) fn origin(window: &Window, scene: &Scene<'_>) -> Result<Origin, Unmappable> {
     if window.layout.pos_in_scrolling_layout.is_some() {
         return Err(Unmappable::Tiled);
     }
@@ -338,15 +356,19 @@ pub(crate) fn origin(window: &Window, scene: &Scene<'_>) -> Result<LayoutPt, Unm
         .and_then(|id| scene.workspaces.iter().find(|workspace| workspace.id == id))
         .filter(|workspace| workspace.is_active)
         .ok_or(Unmappable::NotShowing)?;
-    let output = workspace
+    let (name, area) = workspace
         .output
-        .as_deref()
-        .and_then(|name| scene.outputs.get(name)?.logical.as_ref())
+        .as_ref()
+        .and_then(|name| Some((name, scene.outputs.get(name)?.logical?)))
         .ok_or(Unmappable::NotShowing)?;
-    if covered(workspace, output, scene.windows) {
+    if covered(workspace, &area, scene.windows) {
         return Err(Unmappable::Covered);
     }
-    window_origin(output, &window.layout)
+    Ok(Origin {
+        at: window_origin(&area, &window.layout)?,
+        output: name.clone(),
+        area,
+    })
 }
 
 /// Whether `workspace`'s active window is a tiled one as large as `output`, as a fullscreen
@@ -386,12 +408,12 @@ pub(crate) const fn frame_fits(frame: Extents, window_size: (i32, i32)) -> bool 
 }
 
 /// What decides whether an element can be aimed at.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Placement {
     pub(crate) states: States,
     pub(crate) extents: Extents,
     pub(crate) frame_fits: bool,
-    pub(crate) origin: Result<LayoutPt, Unmappable>,
+    pub(crate) origin: Result<Origin, Unmappable>,
 }
 
 /// The element's box in the layout, or why it has none.
@@ -412,12 +434,23 @@ pub(crate) fn place(placement: Placement) -> Result<LayoutBox, Unmappable> {
         return Err(Unmappable::FrameSizeMismatch);
     }
     let origin = origin?;
-    Ok(LayoutBox {
-        x: origin.x + f64::from(extents.x),
-        y: origin.y + f64::from(extents.y),
+    let found = LayoutBox {
+        x: origin.at.x + f64::from(extents.x),
+        y: origin.at.y + f64::from(extents.y),
         width: f64::from(extents.width),
         height: f64::from(extents.height),
-    })
+    };
+    if !on(&origin.area, found.centre()) {
+        return Err(Unmappable::OffOutput);
+    }
+    Ok(found)
+}
+
+/// Whether `point` lies on the output whose layout area is `area`.
+fn on(area: &LogicalOutput, point: LayoutPt) -> bool {
+    let (x, y) = (f64::from(area.x), f64::from(area.y));
+    (x..x + f64::from(area.width)).contains(&point.x)
+        && (y..y + f64::from(area.height)).contains(&point.y)
 }
 
 /// One of an application's top-level frames.
@@ -656,7 +689,7 @@ impl NameHash {
 }
 
 /// The element and its window as they are now.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Fresh {
     pub(crate) role: u32,
     pub(crate) placement: Placement,
@@ -720,12 +753,25 @@ mod tests {
         }
     }
 
+    /// A placement whose window starts at `origin` on an output far larger than any test's
+    /// boxes.
     fn placement(extents: Extents, origin: Result<LayoutPt, Unmappable>) -> Placement {
+        let area = LogicalOutput {
+            x: -10_000,
+            y: -10_000,
+            width: 20_000,
+            height: 20_000,
+            ..output(0, 0, 1.0)
+        };
         Placement {
             states: SHOWN,
             extents,
             frame_fits: true,
-            origin,
+            origin: origin.map(|at| Origin {
+                at,
+                output: "DP-1".to_owned(),
+                area,
+            }),
         }
     }
 
@@ -877,9 +923,14 @@ mod tests {
                 &window_on(Some(id), floating.clone()),
                 &scene(&shown, &screens, false),
             )
+            .map(|origin| (origin.at, origin.output))
         };
-        assert_eq!(at(1), Ok(LayoutPt { x: 20.0, y: 30.0 }));
-        assert_eq!(at(2), Ok(LayoutPt { x: 980.0, y: 30.0 }));
+        assert_eq!(
+            at(1),
+            Ok((LayoutPt { x: 20.0, y: 30.0 }, "DP-1".to_owned()))
+        );
+        let second = LayoutPt { x: 980.0, y: 30.0 };
+        assert_eq!(at(2), Ok((second, "HDMI-A-1".to_owned())));
         // The overview zooms the workspaces out, and niri's place stays as it was.
         let zoomed = origin(
             &window_on(Some(1), floating.clone()),
@@ -912,6 +963,33 @@ mod tests {
                 "{unplaced:?}"
             );
         }
+    }
+
+    // niri lets a floating window reach past its output's edge and shows that part on no
+    // output, so an element whose centre is there has no box, even where another output
+    // lies.
+    #[test]
+    fn an_element_past_its_windows_output_has_no_box() {
+        let screens = outputs(&[("DP-1", Some((0, 0))), ("HDMI-A-1", Some((960, 0)))]);
+        let shown = [
+            workspace(1, Some("DP-1"), true),
+            workspace(2, Some("HDMI-A-1"), true),
+        ];
+        let window = window_on(Some(1), layout(Some((700.0, 30.0)), (0.0, 0.0)));
+        let at = |x| {
+            place(Placement {
+                origin: origin(&window, &scene(&shown, &screens, false)),
+                ..placement(extents(x, 10, 20, 20), Ok(LayoutPt { x: 0.0, y: 0.0 }))
+            })
+        };
+        // Centres at x 950 and 959 are on DP-1, one at 960 on HDMI-A-1, one at -10 on none.
+        assert!(at(240).is_ok());
+        assert_eq!(
+            at(249).map(LayoutBox::centre).map(|centre| centre.x),
+            Ok(959.0)
+        );
+        assert_eq!(at(250), Err(Unmappable::OffOutput));
+        assert_eq!(at(-720), Err(Unmappable::OffOutput));
     }
 
     // niri draws no floating window of a workspace whose active window is a fullscreen
@@ -949,7 +1027,7 @@ mod tests {
                 windows: &windows,
                 ..scene(&workspaces, &screens, false)
             };
-            origin(&floating, &scene)
+            origin(&floating, &scene).map(|origin| origin.at)
         };
         let placed = Ok(LayoutPt { x: 20.0, y: 30.0 });
         // Fullscreen, at a fractional scale too.
@@ -979,7 +1057,10 @@ mod tests {
         );
         assert_eq!(unplaced, Err(Unmappable::Tiled));
         assert_eq!(
-            place(placement(extents(40, 70, 320, 34), unplaced)),
+            place(placement(
+                extents(40, 70, 320, 34),
+                unplaced.map(|origin| origin.at)
+            )),
             Err(Unmappable::Tiled)
         );
         // A place niri gives a tiled window isn't trusted either.
@@ -1047,10 +1128,10 @@ mod tests {
                 frame_fits,
                 origin: Err(Unmappable::Tiled),
             };
-            assert_eq!(place(placement), Err(reason), "{placement:?}");
+            assert_eq!(place(placement.clone()), Err(reason), "{placement:?}");
             let fresh = Fresh {
                 role: 43,
-                placement,
+                placement: placement.clone(),
             };
             assert_eq!(
                 recheck(&kept, fresh),
@@ -1200,11 +1281,11 @@ mod tests {
         let shown = placement(extents(40, 70, 320, 34), Ok(LayoutPt { x: 20.0, y: 20.0 }));
         let fresh = |role, placement| Fresh { role, placement };
         assert_eq!(
-            recheck(&kept, fresh(43, shown)).map(LayoutBox::centre),
+            recheck(&kept, fresh(43, shown.clone())).map(LayoutBox::centre),
             Ok(LayoutPt { x: 220.0, y: 107.0 })
         );
         assert!(matches!(
-            recheck(&kept, fresh(29, shown)),
+            recheck(&kept, fresh(29, shown.clone())),
             Err(Refused::Stale(detail)) if detail.contains("button") && detail.contains("label")
         ));
         let hidden = Placement {

@@ -333,13 +333,16 @@ async fn locate(
     let a11y = input
         .a11y
         .ok_or_else(|| a11y::not_accessible("this session has no accessibility bus".to_owned()))?;
-    let point = elements::aim(input.niri.socket, a11y, input.policy, &kept).await?;
+    let aimed = elements::aim(input.niri.socket, a11y, input.policy, &kept).await?;
+    if aimed.output != shot.output {
+        return Err(elements::unmappable(Unmappable::OtherOutput));
+    }
     let events = input.niri.events.map_err(Clone::clone)?;
-    if events.animating(&shot.output, SETTLE) {
+    if events.animating(&aimed.output, SETTLE) {
         return Err(elements::unmappable(Unmappable::Moving));
     }
-    if shot.contains(point) {
-        Ok(point)
+    if shot.contains(aimed.at) {
+        Ok(aimed.at)
     } else {
         Err(elements::unmappable(Unmappable::OutsideScreenshot))
     }

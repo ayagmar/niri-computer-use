@@ -9,8 +9,8 @@ use niri_ipc::Window;
 use serde::Serialize;
 
 use crate::a11y::model::{
-    self, Extents, Filter, Fresh, LayoutBox, Link, NameHash, Placement, Refused, Row, Scene, Shape,
-    Unbound, Unmappable,
+    self, Extents, Filter, Fresh, LayoutBox, Link, NameHash, Origin, Placement, Refused, Row,
+    Scene, Shape, Unbound, Unmappable,
 };
 use crate::a11y::{self, A11y, Capped, ElementRef, Failed, Node, Want};
 use crate::changes::elements::{Seen, Unknown};
@@ -144,7 +144,7 @@ fn word(value: impl Serialize) -> String {
 #[derive(Debug)]
 struct Placed {
     window: Window,
-    origin: Result<LayoutPt, Unmappable>,
+    origin: Result<Origin, Unmappable>,
     others: Vec<Window>,
 }
 
@@ -320,7 +320,7 @@ pub(crate) async fn list(
                 height: 0,
             }),
             frame_fits: read.frame.fits,
-            origin: read.placed.origin,
+            origin: read.placed.origin.clone(),
         };
         let placed_box = model::place(placement);
         let element = read.element(at, node);
@@ -403,7 +403,7 @@ pub(crate) async fn aim(
     a11y: &A11y,
     policy: &Loaded,
     element: &ElementRef,
-) -> Result<LayoutPt, ToolError> {
+) -> Result<Aimed, ToolError> {
     let kept = &element.kept;
     let placed = placed(socket, kept.window)
         .await?
@@ -426,14 +426,24 @@ pub(crate) async fn aim(
             states: probe.states,
             extents: probe.extents,
             frame_fits: model::frame_fits(probe.frame, window.layout.window_size),
-            origin: placed.origin,
+            origin: placed.origin.clone(),
         },
     };
-    match model::recheck(kept, fresh) {
-        Ok(found) => Ok(found.centre()),
-        Err(Refused::Stale(detail)) => Err(stale(&detail)),
-        Err(Refused::Unmappable(why)) => Err(unmappable(why)),
+    match (model::recheck(kept, fresh), placed.origin) {
+        (Ok(found), Ok(origin)) => Ok(Aimed {
+            at: found.centre(),
+            output: origin.output,
+        }),
+        (Err(Refused::Stale(detail)), _) => Err(stale(&detail)),
+        (Err(Refused::Unmappable(why)), _) | (Ok(_), Err(why)) => Err(unmappable(why)),
     }
+}
+
+/// Where an aimed element's centre is, and the output its window is shown on.
+#[derive(Debug)]
+pub(crate) struct Aimed {
+    pub(crate) at: LayoutPt,
+    pub(crate) output: String,
 }
 
 /// Which names `identify` compares with the ones `elements` listed.
@@ -593,10 +603,18 @@ pub(crate) fn unmappable(why: Unmappable) -> ToolError {
             "tiled",
             "niri 26.04 gives a tiled window no position on screen; activate_element and set_element_text still work, or aim with a screenshot pixel; only when changing the user's layout is fine, float the window with niri_action and call elements again",
         ),
+        Unmappable::OffOutput => (
+            "not_showing",
+            "the element's centre is past its output's edge, where niri shows nothing of its window; move the window so the element is on screen, and call elements again",
+        ),
         Unmappable::Empty => ("empty", "the element has no area"),
         Unmappable::OutsideScreenshot => (
             "outside_screenshot",
             "the element's centre is outside the screenshot; take a screenshot that shows it",
+        ),
+        Unmappable::OtherOutput => (
+            "outside_screenshot",
+            "the element's window is on another output than the screenshot; take a screenshot of its output",
         ),
     };
     ToolError::new(ErrorName::ElementUnmappable, format!("{reason}: {detail}"))
