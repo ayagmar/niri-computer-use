@@ -188,6 +188,9 @@ impl Stroke {
 pub(super) struct Sent {
     pub(super) chars: usize,
     pub(super) keys: usize,
+    /// The stroke or key after these was let go and failed, so some or all of it may have
+    /// gone out.
+    pub(super) underway: bool,
 }
 
 impl Sent {
@@ -211,22 +214,38 @@ impl Sent {
         self.chars == 0 && self.keys == 0
     }
 
+    /// These, and the next stroke or key let go and failed.
+    pub(super) const fn underway(self) -> Self {
+        Self {
+            underway: true,
+            ..self
+        }
+    }
+
     /// What went out, as the detail of a failure partway says it.
     fn describe(self, typing: &Typing) -> String {
-        match typing {
-            Typing::Keys(keys) => format!("pressed {} of {} keys", self.keys, keys.len()),
-            Typing::Text { text, submit } => {
-                let typed = format!(
-                    "typed {} of {} characters",
-                    self.chars,
-                    text.chars().count()
-                );
-                match (submit, self.keys) {
-                    (false, _) => typed,
-                    (true, 0) => format!("{typed}, not yet the submitting Return"),
-                    (true, _) => format!("{typed} and the submitting Return"),
-                }
+        let (counted, total) = match typing {
+            Typing::Keys(keys) => (format!("pressed {} of {} keys", self.keys, keys.len()), 0),
+            Typing::Text { text, .. } => {
+                let total = text.chars().count();
+                (format!("typed {} of {total} characters", self.chars), total)
             }
+        };
+        let submit = matches!(typing, Typing::Text { submit: true, .. });
+        // Once all the text went out, the stroke under way was the submitting `Return`.
+        let more = self.underway && !(submit && self.chars == total);
+        let counted = if more {
+            format!("{counted}, and more may have gone out")
+        } else {
+            counted
+        };
+        match (submit, self.keys, self.underway) {
+            (false, _, _) => counted,
+            (true, 0, true) if !more => {
+                format!("{counted}, and the submitting Return may have gone out")
+            }
+            (true, 0, _) => format!("{counted}, not yet the submitting Return"),
+            (true, _, _) => format!("{counted} and the submitting Return"),
         }
     }
 }
@@ -370,7 +389,14 @@ pub(crate) async fn type_input_then(
         };
         run_wtype(input.runtime, wtype, aftercare, go, desk)
             .await
-            .map_err(|error| partly(error, &typing, sent))?;
+            .map_err(|failed| {
+                let sent = if failed.released {
+                    sent.underway()
+                } else {
+                    sent
+                };
+                partly(failed.error, &typing, sent)
+            })?;
         sent.add(&stroke);
         // Counts only once `go` told the desk the stroke was going out.
         desk.answered(typed_so_far(waiter.view(), focus, &typing, sent));
@@ -455,6 +481,30 @@ pub(super) fn partly(error: ToolError, typing: &Typing, sent: Sent) -> ToolError
     )
 }
 
+/// A `wtype` run that failed, and whether wtype was let past its gate first, after which
+/// some or all of its stroke may have gone out.
+#[derive(Debug)]
+struct Failed {
+    error: ToolError,
+    released: bool,
+}
+
+impl Failed {
+    const fn unsent(error: ToolError) -> Self {
+        Self {
+            error,
+            released: false,
+        }
+    }
+
+    const fn released(error: ToolError) -> Self {
+        Self {
+            error,
+            released: true,
+        }
+    }
+}
+
 /// One `wtype` call: the tool it types for, its arguments and what it reads.
 struct Wtype<'a> {
     tool: &'a str,
@@ -471,15 +521,15 @@ async fn run_wtype(
     aftercare: &mut Option<Aftercare>,
     go: impl Future<Output = Result<(), ToolError>>,
     desk: &Desk,
-) -> Result<(), ToolError> {
+) -> Result<(), Failed> {
     let Wtype { tool, args, stdin } = wtype;
     let mut marker = Written::write(runtime, Marker::pending(tool, Vec::new()))
         .await
-        .map_err(|error| marker::unwritten(&error))?;
+        .map_err(|error| Failed::unsent(marker::unwritten(&error)))?;
     let gated = match runner::gated("wtype", args, &UTF8, WTYPE_DEADLINE) {
         Ok(gated) => gated,
         // Nothing started, so nothing was typed.
-        Err(error) => return Err(cleared(marker, error).await),
+        Err(error) => return Err(Failed::unsent(cleared(marker, error).await)),
     };
     let child = gated.pid().and_then(|pid| {
         let stat = procs::stat(Path::new("/proc"), pid)?;
@@ -502,25 +552,28 @@ async fn run_wtype(
         // Still waiting at the gate: killing it now types nothing.
         drop(gated);
         let error = ToolError::new(ErrorName::UpstreamError, detail);
-        return Err(cleared(marker, error).await);
+        return Err(Failed::unsent(cleared(marker, error).await));
     }
     if let Err(error) = go.await {
         drop(gated);
-        return Err(cleared(marker, error).await);
+        return Err(Failed::unsent(cleared(marker, error).await));
     }
     // A task of its own, so wtype finishes and the marker comes off even if the call is
     // dropped.
     let aftercare = aftercare.take();
     let desk = desk.clone();
     let typed = cleanup::spawn(cleanup::deadline(), async move {
-        feed(gated, &stdin, marker, aftercare, &desk).await
+        Ok(feed(gated, &stdin, marker, aftercare, &desk).await)
     });
-    typed.await.map_err(|error| {
-        ToolError::new(
+    // The task's own end, at its deadline or by a panic, may have come after the gate.
+    match typed.await {
+        Ok(Ok(fed)) => fed,
+        Ok(Err(error)) => Err(Failed::released(error)),
+        Err(error) => Err(Failed::released(ToolError::new(
             ErrorName::UpstreamError,
             format!("the wtype task ended: {error}"),
-        )
-    })?
+        ))),
+    }
 }
 
 /// Lets wtype past its gate and feeds it, between arming `aftercare` against `desk`'s lock
@@ -532,21 +585,22 @@ async fn feed(
     marker: Written,
     aftercare: Option<Aftercare>,
     desk: &Desk,
-) -> Result<(), ToolError> {
+) -> Result<(), Failed> {
     let Some(aftercare) = aftercare else {
-        return finish(gated.feed(stdin, MAX_STDOUT).await, marker).await;
+        let fed = gated.feed(stdin, MAX_STDOUT).await;
+        return finish(fed, marker).await.map_err(Failed::released);
     };
     let aftercare = match aftercare.arm(desk).await {
         Ok(armed) => armed,
         Err(error) => {
             // Still waiting at the gate: killing it now types nothing.
             drop(gated);
-            return Err(cleared(marker, error).await);
+            return Err(Failed::unsent(cleared(marker, error).await));
         }
     };
     let fed = gated.feed(stdin, MAX_STDOUT).await;
     aftercare.sent().await;
-    finish(fed, marker).await
+    finish(fed, marker).await.map_err(Failed::released)
 }
 
 /// Removes the marker once wtype has exited by itself. A wtype killed by a signal, or
@@ -720,7 +774,16 @@ mod tests {
         let current = view(vec![window(1, Some("a"), 1, true)]);
         let report = |typing: &Typing, chars, keys| {
             let outcome = Outcome::seen(Observed::Interrupted, &current, Vec::new());
-            let ended = ended(outcome, Focus::Matched, typing, Sent { chars, keys });
+            let ended = ended(
+                outcome,
+                Focus::Matched,
+                typing,
+                Sent {
+                    chars,
+                    keys,
+                    underway: false,
+                },
+            );
             (ended.typed, ended.pressed, ended.submitted)
         };
         let message = text(&"x".repeat(250), true);
@@ -732,17 +795,19 @@ mod tests {
         let list = keys(&["Down", "Down", "Return"]);
         assert_eq!(report(&list, 0, 2), (None, Some(2), None));
         assert_eq!(report(&list, 0, 3), (None, None, None));
+        // A part let past wtype's gate may have gone out in part, but `Return` comes after.
         let failed = partly(
             ToolError::new(ErrorName::UpstreamError, "wtype exited 1"),
             &message,
             Sent {
                 chars: 200,
                 keys: 0,
+                underway: true,
             },
         );
         assert_eq!(
             failed.detail,
-            "typed 200 of 250 characters, not yet the submitting Return; then wtype exited 1"
+            "typed 200 of 250 characters, and more may have gone out, not yet the submitting Return; then wtype exited 1"
         );
         // All the text went out and only `Return` was refused, which the detail must say.
         let refused = partly(
@@ -751,6 +816,7 @@ mod tests {
             Sent {
                 chars: 250,
                 keys: 0,
+                underway: false,
             },
         );
         assert_eq!(
@@ -799,9 +865,11 @@ mod tests {
         let (aftercare, _done) =
             crate::input::paste::fake_aftercare(crate::input::paste::STOPPED_WAITING).await;
         let desk = crate::input::paste::desk_read(&dir, Duration::ZERO);
-        let error = feed(gated, b"ctrl+v", marker, Some(aftercare), &desk)
+        let failed = feed(gated, b"ctrl+v", marker, Some(aftercare), &desk)
             .await
             .unwrap_err();
+        let Failed { error, released } = failed;
+        assert!(!released, "{}", error.detail);
         assert!(
             error.detail.contains("nothing was pasted"),
             "{}",
@@ -832,9 +900,11 @@ mod tests {
             crate::input::paste::fake_aftercare(crate::input::paste::SLOW_ADMISSION).await;
         // Fresh when the `k` goes out, older than `LAST_GATE` once the keeper admits.
         let desk = crate::input::paste::desk_read(&dir, Duration::from_millis(200));
-        let error = feed(gated, b"ctrl+v", marker, Some(aftercare), &desk)
+        let failed = feed(gated, b"ctrl+v", marker, Some(aftercare), &desk)
             .await
             .unwrap_err();
+        let Failed { error, released } = failed;
+        assert!(!released, "{}", error.detail);
         assert_eq!(error.name, ErrorName::ScreenLocked, "{}", error.detail);
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(std::fs::read(&typed).unwrap_or_default(), b"");

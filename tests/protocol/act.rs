@@ -1465,6 +1465,35 @@ async fn submit_presses_return_once_all_of_the_text_went_out() {
     );
 }
 
+/// A submitting stroke that wtype read before failing may have pressed `Return`, so the
+/// error must never say the message wasn't submitted.
+#[tokio::test]
+async fn a_submit_whose_wtype_fails_after_reading_it_may_have_gone_out() {
+    let mut desk = Desk::start("act-submit-fails", "").await;
+    let message = json!({"text": "a".repeat(150), "expect": {"window_id": 1}, "submit": true});
+    let may_have =
+        "typed 150 of 150 characters, and the submitting Return may have gone out; then ";
+    recording_wtype(
+        &desk.fixture,
+        r#"case "$*" in *Return*) echo 'lost the display' >&2; exit 1;; esac"#,
+    );
+    let (name, detail) = tool_error(&desk.server.call("type_text", message.clone()).await);
+    assert_eq!(name, "upstream_error");
+    assert!(detail.starts_with(may_have), "{detail}");
+    assert!(detail.contains("lost the display"), "{detail}");
+    assert_eq!(wtype_calls(&desk.fixture), ["-", "-", "- -k Return"]);
+
+    // Killed once it read the stroke, as a wtype that hangs is at its deadline.
+    recording_wtype(
+        &desk.fixture,
+        r#"case "$*" in *Return*) kill -KILL $$;; esac"#,
+    );
+    let (killed_name, killed_detail) = tool_error(&desk.server.call("type_text", message).await);
+    assert_eq!(killed_name, "upstream_error");
+    assert!(killed_detail.starts_with(may_have), "{killed_detail}");
+    assert!(killed_detail.contains("marker stays"), "{killed_detail}");
+}
+
 #[tokio::test]
 async fn key_presses_each_combination_in_order() {
     let mut desk = Desk::start("act-keys", "").await;

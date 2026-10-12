@@ -63,7 +63,11 @@ pub(super) async fn type_input(
         }
         may_press(input, waiter.view(), &typing, sent, marks).await?;
         device.commit(aftercare, input.niri.desk).await?;
-        device.stroke(key).await?;
+        // Sent to niri before it failed, the key may still have gone out.
+        device
+            .stroke(key)
+            .await
+            .map_err(|error| partly(error, &typing, sent.underway()))?;
         sent.add_key(key.character);
         // Counts only once `may_press` told the desk the key was going out.
         let answered = typed_so_far(waiter.view(), focus, &typing, sent);
