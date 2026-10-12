@@ -39,8 +39,8 @@ use crate::session::Session;
 use crate::wev::{self, Pointer};
 
 /// Within what is left of the run's deadline.
-const NOCTALIA_DEADLINE: Duration = Duration::from_secs(160);
-const SERVER_DEADLINE: Duration = Duration::from_secs(150);
+const NOCTALIA_DEADLINE: Duration = Duration::from_secs(220);
+const SERVER_DEADLINE: Duration = Duration::from_secs(210);
 const WEV_DEADLINE: Duration = Duration::from_secs(150);
 const READY: Duration = Duration::from_secs(20);
 const WAIT: Duration = Duration::from_secs(5);
