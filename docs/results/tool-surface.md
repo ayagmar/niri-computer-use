@@ -217,5 +217,6 @@ Also, in `iteration-6a-sonnet`'s `compose-message` without the skill, Sonnet onc
 | Sonnet | 5 of 6, 1 | 2 of 4, 0 |
 | Haiku | 4 of 6, 1 | 4 of 4, 0 |
 
-Every other miss in these runs was the grader's word check: both of `main`'s Sonnet misses, and one Haiku run on the branch. With iteration 6's stop and its rerun, the branch stopped to ask in 3 of 20 `dialog-midway` runs with the skill, and `main` in none of 12. A stop sends nothing and tells the user, so it is a missed task rather than a wrong call. The runs are too few to say whether the shorter `type_text`, `key` or `focus` descriptions cause it. 
+Every other miss in these runs was the grader's word check: both of `main`'s Sonnet misses, and one Haiku run on the branch. With iteration 6's stop and its rerun, the branch stopped to ask in 3 of 20 `dialog-midway` runs with the skill, and `main` in none of 12. A stop sends nothing and tells the user, so it is a missed task rather than a wrong call. The runs are too few to say whether the shorter `type_text`, `key` or `focus` descriptions cause it.
+
 **Iteration 8, with `type_text`'s clause back.** The branch's next commit, `fix(tools): restore type_text's focus_mismatch clause`, puts back "(`focus_mismatch` otherwise)" after `type_text`'s `expect` rule. That adds 29 bytes: `act` 23,172 and `full` 26,403, with the ceilings unchanged. At that commit, `dialog-midway` with the skill passed all 8 runs, 4 for Sonnet and 4 for Haiku (`iteration-8-*`). None stopped to ask, and none missed the word check. Neither those runs nor `main`'s 12 stopped to ask.

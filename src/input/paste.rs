@@ -477,7 +477,9 @@ mod tests {
         assert!(
             error.detail.starts_with("the selection is too large; ")
                 && error.detail.contains("nothing was pasted")
-                && error.detail.contains("type the text instead"),
+                && error.detail.contains("type the text instead")
+                && error.detail.contains("only on the last")
+                && error.detail.contains("line breaks"),
             "{}",
             error.detail
         );
