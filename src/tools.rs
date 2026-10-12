@@ -537,7 +537,9 @@ struct KeyArgs {
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct TypeTextArgs {
-    /// Up to 1000 characters to type, or 1 MiB to paste.
+    /// Up to 1000 characters to type, or 1 MiB to paste. Typed text may not hold a line
+    /// break or a tab, which would be pressed as Return or Tab: use `submit`, `key`, or
+    /// `via: "paste"` for text with several lines.
     text: String,
     /// The window that must have keyboard focus: `{"window_id": <id>}`, `{"app_id":
     /// "<app_id>"}`, or `"none"` to skip the check, as for a shell panel.

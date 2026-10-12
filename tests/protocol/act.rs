@@ -1548,6 +1548,32 @@ async fn a_first_stroke_that_fails_after_wtype_read_it_may_have_gone_out() {
     );
 }
 
+/// A line break or a tab would be typed as Return or Tab, sending a message before the
+/// rest of it or moving to another field: either backend refuses the text before anything
+/// is typed and points to `submit`, `key` and `via: "paste"`.
+#[tokio::test]
+async fn text_with_a_line_break_or_a_tab_is_refused_before_anything_is_typed() {
+    for backend in ["wtype", "native"] {
+        let mut desk = Desk::start_backend(&format!("act-newline-{backend}"), "", backend).await;
+        recording_wtype(&desk.fixture, "exit 0");
+        for text in ["Hi,\n\nhere is the plan", "a\r\nb", "name\tvalue"] {
+            let message = json!({"text": text, "expect": {"window_id": 1}, "submit": true});
+            let refused = desk.server.call("type_text", message).await;
+            let said = mistake(&refused);
+            assert!(said.contains("would be typed as Return or Tab"), "{said}");
+            assert!(
+                said.contains("`submit: true`") && said.contains("`via: \"paste\"`"),
+                "{said}"
+            );
+        }
+        assert_eq!(
+            wtype_calls(&desk.fixture),
+            Vec::<String>::new(),
+            "{backend}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn key_presses_each_combination_in_order() {
     let mut desk = Desk::start("act-keys", "").await;

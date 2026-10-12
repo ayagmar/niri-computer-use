@@ -75,12 +75,10 @@ fn resolve(keymap: &xkb::Keymap, group: u32, typing: &Typing) -> Result<Vec<Key>
     }
 }
 
+/// The keysym that types `c`. `Typing::check` has refused line breaks and tabs, which
+/// would be keys rather than characters.
 fn text_sym(c: char) -> xkb::Keysym {
-    match c {
-        '\n' => xkb::keysym_from_name("Return", xkb::KEYSYM_NO_FLAGS),
-        '\t' => xkb::keysym_from_name("Tab", xkb::KEYSYM_NO_FLAGS),
-        _ => xkb::utf32_to_keysym(u32::from(c)),
-    }
+    xkb::utf32_to_keysym(u32::from(c))
 }
 
 /// The text's distinct printable symbols the active layout lacks, in order of use.

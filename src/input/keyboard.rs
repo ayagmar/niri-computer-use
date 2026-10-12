@@ -145,6 +145,13 @@ fn check_text(text: &str) -> Result<(), CallError> {
             "`text` must not be empty".to_owned(),
         ));
     }
+    // Typed, they are Return and Tab: one sends a message before the rest of it, the other
+    // moves to another field of the same window, where `expect` can't see it.
+    if let Some(at) = text.chars().position(|c| matches!(c, '\n' | '\r' | '\t')) {
+        return Err(CallError::InvalidArguments(format!(
+            "`text` holds a line break or a tab at character {at}, which would be typed as Return or Tab; pass `submit: true` to press Return once all of the text went out, press Return or Tab with `key`, or pass `via: \"paste\"` for text with several lines; nothing was typed"
+        )));
+    }
     if length > MAX_TEXT {
         return Err(ToolError::new(
             ErrorName::TextTooLong,
