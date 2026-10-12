@@ -67,6 +67,18 @@ struct Seat {
     /// When the latest read of the lock state began (`Desk::lock_read`). Cleared when an
     /// action starts, before its readiness report.
     lock_read: std::sync::Mutex<Option<Instant>>,
+    /// The session taking the lease under the action mutex, with no grant yet, while it
+    /// waits for the policy's answer and the user's.
+    taking: std::sync::Mutex<Option<SessionId>>,
+}
+
+/// Marks a session as taking the lease until dropped.
+struct Taking<'a>(&'a Seat);
+
+impl Drop for Taking<'_> {
+    fn drop(&mut self) {
+        self.0.taking().take();
+    }
 }
 
 /// The lease, held for one session.
@@ -91,6 +103,11 @@ impl Seat {
     /// No code panics while holding the lock, so a poisoned one still holds a sound value.
     fn answer(&self) -> std::sync::MutexGuard<'_, Option<Outcome>> {
         self.answered.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The same.
+    fn taking(&self) -> std::sync::MutexGuard<'_, Option<SessionId>> {
+        self.taking.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// The same.
@@ -120,9 +137,15 @@ impl Seat {
     }
 
     /// Gives the lease up once any running action has ended, if `whose` holds it, or
-    /// whoever does for `None`. Returns whether it was given up.
+    /// whoever does for `None`. Returns whether it was given up. Another session holding the
+    /// lease, or taking it, means `whose` has nothing to give up, so it doesn't wait for that
+    /// session, which may be waiting a minute for its user's answer.
     async fn give_up(&self, whose: Option<SessionId>) -> bool {
-        if whose.is_some_and(|session| self.held_by_other(session).is_some()) {
+        let others = |session| {
+            self.held_by_other(session).is_some()
+                || self.taking().is_some_and(|taker| taker != session)
+        };
+        if whose.is_some_and(others) {
             return false;
         }
         let mut held = self.lease.lock().await;
@@ -190,6 +213,7 @@ impl Desk {
             sending: AtomicBool::new(false),
             answered: std::sync::Mutex::new(None),
             lock_read: std::sync::Mutex::new(None),
+            taking: std::sync::Mutex::new(None),
         });
         let runtime = RuntimeDir::of(env).map_err(|detail| {
             let name = if env.instance.socket().is_err() {
@@ -277,7 +301,10 @@ impl Desk {
         if let Some(grant) = held.as_ref() {
             return Err(refused(Refused::Held(Some(grant.lease.holder().clone()))));
         }
-        let lease = Lease::acquire(runtime, label).map_err(refused)?;
+        let mut lease = Lease::acquire(runtime, label).map_err(refused)?;
+        // No grant exists now, so no other session has a lease to give up meanwhile.
+        *self.seat.taking() = Some(session.id());
+        let _taking = Taking(&self.seat);
         // `refusal` may wait for the user's answer, so a stop or the session's end ends it.
         let refusal = tokio::select! {
             biased;
@@ -296,6 +323,9 @@ impl Desk {
             return Err(session_ended());
         }
         self.unblocked(runtime)?;
+        lease
+            .publish()
+            .map_err(|detail| ToolError::new(ErrorName::UpstreamError, detail))?;
         let holder = lease.holder().clone();
         let grant = Grant {
             owner: session.id(),
@@ -846,6 +876,13 @@ fn unreadable(error: &std::io::Error) -> ToolError {
 
 fn refused(refused: Refused) -> ToolError {
     match refused {
+        Refused::Held(Some(holder)) if holder.pending => ToolError::new(
+            ErrorName::LeaseHeld,
+            format!(
+                "being taken by PID {} ({}) since {}, which may be waiting for its user to allow it",
+                holder.pid, holder.label, holder.since
+            ),
+        ),
         Refused::Held(Some(holder)) => ToolError::new(
             ErrorName::LeaseHeld,
             format!(
@@ -1747,6 +1784,20 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// A refusal that never answers, like a prompt the user hasn't answered, and a receiver
+    /// that says once it is being waited for, so a test acts only after that.
+    fn unanswered() -> (
+        impl Future<Output = Option<ToolError>>,
+        tokio::sync::oneshot::Receiver<()>,
+    ) {
+        let (asked, waiting) = tokio::sync::oneshot::channel();
+        let refusal = async move {
+            asked.send(()).ok();
+            std::future::pending::<Option<ToolError>>().await
+        };
+        (refusal, waiting)
+    }
+
     /// A refusal can wait up to a minute for the user's answer to the lease prompt; a stop
     /// or the client leaving meanwhile must end it, not leave it holding the lease's lock.
     #[tokio::test]
@@ -1755,15 +1806,16 @@ mod tests {
         let dir = crate::test_support::fresh_dir("desk-acquire-waiting");
         let desk = Desk::start(&env(&dir));
         let runtime = RuntimeDir::of(&env(&dir)).unwrap();
-        let waiting = std::future::pending::<Option<ToolError>>();
+        let (waiting, asked) = unanswered();
         let acquire = desk.acquire(&me, "me/1", waiting, ready(None));
         let stop = async {
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            asked.await.unwrap();
             runtime.stop().unwrap();
         };
         let within = Duration::from_secs(5);
         let (stopped, ()) = tokio::join!(tokio::time::timeout(within, acquire), stop);
-        assert_eq!(stopped.unwrap().unwrap_err().name, ErrorName::Stopped);
+        let error = stopped.unwrap().unwrap_err();
+        assert_eq!(error.detail, stopped_before_grant().detail);
         assert_eq!(lease::holder(&runtime), None);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -1775,15 +1827,47 @@ mod tests {
         let dir = crate::test_support::fresh_dir("desk-acquire-waiting-end");
         let desk = Desk::start(&env(&dir));
         let runtime = RuntimeDir::of(&env(&dir)).unwrap();
-        let waiting = std::future::pending::<Option<ToolError>>();
+        let (waiting, asked) = unanswered();
         let acquire = desk.acquire(&me, "me/1", waiting, ready(None));
         let end = async {
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            asked.await.unwrap();
             me.end();
         };
         let (ended, ()) = tokio::join!(tokio::time::timeout(within, acquire), end);
         assert_eq!(ended.unwrap().unwrap_err().detail, session_ended().detail);
         assert_eq!(lease::holder(&runtime), None);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// While one session waits for its user's Allow, others have no lease to give up and
+    /// must not wait a minute for that answer, and the record shows the lease as pending
+    /// until it is granted.
+    #[tokio::test]
+    async fn a_session_waiting_for_its_user_holds_up_no_other_session() {
+        let (me, other) = (session(1), session(2));
+        let dir = crate::test_support::fresh_dir("desk-acquire-pending");
+        let desk = Desk::start(&env(&dir));
+        let runtime = RuntimeDir::of(&env(&dir)).unwrap();
+        let (allow, allowed) = tokio::sync::oneshot::channel::<()>();
+        let (asked, waiting) = tokio::sync::oneshot::channel();
+        let refusal = async move {
+            asked.send(()).unwrap();
+            allowed.await.ok();
+            None
+        };
+        let acquire = desk.acquire(&me, "me/1", refusal, ready(None));
+        let others = async {
+            waiting.await.unwrap();
+            assert!(lease::holder(&runtime).unwrap().pending);
+            let within = Duration::from_millis(500);
+            let released = tokio::time::timeout(within, release_and_end(&desk, &other)).await;
+            assert_eq!(released, Ok(false));
+            allow.send(()).unwrap();
+        };
+        let (holder, ()) = tokio::join!(acquire, others);
+        let holder = holder.unwrap();
+        assert!(!holder.pending);
+        assert_eq!(lease::holder(&runtime), Some(holder));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

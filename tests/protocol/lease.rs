@@ -1,7 +1,7 @@
 //! The lease over stdio: two servers for one niri instance, the stop flag, and what
 //! `status` and the audit log say.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -331,4 +331,67 @@ async fn the_variable_asks_for_its_own_clients_lease_only() {
     assert_eq!(name, "lease_declined");
     trusting.structured("acquire_desktop").await;
     assert_eq!(prompts(&fixture), 1);
+}
+
+/// While the user hasn't answered, other clients see the asking client as a pending holder,
+/// and releasing the lease they don't hold doesn't wait for that answer.
+#[tokio::test]
+async fn a_prompt_waiting_for_the_user_shows_a_pending_holder_and_holds_no_one_up() {
+    let mut fixture = Fixture::new("lease-confirm-pending");
+    let _niri = NiriProcess::unlocked(&fixture).await;
+    fixture.program(
+        "notify-send",
+        r#"echo >> "$DIR/notify-send.calls"; await_file answer; cat "$DIR/answer""#,
+    );
+    fixture.set("NIRI_COMPUTER_USE_CONFIRM_LEASE", "1");
+    let mut asking = Server::start(&fixture).await;
+    fixture.unset("NIRI_COMPUTER_USE_CONFIRM_LEASE");
+    let mut other = Server::start(&fixture).await;
+    let acquire = asking.start_call("acquire_desktop", json!({})).await;
+    assert!(eventually(WAIT, || fixture.path("notify-send.calls").exists()).await);
+
+    let pending = other.structured("status").await["lease"]["holder"].clone();
+    assert_eq!(pending["label"], format!("{CLIENT}/{}", asking.pid));
+    assert_eq!(pending["pending"], true, "{pending}");
+    let started = Instant::now();
+    let released = other
+        .structured_with("release_desktop", json!({"restore_focus": false}))
+        .await;
+    assert_eq!(released["released"], false, "{released}");
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "{:?}",
+        started.elapsed()
+    );
+
+    std::fs::write(fixture.path("answer.new"), "allow\n").unwrap();
+    std::fs::rename(fixture.path("answer.new"), fixture.path("answer")).unwrap();
+    let held = asking.response(acquire).await["result"]["structuredContent"].clone();
+    assert_eq!(held["holder"]["label"], pending["label"], "{held}");
+    assert_eq!(held["holder"].get("pending"), None, "{held}");
+    assert_eq!(
+        other.structured("status").await["lease"]["holder"],
+        held["holder"]
+    );
+}
+
+/// The user can take a minute to answer, so an Allow is followed by the same readiness
+/// checks as before the prompt: a screen locked meanwhile refuses the lease.
+#[tokio::test]
+async fn a_screen_locked_while_the_user_answers_refuses_the_lease() {
+    let mut fixture = Fixture::new("lease-confirm-locked");
+    let _niri = NiriProcess::unlocked(&fixture).await;
+    fixture.program(
+        "loginctl",
+        r#"if [ -e "$DIR/locked" ]; then echo yes; else echo no; fi"#,
+    );
+    fixture.program("notify-send", r#": > "$DIR/locked"; echo allow"#);
+    fixture.set("NIRI_COMPUTER_USE_CONFIRM_LEASE", "1");
+    let mut server = Server::start(&fixture).await;
+
+    let (name, detail) = tool_error(&server.call("acquire_desktop", json!({})).await);
+    assert_eq!(name, "screen_locked", "{detail}");
+    assert!(fixture.path("locked").exists());
+    let status = server.structured("status").await;
+    assert_eq!(status["lease"]["holder"], Value::Null, "{status}");
 }

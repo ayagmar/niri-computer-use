@@ -2,8 +2,8 @@
 //! non-blocking `flock` on `<runtime dir>/lease`, a file that is created once and never
 //! removed, so every server locks the same inode. The kernel drops the lock when the
 //! holder's file closes, including when the process dies. `lease.json` beside it names
-//! the holder for other servers to display; it is cleared on release, and a holder whose
-//! process is gone is ignored.
+//! the holder for other servers to display, as pending until the lease is granted; it is
+//! cleared on release, and a holder whose process is gone is ignored.
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Write as _};
@@ -25,6 +25,10 @@ pub(crate) struct Holder {
     /// The MCP client's name and the server's PID, such as `claude-code/4711`.
     pub(crate) label: String,
     pub(crate) since: String,
+    /// The server holds the lock but hasn't granted the lease yet, as while the user is
+    /// asked to allow it; `since` is when it took the lock.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) pending: bool,
 }
 
 /// A held lease. Dropping it clears `lease.json` and unlocks.
@@ -62,7 +66,8 @@ pub(crate) enum Refused {
 }
 
 impl Lease {
-    /// Takes the lease without waiting, creating the runtime directory as needed.
+    /// Takes the lease's lock without waiting, creating the runtime directory as needed.
+    /// The record names this server as pending until `publish`.
     pub(crate) fn acquire(runtime: &RuntimeDir, label: &str) -> Result<Self, Refused> {
         let io = |action: &str, path: &Path, error: io::Error| {
             Refused::Io(format!("{action} {}: {error}", path.display()))
@@ -93,7 +98,8 @@ impl Lease {
         let holder = Holder {
             pid: std::process::id(),
             label: label.to_owned(),
-            since: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+            since: now(),
+            pending: true,
         };
         let record = runtime.path().join(HOLDER);
         write_record(&record, Some(&holder)).map_err(|error| io("write", &record, error))?;
@@ -103,6 +109,19 @@ impl Lease {
             locked,
             record,
         })
+    }
+
+    /// Records the lease as granted, from now.
+    pub(crate) fn publish(&mut self) -> Result<(), String> {
+        let granted = Holder {
+            since: now(),
+            pending: false,
+            ..self.holder.clone()
+        };
+        write_record(&self.record, Some(&granted))
+            .map_err(|error| format!("write {}: {error}", self.record.display()))?;
+        self.holder = granted;
+        Ok(())
     }
 
     pub(crate) const fn holder(&self) -> &Holder {
@@ -130,6 +149,10 @@ impl Drop for Lease {
         }
         self.file.unlock().ok();
     }
+}
+
+fn now() -> String {
+    Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
 /// The current holder, from `lease.json`, if its process is still running.
@@ -168,9 +191,13 @@ mod tests {
         let dir = crate::test_support::fresh_dir("lease");
         let runtime = runtime(&dir);
         assert_eq!(holder(&runtime), None);
-        let first = Lease::acquire(&runtime, "first/1").unwrap();
+        let mut first = Lease::acquire(&runtime, "first/1").unwrap();
         assert_eq!(first.holder().label, "first/1");
         assert_eq!(first.holder().pid, std::process::id());
+        // Until it is granted, other servers see it as pending, not held.
+        assert!(holder(&runtime).unwrap().pending);
+        first.publish().unwrap();
+        assert!(!first.holder().pending);
         assert_eq!(holder(&runtime).as_ref(), Some(first.holder()));
         // A second open file description can't take the lock, even in this process.
         assert_eq!(
@@ -201,6 +228,7 @@ mod tests {
             pid: u32::MAX,
             label: "gone/1".to_owned(),
             since: "2026-10-08T00:00:00.000Z".to_owned(),
+            pending: false,
         };
         write_record(&runtime.path().join(HOLDER), Some(&dead)).unwrap();
         assert_eq!(holder(&runtime), None);

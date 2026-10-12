@@ -45,7 +45,7 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 ### `lease_held`
 
-**Cause:** another server holds the lease on this niri instance. The `detail` names its PID, its client and since when.
+**Cause:** another server holds the lease on this niri instance. The `detail` names its PID, its client and since when, or says it is still being taken, as while its user is asked to allow it.
 
 **What to do:** finish or close the other agent's session; its server gives the lease up when it releases or exits. The stop key also takes the lease back.
 
