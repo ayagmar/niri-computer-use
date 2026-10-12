@@ -11,7 +11,7 @@ mod lists;
 use std::fs;
 use std::time::{Duration, Instant};
 
-use niri_ipc::{Action, PositionChange, Request, Window};
+use niri_ipc::{Action, PositionChange, Request, Response, Window};
 use serde_json::{Value, json};
 
 use super::{Bus, Fixture, Toolkit};
@@ -110,6 +110,7 @@ impl Checks<'_, '_> {
         self.activations(&primary, "primary-count", 0)?;
         self.moved(&window, &primary)?;
         self.tiled(window.id, &primary)?;
+        self.overview(window.id)?;
         self.vanished(window.id)?;
         let qt = Fixture::start(self.session, Toolkit::Qt)?;
         let qt_window = qt.window(self.session, bus)?;
@@ -217,6 +218,54 @@ impl Checks<'_, '_> {
         self.session.log(&format!(
             "M9: tiled, Primary unmappable and its click refused: {refused}; floating again, it hit"
         ))
+    }
+
+    /// With niri's overview open, the workspaces are zoomed out: `Primary` is
+    /// `not_showing`, and its ref is refused without a click. Closed again, it hits.
+    fn overview(&mut self, window: u64) -> Result<()> {
+        self.overview_open(true)?;
+        let listed = self.primary_until(window, "Primary unmappable: not_showing", |element| {
+            field(element, "/unmappable") == "not_showing"
+        })?;
+        let refused = self.refused_click(&element_ref(&listed)?)?;
+        expect(
+            field(&refused, "/error") == "element_unmappable"
+                && field(&refused, "/detail")
+                    .as_str()
+                    .is_some_and(|detail| detail.starts_with("not_showing: ")),
+            "element_unmappable: not_showing for a click in the overview",
+            &refused,
+        )?;
+        let session = &*self.session;
+        session.still_absent("m9-overview-no-activation", SETTLE, || {
+            Ok(read_count(session, "primary-count")? != Some(ROUNDS + 2))
+        })?;
+        self.overview_open(false)?;
+        let closed = self.button(window, "Primary")?;
+        self.shot = None;
+        self.click(&closed.id)?;
+        self.counted("primary-count", ROUNDS + 3)?;
+        self.session.log(&format!(
+            "M9: overview open, Primary unmappable and its click refused: {refused}; closed, it hit"
+        ))
+    }
+
+    /// Opens or closes niri's overview, and waits until niri reports it so.
+    fn overview_open(&mut self, open: bool) -> Result<()> {
+        let action = if open {
+            Action::OpenOverview {}
+        } else {
+            Action::CloseOverview {}
+        };
+        self.session.request(&Request::Action(action))?;
+        self.session
+            .wait_until("m9-overview", "the overview", WAIT, |session| {
+                let now = session.request(&Request::OverviewState)?;
+                Ok(
+                    matches!(now, Response::OverviewState(state) if state.is_open == open)
+                        .then_some(()),
+                )
+            })
     }
 
     /// Lists `window`'s `Primary` until it `holds`, as the window settles in its new

@@ -1124,3 +1124,8 @@ These match the versions installed locally.
 
 - `elements` and every ref aimed read the window, its workspace and its output from three requests made together. A failed `Windows` already failed the call; a failed `Workspaces` or `Outputs` was dropped, and the window counted as not shown. That hid niri's message and, after the tiled-window change, turned a tiled window's `tiled` into `not_showing`. Now any of the three failing fails the call with niri's error (AGENTS.md rule 5). Sol's review of the tiled-window change found it.
 - `model::origin` decides `tiled` before it looks for the window's output, so a tiled window says so whatever niri reports of its workspace, no output included. A floating window on no output is `not_showing`: there is nothing it is shown on.
+
+## 2026-10-12: nothing is placed while the overview is open
+
+- niri's overview zooms the workspaces out, and `tile_pos_in_workspace_view` stays what it was: `FloatingSpace::tiles_with_ipc_layouts` doesn't scale it by the overview's zoom (niri `8ed0da4`). A floating window's box then pointed where the window is when the overview is closed, at whatever the overview shows there. Found while fixing the inactive-workspace placement; Sol's review didn't list it.
+- `model::origin` takes the overview's state from a fresh `OverviewState` request, made with the window, workspace and output requests and failing the call like them, and places nothing while it is open: `not_showing`, whose detail now says to close the overview. Placing elements by the overview's zoom would need the zoom and where niri puts each workspace in it, which IPC doesn't give.

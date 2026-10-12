@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use niri_ipc::{
-    Action, LogicalOutput, Output, Reply, Request, Response, Transform, Window, Workspace,
+    Action, LogicalOutput, Output, Overview, Reply, Request, Response, Transform, Window, Workspace,
 };
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
@@ -46,6 +46,8 @@ struct Config {
     silent: bool,
     /// Requests answered with niri's error, by name, with the error's text.
     failing: HashMap<String, String>,
+    /// Whether `OverviewState` says the overview is open.
+    overview_open: bool,
     /// Read actions but never answer them.
     hold_actions: bool,
     /// How much later every `Version` is answered.
@@ -120,6 +122,7 @@ impl Niri {
             workspaces: Vec::new(),
             silent: false,
             failing: HashMap::new(),
+            overview_open: false,
             hold_actions: false,
             version_delay: Duration::ZERO,
             effects: None,
@@ -212,6 +215,11 @@ impl Niri {
         let mut config = self.config.lock().unwrap();
         config.windows = parsed(windows);
         config.workspaces = parsed(workspaces);
+    }
+
+    /// Opens or closes the overview, as `OverviewState` answers it.
+    pub(crate) fn set_overview(&self, open: bool) {
+        self.config.lock().unwrap().overview_open = open;
     }
 
     /// Answers every later `request`, such as `Workspaces`, with niri's error `message`.
@@ -473,13 +481,16 @@ async fn effect(channels: &Channels, action: &Action) {
 
 #[expect(
     clippy::wildcard_enum_match_arm,
-    reason = "the server only sends these five; any other request is an error, as from niri"
+    reason = "the server only sends these six; any other request is an error, as from niri"
 )]
 fn answer(config: &Config, request: &Request) -> Reply {
     match request {
         Request::Version => Ok(Response::Version("26.04 (protocol-test)".to_owned())),
         Request::Windows => Ok(Response::Windows(config.windows.clone())),
         Request::Workspaces => Ok(Response::Workspaces(config.workspaces.clone())),
+        Request::OverviewState => Ok(Response::OverviewState(Overview {
+            is_open: config.overview_open,
+        })),
         Request::Outputs => Ok(Response::Outputs(
             config
                 .outputs

@@ -165,6 +165,16 @@ pub(crate) async fn workspaces(socket: &Socket) -> Result<Vec<Workspace>, ToolEr
     Ok(workspaces)
 }
 
+/// Whether niri's overview is open, as niri reports it right now.
+pub(crate) async fn overview_open(socket: &Socket) -> Result<bool, ToolError> {
+    let Response::OverviewState(overview) =
+        request::send(known(socket)?, &Request::OverviewState).await?
+    else {
+        return Err(unexpected("OverviewState"));
+    };
+    Ok(overview.is_open)
+}
+
 /// The output with keyboard focus, if niri reports one.
 pub(crate) async fn focused_output(socket: &Socket) -> Result<Option<Output>, ToolError> {
     let Response::FocusedOutput(output) =

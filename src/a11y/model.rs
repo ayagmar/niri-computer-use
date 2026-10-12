@@ -286,8 +286,8 @@ pub(crate) enum Unmappable {
     /// The window's accessible frame isn't the size niri gives the window, so the
     /// toolkit's window coordinates start elsewhere.
     FrameSizeMismatch,
-    /// The element isn't showing and visible, or its floating window's workspace isn't the
-    /// one shown on its output.
+    /// The element isn't showing and visible, its floating window's workspace isn't the
+    /// one shown on its output, or niri's overview is open.
     NotShowing,
     /// The window is tiled: niri 26.04 gives only floating windows a place in their
     /// workspace's view, so where a tiled one is on screen isn't known.
@@ -304,14 +304,20 @@ pub(crate) enum Unmappable {
 /// and a place derived from where the view is heading would be wrong while the view
 /// scrolls. A floating window is placed only on the active workspace of its output
 /// (`NotShowing` otherwise, on no output too): niri reports its place on every workspace,
-/// shown or not, and the shown workspace's windows are where a hidden one's would be.
+/// shown or not, and the shown workspace's windows are where a hidden one's would be. Nor
+/// while the overview is open, which zooms the workspaces out and leaves that place as it
+/// was.
 pub(crate) fn origin(
     window: &Window,
     workspaces: &[Workspace],
     outputs: &BTreeMap<String, Output>,
+    overview_open: bool,
 ) -> Result<LayoutPt, Unmappable> {
     if window.layout.pos_in_scrolling_layout.is_some() {
         return Err(Unmappable::Tiled);
+    }
+    if overview_open {
+        return Err(Unmappable::NotShowing);
     }
     let output = window
         .workspace_id
@@ -814,9 +820,24 @@ mod tests {
             workspace(1, Some("DP-1"), true),
             workspace(2, Some("HDMI-A-1"), true),
         ];
-        let at = |id| origin(&window_on(Some(id), floating.clone()), &shown, &screens);
+        let at = |id| {
+            origin(
+                &window_on(Some(id), floating.clone()),
+                &shown,
+                &screens,
+                false,
+            )
+        };
         assert_eq!(at(1), Ok(LayoutPt { x: 20.0, y: 30.0 }));
         assert_eq!(at(2), Ok(LayoutPt { x: 980.0, y: 30.0 }));
+        // The overview zooms the workspaces out, and niri's place stays as it was.
+        let zoomed = origin(
+            &window_on(Some(1), floating.clone()),
+            &shown,
+            &screens,
+            true,
+        );
+        assert_eq!(zoomed, Err(Unmappable::NotShowing));
         // niri still reports the window's place once another workspace is shown on its
         // output, where that workspace's windows now are.
         let hidden = [
@@ -825,7 +846,7 @@ mod tests {
         ];
         let behind = window_on(Some(1), floating.clone());
         assert_eq!(
-            origin(&behind, &hidden, &screens),
+            origin(&behind, &hidden, &screens, false),
             Err(Unmappable::NotShowing)
         );
         // No workspace, an unknown one, one on no output or on an output that is off.
@@ -838,7 +859,7 @@ mod tests {
             (window_on(Some(1), floating.clone()), &shown[..], &off),
         ] {
             assert_eq!(
-                origin(&unplaced, workspaces, on),
+                origin(&unplaced, workspaces, on, false),
                 Err(Unmappable::NotShowing),
                 "{unplaced:?}"
             );
@@ -855,7 +876,7 @@ mod tests {
         let shown = [workspace(1, Some("DP-1"), true)];
         // niri 26.04 gives a tiled window no place in the view: the element is on
         // screen, so `not_showing` would send the agent looking for it.
-        let unplaced = origin(&window_on(Some(1), tiled(None)), &shown, &screens);
+        let unplaced = origin(&window_on(Some(1), tiled(None)), &shown, &screens, false);
         assert_eq!(unplaced, Err(Unmappable::Tiled));
         assert_eq!(
             place(placement(extents(40, 70, 320, 34), unplaced)),
@@ -863,7 +884,12 @@ mod tests {
         );
         // A place niri gives a tiled window isn't trusted either.
         let given = window_on(Some(1), tiled(Some((16.0, 16.0))));
-        assert_eq!(origin(&given, &shown, &screens), Err(Unmappable::Tiled));
+        assert_eq!(
+            origin(&given, &shown, &screens, false),
+            Err(Unmappable::Tiled)
+        );
+        let overview = origin(&window_on(Some(1), tiled(None)), &shown, &screens, true);
+        assert_eq!(overview, Err(Unmappable::Tiled));
         // Whatever niri says of its workspace: tiled, it wouldn't be placed if shown.
         let hidden = [workspace(1, Some("DP-1"), false)];
         let nowhere = [workspace(1, None, true)];
@@ -877,7 +903,7 @@ mod tests {
         ] {
             let window = window_on(workspace, tiled(None));
             assert_eq!(
-                origin(&window, workspaces, on),
+                origin(&window, workspaces, on, false),
                 Err(Unmappable::Tiled),
                 "{workspace:?} {workspaces:?}"
             );

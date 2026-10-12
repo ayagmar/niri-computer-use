@@ -2234,3 +2234,29 @@ async fn a_tiled_windows_listing_and_its_refs_give_the_same_reason() {
         assert_eq!(desk.fixture.clipboard.pointed(), [], "{frame}");
     }
 }
+
+// The overview zooms the workspaces out, and niri reports a floating window's place as it
+// was, so while it is open no element is placed and a ref's aim sends nothing.
+#[tokio::test]
+async fn no_element_is_aimed_at_while_the_overview_is_open() {
+    let windows = [floating_window()];
+    let mut desk = Desk::start_with("el-overview", &["/frame"], objects(), &windows).await;
+    let button = safe(&mut desk).await["element_ref"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    desk.niri.set_overview(true);
+    let shot = desk.screenshot_ref().await;
+    let aimed = json!({"screenshot_ref": shot, "element": button});
+    let refused = desk.server.call("click", aimed.clone()).await;
+    let (name, detail) = tool_error(&refused);
+    assert_eq!(name, "element_unmappable", "{refused}");
+    assert!(detail.starts_with("not_showing: "), "{detail}");
+    assert_eq!(desk.fixture.clipboard.pointed(), []);
+    let listed = safe(&mut desk).await;
+    assert_eq!(listed["unmappable"], "not_showing", "{listed}");
+    desk.niri.set_overview(false);
+    let moved = desk.server.call("pointer_move", aimed).await;
+    assert_eq!(moved["isError"], false, "{moved}");
+    assert_eq!(desk.fixture.clipboard.pointed().len(), 1);
+}

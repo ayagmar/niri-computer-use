@@ -151,17 +151,18 @@ struct Placed {
 /// niri's window `id` right now, with its place in the layout, from fresh requests. Any of
 /// them failing fails the call with niri's error.
 async fn placed(socket: &Socket, id: u64) -> Result<Option<Placed>, ToolError> {
-    let (windows, workspaces, outputs) = tokio::join!(
+    let (windows, workspaces, outputs, overview) = tokio::join!(
         niri::windows(socket),
         niri::workspaces(socket),
-        niri::outputs(socket)
+        niri::outputs(socket),
+        niri::overview_open(socket)
     );
     let (window, others): (Vec<Window>, Vec<Window>) =
         windows?.into_iter().partition(|window| window.id == id);
     let Some(window) = window.into_iter().next() else {
         return Ok(None);
     };
-    let origin = model::origin(&window, &workspaces?, &outputs?);
+    let origin = model::origin(&window, &workspaces?, &outputs?, overview?);
     Ok(Some(Placed {
         window,
         origin,
@@ -572,7 +573,7 @@ pub(crate) fn unmappable(why: Unmappable) -> ToolError {
         ),
         Unmappable::NotShowing => (
             "not_showing",
-            "the element or its window isn't showing; bring it into view and call elements again",
+            "the element or its window isn't showing, or niri's overview is open; bring it into view or close the overview, and call elements again",
         ),
         Unmappable::Tiled => (
             "tiled",
