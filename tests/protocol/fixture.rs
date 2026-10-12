@@ -343,6 +343,13 @@ pub(crate) fn signal(pid: u32, signal: rustix::process::Signal) {
     rustix::process::kill_process(pid, signal).unwrap();
 }
 
+/// The parent of process `pid`.
+pub(crate) fn parent(pid: u32) -> u32 {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+    let (_, rest) = stat.rsplit_once(") ").unwrap();
+    rest.split(' ').nth(1).unwrap().parse().unwrap()
+}
+
 /// Whether `pid` has exited: gone, or a zombie waiting to be reaped.
 pub(crate) fn exited(pid: i32) -> bool {
     std::fs::read_to_string(format!("/proc/{pid}/stat")).map_or(true, |stat| {
