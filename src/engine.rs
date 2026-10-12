@@ -310,7 +310,7 @@ impl Engine {
 
     /// Takes the lease for `session`, labelled `label`, and watches the clipboard from
     /// then on. Returns the holder and the window that had keyboard focus, which `release`
-    /// can give focus back to.
+    /// can give focus back to. A lease given up before the watch is bound fails the call.
     pub(crate) async fn acquire(
         self: &Arc<Self>,
         session: &Session,
@@ -325,9 +325,7 @@ impl Engine {
                 .and_then(|waiter| waiter.view().focused_window())
         };
         let holder = self.desk.acquire(session, label, refusal, focused).await?;
-        if let Some(lease) = self.desk.ref_lease(session) {
-            self.watch_clipboard(session, lease).await;
-        }
+        self.watch_clipboard(session).await?;
         Ok((holder, self.desk.users_window(session)))
     }
 
@@ -470,16 +468,23 @@ impl Engine {
         reader.read().await
     }
 
-    /// Watches the clipboard for `session`'s `lease` from now on, unless something already
-    /// does. The watch ends itself once the lease is gone, however it went: released, taken
-    /// back by a stop, lost, or its session ended. A later lease replaces it.
-    async fn watch_clipboard(self: &Arc<Self>, session: &Session, lease: u64) {
+    /// Watches the clipboard for the lease `session` holds from now on, unless something
+    /// already does. The watch ends itself once the lease is gone, however it went:
+    /// released, taken back by a stop, lost, or its session ended. A later lease replaces
+    /// it. Binding takes time, so the watch is kept only if `session` still holds that
+    /// lease once it is bound, checked with the watch slot locked, so another lease's watch
+    /// can't be replaced; otherwise `session` is told its lease is gone.
+    async fn watch_clipboard(self: &Arc<Self>, session: &Session) -> Result<(), ToolError> {
+        let lease = self
+            .desk
+            .ref_lease(session)
+            .ok_or_else(|| lease_gone(session))?;
         if self
             .watch()
             .as_ref()
             .is_some_and(|watch| watch.lease() == lease)
         {
-            return;
+            return Ok(());
         }
         let engine = Arc::downgrade(self);
         let owner = session.clone();
@@ -489,9 +494,16 @@ impl Engine {
                     .upgrade()
                     .is_some_and(|engine| engine.desk.ref_lease(&owner) == Some(lease))
         };
+        let still = holds.clone();
         let (socket, display) = (self.env.niri_socket.clone(), self.env.display.clone());
         let watch = clipboard::Watch::start(socket, display, lease, holds).await;
-        *self.watch() = Some(watch);
+        let mut current = self.watch();
+        if !still() {
+            return Err(lease_gone(session));
+        }
+        *current = Some(watch);
+        drop(current);
+        Ok(())
     }
 
     fn watch(&self) -> std::sync::MutexGuard<'_, Option<clipboard::Watch>> {
@@ -756,21 +768,28 @@ struct Watched {
     before: Option<Surveyed>,
 }
 
+/// Why `acquire_desktop` fails when `session`'s lease went before the clipboard watch for it
+/// was bound.
+fn lease_gone(session: &Session) -> ToolError {
+    let detail = if session.has_ended() {
+        "this session ended before acquire_desktop finished, and its lease was given up"
+    } else {
+        "the lease was given up before acquire_desktop finished: released, taken back by a stop, or its file moved; call acquire_desktop again if you still need it"
+    };
+    ToolError::new(ErrorName::LeaseRequired, detail)
+}
+
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
+    use crate::RuntimeDir;
 
     #[tokio::test]
     async fn another_session_releasing_neither_refocuses_nor_learns_the_owners_window() {
         let dir = crate::test_support::fresh_dir("engine-release");
-        let env = crate::test_support::niri_env(&dir);
-        let events = Err(ToolError::new(ErrorName::NiriUnavailable, "no niri"));
-        let absent = Presence {
-            available: false,
-            address: None,
-            reason: Some("no session bus".to_owned()),
-        };
-        let engine = Engine::new(env, events, Audit::new(None), absent);
+        let engine = without_niri(crate::test_support::niri_env(&dir));
         let owner = crate::test_support::session(1);
         engine
             .desk
@@ -790,5 +809,99 @@ mod tests {
         assert!(engine.desk.status(&owner).held_by_me);
         assert_eq!(engine.desk.users_window(&owner), Some(5));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// How the first session's lease ends while its clipboard watch is binding.
+    #[derive(Debug, Clone, Copy)]
+    enum Ending {
+        Release,
+        Disconnect,
+        Stop,
+    }
+
+    /// A watch bound after its lease ended is dropped, not kept in place of the next
+    /// lease's, and its acquisition fails.
+    #[tokio::test]
+    async fn a_watch_bound_after_its_lease_ended_leaves_the_next_leases_watch() {
+        for ending in [Ending::Release, Ending::Disconnect, Ending::Stop] {
+            late_bind(ending).await;
+        }
+    }
+
+    async fn late_bind(ending: Ending) {
+        use crate::test_support::wayland::Compositor;
+
+        let dir = crate::test_support::fresh_dir(&format!("engine-late-bind-{ending:?}"));
+        let niri = Compositor::start(&dir, include_str!("../tests/fixtures/us-de.xkb"));
+        let runtime = RuntimeDir::of(&niri.env(&dir)).unwrap();
+        runtime.create().unwrap();
+        let engine = Arc::new(without_niri(niri.env(&dir)));
+        let (first, second) = (
+            crate::test_support::session(1),
+            crate::test_support::session(2),
+        );
+        granted(&engine, &first).await.unwrap();
+        niri.hold_client().await;
+        let late = tokio::spawn({
+            let (engine, first) = (Arc::clone(&engine), first.clone());
+            async move { engine.watch_clipboard(&first).await }
+        });
+        until(|| niri.seen().holding).await;
+        end_lease(&engine, &runtime, &first, ending).await;
+        for _ in 0..500 {
+            if granted(&engine, &second).await.is_ok() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        engine.watch_clipboard(&second).await.unwrap();
+        niri.serve_held().await;
+        let refused = late.await.unwrap().unwrap_err();
+        assert_eq!(refused.name, ErrorName::LeaseRequired, "{ending:?}");
+        let read = engine.clipboard(&second).await.map(|_| ());
+        assert_eq!(read, Ok(()), "{ending:?}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// An engine for `env` with no event stream and no accessibility bus.
+    fn without_niri(env: Env) -> Engine {
+        let events = Err(ToolError::new(ErrorName::NiriUnavailable, "no niri"));
+        let absent = Presence {
+            available: false,
+            address: None,
+            reason: Some("no session bus".to_owned()),
+        };
+        Engine::new(env, events, Audit::new(None), absent)
+    }
+
+    /// The desk's lease for `session`, with nothing refused and no window focused.
+    async fn granted(engine: &Engine, session: &Session) -> Result<Holder, ToolError> {
+        let label = format!("test/{}", session.id().0);
+        let (refusal, focused) = (std::future::ready(None), std::future::ready(None));
+        engine.desk.acquire(session, &label, refusal, focused).await
+    }
+
+    /// Ends `session`'s lease as `ending` says, ready for another session to take it.
+    async fn end_lease(engine: &Engine, runtime: &RuntimeDir, session: &Session, ending: Ending) {
+        match ending {
+            Ending::Release => assert!(engine.release(session, false).await.released),
+            Ending::Disconnect => engine.close_session(session).await,
+            Ending::Stop => {
+                runtime.stop().unwrap();
+                until(|| !engine.desk.held()).await;
+                runtime.resume().unwrap();
+            }
+        }
+    }
+
+    /// Waits until `done`, for at most five seconds.
+    async fn until(done: impl Fn() -> bool) {
+        for _ in 0..500 {
+            if done() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("still waiting after five seconds");
     }
 }

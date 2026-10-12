@@ -85,6 +85,8 @@ pub(crate) struct Seen {
     pub(crate) compositor: String,
     /// The current selection's types, when something is selected.
     pub(crate) selection: Option<Vec<String>>,
+    /// Whether a display client's connection is held unanswered (`Compositor::hold_client`).
+    pub(crate) holding: bool,
 }
 
 impl Seen {
@@ -129,6 +131,10 @@ enum Command {
     CopyOnRead(Selection),
     /// Handles each virtual key press only after this long, as a niri busy elsewhere.
     SlowKeys(Duration),
+    /// Holds the next display client's connection unanswered.
+    HoldClient,
+    /// Serves the held connection, or the next one if it hasn't come yet.
+    ServeHeld,
 }
 
 /// The fake niri, served from a thread of its own until dropped.
@@ -232,6 +238,17 @@ impl Compositor {
         self.send(Command::SlowKeys(delay)).await;
     }
 
+    /// Holds the next client that connects to the display unanswered, as a niri busy with
+    /// it would, until `serve_held`. `Seen::holding` says when it has connected.
+    pub(crate) async fn hold_client(&self) {
+        self.send(Command::HoldClient).await;
+    }
+
+    /// Serves the client `hold_client` held.
+    pub(crate) async fn serve_held(&self) {
+        self.send(Command::ServeHeld).await;
+    }
+
     /// niri's event stream from the fake's socket.
     pub(crate) fn events(&self) -> crate::niri::events::EventStream {
         crate::niri::events::EventStream::spawn(self.socket.clone())
@@ -278,7 +295,7 @@ async fn serve(
         tokio::select! {
             accepted = display_listener.accept() => {
                 let stream = accepted.unwrap().0.into_std().unwrap();
-                display.handle().insert_client(stream, Arc::new(Peer)).unwrap();
+                state.admit(&display.handle(), stream);
             }
             accepted = niri_listener.accept() => {
                 let group = state.group;
@@ -467,6 +484,10 @@ struct State {
     copy_on_read: Option<Selection>,
     /// How late each virtual key press is handled.
     key_delay: Duration,
+    /// Whether the next display client is held (`Command::HoldClient`).
+    hold_next: bool,
+    /// The display client held, unanswered.
+    held: Option<std::os::unix::net::UnixStream>,
 }
 
 impl State {
@@ -479,7 +500,22 @@ impl State {
             selection: Selection::Empty,
             copy_on_read: None,
             key_delay: Duration::ZERO,
+            hold_next: false,
+            held: None,
         }
+    }
+
+    /// Serves a new display client, unless it is the one to hold.
+    fn admit(&mut self, handle: &DisplayHandle, stream: std::os::unix::net::UnixStream) {
+        if std::mem::take(&mut self.hold_next) {
+            self.held = Some(stream);
+            self.seen().holding = true;
+            return;
+        }
+        handle
+            .clone()
+            .insert_client(stream, Arc::new(Peer))
+            .unwrap();
     }
 
     fn globals(handle: &DisplayHandle) {
@@ -515,6 +551,14 @@ impl State {
             Command::Copy(selection) => self.select(handle, selection),
             Command::CopyOnRead(selection) => self.copy_on_read = Some(selection),
             Command::SlowKeys(delay) => self.key_delay = delay,
+            Command::HoldClient => self.hold_next = true,
+            Command::ServeHeld => {
+                self.hold_next = false;
+                if let Some(stream) = self.held.take() {
+                    self.seen().holding = false;
+                    self.admit(handle, stream);
+                }
+            }
         }
     }
 

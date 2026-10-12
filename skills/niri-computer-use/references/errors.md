@@ -28,7 +28,7 @@ These are the user's decisions. Don't call the refused action again and don't tr
 
 | Error | What to do |
 |---|---|
-| `lease_required` | You called an action or `clipboard_read` without the lease. Call `acquire_desktop` if the user asked you to act. |
+| `lease_required` | You called an action or `clipboard_read` without the lease, or the lease was given up while `acquire_desktop` was still finishing. Call `acquire_desktop` if the user asked you to act. |
 | `unknown_preset` | `launch` named a preset that doesn't exist; the detail lists the ones that do. If none fits and `status.unrestricted.enabled` is true, start the app with `niri_action` `Spawn` and `wait_for` its window; otherwise ask the user to add one. |
 | `ref_invalid` | The detail starts with `unknown_ref`, `expired`, `output_changed` or `out_of_bounds`. Take a new screenshot and aim again from it; for `out_of_bounds`, use a pixel inside the image. |
 | `element_stale` | The element ref's window, app or element is gone, it is now another kind of element or moved in its window, it or an element it sits in changed its name since `elements` listed it, or this lease didn't list it. A list's rows usually go stale once it scrolls or loses a record. The pointer tools don't compare the element's own name, except for a ref to a named list row itself, whose name binds its record; `activate_element` and `set_element_text` do, so a button that relabelled itself when you activated it is stale for the next activation. Call `elements` again and aim from its new list. |

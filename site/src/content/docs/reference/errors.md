@@ -71,7 +71,7 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 ### `lease_required`
 
-**Cause:** an action tool or `clipboard_read` was called without holding the lease, or the lease file was removed or replaced before or during the action, so another server may hold the lease. The server then gives its lease up, and cancels an action that was running; one whose request or call had already gone out ends `uncertain` instead, as for a stop.
+**Cause:** an action tool or `clipboard_read` was called without holding the lease, `acquire_desktop`'s lease was released, taken back by a stop or ended with its session before the call finished, or the lease file was removed or replaced before or during the action, so another server may hold the lease. The server then gives its lease up, and cancels an action that was running; one whose request or call had already gone out ends `uncertain` instead, as for a stop.
 
 **What to do:** call `acquire_desktop` first, if you asked the agent to act.
 
