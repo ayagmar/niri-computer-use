@@ -248,6 +248,13 @@ mod tests {
         sender.send(Update::Event(seq, Box::new(event))).unwrap();
     }
 
+    /// Sends `sent` after `delay`, as niri's first event since the watch started.
+    async fn later(sender: Sender, delay: Duration, sent: Event) -> Sender {
+        tokio::time::sleep(delay).await;
+        event(&sender, 1, sent);
+        sender
+    }
+
     fn app() -> Window {
         window(1, Some("app"), 1, true)
     }
@@ -388,6 +395,49 @@ mod tests {
             .and_then(|window| window.title.clone());
         assert_eq!(opened.as_deref(), Some("Save changes?"));
         drop(titles.await.unwrap());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn each_change_the_report_shows_restarts_the_quiet_and_is_in_it() {
+        let mut resized = app().layout;
+        resized.window_size = (800, 600);
+        // A resize comes with a move, which alone would change nothing shown.
+        resized.tile_pos_in_workspace_view = Some((10.0, 10.0));
+        let cases = [
+            (
+                Event::WindowLayoutsChanged {
+                    changes: vec![(1, resized)],
+                },
+                json!({"windows": [{"id": 1, "size": [800, 600]}]}),
+            ),
+            (
+                Event::WindowUrgencyChanged {
+                    id: 1,
+                    urgent: true,
+                },
+                json!({"windows": [{"id": 1, "urgent": true}]}),
+            ),
+            (
+                Event::WorkspaceActivated {
+                    id: 2,
+                    focused: true,
+                },
+                json!({"workspace": {"from": 1, "to": 2}}),
+            ),
+            (
+                Event::WindowFocusChanged { id: None },
+                json!({"focus": {"from": 1, "to": null}}),
+            ),
+        ];
+        for (sent, reported) in cases {
+            let (recorder, mut outcome, sender) = watching(vec![app()]);
+            let sends = tokio::spawn(later(sender, Duration::from_millis(200), sent));
+            let started = Instant::now();
+            let changes = recorder.finish(Wait::Quiet, &mut outcome).await;
+            assert_eq!(started.elapsed(), Duration::from_millis(200) + QUIET);
+            assert_eq!(serde_json::to_value(&changes).unwrap(), reported);
+            drop(sends.await.unwrap());
+        }
     }
 
     #[tokio::test(start_paused = true)]
