@@ -20,7 +20,7 @@ use tokio::time::Instant;
 use super::Engine;
 use super::hello::{self, Own, Refusal, Reply};
 use crate::control::runtime::{RuntimeDir, identity};
-use crate::session::{Incoming, Session, Settings};
+use crate::session::{Dir, Incoming, Session, Settings};
 use crate::status::Mode;
 use crate::{Env, cli, control, tools};
 
@@ -193,7 +193,22 @@ async fn connection(engine: Arc<Engine>, own: Arc<Own>, stream: UnixStream, busy
         .pid()
         .and_then(|pid| u32::try_from(pid).ok())
         .unwrap_or(0);
-    let session = engine.open_session(pid, Settings::new(hello.given()));
+    // The client's own directory, held from now on, wherever its path leads later.
+    let dir = match Dir::of_process(pid) {
+        Ok(dir) => dir,
+        Err(detail) => {
+            let error = Refusal::NoDirectory;
+            reply(&mut output, &Reply::Refused { error, detail })
+                .await
+                .ok();
+            return;
+        }
+    };
+    let settings = Settings {
+        dir: Some(dir),
+        ..Settings::new(hello.given())
+    };
+    let session = engine.open_session(pid, settings);
     let engine_pid = std::process::id();
     if reply(&mut output, &Reply::Engine { pid: engine_pid })
         .await

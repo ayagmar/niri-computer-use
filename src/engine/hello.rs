@@ -92,21 +92,18 @@ pub(crate) struct Hello {
     keyboard: Option<String>,
     home: Option<PathBuf>,
     path: Option<String>,
-    cwd: String,
     policy: policy::Source,
 }
 
 impl Hello {
     /// The hello of a bridge running `exe` for the niri on `niri_socket` and the display
-    /// on `wayland_socket`, for a client whose environment gave `given` and which works in
-    /// `cwd`. A policy file over `MAX_POLICY` is sent as unreadable. Fails on a value that
-    /// isn't UTF-8.
+    /// on `wayland_socket`, for a client whose environment gave `given`. A policy file over
+    /// `MAX_POLICY` is sent as unreadable. Fails on a value that isn't UTF-8.
     pub(crate) fn new(
         exe: Exe,
         niri_socket: &Path,
         wayland_socket: Option<&Path>,
         given: Given,
-        cwd: &Path,
     ) -> Result<Self, String> {
         let utf8 = |name: &str, value: Option<std::ffi::OsString>| {
             value
@@ -139,10 +136,6 @@ impl Hello {
             keyboard: utf8("NIRI_COMPUTER_USE_KEYBOARD", given.keyboard)?,
             home: given.home,
             path: utf8("PATH", given.path)?,
-            cwd: cwd
-                .to_str()
-                .ok_or("the working directory isn't UTF-8")?
-                .to_owned(),
             policy,
         })
     }
@@ -155,7 +148,6 @@ impl Hello {
             keyboard: self.keyboard.map(Into::into),
             home: self.home,
             path: self.path.map(Into::into),
-            cwd: Some(self.cwd.into()),
             policy: self.policy,
         }
     }
@@ -180,6 +172,9 @@ pub(crate) enum Refusal {
     EngineBusy,
     /// The line isn't a hello.
     BadHello,
+    /// The engine couldn't open the client's working directory, where it starts the
+    /// client's programs.
+    NoDirectory,
 }
 
 /// The display's socket with every symlink resolved, as a hello names it, so two
@@ -268,7 +263,6 @@ mod tests {
             keyboard: None,
             home: Some(PathBuf::from("/home/me")),
             path: Some("bin::/usr/bin".to_owned()),
-            cwd: "/home/me/work".to_owned(),
             policy: policy::Source::Text {
                 path: PathBuf::from("/home/me/.config/niri-computer-use/policy.toml"),
                 text: "unrestricted = true\n".to_owned(),
@@ -296,7 +290,6 @@ mod tests {
                 keyboard: None,
                 home: Some(PathBuf::from("/home/me")),
                 path: Some("bin::/usr/bin".into()),
-                cwd: Some(PathBuf::from("/home/me/work")),
                 policy: sent.policy,
             }
         );
@@ -344,15 +337,12 @@ mod tests {
             keyboard: None,
             home: None,
             path: None,
-            cwd: None,
             policy: policy::Source::Text {
                 path: PathBuf::from("/p.toml"),
                 text,
             },
         };
-        let sent = |text| {
-            Hello::new(own.exe, &own.niri_socket, None, given(text), Path::new("/")).unwrap()
-        };
+        let sent = |text| Hello::new(own.exe, &own.niri_socket, None, given(text)).unwrap();
         assert!(matches!(
             sent("#".repeat(MAX_POLICY)).given().policy,
             policy::Source::Text { .. }

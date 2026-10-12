@@ -1,11 +1,13 @@
 //! One client of the engine, and what its own environment decides for it alone.
 
 use std::ffi::OsString;
+use std::os::fd::{AsRawFd as _, OwnedFd};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
+use rustix::fs::{Mode, OFlags};
 use tokio::io::{AsyncRead, ReadBuf};
 use tokio::sync::{Semaphore, SemaphorePermit, oneshot, watch};
 
@@ -27,10 +29,6 @@ pub(crate) struct Given {
     /// `$PATH`, where the session's own programs, `grim` and `wtype`, are found. Empty
     /// isn't unset: it means the working directory.
     pub(crate) path: Option<OsString>,
-    /// The client's working directory, where `PATH`'s relative entries are, as its hello
-    /// to a shared engine gives it. `None` in a standalone server, whose programs start in
-    /// its own.
-    pub(crate) cwd: Option<PathBuf>,
     pub(crate) policy: policy::Source,
 }
 
@@ -50,7 +48,6 @@ impl Given {
             keyboard: var("NIRI_COMPUTER_USE_KEYBOARD"),
             home,
             path,
-            cwd: None,
             policy: policy::Source::read(config_dir.as_deref()),
         }
     }
@@ -69,10 +66,12 @@ pub(crate) struct Settings {
     pub(crate) keyboard: Option<OsString>,
     /// The session's home, for a `capture_dir` under `~/`.
     pub(crate) home: Option<PathBuf>,
-    /// The session's `PATH` and working directory, where `grim` and `wtype` are found for
-    /// its calls.
+    /// The session's `PATH`, where `grim` and `wtype` are found for its calls.
     pub(crate) path: Option<OsString>,
-    pub(crate) cwd: Option<PathBuf>,
+    /// A shared engine's client's working directory, where those calls start and
+    /// `PATH`'s relative entries are. `None` in a standalone server, whose calls start in
+    /// its own.
+    pub(crate) dir: Option<Dir>,
 }
 
 impl Settings {
@@ -93,7 +92,7 @@ impl Settings {
             keyboard: given.keyboard,
             home: given.home,
             path: given.path,
-            cwd: given.cwd,
+            dir: None,
         }
     }
 
@@ -101,8 +100,30 @@ impl Settings {
     pub(crate) fn place(&self) -> Place<'_> {
         Place {
             path: self.path.as_deref(),
-            cwd: self.cwd.as_deref(),
+            cwd: self.dir.as_ref().map(|dir| dir.path.as_path()),
         }
+    }
+}
+
+/// A client's working directory, held open, so that renaming or removing its path, or
+/// making another directory there, can't move the session's calls elsewhere. The bridge
+/// never changes its directory.
+#[derive(Debug)]
+pub(crate) struct Dir {
+    _open: OwnedFd,
+    /// The directory through the open descriptor: `/proc/self/fd/<fd>`, which is this
+    /// process's and, until they start their program, its children's.
+    path: PathBuf,
+}
+
+impl Dir {
+    /// The working directory of the process `pid`, as it is now.
+    pub(crate) fn of_process(pid: u32) -> Result<Self, String> {
+        let flags = OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC;
+        let open = rustix::fs::open(format!("/proc/{pid}/cwd"), flags, Mode::empty())
+            .map_err(|error| format!("open the working directory of process {pid}: {error}"))?;
+        let path = PathBuf::from(format!("/proc/self/fd/{}", open.as_raw_fd()));
+        Ok(Self { _open: open, path })
     }
 }
 
@@ -280,6 +301,17 @@ mod tests {
     use tokio::io::AsyncReadExt as _;
 
     use super::*;
+
+    /// The engine refuses a client whose directory it can't hold, rather than start its
+    /// calls in its own: process 0 is what a peer without credentials counts as.
+    #[test]
+    fn a_process_without_a_directory_has_no_dir() {
+        let error = Dir::of_process(0).unwrap_err();
+        assert!(
+            error.starts_with("open the working directory of process 0"),
+            "{error}"
+        );
+    }
 
     /// Reads all of `input` through `Incoming`. Returns the read's result and whether the
     /// client counts as gone.

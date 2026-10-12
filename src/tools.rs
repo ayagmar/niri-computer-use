@@ -2133,7 +2133,6 @@ mod tests {
             keyboard: None,
             home: None,
             path: Some(crate::test_support::NO_PROGRAMS.into()),
-            cwd: None,
             policy: Source::Missing,
         };
         Server::new(

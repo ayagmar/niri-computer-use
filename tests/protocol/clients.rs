@@ -706,31 +706,75 @@ async fn a_grim_that_cant_start_is_passed_over_for_the_next_on_path() {
     }
 }
 
-/// A client whose working directory can't go in the hello is served standalone, saying
-/// why, and its programs still start in its own directory.
-#[tokio::test]
-async fn a_client_whose_directory_cant_be_sent_is_served_standalone() {
-    use std::os::unix::ffi::OsStrExt as _;
-    let mut fixture = shared("cwd-not-utf8");
-    let mut desktop = Desktop::new(&fixture);
-    std::fs::write(fixture.path("small.jpg"), jpeg(1280, 720, b"small")).unwrap();
-    let cwd = fixture
-        .path("")
-        .join(std::ffi::OsStr::from_bytes(b"not-utf8-\xff"));
-    fixture.program_at(&cwd.join("bin/grim"), r#"cat "$DIR/small.jpg""#);
-    fixture.set("PATH", "bin");
-    fixture.work_in(cwd);
-    let mut client = Server::start(&fixture).await;
-    let _stream = desktop.stream().await;
-    let engine = client.structured("status").await["engine"].clone();
-    assert_eq!(engine["mode"], "standalone", "{engine}");
-    let fallback = engine["fallback"].as_str().unwrap();
-    assert!(
-        fallback.contains("working directory isn't UTF-8"),
-        "{fallback}"
-    );
+/// Starts a client in `work` with `bin` and then `extra` on its `PATH`. The fixture's own
+/// `bin`, where Noctalia reports the session unlocked for the lease, comes last.
+async fn client_in(fixture: &mut Fixture, work: &str, extra: &str) -> Server {
+    let mut path = OsString::from("bin:");
+    path.push(fixture.path(extra));
+    path.push(":");
+    path.push(fixture.path("bin"));
+    fixture.set("PATH", path);
+    fixture.work_in(fixture.path(work));
+    Server::start(fixture).await
+}
+
+/// Takes a screenshot and sends one key with `client`, and returns `status.binaries`.
+async fn shoot_and_type(client: &mut Server) -> serde_json::Value {
     let taken = client
         .call("screenshot", json!({"target": "focused_output"}))
         .await;
     assert_eq!(taken["structuredContent"]["width"], 1280, "{taken}");
+    client.structured("acquire_desktop").await;
+    let key = json!({"keys": ["Down"], "expect": "none"});
+    let pressed = client.call("key", key).await;
+    assert_eq!(
+        pressed["structuredContent"]["observed"], "sent",
+        "{pressed}"
+    );
+    client
+        .structured_with("release_desktop", json!({"restore_focus": false}))
+        .await;
+    client.structured("status").await["binaries"].clone()
+}
+
+/// A client's calls stay in the directory it works in after that directory is renamed and
+/// another is made under its old name, as a standalone server's do, standalone or shared.
+#[tokio::test]
+async fn a_renamed_working_directory_keeps_its_clients_programs() {
+    let mut fixture = Fixture::new("cwd-renamed");
+    let mut desktop = Desktop::new(&fixture);
+    std::fs::write(fixture.path("small.jpg"), jpeg(1280, 720, b"small")).unwrap();
+    fixture.program_at(&fixture.path("work/bin/grim"), r#"cat "$DIR/small.jpg""#);
+    let wtype = r#"cat > /dev/null; echo >> "$DIR/wtype-original""#;
+    fixture.program_at(&fixture.path("work/bin/wtype"), wtype);
+    let mut client = client_in(&mut fixture, "work", "none").await;
+    std::fs::rename(fixture.path("work"), fixture.path("moved")).unwrap();
+    let replacement = "echo REPLACEMENT >&2; exit 1";
+    fixture.program_at(&fixture.path("work/bin/grim"), replacement);
+    let _stream = desktop.stream().await;
+    let binaries = shoot_and_type(&mut client).await;
+    assert_eq!(binaries["wtype"], true, "{binaries}");
+    let calls = std::fs::read_to_string(fixture.path("wtype-original")).unwrap();
+    assert_eq!(calls.lines().count(), 1);
+}
+
+/// A client whose working directory is removed still runs its programs from the rest of
+/// its `PATH`, standalone or shared.
+#[tokio::test]
+async fn a_removed_working_directory_leaves_the_rest_of_the_path() {
+    let mut fixture = Fixture::new("cwd-removed");
+    let mut desktop = Desktop::new(&fixture);
+    std::fs::write(fixture.path("small.jpg"), jpeg(1280, 720, b"small")).unwrap();
+    fixture.program_at(&fixture.path("tools/grim"), r#"cat "$DIR/small.jpg""#);
+    let wtype = r#"cat > /dev/null; echo >> "$DIR/wtype-tools""#;
+    fixture.program_at(&fixture.path("tools/wtype"), wtype);
+    std::fs::create_dir(fixture.path("gone")).unwrap();
+    let mut client = client_in(&mut fixture, "gone", "tools").await;
+    std::fs::remove_dir(fixture.path("gone")).unwrap();
+    let _stream = desktop.stream().await;
+    let binaries = shoot_and_type(&mut client).await;
+    assert_eq!(binaries["grim"], true, "{binaries}");
+    assert_eq!(binaries["wtype"], true, "{binaries}");
+    let calls = std::fs::read_to_string(fixture.path("wtype-tools")).unwrap();
+    assert_eq!(calls.lines().count(), 1);
 }
