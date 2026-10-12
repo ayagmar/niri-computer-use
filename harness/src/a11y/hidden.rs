@@ -1,44 +1,76 @@
-//! What GTK 4 puts on the accessibility bus for an entry that only hides its text
-//! (`Gtk.Entry(visibility=False)`, free-form input purpose), beside the plain entry: its
-//! role, states, interfaces, attributes and `Text` contents. `secret_field` refuses the
-//! role `password_text`; this records whether anything else could tell such an entry
-//! apart. The fixture's text is synthetic, so reading it is safe.
+//! What a toolkit puts on the accessibility bus for an entry that only hides its text,
+//! beside its plain entry and, for reference, its password entry: GTK 4's
+//! `Gtk.Entry(visibility=False)` with a free-form input purpose and Qt Quick's `TextField`
+//! in `NoEcho` mode. `secret_field` refuses the role `password_text`. Qt gives its hidden
+//! entry that role, so it is refused like a password field; GTK 4 gives its hidden entry
+//! the role `text`, and this requires that nothing but the text tells it apart from the
+//! plain entry, as the docs say. The fixtures' text is synthetic, so reading it is safe.
 
 use serde_json::{Value, json};
 
-use super::{Bus, ROOT, busctl};
+use super::{Bus, ROOT, Toolkit, busctl};
 use crate::failure::{Failure, Result};
-use crate::mcp::field;
 use crate::session::Session;
 
 pub(super) const ACCESSIBLE: &str = "org.a11y.atspi.Accessible";
 const TEXT_INTERFACE: &str = "org.a11y.atspi.Text";
-/// AT-SPI's role `text`.
-const TEXT: u64 = 61;
-/// How deep the walk goes; the fixture's entries sit a few levels down.
+const ACTION_INTERFACE: &str = "org.a11y.atspi.Action";
+/// AT-SPI's roles `password_text` and `text`.
+const ENTRIES: [u64; 2] = [40, 61];
+/// How deep the walk goes; the fixtures' entries sit a few levels down.
 const DEPTH: usize = 8;
+/// What the hidden entry and the plain one must expose alike: all but the text.
+const ALIKE: [&str; 6] = [
+    "/role",
+    "/states",
+    "/interfaces",
+    "/attributes",
+    "/text_attributes",
+    "/actions",
+];
 
-/// Records both entries of the GTK 4 fixture `pid` and requires the hidden one to have
-/// the plain one's role: the server can't tell it apart by role, as its docs say.
-pub(crate) fn record(session: &mut Session<'_>, bus: &Bus, pid: i32) -> Result<()> {
+/// Records the hidden, plain and password entries of `toolkit`'s fixture `pid`, and
+/// requires Qt's hidden entry to be a password field and GTK 4's to expose what the plain
+/// one does but for its text: the server can't tell it apart, as its docs say.
+pub(crate) fn record(
+    session: &mut Session<'_>,
+    bus: &Bus,
+    pid: i32,
+    toolkit: Toolkit,
+) -> Result<()> {
     let app = app(session, bus, pid)?;
     let mut entries = Vec::new();
     walk(session, bus, (&app, ROOT), DEPTH, &mut entries)?;
-    let find = |name: &str| {
+    let find = |name: &str, role: u64| {
         entries
             .iter()
-            .find(|(found, _)| found == name)
-            .map(|(_, path)| path.clone())
+            .find(|(found, found_role, _)| found == name && *found_role == role)
+            .map(|(_, _, path)| path.clone())
             .ok_or_else(|| Failure::new(format!("M9b: no {name} among {entries:?}")))
     };
-    let hidden = describe(session, bus, &app, &find("Hidden entry")?);
-    let plain = describe(session, bus, &app, &find("Plain entry")?);
+    let [password_text, text] = ENTRIES;
+    let (hidden_role, password_name) = if toolkit == Toolkit::Qt {
+        // Qt marks a `NoEcho` field as a password field and drops a password field's name.
+        (password_text, "")
+    } else {
+        (text, "Password entry")
+    };
+    let hidden = describe(session, bus, &app, &find("Hidden entry", hidden_role)?);
+    let plain = describe(session, bus, &app, &find("Plain entry", text)?);
+    let password = describe(session, bus, &app, &find(password_name, password_text)?);
     session.log(&format!(
-        "M9b: GTK 4 hidden entry {hidden}; plain entry {plain}"
+        "M9b: {toolkit:?} hidden entry {hidden}; plain entry {plain}; password entry {password}"
     ))?;
-    if field(&hidden, "/role") != field(&plain, "/role") {
+    if hidden_role == password_text {
+        return Ok(());
+    }
+    let differs: Vec<&str> = ALIKE
+        .into_iter()
+        .filter(|at| hidden.pointer(at) != plain.pointer(at))
+        .collect();
+    if !differs.is_empty() {
         return Err(Failure::new(format!(
-            "M9b: the hidden entry's role differs from the plain entry's now: {hidden}; update the secret_field docs"
+            "M9b: the {toolkit:?} hidden entry differs from the plain entry in {differs:?} now: {hidden}; update the secret_field docs"
         )));
     }
     Ok(())
@@ -54,18 +86,23 @@ pub(super) fn app(session: &Session<'_>, bus: &Bus, pid: i32) -> Result<String> 
     Err(Failure::new(format!("M9b: no application with pid {pid}")))
 }
 
-/// Collects the name and path of every object with the role `text` under `at`.
+/// Collects the name, role and path of every entry, with the role `text` or
+/// `password_text`, under `at`.
 fn walk(
     session: &Session<'_>,
     bus: &Bus,
     at: (&str, &str),
     depth: usize,
-    found: &mut Vec<(String, String)>,
+    found: &mut Vec<(String, u64, String)>,
 ) -> Result<()> {
     let (app, path) = at;
     let role = call(session, bus, app, path, &[ACCESSIBLE, "GetRole"])?;
-    if role.pointer("/data/0").and_then(Value::as_u64) == Some(TEXT) {
-        found.push((name(session, bus, app, path)?, path.to_owned()));
+    if let Some(role) = role
+        .pointer("/data/0")
+        .and_then(Value::as_u64)
+        .filter(|role| ENTRIES.contains(role))
+    {
+        found.push((name(session, bus, app, path)?, role, path.to_owned()));
     }
     if depth == 0 {
         return Ok(());
@@ -124,6 +161,7 @@ fn describe(session: &Session<'_>, bus: &Bus, app: &str, path: &str) -> Value {
         // busctl would take -1, "to the end", for an option.
         "text": read(&[TEXT_INTERFACE, "GetText", "ii", "0", "100"]),
         "text_attributes": read(&[TEXT_INTERFACE, "GetDefaultAttributes"]),
+        "actions": read(&[ACTION_INTERFACE, "GetActions"]),
     })
 }
 

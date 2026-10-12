@@ -3,9 +3,11 @@
 // counts its activations in `TEST_DIR/qt-count`, a `Dismiss` button that closes the
 // window, the `Plain entry` text field, which reports its text in `qt-entry-text`, and
 // the `Password entry` field, which hides its text and counts its changes in
-// `qt-password-changes` without the text. The files are written with an XMLHttpRequest
-// PUT to a file URL, which Qt allows only with QML_XHR_ALLOW_FILE_WRITE=1, set for this
-// process alone.
+// `qt-password-changes` without the text, and the `Hidden entry`, which shows none of its
+// synthetic text, as a field in `NoEcho` mode does, and counts its changes in
+// `qt-hidden-changes`. Qt drops the password field's accessible name. The files are written with an
+// XMLHttpRequest PUT to a file URL, which Qt allows only with QML_XHR_ALLOW_FILE_WRITE=1,
+// set for this process alone.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -17,6 +19,7 @@ ApplicationWindow {
     title: "qt fixture"
     property int clicks: 0
     property int passwordChanges: 0
+    property int hiddenChanges: 0
     property string root: Qt.application.arguments[Qt.application.arguments.length - 1]
 
     function report(name, text) {
@@ -55,12 +58,22 @@ ApplicationWindow {
                 report("qt-password-changes", String(passwordChanges))
             }
         }
+        TextField {
+            Accessible.name: "Hidden entry"
+            echoMode: TextInput.NoEcho
+            text: "ncu hidden"
+            onTextChanged: {
+                hiddenChanges += 1
+                report("qt-hidden-changes", String(hiddenChanges))
+            }
+        }
     }
 
     Component.onCompleted: {
         report("qt-count", "0")
         report("qt-entry-text", "")
         report("qt-password-changes", "0")
+        report("qt-hidden-changes", "0")
     }
     Timer { interval: 240000; running: true; onTriggered: Qt.quit() }
 }

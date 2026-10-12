@@ -32,8 +32,8 @@ struct Files {
     button: &'static str,
     count: &'static str,
     entry: &'static str,
-    /// The password fields, by a part of their name where there are several, and the
-    /// files that count their changes.
+    /// The password fields, by a part of their name, or none for the one with no name, and
+    /// the files that count their changes.
     passwords: &'static [(Option<&'static str>, &'static str)],
 }
 
@@ -52,14 +52,18 @@ const fn files(toolkit: Toolkit) -> Files {
             button: "Gtk3",
             count: "gtk3-count",
             entry: "gtk3-entry-text",
-            passwords: &[(None, "gtk3-password-changes")],
+            passwords: &[(Some("Password entry"), "gtk3-password-changes")],
         },
         Toolkit::Qt => Files {
             button: "Qt",
             count: "qt-count",
             entry: "qt-entry-text",
-            // Qt gives its password field no accessible name.
-            passwords: &[(None, "qt-password-changes")],
+            // Qt drops its password field's accessible name, and marks a field that hides
+            // its text in `NoEcho` mode as a password field too.
+            passwords: &[
+                (None, "qt-password-changes"),
+                (Some("Hidden entry"), "qt-hidden-changes"),
+            ],
         },
     }
 }
@@ -91,8 +95,8 @@ impl Checks<'_, '_> {
         self.counted(files.count, 0)?;
         self.call("focus", json!({"window_id": window}))?;
         self.describe(toolkit, window)?;
-        if toolkit == Toolkit::Gtk4 {
-            crate::a11y::hidden::record(self.session, bus, fixture.pid())?;
+        if toolkit != Toolkit::Gtk3 {
+            crate::a11y::hidden::record(self.session, bus, fixture.pid(), toolkit)?;
         }
         let button = self.activated(toolkit, window, &files)?;
         self.set_text(toolkit, window, files.entry)?;
@@ -260,7 +264,10 @@ impl Checks<'_, '_> {
 
     /// A password field is refused, and the fixture saw no change.
     fn secret(&mut self, window: u64, name: Option<&str>, changes: &str) -> Result<()> {
-        let field_ref = self.named(window, Some("password_text"), name.unwrap_or(""))?;
+        let field_ref = match name {
+            Some(name) => self.named(window, Some("password_text"), name)?,
+            None => self.unnamed(window, "password_text")?,
+        };
         let refused = self.refused(
             "set_element_text",
             json!({"element": field_ref, "text": "ncu m9b secret", "expect": {"window_id": window}}),
@@ -608,6 +615,24 @@ impl Checks<'_, '_> {
         let [element] = found.as_slice() else {
             return Err(Failure::new(format!(
                 "M9b: expected one element named {name:?} in window {window}; saw {} of them",
+                found.len()
+            )));
+        };
+        element_ref(element)
+    }
+
+    /// The one element of `role` with no name.
+    fn unnamed(&mut self, window: u64, role: &str) -> Result<String> {
+        let listing = self.list(window, Some(role), None)?;
+        let found: Vec<&Value> = field(&listing, "/elements")
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|element| field(element, "/name") == "")
+            .collect();
+        let [element] = found.as_slice() else {
+            return Err(Failure::new(format!(
+                "M9b: expected one {role} with no name in window {window}; saw {} of them",
                 found.len()
             )));
         };
