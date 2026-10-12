@@ -60,19 +60,40 @@ enum Aim {
     Window(u64),
 }
 
-/// The window an action acts on and changes in a way niri reports. Screenshots, casts and
-/// the opacity rule name a window but change nothing niri reports about it.
+/// How an action names the window it acts on.
+#[derive(Debug, PartialEq, Eq)]
+enum Field<'a> {
+    /// It acts on no one window, or on the focused one without a field to name it.
+    None,
+    /// It must name one.
+    Window(u64),
+    /// It may name one, and acts on the focused one when it doesn't. Whether niri reports
+    /// what it changes there: screenshots, casts and the opacity rule change nothing it
+    /// reports.
+    Optional {
+        id: &'a mut Option<u64>,
+        reported: bool,
+    },
+}
+
+/// Where `action` names its window.
 #[expect(
     clippy::too_many_lines,
     reason = "one exhaustive match over niri's actions without a wildcard arm, so an action a \
               new niri-ipc adds must be placed here"
 )]
-const fn aim(action: &Action) -> Aim {
-    let id = match action {
+const fn field(action: &mut Action) -> Field<'_> {
+    match action {
         Action::FocusWindow { id }
         | Action::ToggleWindowUrgent { id }
         | Action::SetWindowUrgent { id }
-        | Action::UnsetWindowUrgent { id } => Some(*id),
+        | Action::UnsetWindowUrgent { id } => Field::Window(*id),
+        Action::ScreenshotWindow { id, .. }
+        | Action::ToggleWindowRuleOpacity { id }
+        | Action::SetDynamicCastWindow { id } => Field::Optional {
+            id,
+            reported: false,
+        },
         Action::CloseWindow { id }
         | Action::FullscreenWindow { id }
         | Action::ToggleWindowedFullscreen { id }
@@ -92,7 +113,9 @@ const fn aim(action: &Action) -> Aim {
         | Action::SetWindowWidth { id, .. }
         | Action::SetWindowHeight { id, .. }
         | Action::MoveFloatingWindow { id, .. }
-        | Action::MoveWindowToWorkspace { window_id: id, .. } => *id,
+        | Action::MoveWindowToWorkspace { window_id: id, .. } => {
+            Field::Optional { id, reported: true }
+        }
         Action::Quit { .. }
         | Action::PowerOffMonitors { .. }
         | Action::PowerOnMonitors { .. }
@@ -101,7 +124,6 @@ const fn aim(action: &Action) -> Aim {
         | Action::DoScreenTransition { .. }
         | Action::Screenshot { .. }
         | Action::ScreenshotScreen { .. }
-        | Action::ScreenshotWindow { .. }
         | Action::ToggleKeyboardShortcutsInhibit { .. }
         | Action::FocusWindowInColumn { .. }
         | Action::FocusWindowPrevious { .. }
@@ -201,47 +223,65 @@ const fn aim(action: &Action) -> Aim {
         | Action::FocusFloating { .. }
         | Action::FocusTiling { .. }
         | Action::SwitchFocusBetweenFloatingAndTiling { .. }
-        | Action::ToggleWindowRuleOpacity { .. }
-        | Action::SetDynamicCastWindow { .. }
         | Action::SetDynamicCastMonitor { .. }
         | Action::ClearDynamicCastTarget { .. }
         | Action::StopCast { .. }
         | Action::ToggleOverview { .. }
         | Action::OpenOverview { .. }
         | Action::CloseOverview { .. }
-        | Action::LoadConfigFile { .. } => return Aim::None,
-    };
-    match id {
-        Some(id) => Aim::Window(id),
-        None => Aim::Focused,
+        | Action::LoadConfigFile { .. } => Field::None,
     }
+}
+
+/// The window an action acts on and changes in a way niri reports.
+const fn aim(action: &mut Action) -> Aim {
+    match field(action) {
+        Field::None
+        | Field::Optional {
+            reported: false, ..
+        } => Aim::None,
+        Field::Window(id) => Aim::Window(id),
+        Field::Optional { id: Some(id), .. } => Aim::Window(*id),
+        Field::Optional { id: None, .. } => Aim::Focused,
+    }
+}
+
+/// Names `focused`, the window focused at the check, in an action that may name a window
+/// and names none, so focus moving before niri handles it can't redirect it. With no
+/// window focused, such an action is refused.
+fn pin(action: &mut Action, focused: Option<u64>) -> Result<(), CallError> {
+    let Field::Optional { id: id @ None, .. } = field(action) else {
+        return Ok(());
+    };
+    *id = Some(focused.ok_or_else(|| {
+        CallError::InvalidArguments(
+            "no window has focus; pass the id of the window to act on".to_owned(),
+        )
+    })?);
+    Ok(())
 }
 
 /// Sends `action`, then, for an action about one window, reports that window as niri
 /// shows it once it changed, or after a second: `changed`, `unchanged` or `closed`, with
-/// the window's state. Any other action is `sent`. `CloseWindow` on a window of an app on
-/// the deny list is refused, and goes out naming the window that was checked, so focus
-/// moving meanwhile can't redirect it.
+/// the window's state. Any other action is `sent`. An action that may name a window and
+/// names none goes out naming the window focused at the check, so focus moving meanwhile
+/// can't redirect it. `CloseWindow` on a window of an app on the deny list is refused.
 pub(crate) async fn run(
     niri: Niri<'_>,
     policy: &Loaded,
     mut action: Action,
 ) -> Result<Outcome, CallError> {
     let mut waiter = niri::waiter(niri.events).await?;
-    let target = match aim(&action) {
+    let focused = waiter.view().focused_window();
+    let target = match aim(&mut action) {
         Aim::None => None,
-        Aim::Focused => waiter.view().focused_window(),
+        Aim::Focused => focused,
         Aim::Window(id) if waiter.view().windows().contains_key(&id) => Some(id),
         Aim::Window(id) => return Err(no_window(id)),
     };
-    if let Action::CloseWindow { .. } = action {
-        let id = target.ok_or_else(|| {
-            CallError::InvalidArguments(
-                "no window has focus; pass the id of the window to close".to_owned(),
-            )
-        })?;
+    pin(&mut action, focused)?;
+    if let Action::CloseWindow { id: Some(id) } = action {
         refuse_close(policy, waiter.view(), id)?;
-        action = Action::CloseWindow { id: Some(id) };
     }
     let before = target.and_then(|id| state(waiter.view(), id));
     if let Some(lost) = send(niri, action).await? {
@@ -289,30 +329,64 @@ mod tests {
     use super::*;
 
     #[test]
+    fn an_action_that_names_no_window_is_pinned_to_the_focused_one() {
+        let json = |action: &Action| serde_json::to_value(action).unwrap();
+        let pinned =
+            |mut action: Action, focused| pin(&mut action, focused).map(|()| json(&action));
+        assert_eq!(
+            pinned(Action::FullscreenWindow { id: None }, Some(7)),
+            Ok(json(&Action::FullscreenWindow { id: Some(7) }))
+        );
+        // Screenshots change nothing niri reports, but act on a window all the same.
+        let screenshot = |id| Action::ScreenshotWindow {
+            id,
+            write_to_disk: false,
+            show_pointer: false,
+            path: None,
+        };
+        assert_eq!(
+            pinned(screenshot(None), Some(7)),
+            Ok(json(&screenshot(Some(7))))
+        );
+        assert_eq!(
+            pinned(Action::CenterWindow { id: Some(3) }, Some(7)),
+            Ok(json(&Action::CenterWindow { id: Some(3) }))
+        );
+        assert_eq!(
+            pinned(Action::MaximizeColumn {}, None),
+            Ok(json(&Action::MaximizeColumn {}))
+        );
+        assert!(matches!(
+            pinned(Action::FullscreenWindow { id: None }, None),
+            Err(CallError::InvalidArguments(_))
+        ));
+    }
+
+    #[test]
     fn an_action_is_about_the_window_it_names_or_the_focused_one() {
         assert_eq!(
-            aim(&Action::FullscreenWindow { id: Some(12) }),
+            aim(&mut Action::FullscreenWindow { id: Some(12) }),
             Aim::Window(12)
         );
         assert_eq!(
-            aim(&Action::SetWindowWidth {
+            aim(&mut Action::SetWindowWidth {
                 id: None,
                 change: SizeChange::SetFixed(1600)
             }),
             Aim::Focused
         );
         assert_eq!(
-            aim(&Action::MoveWindowToWorkspace {
+            aim(&mut Action::MoveWindowToWorkspace {
                 window_id: Some(4),
                 reference: WorkspaceReferenceArg::Index(2),
                 focus: false
             }),
             Aim::Window(4)
         );
-        assert_eq!(aim(&Action::FocusWindow { id: 3 }), Aim::Window(3));
-        assert_eq!(aim(&Action::MaximizeColumn {}), Aim::None);
+        assert_eq!(aim(&mut Action::FocusWindow { id: 3 }), Aim::Window(3));
+        assert_eq!(aim(&mut Action::MaximizeColumn {}), Aim::None);
         assert_eq!(
-            aim(&Action::ScreenshotWindow {
+            aim(&mut Action::ScreenshotWindow {
                 id: Some(3),
                 write_to_disk: false,
                 show_pointer: false,

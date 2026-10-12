@@ -928,7 +928,7 @@ async fn a_focused_close_names_the_window_it_checked() {
     let unfocused = desk.server.call("niri_action", close_focused).await;
     assert_eq!(
         mistake(&unfocused),
-        "invalid arguments: no window has focus; pass the id of the window to close"
+        "invalid arguments: no window has focus; pass the id of the window to act on"
     );
     assert!(!desk.niri.sent_action());
 
@@ -2155,6 +2155,38 @@ async fn a_client_that_goes_mid_key_leaves_no_marker_behind() {
     } else {
         assert!(!marker.exists());
     }
+}
+
+/// An action that names no window goes out naming the one focused at the check, so focus
+/// moving before niri handles it can't make it act on another window.
+#[tokio::test]
+async fn niri_action_names_the_window_focused_at_the_check() {
+    let mut desk = Desk::start("act-niri-action-pinned", "").await;
+    let fullscreen = json!({"action": {"FullscreenWindow": {"id": null}}});
+    desk.act("niri_action", fullscreen, |stream, action| {
+        assert!(
+            matches!(action, Action::FullscreenWindow { id: Some(1) }),
+            "{action:?}"
+        );
+        stream.send(&json!({"WindowFocusChanged": {"id": 2}}));
+    })
+    .await;
+    let moved = json!({"action": {"MoveWindowToWorkspace": {
+        "window_id": null, "reference": {"Index": 2}, "focus": false
+    }}});
+    desk.act("niri_action", moved, |_, action| {
+        assert!(
+            matches!(
+                action,
+                Action::MoveWindowToWorkspace {
+                    window_id: Some(2),
+                    ..
+                }
+            ),
+            "{action:?}"
+        );
+    })
+    .await;
 }
 
 #[tokio::test]
