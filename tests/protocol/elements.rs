@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use crate::atspi::{self, Bus, LIST_ITEM, Mock, Object, PANEL, PASSWORD_TEXT, TEXT};
+use crate::atspi::{self, Bus, LIST_ITEM, Mock, Object, PANEL, PASSWORD_TEXT, SHOWING, TEXT};
 use crate::client::{Server, mistake, tool_error};
 use crate::clipboard::Pointed;
 use crate::fixture::{Fixture, jpeg};
@@ -2183,5 +2183,54 @@ async fn a_window_on_no_output_says_the_same_in_the_listing_and_for_its_ref() {
         assert_eq!(error, "element_unmappable", "{moved}");
         assert!(detail.starts_with(&format!("{reason}: ")), "{detail}");
         assert_eq!(desk.fixture.clipboard.pointed(), [], "{reason}");
+    }
+}
+
+// In a tiled window, an element that floating wouldn't fix keeps its own reason, and the
+// listing and the ref's aim agree: a hidden element is `not_showing`, one with no area
+// `empty`, any in a frame of another size `frame_size_mismatch`, and only the rest `tiled`.
+#[tokio::test]
+async fn a_tiled_windows_listing_and_its_refs_give_the_same_reason() {
+    for (frame, safe) in [(800, "tiled"), (700, "frame_size_mismatch")] {
+        let mut objects = objects();
+        objects[0] = (
+            "/frame",
+            Object::frame("Mock", (frame, 600), &["/panel", "/faded", "/flat"]),
+        );
+        let faded = Object {
+            states: SHOWING & !(1 << 30),
+            ..Object::button("Faded", &["click"])
+        };
+        let flat = Object {
+            extents: Some((10, 10, 0, 30)),
+            ..Object::button("Flat", &["click"])
+        };
+        objects.extend([("/faded", faded), ("/flat", flat)]);
+        let windows = [app_window(WINDOW, true)];
+        let test = format!("el-tiled-reasons-{frame}");
+        let mut desk = Desk::start_with(&test, &["/frame"], objects, &windows).await;
+        let listing = desk
+            .server
+            .structured_with("elements", json!({"window_id": WINDOW}))
+            .await;
+        let shot = desk.screenshot_ref().await;
+        for (name, reason) in [("Safe", safe), ("Faded", "not_showing"), ("Flat", "empty")] {
+            let listed = listing["elements"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|element| element["name"] == name)
+                .unwrap_or_else(|| panic!("no {name} in {listing}"));
+            assert_eq!(listed["unmappable"], reason, "{frame}: {listed}");
+            let aimed = json!({"screenshot_ref": shot, "element": listed["element_ref"]});
+            let moved = desk.server.call("pointer_move", aimed).await;
+            let (error, detail) = tool_error(&moved);
+            assert_eq!(error, "element_unmappable", "{frame} {name}: {moved}");
+            assert!(
+                detail.starts_with(&format!("{reason}: ")),
+                "{frame} {name}: {detail}"
+            );
+        }
+        assert_eq!(desk.fixture.clipboard.pointed(), [], "{frame}");
     }
 }

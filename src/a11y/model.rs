@@ -884,6 +884,53 @@ mod tests {
         }
     }
 
+    // Floating a tiled window fixes only `tiled`, so whatever else keeps an element from a
+    // box is reported first: a hidden element, then one with no area, then a frame that
+    // doesn't fit. A ref aimed checks the same placement as the listing.
+    #[test]
+    fn a_tiled_windows_element_says_what_floating_would_not_fix_first() {
+        let showing = States(1 << 25);
+        let visible = States(1 << 30);
+        let fine = extents(40, 70, 320, 34);
+        let cases = [
+            (SHOWN, fine, true, Unmappable::Tiled),
+            (showing, fine, true, Unmappable::NotShowing),
+            (visible, fine, true, Unmappable::NotShowing),
+            (States::default(), fine, true, Unmappable::NotShowing),
+            (SHOWN, extents(40, 70, 0, 34), true, Unmappable::Empty),
+            (SHOWN, extents(40, 70, 320, -1), true, Unmappable::Empty),
+            (SHOWN, fine, false, Unmappable::FrameSizeMismatch),
+            (showing, extents(0, 0, 0, 0), false, Unmappable::NotShowing),
+            (SHOWN, extents(0, 0, 0, 0), false, Unmappable::Empty),
+        ];
+        let kept = Kept {
+            role: 43,
+            window: 1,
+            pid: 4711,
+            actions: Vec::new(),
+            lineage: Vec::new(),
+            row: Row::Lineage,
+        };
+        for (states, extents, frame_fits, reason) in cases {
+            let placement = Placement {
+                states,
+                extents,
+                frame_fits,
+                origin: Err(Unmappable::Tiled),
+            };
+            assert_eq!(place(placement), Err(reason), "{placement:?}");
+            let fresh = Fresh {
+                role: 43,
+                placement,
+            };
+            assert_eq!(
+                recheck(&kept, fresh),
+                Err(Refused::Unmappable(reason)),
+                "{placement:?}"
+            );
+        }
+    }
+
     #[test]
     fn picks_the_frame_that_is_the_window() {
         let frame = |width, height, name| Frame {
