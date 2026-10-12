@@ -537,7 +537,7 @@ async fn launch_spawns_the_presets_argv_and_counts_new_windows() {
         [
             json!(["launch", {"preset": "foot", "reuse": false}, true, "one", null]),
             json!(["launch", {"preset": "foot", "reuse": false}, true, "ambiguous", null]),
-            json!(["launch", {"preset": "sh", "reuse": false}, null, null, "unknown_preset"]),
+            json!(["launch", {"preset": {"category": "unknown_preset", "bytes": 2}, "reuse": false}, null, null, "unknown_preset"]),
         ]
     );
 }
@@ -996,7 +996,7 @@ async fn pointer_tools_check_the_ref_the_outputs_and_their_arguments_first() {
     assert_eq!(
         desk.audited(),
         [
-            json!(["pointer_move", at("shot-9", 10), null, null, "ref_invalid"]),
+            json!(["pointer_move", {"screenshot_ref": {"category": "invalid_ref", "bytes": 6}, "x": 10, "y": 10}, null, null, "ref_invalid"]),
             json!(["pointer_move", at(&id, 1280), null, null, "ref_invalid"]),
             json!(["click", clicked(4), null, null, "invalid_arguments"]),
             json!(["click", clicked(1), null, null, "upstream_error"]),
@@ -1053,7 +1053,7 @@ async fn a_point_is_a_pixel_or_an_element_ref_of_this_lease() {
         logged.last(),
         Some(&json!([
             "pointer_move",
-            unknown,
+            {"screenshot_ref": id, "element": {"category": "invalid_ref", "bytes": 6}},
             null,
             null,
             "element_stale"
@@ -1114,9 +1114,9 @@ async fn keyboard_tools_check_their_text_focus_and_app_before_typing() {
         desk.audited(),
         [
             json!(["type_text", {"text_len": 1001, "expect": "none"}, null, null, "text_too_long"]),
-            json!(["key", {"keys": ["hyper+a"], "expect": "none"}, null, null, "invalid_arguments"]),
+            json!(["key", {"keys": {"category": "invalid_keys", "count": 1}, "expect": "none"}, null, null, "invalid_arguments"]),
             json!(["key", {"keys": ["ctrl+s"], "expect": {"window_id": 2}}, null, null, "focus_mismatch"]),
-            json!(["type_text", {"text_len": 6, "expect": {"app_id": "b"}}, null, null, "app_denied"]),
+            json!(["type_text", {"text_len": 6, "expect": {"app_id_len": 1, "matched": null}}, null, null, "app_denied"]),
         ]
     );
 }
@@ -1169,8 +1169,8 @@ async fn a_paste_checks_its_text_focus_app_and_clipboard_before_the_key() {
         [
             json!(["type_text", {"text_len": 1024 * 1024 + 1, "via": "paste", "paste_keys": "ctrl+v", "expect": "none"}, null, null, "text_too_long"]),
             json!(["type_text", {"text_len": 1, "via": "paste", "paste_keys": "ctrl+v", "expect": {"window_id": 2}}, null, null, "focus_mismatch"]),
-            json!(["type_text", {"text_len": 12, "via": "paste", "paste_keys": "ctrl+v", "expect": {"app_id": "a"}}, null, null, "upstream_error"]),
-            json!(["type_text", {"text_len": 1, "via": "paste", "paste_keys": "ctrl+v", "expect": {"app_id": "b"}}, null, null, "app_denied"]),
+            json!(["type_text", {"text_len": 12, "via": "paste", "paste_keys": "ctrl+v", "expect": {"app_id_len": 1, "matched": null}}, null, null, "upstream_error"]),
+            json!(["type_text", {"text_len": 1, "via": "paste", "paste_keys": "ctrl+v", "expect": {"app_id_len": 1, "matched": null}}, null, null, "app_denied"]),
         ]
     );
 }
@@ -1317,7 +1317,9 @@ async fn type_text_feeds_wtype_behind_the_gate_and_clears_the_marker() {
     assert!(!audit.contains("héllo"), "{audit}");
     assert_eq!(
         desk.audited(),
-        [json!(["type_text", {"text_len": 9, "expect": {"app_id": "a"}}, true, "sent", null])]
+        [
+            json!(["type_text", {"text_len": 9, "expect": {"app_id_len": 1, "matched": true}}, true, "sent", null])
+        ]
     );
 
     let key = desk
@@ -1422,7 +1424,9 @@ async fn long_text_is_typed_in_parts_of_a_hundred_characters() {
     assert_eq!(wtype_calls(&desk.fixture), ["-", "-", "-"]);
     assert_eq!(
         desk.audited(),
-        [json!(["type_text", {"text_len": 250, "expect": {"app_id": "a"}}, true, "sent", null])]
+        [
+            json!(["type_text", {"text_len": 250, "expect": {"app_id_len": 1, "matched": true}}, true, "sent", null])
+        ]
     );
 }
 
@@ -2366,7 +2370,15 @@ async fn passthrough_arguments_reach_the_audit_log_only_as_metadata() {
     let mut desk = Desk::start_with("act-audit-private", "", &on).await;
     let spawn = json!({"action": {"Spawn": {"command": ["foot", PRIVATE]}}});
     desk.act("niri_action", spawn, |_, _| {}).await;
-    for args in [json!([PRIVATE, PRIVATE]), json!(["panel-open", PRIVATE])] {
+    // The last breaks the message's framing and is refused.
+    for args in [
+        json!([PRIVATE, PRIVATE]),
+        json!(["panel-open", PRIVATE]),
+        json!([
+            "panel-open",
+            format!("{PRIVATE}\u{1e}panel-close wallpaper")
+        ]),
+    ] {
         desk.server.call("noctalia", json!({ "args": args })).await;
     }
     // Cancelled while it waits for the window to change.
@@ -2418,6 +2430,7 @@ async fn passthrough_arguments_reach_the_audit_log_only_as_metadata() {
             json!(["niri_action", {"action": {"Spawn": {"command": {"count": 2, "bytes": [4, 25]}}}}, null]),
             json!(["noctalia", {"count": 2, "bytes": [25, 25]}, "upstream_error"]),
             json!(["noctalia", {"count": 2, "bytes": [10, 25]}, null]),
+            json!(["noctalia", {"count": 2, "bytes": [10, 47]}, "invalid_arguments"]),
             json!(["niri_action", {"action": {"MoveWindowToWorkspace": {
                 "window_id": 2, "reference": {"Name": {"bytes": 25}}, "focus": false
             }}}, "cancelled"]),

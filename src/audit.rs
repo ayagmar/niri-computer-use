@@ -1,9 +1,13 @@
 //! The audit log: one JSON line per tool call at
 //! `$XDG_STATE_HOME/niri-computer-use/audit.jsonl`, in a `0700` directory and a `0600` file.
 //! It records argument metadata and the outcome, never typed text, clipboard contents,
-//! screenshot data or window titles. The passthroughs log metadata too: `niri_action` its
-//! action's name, field names, numbers and booleans with every string as its length in
-//! bytes, and `noctalia` only its argument count and byte lengths.
+//! screenshot data or window titles. A string the agent chose is logged as it is only once
+//! it names something the server knows: a preset, a panel, a role, a ref in the form refs
+//! are issued in, or key combinations XKB knows. Anything else is a category and its
+//! length, and text, paths, app ids and output names only ever their length or kind. The
+//! passthroughs log metadata too: `niri_action` its action's name, field names, numbers and
+//! booleans with every string as its length in bytes, and `noctalia` only its argument
+//! count and byte lengths.
 
 use std::fs::{DirBuilder, OpenOptions};
 use std::io::Write as _;
@@ -20,6 +24,8 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 
 use crate::error::CANCELLED;
+use crate::input::keyboard::Expect;
+use crate::input::keymap;
 
 /// Where the log goes, and the last write error, which `status` reports.
 #[derive(Debug, Clone)]
@@ -119,9 +125,10 @@ impl Audit {
         &self,
         call: &Call<'_>,
         caller: Caller<'_>,
-        args: &Value,
+        mut args: Value,
         result: &Result<CallToolResult, ErrorData>,
     ) {
+        matched(&mut args, result);
         let (accepted, observed, changes) = if call.action {
             effect(result)
         } else {
@@ -132,7 +139,7 @@ impl Audit {
             session: caller.session,
             instance: caller.instance,
             tool: call.tool,
-            args,
+            args: &args,
             accepted,
             observed,
             changes,
@@ -214,6 +221,76 @@ fn lengths(value: &Value) -> Value {
             .collect(),
         Value::Null | Value::Bool(_) | Value::Number(_) => value.clone(),
     }
+}
+
+/// A name the agent gave, as it is when the server knows it, such as a preset, a panel or
+/// a role; otherwise `category` and its length in bytes, since it is the agent's text.
+pub(crate) fn known(name: &str, is_known: bool, category: &str) -> Value {
+    if is_known {
+        return Value::from(name);
+    }
+    json!({ "category": category, "bytes": name.len() })
+}
+
+/// A screenshot or element ref, as it is when it has the form refs are issued in.
+pub(crate) fn ref_id(id: &str) -> Value {
+    known(id, crate::refs::well_formed(id), "invalid_ref")
+}
+
+/// `key`'s combinations as they are when XKB knows every one, otherwise only how many.
+pub(crate) fn keys(keys: &[String]) -> Value {
+    if keys.iter().all(|combo| keymap::known_combo(combo)) {
+        return json!(keys);
+    }
+    json!({ "category": "invalid_keys", "count": keys.len() })
+}
+
+/// A pointer tool's held modifiers as they are when each is one a combination may hold,
+/// otherwise only how many.
+pub(crate) fn modifiers(keys: &[String]) -> Value {
+    if keys
+        .iter()
+        .all(|key| keymap::known_combo(&format!("{key}+a")))
+    {
+        return json!(keys);
+    }
+    json!({ "category": "invalid_keys", "count": keys.len() })
+}
+
+/// `expect` for the log: a window id or `none` as given, and an app id only as its length
+/// in characters, to which `finish` adds whether focus matched it.
+pub(crate) fn expect(expect: &Expect) -> Value {
+    match expect {
+        Expect::Window(id) => json!({ "window_id": id }),
+        Expect::App(app_id) => json!({ "app_id_len": app_id.chars().count() }),
+        Expect::Unchecked => json!("none"),
+    }
+}
+
+/// Adds `matched` to an `expect` logged as an app id's length: true when the result says
+/// focus matched it, false on `focus_mismatch`, and null when the call ended before the
+/// check or without saying.
+fn matched(args: &mut Value, result: &Result<CallToolResult, ErrorData>) {
+    let Some(expect) = args
+        .get_mut("expect")
+        .and_then(Value::as_object_mut)
+        .filter(|expect| expect.contains_key("app_id_len"))
+    else {
+        return;
+    };
+    let focus = result
+        .as_ref()
+        .ok()
+        .filter(|result| result.is_error != Some(true))
+        .and_then(|result| result.structured_content.as_ref())
+        .and_then(|content| content.get("focus"))
+        .and_then(Value::as_str);
+    let matched = match (outcome(result).as_deref(), focus) {
+        (Some("focus_mismatch"), _) => Value::Bool(false),
+        (None, Some("matched")) => Value::Bool(true),
+        _ => Value::Null,
+    };
+    expect.insert("matched".to_owned(), matched);
 }
 
 /// `noctalia`'s arguments for the log: how many, and each one's length in bytes.
@@ -398,6 +475,37 @@ mod tests {
         assert!(ts.ends_with('Z') && ts.len() == 24, "{ts}");
     }
 
+    /// A stale lock read refuses after the `expect` check passed, and its detail can name
+    /// the window; the line keeps only the error's name and the bounded arguments.
+    #[test]
+    fn a_stale_lock_read_is_logged_by_name_with_bounded_arguments() {
+        let dir = crate::test_support::fresh_dir("audit-stale");
+        let audit = Audit::new(Some(dir.clone()));
+        let caller = Caller {
+            session: "smoke/1",
+            instance: None,
+        };
+        let marker = "MARKER-SENTINEL";
+        let args = json!({
+            "keys": keys(&[format!("ctrl+{marker}")]),
+            "expect": expect(&Expect::App(marker.to_owned())),
+        });
+        let stale = ToolError::new(ErrorName::LockStale, format!("read before {marker}"));
+        audit.finish(&Call::action("key"), caller, args, &Ok(stale.into_result()));
+        let text = std::fs::read_to_string(dir.join("niri-computer-use/audit.jsonl")).unwrap();
+        assert!(!text.contains(marker), "{text}");
+        let line: Value = serde_json::from_str(text.trim_end()).unwrap();
+        assert_eq!(line["error"], "lock_stale");
+        assert_eq!(
+            line["args"],
+            json!({
+                "keys": {"category": "invalid_keys", "count": 1},
+                "expect": {"app_id_len": 15, "matched": null}
+            })
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn a_niri_action_is_logged_as_its_names_numbers_and_byte_lengths() {
         let action = |json: Value| serde_json::from_value::<Action>(json).unwrap();
@@ -455,10 +563,20 @@ mod tests {
         let done = CallToolResult::structured(serde_json::json!({
             "accepted": true, "observed": "focused", "focused_window": 4
         }));
-        audit.finish(&Call::action("focus"), caller, &args, &Ok(done.clone()));
-        audit.finish(&Call::start("desktop_state"), caller, &args, &Ok(done));
+        audit.finish(
+            &Call::action("focus"),
+            caller,
+            args.clone(),
+            &Ok(done.clone()),
+        );
+        audit.finish(
+            &Call::start("desktop_state"),
+            caller,
+            args.clone(),
+            &Ok(done),
+        );
         let refused = ToolError::new(ErrorName::LeaseRequired, "no").into_result();
-        audit.finish(&Call::action("focus"), caller, &args, &Ok(refused));
+        audit.finish(&Call::action("focus"), caller, args, &Ok(refused));
         let lines: Vec<Value> = std::fs::read_to_string(dir.join("niri-computer-use/audit.jsonl"))
             .unwrap()
             .lines()
@@ -509,10 +627,10 @@ mod tests {
         audit.finish(
             &Call::action("activate_element"),
             caller,
-            &args,
+            args.clone(),
             &Ok(reported),
         );
-        audit.finish(&Call::action("key"), caller, &args, &Ok(unknown));
+        audit.finish(&Call::action("key"), caller, args, &Ok(unknown));
         let text = std::fs::read_to_string(dir.join("niri-computer-use/audit.jsonl")).unwrap();
         assert!(!text.contains("SENTINEL"), "{text}");
         let lines: Vec<Value> = text

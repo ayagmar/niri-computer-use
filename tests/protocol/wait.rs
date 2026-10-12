@@ -67,7 +67,7 @@ async fn a_window_that_appears_ends_the_wait_and_its_title_is_never_logged() {
         .unwrap();
     assert_eq!(
         logged["args"],
-        json!({"until": {"window": {"app_id": "dialog", "title_len": 4}}, "timeout_ms": 10000})
+        json!({"until": {"window": {"app_id_len": 6, "title_len": 4}}, "timeout_ms": 10000})
     );
 }
 

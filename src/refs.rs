@@ -189,6 +189,23 @@ pub(crate) fn invalid(reason: &str, detail: &str) -> ToolError {
     ToolError::new(ErrorName::RefInvalid, format!("{reason}: {detail}"))
 }
 
+/// Whether `id` has the form refs are issued in: `shot-` or `elem-`, a process's tag of
+/// eight hex digits, `-` and the number, whichever process issued it.
+pub(crate) fn well_formed(id: &str) -> bool {
+    let Some(rest) = id
+        .strip_prefix("shot-")
+        .or_else(|| id.strip_prefix("elem-"))
+    else {
+        return false;
+    };
+    let Some((tag, number)) = rest.split_once('-') else {
+        return false;
+    };
+    tag.len() == 8
+        && tag.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f'))
+        && number.parse::<u64>().is_ok_and(|n| n.to_string() == number)
+}
+
 /// The refs of the current lease.
 #[derive(Debug)]
 pub(crate) struct Refs {

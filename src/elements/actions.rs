@@ -149,8 +149,8 @@ pub(crate) fn choose_action(
         })
 }
 
-/// What the audit log keeps of an element action's arguments: the ref, the role it was
-/// listed with, the kind and index of the action it names, the text's length, `expect` and
+/// What the audit log keeps of an element action's arguments: the ref in the form refs
+/// are issued in, otherwise its length, the role it was listed with, the kind and index of the action it names, the text's length, `expect` and
 /// `screenshot`. Never a name, text, or an action's own name.
 pub(crate) fn logged(
     id: &str,
@@ -160,6 +160,7 @@ pub(crate) fn logged(
     expect: &Value,
 ) -> Value {
     let role = kept.map(|element| model::role_name(element.kept.role));
+    let id = crate::audit::ref_id(id);
     if let Some(text_len) = text_len {
         return json!({"element": id, "role": role, "text_len": text_len, "expect": expect});
     }
@@ -1017,31 +1018,48 @@ mod tests {
         let button = element(3, &["SECRET-1", "Press"]);
         let expect = json!({"window_id": 3});
         assert_eq!(
-            logged("elem-t-1", Some(&button), None, None, &expect),
-            json!({"element": "elem-t-1", "role": "button", "action": "press", "action_index": 1, "expect": expect})
-        );
-        assert_eq!(
-            logged("elem-t-1", Some(&button), Some("SECRET-1"), None, &expect),
-            json!({"element": "elem-t-1", "role": "button", "action": "other", "action_index": 0, "expect": expect})
-        );
-        // An action the element didn't list, or an unknown ref, logs the kind asked for.
-        assert_eq!(
-            logged("elem-t-1", Some(&button), Some("SECRET-2"), None, &expect),
-            json!({"element": "elem-t-1", "role": "button", "action": "other", "action_index": null, "expect": expect})
-        );
-        assert_eq!(
-            logged("elem-t-9", None, Some("Click"), None, &json!("none")),
-            json!({"element": "elem-t-9", "role": null, "action": "click", "action_index": null, "expect": "none"})
+            logged("elem-0a1b2c3d-1", Some(&button), None, None, &expect),
+            json!({"element": "elem-0a1b2c3d-1", "role": "button", "action": "press", "action_index": 1, "expect": expect})
         );
         assert_eq!(
             logged(
-                "elem-t-1",
+                "elem-0a1b2c3d-1",
+                Some(&button),
+                Some("SECRET-1"),
+                None,
+                &expect
+            ),
+            json!({"element": "elem-0a1b2c3d-1", "role": "button", "action": "other", "action_index": 0, "expect": expect})
+        );
+        // An action the element didn't list, or an unknown ref, logs the kind asked for.
+        assert_eq!(
+            logged(
+                "elem-0a1b2c3d-1",
+                Some(&button),
+                Some("SECRET-2"),
+                None,
+                &expect
+            ),
+            json!({"element": "elem-0a1b2c3d-1", "role": "button", "action": "other", "action_index": null, "expect": expect})
+        );
+        assert_eq!(
+            logged("elem-0a1b2c3d-9", None, Some("Click"), None, &json!("none")),
+            json!({"element": "elem-0a1b2c3d-9", "role": null, "action": "click", "action_index": null, "expect": "none"})
+        );
+        assert_eq!(
+            logged(
+                "elem-0a1b2c3d-1",
                 Some(&button),
                 None,
                 Some(12),
-                &json!({"app_id": "a"})
+                &json!({"app_id_len": 1})
             ),
-            json!({"element": "elem-t-1", "role": "button", "text_len": 12, "expect": {"app_id": "a"}})
+            json!({"element": "elem-0a1b2c3d-1", "role": "button", "text_len": 12, "expect": {"app_id_len": 1}})
+        );
+        // A ref not in the form refs are issued in is the agent's text.
+        assert_eq!(
+            logged("SECRET-3", None, None, Some(0), &json!("none"))["element"],
+            json!({"category": "invalid_ref", "bytes": 8})
         );
     }
 }

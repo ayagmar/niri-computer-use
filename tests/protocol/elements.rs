@@ -1944,3 +1944,114 @@ async fn a_failed_walk_after_the_action_never_returns_the_apps_error_message() {
     );
     assert!(!response.to_string().contains(SENTINEL), "{response}");
 }
+
+/// Text an agent could pass on, shaped as a keysym name so that only checking the name
+/// against XKB, not its syntax, keeps it out of the log.
+const MARKER: &str = "ncu_audit_marker";
+
+#[tokio::test]
+async fn agent_strings_reach_the_audit_log_only_as_known_names_or_lengths() {
+    let mut desk = Desk::start("el-audit-marker").await;
+    let app = json!({"app_id": MARKER});
+    let calls = [
+        (
+            "key",
+            json!({"keys": [format!("ctrl+{MARKER}")], "expect": app}),
+        ),
+        ("key", json!({"keys": ["Escape"], "expect": app})),
+        ("type_text", json!({"text": MARKER, "expect": app})),
+        // Refused for its line break or tab before anything else is checked.
+        (
+            "type_text",
+            json!({"text": format!("{MARKER}\n{MARKER}"), "expect": "none"}),
+        ),
+        (
+            "type_text",
+            json!({"text": format!("{MARKER}\t{MARKER}"), "expect": "none"}),
+        ),
+        (
+            "activate_element",
+            json!({"element": MARKER, "action": MARKER, "expect": app}),
+        ),
+        (
+            "set_element_text",
+            json!({"element": MARKER, "text": MARKER, "expect": app}),
+        ),
+        ("launch", json!({"preset": MARKER})),
+        ("shell_panel", json!({"panel": MARKER, "open": true})),
+        ("screenshot", json!({"target": MARKER})),
+        (
+            "screenshot",
+            json!({"target": format!("output:{MARKER}"), "save_path": MARKER}),
+        ),
+        (
+            "wait_for",
+            json!({"until": {"window": {"app_id": MARKER, "title": MARKER}}, "timeout_ms": 100}),
+        ),
+        (
+            "elements",
+            json!({"window_id": WINDOW, "role": MARKER, "name_contains": MARKER}),
+        ),
+        (
+            "pointer_move",
+            json!({"screenshot_ref": MARKER, "element": MARKER}),
+        ),
+        (
+            "click",
+            json!({"screenshot_ref": MARKER, "element": MARKER, "keys": [MARKER]}),
+        ),
+        (
+            "drag",
+            json!({"screenshot_ref": MARKER, "from": {"element": MARKER}, "to": {"element": MARKER}, "keys": [MARKER]}),
+        ),
+        (
+            "scroll",
+            json!({"screenshot_ref": MARKER, "x": 1, "y": 1, "keys": [MARKER]}),
+        ),
+    ];
+    for (tool, args) in calls {
+        let before = desk.fixture.audit_lines().len();
+        desk.server.call(tool, args.clone()).await;
+        let lines = desk.fixture.audit_lines();
+        assert_eq!(lines.len(), before + 1, "{tool} {args} wrote no line");
+        let line = lines.last().unwrap();
+        assert_eq!(line["tool"], tool, "{line}");
+        assert!(!line.to_string().contains(MARKER), "{tool} {args}: {line}");
+    }
+}
+
+#[tokio::test]
+async fn names_the_server_knows_reach_the_audit_log_as_they_are() {
+    let mut desk = Desk::start("el-audit-known").await;
+    let button = desk.element("Safe").await;
+    let shot = desk.screenshot_ref().await;
+    let known = [
+        (
+            "key",
+            json!({"keys": ["ctrl+Escape"], "expect": {"window_id": 2}}),
+        ),
+        ("elements", json!({"window_id": WINDOW, "role": "button"})),
+        (
+            "shell_panel",
+            json!({"panel": "control-center", "open": false}),
+        ),
+        ("screenshot", json!({"target": "output:DP-1"})),
+        (
+            "pointer_move",
+            json!({"screenshot_ref": shot, "element": button}),
+        ),
+    ];
+    let mut logged = Vec::new();
+    for (tool, args) in known {
+        desk.server.call(tool, args).await;
+        logged.push(desk.fixture.audit_lines().pop().unwrap()["args"].clone());
+    }
+    assert_eq!(logged[0]["keys"], json!(["ctrl+Escape"]));
+    assert_eq!(logged[1]["role"], "button");
+    assert_eq!(logged[2]["panel"], "control-center");
+    assert_eq!(logged[3]["target"], "output");
+    assert_eq!(
+        logged[4],
+        json!({"screenshot_ref": shot, "element": button})
+    );
+}

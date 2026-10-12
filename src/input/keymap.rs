@@ -206,6 +206,14 @@ fn inert(map: &xkb::Keymap, code: xkb::Keycode) -> bool {
         && state.serialize_layout(xkb::STATE_LAYOUT_EFFECTIVE) == 0
 }
 
+/// Whether `combo` is modifiers a combination may hold and a keysym name XKB knows, in
+/// any case, as wtype looks keys up.
+pub(crate) fn known_combo(combo: &str) -> bool {
+    parse_combo(combo).is_ok_and(|(_, keysym_name)| {
+        xkb::keysym_from_name(keysym_name, xkb::KEYSYM_CASE_INSENSITIVE) != xkb::Keysym::NoSymbol
+    })
+}
+
 fn combo_key(map: &xkb::Keymap, group: u32, combo: &str) -> Result<Key, CallError> {
     let (modifiers, keysym_name) = parse_combo(combo).map_err(CallError::InvalidArguments)?;
     let mut key = find(

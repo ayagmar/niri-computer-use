@@ -88,6 +88,23 @@ const fn default_format() -> Option<FormatArg> {
 }
 
 impl ScreenshotArgs {
+    /// The arguments for the audit log: the target's kind, never an output's name, and the
+    /// save path's length in bytes.
+    fn logged(&self) -> Value {
+        let target = match self.target.as_str() {
+            "focused_output" | "region" => Value::from(self.target.as_str()),
+            other if other.starts_with("output:") => Value::from("output"),
+            other => audit::known(other, false, "invalid_target"),
+        };
+        serde_json::json!({
+            "target": target,
+            "region": self.region,
+            "max_width": self.max_width,
+            "format": self.format,
+            "save_path_len": self.save_path.as_deref().map(str::len),
+        })
+    }
+
     fn request(self) -> Result<observe::Request, String> {
         let region = self.region.map(|r| Rect {
             x: r.x,
@@ -588,7 +605,7 @@ impl TypeTextArgs {
     fn logged(&self) -> Value {
         let mut logged = serde_json::json!({
             "text_len": self.text.chars().count(),
-            "expect": self.expect,
+            "expect": audit::expect(&self.expect.clone().into()),
         });
         if let (ViaArg::Paste, Some(fields)) = (self.via, logged.as_object_mut()) {
             fields.insert("via".to_owned(), Value::from("paste"));
@@ -859,9 +876,13 @@ impl Server {
         Parameters(args): Parameters<LaunchArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
-        let niri = self.engine.niri();
         let preset = self.session.settings().policy.preset(&args.preset);
+        let mut logged = serde_json::json!({
+            "preset": audit::known(&args.preset, preset.is_ok(), "unknown_preset"),
+            "reuse": args.reuse,
+        });
+        flag(&mut logged, "screenshot", args.screenshot);
+        let niri = self.engine.niri();
         let (reuse, shoot) = (args.reuse, args.screenshot);
         let work = async move { act::launch(niri, preset?, reuse).await };
         self.act(
@@ -989,7 +1010,7 @@ impl Server {
         Parameters(args): Parameters<PointArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        let logged = pointed(&args);
         let gesture = args.at.spot().map(Gesture::Move);
         let aim = Aim {
             id: args.screenshot_ref,
@@ -1018,7 +1039,7 @@ impl Server {
         Parameters(args): Parameters<ClickArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        let logged = pointed(&args);
         let watch = args.at.element.clone().filter(|_| args.element_changes);
         let gesture = if args.element_changes && watch.is_none() {
             Err(CallError::InvalidArguments(
@@ -1058,7 +1079,7 @@ impl Server {
         Parameters(args): Parameters<DragArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        let logged = pointed(&args);
         let gesture = args
             .from
             .spot()
@@ -1093,7 +1114,7 @@ impl Server {
         Parameters(args): Parameters<ScrollArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        let logged = pointed(&args);
         let gesture = Ok(Gesture::Scroll {
             at: Spot::Pixel(ImagePx {
                 x: args.x,
@@ -1131,7 +1152,12 @@ impl Server {
         Parameters(args): Parameters<KeyArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        let mut logged = serde_json::json!({
+            "keys": audit::keys(&args.keys),
+            "expect": audit::expect(&args.expect.clone().into()),
+        });
+        flag(&mut logged, "screenshot", args.screenshot);
+        flag(&mut logged, "element_changes", args.element_changes);
         let typing = Typing::Keys(args.keys);
         let keying = Keying {
             typing,
@@ -1231,7 +1257,7 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let kept = self.engine.element(&self.session, &args.element).ok();
-        let expect = serde_json::to_value(&args.expect).unwrap_or(Value::Null);
+        let expect = audit::expect(&args.expect.clone().into());
         let mut logged = actions::logged(
             &args.element,
             kept.as_ref(),
@@ -1290,7 +1316,7 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let kept = self.engine.element(&self.session, &args.element).ok();
-        let expect = serde_json::to_value(&args.expect).unwrap_or(Value::Null);
+        let expect = audit::expect(&args.expect.clone().into());
         // The length, never the text.
         let text_len = Some(args.text.chars().count());
         let mut logged = actions::logged(&args.element, kept.as_ref(), None, text_len, &expect);
@@ -1363,9 +1389,10 @@ impl Server {
         Parameters(args): Parameters<ElementsArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let role = args.role.as_deref();
         let logged = serde_json::json!({
             "window_id": args.window_id,
-            "role": args.role,
+            "role": role.map(|role| audit::known(role, model::is_role(role), "unknown_role")),
             "name_contains_len": args.name_contains.as_deref().map(str::len),
             "limit": args.limit,
             "interactive_only": args.interactive_only,
@@ -1400,9 +1427,7 @@ impl Server {
         Parameters(args): Parameters<ScreenshotArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        // Targets, sizes, formats and the save path only: nothing in these arguments is
-        // content.
-        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        let logged = args.logged();
         self.audited(&context, "screenshot", logged, async {
             let save = args
                 .save_path
@@ -1486,7 +1511,12 @@ impl Server {
         Parameters(args): Parameters<PanelArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
+        let known = policy::panel(&args.panel).is_ok();
+        let mut logged = serde_json::json!({
+            "panel": audit::known(&args.panel, known, "unknown_panel"),
+            "open": args.open,
+        });
+        flag(&mut logged, "screenshot", args.screenshot);
         let (env, niri) = (self.engine.env(), self.engine.niri());
         let shoot = args.screenshot;
         let work = async move {
@@ -1706,7 +1736,7 @@ impl Server {
             session: &session,
             instance: instance.as_deref(),
         };
-        self.engine.audit().finish(&call, caller, &args(), &result);
+        self.engine.audit().finish(&call, caller, args(), &result);
         result
     }
 
@@ -1720,12 +1750,12 @@ impl Server {
     }
 }
 
-/// `wait_for`'s arguments for the audit log: lengths of the text to match, never the text,
-/// since titles can hold anything.
+/// `wait_for`'s arguments for the audit log: lengths of the app id and text to match,
+/// never the text, since titles can hold anything.
 fn waited_for(args: &WaitForArgs) -> Value {
     let until = match &args.until {
         UntilArg::Window(window) => serde_json::json!({"window": {
-            "app_id": window.app_id,
+            "app_id_len": window.app_id.as_ref().map(|app_id| app_id.chars().count()),
             "title_len": window.title.as_ref().map(|title| title.chars().count()),
         }}),
         UntilArg::Closed(id) => serde_json::json!({ "closed": id }),
@@ -1738,6 +1768,36 @@ fn waited_for(args: &WaitForArgs) -> Value {
     let mut logged = serde_json::json!({ "until": until, "timeout_ms": args.timeout_ms });
     flag(&mut logged, "screenshot", args.screenshot);
     logged
+}
+
+/// A pointer tool's arguments for the audit log, with refs and held modifiers only in the
+/// forms the server issues and accepts, since anything else is the agent's text.
+fn pointed(args: &impl Serialize) -> Value {
+    let mut logged = serde_json::to_value(args).unwrap_or(Value::Null);
+    if let Some(fields) = logged.as_object_mut() {
+        bound_strings(fields);
+        for spot in ["from", "to"] {
+            if let Some(Value::Object(spot)) = fields.get_mut(spot) {
+                bound_strings(spot);
+            }
+        }
+    }
+    logged
+}
+
+/// Replaces a pointer tool's refs and held modifiers with their logged forms.
+fn bound_strings(fields: &mut serde_json::Map<String, Value>) {
+    for name in ["screenshot_ref", "element"] {
+        if let Some(id) = fields.get_mut(name)
+            && let Some(text) = id.as_str()
+        {
+            *id = audit::ref_id(text);
+        }
+    }
+    if let Some(keys) = fields.get_mut("keys") {
+        let held: Vec<String> = serde_json::from_value(keys.clone()).unwrap_or_default();
+        *keys = audit::modifiers(&held);
+    }
 }
 
 /// Adds `name: true` to logged arguments when `set`; a flag left false isn't logged.
