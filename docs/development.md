@@ -16,6 +16,10 @@ git config core.hooksPath .githooks
 
 The dependency gate accepts MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Unicode-3.0, Zlib, and MPL-2.0 licenses. The one exception is GPL-3.0-or-later for `niri-ipc` (see [decisions](decisions.md)). It rejects wildcard requirements, advisories, unmaintained crates, yanked crates, Git dependencies, and registries other than crates.io. Duplicate versions are warnings until an explicit skip list is needed. cargo-deny doesn't check the `harness` crate's dependencies, because the harness isn't published.
 
+## Unit tests against a fake niri
+
+The native keyboard, held pointer modifiers and the paste keeper talk to niri's Wayland display. Their unit tests run against `test_support::wayland::Compositor`, a display and a niri socket served from a thread of the test's own process. It models what niri's Smithay does with virtual keyboards, keymaps and data-control (see [decisions](decisions.md), 2026-10-12), and records what the focused client would have been sent: keys, modifiers, keymaps, buttons and the selection's types. A test can change niri's keyboard configuration, switch its layout, press a physical key, or copy something, including while a client reads the selection.
+
 ## Protocol tests
 
 `tests/protocol/` starts the server binary and speaks MCP to it over stdin and stdout, as a client would. `make check` runs it, and so does:

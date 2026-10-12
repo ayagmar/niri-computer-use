@@ -552,6 +552,52 @@ const fn command(byte: u8) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{fresh_dir, wayland::Compositor};
+
+    const KEYMAP: &str = include_str!("../../tests/fixtures/us-de.xkb");
+
+    fn copied(types: &[(&str, &[u8])]) -> Vec<(String, Vec<u8>)> {
+        types
+            .iter()
+            .map(|(mime, bytes)| ((*mime).to_owned(), bytes.to_vec()))
+            .collect()
+    }
+
+    /// A copy niri announces while the keeper reads the selection refuses the paste before
+    /// the keeper takes the selection: the newer copy stays.
+    #[tokio::test]
+    async fn take_refuses_when_something_is_copied_while_it_saves() {
+        let dir = fresh_dir("keeper-copied-while-saving");
+        let niri = Compositor::start(&dir, KEYMAP);
+        niri.copy(Some(copied(&[
+            ("text/plain", b"before"),
+            ("text/html", b"<b>before</b>"),
+        ])))
+        .await;
+        niri.copy_on_read(Some(copied(&[("text/plain", b"during")])))
+            .await;
+        let refused = take(&niri.env(&dir)).await.map(|(_, previous, _)| previous);
+        assert_eq!(refused, Err(CHANGED.to_owned()));
+        assert_eq!(niri.seen().selection, Some(vec!["text/plain".to_owned()]));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Otherwise the keeper saves every type, then holds the selection with the text's.
+    #[tokio::test]
+    async fn take_saves_every_type_then_holds_the_selection() {
+        let dir = fresh_dir("keeper-take");
+        let niri = Compositor::start(&dir, KEYMAP);
+        let before = [
+            ("text/plain", &b"before"[..]),
+            ("image/png", &[0, 159, 146, 150][..]),
+        ];
+        niri.copy(Some(copied(&before))).await;
+        let (_selection, previous, _) = take(&niri.env(&dir)).await.unwrap();
+        assert_eq!(previous, Previous::Saved(Some(saved(&before))));
+        let offered: Vec<String> = offered().into_iter().map(str::to_owned).collect();
+        assert_eq!(niri.seen().selection, Some(offered));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn waits_for_the_server_then_the_read_then_quiet() {

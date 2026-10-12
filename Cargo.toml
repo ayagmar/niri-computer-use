@@ -99,3 +99,6 @@ zbus = { version = "5.19.0", default-features = false, features = ["tokio"] }
 [dev-dependencies]
 rustix = { version = "1.1.5", features = ["net"] }
 tokio = { version = "1.53.1", default-features = false, features = ["test-util"] }
+wayland-protocols-misc = { version = "0.3.12", features = ["server"] }
+wayland-protocols-wlr = { version = "0.3.12", features = ["server"] }
+wayland-server = "0.31.14"

@@ -1,6 +1,7 @@
 //! Helpers shared by unit tests.
 
 pub(crate) mod output_mode;
+pub(crate) mod wayland;
 
 use std::path::PathBuf;
 

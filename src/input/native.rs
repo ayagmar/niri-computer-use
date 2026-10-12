@@ -363,9 +363,103 @@ fn upstream(detail: &str) -> ToolError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control::runtime::RuntimeDir;
+    use crate::input::keyboard::Typing;
     use crate::input::paste::{
         Clipboard, Report, SLOW_ADMISSION, STOPPED_WAITING, desk_read, fake_aftercare,
     };
+    use crate::test_support::{fresh_dir, wayland::Compositor};
+
+    const BASE: &str = include_str!("../../tests/fixtures/us-de.xkb");
+
+    /// A device on the fake niri in `dir`, with `text` planned in layout 0: its extended
+    /// keymap uploaded, if the layout lacks some of the text's symbols.
+    async fn typing(niri: &Compositor, text: &str) -> (Device, Vec<Key>) {
+        let keyboard = Keyboard::bind(niri.display(), std::process::id())
+            .await
+            .unwrap();
+        let typing = Typing::Text {
+            text: text.to_owned(),
+            submit: false,
+        };
+        let plan = plan(keyboard.map().unwrap(), 0, &typing).unwrap();
+        let mut device = Device {
+            keyboard: Some(keyboard),
+            marker: None,
+            socket: niri.niri_socket(),
+            group: 0,
+            aftercare: None,
+            ends: None,
+        };
+        if let Some(map) = &plan.extended {
+            device.keyboard().unwrap().extend(map).unwrap();
+        }
+        (device, plan.keys)
+    }
+
+    /// Text beyond the layout goes out through an extended keymap, which clients then hold;
+    /// the call ends with every key released, zero modifiers and the compositor's keymap back
+    /// in clients and active in niri, so the user's next key sends no keymap.
+    #[tokio::test]
+    async fn a_call_with_an_extended_keymap_ends_with_the_compositors_back() {
+        let dir = fresh_dir("native-extension");
+        let niri = Compositor::start(&dir, BASE);
+        let (mut device, keys) = typing(&niri, "é").await;
+        for key in keys {
+            device.stroke(key).await.unwrap();
+        }
+        let during = niri.seen();
+        assert_ne!(
+            during.active, during.compositor,
+            "the extension reached clients"
+        );
+        device.finish(Some(0)).await.unwrap();
+        let seen = niri.seen();
+        assert_eq!(seen.active, seen.compositor);
+        assert!(seen.held_keys().is_empty(), "{:?}", seen.keys);
+        assert_eq!(seen.last_modifiers(), Some((0, 0)));
+        niri.physical(38).await;
+        assert_eq!(
+            niri.seen().keymaps,
+            seen.keymaps,
+            "a physical key sent a keymap"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A call dropped mid-text, as a cancellation drops it, releases at once and, once niri
+    /// has acknowledged that, puts the compositor's keymap back in the layout niri has active
+    /// before its marker comes off.
+    #[tokio::test]
+    async fn a_dropped_call_restores_the_compositors_keymap_before_its_marker_goes() {
+        let dir = fresh_dir("native-dropped");
+        let niri = Compositor::start(&dir, BASE);
+        let runtime = RuntimeDir::of(&niri.env(&dir)).unwrap();
+        runtime.create().unwrap();
+        let (mut device, keys) = typing(&niri, "éa").await;
+        device.marker = Some(
+            Written::write(&runtime, Marker::pending("type_text", Vec::new()))
+                .await
+                .unwrap(),
+        );
+        device.stroke(keys[0]).await.unwrap();
+        niri.switch(1).await;
+        drop(device);
+        let until = Instant::now() + cleanup::LIMIT;
+        while marker::read(&runtime).is_some() {
+            assert!(Instant::now() < until, "the marker stayed");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let seen = niri.seen();
+        assert_eq!(seen.active, seen.compositor);
+        assert!(seen.held_keys().is_empty(), "{:?}", seen.keys);
+        assert_eq!(
+            seen.last_modifiers(),
+            Some((0, 1)),
+            "not in niri's active layout"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     fn device() -> Device {
         Device {
@@ -380,7 +474,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_paste_key_its_keeper_doesnt_admit_is_never_committed() {
-        let dir = crate::test_support::fresh_dir("commit-unadmitted");
+        let dir = fresh_dir("commit-unadmitted");
         let mut device = device();
         let (aftercare, _done) = fake_aftercare(STOPPED_WAITING).await;
         let mut aftercare = Some(aftercare);
@@ -400,7 +494,7 @@ mod tests {
     /// and the keeper hears `n` and restores the clipboard.
     #[tokio::test]
     async fn a_paste_key_admitted_after_the_lock_read_aged_is_never_committed() {
-        let dir = crate::test_support::fresh_dir("commit-aged-lock");
+        let dir = fresh_dir("commit-aged-lock");
         let mut device = device();
         let (aftercare, done) = fake_aftercare(SLOW_ADMISSION).await;
         let mut aftercare = Some(aftercare);

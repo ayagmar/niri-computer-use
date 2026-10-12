@@ -103,3 +103,47 @@ impl Drop for Held {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{fresh_dir, wayland::Compositor};
+
+    const BASE: &str = include_str!("../../tests/fixtures/us-de.xkb");
+    /// Control in the fixture.
+    const CONTROL: u32 = 4;
+
+    /// niri's keyboard configuration changes and its layout switches while a gesture holds
+    /// Control: the release leaves clients with the new compositor keymap and zero modifiers
+    /// in the layout now active, not the keymap and layout the gesture began in.
+    #[tokio::test]
+    async fn a_release_restores_the_keymap_and_layout_niri_has_now() {
+        let dir = fresh_dir("held-restore");
+        let niri = Compositor::start(&dir, BASE);
+        let keyboard = Keyboard::bind(niri.display(), std::process::id())
+            .await
+            .unwrap();
+        let mut held = Held {
+            keyboard,
+            socket: niri.niri_socket(),
+            mask: CONTROL,
+            group: 0,
+            active: false,
+        };
+        held.begin().await.unwrap();
+        let before = niri.seen();
+        assert_eq!(before.last_modifiers(), Some((CONTROL, 0)));
+        niri.configure(&BASE.replace("[Return]", "[KP_Enter]"))
+            .await;
+        niri.switch(1).await;
+        held.released().await.unwrap();
+        let seen = niri.seen();
+        assert_eq!(seen.active, seen.compositor, "clients kept an old keymap");
+        assert_ne!(
+            seen.compositor, before.compositor,
+            "the configuration didn't change"
+        );
+        assert_eq!(seen.last_modifiers(), Some((0, 1)));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
