@@ -670,6 +670,57 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// Once the call's time is up, the next key doesn't start, though the stop flag, the
+    /// deny list and the lock state would let it, and the refusal counts what was typed.
+    #[tokio::test]
+    async fn no_key_starts_once_the_time_is_up() {
+        let dir = fresh_dir("native-time-up");
+        let env = crate::test_support::niri_env(&dir);
+        let runtime = RuntimeDir::of(&env).unwrap();
+        runtime.create().unwrap();
+        let desk = desk_read(&dir, Duration::ZERO);
+        let unread = ToolError::new(ErrorName::NiriUnavailable, "no event stream in this test");
+        let input = Input {
+            niri: Niri {
+                socket: &env.niri_socket,
+                events: Err(&unread),
+                desk: &desk,
+                locks: LockSources {
+                    env: &env,
+                    noctalia: false,
+                },
+            },
+            display: &env.display,
+            runtime: &runtime,
+            policy: &Loaded::Missing,
+            keyboard: None,
+            a11y: None,
+        };
+        let typing = Typing::Text {
+            text: "az".to_owned(),
+            submit: false,
+        };
+        let call = Call {
+            typing: &typing,
+            budget: Budget {
+                length: WTYPE_DEADLINE,
+                ends: Instant::now(),
+            },
+            marks: true,
+        };
+        let mut sent = Sent::default();
+        sent.add_key(true);
+        let error = may_press(input, &View::default(), &call, sent)
+            .await
+            .unwrap_err();
+        assert_eq!(error.name, ErrorName::DeadlineExceeded);
+        assert_eq!(
+            error.detail,
+            "typed 1 of 2 characters; then native typing took longer than its 3s"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     /// A call gets 50 ms a key, here 7.5 s, and a short one wtype's 3 s; past them, the
     /// next key is refused with `deadline_exceeded`.
     #[tokio::test(start_paused = true)]
