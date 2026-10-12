@@ -7,55 +7,55 @@
    "answer": "lease taken \u00b7 users_window: 2",
    "error": false,
    "you": false,
-   "ms": 51
+   "ms": 2
   },
   {
-   "start": 2.75,
+   "start": 2.7,
    "request": "desktop_state",
    "answer": "focused_window: 2 \u00b7 kitty 2 \u00b7 org.ncu.Chat 3",
    "error": false,
    "you": false,
-   "ms": 51
+   "ms": 2
   },
   {
-   "start": 4.0,
+   "start": 3.9,
    "request": "focus {\"window_id\": 3}",
    "answer": "accepted: true \u00b7 observed: focused \u00b7 focus 2 \u2192 3",
    "error": false,
    "you": false,
-   "ms": 303
+   "ms": 255
   },
   {
-   "start": 6.0,
+   "start": 5.86,
    "request": "elements {\"window_id\": 3}",
    "answer": "14 elements \u00b7 button \u201cSend\u201d \u00b7 text \u201cMessage\u201d",
    "error": false,
    "you": false,
-   "ms": 51
+   "ms": 17
   },
   {
-   "start": 8.36,
-   "request": "set_element_text {\"element\": \"elem-8d4bebfc-12\", \"expect\": {\"window_id\": 3}, \"text\": \"The release review moved to 3pm.\"}",
+   "start": 8.18,
+   "request": "set_element_text {\"element\": \"elem-30030473-12\", \"expect\": {\"window_id\": 3}, \"text\": \"The release review moved to 3pm.\"}",
    "answer": "accepted: true \u00b7 observed: matched",
    "error": false,
    "you": false,
-   "ms": 304
+   "ms": 256
   },
   {
-   "start": 10.36,
-   "request": "activate_element {\"element\": \"elem-8d4bebfc-13\", \"expect\": {\"window_id\": 3}}",
+   "start": 10.13,
+   "request": "activate_element {\"element\": \"elem-30030473-13\", \"expect\": {\"window_id\": 3}}",
    "answer": "accepted: true \u00b7 observed: present",
    "error": false,
    "you": false,
-   "ms": 354
+   "ms": 312
   },
   {
-   "start": 13.01,
+   "start": 12.75,
    "request": "release_desktop {\"restore_focus\": true}",
    "answer": "released \u00b7 focus back on 2 \u00b7 observed: focused",
    "error": false,
    "you": false,
-   "ms": 51
+   "ms": 49
   }
  ]
 }

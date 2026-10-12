@@ -7,39 +7,39 @@
    "answer": "lease taken \u00b7 users_window: 2",
    "error": false,
    "you": false,
-   "ms": 51
+   "ms": 2
   },
   {
-   "start": 2.75,
+   "start": 2.7,
    "request": "focus {\"window_id\": 3}",
    "answer": "accepted: true \u00b7 observed: focused \u00b7 focus 2 \u2192 3",
    "error": false,
    "you": false,
-   "ms": 303
+   "ms": 254
   },
   {
-   "start": 4.75,
+   "start": 4.66,
    "request": "type_text {\"expect\": {\"window_id\": 3}, \"text\": \"Release notes: the stop key now\"}",
    "answer": "accepted: true \u00b7 observed: sent",
    "error": false,
    "you": false,
-   "ms": 302
+   "ms": 254
   },
   {
-   "start": 6.26,
+   "start": 6.11,
    "request": "niri-computer-use stop",
-   "answer": "the command the stop key runs: the lease is taken back",
-   "error": true,
+   "answer": "the command the stop key runs; it takes the lease back",
+   "error": false,
    "you": true,
-   "ms": 1
+   "ms": null
   },
   {
-   "start": 7.46,
+   "start": 7.31,
    "request": "type_text {\"expect\": {\"window_id\": 3}, \"text\": \" takes the desktop back.\"}",
    "answer": "refused: stopped",
    "error": true,
    "you": false,
-   "ms": 51
+   "ms": 2
   }
  ]
 }

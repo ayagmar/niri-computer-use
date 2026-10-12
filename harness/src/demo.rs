@@ -303,11 +303,12 @@ impl<'s, 'a> Director<'s, 'a> {
     }
 
     /// Calls `tool`, records the call, and holds still for `hold` so the recording shows
-    /// what it did. Returns whether it failed, and its structured content: for a failure,
-    /// `{"error", "detail"}`.
+    /// what it did. The call is timed to within about a millisecond, so its start and end
+    /// are the round trip the captions show. Returns whether it failed, and its structured
+    /// content: for a failure, `{"error", "detail"}`.
     fn call(&mut self, tool: &str, arguments: &Value, hold: Duration) -> Result<(bool, Value)> {
         let start = now()?;
-        let result = self.client.call(self.session, tool, arguments.clone())?;
+        let (result, _) = self.client.timed_call(tool, arguments.clone())?;
         let end = now()?;
         let error = field(&result, "/isError") == true;
         let content = field(&result, "/structuredContent").clone();

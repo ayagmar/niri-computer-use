@@ -1064,7 +1064,7 @@ These match the versions installed locally.
 
 ## 2026-10-12: demo recordings
 
-- The recordings come from `make nested-demo`: a headless nested niri with Noctalia, kitty and a GTK 4 chat fixture, recorded by `grim` in a loop. A script makes the calls an agent would make, through the real server, so every answer and timing on screen is the server's. A model-driven run would make each take different and couldn't be re-recorded after a change. The chat window is a test fixture and the site says so.
+- The recordings come from `make nested-demo`: a headless nested niri with Noctalia, kitty and a GTK 4 chat fixture, recorded by `grim` in a loop. A script makes the calls an agent would make, through the real server, and repeats the same calls each take, which makes recordings easier to compare and regenerate after a change; a model-driven run picks its own. The captions summarise the server's replies and show the round trip the harness measured, polling for each reply every millisecond. The line after the `stop` command is narration, since the command prints nothing. The chat window is a test fixture and the site says so.
 - `scripts/demo-encode.py` turns a run into the site's media with ffmpeg, `rsvg-convert` and `avifenc`, which the nested harness or Arch's repos already provide. It needs nothing beyond Python's standard library. The caption band under each recording is drawn from the run's `timeline.jsonl`, never typed by hand.
 
 ## 2026-10-12: the landing page

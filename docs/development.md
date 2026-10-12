@@ -349,7 +349,7 @@ The site's recordings come from `make nested-demo`, which plays one scene in a h
 make nested-demo SCENE=errand
 ```
 
-The scenes are `errand` (focus the chat, fill its Message field and press Send by element, then hand focus back), `layout` (widen a column, then fullscreen a window and back), `keyboard` (a `focus_mismatch` refusal, then a typed message with `submit`) and `stop` (typing, the `stop` command, then a refused call). The harness starts the accessibility bus, Noctalia with a generated wallpaper, kitty with nvim, and `harness/fixtures/chat.py`, a GTK 4 and libadwaita chat window that stands in for a real one. A script, not a model, makes the calls through the real server, so every take is the same and every answer is the server's. Besides the tools of `make nested`, it needs `kitty`, `nvim`, `python-gobject` and `libadwaita`.
+The scenes are `errand` (focus the chat, fill its Message field and press Send by element, then hand focus back), `layout` (widen a column, then fullscreen a window and back), `keyboard` (a `focus_mismatch` refusal, then a typed message with `submit`) and `stop` (typing, the `stop` command, then a refused call). The harness starts the accessibility bus, Noctalia with a generated wallpaper, kitty with nvim, and `harness/fixtures/chat.py`, a GTK 4 and libadwaita chat window that stands in for a real one. A script, not a model, makes the calls through the real server and repeats the same calls each take, which makes recordings easier to compare and regenerate. Besides the tools of `make nested`, it needs `kitty`, `nvim`, `python-gobject` and `libadwaita`.
 
 The run has a three-minute deadline. `grim` captures about 28 frames a second into `target/e2e/<run>/frames/`, and `timeline.jsonl` there records each call with its arguments, its result and its start and end on the frames' clock.
 
@@ -357,13 +357,13 @@ The run has a three-minute deadline. `grim` captures about 28 frames a second in
 
 ```sh
 python3 -I scripts/demo-encode.py target/e2e/<errand run> --name errand --out site/public/demo --gif 3.8 15.6 --still 11.5 --og 11.5
-python3 -I scripts/demo-encode.py target/e2e/<errand run> --name elements --out site/public/demo --clip 5.8 12.8 --still 6.3
+python3 -I scripts/demo-encode.py target/e2e/<errand run> --name elements --out site/public/demo --clip 5.8 12.7 --still 6.3
 python3 -I scripts/demo-encode.py target/e2e/<layout run> --name layout --out site/public/demo --clip 5.8 15.8 --still 6.0
-python3 -I scripts/demo-encode.py target/e2e/<keyboard run> --name keyboard --out site/public/demo --clip 2.6 12.0 --still 3.0
+python3 -I scripts/demo-encode.py target/e2e/<keyboard run> --name keyboard --out site/public/demo --clip 2.6 11.5 --still 3.0
 python3 -I scripts/demo-encode.py target/e2e/<stop run> --name stop --out site/public/demo --still 8.6
 ```
 
-Under the desktop it draws a caption band from the timeline: the request the scene stands for, each call as it went out and its answer when it came back, with the call's time and the lease's state. It writes an MP4 and an AV1 WebM, `<name>.json` with the calls for the page's text version, optional stills as PNG and AVIF, a GIF for the README, and `og.png`, the link-preview card. Times are seconds into the run's recording. After re-recording a scene, check the clip times against the new run's timeline.
+Under the desktop it draws a caption band from the timeline: the request the scene stands for, each call as it went out and a summary of its reply when it came back, with the lease's state and the round trip the harness measured, to about a millisecond. After a user command such as `stop`, which prints nothing, the band shows a line of narration marked `#` instead. It writes an MP4 and an AV1 WebM, `<name>.json` with the calls for the page's text version, optional stills as PNG and AVIF, a GIF for the README, and `og.png`, the link-preview card. Times are seconds into the run's recording. After re-recording a scene, check the clip times against the new run's timeline.
 
 ## Real-session pointer check
 

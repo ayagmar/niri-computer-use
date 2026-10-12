@@ -5,9 +5,10 @@
 
 The run's `frames/` are JPEGs named by the Unix time in nanoseconds of their capture, and
 its `timeline.jsonl` has each call with its start and end on the same clock. Under the
-desktop goes a caption band rendered from the timeline: what the agent was asked, the
-request as it went out and the server's answer when it came back, with the lease's state.
-Nothing in the band is typed by hand.
+desktop goes a caption band rendered from the timeline: what the scene stands for, each
+request as it went out and a summary of the server's answer when it came back, with the
+round trip the harness measured and the lease's state. The one line not from the server is
+the narration after a user command such as `stop`, marked `#`.
 
 Writes `<name>.mp4` (H.264) and `<name>.webm` (AV1) of the whole run or of `--clip`,
 `<name>.json` with the prompt and the calls shown, timed from the clip's start, and
@@ -27,8 +28,9 @@ import subprocess
 import sys
 import tempfile
 
-# What the band says after the user's stop command.
-USER_ANSWER = "the command the stop key runs: the lease is taken back"
+# What the band says after the user's stop command. The command prints nothing, so this is
+# narration, marked `#` and shown without a time.
+USER_ANSWER = "the command the stop key runs; it takes the lease back"
 BAND = 116
 WIDTH = 1280
 FPS = 30
@@ -114,17 +116,15 @@ def calls(timeline, origin):
     for record in timeline:
         if "note" in record:
             continue
-        if "user" in record:
-            text, error = USER_ANSWER, True
-        else:
-            text, error = answer(record["tool"], record)
+        you = "user" in record
+        text, error = (USER_ANSWER, False) if you else answer(record["tool"], record)
         out.append({
             "start": seconds(record["start_ns"], origin),
             "request": request(record),
             "answer": text,
             "error": error,
-            "you": "user" in record,
-            "ms": round((record["end_ns"] - record["start_ns"]) / 1e6),
+            "you": you,
+            "ms": None if you else round((record["end_ns"] - record["start_ns"]) / 1e6),
         })
     return out
 
@@ -154,7 +154,7 @@ def states(timeline, origin, end):
         state.update(request=request(record), answer=None, you="user" in record)
         out.append((start, dict(state)))
         if "user" in record:
-            text, error = USER_ANSWER, True
+            text, error = USER_ANSWER, False
             lease = "stopped"
         else:
             text, error = answer(record["tool"], record)
@@ -191,10 +191,16 @@ def band_svg(state):
         )
     if state["answer"]:
         text, error, ms = state["answer"]
-        colour = RED if error else INK
-        rows.append(f'<text x="24" y="98" fill="{RED if error else MUTED}">←</text>')
-        rows.append(f'<text x="50" y="98" fill="{colour}">{e(clip(text, 98))}</text>')
-        rows.append(f'<text x="{WIDTH - 24}" y="98" fill="{MUTED}" text-anchor="end">{ms} ms</text>')
+        if state["you"]:
+            rows.append(f'<text x="24" y="98" fill="{MUTED}">#</text>')
+            rows.append(f'<text x="50" y="98" fill="{MUTED}">{e(clip(text, 98))}</text>')
+        else:
+            colour = RED if error else INK
+            rows.append(f'<text x="24" y="98" fill="{RED if error else MUTED}">←</text>')
+            rows.append(f'<text x="50" y="98" fill="{colour}">{e(clip(text, 98))}</text>')
+            rows.append(
+                f'<text x="{WIDTH - 24}" y="98" fill="{MUTED}" text-anchor="end">{ms} ms</text>'
+            )
     body = "\n".join(rows)
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{BAND}" '

@@ -20,7 +20,7 @@ interface Call {
 	answer: string;
 	error: boolean;
 	you: boolean;
-	ms: number;
+	ms: number | null;
 }
 
 const { name, label, log = false, caption = true } = Astro.props;
@@ -74,16 +74,24 @@ const at = (seconds: number) =>
 						<code class="request">
 							<span class="mark">{call.you ? '$' : '→'}</span> {call.request}
 						</code>
-						<code class="answer">
-							<span class="mark">←</span> {call.answer} <span class="ms">{call.ms} ms</span>
-						</code>
+						{call.you ? (
+							<code class="answer narration">
+								<span class="mark">#</span> {call.answer}
+							</code>
+						) : (
+							<code class="answer">
+								<span class="mark">←</span> {call.answer} <span class="ms">{call.ms} ms</span>
+							</code>
+						)}
 					</li>
 				))
 			}
 		</ol>
 		<p class="note">
-			Recorded in a headless nested niri. A script makes the calls an agent would make; every
-			answer is the server's, with its own timing. The chat window is a test stand-in.
+			Recorded in a headless nested niri. A script makes the calls an agent would make, through
+			the real server. Each answer line summarises the server's reply, and each time is the round
+			trip the harness measured. A line marked # is narration. The chat window is a test
+			stand-in.
 		</p>
 	</details>
 </figure>
@@ -255,6 +263,12 @@ const at = (seconds: number) =>
 	}
 
 	.ms {
+		color: var(--sl-color-gray-3);
+	}
+
+	/* What the scene says about a user command, which prints nothing: not the server's. */
+	.narration,
+	.narration .mark {
 		color: var(--sl-color-gray-3);
 	}
 

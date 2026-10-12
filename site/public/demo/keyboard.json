@@ -2,36 +2,36 @@
  "prompt": "Say in #release that I'm on my way.",
  "calls": [
   {
-   "start": 0.15,
+   "start": 0.1,
    "request": "type_text {\"expect\": {\"window_id\": 3}, \"submit\": true, \"text\": \"On my way.\"}",
    "answer": "refused: focus_mismatch",
    "error": true,
    "you": false,
-   "ms": 51
+   "ms": 2
   },
   {
-   "start": 2.5,
+   "start": 2.4,
    "request": "focus {\"window_id\": 3}",
    "answer": "accepted: true \u00b7 observed: focused \u00b7 focus 2 \u2192 3",
    "error": false,
    "you": false,
-   "ms": 304
+   "ms": 254
   },
   {
-   "start": 4.51,
+   "start": 4.36,
    "request": "type_text {\"expect\": {\"window_id\": 3}, \"submit\": true, \"text\": \"On my way.\"}",
    "answer": "accepted: true \u00b7 observed: sent",
    "error": false,
    "you": false,
-   "ms": 253
+   "ms": 254
   },
   {
-   "start": 7.06,
+   "start": 6.91,
    "request": "release_desktop {\"restore_focus\": true}",
    "answer": "released \u00b7 focus back on 2 \u00b7 observed: focused",
    "error": false,
    "you": false,
-   "ms": 51
+   "ms": 2
   }
  ]
 }

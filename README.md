@@ -6,10 +6,10 @@ Let Claude Code, Codex, Pi or any MCP agent see and drive your [niri](https://gi
 
 <picture>
   <source media="(prefers-reduced-motion: reduce)" srcset="site/public/demo/errand.png">
-  <img src="site/public/demo/errand.gif" width="960" alt="A chat window and an editor side by side in niri. The agent focuses the chat, fills its Message field and presses Send through the accessibility bus, then puts focus back on the editor. A caption band under the desktop shows each request and the server's answer.">
+  <img src="site/public/demo/errand.gif" width="960" alt="A chat window and an editor side by side in niri. The agent focuses the chat, fills its Message field and presses Send through the accessibility bus, then puts focus back on the editor. A caption band under the desktop shows each request and a summary of the server's reply.">
 </picture>
 
-Asked: "Tell #release the review moved to 3pm, then put me back where I was." A script makes the calls an agent would make, in a headless nested niri; every answer and timing is the server's, and the chat window is a test stand-in. [The full 17-second recording (MP4)](site/public/demo/errand.mp4).
+Asked: "Tell #release the review moved to 3pm, then put me back where I was." A script makes the calls an agent would make, through the real server in a headless nested niri. The band under the desktop summarises each reply with the round trip the harness measured; the chat window is a test stand-in. [The full 17-second recording (MP4)](site/public/demo/errand.mp4).
 
 Documentation: **https://ayagmar.github.io/niri-computer-use/**, also as plain Markdown for agents ([llms.txt](https://ayagmar.github.io/niri-computer-use/llms.txt)).
 
