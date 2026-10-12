@@ -3,6 +3,7 @@
 //! environment gives the session; the engine takes it as a new session or refuses it.
 //! Pure, apart from reading this binary's identity.
 
+use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -34,8 +35,13 @@ pub(crate) struct Exe {
 
 impl Exe {
     pub(crate) fn current() -> Result<Self, String> {
-        let meta = std::fs::metadata("/proc/self/exe")
-            .map_err(|error| format!("stat /proc/self/exe: {error}"))?;
+        Self::of(Path::new("/proc/self/exe"))
+    }
+
+    /// The build in the file at `path`.
+    fn of(path: &Path) -> Result<Self, String> {
+        let meta =
+            std::fs::metadata(path).map_err(|error| format!("stat {}: {error}", path.display()))?;
         Ok(Self {
             dev: meta.dev(),
             ino: meta.ino(),
@@ -43,6 +49,33 @@ impl Exe {
             mtime: meta.mtime(),
             mtime_nsec: meta.mtime_nsec(),
         })
+    }
+}
+
+/// The file this process was started from, and whether that path still holds this build.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct Build {
+    /// As `/proc/self/exe` names it; null if it can't be read.
+    pub(crate) exe: Option<PathBuf>,
+    /// The path now holds another file or none, as after a reinstall: this process still
+    /// runs the build it started with.
+    pub(crate) replaced: bool,
+}
+
+impl Build {
+    pub(crate) fn current() -> Self {
+        let exe = std::fs::read_link("/proc/self/exe").ok().map(|path| {
+            // The kernel names a file removed or replaced since with this suffix.
+            let kept = path.as_os_str().as_bytes().strip_suffix(b" (deleted)");
+            kept.map(|kept| PathBuf::from(std::ffi::OsStr::from_bytes(kept)))
+                .unwrap_or(path)
+        });
+        let running = Exe::current().ok();
+        let at_path = exe.as_deref().and_then(|path| Exe::of(path).ok());
+        Self {
+            replaced: running.is_none() || at_path != running,
+            exe,
+        }
     }
 }
 
@@ -148,6 +181,7 @@ pub(crate) fn resolved(display: &Path) -> PathBuf {
 /// display.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Own {
+    pub(crate) pid: u32,
     pub(crate) exe: Exe,
     pub(crate) niri_socket: PathBuf,
     pub(crate) wayland_socket: Option<PathBuf>,
@@ -170,7 +204,10 @@ impl Own {
         if hello.exe != self.exe {
             return Err((
                 Refusal::EngineVersion,
-                "the engine runs another build of niri-computer-use".to_owned(),
+                format!(
+                    "the engine, PID {}, runs another build of niri-computer-use, which it keeps until its last client leaves",
+                    self.pid
+                ),
             ));
         }
         if hello.niri_socket != self.niri_socket || hello.wayland_socket != self.wayland_socket {
@@ -195,6 +232,7 @@ mod tests {
 
     fn own() -> Own {
         Own {
+            pid: 42,
             exe: Exe {
                 dev: 1,
                 ino: 2,

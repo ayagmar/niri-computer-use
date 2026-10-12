@@ -283,6 +283,9 @@ impl Engine {
             mode: self.mode,
             sessions: self.sessions().len(),
             fallback: self.fallback.clone(),
+            version: env!("CARGO_PKG_VERSION"),
+            build: hello::Build::current(),
+            cgroup: status::own_cgroup(),
         };
         let sources = status::Sources {
             engine: Some(engine),

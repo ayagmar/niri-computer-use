@@ -50,6 +50,7 @@ pub(crate) async fn run(env: Env) -> Result<(), String> {
     truncate_log(&runtime)?;
     let (listener, bound) = listen(&runtime)?;
     let own = Own {
+        pid: std::process::id(),
         exe: hello::Exe::current()?,
         niri_socket: env.instance.socket().map_err(Clone::clone)?.to_path_buf(),
         wayland_socket: env.display.path().ok().map(hello::resolved),

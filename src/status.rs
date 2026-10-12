@@ -10,6 +10,7 @@ use crate::control::desk::LeaseStatus;
 use crate::control::marker::{self, Found};
 use crate::control::runtime::RuntimeDir;
 use crate::control::{self, Lock};
+use crate::engine::hello::Build;
 use crate::error::ToolError;
 use crate::niri::events::StreamState;
 use crate::niri::{self, version::Compat};
@@ -86,6 +87,23 @@ pub(crate) struct EngineStatus {
     pub(crate) sessions: usize,
     /// Why a client that asked for shared mode is served standalone.
     pub(crate) fallback: Option<String>,
+    pub(crate) version: &'static str,
+    #[serde(flatten)]
+    pub(crate) build: Build,
+    /// The engine's cgroup, as `/proc/self/cgroup` gives it: a scope of its own when the
+    /// bridge that started it could reach systemd, otherwise the client's.
+    pub(crate) cgroup: Option<String>,
+}
+
+/// This process's cgroup v2 path, if `/proc/self/cgroup` can be read and has one.
+pub(crate) fn own_cgroup() -> Option<String> {
+    let cgroups = std::fs::read_to_string("/proc/self/cgroup").ok()?;
+    unified_cgroup(&cgroups).map(str::to_owned)
+}
+
+/// The cgroup v2 path in the text of `/proc/<pid>/cgroup`: the line `0::<path>`.
+fn unified_cgroup(cgroups: &str) -> Option<&str> {
+    cgroups.lines().find_map(|line| line.strip_prefix("0::"))
 }
 
 /// How a server serves its clients.

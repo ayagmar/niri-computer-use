@@ -10,7 +10,9 @@ use serde_json::json;
 
 use crate::client::{CLIENT, Server, WAIT, run, tool_error};
 use crate::fixture::{Fixture, eventually, exited, jpeg, kill, parent, png};
-use crate::shared::{Desktop, engine, engines, guardians, hold_engine_lock, sessions, shared};
+use crate::shared::{
+    Desktop, engine, engines, guardians, hold_engine_lock, holds_alone, sessions, shared,
+};
 
 /// The audit log's name for `client`'s session.
 fn label(client: &Server) -> String {
@@ -288,6 +290,62 @@ async fn served_once(fixture: &Fixture) -> i32 {
         assert!(status.success(), "{stderr}");
     }
     pids[0]
+}
+
+/// A copy of the binary Cargo built: the same build as far as its code goes, but another
+/// file, so another build to the hello.
+fn copy_of_the_binary(fixture: &Fixture, name: &str) -> std::path::PathBuf {
+    let copy = fixture.path(name);
+    std::fs::copy(env!("CARGO_BIN_EXE_niri-computer-use"), &copy).unwrap();
+    copy
+}
+
+/// `cargo install` replaces the binary's file while an engine runs from it. A client
+/// started from the new file is served standalone, sharing the lease, and says why; the
+/// old engine's clients keep working and their `status` says the file was replaced; once
+/// they leave, the old engine exits, and the next client starts an engine of the new build.
+#[tokio::test]
+async fn after_the_binary_is_replaced_new_clients_wait_out_the_old_engine_standalone() {
+    let fixture = shared("many-upgrade");
+    let mut desktop = Desktop::new(&fixture);
+    let installed = copy_of_the_binary(&fixture, "installed");
+    let mut old = Vec::new();
+    for _ in 0..3 {
+        old.push(Server::start_from(&fixture, &installed).await);
+    }
+    let _engine_stream = desktop.stream().await;
+    let old_engine = engine(&fixture).await;
+    let before = old[0].structured("status").await;
+    assert_eq!(before["engine"]["replaced"], false, "{before}");
+    let update = copy_of_the_binary(&fixture, "update");
+    std::fs::rename(&update, &installed).unwrap();
+    let after = old[0].structured("status").await;
+    assert_eq!(after["engine"]["replaced"], true, "{after}");
+    let mut upgraded = Server::start_from(&fixture, &installed).await;
+    let _own_stream = desktop.stream().await;
+    let served = upgraded.structured("status").await["engine"].clone();
+    assert_eq!(served["mode"], "standalone", "{served}");
+    let fallback = served["fallback"].as_str().unwrap();
+    assert!(fallback.contains("(engine_version)"), "{fallback}");
+    assert!(
+        fallback.contains(&format!("PID {old_engine}")),
+        "{fallback}"
+    );
+    holds_alone(&mut upgraded, &mut old[0]).await;
+    holds_alone(&mut old[1], &mut upgraded).await;
+    for client in old {
+        client.stop().await;
+    }
+    assert!(
+        eventually(Duration::from_secs(4), || exited(old_engine)).await,
+        "the old engine stayed after its last client left"
+    );
+    let mut next = Server::start_from(&fixture, &installed).await;
+    let engine_status = next.structured("status").await["engine"].clone();
+    assert_eq!(engine_status["mode"], "shared", "{engine_status}");
+    assert_eq!(engine_status["replaced"], false, "{engine_status}");
+    assert_ne!(engine_status["pid"], old_engine);
+    assert_eq!(upgraded.call("status", json!({})).await["isError"], false);
 }
 
 /// What one client's environment gives its session, for `settings_stay_with_their_session`.

@@ -1,6 +1,7 @@
 //! A minimal MCP client speaking JSON-RPC over the server's stdin and stdout. It fails the
 //! test if any stdout line isn't a JSON-RPC 2.0 message.
 
+use std::path::Path;
 use std::process::{ExitStatus, Stdio};
 use std::sync::PoisonError;
 use std::time::{Duration, Instant};
@@ -32,8 +33,14 @@ pub(crate) struct Server {
 impl Server {
     /// Starts the server without a handshake.
     pub(crate) fn spawn(fixture: &Fixture) -> Self {
+        Self::spawn_from(fixture, Path::new(env!("CARGO_BIN_EXE_niri-computer-use")))
+    }
+
+    /// Starts the server from `binary`, another file than the one Cargo built, without a
+    /// handshake.
+    pub(crate) fn spawn_from(fixture: &Fixture, binary: &Path) -> Self {
         let spawning = SPAWNING.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut child = command()
+        let mut child = command_for(binary)
             .arg("serve")
             .env_clear()
             .envs(fixture.env())
@@ -63,7 +70,15 @@ impl Server {
 
     /// Starts the server and completes the handshake at the newest version with one.
     pub(crate) async fn start(fixture: &Fixture) -> Self {
-        let mut server = Self::spawn(fixture);
+        Self::handshake(Self::spawn(fixture)).await
+    }
+
+    /// Starts the server from `binary` and completes the handshake.
+    pub(crate) async fn start_from(fixture: &Fixture, binary: &Path) -> Self {
+        Self::handshake(Self::spawn_from(fixture, binary)).await
+    }
+
+    async fn handshake(mut server: Self) -> Self {
         let response = server.initialize("2025-11-25").await;
         assert!(response.get("result").is_some(), "{response}");
         server
@@ -295,8 +310,12 @@ pub(crate) fn engine(fixture: &Fixture) -> Child {
     clippy::disallowed_methods,
     reason = "the test starts the server binary itself, outside the server's runner"
 )]
+fn command_for(binary: &Path) -> Command {
+    Command::new(binary)
+}
+
 fn command() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_niri-computer-use"))
+    command_for(Path::new(env!("CARGO_BIN_EXE_niri-computer-use")))
 }
 
 /// Runs a human-only subcommand, such as `stop`, in the fixture's environment.

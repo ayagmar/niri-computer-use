@@ -63,6 +63,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - Tool profiles: `tools = "observe"`, `"act"` or `"full"` in the policy file, or `NIRI_COMPUTER_USE_TOOLS` for one client. `observe` lists only `status`, `desktop_state`, `screenshot`, `elements` and `wait_for`; `act` leaves out `niri_action`, `noctalia` and `shell_panel`. The default, `full`, lists every tool as before. `status.tools` reports the profile.
 - `elements` marks an element whose ref nothing on the accessibility bus binds to the record it acts on: `unbound` in its JSON, `unnamed_row` or `repeated`, and `unbound:<why>` at the end of its line. Every tool taking an `element` refuses such a ref with the new error `element_unbound`, whose detail says to aim the pointer tools at its pixels.
 
+- `status.engine` reports the serving process's `version`, the file it was started from (`exe`), whether that file has been replaced since (`replaced`, as after a reinstall), and its `cgroup`.
+
 ### Changed
 
 - The audit log's `activate_element` and `set_element_text` entries have `gate` once the last check ran: how long each pass took and how old its answers were when the call went out, in milliseconds.

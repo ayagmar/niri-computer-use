@@ -112,10 +112,11 @@ async fn a_server_without_shared_mode_serves_its_one_client_itself() {
     fixture.unset("NIRI_COMPUTER_USE_SHARED");
     let _niri = Niri::start(&fixture);
     let mut server = Server::start(&fixture).await;
-    assert_eq!(
-        server.structured("status").await["engine"],
-        json!({"pid": server.pid, "mode": "standalone", "sessions": 1, "fallback": null})
-    );
+    let engine = server.structured("status").await["engine"].clone();
+    assert_eq!(engine["pid"], server.pid, "{engine}");
+    assert_eq!(engine["mode"], "standalone", "{engine}");
+    assert_eq!(engine["sessions"], 1, "{engine}");
+    assert!(engine["fallback"].is_null(), "{engine}");
     assert_eq!(engines(&fixture), Vec::<i32>::new());
 }
 
@@ -134,10 +135,11 @@ async fn ten_clients_share_one_engine_and_its_lease() {
     let engine = engine(&fixture).await;
     assert_eq!(guardians(engine), 1);
     for server in &mut servers {
-        assert_eq!(
-            server.structured("status").await["engine"],
-            json!({"pid": engine, "mode": "shared", "sessions": 10, "fallback": null})
-        );
+        let status = server.structured("status").await["engine"].clone();
+        assert_eq!(status["pid"], engine, "{status}");
+        assert_eq!(status["mode"], "shared", "{status}");
+        assert_eq!(status["sessions"], 10, "{status}");
+        assert!(status["fallback"].is_null(), "{status}");
     }
     let (first, rest) = servers.split_first_mut().unwrap();
     let second = &mut rest[0];

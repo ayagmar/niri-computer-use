@@ -25,13 +25,13 @@ cargo install --locked --path niri-computer-use
 
 The binary goes to `~/.cargo/bin/niri-computer-use`. To update, pull and run the same `cargo install` again.
 
-Before updating, end every running `niri-computer-use` process: close the agent sessions that run `serve`, and with [`shared`](../../concepts/configuration/#shared) on, wait for the engine to exit, two seconds after its last connection, lease and pending input cleanup have ended, or end it. This lists any still running:
+Updating while agents run is safe. A [shared](../../concepts/configuration/#shared) engine keeps serving the clients it has with the build it started with, and their `status.engine.replaced` turns `true`. Clients started after the update are served standalone, sharing the lease, the stop flag and the input-dirty marker, and their `status.engine.fallback` names the old engine's PID. Once the old engine's last client has ended it exits, two seconds later, and the next client starts an engine of the new build. Restart your agent sessions to move all of them to the new build. This lists the processes still running:
 
 ```sh
 pgrep -a '^niri-computer-u'
 ```
 
-Older development builds keep the lease, the stop flag and the input-dirty marker under `XDG_RUNTIME_DIR` rather than beside niri's socket, and don't take the marker's lock, so an old and a new server on one niri would act as if the other weren't there. Start your clients again once nothing is listed.
+Older development builds keep the lease, the stop flag and the input-dirty marker under `XDG_RUNTIME_DIR` rather than beside niri's socket, and don't take the marker's lock, so an old and a new server on one niri would act as if the other weren't there. When updating from one of those, end every running `niri-computer-use` process first, and start your clients again once nothing is listed.
 
 ## Check it
 
