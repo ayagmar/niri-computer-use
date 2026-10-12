@@ -151,7 +151,7 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 **Cause:** the element is still there but can't be aimed at now. The `detail` starts with `frame_size_mismatch` (the app's coordinates for this window can't be trusted), `not_showing`, `tiled` (niri gives its tiled window no place on screen), `empty` or `outside_screenshot` (its centre is outside the screenshot the pointer aims through).
 
-**What to do:** for `frame_size_mismatch`, aim at a screenshot pixel or use `activate_element` instead. For `not_showing`, bring it into view first, or close niri's overview if it is open. For `tiled`, niri 26.04 gives the window no place to measure from: float it with `niri_action` `{"action": {"ToggleWindowFloating": {"id": <window_id>}}}`, then take a new screenshot and call `elements` again before clicking, or use `activate_element` or `set_element_text`, which don't need a box. For `outside_screenshot`, take a screenshot that shows it.
+**What to do:** for `frame_size_mismatch`, aim at a screenshot pixel or use `activate_element` instead. For `not_showing`, bring it into view first, close niri's overview if it is open, or, when the detail says a fullscreen window covers it, focus the element's window or leave fullscreen. For `tiled`, niri 26.04 gives the window no place to measure from: float it with `niri_action` `{"action": {"ToggleWindowFloating": {"id": <window_id>}}}`, then take a new screenshot and call `elements` again before clicking, or use `activate_element` or `set_element_text`, which don't need a box. For `outside_screenshot`, take a screenshot that shows it.
 
 ### `element_unbound`
 

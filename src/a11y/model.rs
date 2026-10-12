@@ -289,6 +289,10 @@ pub(crate) enum Unmappable {
     /// The element isn't showing and visible, its floating window's workspace isn't the
     /// one shown on its output, or niri's overview is open.
     NotShowing,
+    /// A fullscreen window covers the element's floating window: niri hides a workspace's
+    /// floating windows while its active window is a fullscreen tiled one.
+    #[serde(rename = "not_showing")]
+    Covered,
     /// The window is tiled: niri 26.04 gives only floating windows a place in their
     /// workspace's view, so where a tiled one is on screen isn't known.
     Tiled,
@@ -298,34 +302,63 @@ pub(crate) enum Unmappable {
     OutsideScreenshot,
 }
 
-/// Where `window`'s geometry starts in the layout, from niri's workspaces and outputs read
-/// for the call, or why it isn't known. A tile in the scrolling layout is never placed
-/// (`Tiled`), wherever its workspace is, even on no output: niri 26.04 gives it no place,
-/// and a place derived from where the view is heading would be wrong while the view
-/// scrolls. A floating window is placed only on the active workspace of its output
-/// (`NotShowing` otherwise, on no output too): niri reports its place on every workspace,
-/// shown or not, and the shown workspace's windows are where a hidden one's would be. Nor
-/// while the overview is open, which zooms the workspaces out and leaves that place as it
-/// was.
-pub(crate) fn origin(
-    window: &Window,
-    workspaces: &[Workspace],
-    outputs: &BTreeMap<String, Output>,
-    overview_open: bool,
-) -> Result<LayoutPt, Unmappable> {
+/// What niri reports for the call about where windows are shown: its workspaces, its
+/// outputs, its other windows, and whether the overview is open.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Scene<'a> {
+    pub(crate) workspaces: &'a [Workspace],
+    pub(crate) outputs: &'a BTreeMap<String, Output>,
+    pub(crate) windows: &'a [Window],
+    pub(crate) overview_open: bool,
+}
+
+/// Where `window`'s geometry starts in the layout, from the `scene` niri reports, or why it
+/// isn't known. A tile in the scrolling layout is never placed (`Tiled`), wherever its
+/// workspace is, even on no output: niri 26.04 gives it no place, and a place derived from
+/// where the view is heading would be wrong while the view scrolls. A floating window is
+/// placed only on the active workspace of its output (`NotShowing` otherwise, on no output
+/// too): niri reports its place on every workspace, shown or not, and the shown
+/// workspace's windows are where a hidden one's would be. Nor while the overview is open,
+/// which zooms the workspaces out and leaves that place as it was, nor while a fullscreen
+/// window covers it (`Covered`).
+pub(crate) fn origin(window: &Window, scene: &Scene<'_>) -> Result<LayoutPt, Unmappable> {
     if window.layout.pos_in_scrolling_layout.is_some() {
         return Err(Unmappable::Tiled);
     }
-    if overview_open {
+    if scene.overview_open {
         return Err(Unmappable::NotShowing);
     }
-    let output = window
+    let workspace = window
         .workspace_id
-        .and_then(|id| workspaces.iter().find(|workspace| workspace.id == id))
+        .and_then(|id| scene.workspaces.iter().find(|workspace| workspace.id == id))
         .filter(|workspace| workspace.is_active)
-        .and_then(|workspace| outputs.get(workspace.output.as_deref()?)?.logical.as_ref())
         .ok_or(Unmappable::NotShowing)?;
+    let output = workspace
+        .output
+        .as_deref()
+        .and_then(|name| scene.outputs.get(name)?.logical.as_ref())
+        .ok_or(Unmappable::NotShowing)?;
+    if covered(workspace, output, scene.windows) {
+        return Err(Unmappable::Covered);
+    }
     window_origin(output, &window.layout)
+}
+
+/// Whether `workspace`'s active window is a tiled one as large as `output`, as a fullscreen
+/// window is. niri then draws none of the workspace's floating windows and sends the
+/// pointer to the fullscreen one (`Workspace::is_floating_visible`). IPC doesn't say
+/// whether a window is fullscreen, so a tiled window that fills the output some other way
+/// counts too, and so does one whose workspace niri shows its floating windows above.
+fn covered(workspace: &Workspace, output: &LogicalOutput, windows: &[Window]) -> bool {
+    windows
+        .iter()
+        .filter(|window| Some(window.id) == workspace.active_window_id)
+        .any(|window| {
+            let (width, height) = window.layout.tile_size;
+            window.layout.pos_in_scrolling_layout.is_some()
+                && width >= f64::from(output.width) - 1.0
+                && height >= f64::from(output.height) - 1.0
+        })
 }
 
 /// Where a floating window's geometry starts in the layout: the output's origin, plus the
@@ -812,6 +845,20 @@ mod tests {
             .collect()
     }
 
+    /// A scene of `workspaces` on `outputs` with no other window.
+    fn scene<'a>(
+        workspaces: &'a [Workspace],
+        outputs: &'a BTreeMap<String, Output>,
+        overview_open: bool,
+    ) -> Scene<'a> {
+        Scene {
+            workspaces,
+            outputs,
+            windows: &[],
+            overview_open,
+        }
+    }
+
     #[test]
     fn a_floating_window_is_placed_only_on_the_workspace_its_output_shows() {
         let floating = layout(Some((20.0, 30.0)), (0.0, 0.0));
@@ -823,9 +870,7 @@ mod tests {
         let at = |id| {
             origin(
                 &window_on(Some(id), floating.clone()),
-                &shown,
-                &screens,
-                false,
+                &scene(&shown, &screens, false),
             )
         };
         assert_eq!(at(1), Ok(LayoutPt { x: 20.0, y: 30.0 }));
@@ -833,9 +878,7 @@ mod tests {
         // The overview zooms the workspaces out, and niri's place stays as it was.
         let zoomed = origin(
             &window_on(Some(1), floating.clone()),
-            &shown,
-            &screens,
-            true,
+            &scene(&shown, &screens, true),
         );
         assert_eq!(zoomed, Err(Unmappable::NotShowing));
         // niri still reports the window's place once another workspace is shown on its
@@ -846,7 +889,7 @@ mod tests {
         ];
         let behind = window_on(Some(1), floating.clone());
         assert_eq!(
-            origin(&behind, &hidden, &screens, false),
+            origin(&behind, &scene(&hidden, &screens, false)),
             Err(Unmappable::NotShowing)
         );
         // No workspace, an unknown one, one on no output or on an output that is off.
@@ -859,11 +902,60 @@ mod tests {
             (window_on(Some(1), floating.clone()), &shown[..], &off),
         ] {
             assert_eq!(
-                origin(&unplaced, workspaces, on, false),
+                origin(&unplaced, &scene(workspaces, on, false)),
                 Err(Unmappable::NotShowing),
                 "{unplaced:?}"
             );
         }
+    }
+
+    // niri draws no floating window of a workspace whose active window is a fullscreen
+    // tiled one, and sends the pointer to that window.
+    #[test]
+    fn a_fullscreen_window_covers_its_workspaces_floating_windows() {
+        let floating = window_on(Some(1), layout(Some((20.0, 30.0)), (0.0, 0.0)));
+        let screens = outputs(&[("DP-1", Some((0, 0)))]);
+        let other = |id, tiled: bool, size| {
+            let mut window = window_on(
+                Some(1),
+                WindowLayout {
+                    pos_in_scrolling_layout: tiled.then_some((1, 1)),
+                    tile_size: size,
+                    ..layout(Some((0.0, 0.0)), (0.0, 0.0))
+                },
+            );
+            window.id = id;
+            window
+        };
+        let windows = [
+            other(5, true, (960.0, 720.0)),
+            other(6, true, (959.5, 719.5)),
+            other(7, true, (944.0, 704.0)),
+            other(8, false, (960.0, 720.0)),
+        ];
+        let active = |id| {
+            let mut shown = workspace(1, Some("DP-1"), true);
+            shown.active_window_id = id;
+            [shown]
+        };
+        let at = |id| {
+            let workspaces = active(id);
+            let scene = Scene {
+                windows: &windows,
+                ..scene(&workspaces, &screens, false)
+            };
+            origin(&floating, &scene)
+        };
+        let placed = Ok(LayoutPt { x: 20.0, y: 30.0 });
+        // Fullscreen, at a fractional scale too.
+        assert_eq!(at(Some(5)), Err(Unmappable::Covered));
+        assert_eq!(at(Some(6)), Err(Unmappable::Covered));
+        // A column that leaves gaps, a floating window as large as the output, the
+        // floating window itself active, or none.
+        assert_eq!(at(Some(7)), placed);
+        assert_eq!(at(Some(8)), placed);
+        assert_eq!(at(Some(1)), placed);
+        assert_eq!(at(None), placed);
     }
 
     #[test]
@@ -876,7 +968,10 @@ mod tests {
         let shown = [workspace(1, Some("DP-1"), true)];
         // niri 26.04 gives a tiled window no place in the view: the element is on
         // screen, so `not_showing` would send the agent looking for it.
-        let unplaced = origin(&window_on(Some(1), tiled(None)), &shown, &screens, false);
+        let unplaced = origin(
+            &window_on(Some(1), tiled(None)),
+            &scene(&shown, &screens, false),
+        );
         assert_eq!(unplaced, Err(Unmappable::Tiled));
         assert_eq!(
             place(placement(extents(40, 70, 320, 34), unplaced)),
@@ -885,10 +980,13 @@ mod tests {
         // A place niri gives a tiled window isn't trusted either.
         let given = window_on(Some(1), tiled(Some((16.0, 16.0))));
         assert_eq!(
-            origin(&given, &shown, &screens, false),
+            origin(&given, &scene(&shown, &screens, false)),
             Err(Unmappable::Tiled)
         );
-        let overview = origin(&window_on(Some(1), tiled(None)), &shown, &screens, true);
+        let overview = origin(
+            &window_on(Some(1), tiled(None)),
+            &scene(&shown, &screens, true),
+        );
         assert_eq!(overview, Err(Unmappable::Tiled));
         // Whatever niri says of its workspace: tiled, it wouldn't be placed if shown.
         let hidden = [workspace(1, Some("DP-1"), false)];
@@ -903,7 +1001,7 @@ mod tests {
         ] {
             let window = window_on(workspace, tiled(None));
             assert_eq!(
-                origin(&window, workspaces, on, false),
+                origin(&window, &scene(workspaces, on, false)),
                 Err(Unmappable::Tiled),
                 "{workspace:?} {workspaces:?}"
             );

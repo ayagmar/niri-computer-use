@@ -112,6 +112,7 @@ impl Checks<'_, '_> {
         self.tiled(window.id, &primary)?;
         self.overview(window.id)?;
         self.unshown(window.id, &primary)?;
+        self.covered(window.id)?;
         self.vanished(window.id)?;
         let qt = Fixture::start(self.session, Toolkit::Qt)?;
         let qt_window = qt.window(self.session, bus)?;
@@ -280,6 +281,62 @@ impl Checks<'_, '_> {
         self.counted("primary-count", ROUNDS + 4)?;
         self.session.log(&format!(
             "M9: on a workspace not shown, niri reported the window at {place:?}; Primary unmappable and its click refused: {refused}; shown again, it hit"
+        ))
+    }
+
+    /// A fullscreen tiled window, focused on the same workspace, hides the floating one:
+    /// `Primary` is `not_showing` because a fullscreen window covers it, and its ref is
+    /// refused without a click. With that window closed, it hits.
+    fn covered(&mut self, window: u64) -> Result<()> {
+        let decoy = Fixture::start_decoy(self.session)?;
+        let cover = decoy.decoy_window(self.session)?;
+        let id = Some(cover);
+        for action in [
+            Action::MoveWindowToTiling { id },
+            Action::FullscreenWindow { id },
+            Action::FocusWindow { id: cover },
+        ] {
+            self.session.request(&Request::Action(action))?;
+        }
+        let size = self.session.wait_until(
+            "m9-covered",
+            "the fullscreen decoy, focused",
+            WAIT,
+            |session| {
+                let Some(now) = super::window(session, cover)? else {
+                    return Ok(None);
+                };
+                let tiled = now.layout.pos_in_scrolling_layout.is_some();
+                let filled = now.layout.tile_size.0 > 400.0;
+                Ok((tiled && filled && now.is_focused).then_some(now.layout.tile_size))
+            },
+        )?;
+        let listed = self.primary_until(window, "Primary unmappable: not_showing", |element| {
+            field(element, "/unmappable") == "not_showing"
+        })?;
+        let refused = self.refused_click(&element_ref(&listed)?)?;
+        expect(
+            field(&refused, "/error") == "element_unmappable"
+                && field(&refused, "/detail").as_str().is_some_and(|detail| {
+                    detail.starts_with("not_showing: a fullscreen window covers it")
+                }),
+            "element_unmappable: a fullscreen window covers it",
+            &refused,
+        )?;
+        let session = &*self.session;
+        session.still_absent("m9-covered-no-activation", SETTLE, || {
+            Ok(read_count(session, "primary-count")? != Some(ROUNDS + 4))
+        })?;
+        decoy.stop()?;
+        self.primary_until(window, "Primary with a box", |element| {
+            !field(element, "/layout_box").is_null()
+        })?;
+        let uncovered = self.button(window, "Primary")?;
+        self.shot = None;
+        self.click(&uncovered.id)?;
+        self.counted("primary-count", ROUNDS + 5)?;
+        self.session.log(&format!(
+            "M9: behind a fullscreen window of tile size {size:?}, Primary unmappable and its click refused: {refused}; uncovered, it hit"
         ))
     }
 

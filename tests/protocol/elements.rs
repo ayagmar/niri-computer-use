@@ -2260,3 +2260,44 @@ async fn no_element_is_aimed_at_while_the_overview_is_open() {
     assert_eq!(moved["isError"], false, "{moved}");
     assert_eq!(desk.fixture.clipboard.pointed().len(), 1);
 }
+
+// niri draws no floating window of a workspace whose active window is a fullscreen tiled
+// one, and sends the pointer to that window instead. A ref listed before the other window
+// went fullscreen sends nothing, and the listing says `not_showing`.
+#[tokio::test]
+async fn a_floating_window_behind_a_fullscreen_one_is_never_aimed_at() {
+    let mut fullscreen = window_on(2, Some("other"), 1, false);
+    fullscreen["layout"]["tile_size"] = json!([2560.0, 1440.0]);
+    fullscreen["layout"]["window_size"] = json!([2560, 1440]);
+    let windows = [floating_window(), fullscreen];
+    let mut desk = Desk::start_with("el-fullscreen", &["/frame"], objects(), &windows).await;
+    let button = safe(&mut desk).await["element_ref"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut covered = workspace();
+    covered["active_window_id"] = json!(2);
+    desk.niri.set_windows(&windows, &[covered]);
+    let shot = desk.screenshot_ref().await;
+    for tool in ["pointer_move", "click"] {
+        let aimed = json!({"screenshot_ref": shot, "element": button});
+        let refused = desk.server.call(tool, aimed).await;
+        let (name, detail) = tool_error(&refused);
+        assert_eq!(name, "element_unmappable", "{tool}: {refused}");
+        assert!(
+            detail.starts_with("not_showing: a fullscreen window covers it"),
+            "{tool}: {detail}"
+        );
+        assert_eq!(desk.fixture.clipboard.pointed(), [], "{tool}");
+    }
+    let listed = safe(&mut desk).await;
+    assert_eq!(listed["unmappable"], "not_showing", "{listed}");
+    assert_eq!(listed["layout_box"], Value::Null, "{listed}");
+    let mut uncovered = workspace();
+    uncovered["active_window_id"] = json!(WINDOW);
+    desk.niri.set_windows(&windows, &[uncovered]);
+    let aimed = json!({"screenshot_ref": shot, "element": button});
+    let moved = desk.server.call("pointer_move", aimed).await;
+    assert_eq!(moved["isError"], false, "{moved}");
+    assert_eq!(desk.fixture.clipboard.pointed().len(), 1);
+}

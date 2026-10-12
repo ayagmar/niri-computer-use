@@ -9,7 +9,7 @@ use niri_ipc::Window;
 use serde::Serialize;
 
 use crate::a11y::model::{
-    self, Extents, Filter, Fresh, LayoutBox, Link, NameHash, Placement, Refused, Row, Shape,
+    self, Extents, Filter, Fresh, LayoutBox, Link, NameHash, Placement, Refused, Row, Scene, Shape,
     Unbound, Unmappable,
 };
 use crate::a11y::{self, A11y, Capped, ElementRef, Failed, Node, Want};
@@ -162,7 +162,13 @@ async fn placed(socket: &Socket, id: u64) -> Result<Option<Placed>, ToolError> {
     let Some(window) = window.into_iter().next() else {
         return Ok(None);
     };
-    let origin = model::origin(&window, &workspaces?, &outputs?, overview?);
+    let scene = Scene {
+        workspaces: &workspaces?,
+        outputs: &outputs?,
+        windows: &others,
+        overview_open: overview?,
+    };
+    let origin = model::origin(&window, &scene);
     Ok(Some(Placed {
         window,
         origin,
@@ -574,6 +580,10 @@ pub(crate) fn unmappable(why: Unmappable) -> ToolError {
         Unmappable::NotShowing => (
             "not_showing",
             "the element or its window isn't showing, or niri's overview is open; bring it into view or close the overview, and call elements again",
+        ),
+        Unmappable::Covered => (
+            "not_showing",
+            "a fullscreen window covers it; focus its window or leave fullscreen, and call elements again",
         ),
         Unmappable::Tiled => (
             "tiled",
