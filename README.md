@@ -19,11 +19,11 @@ Documentation: **https://ayagmar.github.io/niri-computer-use/**, also as plain M
 - **niri only, through niri's own IPC.** Windows, focus and layout come from niri. Where an app exposes its buttons and fields on the accessibility bus, the agent can act on them by name rather than by pixels. With a niri release other than 26.04 the server only looks; a 26.04 patch release works, with a warning in `status`.
 - **Guardrails, not a sandbox.** A lease, a stop key, a lock check and an audit log. An agent holding the lease can do anything you could do with a mouse and keyboard.
 
-It offers up to 22 tools over stdio: reading the desktop, screenshots, accessible elements, and, under the lease, focus, launch, close, niri's layout actions, pointer, keyboard, paste, element actions and three Noctalia panels. It is in early development; acceptance evidence for each milestone is in [docs/results/](docs/results/).
+It offers up to 22 tools over stdio: reading the desktop, screenshots, zooming into part of a screenshot to read small text, accessible elements, and, under the lease, focus, launch, close, niri's layout actions, pointer, keyboard, paste, element actions and three Noctalia panels. It is in early development; acceptance evidence for each milestone is in [docs/results/](docs/results/).
 
 ## Quickstart
 
-Needs niri 26.04, Rust 1.99.0 through rustup, libxkbcommon, and `grim`, `wtype` and `loginctl` at run time. From a shell inside your niri session:
+Needs niri 26.04, Rust 1.99.0 through rustup, libxkbcommon, and `grim`, `wtype` and `loginctl` at run time, plus `notify-send` if you turn on `confirm_lease`. From a shell inside your niri session:
 
 ```sh
 git clone https://github.com/ayagmar/niri-computer-use.git
@@ -98,13 +98,14 @@ What `launch` answered:
 ## Safety
 
 - One agent at a time holds the lease, and only the lease holder acts. Looking needs no lease.
+- With `confirm_lease` on, you allow each lease on a desktop notification before the agent gets it, even when its client approves tool calls without asking you. It is off by default.
 - The stop key cancels the running action and takes the lease back. An agent can't press it.
 - An action starts only after a read of the lock state at most 250 ms old says unlocked. Locked or unknown refuses it.
 - Before typing, the server checks that the window the agent names in `expect` has focus, unless it passes `"none"`. Text goes out in parts of up to 100 characters, with focus and the lock read again before each part. Pointer and keyboard input is refused while an app on your deny list has focus, and element actions on its windows.
 - Element actions refuse fields the toolkit marks as password fields. Apps start only from presets you write; `unrestricted` lifts that and allows niri's gated actions such as `Spawn`.
 - Calls that reach a tool go to an audit log, without the text typed, the clipboard, window titles or images.
 
-What isn't protected: any connected agent sees your screen and window titles, a click can land on a denied window that doesn't have focus, typing and clicking don't check for password fields, and a lock that comes after the last read isn't caught. With the default `wtype` backend, a part that has started typing finishes even if focus moves, you press the stop key or the screen locks. A click or a key can do anything you could do. Read [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/#what-isnt-a-boundary) before letting an agent act, and [SECURITY.md](SECURITY.md) to report a problem.
+What isn't protected: any connected agent sees your screen and window titles, a click can land on a denied window that doesn't have focus, typing and clicking don't check for password fields, a lock that comes after the last read isn't caught, and an agent that can run shell commands can answer the `confirm_lease` notification itself. With the default `wtype` backend, a part that has started typing finishes even if focus moves, you press the stop key or the screen locks. A click or a key can do anything you could do. Read [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/#what-isnt-a-boundary) before letting an agent act, and [SECURITY.md](SECURITY.md) to report a problem.
 
 ## Limits
 
@@ -117,7 +118,7 @@ What isn't protected: any connected agent sees your screen and window titles, a 
 
 - [Install](https://ayagmar.github.io/niri-computer-use/start/install/) and [Client setup](https://ayagmar.github.io/niri-computer-use/start/clients/): build, check, and register the server in your agent
 - [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/): what the server enforces, what it doesn't, and how you take the desktop back
-- [Configuration](https://ayagmar.github.io/niri-computer-use/concepts/configuration/): `policy.toml`, launch presets, the deny list, `unrestricted`, the shared engine and tool profiles
+- [Configuration](https://ayagmar.github.io/niri-computer-use/concepts/configuration/): `policy.toml`, launch presets, the deny list, `unrestricted`, `confirm_lease`, the shared engine and tool profiles
 - [Tools](https://ayagmar.github.io/niri-computer-use/tools/overview/): every tool, its arguments and results
 - [Error reference](https://ayagmar.github.io/niri-computer-use/reference/errors/) and [Troubleshooting](https://ayagmar.github.io/niri-computer-use/reference/troubleshooting/): what each error means and what to do
 - [CLI reference](https://ayagmar.github.io/niri-computer-use/reference/cli/): `serve`, `status`, `stop`, `resume`, `recover`

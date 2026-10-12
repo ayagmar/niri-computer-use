@@ -23,7 +23,7 @@ import Workspace from '../../components/Workspace.astro';
 
 ## It asks niri, then acts through niri
 
-An agent such as Claude Code, Codex or Pi starts `niri-computer-use serve` and gets niri's own view of your desktop: windows, workspaces, focus, monitors, screenshots that map back to the layout, and, where apps expose them, accessible buttons and fields. Once it takes the lease, it can focus windows, start apps you listed, resize and move them with niri's actions, click, drag, scroll, type and paste, and open three Noctalia panels.
+An agent such as Claude Code, Codex or Pi starts `niri-computer-use serve` and gets niri's own view of your desktop: windows, workspaces, focus, monitors, screenshots that map back to the layout and that it can zoom into to read small text, and, where apps expose them, accessible buttons and fields. Once it takes the lease, it can focus windows, start apps you listed, resize and move them with niri's actions, click, drag, scroll, type and paste, and open three Noctalia panels.
 
 <div class="columns">
 <div class="column">
@@ -87,6 +87,7 @@ Your agent starts the server over stdio. By default every client on one niri is 
 <div class="column">
 
 - One agent at a time holds the lease, and only the lease holder acts. Looking needs no lease.
+- With [`confirm_lease`](concepts/configuration/#confirm_lease) on, you allow each lease on a desktop notification first, even when the agent's client approves tool calls without asking you. Deny, or no answer within a minute, refuses it. An agent that can run shell commands can answer the notification itself.
 - A key bound to `niri-computer-use stop` cancels the running action and takes the lease back. An agent can't press it.
 - An action starts only after a read of the lock state at most 250 ms old says unlocked. A lock after that read isn't caught.
 - Before typing, the server checks that the window the agent names in `expect` has focus, unless it passes `"none"`. Text goes out in parts of up to 100 characters, with focus and the lock read again before each part. With the default `wtype` backend, a part that has started finishes even if focus moves, you press the stop key or the screen locks. Pointer and keyboard input is refused while an app on your deny list has focus, and element actions on its windows. A click can still land on a denied window that doesn't have focus.
@@ -118,10 +119,11 @@ None of this is a sandbox. A click or a key can do anything you could do, and sc
 ### Needs
 
 - niri 26.04 on Linux. With another major or minor release of niri the server only looks.
-- `grim`, `wtype`, `loginctl` and libxkbcommon.
+- `grim`, `wtype`, `loginctl` and libxkbcommon, plus `notify-send` for `confirm_lease`.
 - Rust 1.99.0 through rustup, to build it. There is no package yet.
 - Claude Code, Codex, Pi or any client that starts a stdio MCP server.
 - Optional: [Noctalia](concepts/noctalia/) 5.2 for its panels and lock state, and an accessibility bus (at-spi2-core) for elements.
+- The server looks for `loginctl` and `noctalia` in `/usr/local/bin`, `/usr/bin`, `/bin` and `/run/current-system/sw/bin`. For a Noctalia installed elsewhere, set [`NIRI_COMPUTER_USE_DESKTOP_PATH`](concepts/configuration/#environment).
 
 </div>
 <div class="column">
@@ -152,7 +154,7 @@ From a shell inside your niri session:
    cargo install --locked --path niri-computer-use
    ```
 
-2. Check it against your session. `niri.compat` should be `ok`, and every entry under `binaries` `true`.
+2. Check it against your session. `niri.compat` should be `ok`, and `grim` and `wtype` `true` under `binaries`.
 
    ```sh
    ~/.cargo/bin/niri-computer-use status
