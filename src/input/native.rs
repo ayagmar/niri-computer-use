@@ -9,7 +9,9 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
-use super::keyboard::{Expect, Sent, Typing, check_expect, ended, partly, typed_so_far};
+use super::keyboard::{
+    Expect, Sent, Typing, WTYPE_DEADLINE, check_expect, ended, partly, typed_so_far,
+};
 use super::keymap::{Key, Plan, plan};
 use super::paste::Aftercare;
 use super::{Input, focused_app_id};
@@ -49,8 +51,11 @@ pub(super) async fn type_input(
     if let Some(map) = &plan.extended {
         device.keyboard()?.extend(map)?;
     }
-    // `paste`'s keeper reports whether its key went out; the keyboard tools tell the desk.
-    let marks = aftercare.is_none();
+    let call = Call {
+        typing: &typing,
+        budget: Budget::start(keys.len()),
+        marks: aftercare.is_none(),
+    };
     let mut sent = Sent::default();
     for key in keys {
         act::fresh_lock(input.niri)
@@ -61,7 +66,7 @@ pub(super) async fn type_input(
             device.finish(waiter.view().keyboard_group()).await?;
             return Ok(ended(outcome, focus, &typing, sent));
         }
-        may_press(input, waiter.view(), &typing, sent, marks).await?;
+        may_press(input, waiter.view(), &call, sent).await?;
         device.commit(aftercare, input.niri.desk).await?;
         // Sent to niri before it failed, the key may still have gone out.
         device
@@ -112,22 +117,30 @@ fn keymap_changed(view: &View) -> Outcome {
     )
 }
 
+/// What stays the same for each key of a call.
+struct Call<'a> {
+    typing: &'a Typing,
+    budget: Budget,
+    /// Whether to tell the desk each key is going out. `paste`'s keeper reports whether
+    /// its key went out instead.
+    marks: bool,
+}
+
 /// Whether the next key may go out: the stop flag isn't set, the focused app in `view` isn't
-/// denied, and the lock state was read at most `LAST_GATE` ago. With `marks`, tells the
-/// desk the key is going out.
+/// denied, the call's time isn't up, and the lock state was read at most `LAST_GATE` ago.
+/// With `marks`, tells the desk the key is going out.
 async fn may_press(
     input: Input<'_>,
     view: &View,
-    typing: &Typing,
+    call: &Call<'_>,
     sent: Sent,
-    marks: bool,
 ) -> Result<(), ToolError> {
     if input
         .runtime
         .stopped()
         .map_err(|error| upstream(&format!("read stop flag: {error}")))?
     {
-        if marks && !sent.nothing() {
+        if call.marks && !sent.nothing() {
             // Keys went out, so the call ends `uncertain`, as the desk's stop watcher ends
             // it once it sees the same flag.
             tokio::time::sleep(STOP_SEEN).await;
@@ -141,14 +154,17 @@ async fn may_press(
         ));
     }
     if let Some(refused) = policy::refuse_input(input.policy, focused_app_id(view)) {
-        return Err(partly(refused, typing, sent));
+        return Err(partly(refused, call.typing, sent));
     }
-    let unlocked = if marks {
+    call.budget
+        .check()
+        .map_err(|error| partly(error, call.typing, sent))?;
+    let unlocked = if call.marks {
         input.niri.desk.sending_input()
     } else {
         input.niri.desk.fresh()
     };
-    unlocked.map_err(|error| partly(error, typing, sent))
+    unlocked.map_err(|error| partly(error, call.typing, sent))
 }
 
 async fn interrupted(waiter: &mut Waiter, before: Option<u64>, group: u32) -> Option<Outcome> {
@@ -165,6 +181,40 @@ async fn interrupted(waiter: &mut Waiter, before: Option<u64>, group: u32) -> Op
             Vec::new(),
         )),
         Waited::Lost(reason) => Some(Outcome::uncertain(Some(true), Some(waiter.view()), reason)),
+    }
+}
+
+/// A key's share of its call's time: three frames at 60 Hz. The slowest steady rate
+/// measured, a nested niri drawing every frame, was two (32 ms).
+const PER_KEY: Duration = Duration::from_millis(50);
+
+/// A call's time: `PER_KEY` for each key, and at least what one `wtype` call gets. Each
+/// round trip has its own deadline, but a niri that answers every one late could
+/// otherwise stretch a call without end. A call past it stops between keys, and the
+/// dropped device's cleanup releases them.
+struct Budget {
+    length: Duration,
+    ends: Instant,
+}
+
+impl Budget {
+    fn start(keys: usize) -> Self {
+        let keys = u32::try_from(keys).unwrap_or(u32::MAX);
+        let length = PER_KEY.saturating_mul(keys).max(WTYPE_DEADLINE);
+        Self {
+            length,
+            ends: Instant::now() + length,
+        }
+    }
+
+    fn check(&self) -> Result<(), ToolError> {
+        if Instant::now() < self.ends {
+            return Ok(());
+        }
+        Err(ToolError::new(
+            ErrorName::DeadlineExceeded,
+            format!("native typing took longer than its {:?}", self.length),
+        ))
     }
 }
 
@@ -459,6 +509,22 @@ mod tests {
             "not in niri's active layout"
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A call gets 50 ms a key, here 7.5 s, and a short one wtype's 3 s; past them, the
+    /// next key is refused with `deadline_exceeded`.
+    #[tokio::test(start_paused = true)]
+    async fn a_call_gets_its_keys_time_and_at_least_wtypes() {
+        let budget = Budget::start(150);
+        let short = Budget::start(2);
+        tokio::time::advance(Duration::from_millis(2900)).await;
+        short.check().unwrap();
+        tokio::time::advance(Duration::from_millis(4500)).await;
+        budget.check().unwrap();
+        short.check().unwrap_err();
+        tokio::time::advance(Duration::from_millis(100)).await;
+        let error = budget.check().unwrap_err();
+        assert_eq!(error.name, ErrorName::DeadlineExceeded);
     }
 
     fn device() -> Device {

@@ -30,7 +30,7 @@ use super::paste::Aftercare;
 
 /// Plan §6: about 0.4 s of wtype's sleeps at the 100-character cap, and C10's slowest
 /// run of the corpus at well under half of this.
-const WTYPE_DEADLINE: Duration = Duration::from_secs(3);
+pub(super) const WTYPE_DEADLINE: Duration = Duration::from_secs(3);
 /// One `wtype` call's text, counted in Unicode scalar values, as wtype batches them.
 const MAX_PART: usize = 100;
 /// `key`'s combinations per call.

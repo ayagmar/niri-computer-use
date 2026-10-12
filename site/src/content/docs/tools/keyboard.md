@@ -67,6 +67,7 @@ The result is `key`'s with `paste`: `read`, whether an app asked for the text af
 What changes with native:
 
 - It uses the compositor's keymap and checks focus, the layout and the stop flag between individual key presses, not between parts of 100 characters.
+- A call gets 50 ms for each character or key, and at least three seconds. One still typing after that stops between keys with `deadline_exceeded`, saying how much it typed, and its keys are released.
 - Text with symbols the active layout lacks is typed through a temporary keymap for that call, using keycodes the layout leaves empty, and the compositor's keymap is restored before the call succeeds. There are only so many spare keycodes (14 in a US layout), so a text needing more distinct missing symbols, or a missing control character, is refused whole with `refused`; split it.
 - `key` combinations still refuse keysyms the layout lacks.
 - Modifiers you hold and locks you have on, such as Shift or Caps Lock, don't change what it types: each key goes out with the modifiers it needs and no lock. Afterwards the focused application believes no modifier is down and no lock is on until you press or release a modifier or a lock key, or focus moves, so a letter you type with Shift still held or Caps Lock still on comes out lowercase. After wtype, your next key puts the application back in step. A modifier you press or release while a call types can reach the application between a key's modifiers and the key itself, and change that key.
