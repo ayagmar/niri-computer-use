@@ -613,6 +613,20 @@ impl World {
         trace
     }
 
+    /// Runs `case` up to three times until its point is reached. A lock read made again
+    /// because the last one had aged is in the trace only when the machine was that slow,
+    /// so on a loaded machine the next call may not make it.
+    async fn reach(&mut self, case: &Case<'_>) -> Result<Ran, String> {
+        let mut ran = self.run(case).await;
+        for _ in 0..2 {
+            if ran.is_ok() {
+                break;
+            }
+            ran = self.run(case).await;
+        }
+        ran
+    }
+
     /// Runs `case`, or says why its point wasn't reached.
     async fn run(&mut self, case: &Case<'_>) -> Result<Ran, String> {
         let arguments = self.reset(case.tool).await;
@@ -840,7 +854,7 @@ async fn explore_fact(tool: Tool, fact: Fact, shard: usize) -> (usize, Vec<Strin
                 continue;
             }
             runs += 1;
-            let judged = match world.run(&case).await {
+            let judged = match world.reach(&case).await {
                 Ok(ran) => judge(&case, &ran).map_err(|why| format!("{why}; {}", ran.result)),
                 Err(why) => Err(why),
             };
