@@ -22,6 +22,11 @@ use crate::niri::{self, Events};
 pub(crate) const QUIET: Duration = Duration::from_millis(250);
 /// At most this long after the action's own wait and its evidence, however busy niri is.
 const EXTRA: Duration = Duration::from_millis(500);
+/// After an action whose own wait saw niri's event, the rest of niri's batch has come once
+/// niri sent no event of any kind for this long.
+const GAP: Duration = Duration::from_millis(10);
+/// At most this long for the rest of niri's batch.
+const BATCH: Duration = Duration::from_millis(50);
 
 /// A watch on niri's events from the start of an action.
 #[derive(Debug)]
@@ -43,8 +48,12 @@ pub(crate) struct Recorder {
 pub(crate) enum Wait {
     /// Until niri has been quiet for `QUIET`: nothing else waited for the screen.
     Quiet,
-    /// Only for what niri already sent: a settled screenshot waited for the screen, or the
-    /// action's own wait saw niri's event for it.
+    /// Until the rest of the batch the action's own wait saw niri's event in: no event for
+    /// `GAP`, at most `BATCH`. niri writes a refresh's events one at a time, and some come
+    /// after the one a wait looks for, such as the urgency it clears on a window that took
+    /// focus.
+    Batch,
+    /// Only for what niri already sent, after a settled screenshot waited for the screen.
     Received,
 }
 
@@ -73,7 +82,7 @@ impl Quiet {
                 Self::UnlessSeen,
                 Observed::Focused | Observed::Changed | Observed::Unchanged | Observed::Closed,
             )
-            | (Self::Never, _) => Wait::Received,
+            | (Self::Never, _) => Wait::Batch,
             _ => Wait::Quiet,
         }
     }
@@ -113,8 +122,10 @@ impl Recorder {
     /// changed since the start; with `lost` saying why when the stream ended first, and
     /// then `focused_window` unknown, as focus may have moved since.
     pub(crate) async fn finish(mut self, wait: Wait, outcome: &mut Outcome) -> Changes {
-        if wait == Wait::Quiet {
-            self.quiet().await;
+        match wait {
+            Wait::Quiet => self.quiet().await,
+            Wait::Batch => self.batch().await,
+            Wait::Received => {}
         }
         self.drain().await;
         let view = self.waiter.view();
@@ -139,6 +150,17 @@ impl Recorder {
                 return;
             }
             self.next(left).await;
+        }
+    }
+
+    /// Applies events until none came for `GAP`, or `BATCH` from now.
+    async fn batch(&mut self) {
+        let limit = Instant::now() + BATCH;
+        while self.lost.is_none() {
+            let left = GAP.min(limit.saturating_duration_since(Instant::now()));
+            if left.is_zero() || !self.next(left).await {
+                return;
+            }
         }
     }
 
@@ -300,15 +322,45 @@ mod tests {
             Observed::Closed,
         ];
         for observed in seen {
-            assert_eq!(Quiet::UnlessSeen.wait(false, observed), Wait::Received);
+            assert_eq!(Quiet::UnlessSeen.wait(false, observed), Wait::Batch);
             assert_eq!(Quiet::Always.wait(false, observed), Wait::Quiet);
         }
         // A focus that timed out or was interrupted, or an action only sent, saw nothing.
         for observed in [Observed::Timeout, Observed::Interrupted, Observed::Sent] {
             assert_eq!(Quiet::UnlessSeen.wait(false, observed), Wait::Quiet);
         }
-        assert_eq!(Quiet::Never.wait(false, Observed::Sent), Wait::Received);
+        assert_eq!(Quiet::Never.wait(false, Observed::Sent), Wait::Batch);
         assert_eq!(Quiet::Always.wait(true, Observed::Sent), Wait::Received);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_focus_reports_the_urgency_niri_clears_in_the_same_refresh() {
+        let urgent = Window {
+            is_urgent: true,
+            ..window(2, Some("chat"), 1, false)
+        };
+        let (recorder, mut outcome, sender) = watching(vec![app(), urgent]);
+        // The focus wait returned on this event; niri writes the next one a moment later.
+        event(&sender, 1, Event::WindowFocusChanged { id: Some(2) });
+        let clears = tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            let cleared = Event::WindowUrgencyChanged {
+                id: 2,
+                urgent: false,
+            };
+            event(&sender, 2, cleared);
+            sender
+        });
+        let wait = Quiet::UnlessSeen.wait(false, Observed::Focused);
+        let changes = recorder.finish(wait, &mut outcome).await;
+        assert_eq!(
+            serde_json::to_value(&changes).unwrap(),
+            json!({
+                "focus": {"from": 1, "to": 2},
+                "windows": [{"id": 2, "urgent": false}],
+            })
+        );
+        drop(clears.await.unwrap());
     }
 
     #[tokio::test(start_paused = true)]
