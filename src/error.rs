@@ -60,7 +60,8 @@ pub(crate) enum ErrorName {
     PanelNotAllowed,
     /// A paste couldn't save the clipboard whole, so it pasted nothing.
     ClipboardUnsaved,
-    /// `screenshot` was asked to save without a `capture_dir` in the policy file.
+    /// `screenshot` was asked to save while saving is off: `capture_dir = ""`, an invalid
+    /// policy file, or a `~/` directory without `HOME`.
     SaveNotEnabled,
     /// The window's application isn't on the accessibility bus, or has no window there.
     NotAccessible,

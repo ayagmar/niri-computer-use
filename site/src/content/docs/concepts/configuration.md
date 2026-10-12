@@ -16,7 +16,8 @@ The server reads `~/.config/niri-computer-use/policy.toml`, or `$XDG_CONFIG_HOME
 | `state` | `loaded`, `missing` or `invalid` |
 | `presets`, `preset_names` | how many presets there are, and the names `launch` takes |
 | `denied_app_ids` | how many apps are on the deny list |
-| `capture_dir` | as the file writes it, or null when saving is off |
+| `capture_dir` | where `save_path` writes, as the file writes it or `~/Pictures/niri-computer-use` by default, or null when saving is off |
+| `capture_dir_source` | `policy` when the file sets `capture_dir`, `""` included, `default` when it doesn't or there is no file, null while the file is invalid |
 | `error` | why the file is invalid |
 
 `status` also shows `unrestricted` and `confirm_lease`, each with `enabled`, `source` (`policy`, `env`, `both`, or null while off) and `error`, which explains a `NIRI_COMPUTER_USE_UNRESTRICTED` or `NIRI_COMPUTER_USE_CONFIRM_LEASE` value other than `1`. Its `tools` shows the [tool profile](#tools): `profile`, `source` (`policy`, `env`, `both`, or null for `full`) and `error`, which explains a `NIRI_COMPUTER_USE_TOOLS` value that names no profile.
@@ -29,7 +30,8 @@ An invalid file doesn't stop the server, but `acquire_desktop` and every action 
 # Input tools refuse while one of these apps has keyboard focus.
 deny_input_app_ids = ["org.keepassxc.KeePassXC", "org.gnome.Settings"]
 
-# Where screenshot's save_path writes PNG files. Without it, saving is off.
+# Where screenshot's save_path writes PNG files. Without it, ~/Pictures/niri-computer-use;
+# "" turns saving off.
 capture_dir = "~/Pictures/agent-shots"
 
 [[preset]]
@@ -51,7 +53,7 @@ app_id = "org.gnome.Nautilus"
 With this file, `status` reports:
 
 ```json
-{"state":"loaded","presets":3,"preset_names":["firefox","terminal","files"],"denied_app_ids":2,"capture_dir":"~/Pictures/agent-shots","error":null}
+{"state":"loaded","presets":3,"preset_names":["firefox","terminal","files"],"denied_app_ids":2,"capture_dir":"~/Pictures/agent-shots","capture_dir_source":"policy","error":null}
 ```
 
 ## Keys
@@ -64,9 +66,9 @@ The check follows keyboard focus, and apps choose their own `app_id`, so this gu
 
 ### `capture_dir`
 
-Where `screenshot` may save files, default unset. It is an absolute path or one starting with `~/`. Without it, `screenshot` refuses `save_path` with `save_not_enabled`.
+Where `screenshot` saves files, default `~/Pictures/niri-computer-use`. It is an absolute path or one starting with `~/`, resolved against the `HOME` of the client's session, so in [shared](#shared) mode each client saves under its own home. `capture_dir = ""` turns saving off, and `screenshot` then refuses `save_path` with `save_not_enabled`. While the policy file is invalid, saving is off too, since the file might have turned it off.
 
-The directory is created with mode `0700` if it is missing. `save_path` is relative to it, made only of plain names (no `..`, `.` or leading `/`), and names a `.png` file; subdirectories in it must already exist. The server opens subdirectories without following symlinks and creates the file new, with mode `0600`, so a save can't leave the directory or replace a file. See [Screenshots](../../tools/screenshots/#saving-a-screenshot).
+The directory, the default or yours, is created with mode `0700` if it is missing, along with any missing parent. `save_path` is relative to it, made only of plain names (no `..`, `.` or leading `/`), and names a `.png` file; subdirectories in it must already exist. The server opens subdirectories without following symlinks and creates the file new, with mode `0600`, so a save can't leave the directory or replace a file. See [Screenshots](../../tools/screenshots/#saving-a-screenshot).
 
 ### `unrestricted`
 
@@ -153,7 +155,7 @@ The server reads these once, at startup. When `XDG_RUNTIME_DIR`, `NIRI_SOCKET` o
 | `NIRI_COMPUTER_USE_DESKTOP_PATH` | where to look for `loginctl` and `noctalia`, as a `PATH`-style list of absolute directories; unset or empty looks in `/usr/local/bin:/usr/bin:/bin:/run/current-system/sw/bin`. Only absolute directories count, each once, and a trailing slash makes no difference. In [shared](#shared) mode, a client that sets other directories than the engine's, or the same ones in another order, is served standalone |
 | `XDG_CONFIG_HOME`, else `HOME` | the policy file |
 | `XDG_STATE_HOME`, else `HOME` | the audit log |
-| `HOME` | a `capture_dir` that starts with `~/` |
+| `HOME` | a `capture_dir` that starts with `~/`, and the default one |
 | `NIRI_COMPUTER_USE_UNRESTRICTED` | `1` turns on [`unrestricted`](#unrestricted) for this server; unset or empty leaves the policy file to decide |
 | `NIRI_COMPUTER_USE_CONFIRM_LEASE` | `1` turns on [`confirm_lease`](#confirm_lease) for this server; unset or empty leaves the policy file to decide |
 | `NIRI_COMPUTER_USE_TOOLS` | `observe`, `act` or `full`: the [tool profile](#tools) for this server; unset or empty leaves the policy file to decide |

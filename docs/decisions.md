@@ -1076,3 +1076,14 @@ These match the versions installed locally.
 
 - Both are the latest releases and have no dependencies, so `site/package-lock.json` gains only these two packages.
 - The home page is `index.mdx` with Starlight's `splash` template and a `Hero` override that applies only to the home page, so search, navigation and the Markdown and llms files keep working. MDX support comes with Starlight; no package was added for it.
+
+## 2026-10-12: saving screenshots by default
+
+- `save_path` now saves without any configuration: with no `capture_dir` in the policy file, or no file at all, the capture directory is `~/Pictures/niri-computer-use`. The user asked for this. It reverses the 2026-10-10 note that made saving opt-in because an agent without a shell would otherwise have no way to write files. That reason no longer outweighs the setup it costs:
+  - A save is per call and explicit: nothing is written unless a call names a `save_path`, and the audit log records its length.
+  - Every file lands under one directory, as a new `.png` with mode `0600`, never replacing a file and never through a symlink. The agent can't choose where else to write.
+  - The image is the screen the agent already captured and sent to its model provider. The saved PNG is at the output's full resolution, which the agent can already get with a region or a zoom.
+- The default is fixed rather than read from XDG user directories (`user-dirs.dirs`): that would be another file to read for every session, with localized names, and in shared mode every process should resolve the same rule. `~/` resolves against the session's `HOME`, as a `capture_dir` under `~/` does, so each client of a shared engine saves under its own home.
+- `capture_dir = ""` turns saving off, and `save_path` then fails with `save_not_enabled` before anything is captured. A policy file that doesn't parse turns it off too, since that file might be the one that said `""`.
+- `save::write` already creates the capture directory, and any missing parent, with mode `0700`, for the default and for a directory the user set. That stays as it was.
+- `status.policy.capture_dir` is now the directory in use, `~/Pictures/niri-computer-use` included, and the new `capture_dir_source` is `policy` when the file sets `capture_dir` (`""` included), `default` otherwise, and null while the file is invalid. The `save_path` and `screenshot` descriptions name the default; `tools/list` measures 6,899 bytes for `observe`, 26,808 for `act` and 30,791 for `full`, under the unchanged ceilings.

@@ -492,14 +492,21 @@ async fn settings_stay_with_their_session() {
     let mut clients = four_clients(&mut fixture).await;
     let _stream = desktop.stream().await;
     each_status_is_its_own(&mut clients).await;
-    // One `status` each so far. `~/shots` is under each session's own home.
+    // One `status` each so far. `~/shots` and the default `~/Pictures/niri-computer-use`
+    // are under each session's own home; an invalid policy file saves nothing.
     let mut calls = [1, 1, 1, 1];
     let save = json!({"target": "focused_output", "save_path": "one.png"});
+    let dirs = [
+        Some("shots"),
+        Some("Pictures/niri-computer-use"),
+        Some("shots"),
+        None,
+    ];
     for (index, (client, name)) in clients.iter_mut().enumerate() {
         let result = client.call("screenshot", save.clone()).await;
         calls[index] += 1;
-        if index % 2 == 0 {
-            let path = fixture.path(&format!("home-{name}/shots/one.png"));
+        if let Some(dir) = dirs[index] {
+            let path = fixture.path(&format!("home-{name}/{dir}/one.png"));
             assert_eq!(result["structuredContent"]["saved"]["path"], json!(path));
             assert!(path.exists());
         } else {

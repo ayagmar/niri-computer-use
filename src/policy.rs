@@ -103,8 +103,8 @@ pub(crate) struct Policy {
     pub(crate) deny_input_app_ids: Vec<String>,
     #[serde(default, rename = "preset")]
     pub(crate) presets: Vec<Preset>,
-    /// Where `screenshot` may save files: an absolute path or one under `~/`. Without it,
-    /// nothing is saved.
+    /// Where `screenshot` saves files: an absolute path or one under `~/`, or `""` to save
+    /// nothing. Without it, `DEFAULT_CAPTURE_DIR`.
     #[serde(default)]
     pub(crate) capture_dir: Option<String>,
     /// Lets `niri_action` send the gated actions, such as `Spawn`. Off unless the user
@@ -176,9 +176,24 @@ pub(crate) struct PolicyStatus {
     /// What `launch` takes.
     preset_names: Vec<String>,
     denied_app_ids: usize,
-    /// Where `screenshot`'s `save_path` writes, as the file says it; null when saving is off.
+    /// Where `screenshot`'s `save_path` writes, as written; null when saving is off.
     capture_dir: Option<String>,
+    /// Whether the file chose `capture_dir`, an empty one included, or the default
+    /// applies; null while the file is invalid.
+    capture_dir_source: Option<CaptureSource>,
     error: Option<String>,
+}
+
+/// Where `screenshot` saves when the policy file sets no `capture_dir`, as the user would
+/// write it in the file.
+pub(crate) const DEFAULT_CAPTURE_DIR: &str = "~/Pictures/niri-computer-use";
+
+/// Where the capture directory in use comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CaptureSource {
+    Policy,
+    Default,
 }
 
 /// What reading the policy file gave, before it is checked: what a session brings. A
@@ -296,29 +311,52 @@ impl Loaded {
                     .collect()
             }),
             denied_app_ids: policy.map_or(0, |policy| policy.deny_input_app_ids.len()),
-            capture_dir: policy.and_then(|policy| policy.capture_dir.clone()),
+            capture_dir: self.capture_dir().ok().map(|(dir, _)| dir.to_owned()),
+            capture_dir_source: match (self, self.capture_dir()) {
+                (_, Ok((_, source))) => Some(source),
+                (Self::Valid(_), Err(_)) => Some(CaptureSource::Policy),
+                (Self::Missing | Self::Invalid(_), Err(_)) => None,
+            },
             error,
         }
     }
 
-    /// Where `screenshot` saves `save_path`: `save_not_enabled` without `capture_dir`, an
-    /// argument mistake for a path that breaks the rules.
+    /// The capture directory as written, and where it comes from: the file's, or the
+    /// default when the file sets none or is missing. Saving is off, for the reason
+    /// returned, when the file sets it to `""` or is invalid, since an invalid file might
+    /// have turned saving off.
+    fn capture_dir(&self) -> Result<(&str, CaptureSource), &'static str> {
+        match self {
+            Self::Missing
+            | Self::Valid(Policy {
+                capture_dir: None, ..
+            }) => Ok((DEFAULT_CAPTURE_DIR, CaptureSource::Default)),
+            Self::Valid(Policy {
+                capture_dir: Some(dir),
+                ..
+            }) if dir.is_empty() => {
+                Err("saving screenshots is off: the policy file sets capture_dir = \"\"")
+            }
+            Self::Valid(Policy {
+                capture_dir: Some(dir),
+                ..
+            }) => Ok((dir, CaptureSource::Policy)),
+            Self::Invalid(_) => Err(
+                "saving screenshots is off while the policy file is invalid; see status.policy.error",
+            ),
+        }
+    }
+
+    /// Where `screenshot` saves `save_path`, with `~/` resolved against `home`, the
+    /// session's: `save_not_enabled` while saving is off, an argument mistake for a path
+    /// that breaks the rules.
     pub(crate) fn save_target(
         &self,
         home: Option<&Path>,
         save_path: &str,
     ) -> Result<SaveTarget, CallError> {
         let not_enabled = |detail: &str| ToolError::new(ErrorName::SaveNotEnabled, detail);
-        let Self::Valid(Policy {
-            capture_dir: Some(dir),
-            ..
-        }) = self
-        else {
-            return Err(not_enabled(
-                "saving screenshots is off: the policy file has no capture_dir",
-            )
-            .into());
-        };
+        let (dir, _) = self.capture_dir().map_err(not_enabled)?;
         let dir = match dir.strip_prefix("~/") {
             Some(rest) => home
                 .ok_or_else(|| not_enabled("capture_dir starts with ~/ but HOME is not set"))?
@@ -378,11 +416,12 @@ impl SavePath {
 pub(crate) fn parse(text: &str, unrestricted_env: bool) -> Result<Policy, String> {
     let policy: Policy = toml::from_str(text).map_err(|error| error.to_string())?;
     if let Some(dir) = &policy.capture_dir
+        && !dir.is_empty()
         && !Path::new(dir).is_absolute()
         && dir.strip_prefix("~/").is_none_or(str::is_empty)
     {
         return Err(format!(
-            "capture_dir {dir:?} must be an absolute path or start with ~/"
+            "capture_dir {dir:?} must be an absolute path, start with ~/, or be empty to save nothing"
         ));
     }
     let mut names = BTreeSet::new();
@@ -1222,19 +1261,40 @@ app_id = "foot"
         );
     }
 
+    fn off(loaded: &Loaded) -> String {
+        let Err(CallError::Tool(error)) = loaded.save_target(Some(Path::new("/home/u")), "a.png")
+        else {
+            panic!("saved while saving is off");
+        };
+        assert_eq!(error.name, ErrorName::SaveNotEnabled);
+        error.detail
+    }
+
+    /// Saving is on by default, under the session's home.
     #[test]
-    fn saving_needs_a_capture_dir_in_the_file() {
+    fn without_a_capture_dir_saves_go_to_the_default() {
         let home = Some(Path::new("/home/u"));
-        for loaded in [
-            Loaded::Missing,
-            Loaded::Valid(parse(EXAMPLE, false).unwrap()),
-            Loaded::Invalid("bad".to_owned()),
-        ] {
-            let Err(CallError::Tool(error)) = loaded.save_target(home, "a.png") else {
-                panic!("saved without capture_dir");
+        let unset = Loaded::Valid(parse(EXAMPLE, false).unwrap());
+        for loaded in [&Loaded::Missing, &unset] {
+            assert_eq!(
+                loaded.save_target(home, "a.png").unwrap().dir,
+                PathBuf::from("/home/u/Pictures/niri-computer-use")
+            );
+            let status = loaded.status();
+            assert_eq!(status.capture_dir.as_deref(), Some(DEFAULT_CAPTURE_DIR));
+            assert_eq!(status.capture_dir_source, Some(CaptureSource::Default));
+            let Err(CallError::Tool(error)) = loaded.save_target(None, "a.png") else {
+                panic!("saved under ~/ without HOME");
             };
             assert_eq!(error.name, ErrorName::SaveNotEnabled);
         }
+    }
+
+    /// The file's `capture_dir` replaces the default, and `""` turns saving off, as an
+    /// invalid file does, since it might have said `""`.
+    #[test]
+    fn the_files_capture_dir_moves_saving_or_turns_it_off() {
+        let home = Some(Path::new("/home/u"));
         let tilde =
             Loaded::Valid(parse("capture_dir = \"~/Pictures/agent-shots\"", false).unwrap());
         assert_eq!(
@@ -1248,13 +1308,6 @@ app_id = "foot"
             })
         );
         assert!(matches!(
-            tilde.save_target(None, "a.png"),
-            Err(CallError::Tool(ToolError {
-                name: ErrorName::SaveNotEnabled,
-                ..
-            }))
-        ));
-        assert!(matches!(
             tilde.save_target(home, "/etc/a.png"),
             Err(CallError::InvalidArguments(_))
         ));
@@ -1263,8 +1316,19 @@ app_id = "foot"
             absolute.save_target(home, "a.png").unwrap().dir,
             PathBuf::from("/srv/shots")
         );
-        assert_eq!(absolute.status().capture_dir.as_deref(), Some("/srv/shots"));
-        for relative in ["shots", "~", "~/", "~user/shots", ""] {
+        let chosen = absolute.status();
+        assert_eq!(chosen.capture_dir.as_deref(), Some("/srv/shots"));
+        assert_eq!(chosen.capture_dir_source, Some(CaptureSource::Policy));
+
+        let empty = Loaded::Valid(parse("capture_dir = \"\"", false).unwrap());
+        assert!(off(&empty).contains("capture_dir = \"\""));
+        let turned_off = empty.status();
+        assert_eq!(turned_off.capture_dir, None);
+        assert_eq!(turned_off.capture_dir_source, Some(CaptureSource::Policy));
+        let invalid = Loaded::Invalid("bad".to_owned());
+        assert!(off(&invalid).contains("invalid"));
+        assert_eq!(invalid.status().capture_dir_source, None);
+        for relative in ["shots", "~", "~/", "~user/shots"] {
             let file = format!("capture_dir = {relative:?}");
             assert!(
                 parse(&file, false).unwrap_err().contains("absolute"),

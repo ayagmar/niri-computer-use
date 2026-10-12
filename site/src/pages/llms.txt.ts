@@ -42,7 +42,7 @@ export const GET: APIRoute = async () => {
 		`# niri-computer-use`,
 		`> ${home?.data.description ?? ''}`,
 		`It runs only on Linux, under niri 26.04 on Wayland, built from source; with another major or minor release of niri it only looks. Every page is also plain Markdown at its address with \`.md\` in place of the trailing slash. [llms-full.txt](${new URL('llms-full.txt', siteRoot()).href}) has all of them in one file.`,
-		`If the user turned on \`confirm_lease\`, \`acquire_desktop\` waits up to a minute for them to choose Allow on the desktop, and fails with \`lease_declined\` if they don't. To read small text, call \`screenshot\` with target \`region\`, an earlier screenshot's \`screenshot_ref\`, and \`region\` in that image's pixels.`,
+		`If the user turned on \`confirm_lease\`, \`acquire_desktop\` waits up to a minute for them to choose Allow on the desktop, and fails with \`lease_declined\` if they don't. To read small text, call \`screenshot\` with target \`region\`, an earlier screenshot's \`screenshot_ref\`, and \`region\` in that image's pixels. A \`save_path\` saves the screenshot as a full-resolution PNG under \`~/Pictures/niri-computer-use\`, or the user's \`capture_dir\`.`,
 		`## Using the tools (for agents operating a desktop)\n\n${[...skillLines, ...list(using)].join('\n')}`,
 		`## Installing for a user\n\n${list(installing).join('\n')}`,
 		`## More\n\n${more.join('\n')}`,

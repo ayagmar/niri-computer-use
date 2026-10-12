@@ -52,8 +52,9 @@ struct ScreenshotArgs {
     max_width: Option<u32>,
     #[schemars(with = "FormatArg", default = "default_format")]
     format: Option<FormatArg>,
-    /// Also save a full-resolution PNG at this new path inside the policy's `capture_dir`,
-    /// such as `readme/editor.png`. Its directories must exist; no file is replaced.
+    /// Also save a full-resolution PNG at this new path under `capture_dir`
+    /// (`~/Pictures/niri-computer-use` by default), such as `readme/editor.png`. Its
+    /// directories must exist; no file is replaced.
     #[schemars(with = "String", default, skip_serializing_if = "Option::is_none")]
     #[serde(skip_serializing_if = "Option::is_none")]
     save_path: Option<String>,
@@ -1450,8 +1451,8 @@ impl Server {
     /// A screenshot of one output, or of a region inside one, with its metadata: the
     /// output, the captured rectangle in layout coordinates, the scale to image pixels,
     /// and a `screenshot_ref` (for the pointer tools under the lease). With `save_path`, a
-    /// full-resolution PNG is also saved (`saved`), or `save_not_enabled` without a
-    /// `capture_dir`. To see an action's effect, pass it `screenshot: true` rather than
+    /// full-resolution PNG is also saved (`saved`), or `save_not_enabled` if the user turned
+    /// saving off. To see an action's effect, pass it `screenshot: true` rather than
     /// calling this alongside it. Prefer `desktop_state` when structured data answers.
     #[tool(
         title = "Screenshot",

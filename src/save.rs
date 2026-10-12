@@ -1,4 +1,4 @@
-//! Writes a saved screenshot inside the policy's capture directory. Each subdirectory is
+//! Writes a saved screenshot inside the capture directory, the policy's or the default. Each subdirectory is
 //! opened without following a symlink, and the file is created exclusively without
 //! following one, so a save can't leave the directory or replace a file.
 

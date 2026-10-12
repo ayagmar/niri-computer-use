@@ -171,12 +171,61 @@ fn policy(fixture: &Fixture, text: &str) {
     std::fs::write(fixture.path("config/niri-computer-use/policy.toml"), text).unwrap();
 }
 
+/// `status.policy`'s capture directory and where it came from.
+async fn capture_dir(server: &mut Server) -> (Value, Value) {
+    let policy = server.structured("status").await["policy"].clone();
+    (
+        policy["capture_dir"].clone(),
+        policy["capture_dir_source"].clone(),
+    )
+}
+
+/// Saving is on without a policy file: the PNG goes under `~/Pictures/niri-computer-use`
+/// in the session's home, and the server creates that folder, private to the user.
 #[tokio::test]
-async fn saving_is_refused_without_a_capture_dir_and_captures_nothing() {
-    let fixture = Fixture::new("shot-nosave");
+async fn by_default_a_save_goes_to_a_private_folder_in_pictures() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let mut fixture = Fixture::new("shot-save-default");
+    let _niri = Niri::start(&fixture);
+    let (full, _) = two_sizes(&fixture);
+    fixture.set("HOME", fixture.dir.clone());
+    let mut server = Server::start(&fixture).await;
+    assert_eq!(
+        capture_dir(&mut server).await,
+        (json!("~/Pictures/niri-computer-use"), json!("default"))
+    );
+    let result = server
+        .call(
+            "screenshot",
+            json!({"target": "focused_output", "save_path": "one.png"}),
+        )
+        .await;
+    let folder = fixture.path("Pictures/niri-computer-use");
+    let saved = folder.join("one.png");
+    assert_eq!(
+        result["structuredContent"]["saved"]["path"],
+        json!(saved),
+        "{result}"
+    );
+    assert_eq!(std::fs::read(&saved).unwrap(), full);
+    let mode = std::fs::metadata(&folder).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o700);
+}
+
+/// `capture_dir = ""` turns saving off before anything is captured.
+#[tokio::test]
+async fn an_empty_capture_dir_turns_saving_off_and_captures_nothing() {
+    let mut fixture = Fixture::new("shot-nosave");
     let _niri = Niri::start(&fixture);
     two_sizes(&fixture);
+    fixture.set("HOME", fixture.dir.clone());
+    policy(&fixture, "capture_dir = \"\"\n");
     let mut server = Server::start(&fixture).await;
+    assert_eq!(
+        capture_dir(&mut server).await,
+        (Value::Null, json!("policy"))
+    );
     let result = server
         .call(
             "screenshot",
@@ -186,6 +235,7 @@ async fn saving_is_refused_without_a_capture_dir_and_captures_nothing() {
     assert_eq!(result["isError"], true, "{result}");
     assert_eq!(result["structuredContent"]["error"], "save_not_enabled");
     assert_eq!(grim_calls(&fixture), Vec::<String>::new());
+    assert!(!fixture.path("Pictures").exists());
 }
 
 #[tokio::test]
@@ -196,6 +246,10 @@ async fn a_save_is_a_full_resolution_png_inside_the_capture_dir() {
     fixture.set("HOME", fixture.dir.clone());
     policy(&fixture, "capture_dir = \"~/shots\"\n");
     let mut server = Server::start(&fixture).await;
+    assert_eq!(
+        capture_dir(&mut server).await,
+        (json!("~/shots"), json!("policy"))
+    );
     let save = |path: &str| json!({"target": "focused_output", "save_path": path});
     let result = server.call("screenshot", save("one.png")).await;
     let metadata = delivered(&result, &small, "image/jpeg");
@@ -205,6 +259,8 @@ async fn a_save_is_a_full_resolution_png_inside_the_capture_dir() {
         json!({"path": saved, "width": 2560, "height": 1440})
     );
     assert_eq!(std::fs::read(&saved).unwrap(), full);
+    // The policy's directory replaces the default, which stays uncreated.
+    assert!(!fixture.path("Pictures").exists());
     assert_eq!(
         grim_calls(&fixture),
         ["-t png -s 1 -o DP-1 -", "-t jpeg -q 80 -s 0.5 -o DP-1 -"]

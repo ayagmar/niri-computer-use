@@ -16,7 +16,7 @@ Prefer `desktop_state` when structured data answers the question; take a screens
 | `screenshot_ref` | with target `region`: an earlier screenshot's ref, to [zoom into](#zooming-in) `region` of its image |
 | `max_width` | the widest image to return, in pixels; default 1280, or none for a zoom |
 | `format` | `jpeg` (default, quality 80) or `png` |
-| `save_path` | also save a full-resolution PNG at this path under `capture_dir`; see [below](#saving-a-screenshot) |
+| `save_path` | also save a full-resolution PNG at this path under `capture_dir`, `~/Pictures/niri-computer-use` by default; see [below](#saving-a-screenshot) |
 
 The capture uses the output's own scale, lowered when the captured width times that scale is wider than `max_width`. For small text, [zoom in](#zooming-in).
 
@@ -62,11 +62,11 @@ This is faster and more reliable than a `screenshot` call sent after the action,
 
 ## Saving a screenshot
 
-With `save_path` and a [`capture_dir`](../../concepts/configuration/#capture_dir) in the policy file, the server also writes the capture as a PNG at the output's full resolution, whatever `max_width` is. It is a separate capture, taken just before the image the tool returns.
+With `save_path`, the server also writes the capture as a PNG under the [capture directory](../../concepts/configuration/#capture_dir), `~/Pictures/niri-computer-use` unless the policy file sets `capture_dir`, at the output's full resolution, whatever `max_width` is. It is a separate capture, taken just before the image the tool returns.
 
 ```json
 {"target": "focused_output", "save_path": "readme/editor.png"}
 ```
 
-`save_path` is relative to `capture_dir`, made of plain names, and names a new `.png` file; its directories must exist. An existing file is never replaced: a second save to the same name is an argument mistake, `invalid arguments: <path> already exists; pick another save_path`, and nothing is written. Without `capture_dir`, the call fails with `save_not_enabled`.
+`save_path` is relative to `capture_dir`, made of plain names, and names a new `.png` file; its directories must exist. An existing file is never replaced: a second save to the same name is an argument mistake, `invalid arguments: <path> already exists; pick another save_path`, and nothing is written. With `capture_dir = ""` in the policy file, or while that file is invalid, the call fails with `save_not_enabled`.
 

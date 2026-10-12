@@ -313,7 +313,8 @@ mod tests {
                 "audit": {"path": null, "last_error": "neither XDG_STATE_HOME nor HOME is set"},
                 "policy": {
                     "state": "missing", "presets": 0, "preset_names": [], "denied_app_ids": 0,
-                    "capture_dir": null,
+                    "capture_dir": "~/Pictures/niri-computer-use",
+                    "capture_dir_source": "default",
                     "error": null
                 },
                 "unrestricted": {"enabled": false, "source": null, "error": null},

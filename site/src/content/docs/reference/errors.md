@@ -119,9 +119,9 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 ### `save_not_enabled`
 
-**Cause:** `screenshot` was given `save_path`, but the policy file has no `capture_dir`, or `capture_dir` starts with `~/` and `HOME` isn't set.
+**Cause:** `screenshot` was given `save_path` while saving is off: the policy file sets `capture_dir = ""` or is invalid, or the capture directory starts with `~/` and `HOME` isn't set.
 
-**What to do:** add a [`capture_dir`](../../concepts/configuration/#capture_dir) and restart the agent's session, or take the screenshot without saving.
+**What to do:** fix the policy file or set a [`capture_dir`](../../concepts/configuration/#capture_dir) and restart the agent's session, or take the screenshot without saving.
 
 ### `panel_not_allowed`
 
