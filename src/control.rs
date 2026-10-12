@@ -69,27 +69,43 @@ pub(crate) struct LockSources<'a> {
 }
 
 impl LockSources<'_> {
-    /// The lock state from reads started now: Noctalia's status, then logind's hint.
+    /// The lock state from reads started now, side by side: Noctalia's status and logind's
+    /// hint.
     pub(crate) async fn read(self) -> Lock {
-        let status = if self.noctalia {
-            noctalia::status(self.env).await.ok()
-        } else {
-            None
+        let status = async {
+            if self.noctalia {
+                noctalia::status(self.env).await.ok()
+            } else {
+                None
+            }
         };
-        lock(&self.env.niri_socket, status.as_ref()).await
+        let (status, logind) = tokio::join!(status, logind(&self.env.niri_socket));
+        lock(logind, status.as_ref())
     }
 }
 
-/// Asks logind about niri's session and reads `noctalia`'s status reply; locked wins.
-pub(crate) async fn lock(niri_socket: &Socket, noctalia: Option<&Map<String, Value>>) -> Lock {
+/// What logind says about niri's session.
+#[derive(Debug)]
+pub(crate) struct Logind {
+    session: Result<String, String>,
+    hint: Result<bool, String>,
+}
+
+/// Asks logind for the locked hint of niri's session.
+pub(crate) async fn logind(niri_socket: &Socket) -> Logind {
     let session = niri_session(niri_socket).await;
-    let logind = match &session {
+    let hint = match &session {
         Ok(id) => locked_hint(id).await,
         Err(error) => Err(error.clone()),
     };
+    Logind { session, hint }
+}
+
+/// The lock state from `logind`'s answer and `noctalia`'s status reply; locked wins.
+pub(crate) fn lock(logind: Logind, noctalia: Option<&Map<String, Value>>) -> Lock {
     Lock {
-        session: session.ok(),
-        ..decide(logind, noctalia)
+        session: logind.session.ok(),
+        ..decide(logind.hint, noctalia)
     }
 }
 

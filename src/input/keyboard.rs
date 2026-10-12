@@ -947,7 +947,7 @@ mod tests {
             .unwrap_err();
         let Failed { error, released } = failed;
         assert!(!released, "{}", error.detail);
-        assert_eq!(error.name, ErrorName::ScreenLocked, "{}", error.detail);
+        assert_eq!(error.name, ErrorName::LockStale, "{}", error.detail);
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(std::fs::read(&typed).unwrap_or_default(), b"");
         assert_eq!(
@@ -998,7 +998,7 @@ mod tests {
             .await
             .unwrap_err();
         assert!(!released, "{}", error.detail);
-        assert_eq!(error.name, ErrorName::ScreenLocked, "{}", error.detail);
+        assert_eq!(error.name, ErrorName::LockStale, "{}", error.detail);
         // Killed at its gate, the stand-in for wtype read nothing.
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(std::fs::read(&typed).unwrap_or_default(), b"");
@@ -1035,7 +1035,7 @@ mod tests {
         tokio::time::sleep(crate::control::desk::LAST_GATE + Duration::from_millis(50)).await;
         let Failed { error, released } = fed.await.unwrap_err();
         assert!(!released, "{}", error.detail);
-        assert_eq!(error.name, ErrorName::ScreenLocked, "{}", error.detail);
+        assert_eq!(error.name, ErrorName::LockStale, "{}", error.detail);
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(std::fs::read(&typed).unwrap_or_default(), b"");
         assert!(!runtime.input_dirty().unwrap());

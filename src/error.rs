@@ -36,6 +36,9 @@ pub(crate) enum ErrorName {
     ReadOnly,
     /// The screen is locked, or its lock state is unknown.
     ScreenLocked,
+    /// The lock state was read too long before an action's call could go out, so nothing
+    /// was sent; another call reads it again.
+    LockStale,
     /// `launch` named a preset the policy file doesn't have.
     UnknownPreset,
     /// A pointer tool on an output setup no live test covers.

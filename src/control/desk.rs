@@ -414,18 +414,24 @@ impl Desk {
     }
 
     /// Whether a call that acts may go out now: the latest read of the lock state began at
-    /// most `LAST_GATE` ago. Otherwise `screen_locked`, since that read may no longer hold.
+    /// most `LAST_GATE` ago. Otherwise `lock_stale`, since that read may no longer hold, or
+    /// `screen_locked` when the action read none.
     pub(crate) fn fresh(&self) -> Result<(), ToolError> {
-        if self.lock_fresh() {
-            return Ok(());
+        let began = *self.seat.lock_read();
+        match began {
+            Some(began) if began.elapsed() <= LAST_GATE => Ok(()),
+            Some(_) => Err(ToolError::new(
+                ErrorName::LockStale,
+                format!(
+                    "the lock state was read over {} ms before the call that acts could go out, so it isn't known to be unlocked now, and that call wasn't sent; the desktop answered slowly, so try once more",
+                    LAST_GATE.as_millis()
+                ),
+            )),
+            None => Err(ToolError::new(
+                ErrorName::ScreenLocked,
+                "the lock state wasn't read for this action, so it isn't known to be unlocked, and nothing was sent",
+            )),
         }
-        Err(ToolError::new(
-            ErrorName::ScreenLocked,
-            format!(
-                "the lock state was read over {} ms before the call that acts could go out, so it isn't known to be unlocked now, and that call wasn't sent",
-                LAST_GATE.as_millis()
-            ),
-        ))
     }
 
     /// Whether the latest read of the lock state began at most `LAST_GATE` ago.
@@ -950,7 +956,7 @@ mod tests {
         };
         let refused = desk.act(&me, read_lock(&desk), late, done).await;
         assert!(
-            matches!(&refused, Err(CallError::Tool(error)) if error.name == ErrorName::ScreenLocked),
+            matches!(&refused, Err(CallError::Tool(error)) if error.name == ErrorName::LockStale),
             "{refused:?}"
         );
         // A refusal that read no lock state lets nothing go out either.

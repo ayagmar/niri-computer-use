@@ -813,7 +813,7 @@ mod tests {
         // Fresh when the `k` goes out, older than `LAST_GATE` once the keeper admits.
         let desk = desk_read(&dir, Duration::from_millis(200));
         let error = device.commit(&mut aftercare, &desk).await.unwrap_err();
-        assert_eq!(error.name, ErrorName::ScreenLocked, "{}", error.detail);
+        assert_eq!(error.name, ErrorName::LockStale, "{}", error.detail);
         assert!(aftercare.is_none() && device.aftercare.is_none());
         assert_eq!(
             done.await.unwrap().unwrap(),

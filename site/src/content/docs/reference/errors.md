@@ -27,9 +27,15 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 ### `screen_locked`
 
-**Cause:** the screen is locked, or neither logind nor Noctalia can say that it isn't. `status` shows `lock.state` and, under `lock.logind_error`, why logind couldn't answer. An action also gets it when the lock state was read more than 250 ms before its call could go out: a lock in that time could have been missed, so nothing is sent.
+**Cause:** the screen is locked, or neither logind nor Noctalia can say that it isn't. `status` shows `lock.state` and, under `lock.logind_error`, why logind couldn't answer.
 
 **What to do:** unlock the screen. If it is unlocked and `lock.state` is `unknown`, run niri as `niri --session` or run Noctalia; see [Troubleshooting](../troubleshooting/#the-lease-is-refused-with-screen_locked-while-the-screen-is-unlocked).
+
+### `lock_stale`
+
+**Cause:** an action's request, input or command must go out within 250 ms of when the server's last read of the lock state began, since a lock after that read could be missed. The desktop answered so slowly that the call couldn't go out in time, so nothing was sent. The screen may well be unlocked.
+
+**What to do:** try the call once more. If it comes back `lock_stale` again, the desktop is under load; tell the user.
 
 ### `session_mismatch`
 

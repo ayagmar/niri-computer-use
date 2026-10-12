@@ -215,6 +215,40 @@ async fn a_lock_while_loginds_answer_is_held_refuses_the_call() {
     }
 }
 
+/// Noctalia's status and logind's hint are read side by side, in `acquire_desktop`'s
+/// readiness report and in its lock read after it, so a slow source doesn't add its time
+/// to the other's: both replies are held at once.
+#[tokio::test]
+async fn noctalia_and_logind_are_asked_about_the_lock_side_by_side() {
+    let fixture = Fixture::new("lock-side-by-side");
+    fixture.program("noctalia", "exit 0");
+    session::held_loginctl(&fixture);
+    let _noctalia = noctalia::start(&fixture, UNLOCKED);
+    let _niri = NiriProcess::start(&fixture, Some("c4")).await;
+    let mut server = Server::start(&fixture).await;
+    fixture.serve_programs();
+    let points = fixture.points();
+    points.start();
+    let held: Vec<_> = (1..=2)
+        .map(|nth| {
+            (
+                points.hold("noctalia:status", nth),
+                points.hold("loginctl", nth),
+            )
+        })
+        .collect();
+    let id = server.start_call("acquire_desktop", json!({})).await;
+    for (nth, (noctalia, logind)) in (1..).zip(held) {
+        let both = Duration::from_secs(2);
+        assert!(noctalia.arrived_within(both).await, "Noctalia's read {nth}");
+        assert!(logind.arrived_within(both).await, "logind's read {nth}");
+        noctalia.release();
+        logind.release();
+    }
+    let response = server.response(id).await;
+    assert_eq!(response["result"]["isError"], false, "{response}");
+}
+
 /// What the user copied: markup, then text, then an image, as a browser offers them.
 fn copied(text: &str) -> Contents {
     vec![
