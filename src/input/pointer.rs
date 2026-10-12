@@ -299,8 +299,10 @@ pub(crate) async fn point(
     let pressing = Pressing { tool, button };
     let mut device = Device::new(pointer, input.runtime, pressing, &shot.output, held).await?;
     input.niri.desk.fresh()?;
-    if at_element {
-        unmoved(&mut waiter).await?;
+    if at_element && let Err(refused) = unmoved(&mut waiter).await {
+        // Nothing was pressed, so the marker goes now, before the next call can see it.
+        device.finish().await?;
+        return Err(refused.into());
     }
     if let Err(error) = device.run(plan(&located, &aimed)).await {
         // Nothing reached niri: an error like any other before input.
@@ -440,7 +442,8 @@ impl Device {
         Ok(())
     }
 
-    /// Removes the marker after a gesture niri has handled whole.
+    /// Removes the marker after a gesture niri has handled whole, or one refused before
+    /// anything of it went out.
     async fn finish(mut self) -> Result<(), ToolError> {
         let Some(marker) = self.marker.take() else {
             return Ok(());

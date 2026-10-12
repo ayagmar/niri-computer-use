@@ -2475,21 +2475,35 @@ async fn an_element_aim_is_refused_when_the_view_moved_before_it_went_out() {
         ("layout", layouts),
         ("active", active),
     ] {
-        let windows = [floating_window()];
-        let name = format!("el-gap-{tag}");
-        let mut desk = Desk::start_with(&name, &["/frame"], objects(), &windows).await;
-        let button = desk.element("Safe").await;
-        let shot = desk.screenshot_ref().await;
-        let points = desk.fixture.points();
-        points.start();
-        let held = points.hold("wayland:get_registry", 1);
-        let aimed = json!({"screenshot_ref": shot, "element": button});
-        let id = desk.server.start_call("pointer_move", aimed).await;
-        held.arrived().await;
-        desk.moved(&event).await;
-        held.release();
-        let response = desk.server.response(id).await;
-        refused_moving(&response["result"], tag);
-        assert_eq!(desk.fixture.clipboard.pointed(), [], "{tag}");
+        for tool in ["pointer_move", "click"] {
+            moved_before_it_went_out(tool, tag, &event).await;
+        }
     }
+}
+
+/// Aims `tool` at the Safe button, sends `event` once the pointer is being set up and
+/// before anything went out, and requires the aim refused with nothing sent. A click has
+/// marked input as possibly stuck by then, and the refusal must clear that, so a pixel
+/// click right after still goes out.
+async fn moved_before_it_went_out(tool: &str, tag: &str, event: &Value) {
+    let windows = [floating_window()];
+    let name = format!("el-gap-{tag}-{}", u8::from(tool == "click"));
+    let mut desk = Desk::start_with(&name, &["/frame"], objects(), &windows).await;
+    let button = desk.element("Safe").await;
+    let shot = desk.screenshot_ref().await;
+    let points = desk.fixture.points();
+    points.start();
+    let held = points.hold("wayland:get_registry", 1);
+    let aimed = json!({"screenshot_ref": shot, "element": button});
+    let id = desk.server.start_call(tool, aimed).await;
+    held.arrived().await;
+    desk.moved(event).await;
+    held.release();
+    let response = desk.server.response(id).await;
+    refused_moving(&response["result"], &format!("{tag} {tool}"));
+    assert_eq!(desk.fixture.clipboard.pointed(), [], "{tag} {tool}");
+    let pixel = json!({"screenshot_ref": shot, "x": 5, "y": 5});
+    let clicked = desk.server.call("click", pixel).await;
+    assert_eq!(clicked["isError"], false, "{tag} {tool}: {clicked}");
+    assert_eq!(desk.fixture.clipboard.pointed().len(), 3, "{tag} {tool}");
 }
