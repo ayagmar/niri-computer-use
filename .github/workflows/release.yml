@@ -49,6 +49,7 @@ jobs:
           name="niri-computer-use-$VERSION-x86_64-linux"
           mkdir -p "dist/$name/skills"
           cp target/x86_64-unknown-linux-gnu/release/niri-computer-use README.md LICENSE CHANGELOG.md "dist/$name/"
+          strip --strip-debug "dist/$name/niri-computer-use"
           cp -r skills/niri-computer-use "dist/$name/skills/"
           cargo about generate --frozen -c .github/release/about.toml -m Cargo.toml \
             .github/release/licenses.hbs -o "dist/$name/THIRD-PARTY-LICENSES.txt"
