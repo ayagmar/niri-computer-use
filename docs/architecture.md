@@ -2,6 +2,54 @@
 
 `niri-computer-use` is one binary. `serve` runs an MCP server over stdin and stdout, one process per agent session. `status` prints the readiness report and exits. `stop` and `resume` set and clear the stop flag, and `recover` clears the input-dirty marker. `engine` serves every client of one niri instance from one process, over a Unix socket (see [The shared engine](#the-shared-engine)).
 
+## Processes
+
+Each client starts its own `serve`. In shared mode, the default, `serve` is a bridge to the one engine of its niri instance, and starts that engine when none listens; standalone, it runs an engine of its own. Either way the engine starts the crash guardian before anything else, and a paste keeper for each paste. Every program it runs goes through the runner.
+
+```mermaid
+flowchart TB
+    client["MCP client"]
+    policy[("policy.toml")]
+    human["you, in a terminal:<br/>stop · resume · recover"]
+    bridge["niri-computer-use serve<br/>one per client; in shared mode a bridge"]
+    engine["engine, one per niri instance<br/>desk: lease, action mutex, refs<br/>event stream · AT-SPI connection<br/>audit writer · runner"]
+
+    client -- "MCP over stdio" --> bridge
+    policy -. "read at start,<br/>sent in the hello" .-> bridge
+    bridge -- "engine.sock: hello, then MCP lines<br/>(standalone: the engine runs inside serve)" --> engine
+
+    subgraph children["its own children, through the runner"]
+        guardian["crash guardian<br/>guard &lt;engine pid&gt;"]
+        keeper["paste keeper<br/>one per paste"]
+        programs["grim · wtype<br/>notify-send · loginctl"]
+    end
+
+    subgraph desktop["the desktop"]
+        ipc["niri IPC socket:<br/>a connection per request,<br/>one event stream"]
+        wayland["niri's Wayland display:<br/>virtual pointer and keyboard,<br/>data-control"]
+        atspi["AT-SPI bus"]
+        noctalia["Noctalia IPC socket"]
+        logind["logind"]
+    end
+
+    subgraph files["files"]
+        runtime["runtime dir beside niri's socket:<br/>engine.sock · lease · lease.json<br/>stop · input-dirty"]
+        audit[("audit.jsonl")]
+    end
+
+    engine --> children
+    engine --> ipc
+    engine --> wayland
+    engine --> atspi
+    engine --> noctalia
+    engine --> runtime
+    engine --> audit
+    guardian -- "releases held input<br/>after the engine dies" --> wayland
+    keeper -- "holds, then restores<br/>the clipboard" --> wayland
+    programs -- "loginctl" --> logind
+    human --> runtime
+```
+
 ## Modules
 
 | Module | Does |
@@ -17,6 +65,7 @@
 | `session.rs` | One client of the engine: its label in the audit log, the lease record and the lease prompt (`Label`, the client's own name cut to 64 characters of ASCII letters, digits, spaces and `._-+@`, then its PID), and the settings its own environment gives it: the policy file, read from its config directory when the session starts, its `HOME` for `capture_dir`, and its `NIRI_COMPUTER_USE_UNRESTRICTED`, `NIRI_COMPUTER_USE_CONFIRM_LEASE`, `NIRI_COMPUTER_USE_TOOLS` and `NIRI_COMPUTER_USE_KEYBOARD`. |
 | `niri.rs`, `niri/request.rs`, `niri/events.rs` | The only code that talks to niri: one connection per request, one long-lived event stream, and the virtual pointer's Wayland connection. |
 | `niri/pointer.rs` | The virtual pointer: its own Wayland connection to niri, bound to one output. |
+| `niri/wayland.rs` | The Wayland transport shared by the virtual devices, the clipboard, the paste keeper and the display check before `grim` and `wtype`: niri's PID must serve the display, and every round trip has a deadline. |
 | `niri/selection.rs` | The clipboard through wlr data-control on its own Wayland connection to niri: saving every type of the selection, taking it with a source, the reads of that source, and the selections niri announces. |
 | `niri/waiter.rs` | Waiters: how an action watches the event stream, event by event, for its effect. |
 | `act.rs` | The action tools' work: check the arguments against niri's state, dispatch one niri action, observe its effect. |
@@ -34,6 +83,7 @@
 | `input/keyboard.rs` | `key` and `type_text`: the `expect` check, then one gated `wtype` call per key or part of text, with the marker's two phases, stopping when focus moves. |
 | `input/paste.rs` | `type_text` with `via: "paste"`: the checks before the clipboard is touched, the keeper's protocol, the key through `input/keyboard.rs`, and the outcome with what became of the clipboard. |
 | `input/keeper.rs` | The `paste-keeper` subcommand: saves the selection, holds the text, counts the reads and restores the selection. |
+| `input/held.rs` | A pointer gesture's held modifiers with the native keyboard, recorded in the gesture's one input-dirty marker. |
 | `settle.rs` | Waits for the screen to stop changing: captures until two in a row are the same image. |
 | `wait.rs` | `wait_for`'s work: a window condition on the event stream, or a still screen. |
 | `a11y.rs` | The only code that talks to AT-SPI: finds the accessibility bus at startup, then reads one application's tree, every call under a deadline. |
@@ -53,6 +103,7 @@
 | `control/lease.rs` | The lease lock and the holder record. |
 | `control/marker.rs` | Reads and writes the input-dirty marker. |
 | `control/recover.rs` | The `recover` subcommand. |
+| `control/guard.rs` | The `guard` subcommand, the crash guardian (see [The crash guardian](#the-crash-guardian)). |
 | `control/procs.rs` | Process state from `/proc`: start times and the user's `wtype` processes. |
 | `control/desk.rs` | Whether this server holds the lease: takes it, gives it up, and lets the stop flag take it back. Gates every action and cancels it on a stop or when its session ends. |
 | `control/cleanup.rs` | Runs the input cleanups that outlive their call, each within ten seconds of its start, and counts them for the server's wait before it exits. |
@@ -108,7 +159,7 @@ A failed connect, or a connection that closes before replying, is `niri_unavaila
 
 ## Event stream
 
-`serve` keeps one connection to niri open for its event stream. A task reads each event line, parses it as niri-ipc's `Event`, and applies it to niri-ipc's `EventStreamState`, the same reducer niri uses for its own replies. Tools read that state through a Tokio `watch` channel, so a snapshot comes from one moment and never waits on the reader.
+Each engine keeps one connection to niri open for its event stream, shared by its sessions. A task reads each event line, parses it as niri-ipc's `Event`, and applies it to niri-ipc's `EventStreamState`, the same reducer niri uses for its own replies. Tools read that state through a Tokio `watch` channel, so a snapshot comes from one moment and never waits on the reader.
 
 On connect, niri sends its current state as a burst of events: workspaces, windows, keyboard layouts (if any), overview, config and screencasts. The state counts as initialized once the workspaces, windows and overview events have arrived. `desktop_state` waits up to two seconds for that, for example right after the server starts.
 
@@ -179,6 +230,27 @@ A process resolves the socket once, at its start, and connects to niri only at t
 
 One server at a time holds the lease on a niri instance. It is an exclusive, non-blocking `flock` on `<runtime dir>/lease`, a file created once with mode `0600` that the server never removes, so every server locks the same file. The kernel releases the lock when the holder's file is closed, which includes the process dying. The holder writes its PID, label (the MCP client's name and its own PID) and the time to `lease.json` for other servers' `status`, with `pending: true` from taking the lock until the grant, when it writes the record again with the grant's time (`Lease::publish`). Like emptying it, that write happens only while `lease` still names the locked file: if the file was removed or replaced meanwhile, as while the user is asked, another server may have locked the new one and written its own record, so the grant is refused with `lease_required` and that record is left alone; it empties the file before unlocking, and a record whose PID no longer exists names nobody.
 
+The lease, the stop flag and the input-dirty marker together decide whether a server may act. The flag and the marker are separate files: either one refuses `acquire_desktop`, and the marker also refuses `resume`.
+
+```mermaid
+stateDiagram-v2
+    state "Free" as Free
+    state "Pending: lease locked, lease.json says pending, confirm_lease prompt" as Pending
+    state "Held" as Held
+    state "Stopped: the stop flag is set" as Stopped
+    state "Recovery required: the input-dirty marker is set" as Dirty
+    [*] --> Free
+    Free --> Pending: acquire_desktop, with no stop flag, no marker, policy allows
+    Pending --> Held: granted (Allow, or no prompt)
+    Pending --> Free: refused, declined, stopped or client gone
+    Held --> Free: release_desktop, client gone, lease file moved, server died
+    Held --> Stopped: stop flag set, the watcher gives the lease up
+    Free --> Stopped: niri-computer-use stop
+    Stopped --> Free: niri-computer-use resume, refused while input-dirty
+    Held --> Dirty: input may be stuck (crash, killed wtype, failed release)
+    Dirty --> Free: release_desktop, then a human runs recover
+```
+
 `acquire_desktop` takes the lease only if the stop flag and the input-dirty marker are both absent. A runtime directory that can't be read counts as neither absent: the call fails rather than guess. A server watches its runtime directory with inotify from startup; whenever anything in it changes, it checks the stop flag again, and when the flag is set it gives the lease up. A directory that can't be read counts as stopped. If the watch can't be set up, `acquire_desktop` refuses, because a stop couldn't take the lease back. `acquire_desktop` binds the clipboard watcher for the lease before granting it, last under the mutex, then keeps it with no await after the grant (`Engine::grant`), so a cancelled call leaves either no lease or the lease with its watcher. A release, a stop or the session's end meanwhile waits for the mutex, as during the readiness report: a stop or an ended session then refuses the grant, and a release gives the lease up once granted. Until the grant, the watcher's check of its lease counts that lease as still to come (`Desk::pending`), since its first check comes as soon as it is bound. The watcher is kept only if its session still holds the lease, checked with the engine's watcher slot locked, since a release on another thread can come between the grant and the store; otherwise it is dropped and `acquire_desktop` fails with `lease_required`. A session that holds the lease already binds no new watcher, so the one it has keeps what it noted.
 
 Removing the runtime directory or the `lease` file while a server holds the lease would let another server lock a new file, and would leave the holder watching a directory nobody can reach. So the watcher checks, on every event and once a second, that the directory's path still names the inode it watches; when it doesn't, the watcher reports the flag as set and ends, the holder gives the lease up, and `acquire_desktop` refuses from then on with a detail that says to restart the server. Separately, the holder checks about once a second that `lease` still names the file it locked, and gives the lease up if not. The periodic checks exist because the kernel delays a directory's own deletion event while a file inside it is open, as the held lease is. The lease's mutex is the action mutex: an action holds it while it runs. Giving the lease up for a stop and the `lease` check both wait for that mutex, so neither is prompt while something holds it. An action's work doesn't keep them waiting: it checks for itself, without the mutex it already holds, `lease` once right before the work starts, after the readiness report, and while the work runs the stop flag on every change and `lease` every 100 ms; either ends the work and frees the mutex (see Actions). Everything else under the mutex runs to its end first: a readiness report, an action's or `acquire_desktop`'s, `acquire_desktop`'s clipboard bind, within niri's PID's and the bind's deadlines, an action's evidence screenshot, and a screenshot the lease holder takes (see Screenshots), which waits at most for its niri requests, two seconds each, and grim's five seconds, twice with `save_path`. A stop or a replaced `lease` during one of those is acted on when it ends, and the next action, which checks both again under the mutex, sends nothing. `status` reads a copy of the holder kept beside the lease, so it never waits for a running action. Inside a server, the lease belongs to the session that took it, and so do its refs and `users_window`: another session's `acquire_desktop` gets `lease_held` and its actions `lease_required`, both without waiting for the owner's running action, and its `release_desktop` releases nothing. A `serve` process has one session.
@@ -194,6 +266,37 @@ A session ends when its client closes the server's stdin, reading it fails, or t
 `acquire_desktop` asks `policy::refuse_control` after the stop flag and the input-dirty marker, using the same report `status` builds: niri's version error first, then `read_only` for an unsupported niri version, events this build can't parse, or an invalid policy, then `screen_locked` for a locked screen and for an unknown lock state, so input only ever goes to a screen known to be unlocked. Then it reads the lock state once more, from Noctalia's status and logind's hint read side by side after the report is done, since the report asks Noctalia beside niri and its answer can be older than niri's. It asks under the action mutex, with the `lease` file already locked, so another server's lease refuses with `lease_held` before anything slow is asked, and a refusal gives the lock back. With `confirm_lease` on, it then asks the user (`confirm::ask`), saying the client "calls itself" its label's name, next to its PID: `notify-send` with `--urgency=critical`, `--expire-time` at the 60-second deadline and the actions `deny` and `allow`, run through the runner with the same deadline and the client's `PATH`. Only `allow` on its stdout grants the lease; `deny`, nothing (the notification was dismissed or expired) and the deadline are `lease_declined`, and `notify-send` failing is `upstream_error` with its exit status and stderr. The client's name in the body is written with Rust's string escaping, then markup-escaped. After an Allow it asks for the readiness report again, since the answer can take a minute. While the refusal and the prompt run, `Desk::acquire_with` races them against the stop watcher and the session's end, so a stop or a client gone refuses at once and kills `notify-send`; a notification server that keeps the notification shows it until it expires, and answering it then does nothing. Another session of the same engine waits for the mutex meanwhile, so its `acquire_desktop` waits for the answer too. It reads the focused window it keeps as `users_window` there too, so waiting for a running action can't make either stale, and since both take time, it checks the session's end, the stop flag and the marker again before the lease is granted. Another session's release and end don't wait for the answer: the desk notes the session taking the lease (`Seat::taking`), and another session's `give_up` finds nothing of its own to give up without taking the mutex. Every action asks the same question again before it runs (see Actions). `launch` uses the presets. The pointer tools, `key` and `type_text` refuse with `app_denied` when the focused window's `app_id` is on the deny list, `elements` when the window it is asked about is, `activate_element` and `set_element_text` when the element's window is, and `close_window` and `niri_action`'s `CloseWindow` when the window they would close is, named or focused. Focus and layout actions aren't checked: they don't send the app anything.
 
 ## Actions
+
+One action's life, here a niri action such as `focus`. The input and element tools follow the same gate and evidence; their request goes to `wtype`, the virtual pointer or the app instead of niri, and the paragraphs below say how each differs.
+
+```mermaid
+sequenceDiagram
+    participant C as MCP client
+    participant T as tools.rs
+    participant D as desk gate
+    participant W as tool's work
+    participant N as niri
+    participant A as audit.jsonl
+    C->>T: tools/call, e.g. focus
+    T->>D: Engine::act
+    Note over D: under the action mutex:<br/>stop flag → stopped<br/>input-dirty → recovery_required<br/>lease → lease_required<br/>readiness report → read_only, screen_locked<br/>stop flag and marker again, lease file intact
+    D->>W: run, raced against the stop flag and the lease file
+    Note over W: recorder copies the scene before<br/>checks: arguments against niri's state,<br/>deny list, expect where the tool takes it
+    W->>D: lock read under 250 ms old? Desk::sending
+    W->>N: request on a new connection
+    N-->>W: Handled → accepted: true (reply lost → null, uncertain)
+    N-->>W: events → waiter, up to 5 s → observed
+    alt stop or lease lost before Desk::sending
+        D-->>T: error: stopped or lease_required, nothing sent
+    else stop or lease lost after Desk::sending
+        D-->>T: observed: uncertain, no screenshot, no changes
+    else work finished
+        Note over D: still under the mutex, past the stop race:<br/>screenshot if asked or in doubt,<br/>recorder → changes
+        D-->>T: accepted, observed, changes, screenshot
+    end
+    T->>A: one JSON line, refusals included
+    T-->>C: result
+```
 
 `focus`, `launch` and `close_window` act through niri's IPC. Each runs through `Desk::act`, which holds the action mutex for the whole action, so one server's actions run one at a time, and checks in this order: the runtime directory and the stop watcher, the stop flag (`stopped`), the input-dirty marker (`recovery_required`), the lease (`lease_required`), then `policy::refuse_control` with a fresh readiness report (niri unreachable, `read_only`, `screen_locked`), then the stop flag and the marker again, since the report takes time, then that `lease` still names the file this server locked. The lock state must still be fresh when the call that acts goes out. Reading it asks Noctalia and logind side by side, and a lock that comes while an answer is on its way goes unseen by that read. So every acting tool reads the lock state again with `act::fresh_lock` when the last read began more than `LAST_GATE`, 250 ms, ago, and `Desk::fresh` refuses with `lock_stale` right before the call if it is that old again by then, or with `screen_locked` if the action read none: before a niri request (inside `Desk::sending`), each `wtype` run, each native key, a pointer gesture's device and a Noctalia command. A `wtype` run reads it again at its gate, after the marker writes and wtype's start, and a paste's key is checked once more after its keeper admits it. A lock can then be missed only if the call goes out within 250 ms of the read beginning, the bound the element actions' last gate has. The stop flag and the marker come first because they tell the agent to stop and ask the user, which taking the lease again wouldn't change. The report is gathered only once the cheap checks pass. While the action runs, the desk races it against the stop watcher: a stop drops the action, with any connection or wait it holds, returns `stopped`, and releases the mutex, after which the watcher's task takes the lease back. If the watcher itself ended, because the runtime directory was removed, the action is dropped the same way but fails with `upstream_error` saying to restart the server. A `lease` file removed or replaced, found before the work starts or while it runs, gives the lease up at once and fails with `lease_required`; a running action is dropped first, as for a stop. A niri action's work tells the desk once connected to niri, right before it writes the request (`Desk::sending`, through `act::Niri`), and again once niri answered `Handled` (`Desk::answered`); an element action's work does the same around its one call that acts, through `Recheck`. A stop or a moved `lease` that drops the work after `sending` is no error but the outcome `uncertain`, with the reason in `detail` and `accepted: true` once niri or the app answered, `null` before, built from `Worked::CutAfterSending` without any further niri request, call or evidence screenshot (see Element actions). The Noctalia tools mark their command the same way, once connected to Noctalia's socket and once it replied, and `key` and `type_text` mark each stroke as it goes out and what was typed once it has (see Keyboard input). `Desk::sending` checks the stop flag and the input-dirty marker again too, since the work may have waited on Noctalia or the app since the desk's checks; `key` and `type_text`, whose own marker is written by then, check only the lock state's age (`Desk::sending_input`). The pointer tools tell the desk right before their first input, held modifiers or the first motion (`Desk::sending_input`, in `Gate::pass`), so a stop or a moved `lease` after that is `uncertain` with `accepted: null`, and one before it still fails with `stopped` or `lease_required`. A paste doesn't mark its input, so a stop or a moved `lease` while it runs still fails with `stopped` or `lease_required`, and anything it had already sent may have taken effect: its keeper reports whether its key went out. The flag is cleared under the mutex as each action starts. Cancelling the MCP request drops the action too, and the lease stays held. `status` never waits on the mutex; the holder's `release_desktop` does, so it returns once a running action has ended. Another session's `release_desktop`, or its end, returns at once while the lease is held: it has nothing to give up. No deadline covers a whole action; each step has its own, so the wait is at worst the sum of the running action's steps: for a niri action, the readiness report, the five-second wait and a screenshot (grim has five seconds); for `key`, up to 16 wtype calls of three seconds each; for `type_text`, up to 11; for a paste, eleven seconds for the keeper to be ready, half a second for it to admit the key, the key, and six and a half for its report; with the native keyboard, one two-second round trip per key, up to 1000 for `type_text`. A stop doesn't wait for the work: it drops it, as above, though a readiness report or evidence screenshot already under way finishes first (see The lease).
 
@@ -224,6 +327,22 @@ An outcome in doubt, `timeout`, `pending`, `none`, `interrupted` or `uncertain`,
 A point is a pixel of the screenshot or an element ref, `elem-<tag>-N`, from `elements` under the same lease. An element is checked again right then, once, with no retry (`elements::aim`): niri still has its window, with the same process, and the deny list doesn't name the window's app; `elements::identify` finds the same element (see Elements); one round of calls to the element and its frame answers within the three-second budget; its role is the one listed (`element_stale` otherwise); it is showing and visible, has an area, and its frame still fits niri's window (`element_unmappable` otherwise). Its box is computed again from niri's layout, workspaces and outputs read for that call, so its window must be floating (`tiled` otherwise) on the workspace shown on its output, with the overview closed, no fullscreen window over it and no other floating window over its centre, with its centre on that output (`not_showing` otherwise), the screenshot must be of that output, and the centre must lie inside the screenshot (`element_unmappable` with `outside_screenshot` for both). The pointer refuses more than one enabled output before any of this (`untested_output_config`), so for now the screenshot's output can't differ; the check is there for when it can. niri reports a workspace switch, the overview opening or closing and a floating window's new place when their animations start, never when they end, so for one second after niri activates a workspace on the element's window's output, changes which workspaces that output has, or opens or closes the overview, or the event stream reconnects, or after niri moves, resizes, floats or opens the element's window or moves it to another workspace, or does any of that to another window floating on the workspace that output shows, or one that was floating there (a window that moved clear of the element may still cover it while it animates), an element ref is refused with `not_showing` and a detail saying the view may still be moving (`EventStream::animating`). When niri moved or resized the element's window again within a second of the time before, as an app that keeps fitting its window to its content does, waiting may never help, so the detail says the window may keep moving and points at screenshot pixels instead (`Motion::Restless`). A stream with no state then, as during a reconnect, gets two seconds to have it again and otherwise fails the call with the stream's own error. niri's default animations take about 0.3 s; animations slowed down more than about three times aren't covered, nor is a touchpad gesture the user is making, which niri doesn't report at all. Right before the input goes out, the call's waiter, opened before the element was placed, is read once more, taking the events queued once the event stream's task has had a turn and none that come meanwhile, so a niri that keeps sending can't hold it (`Waiter::catch_up`): an event since then that can change what is shown where (a workspace activated or changed, the overview opened or closed, a window opened, closed, focused, moved, resized or floated, or a workspace's active window changed) refuses it the same way, with nothing sent and a click's input-dirty marker removed before the call returns, so the next call doesn't find it (`Waiter::moved`), and a lost event stream refuses it with `upstream_error`. That look happens for a pixel aim too, and then the deny list is asked again about the focused window, and for an element aim about the element's window, as the caught-up view has them, since an app can change its `app_id` at any time without moving anything (`app_denied`, nothing sent). Before that look the lock state is read again if its last read began over 250 ms ago (`act::fresh_lock`), refusing with `screen_locked` if the screen is locked, and its age is checked after the look, so a look that took long fails with `lock_stale` instead of sending. An object or application that is gone is `element_stale`, as is an id this lease didn't list.
 
 The mapping is in `coords.rs`, with a type for each space: `ImagePx` (a pixel, which targets its centre) → `LayoutPt` (divide by the capture scale, add the captured rectangle's origin) → `OutputLocalPt` (subtract the output's origin) → the output's untransformed space (the inverse of niri's transform, written out per transform) → `ProtocolPt`, the `motion_absolute` arguments with extents of the untransformed logical size times 1000, clamped inside the output. Each encoded point is pushed back through a port of niri's forward formula (`compute_absolute_location` at v26.04) and refused if it would land more than 0.002 logical pixels away, which only a point off the output does.
+
+```mermaid
+flowchart TB
+    shot["ImagePx<br/>a pixel of a screenshot"]
+    layout["LayoutPt<br/>niri's layout, logical pixels"]
+    element["element_ref<br/>centre of the element's box"]
+    local["OutputLocalPt<br/>on the output as displayed"]
+    protocol["ProtocolPt<br/>motion_absolute arguments"]
+    pointer["virtual pointer<br/>bound to the screenshot's output"]
+
+    shot -- "pixel centre ÷ capture scale<br/>+ captured rectangle's origin" --> layout
+    element -- "output origin + tile + window offset<br/>+ AT-SPI WINDOW extents" --> layout
+    layout -- "ref under 60 s, same event stream,<br/>output unchanged, point inside the capture;<br/>− output origin" --> local
+    local -- "undo the output's transform,<br/>× 1000, clamped inside the output" --> protocol
+    protocol -- "niri's forward formula lands<br/>within 0.002 px, or refused" --> pointer
+```
 
 `niri/pointer.rs` opens a Wayland connection of its own to `$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY` (or the absolute `WAYLAND_DISPLAY`) for each gesture. It refuses unless the socket's peer is the PID that serves `NIRI_SOCKET`, so input can't go to another compositor. It binds the seat, `zwlr_virtual_pointer_manager_v1` version 2 and every `wl_output` version 4, and creates a virtual pointer bound to the screenshot's output by its name. Its socket is watched through Tokio's `AsyncFd`, so round trips never block the server's single thread, and each has a two-second deadline. Every step is one frame, flushed at once: a motion, a press, a release, or a wheel turn as `axis_discrete(15 × notches, notches)` → `axis_source(wheel)` → `frame`, the order niri needs (C12). Event times are milliseconds on the monotonic clock. After each pause in a gesture, and after the last step, a `wl_display.sync` round trip confirms niri has handled everything sent so far; after the last one, the result is `sent`. A failure before any step reached the socket is an error like any other before input; a failure after one did is `uncertain` with `accepted: null`, because some input may have arrived.
 
