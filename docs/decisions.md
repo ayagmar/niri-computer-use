@@ -1254,6 +1254,13 @@ These match the versions installed locally.
 - `End::lost` looked at every follower at every look, not only the relaid ones, on the grounds that the pointer moves. That check can never stop a drag. A follower's tile changes only when niri relays it, which puts it among the relaid windows anyway. A follower that wasn't relaid either never covered the end, and still doesn't, or covered it while exempt, holding both the pointer and the end; the drag moves in a straight line from that pointer position to the end, and a box that holds both ends of a line holds all of it. So the check was dropped, and `followers` only says which relaid windows are exempt. If drag motion stops being a straight line, the check has to come back.
 - One case the follower rule doesn't catch: a window that opens during the drag under the pointer and clear of the end, as a dialog centred on its parent may when the pointer crosses that parent's centre, then grows or moves over the end in the last step or two. At the last look the pointer is on the end, so the window holds both and is exempt, and the release goes to it. Nothing niri reports tells that window from a torn-out tab, which the rule exists for. Like a popup over the end, it is a known gap, not handled.
 
+## 2026-10-13: what the 0.1.0 crate holds
+
+- `include` keeps the crate to `src/`, `README.md`, `LICENSE` and `CHANGELOG.md`; Cargo adds `Cargo.toml` and `Cargo.lock`. Before, it held all 223 tracked files outside `harness/`, 9.6 MiB (7.1 MiB compressed), most of it the site's recordings. Now it is 76 files, 1.4 MiB (366 KiB compressed).
+- `tests/` stays out, so `cargo publish` warns that it ignores the `protocol` test. The tests and their fixtures run from the repository; nobody runs them from the crate. The unit tests' `include_str!` of `tests/fixtures/us-de.xkb` is compiled only under `cfg(test)`, which the publish build doesn't use.
+- The skill stays out: the binary doesn't embed it. The release tarball carries it.
+- The harness was already `publish = false`.
+
 ## 2026-10-13: a wtype call dropped at its gate removes its marker
 
 - `run_wtype` wrote the input-dirty marker, then awaited the marker's update with wtype's PID and the last gate (`go`) in the call's own future. `Written`'s drop doesn't remove the file, so a call dropped during either await, by the stop key, the client's cancel or the session's end, left the marker with nothing typed, and every later action asked for `recover`. The gate reads the lock state and can take a Noctalia round trip, so the window is real, if short. The pointer's `Device::finish` and `discard` were already safe (see "follow-ups after the round-three review"); this window was the wtype path's.
