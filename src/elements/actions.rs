@@ -8,6 +8,8 @@
 //! the result is what was observed afterwards. Names and text are never returned or
 //! logged.
 
+mod index;
+
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
@@ -28,6 +30,7 @@ use crate::policy::{self, Loaded};
 use niri_ipc::Window;
 
 use super::{Names, gone_is_stale, identify, stale};
+use index::{Named, Source};
 
 /// How long an activation's effect has to show before the element is looked at again.
 /// GTK 3 and GTK 4 buttons answer the action as they answer Enter: shown pressed for
@@ -389,10 +392,10 @@ pub(crate) async fn activate(
         Names::All,
     )
     .await?;
-    let run_at = canonical(&request, element, action).await?;
+    let mapped = canonical(&request, element, action).await?;
     let checked = gate
         .last(element, &request, &mut waiter, || {
-            offered(&request, element, action, run_at)
+            offered(&request, element, action, &mapped)
         })
         .await?;
     gate.send(&checked)?;
@@ -444,73 +447,116 @@ pub(crate) async fn activate(
 /// The most action indices `canonical` asks about.
 const MAX_ACTIONS: i32 = 32;
 
-/// The index to ask the app for `action`, its `DoAction` index, which needn't be where
-/// `GetActions` lists it: GTK 4 leaves disabled actions out of that list while `GetName`
-/// and `DoAction` count them. The element must still list the action where `elements`
-/// did. That index is kept when the app names the action there (`Request::action_named`);
-/// otherwise it is the one index whose action has the listed name. With no such index, or
-/// several, which index the app would run is unknown, so nothing is sent.
+/// An action's `DoAction` index and the name that showed it.
+struct Mapped {
+    index: i32,
+    source: Source,
+    named: Named,
+}
+
+/// The index to ask the app for `action`, its `DoAction` index (see `index`): the element
+/// must still list the action where `elements` did, and the app names each of its actions
+/// from 0 until it has no more, at most 32. With no index naming it, several, or any
+/// whose name is unknown, which index the app would run is unknown, so nothing is sent.
+/// Actions that changed meanwhile can look like that, so the element must then still list
+/// the action as before, or it is stale.
 async fn canonical(
     request: &Request,
     element: &ElementRef,
     action: Chosen,
-) -> Result<i32, CallError> {
-    let (listed, name) = still_listed(request, element, action).await?;
-    if request
-        .action_named(element, listed, name)
-        .await
-        .map_err(gone_is_stale)?
-        == Some(true)
-    {
-        return Ok(listed);
+) -> Result<Mapped, CallError> {
+    let place = still_listed(request, element, action).await?;
+    if let Some(mapped) = search(request, element, &place).await? {
+        return Ok(mapped);
     }
-    let mut found = None;
-    for index in 0..MAX_ACTIONS {
-        match request
-            .action_named(element, index, name)
-            .await
-            .map_err(gone_is_stale)?
-        {
-            // Past the element's last action.
-            None => return found.ok_or_else(|| unmapped_action(action)),
-            Some(true) if found.replace(index).is_some() => break,
-            Some(_) => {}
-        }
-    }
+    still_listed(request, element, action).await?;
     Err(unmapped_action(action))
 }
 
-/// The index `canonical` found for `action`, checked again: the element still lists the
-/// action where `elements` did, so an action list that changed since can't make the index
-/// name another action, and the app still names it at `index`.
+/// The one index whose action has `place`'s name, asking the app for its actions' names
+/// from 0 until it has no more, at most 32.
+async fn search(
+    request: &Request,
+    element: &ElementRef,
+    place: &Place<'_>,
+) -> Result<Option<Mapped>, CallError> {
+    let mut table = Vec::new();
+    for at in 0..MAX_ACTIONS {
+        let answers = request
+            .action_names(element, at)
+            .await
+            .map_err(gone_is_stale)?;
+        if index::past_end(table.len(), place.count, &answers) {
+            let found = index::find(&table, place.source, place.name);
+            return Ok(found.and_then(|(index, named)| {
+                Some(Mapped {
+                    index: i32::try_from(index).ok()?,
+                    source: place.source,
+                    named,
+                })
+            }));
+        }
+        table.push(answers);
+    }
+    Ok(None)
+}
+
+/// The index `canonical` found for `action`, checked again the same way: the element
+/// still lists the action where `elements` did, from the same source, so an action list
+/// that changed since can't make the index name another action, and the app still names
+/// the action at the index by the same method.
 async fn offered(
     request: &Request,
     element: &ElementRef,
     action: Chosen,
-    index: i32,
+    mapped: &Mapped,
 ) -> Result<i32, CallError> {
-    let (_, name) = still_listed(request, element, action).await?;
-    match request.action_named(element, index, name).await {
-        Ok(Some(true)) => Ok(index),
-        Ok(_) => Err(stale(&format!(
-            "the app no longer names the element's {} action at its index",
-            action.kind.name()
-        ))
-        .into()),
-        Err(failed) => Err(gone_is_stale(failed).into()),
+    let place = still_listed(request, element, action).await?;
+    let answers = request
+        .action_names(element, mapped.index)
+        .await
+        .map_err(gone_is_stale)?;
+    if place.source == mapped.source
+        && index::named(&answers, place.source).as_ref() == Some(&mapped.named)
+    {
+        return Ok(mapped.index);
     }
+    Err(stale(&format!(
+        "the app no longer names the element's {} action at its index",
+        action.kind.name()
+    ))
+    .into())
 }
 
-/// Where the element lists `action` now and its name, as `elements` listed it there.
+/// Where an element lists an action now.
+struct Place<'a> {
+    /// The name `elements` listed it by.
+    name: &'a str,
+    source: Source,
+    /// How many actions the element lists.
+    count: usize,
+}
+
+/// Where the element lists `action` now: at its index, with the name `elements` listed
+/// there.
 async fn still_listed<'a>(
     request: &Request,
     element: &'a ElementRef,
     action: Chosen,
-) -> Result<(i32, &'a str), CallError> {
-    let actions = request.actions(element).await.map_err(gone_is_stale)?;
-    let listed = element.kept.actions.get(action.index);
-    match (i32::try_from(action.index), listed) {
-        (Ok(index), Some(name)) if actions.get(action.index) == Some(name) => Ok((index, name)),
+) -> Result<Place<'a>, CallError> {
+    let listed = request.listed(element).await.map_err(gone_is_stale)?;
+    let count = listed.len();
+    let source = match listed.get(action.index) {
+        Some(name) if name.is_empty() => Source::Own,
+        _ => Source::List,
+    };
+    let actions = request.named(element.at(), listed).await?;
+    match element.kept.actions.get(action.index) {
+        Some(name) if actions.get(action.index) == Some(name) => Ok(Place {
+            name,
+            source,
+            count,
+        }),
         _ => Err(stale(&format!(
             "the element no longer offers its {} action at index {}",
             action.kind.name(),
@@ -525,7 +571,7 @@ fn unmapped_action(action: Chosen) -> CallError {
     ToolError::new(
         ErrorName::ElementUnmappable,
         format!(
-            "action_unmapped: at the element's {} action's place in its action list the app runs another action or none, and not exactly one of its actions has that name, so which action it would run isn't known; nothing was sent, so aim at screenshot pixels instead",
+            "action_unmapped: not exactly one of the app's actions is known to have the name the element lists its {} action by, so which action the app would run isn't known; nothing was sent, so aim at screenshot pixels instead",
             action.kind.name()
         ),
     )

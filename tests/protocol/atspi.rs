@@ -52,6 +52,8 @@ pub(crate) struct Object {
     pub(crate) listed: Option<Vec<String>>,
     /// What `GetLocalizedName` gives for each action, when not its name: a translation.
     pub(crate) localized: Option<Vec<String>>,
+    /// The naming methods it refuses at every index, as Qt has no `GetLocalizedName`.
+    pub(crate) refused: Vec<&'static str>,
     /// With `Text` and `EditableText` interfaces: how many characters it holds.
     pub(crate) text: Option<i32>,
     /// A counter button's count, which each `DoAction` adds one to and names it after.
@@ -554,6 +556,17 @@ impl Component {
 
 struct Action(Node);
 
+impl Action {
+    /// Refuses `method` when the object doesn't have it, as Qt refuses a method its
+    /// adaptor doesn't handle: with `UnknownObject`.
+    fn answers(&self, method: &str) -> answer::Result<()> {
+        if self.0.read(|object, _| object.refused.contains(&method))? {
+            return Err(fdo::Error::UnknownObject(format!("no {method}")).into());
+        }
+        Ok(())
+    }
+}
+
 #[interface(name = "org.a11y.atspi.Action")]
 impl Action {
     async fn get_actions(&self) -> answer::Result<Vec<(String, String, String)>> {
@@ -571,6 +584,7 @@ impl Action {
 
     async fn get_name(&self, index: i32) -> answer::Result<String> {
         self.0.called("GetName").await?;
+        self.answers("GetName")?;
         let name = self.0.read(|object, _| {
             usize::try_from(index)
                 .ok()
@@ -581,6 +595,7 @@ impl Action {
 
     async fn get_localized_name(&self, index: i32) -> answer::Result<String> {
         self.0.called("GetLocalizedName").await?;
+        self.answers("GetLocalizedName")?;
         let name = self.0.read(|object, _| {
             let names = object.localized.as_ref().unwrap_or(&object.actions);
             usize::try_from(index)
