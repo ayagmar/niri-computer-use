@@ -6,10 +6,10 @@ Let Claude Code, Codex, Pi or any MCP agent see and drive your [niri](https://gi
 
 <picture>
   <source media="(prefers-reduced-motion: reduce)" srcset="site/public/demo/errand.png">
-  <img src="site/public/demo/errand.gif" width="960" alt="A chat window and an editor side by side in niri. The agent focuses the chat, fills its Message field and presses Send through the accessibility bus, then puts focus back on the editor. A caption band under the desktop shows each request and a summary of the server's reply.">
+  <img src="site/public/demo/errand.gif" width="960" alt="A niri desktop with a terminal running Claude Code on the left and Files on the right. The agent selects two screenshots in Files, makes a folder for them from the right-click menu, names it release-0.1, and gives focus back to the terminal. A caption band under the desktop shows each request, a summary of the server's answer, its round trip and whether the agent holds the lease.">
 </picture>
 
-Asked: "Tell #release the review moved to 3pm, then put me back where I was." A script makes the calls an agent would make, through the real server in a headless nested niri. The band under the desktop summarises each reply with the round trip the harness measured; the chat window is a test stand-in. [The full 17-second recording (MP4)](site/public/demo/errand.mp4).
+Asked: "In Files, put the two screenshots into a new folder called release-0.1, then bring me back here." This is a real Claude Code session (Opus 5.5) on a niri 26.04 desktop, with the installed server; nothing was scripted. The agent's keyboard shortcut doesn't open the dialog, so it uses the right-click menu instead. Thinking time between calls is shortened; the calls play in real time. [The full 19-second recording (MP4)](site/public/demo/errand.mp4).
 
 Documentation: **https://ayagmar.github.io/niri-computer-use/**, also as plain Markdown for agents ([llms.txt](https://ayagmar.github.io/niri-computer-use/llms.txt)).
 
@@ -19,7 +19,7 @@ Documentation: **https://ayagmar.github.io/niri-computer-use/**, also as plain M
 - **niri only, through niri's own IPC.** Windows, focus and layout come from niri. Where an app exposes its buttons and fields on the accessibility bus, the agent can act on them by name rather than by pixels. With a niri release other than 26.04 the server only looks; a 26.04 patch release works, with a warning in `status`.
 - **Guardrails, not a sandbox.** A lease, a stop key, a lock check and an audit log. An agent holding the lease can do anything you could do with a mouse and keyboard.
 
-It offers up to 22 tools over stdio: reading the desktop, screenshots it can save to `~/Pictures/niri-computer-use`, zooming into part of a screenshot to read small text, accessible elements, and, under the lease, focus, launch, close, niri's layout actions, pointer, keyboard, paste, element actions and three Noctalia panels. It is in early development; acceptance evidence for each milestone is in [docs/results/](docs/results/).
+It offers up to 22 tools over stdio: reading the desktop, screenshots it can save to `~/Pictures/niri-computer-use`, zooming into part of a screenshot to read small text, accessible elements, and, under the lease, focus, launch, close, niri's layout actions, pointer, keyboard, paste, element actions and three Noctalia panels. Acceptance evidence for each milestone is in [docs/results/](docs/results/). It is in early development.
 
 ## Quickstart
 
@@ -55,7 +55,7 @@ The key cancels the running action and takes the lease back; `niri-computer-use 
 
 ## Example
 
-Unlike the recording above, here a model chose the calls. This is run `1791814792-1684005` of the following command, with the model `claude-sonnet-5-5` through Claude Code 2.1.296 and the server at `8faae79`, in a headless nested niri:
+Here is one run with every call and a full result. It is run `1791814792-1684005` of the following command, with the model `claude-sonnet-5-5` through Claude Code 2.1.296 and the server at `8faae79`, in a headless nested niri:
 
 ```sh
 make nested-eval SCENARIO=errand SKILL=skills/niri-computer-use MODEL=sonnet
@@ -111,7 +111,7 @@ What isn't protected: any connected agent sees your screen and window titles, a 
 
 - niri 26.04 only. With another major or minor release the server is read-only.
 - The pointer tools need one monitor at transform `Normal`. The keyboard, screenshots and the other tools work with any monitors.
-- Installed from source; there is no package yet.
+- There is no package yet: it is installed from source.
 - Accessibility varies by toolkit. GTK 4 works; GTK 3 and Qt apps that draw their own title bar give no element boxes, and niri 26.04 gives tiled windows none until they float. Activating an element and setting its text work in both cases.
 
 ## Documentation

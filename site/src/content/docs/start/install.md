@@ -23,7 +23,7 @@ git clone https://github.com/ayagmar/niri-computer-use.git
 cargo install --locked --path niri-computer-use
 ```
 
-The binary goes to `~/.cargo/bin/niri-computer-use`. To update, pull and run the same `cargo install` again.
+The binary goes to `~/.cargo/bin/niri-computer-use`. To update, run `git -C niri-computer-use pull` and the same `cargo install` again.
 
 Updating while agents run is safe. A [shared](../../concepts/configuration/#shared) engine keeps serving the clients it has with the build it started with, and their `status.engine.replaced` turns `true`. Clients started after the update are served standalone, sharing the lease, the stop flag and the input-dirty marker, and their `status.engine.fallback` names the old engine's PID. Once the old engine's last client has ended it exits, two seconds later, and the next client starts an engine of the new build. Restart your agent sessions to move all of them to the new build. This lists the processes still running:
 
@@ -46,10 +46,10 @@ It prints the readiness report as JSON. Look at these fields:
 | Field | Healthy value |
 |---|---|
 | `niri.compat` | `ok`; `read_only` means this build doesn't support your niri |
-| `niri.error` | `null`; `NIRI_SOCKET is not set` means the server found no running niri of yours |
+| `niri.error` | `null`; a `detail` of `NIRI_SOCKET is not set` means the server found no running niri of yours |
 | `lock.state` | `unlocked`; `unknown` refuses the lease, see [Troubleshooting](../../reference/troubleshooting/#the-lease-is-refused-with-screen_locked-while-the-screen-is-unlocked) |
 | `outputs.pointer_supported` | `true` for the pointer tools |
-| `binaries` | every program `true` |
+| `binaries` | `grim` and `wtype` `true`; `notify-send` matters only with [`confirm_lease`](../../concepts/configuration/#confirm_lease) |
 | `desktop_programs.loginctl` | a path such as `/usr/bin/loginctl` |
 | `desktop_programs.noctalia` | with Noctalia installed, a path such as `/usr/bin/noctalia`; `null` when it is installed elsewhere, such as a Nix user profile or `~/.local/bin`: set [`NIRI_COMPUTER_USE_DESKTOP_PATH`](../../concepts/configuration/#environment) to its directories, the same for every client |
 

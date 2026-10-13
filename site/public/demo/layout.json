@@ -1,42 +1,84 @@
 {
- "prompt": "Give the chat more room, then show my notes fullscreen for a moment.",
+ "prompt": "Make room for the browser: Files a third of the screen wide, the browser the other two thirds, and float this terminal small in the bottom right corner.",
+ "note": "A real Claude Code session on a real niri 26.04 desktop; nothing was scripted. Thinking time between calls is shortened; calls play in real time. A line marked $ is something the user did.",
+ "output": "DP-1 · 2560×1440, shown at 1920×1080",
  "calls": [
   {
-   "start": 0.06,
-   "request": "niri_action {\"action\": {\"SetWindowWidth\": {\"change\": {\"SetProportion\": 75.0}, \"id\": 3}}}",
-   "answer": "accepted: true \u00b7 observed: changed \u00b7 window 3 size 932\u00d7654",
+   "start": 1.2,
+   "request": "desktop_state",
+   "answer": "focused_window: 14 · org.gnome.Nautilus 11 · helium 12 · ncu-demo-agent 14",
    "error": false,
    "you": false,
-   "ms": 269
+   "ms": 0
   },
   {
-   "start": 2.03,
-   "request": "focus {\"window_id\": 4}",
-   "answer": "accepted: true \u00b7 observed: focused \u00b7 focus 3 \u2192 4",
+   "start": 2.4,
+   "request": "acquire_desktop",
+   "answer": "lease taken · users_window: 14",
    "error": false,
    "you": false,
-   "ms": 300
+   "ms": 3
+  },
+  {
+   "start": 3.6,
+   "request": "niri_action {\"action\": {\"SetWindowWidth\": {\"id\": 11, \"change\": {\"SetProportion\": 33.333}}}}",
+   "answer": "accepted: true · observed: changed · window 11 size 839×1374",
+   "error": false,
+   "you": false,
+   "ms": 206
   },
   {
    "start": 4.03,
-   "request": "niri_action {\"action\": {\"FullscreenWindow\": {\"id\": 4}}}",
-   "answer": "accepted: true \u00b7 observed: changed \u00b7 window 4 size 1280\u00d7720",
+   "request": "niri_action {\"action\": {\"SetWindowWidth\": {\"id\": 12, \"change\": {\"SetProportion\": 66.667}}}}",
+   "answer": "accepted: true · observed: changed · window 12 size 1690×1374",
    "error": false,
    "you": false,
-   "ms": 257
+   "ms": 217
   },
   {
-   "start": 6.58,
-   "request": "niri_action {\"action\": {\"FullscreenWindow\": {\"id\": 4}}}",
-   "answer": "accepted: true \u00b7 observed: changed \u00b7 window 4 size 767\u00d7654",
+   "start": 5.45,
+   "request": "niri_action {\"action\": {\"MoveWindowToFloating\": {\"id\": 14}}}",
+   "answer": "accepted: true · observed: changed",
    "error": false,
    "you": false,
-   "ms": 257
+   "ms": 203
   },
   {
-   "start": 8.54,
+   "start": 6.85,
+   "request": "niri_action {\"action\": {\"SetWindowWidth\": {\"id\": 14, \"change\": {\"SetFixed\": 800}}}}",
+   "answer": "accepted: true · observed: changed · window 14 size 800×1374",
+   "error": false,
+   "you": false,
+   "ms": 206
+  },
+  {
+   "start": 7.25,
+   "request": "niri_action {\"action\": {\"SetWindowHeight\": {\"id\": 14, \"change\": {\"SetFixed\": 500}}}}",
+   "answer": "accepted: true · observed: changed · window 14 size 800×500",
+   "error": false,
+   "you": false,
+   "ms": 206
+  },
+  {
+   "start": 8.65,
+   "request": "niri_action {\"action\": {\"MoveFloatingWindow\": {\"id\": 14, \"x\": {\"SetFixed\": 1740}, \"y\": {\"SetFixed\": 920}}}, \"screenshot\": true}",
+   "answer": "accepted: true · observed: changed",
+   "error": false,
+   "you": false,
+   "ms": 1706
+  },
+  {
+   "start": 11.56,
+   "request": "niri_action {\"action\": {\"MoveFloatingWindow\": {\"id\": 14, \"x\": {\"SetFixed\": 1740}, \"y\": {\"SetFixed\": 874}}}, \"screenshot\": true}",
+   "answer": "accepted: true · observed: changed",
+   "error": false,
+   "you": false,
+   "ms": 1263
+  },
+  {
+   "start": 14.02,
    "request": "release_desktop {\"restore_focus\": true}",
-   "answer": "released \u00b7 focus back on 2 \u00b7 observed: focused",
+   "answer": "released · focus back on 14 · observed: focused",
    "error": false,
    "you": false,
    "ms": 2

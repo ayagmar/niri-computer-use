@@ -1,0 +1,195 @@
+---
+// The home page's header is a bar like a niri desktop's: the workspaces (the page's sections)
+// with the one in view lit, the lease, which the hero's recording takes and gives back as it
+// plays, and the stop key. Other pages keep Starlight's header.
+import Default from '@astrojs/starlight/components/Header.astro';
+import Search from '@astrojs/starlight/components/Search.astro';
+import SiteTitle from '@astrojs/starlight/components/SiteTitle.astro';
+import SocialIcons from '@astrojs/starlight/components/SocialIcons.astro';
+import ThemeSelect from '@astrojs/starlight/components/ThemeSelect.astro';
+import { timeline, workspaces } from '../lib/workspaces.mjs';
+
+const home = Astro.locals.starlightRoute.id === '';
+// Each pill follows its section's view timeline, which needs the name in scope on an
+// element above both.
+const scope = `body{timeline-scope:${workspaces.map(({ id }) => timeline(id)).join(',')}}`;
+---
+
+{
+	home ? (
+		<div class="ncu-bar">
+			<div class="title">
+				<SiteTitle />
+			</div>
+			<nav class="workspaces" aria-label="Sections">
+				<style is:inline set:html={scope} />
+				{workspaces.map(({ id, name }) => (
+					<a href={`#${id === 'demo' ? '_top' : id}`} style={`animation-timeline: ${timeline(id)}`}>
+						{name}
+					</a>
+				))}
+			</nav>
+			<p class="lease" data-lease data-held="false">
+				lease <span class="free">free</span>
+				<span class="held">held by the agent</span>
+			</p>
+			<a class="stop" href="#ncu-stop-title" aria-label="The stop key, Mod+Shift+Escape">
+				<kbd>Mod</kbd>
+				<kbd>Shift</kbd>
+				<kbd>Esc</kbd>
+			</a>
+			<div class="search">
+				<Search />
+			</div>
+			<div class="right">
+				<SocialIcons />
+				<ThemeSelect />
+			</div>
+		</div>
+	) : (
+		<Default />
+	)
+}
+
+<style>
+	.ncu-bar {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+		height: 100%;
+	}
+
+	.title {
+		min-width: 0;
+		overflow: clip;
+		padding: 0.25rem;
+		margin: -0.25rem;
+	}
+
+	.workspaces,
+	.lease,
+	.stop,
+	.right {
+		display: none;
+	}
+
+	.search {
+		display: flex;
+		margin-inline-start: auto;
+	}
+
+	.workspaces {
+		gap: 0.35rem;
+	}
+
+	/* A workspace pill, lit while its section crosses the middle of the view. */
+	.workspaces a {
+		padding: 0.15rem 0.6rem;
+		border: 1px solid var(--ncu-rule);
+		border-radius: 999px;
+		font-size: var(--sl-text-xs);
+		line-height: 1.4;
+		color: var(--sl-color-gray-3);
+		text-decoration: none;
+		animation: ncu-lit linear;
+		animation-range: cover 50vh cover calc(100% - 50vh);
+		transition: color 150ms ease;
+	}
+
+	.workspaces a:hover {
+		color: var(--sl-color-white);
+	}
+
+	@keyframes ncu-lit {
+		from,
+		to {
+			padding-inline: 1rem;
+			border-color: var(--ncu-ring);
+			color: var(--sl-color-white);
+		}
+	}
+
+	.lease {
+		align-items: center;
+		gap: 0.4rem;
+		margin: 0;
+		padding: 0.15rem 0.6rem;
+		border: 1px dashed var(--sl-color-gray-4);
+		border-radius: 6px;
+		font-family: var(--sl-font-mono);
+		font-size: 0.7rem;
+		color: var(--sl-color-gray-3);
+		white-space: nowrap;
+	}
+
+	.lease .held,
+	.lease[data-held='true'] .free {
+		display: none;
+	}
+
+	.lease[data-held='true'] {
+		border-style: solid;
+		border-color: var(--ncu-ring);
+		color: var(--sl-color-white);
+	}
+
+	.lease[data-held='true'] .held {
+		display: inline;
+	}
+
+	.stop {
+		align-items: center;
+		gap: 0.2rem;
+		text-decoration: none;
+	}
+
+	.stop kbd {
+		padding: 0.05rem 0.4rem;
+		border: 1px solid var(--sl-color-gray-4);
+		border-bottom-width: 2px;
+		border-radius: 5px;
+		font-family: var(--sl-font-mono);
+		font-size: 0.7rem;
+		color: var(--sl-color-gray-2);
+		background: none;
+	}
+
+	.stop:hover kbd {
+		border-color: var(--sl-color-gray-3);
+		color: var(--sl-color-white);
+	}
+
+	.right {
+		align-items: center;
+		gap: 1rem;
+	}
+
+	.right::before {
+		content: '';
+		height: 2rem;
+		border-inline-start: 1px solid var(--sl-color-gray-5);
+	}
+
+	@media (min-width: 50rem) {
+		.lease,
+		.stop,
+		.right {
+			display: flex;
+		}
+
+		.search {
+			margin-inline-start: 0;
+		}
+
+		.lease {
+			margin-inline-start: auto;
+		}
+	}
+
+	@media (min-width: 78rem) {
+		.workspaces {
+			display: flex;
+			margin-inline-start: 1rem;
+		}
+	}
+</style>

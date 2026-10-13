@@ -4,7 +4,7 @@ description: An MCP server that lets AI agents see and act on a niri Wayland des
 template: splash
 hero:
   title: Your agent can drive your niri desktop. <span class="key">One key takes it back.</span>
-  tagline: An MCP server for Claude Code, Codex, Pi or any other MCP client. It reads windows and layout from niri's IPC and buttons and fields from the accessibility bus, and acts only while it holds the lease. A key bound to <code>niri-computer-use stop</code> cancels the running action and takes the lease back.
+  tagline: An MCP server for Claude Code, Codex, Pi or any other MCP client. It reads windows and layout from niri's IPC and buttons and fields from the accessibility bus, and acts only while it holds the lease.
   actions:
     - text: Install from source
       link: start/install/
@@ -23,49 +23,37 @@ import Workspace from '../../components/Workspace.astro';
 
 ## It asks niri, then acts through niri
 
-An agent such as Claude Code, Codex or Pi starts `niri-computer-use serve` and gets niri's own view of your desktop: windows, workspaces, focus, monitors, screenshots that map back to the layout, that it can zoom into to read small text and save to `~/Pictures/niri-computer-use`, and, where apps expose them, accessible buttons and fields. Once it takes the lease, it can focus windows, start apps you listed, resize and move them with niri's actions, click, drag, scroll, type and paste, and open three Noctalia panels.
+An agent such as Claude Code, Codex or Pi starts `niri-computer-use serve` and gets niri's own view of your desktop: windows, workspaces, focus, monitors, screenshots that map back to the layout, and, where apps expose them, accessible buttons and fields. Once it takes the lease, it can focus windows, start apps you listed, resize and move them with niri's actions, click, drag, scroll, type and paste, and open three Noctalia panels.
 
 <div class="columns">
-<div class="column">
+<div class="column focused">
 
 ### Layout, through niri's actions
 
 `niri_action` sends niri's own layout actions. The answer carries the size niri gave the window.
 
-<Demo name="layout" label="The chat column widens to three quarters of the screen, then the notes window goes fullscreen and back." caption={false} />
+<Demo name="layout" call={2} label="Files becomes a third of the screen wide and the browser two thirds, then the agent floats its own terminal small in the bottom right corner and nudges it once to fit." />
 
 </div>
 <div class="column">
 
-### Buttons and fields, by name
+### Noctalia's panels
 
-`elements` lists a window's accessible elements. `set_element_text` and `activate_element` act on them without the pointer.
+`shell_panel` opens and closes Noctalia's panels. Its answer says `opened` or `closed` once Noctalia reports it so.
 
-<Demo name="elements" label="The agent fills the chat's Message field and presses Send, both through the accessibility bus." caption={false} />
+<Demo name="shell" call={2} label="The agent opens Noctalia's control center, clicks Do Not Disturb, and closes the panel." />
 
 </div>
 <div class="column">
 
-### Typing, checked against focus
+### Keys, checked against focus
 
-`type_text` names the window it means. Typing into any other window is refused with `focus_mismatch`.
+`key` and `type_text` name the window they mean. When you click into another window, the next keys are refused with `focus_mismatch`.
 
-<Demo name="keyboard" label="The first message is refused because the editor has focus. The agent focuses the chat and the message goes out." caption={false} />
+<Demo name="takeover" call={6} label="The agent types a paragraph into nvim. The user clicks into Files, and the agent's next key is refused, so nothing lands in Files." />
 
 </div>
 </div>
-
-</Workspace>
-
-<Workspace id="measured">
-
-## Measured in a nested niri
-
-The test suite runs niri, Noctalia and real apps in a headless nested session and checks what each app received, event by event.
-
-- 100 of 100 clicks by element landed on the right GTK 4 button. [Accessibility results](https://github.com/ayagmar/niri-computer-use/blob/main/docs/results/m9.md)
-- A stop mid-drag ended the call `stopped` and released the mouse button. [Input results](https://github.com/ayagmar/niri-computer-use/blob/main/docs/results/m4.md)
-- Noctalia's control center was seen open 50 to 51 ms after the call. [Noctalia results](https://github.com/ayagmar/niri-computer-use/blob/main/docs/results/m5.md)
 
 </Workspace>
 
@@ -75,7 +63,24 @@ The test suite runs niri, Noctalia and real apps in a headless nested session an
 
 Your agent starts the server over stdio. By default every client on one niri is served by one engine; a client in [standalone mode](concepts/configuration/#shared) runs its own and still shares the lease and the stop flag. Looking goes straight to niri, `grim`, the accessibility bus or Noctalia. Acting passes the gate first: the stop flag, the lease and the screen's lock state. Then each tool makes its own checks, such as the deny list, `expect` or a screenshot ref.
 
+<div class="columns wide-first">
+<div class="column focused">
+
 <Diagram />
+
+</div>
+<div class="column">
+
+### Measured in a nested niri
+
+The test suite runs niri, Noctalia and real apps in a headless nested session and checks what each app received, event by event.
+
+- 100 of 100 clicks by element landed on the right GTK 4 button. [Accessibility results](https://github.com/ayagmar/niri-computer-use/blob/main/docs/results/m9.md)
+- A stop mid-drag ended the call `stopped` and released the mouse button. [Input results](https://github.com/ayagmar/niri-computer-use/blob/main/docs/results/m4.md)
+- Noctalia's control center was seen open 50 to 51 ms after the call. [Noctalia results](https://github.com/ayagmar/niri-computer-use/blob/main/docs/results/m5.md)
+
+</div>
+</div>
 
 </Workspace>
 
@@ -83,8 +88,15 @@ Your agent starts the server over stdio. By default every client on one niri is 
 
 ## The stop key is yours
 
-<div class="columns">
+<div class="columns wide-last">
+<div class="column focused">
+
+<Demo name="stop" call={7} label="The agent reads niri's releases in the browser. The user runs the stop command, and the agent's next click is refused with stopped." />
+
+</div>
 <div class="column">
+
+<div class="split">
 
 - One agent at a time holds the lease, and only the lease holder acts. Looking needs no lease.
 - With [`confirm_lease`](concepts/configuration/#confirm_lease) on, you allow each lease on a desktop notification first, even when the agent's client approves tool calls without asking you. Deny, or no answer within a minute, refuses it. An agent that can run shell commands can answer the notification itself.
@@ -97,12 +109,9 @@ Your agent starts the server over stdio. By default every client on one niri is 
 - Every action reports `accepted`, whether niri took the request, and `observed`, what niri saw afterwards. Nothing is retried.
 - Calls that reach a tool go to an audit log, without the text typed, the clipboard, window titles or images.
 
-None of this is a sandbox. A click or a key can do anything you could do, and screenshots show the agent whatever is on your screen. Read [what isn't a boundary](concepts/safety/#what-isnt-a-boundary) before you let an agent act.
-
 </div>
-<div class="column">
 
-<Demo name="stop" label="The agent types release notes into the chat. The stop key takes the lease back, and its next type_text is refused with stopped." />
+None of this is a sandbox. A click or a key can do anything you could do, and screenshots show the agent whatever is on your screen. Read [what isn't a boundary](concepts/safety/#what-isnt-a-boundary) before you let an agent act.
 
 </div>
 </div>
@@ -114,7 +123,7 @@ None of this is a sandbox. A click or a key can do anything you could do, and sc
 ## What it needs, and where it stops
 
 <div class="columns">
-<div class="column">
+<div class="column focused">
 
 ### Needs
 
@@ -144,34 +153,38 @@ None of this is a sandbox. A click or a key can do anything you could do, and sc
 
 ## Install
 
+<div class="columns wide-first">
+<div class="column focused">
+
 From a shell inside your niri session:
 
 <Steps>
 
 1. Build and install the server.
 
-   ```sh
+   ```sh frame="none"
    git clone https://github.com/ayagmar/niri-computer-use.git
    cargo install --locked --path niri-computer-use
    ```
 
 2. Check it against your session. `niri.compat` should be `ok`, and `grim` and `wtype` `true` under `binaries`.
 
-   ```sh
+   ```sh frame="none"
    ~/.cargo/bin/niri-computer-use status
    ```
 
 3. Register it in your agent. For Claude Code:
 
-   ```sh
+   ```sh frame="none"
    claude mcp add --scope user niri-computer-use -- ~/.cargo/bin/niri-computer-use serve
    ```
 
    [Client setup](start/clients/) covers Codex, Pi and other MCP clients.
 
-4. Give your agents the skill, which tells them how to use the tools. From the directory you cloned:
+4. Give your agents the skill, which tells them how to use the tools:
 
-   ```sh
+   ```sh frame="none"
+   cd niri-computer-use
    mkdir -p ~/.claude/skills ~/.agents/skills
    ln -s "$PWD/skills/niri-computer-use" ~/.claude/skills/niri-computer-use
    ln -s "$PWD/skills/niri-computer-use" ~/.agents/skills/niri-computer-use
@@ -179,7 +192,7 @@ From a shell inside your niri session:
 
 5. Bind the stop key, inside the `binds` block of `~/.config/niri/config.kdl`, with the path `cargo install` printed:
 
-   ```kdl
+   ```kdl frame="none"
    Mod+Shift+Escape allow-inhibiting=false allow-when-locked=true hotkey-overlay-title="Stop the AI agent (niri-computer-use)" { spawn "/home/you/.cargo/bin/niri-computer-use" "stop"; }
    ```
 
@@ -187,12 +200,14 @@ From a shell inside your niri session:
 
 Then try a [first session](start/first-session/): ask your agent to look, then to act.
 
-</Workspace>
+</div>
+<div class="column">
 
-<Workspace id="for-agents">
-
-## For agents
+### For agents
 
 If you are an agent reading this, start with [llms.txt](llms.txt) and the skill, [skill/SKILL.md](skill/SKILL.md). Every page is also plain Markdown at its address with `.md` in place of the trailing slash.
+
+</div>
+</div>
 
 </Workspace>

@@ -7,7 +7,7 @@ sidebar:
 
 A failed call sets `isError` and returns `{"error": <name>, "detail": <upstream detail>}`, with `"may_have_sent": true` added when `key` or `type_text` failed after some of its input went out, or may have. The names below are a stable contract; the `detail` carries niri's, Noctalia's or a program's own message, so quote it when you report a problem. This list is checked against `ErrorName` in [`src/error.rs`](https://github.com/ayagmar/niri-computer-use/blob/main/src/error.rs) when the site builds.
 
-A mistake in the arguments isn't one of these: it comes back as plain text starting `invalid arguments:`, and nothing was done.
+A mistake in the arguments isn't one of these: it comes back as plain text starting `failed to deserialize parameters:` or `invalid arguments:`, and nothing was done.
 
 ## Refusals that are yours to clear
 
@@ -15,7 +15,7 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 ### `stopped`
 
-**Cause:** the stop flag is set for this niri instance, by the stop key or `niri-computer-use stop`. A stop during an action cancels it with this error. A niri action whose request had already gone out, a Noctalia command, an `activate_element` or `set_element_text` whose call to the app had, or `key` or `type_text` once a stroke had, isn't an error: it ends `uncertain`, with the stop in `detail` and `accepted: true` if niri, Noctalia or the app had answered or a stroke had been typed, `null` if not. For the pointer tools and a paste, anything already sent may have taken effect. A runtime directory that can't be read also counts as stopped.
+**Cause:** the stop flag is set for this niri instance, by the stop key or `niri-computer-use stop`. A stop during an action cancels it with this error. A niri action whose request had already gone out, a Noctalia command, an `activate_element` or `set_element_text` whose call to the app had, or `key` or `type_text` once a stroke had, isn't an error: it ends `uncertain`, with the stop in `detail` and `accepted: true` if niri, Noctalia or the app had answered or a stroke had been typed, `null` if not. For the pointer tools and a paste, anything already sent may have taken effect. While the lease is held, a runtime directory that can't be read counts as stopped and the lease is given up; an action that finds it unreadable as it starts fails with `upstream_error`.
 
 **What to do:** when you want agents to act again, run `niri-computer-use resume`. If `status` shows `input_dirty`, run `niri-computer-use recover` first.
 
@@ -65,7 +65,7 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 ### `app_denied`
 
-**Cause:** the window with keyboard focus belongs to an app on `deny_input_app_ids`, or for `elements`, the window asked about does, or for `activate_element` and `set_element_text`, the element's window does, or for `close_window` and `niri_action`'s `CloseWindow`, the window it would close does.
+**Cause:** the window with keyboard focus belongs to an app on `deny_input_app_ids`, or for `elements`, the window asked about does, or for `activate_element`, `set_element_text` and a pointer tool aimed at an `element`, the element's window does, or for `close_window` and `niri_action`'s `CloseWindow`, the window it would close does.
 
 **What to do:** nothing, if you meant it. Otherwise remove the app from the [policy file](../../concepts/configuration/#deny_input_app_ids) and restart the agent's session.
 
@@ -97,7 +97,7 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 ### `ref_invalid`
 
-**Cause:** a pointer tool's `screenshot_ref` can't be used. The `detail` starts with the reason: `unknown_ref` (not a screenshot of this lease, or niri's event stream reconnected since), `expired` (over 60 seconds old), `output_changed` (the output moved, resized, changed scale or transform, or is gone) or `out_of_bounds` (the pixel is outside the image).
+**Cause:** a pointer tool's `screenshot_ref`, or the one a `screenshot` zooms into, can't be used. The `detail` starts with the reason: `unknown_ref` (not a screenshot of this lease, or niri's event stream reconnected since), `expired` (over 60 seconds old), `output_changed` (the output moved, resized, changed scale or transform, or is gone) or `out_of_bounds` (the pixel is outside the image).
 
 **What to do:** take a new screenshot and aim from it; for `out_of_bounds`, use a pixel inside the image.
 
@@ -191,7 +191,7 @@ These mean niri, a program or Noctalia didn't answer as expected. Report the nam
 
 ### `deadline_exceeded`
 
-**Cause:** niri, a program or an app didn't answer in time: two seconds for niri and for each step of a clipboard read, five for `grim`, three for an `elements` walk.
+**Cause:** niri, a program or an app didn't answer in time: two seconds for niri and for each step of a clipboard read, five for `grim`, one for each call to an app's accessibility interface and three for an `elements` walk as a whole, and for native keys 50 ms a key, at least three seconds a call.
 
 **What to do:** check whether niri or the app is stuck. A stopped app makes `elements` time out; a large tree that is only slow gives a partial listing with `capped_reason: "budget_exhausted"` instead.
 

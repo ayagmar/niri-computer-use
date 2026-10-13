@@ -83,6 +83,7 @@ Without the variables, a server started over SSH, from a TTY or as a systemd ser
 The repository's skill tells an agent how to use the tools: start with `status`, prefer structured data to screenshots, read `accepted` and `observed`, and when to stop and hand back. Link it into your agents' skill directories from the directory you cloned:
 
 ```sh
+cd niri-computer-use
 mkdir -p ~/.claude/skills ~/.agents/skills
 ln -s "$PWD/skills/niri-computer-use" ~/.claude/skills/niri-computer-use
 ln -s "$PWD/skills/niri-computer-use" ~/.agents/skills/niri-computer-use

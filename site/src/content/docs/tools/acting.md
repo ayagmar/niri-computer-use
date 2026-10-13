@@ -64,7 +64,7 @@ An unknown window or workspace id is an argument mistake, and nothing is sent. O
 - `interrupted`: focus moved to a window that was neither focused before nor the expected target, so someone else is using the desktop. `focused_window` says where focus came to rest.
 - `uncertain`: niri's reply or event stream was lost, so the action may or may not have happened. `accepted` is null when the reply was lost.
 
-None of these outcomes is an error, and the server never retries an action. `timeout`, `pending`, `none`, `interrupted` and `uncertain` are outcomes in doubt: the result comes with a fresh screenshot of the focused output, 1280 pixels wide, so the agent can see the desktop without another call.
+None of these outcomes is an error, and the server never retries an action. `timeout`, `pending`, `none`, `interrupted`, `uncertain` and `unknown` are outcomes in doubt: the result comes with a fresh screenshot of the focused output, 1280 pixels wide, so the agent can see the desktop without another call.
 
 ## `focus`
 

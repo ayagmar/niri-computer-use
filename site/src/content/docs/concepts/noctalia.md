@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-[Noctalia](https://github.com/noctalia-dev/noctalia-shell) is optional. Without it, everything except `shell_panel` works the same.
+[Noctalia](https://github.com/noctalia-dev/noctalia-shell) is optional. Without it, `shell_panel` and `noctalia` aren't listed and `desktop_state` has no `shell`; everything else works the same.
 
 ## Detection
 
@@ -16,7 +16,7 @@ The server talks to Noctalia over its socket, `$XDG_RUNTIME_DIR/noctalia-$WAYLAN
 ## What it adds
 
 - Noctalia's `locked` is a second source for the [lock gate](../safety/#the-lock-gate), next to logind's, so the server knows the lock state even when niri isn't started with `--session`.
-- `desktop_state`'s `shell` is Noctalia's own status: `barVisible`, `panelOpen`, `activePanelId` and `locked`, or `noctalia_unavailable` when Noctalia isn't answering.
+- `desktop_state`'s `shell` is Noctalia's own status: `barVisible`, `panelOpen`, `activePanelId` and `locked`, or `noctalia_unavailable` when Noctalia isn't answering, and `upstream_error` when it answers with an error.
 - `shell_panel` opens and closes a panel, under the lease and the same checks as every action.
 
 ## Panels
