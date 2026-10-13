@@ -169,8 +169,10 @@ impl Recorder {
     }
 
     /// Applies the events already received when it starts, and no more, so a niri that
-    /// keeps sending can't hold it.
+    /// keeps sending can't hold it. The stream's task gets a turn first, even with nothing
+    /// received yet, to pass on what niri already sent.
     async fn drain(&mut self) {
+        tokio::task::yield_now().await;
         for _ in 0..self.waiter.queued() {
             if self.lost.is_some() || !self.next(Duration::ZERO).await {
                 return;
@@ -536,6 +538,24 @@ mod tests {
         assert_eq!(outcome.window.map(|window| window.is_focused), Some(false));
     }
 
+    // When the work ends, the stream's task may have read niri's event and not passed it
+    // on yet. With nothing received so far, the report still gives it a turn, and applies
+    // the event before deciding that the quiet has passed.
+    #[tokio::test(start_paused = true)]
+    async fn an_event_not_yet_passed_on_as_the_work_ends_is_in_the_report() {
+        for wait in [Wait::Quiet, Wait::Received] {
+            let (recorder, mut outcome, sender) = watching(vec![app()]);
+            tokio::time::advance(QUIET + Duration::from_millis(50)).await;
+            let dialog = window(5, Some("app"), 1, true);
+            let opened = Event::WindowOpenedOrChanged { window: dialog };
+            let passes = tokio::spawn(later(sender, Duration::ZERO, opened));
+            let changes = recorder.finish(wait, &mut outcome).await;
+            assert_eq!(changes.opened.len(), 1, "{wait:?}");
+            assert_eq!(outcome.focused_window, Some(5), "{wait:?}");
+            drop(passes.await.unwrap());
+        }
+    }
+
     /// Marks window 1 urgent on odd sequence numbers and not on even ones.
     const fn urgent(seq: u64) -> Event {
         Event::WindowUrgencyChanged {
@@ -555,15 +575,15 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_niri_that_keeps_sending_cant_hold_the_report_after_a_screenshot() {
         let (recorder, mut outcome, sender) = watching(vec![app()]);
-        event(&sender, 1, urgent(1));
+        event(&sender, 1, Event::WindowFocusChanged { id: None });
         let sending = tokio::spawn(keeps_sending(sender));
         let changes = recorder.finish(Wait::Received, &mut outcome).await;
         assert!(!sending.is_finished());
         sending.abort();
         // The event received before the report ended is in it.
         assert_eq!(
-            changes.windows.first().and_then(|window| window.urgent),
-            Some(true)
+            serde_json::to_value(changes.focus).unwrap(),
+            json!({"from": 1, "to": null})
         );
     }
 }
