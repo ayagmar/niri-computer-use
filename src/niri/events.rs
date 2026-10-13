@@ -331,8 +331,9 @@ impl EventStream {
     }
 
     /// Whether niri activated a workspace on `output`, opened or closed the overview, or
-    /// moved, resized, floated or opened `window` within `settle`, so that the view there
-    /// may still be moving, and whether the window keeps moving. Waits up to two seconds
+    /// moved, resized, floated or opened `window` or a floating window on `output` within
+    /// `settle`, so that the view there may still be moving, and whether the window keeps
+    /// moving. Waits up to two seconds
     /// for niri's initial state, as after a reconnect, and fails with the stream's error
     /// without it.
     pub(crate) async fn motion(
