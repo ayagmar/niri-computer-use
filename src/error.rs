@@ -51,7 +51,8 @@ pub(crate) enum ErrorName {
     AppDenied,
     /// A keyboard tool's `expect` doesn't match the focused window.
     FocusMismatch,
-    /// `type_text` over 1000 characters, or over 1 MiB with `via: "paste"`.
+    /// `type_text` over 1000 characters, or over 1 MiB with `via: "paste"`, or
+    /// `set_element_text` over 64 KiB.
     TextTooLong,
     /// A screenshot ref that is unknown, expired, for a changed output, or a pixel outside
     /// its image.
@@ -75,7 +76,8 @@ pub(crate) enum ErrorName {
     /// An element ref that nothing on the accessibility bus binds to the record it acts
     /// on, as a list's button in a row with no name: see `Unbound`.
     ElementUnbound,
-    /// `set_element_text` on a password field: it is never written.
+    /// `activate_element` or `set_element_text` on a password field: element actions
+    /// never act on one.
     SecretField,
     /// An element action's last checks before its call took too long, twice, so what they
     /// read may have changed: nothing was sent.

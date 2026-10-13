@@ -1042,8 +1042,8 @@ impl Server {
     /// Clicks a pixel of a screenshot, or an element: moves there, then presses and
     /// releases the button `count` times; `observed` is `sent`. A click can change focus or
     /// do anything the app does on a click; read `changes`, and take a screenshot when it
-    /// doesn't say enough. The deny list checks the focused app, not the one under the
-    /// pointer.
+    /// doesn't say enough. The deny list checks the focused app, and an `element`'s app,
+    /// not the one under the pointer.
     #[tool(
         title = "Click",
         annotations(
