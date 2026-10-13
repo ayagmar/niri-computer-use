@@ -3196,6 +3196,36 @@ async fn a_drag_cancelled_while_it_releases_still_clears_its_marker() {
     assert_eq!(clicked["isError"], false, "{clicked}");
 }
 
+// A floating window's elements are hidden while its workspace's active window is a tiled
+// one as large as the output, as a fullscreen window is. That can start while a drag to
+// one holds its button: a tiled window that already fills the output becomes the active
+// one, or the active one grows to fill it. The look after either stops the drag before
+// it moves further, releases the button and reports `uncertain`.
+#[tokio::test]
+async fn a_tiled_window_filling_the_output_stops_a_held_element_drag() {
+    let mut filling = window_on(2, Some("other"), 1, false);
+    filling["layout"]["tile_size"] = json!([2560.0, 1440.0]);
+    filling["layout"]["window_size"] = json!([2560, 1440]);
+    let filled = json!({"WindowOpenedOrChanged": {"window": filling}});
+    let active = json!({"WorkspaceActiveWindowChanged": {
+        "workspace_id": 1, "active_window_id": 2
+    }});
+    for (tag, holds) in [
+        ("activated", [(4, filled.clone()), (5, active.clone())]),
+        ("grown", [(4, active.clone()), (5, filled.clone())]),
+    ] {
+        let (result, sent) =
+            drag_moved_at_syncs(&format!("drag-cover-{tag}"), ButtonEnd::End, &holds).await;
+        stopped_midway(&result, "a tiled window as large as the output", tag);
+        // The motion to the start, the press, the steps before the second event and the
+        // release: none of the steps after it.
+        assert!(
+            sent.len() < 13 && sent.last() == Some(&Pointed::Button(272, 0)),
+            "{tag}: {sent:?}"
+        );
+    }
+}
+
 /// Aims `tool` at the Safe button, sends `event` once the pointer is being set up and
 /// before anything went out, and requires the aim refused with nothing sent. A click has
 /// marked input as possibly stuck by then, and the refusal must clear that, so a pixel

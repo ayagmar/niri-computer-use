@@ -586,7 +586,8 @@ impl Gate<'_> {
 impl End {
     /// Why the element is no longer where the drag goes after niri's changes `moved`, with
     /// the pointer at `pointer`: its window moved, resized, floated, went to another
-    /// workspace or closed, or another floating window on its workspace lies over its
+    /// workspace or closed, its workspace's active window now hides the floating windows
+    /// (`model::hides_floating`), or another floating window on its workspace lies over its
     /// centre after opening or being relaid. niri reports no stacking order, so that window
     /// may be on top. Only one of `followers` that also lies under the pointer doesn't
     /// count. A window that was there before the drag counts even when the drag carries
@@ -602,6 +603,13 @@ impl End {
         };
         if moved.relaid.contains(&self.window) {
             return Some(END_MOVED);
+        }
+        let active = own
+            .workspace_id
+            .and_then(|id| view.workspaces().get(&id)?.active_window_id)
+            .and_then(|id| view.windows().get(&id));
+        if active.is_some_and(|active| model::hides_floating(&self.area, active)) {
+            return Some(END_HIDDEN);
         }
         let tile_of = |id: &u64| {
             if *id == self.window {
@@ -626,6 +634,7 @@ impl End {
 }
 
 const END_MOVED: &str = "niri moved, resized or closed the window of the element the drag ends at, or moved it to another workspace, after the drag began, so the element is no longer where the drag goes";
+const END_HIDDEN: &str = "a tiled window as large as the output, as a fullscreen window is, became or grew into the active window of the workspace of the element the drag ends at after the drag began, so niri hides the element's floating window";
 const END_COVERED: &str = "another floating window opened or moved over the element the drag ends at after the drag began, and may be on top of it";
 
 /// Why `Gate::pass` refused or stopped a gesture at `stage` when niri reported `moved`.
