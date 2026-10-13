@@ -1,6 +1,6 @@
 # README example
 
-The source of the README's example: one graded run of the `errand` skill eval, in which a model chose every call. The README's recording is a different thing, a script replaying fixed calls.
+The source of the README's example: one graded run of the `errand` skill eval, in which a model chose every call. The README's recording is a different run: a real Claude Code session on a real desktop, made as `docs/development.md` describes under "Demo recordings".
 
 | | |
 |---|---|
