@@ -1,0 +1,80 @@
+---
+// One action's life, for a niri action such as `focus`: the call, the desk's gate, the
+// tool's checks, the request, `accepted`, the wait for `observed`, the evidence and the
+// audit line, and where a stop or a lost lease ends it. Drawn from src/tools.rs,
+// src/engine.rs (`Engine::act`), src/control/desk.rs (`Desk::act`) and src/act.rs.
+import Frame from './Frame.astro';
+
+// Each step: name, what happens, top. The gate is drawn on its own.
+const steps: [string, string, number][] = [
+	['tools/call', "raced against the client's cancel", 1],
+	["tool's checks", 'arguments against niri · deny list · expect', 161],
+	['send', 'lock read ≤ 250 ms old · Desk::sending', 223],
+	['accepted', 'true once niri answers, null if the reply is lost', 285],
+	['observed', 'each event applied to the waiter, up to 5 s', 347],
+	['screenshot', 'settled if asked, at once if in doubt', 409],
+	['changes', "niri's scene before and after, once quiet", 471],
+	['audit line', 'one JSON line per call, refusals included', 533],
+];
+// The arrows between the boxes: from one bottom to the next top.
+const gaps = [47, 145, 207, 269, 331, 393, 455, 517];
+
+// Brackets on the right: first and last y, whether a stop ends the action there, then
+// lines.
+const brackets: [number, number, boolean, string[]][] = [
+	[63, 244, true, ['refused or stopped here:', 'an error, nothing sent']],
+	[250, 393, true, ['stopped or lease lost here:', 'uncertain, no screenshot,', 'no changes']],
+	[409, 517, false, ['past the stop race,', 'action mutex still held']],
+];
+---
+
+<Frame label="One action's life">
+	<svg viewBox="0 0 720 612" role="img" aria-labelledby="al-title al-desc">
+		<title id="al-title">One action's life</title>
+		<desc id="al-desc">
+			A tools/call runs raced against the client's cancel. The gate, under the action mutex, checks the stop
+			flag, the input-dirty marker and the lease, asks the readiness report about niri's version, the policy
+			and the lock state, then checks the stop flag, the marker and the lease file again. The tool checks its
+			arguments against niri's state, the deny list and expect. It sends the request once the lock state was
+			read at most 250 ms before and the desk is told. accepted is true once niri answers. observed comes from
+			niri's events, up to five seconds. Then a screenshot if asked or in doubt, the changes, and one audit
+			line. A refusal or stop before sending is an error with nothing sent; a stop or lost lease after sending
+			makes the outcome uncertain with no screenshot and no changes.
+		</desc>
+		<defs>
+			<marker id="al-arrow" viewBox="0 0 8 8" refX="8" refY="4" markerWidth="8" markerHeight="8" orient="auto">
+				<path d="M0 0 8 4 0 8z" class="head act" />
+			</marker>
+		</defs>
+
+		{gaps.map((top) => <path d={`M220 ${top} V${top + 14}`} class="wire act" marker-end="url(#al-arrow)" />)}
+
+		<rect x="1" y="63" width="438" height="82" rx="6" class="gate" />
+		<text x="17" y="83" class="t ring">gate · Desk::act</text>
+		<text x="17" y="101" class="s">stop flag · input-dirty · lease</text>
+		<text x="17" y="119" class="s">readiness: niri version, policy, lock</text>
+		<text x="17" y="137" class="s">stop flag and marker again · lease file</text>
+
+		{
+			steps.map(([name, what, top]) => (
+				<>
+					<rect x="1" y={top} width="438" height="46" rx="8" class="box" />
+					<text x="17" y={top + 19} class="t">{name}</text>
+					<text x="17" y={top + 37} class="s">{what}</text>
+				</>
+			))
+		}
+		<text x="17" y="604" class="s">→ result: accepted · observed · changes · screenshot</text>
+
+		{
+			brackets.map(([from, to, stops, lines]) => (
+				<>
+					<path d={`M452 ${from} H462 V${to} H452`} class={stops ? 'wire halt' : 'wire'} />
+					{lines.map((line, index) => (
+						<text x="476" y={from + 14 + index * 18} class={index === 0 && stops ? 's stop' : 's'}>{line}</text>
+					))}
+				</>
+			))
+		}
+	</svg>
+</Frame>

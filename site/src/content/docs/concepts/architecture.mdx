@@ -1,0 +1,43 @@
+---
+title: Architecture
+description: The processes niri-computer-use runs, the path one action takes, the lease's states, and the coordinate spaces a click passes through.
+sidebar:
+  order: 4
+---
+
+import ActionLife from '../../../components/diagrams/ActionLife.astro';
+import CoordSpaces from '../../../components/diagrams/CoordSpaces.astro';
+import LeaseStates from '../../../components/diagrams/LeaseStates.astro';
+import ProcessMap from '../../../components/diagrams/ProcessMap.astro';
+
+These drawings follow the code. The full account, module by module, is [docs/architecture.md](https://github.com/ayagmar/niri-computer-use/blob/main/docs/architecture.md) in the repository.
+
+## Processes
+
+Your agent starts `niri-computer-use serve` over stdio, one per session. By default every `serve` on one niri relays to a single engine, and starts that engine when none is running. With [`shared = false`](../configuration/#shared) or `NIRI_COMPUTER_USE_SHARED=0`, `serve` runs the engine itself. The engine holds the lease and talks to niri, the accessibility bus and Noctalia. It runs `grim`, `wtype`, `notify-send` and `loginctl` through one runner, each with a deadline. The crash guardian is the same binary watching the engine: if the engine dies while its virtual pointer or keyboard holds a button or key, the guardian sends the release.
+
+<ProcessMap />
+
+The lease, the stop flag and the input-dirty marker are files in a directory beside niri's socket. Every server on the same niri sees the same files, in either mode.
+
+## One action
+
+Looking needs no lease. Every action passes the same gate first, under the action mutex, so one server's actions run one at a time. A refusal at the gate is an error, and nothing was sent. Once the request is on its way, a stop can't take it back: the result is `uncertain`, with `accepted` true if niri answered and null if it didn't. Otherwise the result has `accepted`, `observed`, `changes` when niri saw something change, and a screenshot when the agent asked for one or the outcome is in doubt. Every call writes one line to the audit log, refusals included.
+
+<ActionLife />
+
+The drawing follows a niri action such as `focus`. Keys and text go to `wtype`, or to the experimental native keyboard, clicks to a virtual pointer, and element actions to the app over the accessibility bus, all behind the same gate.
+
+## Lease, stop and recovery
+
+<LeaseStates />
+
+`acquire_desktop` locks the lease file before it asks anything slow, so a second agent gets `lease_held` at once. With [`confirm_lease`](../configuration/#confirm_lease) on, a notification asks you to Allow or Deny before the lease is granted. `niri-computer-use stop` sets the stop flag: the running action is cancelled and the lease is taken back. `resume` clears the flag, except while the input-dirty marker says a key or button may be stuck. Then `recover` ends or releases what was held and asks you to check before it clears the marker.
+
+## Coordinates
+
+A click names a pixel of a screenshot, by its `screenshot_ref`, or an element from `elements`. Each space is its own type in the code, so a pixel can't be passed where a layout point is expected. Before anything moves, the server maps the final point back through niri's own formula and refuses it if it lands more than 0.002 logical pixels away.
+
+<CoordSpaces />
+
+A screenshot ref expires after 60 seconds, when niri's event stream reconnects, or when its output's position, size, scale or transform changes. An element ref is checked against the app again each time it is used, and the pointer aims at one only while its window is floating and in view.

@@ -1,0 +1,70 @@
+---
+// The lease, the stop flag and the input-dirty marker as states: free, pending, held,
+// stopped and recovery required, with what moves between them. Drawn from
+// src/control/desk.rs (`acquire_with`, the stop watcher), src/control/lease.rs,
+// src/control/runtime.rs (`stop`, `resume`) and src/control/recover.rs.
+import Frame from './Frame.astro';
+
+// Each transition: its path, then its label lines as x, y and text.
+const moves: [string, [number, number, string][]][] = [
+	['M60 190 V53 H263', [[72, 45, 'acquire_desktop'], [72, 69, 'no stop flag, no marker,'], [72, 85, 'policy allows']]],
+	['M330 90 V150 H130 V188', [[140, 126, 'refused, declined,'], [140, 142, 'stopped or client gone']]],
+	['M475 53 H640 V188', [[488, 45, 'granted'], [488, 69, 'Allow, or no prompt']]],
+	['M548 218 H172', [[190, 210, 'release_desktop · client gone'], [190, 236, 'lease file moved · server died']]],
+	['M580 246 V300 H420 V358', [[430, 276, 'stop flag set,'], [430, 292, 'lease given up']]],
+	['M660 246 V358', [[668, 284, 'input'], [668, 300, 'may be'], [668, 316, 'stuck']]],
+	['M100 246 V388 H258', [[110, 404, 'stop']]],
+	['M300 360 V300 H140 V248', [[150, 276, 'resume,'], [150, 292, 'not while input-dirty']]],
+	['M590 416 V440 H40 V248', [[60, 458, 'release_desktop, then a human runs recover']]],
+];
+
+// Each state: x, y, width, height, name, what, and how it is drawn.
+const states: [number, number, number, number, string, string, string][] = [
+	[20, 190, 150, 56, 'free', 'no lease held', 'box'],
+	[265, 20, 210, 70, 'pending', 'locked, not granted', 'box'],
+	[550, 190, 150, 56, 'held', 'by one session', 'box held'],
+	[260, 360, 200, 56, 'stopped', 'stop flag set', 'box halt'],
+	[480, 360, 220, 56, 'recovery required', 'input-dirty set', 'box halt'],
+];
+---
+
+<Frame label="Lease, stop and recovery states">
+	<svg viewBox="0 0 720 470" role="img" aria-labelledby="ls-title ls-desc">
+		<title id="ls-title">Lease, stop and recovery states</title>
+		<desc id="ls-desc">
+			Free: acquire_desktop, with no stop flag, no marker and the policy allowing it, locks the lease and is
+			pending; with confirm_lease it asks you. Granted, after Allow or with no prompt, the lease is held by one
+			session; refused, declined, stopped or with the client gone, it is free again. release_desktop, the
+			client going, the lease file moving or the server dying frees it. The stop flag, set while held, makes
+			the watcher give the lease up; stop sets it any time and resume clears it, but not while input-dirty
+			is set. Input that may be stuck sets the input-dirty marker, which refuses every action until the
+			holder releases and a human runs recover.
+		</desc>
+		<defs>
+			<marker id="ls-arrow" viewBox="0 0 8 8" refX="8" refY="4" markerWidth="8" markerHeight="8" orient="auto">
+				<path d="M0 0 8 4 0 8z" class="head" />
+			</marker>
+		</defs>
+
+		{
+			moves.map(([path, labels]) => (
+				<>
+					<path d={path} class="wire" marker-end="url(#ls-arrow)" />
+					{labels.map(([x, y, line]) => (
+						<text x={x} y={y} class="s">{line}</text>
+					))}
+				</>
+			))
+		}
+		{
+			states.map(([x, y, width, height, name, what, cls]) => (
+				<>
+					<rect x={x} y={y} width={width} height={height} rx="8" class={cls} />
+					<text x={x + 16} y={y + 24} class={cls === 'box held' ? 't ring' : 't'}>{name}</text>
+					<text x={x + 16} y={y + 44} class="s">{what}</text>
+				</>
+			))
+		}
+		<text x="281" y="82" class="s">confirm_lease asks you</text>
+	</svg>
+</Frame>

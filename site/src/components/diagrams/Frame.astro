@@ -1,0 +1,123 @@
+---
+// One drawing on a page. With `scroll`, where the column is narrower than 38rem the
+// drawing scrolls sideways instead of shrinking, so its text keeps a readable size, and a
+// line below says so. The styles are global because the drawings' own components hold
+// the SVG they apply to.
+interface Props {
+	// Names the scrolling region for screen readers.
+	label: string;
+	scroll?: boolean;
+}
+
+const { label, scroll = true } = Astro.props;
+---
+
+<figure class:list={['ncu-d', 'not-content', { 'ncu-d-wide': scroll }]}>
+	<div class="ncu-d-scroll" {...scroll && { tabindex: 0, role: 'region', 'aria-label': label }}>
+		<slot />
+	</div>
+	{scroll && <p class="ncu-d-hint">scroll sideways for the rest →</p>}
+</figure>
+
+<style is:global>
+	.ncu-d {
+		margin: 1.5rem 0;
+		container-type: inline-size;
+	}
+
+	.ncu-d-wide svg {
+		min-width: 38rem;
+	}
+
+	.ncu-d-hint {
+		display: none;
+		margin: 0.5rem 0 0;
+		font-family: var(--sl-font-mono);
+		font-size: var(--sl-text-xs);
+		color: var(--sl-color-gray-3);
+	}
+
+	/* Only where the drawing is wider than its column. */
+	@container (width < 38rem) {
+		.ncu-d-hint {
+			display: block;
+		}
+	}
+
+	.ncu-d-scroll {
+		overflow-x: auto;
+		border-radius: var(--ncu-radius);
+	}
+
+	.ncu-d svg {
+		display: block;
+		width: 100%;
+		height: auto;
+		font-family: var(--sl-font-mono);
+	}
+
+	.ncu-d .box {
+		fill: var(--ncu-panel);
+		stroke: var(--ncu-rule);
+		stroke-width: 1.5;
+	}
+
+	.ncu-d .held {
+		stroke: var(--ncu-ring);
+		stroke-width: 2;
+	}
+
+	.ncu-d .halt {
+		stroke: var(--ncu-stop);
+	}
+
+	.ncu-d .gate {
+		fill: var(--ncu-panel);
+		stroke: var(--ncu-ring);
+		stroke-width: 2;
+		stroke-dasharray: 5 4;
+	}
+
+	.ncu-d .t {
+		fill: var(--sl-color-white);
+		font-size: 13px;
+		font-weight: 600;
+	}
+
+	.ncu-d .n {
+		fill: var(--sl-color-gray-1);
+		font-size: 12px;
+	}
+
+	.ncu-d .s {
+		fill: var(--sl-color-gray-3);
+		font-size: 12px;
+	}
+
+	.ncu-d .wire {
+		fill: none;
+		stroke: var(--sl-color-gray-4);
+		stroke-width: 1.5;
+	}
+
+	.ncu-d .wire.act {
+		stroke: var(--ncu-ring);
+	}
+
+	.ncu-d .wire.halt {
+		stroke: var(--ncu-stop);
+	}
+
+	.ncu-d .head {
+		fill: var(--sl-color-gray-4);
+	}
+
+	.ncu-d .head.act,
+	.ncu-d .ring {
+		fill: var(--ncu-ring);
+	}
+
+	.ncu-d .stop {
+		fill: var(--ncu-stop);
+	}
+</style>
