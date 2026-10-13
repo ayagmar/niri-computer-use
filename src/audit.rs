@@ -8,11 +8,15 @@
 //! passthroughs log metadata too: `niri_action` its action's name, field names, numbers and
 //! booleans with every string as its length in bytes, and `noctalia` only its argument
 //! count and byte lengths.
+//!
+//! Once the log reaches `ROTATE_AT`, the next write first moves it aside to
+//! `audit.jsonl.1`, shifting older ones up to `audit.jsonl.3` and dropping the oldest
+//! (`rotate`).
 
-use std::fs::{DirBuilder, OpenOptions};
+use std::fs::{DirBuilder, OpenOptions, TryLockError};
 use std::io::Write as _;
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
@@ -26,6 +30,11 @@ use serde_json::{Map, Value, json};
 use crate::error::CANCELLED;
 use crate::input::keyboard::Expect;
 use crate::input::keymap;
+
+/// The log's size from which the next write moves it aside first.
+const ROTATE_AT: u64 = 10 * 1024 * 1024;
+/// How many logs moved aside are kept: `audit.jsonl.1`, the newest, to `audit.jsonl.3`.
+const KEPT: u32 = 3;
 
 /// Where the log goes, and the last write error, which `status` reports.
 #[derive(Debug, Clone)]
@@ -157,7 +166,8 @@ impl Audit {
         let result = serde_json::to_vec(record)
             .map_err(|error| error.to_string())
             .and_then(|line| {
-                append(path, &line).map_err(|error| format!("{}: {error}", path.display()))
+                append(path, &line, ROTATE_AT)
+                    .map_err(|error| format!("{}: {error}", path.display()))
             });
         if let Err(error) = result {
             *self.last() = Some(error);
@@ -171,18 +181,67 @@ impl Audit {
     }
 }
 
-fn append(path: &std::path::Path, line: &[u8]) -> std::io::Result<()> {
+/// Appends `line` to the log at `path`, moving the log aside first once it has reached
+/// `limit` bytes. A failed rotation doesn't cost the line: it is written all the same, and
+/// the rotation's error returned after.
+fn append(path: &Path, line: &[u8], limit: u64) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
     }
+    let rotated = rotate(path, limit);
     let mut file = OpenOptions::new()
         .append(true)
         .create(true)
         .mode(0o600)
         .open(path)?;
     // One write per line, so concurrent servers appending to the same file don't
-    // interleave within a line.
-    file.write_all(&[line, b"\n"].concat())
+    // interleave within a line. A server that opened the log just before another moved it
+    // aside writes its line to the moved file, whole.
+    file.write_all(&[line, b"\n"].concat())?;
+    rotated
+}
+
+/// Moves the log at `path` aside once it has reached `limit` bytes: it becomes `.1`, `.1`
+/// becomes `.2`, and so on to `KEPT`, the oldest dropped. Every server sharing the log
+/// does this under its lock file, and looks at the size again once it holds it, so two
+/// can't rotate the same log twice. A server that finds the lock held doesn't wait for
+/// it: the holder is rotating, and this line goes to the log as it is.
+fn rotate(path: &Path, limit: u64) -> std::io::Result<()> {
+    let below = || std::fs::metadata(path).map_or(true, |log| log.len() < limit);
+    if below() {
+        return Ok(());
+    }
+    let lock = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(numbered(path, "lock"))?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(TryLockError::WouldBlock) => return Ok(()),
+        Err(TryLockError::Error(error)) => return Err(error),
+    }
+    if below() {
+        return Ok(());
+    }
+    for kept in (1..KEPT).rev() {
+        let older = numbered(path, &kept.to_string());
+        if let Err(error) = std::fs::rename(&older, numbered(path, &(kept + 1).to_string()))
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(error);
+        }
+    }
+    std::fs::rename(path, numbered(path, "1"))
+}
+
+/// `path` with `.suffix` after its name, such as `audit.jsonl.1`.
+fn numbered(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".");
+    name.push(suffix);
+    PathBuf::from(name)
 }
 
 /// `niri_action`'s action for the log: its name and field names, as niri-ipc spells them,
@@ -438,7 +497,7 @@ mod tests {
             })
         );
         assert_eq!(lines[1]["error"], "niri_unavailable");
-        let mode = |file: &std::path::Path| file.metadata().unwrap().permissions().mode() & 0o777;
+        let mode = |file: &Path| file.metadata().unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(&path), 0o600);
         assert_eq!(mode(path.parent().unwrap()), 0o700);
         assert_eq!(audit.status().last_error, None);
@@ -457,6 +516,108 @@ mod tests {
             Audit::new(None).status().last_error.as_deref(),
             Some("neither XDG_STATE_HOME nor HOME is set")
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The log and the ones moved aside, newest first, as each one's lines.
+    fn logs(path: &Path) -> Vec<Vec<String>> {
+        let read = |file: PathBuf| {
+            std::fs::read_to_string(file)
+                .unwrap_or_default()
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        };
+        let mut logs = vec![read(path.to_owned())];
+        logs.extend((1..=KEPT + 1).map(|kept| read(numbered(path, &kept.to_string()))));
+        logs
+    }
+
+    /// Line `n`, ten bytes with its newline.
+    fn line(n: usize) -> String {
+        format!("line {n:04}")
+    }
+
+    // The log is moved aside once it reaches its limit, before the next line; three logs
+    // moved aside are kept and older ones dropped, and every file stays private.
+    #[test]
+    fn a_full_log_is_moved_aside_and_only_three_old_ones_are_kept() {
+        let dir = crate::test_support::fresh_dir("audit-rotate");
+        let path = dir.join("audit.jsonl");
+        // Three lines fill 30 bytes.
+        for n in 0..20 {
+            append(&path, line(n).as_bytes(), 30).unwrap();
+        }
+        let lines = |range: std::ops::Range<usize>| range.map(line).collect::<Vec<_>>();
+        assert_eq!(
+            logs(&path),
+            [
+                lines(18..20),
+                lines(15..18),
+                lines(12..15),
+                lines(9..12),
+                Vec::new()
+            ]
+        );
+        for file in [
+            "audit.jsonl",
+            "audit.jsonl.1",
+            "audit.jsonl.3",
+            "audit.jsonl.lock",
+        ] {
+            let mode = dir.join(file).metadata().unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "{file}");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    // A server that finds another rotating, holding the log's lock, doesn't wait: its line
+    // goes to the log as it is, and the log is moved aside on a later write.
+    #[test]
+    fn a_held_lock_delays_the_rotation_but_never_the_line() {
+        let dir = crate::test_support::fresh_dir("audit-rotate-held");
+        let path = dir.join("audit.jsonl");
+        for n in 0..3 {
+            append(&path, line(n).as_bytes(), 30).unwrap();
+        }
+        let lock = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(numbered(&path, "lock"))
+            .unwrap();
+        lock.try_lock().unwrap();
+        append(&path, line(3).as_bytes(), 30).unwrap();
+        assert_eq!(logs(&path)[..2], [(0..4).map(line).collect(), Vec::new()]);
+        drop(lock);
+        append(&path, line(4).as_bytes(), 30).unwrap();
+        assert_eq!(
+            logs(&path)[..2],
+            [vec![line(4)], (0..4).map(line).collect()]
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    // Servers sharing the log write and rotate it at once: every line ends up whole in one
+    // of the logs, none twice and none lost, while fewer than four rotations are needed.
+    #[test]
+    fn servers_writing_at_once_lose_and_split_no_line() {
+        let dir = crate::test_support::fresh_dir("audit-rotate-shared");
+        let path = dir.join("audit.jsonl");
+        // 400 lines of ten bytes: at most four logs of 1000 bytes, so none is dropped.
+        let write = |writer: usize| {
+            for n in 0..100 {
+                append(&path, line(writer * 100 + n).as_bytes(), 1000).unwrap();
+            }
+        };
+        std::thread::scope(|scope| {
+            for writer in 0..4 {
+                scope.spawn(move || write(writer));
+            }
+        });
+        let mut written: Vec<String> = logs(&path).concat();
+        written.sort();
+        assert_eq!(written, (0..400).map(line).collect::<Vec<_>>());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
