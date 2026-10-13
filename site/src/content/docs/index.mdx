@@ -17,6 +17,7 @@ hero:
 import { Steps } from '@astrojs/starlight/components';
 import Demo from '../../components/Demo.astro';
 import Diagram from '../../components/Diagram.astro';
+import CallPath from '../../components/diagrams/CallPath.astro';
 import Workspace from '../../components/Workspace.astro';
 
 <Workspace id="what-it-does">
@@ -67,6 +68,10 @@ Your agent starts the server over stdio. By default every client on one niri is 
 <div class="column focused">
 
 <Diagram />
+
+<CallPath />
+
+Every process and state is drawn on the [architecture page](concepts/architecture/).
 
 </div>
 <div class="column">
