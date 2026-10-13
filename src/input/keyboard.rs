@@ -965,14 +965,16 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    /// The task that lets wtype past its gate may run well after `go`, as when the shared
-    /// engine is busy with another client's call. Once the lock read is older than
-    /// `LAST_GATE` by then, wtype is killed at its gate and its marker comes off.
-    #[tokio::test]
-    async fn a_stroke_whose_gate_opens_after_the_lock_read_aged_is_never_let_through() {
+    /// What a stand-in for wtype that writes what it reads to a file did with one stroke,
+    /// `go` passing with the lock read fresh and `then` run before its gate opens: how the
+    /// stroke failed, and what it typed once it had time to.
+    async fn stroke_held_at_its_gate(
+        name: &str,
+        then: impl AsyncFnOnce(&RuntimeDir),
+    ) -> (Failed, Vec<u8>) {
         use std::os::unix::fs::PermissionsExt as _;
 
-        let dir = crate::test_support::fresh_dir("feed-late");
+        let dir = crate::test_support::fresh_dir(name);
         let runtime = RuntimeDir::of(&crate::test_support::niri_env(&dir)).unwrap();
         runtime.create().unwrap();
         let typed = dir.join("typed");
@@ -982,10 +984,9 @@ mod tests {
         std::fs::write(&wtype, format!("#!/bin/sh\ncat > '{}'\n", typed.display())).unwrap();
         std::fs::set_permissions(&wtype, std::fs::Permissions::from_mode(0o755)).unwrap();
         let desk = crate::input::paste::desk_read(&dir, Duration::ZERO);
-        // `go` passes on a fresh read, which has aged past `LAST_GATE` before the gate opens.
         let go = async {
             desk.sending_input()?;
-            tokio::time::sleep(crate::control::desk::LAST_GATE + Duration::from_millis(50)).await;
+            then(&runtime).await;
             Ok(())
         };
         let stroke = Wtype {
@@ -997,16 +998,41 @@ mod tests {
                 cwd: None,
             },
         };
-        let Failed { error, released } = run_wtype(&runtime, stroke, &mut None, go, &desk)
+        let failed = run_wtype(&runtime, stroke, &mut None, go, &desk)
             .await
             .unwrap_err();
-        assert!(!released, "{}", error.detail);
-        assert_eq!(error.name, ErrorName::LockStale, "{}", error.detail);
         // Killed at its gate, the stand-in for wtype read nothing.
         tokio::time::sleep(Duration::from_millis(100)).await;
-        assert_eq!(std::fs::read(&typed).unwrap_or_default(), b"");
         assert!(!runtime.input_dirty().unwrap());
+        let read = std::fs::read(&typed).unwrap_or_default();
         std::fs::remove_dir_all(dir).unwrap();
+        (failed, read)
+    }
+
+    /// The task that lets wtype past its gate may run well after `go`, as when the shared
+    /// engine is busy with another client's call. Once the lock read is older than
+    /// `LAST_GATE` by then, wtype is killed at its gate and its marker comes off.
+    #[tokio::test]
+    async fn a_stroke_whose_gate_opens_after_the_lock_read_aged_is_never_let_through() {
+        let aged = async |_: &RuntimeDir| {
+            tokio::time::sleep(crate::control::desk::LAST_GATE + Duration::from_millis(50)).await;
+        };
+        let (Failed { error, released }, typed) = stroke_held_at_its_gate("feed-late", aged).await;
+        assert!(!released, "{}", error.detail);
+        assert_eq!(error.name, ErrorName::LockStale, "{}", error.detail);
+        assert_eq!(typed, b"");
+    }
+
+    /// The user's stop key sets the stop flag after `go` passed and before wtype's gate
+    /// opens, sooner than the desk's stop watcher can cancel the call: the gate reads the
+    /// flag itself, so wtype is killed there and types nothing.
+    #[tokio::test]
+    async fn a_stroke_stopped_before_its_gate_opens_is_never_let_through() {
+        let stop = async |runtime: &RuntimeDir| runtime.stop().unwrap();
+        let (Failed { error, released }, typed) = stroke_held_at_its_gate("feed-stop", stop).await;
+        assert!(!released, "{}", error.detail);
+        assert_eq!(error.name, ErrorName::Stopped, "{}", error.detail);
+        assert_eq!(typed, b"");
     }
 
     /// wtype's first write may find the pipe not ready and wait. Resumed once the lock read

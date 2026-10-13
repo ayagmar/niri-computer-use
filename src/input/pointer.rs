@@ -1191,6 +1191,35 @@ mod tests {
         std::fs::remove_dir_all(&bench.dir).unwrap();
     }
 
+    // The user's stop key may set the stop flag after a gesture's last look and before the
+    // desk's stop watcher cancels it. Each part of the gesture reads the flag itself: the
+    // first input, the pointer input after the held modifiers, and each drag step while
+    // the button is held.
+    #[tokio::test]
+    async fn every_part_of_a_gesture_checks_the_stop_flag_itself() {
+        let bench = Bench::start("pointer-gate-stop", vec![(Duration::ZERO, UNLOCKED)]);
+        let (mut waiter, input) = gate_on(&bench).await;
+        let mut gate = Gate {
+            waiter: &mut waiter,
+            input,
+            windows: &[],
+            end: None,
+            reading: GESTURE_READING,
+        };
+        bench.runtime.stop().unwrap();
+        for stage in [Stage::First, Stage::Unpressed, Stage::Pressed] {
+            bench.desk.lock_read(Instant::now());
+            let error = gate.pass(stage, None).await.unwrap_err();
+            assert_eq!(
+                error.name,
+                ErrorName::Stopped,
+                "{stage:?}: {}",
+                error.detail
+            );
+        }
+        std::fs::remove_dir_all(&bench.dir).unwrap();
+    }
+
     // While a gesture reads the lock state again after a read that came back stale, a drag
     // holds its button and an app may autoscroll under it, so those reads stop after a
     // second in all, however long each one would take. The look's first read keeps its
@@ -1218,6 +1247,93 @@ mod tests {
         assert!(took < Duration::from_millis(3500), "{took:?}");
         assert!(!bench.desk.lock_fresh());
         assert_eq!(gate.reading, Duration::ZERO);
+        std::fs::remove_dir_all(&bench.dir).unwrap();
+    }
+
+    /// A device for a left click on `bench`'s output, its marker written.
+    async fn click_device(bench: &Bench) -> Result<Device, ToolError> {
+        let output = crate::test_support::wayland::OUTPUT;
+        let pointer = Pointer::bind(bench.niri.display(), std::process::id(), output)
+            .await
+            .unwrap();
+        let pressing = Pressing {
+            tool: "click",
+            button: Some(Button::Left),
+        };
+        Device::new(pointer, &bench.runtime, pressing, output, None).await
+    }
+
+    // The user's stop key sets the stop flag while a click's last look reads niri's events,
+    // before the desk's stop watcher has seen it. Nothing of the click goes out, and the
+    // call is refused as stopped rather than cut after sending.
+    #[tokio::test]
+    async fn a_stop_set_while_the_last_gate_reads_events_prevents_the_click() {
+        let bench = Bench::start("pointer-stop-gate", vec![(Duration::ZERO, UNLOCKED)]);
+        let session = crate::test_support::session(1);
+        bench
+            .desk
+            .acquire(&session, "review", async { None }, async { None })
+            .await
+            .unwrap();
+        let input = bench.input();
+        let window = niri::waiter::tests::window(1, Some("test"), 1, true);
+        let (mut waiter, updates) =
+            niri::waiter::tests::waiter(niri::waiter::tests::view(vec![window]), 0);
+        let notify = std::sync::Arc::new(tokio::sync::Notify::new());
+        let notified = std::sync::Arc::clone(&notify);
+        let runtime = bench.runtime.clone();
+        let stopper = tokio::spawn(async move {
+            notified.notified().await;
+            runtime.stop().unwrap();
+            updates
+                .send(niri::waiter::Update::Event(
+                    1,
+                    Box::new(niri_ipc::Event::WindowUrgencyChanged {
+                        id: 1,
+                        urgent: true,
+                    }),
+                ))
+                .unwrap();
+        });
+        let work = async {
+            let device = click_device(&bench).await?;
+            bench.desk.lock_read(Instant::now());
+            let gate = Gate {
+                waiter: &mut waiter,
+                input,
+                windows: &[],
+                end: None,
+                reading: GESTURE_READING,
+            };
+            notify.notify_one();
+            let steps = plan(
+                &Gesture::Click {
+                    at: PX,
+                    button: Button::Left,
+                    count: 1,
+                },
+                &[at(1)],
+            );
+            send(device, gate, steps).await?;
+            Ok::<_, CallError>(())
+        };
+        let acted = bench
+            .desk
+            .act(&session, async { None }, work, |worked| async { worked });
+        let ended = Box::pin(acted).await;
+        stopper.await.unwrap();
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        let buttons = bench.niri.seen().buttons;
+        // The gate read niri's events after the stop flag was set, so it looked after.
+        assert!(waiter.view().windows()[&1].is_urgent);
+        assert!(
+            buttons.is_empty(),
+            "input after the stop flag was set: {buttons:?}; result={ended:?}"
+        );
+        assert!(
+            matches!(&ended, Err(CallError::Tool(error)) if error.name == ErrorName::Stopped),
+            "{ended:?}"
+        );
         std::fs::remove_dir_all(&bench.dir).unwrap();
     }
 

@@ -827,6 +827,36 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// The user's stop key sets the stop flag while the keeper admits the paste key, after
+    /// the stop was last checked: the key is never committed, and the keeper hears `n` and
+    /// restores the clipboard.
+    #[tokio::test]
+    async fn a_paste_key_stopped_while_its_keeper_admits_it_is_never_committed() {
+        let dir = fresh_dir("commit-stopped");
+        let mut device = device();
+        let (aftercare, done) = fake_aftercare(SLOW_ADMISSION).await;
+        let mut aftercare = Some(aftercare);
+        let desk = desk_read(&dir, Duration::ZERO);
+        let runtime = RuntimeDir::of(&crate::test_support::niri_env(&dir)).unwrap();
+        let stopper = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            runtime.stop().unwrap();
+        });
+        let error = device.commit(&mut aftercare, &desk).await.unwrap_err();
+        stopper.await.unwrap();
+        assert_eq!(error.name, ErrorName::Stopped, "{}", error.detail);
+        assert!(aftercare.is_none() && device.aftercare.is_none());
+        assert_eq!(
+            done.await.unwrap().unwrap(),
+            Report::Done {
+                read: false,
+                clipboard: Clipboard::Restored,
+                detail: Some("after n".to_owned())
+            }
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     /// The keeper's admission may outlast the lock read: the key is then never committed,
     /// and the keeper hears `n` and restores the clipboard.
     #[tokio::test]
