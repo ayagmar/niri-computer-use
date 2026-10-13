@@ -733,10 +733,11 @@ pub(crate) struct Server {
 
 #[tool_router]
 impl Server {
-    /// `shell_panel` exists only when `noctalia` is on `PATH`, `noctalia` only when
-    /// `unrestricted` is on as well, the element tools only with an accessibility bus, and
-    /// every tool only in the profiles that list it, so the tool list stays fixed for the
-    /// session. A call to a tool not listed fails as an unknown tool.
+    /// `shell_panel` exists only when Noctalia is installed in the desktop's directories,
+    /// `noctalia` only when `unrestricted` is on as well, the element tools only with an
+    /// accessibility bus, and every tool only in the profiles that list it, so the tool
+    /// list stays fixed for the session. A call to a tool not listed fails as an unknown
+    /// tool.
     pub(crate) fn new(engine: Arc<Engine>, session: Session) -> Self {
         let mut tool_router = Self::tool_router();
         let profile = session.settings().tools.profile();
