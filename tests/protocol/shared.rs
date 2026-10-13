@@ -608,7 +608,10 @@ pub(crate) async fn holds_alone(holder: &mut Server, other: &mut Server) {
 async fn the_engine_keeps_serving_past_its_last_client_until_a_dropped_keys_cleanup_ends() {
     let fixture = shared("shared-cleanup-idle");
     let mut desktop = Desktop::new(&fixture);
-    fixture.program("wtype", r#"echo >> "$DIR/wtype.calls"; await_file go"#);
+    fixture.program(
+        "wtype",
+        r#"cat > /dev/null; echo >> "$DIR/wtype.calls"; await_file go"#,
+    );
     let mut typing = Server::start(&fixture).await;
     let _stream = desktop.stream().await;
     let engine = engine(&fixture).await;

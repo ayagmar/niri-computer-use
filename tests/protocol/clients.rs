@@ -101,7 +101,10 @@ async fn clients_racing_for_the_lease_leave_exactly_one_owner() {
 async fn a_stop_during_one_clients_action_holds_every_client_back_until_resume() {
     let fixture = shared("many-stop");
     let mut desktop = Desktop::new(&fixture);
-    fixture.program("wtype", r#"echo >> "$DIR/wtype.calls"; await_file go"#);
+    fixture.program(
+        "wtype",
+        r#"cat > /dev/null; echo >> "$DIR/wtype.calls"; await_file go"#,
+    );
     let mut clients = bridges(&fixture, 5).await;
     let _stream = desktop.stream().await;
     let (owner, others) = clients.split_first_mut().unwrap();
@@ -116,7 +119,7 @@ async fn a_stop_during_one_clients_action_holds_every_client_back_until_resume()
     }
     let stopped = Instant::now();
     assert!(run(&fixture, "stop").await.status.success());
-    // wtype had started on the key, so it may have gone out: the outcome says so.
+    // wtype was past its gate, so the key may have gone out: the outcome says so.
     let cut = report(&owner.response(key).await["result"]);
     assert_eq!(cut["observed"], "uncertain", "{cut}");
     assert!(
@@ -154,7 +157,10 @@ async fn a_stop_during_one_clients_action_holds_every_client_back_until_resume()
 async fn a_client_killed_mid_key_frees_the_lease_while_others_keep_working() {
     let fixture = shared("many-killed");
     let mut desktop = Desktop::new(&fixture);
-    fixture.program("wtype", r#"echo >> "$DIR/wtype.calls"; await_file go"#);
+    fixture.program(
+        "wtype",
+        r#"cat > /dev/null; echo >> "$DIR/wtype.calls"; await_file go"#,
+    );
     let mut clients = bridges(&fixture, 4).await;
     let _stream = desktop.stream().await;
     let started_by = parent(u32::try_from(engine(&fixture).await).unwrap());
