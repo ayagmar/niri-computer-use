@@ -2956,6 +2956,52 @@ async fn a_drag_stops_when_the_screen_locks_during_one_of_its_waits() {
     }
 }
 
+// A whole click removes its input-dirty marker under the marker's lock, which another
+// server writing its own marker can hold for a moment. A request cancelled while the click
+// waits for that lock doesn't cut the removal short: once the lock is free, the marker
+// goes, and the next click goes out rather than asking for `recover`.
+#[tokio::test]
+async fn a_click_cancelled_while_it_removes_its_marker_still_removes_it() {
+    let mut desk = Desk::start("el-finish-cancel").await;
+    let shot = desk.screenshot_ref().await;
+    let points = desk.fixture.points();
+    points.start();
+    // The round trip after the release, once the whole click went out.
+    let handled = points.hold("wayland:sync", 3);
+    let clicked = json!({"screenshot_ref": shot, "x": 5, "y": 5});
+    let id = desk.server.start_call("click", clicked.clone()).await;
+    handled.arrived().await;
+    let lock = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .open(desk.fixture.runtime_dir().join("input-dirty.lock"))
+        .unwrap();
+    lock.try_lock().unwrap();
+    handled.release();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    desk.server.cancel(id).await;
+    while !desk
+        .fixture
+        .audit_lines()
+        .iter()
+        .any(|line| line["tool"] == "click" && line["error"] == "cancelled")
+    {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    drop(lock);
+    let marker = desk.fixture.runtime_dir().join("input-dirty");
+    let since = std::time::Instant::now();
+    while marker.exists() {
+        assert!(
+            since.elapsed() < Duration::from_secs(5),
+            "the marker stayed"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let again = desk.server.call("click", clicked).await;
+    assert_eq!(again["isError"], false, "{again}");
+}
+
 // A drag the overview stopped while it held its button releases it and waits for niri to
 // handle that before removing the input-dirty marker. A request cancelled during that wait
 // doesn't cut the cleanup short: once niri answers, the marker goes, and the next click

@@ -764,19 +764,32 @@ impl Device {
     }
 
     /// Removes the marker; if that fails, the error starts with `done`, what happened to
-    /// the input.
+    /// the input. The removal waits for the marker's lock, so it runs in a cleanup task,
+    /// as `abandon`'s does, and a call cancelled meanwhile can't leave the marker behind.
     async fn clear(mut self, done: &str) -> Result<(), ToolError> {
         let Some(marker) = self.marker.take() else {
             return Ok(());
         };
-        marker.clear().await.map_err(|error| {
+        let cleared = cleanup::spawn(cleanup::deadline(), async move {
+            marker
+                .clear()
+                .await
+                .map_err(|error| ToolError::new(ErrorName::UpstreamError, error.to_string()))
+        });
+        let unremoved = |error: ToolError| {
             ToolError::new(
                 ErrorName::UpstreamError,
                 format!(
-                    "{done}, but the input-dirty marker couldn't be removed ({error}); actions refuse until the user runs `niri-computer-use recover`"
+                    "{done}, but the input-dirty marker couldn't be removed ({}); actions refuse until the user runs `niri-computer-use recover`",
+                    error.detail
                 ),
             )
-        })
+        };
+        cleared
+            .await
+            .map_err(|error| ToolError::new(ErrorName::UpstreamError, error.to_string()))
+            .and_then(|cleared| cleared)
+            .map_err(unremoved)
     }
 }
 
