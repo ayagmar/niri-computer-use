@@ -165,10 +165,7 @@ impl Audit {
         };
         let result = serde_json::to_vec(record)
             .map_err(|error| error.to_string())
-            .and_then(|line| {
-                append(path, &line, ROTATE_AT)
-                    .map_err(|error| format!("{}: {error}", path.display()))
-            });
+            .and_then(|line| append(path, &line, ROTATE_AT).map_err(|error| error.to_string()));
         if let Err(error) = result {
             *self.last() = Some(error);
         }
@@ -183,22 +180,33 @@ impl Audit {
 
 /// Appends `line` to the log at `path`, moving the log aside first once it has reached
 /// `limit` bytes. A failed rotation doesn't cost the line: it is written all the same, and
-/// the rotation's error returned after.
+/// the rotation's error returned after. Each error names the file it is about.
 fn append(path: &Path, line: &[u8], limit: u64) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
-        DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
+        DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)
+            .map_err(about(dir))?;
     }
     let rotated = rotate(path, limit);
     let mut file = OpenOptions::new()
         .append(true)
         .create(true)
         .mode(0o600)
-        .open(path)?;
+        .open(path)
+        .map_err(about(path))?;
     // One write per line, so concurrent servers appending to the same file don't
     // interleave within a line. A server that opened the log just before another moved it
     // aside writes its line to the moved file, whole.
-    file.write_all(&[line, b"\n"].concat())?;
+    file.write_all(&[line, b"\n"].concat())
+        .map_err(about(path))?;
     rotated
+}
+
+/// `error` with the file it is about in front.
+fn about(path: &Path) -> impl FnOnce(std::io::Error) -> std::io::Error {
+    move |error| std::io::Error::new(error.kind(), format!("{}: {error}", path.display()))
 }
 
 /// Moves the log at `path` aside once it has reached `limit` bytes: it becomes `.1`, `.1`
@@ -211,16 +219,18 @@ fn rotate(path: &Path, limit: u64) -> std::io::Result<()> {
     if below() {
         return Ok(());
     }
+    let lock_path = numbered(path, "lock");
     let lock = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(false)
         .mode(0o600)
-        .open(numbered(path, "lock"))?;
+        .open(&lock_path)
+        .map_err(about(&lock_path))?;
     match lock.try_lock() {
         Ok(()) => {}
         Err(TryLockError::WouldBlock) => return Ok(()),
-        Err(TryLockError::Error(error)) => return Err(error),
+        Err(TryLockError::Error(error)) => return Err(about(&lock_path)(error)),
     }
     if below() {
         return Ok(());
@@ -230,10 +240,10 @@ fn rotate(path: &Path, limit: u64) -> std::io::Result<()> {
         if let Err(error) = std::fs::rename(&older, numbered(path, &(kept + 1).to_string()))
             && error.kind() != std::io::ErrorKind::NotFound
         {
-            return Err(error);
+            return Err(about(&older)(error));
         }
     }
-    std::fs::rename(path, numbered(path, "1"))
+    std::fs::rename(path, numbered(path, "1")).map_err(about(path))
 }
 
 /// `path` with `.suffix` after its name, such as `audit.jsonl.1`.
@@ -595,6 +605,23 @@ mod tests {
             logs(&path)[..2],
             [vec![line(4)], (0..4).map(line).collect()]
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    // A rotation that fails says which file it failed on, here the lock file, and the line
+    // is still written.
+    #[test]
+    fn a_failed_rotation_names_its_file_and_keeps_the_line() {
+        let dir = crate::test_support::fresh_dir("audit-rotate-fails");
+        let path = dir.join("audit.jsonl");
+        append(&path, line(0).as_bytes(), 1).unwrap();
+        std::fs::create_dir(numbered(&path, "lock")).unwrap();
+        let error = append(&path, line(1).as_bytes(), 1)
+            .unwrap_err()
+            .to_string();
+        let lock = numbered(&path, "lock").display().to_string();
+        assert!(error.starts_with(&format!("{lock}: ")), "{error}");
+        assert_eq!(logs(&path)[0], [line(0), line(1)]);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

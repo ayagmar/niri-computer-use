@@ -69,8 +69,13 @@ async fn a_failed_write_shows_in_status_and_the_call_still_succeeds() {
     assert_eq!(status["outputs"]["pointer_supported"], true);
     let audit = &server.structured("status").await["audit"];
     assert_eq!(audit["path"], fixture.audit_log().to_str().unwrap());
+    // The directory that couldn't be made, named.
     let error = audit["last_error"].as_str().unwrap();
-    assert!(error.contains("audit.jsonl"), "{error}");
+    let dir = fixture.path("state/niri-computer-use");
+    assert!(
+        error.starts_with(&format!("{}: ", dir.display())),
+        "{error}"
+    );
 }
 
 #[tokio::test]
