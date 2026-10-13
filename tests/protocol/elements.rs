@@ -2880,6 +2880,46 @@ async fn a_held_drag_stops_when_the_window_it_ends_in_moves_or_closes() {
     }
 }
 
+// niri doesn't say which floating window is on top. While a drag from a pixel to the Safe
+// button holds its button, window 2 moving over the button, or a new window 3 opening
+// there, may cover it, so the drag stops and releases its button. A window that opens
+// under the pointer too, as a tab torn out by the drag does, doesn't stop it.
+#[tokio::test]
+async fn a_held_drag_stops_when_another_window_comes_over_its_end() {
+    let mut opened = floating_other(60.0, false);
+    opened["id"] = json!(3);
+    let mut under_pointer = opened.clone();
+    under_pointer["layout"]["tile_pos_in_workspace_view"] = json!([0.0, 0.0]);
+    under_pointer["layout"]["tile_size"] = json!([2560.0, 1440.0]);
+    let cases = [
+        ("moved", floating_other(60.0, false), true),
+        ("opened", opened, true),
+        ("torn", under_pointer, false),
+    ];
+    for (tag, window, stops) in cases {
+        let event = json!({"WindowOpenedOrChanged": {"window": window}});
+        let test = format!("el-held-cover-{tag}");
+        let (result, sent) = drag_moved_at_sync(&test, ButtonEnd::End, 4, &event).await;
+        if !stops {
+            assert_eq!(result["structuredContent"]["observed"], "sent", "{result}");
+            assert_eq!(sent.len(), 13, "{tag}: {sent:?}");
+            continue;
+        }
+        stopped_midway(&result, "another floating window opened or moved over", tag);
+        assert!(
+            matches!(
+                sent.as_slice(),
+                [
+                    Pointed::Motion(..),
+                    Pointed::Button(272, 1),
+                    Pointed::Button(272, 0)
+                ]
+            ),
+            "{tag}: {sent:?}"
+        );
+    }
+}
+
 // A round trip within a gesture can take seconds, longer than a read of the lock state
 // holds. A screen locked while a drag rests on its start, or while it holds its button,
 // stops it at the next look: only what went out before stays out, the button is released,

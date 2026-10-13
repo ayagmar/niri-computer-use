@@ -279,7 +279,7 @@ impl LayoutBox {
         }
     }
 
-    fn contains(self, point: LayoutPt) -> bool {
+    pub(crate) fn contains(self, point: LayoutPt) -> bool {
         (self.x..self.x + self.width).contains(&point.x)
             && (self.y..self.y + self.height).contains(&point.y)
     }
@@ -388,8 +388,7 @@ pub(crate) fn origin(window: &Window, scene: &Scene<'_>) -> Result<Origin, Unmap
         .windows
         .iter()
         .filter(|other| other.id != window.id && other.workspace_id == window.workspace_id)
-        .filter(|other| other.layout.pos_in_scrolling_layout.is_none())
-        .filter_map(|other| tile(&area, &other.layout))
+        .filter_map(|other| floating_tile(&area, other))
         .collect();
     Ok(Origin {
         at: window_origin(&area, &window.layout)?,
@@ -397,6 +396,15 @@ pub(crate) fn origin(window: &Window, scene: &Scene<'_>) -> Result<Origin, Unmap
         area,
         floating,
     })
+}
+
+/// Where `window`'s tile is in the layout, on the output whose layout area is `output`,
+/// if it floats and niri gives it a place.
+pub(crate) fn floating_tile(output: &LogicalOutput, window: &Window) -> Option<LayoutBox> {
+    if window.layout.pos_in_scrolling_layout.is_some() {
+        return None;
+    }
+    tile(output, &window.layout)
 }
 
 /// Where a floating window's tile is in the layout, if niri gives it a place.

@@ -21,7 +21,7 @@ use super::{
     Input, focused_app_id,
     held::{self, Held},
 };
-use crate::a11y::model::Unmappable;
+use crate::a11y::model::{self, Unmappable};
 use crate::a11y::{self, ElementRef};
 use crate::act::{self, Observed, Outcome};
 use crate::control::cleanup;
@@ -31,7 +31,7 @@ use crate::coords::{ImagePx, LayoutPt, ProtocolPt};
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::events::Motion;
 use crate::niri::pointer::{Axis, Pointer, Step};
-use crate::niri::waiter::{Moved, Shift, Waited};
+use crate::niri::waiter::{Moved, Shift, View, Waited};
 use crate::policy;
 use crate::refs::Shot;
 use crate::{elements, niri};
@@ -202,6 +202,16 @@ impl Gesture<Spot> {
     }
 }
 
+impl<P: Copy> Gesture<P> {
+    /// Where a drag ends.
+    const fn end(&self) -> Option<P> {
+        match self {
+            Self::Drag { to, .. } => Some(*to),
+            Self::Move(_) | Self::Click { .. } | Self::Scroll { .. } => None,
+        }
+    }
+}
+
 impl Gesture<LayoutPt> {
     /// The points the gesture goes through, in order. A drag goes from its start to its
     /// end in even steps.
@@ -221,18 +231,25 @@ impl Gesture<LayoutPt> {
     }
 }
 
-/// One thing to do: send a step, or wait.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A point of a gesture: where it is in the layout, and the motion on the output that
+/// takes the pointer there.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Aim {
+    at: LayoutPt,
+    motion: ProtocolPt,
+}
+
+/// One thing to do: move the pointer, send another step, or wait.
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum Planned {
+    Move(Aim),
     Send(Step),
     Pause(Duration),
 }
 
-/// The steps of `gesture`, given where each of its points is on the output.
-fn plan<P>(gesture: &Gesture<P>, aimed: &[ProtocolPt]) -> Vec<Planned> {
-    let motions = aimed
-        .iter()
-        .map(|point| Planned::Send(Step::Motion(*point)));
+/// The steps of `gesture`, given where each of its points is.
+fn plan<P>(gesture: &Gesture<P>, aimed: &[Aim]) -> Vec<Planned> {
+    let motions = aimed.iter().map(|aim| Planned::Move(*aim));
     match gesture {
         Gesture::Move(_) => motions.collect(),
         &Gesture::Click { button, count, .. } => {
@@ -313,12 +330,20 @@ pub(crate) async fn point(
     let located = gesture
         .located(|spot| locate(input, &shot, spot, &element))
         .await?;
+    let end = destination.zip(located.end()).map(|(window, at)| End {
+        window,
+        at,
+        area: shot.geometry,
+    });
     let now = Instant::now();
     let aimed = located
         .points()
         .into_iter()
-        .map(|point| shot.aim_at(point, now, &outputs, connection))
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(|at| {
+            let motion = shot.aim_at(at, now, &outputs, connection)?;
+            Ok(Aim { at, motion })
+        })
+        .collect::<Result<Vec<_>, ToolError>>()?;
     let display = input.display.path().map_err(Clone::clone)?;
     let held = Held::prepare(input, waiter.view(), keys).await?;
     act::fresh_lock(input.niri).await?;
@@ -329,7 +354,7 @@ pub(crate) async fn point(
         waiter: &mut waiter,
         input,
         windows: &windows,
-        destination,
+        end,
     };
     if let Some(stopped) = send(device, gate, plan(&located, &aimed)).await? {
         return Ok(stopped);
@@ -418,8 +443,17 @@ struct Gate<'a> {
     input: Input<'a>,
     /// The windows of the elements the gesture aims at, none for pixels.
     windows: &'a [u64],
-    /// The window of the element a drag ends at, if it ends at one.
-    destination: Option<u64>,
+    /// The element a drag ends at, if it ends at one.
+    end: Option<End>,
+}
+
+/// The element a drag ends at: its window, and its centre on the output whose layout
+/// area is `area`, as the drag aims at it.
+#[derive(Debug, Clone, Copy)]
+struct End {
+    window: u64,
+    at: LayoutPt,
+    area: niri_ipc::LogicalOutput,
 }
 
 /// Where a gesture is when its next part goes out.
@@ -442,17 +476,17 @@ impl Gate<'_> {
     /// placed, until a button is pressed: a box may no longer be where its element is. Once
     /// something went out, any gesture is stopped by a workspace switch or the overview,
     /// which change the whole view under the pointer. A window moving doesn't stop a drag
-    /// that holds a button, as dragging a window by its title bar moves it, unless it is
-    /// the window of the element the drag ends at: that element is no longer where the drag
-    /// goes once its window moved, resized, floated, went to another workspace or closed.
-    /// An app can change its `app_id` at any time without moving anything, so the deny
-    /// list is asked each time about the focused window and the elements' windows as niri
-    /// reports them now. The lock state is read again first when the last read is too old, since a
+    /// that holds a button, as dragging a window by its title bar moves it, unless the
+    /// element the drag ends at is no longer where the drag goes (`End::lost`). An app can
+    /// change its `app_id` at any time without moving anything, so the deny list is asked
+    /// each time about the focused window and the elements' windows as niri reports them
+    /// now. The lock state is read again first when the last read is too old, since a
     /// round trip in the gesture can take seconds, and must still be fresh at the end,
     /// however long the look took. Before the first input, the desk is told input is going
     /// out: a motion can open a hover menu or move focus, so a stop or a lost lease from
-    /// then on leaves the call `uncertain`.
-    async fn pass(&mut self, stage: Stage) -> Result<(), ToolError> {
+    /// then on leaves the call `uncertain`. `pointer` is where the last motion put the
+    /// pointer, if one went out.
+    async fn pass(&mut self, stage: Stage, pointer: Option<LayoutPt>) -> Result<(), ToolError> {
         act::fresh_lock(self.input.niri).await?;
         let moved = self.waiter.moved().await.map_err(|reason| {
             let sent = if stage == Stage::First {
@@ -462,7 +496,7 @@ impl Gate<'_> {
             };
             ToolError::new(ErrorName::UpstreamError, format!("{reason}; {sent}"))
         })?;
-        self.still_aimed(stage, &moved)?;
+        self.still_aimed(stage, &moved, pointer)?;
         let view = self.waiter.view();
         if let Some(refused) = policy::refuse_input(self.input.policy, focused_app_id(view)) {
             return Err(refused);
@@ -484,8 +518,14 @@ impl Gate<'_> {
         }
     }
 
-    /// Whether the gesture's points still stand at `stage` after niri's changes `moved`.
-    fn still_aimed(&self, stage: Stage, moved: &Moved) -> Result<(), ToolError> {
+    /// Whether the gesture's points still stand at `stage` after niri's changes `moved`,
+    /// with the pointer at `pointer`.
+    fn still_aimed(
+        &self,
+        stage: Stage,
+        moved: &Moved,
+        pointer: Option<LayoutPt>,
+    ) -> Result<(), ToolError> {
         let at_element = !self.windows.is_empty();
         let least = match stage {
             Stage::First | Stage::Unpressed if at_element => Some(Shift::Windows),
@@ -496,18 +536,42 @@ impl Gate<'_> {
             return Err(moving(stage, moved.shift));
         }
         // Before the press, an element aim already stops on any window change.
-        let Some(id) = self.destination else {
-            return Ok(());
-        };
-        if moved.relaid.contains(&id) || !self.waiter.view().windows().contains_key(&id) {
-            return Err(ToolError::new(
-                ErrorName::ElementUnmappable,
-                "niri moved, resized or closed the window of the element the drag ends at, or moved it to another workspace, after the drag began, so the element is no longer where the drag goes",
-            ));
-        }
-        Ok(())
+        self.end
+            .and_then(|end| end.lost(self.waiter.view(), moved, pointer))
+            .map_or(Ok(()), |why| {
+                Err(ToolError::new(ErrorName::ElementUnmappable, why))
+            })
     }
 }
+
+impl End {
+    /// Why the element is no longer where the drag goes after niri's changes `moved`, with
+    /// the pointer at `pointer`: its window moved, resized, floated, went to another
+    /// workspace or closed, or another floating window on its workspace opened or was
+    /// relaid over its centre. niri reports no stacking order, so that window may be on
+    /// top. One that also lies under the pointer doesn't count: a tab torn out by the drag
+    /// opens a window there that follows the pointer.
+    fn lost(self, view: &View, moved: &Moved, pointer: Option<LayoutPt>) -> Option<&'static str> {
+        let Some(own) = view.windows().get(&self.window) else {
+            return Some(END_MOVED);
+        };
+        if moved.relaid.contains(&self.window) {
+            return Some(END_MOVED);
+        }
+        let covered = moved
+            .relaid
+            .iter()
+            .filter(|id| **id != self.window)
+            .filter_map(|id| view.windows().get(id))
+            .filter(|other| other.workspace_id == own.workspace_id)
+            .filter_map(|other| model::floating_tile(&self.area, other))
+            .any(|tile| tile.contains(self.at) && !pointer.is_some_and(|at| tile.contains(at)));
+        covered.then_some(END_COVERED)
+    }
+}
+
+const END_MOVED: &str = "niri moved, resized or closed the window of the element the drag ends at, or moved it to another workspace, after the drag began, so the element is no longer where the drag goes";
+const END_COVERED: &str = "another floating window opened or moved over the element the drag ends at after the drag began, and may be on top of it";
 
 /// Why `Gate::pass` refused or stopped a gesture at `stage` when niri reported `moved`.
 fn moving(stage: Stage, moved: Shift) -> ToolError {
@@ -540,6 +604,8 @@ struct Device {
     held: Option<Held>,
     /// Whether the held modifiers may have gone out.
     keys_sent: bool,
+    /// Where the last motion put the pointer, if one went out.
+    at: Option<LayoutPt>,
 }
 
 impl Device {
@@ -569,6 +635,7 @@ impl Device {
             marker,
             held,
             keys_sent: false,
+            at: None,
         })
     }
 
@@ -587,14 +654,18 @@ impl Device {
     /// first input and every part that follows a wait. After a pause, niri handles what
     /// was sent before the gate looks, so the events it wrote meanwhile are there.
     async fn run(&mut self, steps: Vec<Planned>, gate: &mut Gate<'_>) -> Result<(), ToolError> {
-        gate.pass(Stage::First).await?;
+        gate.pass(Stage::First, None).await?;
         if let Some(held) = &mut self.held {
             self.keys_sent = true;
             held.begin().await?;
-            gate.pass(Stage::Unpressed).await?;
+            gate.pass(Stage::Unpressed, None).await?;
         }
         for planned in steps {
             match planned {
+                Planned::Move(aim) => {
+                    self.pointer()?.send(Step::Motion(aim.motion))?;
+                    self.at = Some(aim.at);
+                }
                 Planned::Send(step) => self.pointer()?.send(step)?,
                 Planned::Pause(pause) => self.rest(pause, gate).await?,
             }
@@ -617,7 +688,7 @@ impl Device {
         } else {
             Stage::Unpressed
         };
-        gate.pass(stage).await
+        gate.pass(stage, self.at).await
     }
 
     /// Removes the marker after a gesture niri has handled whole.
@@ -710,12 +781,18 @@ async fn release(
 mod tests {
     use super::*;
 
-    const fn at(x: u32) -> ProtocolPt {
-        ProtocolPt {
-            x,
-            y: 0,
-            x_extent: 1000,
-            y_extent: 1000,
+    fn at(x: u32) -> Aim {
+        Aim {
+            at: LayoutPt {
+                x: f64::from(x),
+                y: 0.0,
+            },
+            motion: ProtocolPt {
+                x,
+                y: 0,
+                x_extent: 1000,
+                y_extent: 1000,
+            },
         }
     }
 
@@ -731,17 +808,14 @@ mod tests {
         assert_eq!(
             plan(&double, &[at(1)]),
             [
-                Planned::Send(Step::Motion(at(1))),
+                Planned::Move(at(1)),
                 Planned::Send(Step::Press(273)),
                 Planned::Send(Step::Release(273)),
                 Planned::Send(Step::Press(273)),
                 Planned::Send(Step::Release(273)),
             ]
         );
-        assert_eq!(
-            plan(&Gesture::Move(PX), &[at(1)]),
-            [Planned::Send(Step::Motion(at(1)))]
-        );
+        assert_eq!(plan(&Gesture::Move(PX), &[at(1)]), [Planned::Move(at(1))]);
     }
 
     #[test]
@@ -760,13 +834,13 @@ mod tests {
         assert_eq!(
             planned,
             [
-                Planned::Send(Step::Motion(at(0))),
+                Planned::Move(at(0)),
                 Planned::Pause(HOVER),
                 Planned::Send(Step::Press(272)),
                 Planned::Pause(HOVER),
-                Planned::Send(Step::Motion(at(1))),
+                Planned::Move(at(1)),
                 Planned::Pause(DRAG_STEP),
-                Planned::Send(Step::Motion(at(2))),
+                Planned::Move(at(2)),
                 Planned::Pause(DRAG_STEP),
                 Planned::Send(Step::Release(272)),
             ]
@@ -783,7 +857,7 @@ mod tests {
         assert_eq!(
             plan(&both, &[at(1)]),
             [
-                Planned::Send(Step::Motion(at(1))),
+                Planned::Move(at(1)),
                 Planned::Send(Step::Wheel(Axis::Vertical, 3)),
                 Planned::Send(Step::Wheel(Axis::Horizontal, -1)),
             ]
@@ -796,7 +870,7 @@ mod tests {
         assert_eq!(
             plan(&down, &[at(1)]),
             [
-                Planned::Send(Step::Motion(at(1))),
+                Planned::Move(at(1)),
                 Planned::Send(Step::Wheel(Axis::Vertical, 1)),
             ]
         );
