@@ -569,12 +569,10 @@ impl Request {
         Ok((role, States::from_words(&states)))
     }
 
-    /// The names of the element's actions now, in index order, as `elements` lists them.
-    pub(crate) async fn actions(&self, element: &ElementRef) -> Result<Vec<String>, Failed> {
-        let listed = self.listed_actions(element.at()).await?;
-        self.named(element.at(), listed)
-            .await
-            .map_err(Failed::Error)
+    /// The names of the element's actions now, as `GetActions` lists them, empty ones
+    /// included.
+    pub(crate) async fn listed(&self, element: &ElementRef) -> Result<Vec<String>, Failed> {
+        self.listed_actions(element.at()).await
     }
 
     /// The names of the actions of the object at `at`, in index order, as `GetActions`
@@ -611,32 +609,36 @@ impl Request {
         Ok(names)
     }
 
-    /// Whether the element's action at `index`, the one `DoAction(index)` does, is named
-    /// `name`: by `GetName`, or by `GetLocalizedName`, which gives the name as `GetActions`
-    /// lists it, translated by GTK and at-spi2-atk. `None` when the app has no action at
-    /// `index`, which it says with a D-Bus error.
-    pub(crate) async fn action_named(
+    /// What the app names the element's action at `index`, the one `DoAction(index)` does,
+    /// by `GetName` and by `GetLocalizedName`.
+    pub(crate) async fn action_names(
         &self,
         element: &ElementRef,
         index: i32,
-        name: &str,
-    ) -> Result<Option<bool>, Failed> {
-        let at = element.at();
+    ) -> Result<ActionNames, Failed> {
+        Ok(ActionNames {
+            own: self.action_name(element, "GetName", index).await?,
+            localized: self.action_name(element, "GetLocalizedName", index).await?,
+        })
+    }
+
+    /// The name `method` gives the element's action at `index`, `None` when the app
+    /// answers it with an error. That includes the errors that mean the object is gone:
+    /// Qt answers `UnknownObject` for a method its adaptor doesn't handle, such as
+    /// `GetLocalizedName`, so it says nothing about the object. An object really gone
+    /// shows in the calls around this one.
+    async fn action_name(
+        &self,
+        element: &ElementRef,
+        method: &str,
+        index: i32,
+    ) -> Result<Option<String>, Failed> {
         match self
-            .call::<_, String>(at, (ACTION, "GetName"), &(index,))
+            .call::<_, String>(element.at(), (ACTION, method), &(index,))
             .await
         {
-            Ok(own) if own == name => return Ok(Some(true)),
-            Ok(_) => {}
-            Err(Failed::Refused(_)) => return Ok(None),
-            Err(failed) => return Err(failed),
-        }
-        match self
-            .call::<_, String>(at, (ACTION, "GetLocalizedName"), &(index,))
-            .await
-        {
-            Ok(localized) => Ok(Some(localized == name)),
-            Err(Failed::Refused(_)) => Ok(Some(false)),
+            Ok(name) => Ok(Some(name)),
+            Err(Failed::Refused(_) | Failed::Gone(_)) => Ok(None),
             Err(failed) => Err(failed),
         }
     }
@@ -704,6 +706,16 @@ impl walk::Source for AppTree<'_> {
     fn spent(&self) -> bool {
         self.request.spent()
     }
+}
+
+/// What an app names one of an element's actions by each of its two naming methods, `None`
+/// for one it answers with an error.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ActionNames {
+    /// `GetName`'s.
+    pub(crate) own: Option<String>,
+    /// `GetLocalizedName`'s.
+    pub(crate) localized: Option<String>,
 }
 
 /// A kept element as it is now.

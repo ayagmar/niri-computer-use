@@ -388,10 +388,22 @@ async fn an_action_runs_at_the_index_the_app_names_it_at() {
         listed: &["Klicken", "Umschalten"],
         localized: Some(&["Klicken", "Umschalten"]),
     };
+    let filtered_translated = Offered {
+        actions: &["disabled", "press", "toggle"],
+        listed: &["Drücken", "Umschalten"],
+        localized: Some(&["disabled", "Drücken", "Umschalten"]),
+    };
+    let unnamed = Offered {
+        actions: &[""],
+        listed: &["Klicken"],
+        localized: Some(&["Klicken"]),
+    };
     for (tag, offered, requested, index) in [
         ("listed", listed, "toggle", 1),
         ("filtered", filtered, "toggle", 2),
         ("translated", translated, "Umschalten", 1),
+        ("filtered-de", filtered_translated, "Umschalten", 2),
+        ("unnamed", unnamed, "Klicken", 0),
     ] {
         let test = format!("action-index-{tag}");
         let (result, done) = activated_with(&test, &offered, requested).await;
@@ -400,28 +412,108 @@ async fn an_action_runs_at_the_index_the_app_names_it_at() {
     }
 }
 
-// When the app names another action at the listed place and no other single index has the
-// listed name, which action `DoAction` would run isn't known: the call is refused and
-// nothing reaches the app.
+// When no single index has the listed name, which action `DoAction` would run isn't known:
+// the call is refused and nothing reaches the app. That includes an app that gives
+// `GetLocalizedName` for some indices and refuses it for others, whose names come from two
+// namespaces.
 #[tokio::test]
 async fn an_action_no_single_index_names_is_never_run() {
-    let cases: [(&str, &[&str]); 2] = [
-        ("missing", &["click", "press"]),
-        ("repeated", &["click", "toggle", "toggle"]),
-    ];
-    for (tag, actions) in cases {
+    let missing = Offered {
+        actions: &["click", "press"],
+        listed: &["toggle"],
+        localized: None,
+    };
+    let repeated = Offered {
+        actions: &["click", "toggle", "toggle"],
+        listed: &["toggle"],
+        localized: None,
+    };
+    let mixed = Offered {
+        actions: &["toggle", "press"],
+        listed: &["press"],
+        localized: Some(&["Umschalten"]),
+    };
+    for (tag, offered, requested) in [
+        ("missing", missing, "toggle"),
+        ("repeated", repeated, "toggle"),
+        ("mixed", mixed, "press"),
+    ] {
         let test = format!("action-unmapped-{tag}");
-        let offered = Offered {
-            actions,
-            listed: &["toggle"],
-            localized: None,
-        };
-        let (result, done) = activated_with(&test, &offered, "toggle").await;
+        let (result, done) = activated_with(&test, &offered, requested).await;
         let (name, detail) = tool_error(&result);
         assert_eq!(name, "element_unmappable", "{tag}: {result}");
         assert!(detail.starts_with("action_unmapped: "), "{tag}: {detail}");
         assert_eq!(done, Vec::<i32>::new(), "{tag}: {result}");
     }
+}
+
+// GTK and at-spi2-atk list what `GetLocalizedName` gives, so a listed name is compared
+// only with that: an action whose `GetName` happens to be the same never runs in its place.
+#[tokio::test]
+async fn a_listed_name_never_runs_the_action_whose_own_name_it_matches() {
+    let offered = Offered {
+        actions: &["disabled", "toggle", "press"],
+        listed: &["press", "toggle"],
+        localized: Some(&["disabled", "press", "toggle"]),
+    };
+    let (result, done) = activated_with("action-name-namespaces", &offered, "toggle").await;
+    assert_eq!(report(&result)["accepted"], true, "{result}");
+    assert_eq!(done, [2], "{result}");
+}
+
+// An app may refuse a naming method at every index, as Qt has no `GetLocalizedName`. Its
+// actions are mapped by the method it answers, and the refusal isn't the end of its actions.
+#[tokio::test]
+async fn an_action_is_mapped_by_the_naming_method_the_app_answers() {
+    for (tag, refused, listed) in [
+        ("own", "GetName", "Klicken"),
+        ("localized", "GetLocalizedName", "Press"),
+    ] {
+        let mut objects = objects();
+        objects[2].1.actions = vec!["Press".to_owned()];
+        objects[2].1.localized = Some(vec!["Klicken".to_owned()]);
+        objects[2].1.listed = Some(vec![listed.to_owned()]);
+        objects[2].1.refused = vec![refused];
+        let windows = [app_window(WINDOW, true)];
+        let test = format!("action-refused-{tag}");
+        let mut desk = Desk::start_with(&test, &["/frame"], objects, &windows).await;
+        let button = desk.element("Safe").await;
+        let arguments = json!({
+            "element": button, "action": listed, "expect": {"window_id": WINDOW}
+        });
+        let result = desk.server.call("activate_element", arguments).await;
+        assert_eq!(report(&result)["accepted"], true, "{refused}: {result}");
+        assert_eq!(desk.mock.done(), [0], "{refused}: {result}");
+    }
+}
+
+// The last gate asks the index found for the action's name again: an app that renamed the
+// action there since, with the same list, isn't sent anything.
+#[tokio::test]
+async fn an_index_renamed_before_the_last_gate_is_never_run() {
+    let mut objects = objects();
+    objects[2].1.actions = vec!["click".to_owned(), "toggle".to_owned()];
+    objects[2].1.listed = Some(vec!["click".to_owned(), "toggle".to_owned()]);
+    let windows = [app_window(WINDOW, true)];
+    let mut desk = Desk::start_with("action-renamed", &["/frame"], objects, &windows).await;
+    let button = desk.element("Safe").await;
+    let first = desk.mock.hold_on("GetActions", "/button");
+    let arguments = json!({
+        "element": button, "action": "toggle", "expect": {"window_id": WINDOW}
+    });
+    let id = desk.server.start_call("activate_element", arguments).await;
+    first.arrived().await;
+    // The last gate's first read: the frame's child on the way down to the element.
+    let last = desk.mock.hold_on("GetChildAtIndex", "/frame");
+    first.release();
+    last.arrived().await;
+    desk.mock.change("/button", |object| {
+        object.actions = vec!["toggle".to_owned(), "click".to_owned()];
+    });
+    last.release();
+    let result = desk.server.response(id).await["result"].clone();
+    assert_eq!(tool_error(&result).0, "element_stale", "{result}");
+    assert_eq!(desk.mock.done(), Vec::<i32>::new(), "{result}");
 }
 
 // An action's change report hands out refs to the elements it shows, and those are named
