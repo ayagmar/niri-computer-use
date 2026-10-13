@@ -1,0 +1,132 @@
+---
+// The home page's focus ring, and the element every ring on the page is. A ring moves to
+// whatever has focus, as niri's focus ring follows the focused window: this one between
+// sections, the lit pill in the bar, the current call in a call list. It sits inside its
+// target, so it stays put when the layout around it changes; a move re-parents it, then
+// slides it from where it was to where it is now, or, from far away, lands it in place.
+//
+// The page's ring starts on the promise window. As a section crosses the middle of the
+// view, the ring moves to that section's focused column and the bar lights the section's
+// workspace, the way niri moves focus to another workspace. Without scripts it stays on the
+// promise window.
+---
+
+<ncu-ring class="ncu-ring" aria-hidden="true"></ncu-ring>
+
+<script>
+	const reduce = matchMedia('(prefers-reduced-motion: reduce)');
+	const easing = 'cubic-bezier(0.16, 1, 0.3, 1)';
+
+	class Ring extends HTMLElement {
+		/** Moves the ring into `target`, sliding it there unless `animate` is off or motion is reduced. */
+		moveTo(target: Element, animate = true) {
+			if (this.parentElement === target) return;
+			// Measured mid-flight, a ring that is still moving starts its next move from where it is.
+			const from = this.getBoundingClientRect();
+			for (const flight of this.getAnimations()) flight.cancel();
+			target.append(this);
+			if (!animate || reduce.matches || from.width === 0) return;
+			const to = this.getBoundingClientRect();
+			if (to.width === 0) return;
+			const dx = from.left - to.left;
+			const dy = from.top - to.top;
+			// A ring going a long way, such as to another section, doesn't sweep across the page
+			// between: it arrives at its new size from a little way back along its path.
+			if (Math.abs(dy) > innerHeight / 3) {
+				this.animate([{ translate: `0 ${Math.sign(dy) * 3}rem`, opacity: 0 }, { translate: '0 0', opacity: 1 }], {
+					duration: 420,
+					easing,
+				});
+				return;
+			}
+			const distance = Math.hypot(dx, dy, from.width - to.width, from.height - to.height);
+			this.animate(
+				[
+					{ translate: `${dx}px ${dy}px`, width: `${from.width}px`, height: `${from.height}px` },
+					{ translate: '0 0', width: `${to.width}px`, height: `${to.height}px` },
+				],
+				{ duration: Math.min(560, 220 + distance * 0.35), easing },
+			);
+		}
+	}
+	customElements.define('ncu-ring', Ring);
+
+	const ring = document.querySelector<Ring>('ncu-ring.ncu-ring');
+	const lit = document.querySelector<Ring>('ncu-ring.ncu-lit');
+	const sections = [...document.querySelectorAll<HTMLElement>('section[data-workspace]')];
+	const pills = [...document.querySelectorAll<HTMLElement>('[data-pill]')];
+	const here = document.querySelector<HTMLElement>('[data-here]');
+	let current = -1;
+
+	// The bar's label for the workspace in view, on screens too narrow for the pills. It
+	// slides the way niri's workspaces switch: up when moving down the page, down when up.
+	function relabel(name: string, down: boolean, animate: boolean) {
+		if (!here) return;
+		// Labels already on their way out are left to finish.
+		const old = [...here.querySelectorAll('span:not([data-leaving])')];
+		const label = document.createElement('span');
+		label.textContent = name;
+		here.append(label);
+		const slide = animate && !reduce.matches && here.offsetParent;
+		const step = down ? 100 : -100;
+		for (const each of old) {
+			if (!slide) {
+				each.remove();
+				continue;
+			}
+			each.setAttribute('data-leaving', '');
+			each
+				.animate([{ translate: '0 0' }, { translate: `0 ${-step}%` }], { duration: 200, easing, fill: 'forwards' })
+				.finished.then(() => each.remove());
+		}
+		if (slide) label.animate([{ translate: `0 ${step}%` }, { translate: '0 0' }], { duration: 320, easing });
+	}
+
+	function focus(index: number, animate: boolean) {
+		if (index === current) return;
+		const down = index > current;
+		current = index;
+		const section = sections[index];
+		const id = section.dataset.workspace;
+		const target = section.querySelector('.focused');
+		if (ring && target) ring.moveTo(target, animate);
+		for (const pill of pills) {
+			if (pill.dataset.pill === id) pill.setAttribute('aria-current', 'location');
+			else pill.removeAttribute('aria-current');
+		}
+		const pill = pills.find((each) => each.dataset.pill === id);
+		if (!pill) return;
+		lit?.moveTo(pill, animate);
+		relabel(pill.textContent!.trim(), down, animate);
+	}
+
+	// The section crossing the middle of the view is the one in focus. The first answer only
+	// places the ring, so a page opened at an anchor doesn't watch it fly there.
+	let placed = false;
+	const observer = new IntersectionObserver(
+		(entries) => {
+			for (const entry of entries) {
+				if (entry.isIntersecting) focus(sections.indexOf(entry.target as HTMLElement), placed);
+			}
+			placed = true;
+		},
+		{ rootMargin: '-50% 0px -50% 0px' },
+	);
+	for (const section of sections) observer.observe(section);
+</script>
+
+<style is:global>
+	.ncu-ring {
+		position: absolute;
+		inset: -4px;
+		z-index: 1;
+		border: 2px solid var(--ncu-ring);
+		border-radius: calc(var(--ncu-radius) + 4px);
+		pointer-events: none;
+	}
+
+	/* In a column, Starlight's spacing between Markdown blocks would push the ring down. */
+	.sl-markdown-content .ncu-ring {
+		margin: 0;
+	}
+</style>

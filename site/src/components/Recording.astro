@@ -3,7 +3,8 @@
 // while in view, after the page has loaded, and never for readers who ask for reduced motion
 // or less data.
 // While it plays, the calls with the same name mark the call being shown, and the hero's
-// recording drives the header's lease tag.
+// recording drives the header's lease tag. A call's time plays the recording from that call.
+// A recording stopped with the stop key stays stopped until the reader plays it.
 import type { Demo } from '../lib/demo';
 
 interface Props {
@@ -27,6 +28,8 @@ const { demo, label, sizes, lead = false } = Astro.props;
 		loop
 		playsinline
 		controls
+		controlslist="nodownload noremoteplayback"
+		disablepictureinpicture
 		preload="none"
 		width={demo.width}
 		height={demo.height}
@@ -64,14 +67,24 @@ const { demo, label, sizes, lead = false } = Astro.props;
 </div>
 
 <script>
+	/** A ring that moves to what has focus, the element FocusRing.astro defines. */
+	type Ring = HTMLElement & { moveTo(target: Element, animate: boolean): void };
+
 	const reduce = matchMedia('(prefers-reduced-motion: reduce)');
 	const saveData = (navigator as { connection?: { saveData?: boolean } }).connection?.saveData;
 	const lease = document.querySelector<HTMLElement>('[data-lease]');
 
+	const videoFor = (list: Element) =>
+		document.querySelector<HTMLVideoElement>(`video[data-demo="${(list as HTMLElement).dataset.calls}"]`);
+
 	function follow(video: HTMLVideoElement) {
-		const calls = [...document.querySelectorAll<HTMLElement>(`[data-calls="${video.dataset.demo}"] li`)];
-		const list = calls[0]?.parentElement;
+		const list = document.querySelector<HTMLElement>(`[data-calls="${video.dataset.demo}"]`);
+		if (!list) return;
+		const calls = [...list.querySelectorAll<HTMLElement>(':scope > li')];
 		const leaseCalls = video.hasAttribute('data-lease-source') && lease ? calls : [];
+		const ring = document.createElement('ncu-ring') as Ring;
+		ring.className = 'ncu-now';
+		ring.ariaHidden = 'true';
 		let shown: HTMLElement | undefined;
 		video.addEventListener('timeupdate', () => {
 			const now = video.currentTime;
@@ -79,8 +92,14 @@ const { demo, label, sizes, lead = false } = Astro.props;
 			for (const call of calls) {
 				call.dataset.state = call === current ? 'now' : Number(call.dataset.start) <= now ? 'past' : 'next';
 			}
-			if (current && current !== shown && list && list.scrollHeight > list.clientHeight) {
-				list.scrollTo({ top: current.offsetTop - list.clientHeight / 3, behavior: 'smooth' });
+			if (current && current !== shown) {
+				ring.moveTo(current, !!shown);
+				// Tab into the list lands on the call being shown, unless the reader is in it.
+				if (!list.contains(document.activeElement)) roveTo(list, current);
+				if (list.scrollHeight > list.clientHeight) {
+					const top = current.offsetTop - list.clientHeight / 3;
+					list.scrollTo({ top, behavior: reduce.matches ? 'auto' : 'smooth' });
+				}
 			}
 			shown = current;
 			const leaseCall = leaseCalls.findLast(
@@ -88,7 +107,44 @@ const { demo, label, sizes, lead = false } = Astro.props;
 			);
 			if (lease) lease.dataset.held = String(leaseCall?.dataset.lease === 'held');
 		});
+		// Playing again, by its controls or from a call, ends a stop.
+		video.addEventListener('play', () => delete video.dataset.stopped);
 	}
+
+	// One call's time is in the tab order at a time; the arrow keys move between calls.
+	function roveTo(list: Element, call: Element) {
+		for (const button of list.querySelectorAll<HTMLElement>(':scope > li > .at')) button.tabIndex = -1;
+		const button = call.querySelector<HTMLElement>('.at');
+		if (button) button.tabIndex = 0;
+		return button;
+	}
+
+	const steps: Record<string, (index: number, last: number) => number> = {
+		ArrowDown: (index, last) => Math.min(index + 1, last),
+		ArrowUp: (index) => Math.max(index - 1, 0),
+		Home: () => 0,
+		End: (_, last) => last,
+	};
+
+	document.addEventListener('keydown', (event) => {
+		const step = steps[event.key];
+		const call = (event.target as Element).closest?.('[data-calls] > li');
+		if (!step || !call) return;
+		event.preventDefault();
+		const calls = [...call.parentElement!.children];
+		const next = calls[step(calls.indexOf(call), calls.length - 1)];
+		roveTo(call.parentElement!, next)?.focus();
+	});
+
+	// A click on a call plays the recording from it, unless the click ended a text selection.
+	document.addEventListener('click', (event) => {
+		const call = (event.target as Element).closest?.<HTMLElement>('[data-calls] > li');
+		if (!call || !getSelection()?.isCollapsed) return;
+		const video = videoFor(call.parentElement!);
+		if (!video) return;
+		video.currentTime = Number(call.dataset.start);
+		video.play().catch(() => {});
+	});
 
 	// Stills below the first view load as they come near. The browser's own lazy loading
 	// starts them with the page on a slow connection, where they compete with the hero.
@@ -122,7 +178,8 @@ const { demo, label, sizes, lead = false } = Astro.props;
 			video.addEventListener('playing', reveal, { once: true });
 			new IntersectionObserver(
 				([entry]) => {
-					if (entry.isIntersecting && !reduce.matches) video.play().catch(() => {});
+					const stopped = video.dataset.stopped !== undefined;
+					if (entry.isIntersecting && !reduce.matches && !stopped) video.play().catch(() => {});
 					else video.pause();
 				},
 				{ threshold: 0.35 },
@@ -162,5 +219,10 @@ const { demo, label, sizes, lead = false } = Astro.props;
 		inset: 2px;
 		width: calc(100% - 4px);
 		pointer-events: none;
+	}
+
+	/* A still that hasn't started loading shows the plate, not a broken image. */
+	.still:not([src]) {
+		visibility: hidden;
 	}
 </style>

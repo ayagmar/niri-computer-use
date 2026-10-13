@@ -1,9 +1,10 @@
 ---
 // One section of the home page, drawn as a niri workspace: its windows sit side by side as
-// columns on a wide screen, and while the section crosses the middle of the view its focused
-// column wears the focus ring and its pill in the header's bar is lit, the way niri marks the
-// window and workspace you moved to.
-import { timeline, workspaces } from '../lib/workspaces.mjs';
+// columns on a wide screen and slide in from the right as they scroll into view there. While the
+// section crosses the middle of the view, the page's focus ring (FocusRing.astro) moves to
+// its focused column and its pill in the header's bar is lit, the way niri marks the window
+// and workspace you moved to.
+import { workspaces } from '../lib/workspaces.mjs';
 
 interface Props {
 	/** The anchor, one of the workspaces in `src/lib/workspaces.mjs`. */
@@ -16,7 +17,7 @@ if (!workspaces.some((workspace) => workspace.id === id)) {
 }
 ---
 
-<section class="ncu-ws" id={id} style={`--ncu-tl: ${timeline(id)}; view-timeline-name: ${timeline(id)}`}>
+<section class="ncu-ws" id={id} data-workspace={id}>
 	<slot />
 </section>
 
@@ -94,56 +95,22 @@ if (!workspaces.some((workspace) => workspace.id === id)) {
 		margin-top: 0;
 	}
 
-	/* The focus ring, on the focused column while its section is in the middle of the view. */
-	.ncu-ws :global(.column.focused)::after {
-		content: '';
-		position: absolute;
-		inset: -4px;
-		border: 2px solid var(--ncu-ring);
-		border-radius: calc(var(--ncu-radius) + 4px);
-		opacity: 0;
-		pointer-events: none;
-	}
-
+	/* Side by side, a section's columns arrive from the right as they scroll into view, as
+	   niri scrolls a row of columns in, and are in place by the time they are a third of the
+	   way up the view. Stacked on a phone they stay still. */
 	@supports (animation-timeline: view()) {
-		@media (prefers-reduced-motion: no-preference) {
-			.ncu-ws :global(.column.focused)::after {
-				animation: ncu-ring linear;
-				animation-timeline: var(--ncu-tl);
-				animation-range: cover 50vh cover calc(100% - 50vh);
-			}
-		}
-
-		/* Without motion the ring still moves to the section in view, without the fade. */
-		@media (prefers-reduced-motion: reduce) {
-			.ncu-ws :global(.column.focused)::after {
-				animation: ncu-ring-still linear;
-				animation-timeline: var(--ncu-tl);
-				animation-range: cover 50vh cover calc(100% - 50vh);
+		@media (min-width: 50rem) and (prefers-reduced-motion: no-preference) {
+			.ncu-ws :global(.column) {
+				animation: ncu-arrive cubic-bezier(0.16, 1, 0.3, 1) both;
+				animation-timeline: view();
+				animation-range: entry 0% entry 33vh;
 			}
 		}
 	}
 
-	@keyframes ncu-ring {
-		0% {
-			opacity: 0;
-			transform: scale(0.99);
-		}
-		12%,
-		88% {
-			opacity: 1;
-			transform: scale(1);
-		}
-		100% {
-			opacity: 0;
-			transform: scale(0.99);
-		}
-	}
-
-	@keyframes ncu-ring-still {
-		from,
-		to {
-			opacity: 1;
+	@keyframes ncu-arrive {
+		from {
+			translate: 3rem 0;
 		}
 	}
 </style>

@@ -102,6 +102,30 @@ const call = demo.calls[index];
 		color: var(--sl-color-gray-3);
 		font-family: var(--sl-font-mono);
 		font-size: var(--sl-text-xs);
+		transition: color 150ms ease;
+	}
+
+	summary:hover {
+		color: var(--sl-color-white);
+	}
+
+	/* The list opens to its height rather than appearing at once. */
+	@media (prefers-reduced-motion: no-preference) {
+		details {
+			interpolate-size: allow-keywords;
+		}
+
+		details::details-content {
+			height: 0;
+			overflow: clip;
+			transition:
+				height 360ms cubic-bezier(0.16, 1, 0.3, 1),
+				content-visibility 360ms allow-discrete;
+		}
+
+		details[open]::details-content {
+			height: auto;
+		}
 	}
 
 	details :global(.ncu-calls) {

@@ -2,12 +2,13 @@
 // The home page's hero, drawn as a niri screen: a strip of windows with the focus ring on the
 // promise, the errand recording stacked over the agent's calls in the next column, and the
 // stop key in a column that runs off the right edge on a narrower screen, as niri leaves one.
+// The stop key's keycaps answer the reader's own keys.
 // Other pages with a hero keep Starlight's.
 import Default from '@astrojs/starlight/components/Hero.astro';
 import { HERO_SIZES, HERO_WIDTHS, loadDemo } from '../lib/demo';
 import Calls from './Calls.astro';
+import FocusRing from './FocusRing.astro';
 import Recording from './Recording.astro';
-import { timeline } from '../lib/workspaces.mjs';
 
 // Starlight's id for the page title, which its skip link names.
 const PAGE_TITLE_ID = '_top';
@@ -20,13 +21,10 @@ const demo = id === '' ? await loadDemo('errand', HERO_WIDTHS) : undefined;
 
 {
 	demo ? (
-		<section
-			class="ncu-desk not-content"
-			aria-labelledby={PAGE_TITLE_ID}
-			style={`view-timeline-name: ${timeline('demo')}`}
-		>
+		<section class="ncu-desk not-content" aria-labelledby={PAGE_TITLE_ID} data-workspace="demo">
 			<div class="strip">
-				<div class="win you">
+				<div class="win you focused">
+					<FocusRing />
 					<h1 id={PAGE_TITLE_ID} data-page-title set:html={title} />
 					<div class="lower">
 						{tagline && <p class="tagline" set:html={tagline} />}
@@ -63,11 +61,12 @@ const demo = id === '' ? await loadDemo('errand', HERO_WIDTHS) : undefined;
 					</div>
 				</div>
 				<aside class="win stop" aria-labelledby="ncu-stop-title">
-					<p class="keys" aria-hidden="true">
-						<kbd>Mod</kbd>
-						<kbd>Shift</kbd>
-						<kbd>Escape</kbd>
-					</p>
+					<button class="keys" type="button" data-stop aria-label="Mod Shift Escape: stop the recording">
+						<kbd data-key="mod">Mod</kbd>
+						<kbd data-key="shift">Shift</kbd>
+						<kbd data-key="esc">Escape</kbd>
+					</button>
+					<p class="stopped" data-stopped-note aria-live="polite"></p>
 					<h2 id="ncu-stop-title">The stop key</h2>
 					<p>
 						Bind a key to <code>niri-computer-use stop</code>. It cancels the running action and takes
@@ -89,6 +88,47 @@ const demo = id === '' ? await loadDemo('errand', HERO_WIDTHS) : undefined;
 	// Keyboard focus on a window past the screen's edge brings it in, as niri does.
 	document.querySelector('.ncu-desk')?.addEventListener('focusin', (event) => {
 		(event.target as Element).scrollIntoView({ block: 'nearest', inline: 'nearest' });
+	});
+
+	// The keycaps on the page sink while the reader holds the same keys. Pressing the stop
+	// window's keycaps stops the hero recording, frees the bar's lease tag and says so under
+	// the keys until the recording plays again. Nothing reads the keyboard to stop it: the
+	// real chord belongs to niri, and Shift+Escape to the browser.
+	const names: Record<string, string> = { Meta: 'mod', OS: 'mod', Super: 'mod', Shift: 'shift', Escape: 'esc' };
+	const press = (name: string, down: boolean) => {
+		for (const key of document.querySelectorAll(`kbd[data-key="${name}"]`)) key.classList.toggle('down', down);
+	};
+	const release = () => Object.values(names).forEach((name) => press(name, false));
+
+	const video = document.querySelector<HTMLVideoElement>('video[data-lease-source]');
+	const note = document.querySelector<HTMLElement>('[data-stopped-note]');
+	video?.addEventListener('play', () => {
+		if (note) note.textContent = '';
+	});
+
+	function stop() {
+		if (!video) return;
+		video.dataset.stopped = '';
+		video.pause();
+		const lease = document.querySelector<HTMLElement>('[data-lease]');
+		if (lease) lease.dataset.held = 'false';
+		if (note) note.textContent = 'The recording is stopped. Play it again from its controls or a call.';
+	}
+
+	addEventListener('keydown', (event) => {
+		const name = names[event.key];
+		if (name) press(name, true);
+	});
+	addEventListener('keyup', (event) => {
+		const name = names[event.key];
+		if (name) press(name, false);
+	});
+	addEventListener('blur', release);
+
+	document.querySelector('[data-stop]')?.addEventListener('click', () => {
+		for (const name of Object.values(names)) press(name, true);
+		setTimeout(release, 160);
+		stop();
 	});
 </script>
 
@@ -116,13 +156,12 @@ const demo = id === '' ? await loadDemo('errand', HERO_WIDTHS) : undefined;
 		background: var(--ncu-panel);
 	}
 
-	/* The focused window. */
+	/* The focused window, which the page's focus ring starts on. */
 	.you {
+		position: relative;
 		display: flex;
 		flex-direction: column;
 		padding: clamp(1.25rem, 0.9rem + 1vw, 2.25rem);
-		outline: 2px solid var(--ncu-ring);
-		outline-offset: 2px;
 	}
 
 	h1 {
@@ -287,10 +326,19 @@ const demo = id === '' ? await loadDemo('errand', HERO_WIDTHS) : undefined;
 		margin-top: 0.9rem;
 	}
 
+	/* The keycaps press as a button, so the hit area spans the row at full height. */
 	.keys {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.4rem;
+		min-height: 2.75rem;
+		margin: -0.125rem;
+		padding: 0.125rem;
+		border: 0;
+		border-radius: 10px;
+		background: none;
+		font: inherit;
+		cursor: pointer;
 	}
 
 	kbd {
@@ -301,10 +349,35 @@ const demo = id === '' ? await loadDemo('errand', HERO_WIDTHS) : undefined;
 		border: 1px solid var(--sl-color-gray-4);
 		border-bottom-width: 3px;
 		border-radius: 8px;
+		background: var(--sl-color-black);
+		background-clip: padding-box;
 		font-family: var(--sl-font-mono);
 		font-size: var(--sl-text-sm);
 		color: var(--sl-color-white);
-		background: var(--sl-color-black);
+		transition:
+			border-color 80ms ease,
+			border-width 80ms ease;
+	}
+
+	.keys:hover kbd {
+		border-color: var(--sl-color-gray-3);
+	}
+
+	/* A held key sinks: its 3px travel moves from the bottom edge to the top, where it shows
+	   the window behind, so the key's box keeps its size. */
+	kbd:global(.down) {
+		border-color: var(--ncu-ring);
+		border-top-color: transparent;
+		border-width: 3px 1px 1px;
+	}
+
+	.stopped {
+		font-size: var(--sl-text-xs);
+		color: var(--sl-color-gray-2);
+	}
+
+	.stopped:empty {
+		display: none;
 	}
 
 	.stop h2 {
@@ -357,27 +430,45 @@ const demo = id === '' ? await loadDemo('errand', HERO_WIDTHS) : undefined;
 		}
 	}
 
-	/* The strip settles into place as a newly opened niri window does, and the ring lands
-	   once it has. */
+	/* The columns open one after another from the right, as niri opens new columns beside
+	   the focused one and scrolls them in, and the ring lands on the promise once they have.
+	   Only transforms move, so the first paint holds everything at its place in the page. */
 	@media (prefers-reduced-motion: no-preference) {
-		.strip {
-			animation: ncu-open 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+		.strip > * {
+			animation: ncu-open 680ms cubic-bezier(0.16, 1, 0.3, 1) both;
 		}
 
-		.you {
-			animation: ncu-focus 260ms ease-out 360ms both;
+		.strip > :nth-child(2) {
+			animation-delay: 70ms;
+		}
+
+		.strip > :nth-child(3) {
+			animation-delay: 140ms;
+		}
+
+		/* The ring as the page renders it, first in the window. A ring moved back here later
+		   comes last, and slides in without landing again. */
+		.you > :global(.ncu-ring:first-child) {
+			animation: ncu-land 320ms cubic-bezier(0.16, 1, 0.3, 1) 420ms both;
 		}
 	}
 
 	@keyframes ncu-open {
 		from {
-			transform: translateX(2.5rem);
+			translate: 4rem 0;
 		}
 	}
 
-	@keyframes ncu-focus {
+	@keyframes ncu-land {
 		from {
-			outline-color: var(--ncu-rule);
+			border-color: var(--ncu-rule);
+			scale: 1.012;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		kbd {
+			transition: none;
 		}
 	}
 </style>
