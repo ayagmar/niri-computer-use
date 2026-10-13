@@ -388,8 +388,7 @@ async fn send(
     };
     if !device.sent() {
         // Nothing was pressed, so the marker goes now, before the next call can see it.
-        device.discard().await?;
-        return Err(error.into());
+        return Err(device.discard(error).await.into());
     }
     let released = match device.abandon().await {
         Ok(()) => "every button and key it held was released".to_owned(),
@@ -752,9 +751,17 @@ impl Device {
         self.clear("niri handled the input").await
     }
 
-    /// Removes the marker of a gesture refused before anything of it went out.
-    async fn discard(self) -> Result<(), ToolError> {
-        self.clear("nothing was sent").await
+    /// Removes the marker of a gesture refused with `error` before anything of it went out,
+    /// and returns `error`. A marker that can't be removed is added to its detail, since it
+    /// blocks the next action, and the refusal's own reason stays.
+    async fn discard(self, error: ToolError) -> ToolError {
+        match self.clear(&error.detail).await {
+            Ok(()) => error,
+            Err(unremoved) => ToolError {
+                detail: unremoved.detail,
+                ..error
+            },
+        }
     }
 
     /// Releases what a gesture stopped midway still holds, and removes the marker once
@@ -1334,6 +1341,48 @@ mod tests {
             matches!(&ended, Err(CallError::Tool(error)) if error.name == ErrorName::Stopped),
             "{ended:?}"
         );
+        std::fs::remove_dir_all(&bench.dir).unwrap();
+    }
+
+    // A gesture refused before any input, here because niri's event stream reset, removes
+    // its marker. When that fails too, the error still says why the gesture was refused,
+    // besides that the marker stayed and what the user does about it.
+    #[tokio::test]
+    async fn a_marker_that_cant_be_removed_keeps_the_original_failure() {
+        let bench = Bench::start("pointer-unremoved", vec![(Duration::ZERO, UNLOCKED)]);
+        let input = bench.input();
+        let device = click_device(&bench).await.unwrap();
+        let lock = std::fs::File::options()
+            .read(true)
+            .write(true)
+            .open(bench.runtime.path().join("input-dirty.lock"))
+            .unwrap();
+        lock.try_lock().unwrap();
+        let (mut waiter, updates) = niri::waiter::tests::waiter(View::default(), 0);
+        updates.send(niri::waiter::Update::Reset(2)).unwrap();
+        bench.desk.lock_read(Instant::now());
+        let gate = Gate {
+            waiter: &mut waiter,
+            input,
+            windows: &[],
+            end: None,
+            reading: GESTURE_READING,
+        };
+        let error = send(device, gate, Vec::new()).await.unwrap_err();
+        let CallError::Tool(error) = error else {
+            panic!("unexpected error: {error:?}")
+        };
+        assert!(
+            error.detail.starts_with("niri's event stream disconnected")
+                && error.detail.contains("nothing was sent")
+                && error
+                    .detail
+                    .contains("input-dirty marker couldn't be removed")
+                && error.detail.contains("`niri-computer-use recover`"),
+            "{}",
+            error.detail
+        );
+        drop(lock);
         std::fs::remove_dir_all(&bench.dir).unwrap();
     }
 
