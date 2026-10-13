@@ -109,7 +109,7 @@ They don't need a screenshot, and they work on elements with no `layout_box`, su
 An app's answer only says it took the request, so 300 ms later the server looks at the element again. GTK buttons show an activation as a 250 ms press before they act; the wait ends at once if the window closes. `observed` is:
 
 - `present`: the element is still there; `element.states_set` and `element.states_cleared` name the states that changed, such as `checked`;
-- `gone`: the element or its window went away, as when a button closes its dialog;
+- `gone`: the element or its window went away, as when a button closes its dialog, or the app says the element is `defunct`, as Chromium does when it replaces it with a new one: list again for its new ref;
 - `unknown`: it couldn't be read, with the reason in `detail`, and a screenshot comes with the result;
 - `uncertain`, with `accepted: null`: the action went out but its reply was lost, as when the app hung or left, so it may have happened. `detail` says what the look afterwards saw, and a screenshot comes with the result. Don't repeat it; look first. A stop, or another server taking the lease, after the action went out is `uncertain` too, with the reason in `detail` and no look afterwards or screenshot: the user stopped the agent, or it no longer holds the desktop. That includes a stop in the moment just before the call is written, when nothing may have been sent: the server can't tell, so it reports the safe side. When the app had already answered, `accepted` is `true` and `element` says what was taken.
 

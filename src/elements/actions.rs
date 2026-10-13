@@ -647,11 +647,13 @@ enum After {
 /// The states set and cleared, by name.
 type Changes = (Vec<&'static str>, Vec<&'static str>);
 
-/// `gone` when the window or the element went away, `present` with the states that
-/// changed since `before`, or `unknown` with why the element couldn't be read.
+/// `gone` when the window or the element went away, or the element says it is `defunct`,
+/// as Chromium's does once it replaced the element; `present` with the states that
+/// changed since `before`; or `unknown` with why the element couldn't be read.
 fn activation(before: States, after: After) -> (Observed, Option<Changes>, Option<String>) {
     match after {
         After::WindowGone | After::Probed(Err(Failed::Gone(_))) => (Observed::Gone, None, None),
+        After::Probed(Ok((_, now))) if now.has(State::Defunct) => (Observed::Gone, None, None),
         After::Probed(Ok((_, now))) => (Observed::Present, Some(now.changes(before)), None),
         After::Probed(Err(Failed::Refused(error) | Failed::Error(error))) => {
             (Observed::Unknown, None, Some(error.detail))
@@ -972,6 +974,12 @@ mod tests {
         assert_eq!(
             activation(checked, After::Probed(Ok((43, checked)))),
             (Observed::Present, Some((vec![], vec![])), None)
+        );
+        // Chromium keeps a replaced element on the bus with only `defunct` set.
+        let defunct = States::from_words(&[1 << 6]);
+        assert_eq!(
+            activation(unchecked, After::Probed(Ok((62, defunct)))),
+            (Observed::Gone, None, None)
         );
         let late = ToolError::new(ErrorName::DeadlineExceeded, "no answer within 1 s");
         assert_eq!(

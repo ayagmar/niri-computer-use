@@ -214,6 +214,7 @@ pub(crate) fn is_role(name: &str) -> bool {
 /// An AT-SPI state, by its bit in the state set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum State {
+    Defunct = 6,
     Editable = 7,
     Showing = 25,
     Visible = 30,
