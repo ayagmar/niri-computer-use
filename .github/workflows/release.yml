@@ -8,7 +8,43 @@ permissions:
   contents: read
 
 jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Require the tagged commit on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$GITHUB_SHA" --jq .status)
+          if [ "$status" != identical ] && [ "$status" != behind ]; then
+            echo "$GITHUB_REF_NAME ($GITHUB_SHA) isn't on main: compare says $status" >&2
+            exit 1
+          fi
+
+      - name: Wait for CI to pass on the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for _ in $(seq 90); do
+            runs=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" --json status,conclusion)
+            if jq -e 'length > 0 and all(.status == "completed")' <<<"$runs" >/dev/null; then
+              if jq -e 'all(.conclusion == "success")' <<<"$runs" >/dev/null; then
+                exit 0
+              fi
+              echo "CI didn't pass on $GITHUB_SHA: $runs" >&2
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "CI on $GITHUB_SHA didn't finish within 45 minutes" >&2
+          exit 1
+
   build:
+    needs: verify
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -75,6 +111,7 @@ jobs:
   draft:
     needs: build
     runs-on: ubuntu-24.04
+    environment: release
     permissions:
       contents: write
     steps:
