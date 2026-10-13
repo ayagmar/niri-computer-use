@@ -48,6 +48,9 @@ const MAX_CLICKS: u8 = 3;
 /// when its animation ends. Its default animations take about 0.3 s.
 const SETTLE: Duration = Duration::from_secs(1);
 const MAX_NOTCHES: i32 = 10;
+/// How many times a look within a gesture reads the lock state while each read takes too
+/// long (`Gate::read_lock`).
+const GESTURE_READS: usize = 3;
 /// The wheel notches one call may turn each way.
 const NOTCHES: RangeInclusive<i32> = -MAX_NOTCHES..=MAX_NOTCHES;
 
@@ -487,7 +490,7 @@ impl Gate<'_> {
     /// then on leaves the call `uncertain`. `pointer` is where the last motion put the
     /// pointer, if one went out.
     async fn pass(&mut self, stage: Stage, pointer: Option<LayoutPt>) -> Result<(), ToolError> {
-        act::fresh_lock(self.input.niri).await?;
+        self.read_lock(stage).await?;
         let moved = self.waiter.moved().await.map_err(|reason| {
             let sent = if stage == Stage::First {
                 "nothing was sent"
@@ -516,6 +519,26 @@ impl Gate<'_> {
         } else {
             desk.fresh()
         }
+    }
+
+    /// Reads the lock state again when its last read is too old (`act::fresh_lock`). Once
+    /// something went out, a read that itself took too long is made again, up to
+    /// `GESTURE_READS` reads: stopping drops a drag wherever the pointer is, while another
+    /// read only holds the pointer still a little longer. Before the first input, one slow
+    /// read refuses the call with nothing sent, and the agent can simply try again.
+    async fn read_lock(&self, stage: Stage) -> Result<(), ToolError> {
+        let reads = if stage == Stage::First {
+            1
+        } else {
+            GESTURE_READS
+        };
+        for _ in 0..reads {
+            act::fresh_lock(self.input.niri).await?;
+            if self.input.niri.desk.lock_fresh() {
+                break;
+            }
+        }
+        Ok(())
     }
 
     /// Whether the gesture's points still stand at `stage` after niri's changes `moved`,
@@ -898,41 +921,50 @@ mod tests {
         assert!(scroll(0, -11).check().is_err());
     }
 
-    /// Serves Noctalia's status for `env`: unlocked to the first read, locked to every
-    /// later one.
-    fn locks_after_the_first_read(env: &crate::Env) {
+    const UNLOCKED: &str = r#"{"locked": false}"#;
+    const LOCKED: &str = r#"{"locked": true}"#;
+
+    /// Serves Noctalia's status for `env`: each read gets the next of `replies`, that late,
+    /// and every read after them the last one.
+    fn noctalia_answers(env: &crate::Env, replies: Vec<(Duration, &'static str)>) {
         use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
         let socket = crate::noctalia::socket(env).unwrap();
         let listener = tokio::net::UnixListener::bind(socket).unwrap();
         tokio::spawn(async move {
-            let mut reply: &[u8] = br#"{"locked": false}"#;
+            let mut replies = replies.into_iter();
+            let mut last = (Duration::ZERO, UNLOCKED);
             while let Ok((mut stream, _)) = listener.accept().await {
+                last = replies.next().unwrap_or(last);
+                let (late, reply) = last;
                 let mut request = Vec::new();
                 stream.read_to_end(&mut request).await.ok();
-                stream.write_all(reply).await.ok();
-                reply = br#"{"locked": true}"#;
+                tokio::time::sleep(late).await;
+                stream.write_all(reply.as_bytes()).await.ok();
             }
         });
     }
 
-    // Held modifiers go down after the look before the first input, and niri may take long
-    // to handle them. A screen locked meanwhile stops the click at the look after them:
-    // no pointer input goes out, the modifiers are released, the marker is removed, and
-    // the outcome is uncertain, since the modifiers went out.
-    #[tokio::test]
-    async fn a_screen_locked_while_held_keys_go_down_stops_the_click() {
+    /// What a click with Control held did, its modifiers handled 300 ms late, past the
+    /// 250 ms a read of the lock state holds for, while Noctalia gives `replies`.
+    struct HeldClick {
+        outcome: Outcome,
+        seen: crate::test_support::wayland::Seen,
+        marker_left: bool,
+    }
+
+    async fn click_holding_ctrl(name: &str, replies: Vec<(Duration, &'static str)>) -> HeldClick {
         use crate::act::Niri;
         use crate::control::{LockSources, desk::Desk};
         use crate::test_support::{fresh_dir, wayland::Compositor};
 
-        let dir = fresh_dir("pointer-held-lock");
+        let dir = fresh_dir(name);
         let niri = Compositor::start(&dir, include_str!("../../tests/fixtures/us-de.xkb"));
         let env = crate::Env {
             wayland_display: Some("fake-noctalia".into()),
             ..niri.env(&dir)
         };
-        locks_after_the_first_read(&env);
+        noctalia_answers(&env, replies);
         let runtime = RuntimeDir::of(&env).unwrap();
         runtime.create().unwrap();
         let socket = niri.niri_socket();
@@ -973,7 +1005,6 @@ mod tests {
             height: geometry.height,
             ..crate::test_support::shot()
         };
-        // Past the 250 ms a read of the lock state holds for.
         niri.slow_modifiers(Duration::from_millis(300)).await;
         let click = Gesture::Click {
             at: Spot::Pixel(PX),
@@ -984,14 +1015,51 @@ mod tests {
         let outcome = point(input, Ok(shot), click, &["ctrl".to_owned()], no_element)
             .await
             .unwrap();
-        assert_eq!(outcome.observed, Observed::Uncertain);
-        let detail = outcome.detail.unwrap_or_default();
-        assert!(detail.starts_with("the screen is locked"), "{detail}");
-        let seen = niri.seen();
-        assert_eq!(seen.buttons, []);
-        assert_eq!(seen.last_modifiers().map(|(held, _)| held), Some(0));
-        assert!(marker::read(&runtime).is_none());
+        let clicked = HeldClick {
+            outcome,
+            seen: niri.seen(),
+            marker_left: marker::read(&runtime).is_some(),
+        };
         std::fs::remove_dir_all(dir).unwrap();
+        clicked
+    }
+
+    // Held modifiers go down after the look before the first input, and niri may take long
+    // to handle them. A screen locked meanwhile stops the click at the look after them:
+    // no pointer input goes out, the modifiers are released, the marker is removed, and
+    // the outcome is uncertain, since the modifiers went out.
+    #[tokio::test]
+    async fn a_screen_locked_while_held_keys_go_down_stops_the_click() {
+        let replies = vec![(Duration::ZERO, UNLOCKED), (Duration::ZERO, LOCKED)];
+        let clicked = click_holding_ctrl("pointer-held-lock", replies).await;
+        assert_eq!(clicked.outcome.observed, Observed::Uncertain);
+        let detail = clicked.outcome.detail.unwrap_or_default();
+        assert!(detail.starts_with("the screen is locked"), "{detail}");
+        assert_eq!(clicked.seen.buttons, []);
+        assert_eq!(clicked.seen.last_modifiers().map(|(held, _)| held), Some(0));
+        assert!(!clicked.marker_left);
+    }
+
+    // Once input went out, stopping leaves a gesture half done, so a read of the lock state
+    // that itself took longer than the 250 ms a read holds for is made again: one slow
+    // read in the middle of a gesture doesn't stop it.
+    #[tokio::test]
+    async fn one_slow_lock_read_after_input_went_out_is_read_again() {
+        let slow = Duration::from_millis(300);
+        let replies = vec![
+            (Duration::ZERO, UNLOCKED),
+            (slow, UNLOCKED),
+            (Duration::ZERO, UNLOCKED),
+        ];
+        let clicked = click_holding_ctrl("pointer-held-slow-read", replies).await;
+        assert_eq!(
+            clicked.outcome.observed,
+            Observed::Sent,
+            "{:?}",
+            clicked.outcome.detail
+        );
+        assert_eq!(clicked.seen.buttons, [(272, true), (272, false)]);
+        assert!(!clicked.marker_left);
     }
 
     #[test]
