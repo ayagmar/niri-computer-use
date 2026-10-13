@@ -50,9 +50,9 @@ const MAX_CLICKS: u8 = 3;
 /// when its animation ends. Its default animations take about 0.3 s.
 const SETTLE: Duration = Duration::from_secs(1);
 const MAX_NOTCHES: i32 = 10;
-/// How many times a look within a gesture reads the lock state while each read takes too
-/// long (`Gate::read_lock`).
-const GESTURE_READS: usize = 3;
+/// How long the looks within a gesture may spend reading the lock state, all together
+/// (`Gate::read_lock`). Meanwhile a drag holds its button, and an app may autoscroll.
+const GESTURE_READING: Duration = Duration::from_secs(1);
 /// The wheel notches one call may turn each way.
 const NOTCHES: RangeInclusive<i32> = -MAX_NOTCHES..=MAX_NOTCHES;
 
@@ -361,6 +361,7 @@ pub(crate) async fn point(
         input,
         windows: &windows,
         end,
+        reading: GESTURE_READING,
     };
     if let Some(stopped) = send(device, gate, plan(&located, &aimed)).await? {
         return Ok(stopped);
@@ -451,6 +452,8 @@ struct Gate<'a> {
     windows: &'a [u64],
     /// The element a drag ends at, if it ends at one.
     end: Option<End>,
+    /// What is left of `GESTURE_READING`.
+    reading: Duration,
 }
 
 /// The element a drag ends at: its window, and its centre on the output whose layout
@@ -528,22 +531,25 @@ impl Gate<'_> {
     }
 
     /// Reads the lock state again when its last read is too old (`act::fresh_lock`). Once
-    /// something went out, a read that itself took too long is made again, up to
-    /// `GESTURE_READS` reads: stopping drops a drag wherever the pointer is, while another
-    /// read only holds the pointer still a little longer. Before the first input, one slow
-    /// read refuses the call with nothing sent, and the agent can simply try again.
-    async fn read_lock(&self, stage: Stage) -> Result<(), ToolError> {
-        let reads = if stage == Stage::First {
-            1
-        } else {
-            GESTURE_READS
-        };
-        for _ in 0..reads {
-            act::fresh_lock(self.input.niri).await?;
-            if self.input.niri.desk.lock_fresh() {
-                break;
-            }
+    /// something went out, a read that itself took too long is made again while `reading`
+    /// lasts, and a read still running when it runs out is dropped, leaving the lock state
+    /// stale: stopping drops a drag wherever the pointer is, while another read only holds
+    /// the pointer still a little longer, but not for long. Before the first input, one
+    /// slow read refuses the call with nothing sent, and the agent can simply try again.
+    async fn read_lock(&mut self, stage: Stage) -> Result<(), ToolError> {
+        let niri = self.input.niri;
+        if stage == Stage::First {
+            return act::fresh_lock(niri).await;
         }
+        let began = Instant::now();
+        let until = began + self.reading;
+        while !niri.desk.lock_fresh() {
+            let Ok(read) = tokio::time::timeout_at(until, act::fresh_lock(niri)).await else {
+                break;
+            };
+            read?;
+        }
+        self.reading = self.reading.saturating_sub(began.elapsed());
         Ok(())
     }
 
@@ -986,6 +992,8 @@ mod tests {
     /// 250 ms a read of the lock state holds for, while Noctalia gives `replies`.
     struct HeldClick {
         outcome: Outcome,
+        /// How long the click took.
+        took: Duration,
         seen: crate::test_support::wayland::Seen,
         marker_left: bool,
     }
@@ -1049,11 +1057,13 @@ mod tests {
             count: 1,
         };
         let no_element = |id: &str| Err(a11y::not_accessible(format!("no element {id}")));
+        let began = Instant::now();
         let outcome = point(input, Ok(shot), click, &["ctrl".to_owned()], no_element)
             .await
             .unwrap();
         let clicked = HeldClick {
             outcome,
+            took: began.elapsed(),
             seen: niri.seen(),
             marker_left: marker::read(&runtime).is_some(),
         };
@@ -1119,6 +1129,24 @@ mod tests {
         assert!(detail.contains("may have taken effect"), "{detail}");
         assert_eq!(clicked.seen.buttons, []);
         assert!(!clicked.marker_left);
+    }
+
+    // While a gesture reads the lock state again, a drag holds its button and an app may
+    // autoscroll under it, so the reads within one gesture stop after a second in all,
+    // however many there were or however long each one would take.
+    #[tokio::test]
+    async fn slow_lock_reads_hold_a_gesture_for_a_second_at_most() {
+        let slow = Duration::from_millis(900);
+        let replies = vec![(Duration::ZERO, UNLOCKED), (slow, UNLOCKED)];
+        let clicked = click_holding_ctrl("pointer-held-slower", replies).await;
+        assert_eq!(clicked.outcome.observed, Observed::Uncertain);
+        assert_eq!(clicked.seen.buttons, []);
+        // The modifiers' 300 ms, the second of reads, and the rest of the click.
+        assert!(
+            clicked.took < Duration::from_millis(2000),
+            "{:?}",
+            clicked.took
+        );
     }
 
     #[test]
