@@ -352,27 +352,31 @@ The run's files are in `target/e2e/<run>/`: `transcript.jsonl` (the agent's stre
 
 ## Demo recordings
 
-The site's recordings come from `make nested-demo`, which plays one scene in a headless nested niri and records it:
+The site's recordings are real: a Claude Code session drives a real niri desktop through the installed server, and the screen is recorded meanwhile. Nothing in them is scripted or staged after the prompt.
+
+Set the scene on an empty workspace with the apps the prompt needs, and nothing private on that output: notifications off (Noctalia's Do Not Disturb), no other workspace shown. Start the agent in a terminal there, with Claude Code's status line off so it shows no account details, and the prompt as its first message:
 
 ```sh
-make nested-demo SCENE=errand
+scripts/demo-record.sh target/demo/errand &
+kitty -o font_size=14 -o confirm_os_window_close=0 --directory ~/projects/ncu-demo \
+    claude --model claude-opus-5-5 --effort low --dangerously-skip-permissions \
+    --settings '{"statusLine":{"type":"command","command":"true"}}' \
+    "In Files, put the two screenshots into a new folder called release-0.1, then bring me back here."
+touch target/demo/errand/STOP   # once the agent has answered
 ```
 
-The scenes are `errand` (focus the chat, fill its Message field and press Send by element, then hand focus back), `layout` (widen a column, then fullscreen a window and back), `keyboard` (a `focus_mismatch` refusal, then a typed message with `submit`) and `stop` (typing, the `stop` command, then a refused call). The harness starts the accessibility bus, Noctalia with a generated wallpaper, kitty with nvim, and `harness/fixtures/chat.py`, a GTK 4 and libadwaita chat window that stands in for a real one. A script, not a model, makes the calls through the real server and repeats the same calls each take, which makes recordings easier to compare and regenerate. Besides the tools of `make nested`, it needs `kitty`, `nvim`, `python-gobject` and `libadwaita`.
+`scripts/demo-record.sh` captures the focused output, cursor included, about 30 times a second with `grim`, into `<run>/frames/`, each JPEG named by its capture time in nanoseconds, until `<run>/STOP` exists. It only reads the screen. Anything you do yourself during the take, such as the stop command, goes in `<run>/user.jsonl` as `{"user": [program, [args]], "start_ns": …, "end_ns": …, "narration": …}`.
 
-The run has a three-minute deadline. `grim` captures about 28 frames a second into `target/e2e/<run>/frames/`, and `timeline.jsonl` there records each call with its arguments, its result and its start and end on the frames' clock.
-
-`scripts/demo-encode.py` turns a run into the files in `site/public/demo/`. It needs ffmpeg with libx264 and libsvtav1, `rsvg-convert` (librsvg) and `avifenc` (libavif). The site's files were made with:
+`scripts/demo-timeline.py` takes the calls from the agent's transcript under `~/.claude/projects/`, which has each call's arguments and full result, times them by the server's audit log, and cuts the time the agent spent thinking: wherever no call is in flight for more than `--gap` seconds (1.2 by default), the stretch is cut down to that, and the end is held for `--tail` (2.5). Calls play in real time. `--exclude-session` leaves out the audit entries of the session that set the scene up. It writes `<run>/cut/`, which `scripts/demo-encode.py` turns into the site's files. The pages that show the videos say that thinking time was shortened.
 
 ```sh
-python3 -I scripts/demo-encode.py target/e2e/<errand run> --name errand --out site/public/demo --gif 3.8 15.6 --still 11.5 --og 11.5
-python3 -I scripts/demo-encode.py target/e2e/<errand run> --name elements --out site/public/demo --clip 5.8 12.7 --still 6.3
-python3 -I scripts/demo-encode.py target/e2e/<layout run> --name layout --out site/public/demo --clip 5.8 15.8 --still 6.0
-python3 -I scripts/demo-encode.py target/e2e/<keyboard run> --name keyboard --out site/public/demo --clip 2.6 11.5 --still 3.0
-python3 -I scripts/demo-encode.py target/e2e/<stop run> --name stop --out site/public/demo --still 8.6
+python3 -I scripts/demo-timeline.py target/demo/errand ~/.claude/projects/<demo dir>/<session>.jsonl --exclude-session claude-code/<pid>
+python3 -I scripts/demo-encode.py target/demo/errand/cut --width 1920 --name errand --out site/public/demo --gif 0 18.7 --still 16.5 --og 16.5
 ```
 
-Under the desktop it draws a caption band from the timeline: the request the scene stands for, each call as it went out and a summary of its reply when it came back, with the lease's state and the round trip the harness measured, to about a millisecond. After a user command such as `stop`, which prints nothing, the band shows a line of narration marked `#` instead. It writes an MP4 and an AV1 WebM, `<name>.json` with the calls for the page's text version, optional stills as PNG and AVIF, a GIF for the README, and `og.png`, the link-preview card. Times are seconds into the run's recording. After re-recording a scene, check the clip times against the new run's timeline.
+`scripts/demo-encode.py` needs ffmpeg with libx264 and libsvtav1, `rsvg-convert` (librsvg) and `avifenc` (libavif). It scales the desktop to `--width` and draws a caption band under it: the prompt, each call as it went out, a summary of its answer when it came back with its round trip, and the lease's state. For `desktop_state` it names only the focused workspace's windows. After a user command, which prints nothing, the band shows the record's narration marked `#`. It writes an MP4 and an AV1 WebM, `<name>.json` with the calls for the page's text version, optional stills as PNG and AVIF, a GIF for the README, and `og.png`, the link-preview card. Times are seconds into the cut recording.
+
+`make nested-demo SCENE=<scene>` still plays a scripted scene in a headless nested niri (`errand`, `layout`, `keyboard` and `stop`, against `harness/fixtures/chat.py`, a GTK 4 chat window) and writes the same `frames/` and `timeline.jsonl` to `target/e2e/<run>/`, which `scripts/demo-encode.py` takes at its default width of 1280. It makes the same calls each take, which helps when comparing builds; the site no longer uses it.
 
 ## Real-session pointer check
 

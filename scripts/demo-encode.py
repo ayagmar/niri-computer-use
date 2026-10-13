@@ -1,14 +1,17 @@
-"""Turns a demo recording (`make nested-demo SCENE=<scene>`) into the README and site media:
+"""Turns a demo recording into the README and site media: a run of
+`scripts/demo-record.sh` cut by `scripts/demo-timeline.py`, or of `make nested-demo`:
 
-    python3 -I scripts/demo-encode.py target/e2e/<run> --name errand --out site/public/demo \
-        [--gif FROM TO] [--clip FROM TO] [--still AT]... [--og AT]
+    python3 -I scripts/demo-encode.py <run> --name errand --out site/public/demo \
+        [--width PX] [--gif FROM TO] [--clip FROM TO] [--still AT]... [--og AT]
 
 The run's `frames/` are JPEGs named by the Unix time in nanoseconds of their capture, and
 its `timeline.jsonl` has each call with its start and end on the same clock. Under the
 desktop goes a caption band rendered from the timeline: what the scene stands for, each
 request as it went out and a summary of the server's answer when it came back, with the
-round trip the harness measured and the lease's state. The one line not from the server is
-the narration after a user command such as `stop`, marked `#`.
+round trip measured and the lease's state. The one line not from the server is the
+narration after a user command such as `stop`, marked `#`: the record's `narration`, or
+what the stop key does. The desktop is scaled to `--width` (1280 by default) and the band
+drawn to match.
 
 Writes `<name>.mp4` (H.264) and `<name>.webm` (AV1) of the whole run or of `--clip`,
 `<name>.json` with the prompt and the calls shown, timed from the clip's start, and
@@ -41,6 +44,9 @@ INK = "#e6e8ea"
 MUTED = "#8b9399"
 GROUND = "#121416"
 RULE = "#2a2e32"
+# The video's width, `--width`: the desktop is scaled to it and the band drawn to match. The
+# desktop's height at that width is read from the first frame.
+OUTPUT = {"width": WIDTH, "desk_height": 720}
 
 
 def run(argv, timeout):
@@ -69,7 +75,13 @@ def answer(tool, record):
     if tool == "acquire_desktop":
         return f"lease taken · users_window: {result.get('users_window')}", False
     if tool == "desktop_state":
-        windows = " · ".join(f"{w['app_id']} {w['id']}" for w in result.get("windows", []))
+        # Only the focused workspace's windows, so the rest of a real desktop stays out.
+        everything = result.get("windows", [])
+        focused = [w for w in everything if w.get("is_focused")]
+        here = focused[0]["workspace_id"] if focused else None
+        windows = " · ".join(
+            f"{w['app_id']} {w['id']}" for w in everything if w.get("workspace_id") == here
+        )
         return f"focused_window: {result.get('focused_window')} · {windows}", False
     if tool == "elements":
         named = [
@@ -102,6 +114,11 @@ def answer(tool, record):
     return " · ".join(parts) or "ok", False
 
 
+def narration(record):
+    """The band's line after a user command: the record's own, or the stop key's."""
+    return record.get("narration", USER_ANSWER)
+
+
 def request(record):
     if "user" in record:
         program, args = record["user"]
@@ -117,7 +134,7 @@ def calls(timeline, origin):
         if "note" in record:
             continue
         you = "user" in record
-        text, error = (USER_ANSWER, False) if you else answer(record["tool"], record)
+        text, error = (narration(record), False) if you else answer(record["tool"], record)
         out.append({
             "start": seconds(record["start_ns"], origin),
             "request": request(record),
@@ -154,8 +171,9 @@ def states(timeline, origin, end):
         state.update(request=request(record), answer=None, you="user" in record)
         out.append((start, dict(state)))
         if "user" in record:
-            text, error = USER_ANSWER, False
-            lease = "stopped"
+            text, error = narration(record), False
+            if "stop" in record["user"][1]:
+                lease = "stopped"
         else:
             text, error = answer(record["tool"], record)
             if record["tool"] == "acquire_desktop" and not error:
@@ -231,8 +249,19 @@ def concat_list(path, entries):
     path.write_text("\n".join(lines) + "\n")
 
 
+def scaled_height(frame):
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+         "-of", "csv=p=0", str(frame)],
+        check=True, timeout=30, capture_output=True, text=True,
+    )
+    width, height = (int(n) for n in probe.stdout.strip().split(","))
+    return round(OUTPUT["width"] * height / width / 2) * 2
+
+
 def build(run_dir, work):
     frames, timeline = load(run_dir)
+    OUTPUT["desk_height"] = scaled_height(frames[0])
     origin = int(frames[0].stem)
     times = [seconds(int(f.stem), origin) for f in frames]
     end = times[-1]
@@ -244,7 +273,7 @@ def build(run_dir, work):
         svg = work / f"band-{index:03}.svg"
         svg.write_text(band_svg(state))
         png = svg.with_suffix(".png")
-        run(["rsvg-convert", "-o", str(png), str(svg)], 30)
+        run(["rsvg-convert", "-z", str(OUTPUT["width"] / WIDTH), "-o", str(png), str(svg)], 30)
         bands.append((png, max(stop - start, 0.001)))
     concat_list(work / "bands.txt", bands)
     return end, timeline, origin
@@ -259,7 +288,8 @@ def composite(work, span):
     for name in ("frames", "bands"):
         inputs += ["-f", "concat", "-safe", "0", "-i", str(work / f"{name}.txt")]
     graph = (
-        f"[0:v]format=rgb24,{trim}[desk];[1:v]format=rgb24,{trim}[band];"
+        f"[0:v]format=rgb24,scale={OUTPUT['width']}:-2:flags=lanczos,{trim}[desk];"
+        f"[1:v]format=rgb24,{trim}[band];"
         "[desk][band]vstack=inputs=2[v]"
     )
     return inputs, graph
@@ -316,7 +346,9 @@ def og(work, out, at):
     )
     svg = work / "og.svg"
     # The recording sits on the right, ringed in amber; the headline is the site's H1.
-    shot_w, shot_h = 680, 680 * 836 // 1280
+    band = round(BAND * OUTPUT["width"] / WIDTH)
+    shot_w = 680
+    shot_h = shot_w * (OUTPUT["desk_height"] + band) // OUTPUT["width"]
     shot_x, shot_y = 1280 - 32 - shot_w, (640 - shot_h) // 2
     headline = ["Your agent can", "drive your niri", "desktop."]
     lines = "".join(
@@ -349,7 +381,9 @@ def main():
     parser.add_argument("--gif", nargs=2, type=float, metavar=("FROM", "TO"))
     parser.add_argument("--still", type=float, metavar="AT", action="append", default=[])
     parser.add_argument("--og", type=float, metavar="AT")
+    parser.add_argument("--width", type=int, default=WIDTH)
     options = parser.parse_args()
+    OUTPUT["width"] = options.width
     for tool in ("ffmpeg", "rsvg-convert", "avifenc"):
         if shutil.which(tool) is None:
             sys.exit(f"{tool} is not on PATH")
