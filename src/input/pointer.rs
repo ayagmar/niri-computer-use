@@ -299,8 +299,7 @@ pub(crate) async fn point(
     let pointer = Pointer::bind(display, niri::pid(socket).await?, &shot.output).await?;
     let pressing = Pressing { tool, button };
     let mut device = Device::new(pointer, input.runtime, pressing, &shot.output, held).await?;
-    input.niri.desk.fresh()?;
-    if at_element && let Err(refused) = unmoved(&mut waiter).await {
+    if let Err(refused) = last_gate(&mut waiter, input, at_element).await {
         // Nothing was pressed, so the marker goes now, before the next call can see it.
         device.discard().await?;
         return Err(refused.into());
@@ -354,6 +353,20 @@ async fn locate(
     } else {
         Err(elements::unmappable(Unmappable::OutsideScreenshot))
     }
+}
+
+/// The checks right before the gesture's first input, with nothing awaited between them
+/// and it: for an element aim, niri's events up to now must show nothing moved (`unmoved`),
+/// and then the lock state must still be fresh, however long that look took.
+async fn last_gate(
+    waiter: &mut niri::waiter::Waiter,
+    input: Input<'_>,
+    at_element: bool,
+) -> Result<(), ToolError> {
+    if at_element {
+        unmoved(waiter).await?;
+    }
+    input.niri.desk.fresh()
 }
 
 /// Refuses an element aim when niri reported a change to what is shown where since the

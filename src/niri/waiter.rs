@@ -131,7 +131,8 @@ impl Waiter {
     }
 
     /// Calls `check` on the current view, then after every event, until it returns a value,
-    /// `limit` passes, or the stream is lost.
+    /// `limit` passes, or the stream is lost. Past `limit`, only what niri sent by then
+    /// counts (`catch_up`).
     pub(crate) async fn until<T>(
         &mut self,
         limit: Duration,
@@ -142,94 +143,114 @@ impl Waiter {
             if let Some(done) = check(&self.view) {
                 return Waited::Done(done);
             }
-            if let Err(reason) = self.next(deadline, |_, _| {}).await {
-                return reason;
+            match self.next(deadline).await {
+                Ok(true) => {}
+                Ok(false) => break,
+                Err(reason) => return Waited::Lost(reason),
             }
         }
+        self.catch_up(|_, _| {}, check).await
     }
 
-    /// Applies every event already received, and says whether any of them can change what
-    /// is shown where: a workspace activated or changed, the overview opened or closed, a
-    /// window opened, closed, focused or made its workspace's active one, or a window's
-    /// layout, workspace or floating changed. A title or urgency changing doesn't count.
-    /// `Err` with the reason when the stream can't say.
+    /// Applies what niri has sent by now (`catch_up`), and says whether any of it can
+    /// change what is shown where: a workspace activated or changed, the overview opened or
+    /// closed, a window opened, closed, focused or made its workspace's active one, or a
+    /// window's layout, workspace or floating changed. A title or urgency changing doesn't
+    /// count. `Err` with the reason when the stream can't say.
     pub(crate) async fn moved(&mut self) -> Result<bool, String> {
         let mut moved = false;
-        loop {
-            let applied = self
-                .next::<()>(Instant::now(), |view, event| moved |= moves(view, event))
-                .await;
-            match applied {
-                Ok(()) => {}
-                // `next` never finishes a wait: only a timeout ends this one.
-                Err(Waited::Timeout | Waited::Done(())) => return Ok(moved),
-                Err(Waited::Lost(reason)) => return Err(reason),
-            }
+        let caught_up = self
+            .catch_up(|view, event| moved |= moves(view, event), |_| None::<()>)
+            .await;
+        match caught_up {
+            Waited::Lost(reason) => Err(reason),
+            Waited::Done(()) | Waited::Timeout => Ok(moved),
         }
     }
 
-    /// Applies the next event the view doesn't hold yet, showing it to `seen` with the view
-    /// before it.
-    async fn next<T>(
+    /// Applies the next event the view doesn't hold yet, waiting until `deadline` for it:
+    /// whether one came, or `Err` with why the stream can't say.
+    async fn next(&mut self, deadline: Instant) -> Result<bool, String> {
+        while Instant::now() < deadline {
+            let Ok(received) = tokio::time::timeout_at(deadline, self.updates.recv()).await else {
+                return Ok(false);
+            };
+            if self.take(received.map_err(|error| lost(&error))?, &mut |_, _| {})? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Applies what niri has sent by now. The stream's task gets one turn to pass on what
+    /// it has already read; then the updates queued at that moment are applied in order,
+    /// `seen` shown each new event with the view before it and `check` the view after it,
+    /// until it returns a value (`Timeout` otherwise). Updates that come meanwhile are left
+    /// for the next look, so a niri that keeps sending can't hold this one, and no timer
+    /// runs: one would round up to the next millisecond tick.
+    async fn catch_up<T>(
         &mut self,
-        deadline: Instant,
         mut seen: impl FnMut(&View, &Event),
-    ) -> Result<(), Waited<T>> {
-        loop {
-            let update = match self.receive(deadline).await {
-                None => return Err(Waited::Timeout),
-                Some(Ok(update)) => update,
-                Some(Err(broadcast::error::RecvError::Lagged(missed))) => {
-                    return Err(Waited::Lost(format!(
-                        "missed {missed} of niri's events while waiting"
-                    )));
+        mut check: impl FnMut(&View) -> Option<T>,
+    ) -> Waited<T> {
+        tokio::task::yield_now().await;
+        for _ in 0..self.queued() {
+            let received = match self.updates.try_recv() {
+                Ok(update) => Ok(update),
+                Err(broadcast::error::TryRecvError::Empty) => break,
+                Err(broadcast::error::TryRecvError::Lagged(missed)) => {
+                    Err(broadcast::error::RecvError::Lagged(missed))
                 }
-                Some(Err(broadcast::error::RecvError::Closed)) => {
-                    return Err(Waited::Lost("niri's event stream stopped".to_owned()));
+                Err(broadcast::error::TryRecvError::Closed) => {
+                    Err(broadcast::error::RecvError::Closed)
                 }
             };
-            match update {
-                Update::Reset(connection) if connection == self.numbers.connection => {
-                    return Err(Waited::Lost(
-                        "niri's event stream disconnected while waiting".to_owned(),
-                    ));
-                }
-                // An earlier connection's end, or an event the view already holds.
-                Update::Reset(_) => {}
-                Update::Event(seq, _) if seq <= self.numbers.seq => {}
-                Update::Event(seq, event) => {
-                    self.numbers.seq = seq;
-                    seen(&self.view, &event);
-                    self.view.apply(*event);
-                    return Ok(());
-                }
+            let applied = match received
+                .map_err(|error| lost(&error))
+                .and_then(|update| self.take(update, &mut seen))
+            {
+                Ok(applied) => applied,
+                Err(reason) => return Waited::Lost(reason),
+            };
+            if let Some(done) = applied.then(|| check(&self.view)).flatten() {
+                return Waited::Done(done);
+            }
+        }
+        Waited::Timeout
+    }
+
+    /// Applies `update` when it is an event the view doesn't hold yet, showing it to `seen`
+    /// with the view before it: whether it was one. `Err` with the reason once the view's
+    /// connection has ended.
+    fn take(
+        &mut self,
+        update: Update,
+        seen: &mut impl FnMut(&View, &Event),
+    ) -> Result<bool, String> {
+        match update {
+            Update::Reset(connection) if connection == self.numbers.connection => {
+                Err("niri's event stream disconnected while waiting".to_owned())
+            }
+            // An earlier connection's end, or an event the view already holds.
+            Update::Reset(_) => Ok(false),
+            Update::Event(seq, _) if seq <= self.numbers.seq => Ok(false),
+            Update::Event(seq, event) => {
+                self.numbers.seq = seq;
+                seen(&self.view, &event);
+                self.view.apply(*event);
+                Ok(true)
             }
         }
     }
+}
 
-    /// The next update, or `None` at the deadline. Past it, the stream's task gets one
-    /// turn to pass on what niri already sent, and then only updates already received
-    /// count: a timer would round up to the next millisecond tick.
-    async fn receive(
-        &mut self,
-        deadline: Instant,
-    ) -> Option<Result<Update, broadcast::error::RecvError>> {
-        if Instant::now() < deadline {
-            return tokio::time::timeout_at(deadline, self.updates.recv())
-                .await
-                .ok();
+/// Why the stream can't say, after `error` receiving from it.
+fn lost(error: &broadcast::error::RecvError) -> String {
+    match error {
+        broadcast::error::RecvError::Lagged(missed) => {
+            format!("missed {missed} of niri's events while waiting")
         }
-        tokio::task::yield_now().await;
-        match self.updates.try_recv() {
-            Ok(update) => Some(Ok(update)),
-            Err(broadcast::error::TryRecvError::Empty) => None,
-            Err(broadcast::error::TryRecvError::Lagged(missed)) => {
-                Some(Err(broadcast::error::RecvError::Lagged(missed)))
-            }
-            Err(broadcast::error::TryRecvError::Closed) => {
-                Some(Err(broadcast::error::RecvError::Closed))
-            }
-        }
+        broadcast::error::RecvError::Closed => "niri's event stream stopped".to_owned(),
     }
 }
 
@@ -464,6 +485,36 @@ pub(crate) mod tests {
             let took = started.elapsed();
             assert!(took < Duration::from_millis(20), "{took:?}");
         }
+    }
+
+    /// Sends an urgency change for window 1 each time it gets to run, a million times.
+    async fn keeps_sending(sender: broadcast::Sender<Update>) {
+        for seq in 1..=1_000_000 {
+            let urgent = Event::WindowUrgencyChanged {
+                id: 1,
+                urgent: seq % 2 == 1,
+            };
+            sender.send(Update::Event(seq, Box::new(urgent))).ok();
+            tokio::task::yield_now().await;
+        }
+    }
+
+    // The last look before input goes out, and a wait whose time is up, take what niri
+    // sent by then and no more: a niri that sends one more event every time its task runs
+    // can't hold them.
+    #[tokio::test]
+    async fn a_niri_that_keeps_sending_cant_hold_a_look_at_what_it_sent() {
+        let (mut waiter, sender) = waiter(view(vec![window(1, None, 1, true)]), 0);
+        let sending = tokio::spawn(keeps_sending(sender));
+        let looked = tokio::time::timeout(LIMIT, async {
+            let moved = waiter.moved().await;
+            let past = waiter.until(Duration::ZERO, |_| None::<()>).await;
+            (moved, past)
+        })
+        .await;
+        sending.abort();
+        assert_eq!(looked, Ok((Ok(false), Waited::Timeout)));
+        assert_ne!(waiter.numbers.seq, 0);
     }
 
     /// The stream's task must get a turn first: an event it has already read but not yet
