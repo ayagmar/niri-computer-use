@@ -4,7 +4,7 @@
 //! empty workspace and back to the fixture, `click` on the fixture's entry, `type_text` and
 //! `key` into it, `activate_element` on its `Primary` button, `niri_action` resizing the
 //! fixture, and `shell_panel` opening and closing the control center, none of them with a
-//! screenshot. It writes each call's round trips and which `observed` and `changes` keys
+//! screenshot. The click waits for the view to settle first, untimed. It writes each call's round trips and which `observed` and `changes` keys
 //! came back to `latency.json` in the artifacts, and a summary to the log.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -27,6 +27,10 @@ const READY: Duration = Duration::from_secs(20);
 const ROUNDS: usize = 30;
 /// Screenshot refs last 60 s; a new one is taken well before.
 const SHOT_AGE: Duration = Duration::from_secs(30);
+/// The server refuses an element aim for a second after niri activated a workspace on its
+/// output or moved or resized its window, as the focus calls and the resize do. The click
+/// waits this long first, outside its round trip, rather than being refused or retried.
+const SETTLE: Duration = Duration::from_millis(1200);
 
 pub(crate) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
     let bus = Bus::start(session)?;
@@ -56,6 +60,9 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
             primary: named(session, &mut client, window, Some("button"), "Primary")?,
         };
         for (label, tool, arguments) in targets.round(round, &shot) {
+            if tool == "click" {
+                crate::session::pause(SETTLE);
+            }
             let (result, took) = client.timed_call(tool, arguments)?;
             let outcome = structured(&result).context(format!("latency: {label}"))?;
             timings.add(label, took, &outcome);
