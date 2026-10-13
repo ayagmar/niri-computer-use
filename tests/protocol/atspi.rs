@@ -48,8 +48,10 @@ pub(crate) struct Object {
     /// With an Action interface: its actions' names, as `GetName` gives them.
     pub(crate) actions: Vec<String>,
     /// What `GetActions` lists in place of the names, when it lists other text, as
-    /// Chromium lists empty strings.
+    /// Chromium lists empty strings, or other actions, as GTK 4 leaves disabled ones out.
     pub(crate) listed: Option<Vec<String>>,
+    /// What `GetLocalizedName` gives for each action, when not its name: a translation.
+    pub(crate) localized: Option<Vec<String>>,
     /// With `Text` and `EditableText` interfaces: how many characters it holds.
     pub(crate) text: Option<i32>,
     /// A counter button's count, which each `DoAction` adds one to and names it after.
@@ -573,6 +575,17 @@ impl Action {
             usize::try_from(index)
                 .ok()
                 .and_then(|index| object.actions.get(index).cloned())
+        })?;
+        name.ok_or_else(|| fdo::Error::InvalidArgs(format!("Unknown action {index}")).into())
+    }
+
+    async fn get_localized_name(&self, index: i32) -> answer::Result<String> {
+        self.0.called("GetLocalizedName").await?;
+        let name = self.0.read(|object, _| {
+            let names = object.localized.as_ref().unwrap_or(&object.actions);
+            usize::try_from(index)
+                .ok()
+                .and_then(|index| names.get(index).cloned())
         })?;
         name.ok_or_else(|| fdo::Error::InvalidArgs(format!("Unknown action {index}")).into())
     }
