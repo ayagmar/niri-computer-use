@@ -27,6 +27,15 @@ Before each `wtype` call the server checks that keyboard focus is still on the w
 
 Before `wtype` starts, the server writes the input-dirty marker (`pending`), and once `wtype` runs it adds its PID and start time (`running`). `wtype` starts with `-`, so it waits at its stdin until the server has recorded it, and it is let past only within 250 ms of the server's last read of the lock state; otherwise it is killed there, having typed nothing, and the call ends `lock_stale`. The server removes the marker when `wtype` exits by itself. A stop or a lost lease once a `wtype` call has its text ends the call `uncertain`, with the reason in `detail`, `accepted: true` and `typed` or `pressed` counting what `wtype` finished typing, or `accepted: null` while the first call is still typing; before that it is `stopped` or `lease_required`. A cancelled request ends the call. Either way a `wtype` already running keeps typing and then removes the marker; a server whose client has gone waits for it before exiting. A `wtype` still running three seconds after it started is killed with its process group, and one killed by a signal, the same way: the marker stays and every action refuses with `recovery_required` until the user runs `niri-computer-use recover`. The text is never logged: the audit log has `text_len`.
 
+### Chromium and Electron apps
+
+`wtype` brings its own keymap, which gives each key a code in the order the call first uses it, so the first key of each call goes out as the physical key Escape, the second as `1`, and so on. Most apps go by the key's symbol and never notice. Chromium and Electron apps, VS Code among them, also see the physical key, and some act on that:
+
+- VS Code runs its shortcuts by physical key, so `key` with `ctrl+s` reaches it as Ctrl+Escape and nothing happens, though `observed` is `sent`. Shortcuts that the text field handles itself, such as `ctrl+a` and `ctrl+v`, work.
+- While VS Code has an Escape binding active, such as an open suggestion list, the first character a `type_text` call types is taken as Escape and lost: typing ` busy` after a word with suggestions showing gives `busy`.
+
+The native backend, below, types each key with the code the user's layout gives it, and both work there. With `wtype`, use `via: "paste"` for text, `activate_element` for a control, or set `"keyboard.dispatch": "keyCode"` in VS Code's settings, which makes its shortcuts go by the symbol.
+
 ### `key`
 
 | Argument | Value |
