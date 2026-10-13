@@ -10,6 +10,8 @@ export default defineConfig({
 		'/guides/getting-started': '/niri-computer-use/start/install/',
 		'/reference/tools': '/niri-computer-use/tools/overview/',
 	},
+	// Inline the stylesheets, so the first paint waits on no request after the page's own.
+	build: { inlineStylesheets: 'always' },
 	integrations: [
 		starlight({
 			title: 'niri-computer-use',
@@ -23,7 +25,11 @@ export default defineConfig({
 				'@fontsource-variable/jetbrains-mono/wght.css',
 				'./src/styles/theme.css',
 			],
-			components: { Hero: './src/components/Hero.astro' },
+			components: {
+				Head: './src/components/Head.astro',
+				Header: './src/components/Header.astro',
+				Hero: './src/components/Hero.astro',
+			},
 			// The card link previews show, from the hero demo's recording.
 			head: [
 				{

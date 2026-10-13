@@ -44,7 +44,7 @@ The user's own niri session on Arch-style Linux, often with Noctalia as the shel
 ## Evidence on Hand
 
 - Measured results in `docs/results/`: GTK 4 element clicks 100/100 (`m9.md`), a stop mid-drag ends the call `stopped` and releases the button (`m4.md`), Noctalia panels open and observed in 50–51 ms (`m5.md`), a killed server's held button released by the next server in 3–4 ms (`input-robustness.md`).
-- Demo recordings captured in a headless nested niri by `harness run --demo`; the calls come from a script and the results from the real server. The chat window in the demo is a harness fixture and must be captioned as a stand-in.
+- Demo recordings from the user's own niri 26.04 desktop (one 2560×1440 output, Noctalia): real Claude Code sessions (Opus 5.5) with the installed server, nothing scripted. Thinking time between calls is shortened to 1.2 s and calls play in real time; every place a recording is shown must say so. Each recording is `site/public/demo/<name>.{webm,mp4,png,json}`, the JSON holding the prompt, the calls with their times, the note to show, the recorded output and the caption band's height.
 - No testimonials, users, stars or adoption numbers exist; don't invent any.
 
 ## Product Principles

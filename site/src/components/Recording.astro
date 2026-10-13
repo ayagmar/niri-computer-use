@@ -1,0 +1,188 @@
+---
+// A demo recording on its plate: a still first, then the video, which plays muted and looped
+// while in view, after the page has loaded, and never for readers who ask for reduced motion
+// or less data. The plate's corner ticks mark the recorded output, above any caption band.
+// While it plays, the calls with the same name mark the call being shown, and the hero's
+// recording drives the header's lease tag.
+import type { Demo } from '../lib/demo';
+
+interface Props {
+	demo: Demo;
+	/** What the recording shows, for screen readers. */
+	label: string;
+	/** The `sizes` for the still. */
+	sizes: string;
+	/** The hero's: the still loads first and the header's lease tag follows the video. */
+	lead?: boolean;
+}
+
+const { demo, label, sizes, lead = false } = Astro.props;
+const desk = (demo.height - (demo.band ?? 0)) / demo.height;
+---
+
+<div class="plate" style={`--desk: ${desk}`}>
+	<video
+		data-demo={demo.name}
+		data-lease-source={lead ? '' : undefined}
+		muted
+		loop
+		playsinline
+		controls
+		preload="none"
+		width={demo.width}
+		height={demo.height}
+		aria-label={label}
+	>
+		<source src={demo.webm} type='video/webm; codecs="av01.0.12M.08"' />
+		<source src={demo.mp4} type="video/mp4" />
+	</video>
+	{
+		lead ? (
+			<img
+				class="still"
+				src={demo.poster.src}
+				srcset={demo.poster.srcset}
+				sizes={sizes}
+				width={demo.width}
+				height={demo.height}
+				alt=""
+				fetchpriority="high"
+				decoding="async"
+			/>
+		) : (
+			<img
+				class="still"
+				data-src={demo.poster.src}
+				data-srcset={demo.poster.srcset}
+				sizes={sizes}
+				width={demo.width}
+				height={demo.height}
+				alt=""
+				decoding="async"
+			/>
+		)
+	}
+</div>
+
+<script>
+	const reduce = matchMedia('(prefers-reduced-motion: reduce)');
+	const saveData = (navigator as { connection?: { saveData?: boolean } }).connection?.saveData;
+	const lease = document.querySelector<HTMLElement>('[data-lease]');
+
+	function follow(video: HTMLVideoElement) {
+		const calls = [...document.querySelectorAll<HTMLElement>(`[data-calls="${video.dataset.demo}"] li`)];
+		const list = calls[0]?.parentElement;
+		const leaseCalls = video.hasAttribute('data-lease-source') && lease ? calls : [];
+		let shown: HTMLElement | undefined;
+		video.addEventListener('timeupdate', () => {
+			const now = video.currentTime;
+			const current = calls.findLast((call) => Number(call.dataset.start) <= now);
+			for (const call of calls) {
+				call.dataset.state = call === current ? 'now' : Number(call.dataset.start) <= now ? 'past' : 'next';
+			}
+			if (current && current !== shown && list && list.scrollHeight > list.clientHeight) {
+				list.scrollTo({ top: current.offsetTop - list.clientHeight / 3, behavior: 'smooth' });
+			}
+			shown = current;
+			const leaseCall = leaseCalls.findLast(
+				(call) => Number(call.dataset.start) <= now && call.dataset.lease !== undefined,
+			);
+			if (lease) lease.dataset.held = String(leaseCall?.dataset.lease === 'held');
+		});
+	}
+
+	// Stills below the first view load as they come near. The browser's own lazy loading
+	// starts them with the page on a slow connection, where they compete with the hero.
+	for (const still of document.querySelectorAll<HTMLImageElement>('img[data-src]')) {
+		new IntersectionObserver(
+			([entry], observer) => {
+				if (!entry.isIntersecting) return;
+				still.srcset = still.dataset.srcset!;
+				still.src = still.dataset.src!;
+				observer.disconnect();
+			},
+			{ rootMargin: '100% 0px' },
+		).observe(still);
+	}
+
+	function start() {
+		for (const video of document.querySelectorAll<HTMLVideoElement>('video[data-demo]')) {
+			const still = video.nextElementSibling as HTMLImageElement;
+			// The still stays until the video has a frame to show in its place.
+			const reveal = () => {
+				video.poster = still.currentSrc || still.src;
+				still.hidden = true;
+			};
+			follow(video);
+			if (reduce.matches || saveData) {
+				// The video shows the still as its poster, with its controls, once the still is in.
+				if (still.complete && still.currentSrc) reveal();
+				else still.addEventListener('load', reveal, { once: true });
+				continue;
+			}
+			video.addEventListener('playing', reveal, { once: true });
+			new IntersectionObserver(
+				([entry]) => {
+					if (entry.isIntersecting && !reduce.matches) video.play().catch(() => {});
+					else video.pause();
+				},
+				{ threshold: 0.35 },
+			).observe(video);
+		}
+		reduce.addEventListener('change', () => {
+			if (!reduce.matches) return;
+			for (const video of document.querySelectorAll<HTMLVideoElement>('video[data-demo]')) video.pause();
+		});
+	}
+
+	// The videos wait for the page, so they don't compete with it for the network.
+	if (document.readyState === 'complete') start();
+	else addEventListener('load', start, { once: true });
+</script>
+
+<style>
+	.plate {
+		position: relative;
+		border: 2px solid var(--ncu-rule);
+		border-radius: calc(var(--ncu-radius) + 2px);
+		background: #121416;
+		padding: 2px;
+	}
+
+	/* Registration ticks at the corners of the recorded output, as on a printed plate. A
+	   caption band below it sits outside them. */
+	.plate::before {
+		--tick: var(--sl-color-gray-4);
+		content: '';
+		position: absolute;
+		inset: -9px -9px auto;
+		height: calc((100% - 4px) * var(--desk) + 20px);
+		pointer-events: none;
+		background:
+			linear-gradient(var(--tick), var(--tick)) left top / 14px 1px,
+			linear-gradient(var(--tick), var(--tick)) left top / 1px 14px,
+			linear-gradient(var(--tick), var(--tick)) right top / 14px 1px,
+			linear-gradient(var(--tick), var(--tick)) right top / 1px 14px,
+			linear-gradient(var(--tick), var(--tick)) left bottom / 14px 1px,
+			linear-gradient(var(--tick), var(--tick)) left bottom / 1px 14px,
+			linear-gradient(var(--tick), var(--tick)) right bottom / 14px 1px,
+			linear-gradient(var(--tick), var(--tick)) right bottom / 1px 14px;
+		background-repeat: no-repeat;
+	}
+
+	video,
+	.still {
+		display: block;
+		width: 100%;
+		height: auto;
+		border-radius: var(--ncu-radius);
+		background: #121416;
+	}
+
+	.still {
+		position: absolute;
+		inset: 2px;
+		width: calc(100% - 4px);
+		pointer-events: none;
+	}
+</style>

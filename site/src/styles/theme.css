@@ -77,7 +77,24 @@
 	border-radius: var(--ncu-radius);
 }
 
-/* The home page is wider than a docs page, for the demo beside the headline. */
-[data-has-hero] {
-	--sl-content-width: 76rem;
+/* The home page's sections run wider than a docs page, toward its screen of windows.
+   Starlight sets the width for pages without a sidebar on `html:not([data-has-sidebar])`. */
+:root[data-has-hero]:not([data-has-sidebar]) {
+	--sl-content-width: 96rem;
+}
+
+/* The parts the browser draws, in the page's colours. */
+::selection {
+	background: var(--sl-color-accent-low);
+	color: var(--sl-color-white);
+}
+
+:root {
+	caret-color: var(--ncu-ring);
+	scrollbar-color: var(--sl-color-gray-5) var(--sl-color-black);
+}
+
+/* The home page's screen runs edge to edge; nothing else may widen the page. */
+[data-has-hero] body {
+	overflow-x: clip;
 }

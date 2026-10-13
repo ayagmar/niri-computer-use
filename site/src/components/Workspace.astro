@@ -1,31 +1,98 @@
 ---
-// One section of the home page, drawn as a niri column: its columns sit side by side on a
-// wide screen, and the focus ring lights the section in the middle of the view, moving
-// from section to section as the page scrolls, as niri's moves to the column you scrolled
-// to.
+// One section of the home page, drawn as a niri workspace: its windows sit side by side as
+// columns on a wide screen, and while the section crosses the middle of the view its focused
+// column wears the focus ring and its pill in the header's bar is lit, the way niri marks the
+// window and workspace you moved to.
+import { timeline, workspaces } from '../lib/workspaces.mjs';
+
 interface Props {
-	/** The anchor. */
+	/** The anchor, one of the workspaces in `src/lib/workspaces.mjs`. */
 	id: string;
 }
 
 const { id } = Astro.props;
+if (!workspaces.some((workspace) => workspace.id === id)) {
+	throw new Error(`Workspace ${id} is not listed in src/lib/workspaces.mjs`);
+}
 ---
 
-<section class="ncu-ws" id={id}>
+<section class="ncu-ws" id={id} style={`--ncu-tl: ${timeline(id)}; view-timeline-name: ${timeline(id)}`}>
 	<slot />
 </section>
 
 <style>
 	.ncu-ws {
-		position: relative;
-		padding-block: 3rem;
+		padding-block: clamp(3rem, 2rem + 3vw, 5rem);
 		border-top: 1px solid var(--ncu-rule);
 	}
 
-	.ncu-ws::after {
+	.ncu-ws :global(h2) {
+		margin: 0;
+		max-width: 40rem;
+		font-size: clamp(1.75rem, 1.2rem + 1.6vw, 2.6rem);
+		line-height: 1.08;
+		font-weight: 660;
+		letter-spacing: -0.025em;
+		text-wrap: balance;
+	}
+
+	.ncu-ws :global(h2 + p) {
+		max-width: 46rem;
+		color: var(--sl-color-gray-2);
+	}
+
+	/* Columns: side by side when there's room, with niri's gaps. */
+	.ncu-ws :global(.columns) {
+		display: grid;
+		gap: var(--ncu-gap);
+		margin-top: 2rem;
+	}
+
+	@media (min-width: 50rem) {
+		.ncu-ws :global(.columns) {
+			grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+		}
+
+		.ncu-ws :global(.columns.wide-first) {
+			grid-template-columns: minmax(0, 3fr) minmax(15rem, 2fr);
+		}
+
+		.ncu-ws :global(.columns.wide-last) {
+			grid-template-columns: minmax(15rem, 2fr) minmax(0, 3fr);
+		}
+	}
+
+	/* A long list in a wide column reads in two. */
+	@media (min-width: 72rem) {
+		.ncu-ws :global(.split ul) {
+			columns: 2;
+			column-gap: 2rem;
+		}
+
+		.ncu-ws :global(.split li) {
+			break-inside: avoid;
+		}
+	}
+
+	.ncu-ws :global(.column) {
+		position: relative;
+		min-width: 0;
+		margin: 0;
+		padding: clamp(1rem, 0.75rem + 0.8vw, 1.25rem);
+		border: 1px solid var(--ncu-rule);
+		border-radius: var(--ncu-radius);
+		background: var(--ncu-panel);
+	}
+
+	.ncu-ws :global(.column > :first-child) {
+		margin-top: 0;
+	}
+
+	/* The focus ring, on the focused column while its section is in the middle of the view. */
+	.ncu-ws :global(.column.focused)::after {
 		content: '';
 		position: absolute;
-		inset: 1rem -0.75rem;
+		inset: -4px;
 		border: 2px solid var(--ncu-ring);
 		border-radius: calc(var(--ncu-radius) + 4px);
 		opacity: 0;
@@ -34,66 +101,43 @@ const { id } = Astro.props;
 
 	@supports (animation-timeline: view()) {
 		@media (prefers-reduced-motion: no-preference) {
-			.ncu-ws::after {
-				animation: ncu-ring linear both;
-				animation-timeline: view();
-				animation-range: cover;
+			.ncu-ws :global(.column.focused)::after {
+				animation: ncu-ring linear;
+				animation-timeline: var(--ncu-tl);
+				animation-range: cover 50vh cover calc(100% - 50vh);
+			}
+		}
+
+		/* Without motion the ring still moves to the section in view, without the fade. */
+		@media (prefers-reduced-motion: reduce) {
+			.ncu-ws :global(.column.focused)::after {
+				animation: ncu-ring-still linear;
+				animation-timeline: var(--ncu-tl);
+				animation-range: cover 50vh cover calc(100% - 50vh);
 			}
 		}
 	}
 
 	@keyframes ncu-ring {
-		0%,
-		30% {
+		0% {
 			opacity: 0;
-			transform: scale(0.985);
+			transform: scale(0.99);
 		}
-		42%,
-		58% {
+		12%,
+		88% {
 			opacity: 1;
 			transform: scale(1);
 		}
-		70%,
 		100% {
 			opacity: 0;
-			transform: scale(0.985);
+			transform: scale(0.99);
 		}
 	}
 
-	.ncu-ws :global(h2) {
-		margin: 0;
-		max-width: 40rem;
-		font-size: clamp(1.6rem, 1.2rem + 1.2vw, 2.25rem);
-		line-height: 1.12;
-		font-weight: 660;
-		letter-spacing: -0.02em;
-		text-wrap: balance;
-	}
-
-	/* Columns: side by side when there's room. */
-	.ncu-ws :global(.columns) {
-		display: grid;
-		gap: var(--ncu-gap);
-		margin-top: 1.75rem;
-	}
-
-	@media (min-width: 50rem) {
-		.ncu-ws :global(.columns) {
-			grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+	@keyframes ncu-ring-still {
+		from,
+		to {
+			opacity: 1;
 		}
-	}
-
-	.ncu-ws :global(.column) {
-		min-width: 0;
-		margin: 0;
-		padding: 1.25rem;
-		border: 1px solid var(--ncu-rule);
-		border-radius: var(--ncu-radius);
-		background: var(--ncu-panel);
-	}
-
-	/* A recording in a column leaves the amber to the focus ring. */
-	.ncu-ws :global(.column .plate) {
-		border-color: var(--ncu-rule);
 	}
 </style>

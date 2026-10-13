@@ -1,0 +1,126 @@
+---
+// A recording's calls as text: each call's time in the video, `→` the request and `←` a
+// summary of the server's answer with its round trip. A line marked `$` is a command the user
+// ran, and its `#` line says what it did. While the recording plays, the call it is showing
+// wears the focus ring and the calls still to come are dimmed.
+import { at, type Demo } from '../lib/demo';
+
+interface Props {
+	demo: Demo;
+	/** The list scrolls on its own, so it takes keyboard focus to be scrolled. */
+	scrolls?: boolean;
+}
+
+const { demo, scrolls = false } = Astro.props;
+// The calls that hand the lease over, for the header's lease tag. The user's stop command
+// takes it back too.
+const lease = (request: string) =>
+	request.startsWith('acquire_desktop')
+		? 'held'
+		: request.startsWith('release_desktop') || request === 'niri-computer-use stop'
+			? 'free'
+			: undefined;
+---
+
+<ol
+	class="ncu-calls"
+	data-calls={demo.name}
+	tabindex={scrolls ? 0 : undefined}
+	aria-label={scrolls ? 'The calls' : undefined}
+>
+	{
+		demo.calls.map((call) => (
+			<li class:list={{ error: call.error }} data-start={call.start} data-lease={lease(call.request)}>
+				<span class="at">{at(call.start)}</span>
+				<code class="request">
+					<span class="mark">{call.you ? '$' : '→'}</span> {call.request}
+				</code>
+				{call.you ? (
+					<code class="answer narration">
+						<span class="mark">#</span> {call.answer}
+					</code>
+				) : (
+					<code class="answer">
+						<span class="mark">←</span> {call.answer} <span class="ms">{call.ms} ms</span>
+					</code>
+				)}
+			</li>
+		))
+	}
+</ol>
+
+<style>
+	.ncu-calls {
+		position: relative;
+		list-style: none;
+		padding: 0;
+		margin: 0;
+		display: grid;
+		gap: 0.25rem;
+	}
+
+	li {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		column-gap: 0.75rem;
+		padding: 0.3rem 0.5rem;
+		border-radius: 6px;
+		outline: 1px solid transparent;
+		transition: outline-color 200ms ease-out;
+	}
+
+	li[data-state='now'] {
+		outline-color: var(--ncu-ring);
+	}
+
+	li[data-state='next'] :is(.request, .answer, .answer .ms) {
+		color: var(--sl-color-gray-3);
+	}
+
+	.at {
+		grid-row: span 2;
+		font-family: var(--sl-font-mono);
+		font-size: 0.7rem;
+		line-height: 1.75;
+		color: var(--sl-color-gray-3);
+		font-variant-numeric: tabular-nums;
+	}
+
+	code {
+		display: block;
+		padding: 0 0 0 1.5ch;
+		text-indent: -1.5ch;
+		overflow-wrap: anywhere;
+		background: none;
+		font-size: 0.75rem;
+		line-height: 1.6;
+	}
+
+	.request {
+		color: var(--sl-color-white);
+	}
+
+	.answer {
+		color: var(--sl-color-gray-2);
+	}
+
+	.mark {
+		color: var(--ncu-ring);
+	}
+
+	.error .answer,
+	.error .answer .mark {
+		color: var(--ncu-stop);
+	}
+
+	.ms {
+		color: var(--sl-color-gray-3);
+		white-space: nowrap;
+	}
+
+	/* What the scene says about a user command, which prints nothing: not the server's. */
+	.narration,
+	.narration .mark {
+		color: var(--sl-color-gray-3);
+	}
+</style>
