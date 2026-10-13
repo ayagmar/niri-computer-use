@@ -590,14 +590,25 @@ impl Device {
     }
 
     /// Releases what a gesture stopped midway still holds, and removes the marker once
-    /// niri has handled that, as a drop would, but before the call returns.
+    /// niri has handled that, as a drop would, but before the call returns. That runs in a
+    /// cleanup task, within the cleanup's deadline, so a call cancelled meanwhile can't cut
+    /// it short and leave the marker behind.
     async fn abandon(mut self) -> Result<(), ToolError> {
         let (Some(mut pointer), Some(marker)) = (self.pointer.take(), self.marker.take()) else {
             // No marker: nothing was pressed or held.
             return Ok(());
         };
         pointer.release_all();
-        release(pointer, self.held.take(), marker).await
+        let released = cleanup::spawn(
+            cleanup::deadline(),
+            release(pointer, self.held.take(), marker),
+        );
+        released.await.map_err(|error| {
+            ToolError::new(
+                ErrorName::UpstreamError,
+                format!("the release task ended: {error}"),
+            )
+        })?
     }
 
     /// Removes the marker; if that fails, the error starts with `done`, what happened to

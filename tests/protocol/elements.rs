@@ -2756,6 +2756,54 @@ async fn a_held_drag_stops_on_a_workspace_switch_but_not_on_a_window_moving() {
     assert_eq!(all.len(), 13, "{all:?}");
 }
 
+// A drag the overview stopped while it held its button releases it and waits for niri to
+// handle that before removing the input-dirty marker. A request cancelled during that wait
+// doesn't cut the cleanup short: once niri answers, the marker goes, and the next click
+// goes out rather than asking for `recover`.
+#[tokio::test]
+async fn a_drag_cancelled_while_it_releases_still_clears_its_marker() {
+    let mut desk = Desk::start("el-abandon-cancel").await;
+    let shot = desk.screenshot_ref().await;
+    let points = desk.fixture.points();
+    points.start();
+    // The round trip after the press's rest, then the release's.
+    let pressed = points.hold("wayland:sync", 4);
+    let releasing = points.hold("wayland:sync", 5);
+    let dragged =
+        json!({"screenshot_ref": shot, "from": {"x": 5, "y": 5}, "to": {"x": 300, "y": 200}});
+    let id = desk.server.start_call("drag", dragged).await;
+    pressed.arrived().await;
+    desk.moved(&json!({"OverviewOpenedOrClosed": {"is_open": true}}))
+        .await;
+    pressed.release();
+    releasing.arrived().await;
+    desk.server.cancel(id).await;
+    while !desk
+        .fixture
+        .audit_lines()
+        .iter()
+        .any(|line| line["tool"] == "drag" && line["error"] == "cancelled")
+    {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    releasing.release();
+    points.idle().await;
+    let sent = desk.fixture.clipboard.pointed();
+    assert_eq!(sent.last(), Some(&Pointed::Button(272, 0)), "{sent:?}");
+    let marker = desk.fixture.runtime_dir().join("input-dirty");
+    let since = std::time::Instant::now();
+    while marker.exists() {
+        assert!(
+            since.elapsed() < Duration::from_secs(5),
+            "the marker stayed"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let pixel = json!({"screenshot_ref": shot, "x": 5, "y": 5});
+    let clicked = desk.server.call("click", pixel).await;
+    assert_eq!(clicked["isError"], false, "{clicked}");
+}
+
 /// Aims `tool` at the Safe button, sends `event` once the pointer is being set up and
 /// before anything went out, and requires the aim refused with nothing sent. A click has
 /// marked input as possibly stuck by then, and the refusal must clear that, so a pixel
