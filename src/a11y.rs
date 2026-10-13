@@ -449,7 +449,8 @@ impl Request {
     }
 
     /// The node at `path` in application `bus`, or `None` once it is gone. A node without
-    /// a Component or Action interface has no extents or no actions.
+    /// a Component or Action interface has no extents or no actions. Its action names are
+    /// as the app lists them, empty ones too (`named`).
     pub(crate) async fn node(&self, bus: &str, path: &str) -> Result<Option<Node>, ToolError> {
         let at = (bus, path);
         let (role, name, states, children, extents, actions) = tokio::join!(
@@ -458,7 +459,7 @@ impl Request {
             self.call::<_, Vec<u32>>(at, (ACCESSIBLE, "GetState"), &()),
             self.call::<_, Vec<(String, OwnedObjectPath)>>(at, (ACCESSIBLE, "GetChildren"), &()),
             self.extents(bus, path),
-            self.action_names(at),
+            self.listed_actions(at),
         );
         let (Some(role), Some(name), Some(states), Some(children)) = (
             present(role)?,
@@ -484,6 +485,11 @@ impl Request {
                 })
                 .collect(),
         }))
+    }
+
+    /// Whether the request's whole budget is used up.
+    pub(crate) fn spent(&self) -> bool {
+        Instant::now() >= self.deadline
     }
 
     /// The nodes under `root` in application `bus`, at most `NODE_CAP` of them, until
@@ -563,19 +569,32 @@ impl Request {
         Ok((role, States::from_words(&states)))
     }
 
-    /// The names of the element's actions now, in index order.
+    /// The names of the element's actions now, in index order, as `elements` lists them.
     pub(crate) async fn actions(&self, element: &ElementRef) -> Result<Vec<String>, Failed> {
-        self.action_names(element.at()).await
+        let listed = self.listed_actions(element.at()).await?;
+        self.named(element.at(), listed)
+            .await
+            .map_err(Failed::Error)
     }
 
-    /// The names of the actions of the object at `at`, in index order. Chromium lists every
-    /// name empty, so an empty one is asked for by `GetName`, which gives Chromium's own,
-    /// such as `click`. A name the app refuses, or an object gone meanwhile, leaves that
-    /// name empty and the others as they are.
-    async fn action_names(&self, at: (&str, &str)) -> Result<Vec<String>, Failed> {
+    /// The names of the actions of the object at `at`, in index order, as `GetActions`
+    /// lists them.
+    async fn listed_actions(&self, at: (&str, &str)) -> Result<Vec<String>, Failed> {
         let listed: Vec<(String, String, String)> =
             self.call(at, (ACTION, "GetActions"), &()).await?;
-        let mut names: Vec<String> = listed.into_iter().map(|(name, _, _)| name).collect();
+        Ok(listed.into_iter().map(|(name, _, _)| name).collect())
+    }
+
+    /// `names`, the actions of the object at `at` in index order, with each empty one
+    /// asked for by `GetName`. Chromium lists every name empty and gives its own, such as
+    /// `click`, only there. That costs a round trip per action, so only elements that are
+    /// listed or acted on are named, not every node a walk reads. A name the app refuses,
+    /// or an object gone meanwhile, leaves that name empty and the others as they are.
+    pub(crate) async fn named(
+        &self,
+        at: (&str, &str),
+        mut names: Vec<String>,
+    ) -> Result<Vec<String>, ToolError> {
         for (index, name) in (0_i32..).zip(names.iter_mut()) {
             if !name.is_empty() {
                 continue;
@@ -586,7 +605,7 @@ impl Request {
             {
                 Ok(own) => *name = own,
                 Err(Failed::Refused(_) | Failed::Gone(_)) => {}
-                Err(failed @ Failed::Error(_)) => return Err(failed),
+                Err(Failed::Error(error)) => return Err(error),
             }
         }
         Ok(names)
@@ -653,7 +672,7 @@ impl walk::Source for AppTree<'_> {
     }
 
     fn spent(&self) -> bool {
-        Instant::now() >= self.request.deadline
+        self.request.spent()
     }
 }
 

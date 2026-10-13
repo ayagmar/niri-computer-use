@@ -771,11 +771,15 @@ impl Engine {
             Ok(before) => before,
             Err(unknown) => return Some(element_changes::Report::Unknown(unknown)),
         };
-        let after = match self.survey(session, window).await {
+        let mut after = match self.survey(session, window).await {
             Ok(after) => after,
             Err(unknown) => return Some(element_changes::Report::Unknown(unknown)),
         };
         let lease = self.desk.ref_lease(session);
+        if let (Some(a11y), Some(_)) = (&self.a11y, lease) {
+            let reported = element_changes::reported(&before, &after);
+            elements::name_reported(a11y, &mut after, &reported).await;
+        }
         let remember = |seen: &Seen| {
             lease.and_then(|lease| self.desk.remember_element(lease, seen.element.clone()))
         };

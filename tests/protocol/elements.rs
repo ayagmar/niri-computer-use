@@ -274,6 +274,56 @@ async fn actions_listed_without_a_name_are_named_as_get_name_gives_them() {
     assert_eq!(desk.mock.done(), [0, 0]);
 }
 
+// `GetName` is a round trip per action, so only the elements a listing returns are named,
+// not every node the walk reads: with `limit` 1, Odd is read to say the listing is
+// truncated, but only Safe's two actions are asked for.
+#[tokio::test]
+async fn only_the_elements_a_listing_returns_have_their_actions_named() {
+    let windows = [app_window(WINDOW, true)];
+    let objects = unnamed_actions();
+    let mut desk = Desk::start_with("el-get-name-few", &["/frame"], objects, &windows).await;
+    let listing = desk
+        .server
+        .structured_with(
+            "elements",
+            json!({"window_id": WINDOW, "limit": 1, "format": "json"}),
+        )
+        .await;
+    assert_eq!(listing["truncated"], true, "{listing}");
+    assert_eq!(
+        listing["elements"][0]["actions"],
+        json!(["click", "showContextMenu"])
+    );
+    assert_eq!(desk.mock.calls("GetName"), 2);
+}
+
+// Naming the listed elements' actions gets one second after the walk. When it runs out,
+// the listing ends before the element being named, as a walk that runs out does, rather
+// than failing: Safe's two names take 0.7 s, and Odd's doesn't come back in time.
+#[tokio::test]
+async fn a_listing_whose_naming_runs_out_of_time_ends_before_that_element() {
+    let windows = [app_window(WINDOW, true)];
+    let objects = unnamed_actions();
+    let mut desk = Desk::start_with("el-get-name-late", &["/frame"], objects, &windows).await;
+    desk.mock
+        .slow_on("GetName", "/button", Duration::from_millis(350));
+    desk.mock
+        .slow_on("GetName", "/odd", Duration::from_millis(1500));
+    let listing = desk
+        .server
+        .structured_with("elements", json!({"window_id": WINDOW, "format": "json"}))
+        .await;
+    assert_eq!(listing["capped_reason"], "budget_exhausted", "{listing}");
+    assert_eq!(listing["truncated"], true, "{listing}");
+    let names: Vec<&Value> = listing["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|element| &element["name"])
+        .collect();
+    assert_eq!(names, ["Safe"], "{listing}");
+}
+
 // An app that refuses to name one action leaves only that name empty: the element keeps
 // its other actions, and stays among the interactive elements.
 #[tokio::test]
@@ -289,6 +339,37 @@ async fn a_refused_action_name_leaves_the_elements_other_actions() {
     let safe = &listing["elements"][0];
     assert_eq!(safe["name"], "Safe", "{listing}");
     assert_eq!(safe["actions"], json!(["", "showContextMenu"]), "{listing}");
+}
+
+// An action's change report hands out refs to the elements it shows, and those are named
+// as a listing names them, so activating one that Chromium lists unnamed goes out.
+#[tokio::test]
+async fn a_ref_from_a_change_report_has_its_actions_named() {
+    let mut objects = toggling();
+    let note = Object {
+        states: 0,
+        extents: Some((10, 90, 80, 20)),
+        listed: Some(vec![String::new()]),
+        ..Object::button("Note", &["click"])
+    };
+    objects[4].1 = note;
+    let windows = [app_window(WINDOW, true)];
+    let mut desk = Desk::start_with("chg-get-name", &["/frame"], objects, &windows).await;
+    let toggle = desk.element("Toggle").await;
+    let shown = activate_watching(&mut desk, &toggle).await;
+    let added = &shown["changes"]["elements"]["added"][0];
+    assert_eq!(added["name"], "Note", "{shown}");
+    let shown_ref = added["element_ref"].as_str().unwrap().to_owned();
+    let arguments = json!({"element": shown_ref, "expect": {"window_id": WINDOW}});
+    let taken = desk
+        .server
+        .structured_with("activate_element", arguments)
+        .await;
+    assert_eq!(
+        taken["element"]["action"],
+        json!({"kind": "click", "index": 0}),
+        "{taken}"
+    );
 }
 
 #[tokio::test]

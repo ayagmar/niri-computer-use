@@ -170,7 +170,6 @@ pub(crate) fn diff(
     after: &[Seen],
     mut remember: impl FnMut(&Seen) -> Option<String>,
 ) -> Option<Diff> {
-    let earlier: HashMap<Vec<&str>, &Seen> = before.iter().map(|seen| (seen.key(), seen)).collect();
     let later: HashMap<Vec<&str>, &Seen> = after.iter().map(|seen| (seen.key(), seen)).collect();
     let mut kept = 0;
     let mut dropped = 0;
@@ -185,18 +184,18 @@ pub(crate) fn diff(
     };
     let mut added = Vec::new();
     let mut changed = Vec::new();
-    for seen in after {
-        match earlier.get(&seen.key()) {
-            None if room() => added.push(Added {
+    for (_, seen, old) in entries(before, after) {
+        if !room() {
+            continue;
+        }
+        match old {
+            None => added.push(Added {
                 element_ref: remember(seen),
                 role: seen.role(),
                 name: cut(&seen.name),
                 states: seen.states.names(),
             }),
-            Some(old) if differs(old, seen) && room() => {
-                changed.push(change(old, seen, &mut remember));
-            }
-            _ => {}
+            Some(old) => changed.push(change(old, seen, &mut remember)),
         }
     }
     let removed: Vec<Removed> = before
@@ -217,6 +216,32 @@ pub(crate) fn diff(
     };
     let empty = diff.added.is_empty() && diff.removed.is_empty() && diff.changed.is_empty();
     (!empty || diff.truncated > 0).then_some(diff)
+}
+
+/// Where in `after` the elements are that `diff` keeps a ref to, so their refs can be
+/// made ready first.
+pub(crate) fn reported(before: &[Seen], after: &[Seen]) -> Vec<usize> {
+    entries(before, after)
+        .take(ELEMENTS)
+        .map(|(at, _, _)| at)
+        .collect()
+}
+
+/// The elements of `after` added or changed from `before`, in order: where each is in
+/// `after`, and what it was before, if it was there.
+fn entries<'a>(
+    before: &'a [Seen],
+    after: &'a [Seen],
+) -> impl Iterator<Item = (usize, &'a Seen, Option<&'a Seen>)> {
+    let earlier: HashMap<Vec<&str>, &Seen> = before.iter().map(|seen| (seen.key(), seen)).collect();
+    after
+        .iter()
+        .enumerate()
+        .filter_map(move |(at, seen)| match earlier.get(&seen.key()) {
+            None => Some((at, seen, None)),
+            Some(old) if differs(old, seen) => Some((at, seen, Some(*old))),
+            Some(_) => None,
+        })
 }
 
 fn differs(old: &Seen, new: &Seen) -> bool {

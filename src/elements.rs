@@ -5,6 +5,8 @@
 
 pub(crate) mod actions;
 
+use std::time::Duration;
+
 use niri_ipc::Window;
 use serde::Serialize;
 
@@ -63,6 +65,9 @@ pub(crate) struct Listed {
 
 /// States most elements have, which a compact line leaves out; `disabled` stands for a
 /// missing `sensitive`.
+/// How long naming the actions of the elements a listing or a change report returns may
+/// take, after the walk's own budget (`Request::named`).
+const NAMING: Duration = Duration::from_secs(1);
 const USUAL_STATES: [&str; 5] = ["enabled", "focusable", "sensitive", "showing", "visible"];
 
 impl Listing {
@@ -227,6 +232,45 @@ impl Read {
         }
     }
 
+    /// How `elements` lists the object at `at` with its actions named `actions`, keeping
+    /// a ref to it through `remember`.
+    fn listed_element(
+        &self,
+        at: usize,
+        node: &Node,
+        actions: Vec<String>,
+        remember: &mut impl FnMut(ElementRef) -> Option<String>,
+    ) -> Listed {
+        let placement = Placement {
+            states: node.states,
+            extents: node.extents.unwrap_or(Extents {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+            }),
+            frame_fits: self.frame.fits,
+            origin: self.placed.origin.clone(),
+        };
+        let placed_box = model::place(placement);
+        let mut element = self.element(at, node);
+        element.kept.actions.clone_from(&actions);
+        let unbound = match element.kept.row {
+            Row::Unbound(why) => Some(why),
+            Row::Lineage | Row::Own => None,
+        };
+        Listed {
+            element_ref: remember(element),
+            role: model::role_name(node.role),
+            name: node.name.clone(),
+            states: node.states.names(),
+            actions,
+            layout_box: placed_box.ok(),
+            unmappable: placed_box.err(),
+            unbound,
+        }
+    }
+
     /// The objects `filter` lists, with where each sits in the walk.
     fn listed<'a>(&'a self, filter: &'a Filter) -> impl Iterator<Item = (usize, &'a Node)> {
         self.walked
@@ -308,44 +352,34 @@ pub(crate) async fn list(
         .ok_or_else(|| {
             CallError::InvalidArguments(format!("no window with id {}", ask.window_id))
         })?;
+    let naming = a11y.request(NAMING).await?;
     let mut matching = read.listed(&ask.filter);
     let mut elements = Vec::new();
+    let mut cut = false;
     for (at, node) in matching.by_ref().take(ask.limit) {
-        let placement = Placement {
-            states: node.states,
-            extents: node.extents.unwrap_or(Extents {
-                x: 0,
-                y: 0,
-                width: 0,
-                height: 0,
-            }),
-            frame_fits: read.frame.fits,
-            origin: read.placed.origin.clone(),
+        let actions = naming.named((&read.bus, &node.path), node.actions.clone());
+        let actions = match actions.await {
+            Ok(actions) => actions,
+            Err(error) if error.name == ErrorName::DeadlineExceeded && naming.spent() => {
+                cut = true;
+                break;
+            }
+            Err(error) => return Err(error.into()),
         };
-        let placed_box = model::place(placement);
-        let element = read.element(at, node);
-        let unbound = match element.kept.row {
-            Row::Unbound(why) => Some(why),
-            Row::Lineage | Row::Own => None,
-        };
-        elements.push(Listed {
-            element_ref: remember(element),
-            role: model::role_name(node.role),
-            name: node.name.clone(),
-            states: node.states.names(),
-            actions: node.actions.clone(),
-            layout_box: placed_box.ok(),
-            unmappable: placed_box.err(),
-            unbound,
-        });
+        elements.push(read.listed_element(at, node, actions, &mut remember));
     }
+    let capped = if cut {
+        Some(Capped::BudgetExhausted)
+    } else {
+        read.walked.capped
+    };
     Ok(Listing {
         window_id: read.placed.window.id,
-        truncated: matching.next().is_some(),
+        truncated: cut || matching.next().is_some(),
         elements,
         walked: read.walked.nodes.len(),
-        capped: read.walked.capped.is_some(),
-        capped_reason: read.walked.capped,
+        capped: capped.is_some(),
+        capped_reason: capped,
     })
 }
 
@@ -379,6 +413,28 @@ pub(crate) async fn survey(
             states: node.states,
         })
         .collect())
+}
+
+/// Names the actions of the elements of `seen` at `reported`, the refs an action's change
+/// report hands out, as `elements` names those it lists (`Request::named`), within
+/// `NAMING`. When that fails they stay as the walk read them, and an action on
+/// such a ref is refused rather than guessed, since `offered` reads them named.
+pub(crate) async fn name_reported(a11y: &A11y, seen: &mut [Seen], reported: &[usize]) {
+    let Ok(request) = a11y.request(NAMING).await else {
+        return;
+    };
+    let request = request.names_only();
+    for element in seen
+        .iter_mut()
+        .enumerate()
+        .filter(|(at, _)| reported.contains(at))
+        .map(|(_, seen)| &mut seen.element)
+    {
+        let actions = element.kept.actions.clone();
+        if let Ok(named) = request.named(element.at(), actions).await {
+            element.kept.actions = named;
+        }
+    }
 }
 
 /// Whether `elements` lists `node`: showing, matching the filter, and unless a role was
