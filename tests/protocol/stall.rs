@@ -33,7 +33,7 @@ use serde_json::{Value, json};
 use tokio::sync::Semaphore;
 
 use crate::atspi::{self, Bus, Mock, Object, PASSWORD_TEXT};
-use crate::client::{Server, WAIT};
+use crate::client::{Server, WAIT, report};
 use crate::elements::{WINDOW, app_window, objects, workspace};
 use crate::fixture::{Fixture, jpeg};
 use crate::holds::{Passed, Points};
@@ -478,7 +478,7 @@ impl World {
     async fn element(&mut self, name: &str) -> String {
         let listing = self
             .server
-            .structured_with("elements", json!({"window_id": WINDOW}))
+            .structured_with("elements", json!({"window_id": WINDOW, "format": "json"}))
             .await;
         let elements = listing["elements"].as_array().unwrap();
         let element = elements
@@ -787,7 +787,7 @@ fn after_send(case: &Case<'_>, ran: &Ran) -> Result<(), String> {
         Ok(result) => result,
         Err(name) => return refused_partway(case, ran, &name),
     };
-    let outcome = &result["structuredContent"];
+    let outcome = &report(result);
     if case.fact == Fact::FocusMoved && outcome["focused_window"] == WINDOW {
         return Err(format!("reported focus from before the change: {outcome}"));
     }

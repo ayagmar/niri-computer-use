@@ -20,7 +20,7 @@ Many apps describe their widgets to screen readers over the accessibility bus (A
 | `name_contains` | only elements whose name contains this text, ignoring case |
 | `limit` | the most elements to return, 1 to 500; default 50 |
 | `interactive_only` | default true: only elements with an action or editable text. With false, every element with a name or an action, labels included. With `role`, every element of that role either way |
-| `format` | `compact` (default) or `json`: what the result's text is. `structuredContent` always has the full JSON |
+| `format` | `compact` (default) or `json`: what the result's text is. Only `json` adds `structuredContent`, with the same JSON |
 
 Read-only, and needs no lease. It lists showing elements in the app's order: by default those with an action or editable text; with `interactive_only: false`, those with a name or an action; with `role`, every showing element of that role. The walk counts only elements that pass every filter, and stops as soon as it found one more than `limit`, so a narrow `role`, `name_contains` or `limit` also makes it faster. It still looks inside showing elements that don't match, and reads at most 2000 objects however few match. The result:
 

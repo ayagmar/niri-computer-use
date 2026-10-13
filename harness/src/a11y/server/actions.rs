@@ -547,6 +547,7 @@ impl Checks<'_, '_> {
         let mut arguments = serde_json::Map::new();
         arguments.insert("window_id".to_owned(), json!(window));
         arguments.insert("limit".to_owned(), json!(100));
+        arguments.insert("format".to_owned(), json!("json"));
         if let Some(role) = role {
             arguments.insert("role".to_owned(), json!(role));
         }

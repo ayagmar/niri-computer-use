@@ -3,7 +3,7 @@
 
 use serde_json::{Value, json};
 
-use crate::client::{Server, mistake};
+use crate::client::{Server, mistake, report};
 use crate::fixture::{Fixture, jpeg};
 use crate::niri::{Niri, Stream, window_on};
 
@@ -42,10 +42,10 @@ async fn waited(server: &mut Server, stream: &Stream, arguments: Value, events: 
     }
     let result = server.response(id).await["result"].clone();
     assert_eq!(result["isError"], false, "{result}");
-    let mut report = result["structuredContent"].clone();
-    assert!(report["waited_ms"].is_u64(), "{report}");
-    report.as_object_mut().unwrap().remove("waited_ms");
-    report
+    let mut outcome = report(&result);
+    assert!(outcome["waited_ms"].is_u64(), "{outcome}");
+    outcome.as_object_mut().unwrap().remove("waited_ms");
+    outcome
 }
 
 #[tokio::test]
@@ -157,8 +157,8 @@ async fn a_slow_capture_respects_the_screen_wait_budget() {
         )
         .await;
     assert_eq!(result["isError"], false);
-    assert_eq!(result["structuredContent"]["observed"], "timeout");
-    assert_eq!(result["structuredContent"]["screenshot"]["settled"], false);
+    assert_eq!(report(&result)["observed"], "timeout");
+    assert_eq!(report(&result)["screenshot"]["settled"], false);
     assert!(start.elapsed() < std::time::Duration::from_secs(1));
 }
 
@@ -172,12 +172,12 @@ async fn a_still_screen_is_met_with_its_screenshot() {
         )
         .await;
     assert_eq!(result["isError"], false, "{result}");
-    let report = &result["structuredContent"];
-    assert_eq!(report["observed"], "met", "{report}");
-    assert_eq!(report["screenshot"]["settled"], true, "{report}");
+    let outcome = &report(&result);
+    assert_eq!(outcome["observed"], "met", "{outcome}");
+    assert_eq!(outcome["screenshot"]["settled"], true, "{outcome}");
     // Without the lease, the ref is only for zooming.
-    let id = report["screenshot"]["screenshot_ref"].as_str().unwrap();
-    assert!(id.starts_with("shot-"), "{report}");
+    let id = outcome["screenshot"]["screenshot_ref"].as_str().unwrap();
+    assert!(id.starts_with("shot-"), "{outcome}");
     let content = result["content"].as_array().unwrap();
     assert_eq!(content.len(), 2, "{result}");
     assert_eq!(content[1]["type"], "image", "{result}");

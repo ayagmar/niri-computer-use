@@ -4,7 +4,7 @@
 use base64::Engine as _;
 use serde_json::{Value, json};
 
-use crate::client::{Server, mistake, tool_error};
+use crate::client::{Server, mistake, report, tool_error};
 use crate::fixture::{Fixture, jpeg, png};
 use crate::niri::{Niri, output};
 
@@ -21,7 +21,7 @@ fn delivered(result: &Value, image: &[u8], mime: &str) -> Value {
         .unwrap();
     assert_eq!(data, image);
     let text: Value = serde_json::from_str(content[1]["text"].as_str().unwrap()).unwrap();
-    let metadata = result["structuredContent"].clone();
+    let metadata = report(result);
     assert_eq!(text, metadata);
     assert_eq!(metadata["mime_type"], mime);
     metadata
@@ -203,11 +203,7 @@ async fn by_default_a_save_goes_to_a_private_folder_in_pictures() {
         .await;
     let folder = fixture.path("Pictures/niri-computer-use");
     let saved = folder.join("one.png");
-    assert_eq!(
-        result["structuredContent"]["saved"]["path"],
-        json!(saved),
-        "{result}"
-    );
+    assert_eq!(report(&result)["saved"]["path"], json!(saved), "{result}");
     assert_eq!(std::fs::read(&saved).unwrap(), full);
     let mode = std::fs::metadata(&folder).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o700);
@@ -233,7 +229,7 @@ async fn an_empty_capture_dir_turns_saving_off_and_captures_nothing() {
         )
         .await;
     assert_eq!(result["isError"], true, "{result}");
-    assert_eq!(result["structuredContent"]["error"], "save_not_enabled");
+    assert_eq!(report(&result)["error"], "save_not_enabled");
     assert_eq!(grim_calls(&fixture), Vec::<String>::new());
     assert!(!fixture.path("Pictures").exists());
 }
@@ -369,10 +365,7 @@ async fn a_zoom_captures_a_region_of_an_earlier_screenshot_at_full_resolution() 
         "region": {"x": 1270, "y": 0, "width": 64, "height": 32},
     });
     let refused = server.call("screenshot", outside).await;
-    assert_eq!(
-        refused["structuredContent"]["error"], "ref_invalid",
-        "{refused}"
-    );
+    assert_eq!(report(&refused)["error"], "ref_invalid", "{refused}");
     // A ref with another target would be ignored, so it is a mistake instead.
     let whole_again = json!({"target": "focused_output", "screenshot_ref": first});
     let message = mistake(&server.call("screenshot", whole_again).await);
@@ -407,7 +400,7 @@ async fn screenshot_ref(server: &mut Server, target: &str) -> String {
     server.structured("desktop_state").await;
     let whole = server.call("screenshot", json!({"target": target})).await;
     assert_eq!(whole["isError"], false, "{whole}");
-    whole["structuredContent"]["screenshot_ref"]
+    report(&whole)["screenshot_ref"]
         .as_str()
         .unwrap()
         .to_owned()

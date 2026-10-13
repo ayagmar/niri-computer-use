@@ -12,7 +12,7 @@ use tokio::net::UnixStream;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::process::Child;
 
-use crate::client::{CLIENT, WAIT, engine};
+use crate::client::{CLIENT, WAIT, engine, report};
 use crate::fixture::{DISPLAY, Fixture, eventually};
 use crate::framing;
 
@@ -116,7 +116,7 @@ impl Connection {
 
     async fn status(&mut self, id: u64) -> Value {
         let params = json!({"name": "status", "arguments": {}});
-        self.request(id, "tools/call", params).await["result"]["structuredContent"].clone()
+        report(&self.request(id, "tools/call", params).await["result"])
     }
 }
 

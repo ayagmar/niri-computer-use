@@ -38,7 +38,7 @@ The reading tools carry MCP's `readOnlyHint`, and `close_window`, `niri_action`,
 
 ## Results
 
-A successful call returns its data as `structuredContent` and the same JSON as text, except `elements`, whose text is one line per element by default; with `format: "json"` its text is the JSON too. `screenshot` returns an image block first.
+A successful call returns its data as JSON text, and the same JSON as `structuredContent` unless the result has an image or is `elements`' compact listing. Claude Code and Codex show the model a result's `structuredContent` in place of its text, and Codex drops its images too, so those results go without it. `elements`' text is one line per element by default; `format: "json"` gives the JSON as text and as `structuredContent`. `screenshot` returns an image block first, and an action with `screenshot: true` returns one after its text.
 
 Actions report what happened in two fields:
 

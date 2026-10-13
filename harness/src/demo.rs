@@ -311,7 +311,7 @@ impl<'s, 'a> Director<'s, 'a> {
         let (result, _) = self.client.timed_call(tool, arguments.clone())?;
         let end = now()?;
         let error = field(&result, "/isError") == true;
-        let content = field(&result, "/structuredContent").clone();
+        let content = mcp::report(&result);
         self.write(&json!({
             "start_ns": start, "end_ns": end, "tool": tool, "arguments": arguments,
             "is_error": error, "result": content,

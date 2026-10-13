@@ -172,20 +172,12 @@ impl Server {
         self.structured_with(tool, json!({})).await
     }
 
-    /// A successful tool's structured content, called with `arguments`. Its text is the
-    /// same JSON, except for `elements`' compact lines.
+    /// A successful tool's JSON, called with `arguments`. `elements` gives it only with
+    /// `format: "json"`.
     pub(crate) async fn structured_with(&mut self, tool: &str, arguments: Value) -> Value {
-        let compact = tool == "elements" && arguments["format"] != "json";
         let result = self.call(tool, arguments).await;
         assert_eq!(result["isError"], false, "{tool}: {result}");
-        let text = result["content"][0]["text"].as_str().unwrap();
-        if compact {
-            assert!(text.starts_with("window "), "{text}");
-        } else {
-            let text: Value = serde_json::from_str(text).unwrap();
-            assert_eq!(text, result["structuredContent"], "{tool}");
-        }
-        result["structuredContent"].clone()
+        report(&result)
     }
 
     pub(crate) async fn tools(&mut self) -> Vec<Value> {
@@ -369,6 +361,27 @@ fn json_rpc(line: &str) -> Value {
         .unwrap_or_else(|error| panic!("stdout line isn't JSON ({error}): {line}"));
     assert_eq!(message["jsonrpc"], "2.0", "not JSON-RPC 2.0: {line}");
     message
+}
+
+/// A result's JSON, read from its one text block, after checking that it has the same JSON
+/// as `structuredContent` exactly when it has no image: Claude Code and Codex show the
+/// model `structuredContent` in place of the text, and Codex drops the images too.
+pub(crate) fn report(result: &Value) -> Value {
+    let content = result["content"].as_array().unwrap();
+    let texts: Vec<&str> = content
+        .iter()
+        .filter_map(|block| block["text"].as_str())
+        .collect();
+    let [text] = texts.as_slice() else {
+        panic!("expected one text block: {result}");
+    };
+    let text: Value = serde_json::from_str(text).unwrap();
+    if content.iter().any(|block| block["type"] == "image") {
+        assert_eq!(result.get("structuredContent"), None, "{result}");
+    } else {
+        assert_eq!(result["structuredContent"], text, "{result}");
+    }
+    text
 }
 
 /// A tool error's stable name and detail, checking that the text content repeats the

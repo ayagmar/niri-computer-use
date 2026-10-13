@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use crate::atspi::{self, Bus, LIST_ITEM, Mock, Object, PANEL, PASSWORD_TEXT, SHOWING, TEXT};
-use crate::client::{Server, mistake, tool_error};
+use crate::client::{Server, mistake, report, tool_error};
 use crate::clipboard::Pointed;
 use crate::fixture::{Fixture, jpeg};
 use crate::niri::{Niri, Stream, window_on};
@@ -116,7 +116,7 @@ impl Desk {
             .server
             .call("screenshot", json!({"target": "focused_output"}))
             .await;
-        let id = &shot["structuredContent"]["screenshot_ref"];
+        let id = &report(&shot)["screenshot_ref"];
         id.as_str().unwrap_or_else(|| panic!("{shot}")).to_owned()
     }
 
@@ -124,7 +124,7 @@ impl Desk {
     async fn element(&mut self, name: &str) -> String {
         let listing = self
             .server
-            .structured_with("elements", json!({"window_id": WINDOW}))
+            .structured_with("elements", json!({"window_id": WINDOW, "format": "json"}))
             .await;
         let elements = listing["elements"].as_array().unwrap();
         let element = elements
@@ -193,15 +193,15 @@ async fn elements_gives_one_line_per_interactive_element_unless_asked_for_more()
         .server
         .call("elements", json!({"window_id": WINDOW}))
         .await;
+    // Claude Code shows `structuredContent` in place of the text, so the lines go alone.
+    assert_eq!(listed.get("structuredContent"), None, "{listed}");
     let text = listed["content"][0]["text"].as_str().unwrap();
     let lines: Vec<&str> = text.lines().collect();
     assert!(lines[0].starts_with("window 1: 4 elements, "), "{text}");
     assert_eq!(lines.len(), 5, "{text}");
-    let element_refs = &listed["structuredContent"]["elements"];
-    let safe = element_refs[0]["element_ref"].as_str().unwrap();
-    assert_eq!(
-        lines[1],
-        format!("{safe} button \"Safe\" [] (\"click\") unmappable:tiled"),
+    assert!(lines[1].starts_with("elem-"), "{text}");
+    assert!(
+        lines[1].ends_with(" button \"Safe\" [] (\"click\") unmappable:tiled"),
         "{text}"
     );
     assert!(
@@ -242,7 +242,11 @@ async fn an_apps_action_names_stay_on_their_elements_line_and_can_be_named_as_gi
         .call("elements", json!({"window_id": WINDOW}))
         .await;
     let text = listed["content"][0]["text"].as_str().unwrap();
-    let elements = listed["structuredContent"]["elements"].as_array().unwrap();
+    let listing = desk
+        .server
+        .structured_with("elements", json!({"window_id": WINDOW, "format": "json"}))
+        .await;
+    let elements = listing["elements"].as_array().unwrap();
     let lines: Vec<&str> = text.split(['\n', '\r']).collect();
     assert_eq!(lines.len(), 1 + elements.len(), "{text}");
     let quoted: Vec<String> = actions.iter().map(|action| format!("{action:?}")).collect();
@@ -253,7 +257,7 @@ async fn an_apps_action_names_stay_on_their_elements_line_and_can_be_named_as_gi
         "{text}"
     );
 
-    // The action is named by its value, as `structuredContent` gives it.
+    // The action is named by its value, as the JSON listing gives it.
     let button = elements[0]["element_ref"].as_str().unwrap();
     assert_eq!(elements[0]["actions"][0], FORGED);
     let named = json!({"element": button, "action": FORGED, "expect": {"window_id": WINDOW}});
@@ -297,9 +301,9 @@ async fn the_apps_error_messages_reach_neither_the_result_nor_the_audit_log() {
     desk.mock.fail("GetState", &message);
     held.release();
     results.push(desk.server.response(id).await["result"].clone());
-    let unknown = &results[5]["structuredContent"];
+    let unknown = &report(&results[5]);
     assert_eq!(unknown["observed"], "unknown", "{unknown}");
-    assert_eq!(results[4]["structuredContent"]["observed"], "unknown");
+    assert_eq!(report(&results[4])["observed"], "unknown");
     for result in &results {
         assert!(!result.to_string().contains(SENTINEL), "{result}");
     }
@@ -357,7 +361,7 @@ async fn an_apps_own_error_names_reach_neither_the_result_nor_the_audit_log() {
     desk.mock.fail_named("GetState", "/button", NAMED);
     acting.release();
     let after = desk.server.response(id).await["result"].clone();
-    assert_eq!(after["structuredContent"]["observed"], "unknown", "{after}");
+    assert_eq!(report(&after)["observed"], "unknown", "{after}");
     results.push(after);
     desk.mock.fail_named("GetRole", "/button", NAMED);
     let aimed = json!({"screenshot_ref": shot, "element": button});
@@ -419,7 +423,7 @@ async fn an_apps_action_names_reach_neither_errors_nor_the_audit_log() {
 /// screenshot, and the audit log saying the same.
 fn assert_uncertain(desk: &Desk, tool: &str, result: &Value) {
     assert_eq!(result["isError"], false, "{result}");
-    let outcome = &result["structuredContent"];
+    let outcome = &report(result);
     assert_eq!(outcome["accepted"], Value::Null, "{outcome}");
     assert_eq!(outcome["observed"], "uncertain", "{outcome}");
     assert!(
@@ -520,7 +524,7 @@ async fn another_object_at_a_listed_elements_path_is_stale() {
     });
     let arguments = json!({"element": button, "expect": {"window_id": WINDOW}});
     let result = desk.server.call("activate_element", arguments).await;
-    assert_eq!(result["structuredContent"]["accepted"], true, "{result}");
+    assert_eq!(report(&result)["accepted"], true, "{result}");
 }
 
 /// Calls `held`'s tool on `element` and checks it is refused with `element_stale` and
@@ -600,7 +604,7 @@ async fn a_counter_relabelled_by_its_activation_is_stale_for_the_next_one() {
         .server
         .call("activate_element", ACTIVATE.arguments(&counter))
         .await;
-    assert_eq!(result["structuredContent"]["accepted"], true, "{result}");
+    assert_eq!(report(&result)["accepted"], true, "{result}");
     assert_eq!(desk.mock.object("/counter").name, "Count: 1");
     let aimed = json!({"screenshot_ref": shot, "element": counter});
     let moved = desk.server.call("pointer_move", aimed).await;
@@ -615,7 +619,7 @@ async fn a_counter_relabelled_by_its_activation_is_stale_for_the_next_one() {
         .server
         .call("activate_element", ACTIVATE.arguments(&relisted))
         .await;
-    assert_eq!(again["structuredContent"]["accepted"], true, "{again}");
+    assert_eq!(report(&again)["accepted"], true, "{again}");
     assert_eq!(desk.mock.calls("DoAction"), 2);
 }
 
@@ -639,7 +643,7 @@ async fn an_object_reused_while_its_call_was_out_is_stale_afterwards() {
         });
         acting.release();
         let first = desk.server.response(id).await["result"].clone();
-        assert_eq!(first["structuredContent"]["accepted"], true, "{first}");
+        assert_eq!(report(&first)["accepted"], true, "{first}");
         stale(&mut desk, held, &element).await;
         assert_eq!(desk.mock.calls(held.acts), 1);
     }
@@ -744,7 +748,7 @@ async fn list_desk(name: &str, objects: Vec<(&'static str, Object)>) -> Desk {
 async fn named(desk: &mut Desk, name: &str) -> Vec<Value> {
     let listing = desk
         .server
-        .structured_with("elements", json!({"window_id": WINDOW}))
+        .structured_with("elements", json!({"window_id": WINDOW, "format": "json"}))
         .await;
     listing["elements"]
         .as_array()
@@ -803,7 +807,7 @@ async fn a_named_row_reused_for_another_record_is_stale_for_every_tool_even_alon
         assert_eq!(tool_error(&moved).0, "element_stale", "{moved}");
         if let Some(other) = deletes.get(1) {
             let result = activate(&mut desk, other).await;
-            assert_eq!(result["structuredContent"]["accepted"], true, "{result}");
+            assert_eq!(report(&result)["accepted"], true, "{result}");
             assert_eq!(desk.mock.calls("DoAction"), 1);
         }
     }
@@ -936,7 +940,7 @@ async fn named_rows_of_different_shapes_and_changing_labels_keep_their_refs() {
     });
     for delete in &deletes {
         let result = activate(&mut desk, delete).await;
-        assert_eq!(result["structuredContent"]["accepted"], true, "{result}");
+        assert_eq!(report(&result)["accepted"], true, "{result}");
     }
     assert_eq!(desk.mock.calls("DoAction"), 2);
 }
@@ -960,7 +964,10 @@ fn long_rows(rows: Rows) -> Vec<(&'static str, Object)> {
 async fn first_listed(desk: &mut Desk) -> Value {
     let listing = desk
         .server
-        .structured_with("elements", json!({"window_id": WINDOW, "limit": 1}))
+        .structured_with(
+            "elements",
+            json!({"window_id": WINDOW, "limit": 1, "format": "json"}),
+        )
         .await;
     assert_eq!(listing["truncated"], true, "{listing}");
     listing["elements"][0].clone()
@@ -997,7 +1004,7 @@ async fn a_control_outside_rows_whose_look_alike_elements_went_unread_keeps_its_
     assert!(delete.get("unbound").is_none(), "{delete}");
     reuse_first_row(&desk, Rows::Panels);
     let result = activate(&mut desk, delete["element_ref"].as_str().unwrap()).await;
-    assert_eq!(result["structuredContent"]["accepted"], true, "{result}");
+    assert_eq!(report(&result)["accepted"], true, "{result}");
 }
 
 // A control whose role and name tell it apart from everything beside it keeps its ref
@@ -1022,7 +1029,7 @@ async fn a_control_unlike_its_neighbours_keeps_its_ref_while_they_change() {
         .server
         .call("activate_element", ACTIVATE.arguments(&button))
         .await;
-    assert_eq!(result["structuredContent"]["accepted"], true, "{result}");
+    assert_eq!(report(&result)["accepted"], true, "{result}");
 }
 
 #[tokio::test]
@@ -1035,7 +1042,7 @@ async fn an_element_moved_to_another_window_of_its_app_is_stale() {
     // The other window's elements are refused while it isn't focused.
     let listing = desk
         .server
-        .structured_with("elements", json!({"window_id": 3}))
+        .structured_with("elements", json!({"window_id": 3, "format": "json"}))
         .await;
     let moved = listing["elements"][0]["element_ref"]
         .as_str()
@@ -1069,7 +1076,7 @@ async fn a_frame_of_the_right_size_with_another_windows_title_is_never_taken() {
     assert_eq!(tool_error(&refused).0, "ambiguous_window", "{refused}");
     let listing = desk
         .server
-        .structured_with("elements", json!({"window_id": 3}))
+        .structured_with("elements", json!({"window_id": 3, "format": "json"}))
         .await;
     let other = listing["elements"][0]["element_ref"]
         .as_str()
@@ -1108,7 +1115,7 @@ async fn a_frame_another_window_of_the_app_could_be_is_never_taken() {
         .await;
         let listing = desk
             .server
-            .structured_with("elements", json!({"window_id": WINDOW}))
+            .structured_with("elements", json!({"window_id": WINDOW, "format": "json"}))
             .await;
         let other = listing["elements"][0]["element_ref"]
             .as_str()
@@ -1400,7 +1407,7 @@ async fn a_change_inside_the_last_gate_can_be_missed() {
         let result = desk
             .swapped(held, &element, Swap::Renamed, Duration::ZERO)
             .await;
-        assert_eq!(result["structuredContent"]["accepted"], true, "{result}");
+        assert_eq!(report(&result)["accepted"], true, "{result}");
         assert_eq!(desk.mock.calls(held.acts), 1);
     }
 }
@@ -1583,7 +1590,7 @@ async fn an_action_list_changed_before_the_last_gate_never_sends_another_action(
         if sent.is_empty() {
             assert_eq!(tool_error(&result).0, "element_stale", "{result}");
         } else {
-            let outcome = &result["structuredContent"];
+            let outcome = &report(&result);
             assert_eq!(outcome["accepted"], true, "{result}");
             assert_eq!(
                 outcome["element"]["action"],
@@ -1627,7 +1634,7 @@ async fn a_stop_or_lost_lease_after_the_call_went_out_leaves_it_uncertain() {
             acting.release();
             assert_eq!(result["isError"], false, "{result}");
             assert_eq!(result["content"].as_array().unwrap().len(), 1, "{result}");
-            let outcome = &result["structuredContent"];
+            let outcome = &report(&result);
             assert_eq!(outcome["accepted"], Value::Null, "{outcome}");
             assert_eq!(outcome["observed"], "uncertain", "{outcome}");
             let detail = outcome["detail"].as_str().unwrap();
@@ -1657,7 +1664,7 @@ async fn focus_that_moved_while_the_text_went_out_is_reported_as_it_is_afterward
     desk.make(Change::FocusMoved, "/entry").await;
     acting.release();
     let result = desk.server.response(id).await["result"].clone();
-    let outcome = &result["structuredContent"];
+    let outcome = &report(&result);
     assert_eq!(outcome["observed"], "matched", "{outcome}");
     assert_eq!(outcome["focus"], "matched", "{outcome}");
     assert_eq!(outcome["focused_window"], Value::Null, "{outcome}");
@@ -1680,7 +1687,7 @@ async fn a_stream_lost_while_the_call_was_out_leaves_focus_unknown() {
         desk.lose_stream().await;
         acting.release();
         let result = desk.server.response(id).await["result"].clone();
-        let outcome = &result["structuredContent"];
+        let outcome = &report(&result);
         assert_eq!(outcome["accepted"], true, "{outcome}");
         assert_eq!(outcome["observed"], "uncertain", "{outcome}");
         assert_eq!(outcome["focused_window"], Value::Null, "{outcome}");
@@ -1718,7 +1725,7 @@ async fn a_lost_reply_reports_focus_as_it_is_after_the_look() {
         }
         let result = desk.server.response(id).await["result"].clone();
         acting.release();
-        let outcome = &result["structuredContent"];
+        let outcome = &report(&result);
         assert_eq!(outcome["accepted"], Value::Null, "{outcome}");
         assert_eq!(outcome["observed"], "uncertain", "{outcome}");
         assert_eq!(outcome["focused_window"], Value::Null, "{outcome}");
@@ -1755,7 +1762,7 @@ async fn a_stop_or_lost_lease_after_the_app_answered_keeps_what_it_answered() {
             desk.make(change, path).await;
             let result = desk.server.response(id).await["result"].clone();
             looking.release();
-            let outcome = &result["structuredContent"];
+            let outcome = &report(&result);
             assert_eq!(outcome["accepted"], true, "{outcome}");
             assert_eq!(outcome["observed"], "uncertain", "{outcome}");
             assert_eq!(outcome["focus"], "matched", "{outcome}");
@@ -1878,7 +1885,7 @@ async fn a_button_that_opens_a_dialog_reports_the_window_and_the_focus_it_took()
     desk.stream.send(&json!({"WindowFocusChanged": {"id": 5}}));
     acting.release();
     let result = desk.server.response(id).await["result"].clone();
-    let outcome = &result["structuredContent"];
+    let outcome = &report(&result);
     assert_eq!(outcome["observed"], "present", "{outcome}");
     assert_eq!(
         outcome["changes"],
@@ -1911,7 +1918,7 @@ async fn a_walk_that_fails_after_the_action_leaves_the_elements_unknown_not_the_
         .slow_on("GetChildren", "/panel", Duration::from_millis(1500));
     acting.release();
     let result = desk.server.response(id).await["result"].clone();
-    let outcome = &result["structuredContent"];
+    let outcome = &report(&result);
     assert_eq!(outcome["accepted"], true, "{outcome}");
     assert_eq!(outcome["observed"], "present", "{outcome}");
     let elements = &outcome["changes"]["elements"];
@@ -1945,7 +1952,7 @@ async fn a_failed_walk_after_the_action_never_returns_the_apps_error_message() {
     desk.mock.fail("GetChildren", SENTINEL);
     acting.release();
     let response = desk.server.response(id).await;
-    let outcome = &response["result"]["structuredContent"];
+    let outcome = &report(&response["result"]);
     assert_eq!(outcome["observed"], "present", "{outcome}");
     assert_eq!(
         outcome["changes"]["elements"]["unknown"], "upstream_error",
@@ -2090,7 +2097,7 @@ async fn safe(desk: &mut Desk) -> Value {
         .server
         .structured_with(
             "elements",
-            json!({"window_id": WINDOW, "name_contains": "Safe"}),
+            json!({"window_id": WINDOW, "name_contains": "Safe", "format": "json"}),
         )
         .await;
     listing["elements"][0].clone()
@@ -2217,7 +2224,7 @@ async fn a_tiled_windows_listing_and_its_refs_give_the_same_reason() {
         let mut desk = Desk::start_with(&test, &["/frame"], objects, &windows).await;
         let listing = desk
             .server
-            .structured_with("elements", json!({"window_id": WINDOW}))
+            .structured_with("elements", json!({"window_id": WINDOW, "format": "json"}))
             .await;
         let shot = desk.screenshot_ref().await;
         for (name, reason) in [("Safe", safe), ("Faded", "not_showing"), ("Flat", "empty")] {
@@ -2668,7 +2675,7 @@ async fn a_stop_or_lost_lease_after_the_pointer_sent_leaves_it_uncertain() {
             let result = desk.server.response(id).await["result"].clone();
             held.release();
             assert_eq!(result["isError"], false, "{tag}: {result}");
-            let outcome = &result["structuredContent"];
+            let outcome = &report(&result);
             assert_eq!(outcome["observed"], "uncertain", "{tag}: {outcome}");
             let detail = outcome["detail"].as_str().unwrap();
             assert!(detail.contains(why), "{tag}: {detail}");
@@ -2727,7 +2734,7 @@ async fn drag_moved_at_sync(
 /// gesture stopped.
 fn stopped_midway(result: &Value, why: &str, tag: &str) {
     assert_eq!(result["isError"], false, "{tag}: {result}");
-    let outcome = &result["structuredContent"];
+    let outcome = &report(result);
     assert_eq!(outcome["observed"], "uncertain", "{tag}: {outcome}");
     let detail = outcome["detail"].as_str().unwrap();
     assert!(detail.starts_with(why), "{tag}: {detail}");
@@ -2784,10 +2791,7 @@ async fn a_held_drag_stops_on_a_workspace_switch_but_not_on_a_window_moving() {
     let layout = json!({"WindowLayoutsChanged": {"changes": [[WINDOW, moved["layout"]]]}});
     let (dragged, all) = drag_moved_at_sync("el-held-layout", ButtonEnd::Start, 4, &layout).await;
     assert_eq!(dragged["isError"], false, "{dragged}");
-    assert_eq!(
-        dragged["structuredContent"]["observed"], "sent",
-        "{dragged}"
-    );
+    assert_eq!(report(&dragged)["observed"], "sent", "{dragged}");
     // The start, the press, ten steps and the release.
     assert_eq!(all.len(), 13, "{all:?}");
 }

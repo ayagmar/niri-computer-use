@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use niri_ipc::{Action, WorkspaceReferenceArg};
 use serde_json::{Value, json};
 
-use crate::client::{Server, mistake, run, tool_error};
+use crate::client::{Server, mistake, report, run, tool_error};
 use crate::fixture::{DISPLAY, Fixture, jpeg, shared_mode};
 use crate::niri::{Niri, Stream, output, window_on};
 use crate::noctalia::{self, LOCKED, UNLOCKED};
@@ -126,7 +126,7 @@ app_id = "foot"
 /// screenshot's metadata is left out of what it returns.
 fn outcome(result: &Value) -> Value {
     assert_eq!(result["isError"], false, "{result}");
-    let mut outcome = result["structuredContent"].clone();
+    let mut outcome = report(result);
     let content = result["content"].as_array().unwrap();
     let doubt = ["timeout", "pending", "none", "interrupted", "uncertain"];
     if doubt.contains(&outcome["observed"].as_str().unwrap()) {
@@ -324,7 +324,7 @@ async fn focus_without_its_event_times_out() {
 async fn screenshots_under_the_lease_are_refs_of_that_lease() {
     let mut desk = Desk::start("act-refs", "").await;
     let shot = json!({"target": "focused_output"});
-    let screenshot_ref = |result: Value| result["structuredContent"]["screenshot_ref"].clone();
+    let screenshot_ref = |result: Value| report(&result)["screenshot_ref"].clone();
     let first = screenshot_ref(desk.server.call("screenshot", shot.clone()).await);
     // `shot-<the server's tag>-<number>`.
     let tag = first
@@ -334,7 +334,7 @@ async fn screenshots_under_the_lease_are_refs_of_that_lease() {
         .to_owned();
     let evidence = desk.act("focus", json!({"window_id": 2}), |_, _| {}).await;
     assert_eq!(
-        evidence["structuredContent"]["screenshot"]["screenshot_ref"],
+        report(&evidence)["screenshot"]["screenshot_ref"],
         format!("shot-{tag}-2")
     );
     desk.server
@@ -375,7 +375,7 @@ async fn a_failed_capture_keeps_the_outcome_and_says_why() {
     let result = desk.act("focus", json!({"window_id": 2}), |_, _| {}).await;
     assert_eq!(result["isError"], false, "{result}");
     assert_eq!(result["content"].as_array().unwrap().len(), 1, "{result}");
-    let outcome = &result["structuredContent"];
+    let outcome = &report(&result);
     assert_eq!(outcome["observed"], "timeout");
     assert_eq!(outcome["screenshot_error"]["error"], "upstream_error");
     let detail = outcome["screenshot_error"]["detail"].as_str().unwrap();
@@ -686,7 +686,7 @@ async fn cut_after_sending(desk: &mut Desk, cut: Cut, answered: bool) -> Value {
     let result = desk.server.response(id).await["result"].clone();
     assert_eq!(result["isError"], false, "{cut:?}: {result}");
     assert_eq!(result["content"].as_array().unwrap().len(), 1, "{result}");
-    let outcome = result["structuredContent"].clone();
+    let outcome = report(&result);
     assert_eq!(outcome["observed"], "uncertain", "{outcome}");
     let detail = outcome["detail"].as_str().unwrap();
     assert!(detail.contains(cut.reported().1), "{detail}");
@@ -766,7 +766,7 @@ async fn a_stop_ends_the_owners_queued_actions_and_frees_the_lease_within_a_seco
     assert!(run(&desk.fixture, "stop").await.status.success());
     // The running key went out to wtype, so it may have been typed.
     let running = desk.server.response(calls[0]).await;
-    let cut = &running["result"]["structuredContent"];
+    let cut = &report(&running["result"]);
     assert_eq!(cut["observed"], "uncertain", "{running}");
     assert_eq!(cut["accepted"], Value::Null, "{running}");
     assert!(
@@ -817,10 +817,7 @@ async fn screenshot_ref(desk: &mut Desk) -> String {
         .server
         .call("screenshot", json!({"target": "focused_output"}))
         .await;
-    shot["structuredContent"]["screenshot_ref"]
-        .as_str()
-        .unwrap()
-        .to_owned()
+    report(&shot)["screenshot_ref"].as_str().unwrap().to_owned()
 }
 
 #[tokio::test]
@@ -1491,7 +1488,7 @@ async fn a_submit_whose_wtype_fails_after_reading_it_may_have_gone_out() {
     let (name, detail) = tool_error(&failed);
     assert_eq!(name, "upstream_error");
     assert!(detail.starts_with(may_have), "{detail}");
-    assert_eq!(failed["structuredContent"]["may_have_sent"], true);
+    assert_eq!(report(&failed)["may_have_sent"], true);
     assert!(detail.contains("lost the display"), "{detail}");
     assert_eq!(wtype_calls(&desk.fixture), ["-", "-", "- -k Return"]);
 
@@ -1516,7 +1513,7 @@ async fn a_first_stroke_that_fails_after_wtype_read_it_may_have_gone_out() {
     let elsewhere = json!({"keys": ["Return"], "expect": {"window_id": 2}});
     let refused = desk.server.call("key", elsewhere).await;
     assert_eq!(tool_error(&refused).0, "focus_mismatch");
-    assert_eq!(refused["structuredContent"].get("may_have_sent"), None);
+    assert_eq!(report(&refused).get("may_have_sent"), None);
 
     let keys = json!({"keys": ["Return"], "expect": {"window_id": 1}});
     let key = desk.server.call("key", keys).await;
@@ -1526,7 +1523,7 @@ async fn a_first_stroke_that_fails_after_wtype_read_it_may_have_gone_out() {
         detail.starts_with("pressed 0 of 1 keys, and more may have gone out; then "),
         "{detail}"
     );
-    assert_eq!(key["structuredContent"]["may_have_sent"], true);
+    assert_eq!(report(&key)["may_have_sent"], true);
 
     let message = json!({"text": "hi", "expect": {"window_id": 1}, "submit": true});
     let typed = desk.server.call("type_text", message).await;
@@ -1538,7 +1535,7 @@ async fn a_first_stroke_that_fails_after_wtype_read_it_may_have_gone_out() {
         ),
         "{typed_detail}"
     );
-    assert_eq!(typed["structuredContent"]["may_have_sent"], true);
+    assert_eq!(report(&typed)["may_have_sent"], true);
     assert_eq!(wtype_calls(&desk.fixture), ["- -k Return", "-"]);
 
     let audited: Vec<Value> = desk
@@ -1779,7 +1776,7 @@ async fn unsettled_read_only_waits_allow_actions_and_release_between_captures() 
         )
         .await
         .expect("visual settlement blocked release");
-        assert_eq!(released["structuredContent"]["released"], true);
+        assert_eq!(report(&released)["released"], true);
         assert!(
             !desk.server.answered().contains(&waiting),
             "the wait ended before action/release completed"
@@ -2035,11 +2032,8 @@ async fn an_action_asked_for_a_screenshot_returns_the_screen_once_it_stopped_cha
         let content = result["content"].as_array().unwrap();
         assert_eq!(content.len(), 2, "{result}");
         assert_eq!(content[1]["type"], "image", "{result}");
-        assert_eq!(
-            result["structuredContent"]["observed"], "focused",
-            "{result}"
-        );
-        result["structuredContent"]["screenshot"]["settled"].clone()
+        assert_eq!(report(result)["observed"], "focused", "{result}");
+        report(result)["screenshot"]["settled"].clone()
     };
     let still = desk
         .act(
@@ -2070,6 +2064,14 @@ async fn an_action_asked_for_a_screenshot_returns_the_screen_once_it_stopped_cha
     assert_eq!(shown(&moving), false);
     let waited = started.elapsed();
     assert!((1500..4000).contains(&waited.as_millis()), "{waited:?}");
+    // The audit log reads the outcome before the client's result loses its structure.
+    assert_eq!(
+        desk.audited(),
+        [
+            json!(["focus", {"window_id": 2, "screenshot": true}, true, "focused", null]),
+            json!(["focus", {"window_id": 1, "screenshot": true}, true, "focused", null]),
+        ]
+    );
 }
 
 #[tokio::test]
@@ -2099,7 +2101,7 @@ async fn release_desktop_can_give_focus_back_to_the_users_window() {
         })
         .await;
     assert_eq!(
-        restored["structuredContent"],
+        report(&restored),
         json!({
             "users_window": 1, "released": true,
             "restored": {"accepted": true, "observed": "focused", "focused_window": 1, "windows": [1]}

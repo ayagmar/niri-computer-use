@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use crate::client::{CLIENT, Server, WAIT, run, tool_error};
+use crate::client::{CLIENT, Server, WAIT, report, run, tool_error};
 use crate::fixture::{Fixture, eventually, exited, kill, shared_mode};
 use crate::guard::guardian;
 use crate::niri::{Niri, window_on};
@@ -366,7 +366,7 @@ async fn a_prompt_waiting_for_the_user_shows_a_pending_holder_and_holds_no_one_u
 
     std::fs::write(fixture.path("answer.new"), "allow\n").unwrap();
     std::fs::rename(fixture.path("answer.new"), fixture.path("answer")).unwrap();
-    let held = asking.response(acquire).await["result"]["structuredContent"].clone();
+    let held = report(&asking.response(acquire).await["result"]);
     assert_eq!(held["holder"]["label"], pending["label"], "{held}");
     assert_eq!(held["holder"].get("pending"), None, "{held}");
     assert_eq!(

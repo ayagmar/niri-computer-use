@@ -21,7 +21,7 @@ use super::{Checks, element_ref, expect};
 use crate::a11y::{Bus, Fixture, rows};
 use crate::changes::lists;
 use crate::failure::{Context as _, Failure, Result};
-use crate::mcp::field;
+use crate::mcp::{self, field};
 use crate::session::Session;
 
 /// How long a refused activation has to delete something anyway.
@@ -250,7 +250,7 @@ impl Checks<'_, '_> {
             "activate_element",
             activation(&row.element, shown.window),
         )?;
-        let result = field(&result, "/structuredContent").clone();
+        let result = mcp::report(&result);
         let refused = field(&result, "/error");
         expect(
             row.unbound.is_none() || unbound(&result),

@@ -15,7 +15,7 @@ use super::{WAIT, Wev, stop};
 use crate::failure::{Context as _, Failure, Result};
 use crate::keyboard::{self, CORPUS};
 use crate::keymaps;
-use crate::mcp::{Client, field, structured};
+use crate::mcp::{self, Client, field, structured};
 use crate::runner::Process;
 use crate::session::{Session, pause};
 use crate::wev::keyboard::trace;
@@ -351,7 +351,9 @@ fn cancelled(
         left_before_next(session, client, wev, (offset, target))?;
         match client.replied(id)? {
             None => break,
-            Some(reply) if field(&reply, "/result/structuredContent/observed") == "interrupted" => {
+            Some(reply)
+                if field(&mcp::report(field(&reply, "/result")), "/observed") == "interrupted" =>
+            {
                 ended += 1;
             }
             Some(reply) => {

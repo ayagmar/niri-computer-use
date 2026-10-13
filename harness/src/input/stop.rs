@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use super::{Shot, WAIT, Wev};
 use crate::failure::{Context as _, Failure, Result};
 use crate::keyboard;
-use crate::mcp::{Client, field, structured};
+use crate::mcp::{self, Client, field, structured};
 use crate::session::Session;
 use crate::wev::{self, Pointer};
 
@@ -91,8 +91,9 @@ fn released_and_clear(session: &mut Session<'_>, wev: &Wev<'_>, offset: usize) -
 /// Whether a stop cut the typing or pointer call `result` short once its input went out:
 /// `uncertain`, with the stop in `detail`.
 pub(super) fn cut_by_stop(result: &Value) -> bool {
-    field(result, "/structuredContent/observed") == "uncertain"
-        && field(result, "/structuredContent/detail")
+    let outcome = mcp::report(result);
+    field(&outcome, "/observed") == "uncertain"
+        && field(&outcome, "/detail")
             .as_str()
             .is_some_and(|detail| detail.contains("the user's stop flag"))
 }

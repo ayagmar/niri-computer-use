@@ -271,14 +271,29 @@ pub(crate) fn ready(
     )
 }
 
-/// A successful call's structured content.
+/// A successful call's JSON, as [`report`] reads it.
 pub(crate) fn structured(result: &Value) -> Result<Value> {
     if field(result, "/isError") != false {
         return Err(Failure::new(format!(
             "expected a successful call; saw {result}"
         )));
     }
-    Ok(field(result, "/structuredContent").clone())
+    Ok(report(result))
+}
+
+/// A result's JSON: its structured content, or the JSON in its text when it has none, as a
+/// result with an image doesn't. Null when neither holds any.
+pub(crate) fn report(result: &Value) -> Value {
+    if let Some(structured) = result.get("structuredContent") {
+        return structured.clone();
+    }
+    field(result, "/content")
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|block| block["text"].as_str())
+        .find_map(|text| serde_json::from_str(text).ok())
+        .unwrap_or(Value::Null)
 }
 
 pub(crate) fn field<'a>(value: &'a Value, pointer: &str) -> &'a Value {

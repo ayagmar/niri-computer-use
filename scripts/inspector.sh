@@ -128,7 +128,7 @@ check_observation() {
   focused=$(jq '.result.structuredContent.focused_window' "${work}/desktop_state.json")
   if [[ ${focused} != null ]] &&
     jq -e '.result.structuredContent.accessibility.available' "${work}/status.json" >/dev/null; then
-    call elements elements "{\"window_id\": ${focused}, \"limit\": 5}"
+    call elements elements "{\"window_id\": ${focused}, \"limit\": 5, \"format\": \"json\"}"
     check "elements: the focused window's elements, or why it has none" \
       '.result.structuredContent | (.window_id != null and (.elements | type) == "array")
         or .error == "not_accessible" or .error == "ambiguous_window"' "${work}/elements.json"
@@ -145,18 +145,21 @@ check_observation() {
 
 check_screenshots() {
   call shot screenshot '{"target": "focused_output"}'
-  check "screenshot: a JPEG image block, then its metadata as text" \
+  # No structuredContent, which Claude Code and Codex would show in place of the text, and
+  # Codex in place of the image too.
+  check "screenshot: a JPEG image block, then its metadata as text alone" \
     '.result | .isError == false and .content[0].type == "image"
       and .content[0].mimeType == "image/jpeg" and (.content[0].data | length > 0)
-      and (.content[1].text | fromjson) == .structuredContent' "${work}/shot.json"
+      and (.content[1].text | fromjson | type) == "object" and .structuredContent == null' \
+    "${work}/shot.json"
   check "screenshot: at most 1280 pixels wide by default" \
-    '.result.structuredContent | .width <= 1280 and .mime_type == "image/jpeg"' \
+    '.result.content[1].text | fromjson | .width <= 1280 and .mime_type == "image/jpeg"' \
     "${work}/shot.json"
   local output
-  output=$(jq -r '.result.structuredContent.output' "${work}/shot.json")
+  output=$(jq -r '.result.content[1].text | fromjson | .output' "${work}/shot.json")
   call shot_png screenshot "{\"target\": \"output:${output}\", \"format\": \"png\", \"max_width\": 320}"
   check "screenshot: a PNG of a named output, 320 pixels wide" \
-    '.result | .content[0].mimeType == "image/png" and .structuredContent.width == 320' \
+    '.result | .content[0].mimeType == "image/png" and (.content[1].text | fromjson | .width) == 320' \
     "${work}/shot_png.json"
   call shot_bad screenshot '{"target": "output:NO-SUCH-OUTPUT"}'
   check "screenshot: an unknown output is a plain-text argument mistake" \

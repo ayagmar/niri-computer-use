@@ -176,8 +176,8 @@ struct ElementsArgs {
     /// Only elements with actions or editable text; with `role`, every element of it.
     #[serde(default = "yes")]
     interactive_only: bool,
-    /// `compact`: one line per element; `json`: the full objects, also in
-    /// `structuredContent` either way.
+    /// `compact`: one line per element; `json`: the full objects, also as
+    /// `structuredContent`.
     #[serde(default)]
     format: ListingArg,
 }
@@ -1740,7 +1740,7 @@ impl Server {
             instance: instance.as_deref(),
         };
         self.engine.audit().finish(&call, caller, args(), &result);
-        result
+        result.map(shown)
     }
 
     /// The session label: the MCP client's name and the process it started.
@@ -1928,13 +1928,29 @@ fn always_load() -> rmcp::model::MetaObject {
     rmcp::model::MetaObject(meta)
 }
 
-/// `listing` as `structuredContent`, with its text in `format`.
-fn listed(listing: &elements::Listing, format: ListingArg) -> Result<CallToolResult, ErrorData> {
-    let mut result = structured(listing)?;
-    if matches!(format, ListingArg::Compact) {
-        result.content = vec![ContentBlock::text(listing.compact())];
+/// `result` as the client gets it: without `structuredContent` when it has an image, since
+/// Claude Code and Codex show the model a result's `structuredContent` in place of its
+/// text, and Codex drops the images too. Its text has the same JSON.
+fn shown(mut result: CallToolResult) -> CallToolResult {
+    if result
+        .content
+        .iter()
+        .any(|block| block.as_image().is_some())
+    {
+        result.structured_content = None;
     }
-    Ok(result)
+    result
+}
+
+/// `listing` in `format`: the compact lines alone, or the JSON as text and as
+/// `structuredContent`, which Claude Code and Codex would show in place of the lines.
+fn listed(listing: &elements::Listing, format: ListingArg) -> Result<CallToolResult, ErrorData> {
+    match format {
+        ListingArg::Compact => Ok(CallToolResult::success(vec![ContentBlock::text(
+            listing.compact(),
+        )])),
+        ListingArg::Json => structured(listing),
+    }
 }
 
 fn structured(value: &impl Serialize) -> Result<CallToolResult, ErrorData> {

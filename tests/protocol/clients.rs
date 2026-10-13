@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 
-use crate::client::{CLIENT, Server, WAIT, run, tool_error};
+use crate::client::{CLIENT, Server, WAIT, report, run, tool_error};
 use crate::fixture::{Fixture, eventually, exited, file_at, jpeg, kill, parent, png};
 use crate::shared::{
     Desktop, engine, engines, guardians, hold_engine_lock, holds_alone, sessions, shared,
@@ -117,7 +117,7 @@ async fn a_stop_during_one_clients_action_holds_every_client_back_until_resume()
     let stopped = Instant::now();
     assert!(run(&fixture, "stop").await.status.success());
     // wtype had started on the key, so it may have gone out: the outcome says so.
-    let cut = owner.response(key).await["result"]["structuredContent"].clone();
+    let cut = report(&owner.response(key).await["result"]);
     assert_eq!(cut["observed"], "uncertain", "{cut}");
     assert!(
         cut["detail"].as_str().unwrap().contains("stop flag"),
@@ -507,10 +507,10 @@ async fn settings_stay_with_their_session() {
         calls[index] += 1;
         if let Some(dir) = dirs[index] {
             let path = fixture.path(&format!("home-{name}/{dir}/one.png"));
-            assert_eq!(result["structuredContent"]["saved"]["path"], json!(path));
+            assert_eq!(report(&result)["saved"]["path"], json!(path));
             assert!(path.exists());
         } else {
-            assert_eq!(result["structuredContent"]["error"], "save_not_enabled");
+            assert_eq!(report(&result)["error"], "save_not_enabled");
         }
     }
     // The first session's keyboard backend doesn't exist; the plain one's is wtype.
@@ -610,15 +610,12 @@ async fn each_client_runs_grim_and_wtype_from_its_own_path_and_directory() {
     let (_, detail) = tool_error(&clients[0].call("screenshot", shot.clone()).await);
     assert!(detail.contains("A-grim"), "{detail}");
     let taken = clients[1].call("screenshot", shot).await;
-    assert_eq!(taken["structuredContent"]["width"], 1280, "{taken}");
+    assert_eq!(report(&taken)["width"], 1280, "{taken}");
     let key = json!({"keys": ["Down"], "expect": "none"});
     for (client, name) in clients.iter_mut().zip(["a", "b"]) {
         client.structured("acquire_desktop").await;
         let pressed = client.call("key", key.clone()).await;
-        assert_eq!(
-            pressed["structuredContent"]["observed"], "sent",
-            "{pressed}"
-        );
+        assert_eq!(report(&pressed)["observed"], "sent", "{pressed}");
         client
             .structured_with("release_desktop", json!({"restore_focus": false}))
             .await;
@@ -644,7 +641,7 @@ async fn an_empty_path_finds_grim_in_the_working_directory() {
     let taken = client
         .call("screenshot", json!({"target": "focused_output"}))
         .await;
-    assert_eq!(taken["structuredContent"]["width"], 1280, "{taken}");
+    assert_eq!(report(&taken)["width"], 1280, "{taken}");
 }
 
 /// A working directory whose name has a `:` can't be written into a `PATH`, so it must
@@ -676,7 +673,7 @@ async fn a_working_directory_with_a_colon_keeps_the_clients_path() {
         let taken = client
             .call("screenshot", json!({"target": "focused_output"}))
             .await;
-        assert_eq!(taken["structuredContent"]["width"], 1280, "{taken}");
+        assert_eq!(report(&taken)["width"], 1280, "{taken}");
     }
 }
 
@@ -706,7 +703,7 @@ async fn a_grim_that_cant_start_is_passed_over_for_the_next_on_path() {
         let taken = client
             .call("screenshot", json!({"target": "focused_output"}))
             .await;
-        assert_eq!(taken["structuredContent"]["width"], 1280, "{taken}");
+        assert_eq!(report(&taken)["width"], 1280, "{taken}");
     }
 }
 
@@ -724,14 +721,11 @@ async fn shoot_and_type(client: &mut Server) -> serde_json::Value {
     let taken = client
         .call("screenshot", json!({"target": "focused_output"}))
         .await;
-    assert_eq!(taken["structuredContent"]["width"], 1280, "{taken}");
+    assert_eq!(report(&taken)["width"], 1280, "{taken}");
     client.structured("acquire_desktop").await;
     let key = json!({"keys": ["Down"], "expect": "none"});
     let pressed = client.call("key", key).await;
-    assert_eq!(
-        pressed["structuredContent"]["observed"], "sent",
-        "{pressed}"
-    );
+    assert_eq!(report(&pressed)["observed"], "sent", "{pressed}");
     client
         .structured_with("release_desktop", json!({"restore_focus": false}))
         .await;

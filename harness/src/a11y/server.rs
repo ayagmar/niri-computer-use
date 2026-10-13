@@ -673,7 +673,9 @@ fn elements(
     window: u64,
     name: &str,
 ) -> Result<Value> {
-    let arguments = json!({"window_id": window, "role": "button", "name_contains": name});
+    let arguments = json!({
+        "window_id": window, "role": "button", "name_contains": name, "format": "json",
+    });
     structured(&client.call(session, "elements", arguments)?)
 }
 

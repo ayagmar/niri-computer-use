@@ -6,7 +6,7 @@ use std::os::unix::net::UnixListener;
 
 use serde_json::{Value, json};
 
-use crate::client::{Server, tool_error};
+use crate::client::{Server, report, tool_error};
 use crate::clipboard::Owner;
 use crate::fixture::{DISPLAY, Fixture, jpeg};
 use crate::holds::Points;
@@ -136,7 +136,7 @@ async fn a_given_display_rules_out_a_niri_on_another_display() {
         ),
     ] {
         let result = server.call(tool, arguments).await;
-        assert_eq!(result["structuredContent"], unavailable, "{tool}");
+        assert_eq!(report(&result), unavailable, "{tool}");
     }
     assert!(!fixture.path("wtype.ran").exists());
 }

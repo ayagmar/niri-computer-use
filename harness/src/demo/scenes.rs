@@ -34,7 +34,8 @@ fn errand(director: &mut Director<'_, '_>, desktop: &Desktop) -> Result<()> {
     director.ok("acquire_desktop", &json!({}), SHORT)?;
     director.ok("desktop_state", &json!({}), SHORT)?;
     director.ok("focus", &json!({"window_id": chat}), MEDIUM)?;
-    let elements = director.ok("elements", &json!({"window_id": chat}), LONG)?;
+    let listing = json!({"window_id": chat, "format": "json"});
+    let elements = director.ok("elements", &listing, LONG)?;
     let message = element(&elements, "Message")?;
     let send = element(&elements, "Send")?;
     let text = "The release review moved to 3pm.";
