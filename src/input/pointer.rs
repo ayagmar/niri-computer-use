@@ -590,9 +590,8 @@ impl End {
     /// workspace or closed, or another floating window on its workspace lies over its
     /// centre after opening or being relaid. niri reports no stacking order, so that window
     /// may be on top. Only one of `followers` that also lies under the pointer doesn't
-    /// count, and they are looked at every time, relaid or not, since the pointer moves
-    /// either way. A window that was there before the drag counts even when the drag
-    /// carries it, as a title-bar drag does.
+    /// count. A window that was there before the drag counts even when the drag carries
+    /// it, as a title-bar drag does.
     fn lost(
         &mut self,
         view: &View,
@@ -618,7 +617,7 @@ impl End {
         self.followers.extend(moved.opened.iter().filter(|id| {
             tile_of(id).is_some_and(|tile| under_pointer(&tile) && !tile.contains(self.at))
         }));
-        let covered = moved.relaid.union(&self.followers).any(|id| {
+        let covered = moved.relaid.iter().any(|id| {
             tile_of(id).is_some_and(|tile| {
                 tile.contains(self.at) && !(self.followers.contains(id) && under_pointer(&tile))
             })
