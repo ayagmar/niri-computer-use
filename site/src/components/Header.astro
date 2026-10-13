@@ -68,6 +68,19 @@ const home = Astro.locals.starlightRoute.id === '';
 		margin: -0.25rem;
 	}
 
+	/* The name and search are full-size tap targets on a phone. */
+	.title :global(.site-title) {
+		min-height: 2.75rem;
+	}
+
+	@media (max-width: 49.99rem) {
+		.search :global(button[data-open-modal]) {
+			min-width: 2.75rem;
+			height: 2.75rem;
+			justify-content: center;
+		}
+	}
+
 	.workspaces,
 	.lease,
 	.stop,
