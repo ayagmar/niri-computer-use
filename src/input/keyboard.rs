@@ -15,7 +15,7 @@ use serde::Serialize;
 
 use crate::act::{self, Observed, Outcome};
 use crate::control::cleanup;
-use crate::control::desk::Desk;
+use crate::control::desk::{Desk, partway};
 use crate::control::marker::{self, Child, Marker, Phase, Written};
 use crate::control::procs;
 use crate::control::runtime::RuntimeDir;
@@ -479,11 +479,13 @@ pub(super) fn ended(outcome: Outcome, focus: Focus, typing: &Typing, sent: Sent)
     }
 }
 
-/// A stroke's failure, saying how much went out before it, or may have.
+/// A stroke's failure, saying how much went out before it, or may have, and without
+/// `lock_stale`'s "try once more" once something did (`partway`).
 pub(super) fn partly(error: ToolError, typing: &Typing, sent: Sent) -> ToolError {
     if sent.nothing() && !sent.underway {
         return error;
     }
+    let error = partway(error);
     ToolError {
         detail: format!("{}; then {}", sent.describe(typing), error.detail),
         may_have_sent: true,

@@ -37,6 +37,8 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 **What to do:** try the call once more. If it comes back `lock_stale` again, the desktop is under load; tell the user.
 
+With `may_have_sent: true`, part of a `key` or `type_text` call went out before the refusal, and the detail says how much instead of asking for another try. Repeating the call would type that part again; take a screenshot to see what arrived before sending the rest.
+
 ### `session_mismatch`
 
 **Cause:** the Wayland display isn't served by the niri on niri's socket, so `WAYLAND_DISPLAY` and `NIRI_SOCKET` name two different compositors. The server checks this right before each input and screenshot, and when `acquire_desktop` starts watching the clipboard, and refuses them, because `wtype`, `grim` and the clipboard's watcher would reach the other compositor; `clipboard_read` then fails with this error until the lease is released and taken again. A niri that restarted while the server ran gives this too when another compositor took over the display. `status` shows the current check under `display_error`.

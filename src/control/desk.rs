@@ -37,6 +37,22 @@ const MOVED_CHECK: Duration = Duration::from_millis(100);
 /// docs/decisions.md).
 pub(crate) const LAST_GATE: Duration = Duration::from_millis(250);
 
+/// `error` from `Desk::fresh` once part of a call went out. Its `lock_stale` detail tells
+/// the agent to try once more, which is right only while nothing went out; here something
+/// did, and repeating the call could repeat what that part did.
+pub(crate) fn partway(error: ToolError) -> ToolError {
+    if error.name != ErrorName::LockStale {
+        return error;
+    }
+    ToolError::new(
+        ErrorName::LockStale,
+        format!(
+            "the lock state was last read over {} ms before the call's next part could go out, so it isn't known to be unlocked now",
+            LAST_GATE.as_millis()
+        ),
+    )
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Desk {
     /// Why there is no runtime directory, when there isn't one.

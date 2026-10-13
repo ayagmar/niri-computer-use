@@ -705,15 +705,14 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    /// Once the call's time is up, the next key doesn't start, though the stop flag, the
-    /// deny list and the lock state would let it, and the refusal counts what was typed.
-    #[tokio::test]
-    async fn no_key_starts_once_the_time_is_up() {
-        let dir = fresh_dir("native-time-up");
+    /// The refusal of the second key of "az" after the first went out, with the lock state
+    /// last read `ago` and the call's time ending at `ends`.
+    async fn second_key_refused(test: &str, ago: Duration, ends: Instant) -> ToolError {
+        let dir = fresh_dir(test);
         let env = crate::test_support::niri_env(&dir);
         let runtime = RuntimeDir::of(&env).unwrap();
         runtime.create().unwrap();
-        let desk = desk_read(&dir, Duration::ZERO);
+        let desk = desk_read(&dir, ago);
         let unread = ToolError::new(ErrorName::NiriUnavailable, "no event stream in this test");
         let input = Input {
             niri: Niri {
@@ -740,7 +739,7 @@ mod tests {
             typing: &typing,
             budget: Budget {
                 length: WTYPE_DEADLINE,
-                ends: Instant::now(),
+                ends,
             },
             marks: true,
         };
@@ -749,12 +748,38 @@ mod tests {
         let error = may_press(input, &View::default(), &call, sent)
             .await
             .unwrap_err();
+        std::fs::remove_dir_all(dir).unwrap();
+        error
+    }
+
+    /// Once the call's time is up, the next key doesn't start, though the stop flag, the
+    /// deny list and the lock state would let it, and the refusal counts what was typed.
+    #[tokio::test]
+    async fn no_key_starts_once_the_time_is_up() {
+        let error = second_key_refused("native-time-up", Duration::ZERO, Instant::now()).await;
         assert_eq!(error.name, ErrorName::DeadlineExceeded);
         assert_eq!(
             error.detail,
             "typed 1 of 2 characters; then native typing took longer than its 3s"
         );
-        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    // A key refused because the lock state's last read is too old, once another key went
+    // out, must not tell the agent to try once more: the call would type that key again.
+    #[tokio::test]
+    async fn a_stale_lock_read_after_a_key_went_out_isnt_called_safe_to_repeat() {
+        let ends = Instant::now() + WTYPE_DEADLINE;
+        let error = second_key_refused("native-stale", Duration::from_secs(1), ends).await;
+        assert_eq!(error.name, ErrorName::LockStale);
+        assert!(error.may_have_sent);
+        assert!(
+            error
+                .detail
+                .starts_with("typed 1 of 2 characters; then the lock state was last read over"),
+            "{}",
+            error.detail
+        );
+        assert!(!error.detail.contains("try once more"), "{}", error.detail);
     }
 
     /// A call gets 50 ms a key, here 7.5 s, and a short one wtype's 3 s; past them, the
