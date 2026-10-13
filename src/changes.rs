@@ -66,8 +66,8 @@ pub(crate) struct Changes {
     /// The focused workspace before and after, when they differ.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) workspace: Option<Moved>,
-    /// Windows open before and after whose title, app id, workspace, floating, size or
-    /// urgency changed, with the new values.
+    /// Windows open before and after whose title, app id, workspace, floating, size,
+    /// floating position or urgency changed, with the new values.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) windows: Vec<Changed>,
     /// Window entries left out past the cap.
@@ -137,6 +137,11 @@ pub(crate) struct Changed {
     /// the output's size.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) size: Option<(i32, i32)>,
+    /// A window floating before and after that moved: niri's `tile_pos_in_workspace_view`.
+    /// A tiled window's place isn't reported, since opening a column shifts the ones to its
+    /// right.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) position: Option<(f64, f64)>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) urgent: Option<bool>,
 }
@@ -236,6 +241,7 @@ fn changed(before: &Window, after: &Window) -> Option<Changed> {
         floating: (before.is_floating != after.is_floating).then_some(after.is_floating),
         size: (before.layout.window_size != after.layout.window_size)
             .then_some(after.layout.window_size),
+        position: floated(before, after),
         urgent: (before.is_urgent != after.is_urgent).then_some(after.is_urgent),
     };
     let unchanged = Changed {
@@ -243,6 +249,17 @@ fn changed(before: &Window, after: &Window) -> Option<Changed> {
         ..Changed::default()
     };
     (change != unchanged).then_some(change)
+}
+
+/// Where window `after` is now, when it floated before and after and moved.
+fn floated(before: &Window, after: &Window) -> Option<(f64, f64)> {
+    let place = |window: &Window| {
+        window
+            .layout
+            .tile_pos_in_workspace_view
+            .filter(|_| window.is_floating)
+    };
+    place(after).filter(|now| place(before).is_some_and(|then| then != *now))
 }
 
 fn moved(from: Option<u64>, to: Option<u64>) -> Option<Moved> {
@@ -347,6 +364,30 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&focus_only).unwrap(),
             json!({"focus": {"from": 1, "to": 2}})
+        );
+    }
+
+    #[test]
+    fn a_floating_window_that_moved_says_where_and_one_floated_says_only_that() {
+        let floating = |id, place| {
+            let mut window = titled(id, "Tool", false);
+            window.is_floating = true;
+            window.layout.pos_in_scrolling_layout = None;
+            window.layout.tile_pos_in_workspace_view = Some(place);
+            window
+        };
+        let tiled = titled(2, "Doc", true);
+        let before = scene(1, vec![floating(1, (200.0, 50.0)), tiled.clone()]);
+        let mut floated = tiled;
+        floated.is_floating = true;
+        floated.layout.tile_pos_in_workspace_view = Some((10.0, 10.0));
+        let after = scene(1, vec![floating(1, (100.0, 50.0)), floated]);
+        assert_eq!(
+            serde_json::to_value(desktop(&before, &after, &BTreeMap::new())).unwrap(),
+            json!({"windows": [
+                {"id": 1, "position": [100.0, 50.0]},
+                {"id": 2, "floating": true},
+            ]})
         );
     }
 

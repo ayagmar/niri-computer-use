@@ -45,6 +45,9 @@ pub(crate) struct WindowState {
     pub(crate) tile_size: (f64, f64),
     /// Column and row in the scrolling layout, from 1; null while floating.
     pub(crate) pos_in_scrolling_layout: Option<(usize, usize)>,
+    /// The tile's top-left corner in the workspace view. niri 26.04 gives it only for a
+    /// floating window, whose move changes nothing else.
+    pub(crate) tile_pos_in_workspace_view: Option<(f64, f64)>,
 }
 
 impl From<&Window> for WindowState {
@@ -58,6 +61,7 @@ impl From<&Window> for WindowState {
             window_size: window.layout.window_size,
             tile_size: window.layout.tile_size,
             pos_in_scrolling_layout: window.layout.pos_in_scrolling_layout,
+            tile_pos_in_workspace_view: window.layout.tile_pos_in_workspace_view,
         }
     }
 }

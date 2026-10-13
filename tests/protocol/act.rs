@@ -2350,6 +2350,47 @@ async fn focus_on_another_workspace_reports_the_switch_and_the_cleared_urgency()
     );
 }
 
+/// A floating window's move changes only its place, which niri 26.04 reports for floating
+/// windows alone. It used to be `unchanged` after a second's wait.
+#[tokio::test]
+async fn niri_action_sees_a_floating_window_move() {
+    let mut desk = Desk::start("act-niri-float", "").await;
+    let mut floating = window_on(2, Some("b"), 1, false);
+    floating["is_floating"] = json!(true);
+    floating["layout"]["pos_in_scrolling_layout"] = Value::Null;
+    floating["layout"]["tile_pos_in_workspace_view"] = json!([200.0, 50.0]);
+    desk.stream
+        .send(&json!({"WindowOpenedOrChanged": {"window": floating}}));
+    while !desk.server.structured("desktop_state").await["windows"][1]["is_floating"]
+        .as_bool()
+        .unwrap()
+    {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let left = json!({"action": {"MoveFloatingWindow": {
+        "id": 2, "x": {"AdjustFixed": -100.0}, "y": {"AdjustFixed": 0.0}
+    }}});
+    let result = desk
+        .act("niri_action", left, |stream, _| {
+            stream.send(&json!({"WindowLayoutsChanged": {"changes": [[2, {
+                "pos_in_scrolling_layout": null, "tile_size": [800.0, 600.0],
+                "window_size": [800, 600], "tile_pos_in_workspace_view": [100.0, 50.0],
+                "window_offset_in_tile": [0.0, 0.0]
+            }]]}}));
+        })
+        .await;
+    let outcome = outcome(&result);
+    assert_eq!(outcome["observed"], "changed", "{outcome}");
+    assert_eq!(
+        outcome["window"]["tile_pos_in_workspace_view"],
+        json!([100.0, 50.0])
+    );
+    assert_eq!(
+        outcome["changes"],
+        json!({"windows": [{"id": 2, "position": [100.0, 50.0]}]})
+    );
+}
+
 #[tokio::test]
 async fn niri_action_reports_the_window_as_niri_shows_it_after() {
     let mut desk = Desk::start("act-niri-action", "").await;
@@ -2374,7 +2415,7 @@ async fn niri_action_reports_the_window_as_niri_shows_it_after() {
             "window": {
                 "id": 2, "workspace_id": 1, "is_focused": false, "is_floating": false,
                 "is_urgent": false, "window_size": [2560, 1440], "tile_size": [2560.0, 1440.0],
-                "pos_in_scrolling_layout": [1, 1]
+                "pos_in_scrolling_layout": [1, 1], "tile_pos_in_workspace_view": null
             },
             "changes": {"windows": [{"id": 2, "size": [2560, 1440]}]}
         })

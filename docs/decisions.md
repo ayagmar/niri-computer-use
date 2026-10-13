@@ -1200,3 +1200,8 @@ These match the versions installed locally.
 ## 2026-10-13: the session label reads the client's name from each request
 
 - Since 2026-10-09 every Claude Code session in the audit log and the lease holder was `unknown/<pid>`. Claude Code 2.1.296 speaks MCP 2026-07-28: it sends `server/discover` and then its requests without `initialize`, naming itself in each request's `_meta` under `io.modelcontextprotocol/clientInfo` (captured from its stdin). rmcp 3.5 serves such a session with no peer info, so `peer_info()` was `None`. The label now uses rmcp's `RequestContext::client_info`, which reads the request's `_meta` first and falls back to the `initialize` handshake. The bridge relays each request's line whole, so shared mode gets the name the same way.
+
+## 2026-10-13: a floating window's move is a change
+
+- `niri_action` compared a window's workspace, focus, floating, urgency, sizes and column, so `MoveFloatingWindow`, which changes only where the window is, came back `unchanged` after its one-second wait (desk run). niri's `tile_pos_in_workspace_view` is that place; niri 26.04 gives it only for floating windows, and `null` for tiled ones, so it can't change as the view scrolls. The window state now holds it, and `changes` reports a window that floated before and after and moved as `position`, with the new place. A drag that moves a floating window gets the same entry.
+- A tiled window's place on screen isn't in niri's IPC, so an action that only scrolls the view, such as `CenterWindow` on a tiled window, is still `unchanged`. Column positions stay out of `changes` as before.
