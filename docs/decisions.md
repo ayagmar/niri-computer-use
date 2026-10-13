@@ -1275,3 +1275,10 @@ These match the versions installed locally.
 - `run_wtype` wrote the input-dirty marker, then awaited the marker's update with wtype's PID and the last gate (`go`) in the call's own future. `Written`'s drop doesn't remove the file, so a call dropped during either await, by the stop key, the client's cancel or the session's end, left the marker with nothing typed, and every later action asked for `recover`. The gate reads the lock state and can take a Noctalia round trip, so the window is real, if short. The pointer's `Device::finish` and `discard` were already safe (see "follow-ups after the round-three review"); this window was the wtype path's.
 - Until wtype's feeding task takes it, the marker is held by `Unsent`, whose drop removes it in a cleanup task, as a dropped pointer or native device does. The call's wtype is a later local, so it is dropped first and killed at its gate before the removal starts. `cleared`, which removes the marker of a call refused before anything was typed, now runs its removal in a cleanup task too, since it also waits for the marker's lock.
 - Regression test: `input::keyboard::tests::a_call_dropped_at_the_gate_removes_its_marker`, which fails without the drop.
+
+## 2026-10-13: open items for 0.1.0
+
+- The drag follower gap (a window that opens under the pointer during a drag, then grows or moves over the end in the last steps): accepted. Nothing niri reports tells it from a torn-out tab, and it needs a dialog to open mid-drag and move within the last step or two.
+- `/proc/<pid>/comm` in the `confirm_lease` prompt: accepted, not added. A process sets its own `comm` (`prctl(PR_SET_NAME)`, or the name of whatever it executes), so it is no more checked than the MCP name, and the prompt already shows the PID, which the server does know.
+- Logging a client name that changes within a session: accepted, not added. Every audit line carries the label read from that request's own client info, so a change already shows from one line to the next, and nothing decides on the name.
+- The cancel-unsafe window around the input-dirty marker: fixed, see "a wtype call dropped at its gate removes its marker".
