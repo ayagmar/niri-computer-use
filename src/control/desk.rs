@@ -462,18 +462,23 @@ impl Desk {
         self.sending_input()
     }
 
-    /// `sending`, for input whose own input-dirty marker is set by now: only the lock
-    /// state's age is checked.
+    /// `sending`, for input whose own input-dirty marker is set by now: only `fresh`'s
+    /// checks, the stop flag and the lock state's age.
     pub(crate) fn sending_input(&self) -> Result<(), ToolError> {
         self.fresh()?;
         self.seat.sending.store(true, Ordering::Relaxed);
         Ok(())
     }
 
-    /// Whether a call that acts may go out now: the latest read of the lock state began at
-    /// most `LAST_GATE` ago. Otherwise `lock_stale`, since that read may no longer hold, or
-    /// `screen_locked` when the action read none.
+    /// Whether a call that acts, or the next batch of a call's input, may go out now: the
+    /// stop flag isn't set, read right now rather than waited for from the stop watcher,
+    /// which may not have seen a flag set a moment ago, and the latest read of the lock
+    /// state began at most `LAST_GATE` ago. Otherwise `stopped`, `lock_stale`, since that
+    /// read may no longer hold, or `screen_locked` when the action read none. The
+    /// input-dirty marker isn't checked: input writes its own before it goes out.
     pub(crate) fn fresh(&self) -> Result<(), ToolError> {
+        let runtime = self.runtime.as_ref().map_err(Clone::clone)?;
+        self.not_stopped(runtime)?;
         let began = *self.seat.lock_read();
         match began {
             Some(began) if began.elapsed() <= LAST_GATE => Ok(()),
@@ -532,6 +537,17 @@ impl Desk {
     /// Checks that a stop can reach this server and that neither the stop flag nor the
     /// input-dirty marker is set. Returns the watcher's view of the flag.
     fn unblocked(&self, runtime: &RuntimeDir) -> Result<watch::Receiver<bool>, ToolError> {
+        let stopped = self.not_stopped(runtime)?;
+        if runtime.input_dirty().map_err(|error| unreadable(&error))? {
+            let found = marker::read(runtime);
+            return Err(input_dirty(found.as_ref(), Path::new("/proc")));
+        }
+        Ok(stopped)
+    }
+
+    /// Checks that a stop can reach this server and that the stop flag isn't set, by the
+    /// watcher's view or the file itself. Returns the watcher's view of the flag.
+    fn not_stopped(&self, runtime: &RuntimeDir) -> Result<watch::Receiver<bool>, ToolError> {
         // Without a live watcher a stop couldn't take the lease back.
         let stopped = self
             .stopped
@@ -545,10 +561,6 @@ impl Desk {
                 ErrorName::Stopped,
                 "the stop flag is set; the user clears it with `niri-computer-use resume`",
             ));
-        }
-        if runtime.input_dirty().map_err(|error| unreadable(&error))? {
-            let found = marker::read(runtime);
-            return Err(input_dirty(found.as_ref(), Path::new("/proc")));
         }
         Ok(stopped.clone())
     }

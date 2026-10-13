@@ -341,6 +341,89 @@ async fn a_refused_action_name_leaves_the_elements_other_actions() {
     assert_eq!(safe["actions"], json!(["", "showContextMenu"]), "{listing}");
 }
 
+/// The Safe button's actions: the names its `DoAction` indices have, what `GetActions`
+/// lists, and what `GetLocalizedName` gives, when not the names.
+struct Offered<'a> {
+    actions: &'a [&'a str],
+    listed: &'a [&'a str],
+    localized: Option<&'a [&'a str]>,
+}
+
+/// Activates the Safe button's action `requested` while it has `offered`. Returns the
+/// result and the indices `DoAction` was asked for.
+async fn activated_with(test: &str, offered: &Offered<'_>, requested: &str) -> (Value, Vec<i32>) {
+    let names = |names: &[&str]| names.iter().map(|&name| name.to_owned()).collect();
+    let mut objects = objects();
+    objects[2].1.actions = names(offered.actions);
+    objects[2].1.listed = Some(names(offered.listed));
+    objects[2].1.localized = offered.localized.map(names);
+    let windows = [app_window(WINDOW, true)];
+    let mut desk = Desk::start_with(test, &["/frame"], objects, &windows).await;
+    let button = desk.element("Safe").await;
+    let arguments = json!({
+        "element": button, "action": requested, "expect": {"window_id": WINDOW}
+    });
+    let result = desk.server.call("activate_element", arguments).await;
+    (result, desk.mock.done())
+}
+
+// `DoAction` takes an action's own index, which needn't be where `GetActions` lists it:
+// GTK 4 leaves a disabled action out of the list and still counts it, and GTK and
+// at-spi2-atk list translated names that `GetName` doesn't give. The action asked for runs
+// at the index the app names it at, never the one at its place in the list.
+#[tokio::test]
+async fn an_action_runs_at_the_index_the_app_names_it_at() {
+    let listed = Offered {
+        actions: &["click", "toggle"],
+        listed: &["click", "toggle"],
+        localized: None,
+    };
+    let filtered = Offered {
+        actions: &["click", "press", "toggle"],
+        listed: &["press", "toggle"],
+        localized: None,
+    };
+    let translated = Offered {
+        actions: &["click", "toggle"],
+        listed: &["Klicken", "Umschalten"],
+        localized: Some(&["Klicken", "Umschalten"]),
+    };
+    for (tag, offered, requested, index) in [
+        ("listed", listed, "toggle", 1),
+        ("filtered", filtered, "toggle", 2),
+        ("translated", translated, "Umschalten", 1),
+    ] {
+        let test = format!("action-index-{tag}");
+        let (result, done) = activated_with(&test, &offered, requested).await;
+        assert_eq!(report(&result)["accepted"], true, "{tag}: {result}");
+        assert_eq!(done, [index], "{tag}: {result}");
+    }
+}
+
+// When the app names another action at the listed place and no other single index has the
+// listed name, which action `DoAction` would run isn't known: the call is refused and
+// nothing reaches the app.
+#[tokio::test]
+async fn an_action_no_single_index_names_is_never_run() {
+    let cases: [(&str, &[&str]); 2] = [
+        ("missing", &["click", "press"]),
+        ("repeated", &["click", "toggle", "toggle"]),
+    ];
+    for (tag, actions) in cases {
+        let test = format!("action-unmapped-{tag}");
+        let offered = Offered {
+            actions,
+            listed: &["toggle"],
+            localized: None,
+        };
+        let (result, done) = activated_with(&test, &offered, "toggle").await;
+        let (name, detail) = tool_error(&result);
+        assert_eq!(name, "element_unmappable", "{tag}: {result}");
+        assert!(detail.starts_with("action_unmapped: "), "{tag}: {detail}");
+        assert_eq!(done, Vec::<i32>::new(), "{tag}: {result}");
+    }
+}
+
 // An action's change report hands out refs to the elements it shows, and those are named
 // as a listing names them, so activating one that Chromium lists unnamed goes out.
 #[tokio::test]
@@ -3194,6 +3277,36 @@ async fn a_drag_cancelled_while_it_releases_still_clears_its_marker() {
     let pixel = json!({"screenshot_ref": shot, "x": 5, "y": 5});
     let clicked = desk.server.call("click", pixel).await;
     assert_eq!(clicked["isError"], false, "{clicked}");
+}
+
+// A floating window's elements are hidden while its workspace's active window is a tiled
+// one as large as the output, as a fullscreen window is. That can start while a drag to
+// one holds its button: a tiled window that already fills the output becomes the active
+// one, or the active one grows to fill it. The look after either stops the drag before
+// it moves further, releases the button and reports `uncertain`.
+#[tokio::test]
+async fn a_tiled_window_filling_the_output_stops_a_held_element_drag() {
+    let mut filling = window_on(2, Some("other"), 1, false);
+    filling["layout"]["tile_size"] = json!([2560.0, 1440.0]);
+    filling["layout"]["window_size"] = json!([2560, 1440]);
+    let filled = json!({"WindowOpenedOrChanged": {"window": filling}});
+    let active = json!({"WorkspaceActiveWindowChanged": {
+        "workspace_id": 1, "active_window_id": 2
+    }});
+    for (tag, holds) in [
+        ("activated", [(4, filled.clone()), (5, active.clone())]),
+        ("grown", [(4, active.clone()), (5, filled.clone())]),
+    ] {
+        let (result, sent) =
+            drag_moved_at_syncs(&format!("drag-cover-{tag}"), ButtonEnd::End, &holds).await;
+        stopped_midway(&result, "a tiled window as large as the output", tag);
+        // The motion to the start, the press, the steps before the second event and the
+        // release: none of the steps after it.
+        assert!(
+            sent.len() < 13 && sent.last() == Some(&Pointed::Button(272, 0)),
+            "{tag}: {sent:?}"
+        );
+    }
 }
 
 /// Aims `tool` at the Safe button, sends `event` once the pointer is being set up and

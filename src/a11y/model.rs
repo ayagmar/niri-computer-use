@@ -419,21 +419,24 @@ fn tile(output: &LogicalOutput, layout: &WindowLayout) -> Option<LayoutBox> {
     })
 }
 
-/// Whether `workspace`'s active window is a tiled one as large as `output`, as a fullscreen
-/// window is. niri then draws none of the workspace's floating windows and sends the
-/// pointer to the fullscreen one (`Workspace::is_floating_visible`). IPC doesn't say
-/// whether a window is fullscreen, so a tiled window that fills the output some other way
-/// counts too, and so does one whose workspace niri shows its floating windows above.
+/// Whether `workspace`'s active window hides its floating windows (`hides_floating`).
 fn covered(workspace: &Workspace, output: &LogicalOutput, windows: &[Window]) -> bool {
     windows
         .iter()
         .filter(|window| Some(window.id) == workspace.active_window_id)
-        .any(|window| {
-            let (width, height) = window.layout.tile_size;
-            window.layout.pos_in_scrolling_layout.is_some()
-                && width >= f64::from(output.width) - 1.0
-                && height >= f64::from(output.height) - 1.0
-        })
+        .any(|window| hides_floating(output, window))
+}
+
+/// Whether `active`, a workspace's active window, is a tiled one as large as `output`, as
+/// a fullscreen window is. niri then draws none of the workspace's floating windows and
+/// sends the pointer to the fullscreen one (`Workspace::is_floating_visible`). IPC doesn't
+/// say whether a window is fullscreen, so a tiled window that fills the output some other
+/// way counts too, and so does one whose workspace niri shows its floating windows above.
+pub(crate) fn hides_floating(output: &LogicalOutput, active: &Window) -> bool {
+    let (width, height) = active.layout.tile_size;
+    active.layout.pos_in_scrolling_layout.is_some()
+        && width >= f64::from(output.width) - 1.0
+        && height >= f64::from(output.height) - 1.0
 }
 
 /// Where a floating window's geometry starts in the layout: the output's origin, plus the
