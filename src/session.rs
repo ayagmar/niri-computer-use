@@ -210,10 +210,66 @@ impl Session {
         &self.settings
     }
 
-    /// The label for the audit log and the lease: the MCP client's name and the process it
-    /// started, such as `claude-code/4711`.
-    pub(crate) fn label(&self, client: &str) -> String {
-        format!("{client}/{}", self.pid)
+    /// The label for the audit log, the lease and the lease prompt, from the name the MCP
+    /// client gives itself.
+    pub(crate) fn label(&self, client: &str) -> Label {
+        Label {
+            client: shown_name(client),
+            pid: self.pid,
+        }
+    }
+}
+
+/// The longest client name a label shows, in characters.
+const CLIENT_NAME: usize = 64;
+
+/// Who a session's calls come from, shown as `claude-code/4711`: the name the MCP client
+/// gives itself, which nothing checks, made safe to show (`shown_name`), and the process
+/// it started.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Label {
+    client: String,
+    pid: u32,
+}
+
+impl Label {
+    /// The name the client gives itself, as shown.
+    pub(crate) fn client(&self) -> &str {
+        &self.client
+    }
+
+    pub(crate) const fn pid(&self) -> u32 {
+        self.pid
+    }
+}
+
+impl std::fmt::Display for Label {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.client, self.pid)
+    }
+}
+
+/// `name` as a label shows it: its first `CLIENT_NAME` characters, with every one other
+/// than an ASCII letter, digit, space, `.`, `_`, `-`, `+` or `@` as `_`, and `unknown` when
+/// nothing is left. So a name can't hold a `/` or a character that looks like one and
+/// pass for another `name/pid`, start a line, or fill the lease record or the prompt.
+fn shown_name(name: &str) -> String {
+    let shown: String = name
+        .chars()
+        .take(CLIENT_NAME)
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || " ._-+@".contains(c) {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let shown = shown.trim();
+    if shown.is_empty() {
+        "unknown".to_owned()
+    } else {
+        shown.to_owned()
     }
 }
 
@@ -323,6 +379,26 @@ mod tests {
     use tokio::io::AsyncReadExt as _;
 
     use super::*;
+
+    // The label's name is the client's own claim, shown in the audit log, to other agents
+    // as the lease holder and to the user in the lease prompt. It can't pass for another
+    // `name/pid` through a `/` or a character that looks like one, can't start a line, and
+    // can't fill those with a long name.
+    #[test]
+    fn a_clients_name_cant_pass_for_another_label_or_fill_it() {
+        let session = crate::test_support::session(1);
+        let pid = std::process::id();
+        let shown = |name: &str| session.label(name).to_string();
+        assert_eq!(shown("claude-code"), format!("claude-code/{pid}"));
+        assert_eq!(shown("Claude Code 2.1"), format!("Claude Code 2.1/{pid}"));
+        for slash in ["evil/1", "evil\u{2215}1", "evil\u{2044}1", "evil\u{ff0f}1"] {
+            assert_eq!(shown(slash), format!("evil_1/{pid}"), "{slash}");
+        }
+        assert_eq!(shown("a\nb\u{1b}[2J"), format!("a_b__2J/{pid}"));
+        assert_eq!(session.label(&"x".repeat(1000)).client(), "x".repeat(64));
+        assert_eq!(shown(""), format!("unknown/{pid}"));
+        assert_eq!(shown(" \t "), format!("_/{pid}"));
+    }
 
     /// The engine refuses a client whose directory it can't hold, rather than start its
     /// calls in its own: process 0 is what a peer without credentials counts as.

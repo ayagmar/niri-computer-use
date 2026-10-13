@@ -285,7 +285,11 @@ async fn with_confirm_lease_only_the_users_allow_grants_the_lease() {
     let label = format!("{CLIENT}/{}", server.pid);
     assert_eq!(held["holder"]["label"], label.as_str());
     let body = fixture.args("notify-send").join("\n");
-    assert!(body.contains(&format!("{label:?}")), "{body}");
+    let asked = format!(
+        "A client that calls itself \"{CLIENT}\", process {}, asks",
+        server.pid
+    );
+    assert!(body.contains(&asked), "{body}");
     // Asking again while holding the lease asks the user nothing.
     assert_eq!(server.structured("acquire_desktop").await, held);
     assert_eq!(prompts(&fixture), 3);

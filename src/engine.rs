@@ -32,7 +32,7 @@ use crate::niri::events::{DesktopState, EventStream, StreamState};
 use crate::observe;
 use crate::policy::{self, SaveTarget};
 use crate::refs::Shot;
-use crate::session::{Session, SessionId, Settings};
+use crate::session::{Label, Session, SessionId, Settings};
 use crate::{Env, clipboard, confirm, elements, niri, noctalia, runner, settle, status, wait};
 
 #[derive(Debug)]
@@ -320,17 +320,17 @@ impl Engine {
     pub(crate) async fn acquire(
         self: &Arc<Self>,
         session: &Session,
-        label: &str,
+        label: &Label,
     ) -> Result<(Holder, Option<u64>), ToolError> {
         // Boxed, because the readiness report and the prompt make a large future.
         let refusal = Box::pin(self.acquire_refusal(session, label));
-        self.grant(session, label, refusal).await
+        self.grant(session, &label.to_string(), refusal).await
     }
 
     /// Why `session`'s client `label` may not take the lease: the readiness report's
     /// refusal, or with `confirm_lease` the user's answer on the desktop. Since the user
     /// may take up to `confirm::DEADLINE` to answer, readiness is asked again after an Allow.
-    async fn acquire_refusal(&self, session: &Session, label: &str) -> Option<ToolError> {
+    async fn acquire_refusal(&self, session: &Session, label: &Label) -> Option<ToolError> {
         if let Some(refusal) = Box::pin(self.refusal(session)).await {
             return Some(refusal);
         }

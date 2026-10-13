@@ -25,7 +25,7 @@ use crate::input::paste;
 use crate::input::pointer::{self, Button, Gesture, Spot};
 use crate::observe::{DEFAULT_MAX_WIDTH, Format, Rect, Target};
 use crate::policy;
-use crate::session::{MAX_IN_FLIGHT, Session};
+use crate::session::{Label, MAX_IN_FLIGHT, Session};
 use crate::{elements, observe, wait};
 
 /// Optional arguments are described as their own type with their real default, without
@@ -1733,7 +1733,7 @@ impl Server {
         let result = unless_cancelled(context.ct.cancelled(), work)
             .await
             .and_then(|result| result);
-        let session = self.label(context);
+        let session = self.label(context).to_string();
         let instance = self.engine.env().instance();
         let caller = Caller {
             session: &session,
@@ -1746,11 +1746,9 @@ impl Server {
     /// The session label: the MCP client's name and the process it started. A client of MCP
     /// 2026-07-28, such as Claude Code, may skip `initialize` and name itself in each
     /// request's `_meta` instead.
-    fn label(&self, context: &RequestContext<RoleServer>) -> String {
-        let client = context
-            .client_info()
-            .map_or_else(|| "unknown".to_owned(), |info| info.name);
-        self.session.label(&client)
+    fn label(&self, context: &RequestContext<RoleServer>) -> Label {
+        let client = context.client_info().map(|info| info.name);
+        self.session.label(client.as_deref().unwrap_or_default())
     }
 }
 

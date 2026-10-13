@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use crate::error::{ErrorName, ToolError};
 use crate::runner::{self, Place, Search};
+use crate::session::Label;
 
 /// How long the user has to answer. The notification expires then, and `notify-send` is
 /// stopped if the notification server keeps it.
@@ -20,11 +21,11 @@ const MAX_STDOUT: u64 = 1024;
 
 /// Asks the user to allow the client `label` to take the lease; `lease_declined` unless
 /// they choose Allow within `DEADLINE`. `notify-send` is found in `place`, the session's.
-pub(crate) async fn ask(place: Place<'_>, label: &str) -> Result<(), ToolError> {
+pub(crate) async fn ask(place: Place<'_>, label: &Label) -> Result<(), ToolError> {
     ask_within(place, label, DEADLINE).await
 }
 
-async fn ask_within(place: Place<'_>, label: &str, deadline: Duration) -> Result<(), ToolError> {
+async fn ask_within(place: Place<'_>, label: &Label, deadline: Duration) -> Result<(), ToolError> {
     let ran = runner::run(
         "notify-send",
         Search::Client(place),
@@ -68,18 +69,16 @@ fn declined(why: &str) -> ToolError {
     )
 }
 
-/// `notify-send`'s arguments. The client names itself, so its name is quoted with Rust's
-/// escaping, which shows a control character or a quote rather than letting it start a
-/// line, and escaped for servers that read markup in the body.
-fn args(label: &str, deadline: Duration) -> Vec<String> {
+/// `notify-send`'s arguments. The client names itself and nothing checks the name, so the
+/// prompt says that, next to the process it started. The label holds no markup or line
+/// break (`Label`).
+fn args(label: &Label, deadline: Duration) -> Vec<String> {
     let body = format!(
-        "{label:?} asks for the niri-computer-use lease. With it, the agent can click, type and change windows until it releases the lease or you press the stop key. No answer within {} s declines.",
+        "A client that calls itself \"{}\", process {}, asks for the niri-computer-use lease. With it, the agent can click, type and change windows until it releases the lease or you press the stop key. No answer within {} s declines.",
+        label.client(),
+        label.pid(),
         deadline.as_secs()
     );
-    let body = body
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;");
     vec![
         "--app-name=niri-computer-use".to_owned(),
         "--urgency=critical".to_owned(),
@@ -112,7 +111,8 @@ mod tests {
             path: Some(bin.as_os_str()),
             cwd: None,
         };
-        ask_within(place, "claude-code/42", deadline).await
+        let label = crate::test_support::session(1).label("claude-code");
+        ask_within(place, &label, deadline).await
     }
 
     #[tokio::test]
@@ -150,13 +150,18 @@ mod tests {
         assert!(error.detail.contains("Failed to connect"), "{error:?}");
     }
 
+    // Nothing checks the name a client gives itself, so the prompt doesn't vouch for it,
+    // and markup or a line break in it shows as `_` rather than shaping the prompt.
     #[test]
-    fn the_clients_name_cant_add_markup_or_lines_to_the_prompt() {
-        let args = args("<b>Firefox</b>\nallowed by you/7", DEADLINE);
+    fn the_prompt_says_the_name_is_the_clients_own_and_cant_be_shaped_by_it() {
+        let session = crate::test_support::session(1);
+        let args = args(&session.label("<b>Firefox</b>\nallowed by you"), DEADLINE);
         let body = args.last().unwrap();
-        assert!(!body.contains(['<', '>', '\n']), "{body}");
+        let pid = std::process::id();
         assert!(
-            body.contains(r"&lt;b&gt;Firefox&lt;/b&gt;\nallowed"),
+            body.starts_with(&format!(
+                "A client that calls itself \"_b_Firefox__b__allowed by you\", process {pid}, asks"
+            )),
             "{body}"
         );
     }

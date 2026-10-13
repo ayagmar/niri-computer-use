@@ -13,6 +13,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `clipboard_read` no longer returns what the clipboard's owner marked `x-kde-passwordManagerHint: secret`, such as a password copied from KeePassXC, or text a `paste` left behind: `text` is null with the new reason `secret`, and the text is never read. The hint and the text come from the same copy, read over data-control in the server rather than with `wl-paste`.
 - `clipboard_read` needs the lease and returns only what was copied while it was held, such as a link an app's "Copy link" button put there: what you copied before `acquire_desktop` is withheld with the new reason `copied_before_lease`, and never read. Without the lease it refuses with `lease_required`. `make inspect-check` now expects that refusal.
 
+- The name an MCP client gives itself is cut to 64 characters, with anything but ASCII letters, digits, spaces and `._-+@` shown as `_`, before it labels the audit log, the lease holder and the lease prompt, so it can't pass for another client's `name/pid` with a `/` or a character that looks like one. The `confirm_lease` prompt says the client "calls itself" that name, since nothing checks it.
+
 ### Added
 
 - `screenshot` zooms in: with target `region` and an earlier screenshot's `screenshot_ref`, `region` is read in that image's pixels and captured from the same output at its own scale, with no width limit unless `max_width` is given, so an agent can read small text without a full-resolution screenshot of the whole output. It works without the lease and in the `observe` profile: screenshots taken without the lease now get a `screenshot_ref` too, which only a zoom by the same session takes.
