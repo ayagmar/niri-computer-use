@@ -2363,6 +2363,31 @@ async fn an_element_under_another_floating_window_is_never_aimed_at() {
     assert_eq!(desk.fixture.clipboard.pointed().len(), 1);
 }
 
+// niri reports a floating window's new place at once, while it still animates there. A
+// window that covered the Safe button and moved clear of it may still cover it on screen,
+// so for a second after, a ref to the button is refused as the view may still be moving,
+// though the button's own window didn't move; after that second, it goes out.
+#[tokio::test]
+async fn an_element_just_uncovered_by_another_window_moving_away_waits_a_second() {
+    let covered = [floating_window(), floating_other(60.0, true)];
+    let mut desk = Desk::start_with("el-uncovered", &["/frame"], objects(), &covered).await;
+    let button = desk.element("Safe").await;
+    let shot = desk.screenshot_ref().await;
+    let clear = floating_other(600.0, true);
+    desk.niri
+        .set_windows(&[floating_window(), clear.clone()], &[workspace()]);
+    desk.moved(&json!({"WindowLayoutsChanged": {"changes": [[2, clear["layout"]]]}}))
+        .await;
+    let aimed = json!({"screenshot_ref": shot, "element": button});
+    let refused = desk.server.call("click", aimed.clone()).await;
+    refused_moving(&refused, "moved away");
+    assert_eq!(desk.fixture.clipboard.pointed(), []);
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let clicked = desk.server.call("click", aimed).await;
+    assert_eq!(clicked["isError"], false, "{clicked}");
+    assert_eq!(desk.fixture.clipboard.pointed().len(), 3);
+}
+
 /// The events after which niri's view may still be moving on `DP-1`, or the floating
 /// mock window on it: a workspace switch, the overview opening or closing, the window
 /// moving to (40, 20).

@@ -67,6 +67,10 @@ struct Replica {
     /// workspace or opened it, since the initial state, and the time before: a floating
     /// window animates to the place niri reports at once.
     relaid: HashMap<u64, Stamps>,
+    /// When niri last relaid a floating window on each output, by output name, or one
+    /// that was floating there: a window that moves off an element still covers it while
+    /// it animates away.
+    floated: HashMap<String, Instant>,
     /// When niri last opened or closed the overview, which animates every output, or when
     /// this replica got its initial state after a reconnect: a switch may have started
     /// while the stream was down.
@@ -115,7 +119,11 @@ impl Replica {
         if matches!(event, Event::OverviewOpenedOrClosed { .. }) {
             self.everywhere = Some(now);
         }
-        for id in relaid_by(&self.state.windows.windows, event) {
+        let relaid = relaid_by(&self.state.windows.windows, event);
+        for output in self.floating_outputs(event, &relaid) {
+            self.floated.insert(output, now);
+        }
+        for id in relaid {
             let before = self.relaid.get(&id).map(|stamps| stamps.last);
             self.relaid.insert(id, Stamps { last: now, before });
         }
@@ -124,10 +132,39 @@ impl Replica {
         }
     }
 
+    /// The outputs where a window among `ids` floated before `event` or floats after it.
+    fn floating_outputs(&self, event: &Event, ids: &[u64]) -> Vec<String> {
+        let known = &self.state.windows.windows;
+        let after = |id: u64| -> Option<&Window> {
+            if let Event::WindowsChanged { windows } = event {
+                return windows.iter().find(|window| window.id == id);
+            }
+            if let Event::WindowOpenedOrChanged { window } = event {
+                return (window.id == id).then_some(window);
+            }
+            None
+        };
+        ids.iter()
+            .flat_map(|id| [known.get(id), after(*id)])
+            .flatten()
+            .filter(|window| window.is_floating)
+            .filter_map(|window| {
+                let workspace = self
+                    .state
+                    .workspaces
+                    .workspaces
+                    .get(&window.workspace_id?)?;
+                workspace.output.clone()
+            })
+            .collect()
+    }
+
     /// When the view on `output`, or `window` on it, last started to move, as far as niri
-    /// reported it.
+    /// reported it: a floating window there moving, resizing or opening counts, since it
+    /// may cover `window`'s elements, or stop covering them, only once it has animated.
     fn animated(&self, output: &str, window: u64) -> Option<Instant> {
         let latest = self.activated.get(output).copied().max(self.everywhere);
+        let latest = latest.max(self.floated.get(output).copied());
         latest.max(self.relaid.get(&window).map(|stamps| stamps.last))
     }
 
@@ -714,6 +751,58 @@ mod tests {
         assert_eq!(motion(&replica, 8), Motion::Settled);
         tokio::time::advance(settle).await;
         assert_eq!(motion(&replica, 7), Motion::Settled);
+    }
+
+    // A floating window that moves off an element still covers it while it animates, so
+    // every window's elements on that output wait as for their own window moving: after
+    // another floating window there moves, stops floating or opens. A tiled window moving,
+    // or a floating one on another output, doesn't count.
+    #[tokio::test(start_paused = true)]
+    async fn a_floating_window_relaid_on_an_output_moves_the_view_there() {
+        use crate::niri::waiter::tests::window;
+        let floating = |id, workspace| Window {
+            is_floating: true,
+            ..window(id, None, workspace, false)
+        };
+        let moved = |window: &Window| {
+            let mut layout = window.layout.clone();
+            layout.tile_pos_in_workspace_view = Some((40.0, 0.0));
+            Event::WindowLayoutsChanged {
+                changes: vec![(window.id, layout)],
+            }
+        };
+        let mut replica = Replica::default();
+        let shown = vec![
+            workspace_on(1, "DP-1", true),
+            workspace_on(2, "HDMI-A-1", true),
+        ];
+        replica.apply(1, Event::WorkspacesChanged { workspaces: shown });
+        let tiled = window(9, None, 1, false);
+        let elsewhere = floating(10, 2);
+        let windows = vec![
+            floating(7, 1),
+            floating(8, 1),
+            tiled.clone(),
+            elsewhere.clone(),
+        ];
+        replica.apply(2, Event::WindowsChanged { windows });
+        replica.apply(3, Event::OverviewOpenedOrClosed { is_open: false });
+        replica.apply(4, moved(&tiled));
+        replica.apply(5, moved(&elsewhere));
+        assert_eq!(replica.animated("DP-1", 7), None);
+        let covering = Instant::now();
+        replica.apply(6, moved(&floating(8, 1)));
+        assert_eq!(replica.animated("DP-1", 7), Some(covering));
+        tokio::time::advance(Duration::from_secs(5)).await;
+        let tiling = Instant::now();
+        let tiled_now = window(8, None, 1, false);
+        replica.apply(7, Event::WindowOpenedOrChanged { window: tiled_now });
+        assert_eq!(replica.animated("DP-1", 7), Some(tiling));
+        tokio::time::advance(Duration::from_secs(5)).await;
+        let opened = Instant::now();
+        let opening = floating(11, 1);
+        replica.apply(8, Event::WindowOpenedOrChanged { window: opening });
+        assert_eq!(replica.animated("DP-1", 7), Some(opened));
     }
 
     // niri reports a switch inside `WorkspacesChanged` when a workspace was also added,
