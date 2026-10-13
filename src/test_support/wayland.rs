@@ -131,6 +131,8 @@ enum Command {
     CopyOnRead(Selection),
     /// Handles each virtual key press only after this long, as a niri busy elsewhere.
     SlowKeys(Duration),
+    /// Handles each virtual keyboard's modifiers only after this long.
+    SlowModifiers(Duration),
     /// Holds the next display client's connection unanswered.
     HoldClient,
     /// Serves the held connection, or the next one if it hasn't come yet.
@@ -236,6 +238,11 @@ impl Compositor {
     /// Makes the fake handle each virtual key press, and what follows it, `delay` late.
     pub(crate) async fn slow_keys(&self, delay: Duration) {
         self.send(Command::SlowKeys(delay)).await;
+    }
+
+    /// Makes the fake handle each virtual keyboard's modifiers `delay` late.
+    pub(crate) async fn slow_modifiers(&self, delay: Duration) {
+        self.send(Command::SlowModifiers(delay)).await;
     }
 
     /// Holds the next client that connects to the display unanswered, as a niri busy with
@@ -484,6 +491,8 @@ struct State {
     copy_on_read: Option<Selection>,
     /// How late each virtual key press is handled.
     key_delay: Duration,
+    /// How late each virtual keyboard's modifiers are handled.
+    modifier_delay: Duration,
     /// Whether the next display client is held (`Command::HoldClient`).
     hold_next: bool,
     /// The display client held, unanswered.
@@ -500,6 +509,7 @@ impl State {
             selection: Selection::Empty,
             copy_on_read: None,
             key_delay: Duration::ZERO,
+            modifier_delay: Duration::ZERO,
             hold_next: false,
             held: None,
         }
@@ -551,6 +561,7 @@ impl State {
             Command::Copy(selection) => self.select(handle, selection),
             Command::CopyOnRead(selection) => self.copy_on_read = Some(selection),
             Command::SlowKeys(delay) => self.key_delay = delay,
+            Command::SlowModifiers(delay) => self.modifier_delay = delay,
             Command::HoldClient => self.hold_next = true,
             Command::ServeHeld => {
                 self.hold_next = false;
@@ -831,6 +842,7 @@ impl Dispatch<ZwpVirtualKeyboardV1, Mutex<Virtual>> for State {
             ..
         } = request
         {
+            stall(state.modifier_delay);
             data.modifiers = (mods_depressed, group);
             if !state.send_keymap(&keymap, data.modifiers) {
                 state.seen().modifiers.push(data.modifiers);

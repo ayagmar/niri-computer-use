@@ -2756,6 +2756,42 @@ async fn a_held_drag_stops_on_a_workspace_switch_but_not_on_a_window_moving() {
     assert_eq!(all.len(), 13, "{all:?}");
 }
 
+// A round trip within a gesture can take seconds, longer than a read of the lock state
+// holds. A screen locked while a drag rests on its start, or while it holds its button,
+// stops it at the next look: only what went out before stays out, the button is released,
+// and the outcome is uncertain.
+#[tokio::test]
+async fn a_drag_stops_when_the_screen_locks_during_one_of_its_waits() {
+    // The hover before the press: only the motion went out. The rest after it: the press,
+    // then the release.
+    for (sync, frames) in [(3, 1), (4, 3)] {
+        let mut desk = Desk::start(&format!("el-lock-{sync}")).await;
+        let shot = desk.screenshot_ref().await;
+        let points = desk.fixture.points();
+        points.start();
+        let held = points.hold("wayland:sync", sync);
+        let dragged =
+            json!({"screenshot_ref": shot, "from": {"x": 5, "y": 5}, "to": {"x": 300, "y": 200}});
+        let id = desk.server.start_call("drag", dragged).await;
+        held.arrived().await;
+        desk.noctalia.set(LOCKED);
+        // Past the 250 ms a read of the lock state holds for.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        held.release();
+        let result = desk.server.response(id).await["result"].clone();
+        let tag = format!("sync {sync}");
+        stopped_midway(&result, "the screen is locked", &tag);
+        points.idle().await;
+        let sent = desk.fixture.clipboard.pointed();
+        assert_eq!(sent.len(), frames, "{tag}: {sent:?}");
+        assert_ne!(
+            sent.last(),
+            Some(&Pointed::Button(272, 1)),
+            "{tag}: {sent:?}"
+        );
+    }
+}
+
 // A drag the overview stopped while it held its button releases it and waits for niri to
 // handle that before removing the input-dirty marker. A request cancelled during that wait
 // doesn't cut the cleanup short: once niri answers, the marker goes, and the next click

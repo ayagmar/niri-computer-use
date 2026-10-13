@@ -427,10 +427,13 @@ impl Gate<'_> {
     /// that holds a button, as dragging a window by its title bar moves it. An app can
     /// change its `app_id` at any time without moving anything, so the deny list is asked
     /// each time about the focused window and the elements' windows as niri reports them
-    /// now. Before the first input, the lock state must still be fresh, however long the
-    /// look took, and the desk is told input is going out: a motion can open a hover menu
-    /// or move focus, so a stop or a lost lease from then on leaves the call `uncertain`.
+    /// now. The lock state is read again first when the last read is too old, since a
+    /// round trip in the gesture can take seconds, and must still be fresh at the end,
+    /// however long the look took. Before the first input, the desk is told input is going
+    /// out: a motion can open a hover menu or move focus, so a stop or a lost lease from
+    /// then on leaves the call `uncertain`.
     async fn pass(&mut self, stage: Stage) -> Result<(), ToolError> {
+        act::fresh_lock(self.input.niri).await?;
         let moved = self.waiter.moved().await.map_err(|reason| {
             let sent = if stage == Stage::First {
                 "nothing was sent"
@@ -461,10 +464,12 @@ impl Gate<'_> {
                 return Err(refused);
             }
         }
+        let desk = self.input.niri.desk;
         if stage == Stage::First {
-            return self.input.niri.desk.sending_input();
+            desk.sending_input()
+        } else {
+            desk.fresh()
         }
-        Ok(())
     }
 }
 
@@ -781,6 +786,102 @@ mod tests {
         assert!(scroll(0, 0).check().is_err());
         assert!(scroll(11, 0).check().is_err());
         assert!(scroll(0, -11).check().is_err());
+    }
+
+    /// Serves Noctalia's status for `env`: unlocked to the first read, locked to every
+    /// later one.
+    fn locks_after_the_first_read(env: &crate::Env) {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let socket = crate::noctalia::socket(env).unwrap();
+        let listener = tokio::net::UnixListener::bind(socket).unwrap();
+        tokio::spawn(async move {
+            let mut reply: &[u8] = br#"{"locked": false}"#;
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut request = Vec::new();
+                stream.read_to_end(&mut request).await.ok();
+                stream.write_all(reply).await.ok();
+                reply = br#"{"locked": true}"#;
+            }
+        });
+    }
+
+    // Held modifiers go down after the look before the first input, and niri may take long
+    // to handle them. A screen locked meanwhile stops the click at the look after them:
+    // no pointer input goes out, the modifiers are released, the marker is removed, and
+    // the outcome is uncertain, since the modifiers went out.
+    #[tokio::test]
+    async fn a_screen_locked_while_held_keys_go_down_stops_the_click() {
+        use crate::act::Niri;
+        use crate::control::{LockSources, desk::Desk};
+        use crate::test_support::{fresh_dir, wayland::Compositor};
+
+        let dir = fresh_dir("pointer-held-lock");
+        let niri = Compositor::start(&dir, include_str!("../../tests/fixtures/us-de.xkb"));
+        let env = crate::Env {
+            wayland_display: Some("fake-noctalia".into()),
+            ..niri.env(&dir)
+        };
+        locks_after_the_first_read(&env);
+        let runtime = RuntimeDir::of(&env).unwrap();
+        runtime.create().unwrap();
+        let socket = niri.niri_socket();
+        let events = niri.events();
+        let desk = Desk::start(&env);
+        let input = Input {
+            niri: Niri {
+                socket: &socket,
+                events: Ok(&events),
+                desk: &desk,
+                locks: LockSources {
+                    env: &env,
+                    noctalia: true,
+                },
+            },
+            display: &env.display,
+            runtime: &runtime,
+            policy: &policy::Loaded::Missing,
+            keyboard: Some("native".as_ref()),
+            place: crate::test_support::no_programs(),
+            a11y: None,
+        };
+        let outputs = niri::outputs(&socket).await.unwrap();
+        let output = &outputs[crate::test_support::wayland::OUTPUT];
+        let geometry = output.logical.unwrap();
+        let shot = Shot {
+            output: output.name.clone(),
+            geometry,
+            motion_geometry: crate::coords::motion_geometry(output),
+            captured: crate::observe::Rect {
+                x: 0,
+                y: 0,
+                width: geometry.width,
+                height: geometry.height,
+            },
+            scale: 1.0,
+            width: geometry.width,
+            height: geometry.height,
+            ..crate::test_support::shot()
+        };
+        // Past the 250 ms a read of the lock state holds for.
+        niri.slow_modifiers(Duration::from_millis(300)).await;
+        let click = Gesture::Click {
+            at: Spot::Pixel(PX),
+            button: Button::Left,
+            count: 1,
+        };
+        let no_element = |id: &str| Err(a11y::not_accessible(format!("no element {id}")));
+        let outcome = point(input, Ok(shot), click, &["ctrl".to_owned()], no_element)
+            .await
+            .unwrap();
+        assert_eq!(outcome.observed, Observed::Uncertain);
+        let detail = outcome.detail.unwrap_or_default();
+        assert!(detail.starts_with("the screen is locked"), "{detail}");
+        let seen = niri.seen();
+        assert_eq!(seen.buttons, []);
+        assert_eq!(seen.last_modifiers().map(|(held, _)| held), Some(0));
+        assert!(marker::read(&runtime).is_none());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
