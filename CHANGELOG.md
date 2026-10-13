@@ -101,6 +101,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- `elements` lists the names of a Chromium or Electron app's actions, such as `click` and `showContextMenu`, rather than empty strings, so `activate_element` can take them by name and finds `click` as the default.
 - `activate_element` reports `gone` when the element says it is `defunct` afterwards, as Chromium's do once it replaced them with new ones, rather than `present` with every state cleared and `defunct` set.
 - `niri_action` reports a floating window that only moved, as `MoveFloatingWindow` does, as `changed` rather than `unchanged` after a second's wait: its `window` has the new `tile_pos_in_workspace_view`, and `changes` gives the window's new `position`, for any action that moves a floating window.
 - A result with an image, `screenshot`'s or an action's with `screenshot: true` or in doubt, no longer has `structuredContent`, and neither does `elements`' compact listing; the JSON is in the text. Codex 0.162.1 shows the model only `structuredContent` when a result has it, so its agents never saw a screenshot, and Claude Code 2.1.296 shows it in place of the text, so its agents got `elements`' full JSON, about 2.7 times the bytes, instead of the compact lines.

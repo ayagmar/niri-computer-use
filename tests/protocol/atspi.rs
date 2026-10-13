@@ -45,8 +45,11 @@ pub(crate) struct Object {
     pub(crate) children: Vec<String>,
     /// With a Component interface: its WINDOW extents.
     pub(crate) extents: Option<(i32, i32, i32, i32)>,
-    /// With an Action interface: its actions' names.
+    /// With an Action interface: its actions' names, as `GetName` gives them.
     pub(crate) actions: Vec<String>,
+    /// What `GetActions` lists in place of the names, when it lists other text, as
+    /// Chromium lists empty strings.
+    pub(crate) listed: Option<Vec<String>>,
     /// With `Text` and `EditableText` interfaces: how many characters it holds.
     pub(crate) text: Option<i32>,
     /// A counter button's count, which each `DoAction` adds one to and names it after.
@@ -555,11 +558,23 @@ impl Action {
         self.0.called("GetActions").await?;
         self.0.read(|object, _| {
             object
-                .actions
+                .listed
+                .as_ref()
+                .unwrap_or(&object.actions)
                 .iter()
                 .map(|action| (action.clone(), String::new(), String::new()))
                 .collect()
         })
+    }
+
+    async fn get_name(&self, index: i32) -> answer::Result<String> {
+        self.0.called("GetName").await?;
+        let name = self.0.read(|object, _| {
+            usize::try_from(index)
+                .ok()
+                .and_then(|index| object.actions.get(index).cloned())
+        })?;
+        name.ok_or_else(|| fdo::Error::InvalidArgs(format!("Unknown action {index}")).into())
     }
 
     async fn do_action(&self, index: i32) -> answer::Result<bool> {

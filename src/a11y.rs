@@ -458,7 +458,7 @@ impl Request {
             self.call::<_, Vec<u32>>(at, (ACCESSIBLE, "GetState"), &()),
             self.call::<_, Vec<(String, OwnedObjectPath)>>(at, (ACCESSIBLE, "GetChildren"), &()),
             self.extents(bus, path),
-            self.call::<_, Vec<(String, String, String)>>(at, (ACTION, "GetActions"), &()),
+            self.action_names(at),
         );
         let (Some(role), Some(name), Some(states), Some(children)) = (
             present(role)?,
@@ -474,11 +474,7 @@ impl Request {
             name,
             states: States::from_words(&states),
             extents: optional(extents)?,
-            actions: optional(actions)?
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(action, _, _)| action)
-                .collect(),
+            actions: optional(actions)?.unwrap_or_default(),
             children: (0..)
                 .zip(children)
                 .filter(|(_, (child_bus, _))| child_bus == bus)
@@ -569,9 +565,27 @@ impl Request {
 
     /// The names of the element's actions now, in index order.
     pub(crate) async fn actions(&self, element: &ElementRef) -> Result<Vec<String>, Failed> {
-        let actions: Vec<(String, String, String)> =
-            self.call(element.at(), (ACTION, "GetActions"), &()).await?;
-        Ok(actions.into_iter().map(|(name, _, _)| name).collect())
+        self.action_names(element.at()).await
+    }
+
+    /// The names of the actions of the object at `at`, in index order. Chromium lists every
+    /// name empty, so an empty one is asked for by `GetName`, which gives Chromium's own,
+    /// such as `click`.
+    async fn action_names(&self, at: (&str, &str)) -> Result<Vec<String>, Failed> {
+        let listed: Vec<(String, String, String)> =
+            self.call(at, (ACTION, "GetActions"), &()).await?;
+        let mut names = Vec::with_capacity(listed.len());
+        for (index, (name, _, _)) in (0..).zip(listed) {
+            if name.is_empty() {
+                names.push(
+                    self.call::<_, String>(at, (ACTION, "GetName"), &(index,))
+                        .await?,
+                );
+            } else {
+                names.push(name);
+            }
+        }
+        Ok(names)
     }
 
     /// Whether the element has an `EditableText` interface.
