@@ -50,8 +50,9 @@ const MAX_CLICKS: u8 = 3;
 /// when its animation ends. Its default animations take about 0.3 s.
 const SETTLE: Duration = Duration::from_secs(1);
 const MAX_NOTCHES: i32 = 10;
-/// How long the looks within a gesture may spend reading the lock state, all together
-/// (`Gate::read_lock`). Meanwhile a drag holds its button, and an app may autoscroll.
+/// How long the looks within a gesture may spend reading the lock state again after a read
+/// that came back stale, all together (`Gate::read_lock`). Meanwhile a drag holds its
+/// button, and an app may autoscroll.
 const GESTURE_READING: Duration = Duration::from_secs(1);
 /// The wheel notches one call may turn each way.
 const NOTCHES: RangeInclusive<i32> = -MAX_NOTCHES..=MAX_NOTCHES;
@@ -530,16 +531,19 @@ impl Gate<'_> {
         }
     }
 
-    /// Reads the lock state again when its last read is too old (`act::fresh_lock`). Once
-    /// something went out, a read that itself took too long is made again while `reading`
-    /// lasts, and a read still running when it runs out is dropped, leaving the lock state
-    /// stale: stopping drops a drag wherever the pointer is, while another read only holds
-    /// the pointer still a little longer, but not for long. Before the first input, one
-    /// slow read refuses the call with nothing sent, and the agent can simply try again.
+    /// Reads the lock state again when its last read is too old (`act::fresh_lock`), under
+    /// that read's own deadlines. Once something went out, a read that itself took too
+    /// long is made again while `reading` lasts, and a read still running when it runs out
+    /// is dropped, leaving the lock state stale: stopping drops a drag wherever the pointer
+    /// is, while another read only holds the pointer still a little longer, but not for
+    /// long. Only those reads count against `reading`, so a slow desktop whose reads come
+    /// back fresh doesn't use it up. Before the first input, one slow read refuses the call
+    /// with nothing sent, and the agent can simply try again.
     async fn read_lock(&mut self, stage: Stage) -> Result<(), ToolError> {
         let niri = self.input.niri;
-        if stage == Stage::First {
-            return act::fresh_lock(niri).await;
+        act::fresh_lock(niri).await?;
+        if stage == Stage::First || niri.desk.lock_fresh() {
+            return Ok(());
         }
         let began = Instant::now();
         let until = began + self.reading;
@@ -992,47 +996,75 @@ mod tests {
     /// 250 ms a read of the lock state holds for, while Noctalia gives `replies`.
     struct HeldClick {
         outcome: Outcome,
-        /// How long the click took.
-        took: Duration,
         seen: crate::test_support::wayland::Seen,
         marker_left: bool,
     }
 
-    async fn click_holding_ctrl(name: &str, replies: Vec<(Duration, &'static str)>) -> HeldClick {
-        use crate::act::Niri;
-        use crate::control::{LockSources, desk::Desk};
-        use crate::test_support::{fresh_dir, wayland::Compositor};
+    /// A fake niri with its runtime directory and desk, and a Noctalia that gives
+    /// `replies` (`noctalia_answers`).
+    struct Bench {
+        dir: std::path::PathBuf,
+        niri: crate::test_support::wayland::Compositor,
+        env: crate::Env,
+        runtime: RuntimeDir,
+        socket: niri::Socket,
+        events: niri::events::EventStream,
+        desk: crate::control::desk::Desk,
+    }
 
-        let dir = fresh_dir(name);
-        let niri = Compositor::start(&dir, include_str!("../../tests/fixtures/us-de.xkb"));
-        let env = crate::Env {
-            wayland_display: Some("fake-noctalia".into()),
-            ..niri.env(&dir)
-        };
-        noctalia_answers(&env, replies);
-        let runtime = RuntimeDir::of(&env).unwrap();
-        runtime.create().unwrap();
-        let socket = niri.niri_socket();
-        let events = niri.events();
-        let desk = Desk::start(&env);
-        let input = Input {
-            niri: Niri {
-                socket: &socket,
-                events: Ok(&events),
-                desk: &desk,
-                locks: LockSources {
-                    env: &env,
-                    noctalia: true,
+    impl Bench {
+        fn start(name: &str, replies: Vec<(Duration, &'static str)>) -> Self {
+            use crate::test_support::{fresh_dir, wayland::Compositor};
+
+            let dir = fresh_dir(name);
+            let niri = Compositor::start(&dir, include_str!("../../tests/fixtures/us-de.xkb"));
+            let env = crate::Env {
+                wayland_display: Some("fake-noctalia".into()),
+                ..niri.env(&dir)
+            };
+            noctalia_answers(&env, replies);
+            let runtime = RuntimeDir::of(&env).unwrap();
+            runtime.create().unwrap();
+            let socket = niri.niri_socket();
+            let events = niri.events();
+            let desk = crate::control::desk::Desk::start(&env);
+            Self {
+                dir,
+                niri,
+                env,
+                runtime,
+                socket,
+                events,
+                desk,
+            }
+        }
+
+        fn input(&self) -> Input<'_> {
+            Input {
+                niri: act::Niri {
+                    socket: &self.socket,
+                    events: Ok(&self.events),
+                    desk: &self.desk,
+                    locks: crate::control::LockSources {
+                        env: &self.env,
+                        noctalia: true,
+                    },
                 },
-            },
-            display: &env.display,
-            runtime: &runtime,
-            policy: &policy::Loaded::Missing,
-            keyboard: Some("native".as_ref()),
-            place: crate::test_support::no_programs(),
-            a11y: None,
-        };
-        let outputs = niri::outputs(&socket).await.unwrap();
+                display: &self.env.display,
+                runtime: &self.runtime,
+                policy: &policy::Loaded::Missing,
+                keyboard: Some("native".as_ref()),
+                place: crate::test_support::no_programs(),
+                a11y: None,
+            }
+        }
+    }
+
+    async fn click_holding_ctrl(name: &str, replies: Vec<(Duration, &'static str)>) -> HeldClick {
+        let bench = Bench::start(name, replies);
+        let (niri, socket, runtime) = (&bench.niri, &bench.socket, &bench.runtime);
+        let input = bench.input();
+        let outputs = niri::outputs(socket).await.unwrap();
         let output = &outputs[crate::test_support::wayland::OUTPUT];
         let geometry = output.logical.unwrap();
         let shot = Shot {
@@ -1057,17 +1089,15 @@ mod tests {
             count: 1,
         };
         let no_element = |id: &str| Err(a11y::not_accessible(format!("no element {id}")));
-        let began = Instant::now();
         let outcome = point(input, Ok(shot), click, &["ctrl".to_owned()], no_element)
             .await
             .unwrap();
         let clicked = HeldClick {
             outcome,
-            took: began.elapsed(),
             seen: niri.seen(),
-            marker_left: marker::read(&runtime).is_some(),
+            marker_left: marker::read(runtime).is_some(),
         };
-        std::fs::remove_dir_all(dir).unwrap();
+        std::fs::remove_dir_all(&bench.dir).unwrap();
         clicked
     }
 
@@ -1131,22 +1161,65 @@ mod tests {
         assert!(!clicked.marker_left);
     }
 
-    // While a gesture reads the lock state again, a drag holds its button and an app may
-    // autoscroll under it, so the reads within one gesture stop after a second in all,
-    // however many there were or however long each one would take.
+    /// What a gate on `bench` needs: a waiter on its niri, and its input.
+    async fn gate_on(bench: &Bench) -> (niri::waiter::Waiter, Input<'_>) {
+        let waiter = niri::waiter(Ok(&bench.events)).await.unwrap();
+        (waiter, bench.input())
+    }
+
+    // On a loaded desktop every look of a drag may find the lock state stale and need one
+    // read, which comes back fresh but slowly. Those reads don't count against the second
+    // for reading again, so a drag of many looks isn't stopped partway.
     #[tokio::test]
-    async fn slow_lock_reads_hold_a_gesture_for_a_second_at_most() {
-        let slow = Duration::from_millis(900);
-        let replies = vec![(Duration::ZERO, UNLOCKED), (slow, UNLOCKED)];
-        let clicked = click_holding_ctrl("pointer-held-slower", replies).await;
-        assert_eq!(clicked.outcome.observed, Observed::Uncertain);
-        assert_eq!(clicked.seen.buttons, []);
-        // The modifiers' 300 ms, the second of reads, and the rest of the click.
-        assert!(
-            clicked.took < Duration::from_millis(2000),
-            "{:?}",
-            clicked.took
-        );
+    async fn reads_that_come_back_fresh_never_use_up_a_gestures_second() {
+        let slow = Duration::from_millis(150);
+        let bench = Bench::start("pointer-gate-fresh", vec![(slow, UNLOCKED)]);
+        let (mut waiter, input) = gate_on(&bench).await;
+        let mut gate = Gate {
+            waiter: &mut waiter,
+            input,
+            windows: &[],
+            end: None,
+            reading: GESTURE_READING,
+        };
+        for look in 0..10 {
+            bench
+                .desk
+                .lock_read(Instant::now() - Duration::from_secs(1));
+            gate.read_lock(Stage::Pressed).await.unwrap();
+            assert!(bench.desk.lock_fresh(), "look {look}");
+        }
+        std::fs::remove_dir_all(&bench.dir).unwrap();
+    }
+
+    // While a gesture reads the lock state again after a read that came back stale, a drag
+    // holds its button and an app may autoscroll under it, so those reads stop after a
+    // second in all, however long each one would take. The look's first read keeps its
+    // own deadline.
+    #[tokio::test]
+    async fn reading_again_after_a_stale_read_stops_after_a_second() {
+        let slow = Duration::from_millis(1500);
+        let bench = Bench::start("pointer-gate-slow", vec![(slow, UNLOCKED)]);
+        let (mut waiter, input) = gate_on(&bench).await;
+        let mut gate = Gate {
+            waiter: &mut waiter,
+            input,
+            windows: &[],
+            end: None,
+            reading: GESTURE_READING,
+        };
+        bench
+            .desk
+            .lock_read(Instant::now() - Duration::from_secs(1));
+        let began = Instant::now();
+        let read = tokio::time::timeout(Duration::from_secs(10), gate.read_lock(Stage::Pressed));
+        read.await.unwrap().unwrap();
+        // The first read's 1.5 s and the second of reading again, not a third read.
+        let took = began.elapsed();
+        assert!(took < Duration::from_millis(3500), "{took:?}");
+        assert!(!bench.desk.lock_fresh());
+        assert_eq!(gate.reading, Duration::ZERO);
+        std::fs::remove_dir_all(&bench.dir).unwrap();
     }
 
     #[test]
