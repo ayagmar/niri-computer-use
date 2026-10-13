@@ -56,6 +56,10 @@ typography:
     fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
     fontSize: "0.75rem"
     lineHeight: 1.6
+  call-phone:
+    fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
+    fontSize: "0.8125rem"
+    lineHeight: 1.6
   label:
     fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
     fontSize: "0.7rem"
@@ -199,7 +203,7 @@ Cool graphite neutrals with a single warm amber, and a red held back for refusal
 - **Title** (660 on the stop window's heading at Starlight's h4 size; Starlight's h3 size elsewhere; -0.01em): window and column headings and docs subheads. Code inside h2 and h3 loses its chip and drops to 0.85em.
 - **Lead** (fluid base to large, 1.55, max 34rem): the hero tagline, in gray 2.
 - **Body** (Starlight defaults): prose at a 46rem content width on docs pages; Starlight's sm size inside the hero's windows.
-- **Call** (mono 0.75rem, 1.6): request and answer lines, wrapped anywhere with a 1.5ch hanging indent so the marks stay in a column.
+- **Call** (mono 0.75rem, 1.6; 0.8125rem below 50rem): request and answer lines, wrapped anywhere with a 1.5ch hanging indent so the marks stay in a column.
 - **Label** (mono 0.7rem, tabular numbers): call timestamps, the lease tag, the bar's keycaps and the recording's output line. Mono at Starlight's xs size carries the `asked` tag and the "All N calls as text" toggle.
 
 ### Named Rules
@@ -209,7 +213,7 @@ Cool graphite neutrals with a single warm amber, and a red held back for refusal
 
 On docs pages Starlight's layout holds with a 46rem content width; the home page widens it to 96rem. Spacing follows niri's gap: 1rem between windows and columns, everywhere on the home page.
 
-**The bar.** On the home page the header is a desktop bar: the site name, then from 80rem the six workspace pills (demo, tools, gate, safety, limits, install), then from 50rem the lease tag pushed right, the stop keycaps, search, and a gray divider before the social and theme controls. Below 80rem a single lit pill after the name says which workspace is in view. Below 50rem only the name, that pill and search remain. Docs pages keep Starlight's header.
+**The bar.** On the home page the header is a desktop bar: the site name, then from 80rem the six workspace pills (demo, tools, gate, safety, limits, install), then from 50rem the lease tag pushed right, the stop keycaps, search, and a gray divider before the social and theme controls. Below 80rem a single lit pill after the name says which workspace is in view. Below 50rem only the name, that pill and search remain, each at least 44px tall to tap. Docs pages keep Starlight's header.
 
 **The screen.** The hero runs the full width of the window directly under the bar. Below 62rem its windows stack: promise, recording, calls (capped at 22rem tall and scrolling inside their window), stop key. From 62rem the strip runs sideways as niri's does: as tall as the view (between 38rem and 72rem), three columns at their own widths (the promise at 24 to 36rem around 33vw, the recording column at 34 to 68rem around 52vw, the stop window at 18 to 26rem around 24vw), centered, and scrolling sideways when wider than the window, which it is until about 2150px. The last window runs off the right edge rather than shrinking, and keyboard focus inside it scrolls it into view. The page itself never scrolls sideways: the pane holding the content clips sideways overflow, so windows and columns sliding in from the right can't widen it on a phone.
 
@@ -285,9 +289,10 @@ Two buttons, both 2.75rem tall, semibold, 8px corners, with a 150ms color transi
 
 ### Calls
 - Each call: its time (`m:ss.s`), `→ request`, `← answer · 303 ms` with the milliseconds in gray 3. A command the user ran is `$ command` with a `#` line saying what it did, both in gray 3.
+- Below 50rem the calls are a step larger, 0.8125rem with times at 0.75rem, so they read on a phone without zooming.
 - While the recording plays, the call it shows wears a 1px amber ring with 6px corners that moves from call to call, and the calls still to come drop to gray 3.
 - The time is a button, "Play from 0:07.1", that plays the recording from that call; a click anywhere on the call does the same unless it ends a text selection. Only one time per list is in the tab order, the call being shown, and the arrow keys, Home and End move between calls. Each time is described by its request and a hidden line saying the arrow keys move between calls. On a pointer that hovers, a call's row takes the gray 6 fill and its time turns white.
-- **In a column (Demo):** under the plate, the `asked` tag and prompt, the one call the recording is about with its answer, the recording's note, and a disclosure, "All N calls as text", holding the full list.
+- **In a column (Demo):** under the plate, the `asked` tag and prompt, the one call the recording is about with its answer, the recording's note, and a disclosure, "All N calls as text", holding the full list. Its toggle is 44px tall to tap.
 
 ### Diagram
 The diagram slot. Its current drawing uses panel boxes with rule strokes, gray wires and an amber act path and dashed gate; it is being replaced.

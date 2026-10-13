@@ -102,6 +102,18 @@
 	overflow-x: clip;
 }
 
+/* On a touch screen, heading anchors and code copy buttons are at least 44px to tap. */
+@media (pointer: coarse) {
+	.sl-anchor-link::after {
+		inset: -0.5rem -0.75rem;
+	}
+
+	.expressive-code .copy button {
+		width: 2.75rem;
+		height: 2.75rem;
+	}
+}
+
 /* Moving between pages crossfades while the header holds still, and links within the home
    page scroll to their section rather than jump. */
 @media (prefers-reduced-motion: no-preference) {

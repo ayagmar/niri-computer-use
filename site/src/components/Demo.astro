@@ -83,6 +83,12 @@ const call = demo.calls[index];
 		color: var(--sl-color-gray-2);
 	}
 
+	@media (max-width: 50rem) {
+		.call code {
+			font-size: 0.8125rem;
+		}
+	}
+
 	.mark {
 		color: var(--ncu-ring);
 	}
@@ -93,15 +99,18 @@ const call = demo.calls[index];
 	}
 
 	details {
-		margin-top: 0.75rem;
+		margin-top: 0.25rem;
 		font-size: var(--sl-text-sm);
 	}
 
+	/* The toggle is a full 44px tall to tap; its padding keeps the text where it was. */
 	summary {
+		padding-block: 0.8rem;
 		cursor: pointer;
 		color: var(--sl-color-gray-3);
 		font-family: var(--sl-font-mono);
 		font-size: var(--sl-text-xs);
+		line-height: 1.5;
 		transition: color 150ms ease;
 	}
 
@@ -129,7 +138,7 @@ const call = demo.calls[index];
 	}
 
 	details :global(.ncu-calls) {
-		margin-top: 0.5rem;
+		margin-top: 0.25rem;
 	}
 
 	.note {
