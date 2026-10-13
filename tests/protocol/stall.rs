@@ -291,6 +291,14 @@ impl Case<'_> {
     }
 }
 
+/// What a case's call came to when it never passed the point held, and the points it
+/// passed instead.
+#[derive(Debug)]
+struct Missed {
+    result: Value,
+    trace: Vec<Passed>,
+}
+
 /// What a case's call came to, and what reached the fakes.
 #[derive(Debug)]
 struct Ran {
@@ -615,8 +623,8 @@ impl World {
 
     /// Runs `case` up to three times until its point is reached. A lock read made again
     /// because the last one had aged is in the trace only when the machine was that slow,
-    /// so on a loaded machine the next call may not make it.
-    async fn reach(&mut self, case: &Case<'_>) -> Result<Ran, String> {
+    /// so on a loaded machine the next call may not make it (see `unreached`).
+    async fn reach(&mut self, case: &Case<'_>) -> Result<Ran, Missed> {
         let mut ran = self.run(case).await;
         for _ in 0..2 {
             if ran.is_ok() {
@@ -627,8 +635,8 @@ impl World {
         ran
     }
 
-    /// Runs `case`, or says why its point wasn't reached.
-    async fn run(&mut self, case: &Case<'_>) -> Result<Ran, String> {
+    /// Runs `case`, or says what its call did without reaching its point.
+    async fn run(&mut self, case: &Case<'_>) -> Result<Ran, Missed> {
         let arguments = self.reset(case.tool).await;
         let done_before = self.mock.done().len();
         let held = self.points.hold(&case.at.point, case.at.nth);
@@ -636,7 +644,10 @@ impl World {
         tokio::select! {
             () = held.arrived() => {}
             response = self.server.response(id) => {
-                return Err(format!("never reached: {}", response["result"]));
+                return Err(Missed {
+                    result: response["result"].clone(),
+                    trace: self.points.trace(),
+                });
             }
         }
         let changed = Instant::now();
@@ -710,6 +721,41 @@ fn verdict(result: &Value) -> Result<&Value, String> {
         .as_str()
         .unwrap_or("invalid_arguments");
     Err(name.to_owned())
+}
+
+/// Whether `point` is a reply to a read of the lock state: Noctalia's, and logind's where
+/// niri runs in a session.
+fn reads_lock(point: &str) -> bool {
+    point == "noctalia:status" || point == "loginctl"
+}
+
+/// Whether a case whose point no call reached broke the contract. Only a lock read may be
+/// missed: the server reads the lock state again only when the last read began over
+/// `LAST_GATE` before a call that acts, so a call faster than the trace's makes fewer
+/// reads. That call must still have acted as with nothing held, each call that acts going
+/// out within `LAST_GATE` of the lock read before it, so a read the server should have
+/// made and didn't is still a break.
+fn unreached(case: &Case<'_>, missed: &Missed) -> Result<(), String> {
+    let never = || Err(format!("never reached: {}", missed.result));
+    let acted = acts(case.tool, &missed.trace).len();
+    if !reads_lock(&case.at.point) || verdict(&missed.result).is_err() || acted != case.acts {
+        return never();
+    }
+    let mut read = None;
+    for passed in &missed.trace {
+        if reads_lock(&passed.point) {
+            read = Some(passed.at);
+        } else if case.tool.acts(&passed.point) {
+            let age = read.map(|read| passed.at.saturating_duration_since(read));
+            if age.is_none_or(|age| age > LAST_GATE) {
+                return Err(format!(
+                    "never reached, and acted on a lock read {age:?} old: {}",
+                    missed.result
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Checks the contract on what `case` came to, and says how it broke it.
@@ -856,7 +902,7 @@ async fn explore_fact(tool: Tool, fact: Fact, shard: usize) -> (usize, Vec<Strin
             runs += 1;
             let judged = match world.reach(&case).await {
                 Ok(ran) => judge(&case, &ran).map_err(|why| format!("{why}; {}", ran.result)),
-                Err(why) => Err(why),
+                Err(missed) => unreached(&case, &missed),
             };
             if let Err(why) = judged {
                 broken.push(format!(
@@ -1000,4 +1046,48 @@ fn the_elements_actions_reordered_while_a_reply_is_held() {
 #[test]
 fn the_element_removed_while_a_reply_is_held() {
     explore(Fact::Removed);
+}
+
+/// Whether `type_text`, held at the third `held` and finishing without passing it, broke
+/// the contract when its last stroke went out `last_stroke` ms after its first lock read.
+fn missed_third(held: &str, last_stroke: u64) -> Result<(), String> {
+    let start = Instant::now();
+    let passed = |point: &str, nth, ms| Passed {
+        point: point.to_owned(),
+        nth,
+        at: start + Duration::from_millis(ms),
+    };
+    let missed = Missed {
+        result: json!({"isError": false, "structuredContent": {"observed": "sent"}}),
+        trace: vec![
+            passed("noctalia:status", 1, 0),
+            passed("niri:Version", 1, 0),
+            passed("noctalia:status", 2, 1),
+            passed("wtype", 1, 4),
+            passed("wtype", 2, 8),
+            passed("wtype", 3, last_stroke),
+        ],
+    };
+    let at = passed(held, 3, 300);
+    let case = Case {
+        tool: Tool::TypeText,
+        fact: Fact::InputDirty,
+        at: &at,
+        sends: 4,
+        last: 6,
+        acts: 3,
+        index: 5,
+        hold: Hold::Short,
+    };
+    unreached(&case, &missed)
+}
+
+/// A lock read that a faster call didn't make again is no break, but a call that acted on
+/// a read older than `LAST_GATE` without reading again is, and so is any other point left
+/// unreached.
+#[test]
+fn only_a_lock_read_a_call_had_no_need_to_make_goes_unreached() {
+    assert_eq!(missed_third("noctalia:status", 12), Ok(()));
+    assert!(missed_third("noctalia:status", 300).is_err());
+    assert!(missed_third("niri:Version", 12).is_err());
 }
