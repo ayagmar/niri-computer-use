@@ -389,10 +389,10 @@ pub(crate) async fn activate(
         Names::All,
     )
     .await?;
-    offered(&request, element, action).await?;
+    let run_at = canonical(&request, element, action).await?;
     let checked = gate
         .last(element, &request, &mut waiter, || {
-            offered(&request, element, action)
+            offered(&request, element, action, run_at)
         })
         .await?;
     gate.send(&checked)?;
@@ -441,18 +441,76 @@ pub(crate) async fn activate(
     ))
 }
 
-/// The index to ask the app for `action`: it must still be the element's action of that
-/// name at the index `elements` listed it at, so an action list that changed since can't
-/// make the index name another action.
-async fn offered(
+/// The most action indices `canonical` asks about.
+const MAX_ACTIONS: i32 = 32;
+
+/// The index to ask the app for `action`, its `DoAction` index, which needn't be where
+/// `GetActions` lists it: GTK 4 leaves disabled actions out of that list while `GetName`
+/// and `DoAction` count them. The element must still list the action where `elements`
+/// did. That index is kept when the app names the action there (`Request::action_named`);
+/// otherwise it is the one index whose action has the listed name. With no such index, or
+/// several, which index the app would run is unknown, so nothing is sent.
+async fn canonical(
     request: &Request,
     element: &ElementRef,
     action: Chosen,
 ) -> Result<i32, CallError> {
+    let (listed, name) = still_listed(request, element, action).await?;
+    if request
+        .action_named(element, listed, name)
+        .await
+        .map_err(gone_is_stale)?
+        == Some(true)
+    {
+        return Ok(listed);
+    }
+    let mut found = None;
+    for index in 0..MAX_ACTIONS {
+        match request
+            .action_named(element, index, name)
+            .await
+            .map_err(gone_is_stale)?
+        {
+            // Past the element's last action.
+            None => return found.ok_or_else(|| unmapped_action(action)),
+            Some(true) if found.replace(index).is_some() => break,
+            Some(_) => {}
+        }
+    }
+    Err(unmapped_action(action))
+}
+
+/// The index `canonical` found for `action`, checked again: the element still lists the
+/// action where `elements` did, so an action list that changed since can't make the index
+/// name another action, and the app still names it at `index`.
+async fn offered(
+    request: &Request,
+    element: &ElementRef,
+    action: Chosen,
+    index: i32,
+) -> Result<i32, CallError> {
+    let (_, name) = still_listed(request, element, action).await?;
+    match request.action_named(element, index, name).await {
+        Ok(Some(true)) => Ok(index),
+        Ok(_) => Err(stale(&format!(
+            "the app no longer names the element's {} action at its index",
+            action.kind.name()
+        ))
+        .into()),
+        Err(failed) => Err(gone_is_stale(failed).into()),
+    }
+}
+
+/// Where the element lists `action` now and its name, as `elements` listed it there.
+async fn still_listed<'a>(
+    request: &Request,
+    element: &'a ElementRef,
+    action: Chosen,
+) -> Result<(i32, &'a str), CallError> {
     let actions = request.actions(element).await.map_err(gone_is_stale)?;
     let listed = element.kept.actions.get(action.index);
-    match i32::try_from(action.index) {
-        Ok(index) if listed.is_some() && actions.get(action.index) == listed => Ok(index),
+    match (i32::try_from(action.index), listed) {
+        (Ok(index), Some(name)) if actions.get(action.index) == Some(name) => Ok((index, name)),
         _ => Err(stale(&format!(
             "the element no longer offers its {} action at index {}",
             action.kind.name(),
@@ -460,6 +518,18 @@ async fn offered(
         ))
         .into()),
     }
+}
+
+/// `element_unmappable` for an action `canonical` couldn't find the index of.
+fn unmapped_action(action: Chosen) -> CallError {
+    ToolError::new(
+        ErrorName::ElementUnmappable,
+        format!(
+            "action_unmapped: at the element's {} action's place in its action list the app runs another action or none, and not exactly one of its actions has that name, so which action it would run isn't known; nothing was sent, so aim at screenshot pixels instead",
+            action.kind.name()
+        ),
+    )
+    .into()
 }
 
 /// Replaces the element's whole text with `text` and reads back how many characters it

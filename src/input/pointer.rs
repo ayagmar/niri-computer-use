@@ -388,8 +388,7 @@ async fn send(
     };
     if !device.sent() {
         // Nothing was pressed, so the marker goes now, before the next call can see it.
-        device.discard().await?;
-        return Err(error.into());
+        return Err(device.discard(error).await.into());
     }
     let released = match device.abandon().await {
         Ok(()) => "every button and key it held was released".to_owned(),
@@ -587,7 +586,8 @@ impl Gate<'_> {
 impl End {
     /// Why the element is no longer where the drag goes after niri's changes `moved`, with
     /// the pointer at `pointer`: its window moved, resized, floated, went to another
-    /// workspace or closed, or another floating window on its workspace lies over its
+    /// workspace or closed, its workspace's active window now hides the floating windows
+    /// (`model::hides_floating`), or another floating window on its workspace lies over its
     /// centre after opening or being relaid. niri reports no stacking order, so that window
     /// may be on top. Only one of `followers` that also lies under the pointer doesn't
     /// count. A window that was there before the drag counts even when the drag carries
@@ -603,6 +603,13 @@ impl End {
         };
         if moved.relaid.contains(&self.window) {
             return Some(END_MOVED);
+        }
+        let active = own
+            .workspace_id
+            .and_then(|id| view.workspaces().get(&id)?.active_window_id)
+            .and_then(|id| view.windows().get(&id));
+        if active.is_some_and(|active| model::hides_floating(&self.area, active)) {
+            return Some(END_HIDDEN);
         }
         let tile_of = |id: &u64| {
             if *id == self.window {
@@ -627,6 +634,7 @@ impl End {
 }
 
 const END_MOVED: &str = "niri moved, resized or closed the window of the element the drag ends at, or moved it to another workspace, after the drag began, so the element is no longer where the drag goes";
+const END_HIDDEN: &str = "a tiled window as large as the output, as a fullscreen window is, became or grew into the active window of the workspace of the element the drag ends at after the drag began, so niri hides the element's floating window";
 const END_COVERED: &str = "another floating window opened or moved over the element the drag ends at after the drag began, and may be on top of it";
 
 /// Why `Gate::pass` refused or stopped a gesture at `stage` when niri reported `moved`.
@@ -752,9 +760,17 @@ impl Device {
         self.clear("niri handled the input").await
     }
 
-    /// Removes the marker of a gesture refused before anything of it went out.
-    async fn discard(self) -> Result<(), ToolError> {
-        self.clear("nothing was sent").await
+    /// Removes the marker of a gesture refused with `error` before anything of it went out,
+    /// and returns `error`. A marker that can't be removed is added to its detail, since it
+    /// blocks the next action, and the refusal's own reason stays.
+    async fn discard(self, error: ToolError) -> ToolError {
+        match self.clear(&error.detail).await {
+            Ok(()) => error,
+            Err(unremoved) => ToolError {
+                detail: unremoved.detail,
+                ..error
+            },
+        }
     }
 
     /// Releases what a gesture stopped midway still holds, and removes the marker once
@@ -1191,6 +1207,35 @@ mod tests {
         std::fs::remove_dir_all(&bench.dir).unwrap();
     }
 
+    // The user's stop key may set the stop flag after a gesture's last look and before the
+    // desk's stop watcher cancels it. Each part of the gesture reads the flag itself: the
+    // first input, the pointer input after the held modifiers, and each drag step while
+    // the button is held.
+    #[tokio::test]
+    async fn every_part_of_a_gesture_checks_the_stop_flag_itself() {
+        let bench = Bench::start("pointer-gate-stop", vec![(Duration::ZERO, UNLOCKED)]);
+        let (mut waiter, input) = gate_on(&bench).await;
+        let mut gate = Gate {
+            waiter: &mut waiter,
+            input,
+            windows: &[],
+            end: None,
+            reading: GESTURE_READING,
+        };
+        bench.runtime.stop().unwrap();
+        for stage in [Stage::First, Stage::Unpressed, Stage::Pressed] {
+            bench.desk.lock_read(Instant::now());
+            let error = gate.pass(stage, None).await.unwrap_err();
+            assert_eq!(
+                error.name,
+                ErrorName::Stopped,
+                "{stage:?}: {}",
+                error.detail
+            );
+        }
+        std::fs::remove_dir_all(&bench.dir).unwrap();
+    }
+
     // While a gesture reads the lock state again after a read that came back stale, a drag
     // holds its button and an app may autoscroll under it, so those reads stop after a
     // second in all, however long each one would take. The look's first read keeps its
@@ -1218,6 +1263,135 @@ mod tests {
         assert!(took < Duration::from_millis(3500), "{took:?}");
         assert!(!bench.desk.lock_fresh());
         assert_eq!(gate.reading, Duration::ZERO);
+        std::fs::remove_dir_all(&bench.dir).unwrap();
+    }
+
+    /// A device for a left click on `bench`'s output, its marker written.
+    async fn click_device(bench: &Bench) -> Result<Device, ToolError> {
+        let output = crate::test_support::wayland::OUTPUT;
+        let pointer = Pointer::bind(bench.niri.display(), std::process::id(), output)
+            .await
+            .unwrap();
+        let pressing = Pressing {
+            tool: "click",
+            button: Some(Button::Left),
+        };
+        Device::new(pointer, &bench.runtime, pressing, output, None).await
+    }
+
+    // The user's stop key sets the stop flag while a click's last look reads niri's events,
+    // before the desk's stop watcher has seen it. Nothing of the click goes out, and the
+    // call is refused as stopped rather than cut after sending.
+    #[tokio::test]
+    async fn a_stop_set_while_the_last_gate_reads_events_prevents_the_click() {
+        let bench = Bench::start("pointer-stop-gate", vec![(Duration::ZERO, UNLOCKED)]);
+        let session = crate::test_support::session(1);
+        bench
+            .desk
+            .acquire(&session, "review", async { None }, async { None })
+            .await
+            .unwrap();
+        let input = bench.input();
+        let window = niri::waiter::tests::window(1, Some("test"), 1, true);
+        let (mut waiter, updates) =
+            niri::waiter::tests::waiter(niri::waiter::tests::view(vec![window]), 0);
+        let notify = std::sync::Arc::new(tokio::sync::Notify::new());
+        let notified = std::sync::Arc::clone(&notify);
+        let runtime = bench.runtime.clone();
+        let stopper = tokio::spawn(async move {
+            notified.notified().await;
+            runtime.stop().unwrap();
+            updates
+                .send(niri::waiter::Update::Event(
+                    1,
+                    Box::new(niri_ipc::Event::WindowUrgencyChanged {
+                        id: 1,
+                        urgent: true,
+                    }),
+                ))
+                .unwrap();
+        });
+        let work = async {
+            let device = click_device(&bench).await?;
+            bench.desk.lock_read(Instant::now());
+            let gate = Gate {
+                waiter: &mut waiter,
+                input,
+                windows: &[],
+                end: None,
+                reading: GESTURE_READING,
+            };
+            notify.notify_one();
+            let steps = plan(
+                &Gesture::Click {
+                    at: PX,
+                    button: Button::Left,
+                    count: 1,
+                },
+                &[at(1)],
+            );
+            send(device, gate, steps).await?;
+            Ok::<_, CallError>(())
+        };
+        let acted = bench
+            .desk
+            .act(&session, async { None }, work, |worked| async { worked });
+        let ended = Box::pin(acted).await;
+        stopper.await.unwrap();
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        let buttons = bench.niri.seen().buttons;
+        // The gate read niri's events after the stop flag was set, so it looked after.
+        assert!(waiter.view().windows()[&1].is_urgent);
+        assert!(
+            buttons.is_empty(),
+            "input after the stop flag was set: {buttons:?}; result={ended:?}"
+        );
+        assert!(
+            matches!(&ended, Err(CallError::Tool(error)) if error.name == ErrorName::Stopped),
+            "{ended:?}"
+        );
+        std::fs::remove_dir_all(&bench.dir).unwrap();
+    }
+
+    // A gesture refused before any input, here because niri's event stream reset, removes
+    // its marker. When that fails too, the error still says why the gesture was refused,
+    // besides that the marker stayed and what the user does about it.
+    #[tokio::test]
+    async fn a_marker_that_cant_be_removed_keeps_the_original_failure() {
+        let bench = Bench::start("pointer-unremoved", vec![(Duration::ZERO, UNLOCKED)]);
+        let input = bench.input();
+        let device = click_device(&bench).await.unwrap();
+        let lock = std::fs::File::options()
+            .read(true)
+            .write(true)
+            .open(bench.runtime.path().join("input-dirty.lock"))
+            .unwrap();
+        lock.try_lock().unwrap();
+        let (mut waiter, updates) = niri::waiter::tests::waiter(View::default(), 0);
+        updates.send(niri::waiter::Update::Reset(2)).unwrap();
+        bench.desk.lock_read(Instant::now());
+        let gate = Gate {
+            waiter: &mut waiter,
+            input,
+            windows: &[],
+            end: None,
+            reading: GESTURE_READING,
+        };
+        let error = send(device, gate, Vec::new()).await.unwrap_err();
+        let CallError::Tool(error) = error else {
+            panic!("unexpected error: {error:?}")
+        };
+        assert!(
+            error.detail.starts_with("niri's event stream disconnected")
+                && error.detail.contains("nothing was sent")
+                && error
+                    .detail
+                    .contains("input-dirty marker couldn't be removed")
+                && error.detail.contains("`niri-computer-use recover`"),
+            "{}",
+            error.detail
+        );
+        drop(lock);
         std::fs::remove_dir_all(&bench.dir).unwrap();
     }
 

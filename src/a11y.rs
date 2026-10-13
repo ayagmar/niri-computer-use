@@ -611,6 +611,36 @@ impl Request {
         Ok(names)
     }
 
+    /// Whether the element's action at `index`, the one `DoAction(index)` does, is named
+    /// `name`: by `GetName`, or by `GetLocalizedName`, which gives the name as `GetActions`
+    /// lists it, translated by GTK and at-spi2-atk. `None` when the app has no action at
+    /// `index`, which it says with a D-Bus error.
+    pub(crate) async fn action_named(
+        &self,
+        element: &ElementRef,
+        index: i32,
+        name: &str,
+    ) -> Result<Option<bool>, Failed> {
+        let at = element.at();
+        match self
+            .call::<_, String>(at, (ACTION, "GetName"), &(index,))
+            .await
+        {
+            Ok(own) if own == name => return Ok(Some(true)),
+            Ok(_) => {}
+            Err(Failed::Refused(_)) => return Ok(None),
+            Err(failed) => return Err(failed),
+        }
+        match self
+            .call::<_, String>(at, (ACTION, "GetLocalizedName"), &(index,))
+            .await
+        {
+            Ok(localized) => Ok(Some(localized == name)),
+            Err(Failed::Refused(_)) => Ok(Some(false)),
+            Err(failed) => Err(failed),
+        }
+    }
+
     /// Whether the element has an `EditableText` interface.
     pub(crate) async fn editable_text(&self, element: &ElementRef) -> Result<bool, Failed> {
         let interfaces: Vec<String> = self
