@@ -277,6 +277,11 @@ impl LayoutBox {
             y: self.height.mul_add(0.5, self.y),
         }
     }
+
+    fn contains(self, point: LayoutPt) -> bool {
+        (self.x..self.x + self.width).contains(&point.x)
+            && (self.y..self.y + self.height).contains(&point.y)
+    }
 }
 
 /// Why an element has no layout box.
@@ -293,6 +298,10 @@ pub(crate) enum Unmappable {
     /// floating windows while its active window is a fullscreen tiled one.
     #[serde(rename = "not_showing")]
     Covered,
+    /// Another floating window on the element's workspace lies over the element's centre,
+    /// above or below its own: niri 26.04 doesn't report which floating window is on top.
+    #[serde(rename = "not_showing")]
+    Overlapped,
     /// niri switched a workspace, opened or closed the overview, or moved, resized,
     /// floated or opened the element's window a moment ago, or changed what is shown since
     /// the element was placed, so the view may still be moving. Only an aim gives it.
@@ -328,6 +337,10 @@ pub(crate) struct Origin {
     pub(crate) output: String,
     /// The output's place and size in the layout.
     pub(crate) area: LogicalOutput,
+    /// The tiles of the other floating windows on the window's workspace, in the layout.
+    /// niri 26.04 reports no stacking order, and the active one isn't always on top, so any
+    /// of them may cover the window.
+    pub(crate) floating: Vec<LayoutBox>,
 }
 
 /// What niri reports for the call about where windows are shown: its workspaces, its
@@ -348,7 +361,8 @@ pub(crate) struct Scene<'a> {
 /// too): niri reports its place on every workspace, shown or not, and the shown
 /// workspace's windows are where a hidden one's would be. Nor while the overview is open,
 /// which zooms the workspaces out and leaves that place as it was, nor while a fullscreen
-/// window covers it (`Covered`).
+/// window covers it (`Covered`). The tiles of the workspace's other floating windows come
+/// with it, for `place` to keep elements under them unplaced.
 pub(crate) fn origin(window: &Window, scene: &Scene<'_>) -> Result<Origin, Unmappable> {
     if window.layout.pos_in_scrolling_layout.is_some() {
         return Err(Unmappable::Tiled);
@@ -369,10 +383,30 @@ pub(crate) fn origin(window: &Window, scene: &Scene<'_>) -> Result<Origin, Unmap
     if covered(workspace, &area, scene.windows) {
         return Err(Unmappable::Covered);
     }
+    let floating = scene
+        .windows
+        .iter()
+        .filter(|other| other.id != window.id && other.workspace_id == window.workspace_id)
+        .filter(|other| other.layout.pos_in_scrolling_layout.is_none())
+        .filter_map(|other| tile(&area, &other.layout))
+        .collect();
     Ok(Origin {
         at: window_origin(&area, &window.layout)?,
         output: name.clone(),
         area,
+        floating,
+    })
+}
+
+/// Where a floating window's tile is in the layout, if niri gives it a place.
+fn tile(output: &LogicalOutput, layout: &WindowLayout) -> Option<LayoutBox> {
+    let (x, y) = layout.tile_pos_in_workspace_view?;
+    let (width, height) = layout.tile_size;
+    Some(LayoutBox {
+        x: f64::from(output.x) + x,
+        y: f64::from(output.y) + y,
+        width,
+        height,
     })
 }
 
@@ -445,8 +479,12 @@ pub(crate) fn place(placement: Placement) -> Result<LayoutBox, Unmappable> {
         width: f64::from(extents.width),
         height: f64::from(extents.height),
     };
-    if !on(&origin.area, found.centre()) {
+    let centre = found.centre();
+    if !on(&origin.area, centre) {
         return Err(Unmappable::OffOutput);
+    }
+    if origin.floating.iter().any(|tile| tile.contains(centre)) {
+        return Err(Unmappable::Overlapped);
     }
     Ok(found)
 }
@@ -776,6 +814,7 @@ mod tests {
                 at,
                 output: "DP-1".to_owned(),
                 area,
+                floating: Vec::new(),
             }),
         }
     }
@@ -1044,6 +1083,55 @@ mod tests {
         assert_eq!(at(Some(8)), placed);
         assert_eq!(at(Some(1)), placed);
         assert_eq!(at(None), placed);
+    }
+
+    // niri 26.04 reports no stacking order for floating windows, and the active one isn't
+    // always on top: focus-follows-mouse activates a window without raising it, and a new
+    // window can open on top without taking focus. An element whose centre lies in another
+    // floating window's tile on its workspace has no box, focused or not. One clear of
+    // that tile keeps its box, and so does one under a tiled window, which floating
+    // windows are always drawn above, or under a window on another workspace.
+    #[test]
+    fn an_element_under_another_floating_window_has_no_box() {
+        let screens = outputs(&[("DP-1", Some((0, 0)))]);
+        let shown = [
+            workspace(1, Some("DP-1"), true),
+            workspace(2, Some("DP-1"), false),
+        ];
+        let window = window_on(Some(1), layout(Some((100.0, 100.0)), (0.0, 0.0)));
+        let focused = Window {
+            is_focused: true,
+            ..window.clone()
+        };
+        // A 200x100 tile at (250, 150), over part of the window's.
+        let other = |workspace, tiled: bool| Window {
+            id: 2,
+            ..window_on(
+                Some(workspace),
+                WindowLayout {
+                    pos_in_scrolling_layout: tiled.then_some((1, 1)),
+                    tile_size: (200.0, 100.0),
+                    ..layout(Some((250.0, 150.0)), (0.0, 0.0))
+                },
+            )
+        };
+        let at = |aimed: &Window, others: &[Window], x| {
+            let scene = Scene {
+                windows: others,
+                ..scene(&shown, &screens, false)
+            };
+            place(Placement {
+                origin: origin(aimed, &scene),
+                ..placement(extents(x, 50, 20, 20), Ok(LayoutPt { x: 0.0, y: 0.0 }))
+            })
+        };
+        let above = [other(1, false)];
+        // Centres at (260, 160), inside the other tile, and at (240, 160), left of it.
+        assert_eq!(at(&window, &above, 150), Err(Unmappable::Overlapped));
+        assert_eq!(at(&focused, &above, 150), Err(Unmappable::Overlapped));
+        assert!(at(&window, &above, 130).is_ok());
+        assert!(at(&window, &[other(1, true)], 150).is_ok());
+        assert!(at(&window, &[other(2, false)], 150).is_ok());
     }
 
     #[test]

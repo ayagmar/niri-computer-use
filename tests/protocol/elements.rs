@@ -2305,6 +2305,59 @@ async fn a_floating_window_behind_a_fullscreen_one_is_never_aimed_at() {
     assert_eq!(desk.fixture.clipboard.pointed().len(), 1);
 }
 
+/// Window 2 of another app, floating at `(x, 30)`, 200x100, focused or not.
+fn floating_other(x: f64, focused: bool) -> Value {
+    let mut window = window_on(2, Some("other"), 1, focused);
+    window["is_floating"] = json!(true);
+    window["layout"]["pos_in_scrolling_layout"] = Value::Null;
+    window["layout"]["tile_pos_in_workspace_view"] = json!([x, 30.0]);
+    window["layout"]["tile_size"] = json!([200.0, 100.0]);
+    window
+}
+
+// niri 26.04 doesn't report which floating window is on top, and the focused one isn't
+// always it. With another floating window over the Safe button's centre, focused or not,
+// a ref listed before it came sends nothing, and the listing gives the button no box.
+// Once that window is clear of the button, the same ref goes out.
+#[tokio::test]
+async fn an_element_under_another_floating_window_is_never_aimed_at() {
+    let windows = [floating_window()];
+    let mut desk = Desk::start_with("el-overlap", &["/frame"], objects(), &windows).await;
+    let button = safe(&mut desk).await["element_ref"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let shot = desk.screenshot_ref().await;
+    for other_focused in [true, false] {
+        let mut below = floating_window();
+        below["is_focused"] = json!(!other_focused);
+        // Over the button's centre at (70, 45).
+        let over = [below, floating_other(60.0, other_focused)];
+        desk.niri.set_windows(&over, &[workspace()]);
+        for tool in ["pointer_move", "click"] {
+            let aimed = json!({"screenshot_ref": shot, "element": button});
+            let refused = desk.server.call(tool, aimed).await;
+            let (name, detail) = tool_error(&refused);
+            let tag = format!("{tool}, other focused: {other_focused}");
+            assert_eq!(name, "element_unmappable", "{tag}: {refused}");
+            assert!(
+                detail.starts_with("not_showing: another floating window lies over"),
+                "{tag}: {detail}"
+            );
+            assert_eq!(desk.fixture.clipboard.pointed(), [], "{tag}");
+        }
+        let listed = safe(&mut desk).await;
+        assert_eq!(listed["unmappable"], "not_showing", "{listed}");
+        assert_eq!(listed["layout_box"], Value::Null, "{listed}");
+    }
+    let clear = [floating_window(), floating_other(600.0, false)];
+    desk.niri.set_windows(&clear, &[workspace()]);
+    let aimed = json!({"screenshot_ref": shot, "element": button});
+    let moved = desk.server.call("pointer_move", aimed).await;
+    assert_eq!(moved["isError"], false, "{moved}");
+    assert_eq!(desk.fixture.clipboard.pointed().len(), 1);
+}
+
 /// The events after which niri's view may still be moving on `DP-1`, or the floating
 /// mock window on it: a workspace switch, the overview opening or closing, the window
 /// moving to (40, 20).

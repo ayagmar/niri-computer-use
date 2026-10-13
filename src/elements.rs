@@ -595,6 +595,10 @@ pub(crate) fn unmappable(why: Unmappable) -> ToolError {
             "not_showing",
             "a tiled window as large as the output, likely fullscreen, covers it; focus the element's window or leave fullscreen, and call elements again",
         ),
+        Unmappable::Overlapped => (
+            "not_showing",
+            "another floating window lies over the element's centre, and niri doesn't report which one is on top; use activate_element or set_element_text, or aim at screenshot pixels on a fresh screenshot",
+        ),
         Unmappable::Moving => (
             "not_showing",
             "the view may still be moving: niri switched a workspace, opened or closed the overview, or moved, resized or opened a window a moment ago; take a screenshot and try again",
