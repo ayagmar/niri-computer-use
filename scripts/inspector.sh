@@ -61,7 +61,8 @@ call() {
   fi
 }
 
-# Every tool listed with niri reachable; Noctalia and the accessibility bus add the rest.
+# Every tool listed with niri reachable; Noctalia, `unrestricted` and the accessibility bus
+# add the rest.
 readonly TOOLS='["acquire_desktop","click","clipboard_read","close_window","desktop_state",
   "drag","focus","key","launch","niri_action","pointer_move",
   "release_desktop","screenshot","scroll","status","type_text","wait_for"]'
@@ -74,6 +75,9 @@ list_tools() {
   local expected="${TOOLS}"
   if command -v noctalia >/dev/null; then
     expected="${expected} + [\"shell_panel\"]"
+    if jq -e '.result.structuredContent.unrestricted.enabled' "${work}/status.json" >/dev/null; then
+      expected="${expected} + [\"noctalia\"]"
+    fi
   fi
   if jq -e '.result.structuredContent.accessibility.available' "${work}/status.json" >/dev/null; then
     expected="${expected} + [\"activate_element\",\"elements\",\"set_element_text\"]"

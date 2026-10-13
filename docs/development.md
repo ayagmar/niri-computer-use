@@ -29,7 +29,7 @@ The native keyboard, held pointer modifiers, the crash guardian and the paste ke
 cargo test --locked --test protocol
 ```
 
-Each test gets a directory of its own under `/tmp`, whatever `TMPDIR` says, because the fake sockets inside it must fit the 108-byte limit on Unix socket paths. It starts the server with only seven variables set, all pointing into it:
+Each test gets a directory of its own under `/tmp`, whatever `TMPDIR` says, because the fake sockets inside it must fit the 108-byte limit on Unix socket paths. It starts the server with only eight variables set, all pointing into it, and a ninth, `NIRI_COMPUTER_USE_SHARED=0`, in the standalone run:
 
 - `PATH` holds fake `grim`, `loginctl` and `noctalia` scripts and nothing else, and `NIRI_COMPUTER_USE_DESKTOP_PATH` names the same directory, so the server never finds the host's `loginctl` or `noctalia`.
 - `NIRI_SOCKET` is a fake niri that answers `Version`, `Outputs`, `FocusedOutput`, `Windows` and `Workspaces` and lets the test write each event stream line by line.
@@ -37,7 +37,7 @@ Each test gets a directory of its own under `/tmp`, whatever `TMPDIR` says, beca
 - `XDG_SESSION_ID` is `7`. The server ignores it: the lock state asks logind about niri's own session, which the lock tests set by running the fake niri as a process of its own (`tests/protocol/session.rs`).
 - `XDG_STATE_HOME` keeps the audit log inside the directory, and `XDG_CONFIG_HOME` the policy file.
 
-The element tests (`tests/protocol/elements.rs`) add an eighth, `DBUS_SESSION_BUS_ADDRESS`: a `dbus-daemon` of the test's own (from `dbus`), listening only in the test's directory with no service directories, which serves as both the session bus and the accessibility bus. On it, `tests/protocol/atspi.rs` runs a mock application that answers AT-SPI as a toolkit does, and whose objects, and the next reply of each method, the test changes, holds or fails. Its names and text are synthetic.
+The element tests (`tests/protocol/elements.rs`) add `DBUS_SESSION_BUS_ADDRESS`: a `dbus-daemon` of the test's own (from `dbus`), listening only in the test's directory with no service directories, which serves as both the session bus and the accessibility bus. On it, `tests/protocol/atspi.rs` runs a mock application that answers AT-SPI as a toolkit does, and whose objects, and the next reply of each method, the test changes, holds or fails. Its names and text are synthetic.
 
 Every reply the fakes give passes a named hold point (`tests/protocol/holds.rs`): `niri:Version` or `niri:Action:FocusWindow` for the fake niri, `noctalia:status` for the fake Noctalia, `loginctl` for the `loginctl` the lock tests start (`session::held_loginctl`), `wtype` for the explorer's `wtype` once it read its stroke, `atspi:GetRole:/button` for a method or property of one of the mock application's objects, and `niri:effect` for the events the fake niri can send once the server read its answer to an action. A fake program passes a point with the shell function `pass <point>` once the test calls `Fixture::serve_programs`. The points passed since the trace started are the trace of the calls in between, in order, and a test can hold any one of them back until it releases it.
 
@@ -88,7 +88,7 @@ make inspect-check    # list every tool and call the read-only ones through the 
 
 The Inspector starts the server with a minimal environment, so the script passes on `NIRI_SOCKET`, `XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY` from your shell, which pins the server to that session; without them the server would discover them, as it does for Codex. It finds the session bus under `XDG_RUNTIME_DIR`. It points `XDG_STATE_HOME` and the Inspector's own settings at a temporary directory, which is removed when the script exits, so your audit log isn't touched.
 
-`make inspect-check` lists the tools with `--strict`, which also reports schema portability problems, and checks that exactly the observation tools are marked read-only. It then calls only read-only tools on your desktop, so it never takes the lease: `status`, `desktop_state` (with its outputs, and its `shell` when `noctalia` is on `PATH`), `elements` on the focused window when the accessibility bus is there, `clipboard_read`, which must refuse with `lease_required`, and three screenshots. It prints one line per check and never prints the image data, the clipboard text, window titles or accessible names. Finally it checks the audit log in the temporary directory: one line per call, mode `0600`, in a `0700` directory.
+`make inspect-check` lists the tools with `--strict`, which also reports schema portability problems, and checks that exactly the observation tools are marked read-only. It expects `shell_panel` when `noctalia` is on `PATH`, `noctalia` too when `status.unrestricted.enabled` is true, and the element tools when `status` finds the accessibility bus. It then calls only read-only tools on your desktop, so it never takes the lease: `status`, `desktop_state` (with its outputs, and its `shell` when `noctalia` is on `PATH`), `elements` on the focused window when the accessibility bus is there, `clipboard_read`, which must refuse with `lease_required`, and three screenshots. It prints one line per check and never prints the image data, the clipboard text, window titles or accessible names. Finally it checks the audit log in the temporary directory: one line per call, mode `0600`, in a `0700` directory.
 
 ## Docs site
 
@@ -271,7 +271,7 @@ The run has a 240-second deadline. Its files are in `target/e2e/<run>/`, includi
 2. For `control-center`, `wallpaper` and `tray-drawer` in turn, the open and close cycle of C13 above, each panel drawn and then gone. With no tray items in the nested session the tray drawer is one icon wide, under the 1% a drawn panel must change, so for it only `activePanelId` is checked.
 3. `shell_panel`, opening and closing, on `session`, `launcher`, `polkit`, `clipboard`, `setup-wizard`, `test` and a panel Noctalia doesn't have all give `panel_not_allowed`, and `desktop_state`'s `shell` still shows no open panel.
 4. With Noctalia stopped, `status` reports it `not_running` and the lock state `unknown`, `desktop_state`'s `shell` is `noctalia_unavailable`, and `shell_panel` gives `screen_locked`, because no source can say the screen is unlocked.
-5. A second server started with `PATH` set to an empty directory lists no `shell_*` tools and reports Noctalia as `not_installed`.
+5. A second server started with `PATH` set to an empty directory still finds Noctalia in the desktop's directories: it lists `shell_panel` and reports Noctalia as `not_running`. A third, started with `NIRI_COMPUTER_USE_DESKTOP_PATH` set to an empty directory, lists no `shell_panel` and reports Noctalia as `not_installed`.
 
 The run has a 130-second deadline. Its files are in `target/e2e/<run>/`, including a `success-<panel>.png` for each panel.
 
@@ -409,3 +409,14 @@ make host-capture OUTPUT=DP-1
 ```
 
 The report goes to the terminal and to `target/e2e/<unix time>-<pid>/harness.log`.
+
+## Releases
+
+The crate holds only `src/`, `README.md`, `LICENSE` and `CHANGELOG.md` (`include` in `Cargo.toml`). To see what it would hold and check that it builds on its own:
+
+```sh
+cargo package --list -p niri-computer-use
+cargo publish --dry-run -p niri-computer-use --locked
+```
+
+Pushing a `v<version>` tag runs `.github/workflows/release.yml`. It fails unless the tag matches the crate's version and `CHANGELOG.md` has a `## <version> ` section. It builds `x86_64-unknown-linux-gnu` with `--locked --release`, packs the binary with the README, license, changelog, `skills/niri-computer-use/` and a `THIRD-PARTY-LICENSES.txt` that cargo-about writes from `.github/release/` as `niri-computer-use-<version>-x86_64-linux.tar.gz` with a `.sha256` beside it, and creates a draft GitHub release with that section as its notes. Nothing is published until someone publishes the draft.

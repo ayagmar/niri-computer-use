@@ -2,7 +2,7 @@
 //! feeds: launch presets, the app deny list, where screenshots may be saved, whether a
 //! server may take the lease and whether the user must allow it first, which niri actions
 //! need `unrestricted = true`, and which output setups the pointer tools may run on. Also
-//! the Noctalia panels the shell tools may open, which no file changes.
+//! the Noctalia panels `shell_panel` may open, which no file changes.
 //! Everything here is pure; the caller reads the file. The preset rules catch common
 //! mistakes. They are a guardrail, not a boundary: a wrapper script or a symlink with
 //! another name gets past any list.
@@ -1029,7 +1029,7 @@ pub(crate) fn panel(name: &str) -> Result<Panel, ToolError> {
             ToolError::new(
                 ErrorName::PanelNotAllowed,
                 format!(
-                    "panel {name:?} isn't allowed; the shell tools take only {}",
+                    "panel {name:?} isn't allowed; `shell_panel` takes only {}",
                     allowed.join(", ")
                 ),
             )

@@ -19,6 +19,7 @@ repository = "https://github.com/ayagmar/niri-computer-use"
 readme = "README.md"
 keywords = ["niri", "wayland", "mcp", "computer-use", "desktop-automation"]
 categories = ["command-line-utilities", "os::linux-apis", "accessibility"]
+include = ["/src/", "/README.md", "/LICENSE", "/CHANGELOG.md"]
 
 [lints]
 workspace = true
