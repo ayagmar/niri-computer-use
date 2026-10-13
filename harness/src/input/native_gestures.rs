@@ -128,7 +128,7 @@ pub(super) fn interrupt(
     } else {
         session.run(server, &["stop".into()])?;
         let result = client.result(session, id)?;
-        if field(&result, "/structuredContent/error") != "stopped" {
+        if !stop::cut_by_stop(&result) {
             return Err(Failure::new(format!("M7 stop missed held drag: {result}")));
         }
     }

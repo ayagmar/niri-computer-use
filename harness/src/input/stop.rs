@@ -57,12 +57,12 @@ fn mid_drag(
         })?;
         stop(session, server)?;
         let result = client.result(session, id)?;
-        let stopped = field(&result, "/structuredContent/error") == "stopped";
+        let stopped = cut_by_stop(&result);
         released_and_clear(session, wev, offset)?;
         resume(session, client, server)?;
         if stopped {
             return session.log(&format!(
-                "M4 stop mid-drag (attempt {attempt}): stopped, button released, marker gone, lease taken again"
+                "M4 stop mid-drag (attempt {attempt}): uncertain, button released, marker gone, lease taken again"
             ));
         }
         session.log(&format!(
@@ -88,8 +88,8 @@ fn released_and_clear(session: &mut Session<'_>, wev: &Wev<'_>, offset: usize) -
     marker_gone(session)
 }
 
-/// Whether a stop cut the typing call `result` short once its input went out: `uncertain`,
-/// with the stop in `detail`.
+/// Whether a stop cut the typing or pointer call `result` short once its input went out:
+/// `uncertain`, with the stop in `detail`.
 pub(super) fn cut_by_stop(result: &Value) -> bool {
     field(result, "/structuredContent/observed") == "uncertain"
         && field(result, "/structuredContent/detail")
