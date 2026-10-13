@@ -2,7 +2,6 @@
  "prompt": "In the nvim window, add a paragraph under the title saying what niri-computer-use 0.1.0 does, about three sentences. Type it, don't save.",
  "note": "A real Claude Code session on a real niri 26.04 desktop; nothing was scripted. Thinking time between calls is shortened; calls play in real time. A line marked $ is something the user did.",
  "output": "DP-1 · 2560×1440, shown at 1920×1080",
- "band": 174,
  "calls": [
   {
    "start": 1.2,

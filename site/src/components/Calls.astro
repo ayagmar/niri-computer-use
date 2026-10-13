@@ -113,8 +113,13 @@ const lease = (request: string) =>
 		color: var(--ncu-stop);
 	}
 
+	.ms::before {
+		content: '· ';
+	}
+
 	.ms {
 		color: var(--sl-color-gray-3);
+		font-variant-numeric: tabular-nums;
 		white-space: nowrap;
 	}
 

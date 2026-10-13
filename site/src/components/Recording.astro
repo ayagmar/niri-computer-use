@@ -1,7 +1,7 @@
 ---
 // A demo recording on its plate: a still first, then the video, which plays muted and looped
 // while in view, after the page has loaded, and never for readers who ask for reduced motion
-// or less data. The plate's corner ticks mark the recorded output, above any caption band.
+// or less data.
 // While it plays, the calls with the same name mark the call being shown, and the hero's
 // recording drives the header's lease tag.
 import type { Demo } from '../lib/demo';
@@ -17,10 +17,9 @@ interface Props {
 }
 
 const { demo, label, sizes, lead = false } = Astro.props;
-const desk = (demo.height - (demo.band ?? 0)) / demo.height;
 ---
 
-<div class="plate" style={`--desk: ${desk}`}>
+<div class="plate">
 	<video
 		data-demo={demo.name}
 		data-lease-source={lead ? '' : undefined}
@@ -147,27 +146,6 @@ const desk = (demo.height - (demo.band ?? 0)) / demo.height;
 		border-radius: calc(var(--ncu-radius) + 2px);
 		background: #121416;
 		padding: 2px;
-	}
-
-	/* Registration ticks at the corners of the recorded output, as on a printed plate. A
-	   caption band below it sits outside them. */
-	.plate::before {
-		--tick: var(--sl-color-gray-4);
-		content: '';
-		position: absolute;
-		inset: -9px -9px auto;
-		height: calc((100% - 4px) * var(--desk) + 20px);
-		pointer-events: none;
-		background:
-			linear-gradient(var(--tick), var(--tick)) left top / 14px 1px,
-			linear-gradient(var(--tick), var(--tick)) left top / 1px 14px,
-			linear-gradient(var(--tick), var(--tick)) right top / 14px 1px,
-			linear-gradient(var(--tick), var(--tick)) right top / 1px 14px,
-			linear-gradient(var(--tick), var(--tick)) left bottom / 14px 1px,
-			linear-gradient(var(--tick), var(--tick)) left bottom / 1px 14px,
-			linear-gradient(var(--tick), var(--tick)) right bottom / 14px 1px,
-			linear-gradient(var(--tick), var(--tick)) right bottom / 1px 14px;
-		background-repeat: no-repeat;
 	}
 
 	video,

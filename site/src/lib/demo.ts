@@ -23,8 +23,6 @@ export interface Run {
 	calls: Call[];
 	/** How the recording was made, shown under its calls. */
 	note?: string;
-	/** Rows at the bottom of the video below the desktop, such as a caption band. */
-	band?: number;
 	/** The recorded output, such as `winit · 1280×720 at 0,0`. */
 	output?: string;
 }

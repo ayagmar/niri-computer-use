@@ -34,11 +34,11 @@ const call = demo.calls[index];
 				</p>
 			)
 		}
+		{demo.note && <p class="note">{demo.note}</p>}
 	</figcaption>
 	<details>
 		<summary>All {demo.calls.length} calls as text</summary>
 		<Calls demo={demo} />
-		{demo.note && <p class="note">{demo.note}</p>}
 	</details>
 </figure>
 
@@ -109,7 +109,7 @@ const call = demo.calls[index];
 	}
 
 	.note {
-		margin-top: 0.75rem;
+		margin-top: 0.6rem;
 		color: var(--sl-color-gray-3);
 		font-size: var(--sl-text-xs);
 	}

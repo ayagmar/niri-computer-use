@@ -162,28 +162,29 @@ From a shell inside your niri session:
 
 1. Build and install the server.
 
-   ```sh
+   ```sh frame="none"
    git clone https://github.com/ayagmar/niri-computer-use.git
    cargo install --locked --path niri-computer-use
    ```
 
 2. Check it against your session. `niri.compat` should be `ok`, and `grim` and `wtype` `true` under `binaries`.
 
-   ```sh
+   ```sh frame="none"
    ~/.cargo/bin/niri-computer-use status
    ```
 
 3. Register it in your agent. For Claude Code:
 
-   ```sh
+   ```sh frame="none"
    claude mcp add --scope user niri-computer-use -- ~/.cargo/bin/niri-computer-use serve
    ```
 
    [Client setup](start/clients/) covers Codex, Pi and other MCP clients.
 
-4. Give your agents the skill, which tells them how to use the tools. From the directory you cloned:
+4. Give your agents the skill, which tells them how to use the tools:
 
-   ```sh
+   ```sh frame="none"
+   cd niri-computer-use
    mkdir -p ~/.claude/skills ~/.agents/skills
    ln -s "$PWD/skills/niri-computer-use" ~/.claude/skills/niri-computer-use
    ln -s "$PWD/skills/niri-computer-use" ~/.agents/skills/niri-computer-use
@@ -191,7 +192,7 @@ From a shell inside your niri session:
 
 5. Bind the stop key, inside the `binds` block of `~/.config/niri/config.kdl`, with the path `cargo install` printed:
 
-   ```kdl
+   ```kdl frame="none"
    Mod+Shift+Escape allow-inhibiting=false allow-when-locked=true hotkey-overlay-title="Stop the AI agent (niri-computer-use)" { spawn "/home/you/.cargo/bin/niri-computer-use" "stop"; }
    ```
 

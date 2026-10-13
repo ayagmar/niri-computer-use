@@ -120,8 +120,6 @@ const demo = id === '' ? await loadDemo('errand', HERO_WIDTHS) : undefined;
 	.you {
 		display: flex;
 		flex-direction: column;
-		justify-content: space-between;
-		gap: 2rem;
 		padding: clamp(1.25rem, 0.9rem + 1vw, 2.25rem);
 		outline: 2px solid var(--ncu-ring);
 		outline-offset: 2px;
@@ -141,6 +139,13 @@ const demo = id === '' ? await loadDemo('errand', HERO_WIDTHS) : undefined;
 		display: block;
 		margin-top: 0.15em;
 		color: var(--ncu-ring);
+	}
+
+	.lower {
+		display: flex;
+		flex-direction: column;
+		flex: 1;
+		margin-top: clamp(1.5rem, 1rem + 2vh, 3rem);
 	}
 
 	.tagline {
@@ -197,8 +202,10 @@ const demo = id === '' ? await loadDemo('errand', HERO_WIDTHS) : undefined;
 		border-color: var(--sl-color-gray-3);
 	}
 
+	/* The requirements sit at the window's foot, like a status line. */
 	.needs {
-		margin-top: 1.5rem;
+		margin-top: auto;
+		padding-top: 1.5rem;
 		font-size: var(--sl-text-sm);
 		color: var(--sl-color-gray-3);
 	}

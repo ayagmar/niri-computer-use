@@ -21,7 +21,7 @@ STORY: The visitor sees an agent run a real errand on a real niri desktop, watch
 
 FIRST VIEWPORT: Under the bar, full-bleed: the focused promise window (≈33vw, ring, headline, tagline, Install from source, How the safety works, requirements line); a column of two windows (the errand recording on its plate, then the agent's calls following the video); a stop-key window running off the right edge below ~1900px wide, scrollable sideways. Mobile: stacked in that order.
 
-FORM: Desktop at page scale, the dealt lead of the surface roll (my list #4 of 7). seed: none (unavailable)
+FORM: Desktop at page scale, the dealt lead of the surface roll (my list #4 of 7). seed: da34d443
 
 Signature interaction: the hero recording drives the call log (the call shown wears the ring, later calls dim) and the bar's lease tag; the ring and the workspace pill follow the section in view by scroll timeline. All off under reduced motion except the ring's position.
 

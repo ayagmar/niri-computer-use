@@ -36,8 +36,9 @@ if (!workspaces.some((workspace) => workspace.id === id)) {
 		text-wrap: balance;
 	}
 
-	.ncu-ws :global(h2 + p) {
-		max-width: 46rem;
+	/* Starlight wraps each h2 in a .sl-heading-wrapper. */
+	.ncu-ws :global(:is(h2, .sl-heading-wrapper) + p) {
+		max-width: 40rem;
 		color: var(--sl-color-gray-2);
 	}
 
@@ -59,6 +60,11 @@ if (!workspaces.some((workspace) => workspace.id === id)) {
 
 		.ncu-ws :global(.columns.wide-last) {
 			grid-template-columns: minmax(15rem, 2fr) minmax(0, 3fr);
+		}
+
+		/* A window as tall as its content, as niri sizes a window that asks for less. */
+		.ncu-ws :global(:is(.wide-first, .wide-last) > .column) {
+			align-self: start;
 		}
 	}
 
