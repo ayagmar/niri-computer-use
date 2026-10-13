@@ -1,0 +1,75 @@
+---
+// The coordinate spaces a pointer target passes through, each its own type in
+// src/coords.rs: a screenshot's pixel, or an element ref's box centre, to niri's layout,
+// to the output, to a virtual pointer's `motion_absolute`. The ref checks are
+// `refs::Shot::check` and `Shot::contains`; the element's centre is `elements::aim`.
+import Frame from './Frame.astro';
+
+// Each space down the left: type, what it is, top.
+const spaces: [string, string, number][] = [
+	['ImagePx', 'a pixel of a screenshot_ref', 1],
+	['LayoutPt', "niri's layout, logical px", 115],
+	['OutputLocalPt', 'on the output as shown', 245],
+	['ProtocolPt', 'motion_absolute arguments', 359],
+];
+
+// The step down from each space to the next: arrow top and bottom, then label lines.
+const steps: [number, number, string[]][] = [
+	[57, 113, ['pixel centre ÷ capture scale', "+ captured rectangle's origin"]],
+	[171, 243, ['ref under 60 s, same event stream,', 'output unchanged, point inside the', "capture; then − the output's origin"]],
+	[301, 357, ["undo the output's transform,", '× 1000, clamped inside the output']],
+];
+---
+
+<Frame label="Coordinate spaces">
+	<svg viewBox="0 0 720 420" role="img" aria-labelledby="cs-title cs-desc">
+		<title id="cs-title">Coordinate spaces</title>
+		<desc id="cs-desc">
+			An ImagePx, a pixel of a screenshot_ref, becomes a LayoutPt in niri's layout: its centre divided by the
+			capture scale plus the captured rectangle's origin. An element_ref enters as a LayoutPt too, the centre of
+			its box from niri's layout and its AT-SPI extents, checked again when used. The ref must be under 60
+			seconds old, on the same event stream, with its output unchanged, and the point inside the capture; then
+			the output's origin is subtracted to give an OutputLocalPt. Undoing the output's transform and scaling
+			by 1000 gives a ProtocolPt, the arguments of motion_absolute, which go to a virtual pointer bound to the
+			screenshot's output once niri's own formula maps them back within 0.002 logical pixels.
+		</desc>
+		<defs>
+			<marker id="cs-arrow" viewBox="0 0 8 8" refX="8" refY="4" markerWidth="8" markerHeight="8" orient="auto">
+				<path d="M0 0 8 4 0 8z" class="head" />
+			</marker>
+		</defs>
+
+		{
+			spaces.map(([name, what, top]) => (
+				<>
+					<rect x="1" y={top} width="228" height="56" rx="8" class="box" />
+					<text x="17" y={top + 24} class="t">{name}</text>
+					<text x="17" y={top + 44} class="s">{what}</text>
+				</>
+			))
+		}
+		{
+			steps.map(([from, to, lines]) => (
+				<>
+					<path d={`M115 ${from} V${to}`} class="wire" marker-end="url(#cs-arrow)" />
+					{lines.map((line, index) => (
+						<text x="135" y={from + 23 + index * 18} class="s">{line}</text>
+					))}
+				</>
+			))
+		}
+
+		<rect x="430" y="115" width="288" height="56" rx="8" class="box" />
+		<text x="446" y="139" class="t">element_ref</text>
+		<text x="446" y="159" class="s">its box: niri + AT-SPI extents</text>
+		<path d="M430 143 H231" class="wire" marker-end="url(#cs-arrow)" />
+		<text x="252" y="135" class="s">checked again</text>
+
+		<rect x="430" y="359" width="288" height="56" rx="8" class="box" />
+		<text x="446" y="383" class="t">virtual pointer</text>
+		<text x="446" y="403" class="s">bound to the screenshot's output</text>
+		<path d="M229 387 H428" class="wire" marker-end="url(#cs-arrow)" />
+		<text x="245" y="379" class="s">niri's formula</text>
+		<text x="245" y="405" class="s">lands ≤ 0.002 px</text>
+	</svg>
+</Frame>

@@ -1,0 +1,96 @@
+---
+// One action's life in one row, for the landing page: the call, the gate, the request with
+// `accepted`, the wait with `observed`, and the report with its audit line, and what a stop
+// does on either side of sending. The full drawing is ActionLife.astro. Below 40rem the
+// row is a list, since its text would be too small to read.
+import Frame from './Frame.astro';
+
+// Each step: name, its two lines in the drawing, and the same as one line in the list.
+const steps: [string, string, string, string][] = [
+	['call', 'tools/call', 'by the agent', 'tools/call by the agent'],
+	['gate', 'stop · lease', 'lock · policy', 'stop · lease · lock · policy'],
+	['send', 'one request', '→ accepted', 'one request → accepted'],
+	['watch', "niri's events", '→ observed', "niri's events → observed"],
+	['report', 'changes', '→ audit line', 'changes → audit line'],
+];
+const left = (index: number) => 1 + index * 150;
+---
+
+<div class="call-path">
+	<Frame label="One action's life" scroll={false}>
+		<svg viewBox="0 0 720 132" role="img" aria-labelledby="cp-title cp-desc">
+			<title id="cp-title">One action's life</title>
+			<desc id="cp-desc">
+				A tools/call from the agent passes the gate: the stop flag, the lease, the lock state and the policy.
+				Then one request, answered with accepted, a watch of niri's events, giving observed, and a report of
+				the changes with one audit line. A stop before sending is an error and nothing was sent; after
+				sending, the outcome is uncertain.
+			</desc>
+			<defs>
+				<marker id="cp-arrow" viewBox="0 0 8 8" refX="8" refY="4" markerWidth="8" markerHeight="8" orient="auto">
+					<path d="M0 0 8 4 0 8z" class="head act" />
+				</marker>
+			</defs>
+			{
+				steps.map(([name, first, second], index) => (
+					<>
+						<rect x={left(index)} y="1" width="118" height="78" rx="8" class={name === 'gate' ? 'gate' : 'box'} />
+						<text x={left(index) + 14} y="25" class={name === 'gate' ? 't ring' : 't'}>{name}</text>
+						<text x={left(index) + 14} y="47" class="s">{first}</text>
+						<text x={left(index) + 14} y="65" class="s">{second}</text>
+						{index > 0 && (
+							<path d={`M${left(index) - 31} 40 H${left(index) - 2}`} class="wire act" marker-end="url(#cp-arrow)" />
+						)}
+					</>
+				))
+			}
+			<path d="M152 96 V102 H370 V96 M380 96 V102 H569 V96" class="wire halt" />
+			<text x="152" y="124" class="s"><tspan class="stop">stop</tspan>: error, nothing sent</text>
+			<text x="380" y="124" class="s"><tspan class="stop">stop</tspan>: uncertain</text>
+		</svg>
+	</Frame>
+	<ol class="call-path-list">
+		{
+			steps.map(([name, , , listed]) => (
+				<li>
+					<strong class={name === 'gate' ? 'ring' : undefined}>{name}</strong>: {listed}
+				</li>
+			))
+		}
+		<li>a stop before sending is an error; after sending, the outcome is uncertain</li>
+	</ol>
+</div>
+
+<style>
+	.call-path :global(.ncu-d) {
+		margin: 0;
+	}
+
+	.call-path-list {
+		display: none;
+		margin: 0;
+		padding-inline-start: 1.25rem;
+		font-family: var(--sl-font-mono);
+		font-size: var(--sl-text-xs);
+		line-height: 1.7;
+		color: var(--sl-color-gray-2);
+	}
+
+	.call-path-list strong {
+		color: var(--sl-color-white);
+	}
+
+	.call-path-list .ring {
+		color: var(--ncu-ring);
+	}
+
+	@media (max-width: 40rem) {
+		.call-path :global(.ncu-d) {
+			display: none;
+		}
+
+		.call-path-list {
+			display: block;
+		}
+	}
+</style>

@@ -1,0 +1,94 @@
+---
+// The processes and what they talk to: each client's `serve`, the engine of its niri
+// instance, and everything the engine reaches. Drawn from src/main.rs, src/bridge.rs,
+// src/engine.rs and the modules that own each connection; see docs/architecture.md.
+import Frame from './Frame.astro';
+
+// The engine's parts, as name and what it is.
+const parts = [
+	['desk', 'lease · action mutex · refs'],
+	['event stream', 'one connection to niri'],
+	['AT-SPI connection', 'made on first use'],
+	['audit writer', 'one line per call'],
+	['runner', 'every subprocess'],
+];
+
+// What the engine reaches, top to bottom: heading, lines, top and height.
+const reaches: [string, string[], number, number][] = [
+	['files', ["runtime dir beside niri's socket:", 'engine.sock · lease · lease.json', 'stop · input-dirty', 'state dir: audit.jsonl'], 191, 120],
+	['niri', ['IPC socket: requests, event stream', 'Wayland: virtual devices, data-control'], 323, 82],
+	['desktop services', ['AT-SPI bus · Noctalia IPC socket · logind'], 417, 58],
+	['children', ['grim · wtype · notify-send · loginctl', 'guard: releases held input if the engine dies', 'paste-keeper: one per paste'], 487, 92],
+];
+const middle = (top: number, height: number) => top + height / 2;
+---
+
+<Frame label="Processes and what they talk to">
+	<svg viewBox="0 0 720 580" role="img" aria-labelledby="pm-title pm-desc">
+		<title id="pm-title">Processes and what they talk to</title>
+		<desc id="pm-desc">
+			An MCP client starts niri-computer-use serve over stdio. In shared mode serve is a bridge to the one
+			engine of the niri instance, over engine.sock, and starts that engine when none listens; standalone,
+			serve runs the engine itself. serve reads policy.toml at start and, in shared mode, sends it in the hello. The engine
+			holds the desk with the lease, the event stream, the AT-SPI connection, the audit writer and the
+			runner. It reaches files in the runtime directory beside niri's socket and the audit log; niri's IPC
+			socket and Wayland display; the AT-SPI bus, Noctalia's IPC socket and logind; and its children: grim,
+			wtype, notify-send, loginctl, the crash guardian and a paste keeper per paste. You reach the runtime
+			directory with stop, resume and recover.
+		</desc>
+		<defs>
+			<marker id="pm-arrow" viewBox="0 0 8 8" refX="8" refY="4" markerWidth="8" markerHeight="8" orient="auto">
+				<path d="M0 0 8 4 0 8z" class="head" />
+			</marker>
+		</defs>
+
+		<rect x="1" y="1" width="238" height="56" rx="10" class="box" />
+		<text x="17" y="25" class="t">MCP client</text>
+		<text x="17" y="45" class="s">Claude Code, Codex, Pi</text>
+		<path d="M120 57 V87" class="wire" marker-end="url(#pm-arrow)" />
+		<text x="130" y="77" class="s">stdio</text>
+
+		<rect x="1" y="89" width="238" height="80" rx="10" class="box" />
+		<text x="17" y="113" class="t">niri-computer-use serve</text>
+		<text x="17" y="133" class="s">one per client: a bridge,</text>
+		<text x="17" y="151" class="s">or the engine itself</text>
+		<path d="M120 169 V199" class="wire" marker-end="url(#pm-arrow)" />
+		<text x="130" y="189" class="s">engine.sock</text>
+
+		<rect x="300" y="99" width="170" height="60" rx="8" class="box" />
+		<text x="316" y="123" class="t">policy.toml</text>
+		<text x="316" y="143" class="s">read at start</text>
+		<path d="M300 129 H241" class="wire" marker-end="url(#pm-arrow)" />
+
+		<rect x="480" y="1" width="238" height="56" rx="8" class="box" />
+		<text x="496" y="25" class="t">you, in a terminal</text>
+		<text x="496" y="45" class="s">stop · resume · recover</text>
+		<path d="M600 57 V189" class="wire" marker-end="url(#pm-arrow)" />
+
+		<rect x="1" y="201" width="238" height="378" rx="10" class="box" />
+		<text x="17" y="227" class="t">engine</text>
+		<text x="17" y="247" class="s">one per niri instance</text>
+		{
+			parts.map(([name, what], index) => (
+				<>
+					<text x="17" y={283 + index * 56} class="n">{name}</text>
+					<text x="17" y={301 + index * 56} class="s">{what}</text>
+				</>
+			))
+		}
+
+		<path d="M239 390 H270 M270 251 V533" class="wire" />
+		{
+			reaches.map(([heading, lines, top, height]) => (
+				<>
+					<path d={`M270 ${middle(top, height)} H298`} class="wire" marker-end="url(#pm-arrow)" />
+					<rect x="300" y={top} width="418" height={height} rx="8" class="box" />
+					<text x="316" y={top + 22} class="t">{heading}</text>
+					{lines.map((line, index) => (
+						<text x="316" y={top + 44 + index * 18} class="s">{line}</text>
+					))}
+				</>
+			))
+		}
+	</svg>
+</Frame>
