@@ -1265,7 +1265,7 @@ These match the versions installed locally.
 
 - `.github/workflows/release.yml` runs on a `v*` tag. It checks the tag against the crate's version, builds `x86_64-unknown-linux-gnu` with `--locked --release`, packs the binary with `README.md`, `LICENSE`, `CHANGELOG.md` and `skills/niri-computer-use/` as `niri-computer-use-<version>-x86_64-linux.tar.gz`, writes its `.sha256`, and creates a draft release with the CHANGELOG's `## <version> ` section as its notes. It fails when that section is missing or empty.
 - The draft is made with the `gh` CLI that GitHub's Ubuntu runners have, so the only action is `actions/checkout@v7`, as in `ci.yml` (v7.0.1, 2026-07-20, still the newest). A release action would be one more third-party dependency for one command.
-- The binary is built on `ubuntu-latest`, so it needs that image's glibc or newer.
+- The binary is built on `ubuntu-24.04` rather than `ubuntu-latest`, which GitHub moves to Ubuntu 26 from 2026-10-19. The binary needs the build image's glibc or newer, so a moving label would raise that floor without a commit; moving it is a change of its own.
 - The binary isn't stripped. The release profile keeps line tables (`debug = "line-tables-only"`), so a panic's backtrace names files and lines. Built locally, the binary is 41.8 MB and the tarball 11 MB; `strip` would make the binary 8.2 MB.
 - No separate MSRV job: `rust-version = "1.99"` and the pinned toolchain, 1.99.0, are the same release and move together (see "Rust 1.99.0"), so every CI build already builds with the MSRV.
 - The workflow was checked with actionlint 1.7.12 (`actionlint-py` 1.7.12.25, published 2026-09-22) through `uvx`, with shellcheck on its scripts. It isn't part of `make check`.
