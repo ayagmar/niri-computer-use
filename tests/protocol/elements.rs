@@ -226,18 +226,25 @@ async fn elements_gives_one_line_per_interactive_element_unless_asked_for_more()
     assert_eq!(names, ["Safe", "Odd", "Field", "Secret", "Heading"]);
 }
 
-/// Chromium's `GetActions` lists every name empty; `GetName` gives them.
-#[tokio::test]
-async fn actions_listed_without_a_name_are_named_as_get_name_gives_them() {
+/// `objects` as Chromium lists them: Safe's actions are `click` and `showContextMenu`, and
+/// Odd's `click`, but `GetActions` lists every name empty and only `GetName` gives them.
+fn unnamed_actions() -> Vec<(&'static str, Object)> {
     let mut objects = objects();
     objects[2].1.actions = vec!["click".to_owned(), "showContextMenu".to_owned()];
     objects[2].1.listed = Some(vec![String::new(), String::new()]);
     objects[3].1.actions = vec!["click".to_owned()];
     objects[3].1.listed = Some(vec![String::new()]);
+    objects
+}
+
+/// Chromium's `GetActions` lists every name empty; `GetName` gives them.
+#[tokio::test]
+async fn actions_listed_without_a_name_are_named_as_get_name_gives_them() {
     let windows = [
         app_window(WINDOW, true),
         window_on(2, Some("other"), 1, false),
     ];
+    let objects = unnamed_actions();
     let mut desk = Desk::start_with("el-get-name", &["/frame"], objects, &windows).await;
     let listed = desk
         .server
@@ -265,6 +272,23 @@ async fn actions_listed_without_a_name_are_named_as_get_name_gives_them() {
         );
     }
     assert_eq!(desk.mock.done(), [0, 0]);
+}
+
+// An app that refuses to name one action leaves only that name empty: the element keeps
+// its other actions, and stays among the interactive elements.
+#[tokio::test]
+async fn a_refused_action_name_leaves_the_elements_other_actions() {
+    let windows = [app_window(WINDOW, true)];
+    let objects = unnamed_actions();
+    let mut desk = Desk::start_with("el-get-name-refused", &["/frame"], objects, &windows).await;
+    desk.mock.fail("GetName", "no name for you");
+    let listing = desk
+        .server
+        .structured_with("elements", json!({"window_id": WINDOW, "format": "json"}))
+        .await;
+    let safe = &listing["elements"][0];
+    assert_eq!(safe["name"], "Safe", "{listing}");
+    assert_eq!(safe["actions"], json!(["", "showContextMenu"]), "{listing}");
 }
 
 #[tokio::test]

@@ -570,19 +570,23 @@ impl Request {
 
     /// The names of the actions of the object at `at`, in index order. Chromium lists every
     /// name empty, so an empty one is asked for by `GetName`, which gives Chromium's own,
-    /// such as `click`.
+    /// such as `click`. A name the app refuses, or an object gone meanwhile, leaves that
+    /// name empty and the others as they are.
     async fn action_names(&self, at: (&str, &str)) -> Result<Vec<String>, Failed> {
         let listed: Vec<(String, String, String)> =
             self.call(at, (ACTION, "GetActions"), &()).await?;
-        let mut names = Vec::with_capacity(listed.len());
-        for (index, (name, _, _)) in (0..).zip(listed) {
-            if name.is_empty() {
-                names.push(
-                    self.call::<_, String>(at, (ACTION, "GetName"), &(index,))
-                        .await?,
-                );
-            } else {
-                names.push(name);
+        let mut names: Vec<String> = listed.into_iter().map(|(name, _, _)| name).collect();
+        for (index, name) in (0_i32..).zip(names.iter_mut()) {
+            if !name.is_empty() {
+                continue;
+            }
+            match self
+                .call::<_, String>(at, (ACTION, "GetName"), &(index,))
+                .await
+            {
+                Ok(own) => *name = own,
+                Err(Failed::Refused(_) | Failed::Gone(_)) => {}
+                Err(failed @ Failed::Error(_)) => return Err(failed),
             }
         }
         Ok(names)
