@@ -33,7 +33,7 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 ### `lock_stale`
 
-**Cause:** an action's request, input or command must go out within 250 ms of when the server's last read of the lock state began, since a lock after that read could be missed. The desktop answered so slowly that the call couldn't go out in time, so nothing was sent. The screen may well be unlocked.
+**Cause:** an action's request, input or command must go out within 250 ms of when the server's last read of the lock state began, since a lock after that read could be missed. The desktop answered so slowly that the call couldn't go out in time, so usually nothing was sent; see below. The screen may well be unlocked.
 
 **What to do:** try the call once more. If it comes back `lock_stale` again, the desktop is under load; tell the user.
 
