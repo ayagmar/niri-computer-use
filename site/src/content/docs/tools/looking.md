@@ -26,9 +26,9 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `discovery.warning` | null, or why the given variables might not fit together, such as `NIRI_SOCKET` outside `XDG_RUNTIME_DIR` |
 | `niri.version` | niri's version string, such as `26.04 (8ed0da4)` |
 | `niri.ipc_crate` | the `niri-ipc` version this build uses, `26.4.0` |
-| `niri.compat` | `ok` when the major and minor versions match, `patch_warning` when only the patch differs, `read_only` otherwise |
+| `niri.compat` | `ok` when the major and minor versions match, `patch_warning` when only the patch differs, `read_only` otherwise, and null when niri's version can't be read |
 | `niri.event_stream` | `connected`, `disconnected`, or `schema_incompatible` after niri sent two events this build can't parse; null from the `status` subcommand, which opens no stream |
-| `niri.error` | why niri's version couldn't be read, or null |
+| `niri.error` | why niri's version couldn't be read, as `{"error", "detail"}` with an [error name](../../reference/errors/), or null |
 | `lease.held_by_me` | whether this server holds the lease |
 | `lease.holder` | the holder's `pid`, `label` (client name and server PID, such as `claude-code/4711`) and `since`, or null; `pending: true` while the lease isn't granted yet, as while the user is asked to allow it |
 | `lease.error` | null, or why no lease can be taken for this niri at all, such as a `NIRI_SOCKET` with a hard link; `acquire_desktop` fails with the same reason |
@@ -49,6 +49,7 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `unrestricted.enabled`, `unrestricted.source`, `unrestricted.error` | whether gated `niri_action`s and unrestricted presets are allowed, whether the policy file, `NIRI_COMPUTER_USE_UNRESTRICTED` or both allowed them, and why the variable was ignored |
 | `confirm_lease.enabled`, `confirm_lease.source`, `confirm_lease.error` | whether `acquire_desktop` waits for the user to allow it on the desktop, whether the policy file, `NIRI_COMPUTER_USE_CONFIRM_LEASE` or both asked for that, and why the variable was ignored |
 | `audit.path`, `audit.last_error` | the audit log and the last failure to write it |
+| `tools.profile`, `tools.source`, `tools.error` | the [tool profile](../../concepts/configuration/#tools) this server lists, whether the policy file, `NIRI_COMPUTER_USE_TOOLS` or both chose it, and why the variable was ignored |
 | `binaries` | whether `grim`, `notify-send` and `wtype` are on this client's `PATH` |
 | `desktop_programs` | the directories searched for `loginctl` and `noctalia` at startup (`search`), and the path found for each, or null |
 

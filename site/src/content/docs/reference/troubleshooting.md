@@ -9,7 +9,7 @@ Each problem here was seen in testing, on a real desktop or in a nested niri. Fo
 
 ## `status` reports `NIRI_SOCKET is not set`
 
-The server got no `NIRI_SOCKET` and found no niri session of yours. `niri.error` says where it looked, and `discovery` shows what else is missing. Usually niri isn't running as your user, or the server runs as another user or in a container that can't see `/run/user/<uid>`. Clients with a reduced environment, such as Codex, need no `env_vars`: the server finds the session itself (see [Session variables](../../start/clients/#session-variables)).
+The server got no `NIRI_SOCKET` and found no niri session of yours. `niri.error`'s `detail` says where it looked, and `discovery` shows what else is missing. Usually niri isn't running as your user, or the server runs as another user or in a container that can't see `/run/user/<uid>`. Clients with a reduced environment, such as Codex, need no `env_vars`: the server finds the session itself (see [Session variables](../../start/clients/#session-variables)).
 
 ## `status` reports several running niri instances
 
