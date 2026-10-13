@@ -1743,12 +1743,13 @@ impl Server {
         result.map(shown)
     }
 
-    /// The session label: the MCP client's name and the process it started.
+    /// The session label: the MCP client's name and the process it started. A client of MCP
+    /// 2026-07-28, such as Claude Code, may skip `initialize` and name itself in each
+    /// request's `_meta` instead.
     fn label(&self, context: &RequestContext<RoleServer>) -> String {
-        let client = context.peer.peer_info().map_or_else(
-            || "unknown".to_owned(),
-            |info| info.client_info.name.clone(),
-        );
+        let client = context
+            .client_info()
+            .map_or_else(|| "unknown".to_owned(), |info| info.name);
         self.session.label(&client)
     }
 }

@@ -84,3 +84,30 @@ async fn without_a_state_directory_calls_go_unlogged_and_status_says_so() {
         &json!({"path": null, "last_error": "neither XDG_STATE_HOME nor HOME is set"})
     );
 }
+
+/// Claude Code 2.1.296 speaks MCP 2026-07-28: no `initialize`, and its name in every
+/// request's `_meta`. Its sessions were logged as `unknown`.
+#[tokio::test]
+async fn a_client_named_only_in_each_requests_meta_is_logged_by_that_name() {
+    let fixture = Fixture::new("audit-meta");
+    let _niri = Niri::start(&fixture);
+    let mut server = Server::spawn(&fixture);
+    let meta = json!({"_meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": {"name": "claude-code", "version": "2.1.296"},
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }});
+    let discover = server.request("server/discover", meta.clone()).await;
+    let discovered = server.response(discover).await;
+    assert!(discovered.get("result").is_some(), "{discovered}");
+    let mut call = meta;
+    call["name"] = json!("status");
+    call["arguments"] = json!({});
+    let status = server.request("tools/call", call).await;
+    let called = server.response(status).await;
+    assert_eq!(called["result"]["isError"], false, "{called}");
+
+    let lines = fixture.audit_lines();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines[0]["session"], format!("claude-code/{}", server.pid));
+}
