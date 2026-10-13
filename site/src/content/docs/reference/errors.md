@@ -115,7 +115,7 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 **Cause:** a paste (`type_text` with `via: "paste"`) couldn't save the clipboard whole before replacing it: every type it offers, over 16 MiB in all, or not read within two seconds. Or the clipboard holds what its owner marked as a secret (`x-kde-passwordManagerHint`), or something else was copied while it was being saved. Nothing changed. An earlier paste's text, which a `kept` outcome leaves on the clipboard marked as a secret, isn't refused: the next paste replaces it and reports `clipboard: cleared`.
 
-**What to do:** type the text with `type_text` and `via: "keys"` instead, in parts of at most 1000 characters, with `submit: true` only on the last. Typed text can't hold line breaks, so text with several lines needs another way; the error's detail tells the agent to ask the user.
+**What to do:** type the text with `type_text` and `via: "keys"` instead, in parts of at most 1000 characters with `submit: false`. Only if the text was meant to be submitted does the last part take `submit: true`, after the others went out whole: a paste never submits, so the fallback mustn't either. Typed text can't hold line breaks, so text with several lines needs another way; the error's detail tells the agent to ask the user.
 
 ### `save_not_enabled`
 

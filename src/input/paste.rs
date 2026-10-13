@@ -254,7 +254,7 @@ impl Keeper {
             Report::Refused { detail } => Err(ToolError::new(
                 ErrorName::ClipboardUnsaved,
                 format!(
-                    "{detail}; the clipboard is unchanged and nothing was pasted: type the text instead, in calls of at most {} characters with `submit: true` only on the last; typed text can't hold line breaks, so ask the user about text with several lines",
+                    "{detail}; the clipboard is unchanged and nothing was pasted: type the text instead, in calls of at most {} characters with `submit: false`; only if the text was meant to be submitted, pass `submit: true` on the last call, after the others went out whole; typed text can't hold line breaks, so ask the user about text with several lines",
                     keyboard::MAX_TEXT
                 ),
             )),
@@ -478,7 +478,8 @@ mod tests {
             error.detail.starts_with("the selection is too large; ")
                 && error.detail.contains("nothing was pasted")
                 && error.detail.contains("type the text instead")
-                && error.detail.contains("only on the last")
+                && error.detail.contains("`submit: false`")
+                && error.detail.contains("only if the text was meant")
                 && error.detail.contains("line breaks"),
             "{}",
             error.detail
