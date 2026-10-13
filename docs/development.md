@@ -409,3 +409,14 @@ make host-capture OUTPUT=DP-1
 ```
 
 The report goes to the terminal and to `target/e2e/<unix time>-<pid>/harness.log`.
+
+## Releases
+
+The crate holds only `src/`, `README.md`, `LICENSE` and `CHANGELOG.md` (`include` in `Cargo.toml`). To see what it would hold and check that it builds on its own:
+
+```sh
+cargo package --list -p niri-computer-use
+cargo publish --dry-run -p niri-computer-use --locked
+```
+
+Pushing a `v<version>` tag runs `.github/workflows/release.yml`. It fails unless the tag matches the crate's version and `CHANGELOG.md` has a `## <version> ` section. It builds `x86_64-unknown-linux-gnu` with `--locked --release`, packs the binary with the README, license, changelog and `skills/niri-computer-use/` as `niri-computer-use-<version>-x86_64-linux.tar.gz` with a `.sha256` beside it, and creates a draft GitHub release with that section as its notes. Nothing is published until someone publishes the draft.
