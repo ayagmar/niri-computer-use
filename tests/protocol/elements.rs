@@ -2465,7 +2465,8 @@ impl Desk {
         self.moved_marking(event, WINDOW).await;
     }
 
-    /// `moved`, marking window `marker` urgent, for an event that closes the mock's.
+    /// `moved`, marking window `marker` urgent, for an event that closes the mock's or
+    /// after another `moved` marked it.
     async fn moved_marking(&mut self, event: &Value, marker: u64) {
         self.stream.send(event);
         self.stream
@@ -2474,7 +2475,7 @@ impl Desk {
             .as_array()
             .unwrap()
             .iter()
-            .any(|window| window["is_urgent"] == true)
+            .any(|window| window["id"] == marker && window["is_urgent"] == true)
         {
             tokio::task::yield_now().await;
         }
@@ -2752,6 +2753,15 @@ async fn drag_moved_at_sync(
     sync: usize,
     event: &Value,
 ) -> (Value, Vec<Pointed>) {
+    drag_moved_at_syncs(test, button, &[(sync, event.clone())]).await
+}
+
+/// `drag_moved_at_sync` with one or two holds, in order, each making its event happen.
+async fn drag_moved_at_syncs(
+    test: &str,
+    button: ButtonEnd,
+    holds: &[(usize, Value)],
+) -> (Value, Vec<Pointed>) {
     let windows = [floating_window(), window_on(2, Some("other"), 1, false)];
     let mut desk = Desk::start_with(test, &["/frame"], objects(), &windows).await;
     let safe = json!({"element": desk.element("Safe").await});
@@ -2761,12 +2771,18 @@ async fn drag_moved_at_sync(
     let to = at(ButtonEnd::End, json!({"x": 300, "y": 200}));
     let points = desk.fixture.points();
     points.start();
-    let held = points.hold("wayland:sync", sync);
+    let gates: Vec<_> = holds
+        .iter()
+        .map(|(sync, _)| points.hold("wayland:sync", *sync))
+        .collect();
     let dragged = json!({"screenshot_ref": shot, "from": from, "to": to});
     let id = desk.server.start_call("drag", dragged).await;
-    held.arrived().await;
-    desk.moved_marking(event, 2).await;
-    held.release();
+    // Each marks a window not marked yet.
+    for ((held, (_, event)), marker) in gates.into_iter().zip(holds).zip([2, WINDOW]) {
+        held.arrived().await;
+        desk.moved_marking(event, marker).await;
+        held.release();
+    }
     let result = desk.server.response(id).await["result"].clone();
     (result, desk.fixture.clipboard.pointed())
 }
@@ -2880,44 +2896,69 @@ async fn a_held_drag_stops_when_the_window_it_ends_in_moves_or_closes() {
     }
 }
 
-// niri doesn't say which floating window is on top. While a drag from a pixel to the Safe
-// button holds its button, window 2 moving over the button, or a new window 3 opening
-// there, may cover it, so the drag stops and releases its button. A window that opens
-// under the pointer too, as a tab torn out by the drag does, doesn't stop it.
+/// Window `id` of another app, floating at `(x, y)` with size `size` on the mock's
+/// workspace, as an event that opens or changes it.
+fn floating_at(id: u64, (x, y): (f64, f64), size: f64) -> Value {
+    let mut window = floating_other(x, false);
+    window["id"] = json!(id);
+    window["layout"]["tile_pos_in_workspace_view"] = json!([x, y]);
+    window["layout"]["tile_size"] = json!([size, size]);
+    json!({"WindowOpenedOrChanged": {"window": window}})
+}
+
+/// Asserts that a drag stopped because a window came over its end, with the press and the
+/// release after the first motion and `steps` drag steps between them.
+fn stopped_covered(result: &Value, sent: &[Pointed], steps: usize, tag: &str) {
+    stopped_midway(result, "another floating window opened or moved over", tag);
+    assert_eq!(sent.len(), steps + 3, "{tag}: {sent:?}");
+    assert_eq!(sent[1], Pointed::Button(272, 1), "{tag}: {sent:?}");
+    assert_eq!(
+        sent.last(),
+        Some(&Pointed::Button(272, 0)),
+        "{tag}: {sent:?}"
+    );
+}
+
+// niri doesn't say which floating window is on top. While a drag from pixel (5, 5) to the
+// Safe button, whose centre is at (70, 45), holds its button, window 2 floating over the
+// button, or a new window 3 opening there, may cover it, so the drag stops and releases
+// its button. That holds at every look, the last one before the release too (sync 14),
+// when the pointer is already on the button, and for a window over both the button and
+// the pointer, since one that was there or opened there isn't a tab the drag tore out.
 #[tokio::test]
 async fn a_held_drag_stops_when_another_window_comes_over_its_end() {
-    let mut opened = floating_other(60.0, false);
-    opened["id"] = json!(3);
-    let mut under_pointer = opened.clone();
-    under_pointer["layout"]["tile_pos_in_workspace_view"] = json!([0.0, 0.0]);
-    under_pointer["layout"]["tile_size"] = json!([2560.0, 1440.0]);
+    let over = |id| floating_at(id, (60.0, 30.0), 200.0);
     let cases = [
-        ("moved", floating_other(60.0, false), true),
-        ("opened", opened, true),
-        ("torn", under_pointer, false),
+        ("moved", 4, over(2), 0),
+        ("opened", 4, over(3), 0),
+        ("late", 13, over(3), 9),
+        ("last", 14, over(3), 10),
+        ("both", 4, floating_at(3, (0.0, 0.0), 2560.0), 0),
+        ("relaid-both", 14, floating_at(2, (0.0, 0.0), 2560.0), 10),
     ];
-    for (tag, window, stops) in cases {
-        let event = json!({"WindowOpenedOrChanged": {"window": window}});
+    for (tag, sync, event, steps) in cases {
         let test = format!("el-held-cover-{tag}");
-        let (result, sent) = drag_moved_at_sync(&test, ButtonEnd::End, 4, &event).await;
-        if !stops {
-            assert_eq!(result["structuredContent"]["observed"], "sent", "{result}");
-            assert_eq!(sent.len(), 13, "{tag}: {sent:?}");
-            continue;
-        }
-        stopped_midway(&result, "another floating window opened or moved over", tag);
-        assert!(
-            matches!(
-                sent.as_slice(),
-                [
-                    Pointed::Motion(..),
-                    Pointed::Button(272, 1),
-                    Pointed::Button(272, 0)
-                ]
-            ),
-            "{tag}: {sent:?}"
-        );
+        let (result, sent) = drag_moved_at_sync(&test, ButtonEnd::End, sync, &event).await;
+        stopped_covered(&result, &sent, steps, tag);
     }
+}
+
+// A tab torn out by a drag opens as a window around the pointer, clear of the drag's end,
+// and follows the pointer onto it. That window doesn't stop the drag while it stays under
+// the pointer. It is still looked at every time: once it lies over the end but not under
+// the pointer, the drag stops.
+#[tokio::test]
+async fn a_window_torn_out_by_a_drag_counts_only_while_it_follows_the_pointer() {
+    // Around the start, near (11, 11), and clear of the end.
+    let torn = floating_at(3, (0.0, 0.0), 30.0);
+    let followed = [(4, torn.clone()), (14, floating_at(3, (50.0, 30.0), 100.0))];
+    let (went, all) = drag_moved_at_syncs("el-torn-follows", ButtonEnd::End, &followed).await;
+    assert_eq!(went["structuredContent"]["observed"], "sent", "{went}");
+    assert_eq!(all.len(), 13, "{all:?}");
+    // Halfway, the pointer is near (40, 28): this covers the end and not the pointer.
+    let left = [(4, torn), (9, floating_at(3, (60.0, 40.0), 100.0))];
+    let (result, sent) = drag_moved_at_syncs("el-torn-left", ButtonEnd::End, &left).await;
+    stopped_covered(&result, &sent, 5, "left");
 }
 
 // A round trip within a gesture can take seconds, longer than a read of the lock state

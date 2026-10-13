@@ -109,6 +109,8 @@ pub(crate) struct Moved {
     pub(crate) shift: Shift,
     /// The windows they moved, resized, floated, moved to another workspace or opened.
     pub(crate) relaid: HashSet<u64>,
+    /// Those of `relaid` that opened.
+    pub(crate) opened: HashSet<u64>,
 }
 
 /// How a wait ended.
@@ -182,7 +184,12 @@ impl Waiter {
             .catch_up(
                 |view, event| {
                     moved.shift = moved.shift.max(shift(view, event));
-                    moved.relaid.extend(relaid_by(view.windows(), event));
+                    let relaid = relaid_by(view.windows(), event);
+                    let known = view.windows();
+                    moved
+                        .opened
+                        .extend(relaid.iter().filter(|id| !known.contains_key(id)));
+                    moved.relaid.extend(relaid);
                 },
                 |_| None::<()>,
             )

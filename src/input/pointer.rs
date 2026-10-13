@@ -12,6 +12,7 @@
 //! ends, or, when it is dropped midway by a stop or a cancelled request, by the release
 //! sent on the way out.
 
+use std::collections::HashSet;
 use std::ops::RangeInclusive;
 use std::time::Duration;
 
@@ -338,6 +339,7 @@ pub(crate) async fn point(
         window,
         at,
         area: shot.geometry,
+        followers: HashSet::new(),
     });
     let now = Instant::now();
     let aimed = located
@@ -453,11 +455,14 @@ struct Gate<'a> {
 
 /// The element a drag ends at: its window, and its centre on the output whose layout
 /// area is `area`, as the drag aims at it.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 struct End {
     window: u64,
     at: LayoutPt,
     area: niri_ipc::LogicalOutput,
+    /// The windows that opened on its workspace during the drag under the pointer and
+    /// clear of its centre, as a tab the drag tears out does.
+    followers: HashSet<u64>,
 }
 
 /// Where a gesture is when its next part goes out.
@@ -545,7 +550,7 @@ impl Gate<'_> {
     /// Whether the gesture's points still stand at `stage` after niri's changes `moved`,
     /// with the pointer at `pointer`.
     fn still_aimed(
-        &self,
+        &mut self,
         stage: Stage,
         moved: &Moved,
         pointer: Option<LayoutPt>,
@@ -561,6 +566,7 @@ impl Gate<'_> {
         }
         // Before the press, an element aim already stops on any window change.
         self.end
+            .as_mut()
             .and_then(|end| end.lost(self.waiter.view(), moved, pointer))
             .map_or(Ok(()), |why| {
                 Err(ToolError::new(ErrorName::ElementUnmappable, why))
@@ -571,25 +577,42 @@ impl Gate<'_> {
 impl End {
     /// Why the element is no longer where the drag goes after niri's changes `moved`, with
     /// the pointer at `pointer`: its window moved, resized, floated, went to another
-    /// workspace or closed, or another floating window on its workspace opened or was
-    /// relaid over its centre. niri reports no stacking order, so that window may be on
-    /// top. One that also lies under the pointer doesn't count: a tab torn out by the drag
-    /// opens a window there that follows the pointer.
-    fn lost(self, view: &View, moved: &Moved, pointer: Option<LayoutPt>) -> Option<&'static str> {
+    /// workspace or closed, or another floating window on its workspace lies over its
+    /// centre after opening or being relaid. niri reports no stacking order, so that window
+    /// may be on top. Only one of `followers` that also lies under the pointer doesn't
+    /// count, and they are looked at every time, relaid or not, since the pointer moves
+    /// either way. A window that was there before the drag counts even when the drag
+    /// carries it, as a title-bar drag does.
+    fn lost(
+        &mut self,
+        view: &View,
+        moved: &Moved,
+        pointer: Option<LayoutPt>,
+    ) -> Option<&'static str> {
         let Some(own) = view.windows().get(&self.window) else {
             return Some(END_MOVED);
         };
         if moved.relaid.contains(&self.window) {
             return Some(END_MOVED);
         }
-        let covered = moved
-            .relaid
-            .iter()
-            .filter(|id| **id != self.window)
-            .filter_map(|id| view.windows().get(id))
-            .filter(|other| other.workspace_id == own.workspace_id)
-            .filter_map(|other| model::floating_tile(&self.area, other))
-            .any(|tile| tile.contains(self.at) && !pointer.is_some_and(|at| tile.contains(at)));
+        let tile_of = |id: &u64| {
+            if *id == self.window {
+                return None;
+            }
+            let other = view.windows().get(id)?;
+            (other.workspace_id == own.workspace_id)
+                .then(|| model::floating_tile(&self.area, other))
+                .flatten()
+        };
+        let under_pointer = |tile: &model::LayoutBox| pointer.is_some_and(|at| tile.contains(at));
+        self.followers.extend(moved.opened.iter().filter(|id| {
+            tile_of(id).is_some_and(|tile| under_pointer(&tile) && !tile.contains(self.at))
+        }));
+        let covered = moved.relaid.union(&self.followers).any(|id| {
+            tile_of(id).is_some_and(|tile| {
+                tile.contains(self.at) && !(self.followers.contains(id) && under_pointer(&tile))
+            })
+        });
         covered.then_some(END_COVERED)
     }
 }
