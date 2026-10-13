@@ -175,13 +175,19 @@ impl<P> Gesture<P> {
 }
 
 impl Gesture<Spot> {
-    /// Whether any of its points is an element ref.
-    fn aims_at_element(&self) -> bool {
-        let element = |spot: &Spot| matches!(spot, Spot::Element(_));
-        match self {
-            Self::Move(at) | Self::Click { at, .. } | Self::Scroll { at, .. } => element(at),
-            Self::Drag { from, to, .. } => element(from) || element(to),
-        }
+    /// The element refs among its points.
+    fn elements(&self) -> Vec<&str> {
+        let spots = match self {
+            Self::Move(at) | Self::Click { at, .. } | Self::Scroll { at, .. } => vec![at],
+            Self::Drag { from, to, .. } => vec![from, to],
+        };
+        spots
+            .into_iter()
+            .filter_map(|spot| match spot {
+                Spot::Element(id) => Some(id.as_str()),
+                Spot::Pixel(_) => None,
+            })
+            .collect()
     }
 }
 
@@ -283,7 +289,12 @@ pub(crate) async fn point(
     shot.check(Instant::now(), &outputs, connection)?;
     let tool = gesture.tool();
     let button = gesture.button();
-    let at_element = gesture.aims_at_element();
+    // The windows of the elements it aims at.
+    let windows = gesture
+        .elements()
+        .into_iter()
+        .map(|id| element(id).map(|kept| kept.kept.window))
+        .collect::<Result<Vec<_>, _>>()?;
     let located = gesture
         .located(|spot| locate(input, &shot, spot, &element))
         .await?;
@@ -299,7 +310,7 @@ pub(crate) async fn point(
     let pointer = Pointer::bind(display, niri::pid(socket).await?, &shot.output).await?;
     let pressing = Pressing { tool, button };
     let mut device = Device::new(pointer, input.runtime, pressing, &shot.output, held).await?;
-    if let Err(refused) = last_gate(&mut waiter, input, at_element).await {
+    if let Err(refused) = last_gate(&mut waiter, input, &windows).await {
         // Nothing was pressed, so the marker goes now, before the next call can see it.
         device.discard().await?;
         return Err(refused.into());
@@ -356,31 +367,40 @@ async fn locate(
 }
 
 /// The checks right before the gesture's first input, with nothing awaited between them
-/// and it: for an element aim, niri's events up to now must show nothing moved (`unmoved`),
-/// and then the lock state must still be fresh, however long that look took.
+/// and it. niri's events up to now are applied first (`Waiter::moved`). For an element aim,
+/// at elements of `windows`, one that can change what is shown where since the call's first
+/// look, before the elements were placed, refuses it: a box may no longer be where its
+/// element is. An app can change its `app_id` at any time without moving anything, so the
+/// deny list is asked again about the focused window and `windows` as niri reports them
+/// now. Last, the lock state must still be fresh, however long the look took.
 async fn last_gate(
     waiter: &mut niri::waiter::Waiter,
     input: Input<'_>,
-    at_element: bool,
+    windows: &[u64],
 ) -> Result<(), ToolError> {
-    if at_element {
-        unmoved(waiter).await?;
-    }
-    input.niri.desk.fresh()
-}
-
-/// Refuses an element aim when niri reported a change to what is shown where since the
-/// call's first look, before its element was placed: the box may no longer be where the
-/// element is.
-async fn unmoved(waiter: &mut niri::waiter::Waiter) -> Result<(), ToolError> {
-    match waiter.moved().await {
-        Ok(false) => Ok(()),
-        Ok(true) => Err(elements::unmappable(Unmappable::Moving)),
-        Err(reason) => Err(ToolError::new(
+    let moved = waiter.moved().await.map_err(|reason| {
+        ToolError::new(
             ErrorName::UpstreamError,
             format!("{reason}; nothing was sent"),
-        )),
+        )
+    })?;
+    if moved && !windows.is_empty() {
+        return Err(elements::unmappable(Unmappable::Moving));
     }
+    let view = waiter.view();
+    if let Some(refused) = policy::refuse_input(input.policy, focused_app_id(view)) {
+        return Err(refused);
+    }
+    for id in windows {
+        let app_id = view
+            .windows()
+            .get(id)
+            .and_then(|window| window.app_id.as_deref());
+        if let Some(refused) = policy::refuse_window(input.policy, *id, app_id) {
+            return Err(refused);
+        }
+    }
+    input.niri.desk.fresh()
 }
 
 /// The tool a gesture belongs to and the button it presses, for the marker.

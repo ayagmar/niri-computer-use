@@ -18,6 +18,8 @@ const ODD_ACTION: &str = "open ACTION-SENTINEL";
 
 /// The mock application's window.
 pub(crate) const WINDOW: u64 = 1;
+/// The app ID the policy denies, which no window has until a test gives one it.
+const DENIED: &str = "org.ncu.Denied";
 
 /// A server holding the lease on a fake niri, whose focused window 1 is the mock
 /// application's, beside window 2 of another app.
@@ -84,6 +86,9 @@ impl Desk {
         windows: &[Value],
     ) -> Self {
         let mut fixture = Fixture::new(name);
+        std::fs::create_dir_all(fixture.path("config/niri-computer-use")).unwrap();
+        let policy = format!("deny_input_app_ids = [{DENIED:?}]");
+        std::fs::write(fixture.path("config/niri-computer-use/policy.toml"), policy).unwrap();
         fixture.program("noctalia", "exit 0");
         fixture.grim(&jpeg(1280, 720, b"evidence"));
         let (bus, mock) = atspi::start(&mut fixture, frames, objects).await;
@@ -2561,6 +2566,43 @@ async fn an_element_aim_is_refused_when_the_view_moved_before_it_went_out() {
         for tool in ["pointer_move", "click"] {
             moved_before_it_went_out(tool, tag, &event).await;
         }
+    }
+}
+
+// An app can change its `app_id` at any time, without moving or focusing anything. When
+// the mock's window takes the denied app ID while the pointer is being set up, the click
+// is refused with `app_denied` and nothing is sent: aimed at its element while another
+// window has focus, the deny list is asked about the element's window; aimed at a pixel
+// while it has focus, about the focused window.
+#[tokio::test]
+async fn an_app_id_that_becomes_denied_before_the_input_went_out_refuses_it() {
+    for at_element in [true, false] {
+        let mut window = floating_window();
+        window["is_focused"] = json!(!at_element);
+        let windows = [window.clone(), window_on(2, Some("other"), 1, at_element)];
+        let test = format!("el-renamed-{}", u8::from(at_element));
+        let mut desk = Desk::start_with(&test, &["/frame"], objects(), &windows).await;
+        let button = desk.element("Safe").await;
+        let shot = desk.screenshot_ref().await;
+        let aimed = if at_element {
+            json!({"screenshot_ref": shot, "element": button})
+        } else {
+            json!({"screenshot_ref": shot, "x": 5, "y": 5})
+        };
+        let points = desk.fixture.points();
+        points.start();
+        let held = points.hold("wayland:get_registry", 1);
+        let id = desk.server.start_call("click", aimed).await;
+        held.arrived().await;
+        window["app_id"] = json!(DENIED);
+        desk.moved(&json!({"WindowOpenedOrChanged": {"window": window}}))
+            .await;
+        held.release();
+        let result = desk.server.response(id).await["result"].clone();
+        let (name, detail) = tool_error(&result);
+        assert_eq!(name, "app_denied", "{at_element}: {result}");
+        assert!(detail.contains(DENIED), "{at_element}: {detail}");
+        assert_eq!(desk.fixture.clipboard.pointed(), [], "{at_element}");
     }
 }
 
