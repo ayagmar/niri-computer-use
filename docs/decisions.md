@@ -1311,3 +1311,19 @@ These match the versions installed locally.
 - The listed place no longer wins when the app names the action there: the server asks both names at every index from 0 and needs exactly one index with the listed name. It stops past the listed actions at the first index where neither method names an action, both answering with an error (GTK 4, Qt) or an empty name (at-spi2-atk). Inside the list, an error from both is not the end; that index's name is unknown. More than 32 actions refuses the call, as before. Actions that change during the search can look like several indices with the name, so when the search finds none the server reads the list again, and an action no longer at its place is `element_stale`, not `action_unmapped`; the stall explorer's reordered-actions case found this. The last gate asks both names at the index found again, and needs the same name from the same method and the list's entry from the same source.
 - What this leaves open. An app that leaves actions out of its list and, past the listed ones, has an action neither method names, followed by another with the listed name, is mapped as if its actions ended at the nameless one. None of the toolkits above does that. An app that lists translated names but refuses `GetLocalizedName` everywhere is matched by `GetName`, as Qt is; nothing on the bus tells the two apart. And an action listed unnamed is named by `GetName` at its place in the list, which in an app that also leaves actions out of the list can be another action's index; at-spi2-atk, where empty names come from, lists every action.
 - Cost: two calls per action and two more for the end before the last gate, and two in it. A GTK 4 button with one action asks four names before the gate, where the earlier fix asked one or two.
+
+## 2026-10-13: the last gate searches the action index again
+
+- Opus's release review found that the last gate accepted a table the search refuses. It checked the list entry and the name at the index found, but not that the name was still unique. An app that gave a second index the listed name between the search and the gate had the first index run, though the search would now give `action_unmapped`. The review's mock: GTK 4's shape, `open` disabled and unlisted, `toggle` listed and found at index 1, then index 0 renamed `toggle`; `DoAction(1)` went out with `accepted: true`. No toolkit read for the entry above renames actions like that.
+- The last gate now runs the whole search again (`search` in `elements/actions.rs`) and needs the same index, source and name; anything else is `element_stale`, with nothing sent. The other option was to record the case as accepted, beside the three residuals above. The search is the rule the index comes from, so the gate asking that rule again leaves no table it accepts that the search refuses.
+- Cost: `2·(n+1)` naming calls in the gate for `n` actions, where it asked two. A GTK 4 button with one action asks four. Measured with `make nested-a11y`, 87 gated element actions per run, none ran a second pass and none was `element_busy`:
+
+  | Server | Pass ms, median | p95 | max | Share of 250 ms |
+  |---|---|---|---|---|
+  | main, idle | 2.6 | 3.2 | 25.5 | 10.2% |
+  | this change, idle | 2.6 | 4.9 | 13.1 | 5.2% |
+  | this change, idle | 2.8 | 9.1 | 14.0 | 5.6% |
+  | this change, eight busy loops on the four cores the run was pinned to | 6.6 | 11.1 | 22.5 | 9.0% |
+
+  The extra calls cost a millisecond or two at the p95. The longest pass varies more between runs of one server than between the two.
+- `elements::a_name_another_index_took_before_the_last_gate_is_never_run` is the review's reproduction: it went out with `accepted: true` before the change and gets `element_stale` with nothing sent now, in both protocol modes.

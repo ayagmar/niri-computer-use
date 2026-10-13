@@ -516,6 +516,35 @@ async fn an_index_renamed_before_the_last_gate_is_never_run() {
     assert_eq!(desk.mock.done(), Vec::<i32>::new(), "{result}");
 }
 
+// The last gate searches the actions again: another index that has taken the listed name
+// since, with the same list, makes the index found one of two, which the search refuses,
+// so nothing is sent. GTK 4's shape, where the disabled index 0 isn't listed.
+#[tokio::test]
+async fn a_name_another_index_took_before_the_last_gate_is_never_run() {
+    let mut objects = objects();
+    objects[2].1.actions = vec!["open".to_owned(), "toggle".to_owned()];
+    objects[2].1.listed = Some(vec!["toggle".to_owned()]);
+    let windows = [app_window(WINDOW, true)];
+    let mut desk = Desk::start_with("action-shared", &["/frame"], objects, &windows).await;
+    let button = desk.element("Safe").await;
+    let first = desk.mock.hold_on("GetActions", "/button");
+    let arguments = json!({
+        "element": button, "action": "toggle", "expect": {"window_id": WINDOW}
+    });
+    let id = desk.server.start_call("activate_element", arguments).await;
+    first.arrived().await;
+    let last = desk.mock.hold_on("GetChildAtIndex", "/frame");
+    first.release();
+    last.arrived().await;
+    desk.mock.change("/button", |object| {
+        object.actions = vec!["toggle".to_owned(), "toggle".to_owned()];
+    });
+    last.release();
+    let result = desk.server.response(id).await["result"].clone();
+    assert_eq!(tool_error(&result).0, "element_stale", "{result}");
+    assert_eq!(desk.mock.done(), Vec::<i32>::new(), "{result}");
+}
+
 // An action's change report hands out refs to the elements it shows, and those are named
 // as a listing names them, so activating one that Chromium lists unnamed goes out.
 #[tokio::test]

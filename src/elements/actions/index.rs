@@ -36,7 +36,7 @@ impl Named {
 /// The name an action has where `source` takes its names: for `List`, `GetLocalizedName`'s,
 /// or `GetName`'s where the app refuses `GetLocalizedName`; for `Own`, `GetName`'s. `None`
 /// when the app refuses the method that would name it.
-pub(crate) fn named(names: &ActionNames, source: Source) -> Option<Named> {
+fn named(names: &ActionNames, source: Source) -> Option<Named> {
     match (source, &names.localized, &names.own) {
         (Source::List, Some(localized), _) => Some(Named::Localized(localized.clone())),
         (_, _, Some(own)) => Some(Named::Own(own.clone())),

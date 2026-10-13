@@ -448,6 +448,7 @@ pub(crate) async fn activate(
 const MAX_ACTIONS: i32 = 32;
 
 /// An action's `DoAction` index and the name that showed it.
+#[derive(PartialEq, Eq)]
 struct Mapped {
     index: i32,
     source: Source,
@@ -501,10 +502,10 @@ async fn search(
     Ok(None)
 }
 
-/// The index `canonical` found for `action`, checked again the same way: the element
-/// still lists the action where `elements` did, from the same source, so an action list
-/// that changed since can't make the index name another action, and the app still names
-/// the action at the index by the same method.
+/// The index `canonical` found for `action`, found again the same way: the element still
+/// lists the action where `elements` did, so an action list that changed since can't make
+/// the index name another action, and the search gives the same index, source and name,
+/// so no other index has taken the name since.
 async fn offered(
     request: &Request,
     element: &ElementRef,
@@ -512,13 +513,7 @@ async fn offered(
     mapped: &Mapped,
 ) -> Result<i32, CallError> {
     let place = still_listed(request, element, action).await?;
-    let answers = request
-        .action_names(element, mapped.index)
-        .await
-        .map_err(gone_is_stale)?;
-    if place.source == mapped.source
-        && index::named(&answers, place.source).as_ref() == Some(&mapped.named)
-    {
+    if search(request, element, &place).await?.as_ref() == Some(mapped) {
         return Ok(mapped.index);
     }
     Err(stale(&format!(
