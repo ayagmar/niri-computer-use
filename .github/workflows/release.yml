@@ -16,6 +16,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      - name: Install cargo-about
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.2
+
       - name: Install libxkbcommon
         run: |
           sudo apt-get update
@@ -43,6 +48,8 @@ jobs:
           mkdir -p "dist/$name/skills"
           cp target/x86_64-unknown-linux-gnu/release/niri-computer-use README.md LICENSE CHANGELOG.md "dist/$name/"
           cp -r skills/niri-computer-use "dist/$name/skills/"
+          cargo about generate --frozen -c .github/release/about.toml -m Cargo.toml \
+            .github/release/licenses.hbs -o "dist/$name/THIRD-PARTY-LICENSES.txt"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
           awk -v heading="## $VERSION " 'index($0, heading) == 1 { found = 1; next } /^## / { found = 0 } found' CHANGELOG.md > dist/notes.md

@@ -1,0 +1,14 @@
+The niri-computer-use binary includes the following crates. Each license below lists
+the crates it covers, followed by its text.
+{{#each licenses}}
+
+================================================================================
+{{name}} ({{id}})
+
+Used by:
+{{#each used_by}}
+- {{crate.name}} {{crate.version}}
+{{/each}}
+
+{{{text}}}
+{{/each}}

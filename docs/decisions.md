@@ -1270,6 +1270,13 @@ These match the versions installed locally.
 - No separate MSRV job: `rust-version = "1.99"` and the pinned toolchain, 1.99.0, are the same release and move together (see "Rust 1.99.0"), so every CI build already builds with the MSRV.
 - The workflow was checked with actionlint 1.7.12 (`actionlint-py` 1.7.12.25, published 2026-09-22) through `uvx`, with shellcheck on its scripts. It isn't part of `make check`.
 
+## 2026-10-13: third-party licenses in the release tarball
+
+- The binary includes 106 crates, `niri-ipc` under GPL-3.0-or-later among them, and their licenses ask that a copy of the license, and for MIT the copyright notice, go along with it. The tarball had only the project's MIT `LICENSE`, and `niri-ipc`'s crate ships no license file. The release workflow now adds `THIRD-PARTY-LICENSES.txt`, written by cargo-about from `.github/release/about.toml` and `licenses.hbs`: each license's text with the crates it covers, GPL-3.0's from cargo-about's SPDX copy where a crate ships none.
+- cargo-about 0.9.2, published 2026-08-18, the newest release at least 7 days old, installed in CI by `taiki-e/install-action@v2` as `ci.yml` installs its tools. It runs `--frozen`, after the build has fetched every crate, so it reads only those files; offline and online runs gave the same output here.
+- Dev and build dependencies are left out, and the target is `x86_64-unknown-linux-gnu`. The 106 crates match `cargo tree -p niri-computer-use -e normal --target x86_64-unknown-linux-gnu` exactly. Only licenses in `about.toml`'s `accepted` list pass, so a crate under a new license fails the release until it is reviewed, as `deny.toml` does for the build.
+- The crate published to crates.io is source only and bundles no dependency, so it needs none of this.
+
 ## 2026-10-13: a wtype call dropped at its gate removes its marker
 
 - `run_wtype` wrote the input-dirty marker, then awaited the marker's update with wtype's PID and the last gate (`go`) in the call's own future. `Written`'s drop doesn't remove the file, so a call dropped during either await, by the stop key, the client's cancel or the session's end, left the marker with nothing typed, and every later action asked for `recover`. The gate reads the lock state and can take a Noctalia round trip, so the window is real, if short. The pointer's `Device::finish` and `discard` were already safe (see "follow-ups after the round-three review"); this window was the wtype path's.
