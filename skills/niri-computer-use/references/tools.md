@@ -95,7 +95,7 @@ Listed with `elements`, when the session has an accessibility bus. Both need the
 
 Every action takes `screenshot: true`: the result then has an image of the focused output taken once the screen stopped changing (`settled` in its metadata says whether it did within 1.5 seconds), and its `screenshot_ref` works for the pointer tools.
 
-Each action waits up to five seconds, the shell tools two, and `niri_action` one second for its window to change. With `timeout`, `pending`, `none`, `interrupted`, `uncertain` or `unknown`, the result has an image of the focused output with its metadata in `screenshot` even without asking, or `screenshot_error` if it couldn't be taken.
+Each action waits up to five seconds, `shell_panel` two, and `niri_action` one second for its window to change. With `timeout`, `pending`, `none`, `interrupted`, `uncertain` or `unknown`, the result has an image of the focused output with its metadata in `screenshot` even without asking, or `screenshot_error` if it couldn't be taken.
 
 ## Screenshot targets
 
