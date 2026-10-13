@@ -25,6 +25,7 @@ use crate::a11y::model::{self, Unmappable};
 use crate::a11y::{self, ElementRef};
 use crate::act::{self, Observed, Outcome};
 use crate::control::cleanup;
+use crate::control::desk::LAST_GATE;
 use crate::control::marker::{self, Marker, Written};
 use crate::control::runtime::RuntimeDir;
 use crate::coords::{ImagePx, LayoutPt, ProtocolPt};
@@ -517,7 +518,7 @@ impl Gate<'_> {
         if stage == Stage::First {
             desk.sending_input()
         } else {
-            desk.fresh()
+            desk.fresh().map_err(partway)
         }
     }
 
@@ -595,6 +596,22 @@ impl End {
 
 const END_MOVED: &str = "niri moved, resized or closed the window of the element the drag ends at, or moved it to another workspace, after the drag began, so the element is no longer where the drag goes";
 const END_COVERED: &str = "another floating window opened or moved over the element the drag ends at after the drag began, and may be on top of it";
+
+/// `error` from `Desk::fresh` within a gesture. Its `lock_stale` detail tells the agent to
+/// try once more, which is right only while nothing went out; here part of the gesture
+/// did, and repeating it could repeat what that part did.
+fn partway(error: ToolError) -> ToolError {
+    if error.name != ErrorName::LockStale {
+        return error;
+    }
+    ToolError::new(
+        ErrorName::LockStale,
+        format!(
+            "the lock state was last read over {} ms before the gesture's next part could go out, so it isn't known to be unlocked now",
+            LAST_GATE.as_millis()
+        ),
+    )
+}
 
 /// Why `Gate::pass` refused or stopped a gesture at `stage` when niri reported `moved`.
 fn moving(stage: Stage, moved: Shift) -> ToolError {
@@ -1059,6 +1076,28 @@ mod tests {
             clicked.outcome.detail
         );
         assert_eq!(clicked.seen.buttons, [(272, true), (272, false)]);
+        assert!(!clicked.marker_left);
+    }
+
+    // A gesture that stops partway because every read of the lock state was too slow has
+    // already sent part of itself, so its detail says what happened and doesn't tell the
+    // agent to try once more, as a refusal before any input does.
+    #[tokio::test]
+    async fn a_gesture_stopped_by_slow_lock_reads_isnt_called_safe_to_repeat() {
+        let slow = Duration::from_millis(300);
+        let replies = vec![(Duration::ZERO, UNLOCKED), (slow, UNLOCKED)];
+        let clicked = click_holding_ctrl("pointer-held-stale", replies).await;
+        assert_eq!(clicked.outcome.observed, Observed::Uncertain);
+        let detail = clicked.outcome.detail.unwrap_or_default();
+        assert!(
+            detail.starts_with(
+                "the lock state was last read over 250 ms before the gesture's next part"
+            ),
+            "{detail}"
+        );
+        assert!(!detail.contains("try once more"), "{detail}");
+        assert!(detail.contains("may have taken effect"), "{detail}");
+        assert_eq!(clicked.seen.buttons, []);
         assert!(!clicked.marker_left);
     }
 
