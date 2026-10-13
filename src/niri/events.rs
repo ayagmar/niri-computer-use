@@ -21,7 +21,7 @@ use tokio::net::UnixStream;
 use tokio::sync::{broadcast, watch};
 use tokio::time::Instant;
 
-use super::waiter::{Numbers, Update, View, Waiter, relaid};
+use super::waiter::{Numbers, Update, View, Waiter, relaid_by};
 use crate::error::{ErrorName, ToolError};
 
 /// For connecting, the request's reply, and a tool waiting for the initial state.
@@ -115,49 +115,12 @@ impl Replica {
         if matches!(event, Event::OverviewOpenedOrClosed { .. }) {
             self.everywhere = Some(now);
         }
-        for id in self.relaid_by(event) {
+        for id in relaid_by(&self.state.windows.windows, event) {
             let before = self.relaid.get(&id).map(|stamps| stamps.last);
             self.relaid.insert(id, Stamps { last: now, before });
         }
         if let Event::WindowClosed { id } = event {
             self.relaid.remove(id);
-        }
-    }
-
-    /// The windows `event` moves, resizes, floats, moves to another workspace or opens.
-    fn relaid_by(&self, event: &Event) -> Vec<u64> {
-        let known = &self.state.windows.windows;
-        let changed = |window: &Window| known.get(&window.id).is_none_or(|old| relaid(old, window));
-        match event {
-            Event::WindowsChanged { windows } => windows
-                .iter()
-                .filter(|window| changed(window))
-                .map(|window| window.id)
-                .collect(),
-            Event::WindowOpenedOrChanged { window } => {
-                changed(window).then_some(window.id).into_iter().collect()
-            }
-            Event::WindowLayoutsChanged { changes } => changes
-                .iter()
-                .filter(|(id, layout)| known.get(id).is_none_or(|old| old.layout != *layout))
-                .map(|(id, _)| *id)
-                .collect(),
-            Event::WorkspacesChanged { .. }
-            | Event::WorkspaceUrgencyChanged { .. }
-            | Event::WorkspaceActivated { .. }
-            | Event::WorkspaceActiveWindowChanged { .. }
-            | Event::WindowClosed { .. }
-            | Event::WindowFocusChanged { .. }
-            | Event::WindowFocusTimestampChanged { .. }
-            | Event::WindowUrgencyChanged { .. }
-            | Event::KeyboardLayoutsChanged { .. }
-            | Event::KeyboardLayoutSwitched { .. }
-            | Event::OverviewOpenedOrClosed { .. }
-            | Event::ConfigLoaded { .. }
-            | Event::ScreenshotCaptured { .. }
-            | Event::CastsChanged { .. }
-            | Event::CastStartedOrChanged { .. }
-            | Event::CastStopped { .. } => Vec::new(),
         }
     }
 

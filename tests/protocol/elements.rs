@@ -2389,9 +2389,14 @@ impl Desk {
     /// Sends `event` on niri's event stream, seen by the server before this returns: a
     /// window marked urgent after it shows that the server applied both.
     async fn moved(&mut self, event: &Value) {
+        self.moved_marking(event, WINDOW).await;
+    }
+
+    /// `moved`, marking window `marker` urgent, for an event that closes the mock's.
+    async fn moved_marking(&mut self, event: &Value, marker: u64) {
         self.stream.send(event);
         self.stream
-            .send(&json!({"WindowUrgencyChanged": {"id": WINDOW, "urgent": true}}));
+            .send(&json!({"WindowUrgencyChanged": {"id": marker, "urgent": true}}));
         while !self.server.structured("desktop_state").await["windows"]
             .as_array()
             .unwrap()
@@ -2656,32 +2661,38 @@ async fn a_stop_or_lost_lease_after_the_pointer_sent_leaves_it_uncertain() {
     }
 }
 
-/// Starts a drag from the Safe button, or from pixel (5, 5), to pixel (300, 200) through
-/// a fresh screenshot, holds its `sync`th round trip with niri's display, the first two
-/// being the pointer's setup, makes `event` happen meanwhile, and returns the result and
-/// what the pointer sent.
+/// Which end of a drag is the Safe button; the others are pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ButtonEnd {
+    Start,
+    End,
+    Neither,
+}
+
+/// Starts a drag from pixel (5, 5) to pixel (300, 200), with the Safe button as the end
+/// `button` says, through a fresh screenshot, holds its `sync`th round trip with niri's
+/// display, the first two being the pointer's setup, makes `event` happen meanwhile, and
+/// returns the result and what the pointer sent. Window 2, tiled, is beside the mock's.
 async fn drag_moved_at_sync(
     test: &str,
-    at_element: bool,
+    button: ButtonEnd,
     sync: usize,
     event: &Value,
 ) -> (Value, Vec<Pointed>) {
-    let windows = [floating_window()];
+    let windows = [floating_window(), window_on(2, Some("other"), 1, false)];
     let mut desk = Desk::start_with(test, &["/frame"], objects(), &windows).await;
-    let button = desk.element("Safe").await;
+    let safe = json!({"element": desk.element("Safe").await});
     let shot = desk.screenshot_ref().await;
-    let from = if at_element {
-        json!({"element": button})
-    } else {
-        json!({"x": 5, "y": 5})
-    };
+    let at = |end, pixel: Value| if button == end { safe.clone() } else { pixel };
+    let from = at(ButtonEnd::Start, json!({"x": 5, "y": 5}));
+    let to = at(ButtonEnd::End, json!({"x": 300, "y": 200}));
     let points = desk.fixture.points();
     points.start();
     let held = points.hold("wayland:sync", sync);
-    let dragged = json!({"screenshot_ref": shot, "from": from, "to": {"x": 300, "y": 200}});
+    let dragged = json!({"screenshot_ref": shot, "from": from, "to": to});
     let id = desk.server.start_call("drag", dragged).await;
     held.arrived().await;
-    desk.moved(event).await;
+    desk.moved_marking(event, 2).await;
     held.release();
     let result = desk.server.response(id).await["result"].clone();
     (result, desk.fixture.clipboard.pointed())
@@ -2708,10 +2719,10 @@ fn stopped_midway(result: &Value, why: &str, tag: &str) {
 #[tokio::test]
 async fn a_drag_stops_before_its_press_when_the_view_moved_during_its_hover() {
     let overview = json!({"OverviewOpenedOrClosed": {"is_open": true}});
-    for at_element in [true, false] {
-        let test = format!("el-hover-{}", u8::from(at_element));
-        let (result, sent) = drag_moved_at_sync(&test, at_element, 3, &overview).await;
-        let tag = format!("element: {at_element}");
+    for button in [ButtonEnd::Start, ButtonEnd::Neither] {
+        let test = format!("el-hover-{button:?}");
+        let (result, sent) = drag_moved_at_sync(&test, button, 3, &overview).await;
+        let tag = format!("{button:?}");
         stopped_midway(
             &result,
             "niri switched a workspace or opened or closed the overview",
@@ -2730,7 +2741,7 @@ async fn a_drag_stops_before_its_press_when_the_view_moved_during_its_hover() {
 #[tokio::test]
 async fn a_held_drag_stops_on_a_workspace_switch_but_not_on_a_window_moving() {
     let switch = json!({"WorkspaceActivated": {"id": 1, "focused": true}});
-    let (result, sent) = drag_moved_at_sync("el-held-switch", true, 4, &switch).await;
+    let (result, sent) = drag_moved_at_sync("el-held-switch", ButtonEnd::Start, 4, &switch).await;
     stopped_midway(&result, "niri switched a workspace", "switch");
     assert!(
         matches!(
@@ -2746,7 +2757,7 @@ async fn a_held_drag_stops_on_a_workspace_switch_but_not_on_a_window_moving() {
     let mut moved = floating_window();
     moved["layout"]["tile_pos_in_workspace_view"] = json!([40.0, 20.0]);
     let layout = json!({"WindowLayoutsChanged": {"changes": [[WINDOW, moved["layout"]]]}});
-    let (dragged, all) = drag_moved_at_sync("el-held-layout", true, 4, &layout).await;
+    let (dragged, all) = drag_moved_at_sync("el-held-layout", ButtonEnd::Start, 4, &layout).await;
     assert_eq!(dragged["isError"], false, "{dragged}");
     assert_eq!(
         dragged["structuredContent"]["observed"], "sent",
@@ -2754,6 +2765,49 @@ async fn a_held_drag_stops_on_a_workspace_switch_but_not_on_a_window_moving() {
     );
     // The start, the press, ten steps and the release.
     assert_eq!(all.len(), 13, "{all:?}");
+}
+
+// A drag from a pixel to an element holds its button while the element's window moves or
+// closes: the element is no longer where the drag goes, so the drag stops there and
+// releases its button, and nothing more goes out. Its start's window moving doesn't stop
+// it (above), so this is about the end alone.
+#[tokio::test]
+async fn a_held_drag_stops_when_the_window_it_ends_in_moves_or_closes() {
+    let mut moved = floating_window();
+    moved["layout"]["tile_pos_in_workspace_view"] = json!([40.0, 20.0]);
+    let mut elsewhere = floating_window();
+    elsewhere["workspace_id"] = json!(2);
+    let changes = [
+        (
+            "layout",
+            json!({"WindowLayoutsChanged": {"changes": [[WINDOW, moved["layout"]]]}}),
+        ),
+        (
+            "workspace",
+            json!({"WindowOpenedOrChanged": {"window": elsewhere}}),
+        ),
+        ("closed", json!({"WindowClosed": {"id": WINDOW}})),
+    ];
+    for (tag, event) in changes {
+        let test = format!("el-held-end-{tag}");
+        let (result, sent) = drag_moved_at_sync(&test, ButtonEnd::End, 4, &event).await;
+        stopped_midway(
+            &result,
+            "niri moved, resized or closed the window of the element the drag ends at",
+            tag,
+        );
+        assert!(
+            matches!(
+                sent.as_slice(),
+                [
+                    Pointed::Motion(..),
+                    Pointed::Button(272, 1),
+                    Pointed::Button(272, 0)
+                ]
+            ),
+            "{tag}: {sent:?}"
+        );
+    }
 }
 
 // A round trip within a gesture can take seconds, longer than a read of the lock state

@@ -31,7 +31,7 @@ use crate::coords::{ImagePx, LayoutPt, ProtocolPt};
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::events::Motion;
 use crate::niri::pointer::{Axis, Pointer, Step};
-use crate::niri::waiter::{Shift, Waited};
+use crate::niri::waiter::{Moved, Shift, Waited};
 use crate::policy;
 use crate::refs::Shot;
 use crate::{elements, niri};
@@ -189,6 +189,17 @@ impl Gesture<Spot> {
             })
             .collect()
     }
+
+    /// The element ref a drag ends at, if it ends at one.
+    const fn destination(&self) -> Option<&str> {
+        match self {
+            Self::Drag {
+                to: Spot::Element(id),
+                ..
+            } => Some(id.as_str()),
+            Self::Drag { .. } | Self::Move(_) | Self::Click { .. } | Self::Scroll { .. } => None,
+        }
+    }
 }
 
 impl Gesture<LayoutPt> {
@@ -289,12 +300,16 @@ pub(crate) async fn point(
     shot.check(Instant::now(), &outputs, connection)?;
     let tool = gesture.tool();
     let button = gesture.button();
-    // The windows of the elements it aims at.
+    // The windows of the elements it aims at, and of the one a drag ends at.
     let windows = gesture
         .elements()
         .into_iter()
         .map(|id| element(id).map(|kept| kept.kept.window))
         .collect::<Result<Vec<_>, _>>()?;
+    let destination = gesture
+        .destination()
+        .map(|id| element(id).map(|kept| kept.kept.window))
+        .transpose()?;
     let located = gesture
         .located(|spot| locate(input, &shot, spot, &element))
         .await?;
@@ -314,6 +329,7 @@ pub(crate) async fn point(
         waiter: &mut waiter,
         input,
         windows: &windows,
+        destination,
     };
     if let Some(stopped) = send(device, gate, plan(&located, &aimed)).await? {
         return Ok(stopped);
@@ -402,6 +418,8 @@ struct Gate<'a> {
     input: Input<'a>,
     /// The windows of the elements the gesture aims at, none for pixels.
     windows: &'a [u64],
+    /// The window of the element a drag ends at, if it ends at one.
+    destination: Option<u64>,
 }
 
 /// Where a gesture is when its next part goes out.
@@ -423,8 +441,11 @@ impl Gate<'_> {
     /// can change what is shown where since the call's first look, before its elements were
     /// placed, until a button is pressed: a box may no longer be where its element is. Once
     /// something went out, any gesture is stopped by a workspace switch or the overview,
-    /// which change the whole view under the pointer; a window moving doesn't stop a drag
-    /// that holds a button, as dragging a window by its title bar moves it. An app can
+    /// which change the whole view under the pointer. A window moving doesn't stop a drag
+    /// that holds a button, as dragging a window by its title bar moves it, unless it is
+    /// the window of the element the drag ends at: that element is no longer where the drag
+    /// goes once its window moved, resized, floated, went to another workspace or closed.
+    /// An app can
     /// change its `app_id` at any time without moving anything, so the deny list is asked
     /// each time about the focused window and the elements' windows as niri reports them
     /// now. The lock state is read again first when the last read is too old, since a
@@ -442,15 +463,7 @@ impl Gate<'_> {
             };
             ToolError::new(ErrorName::UpstreamError, format!("{reason}; {sent}"))
         })?;
-        let at_element = !self.windows.is_empty();
-        let least = match stage {
-            Stage::First | Stage::Unpressed if at_element => Some(Shift::Windows),
-            Stage::First => None,
-            Stage::Unpressed | Stage::Pressed => Some(Shift::View),
-        };
-        if least.is_some_and(|least| moved >= least) {
-            return Err(moving(stage, moved));
-        }
+        self.still_aimed(stage, &moved)?;
         let view = self.waiter.view();
         if let Some(refused) = policy::refuse_input(self.input.policy, focused_app_id(view)) {
             return Err(refused);
@@ -470,6 +483,30 @@ impl Gate<'_> {
         } else {
             desk.fresh()
         }
+    }
+
+    /// Whether the gesture's points still stand at `stage` after niri's changes `moved`.
+    fn still_aimed(&self, stage: Stage, moved: &Moved) -> Result<(), ToolError> {
+        let at_element = !self.windows.is_empty();
+        let least = match stage {
+            Stage::First | Stage::Unpressed if at_element => Some(Shift::Windows),
+            Stage::First => None,
+            Stage::Unpressed | Stage::Pressed => Some(Shift::View),
+        };
+        if least.is_some_and(|least| moved.shift >= least) {
+            return Err(moving(stage, moved.shift));
+        }
+        // Before the press, an element aim already stops on any window change.
+        let Some(id) = self.destination else {
+            return Ok(());
+        };
+        if moved.relaid.contains(&id) || !self.waiter.view().windows().contains_key(&id) {
+            return Err(ToolError::new(
+                ErrorName::ElementUnmappable,
+                "niri moved, resized or closed the window of the element the drag ends at, or moved it to another workspace, after the drag began, so the element is no longer where the drag goes",
+            ));
+        }
+        Ok(())
     }
 }
 

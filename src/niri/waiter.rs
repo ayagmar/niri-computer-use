@@ -6,7 +6,7 @@
 //! through another window, which a snapshot of the replica could skip. A disconnect ends
 //! every wait, because the state it was built on is gone.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use niri_ipc::state::{
@@ -90,15 +90,25 @@ impl View {
 }
 
 /// How much an event can change what is shown where, least first.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Shift {
     /// Nothing shown moves: a title, an urgency, niri's bookkeeping.
+    #[default]
     None,
     /// Windows: one opened, closed or focused, its layout, workspace or floating changed,
     /// or a workspace's active window changed.
     Windows,
     /// The whole view: a workspace activated or changed, or the overview opened or closed.
     View,
+}
+
+/// What niri's events since the last look changed (`Waiter::moved`).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Moved {
+    /// How much any of them can change what is shown where, the most of them.
+    pub(crate) shift: Shift,
+    /// The windows they moved, resized, floated, moved to another workspace or opened.
+    pub(crate) relaid: HashSet<u64>,
 }
 
 /// How a wait ended.
@@ -164,14 +174,16 @@ impl Waiter {
         self.catch_up(|_, _| {}, check).await
     }
 
-    /// Applies what niri has sent by now (`catch_up`), and says how much any of it can
-    /// change what is shown where (`Shift`), the most of them. `Err` with the reason when
-    /// the stream can't say.
-    pub(crate) async fn moved(&mut self) -> Result<Shift, String> {
-        let mut moved = Shift::None;
+    /// Applies what niri has sent by now (`catch_up`), and says what it changed. `Err`
+    /// with the reason when the stream can't say.
+    pub(crate) async fn moved(&mut self) -> Result<Moved, String> {
+        let mut moved = Moved::default();
         let caught_up = self
             .catch_up(
-                |view, event| moved = moved.max(shift(view, event)),
+                |view, event| {
+                    moved.shift = moved.shift.max(shift(view, event));
+                    moved.relaid.extend(relaid_by(view.windows(), event));
+                },
                 |_| None::<()>,
             )
             .await;
@@ -269,10 +281,47 @@ fn lost(error: &broadcast::error::RecvError) -> String {
 
 /// Whether niri moved, resized or floated a window between `old` and `new`, or moved it to
 /// another workspace.
-pub(super) fn relaid(old: &Window, new: &Window) -> bool {
+fn relaid(old: &Window, new: &Window) -> bool {
     old.layout != new.layout
         || old.workspace_id != new.workspace_id
         || old.is_floating != new.is_floating
+}
+
+/// The windows `event`, on top of `known`, moves, resizes, floats, moves to another
+/// workspace or opens.
+pub(super) fn relaid_by(known: &HashMap<u64, Window>, event: &Event) -> Vec<u64> {
+    let changed = |window: &Window| known.get(&window.id).is_none_or(|old| relaid(old, window));
+    match event {
+        Event::WindowsChanged { windows } => windows
+            .iter()
+            .filter(|window| changed(window))
+            .map(|window| window.id)
+            .collect(),
+        Event::WindowOpenedOrChanged { window } => {
+            changed(window).then_some(window.id).into_iter().collect()
+        }
+        Event::WindowLayoutsChanged { changes } => changes
+            .iter()
+            .filter(|(id, layout)| known.get(id).is_none_or(|old| old.layout != *layout))
+            .map(|(id, _)| *id)
+            .collect(),
+        Event::WorkspacesChanged { .. }
+        | Event::WorkspaceUrgencyChanged { .. }
+        | Event::WorkspaceActivated { .. }
+        | Event::WorkspaceActiveWindowChanged { .. }
+        | Event::WindowClosed { .. }
+        | Event::WindowFocusChanged { .. }
+        | Event::WindowFocusTimestampChanged { .. }
+        | Event::WindowUrgencyChanged { .. }
+        | Event::KeyboardLayoutsChanged { .. }
+        | Event::KeyboardLayoutSwitched { .. }
+        | Event::OverviewOpenedOrClosed { .. }
+        | Event::ConfigLoaded { .. }
+        | Event::ScreenshotCaptured { .. }
+        | Event::CastsChanged { .. }
+        | Event::CastStartedOrChanged { .. }
+        | Event::CastStopped { .. } => Vec::new(),
+    }
 }
 
 /// How much `event`, on top of `view`, can change what is shown where.
@@ -448,14 +497,21 @@ pub(crate) mod tests {
         for (seq, event) in (1..).zip(quiet) {
             sender.send(Update::Event(seq, Box::new(event))).unwrap();
         }
-        assert_eq!(watched.moved().await, Ok(Shift::None));
+        assert_eq!(
+            watched.moved().await.map(|moved| moved.shift),
+            Ok(Shift::None)
+        );
         for (event, shifted) in moving {
             let (mut fresh, updates) = waiter(view(vec![floating()]), 0);
             let what = format!("{event:?}");
             updates.send(Update::Event(1, Box::new(event))).unwrap();
-            assert_eq!(fresh.moved().await, Ok(shifted), "{what}");
+            assert_eq!(
+                fresh.moved().await.map(|moved| moved.shift),
+                Ok(shifted),
+                "{what}"
+            );
             // Each event counts once: nothing new has come since.
-            assert_eq!(fresh.moved().await, Ok(Shift::None), "{what}");
+            assert_eq!(fresh.moved().await, Ok(Moved::default()), "{what}");
         }
         sender.send(Update::Reset(2)).unwrap();
         assert!(watched.moved().await.is_err());
@@ -533,7 +589,7 @@ pub(crate) mod tests {
         let (mut waiter, sender) = waiter(view(vec![window(1, None, 1, true)]), 0);
         let sending = tokio::spawn(keeps_sending(sender));
         let looked = tokio::time::timeout(LIMIT, async {
-            let moved = waiter.moved().await;
+            let moved = waiter.moved().await.map(|moved| moved.shift);
             let past = waiter.until(Duration::ZERO, |_| None::<()>).await;
             (moved, past)
         })
