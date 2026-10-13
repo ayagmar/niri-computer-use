@@ -67,9 +67,9 @@ struct Replica {
     /// workspace or opened it, since the initial state, and the time before: a floating
     /// window animates to the place niri reports at once.
     relaid: HashMap<u64, Stamps>,
-    /// When niri last relaid a floating window on each output, by output name, or one
-    /// that was floating there: a window that moves off an element still covers it while
-    /// it animates away.
+    /// When niri last relaid a floating window on the workspace each output shows, by
+    /// output name, or one that was floating there: a window that moves off an element
+    /// still covers it while it animates away.
     floated: HashMap<String, Instant>,
     /// When niri last opened or closed the overview, which animates every output, or when
     /// this replica got its initial state after a reconnect: a switch may have started
@@ -132,7 +132,8 @@ impl Replica {
         }
     }
 
-    /// The outputs where a window among `ids` floated before `event` or floats after it.
+    /// The outputs where a window among `ids` floated on the shown workspace before `event`
+    /// or floats there after it. A window on a workspace not shown covers nothing.
     fn floating_outputs(&self, event: &Event, ids: &[u64]) -> Vec<String> {
         let known = &self.state.windows.windows;
         let after = |id: u64| -> Option<&Window> {
@@ -154,7 +155,7 @@ impl Replica {
                     .workspaces
                     .workspaces
                     .get(&window.workspace_id?)?;
-                workspace.output.clone()
+                workspace.output.clone().filter(|_| workspace.is_active)
             })
             .collect()
     }
@@ -757,7 +758,8 @@ mod tests {
     // A floating window that moves off an element still covers it while it animates, so
     // every window's elements on that output wait as for their own window moving: after
     // another floating window there moves, stops floating or opens. A tiled window moving,
-    // or a floating one on another output, doesn't count.
+    // a floating one on another output, or one on a workspace the output doesn't show,
+    // doesn't count.
     #[tokio::test(start_paused = true)]
     async fn a_floating_window_relaid_on_an_output_moves_the_view_there() {
         use crate::niri::waiter::tests::window;
@@ -776,33 +778,37 @@ mod tests {
         let shown = vec![
             workspace_on(1, "DP-1", true),
             workspace_on(2, "HDMI-A-1", true),
+            workspace_on(3, "DP-1", false),
         ];
         replica.apply(1, Event::WorkspacesChanged { workspaces: shown });
         let tiled = window(9, None, 1, false);
         let elsewhere = floating(10, 2);
+        let hidden = floating(12, 3);
         let windows = vec![
             floating(7, 1),
             floating(8, 1),
             tiled.clone(),
             elsewhere.clone(),
+            hidden.clone(),
         ];
         replica.apply(2, Event::WindowsChanged { windows });
         replica.apply(3, Event::OverviewOpenedOrClosed { is_open: false });
         replica.apply(4, moved(&tiled));
         replica.apply(5, moved(&elsewhere));
+        replica.apply(6, moved(&hidden));
         assert_eq!(replica.animated("DP-1", 7), None);
         let covering = Instant::now();
-        replica.apply(6, moved(&floating(8, 1)));
+        replica.apply(7, moved(&floating(8, 1)));
         assert_eq!(replica.animated("DP-1", 7), Some(covering));
         tokio::time::advance(Duration::from_secs(5)).await;
         let tiling = Instant::now();
         let tiled_now = window(8, None, 1, false);
-        replica.apply(7, Event::WindowOpenedOrChanged { window: tiled_now });
+        replica.apply(8, Event::WindowOpenedOrChanged { window: tiled_now });
         assert_eq!(replica.animated("DP-1", 7), Some(tiling));
         tokio::time::advance(Duration::from_secs(5)).await;
         let opened = Instant::now();
         let opening = floating(11, 1);
-        replica.apply(8, Event::WindowOpenedOrChanged { window: opening });
+        replica.apply(9, Event::WindowOpenedOrChanged { window: opening });
         assert_eq!(replica.animated("DP-1", 7), Some(opened));
     }
 
