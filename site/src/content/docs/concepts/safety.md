@@ -27,7 +27,7 @@ The flag stays until you run `niri-computer-use resume`. An agent can't press th
 
 ## Input that may be stuck, and `recover`
 
-Before `click`, `drag`, `key` or `type_text` send any input, the server writes an input-dirty marker, and it removes the marker once the input is released. A paste takes the clipboard before it writes its marker, and its keeper process, not the marker, puts the clipboard back (see [Pasting](../../tools/keyboard/#pasting)).
+Before `click`, `drag`, `key`, `type_text` or a `scroll` with held keys send any input, the server writes an input-dirty marker, and it removes the marker once the input is released. A paste takes the clipboard before it writes its marker, and its keeper process, not the marker, puts the clipboard back (see [Pasting](../../tools/keyboard/#pasting)).
 
 If the call is cancelled midway, the server releases any held button or key. A `wtype` already typing, or a paste key already sent, isn't stopped: it finishes after the cancellation, and the marker stays until it has, for a paste until the keeper has reported. Meanwhile other calls refuse with `recovery_required` and a `detail` saying a cancelled call's input is still finishing; they can try again within seconds.
 
@@ -49,11 +49,11 @@ logind only knows the lock state when niri runs as `niri --session`. Without tha
 
 ## Refusals
 
-Before each action the server checks, in this order: the stop flag (`stopped`), the input-dirty marker (`recovery_required`), the lease (`lease_required`), niri's version and event stream and the policy file (`read_only`), and the lock state (`screen_locked`). The tools then check their own arguments:
+Before each action the server checks, in this order: the stop flag (`stopped`), the input-dirty marker (`recovery_required`), the lease (`lease_required`), whether niri answers (its own error), niri's version and event stream and the policy file (`read_only`), and the lock state (`screen_locked`). The tools then check their own arguments:
 
 - `launch` starts only presets from your [policy file](../configuration/), never a command the agent writes.
 - `niri_action` refuses niri's actions that run programs, write files or reach past the window layout, such as `Spawn`, `Quit` and `LoadConfigFile`, with `unrestricted_required`, and the `noctalia` tool isn't listed, unless you turn on [`unrestricted`](../configuration/#unrestricted). Turning it on lets an agent run any program through the server; every call still needs the lease, stops at the stop key and is logged.
-- The pointer and keyboard tools refuse with `app_denied` while the focused window's `app_id` is on your deny list. `elements`, `activate_element` and `set_element_text` refuse a denied app's window, and `close_window` and `niri_action`'s `CloseWindow` refuse to close one, whether named or focused. Focus and layout actions, such as `focus` or making a window fullscreen, still reach a denied window: they move it, not what is in it.
+- The pointer and keyboard tools refuse with `app_denied` while the focused window's `app_id` is on your deny list. `elements`, `activate_element`, `set_element_text` and a pointer tool aimed at an `element` refuse a denied app's window, and `close_window` and `niri_action`'s `CloseWindow` refuse to close one, whether named or focused. Focus and layout actions, such as `focus` or making a window fullscreen, still reach a denied window: they move it, not what is in it.
 - The keyboard tools need `expect`, the window the agent means to type into, and refuse with `focus_mismatch` rather than type elsewhere. They stop if focus moves while they type, though with the default backend a part already typing finishes. `expect: "none"` skips the check, for a panel or dialog that holds focus outside the windows.
 - The pointer tools aim only at pixels of a screenshot the agent took under its lease, at most a minute old, of an output that hasn't changed since. They don't check whether windows moved since the screenshot. They run only on one monitor at transform `Normal`.
 - `shell_panel` opens and closes only three Noctalia panels.

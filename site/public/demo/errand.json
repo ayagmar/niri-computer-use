@@ -1,61 +1,95 @@
 {
- "prompt": "Tell #release the review moved to 3pm, then put me back where I was.",
+ "prompt": "In Files, put the two screenshots into a new folder called release-0.1, then bring me back here.",
+ "note": "A real Claude Code session on a real niri 26.04 desktop; nothing was scripted. Thinking time between calls is shortened; calls play in real time. A line marked $ is something the user did.",
+ "output": "DP-1 · 2560×1440, shown at 1920×1080",
  "calls": [
   {
-   "start": 1.5,
-   "request": "acquire_desktop",
-   "answer": "lease taken \u00b7 users_window: 2",
+   "start": 1.2,
+   "request": "status",
+   "answer": "ok",
    "error": false,
    "you": false,
-   "ms": 2
+   "ms": 3
   },
   {
-   "start": 2.7,
+   "start": 1.2,
    "request": "desktop_state",
-   "answer": "focused_window: 2 \u00b7 kitty 2 \u00b7 org.ncu.Chat 3",
+   "answer": "focused_window: 15 · org.gnome.Nautilus 11 · helium 12 · ncu-demo-agent 15",
+   "error": false,
+   "you": false,
+   "ms": 3
+  },
+  {
+   "start": 2.4,
+   "request": "acquire_desktop",
+   "answer": "lease taken · users_window: 15",
    "error": false,
    "you": false,
    "ms": 2
   },
   {
-   "start": 3.9,
-   "request": "focus {\"window_id\": 3}",
-   "answer": "accepted: true \u00b7 observed: focused \u00b7 focus 2 \u2192 3",
+   "start": 3.56,
+   "request": "focus {\"window_id\": 11, \"screenshot\": true}",
+   "answer": "accepted: true · observed: focused · focus 15 → 11",
    "error": false,
    "you": false,
-   "ms": 255
+   "ms": 858
   },
   {
-   "start": 5.86,
-   "request": "elements {\"window_id\": 3}",
-   "answer": "14 elements \u00b7 button \u201cSend\u201d \u00b7 text \u201cMessage\u201d",
+   "start": 5.62,
+   "request": "click {\"screenshot_ref\": \"shot-ac2ffeab-43\", \"x\": 979, \"y\": 88}",
+   "answer": "accepted: true · observed: sent",
    "error": false,
    "you": false,
-   "ms": 17
+   "ms": 252
   },
   {
-   "start": 8.18,
-   "request": "set_element_text {\"element\": \"elem-30030473-12\", \"expect\": {\"window_id\": 3}, \"text\": \"The release review moved to 3pm.\"}",
-   "answer": "accepted: true \u00b7 observed: matched",
+   "start": 7.07,
+   "request": "key {\"keys\": [\"shift+Right\", \"ctrl+alt+n\"], \"expect\": {\"window_id\": 11}, \"screenshot\": true}",
+   "answer": "accepted: true · observed: sent",
    "error": false,
    "you": false,
-   "ms": 256
+   "ms": 469
   },
   {
-   "start": 10.13,
-   "request": "activate_element {\"element\": \"elem-30030473-13\", \"expect\": {\"window_id\": 3}}",
-   "answer": "accepted: true \u00b7 observed: present",
+   "start": 8.74,
+   "request": "click {\"screenshot_ref\": \"shot-ac2ffeab-47\", \"x\": 1061, \"y\": 88, \"button\": \"right\", \"screenshot\": true}",
+   "answer": "accepted: true · observed: sent",
    "error": false,
    "you": false,
-   "ms": 312
+   "ms": 957
   },
   {
-   "start": 12.75,
+   "start": 10.89,
+   "request": "click {\"screenshot_ref\": \"shot-ac2ffeab-56\", \"x\": 1130, \"y\": 100, \"screenshot\": true}",
+   "answer": "accepted: true · observed: sent",
+   "error": false,
+   "you": false,
+   "ms": 856
+  },
+  {
+   "start": 12.95,
+   "request": "key {\"keys\": [\"ctrl+a\"], \"expect\": {\"app_id\": \"org.gnome.Nautilus\"}}",
+   "answer": "accepted: true · observed: sent",
+   "error": false,
+   "you": false,
+   "ms": 253
+  },
+  {
+   "start": 14.4,
+   "request": "type_text {\"text\": \"release-0.1\", \"expect\": {\"app_id\": \"org.gnome.Nautilus\"}, \"submit\": true, \"screenshot\": true}",
+   "answer": "accepted: true · observed: sent",
+   "error": false,
+   "you": false,
+   "ms": 920
+  },
+  {
+   "start": 16.49,
    "request": "release_desktop {\"restore_focus\": true}",
-   "answer": "released \u00b7 focus back on 2 \u00b7 observed: focused",
+   "answer": "released · focus back on 15 · observed: focused",
    "error": false,
    "you": false,
-   "ms": 49
+   "ms": 3
   }
  ]
 }

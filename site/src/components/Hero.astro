@@ -1,8 +1,13 @@
 ---
-// The home page's hero: the promise beside the demo recording. Other pages with a hero
-// keep Starlight's.
+// The home page's hero, drawn as a niri screen: a strip of windows with the focus ring on the
+// promise, the errand recording stacked over the agent's calls in the next column, and the
+// stop key in a column that runs off the right edge on a narrower screen, as niri leaves one.
+// Other pages with a hero keep Starlight's.
 import Default from '@astrojs/starlight/components/Hero.astro';
-import Demo from './Demo.astro';
+import { HERO_SIZES, HERO_WIDTHS, loadDemo } from '../lib/demo';
+import Calls from './Calls.astro';
+import Recording from './Recording.astro';
+import { timeline } from '../lib/workspaces.mjs';
 
 // Starlight's id for the page title, which its skip link names.
 const PAGE_TITLE_ID = '_top';
@@ -10,63 +15,142 @@ const PAGE_TITLE_ID = '_top';
 const { id, entry } = Astro.locals.starlightRoute;
 const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
 const { title = entry.data.title, tagline, actions = [] } = entry.data.hero ?? {};
+const demo = id === '' ? await loadDemo('errand', HERO_WIDTHS) : undefined;
 ---
 
 {
-	id === '' ? (
-		<section class="ncu-hero not-content">
-			<div class="copy">
-				<h1 id={PAGE_TITLE_ID} data-page-title set:html={title} />
-				{tagline && <p class="tagline" set:html={tagline} />}
-				<div class="actions">
-					{actions.map(({ link, text, variant }) => (
-						<a class:list={['button', variant === 'primary' ? 'primary' : 'quiet']} href={link}>
-							{text}
-						</a>
-					))}
+	demo ? (
+		<section
+			class="ncu-desk not-content"
+			aria-labelledby={PAGE_TITLE_ID}
+			style={`view-timeline-name: ${timeline('demo')}`}
+		>
+			<div class="strip">
+				<div class="win you">
+					<h1 id={PAGE_TITLE_ID} data-page-title set:html={title} />
+					<div class="lower">
+						{tagline && <p class="tagline" set:html={tagline} />}
+						<div class="actions">
+							{actions.map(({ link, text, variant }) => (
+								<a class:list={['button', variant === 'primary' ? 'primary' : 'quiet']} href={link}>
+									{text}
+								</a>
+							))}
+						</div>
+						<p class="needs">
+							niri 26.04 · Linux, Wayland · built from source · <a href={`${base}#limits`}>limits</a>
+						</p>
+					</div>
 				</div>
-				<p class="needs">
-					niri 26.04 · Linux, Wayland · built from source ·{' '}
-					<a href={`${base}#limits`}>limits</a>
-				</p>
+				<div class="column">
+					<figure class="win recording">
+						<Recording
+							demo={demo}
+							lead
+							label="In Files, the agent selects the two screenshots, makes a folder for them from the right-click menu, names it release-0.1, then puts focus back on its terminal."
+							sizes={HERO_SIZES}
+						/>
+						<figcaption>
+							{demo.note && <p class="note">{demo.note}</p>}
+							{demo.output && <p class="output">{demo.output}</p>}
+						</figcaption>
+					</figure>
+					<div class="win agent">
+						<p class="asked">
+							<span>asked</span> {demo.prompt}
+						</p>
+						<Calls demo={demo} scrolls />
+					</div>
+				</div>
+				<aside class="win stop" aria-labelledby="ncu-stop-title">
+					<p class="keys" aria-hidden="true">
+						<kbd>Mod</kbd>
+						<kbd>Shift</kbd>
+						<kbd>Escape</kbd>
+					</p>
+					<h2 id="ncu-stop-title">The stop key</h2>
+					<p>
+						Bind a key to <code>niri-computer-use stop</code>. It cancels the running action and takes
+						the lease back. An agent can't press it.
+					</p>
+					<p>
+						Guardrails, not a sandbox: an agent holding the lease can do what you can with a keyboard
+						and mouse. <a href={`${base}concepts/safety/#what-isnt-a-boundary`}>What isn't a boundary</a>
+					</p>
+				</aside>
 			</div>
-			<Demo
-				name="errand"
-				label="The agent switches to a chat window, sends a reply through its Message field and Send button, then puts focus back on the editor."
-				log
-			/>
 		</section>
 	) : (
 		<Default />
 	)
 }
 
+<script>
+	// Keyboard focus on a window past the screen's edge brings it in, as niri does.
+	document.querySelector('.ncu-desk')?.addEventListener('focusin', (event) => {
+		(event.target as Element).scrollIntoView({ block: 'nearest', inline: 'nearest' });
+	});
+</script>
+
 <style>
-	.ncu-hero {
+	/* The screen: as wide as the window, right under the bar (out of Starlight's content
+	   padding), with niri's 16px gaps. */
+	.ncu-desk {
+		--gap: 1rem;
+		width: 100vw;
+		margin: -1.5rem calc(50% - 50vw) 0;
+		padding: var(--gap) 0;
+	}
+
+	.strip {
 		display: grid;
-		gap: 2.5rem;
-		padding-block: 2rem 3rem;
+		gap: var(--gap);
+		padding-inline: var(--gap);
+	}
+
+	.win {
+		min-width: 0;
+		margin: 0;
+		border: 1px solid var(--ncu-rule);
+		border-radius: var(--ncu-radius);
+		background: var(--ncu-panel);
+	}
+
+	/* The focused window. */
+	.you {
+		display: flex;
+		flex-direction: column;
+		padding: clamp(1.25rem, 0.9rem + 1vw, 2.25rem);
+		outline: 2px solid var(--ncu-ring);
+		outline-offset: 2px;
 	}
 
 	h1 {
 		margin: 0;
-		font-size: clamp(2.1rem, 1.5rem + 1.4vw, 2.7rem);
-		line-height: 1.04;
+		font-size: clamp(2.2rem, 1rem + 2.6vw, 4.75rem);
+		line-height: 1.02;
 		font-weight: 680;
-		letter-spacing: -0.025em;
+		letter-spacing: -0.03em;
 		color: var(--sl-color-white);
 		text-wrap: balance;
 	}
 
 	h1 :global(.key) {
 		display: block;
+		margin-top: 0.15em;
 		color: var(--ncu-ring);
 	}
 
+	.lower {
+		display: flex;
+		flex-direction: column;
+		flex: 1;
+		margin-top: clamp(1.5rem, 1rem + 2vh, 3rem);
+	}
+
 	.tagline {
-		margin-top: 1.25rem;
-		max-width: 36rem;
-		font-size: clamp(var(--sl-text-base), 0.9rem + 0.4vw, var(--sl-text-lg));
+		max-width: 34rem;
+		font-size: clamp(var(--sl-text-base), 0.9rem + 0.3vw, var(--sl-text-lg));
 		line-height: 1.55;
 		color: var(--sl-color-gray-2);
 		text-wrap: pretty;
@@ -76,7 +160,7 @@ const { title = entry.data.title, tagline, actions = [] } = entry.data.hero ?? {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.75rem;
-		margin-top: 2rem;
+		margin-top: 1.75rem;
 	}
 
 	.button {
@@ -87,7 +171,9 @@ const { title = entry.data.title, tagline, actions = [] } = entry.data.hero ?? {
 		border-radius: 8px;
 		font-weight: 600;
 		text-decoration: none;
-		transition: background-color 150ms ease, border-color 150ms ease;
+		transition:
+			background-color 150ms ease,
+			border-color 150ms ease;
 	}
 
 	.primary {
@@ -116,10 +202,11 @@ const { title = entry.data.title, tagline, actions = [] } = entry.data.hero ?? {
 		border-color: var(--sl-color-gray-3);
 	}
 
+	/* The requirements sit at the window's foot, like a status line. */
 	.needs {
-		margin-top: 1.5rem;
-		font-family: var(--sl-font-mono);
-		font-size: var(--sl-text-xs);
+		margin-top: auto;
+		padding-top: 1.5rem;
+		font-size: var(--sl-text-sm);
 		color: var(--sl-color-gray-3);
 	}
 
@@ -127,16 +214,170 @@ const { title = entry.data.title, tagline, actions = [] } = entry.data.hero ?? {
 		color: inherit;
 	}
 
+	/* A niri column holding two windows. */
+	.column {
+		display: flex;
+		flex-direction: column;
+		gap: var(--gap);
+		min-width: 0;
+	}
+
+	.recording {
+		border: 0;
+		background: none;
+	}
+
+	.recording :global(.plate) {
+		border-color: var(--ncu-rule);
+	}
+
+	.recording figcaption {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: space-between;
+		gap: 0.25rem 1.5rem;
+		margin-top: 0.5rem;
+		font-size: var(--sl-text-xs);
+		line-height: 1.5;
+		color: var(--sl-color-gray-3);
+	}
+
+	.note {
+		flex: 1 1 24rem;
+		max-width: 44rem;
+	}
+
+	.output {
+		margin: 0;
+		font-family: var(--sl-font-mono);
+		font-size: 0.7rem;
+	}
+
+	.agent {
+		display: flex;
+		flex-direction: column;
+		gap: 0.6rem;
+		padding: 0.9rem 0.6rem 0.9rem 0.9rem;
+	}
+
+	.asked {
+		padding-inline: 0.5rem;
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-white);
+	}
+
+	.asked span {
+		margin-inline-end: 0.35rem;
+		font-family: var(--sl-font-mono);
+		font-size: var(--sl-text-xs);
+		color: var(--sl-color-gray-3);
+	}
+
+	.stop {
+		padding: clamp(1.25rem, 0.9rem + 1vw, 2rem);
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-gray-2);
+	}
+
+	.stop a {
+		color: var(--sl-color-text-accent);
+	}
+
+	.stop > * + * {
+		margin-top: 0.9rem;
+	}
+
+	.keys {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem;
+	}
+
+	kbd {
+		display: inline-flex;
+		align-items: center;
+		min-height: 2.5rem;
+		padding: 0 0.8rem;
+		border: 1px solid var(--sl-color-gray-4);
+		border-bottom-width: 3px;
+		border-radius: 8px;
+		font-family: var(--sl-font-mono);
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-white);
+		background: var(--sl-color-black);
+	}
+
+	.stop h2 {
+		margin-top: 1.5rem;
+		font-size: var(--sl-text-h4);
+		font-weight: 660;
+		letter-spacing: -0.01em;
+		color: var(--sl-color-white);
+	}
+
+	/* Stacked, the calls scroll in their own window rather than run the page long. */
+	@media (max-width: 61.99rem) {
+		.agent :global(.ncu-calls) {
+			max-height: 22rem;
+			overflow-y: auto;
+		}
+	}
+
+	/* From here the strip runs sideways as niri's does: as tall as the screen, columns at
+	   their own widths, and the last one past the right edge until there's room for it. */
 	@media (min-width: 62rem) {
-		.ncu-hero {
-			grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-			align-items: start;
-			gap: 3rem;
-			padding-block: 3.5rem 4rem;
+		.ncu-desk {
+			height: clamp(38rem, calc(100svh - var(--sl-nav-height)), 72rem);
+			overflow-x: auto;
+			overscroll-behavior-x: contain;
+			scrollbar-width: thin;
+			scrollbar-color: var(--sl-color-gray-5) transparent;
 		}
 
-		.copy {
-			padding-top: 2.5rem;
+		.strip {
+			grid-template-columns: clamp(24rem, 33vw, 36rem) clamp(34rem, 52vw, 68rem) clamp(18rem, 24vw, 26rem);
+			grid-template-rows: minmax(0, 1fr);
+			width: max-content;
+			height: 100%;
+			margin-inline: auto;
+		}
+
+		.agent {
+			flex: 1;
+			min-height: 0;
+		}
+
+		.agent :global(.ncu-calls) {
+			flex: 1;
+			min-height: 0;
+			overflow-y: auto;
+			align-content: start;
+			scrollbar-width: thin;
+			scrollbar-color: var(--sl-color-gray-5) transparent;
+		}
+	}
+
+	/* The strip settles into place as a newly opened niri window does, and the ring lands
+	   once it has. */
+	@media (prefers-reduced-motion: no-preference) {
+		.strip {
+			animation: ncu-open 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+		}
+
+		.you {
+			animation: ncu-focus 260ms ease-out 360ms both;
+		}
+	}
+
+	@keyframes ncu-open {
+		from {
+			transform: translateX(2.5rem);
+		}
+	}
+
+	@keyframes ncu-focus {
+		from {
+			outline-color: var(--ncu-rule);
 		}
 	}
 </style>

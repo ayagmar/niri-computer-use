@@ -1,0 +1,71 @@
+{
+ "prompt": "In the nvim window, add a paragraph under the title saying what niri-computer-use 0.1.0 does, about three sentences. Type it, don't save.",
+ "note": "A real Claude Code session on a real niri 26.04 desktop; nothing was scripted. Thinking time between calls is shortened; calls play in real time. A line marked $ is something the user did.",
+ "output": "DP-1 · 2560×1440, shown at 1920×1080",
+ "calls": [
+  {
+   "start": 1.2,
+   "request": "desktop_state",
+   "answer": "focused_window: 20 · org.gnome.Nautilus 11 · helium 12 · ncu-demo-notes 19 · ncu-demo-agent 20",
+   "error": false,
+   "you": false,
+   "ms": 0
+  },
+  {
+   "start": 2.4,
+   "request": "acquire_desktop",
+   "answer": "lease taken · users_window: 20",
+   "error": false,
+   "you": false,
+   "ms": 2
+  },
+  {
+   "start": 3.53,
+   "request": "focus {\"window_id\": 19, \"screenshot\": true}",
+   "answer": "accepted: true · observed: focused · focus 20 → 19",
+   "error": false,
+   "you": false,
+   "ms": 557
+  },
+  {
+   "start": 5.29,
+   "request": "key {\"keys\": [\"Escape\", \"o\", \"Return\"], \"expect\": {\"window_id\": 19}}",
+   "answer": "accepted: true · observed: sent",
+   "error": false,
+   "you": false,
+   "ms": 254
+  },
+  {
+   "start": 6.74,
+   "request": "type_text {\"text\": \"niri-computer-use 0.1.0 is an MCP server that lets an AI agent see and operate a niri Wayland desktop. It reads windows, workspaces and accessible elements, takes screenshots, and, while holding an exclusive desktop lease, can focus windows, click, type and run niri actions. The user stays in control with a stop key, a policy file that limits what the agent may do, and an audit log of every action.\", \"expect\": {\"window_id\": 19}, \"screenshot\": true}",
+   "answer": "accepted: true · observed: sent",
+   "error": false,
+   "you": false,
+   "ms": 2482
+  },
+  {
+   "start": 9.48,
+   "request": "niri msg action focus-window --id 11",
+   "answer": "you click into Files; the agent never asked for it",
+   "error": false,
+   "you": true,
+   "ms": null
+  },
+  {
+   "start": 10.68,
+   "request": "key {\"keys\": [\"Escape\"], \"expect\": {\"window_id\": 19}}",
+   "answer": "refused: focus_mismatch",
+   "error": true,
+   "you": false,
+   "ms": 2
+  },
+  {
+   "start": 10.88,
+   "request": "release_desktop {\"restore_focus\": true}",
+   "answer": "released · focus back on 20 · observed: focused",
+   "error": false,
+   "you": false,
+   "ms": 4
+  }
+ ]
+}

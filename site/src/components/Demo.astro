@@ -1,255 +1,85 @@
 ---
-// One demo recording from `public/demo/`, made by `scripts/demo-encode.py`: the video on a
-// plate whose corner ticks mark the nested output's 1280×720, above the caption band the
-// encoder draws, and the calls as text from the same run's `<name>.json`. With `log`, the
-// calls are shown open, each at its time in the recording, and the one playing is marked.
-// It plays only while in view and never for readers who ask for reduced motion.
+// A demo recording in a column: the plate, the call the recording is about with its answer,
+// the prompt, and every call as text under a disclosure.
+import { loadDemo } from '../lib/demo';
+import Calls from './Calls.astro';
+import Recording from './Recording.astro';
+
 interface Props {
 	name: string;
 	/** What the recording shows, for screen readers. */
 	label: string;
-	/** Load the poster at once and show the calls open, for the hero. */
-	log?: boolean;
-	/** Show the prompt under the video. */
-	caption?: boolean;
+	/** The call to show under the recording, by its place in the calls. */
+	call?: number;
 }
 
-interface Call {
-	start: number;
-	request: string;
-	answer: string;
-	error: boolean;
-	you: boolean;
-	ms: number | null;
-}
-
-const { name, label, log = false, caption = true } = Astro.props;
-const runs = import.meta.glob<{ default: { prompt: string; calls: Call[] } }>(
-	'../../public/demo/*.json',
-	{ eager: true },
-);
-const run = runs[`../../public/demo/${name}.json`]?.default;
-if (!run) throw new Error(`public/demo/${name}.json is missing; run scripts/demo-encode.py`);
-const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
-const src = (extension: string) => `${base}demo/${name}.${extension}`;
-// Seconds into the recording as m:ss.s, as a player shows them.
-const at = (seconds: number) =>
-	`${Math.floor(seconds / 60)}:${(seconds % 60).toFixed(1).padStart(4, '0')}`;
+const { name, label, call: index = 0 } = Astro.props;
+const demo = await loadDemo(name, [480, 800]);
+const call = demo.calls[index];
 ---
 
-<figure class="ncu-demo not-content" data-log={log ? '' : undefined}>
-	<span class="geometry" aria-hidden="true">winit · 1280×720 at 0,0</span>
-	<div class="plate">
-		<video
-			data-demo
-			muted
-			loop
-			playsinline
-			controls
-			preload={log ? 'metadata' : 'none'}
-			poster={log ? src('avif') : undefined}
-			data-poster={log ? undefined : src('avif')}
-			width="1280"
-			height="836"
-			aria-label={label}
-		>
-			<source src={src('webm')} type='video/webm; codecs="av01.0.08M.08"' />
-			<source src={src('mp4')} type="video/mp4" />
-		</video>
-	</div>
-	{
-		caption && (
-			<figcaption>
-				<span class="asked">asked</span> {run.prompt}
-			</figcaption>
-		)
-	}
-	<details open={log}>
-		<summary>The calls as text</summary>
-		<ol>
-			{
-				run.calls.map((call) => (
-					<li class:list={{ error: call.error }} data-start={call.start}>
-						<span class="at">{at(call.start)}</span>
-						<code class="request">
-							<span class="mark">{call.you ? '$' : '→'}</span> {call.request}
-						</code>
-						{call.you ? (
-							<code class="answer narration">
-								<span class="mark">#</span> {call.answer}
-							</code>
-						) : (
-							<code class="answer">
-								<span class="mark">←</span> {call.answer} <span class="ms">{call.ms} ms</span>
-							</code>
-						)}
-					</li>
-				))
-			}
-		</ol>
-		<p class="note">
-			Recorded in a headless nested niri. A script makes the calls an agent would make, through
-			the real server. Each answer line summarises the server's reply, and each time is the round
-			trip the harness measured. A line marked # is narration. The chat window is a test
-			stand-in.
-		</p>
+<figure class="ncu-demo not-content">
+	<Recording demo={demo} label={label} sizes="(min-width: 50rem) 24rem, 92vw" />
+	<figcaption>
+		<p class="asked"><span>asked</span> {demo.prompt}</p>
+		{
+			call && (
+				<p class:list={['call', { error: call.error }]}>
+					<code>
+						<span class="mark">→</span> {call.request}
+					</code>
+					<code class="answer">
+						<span class="mark">←</span> {call.answer}
+					</code>
+				</p>
+			)
+		}
+		{demo.note && <p class="note">{demo.note}</p>}
+	</figcaption>
+	<details>
+		<summary>All {demo.calls.length} calls as text</summary>
+		<Calls demo={demo} />
 	</details>
 </figure>
 
-<script>
-	const still = matchMedia('(prefers-reduced-motion: reduce)');
-	for (const video of document.querySelectorAll<HTMLVideoElement>('video[data-demo]')) {
-		// Posters below the fold load as they come near.
-		new IntersectionObserver(
-			([entry], observer) => {
-				if (!entry.isIntersecting) return;
-				if (video.dataset.poster) video.poster = video.dataset.poster;
-				observer.disconnect();
-			},
-			{ rootMargin: '50%' },
-		).observe(video);
-		new IntersectionObserver(
-			([entry]) => {
-				if (entry.isIntersecting && !still.matches) video.play().catch(() => {});
-				else video.pause();
-			},
-			{ threshold: 0.35 },
-		).observe(video);
-		still.addEventListener('change', () => {
-			if (still.matches) video.pause();
-		});
-
-		// Mark the call the recording is showing.
-		const calls = [...(video.closest('[data-log]')?.querySelectorAll<HTMLElement>('li[data-start]') ?? [])];
-		if (calls.length === 0) continue;
-		video.addEventListener('timeupdate', () => {
-			const playing = calls.findLast((call) => Number(call.dataset.start) <= video.currentTime);
-			for (const call of calls) call.toggleAttribute('aria-current', call === playing);
-		});
-	}
-</script>
-
 <style>
 	.ncu-demo {
-		margin: 0;
+		margin: 1rem 0 0;
 		min-width: 0;
 	}
 
-	.plate {
-		position: relative;
-		border: 2px solid var(--ncu-ring);
-		border-radius: calc(var(--ncu-radius) + 2px);
-		background: #121416;
-		padding: 2px;
-	}
-
-	/* Registration ticks at the corners of the nested output's 1280×720, as on a printed
-	   plate. The caption band below it, 116 of the video's 836 rows, sits outside them. */
-	.plate::before {
-		--tick: var(--sl-color-gray-4);
-		content: '';
-		position: absolute;
-		inset: -9px -9px auto;
-		height: calc((100% - 4px) * 720 / 836 + 20px);
-		pointer-events: none;
-		background:
-			linear-gradient(var(--tick), var(--tick)) left top / 14px 1px,
-			linear-gradient(var(--tick), var(--tick)) left top / 1px 14px,
-			linear-gradient(var(--tick), var(--tick)) right top / 14px 1px,
-			linear-gradient(var(--tick), var(--tick)) right top / 1px 14px,
-			linear-gradient(var(--tick), var(--tick)) left bottom / 14px 1px,
-			linear-gradient(var(--tick), var(--tick)) left bottom / 1px 14px,
-			linear-gradient(var(--tick), var(--tick)) right bottom / 14px 1px,
-			linear-gradient(var(--tick), var(--tick)) right bottom / 1px 14px;
-		background-repeat: no-repeat;
-	}
-
-	.geometry {
-		display: block;
-		margin-bottom: 0.75rem;
-		text-align: end;
-		font-family: var(--sl-font-mono);
-		font-size: 0.7rem;
-		color: var(--sl-color-gray-3);
-	}
-
-	video {
-		display: block;
-		width: 100%;
-		height: auto;
-		border-radius: var(--ncu-radius);
-		background: #121416;
-	}
-
 	figcaption {
-		margin-top: 0.85rem;
+		margin-top: 0.9rem;
+	}
+
+	.asked {
 		font-size: var(--sl-text-sm);
 		color: var(--sl-color-gray-2);
 	}
 
-	.asked {
+	.asked span {
 		font-family: var(--sl-font-mono);
 		font-size: var(--sl-text-xs);
 		color: var(--sl-color-gray-3);
 		margin-inline-end: 0.35rem;
 	}
 
-	details {
-		margin-top: 0.5rem;
-		font-size: var(--sl-text-sm);
+	.call {
+		margin-top: 0.6rem;
 	}
 
-	summary {
-		cursor: pointer;
-		color: var(--sl-color-gray-3);
-		font-family: var(--sl-font-mono);
-		font-size: var(--sl-text-xs);
-	}
-
-	ol {
-		list-style: none;
-		padding: 0;
-		margin: 0.75rem 0 0;
-		display: grid;
-		gap: 0.6rem;
-	}
-
-	li {
-		display: grid;
-		grid-template-columns: auto minmax(0, 1fr);
-		column-gap: 0.75rem;
-		padding-inline-start: 0.5rem;
-		border-inline-start: 2px solid transparent;
-	}
-
-	li[aria-current] {
-		border-inline-start-color: var(--ncu-ring);
-	}
-
-	.at {
-		grid-row: span 2;
-		font-family: var(--sl-font-mono);
-		font-size: 0.7rem;
-		line-height: 1.75;
-		color: var(--sl-color-gray-3);
-		font-variant-numeric: tabular-nums;
-	}
-
-	li code {
+	.call code {
 		display: block;
-		overflow-x: auto;
-		white-space: pre;
+		padding: 0 0 0 1.5ch;
+		text-indent: -1.5ch;
+		overflow-wrap: anywhere;
 		background: none;
-		padding: 0;
 		font-size: 0.75rem;
 		line-height: 1.6;
-	}
-
-	.request {
 		color: var(--sl-color-white);
 	}
 
-	.answer {
+	.call .answer {
 		color: var(--sl-color-gray-2);
 	}
 
@@ -262,18 +92,24 @@ const at = (seconds: number) =>
 		color: var(--ncu-stop);
 	}
 
-	.ms {
-		color: var(--sl-color-gray-3);
+	details {
+		margin-top: 0.75rem;
+		font-size: var(--sl-text-sm);
 	}
 
-	/* What the scene says about a user command, which prints nothing: not the server's. */
-	.narration,
-	.narration .mark {
+	summary {
+		cursor: pointer;
 		color: var(--sl-color-gray-3);
+		font-family: var(--sl-font-mono);
+		font-size: var(--sl-text-xs);
+	}
+
+	details :global(.ncu-calls) {
+		margin-top: 0.5rem;
 	}
 
 	.note {
-		margin-top: 0.75rem;
+		margin-top: 0.6rem;
 		color: var(--sl-color-gray-3);
 		font-size: var(--sl-text-xs);
 	}
