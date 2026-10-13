@@ -526,6 +526,54 @@ struct Wtype<'a> {
     place: Place<'a>,
 }
 
+/// The marker of a wtype run not yet let past its gate, so nothing was typed. A call
+/// dropped meanwhile, as by the stop key or the client's cancel, removes it in a cleanup
+/// task, as a dropped pointer or native device does, rather than leave every later action
+/// to `recover`. Locals drop in reverse order, so the call's wtype is killed at its gate
+/// before that.
+struct Unsent(Option<Written>);
+
+impl Unsent {
+    async fn update(&mut self, change: impl FnOnce(&mut Marker)) -> std::io::Result<()> {
+        match &mut self.0 {
+            Some(marker) => marker.update(change).await,
+            None => Err(std::io::Error::other("the marker is gone")),
+        }
+    }
+
+    /// `error`, after removing the marker, as `cleared` does.
+    async fn cleared(mut self, error: ToolError) -> ToolError {
+        match self.0.take() {
+            Some(marker) => cleared(marker, error).await,
+            None => error,
+        }
+    }
+
+    /// Hands the marker on to the task that feeds wtype.
+    fn take(mut self) -> Result<Written, ToolError> {
+        self.0
+            .take()
+            .ok_or_else(|| marker_error("hand on", &std::io::Error::other("the marker is gone")))
+    }
+}
+
+impl Drop for Unsent {
+    fn drop(&mut self) {
+        let Some(marker) = self.0.take() else {
+            return;
+        };
+        // Without a runtime the marker stays, for `recover`.
+        if tokio::runtime::Handle::try_current().is_ok() {
+            cleanup::spawn(cleanup::deadline(), async move {
+                marker
+                    .clear()
+                    .await
+                    .map_err(|error| marker_error("remove", &error))
+            });
+        }
+    }
+}
+
 /// Writes the marker, starts wtype behind the gate, records its PID, then, once `go` lets
 /// it, feeds it in a task that outlives this call if the call is dropped. That task takes
 /// `aftercare`.
@@ -542,13 +590,14 @@ async fn run_wtype(
         stdin,
         place,
     } = wtype;
-    let mut marker = Written::write(runtime, Marker::pending(tool, Vec::new()))
+    let written = Written::write(runtime, Marker::pending(tool, Vec::new()))
         .await
         .map_err(|error| Failed::unsent(marker::unwritten(&error)))?;
+    let mut marker = Unsent(Some(written));
     let gated = match runner::gated("wtype", Search::Client(place), args, &UTF8, WTYPE_DEADLINE) {
         Ok(gated) => gated,
         // Nothing started, so nothing was typed.
-        Err(error) => return Err(Failed::unsent(cleared(marker, error).await)),
+        Err(error) => return Err(Failed::unsent(marker.cleared(error).await)),
     };
     let child = gated.pid().and_then(|pid| {
         let stat = procs::stat(Path::new("/proc"), pid)?;
@@ -571,14 +620,15 @@ async fn run_wtype(
         // Still waiting at the gate: killing it now types nothing.
         drop(gated);
         let error = ToolError::new(ErrorName::UpstreamError, detail);
-        return Err(Failed::unsent(cleared(marker, error).await));
+        return Err(Failed::unsent(marker.cleared(error).await));
     }
     if let Err(error) = go.await {
         drop(gated);
-        return Err(Failed::unsent(cleared(marker, error).await));
+        return Err(Failed::unsent(marker.cleared(error).await));
     }
     // A task of its own, so wtype finishes and the marker comes off even if the call is
     // dropped.
+    let marker = marker.take().map_err(Failed::unsent)?;
     let aftercare = aftercare.take();
     let desk = desk.clone();
     let typed = cleanup::spawn(cleanup::deadline(), async move {
@@ -670,15 +720,27 @@ async fn finish(fed: Result<Finished, ToolError>, marker: Written) -> Result<(),
 }
 
 /// `error`, after removing the marker of a call that typed nothing; a marker that can't
-/// be removed is added to the detail, since it blocks the next action.
+/// be removed is added to the detail, since it blocks the next action. The removal waits
+/// for the marker's lock, so it runs in a cleanup task, and a call dropped meanwhile can't
+/// leave the marker behind.
 async fn cleared(marker: Written, error: ToolError) -> ToolError {
-    match marker.clear().await {
+    let removed = cleanup::spawn(cleanup::deadline(), async move {
+        marker
+            .clear()
+            .await
+            .map_err(|clear| ToolError::new(ErrorName::UpstreamError, clear.to_string()))
+    });
+    let removed = removed
+        .await
+        .map_err(|ended| ToolError::new(ErrorName::UpstreamError, ended.to_string()))
+        .and_then(|removed| removed);
+    match removed {
         Ok(()) => error,
         Err(clear) => ToolError::new(
             error.name,
             format!(
-                "{}; the input-dirty marker couldn't be removed ({clear}), so actions refuse until the user runs `niri-computer-use recover`",
-                error.detail
+                "{}; the input-dirty marker couldn't be removed ({}), so actions refuse until the user runs `niri-computer-use recover`",
+                error.detail, clear.detail
             ),
         ),
     }
@@ -1006,6 +1068,54 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(std::fs::read(&typed).unwrap_or_default(), b"");
         assert!(!runtime.input_dirty().unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Whether the input-dirty marker is gone within a second.
+    async fn marker_gone_soon(runtime: &RuntimeDir) -> bool {
+        for _ in 0..50 {
+            if !runtime.input_dirty().unwrap() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        false
+    }
+
+    /// A call dropped while wtype waits at its gate, as by the stop key or the client's
+    /// cancel during the last checks, typed nothing, so its marker comes off rather than
+    /// leaving every later action to `recover`.
+    #[tokio::test]
+    async fn a_call_dropped_at_the_gate_removes_its_marker() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = crate::test_support::fresh_dir("feed-dropped");
+        let runtime = RuntimeDir::of(&crate::test_support::niri_env(&dir)).unwrap();
+        runtime.create().unwrap();
+        let typed = dir.join("typed");
+        let bin = dir.join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let wtype = bin.join("wtype");
+        std::fs::write(&wtype, format!("#!/bin/sh\ncat > '{}'\n", typed.display())).unwrap();
+        std::fs::set_permissions(&wtype, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let desk = crate::input::paste::desk_read(&dir, Duration::ZERO);
+        let stroke = Wtype {
+            tool: "type_text",
+            args: &["-".to_owned()],
+            stdin: b"hi".to_vec(),
+            place: Place {
+                path: Some(bin.as_os_str()),
+                cwd: None,
+            },
+        };
+        let go = std::future::pending::<Result<(), ToolError>>();
+        let mut aftercare = None;
+        let call = run_wtype(&runtime, stroke, &mut aftercare, go, &desk);
+        tokio::time::timeout(Duration::from_millis(200), call)
+            .await
+            .unwrap_err();
+        assert!(marker_gone_soon(&runtime).await, "the marker stayed");
+        assert_eq!(std::fs::read(&typed).unwrap_or_default(), b"");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
