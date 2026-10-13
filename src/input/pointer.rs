@@ -445,10 +445,9 @@ impl Gate<'_> {
     /// that holds a button, as dragging a window by its title bar moves it, unless it is
     /// the window of the element the drag ends at: that element is no longer where the drag
     /// goes once its window moved, resized, floated, went to another workspace or closed.
-    /// An app can
-    /// change its `app_id` at any time without moving anything, so the deny list is asked
-    /// each time about the focused window and the elements' windows as niri reports them
-    /// now. The lock state is read again first when the last read is too old, since a
+    /// An app can change its `app_id` at any time without moving anything, so the deny
+    /// list is asked each time about the focused window and the elements' windows as niri
+    /// reports them now. The lock state is read again first when the last read is too old, since a
     /// round trip in the gesture can take seconds, and must still be fresh at the end,
     /// however long the look took. Before the first input, the desk is told input is going
     /// out: a motion can open a hover menu or move focus, so a stop or a lost lease from
