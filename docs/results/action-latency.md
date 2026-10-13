@@ -164,6 +164,28 @@ Opus's second review led to two more changes. Only `focus` reads the rest of nir
 
 `niri_action` is back to 212 ms. In all three runs every call came back with the same `observed` and the same `changes` in all 30 rounds, down to the fields of `windows`, and the two builds agreed: `focus+workspace` for both `focus` calls, `windows[size]` for `niri_action`, `focus` for both `shell_panel` calls, and none for the rest. Skipping the quiet wait lost nothing these rounds report.
 
+## After the settle guard
+
+Every run above predates `7e41b26`, which refuses an element aim for a second after niri activates a workspace on its output, and the later commits that extend that to a window moving or resizing. Each round clicks the entry by element right after `focus` switched workspaces and back, so on the merged tree that click was refused and `make nested-latency` stopped at it. The harness now waits 1.2 seconds before the click, outside its timing, and doesn't retry it. One run on branch `sol-fixes` at `6c543e7`, against `main` at `9b585e1` plus the fixes for Sol's review of the evening merge:
+
+| Run | Build | Run id |
+|---|---|---|
+| settled 1 | `sol-fixes` at `6c543e7` | 1791855208-4062381 |
+
+| Call | final 1 | final 2 | settled 1 |
+|---|---|---|---|
+| `focus` on the empty workspace | 42 (72) | 41 (56) | 53 (59) |
+| `focus` on the fixture | 64 (64) | 64 (64) | 64 (80) |
+| `click` on the entry, by element | 272 (288) | 272 (288) | 253 (257) |
+| `type_text` `"ab"` | 253 (253) | 252 (253) | 252 (254) |
+| `key` `BackSpace` twice | 260 (261) | 260 (261) | 259 (275) |
+| `activate_element` | 304 (306) | 304 (306) | 304 (306) |
+| `niri_action` `SetWindowHeight` | 212 (214) | 212 (215) | 212 (214) |
+| `shell_panel` open | 382 (383) | 382 (384) | 382 (383) |
+| `shell_panel` close | 512 (514) | 512 (514) | 512 (529) |
+
+Every call came back with the same `observed` and `changes` as in the final runs in all 30 rounds. `click` is back to 253 ms. The skip runs traced its extra time to niri answering late for a while after the workspace switch (above), and the 1.2 seconds now come between the two. `focus` on the empty workspace took 11 ms longer at the median than in the final runs; it wasn't traced, and one run doesn't say whether it holds.
+
 ## What is left
 
 What remains for most calls is the quiet wait itself, by design: it gives an app 250 ms from the start of the action to answer, so that a dialog a click opens is in `changes`. The time each call spends in it, at the median, from the timing marks of the two builds and the runs above:
