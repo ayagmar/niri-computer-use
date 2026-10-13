@@ -428,7 +428,8 @@ impl Gate<'_> {
     /// change its `app_id` at any time without moving anything, so the deny list is asked
     /// each time about the focused window and the elements' windows as niri reports them
     /// now. Before the first input, the lock state must still be fresh, however long the
-    /// look took.
+    /// look took, and the desk is told input is going out: a motion can open a hover menu
+    /// or move focus, so a stop or a lost lease from then on leaves the call `uncertain`.
     async fn pass(&mut self, stage: Stage) -> Result<(), ToolError> {
         let moved = self.waiter.moved().await.map_err(|reason| {
             let sent = if stage == Stage::First {
@@ -461,7 +462,7 @@ impl Gate<'_> {
             }
         }
         if stage == Stage::First {
-            return self.input.niri.desk.fresh();
+            return self.input.niri.desk.sending_input();
         }
         Ok(())
     }

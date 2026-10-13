@@ -2606,6 +2606,56 @@ async fn an_app_id_that_becomes_denied_before_the_input_went_out_refuses_it() {
     }
 }
 
+// Once the pointer's first input went out, a stop or a lost lease that cuts the gesture
+// short leaves it uncertain rather than refused: after a hover's motion, after a drag's
+// press, and after a click's release, each held at niri's round trip that follows it. A
+// drag cut while it holds its button releases it.
+#[tokio::test]
+async fn a_stop_or_lost_lease_after_the_pointer_sent_leaves_it_uncertain() {
+    let drag = json!({"from": {"x": 5, "y": 5}, "to": {"x": 300, "y": 200}});
+    let cases = [
+        ("pointer_move", json!({"x": 5, "y": 5}), 3, 1),
+        ("drag", drag, 4, 3),
+        ("click", json!({"x": 5, "y": 5}), 3, 3),
+    ];
+    for (tool, mut arguments, sync, frames) in cases {
+        for (change, why) in [
+            (Change::Stopped, "the user's stop flag cancelled the action"),
+            (
+                Change::LeaseReplaced,
+                "the lease file was removed or replaced",
+            ),
+        ] {
+            let tag = format!("{tool} {change:?}");
+            let mut desk = Desk::start(&format!("el-cut-{tool}-{}", change as u8)).await;
+            arguments["screenshot_ref"] = json!(desk.screenshot_ref().await);
+            let points = desk.fixture.points();
+            points.start();
+            let held = points.hold("wayland:sync", sync);
+            let id = desk.server.start_call(tool, arguments.clone()).await;
+            held.arrived().await;
+            desk.make(change, "/button").await;
+            let result = desk.server.response(id).await["result"].clone();
+            held.release();
+            assert_eq!(result["isError"], false, "{tag}: {result}");
+            let outcome = &result["structuredContent"];
+            assert_eq!(outcome["observed"], "uncertain", "{tag}: {outcome}");
+            let detail = outcome["detail"].as_str().unwrap();
+            assert!(detail.contains(why), "{tag}: {detail}");
+            assert!(detail.contains("may have taken effect"), "{tag}: {detail}");
+            points.idle().await;
+            let sent = desk.fixture.clipboard.pointed();
+            assert_eq!(sent.len(), frames, "{tag}: {sent:?}");
+            // Nothing is left pressed.
+            assert_ne!(
+                sent.last(),
+                Some(&Pointed::Button(272, 1)),
+                "{tag}: {sent:?}"
+            );
+        }
+    }
+}
+
 /// Starts a drag from the Safe button, or from pixel (5, 5), to pixel (300, 200) through
 /// a fresh screenshot, holds its `sync`th round trip with niri's display, the first two
 /// being the pointer's setup, makes `event` happen meanwhile, and returns the result and
