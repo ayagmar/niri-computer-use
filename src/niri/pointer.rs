@@ -178,6 +178,11 @@ impl Pointer {
         self.sent
     }
 
+    /// Whether a button it pressed is still pressed.
+    pub(crate) const fn pressing(&self) -> bool {
+        !self.pressed.is_empty()
+    }
+
     /// Waits until niri has handled everything sent so far.
     pub(crate) async fn sync(&mut self) -> Result<(), ToolError> {
         let deadline = Instant::now() + DEADLINE;

@@ -4,7 +4,7 @@
 //! copied, the same for every connection, and a copy announces a new one on each. The
 //! display also offers output `DP-1` and wlr virtual pointers, and hands the test every
 //! motion and button a pointer sends. Each connection's registry request passes the hold
-//! point `wayland:get_registry`.
+//! point `wayland:get_registry`, and each round trip's `wl_display.sync` `wayland:sync`.
 
 use std::io::{IoSliceMut, Write as _};
 use std::mem::MaybeUninit;
@@ -297,11 +297,15 @@ async fn receive(stream: &UnixStream, fds: &mut Vec<OwnedFd>) -> Option<Vec<u8>>
 }
 
 /// The hold point a request passes before it is answered, if any. The server waits for
-/// the registry's answer, so a held one holds the server.
+/// the registry's answer and for each round trip's, so a held one holds the server.
 fn point(message: &[u8]) -> Option<&'static str> {
     let id = word(message, 0)?;
     let opcode = word(message, 4)? & 0xffff;
-    (id == 1 && opcode == 1).then_some("wayland:get_registry")
+    match (id, opcode) {
+        (1, 0) => Some("wayland:sync"),
+        (1, 1) => Some("wayland:get_registry"),
+        _ => None,
+    }
 }
 
 /// A whole message off the front of `bytes`, and what follows it.

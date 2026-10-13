@@ -89,6 +89,18 @@ impl View {
     }
 }
 
+/// How much an event can change what is shown where, least first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Shift {
+    /// Nothing shown moves: a title, an urgency, niri's bookkeeping.
+    None,
+    /// Windows: one opened, closed or focused, its layout, workspace or floating changed,
+    /// or a workspace's active window changed.
+    Windows,
+    /// The whole view: a workspace activated or changed, or the overview opened or closed.
+    View,
+}
+
 /// How a wait ended.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Waited<T> {
@@ -152,15 +164,16 @@ impl Waiter {
         self.catch_up(|_, _| {}, check).await
     }
 
-    /// Applies what niri has sent by now (`catch_up`), and says whether any of it can
-    /// change what is shown where: a workspace activated or changed, the overview opened or
-    /// closed, a window opened, closed, focused or made its workspace's active one, or a
-    /// window's layout, workspace or floating changed. A title or urgency changing doesn't
-    /// count. `Err` with the reason when the stream can't say.
-    pub(crate) async fn moved(&mut self) -> Result<bool, String> {
-        let mut moved = false;
+    /// Applies what niri has sent by now (`catch_up`), and says how much any of it can
+    /// change what is shown where (`Shift`), the most of them. `Err` with the reason when
+    /// the stream can't say.
+    pub(crate) async fn moved(&mut self) -> Result<Shift, String> {
+        let mut moved = Shift::None;
         let caught_up = self
-            .catch_up(|view, event| moved |= moves(view, event), |_| None::<()>)
+            .catch_up(
+                |view, event| moved = moved.max(shift(view, event)),
+                |_| None::<()>,
+            )
             .await;
         match caught_up {
             Waited::Lost(reason) => Err(reason),
@@ -262,21 +275,24 @@ pub(super) fn relaid(old: &Window, new: &Window) -> bool {
         || old.is_floating != new.is_floating
 }
 
-/// Whether `event`, on top of `view`, can change what is shown where (see `Waiter::moved`).
-fn moves(view: &View, event: &Event) -> bool {
+/// How much `event`, on top of `view`, can change what is shown where.
+fn shift(view: &View, event: &Event) -> Shift {
     match event {
-        Event::WindowOpenedOrChanged { window } => view
-            .windows()
-            .get(&window.id)
-            .is_none_or(|old| relaid(old, window) || old.is_focused != window.is_focused),
+        Event::WindowOpenedOrChanged { window } => {
+            let moved = view
+                .windows()
+                .get(&window.id)
+                .is_none_or(|old| relaid(old, window) || old.is_focused != window.is_focused);
+            if moved { Shift::Windows } else { Shift::None }
+        }
         Event::WorkspacesChanged { .. }
         | Event::WorkspaceActivated { .. }
-        | Event::WorkspaceActiveWindowChanged { .. }
+        | Event::OverviewOpenedOrClosed { .. } => Shift::View,
+        Event::WorkspaceActiveWindowChanged { .. }
         | Event::WindowsChanged { .. }
         | Event::WindowClosed { .. }
         | Event::WindowFocusChanged { .. }
-        | Event::WindowLayoutsChanged { .. }
-        | Event::OverviewOpenedOrClosed { .. } => true,
+        | Event::WindowLayoutsChanged { .. } => Shift::Windows,
         Event::WorkspaceUrgencyChanged { .. }
         | Event::WindowFocusTimestampChanged { .. }
         | Event::WindowUrgencyChanged { .. }
@@ -286,7 +302,7 @@ fn moves(view: &View, event: &Event) -> bool {
         | Event::ScreenshotCaptured { .. }
         | Event::CastsChanged { .. }
         | Event::CastStartedOrChanged { .. }
-        | Event::CastStopped { .. } => false,
+        | Event::CastStopped { .. } => Shift::None,
     }
 }
 
@@ -376,7 +392,8 @@ pub(crate) mod tests {
     }
 
     // Before an element aim goes out, any event that can change what is shown where
-    // refuses it; a title or urgency changing doesn't.
+    // refuses it, and while a gesture holds a button, one that changes the whole view stops
+    // it; a title or urgency changing does neither.
     #[tokio::test]
     async fn a_change_to_what_is_shown_where_counts_as_moved_and_a_title_does_not() {
         let floating = || {
@@ -403,33 +420,42 @@ pub(crate) mod tests {
             },
         ];
         let moving = [
-            moved_by((40.0, 30.0)),
-            Event::WindowOpenedOrChanged {
-                window: window(2, None, 1, false),
-            },
-            Event::WorkspaceActivated {
-                id: 2,
-                focused: true,
-            },
-            Event::WorkspaceActiveWindowChanged {
-                workspace_id: 1,
-                active_window_id: Some(2),
-            },
-            Event::OverviewOpenedOrClosed { is_open: true },
-            Event::WindowClosed { id: 1 },
+            (moved_by((40.0, 30.0)), Shift::Windows),
+            (
+                Event::WindowOpenedOrChanged {
+                    window: window(2, None, 1, false),
+                },
+                Shift::Windows,
+            ),
+            (
+                Event::WorkspaceActivated {
+                    id: 2,
+                    focused: true,
+                },
+                Shift::View,
+            ),
+            (
+                Event::WorkspaceActiveWindowChanged {
+                    workspace_id: 1,
+                    active_window_id: Some(2),
+                },
+                Shift::Windows,
+            ),
+            (Event::OverviewOpenedOrClosed { is_open: true }, Shift::View),
+            (Event::WindowClosed { id: 1 }, Shift::Windows),
         ];
         let (mut watched, sender) = waiter(view(vec![floating()]), 0);
         for (seq, event) in (1..).zip(quiet) {
             sender.send(Update::Event(seq, Box::new(event))).unwrap();
         }
-        assert_eq!(watched.moved().await, Ok(false));
-        for event in moving {
+        assert_eq!(watched.moved().await, Ok(Shift::None));
+        for (event, shifted) in moving {
             let (mut fresh, updates) = waiter(view(vec![floating()]), 0);
             let what = format!("{event:?}");
             updates.send(Update::Event(1, Box::new(event))).unwrap();
-            assert_eq!(fresh.moved().await, Ok(true), "{what}");
+            assert_eq!(fresh.moved().await, Ok(shifted), "{what}");
             // Each event counts once: nothing new has come since.
-            assert_eq!(fresh.moved().await, Ok(false), "{what}");
+            assert_eq!(fresh.moved().await, Ok(Shift::None), "{what}");
         }
         sender.send(Update::Reset(2)).unwrap();
         assert!(watched.moved().await.is_err());
@@ -513,7 +539,7 @@ pub(crate) mod tests {
         })
         .await;
         sending.abort();
-        assert_eq!(looked, Ok((Ok(false), Waited::Timeout)));
+        assert_eq!(looked, Ok((Ok(Shift::None), Waited::Timeout)));
         assert_ne!(waiter.numbers.seq, 0);
     }
 

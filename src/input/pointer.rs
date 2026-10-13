@@ -31,7 +31,7 @@ use crate::coords::{ImagePx, LayoutPt, ProtocolPt};
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::events::Motion;
 use crate::niri::pointer::{Axis, Pointer, Step};
-use crate::niri::waiter::Waited;
+use crate::niri::waiter::{Shift, Waited};
 use crate::policy;
 use crate::refs::Shot;
 use crate::{elements, niri};
@@ -309,25 +309,55 @@ pub(crate) async fn point(
     act::fresh_lock(input.niri).await?;
     let pointer = Pointer::bind(display, niri::pid(socket).await?, &shot.output).await?;
     let pressing = Pressing { tool, button };
-    let mut device = Device::new(pointer, input.runtime, pressing, &shot.output, held).await?;
-    if let Err(refused) = last_gate(&mut waiter, input, &windows).await {
-        // Nothing was pressed, so the marker goes now, before the next call can see it.
-        device.discard().await?;
-        return Err(refused.into());
+    let device = Device::new(pointer, input.runtime, pressing, &shot.output, held).await?;
+    let gate = Gate {
+        waiter: &mut waiter,
+        input,
+        windows: &windows,
+    };
+    if let Some(stopped) = send(device, gate, plan(&located, &aimed)).await? {
+        return Ok(stopped);
     }
-    if let Err(error) = device.run(plan(&located, &aimed)).await {
-        // Nothing reached niri: an error like any other before input.
-        if !device.sent() {
-            return Err(error.into());
-        }
-        return Ok(Outcome::uncertain(None, Some(waiter.view()), error.detail));
-    }
-    device.finish().await?;
     // The events the input caused so far, such as a click's focus change.
     if let Waited::Lost(reason) = waiter.until(Duration::ZERO, |_| None::<()>).await {
         return Ok(Outcome::uncertain(Some(true), Some(waiter.view()), reason));
     }
     Ok(Outcome::seen(Observed::Sent, waiter.view(), Vec::new()))
+}
+
+/// Sends `steps` through `device`, each part only once `gate` passes it. Refused or failed
+/// before anything went out, the call fails like any other before input; afterwards, it
+/// stops there, releases what it holds, and its outcome is `uncertain`.
+async fn send(
+    mut device: Device,
+    mut gate: Gate<'_>,
+    steps: Vec<Planned>,
+) -> Result<Option<Outcome>, CallError> {
+    let Err(error) = device.run(steps, &mut gate).await else {
+        device.finish().await?;
+        return Ok(None);
+    };
+    if !device.sent() {
+        // Nothing was pressed, so the marker goes now, before the next call can see it.
+        device.discard().await?;
+        return Err(error.into());
+    }
+    let released = match device.abandon().await {
+        Ok(()) => "every button and key it held was released".to_owned(),
+        Err(failed) => format!(
+            "releasing what it held failed ({}), so actions refuse until the user runs `niri-computer-use recover`",
+            failed.detail
+        ),
+    };
+    let detail = format!(
+        "{}; the gesture stopped there and {released}; what went out may have taken effect",
+        error.detail
+    );
+    Ok(Some(Outcome::uncertain(
+        None,
+        Some(gate.waiter.view()),
+        detail,
+    )))
 }
 
 /// Where `spot` is in the layout: a pixel's centre, or an element's, which must lie in
@@ -366,41 +396,88 @@ async fn locate(
     }
 }
 
-/// The checks right before the gesture's first input, with nothing awaited between them
-/// and it. niri's events up to now are applied first (`Waiter::moved`). For an element aim,
-/// at elements of `windows`, one that can change what is shown where since the call's first
-/// look, before the elements were placed, refuses it: a box may no longer be where its
-/// element is. An app can change its `app_id` at any time without moving anything, so the
-/// deny list is asked again about the focused window and `windows` as niri reports them
-/// now. Last, the lock state must still be fresh, however long the look took.
-async fn last_gate(
-    waiter: &mut niri::waiter::Waiter,
-    input: Input<'_>,
-    windows: &[u64],
-) -> Result<(), ToolError> {
-    let moved = waiter.moved().await.map_err(|reason| {
-        ToolError::new(
-            ErrorName::UpstreamError,
-            format!("{reason}; nothing was sent"),
-        )
-    })?;
-    if moved && !windows.is_empty() {
-        return Err(elements::unmappable(Unmappable::Moving));
-    }
-    let view = waiter.view();
-    if let Some(refused) = policy::refuse_input(input.policy, focused_app_id(view)) {
-        return Err(refused);
-    }
-    for id in windows {
-        let app_id = view
-            .windows()
-            .get(id)
-            .and_then(|window| window.app_id.as_deref());
-        if let Some(refused) = policy::refuse_window(input.policy, *id, app_id) {
+/// The checks before each part of a gesture goes out (`Gate::pass`).
+struct Gate<'a> {
+    waiter: &'a mut niri::waiter::Waiter,
+    input: Input<'a>,
+    /// The windows of the elements the gesture aims at, none for pixels.
+    windows: &'a [u64],
+}
+
+/// Where a gesture is when its next part goes out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stage {
+    /// Nothing went out yet.
+    First,
+    /// Something went out after a wait, the held modifiers or the motion to a drag's start,
+    /// and no button is pressed.
+    Unpressed,
+    /// A button is pressed, during a drag.
+    Pressed,
+}
+
+impl Gate<'_> {
+    /// The checks right before the gesture's next part, with nothing awaited between them
+    /// and it: before its first input, and after each wait in it. niri's events up to now
+    /// are applied first (`Waiter::moved`). An element aim is refused by any of them that
+    /// can change what is shown where since the call's first look, before its elements were
+    /// placed, until a button is pressed: a box may no longer be where its element is. Once
+    /// something went out, any gesture is stopped by a workspace switch or the overview,
+    /// which change the whole view under the pointer; a window moving doesn't stop a drag
+    /// that holds a button, as dragging a window by its title bar moves it. An app can
+    /// change its `app_id` at any time without moving anything, so the deny list is asked
+    /// each time about the focused window and the elements' windows as niri reports them
+    /// now. Before the first input, the lock state must still be fresh, however long the
+    /// look took.
+    async fn pass(&mut self, stage: Stage) -> Result<(), ToolError> {
+        let moved = self.waiter.moved().await.map_err(|reason| {
+            let sent = if stage == Stage::First {
+                "nothing was sent"
+            } else {
+                "the gesture stopped"
+            };
+            ToolError::new(ErrorName::UpstreamError, format!("{reason}; {sent}"))
+        })?;
+        let at_element = !self.windows.is_empty();
+        let least = match stage {
+            Stage::First | Stage::Unpressed if at_element => Some(Shift::Windows),
+            Stage::First => None,
+            Stage::Unpressed | Stage::Pressed => Some(Shift::View),
+        };
+        if least.is_some_and(|least| moved >= least) {
+            return Err(moving(stage, moved));
+        }
+        let view = self.waiter.view();
+        if let Some(refused) = policy::refuse_input(self.input.policy, focused_app_id(view)) {
             return Err(refused);
         }
+        for id in self.windows {
+            let app_id = view
+                .windows()
+                .get(id)
+                .and_then(|window| window.app_id.as_deref());
+            if let Some(refused) = policy::refuse_window(self.input.policy, *id, app_id) {
+                return Err(refused);
+            }
+        }
+        if stage == Stage::First {
+            return self.input.niri.desk.fresh();
+        }
+        Ok(())
     }
-    input.niri.desk.fresh()
+}
+
+/// Why `Gate::pass` refused or stopped a gesture at `stage` when niri reported `moved`.
+fn moving(stage: Stage, moved: Shift) -> ToolError {
+    if stage == Stage::First {
+        return elements::unmappable(Unmappable::Moving);
+    }
+    let what = if moved == Shift::View {
+        "niri switched a workspace or opened or closed the overview after the gesture began"
+    } else {
+        "niri opened, closed, focused, moved or resized a window after the gesture began, so the element may no longer be under the pointer"
+    };
+    ToolError::new(ErrorName::ElementUnmappable, what)
 }
 
 /// The tool a gesture belongs to and the button it presses, for the marker.
@@ -419,6 +496,8 @@ struct Device {
     pointer: Option<Pointer>,
     marker: Option<Written>,
     held: Option<Held>,
+    /// Whether the held modifiers may have gone out.
+    keys_sent: bool,
 }
 
 impl Device {
@@ -447,6 +526,7 @@ impl Device {
             pointer: Some(pointer),
             marker,
             held,
+            keys_sent: false,
         })
     }
 
@@ -456,19 +536,25 @@ impl Device {
             .ok_or_else(|| ToolError::new(ErrorName::UpstreamError, "the pointer is gone"))
     }
 
+    /// Whether any of the gesture's input may have gone out.
     fn sent(&self) -> bool {
-        self.pointer.as_ref().is_some_and(Pointer::sent)
+        self.keys_sent || self.pointer.as_ref().is_some_and(Pointer::sent)
     }
 
-    /// Sends the planned steps and waits until niri has handled them.
-    async fn run(&mut self, steps: Vec<Planned>) -> Result<(), ToolError> {
+    /// Sends the planned steps and waits until niri has handled them. `gate` passes the
+    /// first input and every part that follows a wait. After a pause, niri handles what
+    /// was sent before the gate looks, so the events it wrote meanwhile are there.
+    async fn run(&mut self, steps: Vec<Planned>, gate: &mut Gate<'_>) -> Result<(), ToolError> {
+        gate.pass(Stage::First).await?;
         if let Some(held) = &mut self.held {
+            self.keys_sent = true;
             held.begin().await?;
+            gate.pass(Stage::Unpressed).await?;
         }
         for planned in steps {
             match planned {
                 Planned::Send(step) => self.pointer()?.send(step)?,
-                Planned::Pause(pause) => tokio::time::sleep(pause).await,
+                Planned::Pause(pause) => self.rest(pause, gate).await?,
             }
         }
         self.pointer()?.sync().await?;
@@ -476,6 +562,20 @@ impl Device {
             held.released().await?;
         }
         Ok(())
+    }
+
+    /// Waits `pause`, then until niri has handled what was sent, and has `gate` pass the
+    /// part that follows.
+    async fn rest(&mut self, pause: Duration, gate: &mut Gate<'_>) -> Result<(), ToolError> {
+        tokio::time::sleep(pause).await;
+        let pointer = self.pointer()?;
+        pointer.sync().await?;
+        let stage = if pointer.pressing() {
+            Stage::Pressed
+        } else {
+            Stage::Unpressed
+        };
+        gate.pass(stage).await
     }
 
     /// Removes the marker after a gesture niri has handled whole.
@@ -486,6 +586,17 @@ impl Device {
     /// Removes the marker of a gesture refused before anything of it went out.
     async fn discard(self) -> Result<(), ToolError> {
         self.clear("nothing was sent").await
+    }
+
+    /// Releases what a gesture stopped midway still holds, and removes the marker once
+    /// niri has handled that, as a drop would, but before the call returns.
+    async fn abandon(mut self) -> Result<(), ToolError> {
+        let (Some(mut pointer), Some(marker)) = (self.pointer.take(), self.marker.take()) else {
+            // No marker: nothing was pressed or held.
+            return Ok(());
+        };
+        pointer.release_all();
+        release(pointer, self.held.take(), marker).await
     }
 
     /// Removes the marker; if that fails, the error starts with `done`, what happened to

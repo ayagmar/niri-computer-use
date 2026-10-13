@@ -2606,6 +2606,106 @@ async fn an_app_id_that_becomes_denied_before_the_input_went_out_refuses_it() {
     }
 }
 
+/// Starts a drag from the Safe button, or from pixel (5, 5), to pixel (300, 200) through
+/// a fresh screenshot, holds its `sync`th round trip with niri's display, the first two
+/// being the pointer's setup, makes `event` happen meanwhile, and returns the result and
+/// what the pointer sent.
+async fn drag_moved_at_sync(
+    test: &str,
+    at_element: bool,
+    sync: usize,
+    event: &Value,
+) -> (Value, Vec<Pointed>) {
+    let windows = [floating_window()];
+    let mut desk = Desk::start_with(test, &["/frame"], objects(), &windows).await;
+    let button = desk.element("Safe").await;
+    let shot = desk.screenshot_ref().await;
+    let from = if at_element {
+        json!({"element": button})
+    } else {
+        json!({"x": 5, "y": 5})
+    };
+    let points = desk.fixture.points();
+    points.start();
+    let held = points.hold("wayland:sync", sync);
+    let dragged = json!({"screenshot_ref": shot, "from": from, "to": {"x": 300, "y": 200}});
+    let id = desk.server.start_call("drag", dragged).await;
+    held.arrived().await;
+    desk.moved(event).await;
+    held.release();
+    let result = desk.server.response(id).await["result"].clone();
+    (result, desk.fixture.clipboard.pointed())
+}
+
+/// Asserts that `result` is an `uncertain` outcome whose detail says `why` and that the
+/// gesture stopped.
+fn stopped_midway(result: &Value, why: &str, tag: &str) {
+    assert_eq!(result["isError"], false, "{tag}: {result}");
+    let outcome = &result["structuredContent"];
+    assert_eq!(outcome["observed"], "uncertain", "{tag}: {outcome}");
+    let detail = outcome["detail"].as_str().unwrap();
+    assert!(detail.starts_with(why), "{tag}: {detail}");
+    assert!(
+        detail.contains("the gesture stopped there and every button and key it held was released"),
+        "{tag}: {detail}"
+    );
+}
+
+// niri can switch a workspace or open the overview while a drag rests on its start, after
+// the look before its first input. The look after that rest stops the drag before its
+// press, from an element or a pixel alike: only the motion went out, so the outcome is
+// uncertain, not a refusal.
+#[tokio::test]
+async fn a_drag_stops_before_its_press_when_the_view_moved_during_its_hover() {
+    let overview = json!({"OverviewOpenedOrClosed": {"is_open": true}});
+    for at_element in [true, false] {
+        let test = format!("el-hover-{}", u8::from(at_element));
+        let (result, sent) = drag_moved_at_sync(&test, at_element, 3, &overview).await;
+        let tag = format!("element: {at_element}");
+        stopped_midway(
+            &result,
+            "niri switched a workspace or opened or closed the overview",
+            &tag,
+        );
+        assert!(
+            matches!(sent.as_slice(), [Pointed::Motion(..)]),
+            "{tag}: {sent:?}"
+        );
+    }
+}
+
+// While a drag holds its button, a workspace switch stops it: the button is released where
+// the pointer is, and no more motion goes out. A window moving doesn't, since dragging a
+// window by its title bar moves it, and the drag goes on to its end.
+#[tokio::test]
+async fn a_held_drag_stops_on_a_workspace_switch_but_not_on_a_window_moving() {
+    let switch = json!({"WorkspaceActivated": {"id": 1, "focused": true}});
+    let (result, sent) = drag_moved_at_sync("el-held-switch", true, 4, &switch).await;
+    stopped_midway(&result, "niri switched a workspace", "switch");
+    assert!(
+        matches!(
+            sent.as_slice(),
+            [
+                Pointed::Motion(..),
+                Pointed::Button(272, 1),
+                Pointed::Button(272, 0)
+            ]
+        ),
+        "{sent:?}"
+    );
+    let mut moved = floating_window();
+    moved["layout"]["tile_pos_in_workspace_view"] = json!([40.0, 20.0]);
+    let layout = json!({"WindowLayoutsChanged": {"changes": [[WINDOW, moved["layout"]]]}});
+    let (dragged, all) = drag_moved_at_sync("el-held-layout", true, 4, &layout).await;
+    assert_eq!(dragged["isError"], false, "{dragged}");
+    assert_eq!(
+        dragged["structuredContent"]["observed"], "sent",
+        "{dragged}"
+    );
+    // The start, the press, ten steps and the release.
+    assert_eq!(all.len(), 13, "{all:?}");
+}
+
 /// Aims `tool` at the Safe button, sends `event` once the pointer is being set up and
 /// before anything went out, and requires the aim refused with nothing sent. A click has
 /// marked input as possibly stuck by then, and the refusal must clear that, so a pixel
