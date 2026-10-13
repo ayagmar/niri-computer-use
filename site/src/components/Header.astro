@@ -7,12 +7,9 @@ import Search from '@astrojs/starlight/components/Search.astro';
 import SiteTitle from '@astrojs/starlight/components/SiteTitle.astro';
 import SocialIcons from '@astrojs/starlight/components/SocialIcons.astro';
 import ThemeSelect from '@astrojs/starlight/components/ThemeSelect.astro';
-import { timeline, workspaces } from '../lib/workspaces.mjs';
+import { workspaces } from '../lib/workspaces.mjs';
 
 const home = Astro.locals.starlightRoute.id === '';
-// Each pill follows its section's view timeline, which needs the name in scope on an
-// element above both.
-const scope = `body{timeline-scope:${workspaces.map(({ id }) => timeline(id)).join(',')}}`;
 ---
 
 {
@@ -21,11 +18,14 @@ const scope = `body{timeline-scope:${workspaces.map(({ id }) => timeline(id)).jo
 			<div class="title">
 				<SiteTitle />
 			</div>
+			<p class="here" data-here aria-hidden="true">
+				<span>{workspaces[0].name}</span>
+			</p>
 			<nav class="workspaces" aria-label="Sections">
-				<style is:inline set:html={scope} />
-				{workspaces.map(({ id, name }) => (
-					<a href={`#${id === 'demo' ? '_top' : id}`} style={`animation-timeline: ${timeline(id)}`}>
+				{workspaces.map(({ id, name }, index) => (
+					<a href={`#${id === 'demo' ? '_top' : id}`} data-pill={id}>
 						{name}
+						{index === 0 && <ncu-ring class="ncu-lit" aria-hidden="true"></ncu-ring>}
 					</a>
 				))}
 			</nav>
@@ -34,9 +34,9 @@ const scope = `body{timeline-scope:${workspaces.map(({ id }) => timeline(id)).jo
 				<span class="held">held by the agent</span>
 			</p>
 			<a class="stop" href="#ncu-stop-title" aria-label="The stop key, Mod+Shift+Escape">
-				<kbd>Mod</kbd>
-				<kbd>Shift</kbd>
-				<kbd>Esc</kbd>
+				<kbd data-key="mod">Mod</kbd>
+				<kbd data-key="shift">Shift</kbd>
+				<kbd data-key="esc">Esc</kbd>
 			</a>
 			<div class="search">
 				<Search />
@@ -59,7 +59,9 @@ const scope = `body{timeline-scope:${workspaces.map(({ id }) => timeline(id)).jo
 		height: 100%;
 	}
 
+	/* The name never gives up width; search, the flexible item, does. */
 	.title {
+		flex-shrink: 0;
 		min-width: 0;
 		overflow: clip;
 		padding: 0.25rem;
@@ -82,8 +84,10 @@ const scope = `body{timeline-scope:${workspaces.map(({ id }) => timeline(id)).jo
 		gap: 0.35rem;
 	}
 
-	/* A workspace pill, lit while its section crosses the middle of the view. */
+	/* A workspace pill. The one for the section in view is lit by a ring that slides along
+	   the bar to it, so the pills themselves never change size. */
 	.workspaces a {
+		position: relative;
 		padding: 0.15rem 0.6rem;
 		border: 1px solid var(--ncu-rule);
 		border-radius: 999px;
@@ -91,22 +95,41 @@ const scope = `body{timeline-scope:${workspaces.map(({ id }) => timeline(id)).jo
 		line-height: 1.4;
 		color: var(--sl-color-gray-3);
 		text-decoration: none;
-		animation: ncu-lit linear;
-		animation-range: cover 50vh cover calc(100% - 50vh);
-		transition: color 150ms ease;
+		transition: color 200ms ease;
 	}
 
-	.workspaces a:hover {
+	.workspaces a:hover,
+	.workspaces a[aria-current] {
 		color: var(--sl-color-white);
 	}
 
-	@keyframes ncu-lit {
-		from,
-		to {
-			padding-inline: 1rem;
-			border-color: var(--ncu-ring);
-			color: var(--sl-color-white);
-		}
+	.ncu-lit {
+		position: absolute;
+		inset: -1px;
+		border: 1px solid var(--ncu-ring);
+		border-radius: 999px;
+		pointer-events: none;
+	}
+
+	/* On a screen too narrow for the pills, the name of the workspace in view, in a lit pill.
+	   Names change by sliding, as niri's workspaces do. */
+	.here {
+		display: grid;
+		justify-items: center;
+		min-width: 4.5rem;
+		margin: 0;
+		padding: 0.15rem 0.6rem;
+		border: 1px solid var(--ncu-ring);
+		border-radius: 999px;
+		overflow: clip;
+		font-size: var(--sl-text-xs);
+		line-height: 1.4;
+		color: var(--sl-color-white);
+		white-space: nowrap;
+	}
+
+	.here > :global(span) {
+		grid-area: 1 / 1;
 	}
 
 	.lease {
@@ -120,6 +143,9 @@ const scope = `body{timeline-scope:${workspaces.map(({ id }) => timeline(id)).jo
 		font-size: 0.7rem;
 		color: var(--sl-color-gray-3);
 		white-space: nowrap;
+		transition:
+			color 200ms ease,
+			border-color 200ms ease;
 	}
 
 	.lease .held,
@@ -152,10 +178,23 @@ const scope = `body{timeline-scope:${workspaces.map(({ id }) => timeline(id)).jo
 		font-size: 0.7rem;
 		color: var(--sl-color-gray-2);
 		background: none;
+		transition:
+			border-color 80ms ease,
+			border-width 80ms ease,
+			color 80ms ease;
 	}
 
 	.stop:hover kbd {
 		border-color: var(--sl-color-gray-3);
+		color: var(--sl-color-white);
+	}
+
+	/* A key held down on the reader's keyboard sinks: its travel moves from the bottom edge
+	   to the top, so the key's box keeps its size. */
+	.stop kbd:global(.down) {
+		border-color: var(--ncu-ring);
+		border-top-color: transparent;
+		border-width: 2px 1px 1px;
 		color: var(--sl-color-white);
 	}
 
@@ -186,10 +225,22 @@ const scope = `body{timeline-scope:${workspaces.map(({ id }) => timeline(id)).jo
 		}
 	}
 
-	@media (min-width: 78rem) {
+	@media (min-width: 80rem) {
 		.workspaces {
 			display: flex;
 			margin-inline-start: 1rem;
+		}
+
+		.here {
+			display: none;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.workspaces a,
+		.lease,
+		.stop kbd {
+			transition: none;
 		}
 	}
 </style>

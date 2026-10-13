@@ -7,6 +7,3 @@ export const workspaces = [
 	{ id: 'limits', name: 'limits' },
 	{ id: 'install', name: 'install' },
 ];
-
-/** The scroll timeline a section publishes and its pill follows. */
-export const timeline = (id) => `--ncu-ws-${id}`;

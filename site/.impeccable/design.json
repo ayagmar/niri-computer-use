@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-13T19:29:24+00:00",
+  "generatedAt": "2026-10-13T20:40:00+00:00",
   "title": "Design System: niri-computer-use",
   "extensions": {
     "colorMeta": {
@@ -421,18 +421,18 @@
         "purpose": "Keyboard focus on every element."
       },
       {
-        "name": "window-ring",
-        "value": "outline: 2px solid var(--ncu-ring); outline-offset: 2px",
-        "purpose": "The focused promise window in the hero."
+        "name": "page-ring",
+        "value": "2px solid var(--ncu-ring) at inset -4px, radius calc(var(--ncu-radius) + 4px), on one <ncu-ring> element",
+        "purpose": "The page's one focus ring: on the promise window first, then on the focused column of the section crossing the middle of the view."
       },
       {
-        "name": "column-ring",
-        "value": "2px solid var(--ncu-ring) at inset -4px, radius calc(var(--ncu-radius) + 4px)",
-        "purpose": "The focused column of the section in view."
+        "name": "pill-ring",
+        "value": "1px solid var(--ncu-ring) at inset -1px, radius 999px, on an <ncu-ring> element",
+        "purpose": "The lit workspace pill in the bar."
       },
       {
         "name": "call-ring",
-        "value": "outline: 1px solid var(--ncu-ring); border-radius: 6px",
+        "value": "1px solid var(--ncu-ring) at inset 0, radius 6px, on an <ncu-ring> element",
         "purpose": "The call the recording is showing."
       }
     ],
@@ -444,32 +444,52 @@
       },
       {
         "name": "strip-open",
-        "value": "translateX(2.5rem) to 0, 520ms cubic-bezier(0.16, 1, 0.3, 1)",
-        "purpose": "The hero strip settles in as a newly opened niri window. Off under reduced motion."
+        "value": "each hero column translate 4rem to 0, 680ms cubic-bezier(0.16, 1, 0.3, 1), delays 0, 70, 140ms",
+        "purpose": "The hero's columns open from the right as niri opens columns. Off under reduced motion."
       },
       {
-        "name": "window-focus",
-        "value": "outline-color from var(--ncu-rule) to var(--ncu-ring), 260ms ease-out, 360ms delay",
-        "purpose": "The promise window's ring lands after the strip. Off under reduced motion."
+        "name": "ring-land",
+        "value": "border-color from var(--ncu-rule) and scale 1.012 to amber and 1, 320ms cubic-bezier(0.16, 1, 0.3, 1), 420ms delay",
+        "purpose": "The page's ring lands on the promise window once the columns are in. Off under reduced motion."
       },
       {
-        "name": "column-ring",
-        "value": "animation-timeline: <section view timeline>; animation-range: cover 50vh cover calc(100% - 50vh); opacity 0 to 1 and scale 0.99 to 1 by 12%, held to 88%, out by 100%",
-        "purpose": "The ring on the focused column of the section in view. Under reduced motion it shows across the same range without the fade; without scroll timelines it does not show."
+        "name": "ring-move",
+        "value": "re-parent, then translate and width/height from the old box, cubic-bezier(0.16, 1, 0.3, 1), 220 + 0.35 x distance ms, at most 560ms; a move over a third of the view's height instead lands at the new size, translate 3rem along the path and opacity 0 to 1, 420ms",
+        "purpose": "Every ring moving to what has focus: the page's ring between sections, the lit pill, the current call. Instant under reduced motion."
       },
       {
-        "name": "pill-lit",
-        "value": "same section timeline and range; padding-inline 1rem, amber border, white text",
-        "purpose": "The workspace pill of the section in view."
+        "name": "workspace-label",
+        "value": "old name out by 100% vertically 200ms, new name in from 100% 320ms, cubic-bezier(0.16, 1, 0.3, 1); up when moving down the page",
+        "purpose": "The bar's workspace name below 80rem. Instant under reduced motion."
+      },
+      {
+        "name": "column-arrive",
+        "value": "from 50rem: animation-timeline: view(); animation-range: entry 0% entry 33vh; translate 3rem to 0, cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Section columns side by side arriving from the right. Off on stacked phones, under reduced motion and without scroll timelines."
       },
       {
         "name": "call-follow",
-        "value": "outline-color 200ms ease-out; list scrolls smoothly to keep the current call a third down",
-        "purpose": "The call log following the hero recording."
+        "value": "call text color 200ms ease-out; list scrolls smoothly to keep the current call a third down",
+        "purpose": "The call log following its recording."
+      },
+      {
+        "name": "key-press",
+        "value": "border-width 3px/1px swap (top/bottom) with transparent top, 80ms",
+        "purpose": "A keycap sinking while the reader holds the key; no change in size."
+      },
+      {
+        "name": "details-open",
+        "value": "::details-content height 0 to auto, interpolate-size: allow-keywords, 360ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "The All N calls disclosure. Off under reduced motion."
+      },
+      {
+        "name": "page-transition",
+        "value": "@view-transition { navigation: auto }, header view-transition-name ncu-header; scroll-behavior: smooth on the home page",
+        "purpose": "Between pages and to anchors. Off under reduced motion."
       },
       {
         "name": "demo-playback",
-        "value": "play at 35% in view after page load, pause otherwise; never under reduced motion or save-data",
+        "value": "play at 35% in view after page load, pause otherwise; never under reduced motion or save-data; stays stopped after the stop keycaps are pressed until played",
         "purpose": "Recordings."
       }
     ],
@@ -496,7 +516,7 @@
       },
       {
         "name": "bar-pills",
-        "value": "78rem",
+        "value": "80rem",
         "purpose": "From here: the bar shows the workspace pills."
       }
     ],
@@ -594,7 +614,7 @@
       "refersTo": "workspace-pill",
       "description": "The bar's sections; the one in view is lit.",
       "html": "<nav class=\"ds-pills\"><a href=\"#\">demo</a><a href=\"#\" class=\"ds-lit\">tools</a><a href=\"#\">gate</a><a href=\"#\">safety</a></nav>",
-      "css": ".ds-pills { display:flex; gap:.35rem; } .ds-pills a { padding:.15rem .6rem; border:1px solid var(--ncu-rule,#2a2e32); border-radius:999px; font-family:'Archivo Variable',ui-sans-serif,system-ui,sans-serif; font-size:.8125rem; line-height:1.4; color:var(--sl-color-gray-3,#8b9399); text-decoration:none; transition:color 150ms ease; } .ds-pills a:hover { color:var(--sl-color-white,#eef0f1); } .ds-pills a.ds-lit { padding-inline:1rem; border-color:var(--ncu-ring,#f2a33a); color:var(--sl-color-white,#eef0f1); } .ds-pills a:focus-visible { outline:2px solid var(--ncu-ring,#f2a33a); outline-offset:2px; }"
+      "css": ".ds-pills { display:flex; gap:.35rem; } .ds-pills a { padding:.15rem .6rem; border:1px solid var(--ncu-rule,#2a2e32); border-radius:999px; font-family:'Archivo Variable',ui-sans-serif,system-ui,sans-serif; font-size:.8125rem; line-height:1.4; color:var(--sl-color-gray-3,#8b9399); text-decoration:none; transition:color 150ms ease; } .ds-pills a:hover { color:var(--sl-color-white,#eef0f1); } .ds-pills a.ds-lit { border-color:var(--ncu-ring,#f2a33a); color:var(--sl-color-white,#eef0f1); } .ds-pills a:focus-visible { outline:2px solid var(--ncu-ring,#f2a33a); outline-offset:2px; }"
     },
     {
       "name": "Lease Tag",
@@ -615,13 +635,14 @@
   ],
   "narrative": {
     "northStar": "The Column in Focus",
-    "overview": "The home page is drawn as a niri screen. A bar runs across the top with the page's sections as workspace pills, a lease tag and the stop key. Under it, edge to edge, sits a strip of graphite windows split by niri's 16px gaps: the focused promise window wearing the amber ring, a column holding the recording above the agent's call log, and a stop-key window that runs off the right edge until the screen is wide enough for it. Below the strip each section is a workspace of columns, and as the page scrolls the ring moves to the focused column of the section in view while its pill in the bar lights, the way niri marks the window and workspace you moved to. Starlight supplies search, the sidebar on docs pages and the theme switch; the system lives in the theme tokens and the components layered on top.\n\nEvidence is the decoration. The recordings are real Claude Code sessions on a real niri desktop, each with a note saying so and naming its output. The calls beside them are the requests and answers from the same run, written as `→ request` and `← answer · ms`; while the hero recording plays, the call it shows wears the ring, the calls still to come dim, and the bar's lease tag turns held and free with the run. There are no illustrations, gradient fills, glows or shadows. The page is dense and quiet, and color is spent only on focus, action and refusal.\n\nBoth themes are first class. Dark is graphite with a bright amber ring; light is pale paper with the amber deepened to a brown that holds contrast on white. The browser's own parts follow: text selection takes the low amber, the caret is amber, and scrollbars are gray on the page color.",
+    "overview": "The home page is drawn as a niri screen. A bar runs across the top with the page's sections as workspace pills, a lease tag and the stop key. Under it, edge to edge, sits a strip of graphite windows split by niri's 16px gaps: the focused promise window wearing the amber ring, a column holding the recording above the agent's call log, and a stop-key window that runs off the right edge until the screen is wide enough for it. Below the strip each section is a workspace of columns. The page has one focus ring, as niri has one focused window: as the page scrolls, the ring slides from the promise window into the focused column of the section in view, and the bar's lit pill slides to that section's workspace. Starlight supplies search, the sidebar on docs pages and the theme switch; the system lives in the theme tokens and the components layered on top.\n\nEvidence is the decoration. The recordings are real Claude Code sessions on a real niri desktop, each with a note saying so and naming its output. The calls beside them are the requests and answers from the same run, written as `→ request` and `← answer · ms`; while the hero recording plays, a ring moves down the list with the call it shows, the calls still to come dim, and the bar's lease tag turns held and free with the run. There are no illustrations, gradient fills, glows or shadows. The page is dense and quiet, and color is spent only on focus, action and refusal.\n\nBoth themes are first class. Dark is graphite with a bright amber ring; light is pale paper with the amber deepened to a brown that holds contrast on white. The browser's own parts follow: text selection takes the low amber, the caret is amber, and scrollbars are gray on the page color.",
     "keyCharacteristics": [
       "Graphite windows and 1px rules on niri's 16px gaps, no shadows.",
       "One accent, amber, taken from the focus ring.",
       "Red only for an answer that refused or stopped.",
       "Archivo for prose and headings, JetBrains Mono for calls, keys, geometry and metadata.",
-      "State shown the way niri shows it: a ring that moves, a pill that lights, a tag that goes held."
+      "State shown the way niri shows it: a ring that moves, a pill that lights, a tag that goes held.",
+      "Motion in niri's directions: columns arrive from the right, workspaces change vertically, focus slides."
     ],
     "rules": [
       {

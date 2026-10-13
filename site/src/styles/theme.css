@@ -94,7 +94,26 @@
 	scrollbar-color: var(--sl-color-gray-5) var(--sl-color-black);
 }
 
-/* The home page's screen runs edge to edge; nothing else may widen the page. */
-[data-has-hero] body {
+/* The home page's screen runs edge to edge, and its windows and columns slide in from the
+   right; none of it may widen the page. The clip sits on the pane holding the content, as
+   wide as the window, so a ring just outside a column still shows; on the root, phones
+   would widen the page anyway. */
+[data-has-hero] .main-pane {
 	overflow-x: clip;
+}
+
+/* Moving between pages crossfades while the header holds still, and links within the home
+   page scroll to their section rather than jump. */
+@media (prefers-reduced-motion: no-preference) {
+	@view-transition {
+		navigation: auto;
+	}
+
+	.header {
+		view-transition-name: ncu-header;
+	}
+
+	:root[data-has-hero] {
+		scroll-behavior: smooth;
+	}
 }
