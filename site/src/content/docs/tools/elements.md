@@ -32,7 +32,7 @@ Read-only, and needs no lease. It lists showing elements in the app's order: by 
 | `walked` | how many accessible objects the walk read |
 | `capped` | the walk stopped early, so elements further on are missing |
 | `capped_reason` | why: `node_cap` at its cap of 2000 objects, or `budget_exhausted` when the walk's three seconds, or the second for naming actions, ran out; null when not capped |
-| `building` | present and true when the app built its tree at this call's asking, as Chromium does only once something asks for it, so the page's elements may still be on their way: list again a second later |
+| `building` | present and true when the app started building its tree at this call's asking, as Chromium does only once something asks for it, so the page's elements may still be on their way: list again a second later |
 
 In `compact` format, the text is a line about the walk, then one line per element:
 

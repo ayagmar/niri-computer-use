@@ -334,3 +334,24 @@ async fn a_frame_without_its_tree_is_asked_for_its_attributes_and_read_again() {
     assert_eq!(desk.mock.calls("GetAttributes"), 1);
     assert_eq!(desk.mock.listeners(), [""; 0]);
 }
+
+/// A frame that stays without its tree when asked isn't building it, so the listing doesn't
+/// send the agent back for more.
+#[tokio::test]
+async fn a_frame_that_builds_nothing_when_asked_isnt_reported_as_building() {
+    let mut objects = objects();
+    let frame = objects
+        .iter_mut()
+        .find(|(path, _)| *path == "/frame")
+        .map(|(_, object)| object)
+        .unwrap();
+    frame.children = vec!["/org/a11y/atspi/null".to_owned()];
+    frame.built = Some(frame.children.clone());
+    let mut desk = Desk::start_with("acc-unbuilt", "", app_window(WINDOW, true), objects).await;
+    let listing = desk
+        .server
+        .structured_with("elements", json!({"window_id": WINDOW, "format": "json"}))
+        .await;
+    assert_eq!(desk.mock.calls("GetAttributes"), 1);
+    assert_eq!(listing.get("building"), None, "{listing}");
+}

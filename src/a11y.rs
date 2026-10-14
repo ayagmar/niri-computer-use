@@ -479,9 +479,10 @@ impl Request {
     /// `frame` with its tree built, and whether it was built just now: a frame whose
     /// children are all null references, as Chromium's are until an assistive technology
     /// asks for an object's attributes, is asked for its own, then read again. Chromium
-    /// then builds its own window's tree at once and the page's within a second or so.
+    /// then builds its own window's tree at once and the page's within a second or so. A
+    /// frame read again with no child but null references built nothing.
     async fn built(&self, bus: &str, frame: Node) -> Result<(Node, bool), ToolError> {
-        if frame.children.is_empty() || frame.children.iter().any(|child| child.path != NULL) {
+        if frame.children.is_empty() || has_tree(&frame) {
             return Ok((frame, false));
         }
         let attributes = self
@@ -495,7 +496,8 @@ impl Request {
             return Err(error);
         }
         let read = self.node(bus, &frame.path).await?.unwrap_or(frame);
-        Ok((read, true))
+        let building = has_tree(&read);
+        Ok((read, building))
     }
 
     /// The node at `path` in application `bus`, or `None` once it is gone. A node without
@@ -891,6 +893,11 @@ fn standard_name(name: &OwnedErrorName, reply: &Message) -> String {
 
 fn upstream(what: &str, error: &zbus::Error) -> ToolError {
     ToolError::new(ErrorName::UpstreamError, format!("{what}: {error}"))
+}
+
+/// Whether `node` has a child that isn't AT-SPI's null reference.
+fn has_tree(node: &Node) -> bool {
+    node.children.iter().any(|child| child.path != NULL)
 }
 
 /// Why `not_accessible` for an application that isn't on the bus.
