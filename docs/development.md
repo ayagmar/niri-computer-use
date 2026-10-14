@@ -116,7 +116,7 @@ npm run preview
 
 Besides the HTML, the build writes a Markdown copy of every page (`<page>.md`), `llms.txt`, `llms-full.txt`, and the skill from `skills/niri-computer-use/` under `skill/`. The home page's recordings and their stills are real sessions on a desktop set up for them, as [Demo recordings](#demo-recordings) describes; other images come from nested runs (`target/e2e/<run>/`).
 
-CI builds the site on every push and pull request. `.github/workflows/pages.yml` deploys it to GitHub Pages on every push to `main` that touches `site/` or `skills/`.
+CI builds the site on every push and pull request. `.github/workflows/pages.yml` deploys it to GitHub Pages on every push to `main` that touches `site/`, `skills/` or `Cargo.toml`, since the home page shows the crate's version.
 
 ## Nested harness
 
