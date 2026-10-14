@@ -71,11 +71,12 @@ With Rust 1.99 or newer and libxkbcommon's headers (`libxkbcommon-dev` on Debian
 cargo install --locked niri-computer-use
 ```
 
-From source, rustup installs the Rust version the repository pins, and the skill is in the clone at `niri-computer-use/skills/niri-computer-use`:
+From source, run `cargo install` inside the clone. rustup takes the Rust version the repository pins from `rust-toolchain.toml` in the current directory, so outside the clone it builds with your default toolchain instead. The skill is in the clone at `skills/niri-computer-use`:
 
 ```sh
 git clone https://github.com/ayagmar/niri-computer-use.git
-cargo install --locked --path niri-computer-use
+cd niri-computer-use
+cargo install --locked --path .
 ```
 
 ## Quickstart

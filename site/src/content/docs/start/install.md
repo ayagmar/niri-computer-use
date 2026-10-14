@@ -75,14 +75,15 @@ cargo install --locked niri-computer-use
 
 The crate has no skill; take it from the release tarball or a clone.
 
-From source, rustup installs the Rust version the repository pins in `rust-toolchain.toml`:
+From source, run `cargo install` inside the clone. rustup takes the Rust version the repository pins from `rust-toolchain.toml` in the current directory, so outside the clone it builds with your default toolchain instead:
 
 ```sh
 git clone https://github.com/ayagmar/niri-computer-use.git
-cargo install --locked --path niri-computer-use
+cd niri-computer-use
+cargo install --locked --path .
 ```
 
-The skill is in the clone at `niri-computer-use/skills/niri-computer-use`. To update, run `git -C niri-computer-use pull` and the same `cargo install` again.
+The skill is in the clone at `skills/niri-computer-use`. To update, run `git pull` and the same `cargo install` again, inside the clone.
 
 Updating while agents run is safe. A [shared](../../concepts/configuration/#shared) engine keeps serving the clients it has with the build it started with, and their `status.engine.replaced` turns `true`. Clients started after the update are served standalone, sharing the lease, the stop flag and the input-dirty marker, and their `status.engine.fallback` names the old engine's PID. Once the old engine's last client has ended it exits, two seconds later, and the next client starts an engine of the new build. Restart your agent sessions to move all of them to the new build. This lists the processes still running:
 
