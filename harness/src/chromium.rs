@@ -193,8 +193,8 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str, browser: &str) -> Res
     let mut client = Client::start(session, server, "harness-chromium", SERVER_DEADLINE)?;
     mcp::ready(session, &mut client, "chromium-ready", READY)?;
     structured(&client.call(session, "acquire_desktop", json!({}))?)?;
-    let process = start(session, browser)?;
-    let page = Page::open(session)?;
+    let mut process = start(session, browser)?;
+    let page = Page::open(session, &mut process)?;
     let differed = cases(session, &mut client, &page)?;
     structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     process.terminate(TERM_GRACE)?;
@@ -272,13 +272,19 @@ struct Page {
 }
 
 impl Page {
-    /// Waits for the page's title, then for niri's focus on its window.
-    fn open(session: &mut Session<'_>) -> Result<Self> {
+    /// Waits for the page's title, then for niri's focus on its window. A browser that
+    /// exits first fails the wait at once, with its exit status and where its log is.
+    fn open(session: &mut Session<'_>, browser: &mut Process) -> Result<Self> {
         let window = session.wait_until(
             "chromium-window",
             "the fixture page's window",
             STARTUP,
             |session| {
+                browser.ensure_running().map_err(|failure| {
+                    Failure::new(format!(
+                        "the browser ended before its window opened: {failure}"
+                    ))
+                })?;
                 Ok(windows(session)?
                     .into_iter()
                     .find(|window| units(window).is_some()))
