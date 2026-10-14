@@ -47,7 +47,7 @@ const quoted = (text: string) => text.replace(/`/g, '');
 		</div>
 		<span class="packet" data-packet aria-hidden="true"></span>
 	</div>
-	<output class="answer" data-answer>
+	<output class="answer" data-answer aria-live="off">
 		<span>Pick a row below to send an action through the checks.</span>
 	</output>
 	<div class="table">
@@ -104,6 +104,7 @@ const quoted = (text: string) => text.replace(/`/g, '');
 		const agent = root.querySelector<HTMLElement>('[data-node="agent"]')!;
 		const buttons = [...root.querySelectorAll<HTMLButtonElement>('[data-run]')];
 		let running: Animation | null = null;
+		let timers: number[] = [];
 
 		// The action runs along the wires and over the checks' top edges (their left edges
 		// when the diagram stands upright), so it never covers their names.
@@ -118,19 +119,23 @@ const quoted = (text: string) => text.replace(/`/g, '');
 			};
 		};
 
-		const say = (button: HTMLButtonElement) => {
+		// The answer is announced only for a row the reader picked, not for the demo run.
+		const say = (button: HTMLButtonElement, asked: boolean) => {
 			const refused = button.dataset.error;
 			const lines = refused
 				? [`← refused: ${refused}`, button.dataset.detail!]
 				: [`← ${button.dataset.answer}`];
+			answer.setAttribute('aria-live', asked ? 'polite' : 'off');
 			answer.dataset.kind = refused ? 'error' : 'pass';
 			answer.replaceChildren(
 				...lines.map((line) => Object.assign(document.createElement('code'), { textContent: line })),
 			);
 		};
 
-		const run = (index: number) => {
+		const run = (index: number, asked = true) => {
 			const button = buttons[index];
+			timers.forEach(clearTimeout);
+			timers = [];
 			const stopAt = index < checks.length ? index : -1;
 			buttons.forEach((other) => other.setAttribute('aria-pressed', String(other === button)));
 			root.querySelectorAll('tr[data-row]').forEach((row, other) => row.classList.toggle('on', other === index));
@@ -149,7 +154,7 @@ const quoted = (text: string) => text.replace(/`/g, '');
 						{ duration: 420, easing: 'ease-out' },
 					);
 				} else niri.classList.add('ok');
-				say(button);
+				say(button, asked);
 			};
 			if (reduce.matches) {
 				packet.style.opacity = '0';
@@ -168,22 +173,28 @@ const quoted = (text: string) => text.replace(/`/g, '');
 				{ duration: HOP * (points.length - 1), easing: 'linear', fill: 'forwards' },
 			);
 			// Each check lights up as the action passes it.
-			path.slice(1).forEach((node, step) => {
-				setTimeout(() => {
+			timers = path.slice(1).map((node, step) =>
+				window.setTimeout(() => {
 					if (node.classList.contains('check') && node !== checks[stopAt]) node.classList.add('ok');
-				}, HOP * (step + 1));
-			});
+				}, HOP * (step + 1)),
+			);
 			running.finished.then(finish, () => {});
 		};
 
-		buttons.forEach((button, index) => button.addEventListener('click', () => run(index)));
-
-		// Once in view: one action that passes, then one the stop flag refuses.
+		// Once in view: one action that passes, then one the stop flag refuses, unless the
+		// reader has picked a row by then.
+		let demo = 0;
+		buttons.forEach((button, index) =>
+			button.addEventListener('click', () => {
+				clearTimeout(demo);
+				run(index);
+			}),
+		);
 		const seen = new IntersectionObserver(([entry]) => {
 			if (!entry.isIntersecting) return;
 			seen.disconnect();
-			run(buttons.length - 1);
-			if (!reduce.matches) setTimeout(() => run(0), HOP * (checks.length + 2) + 1400);
+			run(buttons.length - 1, false);
+			if (!reduce.matches) demo = window.setTimeout(() => run(0, false), HOP * (checks.length + 2) + 1400);
 		}, { threshold: 0.5 });
 		seen.observe(flow);
 	}
