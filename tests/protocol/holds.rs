@@ -4,7 +4,7 @@
 //! since `start` are the trace of the calls in between, in order, so a test can find every
 //! reply a call awaited instead of listing them, and hold any one of them back until it
 //! releases it. Every fake started on a fixture passes the fixture's points, and a fake
-//! program can too: `loginctl` or `wtype` as the program's name.
+//! program can too, `loginctl` passing `loginctl`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;

@@ -1,6 +1,7 @@
 //! Native C10: the UTF-8 corpus, with the symbols the nested layout lacks on spare keys
-//! of a call-long extended keymap. An unfocused client saves every map niri sends, so
-//! the check compares contents: the compositor's map must come back byte for byte.
+//! of a call-long extended keymap, and a text needing more spare keys than the map has, in
+//! parts with a map each. An unfocused client saves every map niri sends, so the check
+//! compares contents: the compositor's map must come back byte for byte.
 
 use std::ffi::OsString;
 use std::fs;
@@ -11,9 +12,10 @@ use niri_ipc::{Action, KeyboardLayouts, LayoutSwitchTarget, Request, Response};
 use rustix::process::{Pid, Signal, kill_process};
 use serde_json::{Value, json};
 
+use super::physical::{self, Physical};
 use super::{WAIT, Wev, stop};
 use crate::failure::{Context as _, Failure, Result};
-use crate::keyboard::{self, CORPUS};
+use crate::keyboard::{self, CORPUS, PARTS};
 use crate::keymaps;
 use crate::mcp::{self, Client, field, structured};
 use crate::runner::Process;
@@ -27,6 +29,7 @@ const QUIET: Duration = Duration::from_millis(300);
 const CANCEL_ATTEMPTS: usize = 8;
 
 pub(super) fn run(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>) -> Result<()> {
+    keyboard::validate_corpus(CORPUS)?;
     let (observer, directory, original) = observe(session, "native")?;
     let mut times = Vec::new();
     for run in 1..=5 {
@@ -46,6 +49,7 @@ pub(super) fn run(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>)
         stop::marker_gone(session)?;
         session.log(&format!("M7 native C10 run {run}: 100 decoded pairs in {:.3} ms, extended keymap sent, then the compositor's keymap byte for byte", elapsed.as_secs_f64() * 1000.0))?;
     }
+    parts(session, client, wev, &directory, &original)?;
     quiet_after(session, client, wev, &directory)?;
     observer.stop()?;
     times.sort_unstable();
@@ -96,34 +100,6 @@ pub(super) fn crash(session: &mut Session<'_>, wev: &Wev<'_>, server: &str) -> R
     ))
 }
 
-/// What wtype's own keymap leaves behind, for comparison only: no physical key follows.
-pub(super) fn wtype_comparison(
-    session: &mut Session<'_>,
-    client: &mut Client,
-    wev: &Wev<'_>,
-) -> Result<()> {
-    let (observer, directory, original) = observe(session, "wtype")?;
-    let offset = wev.offset()?;
-    structured(&client.call(
-        session,
-        "type_text",
-        json!({"text": CORPUS, "expect": {"app_id": "wev"}}),
-    )?)?;
-    keyboard::text(
-        &trace(&keyboard::observed(session, wev.log, offset, 100, false)?)?,
-        CORPUS,
-    )?;
-    // A pause: wtype leaves its map until a physical key, which never comes here.
-    session.still_absent("m7-wtype-keymaps", QUIET, || Ok(false))?;
-    let maps = keymaps::saved(&directory)?;
-    observer.stop()?;
-    session.log(&format!(
-        "M7 wtype C10 keymaps sent after the observer's first: {}; compositor's keymap last: {}",
-        maps.len().saturating_sub(1),
-        maps.last() == Some(&original)
-    ))
-}
-
 pub(super) fn observe(
     session: &mut Session<'_>,
     name: &str,
@@ -163,7 +139,24 @@ fn restored(
     original: &[u8],
     before: usize,
 ) -> Result<()> {
-    let sent = session.wait_until(
+    let sent = sent_back(session, directory, original, before)?;
+    match sent.as_slice() {
+        [extended, _] if extended.as_slice() != original => Ok(()),
+        _ => Err(Failure::new(format!(
+            "M7 native C10: expected the extended keymap then the compositor's, got {} maps",
+            sent.len()
+        ))),
+    }
+}
+
+/// The maps niri sent after the first `before`, once the last is the compositor's.
+fn sent_back(
+    session: &mut Session<'_>,
+    directory: &Path,
+    original: &[u8],
+    before: usize,
+) -> Result<Vec<Vec<u8>>> {
+    session.wait_until(
         "m7-keymap-restored",
         "the compositor's keymap sent back",
         WAIT,
@@ -172,14 +165,139 @@ fn restored(
             let sent = maps.get(before..).unwrap_or_default().to_vec();
             Ok((sent.last().map(Vec::as_slice) == Some(original)).then_some(sent))
         },
+    )
+}
+
+/// `PARTS` in one call: every character must decode exactly, clients must get one
+/// extended map per part, each another than the one before, and then the compositor's
+/// byte for byte.
+fn parts(
+    session: &mut Session<'_>,
+    client: &mut Client,
+    wev: &Wev<'_>,
+    directory: &Path,
+    original: &[u8],
+) -> Result<()> {
+    let before = keymaps::saved(directory)?.len();
+    let offset = wev.offset()?;
+    structured(&client.call(
+        session,
+        "type_text",
+        json!({"text": PARTS, "expect": {"app_id": "wev"}}),
+    )?)?;
+    let count = PARTS.chars().count();
+    keyboard::text(
+        &trace(&keyboard::observed(session, wev.log, offset, count, true)?)?,
+        PARTS,
     )?;
-    match sent.as_slice() {
-        [extended, _] if extended.as_slice() != original => Ok(()),
-        _ => Err(Failure::new(format!(
-            "M7 native C10: expected the extended keymap then the compositor's, got {} maps",
+    let sent = sent_back(session, directory, original, before)?;
+    let extended = sent.split_last().map_or(&[][..], |(_, rest)| rest);
+    if extended.len() < 2
+        || extended.iter().any(|map| map.as_slice() == original)
+        || extended.windows(2).any(|pair| pair.first() == pair.last())
+    {
+        return Err(Failure::new(format!(
+            "M7 native parts: expected an extended keymap per part, each new, then the compositor's, got {} maps",
             sent.len()
-        ))),
+        )));
     }
+    stop::marker_gone(session)?;
+    session.log(&format!(
+        "M7 native parts: {count} characters decoded exactly, {} extended keymaps in turn, then the compositor's byte for byte",
+        extended.len()
+    ))
+}
+
+/// A physical F13, evdev 183, pressed on the cage keyboard while a `PARTS` call's first
+/// extension, which borrows `<FK13>`, is what clients hold. The serving process is stopped
+/// from the extension's arrival until wev has the key. niri must send the compositor's map
+/// before the key, so wev decodes `XF86Tools`, not the borrowed symbol, and the call must
+/// still type `PARTS` exactly and end with the compositor's map.
+pub(super) fn physical_f13(
+    session: &mut Session<'_>,
+    client: &mut Client,
+    wev: &Wev<'_>,
+) -> Result<()> {
+    let Some(mut keyboard) = Physical::connect(session)? else {
+        return session.log(
+            "M7 physical F13 mid-call: skipped (a visible run has no keyboard to press it on)",
+        );
+    };
+    let (observer, directory, original) = observe(session, "physical")?;
+    let serving = serving_pid(session, client)?;
+    let before = keymaps::saved(&directory)?.len();
+    let offset = wev.offset()?;
+    let id = client.start_call(
+        "type_text",
+        json!({"text": PARTS, "expect": {"app_id": "wev"}}),
+    )?;
+    extension_sent(&directory, before)?;
+    signal(serving, Signal::STOP)?;
+    let pressed = keyboard
+        .tap(physical::F13)
+        .and_then(|()| tools_seen(session, wev, offset));
+    signal(serving, Signal::CONT)?;
+    pressed?;
+    let outcome = structured(&client.result(session, id)?)?;
+    if field(&outcome, "/observed") != "sent" {
+        return Err(Failure::new(format!(
+            "M7 physical F13 mid-call: expected the call sent, got {outcome}"
+        )));
+    }
+    let count = PARTS.chars().count();
+    let seen = keyboard::observed(session, wev.log, offset, count + 1, true)?;
+    let typed_before = around_f13(&seen, count)?;
+    let sent = sent_back(session, &directory, &original, before)?;
+    let between = sent.split_last().map_or(&[][..], |(_, rest)| rest);
+    if !between.iter().any(|map| map.as_slice() == original) {
+        return Err(Failure::new(
+            "M7 physical F13 mid-call: niri didn't send the compositor's keymap before the key",
+        ));
+    }
+    stop::marker_gone(session)?;
+    observer.stop()?;
+    session.log(&format!(
+        "M7 physical F13 mid-call: pressed after {typed_before} of {count} characters of an extension that borrows <FK13>, wev decoded XF86Tools for it, niri sent the compositor's keymap before it, and the call still typed all {count} exactly and ended with the compositor's keymap byte for byte ({} keymaps)",
+        sent.len()
+    ))
+}
+
+/// Waits until wev has printed the release of a key that decoded as `XF86Tools`.
+fn tools_seen(session: &mut Session<'_>, wev: &Wev<'_>, offset: usize) -> Result<()> {
+    session.wait_until("m7-physical-f13", "XF86Tools in wev", WAIT, |_| {
+        let log = keyboard::since(wev.log, offset)?;
+        let released = trace(&log)?
+            .keys
+            .iter()
+            .any(|key| key.symbol == "XF86Tools" && !key.pressed);
+        Ok(released.then_some(()))
+    })
+}
+
+/// Checks that `seen` holds one `XF86Tools` press and release and otherwise `PARTS`
+/// exactly, and returns how many characters came before the press, fewer than `count`.
+fn around_f13(seen: &str, count: usize) -> Result<usize> {
+    let mut trace = trace(seen)?;
+    let typed_before = trace
+        .keys
+        .iter()
+        .take_while(|key| key.symbol != "XF86Tools")
+        .filter(|key| key.pressed)
+        .count();
+    let (tools, typed): (Vec<_>, Vec<_>) = trace
+        .keys
+        .into_iter()
+        .partition(|key| key.symbol == "XF86Tools");
+    trace.keys = typed;
+    keyboard::text(&trace, PARTS)?;
+    if !matches!(tools.as_slice(), [press, release] if press.pressed && !release.pressed)
+        || typed_before >= count
+    {
+        return Err(Failure::new(format!(
+            "M7 physical F13 mid-call: expected one XF86Tools press and release before the call's last character, got {tools:?} after {typed_before}"
+        )));
+    }
+    Ok(typed_before)
 }
 
 /// After restoration niri's active map is the compositor's again, so a call that needs
@@ -497,6 +615,10 @@ fn layouts(session: &mut Session<'_>) -> Result<KeyboardLayouts> {
         ));
     };
     Ok(layouts)
+}
+
+pub(super) fn layout_count(session: &mut Session<'_>) -> Result<usize> {
+    Ok(layouts(session)?.names.len())
 }
 
 pub(super) fn current_layout(session: &mut Session<'_>) -> Result<u8> {

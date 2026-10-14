@@ -3,7 +3,6 @@
 //! directory, and it quits niri itself when it is done.
 
 use std::collections::HashMap;
-use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
@@ -19,7 +18,7 @@ use crate::run::ServerChecks;
 use crate::scale::Scale;
 use crate::session::Session;
 use crate::test_dir::TestDir;
-use crate::{capture, keyboard, noctalia};
+use crate::{capture, noctalia};
 
 pub(crate) const STATUS_FILE: &str = "supervise.status";
 pub(crate) const LOG_FILE: &str = "supervise.log";
@@ -94,20 +93,16 @@ pub(crate) fn supervise(
     quit
 }
 
-/// Stage 4: the M0 checks against `wev`, then C13 if it was requested. The pointer's
-/// checks run through the server in `make nested-input`. Noctalia starts
-/// after `wev` is gone, so its bar can't move the window the other checks measure.
+/// Stage 4: the M0 capture checks against `wev`, then C13 if it was requested. The
+/// pointer's and keyboard's checks run through the server in `make nested-input`.
+/// Noctalia starts after `wev` is gone, so its bar can't move the window the other checks
+/// measure.
 fn steps(session: &mut Session<'_>, output: &LogicalOutput, probes: &Probes<'_>) -> Result<()> {
     session.screenshot("success-verify-niri.png")?;
     session.log("saved success-verify-niri.png")?;
-    let wev_log = session.artifact("wev.log");
-    // wev doesn't flush stdout, which is block-buffered into a file, so `stdbuf` makes it
-    // line-buffered for the reads below.
-    let args = ["-oL", "wev"].map(OsString::from);
-    let wev = session.start("stdbuf", &args, wev_log.clone(), WEV_DEADLINE)?;
+    let wev = session.start("wev", &[], session.artifact("wev.log"), WEV_DEADLINE)?;
     let window = wait_for_wev(session)?;
     capture::c3(session, output, &window)?;
-    keyboard::run(session, &wev_log)?;
     capture::nested_c15(session, output)?;
     wev.stop()?;
     match probes.noctalia {

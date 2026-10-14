@@ -1,6 +1,6 @@
 //! The input tools' work: the pointer tools in `pointer`, the keyboard tools in
-//! `keyboard`, and `paste`, with its clipboard keeper in `keeper`, which presses its key
-//! through `keyboard`. All refuse input to an app on the policy's deny list, and all write
+//! `keyboard`, which type through the native keyboard in `native`, and `paste`, with its
+//! clipboard keeper in `keeper`, which presses its key through `keyboard`. All refuse input to an app on the policy's deny list, and all write
 //! the input-dirty marker before anything that could leave input held.
 
 mod held;
@@ -25,9 +25,6 @@ pub(crate) struct Input<'a> {
     pub(crate) display: &'a Display,
     pub(crate) runtime: &'a RuntimeDir,
     pub(crate) policy: &'a Loaded,
-    pub(crate) keyboard: Option<&'a std::ffi::OsStr>,
-    /// Where the session's `wtype` is found.
-    pub(crate) place: crate::runner::Place<'a>,
     /// The accessibility bus, when this session has one.
     pub(crate) a11y: Option<&'a crate::a11y::A11y>,
 }

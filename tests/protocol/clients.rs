@@ -94,33 +94,28 @@ async fn clients_racing_for_the_lease_leave_exactly_one_owner() {
     assert_eq!(engines(&fixture), [engine]);
 }
 
-/// A stop while one client's key is running: that call is stopped within a second, the
-/// other clients' calls in flight are answered, and every client is refused the lease
-/// until `resume`, after which another client takes it.
+/// A stop while one client's action waits for niri: that call is stopped within a
+/// second, the other clients' calls in flight are answered, and every client is refused
+/// the lease until `resume`, after which another client takes it.
 #[tokio::test]
 async fn a_stop_during_one_clients_action_holds_every_client_back_until_resume() {
     let fixture = shared("many-stop");
     let mut desktop = Desktop::new(&fixture);
-    fixture.program(
-        "wtype",
-        r#"cat > /dev/null; echo >> "$DIR/wtype.calls"; await_file go"#,
-    );
+    desktop.hold_actions();
     let mut clients = bridges(&fixture, 5).await;
     let _stream = desktop.stream().await;
     let (owner, others) = clients.split_first_mut().unwrap();
     owner.structured("acquire_desktop").await;
-    let key = owner
-        .start_call("key", json!({"keys": ["Down"], "expect": "none"}))
-        .await;
-    assert!(eventually(WAIT, || fixture.path("wtype.calls").exists()).await);
+    let close = owner.start_call("close_window", json!({"id": 1})).await;
+    desktop.action().await;
     let mut calls = Vec::new();
     for other in others.iter_mut() {
         calls.push(other.start_call("desktop_state", json!({})).await);
     }
     let stopped = Instant::now();
     assert!(run(&fixture, "stop").await.status.success());
-    // wtype was past its gate, so the key may have gone out: the outcome says so.
-    let cut = report(&owner.response(key).await["result"]);
+    // The action went out to niri, so it may have been carried out: the outcome says so.
+    let cut = report(&owner.response(close).await["result"]);
     assert_eq!(cut["observed"], "uncertain", "{cut}");
     assert!(
         cut["detail"].as_str().unwrap().contains("stop flag"),
@@ -141,37 +136,27 @@ async fn a_stop_during_one_clients_action_holds_every_client_back_until_resume()
         let (refused, _) = tool_error(&client.call("acquire_desktop", json!({})).await);
         assert_eq!(refused, "stopped");
     }
-    // The released wtype finishes the stopped key, which takes the marker off.
-    std::fs::write(fixture.path("go"), "").unwrap();
-    let dirty = fixture.runtime_dir().join("input-dirty");
-    assert!(eventually(WAIT, || !dirty.exists()).await);
     assert!(run(&fixture, "resume").await.status.success());
     others[0].structured("acquire_desktop").await;
 }
 
-/// A client killed mid-key, the one whose bridge started the engine: the lease is free
-/// within a second while three other clients keep calling, its key's input cleanup holds
-/// every client back with `recovery_required` until the key's wtype ends, and then another
-/// client takes the lease.
+/// A client killed while its action waits for niri, the one whose bridge started the
+/// engine: the lease is free within a second while three other clients keep calling, and
+/// then another client takes it.
 #[tokio::test]
-async fn a_client_killed_mid_key_frees_the_lease_while_others_keep_working() {
+async fn a_client_killed_mid_action_frees_the_lease_while_others_keep_working() {
     let fixture = shared("many-killed");
     let mut desktop = Desktop::new(&fixture);
-    fixture.program(
-        "wtype",
-        r#"cat > /dev/null; echo >> "$DIR/wtype.calls"; await_file go"#,
-    );
+    desktop.hold_actions();
     let mut clients = bridges(&fixture, 4).await;
     let _stream = desktop.stream().await;
     let started_by = parent(u32::try_from(engine(&fixture).await).unwrap());
     let starter = clients.iter().position(|client| client.pid == started_by);
-    let mut typing = clients.remove(starter.unwrap());
-    typing.structured("acquire_desktop").await;
-    typing
-        .start_call("key", json!({"keys": ["Down"], "expect": "none"}))
-        .await;
-    assert!(eventually(WAIT, || fixture.path("wtype.calls").exists()).await);
-    typing.kill().await;
+    let mut acting = clients.remove(starter.unwrap());
+    acting.structured("acquire_desktop").await;
+    acting.start_call("close_window", json!({"id": 1})).await;
+    desktop.action().await;
+    acting.kill().await;
     let killed = Instant::now();
     let mut free = false;
     while !free && killed.elapsed() < Duration::from_secs(1) {
@@ -186,16 +171,6 @@ async fn a_client_killed_mid_key_frees_the_lease_while_others_keep_working() {
         "the lease was still held {:?} after",
         killed.elapsed()
     );
-    let marker = fixture.runtime_dir().join("input-dirty");
-    assert!(marker.exists());
-    // The engine still runs that key's wtype, which takes the marker off once it ends.
-    for other in &mut clients {
-        let (name, detail) = tool_error(&other.call("acquire_desktop", json!({})).await);
-        assert_eq!(name, "recovery_required");
-        assert!(detail.contains("still finishing"), "{detail}");
-    }
-    std::fs::write(fixture.path("go"), "").unwrap();
-    assert!(eventually(WAIT, || !marker.exists()).await);
     let owner = race_for_the_lease(&mut clients).await;
     assert_eq!(
         clients[owner].structured("status").await["lease"]["held_by_me"],
@@ -364,14 +339,12 @@ async fn after_the_binary_is_replaced_new_clients_wait_out_the_old_engine_standa
 #[derive(Debug, Clone, Copy)]
 struct Given {
     unrestricted: bool,
-    keyboard: &'static str,
     tools: Option<&'static str>,
     policy: Option<&'static str>,
 }
 
 const PLAIN: Given = Given {
     unrestricted: false,
-    keyboard: "wtype",
     tools: None,
     policy: None,
 };
@@ -388,7 +361,6 @@ async fn client_with(fixture: &mut Fixture, name: &str, given: Given) -> Server 
     }
     fixture.set("HOME", &home);
     fixture.set("XDG_CONFIG_HOME", &config);
-    fixture.set("NIRI_COMPUTER_USE_KEYBOARD", given.keyboard);
     fixture.unset("NIRI_COMPUTER_USE_UNRESTRICTED");
     if given.unrestricted {
         fixture.set("NIRI_COMPUTER_USE_UNRESTRICTED", "1");
@@ -414,15 +386,14 @@ esac"#,
 }
 
 /// Four clients, by name, the first of which starts the engine: unrestricted, with a
-/// `capture_dir` and a keyboard backend that doesn't exist; a plain one; an `observe`
-/// one with the same `capture_dir`; and one whose policy file is invalid.
+/// `capture_dir`; a plain one; an `observe` one with the same `capture_dir`; and one
+/// whose policy file is invalid.
 async fn four_clients(fixture: &mut Fixture) -> Vec<(Server, &'static str)> {
     let clients = [
         (
             "first",
             Given {
                 unrestricted: true,
-                keyboard: "typo",
                 policy: SHOTS,
                 ..PLAIN
             },
@@ -487,14 +458,13 @@ async fn each_status_is_its_own(clients: &mut [(Server, &'static str)]) {
 
 /// The engine takes the environment of the client that starts it, so the most permissive
 /// client starts it here. None of its settings reach the other sessions: each keeps its
-/// own policy, home, keyboard backend and tool profile, and every call is audited under
+/// own policy, home and tool profile, and every call is audited under
 /// the session that made it.
 #[tokio::test]
 async fn settings_stay_with_their_session() {
     let mut fixture = shared("many-settings");
     let mut desktop = Desktop::new(&fixture);
     two_sizes(&fixture);
-    fixture.program("wtype", r#"cat > /dev/null; echo >> "$DIR/wtype.calls""#);
     let mut clients = four_clients(&mut fixture).await;
     let _stream = desktop.stream().await;
     each_status_is_its_own(&mut clients).await;
@@ -519,22 +489,6 @@ async fn settings_stay_with_their_session() {
             assert_eq!(report(&result)["error"], "save_not_enabled");
         }
     }
-    // The first session's keyboard backend doesn't exist; the plain one's is wtype.
-    let key = json!({"keys": ["Down"], "expect": "none"});
-    let first = &mut clients[0].0;
-    first.structured("acquire_desktop").await;
-    let (name, detail) = tool_error(&first.call("key", key.clone()).await);
-    assert_eq!(name, "refused");
-    assert!(detail.contains("NIRI_COMPUTER_USE_KEYBOARD"), "{detail}");
-    first
-        .structured_with("release_desktop", json!({"restore_focus": false}))
-        .await;
-    let plain = &mut clients[1].0;
-    plain.structured("acquire_desktop").await;
-    assert_eq!(plain.call("key", key).await["isError"], false);
-    assert!(fixture.path("wtype.calls").exists());
-    calls[0] += 3;
-    calls[1] += 2;
     let audited = fixture.audit_lines();
     for ((client, _), count) in clients.iter().zip(calls) {
         let label = label(client);
@@ -590,21 +544,17 @@ async fn each_session_runs_sixteen_calls_whatever_the_others_run() {
     }
 }
 
-/// A session's `grim` and `wtype` come from its own `PATH`, as with a standalone server,
+/// A session's `grim` comes from its own `PATH`, as with a standalone server,
 /// and relative entries are under the client's own working directory, not the engine's.
 /// A starts the engine, which works in A's directory, where `bin` has a `grim` that fails;
 /// B's `PATH` is `bin` too.
 #[tokio::test]
-async fn each_client_runs_grim_and_wtype_from_its_own_path_and_directory() {
+async fn each_client_runs_grim_from_its_own_path_and_directory() {
     let mut fixture = shared("many-path");
     let mut desktop = Desktop::new(&fixture);
     std::fs::write(fixture.path("small.jpg"), jpeg(1280, 720, b"small")).unwrap();
     fixture.program_at(&fixture.path("a/bin/grim"), "echo A-grim >&2; exit 1");
     fixture.program_at(&fixture.path("b/bin/grim"), r#"cat "$DIR/small.jpg""#);
-    for name in ["a", "b"] {
-        let wtype = format!(r#"cat > /dev/null; echo >> "$DIR/wtype-{name}""#);
-        fixture.program_at(&fixture.path(&format!("{name}/bin/wtype")), &wtype);
-    }
     fixture.set("PATH", "bin");
     let mut clients = Vec::new();
     for name in ["a", "b"] {
@@ -617,17 +567,6 @@ async fn each_client_runs_grim_and_wtype_from_its_own_path_and_directory() {
     assert!(detail.contains("A-grim"), "{detail}");
     let taken = clients[1].call("screenshot", shot).await;
     assert_eq!(report(&taken)["width"], 1280, "{taken}");
-    let key = json!({"keys": ["Down"], "expect": "none"});
-    for (client, name) in clients.iter_mut().zip(["a", "b"]) {
-        client.structured("acquire_desktop").await;
-        let pressed = client.call("key", key.clone()).await;
-        assert_eq!(report(&pressed)["observed"], "sent", "{pressed}");
-        client
-            .structured_with("release_desktop", json!({"restore_focus": false}))
-            .await;
-        let calls = std::fs::read_to_string(fixture.path(&format!("wtype-{name}"))).unwrap();
-        assert_eq!(calls.lines().count(), 1, "{name}");
-    }
 }
 
 /// An empty `PATH` is the working directory, as for `execvp`, not the default search path
@@ -722,19 +661,12 @@ async fn client_in(fixture: &mut Fixture, work: &str, extra: &str) -> Server {
     Server::start(fixture).await
 }
 
-/// Takes a screenshot and sends one key with `client`, and returns `status.binaries`.
-async fn shoot_and_type(client: &mut Server) -> serde_json::Value {
+/// Takes a screenshot with `client`, and returns `status.binaries`.
+async fn shoot(client: &mut Server) -> serde_json::Value {
     let taken = client
         .call("screenshot", json!({"target": "focused_output"}))
         .await;
     assert_eq!(report(&taken)["width"], 1280, "{taken}");
-    client.structured("acquire_desktop").await;
-    let key = json!({"keys": ["Down"], "expect": "none"});
-    let pressed = client.call("key", key).await;
-    assert_eq!(report(&pressed)["observed"], "sent", "{pressed}");
-    client
-        .structured_with("release_desktop", json!({"restore_focus": false}))
-        .await;
     client.structured("status").await["binaries"].clone()
 }
 
@@ -746,17 +678,13 @@ async fn a_renamed_working_directory_keeps_its_clients_programs() {
     let mut desktop = Desktop::new(&fixture);
     std::fs::write(fixture.path("small.jpg"), jpeg(1280, 720, b"small")).unwrap();
     fixture.program_at(&fixture.path("work/bin/grim"), r#"cat "$DIR/small.jpg""#);
-    let wtype = r#"cat > /dev/null; echo >> "$DIR/wtype-original""#;
-    fixture.program_at(&fixture.path("work/bin/wtype"), wtype);
     let mut client = client_in(&mut fixture, "work", "none").await;
     std::fs::rename(fixture.path("work"), fixture.path("moved")).unwrap();
     let replacement = "echo REPLACEMENT >&2; exit 1";
     fixture.program_at(&fixture.path("work/bin/grim"), replacement);
     let _stream = desktop.stream().await;
-    let binaries = shoot_and_type(&mut client).await;
-    assert_eq!(binaries["wtype"], true, "{binaries}");
-    let calls = std::fs::read_to_string(fixture.path("wtype-original")).unwrap();
-    assert_eq!(calls.lines().count(), 1);
+    let binaries = shoot(&mut client).await;
+    assert_eq!(binaries["grim"], true, "{binaries}");
 }
 
 /// A client whose working directory is removed still runs its programs from the rest of
@@ -767,15 +695,10 @@ async fn a_removed_working_directory_leaves_the_rest_of_the_path() {
     let mut desktop = Desktop::new(&fixture);
     std::fs::write(fixture.path("small.jpg"), jpeg(1280, 720, b"small")).unwrap();
     fixture.program_at(&fixture.path("tools/grim"), r#"cat "$DIR/small.jpg""#);
-    let wtype = r#"cat > /dev/null; echo >> "$DIR/wtype-tools""#;
-    fixture.program_at(&fixture.path("tools/wtype"), wtype);
     std::fs::create_dir(fixture.path("gone")).unwrap();
     let mut client = client_in(&mut fixture, "gone", "tools").await;
     std::fs::remove_dir(fixture.path("gone")).unwrap();
     let _stream = desktop.stream().await;
-    let binaries = shoot_and_type(&mut client).await;
+    let binaries = shoot(&mut client).await;
     assert_eq!(binaries["grim"], true, "{binaries}");
-    assert_eq!(binaries["wtype"], true, "{binaries}");
-    let calls = std::fs::read_to_string(fixture.path("wtype-tools")).unwrap();
-    assert_eq!(calls.lines().count(), 1);
 }

@@ -1,6 +1,5 @@
-//! Input cleanups that outlive the call that started them: a wtype still typing after its
-//! call was dropped, and the releases a dropped gesture or native key press sent, until
-//! niri has handled them and the input-dirty marker is off. The server waits for them
+//! Input cleanups that outlive the call that started them: the releases a dropped gesture
+//! or key press sent, until niri has handled them and the input-dirty marker is off. The server waits for them
 //! before it exits, so a client's end can't cut one short and leave the marker behind.
 //!
 //! Each runs in a task of its own through `spawn`, and ends by its deadline, `LIMIT` after
@@ -78,7 +77,12 @@ pub(crate) fn pending() -> usize {
 
 /// Waits until no cleanup is pending, or `LIMIT` has passed: by then each has ended.
 pub(crate) async fn settled() {
-    let mut pending = PENDING.subscribe();
+    settled_on(&PENDING).await;
+}
+
+/// `settled` on the count `pending` holds.
+async fn settled_on(pending: &watch::Sender<usize>) {
+    let mut pending = pending.subscribe();
     let none = pending.wait_for(|count| *count == 0);
     if let Ok(done) = tokio::time::timeout(LIMIT, none).await {
         drop(done);
@@ -109,5 +113,43 @@ mod tests {
         assert_eq!(error.name, ErrorName::DeadlineExceeded);
         assert!(error.detail.contains("recover"), "{}", error.detail);
         assert_eq!(Arc::strong_count(&held), 1, "the cleanup still holds it");
+    }
+
+    /// The server's end and the engine's idle exit wait for a dropped call's cleanup, so
+    /// a client that leaves mid-key can't cut it short and leave the marker behind. Other
+    /// tests' cleanups share the count, so the end is awaited within `settled`'s limit,
+    /// and `the_end_wakes_once_nothing_is_pending` times it on a count of its own.
+    #[tokio::test]
+    async fn the_end_waits_for_a_pending_cleanup() {
+        let (finish, finished) = tokio::sync::oneshot::channel::<()>();
+        let cleanup = spawn(deadline(), async move {
+            finished.await.ok();
+            Ok(())
+        });
+        assert!(pending() > 0);
+        let mut end = tokio::spawn(settled());
+        let early = tokio::time::timeout(Duration::from_millis(100), &mut end).await;
+        assert!(early.is_err(), "the end didn't wait for the cleanup");
+        finish.send(()).unwrap();
+        cleanup.await.unwrap().unwrap();
+        tokio::time::timeout(LIMIT, end).await.unwrap().unwrap();
+    }
+
+    async fn settled_on_shared(count: Arc<watch::Sender<usize>>) {
+        settled_on(&count).await;
+    }
+
+    /// The end wakes as the count reaches zero, well inside its own limit.
+    #[tokio::test]
+    async fn the_end_wakes_once_nothing_is_pending() {
+        let count = Arc::new(watch::Sender::new(1));
+        let mut end = tokio::spawn(settled_on_shared(Arc::clone(&count)));
+        let early = tokio::time::timeout(Duration::from_millis(100), &mut end).await;
+        assert!(early.is_err(), "the end didn't wait for the count");
+        count.send_replace(0);
+        tokio::time::timeout(Duration::from_millis(500), end)
+            .await
+            .unwrap()
+            .unwrap();
     }
 }

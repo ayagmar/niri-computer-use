@@ -344,14 +344,9 @@ pub(super) fn typing_crash(
         name,
         switch_to,
     } = crash;
-    let mut client = Client::start_command(
+    let mut client = Client::start(
         session,
-        "env",
-        &[
-            "NIRI_COMPUTER_USE_KEYBOARD=native".into(),
-            server.into(),
-            "serve".into(),
-        ],
+        server,
         &format!("harness-m7-killed-{name}"),
         SERVER_DEADLINE,
     )?;

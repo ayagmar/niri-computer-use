@@ -1164,7 +1164,7 @@ mod tests {
             held.contains("still finishing") && !held.contains("recover"),
             "{held}"
         );
-        // Input that gave up on its marker, such as a wtype killed by a signal, leaves it
+        // Input that gave up on its marker, such as a cleanup past its deadline, leaves it
         // for the user, though this server wrote it.
         drop(written);
         let given_up = detail(marker::read(&runtime));

@@ -17,6 +17,7 @@ mod keeper;
 mod native;
 mod native_gestures;
 mod native_unicode;
+mod other_layout;
 mod pacer;
 mod paste;
 mod physical;
@@ -95,7 +96,7 @@ pub(crate) fn run(session: &mut Session<'_>, output: &LogicalOutput, server: &st
     keeper::run(session, server)?;
     // After `text_entry`, whose empty-clipboard check needs a session that never copied.
     copy::run(session, &mut client)?;
-    apps::run(session, &mut client, server)?;
+    apps::run(session, &mut client)?;
     client.stop()?;
     noctalia.stop().map(drop)
 }

@@ -38,13 +38,6 @@ impl Held {
         if keys.is_empty() {
             return Ok(None);
         }
-        if input.keyboard.and_then(std::ffi::OsStr::to_str) != Some("native") {
-            return Err(ToolError::new(
-                ErrorName::Refused,
-                "held pointer keys require NIRI_COMPUTER_USE_KEYBOARD=native",
-            )
-            .into());
-        }
         let display = input.display.path().map_err(Clone::clone)?;
         let keyboard = Keyboard::bind(display, niri::pid(input.niri.socket).await?).await?;
         let group = view.keyboard_group().ok_or_else(|| {

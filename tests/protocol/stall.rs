@@ -16,12 +16,12 @@
 //! - After it went out, the call isn't refused: a stop or a lost lease makes it `uncertain`,
 //!   `accepted` null until the reply came and true after it, with nothing more asked and no
 //!   screenshot; any other change leaves an outcome that doesn't report focus from before
-//!   the change. With more calls to come, `type_text`'s strokes, a later one may be refused
-//!   with the fact's error, saying what went out before it.
+//!   the change. With more calls to come, a later one may be refused with the fact's error,
+//!   saying what went out before it.
 //!
-//! The keyboard tools act through the fake `wtype`, whose point `wtype` is a stroke read and
-//! going out. The pointer and `paste` act through Wayland only in nested runs (see
-//! docs/decisions.md).
+//! The keyboard, the pointer and `paste` act through Wayland, which the fakes here don't
+//! serve: native keys' gates are unit tests in `src/input/native.rs`, and all three run
+//! in nested runs (see docs/decisions.md).
 
 use std::collections::BTreeSet;
 use std::fs::File;
@@ -57,9 +57,6 @@ app_id = "foot"
 "#;
 /// The window of another app, which niri actions are about.
 const TARGET: u64 = 2;
-/// Ten characters, of which `type_text` types 150 and submits them: two `wtype` calls for
-/// the text, at most 100 characters each, and one for `Return`.
-const TEXT: &str = "abcdefghij";
 /// The Noctalia panel the shell tools open and close.
 const PANEL: &str = "wallpaper";
 
@@ -72,8 +69,6 @@ enum Tool {
     CloseWindow,
     NiriAction,
     Launch,
-    Key,
-    TypeText,
     ShellOpen,
     ShellClose,
     Noctalia,
@@ -84,7 +79,6 @@ enum Tool {
 enum Kind {
     Element,
     Niri,
-    Keyboard,
     Shell,
 }
 
@@ -97,8 +91,6 @@ impl Tool {
             Self::CloseWindow => "close_window",
             Self::NiriAction => "niri_action",
             Self::Launch => "launch",
-            Self::Key => "key",
-            Self::TypeText => "type_text",
             Self::ShellOpen | Self::ShellClose => "shell_panel",
             Self::Noctalia => "noctalia",
         }
@@ -114,7 +106,6 @@ impl Tool {
         match self {
             Self::Activate | Self::SetText => Kind::Element,
             Self::Focus | Self::CloseWindow | Self::NiriAction | Self::Launch => Kind::Niri,
-            Self::Key | Self::TypeText => Kind::Keyboard,
             Self::ShellOpen | Self::ShellClose | Self::Noctalia => Kind::Shell,
         }
     }
@@ -128,8 +119,6 @@ impl Tool {
             | Self::CloseWindow
             | Self::NiriAction
             | Self::Launch
-            | Self::Key
-            | Self::TypeText
             | Self::ShellOpen
             | Self::ShellClose
             | Self::Noctalia => ("Safe", "/button"),
@@ -137,13 +126,12 @@ impl Tool {
     }
 
     /// Whether the hold point `point` is a call that acts reaching niri, the app or
-    /// Noctalia, or `wtype` having read a stroke.
+    /// Noctalia.
     fn acts(self, point: &str) -> bool {
         match self.kind() {
             Kind::Element if self == Self::Activate => point.starts_with("atspi:DoAction:"),
             Kind::Element => point.starts_with("atspi:SetTextContents:"),
             Kind::Niri => point.starts_with("niri:Action:"),
-            Kind::Keyboard => point == "wtype",
             Kind::Shell if self == Self::ShellClose => point == "noctalia:panel-close",
             Kind::Shell => point == "noctalia:panel-open",
         }
@@ -159,8 +147,6 @@ impl Tool {
             Self::CloseWindow => json!({"id": TARGET}),
             Self::NiriAction => json!({"action": {"ToggleWindowFloating": {"id": TARGET}}}),
             Self::Launch => json!({"preset": "foot"}),
-            Self::Key => json!({"keys": ["Down"], "expect": expect}),
-            Self::TypeText => json!({"text": TEXT.repeat(15), "submit": true, "expect": expect}),
             Self::ShellOpen => json!({"panel": PANEL, "open": true}),
             Self::ShellClose => json!({"panel": PANEL, "open": false}),
             Self::Noctalia => json!({"args": ["panel-open", PANEL]}),
@@ -211,19 +197,13 @@ impl Fact {
             Self::ScreenLocked => Some(&["screen_locked"]),
             Self::Stopped => Some(&["stopped"]),
             Self::LeaseTaken => Some(&["lease_required"]),
-            Self::FocusMoved => {
-                matches!(kind, Kind::Element | Kind::Keyboard).then_some(&["focus_mismatch"])
-            }
+            Self::FocusMoved => element.then_some(&["focus_mismatch"]),
             Self::WindowClosed => match kind {
                 Kind::Element => Some(&["element_stale"]),
-                Kind::Keyboard => Some(&["focus_mismatch"]),
                 Kind::Niri => (tool != Tool::Launch).then_some(&["invalid_arguments"]),
                 Kind::Shell => None,
             },
-            Self::DenyListed => {
-                let input = matches!(kind, Kind::Element | Kind::Keyboard);
-                (input || tool == Tool::CloseWindow).then_some(&["app_denied"])
-            }
+            Self::DenyListed => (element || tool == Tool::CloseWindow).then_some(&["app_denied"]),
             Self::BecamePassword => element.then_some(&["secret_field"]),
             Self::Renamed | Self::AncestorRenamed | Self::MovedAway | Self::Removed => {
                 element.then_some(&["element_stale"])
@@ -303,7 +283,7 @@ struct Missed {
 #[derive(Debug)]
 struct Ran {
     result: Value,
-    /// When each call that acts reached niri, the app or `wtype`.
+    /// When each call that acts reached niri, the app or Noctalia.
     acts: Vec<Instant>,
     /// The indexes `DoAction` asked for.
     indexes: Vec<i32>,
@@ -356,7 +336,7 @@ fn effects(action: &Action, closed: &Closed) -> Vec<Value> {
 }
 
 /// A desktop for every tool: the mock app's windows 1 and 3 with their accessible
-/// elements, another app's window 2, Noctalia, `wtype`, grim, and a policy that denies
+/// elements, another app's window 2, Noctalia, grim, and a policy that denies
 /// `DENIED` and has the preset `foot`, with `unrestricted` on. The server holds the lease.
 /// Exploring the lock in the full matrix,
 /// niri runs in a logind session and logind's answer, from `loginctl`, is a point too.
@@ -384,13 +364,10 @@ struct World {
 impl World {
     async fn start(name: &str, fact: Fact) -> Self {
         let mut fixture = Fixture::new(name);
-        fixture.set("NIRI_COMPUTER_USE_KEYBOARD", "wtype");
         fixture.set("NIRI_COMPUTER_USE_UNRESTRICTED", "1");
         std::fs::create_dir_all(fixture.path("config/niri-computer-use")).unwrap();
         std::fs::write(fixture.path("config/niri-computer-use/policy.toml"), POLICY).unwrap();
         fixture.program("noctalia", "exit 0");
-        // The point once it read the stroke, which then goes out as wtype exits.
-        fixture.program("wtype", "cat > /dev/null\npass wtype");
         fixture.grim(&jpeg(1280, 720, b"evidence"));
         let mut objects = objects();
         objects.extend([
@@ -611,13 +588,7 @@ impl World {
         let result = self.server.call(tool.name(), arguments).await;
         let trace = self.points.trace();
         assert_eq!(result["isError"], false, "{}: {result}", tool.label());
-        let strokes = if tool == Tool::TypeText { 3 } else { 1 };
-        assert_eq!(
-            acts(tool, &trace).len(),
-            strokes,
-            "{}: {trace:?}",
-            tool.label()
-        );
+        assert_eq!(acts(tool, &trace).len(), 1, "{}: {trace:?}", tool.label());
         trace
     }
 
@@ -927,24 +898,21 @@ async fn explore_fact(tool: Tool, fact: Fact, shard: usize) -> (usize, Vec<Strin
     (runs, broken)
 }
 
-const TOOLS: [Tool; 11] = [
+const TOOLS: [Tool; 9] = [
     Tool::Activate,
     Tool::SetText,
     Tool::Focus,
     Tool::CloseWindow,
     Tool::NiriAction,
     Tool::Launch,
-    Tool::Key,
-    Tool::TypeText,
     Tool::ShellOpen,
     Tool::ShellClose,
     Tool::Noctalia,
 ];
 
-/// The tools `make check` explores, one of each kind. They catch every bug the explorer
-/// found but one between `type_text`'s strokes; `NCU_STALL=full` explores all of `TOOLS`,
-/// as `make stall` does.
-const SAMPLE: [Tool; 4] = [Tool::Activate, Tool::Focus, Tool::Key, Tool::ShellOpen];
+/// The tools `make check` explores, one of each kind; `NCU_STALL=full` explores all of
+/// `TOOLS`, as `make stall` does.
+const SAMPLE: [Tool; 3] = [Tool::Activate, Tool::Focus, Tool::ShellOpen];
 
 /// Whether `NCU_STALL=full` asks for the full matrix.
 fn full() -> bool {
@@ -1058,9 +1026,9 @@ fn the_element_removed_while_a_reply_is_held() {
     explore(Fact::Removed);
 }
 
-/// Whether `type_text`, held at the third `held` and finishing without passing it, broke
-/// the contract when its last stroke went out `last_stroke` ms after its first lock read.
-fn missed_third(held: &str, last_stroke: u64) -> Result<(), String> {
+/// Whether `focus`, held at the third `held` and finishing without passing it, broke the
+/// contract when its action went out `acted` ms after its first lock read.
+fn missed_third(held: &str, acted: u64) -> Result<(), String> {
     let start = Instant::now();
     let passed = |point: &str, nth, ms| Passed {
         point: point.to_owned(),
@@ -1073,20 +1041,18 @@ fn missed_third(held: &str, last_stroke: u64) -> Result<(), String> {
             passed("noctalia:status", 1, 0),
             passed("niri:Version", 1, 0),
             passed("noctalia:status", 2, 1),
-            passed("wtype", 1, 4),
-            passed("wtype", 2, 8),
-            passed("wtype", 3, last_stroke),
+            passed("niri:Action:FocusWindow", 1, acted),
         ],
     };
     let at = passed(held, 3, 300);
     let case = Case {
-        tool: Tool::TypeText,
+        tool: Tool::Focus,
         fact: Fact::InputDirty,
         at: &at,
         sends: 4,
-        last: 6,
-        acts: 3,
-        index: 5,
+        last: 4,
+        acts: 1,
+        index: 3,
         hold: Hold::Short,
     };
     unreached(&case, &missed)
@@ -1119,20 +1085,18 @@ fn a_late_second_lock_source_doesnt_make_the_read_younger() {
             passed("loginctl", 1, 0),
             passed("noctalia:status", 2, 1),
             passed("loginctl", 2, 301),
-            passed("wtype", 1, 304),
-            passed("wtype", 2, 308),
-            passed("wtype", 3, 312),
+            passed("niri:Action:FocusWindow", 1, 304),
         ],
     };
     let at = passed("noctalia:status", 3, 300);
     let case = Case {
-        tool: Tool::TypeText,
+        tool: Tool::Focus,
         fact: Fact::ScreenLocked,
         at: &at,
         sends: 5,
-        last: 7,
-        acts: 3,
-        index: 6,
+        last: 5,
+        acts: 1,
+        index: 4,
         hold: Hold::Short,
     };
     assert!(unreached(&case, &missed).is_err());

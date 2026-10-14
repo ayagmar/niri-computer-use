@@ -1068,8 +1068,6 @@ mod tests {
                 display: &self.env.display,
                 runtime: &self.runtime,
                 policy: &policy::Loaded::Missing,
-                keyboard: Some("native".as_ref()),
-                place: crate::test_support::no_programs(),
                 a11y: None,
             }
         }

@@ -25,19 +25,21 @@ pub(super) fn run(session: &mut Session<'_>, client: &mut Client) -> Result<()> 
     let socket = session.test_dir().run().join("kitty.sock");
     let listen = format!("unix:{}", socket.display());
     let multiplier = format!("wheel_scroll_multiplier={PER_NOTCH}");
+    // Not `--hold`: it starts the user's shell, whose prompt can move the screen after
+    // the starting line is read.
+    let output = format!("seq 1 {LINES}; exec sleep infinity");
     let args: Vec<OsString> = [
         "--config",
         "NONE",
-        "--hold",
         "-o",
         "allow_remote_control=yes",
         "-o",
         &multiplier,
         "--listen-on",
         &listen,
-        "seq",
-        "1",
-        &LINES.to_string(),
+        "sh",
+        "-c",
+        &output,
     ]
     .iter()
     .map(OsString::from)

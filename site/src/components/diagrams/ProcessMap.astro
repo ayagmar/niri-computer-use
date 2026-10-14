@@ -18,7 +18,7 @@ const reaches: [string, string[], number, number][] = [
 	['files', ["runtime dir beside niri's socket:", 'engine.sock · lease · lease.json', 'stop · input-dirty', 'state dir: audit.jsonl'], 191, 120],
 	['niri', ['IPC socket: requests, event stream', 'Wayland: virtual devices, data-control'], 323, 82],
 	['desktop services', ['AT-SPI bus · Noctalia IPC socket · logind'], 417, 58],
-	['children', ['grim · wtype · notify-send · loginctl', 'guard: releases held input if the engine dies', 'paste-keeper: one per paste'], 487, 92],
+	['children', ['grim · notify-send · loginctl', 'guard: releases held input if the engine dies', 'paste-keeper: one per paste'], 487, 92],
 ];
 const middle = (top: number, height: number) => top + height / 2;
 ---
@@ -33,7 +33,7 @@ const middle = (top: number, height: number) => top + height / 2;
 			holds the desk with the lease, the event stream, the AT-SPI connection, the audit writer and the
 			runner. It reaches files in the runtime directory beside niri's socket and the audit log; niri's IPC
 			socket and Wayland display; the AT-SPI bus, Noctalia's IPC socket and logind; and its children: grim,
-			wtype, notify-send, loginctl, the crash guardian and a paste keeper per paste. You reach the runtime
+			notify-send, loginctl, the crash guardian and a paste keeper per paste. You reach the runtime
 			directory with stop, resume and recover.
 		</desc>
 		<defs>

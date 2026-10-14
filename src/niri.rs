@@ -52,7 +52,7 @@ impl Default for Socket {
 /// The Wayland display's socket, or why it is unknown. A path names no compositor for
 /// good: niri can exit and another compositor take the name, so whatever reaches the
 /// display checks who serves it at the moment of use, either on its own connection or,
-/// for a child such as wtype or grim that finds the display by name, through
+/// for a child such as grim that finds the display by name, through
 /// `checked` right before it starts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Display(Result<PathBuf, ToolError>);

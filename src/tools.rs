@@ -475,7 +475,7 @@ const fn one() -> u8 {
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct ClickArgs {
-    /// Modifiers to hold: shift, ctrl, alt, altgr, super. Native backend only.
+    /// Modifiers to hold: shift, ctrl, alt, altgr, super.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = 5))]
     keys: Vec<String>,
@@ -501,7 +501,7 @@ struct ClickArgs {
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct DragArgs {
-    /// Modifiers to hold: shift, ctrl, alt, altgr, super. Native backend only.
+    /// Modifiers to hold: shift, ctrl, alt, altgr, super.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = 5))]
     keys: Vec<String>,
@@ -521,7 +521,7 @@ struct DragArgs {
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct ScrollArgs {
-    /// Modifiers to hold: shift, ctrl, alt, altgr, super. Native backend only.
+    /// Modifiers to hold: shift, ctrl, alt, altgr, super.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = 5))]
     keys: Vec<String>,
@@ -595,8 +595,7 @@ struct TypeTextArgs {
     /// or `"none"` to skip the check, as for a shell panel.
     expect: ExpectArg,
     /// `keys` types the text; `paste` pastes it through the clipboard, then puts the user's
-    /// clipboard back: for long text, and in Chromium and Electron apps, which lose
-    /// typed spaces.
+    /// clipboard back: for long text, and for emoji in Chromium and Electron apps.
     #[serde(default)]
     via: ViaArg,
     /// With `via: "paste"`: the combination that pastes in that app, `ctrl+v`, or
@@ -1636,7 +1635,7 @@ impl Server {
         .await
     }
 
-    /// Runs a keyboard tool's `wtype` calls through the action gate.
+    /// Runs a keyboard tool's keys through the action gate.
     async fn type_input(
         &self,
         context: &RequestContext<RoleServer>,
@@ -2208,7 +2207,6 @@ mod tests {
             unrestricted: unrestricted.then(|| "1".into()),
             confirm_lease: None,
             tools: tools.map(Into::into),
-            keyboard: None,
             home: None,
             path: Some(crate::test_support::NO_PROGRAMS.into()),
             policy: Source::Missing,

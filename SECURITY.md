@@ -20,4 +20,4 @@ Report a vulnerability privately through GitHub: on the repository's **Security*
 
 - What an agent does with the access you gave it. A lease holder can click and type anything you could.
 - Anything the [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/#what-isnt-a-boundary) page lists as not a boundary: what reading tools show without a lease, apps choosing their own `app_id`, a click landing on a window that isn't focused, a wrapper script getting past the preset rules, and other programs running as your user.
-- Bugs in niri, Noctalia, `wtype`, `grim` or the apps being driven, unless niri-computer-use makes them reachable in a way it shouldn't.
+- Bugs in niri, Noctalia, `grim` or the apps being driven, unless niri-computer-use makes them reachable in a way it shouldn't.

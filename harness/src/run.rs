@@ -49,7 +49,7 @@ pub(crate) struct Options {
     pub(crate) visible: bool,
     /// Start Noctalia in the nested session and run C13 through `niri-computer-use`.
     pub(crate) noctalia: bool,
-    /// Run the supervised sitting (C6, C7, C9) at the human's pace.
+    /// Run the supervised sitting (C9's physical control) at the human's pace.
     pub(crate) sitting: bool,
     /// Run checks with `niri-computer-use` and the nested Noctalia.
     pub(crate) server: Option<ServerChecks>,
