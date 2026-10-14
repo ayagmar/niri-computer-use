@@ -335,6 +335,20 @@ make nested-latency SERVER=/path/to/older/niri-computer-use
 
 One server holds the lease, and 30 rounds each call `focus` on the empty workspace below the fixture's and back on the fixture, `click` on its entry by element, `type_text` of two characters and `key` with two `BackSpace`s into it, `activate_element` on its `Primary` button, `niri_action` setting its height, and `shell_panel` opening and closing the control center, none with a screenshot. Before the click it waits 1.2 seconds, outside the timing, because the server refuses an element aim for a second after a workspace switch or a move or resize of its window. For each call it gives the median and 95th percentile round trip, how often each `observed` came back, and how often each set of `changes` keys came back, with the fields of its `windows` entries, such as `focus+workspace`, `windows[size]` or `none`. The results are in `docs/results/action-latency.md`.
 
+## Nested Chromium checks
+
+`make nested-chromium` types and pastes text through the server into a Chromium text area and compares what arrived with what was sent. It runs in the headless nested niri, with Noctalia as the lock source, and has a 240-second deadline. It needs a Chromium-based browser: `NCU_CHROMIUM=<path>` picks one, which must then be an executable file, and otherwise it takes the first of `chromium`, `chromium-browser`, `google-chrome-stable`, `google-chrome`, `brave` and `helium-browser` on `PATH`. With neither, the run logs that it is skipped and exits 0, so it needs nothing in CI.
+
+```sh
+make nested-chromium
+NCU_CHROMIUM=/path/to/chrome make nested-chromium
+make nested-chromium SHARED=1
+```
+
+The browser opens `harness/fixtures/chromium.html` in app mode (`--app`) with `--ozone-platform=wayland`, inside the nested niri. Its profile (`--user-data-dir`), its `HOME` and every XDG directory are under `TEST_DIR`, so it never reads or writes your profile, and first-run UI, sync, background networking, component updates, extensions and the crash reporter are off. After every input the page sets its title to `ncu-chromium:` and the field's value as UTF-16 code units, four hex digits each, and the supervisor reads it from niri's window list. A title is the one channel that needs nothing beside the browser: the page can't write files, and accessibility would test AT-SPI as well. The code units are needed because Chromium collapses and trims whitespace in titles. The page also logs each keydown's DOM `code` and `key` to the console, which `--enable-logging=stderr` copies into `chromium.log`. The run lists the ones whose `key` isn't one ASCII character, which shows the keycode each symbol the layout lacks went out on.
+
+Each case is typed with `type_text`, then pasted with `via: "paste"`, and the field is emptied with `ctrl+a` and `BackSpace` between them. A result counts once the field shows the text sent, or once it has stopped changing for a second. The cases are ASCII, the C10 corpus, a space or period first and fourteenth (the places wtype's Escape and Backspace codes used to drop or delete them), three, fourteen and thirty symbols a US layout lacks, accented Latin, Cyrillic and two emoji. Typed text the project says arrives exactly, and every paste, must arrive exactly, or the run fails after logging every case. Typed emoji are known to arrive cut to 16 bits in Chromium; the run logs what arrived and passes, and says when one arrives exactly. The results are in `docs/results/chromium.md`.
+
 ## Skill evals
 
 `make nested-eval` runs an agent against one scenario in a nested niri and grades what it did. It needs `claude` on `PATH` and logged in, and it spends tokens:

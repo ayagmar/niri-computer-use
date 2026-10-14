@@ -1,0 +1,36 @@
+<!doctype html>
+<!--
+  The Chromium fixture: one text area whose exact value goes into the window title after
+  every input, which niri reports. The title is "ncu-chromium:" and the value's UTF-16
+  code units as four hex digits each, because Chromium collapses and trims whitespace in
+  page titles and the units keep a lone surrogate. Each keydown's DOM `code` and `key` go
+  to the console, which `--enable-logging=stderr` copies into the browser's log.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>ncu-chromium:</title>
+<style>
+  html, body, textarea { margin: 0; width: 100%; height: 100%; box-sizing: border-box; }
+  textarea { font: 16px monospace; border: none; resize: none; }
+</style>
+</head>
+<body>
+<textarea id="field" autofocus spellcheck="false" autocomplete="off"></textarea>
+<script>
+  const field = document.getElementById("field");
+  const publish = () => {
+    let units = "";
+    for (let i = 0; i < field.value.length; i++) {
+      units += field.value.charCodeAt(i).toString(16).padStart(4, "0");
+    }
+    document.title = "ncu-chromium:" + units;
+  };
+  field.addEventListener("input", publish);
+  field.addEventListener("keydown", (event) => {
+    console.log("ncu-key " + JSON.stringify({ code: event.code, key: event.key }));
+  });
+  publish();
+</script>
+</body>
+</html>

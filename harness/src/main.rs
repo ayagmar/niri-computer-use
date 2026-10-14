@@ -4,6 +4,7 @@ mod a11y;
 mod actions;
 mod capture;
 mod changes;
+mod chromium;
 mod clipboard;
 mod config;
 mod control;
@@ -49,13 +50,13 @@ use scale::Scale;
 use supervise::Probes;
 use test_dir::TestDir;
 
-const USAGE: &str = "usage: harness run [--visible] [--shared] [--server <path>] [--scale <scale>] [--ssd] [--noctalia | --sitting | --control | --actions | --input | --shell | --a11y | --engine | --measure | --latency | --eval <scenario> --skill <dir|none> --model <model> | --demo <scene>]
+const USAGE: &str = "usage: harness run [--visible] [--shared] [--server <path>] [--scale <scale>] [--ssd] [--noctalia | --sitting | --control | --actions | --input | --shell | --a11y | --engine | --measure | --latency | --chromium | --eval <scenario> --skill <dir|none> --model <model> | --demo <scene>]
        harness host-capture <output>
        harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--started <file>]
        harness keymaps <TEST_DIR> <directory> <deadline-ms>
        harness clipboard <TEST_DIR> <deadline-ms> [--secret]
        harness slow-reader <TEST_DIR> <delay-ms> <deadline-ms>
-       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--ssd] [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --a11y <server> | --engine <server> | --measure <server> | --latency <server> | --eval <server> <scenario> <skill|none> <model> | --demo <server> <scene>]";
+       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--ssd] [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --a11y <server> | --engine <server> | --measure <server> | --latency <server> | --chromium <server> <browser> | --eval <server> <scenario> <skill|none> <model> | --demo <server> <scene>]";
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -102,6 +103,7 @@ fn dispatch(args: &[OsString]) -> Result<()> {
                 noctalia: None,
                 sitting: false,
                 server: None,
+                browser: None,
                 eval: None,
                 demo: None,
             };
@@ -110,6 +112,10 @@ fn dispatch(args: &[OsString]) -> Result<()> {
                 ["--demo", server, scene] => probes.demo = Some((scene_option(scene)?, *server)),
                 ["--eval", server, scenario, skill, model] => {
                     probes.eval = Some((eval_options(scenario, skill, model)?, *server));
+                }
+                ["--chromium", server, browser] => {
+                    probes.server = Some((run::ServerChecks::Chromium, *server));
+                    probes.browser = Some(*browser);
                 }
                 ["--sitting"] => probes.sitting = true,
                 ["--noctalia", server] => probes.noctalia = Some(*server),
@@ -144,6 +150,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
         demo: None,
         mode: run::ServerMode::Standalone,
         binary: None,
+        browser: None,
     };
     let (mut scenario, mut skill, mut model) = (None, None, None);
     let mut args = args.iter();
@@ -164,7 +171,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
                 options.binary = Some(path);
             }
             "--control" | "--actions" | "--input" | "--shell" | "--a11y" | "--measure"
-            | "--latency" => {
+            | "--latency" | "--chromium" => {
                 options.server = run::ServerChecks::from_flag(arg);
             }
             "--engine" => {
@@ -195,7 +202,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
         > 1
     {
         return Err(Failure::new(
-            "--sitting, --noctalia, --control, --actions, --input, --shell, --a11y, --engine, --measure, --latency, --eval and --demo cannot be combined",
+            "--sitting, --noctalia, --control, --actions, --input, --shell, --a11y, --engine, --measure, --latency, --chromium, --eval and --demo cannot be combined",
         ));
     }
     options.visible |= options.sitting;

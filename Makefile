@@ -1,4 +1,4 @@
-.PHONY: check check-static test test-shared stall stall-standalone stall-shared perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-latency nested-eval nested-demo sitting host-capture
+.PHONY: check check-static test test-shared stall stall-standalone stall-shared perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-latency nested-chromium nested-eval nested-demo sitting host-capture
 
 SCALE ?= 1
 NESTED_FLAGS = $(if $(VISIBLE),--visible) $(if $(SHARED),--shared)
@@ -85,6 +85,11 @@ nested-measure:
 nested-latency:
 	cargo build --locked --release -p niri-computer-use
 	cargo run --locked -p harness -- run $(NESTED_FLAGS) --latency --server $(or $(SERVER),target/release/niri-computer-use)
+
+# Typed and pasted text read back from a Chromium text area; NCU_CHROMIUM=<path> picks the browser.
+nested-chromium:
+	cargo build --locked -p niri-computer-use
+	cargo run --locked -p harness -- run $(NESTED_FLAGS) --chromium
 
 # One skill eval in the nested niri: make nested-eval SCENARIO=compose-message SKILL=skills/niri-computer-use MODEL=sonnet
 nested-eval:

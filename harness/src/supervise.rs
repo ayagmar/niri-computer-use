@@ -36,6 +36,8 @@ pub(crate) struct Probes<'a> {
     pub(crate) sitting: bool,
     /// Which server checks to run, with the `niri-computer-use` binary.
     pub(crate) server: Option<(ServerChecks, &'a str)>,
+    /// The browser for `ServerChecks::Chromium`.
+    pub(crate) browser: Option<&'a str>,
     pub(crate) eval: Option<(crate::eval::Options, &'a str)>,
     /// A demo recording, with the `niri-computer-use` binary.
     pub(crate) demo: Option<(crate::demo::Scene, &'a str)>,
@@ -81,6 +83,10 @@ pub(crate) fn supervise(
                 ServerChecks::Engine => crate::input::run_engine(&mut session, &output, server),
                 ServerChecks::Measure => crate::measure::run(&mut session, server),
                 ServerChecks::Latency => crate::measure::latency::run(&mut session, server),
+                ServerChecks::Chromium => probes
+                    .browser
+                    .ok_or_else(|| Failure::new("--chromium needs a browser"))
+                    .and_then(|browser| crate::chromium::run(&mut session, server, browser)),
             }
         } else {
             steps(&mut session, &output, probes)

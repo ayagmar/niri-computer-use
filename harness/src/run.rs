@@ -32,6 +32,7 @@ const A11Y_DEADLINE: Duration = Duration::from_secs(240);
 const ENGINE_DEADLINE: Duration = Duration::from_secs(150);
 const MEASURE_DEADLINE: Duration = Duration::from_secs(300);
 const LATENCY_DEADLINE: Duration = Duration::from_secs(240);
+const CHROMIUM_DEADLINE: Duration = Duration::from_secs(240);
 /// The agent's twelve minutes, with the fixtures and Noctalia around it.
 const EVAL_DEADLINE: Duration = Duration::from_mins(15);
 /// A scene with its desktop around it.
@@ -60,6 +61,8 @@ pub(crate) struct Options {
     pub(crate) mode: ServerMode,
     /// The server under test, instead of this checkout's debug build.
     pub(crate) binary: Option<PathBuf>,
+    /// The Chromium-based browser `--chromium` found.
+    pub(crate) browser: Option<PathBuf>,
 }
 
 /// How the servers under test serve their clients.
@@ -90,6 +93,8 @@ pub(crate) enum ServerChecks {
     Measure,
     /// Each action tool's round trip, for docs/results/action-latency.md.
     Latency,
+    /// Typed and pasted text read back from a Chromium text area.
+    Chromium,
 }
 
 impl ServerChecks {
@@ -103,6 +108,7 @@ impl ServerChecks {
             Self::Engine => "--engine",
             Self::Measure => "--measure",
             Self::Latency => "--latency",
+            Self::Chromium => "--chromium",
         }
     }
 
@@ -116,6 +122,7 @@ impl ServerChecks {
             Self::Engine,
             Self::Measure,
             Self::Latency,
+            Self::Chromium,
         ]
         .into_iter()
         .find(|checks| checks.flag() == flag)
@@ -131,6 +138,7 @@ impl ServerChecks {
             Self::Engine => ENGINE_DEADLINE,
             Self::Measure => MEASURE_DEADLINE,
             Self::Latency => LATENCY_DEADLINE,
+            Self::Chromium => CHROMIUM_DEADLINE,
         }
     }
 }
@@ -140,6 +148,10 @@ pub(crate) fn run(options: &Options) -> Result<()> {
     let stamp = stamp()?;
     let artifacts = create_artifacts(&stamp)?;
     let mut log = Log::create(&artifacts.join("harness.log"), true)?;
+    let Some(options) = with_browser(options, &mut log)? else {
+        return log.line("result: skipped");
+    };
+    let options = &options;
     // Short, so that the shared engine's socket fits a Unix socket's 108 bytes.
     let test_dir = TestDir::create(&host.runtime_dir.join("ncu-test"), &stamp)?;
     log.line(&format!("TEST_DIR {}", test_dir.root().display()))?;
@@ -161,6 +173,27 @@ pub(crate) fn run(options: &Options) -> Result<()> {
         Err(_) => "result: fail",
     })?;
     outcome
+}
+
+/// `options` with the browser `--chromium` needs, or `None` when it found none: the
+/// suite is then skipped, not failed, as it needs a browser CI doesn't have.
+fn with_browser(options: &Options, log: &mut Log) -> Result<Option<Options>> {
+    if options.server != Some(ServerChecks::Chromium) {
+        return Ok(Some(options.clone()));
+    }
+    let Some(browser) =
+        crate::chromium::find(env::var_os(crate::chromium::OVERRIDE), env::var_os("PATH"))?
+    else {
+        log.line(&format!(
+            "Chromium fixture: skipped, no Chromium-based browser; set {} to one or put chromium on PATH",
+            crate::chromium::OVERRIDE
+        ))?;
+        return Ok(None);
+    };
+    Ok(Some(Options {
+        browser: Some(browser),
+        ..options.clone()
+    }))
 }
 
 /// Fails if a process still running names `TEST_DIR` in its command line. Everything the
@@ -401,6 +434,9 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: &Optio
     } else if let Some(checks) = options.server {
         args.push(checks.flag().into());
         args.push(server(options)?.into());
+        if let Some(browser) = &options.browser {
+            args.push(browser.into());
+        }
     } else if let Some(eval) = &options.eval {
         args.extend(eval_args(eval, options)?);
     } else if let Some(scene) = options.demo {
