@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## 0.1.0 - unreleased
+## 0.1.0 - 2026-10-14
 
 The first release: an MCP server over stdio that lets an AI agent read and act on a niri 26.04 desktop.
 
@@ -32,6 +32,7 @@ The first release: an MCP server over stdio that lets an AI agent read and act o
 - An audit log of every tool call at `$XDG_STATE_HOME/niri-computer-use/audit.jsonl`, with argument metadata and outcomes but no typed text, clipboard, window titles or images, moved aside at 10 MiB with three old logs kept.
 - Failures carry a stable error name and the upstream detail; the skill's `references/errors.md` and the documentation site list them.
 - The documentation site, with `llms.txt` and a Markdown address for every page.
+- Release tarballs for x86_64 and aarch64 Linux with the binary, the skill and the licenses of the crates built in, and `install.sh`, which installs the binary and the skill from one of them.
 
 ### Security
 

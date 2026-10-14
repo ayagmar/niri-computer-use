@@ -11,11 +11,11 @@ Before an agent acts on your desktop, give yourself a key that takes it back. Ad
 
 ```kdl
 binds {
-    Mod+Shift+Escape allow-inhibiting=false allow-when-locked=true hotkey-overlay-title="Stop the AI agent (niri-computer-use)" { spawn "/home/you/.cargo/bin/niri-computer-use" "stop"; }
+    Mod+Shift+Escape allow-inhibiting=false allow-when-locked=true hotkey-overlay-title="Stop the AI agent (niri-computer-use)" { spawn "/home/you/.local/bin/niri-computer-use" "stop"; }
 }
 ```
 
-Put the line inside your existing `binds` block, with the path `cargo install` printed. niri reloads its config when you save it; `niri validate` checks it first. `allow-inhibiting=false` keeps the key working while an app inhibits shortcuts, and `allow-when-locked=true` on the lock screen. niri passes `NIRI_SOCKET` to what it spawns, so the stop reaches this niri instance.
+Put the line inside your existing `binds` block, with the binary's full path: the install script prints this line with yours, and `cargo install` puts the binary in `~/.cargo/bin`. niri reloads its config when you save it; `niri validate` checks it first. `allow-inhibiting=false` keeps the key working while an app inhibits shortcuts, and `allow-when-locked=true` on the lock screen. niri passes `NIRI_SOCKET` to what it spawns, so the stop reaches this niri instance.
 
 The key cancels the running action, takes the lease back and refuses further actions until you run:
 

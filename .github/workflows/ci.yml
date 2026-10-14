@@ -91,6 +91,29 @@ jobs:
       - name: Run the protocol tests in shared mode
         run: make test-shared
 
+  test-aarch64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install libxkbcommon and dbus-daemon
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libxkbcommon-dev dbus-daemon
+
+      - name: Restore cargo's build cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: test-aarch64
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Run every test in both modes
+        run: make test test-shared
+
   stall-standalone:
     runs-on: ubuntu-24.04
     steps:

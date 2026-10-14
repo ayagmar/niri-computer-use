@@ -24,23 +24,23 @@ export const home = {
 	},
 	install: {
 		headline: 'Install',
-		lede: 'Needs niri 26.04 on Linux and Rust 1.99.',
+		lede: 'Needs niri 26.04 on x86_64 or aarch64 Linux.',
 		steps: [
 			{
-				text: 'Build it.',
+				text: 'Download the install script, read it, run it.',
 				lang: 'sh',
-				code: 'git clone https://github.com/ayagmar/niri-computer-use.git\ncd niri-computer-use\ncargo install --locked --path .',
+				code: 'curl -fsSLO https://github.com/ayagmar/niri-computer-use/releases/latest/download/install.sh\nless install.sh\nsh install.sh',
 			},
 			{
 				text: 'Add it to Claude Code.',
 				lang: 'sh',
-				code: 'claude mcp add --scope user niri-computer-use -- ~/.cargo/bin/niri-computer-use serve',
+				code: 'claude mcp add --scope user niri-computer-use -- ~/.local/bin/niri-computer-use serve',
 				more: { text: 'Codex, Pi and other clients', link: 'start/clients/' },
 			},
 			{
 				text: 'Bind the stop key in niri’s config.kdl.',
 				lang: 'kdl',
-				code: 'Mod+Shift+Escape allow-inhibiting=false allow-when-locked=true { spawn "/home/you/.cargo/bin/niri-computer-use" "stop"; }',
+				code: 'Mod+Shift+Escape allow-inhibiting=false allow-when-locked=true { spawn "/home/you/.local/bin/niri-computer-use" "stop"; }',
 			},
 		],
 		more: { text: 'Full install guide', link: 'start/install/' },

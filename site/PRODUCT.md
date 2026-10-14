@@ -22,12 +22,12 @@ It talks to niri through niri's IPC and event stream, not pixels alone: every ac
 
 ## Operating Context
 
-The user's own niri session on Arch-style Linux, often with Noctalia as the shell. The agent runs in a terminal (Claude Code, Codex, Pi) or a desktop client and starts `niri-computer-use serve` over stdio. One shared engine per niri instance serves every client. Installed from source with cargo; there is no tagged release yet.
+The user's own niri session on Arch-style Linux, often with Noctalia as the shell. The agent runs in a terminal (Claude Code, Codex, Pi) or a desktop client and starts `niri-computer-use serve` over stdio. One shared engine per niri instance serves every client. Installed from a release, with its install script or by hand from the tarball (x86_64 and aarch64 Linux), or with cargo from crates.io or a clone.
 
 ## Capabilities and Constraints
 
 - Up to 22 tools; five look and need no lease (`status`, `desktop_state`, `screenshot`, `elements`, `wait_for`). A session without Noctalia or an accessibility bus has 17.
-- niri 26.04 only (the `niri-ipc` crate is pinned to it); Linux, Wayland; source build with Rust 1.99.0.
+- niri 26.04 only (the `niri-ipc` crate is pinned to it); Linux, Wayland; release tarballs for x86_64 and aarch64 (glibc 2.39 or newer), or a build with Rust 1.99.0.
 - Pointer tools need one monitor at transform Normal.
 - Accessibility (elements) varies by toolkit; GTK 4 works best.
 - Guardrails, not a sandbox: the lease, stop key, lock gate, deny list, secret-field refusal and audit log limit mistakes; an agent with the lease can do what the user could with a keyboard and mouse.
