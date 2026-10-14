@@ -334,21 +334,32 @@ async fn a_window_change_before_the_call_went_out_never_shows_an_effect() {
 
 // The value was read inside the last gate, whose pass must end within 250 ms: an app that
 // answered `CurrentValue` in 300 ms made every activation of its spin button `element_busy`.
+// Read before the gate with only the call deadlines, `GetInterfaces` in 990 ms and
+// `CurrentValue` cut at 1 s left too little of the request's budget for `DoAction`.
 #[tokio::test]
 async fn a_slow_value_read_never_refuses_the_activation() {
-    let mut desk = desk_with("el-value-slow", spin_button()).await;
-    let spin = desk.element("Count").await;
-    desk.mock
-        .slow_on("CurrentValue", "/extra", Duration::from_millis(300));
-    let arguments = json!({"element": spin, "action": "increase", "expect": {"window_id": WINDOW}});
-    let stepped = desk
-        .server
-        .structured_with("activate_element", arguments)
-        .await;
-    assert_eq!(stepped["accepted"], true, "{stepped}");
-    assert_eq!(stepped["element"]["value_changed"], true, "{stepped}");
-    assert_eq!(stepped["effect"], "seen", "{stepped}");
-    assert_eq!(desk.mock.calls("DoAction"), 1);
+    for (name, interfaces, value) in [
+        ("el-value-slower", Some(990), 1500),
+        ("el-value-slow", None, 300),
+    ] {
+        let mut desk = desk_with(name, spin_button()).await;
+        let spin = desk.element("Count").await;
+        if let Some(ms) = interfaces {
+            desk.mock
+                .slow_on("GetInterfaces", "/extra", Duration::from_millis(ms));
+        }
+        desk.mock
+            .slow_on("CurrentValue", "/extra", Duration::from_millis(value));
+        let arguments =
+            json!({"element": spin, "action": "increase", "expect": {"window_id": WINDOW}});
+        let stepped = desk
+            .server
+            .structured_with("activate_element", arguments)
+            .await;
+        assert_eq!(stepped["accepted"], true, "{name}: {stepped}");
+        assert_eq!(stepped["effect"], "unverified", "{name}: {stepped}");
+        assert_eq!(desk.mock.calls("DoAction"), 1, "{name}");
+    }
 }
 
 // The action already went out when the look afterwards fails: the result says the effect

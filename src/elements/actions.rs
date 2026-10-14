@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use tokio::time::{Instant, timeout_at};
+use tokio::time::{Instant, timeout, timeout_at};
 
 use crate::a11y::model::{self, NameHash, State, States};
 use crate::a11y::{self, A11y, Dispatched, ElementRef, Failed, Request};
@@ -414,7 +414,7 @@ pub(crate) async fn activate(
     .await?;
     let mapped = canonical(&request, element, action).await?;
     // Read before the last gate, so a slow value never makes the gate run over.
-    let value = value(&request, element).await;
+    let value = value_before(&request, element).await;
     let checked = gate
         .last(element, &request, &mut waiter, || {
             offered(&request, element, action, &mapped)
@@ -464,6 +464,17 @@ async fn value(request: &Request, element: &ElementRef) -> Reading {
         .current_value(element)
         .await
         .map_err(|failed| ToolError::from(failed).detail)
+}
+
+/// Reads the element's value before the action within `LAST_GATE`, so a slow app can't
+/// spend the request's budget the action needs: past that it is kept as why.
+async fn value_before(request: &Request, element: &ElementRef) -> Reading {
+    timeout(LAST_GATE, value(request, element))
+        .await
+        .unwrap_or_else(|_| {
+            let limit = LAST_GATE.as_millis();
+            Err(format!("the element's value took over {limit} ms to read"))
+        })
 }
 
 /// Waits `SETTLE` for the activation's effect, ended sooner by the element's window closing,
