@@ -26,4 +26,4 @@ The agent skill from the repository's [`skills/niri-computer-use`](https://githu
 | `references/tools.md` | [`skill/references/tools.md`](../../skill/references/tools.md) |
 | `references/errors.md` | [`skill/references/errors.md`](../../skill/references/errors.md) |
 
-The skill's own links are relative, so keep the three files in the same layout if you copy them. To install it from a clone instead, see [Client setup](../../start/clients/#the-skill).
+The skill's own links are relative, so keep the three files in the same layout if you copy them. To install it from a clone instead, see [Install](../../start/install/#the-skill).

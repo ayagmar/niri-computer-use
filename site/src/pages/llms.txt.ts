@@ -8,6 +8,7 @@ import { homeMarkdownUrl, markdownUrl, pages, siteRoot, text } from '../lib/mark
 const using = ['tools/overview', 'reference/errors'];
 const installing = [
 	'start/install',
+	'start/install-script',
 	'start/clients',
 	'start/first-session',
 	'reference/troubleshooting',
@@ -32,7 +33,7 @@ export const GET: APIRoute = async () => {
 		});
 	const named = new Set([...using, ...installing, ...optional]);
 	const more = [
-		`- [Home page](${homeMarkdownUrl()}): what the server does, the stop key, and install in three steps`,
+		`- [Home page](${homeMarkdownUrl()}): what the server does, the stop key, and install in three steps, with the script or cargo`,
 		...all.filter((page) => !named.has(page.id)).map(line),
 	];
 	const skillLines = skill.map(

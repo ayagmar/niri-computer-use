@@ -51,7 +51,7 @@ The user's own niri session on Arch-style Linux, often with Noctalia as the shel
 
 - Show the real call and its real result; never a mock-up of output.
 - Put safety where the first objection is: next to the promise, not below the fold.
-- Tell the wrong reader to leave early (niri-only, source install, one monitor for the pointer).
+- Tell the wrong reader to leave early (niri-only, Linux only, one monitor for the pointer).
 - Plain, specific prose; every claim backed by code or a measured result.
 
 ## Accessibility & Inclusion

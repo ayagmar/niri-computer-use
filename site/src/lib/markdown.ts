@@ -55,7 +55,11 @@ export function homeMarkdown(): string {
 		install.steps
 			.map((step, index) => {
 				const more = step.more ? ` [${step.more.text}](${url(step.more.link)})` : '';
-				return `${index + 1}. ${step.text}${more}\n\n   \`\`\`${step.lang}\n${step.code.replace(/^/gm, '   ')}\n   \`\`\``;
+				const code = (lang: string, text: string) => `   \`\`\`${lang}\n${text.replace(/^/gm, '   ')}\n   \`\`\``;
+				const or = step.or
+					? `\n\n   ${step.or.text} [${step.or.more.text}](${url(step.or.more.link)})\n\n${code(step.or.lang, step.or.code)}`
+					: '';
+				return `${index + 1}. ${step.text}${more}\n\n${code(step.lang, step.code)}${or}`;
 			})
 			.join('\n\n'),
 		`[${install.more.text}](${url(install.more.link)})`,
