@@ -38,7 +38,7 @@ async fn without_the_session_variables_the_server_finds_the_running_niri() {
     assert_eq!(status["niri"]["version"], "26.04 (protocol-test)");
     assert_eq!(status["outputs"]["pointer_supported"], true);
 
-    // Programs such as grim and wtype reach the display through these.
+    // Programs such as grim reach the display through these.
     probe(
         &fixture,
         r#"'%s %s %s' "$XDG_RUNTIME_DIR" "$WAYLAND_DISPLAY" "$NIRI_SOCKET""#,
@@ -106,7 +106,7 @@ async fn children_never_inherit_a_wayland_socket() {
 }
 
 /// Sol's case: the only running niri is on another display than the one the client gave,
-/// which wtype would reach while focus and policy were checked on that niri.
+/// which input would reach while focus and policy were checked on that niri.
 #[tokio::test]
 async fn a_given_display_rules_out_a_niri_on_another_display() {
     let mut fixture = Fixture::new("discover-other");
@@ -116,7 +116,6 @@ async fn a_given_display_rules_out_a_niri_on_another_display() {
     let _process = NiriProcess::discoverable(&fixture, "wayland-other", &backend).await;
     fixture.program("noctalia", "exit 0");
     let _noctalia = noctalia::start(&fixture, UNLOCKED);
-    fixture.program("wtype", r#": > "$DIR/wtype.ran""#);
     let mut server = Server::start(&fixture).await;
     let detail = format!(
         "NIRI_SOCKET is not set and {} has no socket of a running niri on WAYLAND_DISPLAY \
@@ -138,7 +137,6 @@ async fn a_given_display_rules_out_a_niri_on_another_display() {
         let result = server.call(tool, arguments).await;
         assert_eq!(report(&result), unavailable, "{tool}");
     }
-    assert!(!fixture.path("wtype.ran").exists());
 }
 
 /// niri's socket is served by a process of its own, which relays to the fake niri, while
@@ -152,9 +150,7 @@ async fn a_display_niri_doesnt_serve_refuses_input_screenshots_and_the_clipboard
     let _relay = NiriProcess::relaying(&fixture, &backend).await;
     fixture.program("noctalia", "exit 0");
     let _noctalia = noctalia::start(&fixture, UNLOCKED);
-    for program in ["wtype", "grim"] {
-        fixture.program(program, &format!(": > \"$DIR/{program}.ran\""));
-    }
+    fixture.program("grim", ": > \"$DIR/grim.ran\"");
     fixture
         .clipboard
         .copy(Some(vec![("text/plain", b"copied".to_vec())]));
@@ -192,12 +188,7 @@ async fn a_display_niri_doesnt_serve_refuses_input_screenshots_and_the_clipboard
             ("session_mismatch", detail)
         );
     }
-    for program in ["wtype", "grim"] {
-        assert!(
-            !fixture.path(&format!("{program}.ran")).exists(),
-            "{program} ran"
-        );
-    }
+    assert!(!fixture.path("grim.ran").exists());
     assert_eq!(fixture.clipboard.reads(), Vec::<String>::new());
 }
 
@@ -213,9 +204,7 @@ async fn a_display_replaced_after_startup_refuses_input_screenshots_and_the_clip
     let (process, name) = NiriProcess::discoverable(&fixture, DISPLAY, &backend).await;
     fixture.program("noctalia", "exit 0");
     let _noctalia = noctalia::start(&fixture, UNLOCKED);
-    for program in ["wtype", "grim"] {
-        fixture.program(program, &format!(": > \"$DIR/{program}.ran\""));
-    }
+    fixture.program("grim", ": > \"$DIR/grim.ran\"");
     let mut server = Server::start(&fixture).await;
     let stream = niri.stream().await;
     stream.initial(&[window_on(1, Some("a"), 1, true)]);
@@ -237,12 +226,7 @@ async fn a_display_replaced_after_startup_refuses_input_screenshots_and_the_clip
     drop(process);
     std::fs::remove_file(fixture.path(&format!("run/{name}"))).unwrap();
     refuses_what_reaches_the_display(&mut server, "niri_unavailable").await;
-    for program in ["wtype", "grim"] {
-        assert!(
-            !fixture.path(&format!("{program}.ran")).exists(),
-            "{program} ran"
-        );
-    }
+    assert!(!fixture.path("grim.ran").exists());
     assert_eq!(replacement.reads(), Vec::<String>::new());
 }
 

@@ -39,20 +39,11 @@ pub(super) fn run(
     engine_killed_mid_drag(session, clients, wev, server, engine)
 }
 
-/// Starts the ten clients, the first one ready. The first types with wtype, which E4
-/// expects to finish its text after a stop; the others keep the default.
+/// Starts the ten clients, the first one ready.
 pub(super) fn start(session: &mut Session<'_>, server: &str) -> Result<Vec<Client>> {
-    let mut clients = Vec::new();
-    for n in 0..CLIENTS {
-        let name = format!("harness-e{n}");
-        let client = if n == 0 {
-            Client::start_keyboard(session, server, "wtype", &name, SERVER_DEADLINE)?
-        } else {
-            Client::start(session, server, &name, SERVER_DEADLINE)?
-        };
-        clients.push(client);
-    }
-    Ok(clients)
+    (0..CLIENTS)
+        .map(|n| Client::start(session, server, &format!("harness-e{n}"), SERVER_DEADLINE))
+        .collect()
 }
 
 /// E1: every client names the same engine, which serves all ten with one guardian and
@@ -191,19 +182,21 @@ fn killed_mid_drag(
 }
 
 /// E4: a stop while A types and the other clients call `status`, `desktop_state` and
-/// `screenshot`: A's call says `stopped`, every other call is answered, and the lease is
-/// free within a second. wtype still types the whole text.
+/// `screenshot`: A's call says `stopped`, every other call is answered, the lease is free
+/// within a second, and the typing ended early with no key or modifier held. The pacer
+/// keeps the typing slow enough for the stop to land during it.
 fn stop_under_load(
     session: &mut Session<'_>,
     clients: &mut [Client],
     wev: &Wev<'_>,
     server: &str,
 ) -> Result<()> {
-    let text = "abcdefghij".repeat(10);
+    let text = "A".repeat(1000);
     let (a, load) = clients
         .split_first_mut()
         .ok_or_else(|| Failure::new("E4: no client"))?;
     structured(&a.call(session, "acquire_desktop", json!({}))?)?;
+    let pacer = super::pacer::start(session)?;
     let offset = wev.offset()?;
     let id = a.start_call(
         "type_text",
@@ -247,16 +240,31 @@ fn stop_under_load(
         )));
     }
     answered(session, load, &calls)?;
-    let seen = keyboard::observed(session, wev.log, offset, text.chars().count(), false)?;
-    keyboard::text(&wev::keyboard::trace(&seen)?, &text)?;
     super::stop::marker_gone(session)?;
+    let typed = ended_early(&keyboard::since(wev.log, offset)?, text.len())?;
+    pacer.stop()?;
     super::stop::resume(session, a, server)?;
     structured(&a.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     session.log(&format!(
-        "E4: stop during typing with {} calls from {} other clients in flight: A stopped after {took:?}, lease free at {checked:?}, every other call answered, wtype finished the text, resume took the lease again",
+        "E4: stop during typing with {} calls from {} other clients in flight: A stopped after {took:?}, lease free at {checked:?}, every other call answered, the typing ended after {typed} of {} characters with nothing held, resume took the lease again",
         calls.len(),
-        load.len()
+        load.len(),
+        text.len()
     ))
+}
+
+/// The keys `seen` in wev: fewer than `total`, all `A` in whole pairs, and zero modifiers
+/// at the end. Returns how many.
+fn ended_early(seen: &str, total: usize) -> Result<usize> {
+    let seen = wev::keyboard::trace(seen)?;
+    let count = seen.keys.iter().filter(|key| key.pressed).count();
+    if count == 0 || count >= total || seen.modifiers != Some(wev::keyboard::Modifiers::default()) {
+        return Err(Failure::new(format!(
+            "E4: the typing must end early with zero modifiers: {count} of {total}"
+        )));
+    }
+    keyboard::text(&seen, &"A".repeat(count))?;
+    Ok(count)
 }
 
 /// Each of `load`'s clients answered its three calls, in `calls`' order, without error.

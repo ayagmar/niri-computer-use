@@ -343,8 +343,8 @@ fn inert(map: &xkb::Keymap, code: xkb::Keycode) -> bool {
 const UNICODE_KEYSYMS: u32 = 0x0100_0000;
 
 /// Whether `combo` is modifiers a combination may hold and a keysym XKB knows by name, in
-/// any case, as wtype looks keys up. A name in the `U<hex>` or `0x<hex>` form, or one for
-/// a Unicode keysym, is left out: such names spell any text, one character each.
+/// any case, as `combo_key` looks keys up. A name in the `U<hex>` or `0x<hex>` form, or
+/// one for a Unicode keysym, is left out: such names spell any text, one character each.
 pub(crate) fn known_combo(combo: &str) -> bool {
     parse_combo(combo).is_ok_and(|(_, keysym_name)| {
         let keysym = xkb::keysym_from_name(keysym_name, xkb::KEYSYM_CASE_INSENSITIVE);
@@ -384,8 +384,8 @@ fn combo_key(map: &xkb::Keymap, group: u32, combo: &str) -> Result<Key, CallErro
     Ok(key)
 }
 
-/// The keysym `name` names exactly, or else in any case, as wtype looks keys up: `escape`
-/// is `Escape`, while `a` and `A` stay apart.
+/// The keysym `name` names exactly, or else in any case: `escape` is `Escape`, while `a`
+/// and `A` stay apart.
 fn combo_keysym(name: &str) -> Result<xkb::Keysym, CallError> {
     [xkb::KEYSYM_NO_FLAGS, xkb::KEYSYM_CASE_INSENSITIVE]
         .into_iter()
@@ -767,8 +767,7 @@ mod tests {
         );
     }
 
-    /// Key names go in any case, as wtype took them, but an exact name wins: `a` and `A`
-    /// stay two keysyms.
+    /// Key names go in any case, but an exact name wins: `a` and `A` stay two keysyms.
     #[test]
     fn a_key_name_resolves_in_any_case_unless_it_names_another_keysym() {
         assert_eq!(combo_keysym("escape").unwrap(), xkb::Keysym::Escape);

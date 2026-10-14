@@ -215,7 +215,6 @@ mod tests {
             "DISPLAY",
             "XDG_SESSION_ID",
             "DBUS_SESSION_BUS_ADDRESS",
-            "NIRI_COMPUTER_USE_KEYBOARD",
         ] {
             assert!(!env.contains_key(name), "{name}");
         }

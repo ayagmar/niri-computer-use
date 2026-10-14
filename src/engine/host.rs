@@ -120,6 +120,23 @@ where
     served
 }
 
+/// Serves a standalone server's one session, then waits for the input cleanups its
+/// dropped calls left: cut short, one leaves the marker for `recover`.
+pub(crate) async fn serve_alone<R, W>(
+    engine: &Arc<Engine>,
+    session: Session,
+    input: R,
+    output: W,
+) -> Result<(), String>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
+    let served = serve_session(engine, session, input, output).await;
+    control::cleanup::settled().await;
+    served
+}
+
 /// Accepts connections until the engine has been idle for `IDLE_GRACE`, or the stop
 /// watcher ends.
 async fn accept(

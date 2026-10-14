@@ -1,4 +1,6 @@
-//! Native keyboard acceptance, separate from the wtype M4 criteria.
+//! The native keyboard's acceptance, through a server of its own: normal use, Unicode
+//! through extended keymaps, a key from another layout, timings, focus takeover, stop and
+//! cancel, held pointer keys, and crashes.
 
 use std::time::{Duration, Instant};
 
@@ -18,19 +20,15 @@ pub(super) fn run(
     server: &str,
 ) -> Result<()> {
     structured(&owner.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
-    let mut native =
-        Client::start_keyboard(session, server, "native", "harness-m7", SERVER_DEADLINE)?;
+    let mut native = Client::start(session, server, "harness-m7", SERVER_DEADLINE)?;
     structured(&native.call(session, "acquire_desktop", json!({}))?)?;
     normal(session, &mut native, wev)?;
-    let window = super::wev_window(session, &mut native)?;
-    super::mismatch(session, &mut native, wev, window)?;
-    super::routing(session, &mut native, wev, window)?;
     super::native_unicode::run(session, &mut native, wev)?;
     super::native_unicode::layout_change(session, &mut native, wev)?;
     super::other_layout::in_wev(session, &mut native, wev)?;
-    measure(session, &mut native, wev, "native")?;
+    measure(session, &mut native, wev)?;
     let pacer = super::pacer::start(session)?;
-    super::exposure::run(session, &mut native, wev, "native")?;
+    super::exposure::run(session, &mut native, wev)?;
     super::native_unicode::physical_f13(session, &mut native, wev)?;
     interruption(session, &mut native, wev, server, false)?;
     interruption(session, &mut native, wev, server, true)?;
@@ -49,10 +47,7 @@ pub(super) fn run(
     super::native_unicode::layout_crash(session, wev, server)?;
     pacer.stop()?;
     super::guardian::reconnect(session, owner)?;
-    structured(&owner.call(session, "acquire_desktop", json!({}))?)?;
-    super::native_unicode::wtype_comparison(session, owner, wev)?;
-    measure(session, owner, wev, "wtype")?;
-    super::exposure::run(session, owner, wev, "wtype")
+    structured(&owner.call(session, "acquire_desktop", json!({}))?).map(drop)
 }
 
 fn normal(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>) -> Result<()> {
@@ -78,12 +73,7 @@ fn normal(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>) -> Resu
     session.log("M7 native C5 equivalent: 20 Ctrl+a and 20 Hello calls, exact pairs and zero final modifiers")
 }
 
-fn measure(
-    session: &mut Session<'_>,
-    client: &mut Client,
-    wev: &Wev<'_>,
-    backend: &str,
-) -> Result<()> {
+fn measure(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>) -> Result<()> {
     for length in [100, 1000] {
         let text = "Hello0123!".repeat(length / 10);
         let mut timings = Vec::new();
@@ -95,7 +85,7 @@ fn measure(
                 "type_text",
                 json!({"text": text, "expect": {"app_id": "wev"}}),
             )?)?;
-            let seen = keyboard::observed(session, wev.log, offset, length, backend == "native")?;
+            let seen = keyboard::observed(session, wev.log, offset, length, true)?;
             keyboard::text(&trace(&seen)?, &text)?;
             if trace(&wev.read()?)?.modifiers != Some(Modifiers::default()) {
                 return Err(Failure::new("M7 benchmark left modifiers held"));
@@ -104,7 +94,7 @@ fn measure(
         }
         timings.sort_unstable();
         session.log(&format!(
-            "M7 {backend} {length} characters tool-to-wev timings (min/median/max): {timings:?}"
+            "M7 native {length} characters tool-to-wev timings (min/median/max): {timings:?}"
         ))?;
     }
     Ok(())

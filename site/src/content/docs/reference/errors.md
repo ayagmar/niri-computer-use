@@ -41,7 +41,7 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 ### `session_mismatch`
 
-**Cause:** the Wayland display isn't served by the niri on niri's socket, so `WAYLAND_DISPLAY` and `NIRI_SOCKET` name two different compositors. The server checks this right before each input and screenshot, and when `acquire_desktop` starts watching the clipboard, and refuses them, because `wtype`, `grim` and the clipboard's watcher would reach the other compositor; `clipboard_read` then fails with this error until the lease is released and taken again. A niri that restarted while the server ran gives this too when another compositor took over the display. `status` shows the current check under `display_error`.
+**Cause:** the Wayland display isn't served by the niri on niri's socket, so `WAYLAND_DISPLAY` and `NIRI_SOCKET` name two different compositors. The server checks this right before each input and screenshot, and when `acquire_desktop` starts watching the clipboard, and refuses them, because `grim` and the clipboard's watcher would reach the other compositor; `clipboard_read` then fails with this error until the lease is released and taken again. A niri that restarted while the server ran gives this too when another compositor took over the display. `status` shows the current check under `display_error`.
 
 **What to do:** pass the agent's client both variables from the same niri session, or neither, and start a new agent session.
 
@@ -77,9 +77,9 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 ### `refused`
 
-**Cause:** the selected keyboard backend can't send the requested input safely: an unknown `NIRI_COMPUTER_USE_KEYBOARD` value, a missing control character or a `key` keysym none of your layouts has under the native backend, a layout with no spare keycode for a missing symbol, or held pointer `keys` with the wtype backend.
+**Cause:** the keyboard can't send the requested input safely: a control character the layout lacks, a `key` name that is no keysym or a keysym none of your layouts has, a symbol the layout lacks when the keymap has no spare keycode for it, or a keymap from niri the server can't use. Nothing was typed.
 
-**What to do:** the `detail` says which limit was hit. Paste text the layout can't type with `via: "paste"`. An agent shouldn't change the backend itself.
+**What to do:** the `detail` says which limit was hit. Paste text the layout can't type with `via: "paste"`.
 
 ## Mistakes an agent can correct
 

@@ -5,7 +5,7 @@
 //! The GTK 4 entry is `text_entry`'s. kitty runs `cat` on a raw terminal, so what reaches
 //! the file is what kitty sent the program; a raw terminal reads Return as `\r`.
 //!
-//! In a headless run it also types `abc` into the Qt field with each backend while Shift
+//! In a headless run it also types `abc` into the Qt field while Shift
 //! is held, then while Caps Lock is on, then while Num Lock is on, on a keyboard niri
 //! takes for a physical one, and then presses `a` on that keyboard, after keypad `1` with
 //! Num Lock: the call's text must be exact, and the keys show whether the field knows the
@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 
 use super::physical::{self, Physical};
 use super::text_entry::focused_app;
-use super::{SERVER_DEADLINE, WAIT, paste};
+use super::{WAIT, paste};
 use crate::failure::{Context as _, Failure, Result};
 use crate::keyboard::{CORPUS, PARTS};
 use crate::mcp::{Client, field, structured};
@@ -72,26 +72,14 @@ const KITTY: Target = Target {
     reads_after_key: true,
 };
 
-pub(super) fn run(session: &mut Session<'_>, wtype: &mut Client, server: &str) -> Result<()> {
-    let mut native = Client::start_keyboard(
-        session,
-        server,
-        "native",
-        "harness-m7-apps",
-        SERVER_DEADLINE,
-    )?;
+pub(super) fn run(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
     let qt = start_qt(session)?;
-    let app_id = check(session, &mut native, &QT)?;
-    held(
-        session,
-        [("wtype", wtype), ("native", &mut native)],
-        &app_id,
-    )?;
+    let app_id = check(session, client, &QT)?;
+    held(session, client, &app_id)?;
     qt.stop()?;
     let kitty = start_kitty(session)?;
-    check(session, &mut native, &KITTY)?;
-    kitty.stop()?;
-    native.stop()
+    check(session, client, &KITTY)?;
+    kitty.stop().map(drop)
 }
 
 fn start_qt(session: &Session<'_>) -> Result<Process> {
@@ -170,7 +158,7 @@ fn check(session: &mut Session<'_>, client: &mut Client, app: &Target) -> Result
     clear(session, client, app, &app_id, &mut expected)?;
     structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     session.log(&format!(
-        "M7 native in {}: ASCII, the C10 corpus and a text needing several keymaps typed, and {} characters pasted with {}, read back exactly, with paste {}; the owner's {} types offered again",
+        "M7 {}: ASCII, the C10 corpus and a text needing several keymaps typed, and {} characters pasted with {}, read back exactly, with paste {}; the owner's {} types offered again",
         app.name,
         text.chars().count(),
         app.paste_keys,
@@ -214,49 +202,28 @@ impl Hold {
             Self::NumLock => &[physical::KEYPAD_1, physical::A],
         }
     }
-
-    /// What the keys pressed by hand type after a call with `backend`. wtype's map isn't
-    /// the compositor's, so niri sends the compositor's map with the modifiers and locks
-    /// it has along with the next physical key, and the field knows: `A`, and `1` before
-    /// the `a`. Native leaves the compositor's map active, so niri sends no map, and the
-    /// field keeps the call's zero modifiers and locks until a modifier or lock changes:
-    /// `a`, and keypad `1` as End, which types nothing.
-    fn typed(self, backend: &str) -> &'static str {
-        match (self, backend == "native") {
-            (Self::Shift | Self::CapsLock, false) => "A",
-            (Self::NumLock, false) => "1a",
-            (_, true) => "a",
-        }
-    }
 }
 
-/// Each backend's call with Shift held, with Caps Lock on and with Num Lock on, by hand,
-/// in the Qt field `app_id`; see `Hold::typed`.
-fn held(session: &mut Session<'_>, clients: [(&str, &mut Client); 2], app_id: &str) -> Result<()> {
+/// The call with Shift held, with Caps Lock on and with Num Lock on, by hand, in the Qt
+/// field `app_id`. The call leaves the compositor's map active, so niri sends no map, and
+/// the field keeps the call's zero modifiers and locks until a modifier or lock changes:
+/// the keys by hand type `a`, and keypad `1` as End, which types nothing.
+fn held(session: &mut Session<'_>, client: &mut Client, app_id: &str) -> Result<()> {
     let Some(mut keyboard) = Physical::connect(session)? else {
         return session
             .log("M7 held modifiers: skipped (a visible run has no keyboard to hold them on)");
     };
-    for (backend, client) in clients {
-        structured(&client.call(session, "acquire_desktop", json!({}))?)?;
-        for hold in Hold::ALL {
-            let expected = hold.typed(backend);
-            let typed = after_call(session, client, &mut keyboard, app_id, hold)?;
-            if typed != expected {
-                return Err(Failure::new(format!(
-                    "M7 {backend} with {hold:?}: the keys by hand after the call typed {typed:?}, not {expected:?}"
-                )));
-            }
+    structured(&client.call(session, "acquire_desktop", json!({}))?)?;
+    for hold in Hold::ALL {
+        let typed = after_call(session, client, &mut keyboard, app_id, hold)?;
+        if typed != "a" {
+            return Err(Failure::new(format!(
+                "M7 with {hold:?}: the keys by hand after the call typed {typed:?}, not \"a\""
+            )));
         }
-        structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     }
-    session.log(&format!(
-        "M7 held modifiers in the Qt field: `abc` typed exactly with Shift held, with Caps Lock on and with Num Lock on by both backends; `a` by hand afterwards typed `{}` after wtype and `{}` after native; with Num Lock on, keypad `1` then `a` typed `{}` after wtype and `{}` after native",
-        Hold::Shift.typed("wtype"),
-        Hold::Shift.typed("native"),
-        Hold::NumLock.typed("wtype"),
-        Hold::NumLock.typed("native"),
-    ))
+    structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
+    session.log("M7 held modifiers in the Qt field: `abc` typed exactly with Shift held, with Caps Lock on and with Num Lock on; `a` by hand afterwards typed `a`; with Num Lock on, keypad `1` then `a` typed `a`")
 }
 
 /// Types `abc` with `hold`, checks the field shows exactly that, then presses the keys

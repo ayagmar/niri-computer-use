@@ -44,9 +44,6 @@ pub(crate) struct Marker {
     /// The server that wrote it.
     pub(crate) server_pid: u32,
     pub(crate) since: String,
-    /// The input child, once its PID is known (`running`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) child: Option<Child>,
     /// Pointer buttons pressed and not yet released, as evdev codes such as 272.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) buttons: Vec<u32>,
@@ -77,18 +74,9 @@ pub(crate) struct Native {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Phase {
-    /// Written before the child is started; its PID isn't known.
+    /// Written before any input goes out. Input runs in the server, so there is no other
+    /// phase.
     Pending,
-    /// The child runs; its PID and start time are known.
-    Running,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Child {
-    pub(crate) pid: u32,
-    /// From `/proc/<pid>/stat`, so a reused PID isn't mistaken for the child.
-    pub(crate) start_time: u64,
 }
 
 impl Marker {
@@ -99,7 +87,6 @@ impl Marker {
             phase: Phase::Pending,
             server_pid: std::process::id(),
             since: now(),
-            child: None,
             buttons,
             output: None,
             keyboard: None,
@@ -181,18 +168,6 @@ impl Written {
                 .insert(owner.clone());
         }
         Ok(written)
-    }
-
-    /// Changes the marker and writes it again, if the file is still this marker.
-    pub(crate) async fn update(&mut self, change: impl FnOnce(&mut Marker)) -> std::io::Result<()> {
-        let _locked = lock(&self.dir).await?;
-        if !self.is_current()? {
-            return Err(std::io::Error::other(
-                "the marker was removed or replaced by another input's meanwhile",
-            ));
-        }
-        change(&mut self.marker);
-        save(&self.dir, &self.marker)
     }
 
     /// Removes the marker, if the file is still this marker. Another input's stays.
@@ -387,7 +362,6 @@ impl Found {
                 marker.operation,
                 match marker.phase {
                     Phase::Pending => "pending",
-                    Phase::Running => "running",
                 },
                 marker.since,
                 marker
@@ -410,7 +384,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_both_phases_and_keeps_an_unreadable_marker_blocking() {
+    fn reads_a_marker_and_keeps_an_unreadable_one_blocking() {
         let dir = crate::test_support::fresh_dir("marker");
         let runtime = runtime(&dir);
         runtime.create().unwrap();
@@ -424,39 +398,32 @@ mod tests {
         let Some(Found::Marker(pending)) = read(&runtime) else {
             panic!("no marker")
         };
-        assert_eq!((pending.phase, pending.child), (Phase::Pending, None));
+        assert_eq!(pending.phase, Phase::Pending);
         assert_eq!(
             Found::Marker(pending).summary(),
             "type_text pending since 2026-10-08T00:00:00.000Z"
         );
         std::fs::write(
             &path,
-            r#"{"operation":"click","phase":"running","server_pid":7,"since":"t","child":{"pid":9,"start_time":5},"buttons":[272]}"#,
+            r#"{"operation":"click","phase":"pending","server_pid":7,"since":"t","buttons":[272]}"#,
         )
         .unwrap();
-        let Some(Found::Marker(running)) = read(&runtime) else {
+        let Some(Found::Marker(click)) = read(&runtime) else {
             panic!("no marker")
         };
-        assert_eq!(
-            running.child,
-            Some(Child {
-                pid: 9,
-                start_time: 5
-            })
-        );
-        assert_eq!(running.buttons, [272]);
+        assert_eq!(click.buttons, [272]);
         std::fs::write(&path, r#"{"operation":"x","surprise":1}"#).unwrap();
         assert!(matches!(read(&runtime), Some(Found::Unreadable { .. })));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[tokio::test]
-    async fn a_written_marker_is_read_back_through_each_change_until_cleared() {
+    async fn a_written_marker_is_read_back_until_cleared() {
         use std::os::unix::fs::PermissionsExt as _;
         let dir = crate::test_support::fresh_dir("marker-write");
         let runtime = runtime(&dir);
         runtime.create().unwrap();
-        let mut written = Written::write(&runtime, Marker::pending("click", vec![272]))
+        let written = Written::write(&runtime, Marker::pending("click", vec![272]))
             .await
             .unwrap();
         let Some(Found::Marker(pending)) = read(&runtime) else {
@@ -468,24 +435,6 @@ mod tests {
         );
         let path = runtime.path().join(INPUT_DIRTY);
         assert_eq!(path.metadata().unwrap().permissions().mode() & 0o777, 0o600);
-        let child = Child {
-            pid: 9,
-            start_time: 5,
-        };
-        written
-            .update(|marker| {
-                marker.phase = Phase::Running;
-                marker.child = Some(child);
-            })
-            .await
-            .unwrap();
-        let Some(Found::Marker(running)) = read(&runtime) else {
-            panic!("no marker")
-        };
-        assert_eq!(
-            (running.phase, running.child),
-            (Phase::Running, Some(child))
-        );
         // Dropping it leaves the marker; only clearing removes it.
         written.clear().await.unwrap();
         assert_eq!(read(&runtime), None);
@@ -513,11 +462,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_stale_owner_never_changes_or_removes_another_inputs_marker() {
+    async fn a_stale_owner_never_removes_another_inputs_marker() {
         let dir = crate::test_support::fresh_dir("marker-stale");
         let runtime = runtime(&dir);
         runtime.create().unwrap();
-        let mut a = Written::write(&runtime, Marker::pending("key", Vec::new()))
+        let a = Written::write(&runtime, Marker::pending("key", Vec::new()))
             .await
             .unwrap();
         // While A's marker is set, no other input writes one.
@@ -532,9 +481,6 @@ mod tests {
             .await
             .unwrap();
         let theirs = marker_now(&runtime);
-        let late = a.update(|marker| marker.phase = Phase::Running).await;
-        assert!(late.is_err());
-        assert_eq!(marker_now(&runtime), theirs);
         a.clear().await.unwrap();
         assert_eq!(marker_now(&runtime), theirs);
         b.clear().await.unwrap();

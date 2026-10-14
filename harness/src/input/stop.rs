@@ -1,21 +1,19 @@
-//! The stop flag during input (plan §11): a stop cancels the running call, a drag's button
-//! is released on the way out, and a `wtype` already typing finishes. A drag ends
-//! `stopped`; typing whose input went out ends `uncertain`. Either way the input-dirty
-//! marker is gone afterwards, and the lease can be taken again after `resume`.
+//! The stop flag during a drag (plan §11): a stop cancels the running call and the drag's
+//! button is released on the way out. The input-dirty marker is gone afterwards, and the
+//! lease can be taken again after `resume`. A stop during typing is checked with the
+//! native keyboard's interruptions (`native::interruption`).
 
 use serde_json::{Value, json};
 
 use super::{Shot, WAIT, Wev};
 use crate::failure::{Context as _, Failure, Result};
-use crate::keyboard;
 use crate::mcp::{self, Client, field, structured};
 use crate::session::Session;
-use crate::wev::{self, Pointer};
+use crate::wev::Pointer;
 
-/// A stop has to land while the drag or the typing runs, a few tenths of a second; a stop
-/// that lands after it proves nothing, so each check tries again.
+/// A stop has to land while the drag runs, a few tenths of a second; a stop that lands
+/// after it proves nothing, so the check tries again.
 const ATTEMPTS: usize = 3;
-const TEXT: &str = "abcdefghij";
 
 pub(super) fn run(
     session: &mut Session<'_>,
@@ -23,8 +21,7 @@ pub(super) fn run(
     wev: &Wev<'_>,
     server: &str,
 ) -> Result<()> {
-    mid_drag(session, client, wev, server)?;
-    mid_typing(session, client, wev, server)
+    mid_drag(session, client, wev, server)
 }
 
 fn mid_drag(
@@ -96,53 +93,6 @@ pub(super) fn cut_by_stop(result: &Value) -> bool {
         && field(&outcome, "/detail")
             .as_str()
             .is_some_and(|detail| detail.contains("the user's stop flag"))
-}
-
-/// A stop while `wtype` types: the call says `uncertain`, and `wtype` still types the whole
-/// text, then removes the marker. wtype types 100 characters in about 0.4 s, so a stop
-/// that lands after it proves nothing, and the check tries again.
-fn mid_typing(
-    session: &mut Session<'_>,
-    client: &mut Client,
-    wev: &Wev<'_>,
-    server: &str,
-) -> Result<()> {
-    let text = TEXT.repeat(10);
-    for attempt in 1..=ATTEMPTS {
-        let offset = wev.offset()?;
-        let id = client.start_call(
-            "type_text",
-            json!({"text": text, "expect": {"app_id": "wev"}}),
-        )?;
-        session.wait_until("m4-typing", "the first key in wev", WAIT, |_| {
-            let seen = keyboard::since(wev.log, offset)?;
-            Ok((!wev::keyboard::trace(&seen)?.keys.is_empty()).then_some(()))
-        })?;
-        stop(session, server)?;
-        let ack_log = keyboard::since(wev.log, offset)?;
-        let at_ack = wev::keyboard::trace(&ack_log)?
-            .keys
-            .iter()
-            .filter(|key| key.pressed)
-            .count();
-        let result = client.result(session, id)?;
-        let stopped = cut_by_stop(&result);
-        let seen = keyboard::observed(session, wev.log, offset, text.chars().count(), false)?;
-        keyboard::text(&wev::keyboard::trace(&seen)?, &text)?;
-        marker_gone(session)?;
-        resume(session, client, server)?;
-        if stopped {
-            return session.log(&format!(
-                "M4 stop mid-typing (attempt {attempt}): uncertain, wtype typed all 100 characters ({} after stop-command acknowledgement observation), marker gone, lease taken again", text.chars().count().saturating_sub(at_ack)
-            ));
-        }
-        session.log(&format!(
-            "M4 stop mid-typing attempt {attempt}: the typing finished first: {result}"
-        ))?;
-    }
-    Err(Failure::new(format!(
-        "M4 stop mid-typing: no stop landed during the typing in {ATTEMPTS} attempts"
-    )))
 }
 
 fn stop(session: &Session<'_>, server: &str) -> Result<()> {

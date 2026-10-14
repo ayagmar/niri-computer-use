@@ -165,6 +165,11 @@ impl Niri {
         self.config.lock().unwrap().hold_actions = hold;
     }
 
+    /// Holds the answer to the next `FocusWindow` action until the test releases it.
+    pub(crate) fn hold_focus(&self) -> Held {
+        self.points.hold_next("niri:Action:FocusWindow")
+    }
+
     /// Holds the reply to the next `Version` request until the test releases it.
     pub(crate) fn hold_version(&self) -> Held {
         self.points.hold_next("niri:Version")

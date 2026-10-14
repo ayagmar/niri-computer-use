@@ -39,23 +39,6 @@ impl Client {
         Self::start_command(session, server, &["serve".into()], name, deadline)
     }
 
-    /// As `start`, with `NIRI_COMPUTER_USE_KEYBOARD` set to `keyboard`, `wtype` or
-    /// `native`, for checks whose meaning depends on the backend.
-    pub(crate) fn start_keyboard(
-        session: &mut Session<'_>,
-        server: &str,
-        keyboard: &str,
-        name: &str,
-        deadline: Duration,
-    ) -> Result<Self> {
-        let args = [
-            format!("NIRI_COMPUTER_USE_KEYBOARD={keyboard}").into(),
-            server.into(),
-            "serve".into(),
-        ];
-        Self::start_command(session, "env", &args, name, deadline)
-    }
-
     /// As `start`, also returning how long the server took to answer `initialize`, to
     /// within about a millisecond.
     pub(crate) fn start_timed(

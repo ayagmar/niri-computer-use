@@ -344,10 +344,9 @@ pub(super) fn typing_crash(
         name,
         switch_to,
     } = crash;
-    let mut client = Client::start_keyboard(
+    let mut client = Client::start(
         session,
         server,
-        "native",
         &format!("harness-m7-killed-{name}"),
         SERVER_DEADLINE,
     )?;

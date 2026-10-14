@@ -1,7 +1,6 @@
 //! The action tools over stdio: the gate before each action, what niri is asked to do, and
 //! the outcome read from the events the test sends back, as niri would after the action.
 
-use std::os::unix::net::UnixListener;
 use std::time::{Duration, Instant};
 
 use niri_ipc::{Action, WorkspaceReferenceArg};
@@ -31,15 +30,9 @@ impl Desk {
         Self::start_with(name, policy, &[]).await
     }
 
-    async fn start_backend(name: &str, policy: &str, backend: &str) -> Self {
-        Self::start_with(name, policy, &[("NIRI_COMPUTER_USE_KEYBOARD", backend)]).await
-    }
-
-    /// As `start`, with these variables in the server's environment; the keyboard backend
-    /// is wtype unless they choose another.
+    /// As `start`, with these variables in the server's environment.
     async fn start_with(name: &str, policy: &str, vars: &[(&'static str, &str)]) -> Self {
         let mut fixture = Fixture::new(name);
-        fixture.set("NIRI_COMPUTER_USE_KEYBOARD", "wtype");
         for (variable, value) in vars {
             fixture.set(variable, value);
         }
@@ -71,11 +64,6 @@ impl Desk {
     /// Removes the Wayland display's socket, so input finds nothing to connect to.
     fn unplug_display(&self) {
         std::fs::remove_file(self.fixture.path(&format!("run/{DISPLAY}"))).unwrap();
-    }
-
-    /// Serves the display from the test's process again, as the fixture does.
-    fn replug_display(&self) -> UnixListener {
-        UnixListener::bind(self.fixture.path(&format!("run/{DISPLAY}"))).unwrap()
     }
 
     /// Calls `tool`, hands its action to `respond`, and returns the result.
@@ -749,22 +737,19 @@ async fn a_stop_cancels_the_running_action_and_takes_the_lease_back() {
 
 #[tokio::test]
 async fn a_stop_ends_the_owners_queued_actions_and_frees_the_lease_within_a_second() {
-    use std::time::{Duration, Instant};
-
     let mut desk = Desk::start("act-stop-queue", "").await;
-    recording_wtype(&desk.fixture, "await_file go");
-    let key = json!({"keys": ["Down"], "expect": "none"});
+    desk.niri.hold_actions(true);
+    let focus = json!({"window_id": 2});
     let mut calls = Vec::new();
     for _ in 0..16 {
-        calls.push(desk.server.start_call("key", key.clone()).await);
+        calls.push(desk.server.start_call("focus", focus.clone()).await);
     }
-    // The first runs, blocked in wtype, and the other fifteen wait for it.
-    let calls_file = desk.fixture.path("wtype.calls");
-    assert!(crate::fixture::eventually(Duration::from_secs(2), || calls_file.exists()).await);
+    // The first runs, its action held by niri, and the other fifteen wait for it.
+    desk.niri.action().await;
     tokio::time::sleep(Duration::from_millis(200)).await;
     let stopped = Instant::now();
     assert!(run(&desk.fixture, "stop").await.status.success());
-    // The running key went out to wtype, so it may have been typed.
+    // The running action went out to niri, so it may have been carried out.
     let running = desk.server.response(calls[0]).await;
     let cut = &report(&running["result"]);
     assert_eq!(cut["observed"], "uncertain", "{running}");
@@ -788,12 +773,8 @@ async fn a_stop_ends_the_owners_queued_actions_and_frees_the_lease_within_a_seco
         "the lease was still held {:?} after the stop",
         stopped.elapsed()
     );
-    std::fs::write(desk.fixture.path("go"), "").unwrap();
     let (refused, _) = tool_error(&desk.server.call("acquire_desktop", json!({})).await);
     assert_eq!(refused, "stopped");
-    // The released wtype finishes the cancelled key, so nothing is left held.
-    let dirty = desk.fixture.runtime_dir().join("input-dirty");
-    assert!(crate::fixture::eventually(Duration::from_secs(3), || !dirty.exists()).await);
     let resume = run(&desk.fixture, "resume").await;
     assert!(resume.status.success(), "{resume:?}");
     desk.server.structured("acquire_desktop").await;
@@ -838,22 +819,16 @@ async fn denial_is_focus_based_and_unchecked_expect_does_not_bypass_it() {
     let mut desk = Desk::start("deny-focus-only", r#"deny_input_app_ids = ["b"]"#).await;
     let id = screenshot_ref(&mut desk).await;
     // b is visible, but a is focused. Policy does not hit-test these coordinates.
-    // With no fake Wayland server the call reaches connect, not an app_denied refusal.
+    // With no fake Wayland server each call reaches connect, not an app_denied refusal.
     desk.unplug_display();
-    let click = desk
-        .server
-        .call("click", json!({"screenshot_ref": id, "x": 10, "y": 10}))
-        .await;
-    let (name, detail) = tool_error(&click);
-    assert_eq!(name, "upstream_error");
-    assert!(detail.starts_with("connect to"), "{detail}");
-    let _display = desk.replug_display();
-    fake_wtype(&desk.fixture, "cat >/dev/null");
-    let allowed = desk
-        .server
-        .call("type_text", json!({"text": "x", "expect": "none"}))
-        .await;
-    assert_eq!(allowed["isError"], false);
+    for (tool, arguments) in [
+        ("click", json!({"screenshot_ref": id, "x": 10, "y": 10})),
+        ("type_text", json!({"text": "x", "expect": "none"})),
+    ] {
+        let (name, detail) = tool_error(&desk.server.call(tool, arguments).await);
+        assert_eq!(name, "upstream_error", "{tool}");
+        assert!(detail.starts_with("connect to"), "{tool}: {detail}");
+    }
     let focused = desk
         .act("focus", json!({"window_id": 2}), |stream, _| {
             focus_changed(stream, 2);
@@ -1127,7 +1102,6 @@ async fn keyboard_tools_check_their_text_focus_and_app_before_typing() {
 #[tokio::test]
 async fn a_paste_checks_its_text_focus_app_and_clipboard_before_the_key() {
     let mut desk = Desk::start("act-paste", r#"deny_input_app_ids = ["b"]"#).await;
-    fake_wtype(&desk.fixture, "exit 0");
     let paste = |text: &str, expect: Value| json!({"text": text, "via": "paste", "paste_keys": "ctrl+v", "expect": expect});
     let long = desk
         .server
@@ -1151,7 +1125,6 @@ async fn a_paste_checks_its_text_focus_app_and_clipboard_before_the_key() {
     let (name, detail) = tool_error(&unserved);
     assert_eq!(name, "upstream_error");
     assert!(detail.starts_with("connect to"), "{detail}");
-    assert!(!desk.fixture.path("wtype.args").exists());
 
     focus_changed(&desk.stream, 2);
     for _ in 0..100 {
@@ -1180,7 +1153,7 @@ async fn a_paste_checks_its_text_focus_app_and_clipboard_before_the_key() {
 
 #[tokio::test]
 async fn held_pointer_keys_validate_before_any_input() {
-    let mut desk = Desk::start_backend("held-invalid", "", "native").await;
+    let mut desk = Desk::start("held-invalid", "").await;
     let id = screenshot_ref(&mut desk).await;
     let result = desk
         .server
@@ -1198,63 +1171,27 @@ async fn held_pointer_keys_validate_before_any_input() {
     );
 }
 
-/// Native, chosen by name or by default, never falls back to wtype. An empty variable
-/// counts as unset, as for a client that never sets it.
+/// `NIRI_COMPUTER_USE_KEYBOARD` is ignored, whatever it says: the keys go to the native
+/// keyboard, here a display nothing serves.
 #[tokio::test]
-async fn native_selection_never_falls_back_to_wtype() {
-    for backend in ["native", ""] {
-        let fixture = format!("native-no-fallback-{}", backend.len());
-        let mut desk = Desk::start_backend(&fixture, "", backend).await;
+async fn the_old_keyboard_variable_is_ignored() {
+    for value in ["native", "typo"] {
+        let mut desk = Desk::start_with(
+            &format!("keyboard-ignored-{value}"),
+            "",
+            &[("NIRI_COMPUTER_USE_KEYBOARD", value)],
+        )
+        .await;
         desk.unplug_display();
-        fake_wtype(&desk.fixture, "cat >/dev/null");
         let result = desk
             .server
             .call("type_text", json!({"text": "hi", "expect": "none"}))
             .await;
         let (name, detail) = tool_error(&result);
-        assert_eq!(name, "upstream_error", "{backend:?}");
-        assert!(detail.starts_with("connect to"), "{backend:?}: {detail}");
-        assert!(!desk.fixture.path("wtype.args").exists(), "{backend:?}");
-        assert!(
-            !desk
-                .fixture
-                .path("run/niri-computer-use/niri.test/input-dirty")
-                .exists()
-        );
+        assert_eq!(name, "upstream_error", "{value}");
+        assert!(detail.starts_with("connect to"), "{value}: {detail}");
+        assert!(!desk.fixture.path(MARKER).exists(), "{value}");
     }
-}
-
-#[tokio::test]
-async fn invalid_keyboard_selection_refuses_input() {
-    let mut desk = Desk::start_backend("native-invalid", "", "typo").await;
-    fake_wtype(&desk.fixture, "cat >/dev/null");
-    let result = desk
-        .server
-        .call("type_text", json!({"text": "hi", "expect": "none"}))
-        .await;
-    let (name, detail) = tool_error(&result);
-    assert_eq!(name, "refused");
-    assert!(detail.contains("NIRI_COMPUTER_USE_KEYBOARD"), "{detail}");
-    assert!(!desk.fixture.path("wtype.args").exists());
-}
-
-#[tokio::test]
-async fn a_wtype_that_fails_to_start_leaves_no_marker() {
-    let mut desk = Desk::start("act-no-wtype", "").await;
-    let typed = desk
-        .server
-        .call(
-            "type_text",
-            json!({"text": "hi", "expect": {"app_id": "a"}}),
-        )
-        .await;
-    let (name, detail) = tool_error(&typed);
-    assert_eq!(name, "upstream_error");
-    assert!(detail.starts_with("start wtype"), "{detail}");
-    let marker = desk
-        .fixture
-        .path("run/niri-computer-use/niri.test/input-dirty");
-    assert!(!marker.exists());
 }
 
 #[tokio::test]
@@ -1282,372 +1219,56 @@ async fn input_tools_refuse_on_a_locked_screen_before_anything_else() {
 
 const MARKER: &str = "run/niri-computer-use/niri.test/input-dirty";
 
-/// A fake wtype that records its arguments, its locale, all of stdin, and the marker as it
-/// stands once stdin is closed, then runs `then`.
-fn fake_wtype(fixture: &Fixture, then: &str) {
-    fixture.program(
-        "wtype",
-        &format!(
-            "printf '%s\\n' \"$@\" > \"$DIR/wtype.args\"\nprintf '%s' \"$LC_ALL\" > \"$DIR/wtype.locale\"\ncat > \"$DIR/wtype.in\"\ncat \"$DIR/{MARKER}\" > \"$DIR/wtype.marker\"\n{then}"
-        ),
-    );
-}
-
-#[tokio::test]
-async fn type_text_feeds_wtype_behind_the_gate_and_clears_the_marker() {
-    let mut desk = Desk::start("act-wtype", "").await;
-    fake_wtype(&desk.fixture, "exit 0");
-    let typed = desk
-        .server
-        .call(
-            "type_text",
-            json!({"text": "héllo → x", "expect": {"app_id": "a"}}),
-        )
-        .await;
-    assert_eq!(
-        outcome(&typed),
-        json!({"accepted": true, "observed": "sent", "focused_window": 1, "focus": "matched"})
-    );
-    assert_eq!(desk.fixture.args("wtype"), ["-"]);
-    let read = |name: &str| std::fs::read_to_string(desk.fixture.path(name)).unwrap();
-    assert_eq!(read("wtype.in"), "héllo → x");
-    assert_eq!(read("wtype.locale"), "C.UTF-8");
-    // While wtype ran, the marker named it.
-    let marker: Value = serde_json::from_str(&read("wtype.marker")).unwrap();
-    assert_eq!(
-        (&marker["operation"], &marker["phase"]),
-        (&json!("type_text"), &json!("running"))
-    );
-    assert!(marker["child"]["pid"].as_u64().is_some(), "{marker}");
-    assert!(!desk.fixture.path(MARKER).exists());
-    // The audit log has the length, never the text.
-    let audit = std::fs::read_to_string(desk.fixture.audit_log()).unwrap();
-    assert!(!audit.contains("héllo"), "{audit}");
-    assert_eq!(
-        desk.audited(),
-        [
-            json!(["type_text", {"text_len": 9, "expect": {"app_id_len": 1, "matched": true}}, true, "sent", null])
-        ]
-    );
-
-    let key = desk
-        .server
-        .call(
-            "key",
-            json!({"keys": ["ctrl+shift+t"], "expect": {"window_id": 1}}),
-        )
-        .await;
-    assert_eq!(outcome(&key)["observed"], "sent");
-    assert_eq!(
-        desk.fixture.args("wtype"),
-        [
-            "-", "-M", "ctrl", "-M", "shift", "-k", "t", "-m", "shift", "-m", "ctrl"
-        ]
-    );
-    assert_eq!(read("wtype.in"), "");
-}
-
-/// A fake wtype that appends stdin to `wtype.in` and its arguments, one line per call, to
-/// `wtype.calls`, then runs `then`.
-fn recording_wtype(fixture: &Fixture, then: &str) {
-    fixture.program(
-        "wtype",
-        &format!("cat >> \"$DIR/wtype.in\"\necho \"$*\" >> \"$DIR/wtype.calls\"\n{then}"),
-    );
-}
-
-/// The arguments of each `wtype` call so far.
-fn wtype_calls(fixture: &Fixture) -> Vec<String> {
-    std::fs::read_to_string(fixture.path("wtype.calls"))
-        .unwrap_or_default()
-        .lines()
-        .map(str::to_owned)
-        .collect()
-}
-
-/// A wtype whose first call waits until the test creates `go`, so the test can move focus
-/// while it types.
-const FIRST_CALL_WAITS: &str =
-    "if [ ! -e \"$DIR/first\" ]; then : > \"$DIR/first\"; await_file go; fi";
-
-/// Starts `tool`, moves focus to window 2 while wtype's first call runs, and returns the
-/// result.
-async fn focus_moved_during_the_first_call(desk: &mut Desk, tool: &str, arguments: Value) -> Value {
-    recording_wtype(&desk.fixture, FIRST_CALL_WAITS);
-    let id = desk.server.start_call(tool, arguments).await;
-    while !desk.fixture.path("first").exists() {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    focus_changed(&desk.stream, 2);
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    std::fs::write(desk.fixture.path("go"), "").unwrap();
-    desk.server.response(id).await["result"].clone()
-}
-
-// A key opens a window while it goes out: the report has the window and the focus it took.
-// `act::record`'s tests check, with paused time, that one opening after the work is in it.
-#[tokio::test]
-async fn a_window_a_key_opens_is_in_the_report() {
-    let mut desk = Desk::start("act-key-report", "").await;
-    fake_wtype(&desk.fixture, ": > \"$DIR/typed\"; await_file go");
-    let keys = json!({"keys": ["ctrl+n"], "expect": {"app_id": "a"}});
-    let id = desk.server.start_call("key", keys).await;
-    let typed = desk.fixture.path("typed");
-    assert!(crate::fixture::eventually(Duration::from_secs(2), || typed.exists()).await);
-    let window = window_on(9, Some("a"), 1, false);
-    desk.stream
-        .send(&json!({"WindowOpenedOrChanged": {"window": window}}));
-    focus_changed(&desk.stream, 9);
-    std::fs::write(desk.fixture.path("go"), "").unwrap();
-    let result = desk.server.response(id).await["result"].clone();
-    assert_eq!(
-        outcome(&result)["changes"],
-        json!({
-            "opened": [{"id": 9, "app_id": "a", "workspace_id": 1, "title": "t"}],
-            "focus": {"from": 1, "to": 9}
-        })
-    );
-    // One result names one focused window: the one the report ends with.
-    assert_eq!(outcome(&result)["focused_window"], 9);
-}
-
-#[tokio::test]
-async fn long_text_is_typed_in_parts_of_a_hundred_characters() {
-    let mut desk = Desk::start("act-wtype-parts", "").await;
-    recording_wtype(&desk.fixture, "exit 0");
-    let text = "é→x".repeat(83) + "y";
-    let typed = desk
-        .server
-        .call(
-            "type_text",
-            json!({"text": text, "expect": {"app_id": "a"}}),
-        )
-        .await;
-    assert_eq!(
-        outcome(&typed),
-        json!({"accepted": true, "observed": "sent", "focused_window": 1, "focus": "matched"})
-    );
-    let read = |name: &str| std::fs::read_to_string(desk.fixture.path(name)).unwrap();
-    assert_eq!(read("wtype.in"), text);
-    assert_eq!(wtype_calls(&desk.fixture), ["-", "-", "-"]);
-    assert_eq!(
-        desk.audited(),
-        [
-            json!(["type_text", {"text_len": 250, "expect": {"app_id_len": 1, "matched": true}}, true, "sent", null])
-        ]
-    );
-}
-
-#[tokio::test]
-async fn focus_moving_during_a_part_stops_the_rest_of_the_text_and_its_return() {
-    let mut desk = Desk::start("act-wtype-moved", "").await;
-    let text = json!({"text": "a".repeat(250), "expect": {"window_id": 1}, "submit": true});
-    let result = focus_moved_during_the_first_call(&mut desk, "type_text", text).await;
-    assert_eq!(
-        outcome(&result),
-        json!({
-            "accepted": true, "observed": "interrupted", "focused_window": 2, "focus": "matched",
-            "typed": 100, "submitted": false, "changes": {"focus": {"from": 1, "to": 2}}
-        })
-    );
-    let read = |name: &str| std::fs::read_to_string(desk.fixture.path(name)).unwrap();
-    assert_eq!(read("wtype.in"), "a".repeat(100));
-    assert_eq!(wtype_calls(&desk.fixture), ["-"]);
-}
-
-#[tokio::test]
-async fn submit_presses_return_once_all_of_the_text_went_out() {
-    let mut desk = Desk::start("act-submit", "").await;
-    recording_wtype(&desk.fixture, "exit 0");
-    let message = json!({"text": "a".repeat(150), "expect": {"window_id": 1}, "submit": true});
-    let sent = desk.server.call("type_text", message).await;
-    assert_eq!(
-        outcome(&sent),
-        json!({
-            "accepted": true, "observed": "sent", "focused_window": 1, "focus": "matched",
-            "submitted": true
-        })
-    );
-    assert_eq!(wtype_calls(&desk.fixture), ["-", "-", "- -k Return"]);
-    assert_eq!(
-        desk.audited(),
-        [
-            json!(["type_text", {"text_len": 150, "expect": {"window_id": 1}, "submit": true}, true, "sent", null])
-        ]
-    );
-}
-
-/// A submitting stroke that wtype read before failing may have pressed `Return`, so the
-/// error must never say the message wasn't submitted.
-#[tokio::test]
-async fn a_submit_whose_wtype_fails_after_reading_it_may_have_gone_out() {
-    let mut desk = Desk::start("act-submit-fails", "").await;
-    let message = json!({"text": "a".repeat(150), "expect": {"window_id": 1}, "submit": true});
-    let may_have =
-        "typed 150 of 150 characters, and the submitting Return may have gone out; then ";
-    recording_wtype(
-        &desk.fixture,
-        r#"case "$*" in *Return*) echo 'lost the display' >&2; exit 1;; esac"#,
-    );
-    let failed = desk.server.call("type_text", message.clone()).await;
-    let (name, detail) = tool_error(&failed);
-    assert_eq!(name, "upstream_error");
-    assert!(detail.starts_with(may_have), "{detail}");
-    assert_eq!(report(&failed)["may_have_sent"], true);
-    assert!(detail.contains("lost the display"), "{detail}");
-    assert_eq!(wtype_calls(&desk.fixture), ["-", "-", "- -k Return"]);
-
-    // Killed once it read the stroke, as a wtype that hangs is at its deadline.
-    recording_wtype(
-        &desk.fixture,
-        r#"case "$*" in *Return*) kill -KILL $$;; esac"#,
-    );
-    let (killed_name, killed_detail) = tool_error(&desk.server.call("type_text", message).await);
-    assert_eq!(killed_name, "upstream_error");
-    assert!(killed_detail.starts_with(may_have), "{killed_detail}");
-    assert!(killed_detail.contains("marker stays"), "{killed_detail}");
-}
-
-/// A first stroke that fails once wtype read it may have gone out, even though nothing was
-/// counted yet: the error says so and carries `may_have_sent`, which the audit log keeps. A
-/// refusal before any stroke carries neither.
-#[tokio::test]
-async fn a_first_stroke_that_fails_after_wtype_read_it_may_have_gone_out() {
-    let mut desk = Desk::start("act-first-fails", "").await;
-    recording_wtype(&desk.fixture, "echo 'lost the display' >&2; exit 1");
-    let elsewhere = json!({"keys": ["Return"], "expect": {"window_id": 2}});
-    let refused = desk.server.call("key", elsewhere).await;
-    assert_eq!(tool_error(&refused).0, "focus_mismatch");
-    assert_eq!(report(&refused).get("may_have_sent"), None);
-
-    let keys = json!({"keys": ["Return"], "expect": {"window_id": 1}});
-    let key = desk.server.call("key", keys).await;
-    let (name, detail) = tool_error(&key);
-    assert_eq!(name, "upstream_error");
-    assert!(
-        detail.starts_with("pressed 0 of 1 keys, and more may have gone out; then "),
-        "{detail}"
-    );
-    assert_eq!(report(&key)["may_have_sent"], true);
-
-    let message = json!({"text": "hi", "expect": {"window_id": 1}, "submit": true});
-    let typed = desk.server.call("type_text", message).await;
-    let (typed_name, typed_detail) = tool_error(&typed);
-    assert_eq!(typed_name, "upstream_error");
-    assert!(
-        typed_detail.starts_with(
-            "typed 0 of 2 characters, and more may have gone out, not yet the submitting Return; then "
-        ),
-        "{typed_detail}"
-    );
-    assert_eq!(report(&typed)["may_have_sent"], true);
-    assert_eq!(wtype_calls(&desk.fixture), ["- -k Return", "-"]);
-
-    let audited: Vec<Value> = desk
-        .fixture
-        .audit_lines()
-        .into_iter()
-        .filter(|line| ["key", "type_text"].contains(&line["tool"].as_str().unwrap()))
-        .map(|line| json!([line["error"], line["may_have_sent"]]))
-        .collect();
-    assert_eq!(
-        audited,
-        [
-            json!(["focus_mismatch", null]),
-            json!(["upstream_error", true]),
-            json!(["upstream_error", true])
-        ]
-    );
-}
-
 /// A control character would be pressed as a key: a line break or a tab as Return or Tab,
 /// sending a message before the rest of it or moving to another field, and others as
-/// `BackSpace`, `Escape` or `Delete`. Either backend refuses the text before anything is typed
-/// and points to `submit`, `key` and `via: "paste"`.
+/// `BackSpace`, `Escape` or `Delete`. The text is refused before anything is typed, with a
+/// pointer to `submit`, `key` and `via: "paste"`.
 #[tokio::test]
 async fn text_with_a_control_character_is_refused_before_anything_is_typed() {
-    for backend in ["wtype", "native"] {
-        let mut desk = Desk::start_backend(&format!("act-newline-{backend}"), "", backend).await;
-        recording_wtype(&desk.fixture, "exit 0");
-        let texts = [
-            "Hi,\n\nhere is the plan",
-            "a\r\nb",
-            "name\tvalue",
-            "typo\u{8}",
-            "dialog\u{1b}",
-            "word\u{7f}",
-        ];
-        for text in texts {
-            let message = json!({"text": text, "expect": {"window_id": 1}, "submit": true});
-            let refused = desk.server.call("type_text", message).await;
-            let said = mistake(&refused);
-            assert!(said.contains("holds a control character"), "{said}");
-            assert!(
-                said.contains("`submit: true`") && said.contains("`via: \"paste\"`"),
-                "{said}"
-            );
-        }
-        assert_eq!(
-            wtype_calls(&desk.fixture),
-            Vec::<String>::new(),
-            "{backend}"
+    let mut desk = Desk::start("act-newline", "").await;
+    let texts = [
+        "Hi,\n\nhere is the plan",
+        "a\r\nb",
+        "name\tvalue",
+        "typo\u{8}",
+        "dialog\u{1b}",
+        "word\u{7f}",
+    ];
+    for text in texts {
+        let message = json!({"text": text, "expect": {"window_id": 1}, "submit": true});
+        let refused = desk.server.call("type_text", message).await;
+        let said = mistake(&refused);
+        assert!(said.contains("holds a control character"), "{said}");
+        assert!(
+            said.contains("`submit: true`") && said.contains("`via: \"paste\"`"),
+            "{said}"
         );
     }
-}
-
-#[tokio::test]
-async fn key_presses_each_combination_in_order() {
-    let mut desk = Desk::start("act-keys", "").await;
-    recording_wtype(&desk.fixture, "exit 0");
-    let keys = json!({"keys": ["ctrl+l", "Down", "Return"], "expect": {"app_id": "a"}});
-    let pressed = desk.server.call("key", keys).await;
-    assert_eq!(
-        outcome(&pressed),
-        json!({"accepted": true, "observed": "sent", "focused_window": 1, "focus": "matched"})
-    );
-    assert_eq!(
-        wtype_calls(&desk.fixture),
-        ["- -M ctrl -k l -m ctrl", "- -k Down", "- -k Return"]
-    );
-}
-
-#[tokio::test]
-async fn focus_moving_stops_the_rest_of_the_keys() {
-    let mut desk = Desk::start("act-keys-moved", "").await;
-    let keys = json!({"keys": ["Down", "Down", "Return"], "expect": {"window_id": 1}});
-    let result = focus_moved_during_the_first_call(&mut desk, "key", keys).await;
-    assert_eq!(
-        outcome(&result),
-        json!({
-            "accepted": true, "observed": "interrupted", "focused_window": 2, "focus": "matched",
-            "pressed": 1, "changes": {"focus": {"from": 1, "to": 2}}
-        })
-    );
-    assert_eq!(wtype_calls(&desk.fixture), ["- -k Down"]);
+    assert!(!desk.fixture.path(MARKER).exists());
 }
 
 #[tokio::test]
 async fn a_screenshot_waits_for_the_running_action() {
     let mut desk = Desk::start("act-settled", "").await;
-    recording_wtype(&desk.fixture, "await_file go; : > \"$DIR/wtype.done\"");
     desk.fixture.program(
         "grim",
-        r#"if [ -e "$DIR/wtype.done" ]; then echo after; else echo during; fi > "$DIR/grim.when"; cat "$DIR/grim.out""#,
+        r#"if [ -e "$DIR/answered" ]; then echo after; else echo during; fi > "$DIR/grim.when"; cat "$DIR/grim.out""#,
     );
-    let typing = desk
+    let answer = desk.niri.hold_focus();
+    let focus = desk
         .server
-        .start_call("type_text", json!({"text": "x", "expect": "none"}))
+        .start_call("focus", json!({"window_id": 2}))
         .await;
-    while !desk.fixture.path("wtype.calls").exists() {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    answer.arrived().await;
     let shot = desk
         .server
         .start_call("screenshot", json!({"target": "focused_output"}))
         .await;
     tokio::time::sleep(Duration::from_millis(200)).await;
-    std::fs::write(desk.fixture.path("go"), "").unwrap();
-    desk.server.response(typing).await;
+    std::fs::write(desk.fixture.path("answered"), "").unwrap();
+    answer.release();
+    focus_changed(&desk.stream, 2);
+    desk.server.response(focus).await;
     desk.server.response(shot).await;
     let when = std::fs::read_to_string(desk.fixture.path("grim.when")).unwrap();
     assert_eq!(when.trim(), "after");
@@ -1788,48 +1409,6 @@ async fn unsettled_read_only_waits_allow_actions_and_release_between_captures() 
         );
         desk.server.cancel(waiting).await;
     }
-}
-
-#[tokio::test]
-async fn a_wtype_that_fails_by_itself_clears_the_marker_and_one_killed_leaves_it() {
-    let mut desk = Desk::start("act-wtype-fail", "").await;
-    let type_x = json!({"text": "x", "expect": "none"});
-    fake_wtype(&desk.fixture, "echo 'unknown key' >&2; exit 1");
-    let failed = desk.server.call("type_text", type_x.clone()).await;
-    let (name, detail) = tool_error(&failed);
-    assert_eq!(name, "upstream_error");
-    assert!(detail.contains("unknown key"), "{detail}");
-    assert!(!desk.fixture.path(MARKER).exists());
-
-    fake_wtype(&desk.fixture, "kill -KILL $$");
-    let killed = desk.server.call("type_text", type_x.clone()).await;
-    let (killed_name, killed_detail) = tool_error(&killed);
-    assert_eq!(killed_name, "upstream_error");
-    assert!(killed_detail.contains("marker stays"), "{killed_detail}");
-    assert!(desk.fixture.path(MARKER).exists());
-    let blocked = desk.server.call("type_text", type_x).await;
-    let (blocked_name, blocked_detail) = tool_error(&blocked);
-    assert_eq!(blocked_name, "recovery_required");
-    // The killed wtype's cleanup has ended, so nothing will take the marker off.
-    assert!(
-        blocked_detail
-            .contains("call release_desktop, then the user runs `niri-computer-use recover`"),
-        "{blocked_detail}"
-    );
-}
-
-#[tokio::test]
-async fn a_wtype_past_its_deadline_is_killed_and_leaves_the_marker() {
-    let mut desk = Desk::start("act-wtype-slow", "").await;
-    fake_wtype(&desk.fixture, "exec sleep 10");
-    let slow = desk
-        .server
-        .call("type_text", json!({"text": "x", "expect": "none"}))
-        .await;
-    let (name, detail) = tool_error(&slow);
-    assert_eq!(name, "deadline_exceeded");
-    assert!(detail.contains("keys may be held"), "{detail}");
-    assert!(desk.fixture.path(MARKER).exists());
 }
 
 #[tokio::test]
@@ -2205,41 +1784,6 @@ async fn a_client_that_goes_mid_action_frees_the_lease_at_once() {
     stream.send(&json!({"WindowsChanged": {"windows": [window_on(2, Some("b"), 1, true)]}}));
     let taken = next.structured("acquire_desktop").await;
     assert_eq!(taken["holder"]["pid"], next.serving_pid().await);
-}
-
-#[tokio::test]
-async fn a_client_that_goes_mid_key_leaves_no_marker_behind() {
-    use std::time::Duration;
-
-    let mut desk = Desk::start("act-client-gone-typing", "").await;
-    recording_wtype(&desk.fixture, "await_file go");
-    desk.server
-        .start_call("key", json!({"keys": ["Down"], "expect": "none"}))
-        .await;
-    let marker = desk
-        .fixture
-        .path("run/niri-computer-use/niri.test/input-dirty");
-    assert!(
-        crate::fixture::eventually(Duration::from_secs(2), || desk
-            .fixture
-            .path("wtype.calls")
-            .exists())
-        .await
-    );
-    // The call is dropped with the client, but the server waits for wtype to finish. A
-    // bridge exits at once, and its engine finishes the cleanup.
-    let stopped = tokio::spawn(desk.server.stop());
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(stopped.is_finished(), shared_mode());
-    assert!(marker.exists());
-    std::fs::write(desk.fixture.path("go"), "").unwrap();
-    let (status, _, stderr) = stopped.await.unwrap();
-    assert!(status.success(), "{status}: {stderr}");
-    if shared_mode() {
-        assert!(crate::fixture::eventually(Duration::from_secs(2), || !marker.exists()).await);
-    } else {
-        assert!(!marker.exists());
-    }
 }
 
 /// An action that names no window goes out naming the one focused at the check, so focus

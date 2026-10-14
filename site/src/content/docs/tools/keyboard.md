@@ -1,6 +1,6 @@
 ---
 title: Keyboard and paste
-description: key and type_text, typing and pasting, the focus check, and the two keyboard backends.
+description: key and type_text, typing and pasting, the focus check, and the virtual keyboard they type through.
 sidebar:
   order: 5
 ---
@@ -9,7 +9,7 @@ The keyboard tools type into the focused app. They need the lease, and each take
 
 ## How typing works
 
-By default the server types through a virtual keyboard of its own, with the compositor's keymap: the native backend. `NIRI_COMPUTER_USE_KEYBOARD=wtype` in the server's environment selects [the wtype backend](#the-wtype-backend) instead. The keys go to the app, not to niri: niri's own keybinds don't fire from them. They run through the same gate as the other action tools, then check, before anything is typed:
+The server types through a virtual keyboard of its own, with the compositor's keymap. The keys go to the app, not to niri: niri's own keybinds don't fire from them. They run through the same gate as the other action tools, then check, before anything is typed:
 
 1. the arguments: `type_text` refuses over 1000 characters, counted as Unicode scalar values, with `text_too_long`, and an empty text, an empty list of keys, more than 16 keys, or any combination it can't read is an argument mistake
 2. `expect` against the window with keyboard focus: `focus_mismatch` when it doesn't match. A lock screen, the overview or a shell panel leaves no window focused, so only `"none"` types there
@@ -43,7 +43,7 @@ So a lock that was on before the call reads as off in that application after eve
 
 ### Chromium and Electron apps
 
-Characters outside the Basic Multilingual Plane, emoji among them, arrive in Chromium and Electron apps cut to 16 bits, as another character: `🤖` (U+1F916) arrives as U+F916. That is Chromium's handling of the key's symbol, with either backend, so send text holding them with `via: "paste"`.
+Characters outside the Basic Multilingual Plane, emoji among them, arrive in Chromium and Electron apps cut to 16 bits, as another character: `🤖` (U+1F916) arrives as U+F916. That is Chromium's handling of the key's symbol, so send text holding them with `via: "paste"`.
 
 Chromium drops a key whose keycode it has no DOM code for, so the native backend puts symbols your layout lacks on keycodes Chromium knows. Typed into Vesktop (Discord) on a US layout, each of these arrived exactly: `ab é ab ß ab → ab`; `a αβγδεζηθικλμν ok`, 14 missing symbols in one keymap; `αβγδεζηθικλμνξοπρστυφχψω ok ←↑→↓ done`, 28 in two parts; `café naïve façade Ærø`; and `Привет, мир`. So in Chromium and Electron apps only characters outside the Basic Multilingual Plane need `via: "paste"`, with one exception: Chromium reports a symbol typed on F13 to F24, the third and later missing symbols of a keymap on a US layout, as that F key too, so a shortcut the app has on F13 to F24, such as a Discord push-to-talk key or a VS Code keybinding, can run while the symbol is typed. If you have such a shortcut, have agents paste text with more than two distinct symbols your layout lacks.
 
@@ -70,7 +70,7 @@ For each combination, presses the modifiers, presses and releases the key, then 
 | `screenshot` | see Action tools |
 | `element_changes` | default false; with true, [element changes](../elements/#element-changes) for the window focused when the call starts |
 
-The text goes out one key at a time, or in parts of 100 characters with `wtype`. If focus moved, the rest isn't typed: `observed` is `interrupted` and `typed` gives the number of characters sent. A key or part that fails ends the call with that error, its `detail` starting with how many characters were typed before it and, with `submit`, whether `Return` was pressed, as in `typed 150 of 150 characters, not yet the submitting Return; then …`. A key sent to niri that it didn't acknowledge in time, or a part or `Return` that `wtype` had started on, may still have gone out, and the detail says so: `typed 150 of 150 characters, and the submitting Return may have gone out; then …`. That holds for the first key or part too: `typed 0 of 2 characters, and more may have gone out`. Every failure whose `detail` has such a count also has `may_have_sent: true`. A result without `typed` means the whole text went out. With `submit`, the result has `submitted`: true once `Return` was pressed, false when the text stopped early and `Return` wasn't pressed.
+The text goes out one key at a time. If focus moved, the rest isn't typed: `observed` is `interrupted` and `typed` gives the number of characters sent. A key that fails ends the call with that error, its `detail` starting with how many characters were typed before it and, with `submit`, whether `Return` was pressed, as in `typed 150 of 150 characters, not yet the submitting Return; then …`. A key sent to niri that it didn't acknowledge in time may still have gone out, and the detail says so: `typed 150 of 150 characters, and the submitting Return may have gone out; then …`. That holds for the first key too: `typed 0 of 2 characters, and more may have gone out`. Every failure whose `detail` has such a count also has `may_have_sent: true`. A result without `typed` means the whole text went out. With `submit`, the result has `submitted`: true once `Return` was pressed, false when the text stopped early and `Return` wasn't pressed.
 
 ### Pasting
 
@@ -79,20 +79,3 @@ The text goes out one key at a time, or in parts of 100 characters with `wtype`.
 Once the key went out, the keeper waits up to two seconds for an app to read the text, then until no new read has begun for 100 ms, and offers every saved type again. It keeps serving them, as `wl-copy` does, until something else is copied. If the key didn't go out, it restores at once. A stop, a cancelled call or a client that goes away doesn't cut short a key already on its way: the keeper still waits for that key and then for the read, and other input is refused until it has finished. If the server dies once the key may be on its way, the keeper can't know whether the key will still arrive, so it doesn't restore: the pasted text stays on the clipboard, and what you had copied before is lost, rather than pasted into the app by a late key. That text stays until something else is copied or the next paste, which replaces it although it is marked secret, and afterwards clears the clipboard rather than put it back. If something else was copied meanwhile, that copy stays, unless niri handles it in one of two moments: between the keeper's check after saving and its taking the clipboard, or between its last check and its restore. The clipboard protocol can't set the selection only if nothing else took it, so neither moment can be closed.
 
 The result is `key`'s with `paste`: `read`, whether an app asked for the text after the key, and `clipboard`: `restored`; `cleared`, when nothing was copied before and nothing is again, or when the clipboard held an earlier paste's text, which `detail` then says was dropped; `replaced`; `failed`, with `detail`; `kept`, when the server couldn't say whether the key went out, so the pasted text stays; or `unknown` when the keeper didn't report within six and a half seconds. A failed key's error says what became of the clipboard in its `detail`. When the keeper didn't admit the key, the call fails with `upstream_error`, and its `detail` says that the key wasn't sent, that nothing was pasted, and what became of the clipboard, usually that it was restored. A read can't be traced to the app it came from: a clipboard manager that reads every new selection and ignores the hint counts as a read. An app that reads the clipboard as soon as it changes and keeps what it read has the text before the key and reads nothing after it, so it pastes with `read: false`: Qt Quick text fields do this. The text is never logged: the audit log has `text_len`.
-
-## The wtype backend
-
-`NIRI_COMPUTER_USE_KEYBOARD=wtype` selects `wtype` in place of the server's own keyboard. Unset, or `native`, keeps the native default; any other value refuses every keyboard call with `refused`. What changes with `wtype`:
-
-- `key` presses each of its combinations with one `wtype` call, and `type_text` types with one `wtype` call per part of 100 characters, plus one for `Return` with `submit`. Focus and the lock state are checked before each call, not before each key, and a layout change doesn't stop it, so a part that has started typing finishes even if focus moves, you press the stop key or the screen locks.
-- `wtype` brings its own keymap, so after a call your next key makes niri send its keymap again, with the modifiers you hold.
-- `click`, `drag` and `scroll` refuse `keys`.
-
-Before `wtype` starts, the server writes the input-dirty marker (`pending`), and once `wtype` runs it adds its PID and start time (`running`). `wtype` starts with `-`, so it waits at its stdin until the server has recorded it, and it is let past only within 250 ms of the server's last read of the lock state; otherwise it is killed there, having typed nothing, and the call ends `lock_stale`. The server removes the marker when `wtype` exits by itself. A stop or a lost lease once a `wtype` call has its text ends the call `uncertain`, with the reason in `detail`, `accepted: true` and `typed` or `pressed` counting what `wtype` finished typing, or `accepted: null` while the first call is still typing; before that it is `stopped` or `lease_required`. A cancelled request ends the call. Either way a `wtype` already running keeps typing and then removes the marker; a server whose client has gone waits for it before exiting. A `wtype` still running three seconds after it started is killed with its process group, and one killed by a signal, the same way: the marker stays and every action refuses with `recovery_required` until the user runs `niri-computer-use recover`. The text is never logged: the audit log has `text_len`.
-
-Chromium and Electron apps, VS Code, Discord and Vesktop among them, take the physical key from the keycode, and `wtype` gives each key a code in the order the call first uses it: the first as Escape, the second as `1`, and the fourteenth as Backspace. Most apps go by the key's symbol and never notice. In Chromium and Electron apps:
-
-- VS Code runs its shortcuts by physical key, so `key` with `ctrl+s` reaches it as Ctrl+Escape and nothing happens, though `observed` is `sent`. Shortcuts that the text field handles itself, such as `ctrl+a` and `ctrl+v`, work.
-- A space or punctuation mark on the Escape code is dropped every time it occurs in that part, so a part that starts with a space loses all its spaces, and one on the Backspace code deletes the character before it. Letters on those codes arrive as themselves.
-
-With `wtype`, use `via: "paste"` for text there, `activate_element` for a control, or set `"keyboard.dispatch": "keyCode"` in VS Code's settings, which makes its shortcuts go by the symbol.

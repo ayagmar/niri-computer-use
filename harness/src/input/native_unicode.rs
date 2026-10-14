@@ -29,6 +29,7 @@ const QUIET: Duration = Duration::from_millis(300);
 const CANCEL_ATTEMPTS: usize = 8;
 
 pub(super) fn run(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>) -> Result<()> {
+    keyboard::validate_corpus(CORPUS)?;
     let (observer, directory, original) = observe(session, "native")?;
     let mut times = Vec::new();
     for run in 1..=5 {
@@ -96,34 +97,6 @@ pub(super) fn crash(session: &mut Session<'_>, wev: &Wev<'_>, server: &str) -> R
     observer.stop()?;
     session.log(&format!(
         "M7 SIGKILL during an extended keymap: {sent} maps sent; the guardian sent the compositor's byte for byte before recover"
-    ))
-}
-
-/// What wtype's own keymap leaves behind, for comparison only: no physical key follows.
-pub(super) fn wtype_comparison(
-    session: &mut Session<'_>,
-    client: &mut Client,
-    wev: &Wev<'_>,
-) -> Result<()> {
-    let (observer, directory, original) = observe(session, "wtype")?;
-    let offset = wev.offset()?;
-    structured(&client.call(
-        session,
-        "type_text",
-        json!({"text": CORPUS, "expect": {"app_id": "wev"}}),
-    )?)?;
-    keyboard::text(
-        &trace(&keyboard::observed(session, wev.log, offset, 100, false)?)?,
-        CORPUS,
-    )?;
-    // A pause: wtype leaves its map until a physical key, which never comes here.
-    session.still_absent("m7-wtype-keymaps", QUIET, || Ok(false))?;
-    let maps = keymaps::saved(&directory)?;
-    observer.stop()?;
-    session.log(&format!(
-        "M7 wtype C10 keymaps sent after the observer's first: {}; compositor's keymap last: {}",
-        maps.len().saturating_sub(1),
-        maps.last() == Some(&original)
     ))
 }
 

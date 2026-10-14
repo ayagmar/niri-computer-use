@@ -1466,3 +1466,14 @@ v2.9.2 is the newest release; it is over 7 days old.
 - Keys without symbols that Chromium doesn't know are used only by a map that has neither kind above. Taking them after the borrowed keys would give a US map 26 keys, and in a Chromium window every symbol past the fourteenth would be lost; leaving them out costs other applications one more keymap upload per 14 symbols.
 - A map that puts a modifier on one of F13 to F24 makes the borrowed key change a modifier, so the check refuses the call and nothing is typed. The symbols files of xkeyboard-config 2.48 put no modifier on them.
 - No dependency was added.
+
+## 2026-10-14: wtype is removed
+
+- The native keyboard is now the only keyboard. Removed: the wtype path in `input/keyboard.rs`, the runner's stdin gate (`runner::gated`, `Gated`, `feed`, `Fed`, `open_gate`), the process helpers only wtype used (`procs::named`, `alive_as`, `real_uid`), `recover`'s ending of a marker's input child and its offer to end the user's `wtype` processes, the marker's `child` field and `running` phase, and `marker::Written::update`. `keyboard.rs` keeps the argument checks, `expect` and what a call reports; `type_input_then` calls `native::type_input`.
+- `NIRI_COMPUTER_USE_KEYBOARD` is no longer read, and any value is ignored rather than refused. 0.1.0's docs told users to set it to `native`, and refusing would break exactly those setups. A `wtype` setting now gets the native keyboard, which typed Discord and VS Code exactly where wtype didn't (see the two entries above).
+- `status.binaries` lists only `grim` and `notify-send`; `wtype` is no longer a run-time dependency.
+- `recover` releases the native keys and pointer buttons the marker names; a marker that names none has nothing to release. Either way it then asks for the manual check and clears the marker after `yes`.
+- A marker 0.1.0 wrote while `wtype` ran has a `child` field, or the `running` phase, and the marker still denies unknown fields, so this version reads it as unreadable. That blocks input until `recover` as before, and `recover` then does only the human check, which is what a dead wtype child needs.
+- The shared engine's hello lost its `keyboard` field and its version went from 2 to 3. A bridge and an engine of different builds already refuse each other by the binary's identity; the version marks the format change.
+- The protocol tests' fakes serve no virtual keyboard, so the tests that drove a stand-in wtype were moved to unit tests against the fake compositor in `src/test_support/wayland.rs`, rewritten around a held niri action, or dropped where they only tested wtype. The stall explorer no longer calls `key` and `type_text`; it never reached the native keyboard, whose checks before each key are unit tests in `src/input/native.rs`. The harness's native checks are its keyboard checks, and `make nested` no longer runs M0's wtype checks.
+- No dependency was added or removed.

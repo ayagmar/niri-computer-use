@@ -1,30 +1,25 @@
 //! The two-server crash (plan §13): server A, or in shared mode the engine, is killed
-//! mid-`type_text` and mid-drag.
-//! Server B must refuse with `recovery_required` until the user's `recover` has run, which
-//! finds `wtype` already done in the first case and sends the button's release from a
-//! fresh pointer in the second. In the second, A's crash guardian has already released
-//! the button, without `recover`.
+//! mid-drag. Server B must refuse with `recovery_required` until the user's `recover` has
+//! run, which sends the button's release from a fresh pointer. A's crash guardian has
+//! already released the button, without `recover`. A server killed while typing is
+//! checked with the native keyboard's crashes (`native_gestures::typing_crash`).
 
 use serde_json::json;
 
 use super::{SERVER_DEADLINE, Shot, WAIT, Wev, stop};
 use crate::failure::{Failure, Result};
-use crate::keyboard;
 use crate::mcp::{Client, field, structured};
 use crate::session::Session;
-use crate::wev::{self, Pointer};
-
-const TEXT: &str = "0123456789";
+use crate::wev::Pointer;
 
 pub(super) fn run(session: &mut Session<'_>, wev: &Wev<'_>, server: &str) -> Result<()> {
-    mid_typing(session, wev, server)?;
     mid_drag(session, wev, server)?;
     guardian_killed_too(session, wev, server)
 }
 
-/// Starts server A with the lease, typing with wtype, which outlives A.
+/// Starts server A with the lease.
 fn server_a(session: &mut Session<'_>, server: &str, name: &str) -> Result<Client> {
-    let mut a = Client::start_keyboard(session, server, "wtype", name, SERVER_DEADLINE)?;
+    let mut a = Client::start(session, server, name, SERVER_DEADLINE)?;
     structured(&a.call(session, "acquire_desktop", json!({}))?)?;
     Ok(a)
 }
@@ -59,28 +54,6 @@ pub(super) fn recover(
     stop::marker_gone(session)?;
     structured(&b.call(session, "acquire_desktop", json!({}))?)?;
     structured(&b.call(session, "release_desktop", json!({"restore_focus": false}))?).map(drop)
-}
-
-fn mid_typing(session: &mut Session<'_>, wev: &Wev<'_>, server: &str) -> Result<()> {
-    let mut a = server_a(session, server, "harness-m4-a")?;
-    let text = TEXT.repeat(10);
-    let offset = wev.offset()?;
-    a.start_call(
-        "type_text",
-        json!({"text": text, "expect": {"app_id": "wev"}}),
-    )?;
-    session.wait_until("m4-crash-typing", "the first key in wev", WAIT, |_| {
-        let seen = keyboard::since(wev.log, offset)?;
-        Ok((!wev::keyboard::trace(&seen)?.keys.is_empty()).then_some(()))
-    })?;
-    super::guardian::kill(session, a)?;
-    let mut b = refused(session, server, "harness-m4-b")?;
-    // wtype is in a group of its own, so it outlives server A and types everything.
-    let seen = keyboard::observed(session, wev.log, offset, text.chars().count(), false)?;
-    keyboard::text(&wev::keyboard::trace(&seen)?, &text)?;
-    recover(session, &mut b, server, "has already exited")?;
-    b.stop()?;
-    session.log("M4 crash mid-typing: B refused with recovery_required, wtype typed everything, recover cleared the marker, B took the lease")
 }
 
 /// Starts a drag with server `name` and waits for its press in `wev`. Returns the client

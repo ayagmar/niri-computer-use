@@ -96,7 +96,7 @@ The notification needs `notify-send` (libnotify) on the client's `PATH` and a no
 
 ### `shared`
 
-`true` or `false`, default `true`. With `true`, the server serves its client through the one shared engine of its niri instance, starting the engine if none runs, instead of on its own. Every client then shares one crash guardian, one niri event stream and one accessibility connection, while its policy, `unrestricted`, keyboard backend, `HOME` and `PATH` stay its own, read from its own environment as before. Its `grim` and `wtype` run in its own working directory, as a standalone server's would, even after that directory is renamed or removed, so relative entries on its `PATH` work as they do in its shell.
+`true` or `false`, default `true`. With `true`, the server serves its client through the one shared engine of its niri instance, starting the engine if none runs, instead of on its own. Every client then shares one crash guardian, one niri event stream and one accessibility connection, while its policy, `unrestricted`, `HOME` and `PATH` stay its own, read from its own environment as before. Its `grim` runs in its own working directory, as a standalone server's would, even after that directory is renamed or removed, so relative entries on its `PATH` work as they do in its shell.
 
 With `false`, each server serves its own client, with a guardian, event stream and accessibility connection of its own. `NIRI_COMPUTER_USE_SHARED=1` or `0` in the server's environment overrides the file for that one client. Any other non-empty value serves the client on its own, and [`status.engine.fallback`](../../tools/looking/) and the server's stderr say why.
 
@@ -151,7 +151,7 @@ The server reads these once, at startup. When `XDG_RUNTIME_DIR`, `NIRI_SOCKET` o
 | `XDG_RUNTIME_DIR` | finding niri's socket, the display and the session bus |
 | `WAYLAND_DISPLAY` | everything that reaches the display: input, screenshots, pasting, `clipboard_read`, and finding Noctalia's socket |
 | `DBUS_SESSION_BUS_ADDRESS` | finding the accessibility bus for `elements`; without it, `$XDG_RUNTIME_DIR/bus` |
-| `PATH` | `grim`, `wtype` and, with [`confirm_lease`](#confirm_lease), `notify-send` for this client's calls |
+| `PATH` | `grim` and, with [`confirm_lease`](#confirm_lease), `notify-send` for this client's calls |
 | `NIRI_COMPUTER_USE_DESKTOP_PATH` | where to look for `loginctl` and `noctalia`, as a `PATH`-style list of absolute directories; unset or empty looks in `/usr/local/bin:/usr/bin:/bin:/run/current-system/sw/bin`. Only absolute directories count, each once, and a trailing slash makes no difference. In [shared](#shared) mode, a client that sets other directories than the engine's, or the same ones in another order, is served standalone |
 | `XDG_CONFIG_HOME`, else `HOME` | the policy file |
 | `XDG_STATE_HOME`, else `HOME` | the audit log |
@@ -160,6 +160,5 @@ The server reads these once, at startup. When `XDG_RUNTIME_DIR`, `NIRI_SOCKET` o
 | `NIRI_COMPUTER_USE_CONFIRM_LEASE` | `1` turns on [`confirm_lease`](#confirm_lease) for this server; unset or empty leaves the policy file to decide |
 | `NIRI_COMPUTER_USE_TOOLS` | `observe`, `act` or `full`: the [tool profile](#tools) for this server; unset or empty leaves the policy file to decide |
 | `NIRI_COMPUTER_USE_SHARED` | `1` turns on [`shared`](#shared) mode for this server and `0` turns it off; unset or empty leaves the policy file to decide |
-| `NIRI_COMPUTER_USE_KEYBOARD` | the keyboard backend: unset or `native` for the default, `wtype` for the [wtype backend](../../tools/keyboard/#the-wtype-backend) |
 
 The lock state comes from logind's session for niri's own process, which the server finds through niri's socket, so the server's own `XDG_SESSION_ID` doesn't matter.

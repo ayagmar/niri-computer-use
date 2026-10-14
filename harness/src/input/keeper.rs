@@ -242,6 +242,32 @@ fn start(
     Ok((keeper, log))
 }
 
+/// Starts a keeper holding `text`, has it admit the key with `k`, then ends its stdin, as
+/// a server that dies before saying whether the key went out. The keeper then serves
+/// `text` until another client takes the selection.
+pub(super) fn gone_after_k(
+    session: &mut Session<'_>,
+    server: &str,
+    text: &[u8],
+    name: &str,
+) -> Result<Process> {
+    let (mut keeper, log) = start(session, server, text, name)?;
+    keeper.send(b"k".to_vec())?;
+    session.wait_until(
+        &format!("keeper-{name}-armed"),
+        "the keeper's armed report",
+        WAIT,
+        |_| {
+            let armed = reports(&log)?
+                .iter()
+                .any(|report| field(report, "/report") == "armed");
+            Ok(armed.then_some(()))
+        },
+    )?;
+    keeper.feed(Vec::new())?;
+    Ok(keeper)
+}
+
 /// Starts a keeper and sends it `text`; its reports go to the log returned.
 fn spawn(
     session: &Session<'_>,

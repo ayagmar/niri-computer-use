@@ -6,10 +6,15 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
-- The native keyboard is the default. With `NIRI_COMPUTER_USE_KEYBOARD` unset, `key`, `type_text` and a paste's key go through the server's own virtual keyboard with the compositor's keymap, and `click`, `drag` and `scroll` take held `keys` without configuration. Set `NIRI_COMPUTER_USE_KEYBOARD=wtype` to keep typing with `wtype`. In Chromium and Electron apps, wtype's keys lost spaces and punctuation and missed shortcuts such as VS Code's `ctrl+s`; the native keyboard types text your layout has exactly. Symbols your layout lacks, such as accented letters, Greek, Cyrillic or arrows on a US layout, arrive exactly there too, because native puts them on keycodes Chromium knows, F13 to F24 among them. Emoji and other characters outside the Basic Multilingual Plane still arrive as other characters there with either backend, so paste them.
+- `key`, `type_text` and a paste's key always go through the server's own virtual keyboard with the compositor's keymap, and `click`, `drag` and `scroll` take held `keys` without configuration. In Chromium and Electron apps, wtype's keys lost spaces and punctuation and missed shortcuts such as VS Code's `ctrl+s`; the native keyboard types text your layout has exactly. Symbols your layout lacks, such as accented letters, Greek, Cyrillic or arrows on a US layout, arrive exactly there too, because native puts them on keycodes Chromium knows, F13 to F24 among them. Emoji and other characters outside the Basic Multilingual Plane still arrive as other characters there, so paste them.
 - Native text with more distinct symbols the layout lacks than the keymap has spare keycodes, 14 in a US layout, is typed in parts, each with a temporary keymap of its own, instead of refused.
 - A native `key` combination, a paste's key included, that the active layout lacks goes out in another of your layouts that has it, so `ctrl+v` and `ctrl+s` work while a layout such as Russian is active.
-- After a native call, a lock that was on, such as Caps Lock or Num Lock, reads as off in the focused application until you press a modifier or lock key, the keymap changes or focus moves. wtype's calls don't do this.
+- After a native call, a lock that was on, such as Caps Lock or Num Lock, reads as off in the focused application until you press a modifier or lock key, the keymap changes or focus moves.
+
+### Removed
+
+- The `wtype` keyboard. `NIRI_COMPUTER_USE_KEYBOARD` is no longer read, and any value is ignored rather than refused, since 0.1.0's docs told you to set it to `native`; a setting of `wtype` now gets the native keyboard. `wtype` is no longer needed at run time, and `status.binaries` lists only `grim` and `notify-send`.
+- `recover` no longer ends an input program or offers to end your `wtype` processes. It releases the keys and buttons the marker names, asks for the manual check, and clears the marker after `yes`. An input-dirty marker 0.1.0 wrote while `wtype` ran can't be read by this version, so input stays blocked until you run `recover`. Restart every MCP client after upgrading, so no 0.1.0 server keeps running beside this one: a marker it writes while typing reads as unreadable here, and sends agents to `recover` until it finishes.
 
 ## 0.1.0 - 2026-10-14
 

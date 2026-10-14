@@ -9,9 +9,7 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
-use super::keyboard::{
-    Expect, Sent, Typing, WTYPE_DEADLINE, check_expect, ended, partly, typed_so_far,
-};
+use super::keyboard::{Expect, Sent, Typing, check_expect, ended, partly, typed_so_far};
 use super::keymap::{Key, Plan, plan};
 use super::paste::Aftercare;
 use super::{Input, focused_app_id};
@@ -209,8 +207,10 @@ async fn interrupted(waiter: &mut Waiter, before: Option<u64>, group: u32) -> Op
 /// A key's share of its call's time: three frames at 60 Hz. The slowest steady rate
 /// measured, a nested niri drawing every frame, was two (32 ms).
 const PER_KEY: Duration = Duration::from_millis(50);
+/// The least time a call gets, so a short one isn't cut off by a single slow frame.
+const MIN_TIME: Duration = Duration::from_secs(3);
 
-/// The keys' time: `PER_KEY` for each key, and at least what one `wtype` call gets, from
+/// The keys' time: `PER_KEY` for each key, and at least `MIN_TIME`, from
 /// before the first key until niri has acknowledged the last. Each round trip has its own
 /// deadline, but a niri that answers every one late could otherwise stretch a call
 /// without end. Binding and planning before have their round trips' deadlines, and the
@@ -224,7 +224,7 @@ struct Budget {
 impl Budget {
     fn start(keys: usize) -> Self {
         let keys = u32::try_from(keys).unwrap_or(u32::MAX);
-        let length = PER_KEY.saturating_mul(keys).max(WTYPE_DEADLINE);
+        let length = PER_KEY.saturating_mul(keys).max(MIN_TIME);
         Self {
             length,
             ends: Instant::now() + length,
@@ -490,6 +490,8 @@ mod tests {
     const A: u32 = 40;
     const Z: u32 = 44;
     const HELD: u32 = 42;
+    /// The fixture's `<ENTER>`, Return.
+    const RETURN: u32 = 36 - 8;
     /// evdev codes of the fixture's spare keys, `<I60>` and `<I61>`.
     const I60: u32 = 60 - 8;
     const I61: u32 = 61 - 8;
@@ -611,17 +613,34 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    /// Serves Noctalia's status for `env`, with the screen unlocked, to every read.
-    fn unlocked(env: &crate::Env) {
+    /// Serves Noctalia's status for `env`: the screen unlocked, and from the `locked_from`th
+    /// read on, counted from 1, locked.
+    fn noctalia_status(env: &crate::Env, locked_from: Option<usize>) {
         let listener = tokio::net::UnixListener::bind(noctalia::socket(env).unwrap()).unwrap();
         tokio::spawn(async move {
+            let mut reads = 0;
             while let Ok((mut stream, _)) = listener.accept().await {
                 let mut request = Vec::new();
                 stream.read_to_end(&mut request).await.ok();
-                stream.write_all(br#"{"locked": false}"#).await.ok();
+                reads += 1;
+                let locked = locked_from.is_some_and(|from| reads >= from);
+                let status = format!(r#"{{"locked": {locked}}}"#);
+                stream.write_all(status.as_bytes()).await.ok();
             }
         });
     }
+
+    /// What a test's call types against besides the fake: the policy, and from which
+    /// read on Noctalia says the screen is locked.
+    struct Setup {
+        policy: Loaded,
+        locked_from: Option<usize>,
+    }
+
+    const PLAIN: Setup = Setup {
+        policy: Loaded::Missing,
+        locked_from: None,
+    };
 
     fn text(text: &str) -> Typing {
         Typing::Text {
@@ -638,11 +657,22 @@ mod tests {
         typing: Typing,
         waiter: Option<Waiter>,
     ) -> Result<Outcome, CallError> {
+        type_with(niri, dir, typing, waiter, &PLAIN).await
+    }
+
+    /// `type_through` with `setup`'s policy and lock state.
+    async fn type_with(
+        niri: &Compositor,
+        dir: &Path,
+        typing: Typing,
+        waiter: Option<Waiter>,
+        setup: &Setup,
+    ) -> Result<Outcome, CallError> {
         let env = crate::Env {
             wayland_display: Some("fake-noctalia".into()),
             ..niri.env(dir)
         };
-        unlocked(&env);
+        noctalia_status(&env, setup.locked_from);
         let runtime = RuntimeDir::of(&env).unwrap();
         runtime.create().unwrap();
         let socket = niri.niri_socket();
@@ -660,9 +690,7 @@ mod tests {
             },
             display: &env.display,
             runtime: &runtime,
-            policy: &Loaded::Missing,
-            keyboard: None,
-            place: crate::test_support::no_programs(),
+            policy: &setup.policy,
             a11y: None,
         };
         let expect = Expect::App(APP_ID.to_owned());
@@ -696,6 +724,165 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// A waiter on the fake's events that sees focus move to window 2 while niri handles the
+    /// `press`th key press, before it acknowledges it.
+    async fn focus_moves_at(niri: &Compositor, press: usize) -> Waiter {
+        let view = events::view_of(initial_events(0));
+        let (waiter, updates) = events::waiter(view, 0);
+        let moved = Event::WindowFocusChanged { id: Some(2) };
+        niri.on_press(press, move || {
+            updates.send(Update::Event(1, Box::new(moved))).ok();
+        })
+        .await;
+        waiter
+    }
+
+    #[tokio::test]
+    async fn submit_presses_return_once_all_of_the_text_went_out() {
+        let dir = fresh_dir("native-submit");
+        let niri = Compositor::start(&dir, BASE);
+        let typing = Typing::Text {
+            text: "az".to_owned(),
+            submit: true,
+        };
+        let outcome = type_through(&niri, &dir, typing, None).await.unwrap();
+        assert_eq!(outcome.observed, Observed::Sent);
+        assert_eq!((outcome.typed, outcome.submitted), (None, Some(true)));
+        assert_eq!(
+            niri.seen().keys,
+            [
+                (A, true),
+                (A, false),
+                (Z, true),
+                (Z, false),
+                (RETURN, true),
+                (RETURN, false)
+            ]
+        );
+        marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Focus moves while the first character goes out: the rest of the text and the
+    /// submitting `Return` aren't typed, and the outcome says so.
+    #[tokio::test]
+    async fn focus_moving_mid_text_stops_the_rest_and_its_return() {
+        let dir = fresh_dir("native-submit-moved");
+        let niri = Compositor::start(&dir, BASE);
+        let waiter = focus_moves_at(&niri, 1).await;
+        let typing = Typing::Text {
+            text: "az".to_owned(),
+            submit: true,
+        };
+        let outcome = type_through(&niri, &dir, typing, Some(waiter))
+            .await
+            .unwrap();
+        assert_eq!(outcome.observed, Observed::Interrupted);
+        assert_eq!((outcome.typed, outcome.submitted), (Some(1), Some(false)));
+        assert_eq!(niri.seen().keys, [(A, true), (A, false)]);
+        marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn three_keys() -> Typing {
+        Typing::Keys(vec!["z".to_owned(), "a".to_owned(), "z".to_owned()])
+    }
+
+    /// `key` presses its combinations in order.
+    #[tokio::test]
+    async fn key_presses_each_combination_in_order() {
+        let dir = fresh_dir("native-keys");
+        let niri = Compositor::start(&dir, BASE);
+        let outcome = type_through(&niri, &dir, three_keys(), None).await.unwrap();
+        assert_eq!((outcome.observed, outcome.pressed), (Observed::Sent, None));
+        assert_eq!(niri.seen().keys, presses(&[Z, A, Z].map(character)));
+        marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// `key` presses no combination after focus moved, and says how many went out.
+    #[tokio::test]
+    async fn key_stops_once_focus_moves() {
+        let dir = fresh_dir("native-keys-moved");
+        let niri = Compositor::start(&dir, BASE);
+        let waiter = focus_moves_at(&niri, 2).await;
+        let outcome = type_through(&niri, &dir, three_keys(), Some(waiter))
+            .await
+            .unwrap();
+        assert_eq!(
+            (outcome.observed, outcome.pressed),
+            (Observed::Interrupted, Some(2))
+        );
+        assert_eq!(niri.seen().keys, presses(&[Z, A].map(character)));
+        marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The focused window's app becomes one the policy denies while the second key goes
+    /// out: the third isn't pressed, and the refusal counts the two that were.
+    #[tokio::test]
+    async fn a_window_whose_app_becomes_denied_gets_no_more_keys() {
+        let dir = fresh_dir("native-keys-denied");
+        let niri = Compositor::start(&dir, BASE);
+        let view = events::view_of(initial_events(0));
+        let mut window = view.windows()[&1].clone();
+        let (waiter, updates) = events::waiter(view, 0);
+        window.app_id = Some("b".to_owned());
+        let denied = Event::WindowOpenedOrChanged { window };
+        niri.on_press(2, move || {
+            updates.send(Update::Event(1, Box::new(denied))).ok();
+        })
+        .await;
+        let setup = Setup {
+            policy: Loaded::Valid(policy::parse("deny_input_app_ids = [\"b\"]\n", false).unwrap()),
+            locked_from: None,
+        };
+        let Err(CallError::Tool(error)) =
+            type_with(&niri, &dir, three_keys(), Some(waiter), &setup).await
+        else {
+            panic!("the third key wasn't refused");
+        };
+        assert_eq!(error.name, ErrorName::AppDenied);
+        assert!(error.may_have_sent);
+        assert!(
+            error.detail.starts_with("pressed 2 of 3"),
+            "{}",
+            error.detail
+        );
+        assert_eq!(niri.seen().keys, presses(&[Z, A].map(character)));
+        marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The screen locks while the first key goes out, slowly enough that the lock state is
+    /// read again before the second: the second isn't typed, and the refusal counts the
+    /// first.
+    #[tokio::test]
+    async fn a_screen_locked_before_the_next_key_gets_no_more_keys() {
+        let dir = fresh_dir("native-keys-locked");
+        let niri = Compositor::start(&dir, BASE);
+        niri.slow_keys(Duration::from_millis(300)).await;
+        let setup = Setup {
+            policy: Loaded::Missing,
+            locked_from: Some(2),
+        };
+        let Err(CallError::Tool(error)) = type_with(&niri, &dir, text("az"), None, &setup).await
+        else {
+            panic!("the second key wasn't refused");
+        };
+        assert_eq!(error.name, ErrorName::ScreenLocked);
+        assert!(error.may_have_sent);
+        assert!(
+            error.detail.starts_with("typed 1 of 2 characters"),
+            "{}",
+            error.detail
+        );
+        niri.slow_keys(Duration::ZERO).await;
+        marker_cleared(&niri, &dir).await;
+        assert_eq!(niri.seen().keys, [(A, true), (A, false)]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     /// Text needing more spare keys than the map has goes out in parts: clients get each
     /// part's map before its keys, `é` and `ß` the same spare key in turn, and then the
     /// compositor's map back.
@@ -723,13 +910,7 @@ mod tests {
     async fn a_focus_change_between_parts_ends_the_call_with_the_first_part() {
         let dir = fresh_dir("native-parts-moved");
         let niri = Compositor::start(&dir, BASE);
-        let view = events::view_of(initial_events(0));
-        let (waiter, updates) = events::waiter(view, 0);
-        let moved = Event::WindowFocusChanged { id: Some(2) };
-        niri.on_press(2, move || {
-            updates.send(Update::Event(1, Box::new(moved))).ok();
-        })
-        .await;
+        let waiter = focus_moves_at(&niri, 2).await;
         let outcome = type_through(&niri, &dir, text("é→ß"), Some(waiter))
             .await
             .unwrap();
@@ -887,8 +1068,6 @@ mod tests {
             display: &env.display,
             runtime: &runtime,
             policy: &Loaded::Missing,
-            keyboard: None,
-            place: crate::test_support::no_programs(),
             a11y: None,
         };
         let typing = Typing::Text {
@@ -898,7 +1077,7 @@ mod tests {
         let call = Call {
             typing: &typing,
             budget: Budget {
-                length: WTYPE_DEADLINE,
+                length: MIN_TIME,
                 ends,
             },
             marks: true,
@@ -928,7 +1107,7 @@ mod tests {
     // out, must not tell the agent to try once more: the call would type that key again.
     #[tokio::test]
     async fn a_stale_lock_read_after_a_key_went_out_isnt_called_safe_to_repeat() {
-        let ends = Instant::now() + WTYPE_DEADLINE;
+        let ends = Instant::now() + MIN_TIME;
         let error = second_key_refused("native-stale", Duration::from_secs(1), ends).await;
         assert_eq!(error.name, ErrorName::LockStale);
         assert!(error.may_have_sent);
@@ -942,10 +1121,10 @@ mod tests {
         assert!(!error.detail.contains("try once more"), "{}", error.detail);
     }
 
-    /// A call gets 50 ms a key, here 7.5 s, and a short one wtype's 3 s; past them, the
+    /// A call gets 50 ms a key, here 7.5 s, and a short one 3 s; past them, the
     /// next key is refused with `deadline_exceeded`.
     #[tokio::test(start_paused = true)]
-    async fn a_call_gets_its_keys_time_and_at_least_wtypes() {
+    async fn a_call_gets_its_keys_time_and_at_least_three_seconds() {
         let budget = Budget::start(150);
         let short = Budget::start(2);
         tokio::time::advance(Duration::from_millis(2900)).await;

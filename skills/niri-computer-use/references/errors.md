@@ -23,7 +23,7 @@ These are the user's decisions. Don't call the refused action again and don't tr
 | `secret_field` | `activate_element` or `set_element_text` was aimed at a field the toolkit marks as a password field (role `password_text`), including Qt's fields that hide their text. Nothing was sent; ask the user to type it themselves. |
 | `untested_output_config` | The pointer only runs on one monitor at transform `Normal` (or in a nested niri). |
 | `unrestricted_required` | `niri_action` was given a gated action (`Spawn`, `SpawnSh`, `Quit`, `LoadConfigFile`, niri's screenshot actions, monitor power, casts and a few more). It needs `unrestricted = true` in the user's policy file; tell the user. |
-| `refused` | The selected keyboard backend cannot safely send the requested input: for example a missing control character, an invalid backend selection, or held modifiers with wtype. Tell the user; do not change the backend or bypass the tools. |
+| `refused` | The keyboard cannot safely send the requested input: for example a control character or a key the layout lacks. Tell the user; do not bypass the tools. |
 
 ## Fix and continue
 
@@ -47,7 +47,7 @@ These are the user's decisions. Don't call the refused action again and don't tr
 
 ## Report and don't loop
 
-`niri_unavailable`, `deadline_exceeded`, `upstream_error` and `noctalia_unavailable` mean niri, a helper program, Noctalia or an app on the accessibility bus didn't answer as expected; for an element action, `upstream_error` can mean the app refused it, and its detail names only the D-Bus error, not the app's message. A detail starting `start grim:` or `start wtype:` means that program isn't on your client's `PATH`; `status.binaries` says which are. Tell the user the name and detail. Don't repeat the same call in a loop.
+`niri_unavailable`, `deadline_exceeded`, `upstream_error` and `noctalia_unavailable` mean niri, a helper program, Noctalia or an app on the accessibility bus didn't answer as expected; for an element action, `upstream_error` can mean the app refused it, and its detail names only the D-Bus error, not the app's message. A detail starting `start grim:` means `grim` isn't on your client's `PATH`; `status.binaries` says whether it is. Tell the user the name and detail. Don't repeat the same call in a loop.
 
 ## Shared mode
 

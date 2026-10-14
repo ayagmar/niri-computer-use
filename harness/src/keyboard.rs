@@ -1,38 +1,20 @@
-//! C5, C9's virtual-input half and C10. Every wtype call goes through the nested session.
+//! Reading what `wev` logged of keys: exact pairs, chords and decoded text, and the C10
+//! corpus the keyboard checks type.
 
 use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::failure::{Context as _, Failure, Result};
 use crate::session::Session;
 use crate::wev::keyboard::{self, Modifiers, Trace};
 
 const WAIT: Duration = Duration::from_secs(5);
-pub(crate) const WTYPE_DEADLINE: Duration = Duration::from_secs(3);
 pub(crate) const CORPUS: &str = include_str!("../corpus.txt");
 /// Twenty-four Greek letters and six arrows: more symbols a US layout lacks than its map
 /// has spare keys, so native types them in parts with a map each.
 pub(crate) const PARTS: &str = "αβγδεζηθικλμνξοπρστυφχψω←↑→↓↔↕";
-const CTRL_A: &[&str] = &["-M", "ctrl", "-k", "a", "-m", "ctrl"];
-const ROUTING: &[&str] = &[
-    "-M", "ctrl", "-M", "shift", "-k", "F12", "-m", "shift", "-m", "ctrl",
-];
-
-pub(crate) fn run(session: &mut Session<'_>, log: &Path) -> Result<()> {
-    session.wait_until("keyboard-enter", "wl_keyboard.enter in wev", WAIT, |_| {
-        Ok(keyboard::trace(&read(log)?)?.focused.then_some(()))
-    })?;
-    session.log("keyboard: wev logged wl_keyboard.enter")?;
-    // A failure in normal use rejects wtype. Nothing after C5(a) runs in that case.
-    c5a(session, log)?;
-    c5b(session, log)?;
-    c9(session, log)?;
-    session.log("C9 physical positive control: unverified in automatic mode")?;
-    c10(session, log)
-}
-
 pub(crate) fn read(path: &Path) -> Result<String> {
     fs::read_to_string(path).context(format!("read {}", path.display()))
 }
@@ -50,25 +32,6 @@ pub(crate) fn since(path: &Path, offset: usize) -> Result<String> {
 
 pub(crate) fn args(args: &[&str]) -> Vec<OsString> {
     args.iter().map(OsString::from).collect()
-}
-
-pub(crate) fn send(
-    session: &Session<'_>,
-    arguments: &[&str],
-    text: Option<&str>,
-) -> Result<Duration> {
-    let started = Instant::now();
-    let mut process = session.start_with_stdin("wtype", &args(arguments), WTYPE_DEADLINE)?;
-    let fed = process.feed(text.unwrap_or_default().as_bytes().to_vec());
-    let output = process.wait()?;
-    fed?;
-    if !output.stderr.is_empty() {
-        return Err(Failure::new(format!(
-            "wtype stderr: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
-    Ok(started.elapsed())
 }
 
 /// Wait for the final release and, for chords, the final all-zero modifiers record.
@@ -149,101 +112,8 @@ pub(crate) fn text(trace: &Trace<'_>, expected: &str) -> Result<()> {
     Ok(())
 }
 
-fn c5a(session: &mut Session<'_>, log: &Path) -> Result<()> {
-    let start = offset(log)?;
-    for run in 1..=20 {
-        let before = offset(log)?;
-        send(session, CTRL_A, None)?;
-        let seen = observed(session, log, before, 1, true)?;
-        chord(&keyboard::trace(&seen)?, "a", 4, 1)?;
-        session.log(&format!(
-            "C5(a) Ctrl+a run {run}: one press/release with Control, final modifiers 0: pass"
-        ))?;
-    }
-    chord(&keyboard::trace(&since(log, start)?)?, "a", 4, 20)?;
-    let text_start = offset(log)?;
-    for run in 1..=20 {
-        let before = offset(log)?;
-        send(session, &["-"], Some("Hello"))?;
-        let seen = observed(session, log, before, 5, false)?;
-        text(&keyboard::trace(&seen)?, "Hello")?;
-        session.log(&format!(
-            "C5(a) Hello run {run}: exactly five decoded pairs: pass"
-        ))?;
-    }
-    text(
-        &keyboard::trace(&since(log, text_start)?)?,
-        &"Hello".repeat(20),
-    )?;
-    session.log("C5(a): exactly 20 Ctrl+a pairs and 100 Hello pairs: pass")
-}
-
-fn c5b(session: &mut Session<'_>, log: &Path) -> Result<()> {
-    let start = offset(log)?;
-    let mut gate_args = vec!["-"];
-    gate_args.extend(CTRL_A);
-    let mut process = session.start_with_stdin("wtype", &args(&gate_args), WTYPE_DEADLINE)?;
-    let held = Instant::now();
-    session.still_absent("c5b", Duration::from_secs(2), || {
-        process.ensure_running()?;
-        Ok(keyboard::has_input(&since(log, start)?))
-    })?;
-    session.log(&format!(
-        "C5(b): stdin held open {:.3} s, child alive, no keys or modifiers",
-        held.elapsed().as_secs_f64()
-    ))?;
-    process.feed(Vec::new())?;
-    process.wait()?;
-    let seen = observed(session, log, start, 1, true)?;
-    chord(&keyboard::trace(&seen)?, "a", 4, 1)?;
-    session.log("C5(b): after EOF exactly one Ctrl+a pair, final modifiers 0: pass")
-}
-
-pub(crate) fn c9(session: &mut Session<'_>, log: &Path) -> Result<()> {
-    let marker = session.bind_marker();
-    if marker.try_exists().context("check bind-fired")? {
-        return Err(Failure::new("C9: bind-fired existed before virtual input"));
-    }
-    let start = offset(log)?;
-    send(session, ROUTING, None)?;
-    let seen = observed(session, log, start, 1, true)?;
-    chord(&keyboard::trace(&seen)?, "F12", 5, 1)?;
-    session.still_absent("c9", Duration::from_secs(1), || {
-        marker.try_exists().context("check bind-fired")
-    })?;
-    chord(&keyboard::trace(&since(log, start)?)?, "F12", 5, 1)?;
-    session.log("C9 virtual half: exactly one F12 pair with Control+Shift, final modifiers 0; bind-fired absent for 1 s: pass")
-}
-
-fn c10(session: &mut Session<'_>, log: &Path) -> Result<()> {
-    validate_corpus(CORPUS)?;
-    let mut times = Vec::new();
-    for run in 1..=5 {
-        let start = offset(log)?;
-        let elapsed = send(session, &["-"], Some(CORPUS))?;
-        let seen = observed(session, log, start, 100, false)?;
-        text(&keyboard::trace(&seen)?, CORPUS)?;
-        session.log(&format!(
-            "C10 run {run}: {} bytes, 100 decoded pairs, {:.3} ms: pass",
-            CORPUS.len(),
-            elapsed.as_secs_f64() * 1000.0
-        ))?;
-        times.push(elapsed);
-    }
-    times.sort_unstable();
-    let [min, _, median, _, max] = times.as_slice() else {
-        return Err(Failure::new("C10 needs five durations"));
-    };
-    session.log(&format!(
-        "C10 ms min/median/max {:.3}/{:.3}/{:.3}; 3 s >= 2x max: {}",
-        min.as_secs_f64() * 1000.0,
-        median.as_secs_f64() * 1000.0,
-        max.as_secs_f64() * 1000.0,
-        WTYPE_DEADLINE >= *max * 2
-    ))
-}
-
-fn validate_corpus(corpus: &str) -> Result<()> {
+/// The C10 corpus has 100 characters, ASCII among them, and `é`, `ß` and `→`.
+pub(crate) fn validate_corpus(corpus: &str) -> Result<()> {
     if corpus.chars().count() != 100
         || !['é', 'ß', '→'].into_iter().all(|ch| corpus.contains(ch))
         || !corpus.chars().any(|ch| ch.is_ascii_alphabetic())

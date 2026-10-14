@@ -475,7 +475,7 @@ const fn one() -> u8 {
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct ClickArgs {
-    /// Modifiers to hold: shift, ctrl, alt, altgr, super. Native backend only.
+    /// Modifiers to hold: shift, ctrl, alt, altgr, super.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = 5))]
     keys: Vec<String>,
@@ -501,7 +501,7 @@ struct ClickArgs {
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct DragArgs {
-    /// Modifiers to hold: shift, ctrl, alt, altgr, super. Native backend only.
+    /// Modifiers to hold: shift, ctrl, alt, altgr, super.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = 5))]
     keys: Vec<String>,
@@ -521,7 +521,7 @@ struct DragArgs {
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct ScrollArgs {
-    /// Modifiers to hold: shift, ctrl, alt, altgr, super. Native backend only.
+    /// Modifiers to hold: shift, ctrl, alt, altgr, super.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = 5))]
     keys: Vec<String>,
@@ -2207,7 +2207,6 @@ mod tests {
             unrestricted: unrestricted.then(|| "1".into()),
             confirm_lease: None,
             tools: tools.map(Into::into),
-            keyboard: None,
             home: None,
             path: Some(crate::test_support::NO_PROGRAMS.into()),
             policy: Source::Missing,

@@ -172,14 +172,13 @@ async fn focus_back(server: &mut Server, stream: &Stream) {
 }
 
 /// Noctalia says unlocked, then logind's answer, unlocked too, is held while the screen
-/// locks and released past the last gate. The stale answer doesn't let `focus` or
-/// `key` go out: the lock is read again and the call is refused.
+/// locks and released past the last gate. The stale answer doesn't let `focus` go out: the
+/// lock is read again and the call is refused. Native keys read it the same way, through
+/// `act::fresh_lock`, before each key.
 #[tokio::test]
 async fn a_lock_while_loginds_answer_is_held_refuses_the_call() {
-    let mut fixture = Fixture::new("lock-held-logind");
-    fixture.set("NIRI_COMPUTER_USE_KEYBOARD", "wtype");
+    let fixture = Fixture::new("lock-held-logind");
     fixture.program("noctalia", "exit 0");
-    fixture.program("wtype", r#"echo "$*" >> "$DIR/wtype.calls""#);
     session::held_loginctl(&fixture);
     let noctalia = noctalia::start(&fixture, UNLOCKED);
     let backend = fixture.path("run/backend.sock");
@@ -199,43 +198,32 @@ async fn a_lock_while_loginds_answer_is_held_refuses_the_call() {
     ]);
     fixture.serve_programs();
     let points = fixture.points();
-    // `key` first, as `focus` moves the focus `key` expects.
-    for (tool, arguments) in [
-        ("key", json!({"keys": ["Down"], "expect": {"window_id": 1}})),
-        ("focus", json!({"window_id": 2})),
-    ] {
-        noctalia.set(UNLOCKED);
-        std::fs::remove_file(fixture.path("locked")).ok();
-        server.structured("acquire_desktop").await;
-        // The last lock read before the call acts, as a call with nothing held reads it.
-        points.start();
-        let result = server.call(tool, arguments.clone()).await;
-        assert_eq!(result["isError"], false, "{tool}: {result}");
-        points.idle().await;
-        let reads = points
-            .trace()
-            .iter()
-            .filter(|passed| passed.point == "loginctl")
-            .count();
-        if tool == "focus" {
-            niri.action().await;
-            focus_back(&mut server, &stream).await;
-        }
-        std::fs::remove_file(fixture.path("wtype.calls")).ok();
-        points.start();
-        let held = points.hold("loginctl", reads);
-        let id = server.start_call(tool, arguments).await;
-        held.arrived().await;
-        noctalia.set(LOCKED);
-        std::fs::write(fixture.path("locked"), "").unwrap();
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        held.release();
-        let response = server.response(id).await;
-        let (name, detail) = tool_error(&response["result"]);
-        assert_eq!(name, "screen_locked", "{tool}: {detail}");
-        assert!(!niri.sent_action(), "{tool}");
-        assert!(!fixture.path("wtype.calls").exists(), "{tool}");
-    }
+    server.structured("acquire_desktop").await;
+    let arguments = json!({"window_id": 2});
+    // The last lock read before the call acts, as a call with nothing held reads it.
+    points.start();
+    let result = server.call("focus", arguments.clone()).await;
+    assert_eq!(result["isError"], false, "{result}");
+    points.idle().await;
+    let reads = points
+        .trace()
+        .iter()
+        .filter(|passed| passed.point == "loginctl")
+        .count();
+    niri.action().await;
+    focus_back(&mut server, &stream).await;
+    points.start();
+    let held = points.hold("loginctl", reads);
+    let id = server.start_call("focus", arguments).await;
+    held.arrived().await;
+    noctalia.set(LOCKED);
+    std::fs::write(fixture.path("locked"), "").unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    held.release();
+    let response = server.response(id).await;
+    let (name, detail) = tool_error(&response["result"]);
+    assert_eq!(name, "screen_locked", "{detail}");
+    assert!(!niri.sent_action());
 }
 
 /// Noctalia's status and logind's hint are read side by side, in `acquire_desktop`'s

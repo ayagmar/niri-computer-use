@@ -61,15 +61,14 @@ niri-computer-use: a server holds the lease: PID … (…); end that agent or it
 
 Without a marker it prints `No input-dirty marker: nothing to recover.` and exits 0. With one, it prints the marker, then, depending on what the marker names:
 
-- a running input program, such as `wtype`: ends it, if it is still that process
 - held pointer buttons: sends their release from a fresh virtual pointer, or, if it can't, asks you to press and release each of them
 - native keys: sends their release and zero modifiers from a fresh virtual keyboard, which also makes niri send the compositor's keymap again. The modifiers go out in the layout niri has active; if niri doesn't say which that is, they go out in the layout the call started in, and `recover` says the focused application may show another layout until the next key
-- none of these: lists your running `wtype` processes, if any, and asks before ending them
+- none of these, or a marker it can't read, such as one an older version wrote: nothing to release, so only the check below
 
 Then it asks you to check by hand:
 
 ```text
-Check that no input is held: press and release Shift, Ctrl, Alt and Super, click once in an empty area, and check the application the input went to. A physical key doesn't always release a key wtype pressed.
+Check that no input is held: press and release Shift, Ctrl, Alt and Super, click once in an empty area, and check the application the input went to.
 Is all input released? Type yes to confirm:
 ```
 

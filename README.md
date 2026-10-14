@@ -23,7 +23,7 @@ It offers up to 22 tools over stdio: reading the desktop, screenshots it can sav
 
 ## Install
 
-Release builds exist for x86_64 and aarch64 Linux, and both need glibc 2.39 or newer and libxkbcommon. Either way you need niri 26.04, and `grim`, `wtype` and `loginctl` at run time, plus `notify-send` if you turn on `confirm_lease`.
+Release builds exist for x86_64 and aarch64 Linux, and both need glibc 2.39 or newer and libxkbcommon. Either way you need niri 26.04, and `grim` and `loginctl` at run time, plus `notify-send` if you turn on `confirm_lease`.
 
 Two ways to install, both giving the same server:
 
@@ -134,7 +134,7 @@ What `launch` answered:
 - Element actions refuse fields the toolkit marks as password fields. Apps start only from presets you write; `unrestricted` lifts that and allows niri's gated actions such as `Spawn`.
 - Calls that reach a tool go to an audit log, without the text typed, the clipboard, window titles or images. It is moved aside at 10 MiB and the three latest old logs are kept, so it stays under about 40 MiB.
 
-What isn't protected: any connected agent sees your screen and window titles, a click can land on a denied window that doesn't have focus, typing and clicking don't check for password fields, a lock that comes after the last read isn't caught, and an agent that can run shell commands can answer the `confirm_lease` notification itself. If you select the `wtype` keyboard backend instead of the native default, a part of up to 100 characters that has started typing finishes even if focus moves, you press the stop key or the screen locks. A click or a key can do anything you could do. Read [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/#what-isnt-a-boundary) before letting an agent act, and [SECURITY.md](https://github.com/ayagmar/niri-computer-use/blob/main/SECURITY.md) to report a problem.
+What isn't protected: any connected agent sees your screen and window titles, a click can land on a denied window that doesn't have focus, typing and clicking don't check for password fields, a lock that comes after the last read isn't caught, and an agent that can run shell commands can answer the `confirm_lease` notification itself. A click or a key can do anything you could do. Read [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/#what-isnt-a-boundary) before letting an agent act, and [SECURITY.md](https://github.com/ayagmar/niri-computer-use/blob/main/SECURITY.md) to report a problem.
 
 ## Limits
 

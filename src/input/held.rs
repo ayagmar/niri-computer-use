@@ -38,13 +38,6 @@ impl Held {
         if keys.is_empty() {
             return Ok(None);
         }
-        if !super::native_keyboard(input.keyboard)? {
-            return Err(ToolError::new(
-                ErrorName::Refused,
-                "held pointer keys need the native keyboard, which NIRI_COMPUTER_USE_KEYBOARD=wtype turns off",
-            )
-            .into());
-        }
         let display = input.display.path().map_err(Clone::clone)?;
         let keyboard = Keyboard::bind(display, niri::pid(input.niri.socket).await?).await?;
         let group = view.keyboard_group().ok_or_else(|| {

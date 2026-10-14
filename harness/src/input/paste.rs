@@ -30,14 +30,9 @@ const QUIET: Duration = Duration::from_secs(1);
 /// Each type the clipboard offers, in order, with its bytes.
 pub(super) type Offered = Vec<(String, Vec<u8>)>;
 
-pub(super) fn run(
-    session: &mut Session<'_>,
-    client: &mut Client,
-    server: &str,
-    backend: &str,
-) -> Result<()> {
+pub(super) fn run(session: &mut Session<'_>, client: &mut Client, server: &str) -> Result<()> {
     let text = CORPUS.repeat(REPEATS);
-    let (owner, copied) = own(session, backend)?;
+    let (owner, copied) = own(session, "entry")?;
     read_back(session, client, &copied)?;
     refusals(session, client, server, &copied)?;
     let start = Instant::now();
@@ -50,12 +45,12 @@ pub(super) fn run(
     let after = offered(session)?;
     if after != copied {
         return Err(Failure::new(format!(
-            "M7 paste {backend}: the clipboard after is {after:?}, not {copied:?}"
+            "M7 paste: the clipboard after is {after:?}, not {copied:?}"
         )));
     }
     clear(session, client)?;
     session.log(&format!(
-        "M7 paste {backend}: {} characters read back from the GTK entry {:.0} ms after the call began; the owner's {} types and their bytes offered again; focus_mismatch and stopped left the owner's selection and the entry untouched",
+        "M7 paste: {} characters read back from the GTK entry {:.0} ms after the call began; the owner's {} types and their bytes offered again; focus_mismatch and stopped left the owner's selection and the entry untouched",
         text.chars().count(),
         elapsed.as_secs_f64() * 1000.0,
         copied.len()
@@ -63,8 +58,8 @@ pub(super) fn run(
 }
 
 /// Starts the clipboard owner and waits until the clipboard offers its types.
-pub(super) fn own(session: &mut Session<'_>, backend: &str) -> Result<(Process, Offered)> {
-    let owner = copy(session, backend, None)?;
+pub(super) fn own(session: &mut Session<'_>, label: &str) -> Result<(Process, Offered)> {
+    let owner = copy(session, label, None)?;
     let expected = owners_copy();
     session.wait_until("m7-paste-owner", "the owner's clipboard", WAIT, |session| {
         // A type listed by the selection before the owner's can be gone by its read.
@@ -236,7 +231,7 @@ fn expect_outcome(result: &Value, clipboard: &str) -> Result<()> {
 /// copied, Noctalia's clipboard service adopts the last selection whenever the clipboard
 /// goes empty. It ignores the pasted text, which carries
 /// the password-manager hint, so it has nothing of it to adopt.
-pub(super) fn empty(session: &mut Session<'_>, client: &mut Client, backend: &str) -> Result<()> {
+pub(super) fn empty(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
     if !offered(session)?.is_empty() {
         return Err(Failure::new(
             "M7 paste: something was copied before the empty-clipboard check",
@@ -258,7 +253,7 @@ pub(super) fn empty(session: &mut Session<'_>, client: &mut Client, backend: &st
     )?;
     clear(session, client)?;
     session.log(&format!(
-        "M7 paste {backend} with nothing copied: read back from the GTK entry; the clipboard stayed empty for {} ms after",
+        "M7 paste with nothing copied: read back from the GTK entry; the clipboard stayed empty for {} ms after",
         QUIET.as_millis()
     ))
 }
