@@ -201,6 +201,10 @@ const fn withheld(why: Withheld) -> &'static str {
             "no element_ref: the wait ran out of time naming its actions, which a ref needs; \
              wait again with a longer timeout_ms, or aim at its pixels on a fresh screenshot"
         }
+        Withheld::SlowNames => {
+            "no element_ref: the app took longer to name its actions than the server allows, \
+             and a ref needs them; aim at its pixels on a fresh screenshot"
+        }
     }
 }
 
@@ -657,9 +661,13 @@ mod tests {
         unnamed.elements[0].element_ref = None;
         unnamed.withheld = Some(Withheld::Unnamed);
         unchecked.withheld = Some(Withheld::Unchecked);
+        let mut slow = listing(&["x"], Some(Capped::BudgetExhausted));
+        slow.elements[0].element_ref = None;
+        slow.withheld = Some(Withheld::SlowNames);
         for (listed, says) in [
             (unchecked, "role and name"),
             (unnamed, "naming its actions"),
+            (slow, "longer to name its actions"),
         ] {
             let checked = check(&save_button(false), Ok(Some(listed))).unwrap();
             let Checked::Ends(Ended::Met, Some(appeared), Some(detail)) = checked else {

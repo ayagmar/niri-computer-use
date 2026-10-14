@@ -519,6 +519,26 @@ async fn a_match_whose_actions_the_wait_had_no_time_to_name_ends_it_met() {
     assert!(took < Duration::from_millis(1200), "{took:?}");
 }
 
+// The bug: an app slower to name an action than naming's own second, with most of the
+// wait left, was told it had run out of the wait's time, and to wait longer, which
+// would end the same way.
+#[tokio::test]
+async fn a_match_the_app_names_too_slowly_ends_the_wait_met_without_more_waiting() {
+    let mut app = App::start("wait-el-slow-name", true).await;
+    app.mock.change("/button", |button| {
+        button.listed = Some(vec![String::new()]);
+    });
+    app.mock
+        .slow_on("GetName", "/button", Duration::from_millis(1500));
+    let (outcome, took) = app.wait(json!({"name_contains": "safe"}), 8000).await;
+    assert_eq!(outcome["observed"], "met", "{outcome}");
+    assert_eq!(outcome["element"]["element_ref"], Value::Null, "{outcome}");
+    let detail = outcome["detail"].as_str().unwrap_or_default();
+    assert!(detail.contains("longer to name its actions"), "{outcome}");
+    assert!(!detail.contains("timeout_ms"), "{outcome}");
+    assert!(took < Duration::from_secs(3), "{took:?}");
+}
+
 // The bug: a window that closes during the wait left to the timeout, or to the end of a
 // walk. niri goes on listing the window, so only its event stream can end the wait, and
 // the panel takes 0.9 s to answer, so the close comes mid-walk.

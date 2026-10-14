@@ -68,6 +68,9 @@ pub(crate) enum Withheld {
     /// Naming its actions ran out of `Ask::by`'s time, so they are as the walk read them,
     /// and a ref would be refused rather than guessed.
     Unnamed,
+    /// As `Unnamed`, but naming ran out of its own `NAMING` with `Ask::by`'s time left: the
+    /// app names actions slower than naming allows, and more time wouldn't help.
+    SlowNames,
 }
 
 /// One element.
@@ -457,7 +460,13 @@ async fn look(
                 if ask.by.is_none() {
                     break;
                 }
-                (node.actions.clone(), Some(Withheld::Unnamed))
+                let out = ask.by.is_some_and(|by| Instant::now() >= by);
+                let why = if out {
+                    Withheld::Unnamed
+                } else {
+                    Withheld::SlowNames
+                };
+                (node.actions.clone(), Some(why))
             }
             Err(error) => return Err(error),
         };
