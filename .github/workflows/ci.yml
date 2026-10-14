@@ -28,6 +28,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends libxkbcommon-dev dbus-daemon
 
+      - name: Restore cargo's build cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: check
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Run checks
         run: make check
 
@@ -43,6 +50,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends libxkbcommon-dev dbus-daemon
+
+      - name: Restore cargo's build cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: stall
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Explore every stall point
         run: make stall

@@ -1364,3 +1364,16 @@ These match the versions installed locally.
 
 - What 3.5.1 changes, from its release notes and pull requests. A session that starts with `server/discover`, as Claude Code 2.1.296's do, picks its lifecycle from the first ordinary request rather than from `discover` itself (#1248). `-32602` errors map to HTTP 400 only when required `_meta` is missing (#1322); the server speaks stdio, so this doesn't reach it. Results to 2026-07-28 peers get `ttlMs` and `cacheScope` when the handler left them out (#1308); `#[tool_handler]` already sets them on `tools/list`, and the server has no resource or prompt handlers. The other two entries are the `object!` macro without the `macros` feature and OAuth credential stores, neither of which the server uses.
 - `audit::a_client_named_only_in_each_requests_meta_is_logged_by_that_name` sends `server/discover` and then `tools/call` without `initialize`, the shape #1248 changes, and passes on 3.5.1.
+
+## 2026-10-14: CI caches cargo's builds
+
+- `Swatinem/rust-cache` restores `~/.cargo` and `target/` in the CI jobs that compile, so a run builds only this repository's crates, not every dependency. It keys the cache on the Rust toolchain, every `Cargo.toml` and `Cargo.lock`, and the job's key. It also sets `CARGO_INCREMENTAL=0`, which CI builds don't benefit from.
+- Only runs on `main` save a cache (`save-if`). Branches, pull requests and tags restore `main`'s, so their pushes can't evict it from the repository's 10 GB of cache. GitHub already keeps a branch's caches from runs on `main`.
+- `cache-bin: false` leaves `~/.cargo/bin` out, so the gate tools always come from `taiki-e/install-action`, never from a cache.
+- The release workflow's `build` job has no cache and stays that way: the binary users download is built from a clean checkout and the registry alone, so a poisoned cache can't reach it. Only CI's test jobs read a cache.
+
+| Action | Version | Published | Commit |
+|---|---|---|---|
+| `Swatinem/rust-cache` | v2.9.2 | 2026-08-06 | `6323deb102c322ba6fcbdcafc7e3dddab59af2b6` |
+
+v2.9.2 is the newest release; it is over 7 days old.
