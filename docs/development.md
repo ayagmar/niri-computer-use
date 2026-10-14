@@ -353,6 +353,22 @@ The browser opens `harness/fixtures/chromium.html` in app mode (`--app`) with `-
 
 Each case is typed with `type_text`, then pasted with `via: "paste"`, and the field is emptied with `ctrl+a` and `BackSpace` between them. A result counts once the field has stopped changing for a second, even when it shows the text sent, so a key repeated or delivered late after the text is caught. The cases are ASCII, the C10 corpus, a space or period first and fourteenth (the places wtype's Escape and Backspace codes used to drop or delete them), three, fourteen and thirty symbols a US layout lacks, accented Latin, Cyrillic and two emoji. Typed text the project says arrives exactly, and every paste, must arrive exactly, or the run fails after logging every case. Typed emoji are known to arrive cut to 16 bits in Chromium, so the emoji case passes when its text arrives either exactly, which the log calls a fix, or with each emoji cut to its lower 16 bits and the rest intact. Anything else fails, since the text around the emoji is still promised. The results are in `docs/results/chromium.md`.
 
+`make nested-chromium-a11y` checks what Chromium needs before `elements` can read its pages. It finds the browser as `make nested-chromium` does, skips the same way without one, and has the same 240-second deadline:
+
+```sh
+make nested-chromium-a11y
+```
+
+Before anything else, it checks that `DBUS_SESSION_BUS_ADDRESS` names a socket under the run's directory, so `org.a11y.Status` is the nested session's and never yours; the run only reads it, with `busctl`. It starts `at-spi2-registryd` as `make nested-a11y` does, then Noctalia and one server holding the lease. Each browser opens `harness/fixtures/chromium-a11y.html` with a profile of its own under `TEST_DIR`: a labelled field, a button that writes `sent` into it, and with `?rows=N`, N table rows of a link, a check box and a button. The page's title carries the row count and the field's value. The run fails unless:
+
+1. `IsEnabled` is false before the server, and a browser started then is refused with `not_accessible`, whose detail says the server turned accessibility on, after which `IsEnabled` is true.
+2. A browser started after that is on the registry, `elements` lists its field and button, and `activate_element` on the button changes the page's title to the field's `sent`.
+3. The first browser is still refused, with a detail that says accessibility is on.
+4. On pages of 300 and 2,000 rows, the first listing says `building: true`, and the page's field is listed within 30 seconds.
+5. After the server ends, `IsEnabled` is false again.
+
+It also logs what isn't promised: `set_element_text`'s refusal on the field, which has no `EditableText`, the frame's extents beside niri's window size, whether each browser joined or left the bus three seconds after accessibility turned on or off, and each long page's listings with their times, refs and `unbound` reasons. `docs/decisions.md` has the numbers.
+
 ## Skill evals
 
 `make nested-eval` runs an agent against one scenario in a nested niri and grades what it did. It needs `claude` on `PATH` and logged in, and it spends tokens:

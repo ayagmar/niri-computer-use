@@ -6,6 +6,8 @@
 //! exactly must arrive exactly; text it says is lost is reported as received, so a run
 //! shows both the loss and the day a fix lands.
 
+pub(crate) mod a11y;
+
 use std::ffi::OsString;
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
@@ -212,49 +214,81 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str, browser: &str) -> Res
 /// The browser in app mode, with everything it keeps under `TEST_DIR` and its log, the
 /// page's keydowns among it, in `chromium.log`.
 fn start(session: &Session<'_>, browser: &str) -> Result<Process> {
-    let root = session.test_dir().root();
-    let page = root.join("chromium.html");
-    fs::write(&page, include_str!("../fixtures/chromium.html"))
-        .context(format!("write {}", page.display()))?;
-    for dir in ["chromium-home", "chromium-tmp"].map(|name| root.join(name)) {
-        fs::create_dir_all(&dir).context(format!("create {}", dir.display()))?;
-    }
-    session.start(
-        "env",
-        &arguments(root, browser),
-        session.artifact("chromium.log"),
-        BROWSER_DEADLINE,
-    )
+    let page = Launch {
+        name: "chromium",
+        html: include_str!("../fixtures/chromium.html"),
+        query: "",
+        env: &[],
+        flags: &[],
+    };
+    page.start(session, browser)
 }
 
-/// `env`'s arguments for the browser. Its home, its temporary files and its profile are
-/// in `root`: Chromium makes its singleton socket's directory in `TMPDIR`, or in `/tmp`
-/// without it, and never removes it.
-fn arguments(root: &Path, browser: &str) -> Vec<OsString> {
-    let mut args = vec![
-        prefixed("HOME=", &root.join("chromium-home")),
-        prefixed("TMPDIR=", &root.join("chromium-tmp")),
-        browser.into(),
-    ];
-    args.extend(
-        [
-            "--ozone-platform=wayland",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--disable-sync",
-            "--disable-background-networking",
-            "--disable-component-update",
-            "--disable-default-apps",
-            "--disable-extensions",
-            "--disable-crash-reporter",
-            "--password-store=basic",
-            "--enable-logging=stderr",
-        ]
-        .map(OsString::from),
-    );
-    args.push(prefixed("--user-data-dir=", &root.join("chromium-profile")));
-    args.push(prefixed("--app=file://", &root.join("chromium.html")));
-    args
+/// A browser of its own, `name`, opening `html` with `query`: its page, profile, home and
+/// temporary files are `TEST_DIR/<name>…`, and its log is the artifact `<name>.log`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Launch<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) html: &'a str,
+    pub(crate) query: &'a str,
+    pub(crate) env: &'a [&'a str],
+    pub(crate) flags: &'a [&'a str],
+}
+
+impl Launch<'_> {
+    pub(crate) fn start(&self, session: &Session<'_>, browser: &str) -> Result<Process> {
+        let root = session.test_dir().root();
+        let page = root.join(format!("{}.html", self.name));
+        fs::write(&page, self.html).context(format!("write {}", page.display()))?;
+        for dir in self.dirs(root) {
+            fs::create_dir_all(&dir).context(format!("create {}", dir.display()))?;
+        }
+        session.start(
+            "env",
+            &self.arguments(root, browser),
+            session.artifact(&format!("{}.log", self.name)),
+            BROWSER_DEADLINE,
+        )
+    }
+
+    fn dirs(&self, root: &Path) -> [PathBuf; 2] {
+        ["home", "tmp"].map(|dir| root.join(format!("{}-{dir}", self.name)))
+    }
+
+    /// `env`'s arguments for the browser. Its home, its temporary files and its profile
+    /// are in `root`: Chromium makes its singleton socket's directory in `TMPDIR`, or in
+    /// `/tmp` without it, and never removes it.
+    fn arguments(&self, root: &Path, browser: &str) -> Vec<OsString> {
+        let [home, tmp] = self.dirs(root);
+        let mut args = vec![prefixed("HOME=", &home), prefixed("TMPDIR=", &tmp)];
+        args.extend(self.env.iter().map(OsString::from));
+        args.push(browser.into());
+        args.extend(self.flags.iter().map(OsString::from));
+        args.extend(
+            [
+                "--ozone-platform=wayland",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-sync",
+                "--disable-background-networking",
+                "--disable-component-update",
+                "--disable-default-apps",
+                "--disable-extensions",
+                "--disable-crash-reporter",
+                "--password-store=basic",
+                "--enable-logging=stderr",
+            ]
+            .map(OsString::from),
+        );
+        args.push(prefixed(
+            "--user-data-dir=",
+            &root.join(format!("{}-profile", self.name)),
+        ));
+        let mut app = prefixed("--app=file://", &root.join(format!("{}.html", self.name)));
+        app.push(self.query);
+        args.push(app);
+        args
+    }
 }
 
 fn prefixed(prefix: &str, path: &Path) -> OsString {
@@ -664,7 +698,14 @@ mod tests {
     #[test]
     fn everything_the_browser_keeps_is_under_test_dir() {
         let root = Path::new("/t/run-1");
-        let args = arguments(root, "/usr/bin/chromium");
+        let launch = Launch {
+            name: "chromium",
+            html: "",
+            query: "",
+            env: &[],
+            flags: &[],
+        };
+        let args = launch.arguments(root, "/usr/bin/chromium");
         let args: Vec<&str> = args.iter().map(|arg| arg.to_str().unwrap()).collect();
         for variable in ["HOME", "TMPDIR"] {
             let value = args

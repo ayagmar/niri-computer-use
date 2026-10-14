@@ -29,7 +29,7 @@ const BUS_DEADLINE: Duration = Duration::from_secs(230);
 const STARTUP: Duration = Duration::from_secs(10);
 const FIXTURE_DEADLINE: Duration = Duration::from_secs(220);
 const REGISTRY_NAME: &str = "org.a11y.atspi.Registry";
-const ROOT: &str = "/org/a11y/atspi/accessible/root";
+pub(crate) const ROOT: &str = "/org/a11y/atspi/accessible/root";
 
 pub(crate) fn run(session: &mut Session<'_>, server: &str, decorations: Decorations) -> Result<()> {
     session.log(&format!("M9: decorations {decorations:?}"))?;
@@ -174,6 +174,11 @@ impl Bus {
         Ok(false)
     }
 
+    /// One method call on the bus, `busctl call`'s arguments.
+    pub(crate) fn call(&self, session: &Session<'_>, call: &[&str]) -> Result<Value> {
+        busctl(session, &self.address, call)
+    }
+
     pub(crate) fn stop(self) -> Result<()> {
         self.registry.stop()?;
         self.launcher.stop().map(drop)
@@ -246,7 +251,7 @@ fn children(reply: &Value) -> Result<Vec<String>> {
 }
 
 /// Whether `pid` is `ancestor` or one of its descendants, following `/proc/<pid>/stat`.
-fn descends_from(pid: i32, ancestor: i32) -> Result<bool> {
+pub(crate) fn descends_from(pid: i32, ancestor: i32) -> Result<bool> {
     let mut current = pid;
     while current > 1 {
         if current == ancestor {

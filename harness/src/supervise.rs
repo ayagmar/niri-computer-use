@@ -87,6 +87,10 @@ pub(crate) fn supervise(
                     .browser
                     .ok_or_else(|| Failure::new("--chromium needs a browser"))
                     .and_then(|browser| crate::chromium::run(&mut session, server, browser)),
+                ServerChecks::ChromiumA11y => probes
+                    .browser
+                    .ok_or_else(|| Failure::new("--chromium-a11y needs a browser"))
+                    .and_then(|browser| crate::chromium::a11y::run(&mut session, server, browser)),
             }
         } else {
             steps(&mut session, &output, probes)

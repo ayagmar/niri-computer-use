@@ -1,4 +1,4 @@
-.PHONY: check check-static test test-shared stall stall-standalone stall-shared perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-latency nested-chromium nested-eval nested-demo sitting host-capture
+.PHONY: check check-static test test-shared stall stall-standalone stall-shared perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-latency nested-chromium nested-chromium-a11y nested-eval nested-demo sitting host-capture
 
 SCALE ?= 1
 NESTED_FLAGS = $(if $(VISIBLE),--visible) $(if $(SHARED),--shared)
@@ -90,6 +90,10 @@ nested-latency:
 nested-chromium:
 	cargo build --locked -p niri-computer-use
 	cargo run --locked -p harness -- run $(NESTED_FLAGS) --chromium
+
+nested-chromium-a11y:
+	cargo build --locked -p niri-computer-use
+	cargo run --locked -p harness -- run $(NESTED_FLAGS) --chromium-a11y
 
 # One skill eval in the nested niri: make nested-eval SCENARIO=compose-message SKILL=skills/niri-computer-use MODEL=sonnet
 nested-eval:

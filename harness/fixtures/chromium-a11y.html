@@ -1,0 +1,39 @@
+<!doctype html>
+<!--
+  The Chromium accessibility fixture: a labelled text field and a button that writes
+  "sent" into it, and with `?rows=N`, N table rows after them, each a link, a check box
+  and a button, as a long page's listing might hold. The title is "ncu-a11y:", the number
+  of rows, a colon, and the field's value, so the page's load and what reaches the field
+  show in niri.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>ncu-a11y</title>
+</head>
+<body>
+<label>ncu field <input id="field" type="text" autocomplete="off"></label>
+<button id="send">ncu send</button>
+<table id="rows"></table>
+<script>
+  const rows = Number(new URLSearchParams(location.search).get("rows") || 0);
+  const table = document.getElementById("rows");
+  for (let i = 0; i < rows; i++) {
+    const row = table.insertRow();
+    row.insertCell().innerHTML = `<a href="#r${i}">row ${i}</a>`;
+    row.insertCell().innerHTML = `<label><input type="checkbox"> done ${i}</label>`;
+    row.insertCell().innerHTML = `<button>open ${i}</button>`;
+  }
+  const field = document.getElementById("field");
+  const publish = () => {
+    document.title = "ncu-a11y:" + rows + ":" + field.value;
+  };
+  field.addEventListener("input", publish);
+  document.getElementById("send").addEventListener("click", () => {
+    field.value = "sent";
+    publish();
+  });
+  publish();
+</script>
+</body>
+</html>

@@ -95,6 +95,8 @@ pub(crate) enum ServerChecks {
     Latency,
     /// Typed and pasted text read back from a Chromium text area.
     Chromium,
+    /// What Chromium needs before its pages are on the accessibility bus.
+    ChromiumA11y,
 }
 
 impl ServerChecks {
@@ -109,6 +111,7 @@ impl ServerChecks {
             Self::Measure => "--measure",
             Self::Latency => "--latency",
             Self::Chromium => "--chromium",
+            Self::ChromiumA11y => "--chromium-a11y",
         }
     }
 
@@ -123,6 +126,7 @@ impl ServerChecks {
             Self::Measure,
             Self::Latency,
             Self::Chromium,
+            Self::ChromiumA11y,
         ]
         .into_iter()
         .find(|checks| checks.flag() == flag)
@@ -138,7 +142,7 @@ impl ServerChecks {
             Self::Engine => ENGINE_DEADLINE,
             Self::Measure => MEASURE_DEADLINE,
             Self::Latency => LATENCY_DEADLINE,
-            Self::Chromium => CHROMIUM_DEADLINE,
+            Self::Chromium | Self::ChromiumA11y => CHROMIUM_DEADLINE,
         }
     }
 }
@@ -178,7 +182,10 @@ pub(crate) fn run(options: &Options) -> Result<()> {
 /// `options` with the browser `--chromium` needs, or `None` when it found none: the
 /// suite is then skipped, not failed, as it needs a browser CI doesn't have.
 fn with_browser(options: &Options, log: &mut Log) -> Result<Option<Options>> {
-    if options.server != Some(ServerChecks::Chromium) {
+    if !matches!(
+        options.server,
+        Some(ServerChecks::Chromium | ServerChecks::ChromiumA11y)
+    ) {
         return Ok(Some(options.clone()));
     }
     let Some(browser) =
