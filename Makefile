@@ -1,22 +1,34 @@
-.PHONY: check stall perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-latency nested-eval nested-demo sitting host-capture
+.PHONY: check check-static test test-shared stall stall-standalone stall-shared perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-latency nested-eval nested-demo sitting host-capture
 
 SCALE ?= 1
 NESTED_FLAGS = $(if $(VISIBLE),--visible) $(if $(SHARED),--shared)
 
-check:
+# CI runs each of check's parts as a job of its own.
+check: check-static test test-shared
+
+check-static:
 	cargo fmt --check
 	cargo clippy --all-targets --locked -- -D warnings
 	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
-	cargo test --all-targets --locked
-	NCU_PROTOCOL_MODE=shared cargo test --test protocol --locked
 	cargo deny check
 	cargo machete
 	typos
 	git ls-files -z '*.sh' .githooks | xargs -0 -r shellcheck -o all
 
+# Every test target, with the protocol suite in standalone mode.
+test:
+	cargo test --all-targets --locked
+
+test-shared:
+	NCU_PROTOCOL_MODE=shared cargo test --test protocol --locked
+
 # The stall explorer's full matrix; make check explores one tool of each kind.
-stall:
+stall: stall-standalone stall-shared
+
+stall-standalone:
 	NCU_STALL=full cargo test --test protocol --locked stall::
+
+stall-shared:
 	NCU_STALL=full NCU_PROTOCOL_MODE=shared cargo test --test protocol --locked stall::
 
 # Unit tests that also check how long their calls take, which a loaded machine can miss.
