@@ -33,7 +33,9 @@ less install.sh
 sh install.sh
 ```
 
-`NCU_VERSION=0.1.0` installs that release instead of the latest, and `NCU_BIN_DIR` puts the binary somewhere else. Run it again to update. It ends with the steps in the Quickstart below.
+`NCU_VERSION=0.1.0` installs that release instead of the latest, and `NCU_BIN_DIR` puts the binary somewhere else. Run it again to update. It points `~/.claude/skills/niri-computer-use` and `~/.agents/skills/niri-computer-use` at the skill it installed: a link there that points elsewhere, such as into a clone, is replaced and named in the output, and a directory there is left alone. It ends with the steps in the Quickstart below.
+
+The `.sha256` catches a download that is broken or cut off. It isn't a signature: it comes from the same release as the tarball and the script, so whoever can change the release's files can change all three.
 
 To install by hand, download your machine's tarball, check it, and put the binary in `~/.local/bin` or another directory on your `PATH`. `uname -m` prints `x86_64` or `aarch64` on the machines there are builds for:
 
@@ -56,7 +58,12 @@ ln -s ~/.local/share/niri-computer-use/skills/niri-computer-use ~/.claude/skills
 ln -s ~/.local/share/niri-computer-use/skills/niri-computer-use ~/.agents/skills/niri-computer-use
 ```
 
-To update by hand, install the new release's binary and copy its `skills` the same way; the links stay.
+To update by hand, install the new release's binary the same way. Remove the old skill before copying the new one, or files the new release dropped stay behind; the links keep working:
+
+```sh
+rm -rf ~/.local/share/niri-computer-use/skills
+cp -r "niri-computer-use-0.1.0-$arch-linux/skills" ~/.local/share/niri-computer-use/
+```
 
 With Rust 1.99 or newer and libxkbcommon's headers (`libxkbcommon-dev` on Debian and Ubuntu, `libxkbcommon` on Arch), cargo builds it from crates.io into `~/.cargo/bin`. The crate has no skill; take it from the tarball or a clone.
 

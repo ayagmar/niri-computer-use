@@ -56,23 +56,39 @@ fetch --output "${tmp}/${name}.tar.gz.sha256" "${releases}/download/v${version}/
 tar -xzf "${tmp}/${name}.tar.gz" -C "${tmp}"
 
 # A binary this system can't run, such as one needing a newer glibc, stops here.
-installed_version=$("${tmp}/${name}/niri-computer-use" --version) ||
-	fail "the downloaded binary doesn't run here; nothing was installed"
+status=0
+installed_version=$("${tmp}/${name}/niri-computer-use" --version) || status=$?
+[ "${status}" -eq 0 ] ||
+	fail "the downloaded binary exited with status ${status} (its error, if any, is above), so nothing was installed. It needs glibc 2.39 or newer. If TMPDIR is mounted noexec, set TMPDIR to a directory programs can run from."
 
-# A new file moved into place, so a running server keeps the binary it started with.
-mkdir -p "${bin_dir}"
-cp "${tmp}/${name}/niri-computer-use" "${bin_dir}/.niri-computer-use.new"
-chmod 755 "${bin_dir}/.niri-computer-use.new"
-mv -f "${bin_dir}/.niri-computer-use.new" "${bin_dir}/niri-computer-use"
-
+# The binary and the skill are both copied beside where they go before either replaces
+# anything, so a failed copy leaves the previous install as it was. Each then goes into
+# place with a rename, so a running server keeps the binary it started with.
+mkdir -p "${bin_dir}" "${data_dir}/skills"
+bin_dir=$(cd "${bin_dir}" && pwd)
+binary=${bin_dir}/niri-computer-use
 skill=${data_dir}/skills/niri-computer-use
-mkdir -p "${data_dir}/skills"
+staged_binary=${bin_dir}/.niri-computer-use.new
+staged_skill=${data_dir}/skills/.niri-computer-use.new
+trap 'rm -rf "${tmp}" "${staged_binary}" "${staged_skill}"' EXIT
+rm -rf "${staged_skill}"
+if ! {
+	cp "${tmp}/${name}/niri-computer-use" "${staged_binary}" &&
+		chmod 755 "${staged_binary}" &&
+		cp -R "${tmp}/${name}/skills/niri-computer-use" "${staged_skill}"
+}; then
+	fail "couldn't copy the new files into ${bin_dir} and ${data_dir}/skills; what was installed before is unchanged"
+fi
+mv -f "${staged_binary}" "${binary}"
 rm -rf "${skill}"
-cp -R "${tmp}/${name}/skills/niri-computer-use" "${skill}"
+mv "${staged_skill}" "${skill}"
+
 for skills_dir in "${HOME}/.claude/skills" "${HOME}/.agents/skills"; do
 	link=${skills_dir}/niri-computer-use
 	mkdir -p "${skills_dir}"
 	if [ -L "${link}" ]; then
+		target=$(readlink "${link}")
+		[ "${target}" = "${skill}" ] || echo "Replaced ${link}, which pointed to ${target}."
 		rm "${link}"
 	elif [ -e "${link}" ]; then
 		echo "Left ${link} as it is: it isn't a link. The skill is in ${skill}."
@@ -83,14 +99,14 @@ done
 
 cat <<EOF
 
-Installed ${installed_version} to ${bin_dir}/niri-computer-use and its skill to ${skill}.
+Installed ${installed_version} to ${binary} and its skill to ${skill}.
 
 Next:
   1. Check it from a shell inside your niri session; niri.compat should be "ok":
-       ${bin_dir}/niri-computer-use status
+       "${binary}" status
   2. Register it in your agent, for Claude Code:
-       claude mcp add --scope user niri-computer-use -- ${bin_dir}/niri-computer-use serve
+       claude mcp add --scope user niri-computer-use -- "${binary}" serve
      Other clients: https://ayagmar.github.io/niri-computer-use/start/clients/
   3. Bind the stop key inside the binds block of your niri config:
-       Mod+Shift+Escape allow-inhibiting=false allow-when-locked=true hotkey-overlay-title="Stop the AI agent (niri-computer-use)" { spawn "${bin_dir}/niri-computer-use" "stop"; }
+       Mod+Shift+Escape allow-inhibiting=false allow-when-locked=true hotkey-overlay-title="Stop the AI agent (niri-computer-use)" { spawn "${binary}" "stop"; }
 EOF

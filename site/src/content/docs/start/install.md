@@ -29,7 +29,11 @@ sh install.sh
 | `NCU_VERSION` | The release to install, such as `0.1.0`, instead of the latest |
 | `NCU_BIN_DIR` | Where the binary goes, instead of `~/.local/bin` |
 
-It refuses a tarball that doesn't match its `.sha256`, and a binary that doesn't run on your system, such as one that needs a newer glibc, before it changes anything. Run it again to update: it replaces the binary and the skill and keeps the links. It leaves a skill path that isn't a link alone.
+It refuses a tarball that doesn't match its `.sha256`, and a binary that doesn't run on your system, such as one that needs a newer glibc, before it changes anything. It copies the new binary and skill beside the old ones before replacing either, so a copy that fails, on a full disk for example, leaves the previous install as it was.
+
+Run it again to update: it replaces the binary and the skill. It points `~/.claude/skills/niri-computer-use` and `~/.agents/skills/niri-computer-use` at the skill it installed. A link there that points elsewhere, such as into a clone, is replaced and named in the output; a directory there is left alone.
+
+The `.sha256` catches a download that is broken or cut off. It isn't a signature: it comes from the same release as the tarball and the script, so whoever can change the release's files can change all three.
 
 ### By hand
 
@@ -54,7 +58,12 @@ ln -s ~/.local/share/niri-computer-use/skills/niri-computer-use ~/.claude/skills
 ln -s ~/.local/share/niri-computer-use/skills/niri-computer-use ~/.agents/skills/niri-computer-use
 ```
 
-To update, install the new release's binary and copy its `skills` the same way; the links stay.
+To update, install the new release's binary the same way. Remove the old skill before copying the new one, or files the new release dropped stay behind; the links keep working:
+
+```sh
+rm -rf ~/.local/share/niri-computer-use/skills
+cp -r "niri-computer-use-0.1.0-$arch-linux/skills" ~/.local/share/niri-computer-use/
+```
 
 ## Install with cargo
 

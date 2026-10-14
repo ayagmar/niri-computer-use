@@ -1,6 +1,7 @@
 //! `install.sh` against fake releases served over HTTP from a directory of the test's own.
-//! The script runs with that directory as `HOME` and `TMPDIR`, and a fake `uname` that
-//! names the machine, so nothing here reaches the real home directory or the network.
+//! The script runs with a home inside that directory, whose name has a space, as `HOME`, the
+//! directory's `tmp` as `TMPDIR`, and a fake `uname` that names the machine, so nothing here
+//! reaches the real home directory or the network.
 //!
 //! Everything is `cfg(test)`, which always holds here, so Clippy treats the helpers as
 //! test code too.
@@ -30,30 +31,39 @@ mod script {
                 .as_nanos();
             let dir = std::env::temp_dir()
                 .join(format!("ncu-install-{name}-{}-{nanos}", std::process::id()));
-            for sub in ["home", "tmp", "fakes", "releases", "stage"] {
+            for sub in ["home dir", "tmp", "fakes", "releases", "stage"] {
                 std::fs::create_dir_all(dir.join(sub)).unwrap();
             }
-            write_program(
-                &dir.join("fakes/uname"),
+            let release = Self { dir };
+            release.fake(
+                "uname",
                 &format!("case $1 in -s) echo Linux ;; -m) echo {arch} ;; esac\n"),
             );
-            Self { dir }
+            release
         }
 
         fn home(&self) -> PathBuf {
-            self.dir.join("home")
+            self.dir.join("home dir")
+        }
+
+        /// A program the script finds on `PATH` before the system's.
+        fn fake(&self, program: &str, body: &str) {
+            write_program(&self.dir.join("fakes").join(program), body);
         }
 
         /// Publishes `version`'s tarball for `arch` and its `.sha256`, which is `sha256` of
         /// the tarball's own bytes when `None`.
         fn publish(&self, version: &str, arch: &str, sha256: Option<&str>) {
+            let binary = format!("echo 'niri-computer-use {version}'\n");
+            self.publish_binary(version, arch, &binary, sha256);
+        }
+
+        /// Publishes `version` for `arch` with `binary` as the program's body.
+        fn publish_binary(&self, version: &str, arch: &str, binary: &str, sha256: Option<&str>) {
             let name = format!("niri-computer-use-{version}-{arch}-linux");
             let tree = self.dir.join("stage").join(&name);
             std::fs::create_dir_all(tree.join("skills/niri-computer-use/references")).unwrap();
-            write_program(
-                &tree.join("niri-computer-use"),
-                &format!("echo 'niri-computer-use {version}'\n"),
-            );
+            write_program(&tree.join("niri-computer-use"), binary);
             std::fs::write(tree.join("skills/niri-computer-use/SKILL.md"), version).unwrap();
             std::fs::write(
                 tree.join("skills/niri-computer-use/references/tools.md"),
@@ -84,7 +94,8 @@ mod script {
         /// Runs the script with `env` on top of the test's environment.
         async fn install(&self, env: &[(&str, &str)]) -> Output {
             let releases = serve(self.dir.join("releases"));
-            let path = format!("{}:/usr/local/bin:/usr/bin:/bin", self.path("fakes"));
+            let fakes = self.dir.join("fakes");
+            let path = format!("{}:/usr/local/bin:/usr/bin:/bin", fakes.display());
             let mut command = script();
             command
                 .env_clear()
@@ -92,6 +103,7 @@ mod script {
                 .env("HOME", self.home())
                 .env("TMPDIR", self.dir.join("tmp"))
                 .env("NCU_RELEASES_URL", releases)
+                .current_dir(&self.dir)
                 .envs(env.iter().copied())
                 .stdin(Stdio::null())
                 .kill_on_drop(true);
@@ -99,10 +111,6 @@ mod script {
                 .await
                 .unwrap()
                 .unwrap()
-        }
-
-        fn path(&self, relative: &str) -> String {
-            self.dir.join(relative).display().to_string()
         }
 
         /// Whether the script left nothing in its temporary directory.
@@ -226,29 +234,33 @@ mod script {
         }
         let stdout = String::from_utf8(output.stdout).unwrap();
         let register = format!(
-            "claude mcp add --scope user niri-computer-use -- {} serve",
+            "claude mcp add --scope user niri-computer-use -- \"{}\" serve",
             binary.display()
         );
         assert!(stdout.contains(&register), "{stdout}");
         assert!(stdout.contains(&format!("spawn \"{}\" \"stop\"", binary.display())));
+        assert!(!stdout.contains("Replaced"), "{stdout}");
         assert!(release.tmp_is_empty());
     }
 
     #[tokio::test]
-    async fn installs_the_named_version_for_aarch64_into_the_named_directory() {
+    async fn installs_the_named_version_for_aarch64_into_a_relative_directory() {
         let release = Release::new("named", "aarch64");
         release.publish("0.0.9", "aarch64", None);
         release.publish(LATEST, "aarch64", None);
-        let bin_dir = release.path("tools");
 
         let output = release
-            .install(&[("NCU_VERSION", "v0.0.9"), ("NCU_BIN_DIR", &bin_dir)])
+            .install(&[("NCU_VERSION", "v0.0.9"), ("NCU_BIN_DIR", "tools")])
             .await;
 
         assert!(output.status.success(), "{output:?}");
-        let binary = Path::new(&bin_dir).join("niri-computer-use");
+        let binary = release.dir.join("tools/niri-computer-use");
         assert_eq!(version_of(&binary), "niri-computer-use 0.0.9\n");
         assert!(!release.home().join(".local/bin").exists());
+        // The printed steps name the binary by its absolute path, which niri's `spawn` needs.
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let status = format!("\"{}\" status", binary.display());
+        assert!(stdout.contains(&status), "{stdout}");
     }
 
     #[tokio::test]
@@ -308,5 +320,134 @@ mod script {
             "{stderr}"
         );
         assert!(!release.home().join(".local").exists());
+    }
+
+    #[tokio::test]
+    async fn a_binary_that_does_not_run_here_installs_nothing() {
+        let release = Release::new("broken", "x86_64");
+        let binary = "echo 'version GLIBC_2.39 not found' >&2\nexit 1\n";
+        release.publish_binary(LATEST, "x86_64", binary, None);
+
+        let output = release.install(&[]).await;
+
+        assert!(!output.status.success());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains("version GLIBC_2.39 not found"), "{stderr}");
+        assert!(stderr.contains("exited with status 1"), "{stderr}");
+        assert!(stderr.contains("nothing was installed"), "{stderr}");
+        assert!(!release.home().join(".local").exists());
+        assert!(release.tmp_is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_release_without_its_checksum_installs_nothing() {
+        let release = Release::new("unsummed", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        let checksum = format!("niri-computer-use-{LATEST}-x86_64-linux.tar.gz.sha256");
+        std::fs::remove_file(release.dir.join("releases/download/v0.1.0").join(checksum)).unwrap();
+
+        let output = release.install(&[]).await;
+
+        assert!(!output.status.success());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains("404"), "{stderr}");
+        assert!(!release.home().join(".local").exists());
+        assert!(release.tmp_is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_copy_that_fails_keeps_the_previous_install_whole() {
+        let release = Release::new("full", "x86_64");
+        release.publish("0.0.9", "x86_64", None);
+        release.publish(LATEST, "x86_64", None);
+        let older = release.install(&[("NCU_VERSION", "0.0.9")]).await;
+        assert!(older.status.success(), "{older:?}");
+        // The skill's copy fails, as on a full disk, after the binary's copy succeeded.
+        release.fake(
+            "cp",
+            "case $1 in -R) echo 'cp: No space left on device' >&2; exit 1 ;; esac\nexec /bin/cp \"$@\"\n",
+        );
+
+        let output = release.install(&[]).await;
+
+        assert!(!output.status.success());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.contains("what was installed before is unchanged"),
+            "{stderr}"
+        );
+        let home = release.home();
+        let binary = home.join(".local/bin/niri-computer-use");
+        assert_eq!(version_of(&binary), "niri-computer-use 0.0.9\n");
+        let skills = home.join(".local/share/niri-computer-use/skills");
+        let link = home.join(".claude/skills/niri-computer-use");
+        assert_eq!(
+            std::fs::read_to_string(link.join("SKILL.md")).unwrap(),
+            "0.0.9"
+        );
+        assert!(!home.join(".local/bin/.niri-computer-use.new").exists());
+        assert!(!skills.join(".niri-computer-use.new").exists());
+        assert!(release.tmp_is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_link_the_user_made_is_replaced_with_a_notice_and_a_directory_left_alone() {
+        let release = Release::new("theirs", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        let home = release.home();
+        let clone = release.dir.join("clone/skills/niri-computer-use");
+        std::fs::create_dir_all(&clone).unwrap();
+        std::fs::write(clone.join("SKILL.md"), "from the clone").unwrap();
+        let claude = home.join(".claude/skills/niri-computer-use");
+        std::fs::create_dir_all(claude.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&clone, &claude).unwrap();
+        let agents = home.join(".agents/skills/niri-computer-use");
+        std::fs::create_dir_all(&agents).unwrap();
+        std::fs::write(agents.join("SKILL.md"), "their own").unwrap();
+
+        let output = release.install(&[]).await;
+
+        assert!(output.status.success(), "{output:?}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let skill = home.join(".local/share/niri-computer-use/skills/niri-computer-use");
+        assert_eq!(std::fs::read_link(&claude).unwrap(), skill);
+        let replaced = format!(
+            "Replaced {}, which pointed to {}.",
+            claude.display(),
+            clone.display()
+        );
+        assert!(stdout.contains(&replaced), "{stdout}");
+        assert_eq!(
+            std::fs::read_to_string(clone.join("SKILL.md")).unwrap(),
+            "from the clone"
+        );
+        assert!(!agents.is_symlink());
+        assert_eq!(
+            std::fs::read_to_string(agents.join("SKILL.md")).unwrap(),
+            "their own"
+        );
+        assert!(
+            stdout.contains(&format!("Left {} as it is", agents.display())),
+            "{stdout}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_linked_binary_is_replaced_by_a_file_and_its_target_kept() {
+        let release = Release::new("linked", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        let elsewhere = release.dir.join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        write_program(&elsewhere.join("niri-computer-use"), "echo old\n");
+        let binary = release.home().join(".local/bin/niri-computer-use");
+        std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(elsewhere.join("niri-computer-use"), &binary).unwrap();
+
+        let output = release.install(&[]).await;
+
+        assert!(output.status.success(), "{output:?}");
+        assert!(!binary.is_symlink());
+        assert_eq!(version_of(&binary), "niri-computer-use 0.1.0\n");
+        assert_eq!(version_of(&elsewhere.join("niri-computer-use")), "old\n");
     }
 }
