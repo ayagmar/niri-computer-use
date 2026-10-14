@@ -106,7 +106,7 @@ fn check_text(text: &str) -> Result<(), CallError> {
     if length > MAX_TEXT {
         return Err(ToolError::new(
             ErrorName::TextTooLong,
-            format!("{length} characters; at most {MAX_TEXT} per call, so split the text or pass `via: \"paste\"`; nothing was typed"),
+            format!("{length} characters; at most {MAX_TEXT} per call, so split the text, ending no part right after a `>`, or pass `via: \"paste\"`; nothing was typed"),
         )
         .into());
     }
@@ -356,6 +356,11 @@ mod tests {
         assert_eq!(error.name, ErrorName::TextTooLong);
         assert!(
             error.detail.starts_with("1001 characters"),
+            "{}",
+            error.detail
+        );
+        assert!(
+            error.detail.contains("ending no part right after a `>`"),
             "{}",
             error.detail
         );

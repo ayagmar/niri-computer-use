@@ -111,7 +111,7 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 **Cause:** `type_text` with over 1000 characters, or over 1 MiB with `via: "paste"`, or `set_element_text` with over 64 KiB of UTF-8. Nothing was typed or set.
 
-**What to do:** split the text into calls of at most 1000 characters, or pass `via: "paste"`.
+**What to do:** split the text into calls of at most 1000 characters, or pass `via: "paste"`. End no part right after a `>`: a part ending in a tool-call closing tag, such as one closing `text` or `parameter`, whose opening tag was in an earlier part is refused with `leaked_tag`.
 
 ### `leaked_tag`
 
@@ -123,7 +123,7 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 **Cause:** a paste (`type_text` with `via: "paste"`) couldn't save the clipboard whole before replacing it: every type it offers, over 16 MiB in all, or not read within two seconds. Or the clipboard holds what its owner marked as a secret (`x-kde-passwordManagerHint`), or something else was copied while it was being saved. Nothing changed. An earlier paste's text, which a `kept` outcome leaves on the clipboard marked as a secret, isn't refused: the next paste replaces it and reports `clipboard: cleared`.
 
-**What to do:** type the text with `type_text` and `via: "keys"` instead, in parts of at most 1000 characters with `submit: false`. Only if the text was meant to be submitted does the last part take `submit: true`, after the others went out whole: a paste never submits, so the fallback mustn't either. Typed text can't hold line breaks, so text with several lines needs another way; the error's detail tells the agent to ask the user.
+**What to do:** type the text with `type_text` and `via: "keys"` instead, in parts of at most 1000 characters with `submit: false`, none ending right after a `>`. Only if the text was meant to be submitted does the last part take `submit: true`, after the others went out whole: a paste never submits, so the fallback mustn't either. Typed text can't hold line breaks, so text with several lines needs another way; the error's detail tells the agent to ask the user.
 
 ### `save_not_enabled`
 
