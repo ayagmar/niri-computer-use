@@ -307,6 +307,11 @@ const last = demo.calls.at(-1)!;
 		color: var(--ncu-plate-ink-2);
 	}
 
+	/* The call's time wraps whole, never leaving "ms" alone on a line. */
+	.ans span {
+		white-space: nowrap;
+	}
+
 	[data-error] .ans {
 		color: var(--ncu-stop-plate);
 	}
