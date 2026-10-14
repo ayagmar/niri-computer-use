@@ -265,7 +265,9 @@ where
 /// walk keeps its own per-call deadline and budget and is cut off at `deadline`. Walks
 /// never overlap, and the pause after one is at least as long as it took, so a slow app
 /// spends at most half the wait answering. niri's event stream ends the wait the moment
-/// the window closes, mid-walk too; without the stream, the next walk finds it gone.
+/// the window closes, mid-walk too; without the stream, the next walk finds it gone. An
+/// app that leaves the bus after a walk read it gets one more walk before the wait ends
+/// `not_accessible`, so its window closing can end it `window_gone`.
 async fn watch<F>(
     mut waiter: Waiter,
     element: &Element,
@@ -277,13 +279,16 @@ where
 {
     let started = Instant::now();
     let id = element.window_id;
-    let mut cut = None;
+    let (mut cut, mut read) = (None, false);
     let walking = async {
         loop {
             let walk = Instant::now();
             match check(element, poll().await)? {
+                // An app that quits leaves the bus as niri closes its window, and may leave
+                // first: after a walk that read it, look once more.
+                Checked::Ends(Ended::NotAccessible, ..) if read => read = false,
                 Checked::Ends(ended, appeared, detail) => return Ok((ended, appeared, detail)),
-                Checked::Unmet(capped) => cut = capped,
+                Checked::Unmet(capped) => (cut, read) = (capped, true),
             }
             tokio::time::sleep(walk.elapsed().max(PAUSE)).await;
         }
@@ -473,6 +478,15 @@ mod tests {
 
     const WALK: Duration = Duration::from_millis(40);
 
+    /// `listed`, `took` from now, as a walk that takes that long.
+    async fn after(
+        took: Duration,
+        listed: Result<Option<Listing>, ToolError>,
+    ) -> Result<Option<Listing>, ToolError> {
+        tokio::time::sleep(took).await;
+        listed
+    }
+
     // The bug: a wait that reads once, or loses the ref, makes the agent list again.
     #[tokio::test(start_paused = true)]
     async fn an_element_that_appears_later_ends_the_wait_met_with_its_ref() {
@@ -627,5 +641,53 @@ mod tests {
         };
         assert_eq!(appeared.element_ref, None);
         assert!(detail.contains("role and name"), "{detail}");
+    }
+
+    // The bug: an app that quits leaves the accessibility bus a moment before niri reports
+    // its window closed, and the wait ended `not_accessible` in between.
+    #[tokio::test(start_paused = true)]
+    async fn an_app_that_leaves_the_bus_with_its_window_ends_the_wait_window_gone() {
+        let (waiter, sender) = waiter(view(vec![window(1, Some("a"), 1, true)]), 1);
+        let walks = AtomicUsize::new(0);
+        let poll = || {
+            let listed = match walks.fetch_add(1, Ordering::Relaxed) {
+                0 => Ok(Some(listing(&[], None))),
+                _ => Err(ToolError::new(ErrorName::NotAccessible, "no app for pid 7")),
+            };
+            after(WALK, listed)
+        };
+        // The second walk ends at 330 ms, off the bus; niri reports the close at 400.
+        let close = async {
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            let closed = niri_ipc::Event::WindowClosed { id: 1 };
+            sender.send(Update::Event(2, Box::new(closed))).unwrap();
+        };
+        let element = save_button(false);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (report, ()) = tokio::join!(watch(waiter, &element, deadline, poll), close);
+        assert_eq!(report.unwrap().observed, Ended::WindowGone);
+    }
+
+    // An app that stays off the bus still ends the wait, one walk later.
+    #[tokio::test(start_paused = true)]
+    async fn an_app_off_the_bus_twice_in_a_row_ends_the_wait_not_accessible() {
+        let off = |walk| match walk {
+            0 => (WALK, Ok(Some(listing(&[], None)))),
+            _ => (
+                WALK,
+                Err(ToolError::new(ErrorName::NotAccessible, "no app")),
+            ),
+        };
+        let (report, walks, _) = watched(&save_button(false), Duration::from_secs(5), off).await;
+        assert_eq!((report.observed, walks), (Ended::NotAccessible, 3));
+        let first = |_| {
+            (
+                WALK,
+                Err(ToolError::new(ErrorName::NotAccessible, "no app")),
+            )
+        };
+        let (at_once, first_walks, _) =
+            watched(&save_button(false), Duration::from_secs(5), first).await;
+        assert_eq!((at_once.observed, first_walks), (Ended::NotAccessible, 1));
     }
 }
