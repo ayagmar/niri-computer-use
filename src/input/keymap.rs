@@ -1,5 +1,8 @@
 //! Resolves input against the compositor's XKB map, without I/O. Text symbols the active
-//! layout lacks go on spare keys of an extended copy; every existing key stays the same.
+//! layout lacks go on spare keys of an extended copy; every other existing key stays the
+//! same.
+
+use std::ops::RangeInclusive;
 
 use xkbcommon::xkb;
 
@@ -49,6 +52,46 @@ impl Plan {
 
 /// The highest keycode Xwayland clients can receive.
 const MAX_X11_KEYCODE: u32 = 255;
+
+/// The evdev codes up to `MAX_X11_KEYCODE` that Chromium gives a UI Events `code`: the rows
+/// of `ui/events/keycodes/dom/dom_code_data.inc` with an evdev code and a code string, at
+/// chromium/chromium d39a16bacc2469d5d2753160b6cf1a2e666fc069. Chromium and Electron drop
+/// a key whose code has none, so text typed on such a key is lost there.
+const CHROMIUM_CODES: [RangeInclusive<u32>; 22] = [
+    1..=83,
+    85..=94,
+    96..=100,
+    102..=111,
+    113..=117,
+    119..=129,
+    131..=138,
+    140..=140,
+    142..=144,
+    155..=156,
+    158..=159,
+    161..=161,
+    163..=168,
+    171..=173,
+    179..=180,
+    183..=194,
+    201..=201,
+    207..=208,
+    217..=217,
+    224..=225,
+    227..=227,
+    231..=233,
+];
+
+/// F13 to F24 as evdev codes: Chromium knows them, maps give them symbols, and few
+/// keyboards have them, so a map may borrow them once its spare keys Chromium knows run
+/// out.
+const BORROWABLE: RangeInclusive<u32> = 183..=194;
+
+fn evdev_in(code: xkb::Keycode, ranges: &[RangeInclusive<u32>]) -> bool {
+    code.raw()
+        .checked_sub(8)
+        .is_some_and(|evdev| ranges.iter().any(|range| range.contains(&evdev)))
+}
 
 pub(super) fn plan(map: &str, group: u32, typing: &Typing) -> Result<Plan, CallError> {
     let keymap = compile(map)?;
@@ -161,9 +204,9 @@ fn split<'t>(
     Ok(parts)
 }
 
-/// Puts each symbol on a named key that has no symbols, at most `MAX_X11_KEYCODE`, of
-/// which `split` left enough, and proves every other key, the layouts and the modifiers
-/// unchanged. Returns the extended map compiled, and as libxkbcommon serializes it.
+/// Puts each symbol on one of `spare_keys`, of which `split` left enough, replacing what a
+/// borrowed key had, and proves every other key, the layouts and the modifiers unchanged.
+/// Returns the extended map compiled, and as libxkbcommon serializes it.
 fn extend(
     map: &str,
     keymap: &xkb::Keymap,
@@ -178,7 +221,12 @@ fn extend(
     let entries = spare
         .iter()
         .zip(syms)
-        .map(|((_, name), &sym)| format!("key <{name}> {{ [ {} ] }};\n", xkb::keysym_get_name(sym)))
+        .map(|((_, name), &sym)| {
+            format!(
+                "replace key <{name}> {{ [ {} ] }};\n",
+                xkb::keysym_get_name(sym)
+            )
+        })
         .collect::<Vec<_>>()
         .concat();
     let end = symbols_end(map).ok_or_else(|| {
@@ -200,14 +248,33 @@ fn extend(
     Ok((extended, text))
 }
 
+/// The named keys up to `MAX_X11_KEYCODE` a map may put missing symbols on, in the order
+/// it takes them: those without symbols that Chromium knows, then the borrowable ones the
+/// map has, whatever their symbols. Only a map with neither takes the keys without symbols
+/// Chromium doesn't know: those cost a Chromium window the symbol, and more parts don't.
 fn spare_keys(keymap: &xkb::Keymap) -> Vec<(xkb::Keycode, String)> {
     let first = keymap.min_keycode().raw().max(9);
     let last = keymap.max_keycode().raw().min(MAX_X11_KEYCODE);
-    (first..=last)
+    let (empty, defined): (Vec<_>, Vec<_>) = (first..=last)
         .map(xkb::Keycode::new)
-        .filter(|&code| keymap.num_layouts_for_key(code) == 0)
         .filter_map(|code| Some((code, keymap.key_get_name(code)?.to_owned())))
-        .collect()
+        .partition(|(code, _)| keymap.num_layouts_for_key(*code) == 0);
+    let (known, unknown): (Vec<_>, Vec<_>) = empty
+        .into_iter()
+        .partition(|(code, _)| evdev_in(*code, &CHROMIUM_CODES));
+    let chromium: Vec<_> = known
+        .into_iter()
+        .chain(defined.into_iter().filter(|(code, _)| borrowable(*code)))
+        .collect();
+    if chromium.is_empty() {
+        unknown
+    } else {
+        chromium
+    }
+}
+
+fn borrowable(code: xkb::Keycode) -> bool {
+    evdev_in(code, &[BORROWABLE])
 }
 
 /// Where the symbols section closes: the last `};` before the keymap's own.
@@ -220,6 +287,8 @@ fn symbols_end(map: &str) -> Option<usize> {
     (!other.iter().any(|section| after.contains(section))).then_some(end)
 }
 
+/// Every key but `added` is the same in both maps, and each of `added` had no symbols or is
+/// borrowable and now only types its symbol.
 fn unchanged(original: &xkb::Keymap, extended: &xkb::Keymap, added: &[xkb::Keycode]) -> bool {
     let mods = |map: &xkb::Keymap| -> Vec<String> {
         (0..map.num_mods())
@@ -232,7 +301,9 @@ fn unchanged(original: &xkb::Keymap, extended: &xkb::Keymap, added: &[xkb::Keyco
             .map(xkb::Keycode::new)
             .filter(|code| !added.contains(code))
             .all(|code| same_key(original, extended, code))
-        && added.iter().all(|&code| inert(extended, code))
+        && added.iter().all(|&code| {
+            (original.num_layouts_for_key(code) == 0 || borrowable(code)) && inert(extended, code)
+        })
 }
 
 fn same_key(original: &xkb::Keymap, extended: &xkb::Keymap, code: xkb::Keycode) -> bool {
@@ -256,11 +327,14 @@ fn level_mods(map: &xkb::Keymap, code: xkb::Keycode, layout: u32, level: u32) ->
     masks.iter().take(count).copied().collect()
 }
 
-/// An added key types its symbol and changes no modifier or layout.
+/// An added key has one symbol, in one layout and level, and changes no modifier or
+/// layout.
 fn inert(map: &xkb::Keymap, code: xkb::Keycode) -> bool {
     let mut state = xkb::State::new(map);
     state.update_key(code, xkb::KeyDirection::Down);
     map.num_layouts_for_key(code) == 1
+        && map.num_levels_for_key(code, 0) == 1
+        && map.key_get_syms_by_level(code, 0, 0).len() == 1
         && state.serialize_mods(xkb::STATE_MODS_EFFECTIVE) == 0
         && state.serialize_layout(xkb::STATE_LAYOUT_EFFECTIVE) == 0
 }
@@ -477,6 +551,147 @@ mod tests {
                     .map(move |level| map.key_get_syms_by_level(code, layout, level).to_vec())
             })
             .collect()
+    }
+
+    /// The fixture with keys a US map has: `<I120>` (evdev 112) without symbols or a code
+    /// in Chromium, `<AE13>` (evdev 124, `IntlYen`) without symbols, and `<FK13>` and
+    /// `<FK14>` (evdev 183 and 184, `F13` and `F14`) with symbols, the second on two levels.
+    fn us_like() -> String {
+        map()
+            .replace("maximum = 64;", "maximum = 192;")
+            .replace(
+                "<I61> = 61;",
+                "<I61> = 61; <I120> = 120; <AE13> = 132; <FK13> = 191; <FK14> = 192;",
+            )
+            .replace(
+                "    modifier_map Shift",
+                "    key <FK13> { [XF86Tools] };\n    key <FK14> { type=\"TWO_LEVEL\", [XF86Launch5, F14] };\n    modifier_map Shift",
+            )
+    }
+
+    fn codes(part: &Part) -> Vec<u32> {
+        part.keys.iter().map(|key| key.code.0).collect()
+    }
+
+    /// The spare keys Chromium knows go first, `<AE13>` after the fixture's two, then the
+    /// borrowed `<FK13>` and `<FK14>`; `<I120>`, below `<AE13>`, is never used, so a sixth
+    /// symbol starts the next map on the first spare key.
+    #[test]
+    fn missing_symbols_take_spare_keys_chromium_knows_then_borrowed_ones() {
+        let parts = plan(&us_like(), 0, &text("é→ß←↑↓")).unwrap().parts;
+        assert_eq!(parts.len(), 2);
+        assert_eq!(codes(&parts[0]), [52, 53, 124, 183, 184]);
+        assert_eq!(codes(&parts[1]), [52]);
+    }
+
+    /// As many symbols as spare keys Chromium knows leave the borrowable keys as they were.
+    #[test]
+    fn the_borrowable_keys_stay_until_the_spare_keys_run_out() {
+        let original = compile(&us_like()).unwrap();
+        let [part] =
+            <[Part; 1]>::try_from(plan(&us_like(), 0, &text("é→ß")).unwrap().parts).unwrap();
+        assert_eq!(codes(&part), [52, 53, 124]);
+        let extended = compile(part.extended.as_deref().unwrap()).unwrap();
+        for raw in [191, 192] {
+            let code = xkb::Keycode::new(raw);
+            assert_eq!(symbols(&original, code), symbols(&extended, code));
+        }
+    }
+
+    /// A borrowed key types only its symbol, its second level gone, and every key but the
+    /// five that took a symbol stays the same.
+    #[test]
+    fn a_borrowed_key_types_only_its_symbol_and_every_other_key_stays() {
+        let original = compile(&us_like()).unwrap();
+        let [part] =
+            <[Part; 1]>::try_from(plan(&us_like(), 0, &text("é→ß←↑")).unwrap().parts).unwrap();
+        let extended = compile(part.extended.as_deref().unwrap()).unwrap();
+        let up = vec![vec![text_sym('↑')]];
+        assert_eq!(symbols(&extended, xkb::Keycode::new(192)), up);
+        let used = codes(&part);
+        for raw in (8..=192).filter(|raw| !used.contains(&(raw - 8))) {
+            let code = xkb::Keycode::new(raw);
+            assert_eq!(symbols(&original, code), symbols(&extended, code), "{raw}");
+        }
+    }
+
+    /// With the second layout active, symbols it lacks go on the same keys, sent in that
+    /// layout: a borrowed key has one layout, which the second wraps to.
+    #[test]
+    fn borrowed_keys_type_in_the_second_layout_and_leave_every_other_key() {
+        let original = compile(&us_like()).unwrap();
+        let typed = "é→ß←↑";
+        let [part] =
+            <[Part; 1]>::try_from(plan(&us_like(), 1, &text(typed)).unwrap().parts).unwrap();
+        assert_eq!(codes(&part), [52, 53, 124, 183, 184]);
+        assert!(part.keys.iter().all(|key| key.group == 1));
+        let extended = compile(part.extended.as_deref().unwrap()).unwrap();
+        let mut state = xkb::State::new(&extended);
+        state.update_mask(0, 0, 0, 0, 0, 1);
+        for (key, c) in part.keys.iter().zip(typed.chars()) {
+            assert_eq!(
+                state.key_get_one_sym(xkb::Keycode::new(key.code.0 + 8)),
+                text_sym(c)
+            );
+        }
+        let used: Vec<xkb::Keycode> = part
+            .keys
+            .iter()
+            .map(|key| xkb::Keycode::new(key.code.0 + 8))
+            .collect();
+        assert!(unchanged(&original, &extended, &used));
+        for raw in (8..=192).filter(|raw| !used.contains(&xkb::Keycode::new(*raw))) {
+            let code = xkb::Keycode::new(raw);
+            assert!(same_key(&original, &extended, code), "{raw}");
+        }
+    }
+
+    /// A map that makes `<FK13>` a modifier, as a catch-all interpret does with its
+    /// `modifier_map`, keeps it one after the borrowing, so the call is refused.
+    #[test]
+    fn a_borrowable_key_with_a_modifier_refuses_the_call() {
+        let map = us_like()
+            .replace(
+                "  xkb_compatibility \"test\" {",
+                "  xkb_compatibility \"test\" {\n    interpret Any+AnyOf(all) { action = SetMods(modifiers=modMapMods); };",
+            )
+            .replace(
+                "    modifier_map Shift",
+                "    modifier_map Mod3 { <FK13> };\n    modifier_map Shift",
+            );
+        let Err(CallError::Tool(error)) = plan(&map, 0, &text("é→ß←")) else {
+            panic!("a borrowed key that sets Mod3 was planned");
+        };
+        assert!(
+            error.detail.contains("would change existing keys"),
+            "{}",
+            error.detail
+        );
+        assert!(plan(&map, 0, &text("é→ß")).is_ok());
+    }
+
+    /// The check lets a borrowable key change, and no other key that had symbols.
+    #[test]
+    fn only_a_borrowable_key_with_symbols_may_change() {
+        let original = compile(&us_like()).unwrap();
+        let replaced = |name: &str| {
+            let entry = format!("    replace key <{name}> {{ [eacute] }};\n    modifier_map Shift");
+            compile(&us_like().replace("    modifier_map Shift", &entry)).unwrap()
+        };
+        let fk13 = xkb::Keycode::new(191);
+        assert!(unchanged(&original, &replaced("FK13"), &[fk13]));
+        let y = xkb::Keycode::new(29);
+        assert!(!unchanged(&original, &replaced("Y"), &[y]));
+    }
+
+    /// A map whose only key without symbols is one Chromium doesn't know still types there.
+    #[test]
+    fn a_map_without_keys_chromium_knows_uses_its_other_spare_keys() {
+        let map = map()
+            .replace("maximum = 64;", "maximum = 120;")
+            .replace("<I60> = 60; <I61> = 61;", "<I120> = 120;");
+        let [part] = <[Part; 1]>::try_from(plan(&map, 0, &text("é")).unwrap().parts).unwrap();
+        assert_eq!(codes(&part), [112]);
     }
 
     #[test]

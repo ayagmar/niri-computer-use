@@ -31,6 +31,7 @@ pub(super) fn run(
     measure(session, &mut native, wev, "native")?;
     let pacer = super::pacer::start(session)?;
     super::exposure::run(session, &mut native, wev, "native")?;
+    super::native_unicode::physical_f13(session, &mut native, wev)?;
     interruption(session, &mut native, wev, server, false)?;
     interruption(session, &mut native, wev, server, true)?;
     super::native_gestures::normal(session, &mut native, wev)?;

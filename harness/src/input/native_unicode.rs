@@ -12,6 +12,7 @@ use niri_ipc::{Action, KeyboardLayouts, LayoutSwitchTarget, Request, Response};
 use rustix::process::{Pid, Signal, kill_process};
 use serde_json::{Value, json};
 
+use super::physical::{self, Physical};
 use super::{WAIT, Wev, stop};
 use crate::failure::{Context as _, Failure, Result};
 use crate::keyboard::{self, CORPUS, PARTS};
@@ -232,6 +233,98 @@ fn parts(
         "M7 native parts: {count} characters decoded exactly, {} extended keymaps in turn, then the compositor's byte for byte",
         extended.len()
     ))
+}
+
+/// A physical F13, evdev 183, pressed on the cage keyboard while a `PARTS` call's first
+/// extension, which borrows `<FK13>`, is what clients hold. The serving process is stopped
+/// from the extension's arrival until wev has the key. niri must send the compositor's map
+/// before the key, so wev decodes `XF86Tools`, not the borrowed symbol, and the call must
+/// still type `PARTS` exactly and end with the compositor's map.
+pub(super) fn physical_f13(
+    session: &mut Session<'_>,
+    client: &mut Client,
+    wev: &Wev<'_>,
+) -> Result<()> {
+    let Some(mut keyboard) = Physical::connect(session)? else {
+        return session.log(
+            "M7 physical F13 mid-call: skipped (a visible run has no keyboard to press it on)",
+        );
+    };
+    let (observer, directory, original) = observe(session, "physical")?;
+    let serving = serving_pid(session, client)?;
+    let before = keymaps::saved(&directory)?.len();
+    let offset = wev.offset()?;
+    let id = client.start_call(
+        "type_text",
+        json!({"text": PARTS, "expect": {"app_id": "wev"}}),
+    )?;
+    extension_sent(&directory, before)?;
+    signal(serving, Signal::STOP)?;
+    let pressed = keyboard
+        .tap(physical::F13)
+        .and_then(|()| tools_seen(session, wev, offset));
+    signal(serving, Signal::CONT)?;
+    pressed?;
+    let outcome = structured(&client.result(session, id)?)?;
+    if field(&outcome, "/observed") != "sent" {
+        return Err(Failure::new(format!(
+            "M7 physical F13 mid-call: expected the call sent, got {outcome}"
+        )));
+    }
+    let count = PARTS.chars().count();
+    let seen = keyboard::observed(session, wev.log, offset, count + 1, true)?;
+    let typed_before = around_f13(&seen, count)?;
+    let sent = sent_back(session, &directory, &original, before)?;
+    let between = sent.split_last().map_or(&[][..], |(_, rest)| rest);
+    if !between.iter().any(|map| map.as_slice() == original) {
+        return Err(Failure::new(
+            "M7 physical F13 mid-call: niri didn't send the compositor's keymap before the key",
+        ));
+    }
+    stop::marker_gone(session)?;
+    observer.stop()?;
+    session.log(&format!(
+        "M7 physical F13 mid-call: pressed after {typed_before} of {count} characters of an extension that borrows <FK13>, wev decoded XF86Tools for it, niri sent the compositor's keymap before it, and the call still typed all {count} exactly and ended with the compositor's keymap byte for byte ({} keymaps)",
+        sent.len()
+    ))
+}
+
+/// Waits until wev has printed the release of a key that decoded as `XF86Tools`.
+fn tools_seen(session: &mut Session<'_>, wev: &Wev<'_>, offset: usize) -> Result<()> {
+    session.wait_until("m7-physical-f13", "XF86Tools in wev", WAIT, |_| {
+        let log = keyboard::since(wev.log, offset)?;
+        let released = trace(&log)?
+            .keys
+            .iter()
+            .any(|key| key.symbol == "XF86Tools" && !key.pressed);
+        Ok(released.then_some(()))
+    })
+}
+
+/// Checks that `seen` holds one `XF86Tools` press and release and otherwise `PARTS`
+/// exactly, and returns how many characters came before the press, fewer than `count`.
+fn around_f13(seen: &str, count: usize) -> Result<usize> {
+    let mut trace = trace(seen)?;
+    let typed_before = trace
+        .keys
+        .iter()
+        .take_while(|key| key.symbol != "XF86Tools")
+        .filter(|key| key.pressed)
+        .count();
+    let (tools, typed): (Vec<_>, Vec<_>) = trace
+        .keys
+        .into_iter()
+        .partition(|key| key.symbol == "XF86Tools");
+    trace.keys = typed;
+    keyboard::text(&trace, PARTS)?;
+    if !matches!(tools.as_slice(), [press, release] if press.pressed && !release.pressed)
+        || typed_before >= count
+    {
+        return Err(Failure::new(format!(
+            "M7 physical F13 mid-call: expected one XF86Tools press and release before the call's last character, got {tools:?} after {typed_before}"
+        )));
+    }
+    Ok(typed_before)
 }
 
 /// After restoration niri's active map is the compositor's again, so a call that needs
