@@ -151,8 +151,8 @@ async fn lease(runtime: &RuntimeDir) -> Result<Lease, String> {
 }
 
 /// The marker whose input the guardian of `server` releases: one `server` wrote, naming
-/// native keycodes or pointer buttons, not yet released. A `wtype` child outlives the
-/// server and finishes by itself, and an unreadable marker is the human's to inspect.
+/// native keycodes or pointer buttons, not yet released. An unreadable marker, or one
+/// that names nothing to release, is the human's to inspect.
 fn releases(found: Option<&Found>, server: u32) -> Option<&Marker> {
     match found? {
         Found::Marker(marker)
@@ -169,7 +169,7 @@ fn releases(found: Option<&Found>, server: u32) -> Option<&Marker> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::control::marker::{Child, Native};
+    use crate::control::marker::Native;
     use crate::test_support::{fresh_dir, wayland::Compositor};
 
     const KEYMAP: &str = include_str!("../../tests/fixtures/us-de.xkb");
@@ -326,13 +326,8 @@ mod tests {
             error: "parse".into(),
         };
         assert_eq!(releases(Some(&unreadable), 7), None);
-        // A wtype child types to the end by itself; recover handles its marker.
-        let mut wtype = marker(7);
-        wtype.child = Some(Child {
-            pid: 9,
-            start_time: 5,
-        });
-        assert_eq!(releases(Some(&Found::Marker(wtype)), 7), None);
+        // Nothing named to release: recover handles its marker.
+        assert_eq!(releases(Some(&Found::Marker(marker(7))), 7), None);
         // Released once already: the human's `recover` is what remains.
         let mut done = marker(7);
         done.keyboard = Some(Native {

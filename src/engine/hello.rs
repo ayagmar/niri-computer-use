@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::policy;
 use crate::session::Given;
 
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 /// A hello line, newline included. The policy file's text, at most `MAX_POLICY`, can grow
 /// up to six times in JSON.
 pub(crate) const MAX_LINE: usize = 512 * 1024;
@@ -92,7 +92,6 @@ pub(crate) struct Hello {
     unrestricted: Option<String>,
     confirm_lease: Option<String>,
     tools: Option<String>,
-    keyboard: Option<String>,
     home: Option<PathBuf>,
     path: Option<String>,
     policy: policy::Source,
@@ -140,7 +139,6 @@ impl Hello {
             unrestricted: utf8("NIRI_COMPUTER_USE_UNRESTRICTED", given.unrestricted)?,
             confirm_lease: utf8("NIRI_COMPUTER_USE_CONFIRM_LEASE", given.confirm_lease)?,
             tools: utf8("NIRI_COMPUTER_USE_TOOLS", given.tools)?,
-            keyboard: utf8("NIRI_COMPUTER_USE_KEYBOARD", given.keyboard)?,
             home: given.home,
             path: utf8("PATH", given.path)?,
             policy,
@@ -153,7 +151,6 @@ impl Hello {
             unrestricted: self.unrestricted.map(Into::into),
             confirm_lease: self.confirm_lease.map(Into::into),
             tools: self.tools.map(Into::into),
-            keyboard: self.keyboard.map(Into::into),
             home: self.home,
             path: self.path.map(Into::into),
             policy: self.policy,
@@ -284,7 +281,6 @@ mod tests {
             unrestricted: Some("1".to_owned()),
             confirm_lease: Some("1".to_owned()),
             tools: Some("act".to_owned()),
-            keyboard: None,
             home: Some(PathBuf::from("/home/me")),
             path: Some("bin::/usr/bin".to_owned()),
             policy: policy::Source::Text {
@@ -312,7 +308,6 @@ mod tests {
                 unrestricted: Some("1".into()),
                 confirm_lease: Some("1".into()),
                 tools: Some("act".into()),
-                keyboard: None,
                 home: Some(PathBuf::from("/home/me")),
                 path: Some("bin::/usr/bin".into()),
                 policy: sent.policy,
@@ -372,7 +367,6 @@ mod tests {
             unrestricted: None,
             confirm_lease: None,
             tools: None,
-            keyboard: None,
             home: None,
             path: None,
             policy: policy::Source::Text {

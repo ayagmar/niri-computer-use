@@ -14,7 +14,7 @@ These drawings follow the code. The full account, module by module, is [docs/arc
 
 ## Processes
 
-Your agent starts `niri-computer-use serve` over stdio, one per session. By default every `serve` on one niri relays to a single engine, and starts that engine when none is running. With [`shared = false`](../configuration/#shared) or `NIRI_COMPUTER_USE_SHARED=0`, `serve` runs the engine itself. The engine holds the lease and talks to niri, the accessibility bus and Noctalia. It runs `grim`, `wtype`, `notify-send` and `loginctl` through one runner, each with a deadline. The crash guardian is the same binary watching the engine: if the engine dies while its virtual pointer or keyboard holds a button or key, the guardian sends the release.
+Your agent starts `niri-computer-use serve` over stdio, one per session. By default every `serve` on one niri relays to a single engine, and starts that engine when none is running. With [`shared = false`](../configuration/#shared) or `NIRI_COMPUTER_USE_SHARED=0`, `serve` runs the engine itself. The engine holds the lease and talks to niri, the accessibility bus and Noctalia. It runs `grim`, `notify-send` and `loginctl` through one runner, each with a deadline. The crash guardian is the same binary watching the engine: if the engine dies while its virtual pointer or keyboard holds a button or key, the guardian sends the release.
 
 <ProcessMap />
 
@@ -26,13 +26,13 @@ Looking needs no lease. Every action passes the same gate first, under the actio
 
 <ActionLife />
 
-The drawing follows a niri action such as `focus`. Keys and text go to `wtype`, or to the experimental native keyboard, clicks to a virtual pointer, and element actions to the app over the accessibility bus, all behind the same gate.
+The drawing follows a niri action such as `focus`. Keys and text go to the server's own virtual keyboard, clicks to a virtual pointer, and element actions to the app over the accessibility bus, all behind the same gate.
 
 ## Lease, stop and recovery
 
 <LeaseStates />
 
-`acquire_desktop` locks the lease file before it asks anything slow, so an agent on another server gets `lease_held` at once. Another session of the same engine waits until the first `acquire_desktop` is done, which with `confirm_lease` can take up to a minute, and then gets `lease_held`, or the lease if the first was refused. With [`confirm_lease`](../configuration/#confirm_lease) on, a notification asks you to Allow or Deny before the lease is granted. `niri-computer-use stop` sets the stop flag: the running action is cancelled and the lease is taken back. `resume` clears the flag, except while the input-dirty marker says a key or button may be stuck. Then `recover` ends or releases what was held and asks you to check before it clears the marker.
+`acquire_desktop` locks the lease file before it asks anything slow, so an agent on another server gets `lease_held` at once. Another session of the same engine waits until the first `acquire_desktop` is done, which with `confirm_lease` can take up to a minute, and then gets `lease_held`, or the lease if the first was refused. With [`confirm_lease`](../configuration/#confirm_lease) on, a notification asks you to Allow or Deny before the lease is granted. `niri-computer-use stop` sets the stop flag: the running action is cancelled and the lease is taken back. `resume` clears the flag, except while the input-dirty marker says a key or button may be stuck. Then `recover` releases what the marker names and asks you to check before it clears the marker.
 
 ## Coordinates
 

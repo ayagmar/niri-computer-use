@@ -32,7 +32,7 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `lease.held_by_me` | whether this server holds the lease |
 | `lease.holder` | the holder's `pid`, `label` (client name and server PID, such as `claude-code/4711`) and `since`, or null; `pending: true` while the lease isn't granted yet, as while the user is asked to allow it |
 | `lease.error` | null, or why no lease can be taken for this niri at all, such as a `NIRI_SOCKET` with a hard link; `acquire_desktop` fails with the same reason |
-| `input_dirty` | the input-dirty marker, or null: its `operation`, `phase` (`pending` or `running`), `server_pid`, `since`, the input `child` once known, any pointer `buttons` pressed and the `output` of the pointer that pressed them, the native `keyboard` keycodes that may need release, `released` with when the crash guardian released them, and `owner`, which names the write; `{"error": …}` if the marker can't be read |
+| `input_dirty` | the input-dirty marker, or null: its `operation`, `phase` (always `pending`), `server_pid`, `since`, any pointer `buttons` pressed and the `output` of the pointer that pressed them, the native `keyboard` keycodes that may need release, `released` with when the crash guardian released them, and `owner`, which names the write; `{"error": …}` if the marker can't be read |
 | `stop` | whether the stop flag is set for this niri instance (`niri-computer-use stop`, cleared by `niri-computer-use resume`) |
 | `lock.state` | `locked`, `unlocked` or `unknown` |
 | `lock.source` | `logind`, `noctalia` or `none`: the screen counts as locked when logind's `LockedHint` or Noctalia's `locked` says so |
@@ -50,7 +50,7 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `confirm_lease.enabled`, `confirm_lease.source`, `confirm_lease.error` | whether `acquire_desktop` waits for the user to allow it on the desktop, whether the policy file, `NIRI_COMPUTER_USE_CONFIRM_LEASE` or both asked for that, and why the variable was ignored |
 | `audit.path`, `audit.last_error` | the audit log and the last failure to write it |
 | `tools.profile`, `tools.source`, `tools.error` | the [tool profile](../../concepts/configuration/#tools) this server lists, whether the policy file, `NIRI_COMPUTER_USE_TOOLS` or both chose it, and why the variable was ignored |
-| `binaries` | whether `grim`, `notify-send` and `wtype` are on this client's `PATH` |
+| `binaries` | whether `grim` and `notify-send` are on this client's `PATH` |
 | `desktop_programs` | the directories searched for `loginctl` and `noctalia` at startup (`search`), and the path found for each, or null |
 
 ## `desktop_state`

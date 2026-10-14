@@ -8,7 +8,7 @@
 //! at once.
 //!
 //! Whoever commits the key, right before it can go out, takes the keeper's end as an
-//! `Aftercare`: wtype's task, or the native device. It says `k` and waits for the keeper to
+//! `Aftercare`: the native device. It says `k` and waits for the keeper to
 //! admit the key; without that, the key doesn't go out. Then it sends the key, says `p`
 //! even if the key failed partway, and only then takes its input-dirty marker off, so a
 //! stop, a cancelled call or the session's end can't drop the keeper's end while a key may
@@ -53,8 +53,7 @@ const READY: Duration = START.saturating_add(keeper::TAKE);
 /// line to reach the server: 6.5 s.
 const DONE: Duration = keeper::FINISH.saturating_add(Duration::from_millis(500));
 /// From `k` to `armed`: the keeper answers after one round trip to niri, which takes
-/// milliseconds. Well inside wtype's three seconds, which run while wtype waits at its
-/// gate for this, and short enough that a keeper that can't answer fails the call quickly.
+/// milliseconds. Short enough that a keeper that can't answer fails the call quickly.
 const ADMIT: Duration = Duration::from_millis(500);
 
 /// What became of the clipboard the call found.

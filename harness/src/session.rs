@@ -84,17 +84,6 @@ impl<'a> Session<'a> {
         runner::start(&nested(program, args, Sink::File(log), deadline))
     }
 
-    /// Starts a step with stdin held open and a deadline, capturing its output.
-    pub(crate) fn start_with_stdin(
-        &self,
-        program: &str,
-        args: &[OsString],
-        deadline: Duration,
-    ) -> Result<Process> {
-        Nested::from_env(self.test_dir)?;
-        runner::start_with_stdin(&nested(program, args, Sink::Capture, deadline))
-    }
-
     /// Starts a program with stdin held open for `Process::send`, its output in `log`.
     pub(crate) fn serve(
         &self,
@@ -368,11 +357,6 @@ mod tests {
         let started = session.start("true", &[], dir.join("out"), Duration::from_secs(5));
         assert!(started.is_err());
         assert!(!dir.join("out").exists());
-        assert!(
-            session
-                .start_with_stdin("true", &[], Duration::from_secs(1))
-                .is_err()
-        );
         fs::remove_dir_all(dir).unwrap();
     }
 }

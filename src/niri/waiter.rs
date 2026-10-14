@@ -402,6 +402,15 @@ pub(crate) mod tests {
         view
     }
 
+    /// The view `events` make, in order.
+    pub(crate) fn view_of(events: Vec<Event>) -> View {
+        let mut view = View::default();
+        for event in events {
+            view.apply(event);
+        }
+        view
+    }
+
     /// A waiter on `view` after event `seq` of connection 2, and the task's end of its
     /// channel.
     pub(crate) fn waiter(view: View, seq: u64) -> (Waiter, broadcast::Sender<Update>) {

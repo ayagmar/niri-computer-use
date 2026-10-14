@@ -254,8 +254,6 @@ impl Engine {
             display: &self.env.display,
             runtime: self.desk.runtime()?,
             policy: &settings.policy,
-            keyboard: settings.keyboard.as_deref(),
-            place: settings.place(),
             a11y: self.a11y.as_ref(),
         })
     }
@@ -1070,6 +1068,59 @@ mod tests {
         let read = engine.clipboard(session).await.unwrap();
         let read = serde_json::to_value(read).unwrap();
         read["text"].as_str().unwrap().to_owned()
+    }
+
+    /// A cleanup that runs until the returned sender is used or dropped.
+    fn held_cleanup() -> (
+        tokio::sync::oneshot::Sender<()>,
+        tokio::task::JoinHandle<Result<(), ToolError>>,
+    ) {
+        let (finish, finished) = tokio::sync::oneshot::channel::<()>();
+        let cleanup = control::cleanup::spawn(control::cleanup::deadline(), async move {
+            finished.await.ok();
+            Ok(())
+        });
+        (finish, cleanup)
+    }
+
+    /// The idle engine doesn't exit while a dropped call's input cleanup runs: cut short,
+    /// it leaves the marker for `recover`. Other tests' cleanups share the count, so only
+    /// the engine's refusal to settle is asserted.
+    #[tokio::test]
+    async fn a_pending_cleanup_keeps_the_engine_from_settling() {
+        let dir = crate::test_support::fresh_dir("engine-cleanup");
+        let engine = without_niri(crate::test_support::niri_env(&dir));
+        let (finish, cleanup) = held_cleanup();
+        assert!(!engine.settled());
+        finish.send(()).unwrap();
+        cleanup.await.unwrap().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A standalone server whose client is gone ends only once a dropped call's input
+    /// cleanup has. Other tests' cleanups share the count, so the end is awaited within
+    /// the cleanups' limit.
+    #[tokio::test]
+    async fn a_standalone_server_ends_once_the_cleanup_its_client_left_has() {
+        let dir = crate::test_support::fresh_dir("engine-alone-cleanup");
+        let engine = Arc::new(without_niri(crate::test_support::niri_env(&dir)));
+        let (finish, cleanup) = held_cleanup();
+        let (client, ours) = tokio::io::duplex(64);
+        drop(client);
+        let (input, output) = tokio::io::split(ours);
+        let session = crate::test_support::session(1);
+        let mut served =
+            tokio::spawn(async move { host::serve_alone(&engine, session, input, output).await });
+        let early = tokio::time::timeout(Duration::from_millis(200), &mut served).await;
+        assert!(early.is_err(), "the server ended before the cleanup");
+        finish.send(()).unwrap();
+        cleanup.await.unwrap().unwrap();
+        tokio::time::timeout(control::cleanup::LIMIT, served)
+            .await
+            .expect("the server didn't end once the cleanup had")
+            .unwrap()
+            .ok();
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// An engine for `env` with no event stream and no accessibility bus.

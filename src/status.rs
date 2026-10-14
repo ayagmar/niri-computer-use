@@ -20,7 +20,7 @@ use crate::runner::{self, Place};
 use crate::{Env, a11y, discover};
 
 /// Programs the server runs for the session asking, found on its `PATH` or not.
-const SESSION_BINARIES: [&str; 3] = ["grim", "notify-send", "wtype"];
+const SESSION_BINARIES: [&str; 2] = ["grim", "notify-send"];
 
 #[derive(Debug, Serialize)]
 pub(crate) struct Status {
@@ -320,7 +320,7 @@ mod tests {
                 "unrestricted": {"enabled": false, "source": null, "error": null},
                 "confirm_lease": {"enabled": false, "source": null, "error": null},
                 "tools": {"profile": "full", "source": null, "error": null},
-                "binaries": {"grim": false, "notify-send": false, "wtype": false},
+                "binaries": {"grim": false, "notify-send": false},
                 "desktop_programs": {"search": "", "loginctl": null, "noctalia": null}
             })
         );

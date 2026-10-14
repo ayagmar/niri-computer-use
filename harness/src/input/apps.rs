@@ -1,13 +1,15 @@
 //! Native text and paste in a Qt Quick text field and in kitty, read back from each: ASCII,
-//! the C10 corpus, whose `é`, `ß` and `→` need the extended keymap, and a paste of four
+//! the C10 corpus, whose `é`, `ß` and `→` need the extended keymap, `PARTS`, which needs
+//! several extended keymaps in turn, with spare keys reused, and a paste of four
 //! thousand characters, after which the clipboard owner's types offer the same bytes again.
 //! The GTK 4 entry is `text_entry`'s. kitty runs `cat` on a raw terminal, so what reaches
 //! the file is what kitty sent the program; a raw terminal reads Return as `\r`.
 //!
-//! In a headless run it also types `abc` into the Qt field with each backend while Shift
-//! is held, then while Caps Lock is on, on a keyboard niri takes for a physical one, and
-//! then presses `a` on that keyboard: the call's text must be exact, and the key shows
-//! whether the field knows the modifier is still held or the lock still on.
+//! In a headless run it also types `abc` into the Qt field while Shift
+//! is held, then while Caps Lock is on, then while Num Lock is on, on a keyboard niri
+//! takes for a physical one, and then presses `a` on that keyboard, after keypad `1` with
+//! Num Lock: the call's text must be exact, and the keys show whether the field knows the
+//! modifier is still held or the lock still on.
 
 use std::ffi::OsString;
 use std::fs;
@@ -17,9 +19,9 @@ use serde_json::{Value, json};
 
 use super::physical::{self, Physical};
 use super::text_entry::focused_app;
-use super::{SERVER_DEADLINE, WAIT, paste};
+use super::{WAIT, paste};
 use crate::failure::{Context as _, Failure, Result};
-use crate::keyboard::CORPUS;
+use crate::keyboard::{CORPUS, PARTS};
 use crate::mcp::{Client, field, structured};
 use crate::runner::Process;
 use crate::session::Session;
@@ -70,30 +72,14 @@ const KITTY: Target = Target {
     reads_after_key: true,
 };
 
-pub(super) fn run(session: &mut Session<'_>, wtype: &mut Client, server: &str) -> Result<()> {
-    let mut native = Client::start_command(
-        session,
-        "env",
-        &[
-            "NIRI_COMPUTER_USE_KEYBOARD=native".into(),
-            server.into(),
-            "serve".into(),
-        ],
-        "harness-m7-apps",
-        SERVER_DEADLINE,
-    )?;
+pub(super) fn run(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
     let qt = start_qt(session)?;
-    let app_id = check(session, &mut native, &QT)?;
-    held(
-        session,
-        [("wtype", wtype), ("native", &mut native)],
-        &app_id,
-    )?;
+    let app_id = check(session, client, &QT)?;
+    held(session, client, &app_id)?;
     qt.stop()?;
     let kitty = start_kitty(session)?;
-    check(session, &mut native, &KITTY)?;
-    kitty.stop()?;
-    native.stop()
+    check(session, client, &KITTY)?;
+    kitty.stop().map(drop)
 }
 
 fn start_qt(session: &Session<'_>) -> Result<Process> {
@@ -145,7 +131,7 @@ fn check(session: &mut Session<'_>, client: &mut Client, app: &Target) -> Result
         Ok(focused_app(&desktop).filter(|id| id.starts_with(app.app_id)))
     })?;
     let mut expected = String::new();
-    for text in [ASCII, CORPUS] {
+    for text in [ASCII, CORPUS, PARTS] {
         let result = call(session, client, &app_id, json!({"text": text}))?;
         sent(app, &result)?;
         shown(session, app, &mut expected, text)?;
@@ -172,7 +158,7 @@ fn check(session: &mut Session<'_>, client: &mut Client, app: &Target) -> Result
     clear(session, client, app, &app_id, &mut expected)?;
     structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     session.log(&format!(
-        "M7 native in {}: ASCII and the C10 corpus typed, and {} characters pasted with {}, read back exactly, with paste {}; the owner's {} types offered again",
+        "M7 {}: ASCII, the C10 corpus and a text needing several keymaps typed, and {} characters pasted with {}, read back exactly, with paste {}; the owner's {} types offered again",
         app.name,
         text.chars().count(),
         app.paste_keys,
@@ -186,13 +172,17 @@ fn check(session: &mut Session<'_>, client: &mut Client, app: &Target) -> Result
 enum Hold {
     Shift,
     CapsLock,
+    NumLock,
 }
 
 impl Hold {
+    const ALL: [Self; 3] = [Self::Shift, Self::CapsLock, Self::NumLock];
+
     fn start(self, keyboard: &mut Physical) -> Result<()> {
         match self {
             Self::Shift => keyboard.key(physical::LEFT_SHIFT, true),
             Self::CapsLock => keyboard.tap(physical::CAPS_LOCK),
+            Self::NumLock => keyboard.tap(physical::NUM_LOCK),
         }
     }
 
@@ -200,69 +190,67 @@ impl Hold {
         match self {
             Self::Shift => keyboard.key(physical::LEFT_SHIFT, false),
             Self::CapsLock => keyboard.tap(physical::CAPS_LOCK),
+            Self::NumLock => keyboard.tap(physical::NUM_LOCK),
+        }
+    }
+
+    /// The keys pressed by hand after the call: keypad `1` with Num Lock, then `a`, whose
+    /// arrival says the keys before it were handled.
+    const fn by_hand(self) -> &'static [u32] {
+        match self {
+            Self::Shift | Self::CapsLock => &[physical::A],
+            Self::NumLock => &[physical::KEYPAD_1, physical::A],
         }
     }
 }
 
-/// Each backend's call with Shift held and with Caps Lock on, by hand, in the Qt field
-/// `app_id`; see `BY_HAND`.
-fn held(session: &mut Session<'_>, clients: [(&str, &mut Client); 2], app_id: &str) -> Result<()> {
+/// The call with Shift held, with Caps Lock on and with Num Lock on, by hand, in the Qt
+/// field `app_id`. The call leaves the compositor's map active, so niri sends no map, and
+/// the field keeps the call's zero modifiers and locks until a modifier or lock changes:
+/// the keys by hand type `a`, and keypad `1` as End, which types nothing.
+fn held(session: &mut Session<'_>, client: &mut Client, app_id: &str) -> Result<()> {
     let Some(mut keyboard) = Physical::connect(session)? else {
         return session
             .log("M7 held modifiers: skipped (a visible run has no keyboard to hold them on)");
     };
-    for (backend, client) in clients {
-        let expected = by_hand(backend);
-        structured(&client.call(session, "acquire_desktop", json!({}))?)?;
-        for hold in [Hold::Shift, Hold::CapsLock] {
-            let typed = after_call(session, client, &mut keyboard, app_id, hold)?;
-            if typed != expected {
-                return Err(Failure::new(format!(
-                    "M7 {backend} with {hold:?}: `a` by hand after the call typed {typed:?}, not {expected:?}"
-                )));
-            }
+    structured(&client.call(session, "acquire_desktop", json!({}))?)?;
+    for hold in Hold::ALL {
+        let typed = after_call(session, client, &mut keyboard, app_id, hold)?;
+        if typed != "a" {
+            return Err(Failure::new(format!(
+                "M7 with {hold:?}: the keys by hand after the call typed {typed:?}, not \"a\""
+            )));
         }
-        structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     }
-    session.log(&format!(
-        "M7 held modifiers in the Qt field: `abc` typed exactly with Shift held and with Caps Lock on by both backends; `a` by hand afterwards typed `{}` after wtype and `{}` after native",
-        by_hand("wtype"),
-        by_hand("native")
-    ))
+    structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
+    session.log("M7 held modifiers in the Qt field: `abc` typed exactly with Shift held, with Caps Lock on and with Num Lock on; `a` by hand afterwards typed `a`; with Num Lock on, keypad `1` then `a` typed `a`")
 }
 
-/// What a key pressed by hand after a call types, Shift held or Caps Lock on. wtype's
-/// map isn't the compositor's, so niri sends the compositor's map with the modifiers it
-/// has along with the next physical key, and the field knows. Native leaves the
-/// compositor's map active, so niri sends no map, and the field keeps the call's zero
-/// modifiers until a modifier changes.
-fn by_hand(backend: &str) -> char {
-    if backend == "native" { 'a' } else { 'A' }
-}
-
-/// Types `abc` with `hold`, checks the field shows exactly that, then presses `a` by hand
-/// and returns what it typed, and empties the field.
+/// Types `abc` with `hold`, checks the field shows exactly that, then presses the keys
+/// by hand and returns what they typed, once an `a` or `A` ends it, and empties the field.
 fn after_call(
     session: &mut Session<'_>,
     client: &mut Client,
     keyboard: &mut Physical,
     app_id: &str,
     hold: Hold,
-) -> Result<char> {
+) -> Result<String> {
     hold.start(keyboard)?;
     let result = call(session, client, app_id, json!({"text": "abc"}))?;
     sent(&QT, &result)?;
     let mut expected = String::new();
     shown(session, &QT, &mut expected, "abc")?;
-    keyboard.tap(physical::A)?;
+    for &key in hold.by_hand() {
+        keyboard.tap(key)?;
+    }
     let path = session.test_dir().root().join(QT.file);
-    let typed = session.wait_until("m7-held-key", "the key pressed by hand", WAIT, |_| {
+    let typed = session.wait_until("m7-held-key", "the keys pressed by hand", WAIT, |_| {
         let seen = fs::read_to_string(&path).context(format!("read {}", path.display()))?;
-        let mut added = seen.strip_prefix("abc").unwrap_or_default().chars();
-        Ok(added.next().filter(|_| added.next().is_none()))
+        let added = seen.strip_prefix("abc").unwrap_or_default();
+        Ok(added.ends_with(['a', 'A']).then(|| added.to_owned()))
     })?;
     hold.end(keyboard)?;
-    expected.push(typed);
+    expected.push_str(&typed);
     clear(session, client, &QT, app_id, &mut expected)?;
     Ok(typed)
 }

@@ -1,14 +1,11 @@
 //! `niri-computer-use recover` against a fixture's runtime directory: a live lease holder,
-//! a marker naming a running child, and the human's answer.
-
-use std::process::Stdio;
-use std::sync::PoisonError;
+//! the input a marker names, and the human's answer.
 
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 
 use crate::client::{Server, WAIT, answer, run, subcommand, tool_error};
-use crate::fixture::{Fixture, SPAWNING, eventually, exited};
+use crate::fixture::Fixture;
 use crate::session::NiriProcess;
 
 const DIR: &str = "run/niri-computer-use/niri.test";
@@ -26,39 +23,17 @@ fn marker_exists(fixture: &Fixture) -> bool {
     fixture.path(&format!("{DIR}/input-dirty")).exists()
 }
 
-/// A child in a process group of its own that ignores SIGTERM, as a stuck input child
-/// might, and its start time from `/proc`.
-fn stubborn_child() -> (tokio::process::Child, u32, u64) {
-    let spawning = SPAWNING.lock().unwrap_or_else(PoisonError::into_inner);
-    let child = command()
-        .args(["-c", "trap '' TERM; exec sleep 60"])
-        .stdin(Stdio::null())
-        .process_group(0)
-        .kill_on_drop(true)
-        .spawn()
-        .unwrap();
-    drop(spawning);
-    let pid = child.id().unwrap();
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
-    let (_, rest) = stat.rsplit_once(") ").unwrap();
-    let start_time = rest.split(' ').nth(19).unwrap().parse().unwrap();
-    (child, pid, start_time)
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the test starts the child a marker names, outside the server's runner"
-)]
-fn command() -> tokio::process::Command {
-    tokio::process::Command::new("sh")
-}
-
-fn running(pid: u32, start_time: u64) -> Value {
+/// A marker 0.1.0 wrote for its input child, which this version can't read.
+fn with_child() -> Value {
     json!({
         "operation": "type_text", "phase": "running", "server_pid": 1,
         "since": "2026-10-08T00:00:00.000Z",
-        "child": {"pid": pid, "start_time": start_time}
+        "child": {"pid": 1, "start_time": 1}
     })
+}
+
+fn pending() -> Value {
+    json!({"operation": "key", "phase": "pending", "server_pid": 1, "since": "t"})
 }
 
 #[tokio::test]
@@ -80,32 +55,21 @@ async fn recover_refuses_while_a_server_holds_the_lease() {
     assert!(marker_exists(&fixture));
 }
 
+/// An unreadable marker, such as one an older version wrote, blocks the lease like any
+/// other until the human confirms the input is released.
 #[tokio::test]
-async fn recover_ends_the_child_and_clears_the_marker_once_confirmed() {
-    let fixture = Fixture::new("recover-child");
+async fn recover_clears_an_unreadable_marker_once_confirmed() {
+    let fixture = Fixture::new("recover-old");
     let _niri = NiriProcess::unlocked(&fixture).await;
-    let (_child, pid, start_time) = stubborn_child();
-    write_marker(&fixture, &running(pid, start_time));
+    write_marker(&fixture, &with_child());
     let mut server = Server::start(&fixture).await;
-    let status = server.structured("status").await;
-    assert_eq!(status["input_dirty"]["phase"], "running");
     let (name, detail) = tool_error(&server.call("acquire_desktop", json!({})).await);
     assert_eq!(name, "recovery_required");
-    assert!(detail.contains("type_text running"), "{detail}");
+    assert!(detail.contains("recover"), "{detail}");
 
     let out = answer(&fixture, "recover", "yes\n").await;
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(out.status.success(), "{stdout}");
-    assert!(
-        stdout.contains(&format!("Ending the input child, PID {pid}")),
-        "{stdout}"
-    );
-    assert!(
-        eventually(std::time::Duration::from_secs(2), || exited(
-            i32::try_from(pid).unwrap()
-        ))
-        .await
-    );
     assert!(!marker_exists(&fixture));
     server.structured("acquire_desktop").await;
 }
@@ -113,21 +77,13 @@ async fn recover_ends_the_child_and_clears_the_marker_once_confirmed() {
 #[tokio::test]
 async fn without_a_yes_the_marker_stays() {
     let fixture = Fixture::new("recover-no");
-    let (_child, pid, start_time) = stubborn_child();
-    write_marker(&fixture, &running(pid, start_time));
+    write_marker(&fixture, &pending());
     let out = answer(&fixture, "recover", "no\n").await;
     assert!(!out.status.success());
     assert!(
         String::from_utf8(out.stderr)
             .unwrap()
             .contains("not confirmed")
-    );
-    // The child is ended before the question; only the marker waits for the human.
-    assert!(
-        eventually(std::time::Duration::from_secs(2), || exited(
-            i32::try_from(pid).unwrap()
-        ))
-        .await
     );
     assert!(marker_exists(&fixture));
     // End of input is not a yes either.
@@ -138,8 +94,7 @@ async fn without_a_yes_the_marker_stays() {
 #[tokio::test]
 async fn a_marker_written_while_recover_waits_for_the_answer_stays() {
     let fixture = Fixture::new("recover-replaced");
-    let (_child, pid, start_time) = stubborn_child();
-    write_marker(&fixture, &running(pid, start_time));
+    write_marker(&fixture, &pending());
     let mut recover = subcommand(&fixture, "recover");
     let mut stdout = BufReader::new(recover.stdout.take().unwrap()).lines();
     while let Some(line) = tokio::time::timeout(WAIT, stdout.next_line())
@@ -172,21 +127,7 @@ async fn a_marker_written_while_recover_waits_for_the_answer_stays() {
 }
 
 #[tokio::test]
-async fn a_reused_pid_is_never_killed() {
-    let fixture = Fixture::new("recover-reused");
-    let (_child, pid, start_time) = stubborn_child();
-    // The marker's start time doesn't match, so the PID now belongs to someone else.
-    write_marker(&fixture, &running(pid, start_time + 1));
-    let out = answer(&fixture, "recover", "yes\n").await;
-    let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(out.status.success(), "{stdout}");
-    assert!(stdout.contains("has already exited"), "{stdout}");
-    assert!(!exited(i32::try_from(pid).unwrap()));
-    assert!(!marker_exists(&fixture));
-}
-
-#[tokio::test]
-async fn a_pointer_marker_releases_its_buttons_without_asking_about_wtype() {
+async fn a_pointer_marker_without_a_niri_asks_the_human_to_release_its_buttons() {
     let fixture = Fixture::new("recover-pointer");
     write_marker(
         &fixture,
@@ -199,7 +140,6 @@ async fn a_pointer_marker_releases_its_buttons_without_asking_about_wtype() {
     let out = answer(&fixture, "recover", "yes\n").await;
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(out.status.success(), "{stdout}");
-    assert!(!stdout.contains("wtype process"), "{stdout}");
     assert!(
         stdout.contains("pointer buttons [272] may be held, and their release couldn't be sent"),
         "{stdout}"
@@ -220,11 +160,6 @@ async fn failed_native_release_keeps_the_marker_even_after_a_yes() {
     let out = answer(&fixture, "recover", "yes\n").await;
     assert!(!out.status.success());
     assert!(marker_exists(&fixture));
-    assert!(
-        !String::from_utf8(out.stdout)
-            .unwrap()
-            .contains("wtype process")
-    );
 }
 
 #[tokio::test]

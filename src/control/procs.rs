@@ -1,6 +1,5 @@
-//! What `recover` needs to know about processes, read from `/proc`: whether a process
-//! is still the one a marker names, and which `wtype` processes the user runs. The root
-//! is a parameter so tests can use a fake `/proc`.
+//! What the server needs to know about processes, read from `/proc`. The root is a
+//! parameter so tests can use a fake `/proc`.
 
 use std::path::Path;
 
@@ -44,11 +43,6 @@ pub(crate) fn stat(proc_root: &Path, pid: u32) -> Option<Stat> {
     parse_stat(&text)
 }
 
-/// Whether `pid` is still the process that started at `start_time` and hasn't exited.
-pub(crate) fn alive_as(proc_root: &Path, pid: u32, start_time: u64) -> bool {
-    stat(proc_root, pid).is_some_and(|stat| stat.start_time == start_time && !stat.exited())
-}
-
 /// The value of `name` in the environment `pid` started with, from
 /// `/proc/<pid>/environ`. `Ok(None)` when the process has no such variable.
 pub(crate) fn environ_var(
@@ -80,36 +74,6 @@ pub(crate) fn comm(proc_root: &Path, pid: u32) -> Option<String> {
     Some(comm.trim_end().to_owned())
 }
 
-/// The PIDs of running processes named `name` whose real user is `uid`.
-pub(crate) fn named(proc_root: &Path, name: &str, uid: u32) -> Vec<u32> {
-    let Ok(entries) = std::fs::read_dir(proc_root) else {
-        return Vec::new();
-    };
-    let mut pids: Vec<u32> = entries
-        .filter_map(|entry| entry.ok()?.file_name().to_str()?.parse::<u32>().ok())
-        .filter(|&pid| {
-            let dir = proc_root.join(pid.to_string());
-            let status = std::fs::read_to_string(dir.join("status")).unwrap_or_default();
-            comm(proc_root, pid).as_deref() == Some(name)
-                && real_uid(&status) == Some(uid)
-                && stat(proc_root, pid).is_some_and(|stat| !stat.exited())
-        })
-        .collect();
-    pids.sort_unstable();
-    pids
-}
-
-/// The real user ID from `/proc/<pid>/status`'s `Uid:` line.
-fn real_uid(status: &str) -> Option<u32> {
-    status
-        .lines()
-        .find_map(|line| line.strip_prefix("Uid:"))?
-        .split_whitespace()
-        .next()?
-        .parse()
-        .ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,35 +93,6 @@ mod tests {
         assert_eq!(parse_stat("4711 (short) S 1"), None);
         assert_eq!(parse_stat(""), None);
         assert!(parse_stat(&STAT.replace(") S", ") Z")).unwrap().exited());
-    }
-
-    fn process(root: &Path, pid: u32, comm: &str, uid: u32, stat: &str) {
-        let dir = root.join(pid.to_string());
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("comm"), format!("{comm}\n")).unwrap();
-        std::fs::write(
-            dir.join("status"),
-            format!("Name:\t{comm}\nUid:\t{uid}\t{uid}\t{uid}\t{uid}\n"),
-        )
-        .unwrap();
-        std::fs::write(dir.join("stat"), stat).unwrap();
-    }
-
-    #[test]
-    fn finds_the_users_running_processes_by_name() {
-        let root = crate::test_support::fresh_dir("procs");
-        process(&root, 10, "wtype", 1000, STAT);
-        process(&root, 11, "wtype", 0, STAT);
-        process(&root, 12, "wtyper", 1000, STAT);
-        process(&root, 13, "wtype", 1000, &STAT.replace(") S", ") Z"));
-        process(&root, 9, "wtype", 1000, STAT);
-        std::fs::create_dir(root.join("self-not-a-pid")).unwrap();
-        assert_eq!(named(&root, "wtype", 1000), [9, 10]);
-        assert!(alive_as(&root, 10, 98765));
-        assert!(!alive_as(&root, 10, 98766));
-        assert!(!alive_as(&root, 13, 98765));
-        assert!(!alive_as(&root, 99, 98765));
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -203,10 +138,5 @@ mod tests {
     fn reads_this_process_from_the_real_proc() {
         let me = stat(Path::new("/proc"), std::process::id()).unwrap();
         assert!(!me.exited());
-        assert!(alive_as(
-            Path::new("/proc"),
-            std::process::id(),
-            me.start_time
-        ));
     }
 }

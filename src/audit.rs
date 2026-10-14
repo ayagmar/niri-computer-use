@@ -695,6 +695,46 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// A failure after input went out, or may have, says so in its result and in its audit
+    /// line, so neither an agent nor the user takes it for one that sent nothing.
+    #[test]
+    fn a_failure_that_may_have_sent_input_says_so_in_its_result_and_line() {
+        let dir = crate::test_support::fresh_dir("audit-may-have-sent");
+        let audit = Audit::new(Some(dir.clone()));
+        let caller = Caller {
+            session: "smoke/1",
+            instance: None,
+        };
+        let mut sent = ToolError::new(ErrorName::UpstreamError, "niri didn't answer");
+        sent.may_have_sent = true;
+        let plain = ToolError::new(ErrorName::FocusMismatch, "another window has focus");
+        let mut results = Vec::new();
+        for error in [sent, plain] {
+            let result = error.into_result();
+            results.push(result.structured_content.clone().unwrap());
+            audit.finish(&Call::action("key"), caller, json!({}), &Ok(result));
+        }
+        assert_eq!(results[0]["may_have_sent"], true, "{}", results[0]);
+        assert_eq!(results[1].get("may_have_sent"), None, "{}", results[1]);
+        let text = std::fs::read_to_string(dir.join("niri-computer-use/audit.jsonl")).unwrap();
+        let lines: Vec<Value> = text
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let logged: Vec<_> = lines
+            .iter()
+            .map(|line| (line["error"].clone(), line["may_have_sent"].clone()))
+            .collect();
+        assert_eq!(
+            logged,
+            [
+                (json!("upstream_error"), json!(true)),
+                (json!("focus_mismatch"), Value::Null)
+            ]
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn keys_named_by_number_are_logged_as_a_count() {
         let named = [

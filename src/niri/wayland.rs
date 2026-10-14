@@ -29,7 +29,7 @@ pub(super) async fn connect(display: &Path, niri_pid: u32) -> Result<Connection,
 }
 
 /// A connection to the display at `display`, whose peer must be niri's PID. Clients that
-/// find the display by name, such as wtype, would otherwise reach another compositor.
+/// find the display by name would otherwise reach another compositor.
 pub(super) async fn niri_stream(display: &Path, niri_pid: u32) -> Result<UnixStream, ToolError> {
     let stream = tokio::time::timeout(DEADLINE, UnixStream::connect(display))
         .await

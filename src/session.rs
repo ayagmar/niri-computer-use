@@ -14,7 +14,7 @@ use tokio::sync::{Semaphore, SemaphorePermit, oneshot, watch};
 use crate::policy::{self, Loaded, Switch, Tools};
 use crate::runner::Place;
 
-/// What a client's own environment gives its session, and no other: its four variables,
+/// What a client's own environment gives its session, and no other: its three variables,
 /// its home, and the policy file as read from its config directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Given {
@@ -24,11 +24,9 @@ pub(crate) struct Given {
     pub(crate) confirm_lease: Option<OsString>,
     /// `NIRI_COMPUTER_USE_TOOLS`, as given: the profile of tools to list.
     pub(crate) tools: Option<OsString>,
-    /// `NIRI_COMPUTER_USE_KEYBOARD`: the experimental backend; absent means wtype.
-    pub(crate) keyboard: Option<OsString>,
     /// `$HOME`, for a `capture_dir` under `~/`.
     pub(crate) home: Option<PathBuf>,
-    /// `$PATH`, where the session's own programs, `grim` and `wtype`, are found. Empty
+    /// `$PATH`, where the session's own programs, such as `grim`, are found. Empty
     /// isn't unset: it means the working directory.
     pub(crate) path: Option<OsString>,
     pub(crate) policy: policy::Source,
@@ -48,7 +46,6 @@ impl Given {
             unrestricted: var("NIRI_COMPUTER_USE_UNRESTRICTED"),
             confirm_lease: var("NIRI_COMPUTER_USE_CONFIRM_LEASE"),
             tools: var("NIRI_COMPUTER_USE_TOOLS"),
-            keyboard: var("NIRI_COMPUTER_USE_KEYBOARD"),
             home,
             path,
             policy: policy::Source::read(config_dir.as_deref()),
@@ -68,11 +65,9 @@ pub(crate) struct Settings {
     pub(crate) confirm_lease: Switch,
     /// Which tools the session lists, from the policy file and the session's variable.
     pub(crate) tools: Tools,
-    /// The keyboard backend the session asked for.
-    pub(crate) keyboard: Option<OsString>,
     /// The session's home, for a `capture_dir` under `~/`.
     pub(crate) home: Option<PathBuf>,
-    /// The session's `PATH`, where `grim` and `wtype` are found for its calls.
+    /// The session's `PATH`, where `grim` is found for its calls.
     pub(crate) path: Option<OsString>,
     /// A shared engine's client's working directory, where those calls start and
     /// `PATH`'s relative entries are. `None` in a standalone server, whose calls start in
@@ -111,7 +106,6 @@ impl Settings {
                 env: Tools::parse_env(given.tools.as_deref()),
             },
             policy,
-            keyboard: given.keyboard,
             home: given.home,
             path: given.path,
             dir: None,
@@ -475,7 +469,6 @@ mod tests {
             unrestricted: Some("true".into()),
             confirm_lease: Some("true".into()),
             tools: None,
-            keyboard: None,
             home: None,
             path: None,
             policy: policy::Source::Missing,

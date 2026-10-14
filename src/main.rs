@@ -339,12 +339,7 @@ async fn standalone(
     let engine = engine::Engine::start(env, status::Mode::Standalone, fallback).await?;
     let engine = std::sync::Arc::new(engine);
     let session = engine.open_session(std::process::id(), settings);
-    let served =
-        engine::host::serve_session(&engine, session, tokio::io::stdin(), tokio::io::stdout())
-            .await;
-    // A dropped action's input cleanup may still run; cut short, it leaves the marker.
-    control::cleanup::settled().await;
-    served
+    engine::host::serve_alone(&engine, session, tokio::io::stdin(), tokio::io::stdout()).await
 }
 
 #[cfg(test)]
