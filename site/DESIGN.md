@@ -312,7 +312,7 @@ Small corners: 3px (corner) on buttons, tabs, command blocks, diagram blocks and
 - **Focus:** a 2px ink outline, 3px off (4px around the diagram; plate ink on the plate).
 
 ### Navigation
-- **Header:** wordmark with the version tag (mono, 1px rule border, highlighter on hover, linking to the release), the running head "MCP server for niri 26.04 on Linux", then Docs, GitHub, the theme toggle (hidden without JavaScript) and Install. Below 24rem the version tag is left to the footer. Links are 550 weight, underlined on hover.
+- **Header:** wordmark with the version tag (mono, 1px rule border, highlighter on hover, linking to the release), the running head "MCP server for niri 26.04 on Linux", then Docs, GitHub, the theme toggle (hidden without JavaScript) and Install. Below 24rem the version tag is left to the footer, and below 21rem the header's gaps tighten so it fits 320px. Links are 550 weight, underlined on hover.
 - **Footer:** wordmark and version; Docs, GitHub, llms.txt, MIT license.
 
 ### Figure 1: Sessions
