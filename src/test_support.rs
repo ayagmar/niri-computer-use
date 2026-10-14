@@ -20,6 +20,30 @@ pub(crate) fn fresh_dir(name: &str) -> PathBuf {
     dir
 }
 
+/// Writes `body` as an executable shell script at `file`. The `install` child writes it,
+/// so this process never holds the file open for writing: a test spawning a program on
+/// another thread meanwhile would inherit that handle, and running the script would fail
+/// with "Text file busy".
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a test fixture written by a short-lived child, not a process the server runs"
+)]
+pub(crate) fn script(file: &std::path::Path, body: &str) {
+    use std::io::Write as _;
+    let mut install = std::process::Command::new("install")
+        .args(["-m", "755", "/dev/stdin"])
+        .arg(file)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = install.stdin.take().unwrap();
+    stdin
+        .write_all(format!("#!/bin/sh\n{body}\n").as_bytes())
+        .unwrap();
+    drop(stdin);
+    assert!(install.wait().unwrap().success());
+}
+
 /// The environment of a process whose niri socket is `niri.test.sock` in `dir`, resolved
 /// as at its start: `dir` is made private and gets that socket file, which nothing
 /// listens on.

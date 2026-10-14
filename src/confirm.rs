@@ -92,7 +92,6 @@ fn args(label: &Label, deadline: Duration) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs::PermissionsExt as _;
     use std::path::PathBuf;
 
     use super::*;
@@ -100,9 +99,7 @@ mod tests {
     /// A directory holding a `notify-send` that runs `body`.
     fn notify_send(name: &str, body: &str) -> PathBuf {
         let bin = crate::test_support::fresh_dir(name);
-        let program = bin.join("notify-send");
-        std::fs::write(&program, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_support::script(&bin.join("notify-send"), body);
         bin
     }
 

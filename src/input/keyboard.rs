@@ -1034,8 +1034,6 @@ mod tests {
         name: &str,
         then: impl AsyncFnOnce(&RuntimeDir),
     ) -> (Failed, Vec<u8>) {
-        use std::os::unix::fs::PermissionsExt as _;
-
         let dir = crate::test_support::fresh_dir(name);
         let runtime = RuntimeDir::of(&crate::test_support::niri_env(&dir)).unwrap();
         runtime.create().unwrap();
@@ -1043,8 +1041,7 @@ mod tests {
         let bin = dir.join("bin");
         std::fs::create_dir(&bin).unwrap();
         let wtype = bin.join("wtype");
-        std::fs::write(&wtype, format!("#!/bin/sh\ncat > '{}'\n", typed.display())).unwrap();
-        std::fs::set_permissions(&wtype, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_support::script(&wtype, &format!("cat > '{}'", typed.display()));
         let desk = crate::input::paste::desk_read(&dir, Duration::ZERO);
         let go = async {
             desk.sending_input()?;
@@ -1113,8 +1110,6 @@ mod tests {
     /// leaving every later action to `recover`.
     #[tokio::test]
     async fn a_call_dropped_at_the_gate_removes_its_marker() {
-        use std::os::unix::fs::PermissionsExt as _;
-
         let dir = crate::test_support::fresh_dir("feed-dropped");
         let runtime = RuntimeDir::of(&crate::test_support::niri_env(&dir)).unwrap();
         runtime.create().unwrap();
@@ -1122,8 +1117,7 @@ mod tests {
         let bin = dir.join("bin");
         std::fs::create_dir(&bin).unwrap();
         let wtype = bin.join("wtype");
-        std::fs::write(&wtype, format!("#!/bin/sh\ncat > '{}'\n", typed.display())).unwrap();
-        std::fs::set_permissions(&wtype, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_support::script(&wtype, &format!("cat > '{}'", typed.display()));
         let desk = crate::input::paste::desk_read(&dir, Duration::ZERO);
         let stroke = Wtype {
             tool: "type_text",
