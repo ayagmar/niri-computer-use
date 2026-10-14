@@ -1,7 +1,50 @@
 // A recording's calls as a timing diagram: one lane for the agent's calls, one for the
-// lease, one for what niri saw, one for what you did. Pure, so the page draws it at build
-// time and the browser only moves a cursor over it.
-import { leaseAfter, type Call, type Run } from './demo';
+// lease, one for what niri saw, one for what you did; and what the server would answer had
+// you pressed the stop key at a given moment. Pure, so the page draws the diagram at build
+// time, the browser runs the stop with the same code, and `timing.test.ts` checks both.
+
+export interface Call {
+	/** Seconds into the video. */
+	start: number;
+	request: string;
+	answer: string;
+	/** The answer refused or stopped. */
+	error: boolean;
+	/** A command the user ran, not a call. */
+	you: boolean;
+	/** The round trip, or null for a user command. */
+	ms: number | null;
+}
+
+export interface Run {
+	prompt: string;
+	calls: Call[];
+	/** How the recording was made. */
+	note?: string;
+	/** The recorded output, such as `DP-1 · 2560×1440, shown at 1920×1080`. */
+	output?: string;
+}
+
+/** Who holds the lease after each call: taken by `acquire_desktop`, given back by
+ * `release_desktop`, taken back by the user's stop command. */
+export function leaseAfter(calls: Call[]): ('free' | 'held' | 'stopped')[] {
+	let lease: 'free' | 'held' | 'stopped' = 'free';
+	return calls.map((call) => {
+		if (isStop(call)) lease = 'stopped';
+		else if (call.request.startsWith('acquire_desktop') && call.answer.startsWith('lease taken')) lease = 'held';
+		else if (call.request.startsWith('release_desktop') && call.answer.startsWith('released')) lease = 'free';
+		return lease;
+	});
+}
+
+/** Seconds into the recording as m:ss.s, as a player shows them. */
+export const at = (seconds: number) =>
+	`${Math.floor(seconds / 60)}:${(seconds % 60).toFixed(1).padStart(4, '0')}`;
+
+const isStop = (call: Call) => call.you && call.request.endsWith(' stop');
+const tool = (call: Call) => call.request.split(' ')[0];
+/** When a call's answer came back, in seconds into the video. */
+const end = (call: Call) => call.start + (call.ms ?? 0) / 1000;
 
 /** The diagram's width in SVG units; the lanes' labels sit outside it, in HTML. */
 export const WIDTH = 1000;
@@ -16,13 +59,16 @@ export interface Label {
 }
 
 export interface Pulse extends Label {
+	/** Where the pulse ends: its answer, or a few units on for a call too quick to see. */
 	x1: number;
 	error: boolean;
 	/** Index into the run's calls. */
 	call: number;
-	/** What the call would get once the stop flag is set: an action is refused, a look still
-	 * answers, and giving the lease back has nothing to give. */
-	afterStop: 'refused' | 'answered' | 'moot';
+}
+
+export interface Sighting extends Label {
+	/** Index into the run's calls. */
+	call: number;
 }
 
 /** The tools that only look, and need no lease. */
@@ -38,32 +84,29 @@ export interface Timing {
 	lease: { x: number; state: 'free' | 'held' | 'stopped' }[];
 	/** Where the lease is held, as [from, to]. */
 	held: [number, number][];
-	niri: Label[];
+	niri: Sighting[];
 	you: Pulse[];
-	/** Each call's start in seconds, for the cursor and the readout. */
-	starts: number[];
 }
 
 /** The diagram of `run`. */
 export function timing(run: Run): Timing {
-	const end = Math.max(...run.calls.map((call) => call.start + (call.ms ?? 0) / 1000));
-	const duration = Math.ceil(end + 1);
+	const duration = Math.ceil(Math.max(...run.calls.map(end)) + 1);
 	const x = (seconds: number) => (WIDTH * seconds) / duration;
 	const calls = rows(
 		run.calls.flatMap((call, index) => (call.you ? [] : [pulse(call, index, x)])),
 	);
 	const you = rows(run.calls.flatMap((call, index) => (call.you ? [userPulse(call, index, x)] : [])));
 	const niri = rows(
-		run.calls.flatMap((call) => {
+		run.calls.flatMap((call, index) => {
 			const text = saw(call);
-			return text ? [{ x: x(call.start + (call.ms ?? 0) / 1000), row: 0, text }] : [];
+			return text ? [{ x: x(end(call)), row: 0, text, call: index }] : [];
 		}),
 	);
 	const states = leaseAfter(run.calls);
 	const lease = [{ x: 0, state: 'free' as const }];
 	run.calls.forEach((call, index) => {
 		if (states[index] !== lease.at(-1)!.state) {
-			lease.push({ x: x(call.start + (call.ms ?? 0) / 1000), state: states[index] });
+			lease.push({ x: x(end(call)), state: states[index] });
 		}
 	});
 	const held = lease.flatMap((step, index): [number, number][] =>
@@ -77,23 +120,20 @@ export function timing(run: Run): Timing {
 		held,
 		niri,
 		you,
-		starts: run.calls.map((call) => call.start),
 	};
 }
 
 function pulse(call: Call, index: number, x: (s: number) => number): Pulse {
 	const start = x(call.start);
 	// A call too quick to see still gets a pulse a few units wide.
-	const x1 = Math.max(start + 4, x(call.start + (call.ms ?? 0) / 1000));
-	const tool = call.request.split(' ')[0];
-	const afterStop = LOOKS.has(tool) ? 'answered' : tool === 'release_desktop' ? 'moot' : 'refused';
-	return { x: start, x1, row: 0, text: tool, error: call.error, call: index, afterStop };
+	const x1 = Math.max(start + 4, x(end(call)));
+	return { x: start, x1, row: 0, text: tool(call), error: call.error, call: index };
 }
 
 function userPulse(call: Call, index: number, x: (s: number) => number): Pulse {
 	const start = x(call.start);
-	const text = call.request.endsWith(' stop') ? 'stop key' : call.answer.split(';')[0].replace(/^you /, '');
-	return { x: start, x1: start + 14, row: 0, text, error: false, call: index, afterStop: 'moot' };
+	const text = isStop(call) ? 'stop key' : call.answer.split(';')[0].replace(/^you /, '');
+	return { x: start, x1: start + 14, row: 0, text, error: false, call: index };
 }
 
 /** What niri saw, from the answer: a focus move, a new size, or the observed word when it
@@ -120,3 +160,75 @@ function rows<T extends Label>(labels: T[]): T[] {
 		return { ...label, row };
 	});
 }
+
+/** What became of a call had you pressed the stop key at some moment: done before it, an
+ * action cut short by it, refused after it, a look that still answers, or something that no
+ * longer happens, such as giving back a lease already taken back or a later command of yours. */
+export type Fate = 'done' | 'cut' | 'refused' | 'answered' | 'void';
+
+export interface Stop {
+	/** Each call's fate, by index into the run's calls. */
+	fates: Fate[];
+	/** The action the stop cut short, if one was running. */
+	cut: number | null;
+	/** The first action refused after the stop. */
+	refused: number | null;
+	/** Whether the agent held the lease at that moment. */
+	held: boolean;
+}
+
+/** What the server would have answered had you pressed the stop key `time` seconds in. Only
+ * an action can be cut short: a look runs to its answer, since the stop cancels only actions. */
+export function stopAt(calls: Call[], time: number): Stop {
+	const states = leaseAfter(calls);
+	let held = false;
+	const fates = calls.map((call, index): Fate => {
+		if (end(call) <= time) {
+			held = states[index] === 'held';
+			return 'done';
+		}
+		const kind = afterStop(call);
+		if (call.start > time) return kind;
+		return kind === 'refused' ? 'cut' : 'done';
+	});
+	return {
+		fates,
+		cut: nullable(fates.indexOf('cut')),
+		refused: nullable(fates.indexOf('refused')),
+		held,
+	};
+}
+
+/** What a call that starts after the stop gets: an action is refused, a look still answers,
+ * and giving the lease back, or anything you did yourself, doesn't happen. */
+function afterStop(call: Call): Fate {
+	if (call.you || tool(call) === 'release_desktop') return 'void';
+	return LOOKS.has(tool(call)) ? 'answered' : 'refused';
+}
+
+const nullable = (index: number) => (index === -1 ? null : index);
+
+/** The last call started by `time`, or -1 before the first. Of calls that start together,
+ * the last one. */
+export function callAt(calls: Call[], time: number): number {
+	let index = -1;
+	while (index + 1 < calls.length && calls[index + 1].start <= time) index++;
+	return index;
+}
+
+/** The call one step from `from` in `direction`, kept within the run; from -1, the first. */
+export function step(calls: Call[], from: number, direction: 1 | -1): number {
+	if (from < 0) return 0;
+	return Math.min(calls.length - 1, Math.max(0, from + direction));
+}
+
+/** `time` kept within the diagram's `duration`; a recording runs a little past its last call. */
+export const clamp = (time: number, duration: number) => Math.min(duration, Math.max(0, time));
+
+/** The calls with only what `stopAt` reads of them, for the page's script. */
+export const brief = (calls: Call[]): Call[] =>
+	calls.map((call) => ({
+		...call,
+		request: isStop(call) ? `${tool(call)} stop` : tool(call),
+		answer: call.answer.slice(0, 12),
+	}));

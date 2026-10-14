@@ -4,8 +4,8 @@
 // the recording when it comes into view and draws the diagram in step with it, a pen on each
 // trace; a click or the arrow keys pick a call, and the stop key shows what the server would
 // have answered from that moment.
-import { at, loadClip } from '../../lib/demo';
-import { timing, WIDTH, type Label, type Timing } from '../../lib/timing';
+import { loadClip } from '../../lib/demo';
+import { at, brief, timing, WIDTH, type Label, type Timing } from '../../lib/timing';
 
 interface Props {
 	items: { name: string; tab: string; text: string }[];
@@ -64,7 +64,7 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 			const calls = item.clip.calls;
 			const base = g.callsH - 4;
 			return (
-				<article class="panel" data-panel data-duration={t.duration} data-held={JSON.stringify(t.held.map(([a, b]) => [seconds(t, a), seconds(t, b)]))} aria-label={item.tab}>
+				<article class="panel" data-panel data-duration={t.duration} data-calls={JSON.stringify(brief(calls))} aria-label={item.tab}>
 					<div class="stage">
 						<figure class="figure">
 							<div class="frame" data-frame data-src={item.clip.mp4} data-label={`Recording: ${item.text}`}>
@@ -96,14 +96,14 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 						</div>
 					</div>
 					<div class="diagram">
-						<div class="chart" tabindex="0" data-chart aria-label={`Timing diagram of ${calls.length} calls over ${t.duration} seconds. Left and right arrows step through the calls.`}>
+						<div class="chart" role="group" tabindex="0" data-chart aria-label={`Timing diagram of ${calls.length} calls over ${t.duration} seconds. Left and right arrows step through the calls.`}>
 							<div class="grid">
 								<span class="lane">Calls</span>
 								<svg viewBox={`0 0 ${WIDTH} ${g.callsH}`} aria-hidden="true" data-lane="calls" data-high={g.callsTop} data-low={base}>
 									{t.seconds.map((s) => <line class="sec" x1={(WIDTH * s) / t.duration} x2={(WIDTH * s) / t.duration} y1="0" y2={g.callsH} />)}
 									<line class="trace" x1="0" x2={WIDTH} y1={base} y2={base} />
 									{t.calls.map((p) => (
-										<g class:list={['call', { error: p.error }]} data-from={seconds(t, p.x)} data-to={seconds(t, p.x1)} data-after={p.afterStop}>
+										<g class:list={['call', { error: p.error }]} data-call={p.call} data-from={calls[p.call].start} data-to={calls[p.call].start + (calls[p.call].ms ?? 0) / 1000}>
 											<path class="pulse" d={`M${p.x},${base} V${g.callsTop} H${p.x1} V${base}`} data-x={p.x} data-x1={p.x1} data-top={g.callsTop} data-base={base} />
 											<text x={p.x} y={(p.row + 1) * ROW - 3} class="label" data-t={seconds(t, p.x)}>
 												{p.text}
@@ -135,7 +135,7 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 									{t.seconds.map((s) => <line class="sec" x1={(WIDTH * s) / t.duration} x2={(WIDTH * s) / t.duration} y1="0" y2={g.niriH} />)}
 									<line class="base" x1="0" x2={WIDTH} y1={g.niriH - 4} y2={g.niriH - 4} />
 									{t.niri.map((l) => (
-										<g class="event" data-from={seconds(t, l.x)}>
+										<g class="event" data-call={l.call}>
 											<line class="tick" x1={l.x} x2={l.x} y1={l.row * ROW + 2} y2={g.niriH - 4} />
 											<text x={l.x + 5} y={(l.row + 1) * ROW - 3} class="label" data-t={seconds(t, l.x)}>
 												{l.text}
@@ -148,7 +148,7 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 									{t.seconds.map((s) => <line class="sec" x1={(WIDTH * s) / t.duration} x2={(WIDTH * s) / t.duration} y1="0" y2={g.youH} />)}
 									<line class="base" x1="0" x2={WIDTH} y1={g.youH - 4} y2={g.youH - 4} />
 									{t.you.map((p) => (
-										<g class="call you" data-from={seconds(t, p.x)}>
+										<g class="call you" data-call={p.call}>
 											<path class="trace you" d={`M${p.x},${g.youH - 4} V${g.youTop} H${p.x1} V${g.youH - 4}`} />
 											<text x={p.x - 6} y={(p.row + 1) * ROW - 3} class="label you" text-anchor="end" data-t={seconds(t, p.x)}>
 												{p.text}
@@ -173,7 +173,7 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 								<div class="flash" data-flash />
 							</div>
 						</div>
-						<output class="readout" data-readout>
+						<output class="readout" data-readout aria-live="off">
 							<span>{calls.length} calls in {t.duration} s.</span>
 						</output>
 						<details class="list">
@@ -197,6 +197,8 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 </div>
 
 <script>
+	import { callAt, clamp, step, stopAt as stopFates, type Call } from '../../lib/timing';
+
 	const still = matchMedia('(prefers-reduced-motion: reduce)');
 	// With Save-Data on, a recording loads only when the reader presses Play.
 	const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData === true;
@@ -224,11 +226,17 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 			current().begin();
 		}, { threshold: 0.6 });
 		root.querySelectorAll('[data-frame]').forEach((frame) => frames.observe(frame));
-		new IntersectionObserver(([entry]) => (inView = entry.isIntersecting), { threshold: 0.15 }).observe(root);
+		// Out of view, the recording and the diagram stop where they are.
+		new IntersectionObserver(([entry]) => {
+			inView = entry.intersectionRatio >= 0.15;
+			if (!entry.isIntersecting) current().pause();
+		}, { threshold: [0, 0.15] }).observe(root);
+		// Turning on reduced motion stops what moves; Play still plays the recording.
+		still.addEventListener('change', () => still.matches && controls.forEach((control) => control.pause()));
 
-		// Escape on the keyboard is the stop key while the diagrams are in view.
+		// Escape on the keyboard is the stop key while a session runs in view.
 		addEventListener('keydown', (event) => {
-			if (event.key !== 'Escape' || !inView || document.fullscreenElement) return;
+			if (event.key !== 'Escape' || !inView || document.fullscreenElement || !current().running()) return;
 			if ((event.target as HTMLElement).closest('input:not([type=radio]), textarea, select')) return;
 			current().press();
 		});
@@ -236,7 +244,7 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 
 	function panel(root: HTMLElement) {
 		const duration = Number(root.dataset.duration);
-		const held: [number, number][] = JSON.parse(root.dataset.held!);
+		const runCalls: Call[] = JSON.parse(root.dataset.calls!);
 		const chart = root.querySelector<HTMLElement>('[data-chart]')!;
 		const cover = root.querySelector<HTMLElement>('[data-cover]')!;
 		const cursor = root.querySelector<HTMLElement>('[data-cursor]')!;
@@ -249,16 +257,16 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 		const hint = root.querySelector<HTMLElement>('[data-try]')!;
 		const hintText = hint.textContent!;
 		const items = [...root.querySelectorAll<HTMLLIElement>('li[data-start]')];
-		const starts = items.map((item) => Number(item.dataset.start));
 		const labels = [...root.querySelectorAll<SVGTextElement>('.label[data-t]')];
 		const calls = [...root.querySelectorAll<SVGGElement>('[data-lane="calls"] .call')];
-		const later = [...root.querySelectorAll<SVGGElement>('.call[data-from], .event[data-from]')];
+		const marked = [...root.querySelectorAll<SVGGElement>('[data-call]')];
 		const callsLane = root.querySelector<SVGSVGElement>('[data-lane="calls"]')!;
 		const pens = [...root.querySelectorAll<SVGCircleElement>('.pen')];
 		const simLease = root.querySelector<SVGGElement>('[data-sim-lease]')!;
 		const simYou = root.querySelector<SVGGElement>('[data-sim-you]')!;
 		const youLane = root.querySelector<SVGSVGElement>('[data-lane="you"]')!;
 		const x = (time: number) => (WIDTH * time) / duration;
+		const tool = (index: number) => runCalls[index].request.split(' ')[0];
 		let frame = 0;
 		let shown = -1;
 		let now = 0;
@@ -267,8 +275,8 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 		let syncing = false;
 		let stoppedAt: number | null = null;
 		// The recording's own stop, when it has one, lands like the reader's.
-		const recorded = items.find((item) => item.dataset.kind === 'you' && item.textContent!.includes('niri-computer-use stop'));
-		const recordedStop = recorded ? Number(recorded.dataset.start) : null;
+		const recorded = runCalls.find((call) => call.you && call.request.endsWith(' stop'));
+		const recordedStop = recorded ? recorded.start : null;
 		let landed = false;
 
 		// The video exists only once the recording starts, so a reader who never reaches it
@@ -278,12 +286,12 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 		video.setAttribute('aria-label', frameBox.dataset.label!);
 		for (const hidden of [play, stopbar]) hidden.hidden = false;
 
-		const at = (time: number) => {
+		// The cursor at `time`, and the call there; the arrow keys name the call, since calls
+		// can start at the same moment.
+		const at = (time: number, index = callAt(runCalls, time)) => {
 			now = time;
-			cursor.style.setProperty('--at', String(Math.min(1, Math.max(0, time / duration))));
+			cursor.style.setProperty('--at', String(clamp(time, duration) / duration));
 			cursor.classList.add('on');
-			let index = -1;
-			while (index + 1 < starts.length && starts[index + 1] <= time) index++;
 			if (stoppedAt === null) show(index);
 		};
 
@@ -296,7 +304,9 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 			say(item.dataset.kind!, [...item.querySelectorAll('code')].map((code) => code.textContent!));
 		};
 
-		const say = (kind: string, lines: string[]) => {
+		// The readout announces only what the reader asked for, not every call as it plays.
+		const say = (kind: string, lines: string[], asked = false) => {
+			readout.setAttribute('aria-live', asked ? 'polite' : 'off');
 			readout.dataset.kind = kind;
 			readout.replaceChildren(...lines.map((line) => Object.assign(document.createElement('code'), { textContent: line })));
 		};
@@ -309,7 +319,7 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 			const busy = calls.some((call) => time >= Number(call.dataset.from) && time <= Number(call.dataset.to));
 			callPen.setAttribute('cx', String(x(time)));
 			callPen.setAttribute('cy', String(busy ? high : low));
-			const holding = held.some(([from, to]) => time >= from && time < to) && (stoppedAt === null || time < stoppedAt);
+			const holding = (stoppedAt === null || time < stoppedAt) && stopFates(runCalls, time).held;
 			leasePen.setAttribute('cx', String(x(time)));
 			leasePen.setAttribute('cy', String(holding ? 16 : 38));
 		};
@@ -375,8 +385,9 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 			pen(duration);
 		};
 
+		// The recording runs a little past the last call; the cursor waits at the end.
 		const follow = () => {
-			tick(video.currentTime, syncing);
+			tick(clamp(video.currentTime, duration), syncing);
 			if (!video.paused) frame = requestAnimationFrame(follow);
 		};
 
@@ -412,34 +423,26 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 			cancelAnimationFrame(frame);
 			drawing = false;
 			video.pause();
-			root.classList.remove('live');
 			root.classList.add('stopped');
-			reveal(1);
-			seen(duration);
+			whole();
 			at(time);
 			pen(time);
-			let cut: string | null = null;
-			let next: string | null = null;
-			for (const node of later) {
-				const from = Number(node.dataset.from);
-				const to = Number(node.dataset.to ?? from);
-				if (node.closest('[data-lane="calls"]') && from <= time && time < to) {
-					const pulse = node.querySelector<SVGPathElement>('.pulse')!;
+			const stop = stopFates(runCalls, time);
+			for (const node of marked) {
+				const fate = stop.fates[Number(node.dataset.call)];
+				if (fate === 'done') continue;
+				const pulse = node.querySelector<SVGPathElement>('.pulse');
+				if (fate === 'cut' && pulse) {
 					pulse.setAttribute('d', `M${pulse.dataset.x},${pulse.dataset.base} V${pulse.dataset.top} H${x(time)} V${pulse.dataset.base}`);
-					node.classList.add('cut');
-					cut ??= node.querySelector('text')!.textContent!.trim();
-				} else if (from > time) {
-					const after = node.dataset.after;
-					node.classList.add(after === 'refused' ? 'refused' : after === 'answered' ? 'answered' : 'void');
-					if (after === 'refused') next ??= node.querySelector('text')!.textContent!.trim();
 				}
+				// What niri would have seen of a call that no longer goes through doesn't happen.
+				node.classList.add(node.classList.contains('event') ? 'void' : fate);
 			}
-			const holding = held.some(([from, to]) => time >= from && time < to);
 			const sx = x(time);
 			const blank = simLease.querySelector('rect')!;
 			blank.setAttribute('x', String(sx + 1));
 			blank.setAttribute('width', String(WIDTH - sx));
-			simLease.querySelector('path')!.setAttribute('d', `M${sx},${holding ? 16 : 38} V38 H${WIDTH}`);
+			simLease.querySelector('path')!.setAttribute('d', `M${sx},${stop.held ? 16 : 38} V38 H${WIDTH}`);
 			simLease.querySelector('text')!.setAttribute('x', String(sx + 6));
 			const low = Number(youLane.dataset.low);
 			simYou.querySelector('path')!.setAttribute('d', `M${sx},${low} V${Number(youLane.dataset.high)} H${sx + 14} V${low}`);
@@ -448,9 +451,9 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 			simYou.classList.add('on');
 			say('you', [
 				`$ niri-computer-use stop   # you, at ${time.toFixed(1)} s`,
-				cut ? `← ${cut}: stopped, or uncertain if its input had gone out` : holding ? '# the lease goes back to you' : '# no action was running',
-				next ? `← ${next}: refused: stopped` : '# nothing else was asked of the desktop',
-			]);
+				stop.cut !== null ? `← ${tool(stop.cut)}: stopped, or uncertain if its input had gone out` : stop.held ? '# the lease goes back to you' : '# no action was running',
+				stop.refused !== null ? `← ${tool(stop.refused)}: refused: stopped` : '# nothing else was asked of the desktop',
+			], true);
 			key.classList.add('down');
 			hint.textContent = 'Stopped. Every later action is refused until you run resume. Press again to replay.';
 			land();
@@ -464,19 +467,21 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 			hint.textContent = hintText;
 			simLease.classList.remove('on');
 			simYou.classList.remove('on');
-			for (const node of later) {
+			for (const node of marked) {
 				node.classList.remove('cut', 'refused', 'answered', 'void');
 				const pulse = node.querySelector<SVGPathElement>('.pulse');
 				if (pulse) pulse.setAttribute('d', `M${pulse.dataset.x},${pulse.dataset.base} V${pulse.dataset.top} H${pulse.dataset.x1} V${pulse.dataset.base}`);
 			}
 		};
 
+		const running = () => drawing || !video.paused;
+
 		const press = () => {
-			if (stoppedAt !== null || (!drawing && video.paused)) {
+			if (stoppedAt !== null || !running()) {
 				begin();
 				return;
 			}
-			stopAt(drawing ? now : video.currentTime);
+			stopAt(clamp(drawing ? now : video.currentTime, duration));
 		};
 
 		key.addEventListener('click', press);
@@ -484,7 +489,7 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 			cancelAnimationFrame(frame);
 			drawing = false;
 			if (stoppedAt !== null) reset();
-			syncing = video.currentTime < 0.3;
+			syncing = video.currentTime < 0.3 && !still.matches;
 			if (syncing) {
 				reset();
 				landed = false;
@@ -495,22 +500,22 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 		// Paused or ended, the diagram is shown whole, with the cursor where the recording is.
 		video.addEventListener('pause', whole);
 		// Also fires after a seek, which moves the cursor while the video is paused.
-		video.addEventListener('timeupdate', () => video.paused && stoppedAt === null && at(video.currentTime));
+		video.addEventListener('timeupdate', () => video.paused && stoppedAt === null && at(clamp(video.currentTime, duration)));
 		play.addEventListener('click', () => start(0));
 
 		const timeAt = (event: PointerEvent) => {
 			const box = root.querySelector('.axis')!.getBoundingClientRect();
-			return ((event.clientX - box.left) / box.width) * duration;
+			return clamp(((event.clientX - box.left) / box.width) * duration, duration);
 		};
 		chart.addEventListener('pointermove', (event) => {
-			if (!video.paused || drawing || stoppedAt !== null) return;
+			if (running() || stoppedAt !== null) return;
 			const time = timeAt(event);
 			at(time);
 			pen(time);
 		});
 		// A tap on a phone scrolls the diagram; only a pointer's click plays from there.
 		chart.addEventListener('click', (event) => {
-			if ((event as PointerEvent).pointerType !== 'touch') start(Math.max(0, timeAt(event)));
+			if ((event as PointerEvent).pointerType !== 'touch') start(timeAt(event));
 		});
 		chart.addEventListener('keydown', (event) => {
 			if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
@@ -520,22 +525,28 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 				reset();
 				finish();
 			}
-			const next = Math.min(starts.length - 1, Math.max(0, shown + (event.key === 'ArrowRight' ? 1 : -1)));
-			at(starts[next] + 0.001);
-			pen(starts[next] + 0.001);
+			const next = step(runCalls, shown, event.key === 'ArrowRight' ? 1 : -1);
+			const time = runCalls[next].start;
 			if (!video.paused) {
 				whole();
-				video.currentTime = starts[next];
+				video.currentTime = time;
 			}
+			at(time, next);
+			pen(time);
+			const item = items[next];
+			say(item.dataset.kind!, [...item.querySelectorAll('code')].map((code) => code.textContent!), true);
 		});
 
 		return {
 			begin,
 			press,
+			running,
+			// Stops the recording and any drawing where they are, and shows the diagram whole.
 			pause: () => {
 				cancelAnimationFrame(frame);
 				drawing = false;
 				video.pause();
+				whole();
 			},
 		};
 	}
@@ -1000,19 +1011,24 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 		opacity: 1;
 	}
 
+	/* Three lines high whatever it says, so the page below doesn't move as the calls go by;
+	   a long request is cut short here and is whole in the list of calls. */
 	.readout {
 		display: block;
-		min-height: 3.4rem;
+		height: calc(3 * 1.55em + 1.1rem);
 		margin-top: 0.7rem;
 		padding: 0.55rem 0.75rem;
 		background: var(--mark);
 		font: 0.8125rem/1.55 var(--mono);
 		color: var(--ink);
-		overflow-wrap: anywhere;
+		overflow: hidden;
 	}
 
 	.readout > :global(*) {
 		display: block;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 		font: inherit;
 	}
 
@@ -1083,6 +1099,11 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 		color: var(--red);
 	}
 
+	.list li:global(.on)[data-kind='error'] .ans,
+	.list li:global(.on)[data-kind='you'] code {
+		color: var(--red-on-mark);
+	}
+
 	.figure {
 		margin: 0 0 1.5rem;
 	}
@@ -1099,11 +1120,6 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 		position: absolute;
 		inset: 0;
 		display: block;
-	.list li:global(.on)[data-kind='error'] .ans,
-	.list li:global(.on)[data-kind='you'] code {
-		color: var(--red-on-mark);
-	}
-
 		width: 100%;
 		height: 100%;
 		object-fit: cover;
