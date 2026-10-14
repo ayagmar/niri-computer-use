@@ -79,8 +79,8 @@ pub(crate) enum Observed {
     Unknown,
     /// `set_element_text`: the element holds the text that was set.
     Matched,
-    /// `set_element_text`: the element holds other text, as when an app filters, caps or
-    /// reformats what it is given.
+    /// `set_element_text`: the element holds other text right after the app answered, as
+    /// when it filters, caps or reformats what it is given, or sets the text later.
     Differs,
 }
 

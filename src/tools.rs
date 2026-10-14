@@ -1307,8 +1307,8 @@ impl Server {
     /// key events, so use `type_text` where keys matter, such as autocompletion or
     /// submitting. Focus, `expect` and `unbound` refs as for `activate_element`. A field
     /// that only hides its text may not be marked as a password, so never set one that may
-    /// hold a secret. `observed` is `matched` when the field then holds the text sent,
-    /// `differs` (`element.characters`) when the app changed it, or `unknown`; `uncertain`,
+    /// hold a secret. `observed` is `matched` when the field holds the text sent, `differs`
+    /// (`element.characters`) when it then holds other text, or `unknown`; `uncertain`,
     /// with `accepted` null, when the reply was lost: the text may be set.
     #[tool(
         title = "Set an element's text",

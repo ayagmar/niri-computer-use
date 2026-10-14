@@ -944,7 +944,8 @@ fn compare(before: Reading, after: Reading) -> Result<Option<bool>, String> {
 }
 
 /// `matched` when the field holds the text that was set, `differs` with its character
-/// count when it holds other text, as when an app filters, caps or reformats input, or
+/// count when it holds other text right after the app answered, as when it filters, caps
+/// or reformats input or sets the text later, or
 /// `unknown` with why it couldn't be read back.
 fn written(held: Result<Held, Failed>) -> (Seen, Option<i32>) {
     match held {
