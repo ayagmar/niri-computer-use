@@ -101,7 +101,7 @@ npm ci
 npm run build
 ```
 
-The pages are Markdown files in `site/src/content/docs/`, except the home page, `index.mdx`, which places the components in `site/src/components/`. There is one directory per sidebar group (`site/src/lib/groups.mjs`), and pages are ordered by `sidebar.order` in their front matter. The build goes to `site/dist/`. Preview it with:
+The pages are Markdown files in `site/src/content/docs/`, except the home page, `site/src/pages/index.astro`, which places the components in `site/src/components/home/` and takes its words from `site/src/lib/home.ts`. There is one directory per sidebar group (`site/src/lib/groups.mjs`), and pages are ordered by `sidebar.order` in their front matter. The build goes to `site/dist/`. Preview it with:
 
 ```sh
 npm run preview
@@ -114,7 +114,7 @@ npm run preview
 - `scripts/check-reference.mjs`, before Astro: the error reference lists exactly the names in `ErrorName` (`src/error.rs`), and the configuration page exactly the keys of `Policy` and `Preset` (`src/policy.rs`). Change the page in the same commit as the enum or struct.
 - `scripts/check-links.mjs`, after Astro: every internal link, image and `#fragment` resolves to a built file, and `llms.txt` and `llms-full.txt` cover every page.
 
-Besides the HTML, the build writes a Markdown copy of every page (`<page>.md`), `llms.txt`, `llms-full.txt`, and the skill from `skills/niri-computer-use/` under `skill/`. Images for the site come from nested runs (`target/e2e/<run>/`), never from your own screen.
+Besides the HTML, the build writes a Markdown copy of every page (`<page>.md`), `llms.txt`, `llms-full.txt`, and the skill from `skills/niri-computer-use/` under `skill/`. The home page's recordings and their stills are real sessions on a desktop set up for them, as [Demo recordings](#demo-recordings) describes; other images come from nested runs (`target/e2e/<run>/`).
 
 CI builds the site on every push and pull request. `.github/workflows/pages.yml` deploys it to GitHub Pages on every push to `main` that touches `site/` or `skills/`.
 
