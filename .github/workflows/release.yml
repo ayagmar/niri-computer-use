@@ -72,6 +72,8 @@ jobs:
           cp target/x86_64-unknown-linux-gnu/release/niri-computer-use README.md LICENSE CHANGELOG.md "dist/$name/"
           strip --strip-debug "dist/$name/niri-computer-use"
           cp -r skills/niri-computer-use "dist/$name/skills/"
+          # cargo-about reads every platform's crates, and the build fetched only this one's.
+          cargo fetch --locked
           cargo about generate --frozen -c .github/release/about.toml -m Cargo.toml \
             .github/release/licenses.hbs -o "dist/$name/THIRD-PARTY-LICENSES.txt"
           tar -C dist -czf "dist/$name.tar.gz" "$name"

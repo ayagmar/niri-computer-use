@@ -1388,3 +1388,8 @@ v2.9.2 is the newest release; it is over 7 days old.
 - CI has a concurrency group per ref with `cancel-in-progress`, so a push to a branch or pull request cancels the run of the push before it, which nobody reads any more.
 - A called workflow's `github` context is its caller's, so when `release.yml` calls CI, `github.workflow` is `Release` and `github.ref` is the tag. CI keys on that: under `Release`, its group is the release run's ID and it cancels nothing. A release's gate can't be cancelled by a push, and doesn't wait behind one.
 - Checked on a throwaway branch with a second workflow that calls CI as `release.yml` does: a second push cancelled CI's run of the first, and both calling workflows' runs went on to pass.
+
+## 2026-10-14: cargo-about gets every platform's crates
+
+- The release's Package step failed in a dry run on GitHub's runners: `cargo about generate --frozen` stopped with "failed to download `android_system_properties v0.1.6` … --frozen was specified". cargo-about reads `cargo metadata` for every platform before it filters by target, and the build had fetched only the crates its own target needs. The earlier checks of the step (the release entries above, Fable's review, the first release branch) ran with a local cargo cache that already held every crate, so they passed. The same failure reproduces locally with an empty `CARGO_HOME` after `cargo fetch --locked --target x86_64-unknown-linux-gnu`, whether the target comes from `about.toml` or from `--target`.
+- Package now runs `cargo fetch --locked` before cargo-about: 137 crates, 15 MB, against the 114 the x86_64 build fetches. cargo-about still runs `--frozen`, so it reads only crates the lock names. The license list it writes is unchanged.
