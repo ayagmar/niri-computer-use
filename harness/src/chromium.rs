@@ -211,9 +211,26 @@ fn start(session: &Session<'_>, browser: &str) -> Result<Process> {
     let page = root.join("chromium.html");
     fs::write(&page, include_str!("../fixtures/chromium.html"))
         .context(format!("write {}", page.display()))?;
-    let home = root.join("chromium-home");
-    fs::create_dir_all(&home).context(format!("create {}", home.display()))?;
-    let mut args: Vec<OsString> = vec![prefixed("HOME=", &home), browser.into()];
+    for dir in ["chromium-home", "chromium-tmp"].map(|name| root.join(name)) {
+        fs::create_dir_all(&dir).context(format!("create {}", dir.display()))?;
+    }
+    session.start(
+        "env",
+        &arguments(root, browser),
+        session.artifact("chromium.log"),
+        BROWSER_DEADLINE,
+    )
+}
+
+/// `env`'s arguments for the browser. Its home, its temporary files and its profile are
+/// in `root`: Chromium makes its singleton socket's directory in `TMPDIR`, or in `/tmp`
+/// without it, and never removes it.
+fn arguments(root: &Path, browser: &str) -> Vec<OsString> {
+    let mut args = vec![
+        prefixed("HOME=", &root.join("chromium-home")),
+        prefixed("TMPDIR=", &root.join("chromium-tmp")),
+        browser.into(),
+    ];
     args.extend(
         [
             "--ozone-platform=wayland",
@@ -231,13 +248,8 @@ fn start(session: &Session<'_>, browser: &str) -> Result<Process> {
         .map(OsString::from),
     );
     args.push(prefixed("--user-data-dir=", &root.join("chromium-profile")));
-    args.push(prefixed("--app=file://", &page));
-    session.start(
-        "env",
-        &args,
-        session.artifact("chromium.log"),
-        BROWSER_DEADLINE,
-    )
+    args.push(prefixed("--app=file://", &root.join("chromium.html")));
+    args
 }
 
 fn prefixed(prefix: &str, path: &Path) -> OsString {
@@ -610,6 +622,26 @@ mod tests {
         );
         assert!(pasted_report(&case(lost), &[0x61]).1.is_some());
         assert_eq!(pasted_report(&case(lost), &[0xe9]).1, None);
+    }
+
+    #[test]
+    fn everything_the_browser_keeps_is_under_test_dir() {
+        let root = Path::new("/t/run-1");
+        let args = arguments(root, "/usr/bin/chromium");
+        let args: Vec<&str> = args.iter().map(|arg| arg.to_str().unwrap()).collect();
+        for variable in ["HOME", "TMPDIR"] {
+            let value = args
+                .iter()
+                .find_map(|arg| arg.strip_prefix(&format!("{variable}=")))
+                .unwrap_or_else(|| panic!("{variable} unset"));
+            assert!(Path::new(value).starts_with(root), "{variable}={value}");
+        }
+        let profile = args
+            .iter()
+            .find_map(|arg| arg.strip_prefix("--user-data-dir="))
+            .unwrap();
+        assert!(Path::new(profile).starts_with(root), "{profile}");
+        assert_eq!(args.get(2), Some(&"/usr/bin/chromium"));
     }
 
     #[test]
