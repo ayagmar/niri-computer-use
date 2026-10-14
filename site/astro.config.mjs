@@ -30,6 +30,18 @@ export default defineConfig({
 			components: {
 				Head: './src/components/Head.astro',
 			},
+			// Code on the black plate, as the home page's install steps show it: no window frame,
+			// the same dark theme in both modes, and lines wrapped to the width.
+			expressiveCode: {
+				themes: ['github-dark'],
+				defaultProps: { frame: 'none', wrap: true },
+				styleOverrides: {
+					borderWidth: '0px',
+					borderRadius: '0.75rem',
+					codeBackground: 'var(--ncu-plate)',
+					frames: { frameBoxShadowCssValue: 'none' },
+				},
+			},
 			// The card link previews show, from the home page's recording.
 			head: [
 				{

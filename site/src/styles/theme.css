@@ -105,6 +105,11 @@ h1#_top {
 		width: 2.75rem;
 		height: 2.75rem;
 	}
+
+	/* The first line wraps short of the larger button. */
+	.expressive-code :nth-child(1 of .ec-line) .code {
+		padding-inline-end: calc(3.25rem + var(--ec-codePadInl));
+	}
 }
 
 @media (prefers-reduced-motion: no-preference) {
