@@ -307,6 +307,31 @@ async fn a_button_that_relabels_itself_is_seen_without_its_names() {
     }
 }
 
+// The change report starts before the last gate: a window retitled while the element was
+// still being checked, before anything went out, made a button that does nothing `seen`.
+#[tokio::test]
+async fn a_window_change_before_the_call_went_out_never_shows_an_effect() {
+    let mut desk = Desk::start("el-title-before").await;
+    let button = desk.element("Safe").await;
+    let reading = desk.mock.hold_on("GetActions", "/button");
+    let arguments = json!({"element": button, "expect": {"window_id": WINDOW}});
+    let id = desk.server.start_call("activate_element", arguments).await;
+    reading.arrived().await;
+    let mut retitled = app_window(WINDOW, true);
+    retitled["title"] = json!("Mock (1 new message)");
+    desk.stream
+        .send(&json!({"WindowOpenedOrChanged": {"window": retitled}}));
+    assert_eq!(desk.mock.calls("DoAction"), 0);
+    reading.release();
+    let result = desk.server.response(id).await["result"].clone();
+    let outcome = report(&result);
+    assert_eq!(outcome["observed"], "present", "{outcome}");
+    assert_eq!(outcome["effect"], "none_seen", "{outcome}");
+    // The change is still there for the agent to judge.
+    assert_eq!(outcome["changes"]["windows"][0]["id"], WINDOW, "{outcome}");
+    assert_eq!(desk.mock.calls("DoAction"), 1);
+}
+
 // The action already went out when the look afterwards fails: the result says the effect
 // couldn't be checked, with why, and is never an error.
 #[tokio::test]

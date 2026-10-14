@@ -88,14 +88,16 @@ pub(crate) enum Observed {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Effect {
-    /// The field holds the text sent; a state, the value or the name changed; the element or its
-    /// window went away; or niri saw the element's window change.
+    /// The field holds the text sent; a state, the value or the name changed; the element or
+    /// its window went away; or niri saw its window close or lose focus to a window that
+    /// opened.
     Seen,
     /// `set_element_text`: the field holds other text than was sent.
     Differs,
-    /// `activate_element`: the element's states and name, and its value when it has one, read the
-    /// same before and after, and niri saw no change in its window. An action that acts
-    /// elsewhere, such as saving a file, looks like this too.
+    /// `activate_element`: the element's states and name, and its value when it has one,
+    /// read the same before and after, and niri saw its window neither close nor lose focus
+    /// to a window that opened. An action that acts elsewhere, such as saving a file, looks
+    /// like this too.
     NoneSeen,
     /// Nothing could be compared: a read failed or ran out of time.
     Unverified,
@@ -247,13 +249,13 @@ impl Outcome {
         }
     }
 
-    /// Adds what niri reported changing, absent when nothing did. For `activate_element`,
-    /// niri seeing the element's window change makes an effect reading the element didn't
-    /// show `seen`.
+    /// Adds what niri reported changing, absent when nothing did. An activation whose
+    /// element read the same before and after is `seen` when the report shows its window
+    /// closed or losing focus to a window that opened (`Changes::shows`). A read that
+    /// failed stays `unverified`.
     pub(crate) fn report(&mut self, changes: Changes) {
         if let (Some(element), Some(effect)) = (&self.element, &mut self.effect)
-            && element.action.is_some()
-            && matches!(effect, Effect::NoneSeen | Effect::Unverified)
+            && *effect == Effect::NoneSeen
             && changes.shows(element.window)
         {
             *effect = Effect::Seen;
@@ -650,11 +652,11 @@ mod tests {
     use crate::niri::waiter::Update;
     use crate::niri::waiter::tests::{view, view_on, waiter, window, workspace};
 
-    /// An element action's outcome on window 1, with `effect`.
-    fn element_outcome(action: bool, effect: Effect) -> Outcome {
+    /// An activation's outcome on window 1, with `effect`.
+    fn element_outcome(effect: Effect) -> Outcome {
         let acted = Acted {
             role: "button",
-            action: action.then_some(crate::elements::actions::Chosen {
+            action: Some(crate::elements::actions::Chosen {
                 kind: crate::elements::actions::ActionKind::Click,
                 index: 0,
             }),
@@ -672,34 +674,42 @@ mod tests {
         }
     }
 
-    // A button that renames its window, or closes it after the look, acted: the change
-    // report shows it. Text set is judged by the text alone.
+    // The change report starts before the last gate. A title that changed may have changed
+    // before the call went out, so it never makes a no-op `seen`, and nothing makes a failed
+    // read `seen`: that read is all the outcome can say about the element.
     #[test]
-    fn niri_seeing_the_elements_window_change_makes_an_activations_effect_seen() {
+    fn only_the_elements_window_closing_after_the_gate_makes_a_quiet_activation_seen() {
+        let closed = || Changes {
+            closed: vec![crate::changes::Closed {
+                id: 1,
+                app_id: Some("app".to_owned()),
+            }],
+            ..Changes::default()
+        };
         let renamed = || Changes {
             windows: vec![crate::changes::Changed {
                 id: 1,
-                title: Some("Saved".to_owned()),
+                title: Some("Mock (1 new message)".to_owned()),
                 ..crate::changes::Changed::default()
             }],
             ..Changes::default()
         };
-        for effect in [Effect::NoneSeen, Effect::Unverified] {
-            let mut outcome = element_outcome(true, effect);
-            outcome.report(renamed());
-            assert_eq!(outcome.effect, Some(Effect::Seen));
-            assert!(outcome.changes.is_some());
+        let mut quiet = element_outcome(Effect::NoneSeen);
+        quiet.report(closed());
+        assert_eq!(quiet.effect, Some(Effect::Seen));
+        let mut retitled = element_outcome(Effect::NoneSeen);
+        retitled.report(renamed());
+        assert_eq!(retitled.effect, Some(Effect::NoneSeen));
+        assert!(retitled.changes.is_some());
+        for effect in [Effect::Unverified, Effect::Differs] {
+            let mut read = element_outcome(effect);
+            read.report(closed());
+            assert_eq!(read.effect, Some(effect));
         }
-        let mut differs = element_outcome(true, Effect::Differs);
-        differs.report(renamed());
-        assert_eq!(differs.effect, Some(Effect::Differs));
-        let mut text = element_outcome(false, Effect::Unverified);
-        text.report(renamed());
-        assert_eq!(text.effect, Some(Effect::Unverified));
-        let mut quiet = element_outcome(true, Effect::NoneSeen);
-        quiet.report(Changes::default());
-        assert_eq!(quiet.effect, Some(Effect::NoneSeen));
-        assert_eq!(quiet.changes, None);
+        let mut nothing = element_outcome(Effect::NoneSeen);
+        nothing.report(Changes::default());
+        assert_eq!(nothing.effect, Some(Effect::NoneSeen));
+        assert_eq!(nothing.changes, None);
     }
 
     #[test]

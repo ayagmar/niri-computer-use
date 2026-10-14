@@ -89,19 +89,15 @@ impl Changes {
         *self == Self::default()
     }
 
-    /// Whether the report shows `window` changed: it closed, one of its fields changed, it
-    /// lost focus to a window that opened, as to a dialog, or its elements changed.
+    /// Whether the report shows `window` closed, or losing focus to a window that opened,
+    /// as to a dialog. The report starts before an element action's last gate, which
+    /// requires the window open and focused, so these two came after it; a title, size or
+    /// element that changed may have changed before it, and is left to the agent.
     pub(crate) fn shows(&self, window: u64) -> bool {
         let opened_from = self.focus.as_ref().is_some_and(|focus| {
             focus.from == Some(window) && self.opened.iter().any(|new| Some(new.id) == focus.to)
         });
-        let elements = matches!(&self.elements, Some(elements::Report::Diff(diff))
-            if diff.window_id == window
-                && !(diff.added.is_empty() && diff.removed.is_empty() && diff.changed.is_empty()));
-        self.closed.iter().any(|closed| closed.id == window)
-            || self.windows.iter().any(|changed| changed.id == window)
-            || opened_from
-            || elements
+        self.closed.iter().any(|closed| closed.id == window) || opened_from
     }
 }
 
@@ -326,10 +322,12 @@ mod tests {
         );
     }
 
-    // An element action reads niri's report for its own window only: a focus change to a
-    // window that was already open, or another window opening on its own, isn't its effect.
+    // An element action reads niri's report for its own window only, and only for what
+    // can't have come before its last gate: a window that closed, or that lost focus to one
+    // that opened. A retitle, focus moving to a window that was already open, or another
+    // window opening on its own isn't its effect.
     #[test]
-    fn a_window_shows_a_change_when_it_closed_changed_or_lost_focus_to_a_new_window() {
+    fn a_window_shows_a_change_when_it_closed_or_lost_focus_to_a_new_window() {
         let main = |title: &str, focused| titled(1, title, focused);
         let before = scene(1, vec![main("Main", true), titled(2, "Other", false)]);
         let report = |after: Vec<Window>| desktop(&before, &scene(1, after), &BTreeMap::new());
@@ -340,8 +338,8 @@ mod tests {
         ]);
         assert!(dialog.shows(1));
         assert!(!dialog.shows(2));
-        assert!(report(vec![main("Renamed", true), titled(2, "Other", false)]).shows(1));
         assert!(report(vec![titled(2, "Other", true)]).shows(1));
+        assert!(!report(vec![main("Renamed", true), titled(2, "Other", false)]).shows(1));
         let refocused = report(vec![main("Main", false), titled(2, "Other", true)]);
         assert!(!refocused.shows(1));
         let beside = report(vec![
@@ -350,21 +348,6 @@ mod tests {
             titled(5, "Beside", false),
         ]);
         assert!(!beside.shows(1));
-        let relabelled = Changes {
-            elements: Some(elements::Report::Diff(elements::Diff {
-                window_id: 1,
-                added: Vec::new(),
-                removed: vec![elements::Removed {
-                    role: "button",
-                    name: "Count: 1".to_owned(),
-                }],
-                changed: Vec::new(),
-                truncated: 0,
-            })),
-            ..Changes::default()
-        };
-        assert!(relabelled.shows(1));
-        assert!(!relabelled.shows(2));
     }
 
     #[test]
