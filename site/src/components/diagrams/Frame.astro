@@ -46,7 +46,7 @@ const { label, scroll = true } = Astro.props;
 
 	.ncu-d-scroll {
 		overflow-x: auto;
-		border-radius: var(--ncu-radius);
+		border-radius: 4px;
 	}
 
 	.ncu-d svg {
@@ -57,13 +57,13 @@ const { label, scroll = true } = Astro.props;
 	}
 
 	.ncu-d .box {
-		fill: var(--ncu-panel);
-		stroke: var(--ncu-rule);
+		fill: var(--sl-color-gray-6);
+		stroke: var(--sl-color-gray-5);
 		stroke-width: 1.5;
 	}
 
 	.ncu-d .held {
-		stroke: var(--ncu-ring);
+		stroke: var(--sl-color-white);
 		stroke-width: 2;
 	}
 
@@ -72,8 +72,8 @@ const { label, scroll = true } = Astro.props;
 	}
 
 	.ncu-d .gate {
-		fill: var(--ncu-panel);
-		stroke: var(--ncu-ring);
+		fill: var(--sl-color-gray-6);
+		stroke: var(--sl-color-white);
 		stroke-width: 2;
 		stroke-dasharray: 5 4;
 	}
@@ -101,7 +101,7 @@ const { label, scroll = true } = Astro.props;
 	}
 
 	.ncu-d .wire.act {
-		stroke: var(--ncu-ring);
+		stroke: var(--sl-color-white);
 	}
 
 	.ncu-d .wire.halt {
@@ -114,7 +114,7 @@ const { label, scroll = true } = Astro.props;
 
 	.ncu-d .head.act,
 	.ncu-d .ring {
-		fill: var(--ncu-ring);
+		fill: var(--sl-color-white);
 	}
 
 	.ncu-d .stop {
