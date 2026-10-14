@@ -8,7 +8,7 @@ export const home = {
 	running: 'MCP server for niri 26.04 on Linux',
 	headline: 'Your agent can use your niri desktop.',
 	stopline: 'One key takes it back.',
-	lede: 'An MCP server for Claude Code, Codex, Pi and other MCP clients. The agent reads your windows and screenshots; while it holds the lease you grant, it clicks, types and runs niri actions.',
+	lede: 'An MCP server for Claude Code, Codex, Pi and other MCP clients. The agent reads your windows and screenshots; while it holds the lease, it clicks, types and runs niri actions.',
 	safety: { text: 'How the stop key and the lease work', link: 'concepts/safety/' },
 	sessions: {
 		caption: 'Five real sessions: each recording, and under it the calls it made.',
@@ -23,7 +23,7 @@ export const home = {
 			{
 				name: 'takeover',
 				tab: 'Focus moved',
-				text: 'The agent types a paragraph into nvim, then you click into Files. Its next key was meant for nvim, so it is refused.',
+				text: 'The agent types a paragraph into nvim, then you move focus to Files. Its next key was meant for nvim, so it is refused.',
 			},
 			{
 				name: 'errand',
@@ -44,7 +44,7 @@ export const home = {
 	},
 	result: {
 		headline: 'What an action answers',
-		lede: 'Each action says whether niri took the request, what niri’s event stream showed afterwards, and what changed on the desktop.',
+		lede: 'Each action says whether niri, Noctalia or the app took the request, what happened afterwards, and what niri saw change on the desktop.',
 		source:
 			'What launch {"preset": "notes"} answered in the README’s example run, in a headless nested niri.',
 		code: `{
@@ -62,12 +62,12 @@ export const home = {
 			{
 				name: 'accepted',
 				lines: [2, 2],
-				text: 'Whether niri, or Noctalia, took the request. False when nothing was sent, null when the request went out but the reply was lost.',
+				text: 'Whether niri, Noctalia or, for an element action, the app took the request. False when nothing was sent, null when the request went out but the reply was lost.',
 			},
 			{
 				name: 'observed',
 				lines: [3, 3],
-				text: 'What niri saw afterwards, such as focused, opened or closed. For input, sent once niri has handled it.',
+				text: 'What happened afterwards, such as focused, opened or closed in niri’s event stream; for input, sent once niri has handled it; for set_element_text, matched or differs by the app’s own count.',
 			},
 			{
 				name: 'changes',
@@ -76,17 +76,17 @@ export const home = {
 			},
 			{
 				name: 'error',
-				text: 'On a refusal, in place of the above: a stable name such as focus_mismatch, and a detail that keeps niri’s, Noctalia’s or the program’s own message.',
+				text: 'When an action is refused or fails, in place of the above: a stable name such as focus_mismatch, and a detail that keeps niri’s, Noctalia’s or the program’s own message. An app’s own messages from element actions are left out, since they can hold a field’s text. Wrong arguments get a plain-text error instead.',
 			},
 		],
 		more: { text: 'Every tool and its result', link: 'tools/overview/' },
 	},
 	gates: {
 		headline: 'Before anything reaches niri',
-		lede: 'The server runs these checks in this order. The first one that fails answers the agent, and the action doesn’t go out.',
+		lede: 'Every action passes the first three checks, in this order; the last two belong to the tools. The first check that fails answers the agent, and nothing goes out.',
 		pass: {
 			text: 'All checks pass',
-			answer: 'accepted: true · observed: sent',
+			answer: 'accepted: true · observed: sent, for a type_text call',
 		},
 		items: [
 			{
@@ -111,18 +111,18 @@ export const home = {
 				detail: 'the screen is locked',
 			},
 			{
-				gate: 'Deny list',
-				when: 'An app on your deny list has focus.',
-				covers: 'pointer, keyboard and element actions',
-				error: 'app_denied',
-				detail: `the focused window's app_id "org.keepassxc.KeePassXC" is on the policy's deny list`,
-			},
-			{
 				gate: 'Focus',
-				when: 'The window the agent named in expect no longer has focus. Checked again before each key.',
-				covers: 'typing and keys',
+				when: 'The window the agent named in expect, or an element action’s window, doesn’t have focus. Typing checks again before each key.',
+				covers: 'typing, keys and pastes, checked first; element actions, checked after the deny list',
 				error: 'focus_mismatch',
 				detail: 'expected window_id 19; window 11 with app_id Some("org.gnome.Nautilus")',
+			},
+			{
+				gate: 'Deny list',
+				when: 'An app on your deny list has focus, or owns the window an element action or a close aims at.',
+				covers: 'pointer, keyboard and element actions, and closing a window',
+				error: 'app_denied',
+				detail: `the focused window's app_id "org.keepassxc.KeePassXC" is on the policy's deny list`,
 			},
 		],
 		note: 'The details are the server’s own messages; the app_id and window ids are examples. Two more checks sit between these, for stuck input and for niri’s version; Safety lists them all.',
@@ -132,12 +132,12 @@ export const home = {
 		enforces: {
 			title: 'What it enforces',
 			items: [
-				'One agent at a time holds the lease, and only that agent acts. Looking needs no lease.',
+				'One agent at a time holds the lease, and only that agent acts. Looking needs no lease, except reading the clipboard.',
 				'The stop key cancels the running action and takes the lease back. An agent can’t press it.',
 				'With confirm_lease on, you allow each lease from a desktop notification. It is off by default.',
 				'Element actions refuse fields the toolkit marks as password fields.',
-				'Apps start only from presets you write, unless you turn on unrestricted.',
-				'An audit log of every call, without typed text, the clipboard, window titles or images.',
+				'The launch tool starts only presets you write, and niri actions that run programs need unrestricted on.',
+				'An audit log of every call that reaches a tool, without typed text, the clipboard, window titles or images. A failed write shows in status.',
 			],
 		},
 		misses: {

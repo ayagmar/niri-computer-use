@@ -46,7 +46,7 @@
   {
    "start": 9.48,
    "request": "niri msg action focus-window --id 11",
-   "answer": "you click into Files; the agent never asked for it",
+   "answer": "you move focus to Files; the agent never asked for it",
    "error": false,
    "you": true,
    "ms": null
