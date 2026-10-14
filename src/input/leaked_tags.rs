@@ -277,6 +277,25 @@ mod tests {
             .collect()
     }
 
+    /// A piece of text, with the name it closes when it is a known closing tag: free words,
+    /// whitespace, a known closing or opening tag in any case, or an unknown closing tag.
+    fn piece() -> impl Strategy<Value = (String, Option<&'static str>)> {
+        let name = || prop::sample::select(NAMES.to_vec());
+        prop_oneof![
+            "[^<]{0,6}".prop_map(|words| (words, None)),
+            "[ \\t\\n]{1,2}".prop_map(|space| (space, None)),
+            (name(), any::<u64>())
+                .prop_map(|(name, cases)| (close(&recased(name, cases)), Some(name))),
+            (
+                name(),
+                any::<u64>(),
+                prop::sample::select(vec![">", " a=\"b\">"])
+            )
+                .prop_map(|(name, cases, end)| (format!("<{}{end}", recased(name, cases)), None)),
+            Just((close("div"), None)),
+        ]
+    }
+
     proptest! {
         #![proptest_config(crate::test_support::properties(512))]
 
@@ -308,11 +327,36 @@ mod tests {
             prop_assert_eq!(leaked(&sent), None);
         }
 
-        /// Any text is checked without a panic, and a run is only ever found at its end.
+        /// Text of free words, whitespace, and known and unknown tags: only the closing tags
+        /// after its last other character are ever named, and with no opening tag in the
+        /// text every one of them is.
         #[test]
-        fn any_text_is_checked(text in any::<String>()) {
-            if leaked(&text).is_some() {
-                prop_assert!(text.trim_end().ends_with('>'));
+        fn only_the_tags_at_the_end_are_named(pieces in prop::collection::vec(piece(), 0..8)) {
+            let text: String = pieces.iter().map(|(piece, _)| piece.as_str()).collect();
+            let mut tail = Vec::new();
+            for (piece, closes) in pieces.iter().rev() {
+                match closes {
+                    Some(name) => tail.push(*name),
+                    None if piece.trim().is_empty() => {}
+                    None => break,
+                }
+            }
+            tail.reverse();
+            let leak = leaked(&text);
+            if let Some(leak) = &leak {
+                prop_assert!(leak.tags <= tail.len(), "{text:?}");
+                prop_assert!(leak.names.iter().all(|name| tail.contains(name)), "{text:?}");
+            }
+            let opens = pieces.iter().any(|(piece, _)| piece.starts_with('<') && !piece.starts_with("</"));
+            if !opens {
+                let mut names = Vec::new();
+                for name in &tail {
+                    if !names.contains(name) {
+                        names.push(*name);
+                    }
+                }
+                let wanted = (!tail.is_empty()).then_some(Leaked { tags: tail.len(), names });
+                prop_assert_eq!(leak, wanted, "{:?}", text);
             }
         }
     }
