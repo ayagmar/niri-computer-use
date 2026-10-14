@@ -176,7 +176,7 @@ Two materials carry the whole site. The concrete ground holds type set like a st
 
 The home page (`src/pages/index.astro`) sits outside Starlight and loads only its own styles. The docs are Starlight restyled through `src/styles/theme.css`: the same tokens, the same wordmark, Archivo titles a size down from the posters, and Starlight's greys remapped onto the concrete. Both read `src/styles/tokens.css`, so both themes (light and dark, stored under Starlight's `starlight-theme` key) are the same on every page, and the header and wordmark hold still while pages crossfade.
 
-Motion follows the recordings rather than decorating the page: the frame in the headline grows into the first recording, subtitles and the lease tag change at each call's real time, and the stop key sinks when the recorded stop lands. Measured on the built home page: Lighthouse mobile Performance 100 on three runs, LCP 1.65–1.73 s, CLS 0, TBT 0, and 3.3 KB of JS gzipped.
+Motion follows the recordings rather than decorating the page: the frame in the headline grows into the first recording, subtitles and the lease tag change at each call's real time, and the stop key sinks when the recorded stop lands. Measured on the built home page: Lighthouse mobile Performance 100 on three runs, LCP 1.73 s, CLS 0, TBT 0, and 3.8 KB of JS gzipped.
 
 **Key Characteristics:**
 - One Archivo variable face from 62% to 100% width; width carries the hierarchy as much as size does.
@@ -306,7 +306,8 @@ One easing for UI (`cubic-bezier(0.22, 1, 0.36, 1)`). The hero frame either drop
 - **Do** take headline widths from the ladder (62, 70, 72, 84, 88, 100%) and keep running text at 100%.
 - **Do** keep every target at least 2.75rem tall and the focus outline visible on both the ground and the plate.
 - **Do** give every motion a calm, complete reduced-motion state.
-- **Do** keep the home page within its measured budget: Lighthouse mobile Performance 100, CLS 0, 3.3 KB JS gzipped.
+- **Do** keep the home page within its measured budget: Lighthouse mobile Performance 100, CLS 0, 3.8 KB JS gzipped.
+- **Do** keep the home page's HTML inside the first round trip: Lighthouse's simulated network sends 14,600 bytes before it waits for an acknowledgement, and the page is 14,302 bytes as served. Comments in `is:inline` scripts ship as written, so they go in template comments above the script.
 
 ### Don't:
 - **Don't** add borders, divider rules, shadows or gradients to the home page; change the surface instead.

@@ -43,8 +43,8 @@ const slotStill = (await loadDemo('errand', [480])).poster.src;
 		<meta name="twitter:card" content="summary_large_image" />
 		<meta name="theme-color" content="#e6e8e3" media="(prefers-color-scheme: light)" />
 		<meta name="theme-color" content="#161917" media="(prefers-color-scheme: dark)" />
+		{/* The theme the docs pages store, or the system's: the same rule as Starlight's. */}
 		<script is:inline>
-			// The theme the docs pages store, or the system's: the same rule as Starlight's.
 			document.documentElement.dataset.theme =
 				localStorage.getItem('starlight-theme') ||
 				(matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
@@ -84,12 +84,22 @@ const slotStill = (await loadDemo('errand', [480])).poster.src;
 					note={home.note}
 				/>
 			</div>
+			{
+				/* The frame in the headline is the recording itself, drawn small. Where the recording
+				   sits in the first view (a phone held upright), it drops from the frame into place
+				   as the page opens; where it sits below the first view, it grows from the frame into
+				   place as the page scrolls. This runs before the first paint, so the frame starts in
+				   the headline, and again once the text face has loaded and on every resize.
+
+				   Before the text face loads the frame may sit on another line, so with motion on, it
+				   waits for the cut face itself, found by its unicode-range. Loading the family by
+				   name would fetch Fontsource's full face too, which covers the same characters, and
+				   `document.fonts.status` can read `loaded` before the face is even asked for.
+
+				   The comments stay here, out of the inline scripts, which ship as written: the
+				   page's HTML has to fit the first round trip (see DESIGN.md). */
+			}
 			<script is:inline define:vars={{ textRange: archivoText.unicodeRange }}>
-				// The frame in the headline is the recording itself, drawn small. Where the recording
-				// sits in the first view (a phone held upright), it drops from the frame into place
-				// as the page opens; where it sits below the first view, it grows from the frame into
-				// place as the page scrolls. This runs before the first paint, so the frame starts in
-				// the headline, and again once the text face has loaded and on every resize.
 				(() => {
 					const run = document.querySelector('[data-morph]');
 					const frame = run.querySelector('[data-frame]');
@@ -115,10 +125,6 @@ const slotStill = (await loadDemo('errand', [480])).poster.src;
 							run.classList.add('morph');
 						}
 					};
-					// Before the text face loads the frame may sit on another line, so with motion on,
-					// wait for it: the cut face itself, found by its unicode-range. Loading the family
-					// by name would fetch Fontsource's full face too, which covers the same characters,
-					// and `document.fonts.status` can read `loaded` before the face is even asked for.
 					const codes = (range) =>
 						range
 							.split(',')
