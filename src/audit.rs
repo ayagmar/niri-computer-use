@@ -548,10 +548,37 @@ mod tests {
         format!("line {n:04}")
     }
 
+    /// Runs the ignored test `name` in a process of its own and checks that it passed. A
+    /// child another test forks shares the log's lock file until it runs its program, and
+    /// a rotation that finds the lock held waits for the next line, so tests of when the
+    /// log is moved aside run where no other test forks.
+    async fn alone(name: &str) {
+        let name = format!("audit::tests::{name}");
+        let args = ["--exact", "--ignored", "--test-threads=1", "--quiet", &name].map(String::from);
+        let done = crate::runner::run(
+            std::env::current_exe().unwrap(),
+            crate::runner::Search::Own,
+            &args,
+            std::time::Duration::from_secs(30),
+            64 * 1024,
+        )
+        .await
+        .unwrap();
+        let stdout = String::from_utf8_lossy(&done.stdout);
+        assert!(done.status.success(), "{stdout}{}", done.stderr);
+        assert!(stdout.contains("1 passed"), "{stdout}");
+    }
+
     // The log is moved aside once it reaches its limit, before the next line; three logs
     // moved aside are kept and older ones dropped, and every file stays private.
+    #[tokio::test]
+    async fn a_full_log_is_moved_aside_and_only_three_old_ones_are_kept() {
+        alone("full_log_alone").await;
+    }
+
     #[test]
-    fn a_full_log_is_moved_aside_and_only_three_old_ones_are_kept() {
+    #[ignore = "a_full_log_is_moved_aside_and_only_three_old_ones_are_kept runs it alone"]
+    fn full_log_alone() {
         let dir = crate::test_support::fresh_dir("audit-rotate");
         let path = dir.join("audit.jsonl");
         // Three lines fill 30 bytes.
@@ -583,8 +610,14 @@ mod tests {
 
     // A server that finds another rotating, holding the log's lock, doesn't wait: its line
     // goes to the log as it is, and the log is moved aside on a later write.
+    #[tokio::test]
+    async fn a_held_lock_delays_the_rotation_but_never_the_line() {
+        alone("held_lock_alone").await;
+    }
+
     #[test]
-    fn a_held_lock_delays_the_rotation_but_never_the_line() {
+    #[ignore = "a_held_lock_delays_the_rotation_but_never_the_line runs it alone"]
+    fn held_lock_alone() {
         let dir = crate::test_support::fresh_dir("audit-rotate-held");
         let path = dir.join("audit.jsonl");
         for n in 0..3 {

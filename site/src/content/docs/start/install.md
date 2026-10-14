@@ -83,11 +83,11 @@ Without the script, download your machine's tarball, check it, and put the binar
 
 ```sh
 arch=$(uname -m)
-curl -LO "https://github.com/ayagmar/niri-computer-use/releases/download/v0.1.0/niri-computer-use-0.1.0-$arch-linux.tar.gz"
-curl -LO "https://github.com/ayagmar/niri-computer-use/releases/download/v0.1.0/niri-computer-use-0.1.0-$arch-linux.tar.gz.sha256"
-sha256sum -c "niri-computer-use-0.1.0-$arch-linux.tar.gz.sha256"
-tar -xzf "niri-computer-use-0.1.0-$arch-linux.tar.gz"
-install -Dm755 -t ~/.local/bin "niri-computer-use-0.1.0-$arch-linux/niri-computer-use"
+curl -LO "https://github.com/ayagmar/niri-computer-use/releases/download/v0.1.1/niri-computer-use-0.1.1-$arch-linux.tar.gz"
+curl -LO "https://github.com/ayagmar/niri-computer-use/releases/download/v0.1.1/niri-computer-use-0.1.1-$arch-linux.tar.gz.sha256"
+sha256sum -c "niri-computer-use-0.1.1-$arch-linux.tar.gz.sha256"
+tar -xzf "niri-computer-use-0.1.1-$arch-linux.tar.gz"
+install -Dm755 -t ~/.local/bin "niri-computer-use-0.1.1-$arch-linux/niri-computer-use"
 ~/.local/bin/niri-computer-use --version
 ```
 
@@ -97,7 +97,7 @@ The tarball also holds the skill, with the README, the changelog and the license
 
 ```sh
 mkdir -p ~/.local/share/niri-computer-use ~/.claude/skills ~/.agents/skills
-cp -r "niri-computer-use-0.1.0-$arch-linux/skills" ~/.local/share/niri-computer-use/
+cp -r "niri-computer-use-0.1.1-$arch-linux/skills" ~/.local/share/niri-computer-use/
 ln -s ~/.local/share/niri-computer-use/skills/niri-computer-use ~/.claude/skills/niri-computer-use
 ln -s ~/.local/share/niri-computer-use/skills/niri-computer-use ~/.agents/skills/niri-computer-use
 ```
@@ -106,18 +106,20 @@ To update, install the new release's binary the same way. Remove the old skill b
 
 ```sh
 rm -rf ~/.local/share/niri-computer-use/skills
-cp -r "niri-computer-use-0.1.0-$arch-linux/skills" ~/.local/share/niri-computer-use/
+cp -r "niri-computer-use-0.1.1-$arch-linux/skills" ~/.local/share/niri-computer-use/
 ```
 
 ## Updating while agents run
 
-Updating while agents run is safe. A [shared](../../concepts/configuration/#shared) engine keeps serving the clients it has with the build it started with, and their `status.engine.replaced` turns `true`. Clients started after the update are served standalone, sharing the lease, the stop flag and the input-dirty marker, and their `status.engine.fallback` names the old engine's PID. Once the old engine's last client has ended it exits, two seconds later, and the next client starts an engine of the new build. Restart your agent sessions to move all of them to the new build. This lists the processes still running:
+Updating while agents run is safe, except from 0.1.0 or older development builds (below). A [shared](../../concepts/configuration/#shared) engine keeps serving the clients it has with the build it started with, and their `status.engine.replaced` turns `true`. Clients started after the update are served standalone, sharing the lease, the stop flag and the input-dirty marker, and their `status.engine.fallback` names the old engine's PID. Once the old engine's last client has ended it exits, two seconds later, and the next client starts an engine of the new build. Restart your agent sessions to move all of them to the new build. This lists the processes still running:
 
 ```sh
 pgrep -a '^niri-computer-u'
 ```
 
 Older development builds keep the lease, the stop flag and the input-dirty marker under `XDG_RUNTIME_DIR` rather than beside niri's socket, and don't take the marker's lock, so an old and a new server on one niri would act as if the other weren't there. When updating from one of those, end every running `niri-computer-use` process first, and start your clients again once nothing is listed.
+
+Updating from 0.1.0 is the same: 0.1.0 types through `wtype`, and an input-dirty marker it writes can't be read by later versions, so a server beside it sends agents to `recover` until it finishes. End every running `niri-computer-use` process before you install, and if `status` then shows `input_dirty`, run `niri-computer-use recover`.
 
 ## Check it
 
