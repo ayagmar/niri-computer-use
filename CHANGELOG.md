@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Added
+
+- `activate_element` and `set_element_text` return `effect`: `seen` when reading the element back showed the action's effect, `differs` when a field holds other text than was sent, `none_seen` when nothing the server can read changed, and `unverified` when it couldn't be read. A read that fails after the action went out is `unverified` with the reason in `detail`, never an error. The audit log keeps `effect` beside `observed`.
+- `activate_element` reads the value of an element that has one, such as a slider or spin button, before and after, and says in `element.value_changed` whether it changed, never the value.
+
+### Changed
+
+- `set_element_text` reads the field's text back and compares it with the text sent, instead of comparing only the character count. A field that reformats or masks text without changing its length is now `differs`, not `matched`. Neither text is returned or logged.
+
 ## 0.1.1 - 2026-10-14
 
 ### Added

@@ -77,11 +77,28 @@ pub(crate) enum Observed {
     Gone,
     /// Element actions: the element couldn't be read afterwards; `detail` says why.
     Unknown,
-    /// `set_element_text`: the element holds as many characters as were set.
+    /// `set_element_text`: the element holds the text that was set.
     Matched,
-    /// `set_element_text`: the element holds another number of characters, as when an app
-    /// filters what it is given.
+    /// `set_element_text`: the element holds other text, as when an app filters, caps or
+    /// reformats what it is given.
     Differs,
+}
+
+/// Element actions: whether reading the element back showed the action's effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Effect {
+    /// The field holds the text sent; a state or the value changed; the element or its
+    /// window went away; or niri saw the element's window change.
+    Seen,
+    /// `set_element_text`: the field holds other text than was sent.
+    Differs,
+    /// `activate_element`: the element's states, and its value when it has one, read the
+    /// same before and after, and niri saw no change in its window. An action that acts
+    /// elsewhere, such as saving a file, looks like this too.
+    NoneSeen,
+    /// Nothing could be compared: a read failed or ran out of time.
+    Unverified,
 }
 
 /// An action's result.
@@ -129,12 +146,16 @@ pub(crate) struct Outcome {
     /// Element actions: the element's role and what the action did to it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) element: Option<Acted>,
+    /// Element actions: whether the effect was read back.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) effect: Option<Effect>,
     /// What niri reported changing from the start of the action until its report ended,
     /// and with `element_changes` what changed among a window's elements; absent when
     /// nothing did.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) changes: Option<Changes>,
-    /// Why the outcome is uncertain.
+    /// Why the outcome is uncertain or `unknown`, or why an element action's effect is
+    /// `unverified`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) detail: Option<String>,
     /// The metadata of the focused output's screenshot that comes with the result: one asked
@@ -181,6 +202,7 @@ impl Outcome {
             window: None,
             paste: None,
             element: None,
+            effect: None,
             changes: None,
             detail: None,
             screenshot: None,
@@ -203,6 +225,7 @@ impl Outcome {
             window: None,
             paste: None,
             element: None,
+            effect: None,
             changes: None,
             detail: Some(detail),
             screenshot: None,
@@ -222,6 +245,20 @@ impl Outcome {
             },
             Worked::CutAfterSending(cut, None) => Self::uncertain(None, None, cut.detail),
         }
+    }
+
+    /// Adds what niri reported changing, absent when nothing did. For `activate_element`,
+    /// niri seeing the element's window change makes an effect reading the element didn't
+    /// show `seen`.
+    pub(crate) fn report(&mut self, changes: Changes) {
+        if let (Some(element), Some(effect)) = (&self.element, &mut self.effect)
+            && element.action.is_some()
+            && matches!(effect, Effect::NoneSeen | Effect::Unverified)
+            && changes.shows(element.window)
+        {
+            *effect = Effect::Seen;
+        }
+        self.changes = (!changes.is_empty()).then_some(changes);
     }
 
     /// Outcomes after which the agent can't tell what the desktop looks like.
@@ -612,6 +649,57 @@ mod tests {
     use super::*;
     use crate::niri::waiter::Update;
     use crate::niri::waiter::tests::{view, view_on, waiter, window, workspace};
+
+    /// An element action's outcome on window 1, with `effect`.
+    fn element_outcome(action: bool, effect: Effect) -> Outcome {
+        let acted = Acted {
+            role: "button",
+            action: action.then_some(crate::elements::actions::Chosen {
+                kind: crate::elements::actions::ActionKind::Click,
+                index: 0,
+            }),
+            states_set: Vec::new(),
+            states_cleared: Vec::new(),
+            value_changed: None,
+            characters: None,
+            window: 1,
+        };
+        Outcome {
+            element: Some(acted),
+            effect: Some(effect),
+            ..Outcome::seen(Observed::Present, &view(Vec::new()), Vec::new())
+        }
+    }
+
+    // A button that renames its window, or closes it after the look, acted: the change
+    // report shows it. Text set is judged by the text alone.
+    #[test]
+    fn niri_seeing_the_elements_window_change_makes_an_activations_effect_seen() {
+        let renamed = || Changes {
+            windows: vec![crate::changes::Changed {
+                id: 1,
+                title: Some("Saved".to_owned()),
+                ..crate::changes::Changed::default()
+            }],
+            ..Changes::default()
+        };
+        for effect in [Effect::NoneSeen, Effect::Unverified] {
+            let mut outcome = element_outcome(true, effect);
+            outcome.report(renamed());
+            assert_eq!(outcome.effect, Some(Effect::Seen));
+            assert!(outcome.changes.is_some());
+        }
+        let mut differs = element_outcome(true, Effect::Differs);
+        differs.report(renamed());
+        assert_eq!(differs.effect, Some(Effect::Differs));
+        let mut text = element_outcome(false, Effect::Unverified);
+        text.report(renamed());
+        assert_eq!(text.effect, Some(Effect::Unverified));
+        let mut quiet = element_outcome(true, Effect::NoneSeen);
+        quiet.report(Changes::default());
+        assert_eq!(quiet.effect, Some(Effect::NoneSeen));
+        assert_eq!(quiet.changes, None);
+    }
 
     #[test]
     fn reuse_spawns_for_none_focuses_one_and_refuses_to_pick_among_several() {

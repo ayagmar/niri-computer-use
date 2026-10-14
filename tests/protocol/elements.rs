@@ -148,6 +148,8 @@ async fn an_element_of_the_focused_window_is_activated_and_its_text_set_once_eac
         .await;
     assert_eq!(activated["accepted"], true, "{activated}");
     assert_eq!(activated["observed"], "present", "{activated}");
+    // A plain button whose states don't change shows nothing the server can read.
+    assert_eq!(activated["effect"], "none_seen", "{activated}");
     assert_eq!(desk.mock.calls("DoAction"), 1);
     let entry = desk.element("Field").await;
     let set = desk
@@ -158,8 +160,9 @@ async fn an_element_of_the_focused_window_is_activated_and_its_text_set_once_eac
         )
         .await;
     assert_eq!(set["observed"], "matched", "{set}");
+    assert_eq!(set["effect"], "seen", "{set}");
     assert_eq!(desk.mock.calls("SetTextContents"), 1);
-    assert_eq!(desk.mock.object("/entry").text, Some(3));
+    assert_eq!(desk.mock.object("/entry").text.as_deref(), Some("abc"));
     let password = desk.element("Secret").await;
     let refused = desk
         .server
@@ -169,6 +172,145 @@ async fn an_element_of_the_focused_window_is_activated_and_its_text_set_once_eac
         )
         .await;
     assert_eq!(tool_error(&refused).0, "secret_field");
+    assert_eq!(desk.mock.calls("SetTextContents"), 1);
+}
+
+/// A desk whose mock application's panel also holds `extra` at `/extra`.
+async fn desk_with(name: &str, extra: Object) -> Desk {
+    let mut objects = objects();
+    objects[1] = (
+        "/panel",
+        Object::panel(&["/button", "/odd", "/entry", "/password", "/extra"]),
+    );
+    objects.push(("/extra", extra));
+    let windows = [
+        app_window(WINDOW, true),
+        window_on(2, Some("other"), 1, false),
+    ];
+    Desk::start_with(name, &["/frame"], objects, &windows).await
+}
+
+/// `set_element_text` on the mock's field, `/entry`, with `text`.
+async fn set_entry(desk: &mut Desk, text: &str) -> Value {
+    let entry = desk.element("Field").await;
+    let arguments = json!({"element": entry, "text": text, "expect": {"window_id": WINDOW}});
+    desk.server
+        .structured_with("set_element_text", arguments)
+        .await
+}
+
+// A field that caps or reformats its input used to pass as `matched` whenever the count
+// happened to match: one that upper-cases keeps as many characters as it was given.
+#[tokio::test]
+async fn a_field_that_reformats_or_caps_its_text_differs() {
+    let mut desk = Desk::start("el-text-differs").await;
+    desk.mock.change("/entry", |entry| {
+        entry.keeps = Some(str::to_uppercase);
+    });
+    let upper = set_entry(&mut desk, "abc").await;
+    assert_eq!(upper["accepted"], true, "{upper}");
+    assert_eq!(upper["observed"], "differs", "{upper}");
+    assert_eq!(upper["effect"], "differs", "{upper}");
+    assert_eq!(upper["element"]["characters"], 3, "{upper}");
+    desk.mock.change("/entry", |entry| {
+        entry.keeps = Some(|text| text.chars().take(2).collect());
+    });
+    let capped = set_entry(&mut desk, "abc").await;
+    assert_eq!(capped["effect"], "differs", "{capped}");
+    assert_eq!(capped["element"]["characters"], 2, "{capped}");
+    // A count that differs needs no text read back.
+    assert_eq!(desk.mock.calls("GetText"), 1);
+    desk.mock.change("/entry", |entry| entry.keeps = None);
+    let kept = set_entry(&mut desk, "abc").await;
+    assert_eq!(kept["observed"], "matched", "{kept}");
+    assert_eq!(kept["effect"], "seen", "{kept}");
+}
+
+/// Text only the field holds, which must reach neither the result nor the audit log.
+const TEXT_SENTINEL: &str = "PRIVATE-FIELD-SENTINEL";
+
+#[tokio::test]
+async fn the_text_sent_or_read_back_reaches_neither_the_result_nor_the_audit_log() {
+    let mut desk = Desk::start("el-text-private").await;
+    let sent = format!("{TEXT_SENTINEL} sent");
+    let matched = set_entry(&mut desk, &sent).await;
+    assert_eq!(matched["effect"], "seen", "{matched}");
+    // The field adds text of its own, which the read-back sees and drops.
+    desk.mock.change("/entry", |entry| {
+        entry.keeps = Some(|text| format!("{text} {TEXT_SENTINEL} kept"));
+    });
+    let differs = set_entry(&mut desk, &sent).await;
+    assert_eq!(differs["effect"], "differs", "{differs}");
+    for result in [&matched, &differs] {
+        assert!(!result.to_string().contains(TEXT_SENTINEL), "{result}");
+    }
+    let audit = std::fs::read_to_string(desk.fixture.audit_log()).unwrap();
+    assert!(!audit.contains(TEXT_SENTINEL), "{audit}");
+    let line = desk.fixture.audit_lines().pop().unwrap();
+    assert_eq!(line["effect"], "differs", "{line}");
+}
+
+/// A spin button whose `increase` action steps its value and none of its states.
+fn spin_button() -> Object {
+    Object {
+        role: 52,
+        value: Some(2.0),
+        ..Object::button("Count", &["increase"])
+    }
+}
+
+// A slider or spin button stepped by its action changed only its value, which read as no
+// effect at all when only states were compared.
+#[tokio::test]
+async fn a_value_changed_with_no_state_change_is_seen() {
+    let mut desk = desk_with("el-value", spin_button()).await;
+    let spin = desk.element("Count").await;
+    let arguments = json!({"element": spin, "action": "increase", "expect": {"window_id": WINDOW}});
+    let stepped = desk
+        .server
+        .structured_with("activate_element", arguments)
+        .await;
+    assert_eq!(stepped["observed"], "present", "{stepped}");
+    assert_eq!(stepped["element"]["value_changed"], true, "{stepped}");
+    assert_eq!(stepped["effect"], "seen", "{stepped}");
+    assert_eq!(stepped["element"].get("states_set"), None, "{stepped}");
+    // Never the value itself.
+    assert!(!stepped.to_string().contains("3.0"), "{stepped}");
+    assert_eq!(desk.mock.object("/extra").value, Some(3.0));
+    assert_eq!(desk.mock.calls("CurrentValue"), 2);
+}
+
+// The action already went out when the look afterwards fails: the result says the effect
+// couldn't be checked, with why, and is never an error.
+#[tokio::test]
+async fn a_read_back_that_fails_is_unverified_not_an_error() {
+    let mut desk = desk_with("el-readback-fails", spin_button()).await;
+    let spin = desk.element("Count").await;
+    let arguments = json!({"element": spin, "action": "increase", "expect": {"window_id": WINDOW}});
+    let acting = desk.mock.hold_on("DoAction", "/extra");
+    let id = desk.server.start_call("activate_element", arguments).await;
+    acting.arrived().await;
+    desk.mock.fail("CurrentValue", "the value is busy");
+    acting.release();
+    let result = desk.server.response(id).await["result"].clone();
+    assert_eq!(result["isError"], false, "{result}");
+    let stepped = report(&result);
+    assert_eq!(stepped["accepted"], true, "{stepped}");
+    assert_eq!(stepped["observed"], "present", "{stepped}");
+    assert_eq!(stepped["effect"], "unverified", "{stepped}");
+    let detail = stepped["detail"].as_str().unwrap();
+    assert!(
+        detail.ends_with("org.freedesktop.DBus.Error.Failed"),
+        "{detail}"
+    );
+    assert_eq!(desk.mock.calls("DoAction"), 1);
+
+    desk.mock.fail("GetText", "the text is busy");
+    let set = set_entry(&mut desk, "abc").await;
+    assert_eq!(set["accepted"], true, "{set}");
+    assert_eq!(set["observed"], "unknown", "{set}");
+    assert_eq!(set["effect"], "unverified", "{set}");
+    assert!(set["detail"].as_str().unwrap().contains("GetText"), "{set}");
     assert_eq!(desk.mock.calls("SetTextContents"), 1);
 }
 
@@ -636,6 +778,7 @@ async fn the_apps_error_messages_reach_neither_the_result_nor_the_audit_log() {
         ("set_element_text", "GetInterfaces"),
         ("set_element_text", "SetTextContents"),
         ("set_element_text", "CharacterCount"),
+        ("set_element_text", "GetText"),
     ] {
         desk.mock.fail(member, &message);
         let arguments = if tool == "activate_element" {
@@ -651,9 +794,10 @@ async fn the_apps_error_messages_reach_neither_the_result_nor_the_audit_log() {
     desk.mock.fail("GetState", &message);
     held.release();
     results.push(desk.server.response(id).await["result"].clone());
-    let unknown = &report(&results[5]);
+    let unknown = &report(&results[6]);
     assert_eq!(unknown["observed"], "unknown", "{unknown}");
     assert_eq!(report(&results[4])["observed"], "unknown");
+    assert_eq!(report(&results[5])["observed"], "unknown");
     for result in &results {
         assert!(!result.to_string().contains(SENTINEL), "{result}");
     }
@@ -1951,7 +2095,14 @@ async fn an_action_list_changed_before_the_last_gate_never_sends_another_action(
 }
 
 /// The calls that read the element.
-const READS: [&str; 4] = ["GetState", "GetRole", "CharacterCount", "GetActions"];
+const READS: [&str; 6] = [
+    "GetState",
+    "GetRole",
+    "CharacterCount",
+    "GetText",
+    "CurrentValue",
+    "GetActions",
+];
 
 // A stop or a lease change once the call that acts went out can't recall it: the action is
 // `uncertain`, with why, and nothing more is asked, not even a screenshot. Before it went
@@ -2115,6 +2266,7 @@ async fn a_stop_or_lost_lease_after_the_app_answered_keeps_what_it_answered() {
             let outcome = &report(&result);
             assert_eq!(outcome["accepted"], true, "{outcome}");
             assert_eq!(outcome["observed"], "uncertain", "{outcome}");
+            assert_eq!(outcome["effect"], "unverified", "{outcome}");
             assert_eq!(outcome["focus"], "matched", "{outcome}");
             assert_eq!(outcome["element"]["role"], held.role, "{outcome}");
             let detail = outcome["detail"].as_str().unwrap();

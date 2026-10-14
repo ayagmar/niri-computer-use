@@ -736,7 +736,7 @@ impl Engine {
         if let Some(before) = before {
             changes.elements = Box::pin(self.survey_after(session, before)).await;
         }
-        evidenced.outcome.changes = (!changes.is_empty()).then_some(changes);
+        evidenced.outcome.report(changes);
         evidenced
     }
 

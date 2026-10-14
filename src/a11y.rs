@@ -40,6 +40,8 @@ const COMPONENT: &str = "org.a11y.atspi.Component";
 const ACTION: &str = "org.a11y.atspi.Action";
 const EDITABLE_TEXT: &str = "org.a11y.atspi.EditableText";
 const TEXT: &str = "org.a11y.atspi.Text";
+const VALUE: &str = "org.a11y.atspi.Value";
+const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 /// `ATSPI_COORD_TYPE_WINDOW`: relative to the toolkit's window.
 const WINDOW_COORDS: u32 = 1;
 /// D-Bus errors that mean the object or its application is gone.
@@ -506,11 +508,7 @@ impl Request {
     /// The accessible name of the object at `at`.
     pub(crate) async fn name(&self, at: (&str, &str)) -> Result<String, Failed> {
         let value: OwnedValue = self
-            .call(
-                at,
-                ("org.freedesktop.DBus.Properties", "Get"),
-                &(ACCESSIBLE, "Name"),
-            )
+            .call(at, (PROPERTIES, "Get"), &(ACCESSIBLE, "Name"))
             .await?;
         Ok(String::try_from(value).unwrap_or_default())
     }
@@ -645,12 +643,15 @@ impl Request {
 
     /// Whether the element has an `EditableText` interface.
     pub(crate) async fn editable_text(&self, element: &ElementRef) -> Result<bool, Failed> {
+        self.has_interface(element, EDITABLE_TEXT).await
+    }
+
+    /// Whether the element lists `interface` among its interfaces.
+    async fn has_interface(&self, element: &ElementRef, interface: &str) -> Result<bool, Failed> {
         let interfaces: Vec<String> = self
             .call(element.at(), (ACCESSIBLE, "GetInterfaces"), &())
             .await?;
-        Ok(interfaces
-            .iter()
-            .any(|interface| interface == EDITABLE_TEXT))
+        Ok(interfaces.iter().any(|listed| listed == interface))
     }
 
     /// Asks the application to do the element's action at `index`. The answer only says
@@ -677,16 +678,37 @@ impl Request {
     /// How many characters the element's text has now.
     pub(crate) async fn character_count(&self, element: &ElementRef) -> Result<i32, Failed> {
         let value: OwnedValue = self
-            .call(
-                element.at(),
-                ("org.freedesktop.DBus.Properties", "Get"),
-                &(TEXT, "CharacterCount"),
-            )
+            .call(element.at(), (PROPERTIES, "Get"), &(TEXT, "CharacterCount"))
             .await?;
         i32::try_from(value).map_err(|_| {
             Failed::Error(ToolError::new(
                 ErrorName::UpstreamError,
                 format!("{TEXT}.CharacterCount on {}: not an integer", element.bus),
+            ))
+        })
+    }
+
+    /// The element's first `count` characters of text. The caller bounds `count`.
+    pub(crate) async fn text(&self, element: &ElementRef, count: i32) -> Result<String, Failed> {
+        self.call(element.at(), (TEXT, "GetText"), &(0_i32, count))
+            .await
+    }
+
+    /// The element's `Value.CurrentValue`, or `None` when it has no `Value` interface, as
+    /// most elements don't. The interfaces are asked first: the error an app answers for a
+    /// property of an interface the element lacks varies, and may be one that `GONE` reads
+    /// as the object gone.
+    pub(crate) async fn current_value(&self, element: &ElementRef) -> Result<Option<f64>, Failed> {
+        if !self.has_interface(element, VALUE).await? {
+            return Ok(None);
+        }
+        let value: OwnedValue = self
+            .call(element.at(), (PROPERTIES, "Get"), &(VALUE, "CurrentValue"))
+            .await?;
+        f64::try_from(value).map(Some).map_err(|_| {
+            Failed::Error(ToolError::new(
+                ErrorName::UpstreamError,
+                format!("{VALUE}.CurrentValue on {}: not a number", element.bus),
             ))
         })
     }

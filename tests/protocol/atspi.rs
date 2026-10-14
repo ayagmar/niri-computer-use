@@ -54,8 +54,13 @@ pub(crate) struct Object {
     pub(crate) localized: Option<Vec<String>>,
     /// The naming methods it refuses at every index, as Qt has no `GetLocalizedName`.
     pub(crate) refused: Vec<&'static str>,
-    /// With `Text` and `EditableText` interfaces: how many characters it holds.
-    pub(crate) text: Option<i32>,
+    /// With `Text` and `EditableText` interfaces: the text it holds.
+    pub(crate) text: Option<String>,
+    /// What it keeps of text it is given, when not all of it, as a field that caps or
+    /// reformats its input.
+    pub(crate) keeps: Option<fn(&str) -> String>,
+    /// With a `Value` interface: its current value, which each `DoAction` adds one to.
+    pub(crate) value: Option<f64>,
     /// A counter button's count, which each `DoAction` adds one to and names it after.
     pub(crate) counter: Option<u32>,
     /// The objects each `DoAction` shows when hidden and hides when shown.
@@ -112,7 +117,7 @@ impl Object {
             states: SHOWING | EDITABLE,
             extents: Some((10, 50, 200, 30)),
             actions: vec!["activate".to_owned()],
-            text: Some(0),
+            text: Some(String::new()),
             ..Self::default()
         }
     }
@@ -127,6 +132,9 @@ impl Object {
         }
         if self.text.is_some() {
             interfaces.extend(["org.a11y.atspi.Text", "org.a11y.atspi.EditableText"]);
+        }
+        if self.value.is_some() {
+            interfaces.push("org.a11y.atspi.Value");
         }
         interfaces.into_iter().map(str::to_owned).collect()
     }
@@ -468,6 +476,9 @@ async fn serve(app: &Connection, mock: &Mock, path: &str, object: &Object) {
         server.at(path, Text(at())).await.unwrap();
         server.at(path, EditableText(at())).await.unwrap();
     }
+    if object.value.is_some() {
+        server.at(path, Value(at())).await.unwrap();
+    }
 }
 
 /// An object's place in the mock.
@@ -613,6 +624,9 @@ impl Action {
                 *count += 1;
                 object.name = format!("Count: {count}");
             }
+            if let Some(value) = object.value.as_mut() {
+                *value += 1.0;
+            }
         });
         for path in self.0.read(|object, _| object.toggles.clone())? {
             self.0.mock.change(&path, |object| object.states ^= SHOWING);
@@ -630,7 +644,31 @@ impl Text {
     #[zbus(property)]
     async fn character_count(&self) -> fdo::Result<i32> {
         self.0.called("CharacterCount").await?;
-        Ok(self.0.read(|object, _| object.text.unwrap_or_default())?)
+        let text = self
+            .0
+            .read(|object, _| object.text.clone().unwrap_or_default())?;
+        Ok(i32::try_from(text.chars().count()).unwrap())
+    }
+
+    async fn get_text(&self, start: i32, end: i32) -> answer::Result<String> {
+        self.0.called("GetText").await?;
+        let text = self
+            .0
+            .read(|object, _| object.text.clone().unwrap_or_default())?;
+        let start = usize::try_from(start).unwrap();
+        let taken = usize::try_from(end).map_or(usize::MAX, |end| end - start);
+        Ok(text.chars().skip(start).take(taken).collect())
+    }
+}
+
+struct Value(Node);
+
+#[interface(name = "org.a11y.atspi.Value")]
+impl Value {
+    #[zbus(property)]
+    async fn current_value(&self) -> fdo::Result<f64> {
+        self.0.called("CurrentValue").await?;
+        Ok(self.0.read(|object, _| object.value.unwrap_or_default())?)
     }
 }
 
@@ -640,10 +678,13 @@ struct EditableText(Node);
 impl EditableText {
     async fn set_text_contents(&self, text: String) -> answer::Result<bool> {
         self.0.called("SetTextContents").await?;
-        let characters = i32::try_from(text.chars().count()).unwrap();
-        self.0
-            .mock
-            .change(&self.0.path, |object| object.text = Some(characters));
+        self.0.mock.change(&self.0.path, |object| {
+            object.text = Some(
+                object
+                    .keeps
+                    .map_or_else(|| text.clone(), |keeps| keeps(&text)),
+            );
+        });
         Ok(true)
     }
 }
