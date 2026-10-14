@@ -1780,4 +1780,230 @@ app_id = "foot"
             );
         }
     }
+
+    /// Properties of what agents and users write: the policy file, `save_path`, and
+    /// `niri_action`'s JSON.
+    mod properties {
+        use proptest::prelude::*;
+        use serde_json::{Map, Value, json};
+
+        use super::super::*;
+
+        /// A TOML string holding `text`.
+        fn quoted(text: &str) -> String {
+            serde_json::to_string(text).unwrap()
+        }
+
+        /// A `[[preset]]` table.
+        fn preset_table(
+            name: &str,
+            app_id: &str,
+            argv: &[String],
+            env: &BTreeMap<String, String>,
+        ) -> String {
+            let argv: Vec<String> = argv.iter().map(|arg| quoted(arg)).collect();
+            let env: Vec<String> = env
+                .iter()
+                .map(|(variable, value)| format!("{} = {}", quoted(variable), quoted(value)))
+                .collect();
+            format!(
+                "[[preset]]\nname = {}\napp_id = {}\nargv = [{}]\nenv = {{ {} }}\n",
+                quoted(name),
+                quoted(app_id),
+                argv.join(", "),
+                env.join(", ")
+            )
+        }
+
+        /// Policy files with presets of any names, programs, arguments and variables.
+        fn policy_file() -> impl Strategy<Value = String> {
+            let text = || prop_oneof!["[a-z0-9./=_-]{0,10}", any::<String>()];
+            let program = prop_oneof![
+                prop::sample::select(COMMAND_RUNNERS.to_vec()).prop_map(str::to_owned),
+                prop::sample::select(TERMINALS.to_vec()).prop_map(str::to_owned),
+                "(/usr/bin/)?[a-z]{1,8}[0-9.]{0,4}",
+                text(),
+            ];
+            let preset = (
+                text(),
+                text(),
+                program,
+                prop::collection::vec(text(), 0..3),
+                prop::collection::btree_map(text(), text(), 0..2),
+            )
+                .prop_map(|(name, app_id, program, args, env)| {
+                    let argv: Vec<String> =
+                        std::iter::once(&program).chain(&args).cloned().collect();
+                    preset_table(&name, &app_id, &argv, &env)
+                });
+            (any::<bool>(), prop::collection::vec(preset, 0..4)).prop_map(
+                |(unrestricted, presets)| {
+                    format!("unrestricted = {unrestricted}\n{}", presets.concat())
+                },
+            )
+        }
+
+        /// Agent text, marked with `~`, which no name niri-ipc or the log uses holds.
+        fn agent_text() -> impl Strategy<Value = String> {
+            "~\\PC{0,11}"
+        }
+
+        /// Actions that decode and carry the agent's text, and whether they need
+        /// `unrestricted`.
+        fn texted_action() -> impl Strategy<Value = (Value, bool)> {
+            prop_oneof![
+                prop::collection::vec(agent_text(), 0..4)
+                    .prop_map(|command| (json!({"Spawn": {"command": command}}), true)),
+                agent_text().prop_map(|command| (json!({"SpawnSh": {"command": command}}), true)),
+                prop::option::of(agent_text())
+                    .prop_map(|path| (json!({"LoadConfigFile": {"path": path}}), true)),
+                (any::<bool>(), agent_text()).prop_map(|(write, path)| (
+                    json!({"ScreenshotScreen": {"write_to_disk": write, "show_pointer": false, "path": path}}),
+                    true
+                )),
+                (agent_text(), agent_text()).prop_map(|(name, workspace)| (
+                    json!({"SetWorkspaceName": {"name": name, "workspace": {"Name": workspace}}}),
+                    false
+                )),
+                agent_text().prop_map(|name| (json!({"FocusWorkspace": {"reference": {"Name": name}}}), false)),
+                agent_text().prop_map(|output| (
+                    json!({"MoveWindowToMonitor": {"id": null, "output": output}}),
+                    false
+                )),
+            ]
+        }
+
+        /// Any JSON object an agent could send as `action`: niri's action and field names or
+        /// its own, around any values; most don't decode.
+        fn any_action() -> impl Strategy<Value = Map<String, Value>> {
+            let names = || {
+                prop_oneof![
+                    prop::sample::select(vec![
+                        "Spawn",
+                        "SpawnSh",
+                        "Quit",
+                        "LoadConfigFile",
+                        "FocusWorkspace",
+                        "SetWorkspaceName",
+                        "FullscreenWindow",
+                        "SetWindowWidth",
+                        "FocusWindow",
+                        "ToggleWindowFloating",
+                        "PowerOffMonitors",
+                        "id",
+                        "command",
+                        "path",
+                        "reference",
+                        "name",
+                        "output",
+                        "change",
+                        "skip_confirmation",
+                        "Name",
+                        "Index",
+                        "SetFixed",
+                    ])
+                    .prop_map(str::to_owned),
+                    agent_text(),
+                ]
+            };
+            let leaf = prop_oneof![
+                Just(Value::Null),
+                any::<bool>().prop_map(Value::from),
+                any::<i64>().prop_map(Value::from),
+                agent_text().prop_map(Value::from),
+            ];
+            let value = leaf.prop_recursive(3, 16, 4, move |inner| {
+                prop_oneof![
+                    prop::collection::vec(inner.clone(), 0..4).prop_map(Value::Array),
+                    prop::collection::btree_map(names(), inner, 0..3)
+                        .prop_map(|fields| Value::Object(fields.into_iter().collect())),
+                ]
+            });
+            prop::collection::btree_map(names(), value, 0..3)
+                .prop_map(|fields| fields.into_iter().collect())
+        }
+
+        /// Whether `logged` holds a string, or a key of the agent's.
+        fn holds_agent_text(logged: &Value) -> bool {
+            match logged {
+                Value::String(_) => true,
+                Value::Array(items) => items.iter().any(holds_agent_text),
+                Value::Object(fields) => fields
+                    .iter()
+                    .any(|(key, field)| key.starts_with('~') || holds_agent_text(field)),
+                Value::Null | Value::Bool(_) | Value::Number(_) => false,
+            }
+        }
+
+        proptest! {
+            #![proptest_config(crate::test_support::properties(256))]
+
+            /// Any policy file is read or refused without a panic, and a policy that is read
+            /// has what `launch` relies on: named presets with an app id and a program, unique
+            /// names, and variables only under `unrestricted`.
+            #[test]
+            fn any_policy_file_is_read_or_refused(text in policy_file(), from_env in any::<bool>()) {
+                let Ok(policy) = parse(&text, from_env) else {
+                    return Ok(());
+                };
+                let mut names = BTreeSet::new();
+                for preset in &policy.presets {
+                    prop_assert!(!preset.name.is_empty() && !preset.app_id.is_empty());
+                    prop_assert!(preset.argv.first().is_some_and(|program| !program.is_empty()));
+                    prop_assert!(names.insert(preset.name.clone()), "{text}");
+                    prop_assert!(preset.env.is_empty() || policy.unrestricted || from_env, "{text}");
+                }
+            }
+
+            /// A `save_path` that is accepted names a PNG file in or under the capture
+            /// directory: plain names only, nothing that climbs out or starts over at the root.
+            #[test]
+            fn an_accepted_save_path_stays_under_the_capture_dir(
+                text in prop_oneof!["[a-z./ ~\\x00]{0,16}(\\.png|\\.PNG)?", any::<String>()],
+            ) {
+                if let Ok(path) = SavePath::parse(&text) {
+                    let joined: PathBuf = path.dirs.iter().chain([&path.file]).collect();
+                    let parts: Vec<_> = joined.components().collect();
+                    prop_assert_eq!(parts.len(), path.dirs.len() + 1, "{:?}", text);
+                    prop_assert!(
+                        parts.iter().all(|part| matches!(part, std::path::Component::Normal(_))),
+                        "{text:?}"
+                    );
+                    prop_assert!(path.file.to_ascii_lowercase().ends_with(".png"), "{text:?}");
+                }
+            }
+
+            /// An action carrying the agent's text is gated as documented, and the audit log
+            /// keeps its shape and lengths, never the text.
+            #[test]
+            fn a_texted_action_is_gated_and_logged_without_its_text(
+                (json, gated) in texted_action(),
+            ) {
+                let action: Action = serde_json::from_value(json).unwrap();
+                prop_assert_eq!(refuse_action(&action, false).is_some(), gated);
+                prop_assert!(refuse_action(&action, true).is_none());
+                let logged = crate::audit::action(&action);
+                prop_assert!(!holds_agent_text(&logged), "{logged}");
+            }
+
+            /// Any JSON is decoded as an action or refused without a panic; either way the
+            /// audit log keeps none of the agent's text.
+            #[test]
+            fn any_action_json_is_gated_and_logged_without_its_text(fields in any_action()) {
+                let decoded = serde_json::from_value::<Action>(Value::Object(fields.clone()));
+                if let Ok(action) = decoded {
+                    if let Some(refused) = refuse_action(&action, false) {
+                        prop_assert_eq!(refused.name, ErrorName::UnrestrictedRequired);
+                    }
+                    let logged = crate::audit::action(&action);
+                    prop_assert!(!holds_agent_text(&logged), "{logged}");
+                } else {
+                    let mut logged = crate::audit::invalid_action(&fields);
+                    let category = logged.as_object_mut().unwrap().remove("category");
+                    prop_assert_eq!(category, Some(json!("invalid_action")));
+                    prop_assert!(!holds_agent_text(&logged), "{logged}");
+                }
+            }
+        }
+    }
 }

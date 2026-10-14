@@ -111,6 +111,8 @@ impl fmt::Display for Leaked {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
 
     /// The closing tag of `name`, built so this source never holds a tool-call tag.
@@ -209,5 +211,59 @@ mod tests {
         let leak = leaked(&text).unwrap();
         assert_eq!(leak.tags, 150_000);
         assert_eq!(leak.names, ["text"]);
+    }
+
+    /// `name` with its ASCII letters' case picked by the bits of `cases`.
+    fn recased(name: &str, cases: u64) -> String {
+        name.chars()
+            .enumerate()
+            .map(|(at, c)| {
+                if (cases >> (at % 64)) & 1 == 1 {
+                    c.to_ascii_uppercase()
+                } else {
+                    c
+                }
+            })
+            .collect()
+    }
+
+    proptest! {
+        #![proptest_config(crate::test_support::properties(512))]
+
+        /// A known closing tag after any text that holds no tag, in any case and with any
+        /// whitespace after it, is caught and named.
+        #[test]
+        fn a_trailing_tag_nothing_opens_is_caught(
+            text in "[^<]{0,40}",
+            name in prop::sample::select(NAMES.to_vec()),
+            cases in any::<u64>(),
+            after in "[ \t\n]{0,3}",
+        ) {
+            let sent = format!("{text}{}{after}", close(&recased(name, cases)));
+            let leak = leaked(&sent);
+            prop_assert_eq!(leak.map(|leak| leak.names), Some(vec![name]));
+        }
+
+        /// The same tag after an opening tag of its name, in any case and with or without
+        /// attributes, is document content.
+        #[test]
+        fn a_tag_opened_before_it_is_left_alone(
+            (before, inside) in ("[^<]{0,20}", "[^<]{0,20}"),
+            name in prop::sample::select(NAMES.to_vec()),
+            cases in any::<u64>(),
+            attributes in prop::sample::select(vec![">", " name=\"x\">", "\n>"]),
+        ) {
+            let opened = recased(name, cases);
+            let sent = format!("{before}<{opened}{attributes}{inside}{}", close(name));
+            prop_assert_eq!(leaked(&sent), None);
+        }
+
+        /// Any text is checked without a panic, and a run is only ever found at its end.
+        #[test]
+        fn any_text_is_checked(text in any::<String>()) {
+            if leaked(&text).is_some() {
+                prop_assert!(text.trim_end().ends_with('>'));
+            }
+        }
     }
 }

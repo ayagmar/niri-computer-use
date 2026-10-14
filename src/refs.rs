@@ -504,6 +504,8 @@ impl Refs {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
     use crate::test_support::shot;
 
@@ -867,5 +869,229 @@ mod tests {
         }
         assert_eq!(refs.shots.len(), KEPT);
         assert_eq!(refs.shots.front().map(|(id, _)| *id), Some(3));
+    }
+
+    fn element(pid: i32) -> ElementRef {
+        ElementRef {
+            bus: ":1.7".to_owned(),
+            path: "/org/a11y/atspi/accessible/9".to_owned(),
+            frame: "/org/a11y/atspi/accessible/1".to_owned(),
+            kept: crate::a11y::model::Kept {
+                role: 43,
+                window: 3,
+                pid,
+                actions: Vec::new(),
+                lineage: Vec::new(),
+                row: crate::a11y::model::Row::Lineage,
+            },
+        }
+    }
+
+    /// Ids close to the issued ones, as an agent could misspell them, and any text.
+    fn asked() -> impl Strategy<Value = String> {
+        prop_oneof![
+            "(shot|elem)-(0123abcd|0123ABCD|[0-9a-f]{8})-[+0 ]?[0-9]{1,2} ?",
+            any::<String>(),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(crate::test_support::properties(512))]
+
+        /// Every ref the server issues has the form the audit log keeps as it is and names
+        /// what it was issued for, and no other spelling names anything: an id resolves
+        /// only as it was issued.
+        #[test]
+        fn only_the_ids_issued_name_a_ref(count in 1..=32_i32, asked in asked()) {
+            let (holder, viewer) = (SessionId(1), SessionId(2));
+            let mut refs = Refs::new("0123abcd".to_owned());
+            refs.start(holder);
+            let lease = refs.lease().unwrap();
+            let stretch = refs.stretch(viewer);
+            let mut issued = (Vec::new(), Vec::new(), Vec::new());
+            for n in 0..count {
+                let mut taken = shot();
+                taken.connection = n.unsigned_abs().into();
+                let shot_id = refs.insert(lease, taken.clone()).unwrap();
+                prop_assert!(well_formed(&shot_id), "{shot_id}");
+                prop_assert_eq!(refs.get(&shot_id), Ok(taken.clone()));
+                issued.0.push(shot_id);
+                let view_id = refs.insert_view(viewer, stretch, taken.clone()).unwrap();
+                prop_assert!(well_formed(&view_id), "{view_id}");
+                prop_assert_eq!(refs.view(viewer, &view_id), Ok(taken));
+                issued.1.push(view_id);
+                let element_id = refs.insert_element(lease, element(n)).unwrap();
+                prop_assert!(well_formed(&element_id), "{element_id}");
+                prop_assert_eq!(refs.element(&element_id), Ok(element(n)));
+                issued.2.push(element_id);
+            }
+            prop_assert_eq!(refs.get(&asked).is_ok(), issued.0.contains(&asked));
+            prop_assert_eq!(refs.view(viewer, &asked).is_ok(), issued.1.contains(&asked));
+            prop_assert_eq!(refs.element(&asked).is_ok(), issued.2.contains(&asked));
+        }
+    }
+
+    /// grim's image size for `logical` pixels at `scale`.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "grim truncates the same way, `int common_width = geometry->width * scale`"
+    )]
+    fn grim_pixels(logical: u32, scale: f64) -> u32 {
+        (f64::from(logical) * scale) as u32
+    }
+
+    /// The pixel `fraction` of the way across `size` pixels.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a fraction below 1 of a u32 size, floored"
+    )]
+    fn across(size: u32, fraction: f64) -> u32 {
+        (f64::from(size) * fraction).floor() as u32
+    }
+
+    /// Outputs as niri reports them: a physical mode, a scale in niri's 1/120 steps and a
+    /// transform, with the logical size truncated, anywhere in the layout.
+    fn any_output() -> impl Strategy<Value = (LogicalOutput, BTreeMap<String, Output>)> {
+        let transforms = prop::sample::select(vec![
+            niri_ipc::Transform::Normal,
+            niri_ipc::Transform::_90,
+            niri_ipc::Transform::_180,
+            niri_ipc::Transform::_270,
+            niri_ipc::Transform::Flipped,
+            niri_ipc::Transform::Flipped90,
+            niri_ipc::Transform::Flipped180,
+            niri_ipc::Transform::Flipped270,
+        ]);
+        (
+            (1..=7680_u32, 1..=4320_u32),
+            60..=480_u32,
+            transforms,
+            (-100_000..=100_000_i32, -100_000..=100_000_i32),
+        )
+            .prop_filter_map(
+                "an output smaller than a logical pixel",
+                |((width, height), steps, transform, (x, y))| {
+                    let scale = f64::from(steps) / 120.0;
+                    let quarter = matches!(
+                        transform,
+                        niri_ipc::Transform::_90
+                            | niri_ipc::Transform::_270
+                            | niri_ipc::Transform::Flipped90
+                            | niri_ipc::Transform::Flipped270
+                    );
+                    let (shown_width, shown_height) = if quarter {
+                        (height, width)
+                    } else {
+                        (width, height)
+                    };
+                    let geometry = LogicalOutput {
+                        x,
+                        y,
+                        width: grim_pixels(shown_width, 1.0 / scale),
+                        height: grim_pixels(shown_height, 1.0 / scale),
+                        scale,
+                        transform,
+                    };
+                    let output = serde_json::from_value(serde_json::json!({
+                        "name": "winit", "make": "", "model": "", "serial": null,
+                        "physical_size": null, "current_mode": 0, "is_custom_mode": false,
+                        "modes": [{"width": width, "height": height, "refresh_rate": 60000,
+                                   "is_preferred": true}],
+                        "vrr_supported": false, "vrr_enabled": false, "logical": geometry
+                    }))
+                    .ok()?;
+                    (geometry.width > 0 && geometry.height > 0)
+                        .then(|| (geometry, BTreeMap::from([("winit".to_owned(), output)])))
+                },
+            )
+    }
+
+    proptest! {
+        #![proptest_config(crate::test_support::properties(512))]
+
+        /// Every pixel of a screenshot of a whole output, at its own scale or one lowered
+        /// for `max_width`, aims the pointer: an agent never gets `out_of_bounds` for a
+        /// pixel it can see.
+        #[test]
+        fn every_pixel_of_an_output_screenshot_aims(
+            (geometry, outputs) in any_output(),
+            lowered in prop_oneof![Just(1.0), 0.05..1.0_f64],
+            (fx, fy) in (0.0..1.0_f64, 0.0..1.0_f64),
+        ) {
+            let scale = geometry.scale * lowered;
+            let (width, height) = (
+                grim_pixels(geometry.width, scale),
+                grim_pixels(geometry.height, scale),
+            );
+            prop_assume!(width > 0 && height > 0);
+            let output = outputs.get("winit").unwrap();
+            let shot = Shot {
+                geometry,
+                motion_geometry: coords::motion_geometry(output),
+                captured: Rect {
+                    x: geometry.x,
+                    y: geometry.y,
+                    width: geometry.width,
+                    height: geometry.height,
+                },
+                scale,
+                width,
+                height,
+                ..shot()
+            };
+            let now = Instant::now();
+            for pixel in [
+                ImagePx { x: across(width, fx), y: across(height, fy) },
+                ImagePx { x: 0, y: 0 },
+                ImagePx { x: width - 1, y: height - 1 },
+                ImagePx { x: 0, y: height - 1 },
+                ImagePx { x: width - 1, y: 0 },
+            ] {
+                let aimed = aim(&shot, pixel, now, &outputs, Some(shot.connection));
+                prop_assert!(aimed.is_ok(), "{pixel:?} of {width}x{height}: {aimed:?}");
+            }
+        }
+
+        /// A zoom into any region inside the image covers every pixel asked for and stays
+        /// inside the screenshot; any other region is `out_of_bounds`, never a panic.
+        #[test]
+        fn a_zoom_covers_its_region_or_refuses_it(
+            (x, y, width, height) in (-100_000..=100_000_i32, -100_000..=100_000_i32, 1..=4000_u32, 1..=4000_u32),
+            scale in 0.05..4.0_f64,
+            region in (0.0..1.2_f64, 0.0..1.2_f64, 0.0..1.2_f64, 0.0..1.2_f64),
+        ) {
+            let captured = Rect { x, y, width, height };
+            let image = (grim_pixels(width, scale), grim_pixels(height, scale));
+            prop_assume!(image.0 > 0 && image.1 > 0);
+            let shot = Shot { captured, scale, width: image.0, height: image.1, ..shot() };
+            let pixels = ImageRect {
+                origin: ImagePx { x: across(image.0, region.0), y: across(image.1, region.1) },
+                width: across(image.0, region.2),
+                height: across(image.1, region.3),
+            };
+            let inside = |start: u32, extent: u32, size: u32| {
+                extent > 0 && u64::from(start) + u64::from(extent) <= u64::from(size)
+            };
+            let zoomed = shot.zoom(pixels, Instant::now(), Some(shot.connection));
+            if inside(pixels.origin.x, pixels.width, image.0)
+                && inside(pixels.origin.y, pixels.height, image.1)
+            {
+                let (rect, _) = zoomed.unwrap();
+                prop_assert!(rect.width > 0 && rect.height > 0, "{rect:?}");
+                prop_assert!(rect.x >= x && rect.y >= y, "{rect:?} in {captured:?}");
+                prop_assert!(
+                    i64::from(rect.x) + i64::from(rect.width) <= i64::from(x) + i64::from(width)
+                        && i64::from(rect.y) + i64::from(rect.height)
+                            <= i64::from(y) + i64::from(height),
+                    "{rect:?} in {captured:?}"
+                );
+                covers(&shot, pixels, rect);
+            } else {
+                let error = zoomed.unwrap_err();
+                prop_assert!(error.detail.starts_with("out_of_bounds"), "{}", error.detail);
+            }
+        }
     }
 }
