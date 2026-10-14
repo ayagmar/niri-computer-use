@@ -14,6 +14,7 @@ import Gates from '../components/home/Gates.astro';
 import Code from '../components/home/Code.astro';
 import { home } from '../lib/home';
 import { siteRoot } from '../lib/markdown';
+import { releaseLink, version } from '../lib/version';
 
 const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
 const link = (path: string) => `${base}${path}`;
@@ -59,7 +60,10 @@ const { sessions, result, gates, limits, requirements, install } = home;
 		<a class="skip" href="#main">Skip to content</a>
 		<div class="sheet">
 			<header class="top">
-				<a class="name" href={base} aria-current="page">niri-computer-use</a>
+				<span class="mast">
+					<a class="name" href={base} aria-current="page">niri-computer-use</a>
+					<a class="version" href={releaseLink} aria-label={`Release ${version}`}>{version}</a>
+				</span>
 				<span class="running">{home.running}</span>
 				<nav aria-label="Site">
 					<a href={link('start/install/')}>Docs</a>
@@ -179,7 +183,7 @@ const { sessions, result, gates, limits, requirements, install } = home;
 				</section>
 			</main>
 			<footer class="end">
-				<span class="name">niri-computer-use</span>
+				<span class="name">niri-computer-use <a class="version" href={releaseLink}>{version}</a></span>
 				<nav aria-label="More">
 					<a href={link('start/install/')}>Docs</a>
 					<a href={github}>GitHub</a>
@@ -354,6 +358,29 @@ const { sessions, result, gates, limits, requirements, install } = home;
 		letter-spacing: -0.01em;
 		text-decoration: none;
 		white-space: nowrap;
+	}
+
+	.mast {
+		display: flex;
+		align-items: baseline;
+		gap: 0.5rem;
+	}
+
+	.version {
+		padding: 0.05rem 0.35rem;
+		border: 1px solid var(--rule);
+		font: 500 0.75rem/1.4 var(--mono);
+		font-stretch: normal;
+		letter-spacing: 0;
+		color: var(--ink-2);
+		text-decoration: none;
+		transition: background-color 160ms var(--ease), color 160ms var(--ease);
+	}
+
+	.version:hover,
+	.version:focus-visible {
+		background: var(--mark);
+		color: var(--ink);
 	}
 
 	.running {

@@ -148,6 +148,13 @@ components:
     rounded: "{rounded.corner}"
     padding: "0 1rem"
     height: "2.5rem"
+  version-tag:
+    textColor: "{colors.ink-2}"
+    typography: "{typography.figure}"
+    padding: "0.05rem 0.35rem"
+  version-tag-hover:
+    backgroundColor: "{colors.mark}"
+    textColor: "{colors.ink}"
   tab:
     textColor: "{colors.ink}"
     typography: "{typography.small}"
@@ -211,7 +218,7 @@ The home page (`src/pages/index.astro`) sits outside Starlight and defines its o
 - Paper, ink and rules; no panels, cards or section backgrounds.
 - A yellow highlighter for state and attention, never for decoration.
 - One red, for the stop key and refused answers.
-- Archivo for text; JetBrains Mono for calls, commands, answers and the numbers that go with them (times).
+- Archivo for text; JetBrains Mono for calls, commands, answers and the numbers that go with them (times, version).
 - Numbered figure and table captions in the datasheet manner.
 - Motion only where it explains, all of it off under reduced motion, and every part readable without JavaScript.
 
@@ -225,14 +232,14 @@ Pale neutral paper with near-black ink, two greys for rules and grid lines, a pa
 - **On Red** (on-red): text on red, the Esc legend and a refused check. Written as `#fff` in the components, not as a custom property.
 
 ### Secondary
-- **Highlighter** (mark, mark-dark): the held-lease band in the diagram, the readouts under the timing diagram and the block diagram, the answer lines and field rows in Result, the running table row, and the current call in the call list.
+- **Highlighter** (mark, mark-dark): the held-lease band in the diagram, the readouts under the timing diagram and the block diagram, the answer lines and field rows in Result, the running table row, the current call in the call list, and the version tag on hover.
 - **Strong Highlighter** (mark-strong): the stroke drawn under the headline's stop line when a stop lands, the packet that travels through the checks, and text selection. It has one value for both themes.
 
 ### Neutral
 - **Paper** (paper, paper-dark): the page, the blocks of the block diagram, the pinned lane names, and the cover that hides the diagram until it is drawn. The meta `theme-color` uses the same two values.
 - **Ink** (ink, ink-dark): text, the rules that open sections and head tables, traces, block outlines, buttons, the checked tab and a passed check.
 - **Second Ink** (ink-2, ink-2-dark): captions, ledes beside section heads, lane and column labels, answers in call lists, times, and the Install button's hover.
-- **Rule** (rule, rule-dark): row separators and the dashed path through the checks.
+- **Rule** (rule, rule-dark): row separators, the version tag's border and the dashed path through the checks.
 - **Grid** (grid, grid-dark): the one-second lines in the timing diagram and the tab hover.
 - **Plate** (plate, plate-dark), **Plate Ink** (plate-ink) and **Plate Rule** (plate-rule, plate-rule-dark): the install command blocks and their Copy button. In the light theme the plate is the same value as ink.
 
@@ -262,7 +269,7 @@ The home page preloads a cut of Archivo made by `scripts/subset-font.mjs` (width
 - **Small** (0.875rem, 1.45): captions, notes, the header, tabs, the footer, the stop hint.
 - **Label** (650, 0.6875rem to 0.75rem, 0.07em, uppercase, second ink): lane names, table column heads, the two list heads under the limits, and "Asked" before the prompt.
 - **Key legend** (700, 0.8125rem, 0.04em, uppercase): "Esc" on the keycap.
-- **Mono roles:** answer JSON (0.875rem, 1.65); readouts and command blocks (0.8125rem); call lists and table error codes (0.75rem); trace labels in the diagram (12.5px); axis ticks and wire labels (0.6875rem); install step numbers (700, 1.25rem).
+- **Mono roles:** answer JSON (0.875rem, 1.65); readouts and command blocks (0.8125rem); call lists and table error codes (0.75rem); trace labels in the diagram (12.5px); axis ticks and wire labels (0.6875rem); the version tag (500, 0.75rem); install step numbers (700, 1.25rem).
 - **Docs title** (840, 72% width) and **Docs section** (760, 84% width): Starlight page titles and h2/h3.
 
 ### Named Rules
@@ -272,7 +279,7 @@ The home page preloads a cut of Archivo made by `scripts/subset-font.mjs` (width
 
 ## Layout
 
-One centred sheet, at most 86rem wide (sheet), with a fluid side margin (margin). The header is a three-column grid (wordmark, the running head, the nav) over a 1px ink rule. Sections follow at a vertical gap (section), each opened by a 2px ink rule and a two-column head (head and lede, 1fr to 1.35fr). The footer sits on a 1px ink rule.
+One centred sheet, at most 86rem wide (sheet), with a fluid side margin (margin). The header is a three-column grid (wordmark and version tag, the running head, the nav) over a 1px ink rule. Sections follow at a vertical gap (section), each opened by a 2px ink rule and a two-column head (head and lede, 1fr to 1.35fr). The footer sits on a 1px ink rule.
 
 - **Hero:** the headline, then the lede on the left and the actions (Install, the stop key link) on the right, wrapping on narrow screens.
 - **Figure 1:** the caption and the tabs on one row; then the recording (5fr) beside a side column (at least 15rem, 2fr) with the prompt and, under it, the keycap and its hint; under both, the timing diagram across the full width with four lanes (Calls, Lease, niri saw, You) whose names (lanes) stay pinned as it scrolls; then the readout, the call list and the note. The diagram is at least 44rem wide plus the lanes and scrolls sideways on smaller screens, keeping the cursor in view.
@@ -302,8 +309,8 @@ Small corners: 3px (corner) on buttons, tabs, command blocks, diagram blocks and
 - **Focus:** a 2px ink outline, 3px off (4px around the diagram; plate ink on the plate).
 
 ### Navigation
-- **Header:** wordmark, the running head "MCP server for niri 26.04 on Linux", then Docs, GitHub, the theme toggle and Install. Links are 550 weight, underlined on hover.
-- **Footer:** wordmark; Docs, GitHub, llms.txt, MIT license.
+- **Header:** wordmark with the version tag (mono, 1px rule border, highlighter on hover, linking to the release), the running head "MCP server for niri 26.04 on Linux", then Docs, GitHub, the theme toggle and Install. Links are 550 weight, underlined on hover.
+- **Footer:** wordmark and version; Docs, GitHub, llms.txt, MIT license.
 
 ### Figure 1: Sessions
 Tabs are CSS radio buttons inside a 1px ink box; the checked tab is ink, and `:has()` picks the panel shown, so switching works without JavaScript. Each panel holds the still (with a `<noscript>` video with controls), its caption, the prompt, the keycap and hint, the timing diagram drawn at build time, the readout and "All N calls, as text". Without JavaScript the diagram is complete and the keycap and Play button stay hidden.

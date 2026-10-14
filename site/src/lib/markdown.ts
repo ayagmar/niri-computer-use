@@ -3,6 +3,7 @@
 import { getCollection, type CollectionEntry } from 'astro:content';
 import { groups } from './groups.mjs';
 import { home } from './home';
+import { releaseLink, version } from './version';
 
 type Page = CollectionEntry<'docs'>;
 
@@ -45,6 +46,7 @@ export function homeMarkdown(): string {
 	return [
 		`# niri-computer-use`,
 		`> ${home.description}`,
+		`Version ${version}: [release notes](${releaseLink})`,
 		`${home.headline} ${home.stopline} ${home.lede}`,
 		`[${home.safety.text}](${url(home.safety.link)})`,
 		`## Recorded sessions`,
