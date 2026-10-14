@@ -391,6 +391,22 @@ mod script {
     }
 
     #[tokio::test]
+    async fn a_leftover_directory_at_the_staging_name_is_not_installed_as_the_binary() {
+        let release = Release::new("leftover", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        let bin = release.home().join(".local/bin");
+        std::fs::create_dir_all(bin.join(".niri-computer-use.new")).unwrap();
+
+        let output = release.install(&[]).await;
+
+        assert!(output.status.success(), "{output:?}");
+        let binary = bin.join("niri-computer-use");
+        assert!(binary.is_file());
+        assert_eq!(version_of(&binary), "niri-computer-use 0.1.0\n");
+        assert!(!bin.join(".niri-computer-use.new").exists());
+    }
+
+    #[tokio::test]
     async fn a_link_the_user_made_is_replaced_with_a_notice_and_a_directory_left_alone() {
         let release = Release::new("theirs", "x86_64");
         release.publish(LATEST, "x86_64", None);

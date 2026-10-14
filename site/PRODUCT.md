@@ -27,7 +27,7 @@ The user's own niri session on Arch-style Linux, often with Noctalia as the shel
 ## Capabilities and Constraints
 
 - Up to 22 tools; five look and need no lease (`status`, `desktop_state`, `screenshot`, `elements`, `wait_for`). A session without Noctalia or an accessibility bus has 17.
-- niri 26.04 only (the `niri-ipc` crate is pinned to it); Linux, Wayland; source build with Rust 1.99.0.
+- niri 26.04 only (the `niri-ipc` crate is pinned to it); Linux, Wayland; release tarballs for x86_64 and aarch64 (glibc 2.39 or newer), or a build with Rust 1.99.0.
 - Pointer tools need one monitor at transform Normal.
 - Accessibility (elements) varies by toolkit; GTK 4 works best.
 - Guardrails, not a sandbox: the lease, stop key, lock gate, deny list, secret-field refusal and audit log limit mistakes; an agent with the lease can do what the user could with a keyboard and mouse.

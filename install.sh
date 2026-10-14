@@ -71,7 +71,7 @@ skill=${data_dir}/skills/niri-computer-use
 staged_binary=${bin_dir}/.niri-computer-use.new
 staged_skill=${data_dir}/skills/.niri-computer-use.new
 trap 'rm -rf "${tmp}" "${staged_binary}" "${staged_skill}"' EXIT
-rm -rf "${staged_skill}"
+rm -rf "${staged_binary}" "${staged_skill}"
 if ! {
 	cp "${tmp}/${name}/niri-computer-use" "${staged_binary}" &&
 		chmod 755 "${staged_binary}" &&
