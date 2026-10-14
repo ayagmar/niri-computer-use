@@ -1370,7 +1370,7 @@ These match the versions installed locally.
 - `Swatinem/rust-cache` restores `~/.cargo` and `target/` in the CI jobs that compile, so a run builds only this repository's crates, not every dependency. It keys the cache on the Rust toolchain, every `Cargo.toml` and `Cargo.lock`, and the job's key. It also sets `CARGO_INCREMENTAL=0`, which CI builds don't benefit from.
 - Only runs on `main` save a cache (`save-if`). Branches, pull requests and tags restore `main`'s, so their pushes can't evict it from the repository's 10 GB of cache. GitHub already keeps a branch's caches from runs on `main`.
 - `cache-bin: false` leaves `~/.cargo/bin` out, so the gate tools always come from `taiki-e/install-action`, never from a cache.
-- The release workflow's `build` job has no cache and stays that way: the binary users download is built from a clean checkout and the registry alone, so a poisoned cache can't reach it. Only CI's test jobs read a cache.
+- The release workflow's `build` job has no cache and stays that way: the binary users download is built from a clean checkout and the registry alone, so a poisoned cache can't reach it. Only CI's own jobs read a cache.
 
 | Action | Version | Published | Commit |
 |---|---|---|---|
@@ -1387,3 +1387,4 @@ v2.9.2 is the newest release; it is over 7 days old.
 
 - CI has a concurrency group per ref with `cancel-in-progress`, so a push to a branch or pull request cancels the run of the push before it, which nobody reads any more.
 - A called workflow's `github` context is its caller's, so when `release.yml` calls CI, `github.workflow` is `Release` and `github.ref` is the tag. CI keys on that: under `Release`, its group is the release run's ID and it cancels nothing. A release's gate can't be cancelled by a push, and doesn't wait behind one.
+- Checked on a throwaway branch with a second workflow that calls CI as `release.yml` does: a second push cancelled CI's run of the first, and both calling workflows' runs went on to pass.
