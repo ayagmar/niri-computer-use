@@ -76,6 +76,19 @@ pub(crate) enum Turned {
     Unsupported(String),
     /// Another call was still turning it on when this one's time ran out.
     Busy,
+    /// This call's time ran out before the launcher's `TURNING_ON` did, with `IsEnabled`
+    /// still false, so the listener was let go for a later call to try again.
+    Late,
+}
+
+/// How `IsEnabled` read while the server waited for it.
+#[derive(Debug, PartialEq, Eq)]
+enum Waited {
+    On,
+    /// False for the whole of `TURNING_ON`.
+    Off,
+    /// False until the call's deadline, before `TURNING_ON` ran out.
+    Cut,
 }
 
 impl Switch {
@@ -164,12 +177,16 @@ impl Switch {
             ),
         )
         .await?;
-        if self.turned_on(deadline).await? {
-            *held = Held::On {
-                _listener: listener,
-            };
-            drop(held);
-            return Ok(Turned::On);
+        match self.turned_on(deadline).await? {
+            Waited::On => {
+                *held = Held::On {
+                    _listener: listener,
+                };
+                drop(held);
+                return Ok(Turned::On);
+            }
+            Waited::Cut => return Ok(Turned::Late),
+            Waited::Off => {}
         }
         let why = format!(
             "org.a11y.Status IsEnabled stayed false {} ms after the server registered a listener; at-spi2-core before 2.61 doesn't turn it on for one",
@@ -180,15 +197,23 @@ impl Switch {
         Ok(Turned::Unsupported(why))
     }
 
-    /// Whether `IsEnabled` turns true within `TURNING_ON`, read by `deadline`.
-    async fn turned_on(&self, deadline: Instant) -> Result<bool, ToolError> {
-        let deadline = deadline.min(Instant::now() + TURNING_ON);
+    /// Whether `IsEnabled` turns true within `TURNING_ON`, or by `deadline` when that
+    /// comes first. Each read has until `deadline`, so one begun near the end of the wait
+    /// still gets its answer.
+    async fn turned_on(&self, deadline: Instant) -> Result<Waited, ToolError> {
+        let full = Instant::now() + TURNING_ON;
+        let until = deadline.min(full);
+        let off = if until < full {
+            Waited::Cut
+        } else {
+            Waited::Off
+        };
         loop {
             if self.session_enabled(deadline).await? {
-                return Ok(true);
+                return Ok(Waited::On);
             }
-            if Instant::now() + POLL >= deadline {
-                return Ok(false);
+            if Instant::now() + POLL >= until {
+                return Ok(off);
             }
             tokio::time::sleep(POLL).await;
         }

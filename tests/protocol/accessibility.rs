@@ -167,6 +167,9 @@ async fn the_policy_file_keeps_the_server_from_turning_accessibility_on() {
 async fn a_launcher_that_ignores_listeners_is_let_go_and_named() {
     let mut desk = Desk::start("acc-older", "", off_bus_window()).await;
     desk.mock.older_launcher();
+    // Reads that take a while, so the last one ends past the 500 ms the server waits.
+    desk.mock
+        .slow_on("IsEnabled", "/org/a11y/bus", Duration::from_millis(30));
     let (_, detail) = desk.refused().await;
     assert!(detail.contains("before 2.61"), "{detail}");
     let listeners = desk.mock.listeners();
@@ -178,6 +181,28 @@ async fn a_launcher_that_ignores_listeners_is_let_go_and_named() {
     assert!(again.contains("before 2.61"), "{again}");
     assert_eq!(desk.mock.listeners().len(), 1);
     assert_eq!(desk.mock.status_writes(), 0);
+}
+
+/// A call with less than the launcher's time left, as a wait's walk near its end has,
+/// reads `IsEnabled` before a launcher that takes a moment turned it on: that is no sign
+/// of an older launcher, so a later call with time to spare still turns it on.
+#[tokio::test]
+async fn a_launcher_still_turning_on_when_a_call_runs_out_is_asked_again() {
+    let mut desk = Desk::start("acc-late", "", off_bus_window()).await;
+    desk.mock.slow_launcher(Duration::from_millis(350));
+    // Its one walk has 150 ms.
+    let until = json!({"element": {"window_id": WINDOW, "role": "button"}});
+    let waited = desk
+        .server
+        .structured_with("wait_for", json!({"until": until, "timeout_ms": 200}))
+        .await;
+    assert_ne!(desk.switch().await, "unsupported", "{waited}");
+    let (_, detail) = desk.refused().await;
+    assert!(
+        detail.contains("was off, so the server turned it on"),
+        "{detail}"
+    );
+    assert_eq!(desk.switch().await, "on");
 }
 
 #[tokio::test]

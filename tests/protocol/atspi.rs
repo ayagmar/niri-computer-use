@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 use tokio::process::{Child, Command};
@@ -235,10 +235,30 @@ struct Status {
     older: bool,
     /// `IsEnabled` apart from the listeners: true as a screen reader's running made it.
     on: bool,
-    /// The unique name that registered each listener, and its event, in order.
-    listeners: Vec<(String, String)>,
+    /// Each listener registered, in order.
+    listeners: Vec<Listener>,
+    /// How long after a listener registers `IsEnabled` counts it, as a busy launcher
+    /// takes a moment.
+    lag: Duration,
     /// How many times a client wrote a property.
     writes: usize,
+}
+
+impl Status {
+    /// The listeners `IsEnabled` counts: those registered `lag` ago or longer.
+    fn counted(&self) -> Vec<String> {
+        let counted = self.listeners.iter().filter(|l| l.at.elapsed() >= self.lag);
+        counted.map(|listener| listener.name.clone()).collect()
+    }
+}
+
+/// A listener registered with the registry.
+#[derive(Debug, Clone)]
+struct Listener {
+    /// The unique name that registered it.
+    name: String,
+    event: String,
+    at: Instant,
 }
 
 /// The mock application, which the test changes.
@@ -304,6 +324,11 @@ impl Mock {
         self.state.lock().unwrap().status.older = true;
     }
 
+    /// Makes the bus launcher turn `IsEnabled` on only `lag` after a listener registers.
+    pub(crate) fn slow_launcher(&self, lag: Duration) {
+        self.state.lock().unwrap().status.lag = lag;
+    }
+
     /// The unique names that registered a listener.
     pub(crate) fn listeners(&self) -> Vec<String> {
         let state = self.state.lock().unwrap();
@@ -311,7 +336,7 @@ impl Mock {
             .status
             .listeners
             .iter()
-            .map(|(name, _)| name.clone())
+            .map(|listener| listener.name.clone())
             .collect()
     }
 
@@ -802,7 +827,11 @@ impl Listeners {
     ) -> answer::Result<()> {
         self.0.called("RegisterEvent", REGISTRY).await?;
         let sender = header.sender().map(ToString::to_string).unwrap_or_default();
-        let listener = (sender, event);
+        let listener = Listener {
+            name: sender,
+            event,
+            at: Instant::now(),
+        };
         self.0.state.lock().unwrap().status.listeners.push(listener);
         Ok(())
     }
@@ -815,14 +844,11 @@ impl Listeners {
     ) -> answer::Result<Vec<(String, String)>> {
         self.0.called("GetRegisteredEvents", REGISTRY).await?;
         let listeners = self.0.state.lock().unwrap().status.listeners.clone();
-        let live = live(
-            bus,
-            listeners.iter().map(|(name, _)| name.clone()).collect(),
-        )
-        .await?;
+        let live = live(bus, self.0.listeners()).await?;
         Ok(listeners
             .into_iter()
-            .filter(|(name, _)| live.contains(name))
+            .filter(|listener| live.contains(&listener.name))
+            .map(|listener| (listener.name, listener.event))
             .collect())
     }
 }
@@ -851,11 +877,10 @@ impl Launcher {
     #[zbus(property)]
     async fn is_enabled(&self, #[zbus(connection)] bus: &Connection) -> fdo::Result<bool> {
         self.0.called("IsEnabled", "/org/a11y/bus").await?;
-        let (older, on) = {
+        let (older, on, listeners) = {
             let state = self.0.state.lock().unwrap();
-            (state.status.older, state.status.on)
+            (state.status.older, state.status.on, state.status.counted())
         };
-        let listeners = self.0.listeners();
         if on {
             return Ok(true);
         }
