@@ -2,7 +2,7 @@
 title: Client setup
 description: Register niri-computer-use in Claude Code, Pi, Codex or another MCP client, and install the skill.
 sidebar:
-  order: 2
+  order: 3
 ---
 
 niri-computer-use is a stdio MCP server: the client starts `niri-computer-use serve` and talks to it over stdin and stdout. No client needs more than the command. The server finds your niri session itself when its environment lacks `XDG_RUNTIME_DIR`, `NIRI_SOCKET` or `WAYLAND_DISPLAY`, as it does under Codex; see [Session variables](#session-variables).

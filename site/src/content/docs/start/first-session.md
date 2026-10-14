@@ -2,7 +2,7 @@
 title: First session
 description: Bind the stop key, then let an agent look at your desktop and act on it.
 sidebar:
-  order: 3
+  order: 4
 ---
 
 ## Bind the stop key
