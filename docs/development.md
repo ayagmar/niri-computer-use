@@ -448,7 +448,7 @@ A `v*` tag can't be moved or deleted, and a crates.io version can't be replaced,
 3. Tag that commit with a lightweight tag and push the tag:
 
    ```sh
-   version=0.1.0
+   version=0.1.1
    git switch main
    git pull --ff-only
    git log -1 --oneline

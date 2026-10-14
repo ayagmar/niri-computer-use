@@ -111,13 +111,15 @@ cp -r "niri-computer-use-0.1.1-$arch-linux/skills" ~/.local/share/niri-computer-
 
 ## Updating while agents run
 
-Updating while agents run is safe. A [shared](../../concepts/configuration/#shared) engine keeps serving the clients it has with the build it started with, and their `status.engine.replaced` turns `true`. Clients started after the update are served standalone, sharing the lease, the stop flag and the input-dirty marker, and their `status.engine.fallback` names the old engine's PID. Once the old engine's last client has ended it exits, two seconds later, and the next client starts an engine of the new build. Restart your agent sessions to move all of them to the new build. This lists the processes still running:
+Updating while agents run is safe, except from 0.1.0 or older development builds (below). A [shared](../../concepts/configuration/#shared) engine keeps serving the clients it has with the build it started with, and their `status.engine.replaced` turns `true`. Clients started after the update are served standalone, sharing the lease, the stop flag and the input-dirty marker, and their `status.engine.fallback` names the old engine's PID. Once the old engine's last client has ended it exits, two seconds later, and the next client starts an engine of the new build. Restart your agent sessions to move all of them to the new build. This lists the processes still running:
 
 ```sh
 pgrep -a '^niri-computer-u'
 ```
 
 Older development builds keep the lease, the stop flag and the input-dirty marker under `XDG_RUNTIME_DIR` rather than beside niri's socket, and don't take the marker's lock, so an old and a new server on one niri would act as if the other weren't there. When updating from one of those, end every running `niri-computer-use` process first, and start your clients again once nothing is listed.
+
+Updating from 0.1.0 is the same: 0.1.0 types through `wtype`, and an input-dirty marker it writes can't be read by later versions, so a server beside it sends agents to `recover` until it finishes. End every running `niri-computer-use` process before you install, and if `status` then shows `input_dirty`, run `niri-computer-use recover`.
 
 ## Check it
 
