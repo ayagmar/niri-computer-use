@@ -88,12 +88,12 @@ pub(crate) enum Observed {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Effect {
-    /// The field holds the text sent; a state or the value changed; the element or its
+    /// The field holds the text sent; a state, the value or the name changed; the element or its
     /// window went away; or niri saw the element's window change.
     Seen,
     /// `set_element_text`: the field holds other text than was sent.
     Differs,
-    /// `activate_element`: the element's states, and its value when it has one, read the
+    /// `activate_element`: the element's states and name, and its value when it has one, read the
     /// same before and after, and niri saw no change in its window. An action that acts
     /// elsewhere, such as saving a file, looks like this too.
     NoneSeen,
@@ -661,6 +661,7 @@ mod tests {
             states_set: Vec::new(),
             states_cleared: Vec::new(),
             value_changed: None,
+            name_changed: None,
             characters: None,
             window: 1,
         };

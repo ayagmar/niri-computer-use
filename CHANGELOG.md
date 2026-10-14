@@ -7,7 +7,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Added
 
 - `activate_element` and `set_element_text` return `effect`: `seen` when reading the element back showed the action's effect, `differs` when a field holds other text than was sent, `none_seen` when nothing the server can read changed, and `unverified` when it couldn't be read. A read that fails after the action went out is `unverified` with the reason in `detail`, never an error. The audit log keeps `effect` beside `observed`.
-- `activate_element` reads the value of an element that has one, such as a slider or spin button, before and after, and says in `element.value_changed` whether it changed, never the value.
+- `activate_element` reads the value of an element that has one, such as a slider or spin button, before and after, and says in `element.value_changed` whether it changed, never the value. It also compares the element's name, and says in `element.name_changed` whether a button relabelled itself, never either name.
 
 ### Changed
 

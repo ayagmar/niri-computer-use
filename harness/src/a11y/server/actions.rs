@@ -152,7 +152,6 @@ impl Checks<'_, '_> {
         let started = Instant::now();
         let mut took = Vec::new();
         let mut on_return = 0;
-        let mut effects = Vec::new();
         let mut button = String::new();
         for count in 1..=ACTIVATIONS {
             button = self.named(window, Some("button"), files.button)?;
@@ -171,15 +170,8 @@ impl Checks<'_, '_> {
                     "{toolkit:?} activation with element_changes in {elapsed} ms: the button relabelled"
                 );
                 told(self.session, &what, &outcome, relabelled)?;
-                // The relabel is in its window's element changes, so the effect was seen.
-                expect(
-                    field(&outcome, "/effect") == "seen",
-                    "an activation that relabelled its button seen",
-                    &outcome,
-                )?;
             } else {
                 took.push(elapsed);
-                effects.push(field(&outcome, "/effect").clone());
             }
             on_return += u32::from(read_count(self.session, files.count)? == Some(count));
             expect(
@@ -187,20 +179,21 @@ impl Checks<'_, '_> {
                     && field(&outcome, "/observed") == "present"
                     && field(&outcome, "/focus") == "matched"
                     && field(&outcome, "/element/role") == "button"
-                    && field(&outcome, "/element/name").is_null(),
-                "an activation observed present",
+                    && field(&outcome, "/element/name").is_null()
+                    && field(&outcome, "/element/name_changed") == true
+                    && field(&outcome, "/effect") == "seen",
+                "an activation observed present, its relabel seen",
                 &outcome,
             )?;
             self.counted(files.count, count)?;
         }
         took.sort_unstable();
         self.session.log(&format!(
-            "M9b: {toolkit:?} {ACTIVATIONS}/{ACTIVATIONS} activations, each listed first, counted once and present ({on_return} already counted when the call returned), in {:?}; activate_element ms, all but the first, min {:?} median {:?} max {:?}; effects without element_changes: {}",
+            "M9b: {toolkit:?} {ACTIVATIONS}/{ACTIVATIONS} activations, each listed first, counted once and present ({on_return} already counted when the call returned), in {:?}; activate_element ms, all but the first, min {:?} median {:?} max {:?}; each relabel seen, by its name changing",
             started.elapsed(),
             took.first(),
             took.get(took.len() / 2),
-            took.last(),
-            Value::from(effects)
+            took.last()
         ))?;
         let relabelled = self.refused("activate_element", activation(&button, window))?;
         expect(

@@ -1246,7 +1246,8 @@ impl Server {
     /// Does one of an accessible element's own actions without the pointer, so it works
     /// where a click can't aim. The element's window must have keyboard focus and `expect`
     /// must name it. A ref `elements` marked `unbound` is refused: aim at its pixels.
-    /// `observed` is `present` (with `element.states_set`, `states_cleared`, `value_changed`),
+    /// `observed` is `present` (with `element.states_set`, `states_cleared`, `value_changed`,
+    /// `name_changed`),
     /// `gone` (as when a button closes its dialog) or `unknown`; `uncertain`, with
     /// `accepted` null, when the reply was lost: it may have happened. `effect` `none_seen`
     /// means nothing readable changed: check, don't repeat.

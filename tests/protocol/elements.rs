@@ -148,8 +148,9 @@ async fn an_element_of_the_focused_window_is_activated_and_its_text_set_once_eac
         .await;
     assert_eq!(activated["accepted"], true, "{activated}");
     assert_eq!(activated["observed"], "present", "{activated}");
-    // A plain button whose states don't change shows nothing the server can read.
+    // A plain button whose states and name don't change shows nothing the server can read.
     assert_eq!(activated["effect"], "none_seen", "{activated}");
+    assert_eq!(activated["element"]["name_changed"], false, "{activated}");
     assert_eq!(desk.mock.calls("DoAction"), 1);
     let entry = desk.element("Field").await;
     let set = desk
@@ -278,6 +279,32 @@ async fn a_value_changed_with_no_state_change_is_seen() {
     assert!(!stepped.to_string().contains("3.0"), "{stepped}");
     assert_eq!(desk.mock.object("/extra").value, Some(3.0));
     assert_eq!(desk.mock.calls("CurrentValue"), 2);
+}
+
+// A counter button relabels itself and changes no state: compared by states alone it read
+// as `none_seen`. Its names, before and after, reach neither the result nor the audit log.
+#[tokio::test]
+async fn a_button_that_relabels_itself_is_seen_without_its_names() {
+    let counter = Object {
+        counter: Some(41),
+        ..Object::button("PRIVATE-COUNT 0", &["click"])
+    };
+    let mut desk = desk_with("el-relabel", counter).await;
+    let button = desk.element("PRIVATE-COUNT 0").await;
+    let arguments = json!({"element": button, "expect": {"window_id": WINDOW}});
+    let relabelled = desk
+        .server
+        .structured_with("activate_element", arguments)
+        .await;
+    assert_eq!(relabelled["observed"], "present", "{relabelled}");
+    assert_eq!(relabelled["element"]["name_changed"], true, "{relabelled}");
+    assert_eq!(relabelled["effect"], "seen", "{relabelled}");
+    assert_eq!(desk.mock.object("/extra").name, "Count: 42");
+    let audit = std::fs::read_to_string(desk.fixture.audit_log()).unwrap();
+    for text in [relabelled.to_string(), audit] {
+        assert!(!text.contains("PRIVATE-COUNT"), "{text}");
+        assert!(!text.contains("Count: 42"), "{text}");
+    }
 }
 
 // The action already went out when the look afterwards fails: the result says the effect
@@ -2095,7 +2122,8 @@ async fn an_action_list_changed_before_the_last_gate_never_sends_another_action(
 }
 
 /// The calls that read the element.
-const READS: [&str; 6] = [
+const READS: [&str; 7] = [
+    "Name",
     "GetState",
     "GetRole",
     "CharacterCount",
