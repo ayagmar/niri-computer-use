@@ -1,7 +1,10 @@
 //! What the server needs to know about processes, read from `/proc`. The root is a
 //! parameter so tests can use a fake `/proc`.
 
+use std::io::Read as _;
 use std::path::Path;
+
+use tokio::time::Instant;
 
 /// One process, as `/proc/<pid>/stat` describes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,19 +77,45 @@ pub(crate) fn comm(proc_root: &Path, pid: u32) -> Option<String> {
     Some(comm.trim_end().to_owned())
 }
 
-/// Files every Chromium-family build ships beside its executable: Chromium's ICU data and
-/// V8's context snapshot. Chromium, Chrome, Electron and CEF apps all do.
+/// Files every Chromium-family process maps: Chromium's ICU data, and V8's context
+/// snapshot. Chromium, Chrome, Electron and CEF apps all ship them.
 const CHROMIUM_FILES: [&str; 2] = ["icudtl.dat", "v8_context_snapshot.bin"];
+/// How much of `/proc/<pid>/maps` is read. A Chromium browser that ran for days had 223 KB.
+const MAPS_LIMIT: u64 = 4 << 20;
 
-/// Whether `pid` runs a Chromium-family executable, one with `CHROMIUM_FILES` beside it, as
-/// `/proc/<pid>/exe` names it. A process that can't be read, as another user's, or whose
-/// executable isn't at that path here, as one in a sandbox's own filesystem, isn't.
-pub(crate) fn chromium_family(proc_root: &Path, pid: u32) -> bool {
-    let Ok(exe) = std::fs::read_link(proc_root.join(pid.to_string()).join("exe")) else {
-        return false;
-    };
-    exe.parent()
-        .is_some_and(|dir| CHROMIUM_FILES.iter().any(|file| dir.join(file).is_file()))
+/// Whether `pid` is a Chromium-family process, one that maps one of `CHROMIUM_FILES`, by
+/// `deadline`. Reading `/proc/<pid>/maps` waits for the process's memory map, so it runs
+/// on a thread of its own, abandoned at the deadline, which neither the runtime's shutdown
+/// nor the server's exit waits for. A process that can't be read in time, as another
+/// user's or a stuck one, isn't.
+pub(crate) async fn chromium_family(proc_root: &Path, pid: u32, deadline: Instant) -> bool {
+    let maps = proc_root.join(pid.to_string()).join("maps");
+    let (sender, read) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || sender.send(read_maps(&maps)));
+    matches!(
+        tokio::time::timeout_at(deadline, read).await,
+        Ok(Ok(Some(text))) if maps_chromium(&text)
+    )
+}
+
+/// At most `MAPS_LIMIT` bytes of a `/proc/<pid>/maps`.
+fn read_maps(maps: &Path) -> Option<String> {
+    let mut text = Vec::new();
+    std::fs::File::open(maps)
+        .ok()?
+        .take(MAPS_LIMIT)
+        .read_to_end(&mut text)
+        .ok()?;
+    Some(String::from_utf8_lossy(&text).into_owned())
+}
+
+/// Whether the text of a `/proc/<pid>/maps` maps one of `CHROMIUM_FILES`, removed since or
+/// not.
+fn maps_chromium(maps: &str) -> bool {
+    maps.lines()
+        .filter_map(|line| line.rsplit_once('/'))
+        .map(|(_, name)| name.strip_suffix(" (deleted)").unwrap_or(name))
+        .any(|name| CHROMIUM_FILES.contains(&name))
 }
 
 #[cfg(test)]
@@ -156,38 +185,61 @@ mod tests {
     }
 
     #[test]
-    fn tells_a_chromium_family_executable_by_the_files_beside_it() {
+    fn tells_a_chromium_family_process_by_the_files_it_maps() {
+        let line = |path: &str| format!("7f00-7f10 r--p 00000000 103:02 4242      {path}\n");
+        let maps = |paths: &[&str]| paths.iter().map(|path| line(path)).collect::<String>();
+        assert!(maps_chromium(&maps(&[
+            "/usr/lib/libc.so.6",
+            "/opt/helium/icudtl.dat"
+        ])));
+        assert!(maps_chromium(&maps(&[
+            "/opt/app dir/v8_context_snapshot.bin"
+        ])));
+        // Upgraded under the running app.
+        assert!(maps_chromium(&maps(&["/opt/vesktop/icudtl.dat (deleted)"])));
+        assert!(!maps_chromium(&maps(&[
+            "/usr/bin/foot",
+            "/usr/lib/libc.so.6",
+            "[heap]"
+        ])));
+        assert!(!maps_chromium(&maps(&[
+            "/opt/x/icudtl.dat.bak",
+            "/opt/x/not_icudtl.dat"
+        ])));
+        assert!(!maps_chromium("7f00-7f10 rw-p 00000000 00:00 0\n"));
+    }
+
+    #[tokio::test]
+    async fn reads_whether_a_process_maps_chromium_files_and_no_process_is_none() {
         let root = crate::test_support::fresh_dir("procs-chromium");
-        for (app, file) in [
-            ("browser", Some("icudtl.dat")),
-            ("electron", Some("v8_context_snapshot.bin")),
-            ("terminal", None),
-        ] {
-            std::fs::create_dir(root.join(app)).unwrap();
-            std::fs::write(root.join(app).join(app), b"").unwrap();
-            if let Some(file) = file {
-                std::fs::write(root.join(app).join(file), b"").unwrap();
-            }
+        for (pid, path) in [(5, "/opt/helium/icudtl.dat"), (6, "/usr/bin/foot")] {
+            std::fs::create_dir(root.join(pid.to_string())).unwrap();
+            let line = format!("7f00-7f10 r--p 00000000 103:02 4242      {path}\n");
+            std::fs::write(root.join(format!("{pid}/maps")), line).unwrap();
         }
-        // A directory named like the file doesn't count.
-        std::fs::create_dir(root.join("terminal/icudtl.dat")).unwrap();
-        for (pid, exe) in [
-            (5, "browser/browser"),
-            (6, "electron/electron"),
-            (7, "terminal/terminal"),
-            (8, "gone/gone"),
-        ] {
-            std::fs::create_dir_all(root.join(format!("proc/{pid}"))).unwrap();
-            std::os::unix::fs::symlink(root.join(exe), root.join(format!("proc/{pid}/exe")))
-                .unwrap();
-        }
-        let proc_root = root.join("proc");
-        assert!(chromium_family(&proc_root, 5));
-        assert!(chromium_family(&proc_root, 6));
-        assert!(!chromium_family(&proc_root, 7));
-        // An executable not at its path here, as in a sandbox, and no process at all.
-        assert!(!chromium_family(&proc_root, 8));
-        assert!(!chromium_family(&proc_root, 9));
+        let deadline = Instant::now() + std::time::Duration::from_secs(1);
+        assert!(chromium_family(&root, 5, deadline).await);
+        assert!(!chromium_family(&root, 6, deadline).await);
+        assert!(!chromium_family(&root, 7, deadline).await);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_maps_read_that_doesnt_finish_by_the_deadline_isnt_chromium() {
+        let root = crate::test_support::fresh_dir("procs-chromium-stuck");
+        std::fs::create_dir(root.join("5")).unwrap();
+        // A FIFO with no writer blocks the open, as a stuck process's memory map can.
+        let mode = rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR;
+        rustix::fs::mkfifoat(rustix::fs::CWD, root.join("5/maps"), mode).unwrap();
+        let started = Instant::now();
+        let deadline = started + std::time::Duration::from_millis(100);
+        assert!(!chromium_family(&root, 5, deadline).await);
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        // Lets the abandoned open finish.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(root.join("5/maps"))
+            .unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
 }

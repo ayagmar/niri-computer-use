@@ -361,6 +361,7 @@ make nested-chromium-a11y
 
 Before anything else, it checks that `DBUS_SESSION_BUS_ADDRESS` names a socket under the run's directory, so `org.a11y.Status` is the nested session's and never yours; the run only reads it, with `busctl`. It starts `at-spi2-registryd` as `make nested-a11y` does, then Noctalia and one server holding the lease. Each browser opens `harness/fixtures/chromium-a11y.html` with a profile of its own under `TEST_DIR`: a labelled field, a button that writes `sent` into it, and with `?rows=N`, N table rows of a link, a check box and a button. The page's title carries the row count and the field's value. The run fails unless:
 
+1. The first browser's window process maps `icudtl.dat` or `v8_context_snapshot.bin`, as its `/proc/<pid>/maps` shows, which is how the server tells a Chromium-family app.
 1. `IsEnabled` is false before the server, and a browser started then is refused with `not_accessible`, whose detail says the server turned accessibility on, after which `IsEnabled` is true.
 2. A browser started after that is on the registry, `elements` lists its field and button, and `activate_element` on the button changes the page's title to the field's `sent`.
 3. The first browser is still refused, with a detail that says accessibility is on.

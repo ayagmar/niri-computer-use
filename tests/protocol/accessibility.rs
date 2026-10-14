@@ -22,7 +22,8 @@ const BUDGET: Duration = Duration::from_secs(3);
 enum OffBus {
     /// A Chromium-family app: its executable has Chromium's ICU data beside it.
     Chromium,
-    /// Any other app, such as a terminal.
+    /// Any other app, such as a terminal, though a file named as Chromium's lies beside its
+    /// executable.
     Other,
 }
 
@@ -100,8 +101,10 @@ impl Desk {
     }
 }
 
-/// A process of its own for an app off the bus: a copy of `sleep`, so that its
-/// `/proc/<pid>/exe` is the copy, beside Chromium's ICU data for a Chromium-family one.
+/// A process of its own for an app off the bus: a copy of `sleep`, with a file named as
+/// Chromium's ICU data beside it. A Chromium-family one maps that file, as Chromium does:
+/// it is a copy of the C library the test runs on, preloaded. Any other app leaves it
+/// unmapped, as the files of an unrelated install beside a program are.
 #[expect(
     clippy::disallowed_methods,
     reason = "the test runs the window's app itself, as the desktop would"
@@ -109,14 +112,27 @@ impl Desk {
 fn app(fixture: &Fixture, off_bus: OffBus) -> tokio::process::Child {
     let exe = fixture.path("app/app");
     fixture::copy_of("sleep", &exe);
+    let icu = exe.with_file_name("icudtl.dat");
+    fixture::copy_file(&c_library(), &icu);
+    let mut command = tokio::process::Command::new(exe);
     if matches!(off_bus, OffBus::Chromium) {
-        fixture::file_at(&exe.with_file_name("icudtl.dat"), "", 0o644);
+        command.env("LD_PRELOAD", &icu);
     }
     let _spawning = SPAWNING.lock().unwrap_or_else(PoisonError::into_inner);
-    tokio::process::Command::new(exe)
-        .arg("60")
-        .kill_on_drop(true)
-        .spawn()
+    command.arg("60").kill_on_drop(true).spawn().unwrap()
+}
+
+/// The C library this test process has mapped.
+fn c_library() -> std::path::PathBuf {
+    let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
+    maps.lines()
+        .filter_map(|line| line.split_whitespace().nth(5))
+        .find(|path| {
+            std::path::Path::new(path)
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("libc.so"))
+        })
+        .map(std::path::PathBuf::from)
         .unwrap()
 }
 

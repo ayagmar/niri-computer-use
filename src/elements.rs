@@ -407,8 +407,10 @@ async fn off_bus(
     (pid, app_id): (i32, Option<&str>),
     deadline: Instant,
 ) -> ToolError {
-    let chromium =
-        u32::try_from(pid).is_ok_and(|pid| procs::chromium_family(Path::new("/proc"), pid));
+    let chromium = match u32::try_from(pid) {
+        Ok(pid) => procs::chromium_family(Path::new("/proc"), pid, deadline).await,
+        Err(_) => false,
+    };
     if !chromium {
         return a11y::not_accessible(a11y::off_bus(pid));
     }

@@ -5,11 +5,13 @@
 //! accessibility on with a listener of its own when `elements` finds a window's app off
 //! the bus, and asks a frame without its tree for its attributes.
 //!
-//! The run checks that a browser started while accessibility was off isn't listed and is
-//! reported as needing a restart, that the server turned accessibility on, that a browser
-//! started after lists the fixture's field and button and that activating the button
-//! reaches the page, that a fresh page's first listing says the page is building its tree,
-//! and that accessibility goes back off when the server ends. It logs what listing a long
+//! The run checks that the browser's window process maps Chromium's ICU data or V8
+//! snapshot, by which the server tells a Chromium-family app, that a browser started while
+//! accessibility was off isn't listed and is reported as needing a restart, that the server
+//! turned accessibility on, that a browser started after lists the fixture's field and
+//! button and that activating the button reaches the page, that a fresh page's first
+//! listing says the page is building its tree, and that accessibility goes back off when
+//! the server ends. It logs what listing a long
 //! page costs and what a running browser does when accessibility turns on or off.
 //! Everything runs on the nested session bus, which is checked to be under `TEST_DIR/run`
 //! first.
@@ -40,6 +42,9 @@ const WAIT: Duration = Duration::from_secs(5);
 /// How long a browser is watched for a change after accessibility turns on or off.
 const WATCH: Duration = Duration::from_secs(3);
 const TERM_GRACE: Duration = Duration::from_secs(5);
+/// The files the server looks for in a process's `/proc` maps to tell a Chromium-family
+/// app.
+const CHROMIUM_FILES: [&str; 2] = ["icudtl.dat", "v8_context_snapshot.bin"];
 /// Long pages: one within the walk's node cap, one past it.
 const ROWS: [u32; 2] = [300, 2000];
 
@@ -57,6 +62,7 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str, browser: &str) -> Res
     mcp::ready(session, &mut client, "chromium-a11y-ready", READY)?;
     structured(&client.call(session, "acquire_desktop", json!({}))?)?;
     let before = Page::open(session, browser, "before", 0)?;
+    before.mapped(session)?;
     before.refused(session, &mut client, "was off, so the server turned it on")?;
     status.expect(session, true, "after the server's listener")?;
     let after = Page::open(session, browser, "after", 0)?;
@@ -165,6 +171,31 @@ impl Page {
             window,
             name: name.to_owned(),
         })
+    }
+
+    /// Logs which of Chromium's files the browser's window process maps, by which the
+    /// server tells a Chromium-family app, and fails when it maps neither.
+    fn mapped(&self, session: &mut Session<'_>) -> Result<()> {
+        let pid = self.pid()?;
+        let maps = std::fs::read_to_string(format!("/proc/{pid}/maps"))
+            .context("read the browser's /proc maps")?;
+        let mut mapped: Vec<&str> = maps
+            .lines()
+            .filter_map(|line| line.rsplit_once('/'))
+            .map(|(_, name)| name)
+            .filter(|name| CHROMIUM_FILES.contains(name))
+            .collect();
+        mapped.dedup();
+        if mapped.is_empty() {
+            return Err(Failure::new(format!(
+                "{}'s process {pid} maps none of {CHROMIUM_FILES:?}",
+                self.name
+            )));
+        }
+        session.log(&format!(
+            "Chromium a11y: {}'s process maps {mapped:?}",
+            self.name
+        ))
     }
 
     fn pid(&self) -> Result<i32> {
