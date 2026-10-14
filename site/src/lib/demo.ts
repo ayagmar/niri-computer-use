@@ -1,7 +1,8 @@
-// The demo recordings in `public/demo/`. A recording is `<name>.webm`, `<name>.mp4`,
-// `<name>.png` (a still, which also gives the video's size) and `<name>.json` (the prompt and
-// the calls, timed from the start of the video). Replacing those four files replaces the
-// recording on the site.
+// The demo recordings. A recording is `public/demo/<name>.json` (the prompt and the calls,
+// timed from the start of the video), `public/demo/<name>.png` (a still of the desktop with
+// the caption band `scripts/demo-encode.py` draws under it) and `public/clips/<name>.mp4`,
+// the desktop alone at 1280×720, which the home page plays. Replacing those files replaces
+// the recording on the site.
 import type { ImageMetadata } from 'astro';
 import { getImage } from 'astro:assets';
 
@@ -21,21 +22,16 @@ export interface Call {
 export interface Run {
 	prompt: string;
 	calls: Call[];
-	/** How the recording was made, shown under its calls. */
+	/** How the recording was made. */
 	note?: string;
-	/** The recorded output, such as `winit · 1280×720 at 0,0`. */
+	/** The recorded output, such as `DP-1 · 2560×1440, shown at 1920×1080`. */
 	output?: string;
 }
 
-export interface Demo extends Run {
+export interface Clip extends Run {
 	name: string;
-	width: number;
-	height: number;
-	/** Poster images by width, AVIF. */
+	/** The desktop's still without the caption band, AVIF, by width. */
 	poster: { src: string; srcset: string };
-	/** The phone's crop of the poster by width, AVIF, when the recording has one. */
-	cropped?: string;
-	webm: string;
 	mp4: string;
 }
 
@@ -45,59 +41,37 @@ const stills = import.meta.glob<ImageMetadata>(['../../public/demo/*.png', '!../
 	import: 'default',
 });
 
-/** Widths the stills are made at. */
-export const STILL_WIDTHS = [640, 800, 960, 1280, 1920];
+/** Widths the poster is made at. */
+const POSTER_WIDTHS = [480, 800, 1280];
 
-/** Which half of the recording's width a phone shows, so it stays legible: the left, middle
- * or right half. */
-export type Crop = 'left' | 'centre' | 'right';
-
-/** How far a crop's left edge sits from the recording's, as a fraction of its width. */
-export const CROP_LEFT: Record<Crop, number> = { left: 0, centre: 0.25, right: 0.5 };
-
-/** Widths the phone's crop is made at, up to the half of the recording it shows. */
-const CROP_WIDTHS = [480, 800, 960];
-
-export async function loadDemo(name: string, widths: number[], crop?: Crop): Promise<Demo> {
+export async function loadClip(name: string): Promise<Clip> {
 	const run = runs[`../../public/demo/${name}.json`];
 	const still = stills[`../../public/demo/${name}.png`];
 	if (!run || !still) throw new Error(`public/demo/${name}.json or .png is missing`);
+	// The desktop is 16:9 at the top of the still; the caption band is cut off.
 	const posters = await Promise.all(
-		widths.map((width) => getImage({ src: still, width, format: 'avif', quality: 50 })),
+		POSTER_WIDTHS.map((width) =>
+			getImage({
+				src: still,
+				width,
+				height: Math.round((width * 9) / 16),
+				fit: 'cover',
+				position: 'top',
+				format: 'avif',
+				quality: 55,
+			}),
+		),
 	);
 	const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
 	return {
 		...run,
 		name,
-		width: still.width,
-		height: still.height,
 		poster: {
-			src: posters.at(-1)!.src,
-			srcset: posters.map((poster, index) => `${poster.src} ${widths[index]}w`).join(', '),
+			src: posters[1].src,
+			srcset: posters.map((poster, index) => `${poster.src} ${POSTER_WIDTHS[index]}w`).join(', '),
 		},
-		cropped: crop && (await cropped(still, crop)),
-		webm: `${base}demo/${name}.webm`,
-		mp4: `${base}demo/${name}.mp4`,
+		mp4: `${base}clips/${name}.mp4`,
 	};
-}
-
-/** Half the still's width at its full height, cut where `crop` says: the same part of the
- * frame the video shows at twice the width of a phone. */
-async function cropped(still: ImageMetadata, crop: Crop): Promise<string> {
-	const images = await Promise.all(
-		CROP_WIDTHS.map((width) =>
-			getImage({
-				src: still,
-				width,
-				height: Math.round((width * still.height * 2) / still.width),
-				fit: 'cover',
-				position: crop,
-				format: 'avif',
-				quality: 50,
-			}),
-		),
-	);
-	return images.map((image, index) => `${image.src} ${CROP_WIDTHS[index]}w`).join(', ');
 }
 
 /** Who holds the lease after each call: taken by `acquire_desktop`, given back by

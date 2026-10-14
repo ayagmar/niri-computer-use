@@ -1,15 +1,17 @@
 ---
-// The home page. It sits outside Starlight so the first view carries only its own styles;
-// the docs share its colours, type and wordmark through `styles/tokens.css`.
+// The home page, set as a datasheet: a running head, timing diagrams drawn from real
+// sessions, tables for what the server answers and refuses, then install. It sits outside
+// Starlight and loads only its own styles; `styles/tokens.css` keeps its theme and
+// crossfade in step with the docs.
 import '@fontsource-variable/archivo/wdth.css';
 import '../generated/archivo-text.css';
 import '@fontsource-variable/jetbrains-mono/wght.css';
 import '../styles/tokens.css';
 import archivo from '../generated/archivo-text.woff2?url';
-import archivoText from '../generated/archivo-text.json';
-import Stage from '../components/home/Stage.astro';
+import Timing from '../components/home/Timing.astro';
+import Result from '../components/home/Result.astro';
+import Gates from '../components/home/Gates.astro';
 import Code from '../components/home/Code.astro';
-import { loadDemo } from '../lib/demo';
 import { home } from '../lib/home';
 import { siteRoot } from '../lib/markdown';
 
@@ -18,8 +20,7 @@ const link = (path: string) => `${base}${path}`;
 const canonical = siteRoot();
 const og = new URL('demo/og.png', canonical).href;
 const github = 'https://github.com/ayagmar/niri-computer-use';
-// The frame in the headline shows this still until the recording itself takes its place.
-const slotStill = (await loadDemo('errand', [480])).poster.src;
+const { sessions, result, gates, limits, requirements, install } = home;
 ---
 
 <!doctype html>
@@ -41,203 +42,152 @@ const slotStill = (await loadDemo('errand', [480])).poster.src;
 		<meta property="og:image:width" content="1280" />
 		<meta property="og:image:height" content="640" />
 		<meta name="twitter:card" content="summary_large_image" />
-		<meta name="theme-color" content="#e6e8e3" media="(prefers-color-scheme: light)" />
-		<meta name="theme-color" content="#161917" media="(prefers-color-scheme: dark)" />
-		{/* The theme the docs pages store, or the system's: the same rule as Starlight's. */}
+		<meta name="theme-color" content="#f4f5f2" media="(prefers-color-scheme: light)" />
+		<meta name="theme-color" content="#0f1110" media="(prefers-color-scheme: dark)" />
+		{/* The theme the docs pages store, or the system's; `js` for what only works with the
+		    script, and `sweep` to hold the first diagram back until it draws itself in. */}
 		<script is:inline>
-			document.documentElement.dataset.theme =
+			const root = document.documentElement;
+			root.dataset.theme =
 				localStorage.getItem('starlight-theme') ||
 				(matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+			root.classList.add('js');
+			if (matchMedia('(prefers-reduced-motion: no-preference)').matches) root.classList.add('sweep');
 		</script>
 	</head>
 	<body>
 		<a class="skip" href="#main">Skip to content</a>
-		<header class="top">
-			<a class="name" href={base} aria-current="page">niri-computer-use</a>
-			<nav aria-label="Site">
-				<a href={link('start/install/')}>Docs</a>
-				<a href={github}>GitHub</a>
-				<button class="theme" type="button" data-theme-toggle aria-label="Use the dark theme">
-					<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="5.5"></circle><path d="M12 6.5a5.5 5.5 0 0 1 0 11z"></path></svg>
-				</button>
-			</nav>
-		</header>
+		<div class="sheet">
+			<header class="top">
+				<a class="name" href={base} aria-current="page">niri-computer-use</a>
+				<span class="running">{home.running}</span>
+				<nav aria-label="Site">
+					<a href={link('start/install/')}>Docs</a>
+					<a href={github}>GitHub</a>
+					<button class="theme" type="button" data-theme-toggle aria-label="Use the dark theme">
+						<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="5.5"></circle><path d="M12 6.5a5.5 5.5 0 0 1 0 11z"></path></svg>
+					</button>
+					<a class="button small" href="#install">Install</a>
+				</nav>
+			</header>
+			<main id="main">
+				<section class="hero" aria-labelledby="hero-title">
+					<h1 id="hero-title"><span>{home.headline}</span> <em>{home.stopline}</em></h1>
+					<div class="lede">
+						<p>{home.lede}</p>
+						<div class="actions">
+							<a class="button" href="#install">Install</a>
+							<a class="more" href={link(home.safety.link)}>{home.safety.text}</a>
+						</div>
+					</div>
+				</section>
+				<Timing items={sessions.items} caption={sessions.caption} note={sessions.note} try={sessions.try} />
 
-		<main id="main">
-			<section class="hero" aria-labelledby="hero-title">
-				<h1 class="poster" id="hero-title">
-					<span class="line">{home.headline[0]} <span class="slot" data-slot aria-hidden="true" style={`--slot-still: url(${slotStill})`}></span></span>
-					<span class="line">{home.headline[1]}</span>
-				</h1>
-				<div class="lede">
-					<p>{home.lede}</p>
-					<a class="button" href="#install">Install</a>
-				</div>
-			</section>
+				<section class="part" aria-labelledby="result-title">
+					<div class="part-head">
+						<h2 id="result-title">{result.headline}</h2>
+						<p>{result.lede}</p>
+					</div>
+					<Result
+						code={result.code}
+						fields={result.fields}
+						source={result.source}
+						sourceLink={`${github}/blob/main/docs/results/readme-example.md`}
+					/>
+					<a class="more" href={link(result.more.link)}>{result.more.text}</a>
+				</section>
 
-			<div class="run" data-morph>
-				<Stage
-					name="errand"
-					crop="right"
-					sizes="100vw"
-					label="The agent puts two screenshots into a new folder in Files, then hands focus back."
-					note={home.note}
-				/>
-			</div>
-			{
-				/* The frame in the headline is the recording itself, drawn small. Where the recording
-				   sits in the first view (a phone held upright), it drops from the frame into place
-				   as the page opens; where it sits below the first view, it grows from the frame into
-				   place as the page scrolls. This runs before the first paint, so the frame starts in
-				   the headline, and again once the text face has loaded and on every resize.
+				<section class="part" aria-labelledby="gates-title">
+					<div class="part-head">
+						<h2 id="gates-title">{gates.headline}</h2>
+						<p>{gates.lede}</p>
+					</div>
+					<Gates items={gates.items} pass={gates.pass} note={gates.note} />
+				</section>
 
-				   Before the text face loads the frame may sit on another line, so with motion on, it
-				   waits for the cut face itself, found by its unicode-range. Loading the family by
-				   name would fetch Fontsource's full face too, which covers the same characters, and
-				   `document.fonts.status` can read `loaded` before the face is even asked for.
-
-				   The comments stay here, out of the inline scripts, which ship as written: the
-				   page's HTML has to fit the first round trip (see DESIGN.md). */
-			}
-			<script is:inline define:vars={{ textRange: archivoText.unicodeRange }}>
-				(() => {
-					const run = document.querySelector('[data-morph]');
-					const frame = run.querySelector('[data-frame]');
-					const slot = document.querySelector('[data-slot]');
-					const motion = matchMedia('(prefers-reduced-motion: no-preference)');
-					let dropped = false;
-					const place = () => {
-						if (dropped) return;
-						run.classList.remove('morph');
-						if (!motion.matches) return;
-						const to = frame.getBoundingClientRect();
-						const from = slot.getBoundingClientRect();
-						const top = to.top + scrollY;
-						run.style.setProperty('--from-x', `${from.left - to.left}px`);
-						run.style.setProperty('--from-y', `${from.top - to.top}px`);
-						run.style.setProperty('--from-scale', `${from.width / to.width}`);
-						if (top + to.height * 0.4 < innerHeight) {
-							dropped = true;
-							run.classList.add('drop');
-						} else if (CSS.supports('animation-timeline: scroll()')) {
-							const end = Math.max(innerHeight * 0.4, top - Math.max(0, (innerHeight - to.height) / 2));
-							run.style.setProperty('--morph-end', `${end}px`);
-							run.classList.add('morph');
+				<section class="part" aria-labelledby="limits-title">
+					<div class="part-head">
+						<h2 id="limits-title">{limits.headline}</h2>
+					</div>
+					<div class="limits">
+						{
+							[limits.enforces, limits.misses].map((group) => (
+								<div>
+									<h3>{group.title}</h3>
+									<ul>
+										{group.items.map((item) => (
+											<li>{item}</li>
+										))}
+									</ul>
+								</div>
+							))
 						}
-					};
-					const codes = (range) =>
-						range
-							.split(',')
-							.map((part) => part.trim().slice(2).split('-').map((hex) => parseInt(hex, 16)).join('-'))
-							.join();
-					const cut = [...document.fonts].find((face) => codes(face.unicodeRange) === codes(textRange));
-					if (!motion.matches || cut?.status === 'loaded') place();
-					else {
-						run.classList.add('wait');
-						(cut ? cut.load() : document.fonts.ready)
-							.catch(() => {})
-							.then(() => {
-								run.classList.remove('wait');
-								place();
-							});
-					}
-					let pending = 0;
-					addEventListener('resize', () => {
-						cancelAnimationFrame(pending);
-						pending = requestAnimationFrame(place);
-					});
-					motion.addEventListener('change', place);
-				})();
-			</script>
-
-			<section class="stop" aria-labelledby="stop-title">
-				<h2 class="poster" id="stop-title">
-					<span class="line">{home.stop.headline[0]} <button class="key" type="button" data-key aria-label="Stop key: replay the moment it was pressed"><span>Esc</span></button></span>
-					<span class="line">{home.stop.headline[1]}</span>
-				</h2>
-				<div class="stop-body">
-					<div class="facts">
-						<p class="lede-text">{home.stop.lede}</p>
-						<ul>
-							{home.stop.facts.map((fact) => <li>{fact}</li>)}
-						</ul>
-						<a class="more" href={link(home.stop.more.link)}>{home.stop.more.text}</a>
 					</div>
-					<div class="stop-run" data-stop>
-						<Stage
-							name="stop"
-							crop="right"
-							sizes="(max-width: 61.99rem) 100vw, 66vw"
-							label="The agent reads niri's releases in the browser. The user runs the stop command, and the agent's next click is refused."
-							note={home.note}
-						/>
+					<a class="more" href={link(limits.more.link)}>{limits.more.text}</a>
+				</section>
+
+				<section class="part" aria-labelledby="needs-title">
+					<div class="part-head">
+						<h2 id="needs-title">{requirements.headline}</h2>
 					</div>
-				</div>
-			</section>
+					<table class="needs">
+						<tbody>
+							{
+								requirements.rows.map(([what, value]) => (
+									<tr>
+										<th scope="row">{what}</th>
+										<td>{value}</td>
+									</tr>
+								))
+							}
+						</tbody>
+					</table>
+				</section>
 
-			<section class="clips" aria-labelledby="clips-title">
-				<h2 class="heading" id="clips-title">{home.clips.headline}</h2>
-				<ul>
-					{
-						home.clips.items.map((clip) => (
-							<li class={`clip clip-${clip.name}`}>
-								<h3>{clip.text}</h3>
-								<Stage
-									name={clip.name}
-									crop={clip.name === 'shell' ? 'centre' : undefined}
-									sizes={clip.name === 'layout' ? '100vw' : '(max-width: 61.99rem) 100vw, 50vw'}
-									label={clip.text}
-								/>
-							</li>
-						))
-					}
-				</ul>
-				<p class="clips-note">{home.note}</p>
-			</section>
-
-			<section class="install" id="install" aria-labelledby="install-title">
-				<h2 class="poster" id="install-title">{home.install.headline}</h2>
-				<p class="lede-text">{home.install.lede}</p>
-				<ol>
-					{
-						home.install.steps.map((step) => (
-							<li>
-								<p>
-									{step.text}
-									{step.more && (
+				<section class="part" id="install" aria-labelledby="install-title">
+					<div class="part-head">
+						<h2 id="install-title">{install.headline}</h2>
+						<p>{install.lede}</p>
+					</div>
+					<ol class="steps">
+						{
+							install.steps.map((step) => (
+								<li>
+									<p>
+										{step.text}
+										{step.more && (
+											<>
+												{' '}
+												<a href={link(step.more.link)}>{step.more.text}</a>
+											</>
+										)}
+									</p>
+									<Code code={step.code} lang={step.lang} />
+									{step.or && (
 										<>
-											{' '}
-											<a href={link(step.more.link)}>{step.more.text}</a>
+											<p>
+												{step.or.text} <a href={link(step.or.more.link)}>{step.or.more.text}</a>
+											</p>
+											<Code code={step.or.code} lang={step.or.lang} />
 										</>
 									)}
-								</p>
-								<Code code={step.code} lang={step.lang} />
-								{step.or && (
-									<>
-										<p>
-											{step.or.text} <a href={link(step.or.more.link)}>{step.or.more.text}</a>
-										</p>
-										<Code code={step.or.code} lang={step.or.lang} />
-									</>
-								)}
-							</li>
-						))
-					}
-				</ol>
-				<a class="more" href={link(home.install.more.link)}>{home.install.more.text}</a>
-			</section>
-		</main>
-
-		<footer class="end">
-			<p class="wordmark" aria-hidden="true">niri-computer-use</p>
-			<nav aria-label="More">
-				<a href={link('start/install/')}>Docs</a>
-				<a href={github}>GitHub</a>
-				<a href={link(home.agents.link)}>{home.agents.text}</a>
-				<a href={`${github}/blob/main/LICENSE`}>MIT license</a>
-			</nav>
-		</footer>
-
+								</li>
+							))
+						}
+					</ol>
+					<a class="more" href={link(install.more.link)}>{install.more.text}</a>
+				</section>
+			</main>
+			<footer class="end">
+				<span class="name">niri-computer-use</span>
+				<nav aria-label="More">
+					<a href={link('start/install/')}>Docs</a>
+					<a href={github}>GitHub</a>
+					<a href={link(home.agents.link)}>{home.agents.text}</a>
+					<a href={`${github}/blob/main/LICENSE`}>MIT license</a>
+				</nav>
+			</footer>
+		</div>
 		<script>
 			// The theme button switches between dark and light and stores the choice where the docs
 			// pages read it.
@@ -254,28 +204,46 @@ const slotStill = (await loadDemo('errand', [480])).poster.src;
 				localStorage.setItem('starlight-theme', next);
 				label();
 			});
-
-			const smooth = matchMedia('(prefers-reduced-motion: no-preference)');
-
-			// The stop key in the headline sinks when the recording's user runs the stop command, and
-			// a press replays the run from a moment before it.
-			const key = document.querySelector<HTMLButtonElement>('[data-key]')!;
-			const stop = document.querySelector<HTMLElement>('[data-stop] [data-stage]')!;
-			const moment = stop.querySelector<HTMLElement>('li[data-you]');
-			stop.addEventListener('ncu-call', (event) => {
-				const pressed = (event as CustomEvent<HTMLElement>).detail.hasAttribute('data-you');
-				key.classList.toggle('pressed', pressed);
-			});
-			key.addEventListener('click', () => {
-				const at = Number(moment?.dataset.start ?? 0);
-				stop.dispatchEvent(new CustomEvent('ncu-seek', { detail: Math.max(0, at - 2.5) }));
-				stop.scrollIntoView({ block: 'nearest', behavior: smooth.matches ? 'smooth' : 'auto' });
-			});
+			// A stop in the diagram marks the headline's promise.
+			document.addEventListener('ncu-stop', () => document.querySelector('h1 em')?.classList.add('hit'));
 		</script>
-</body>
+	</body>
 </html>
 
 <style is:global>
+	/* Paper and ink, a highlighter for what the reader is pointing at, and one red for the
+	   stop key and refused answers. */
+	:root {
+		--sans: 'Archivo Variable', ui-sans-serif, system-ui, sans-serif;
+		--mono: 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace;
+		--ease: cubic-bezier(0.22, 1, 0.36, 1);
+		--paper: #f4f5f2;
+		--ink: #121413;
+		--ink-2: #545a56;
+		--rule: #c8ccc5;
+		--grid: #e3e6e0;
+		--red: #c9281a;
+		--red-lip: #8a1a10;
+		--mark: #fdf0a6;
+		--mark-strong: #ffd60a;
+		--plate: #121413;
+		--plate-ink: #eceee9;
+		--plate-rule: #3a3f3c;
+	}
+
+	:root[data-theme='dark'] {
+		--paper: #0f1110;
+		--ink: #e9ebe6;
+		--ink-2: #a3aaa5;
+		--rule: #343935;
+		--grid: #1c201e;
+		--red: #ff6150;
+		--red-lip: #a3271b;
+		--mark: #39340f;
+		--plate: #1b1e1c;
+		--plate-rule: #3d433f;
+	}
+
 	*,
 	*::before,
 	*::after {
@@ -283,11 +251,28 @@ const slotStill = (await loadDemo('errand', [480])).poster.src;
 	}
 
 	html {
-		background: var(--ncu-ground);
-		color: var(--ncu-ink);
-		font: 400 1.0625rem/1.5 var(--ncu-sans);
+		background: var(--paper);
+		color: var(--ink);
+		font: 400 1rem/1.5 var(--sans);
 		-webkit-text-size-adjust: 100%;
 		text-rendering: optimizeLegibility;
+	}
+
+	/* Over the docs' own, which tokens.css sets on :root. */
+	html:root {
+		caret-color: var(--red);
+		scrollbar-color: var(--ink-2) var(--paper);
+		accent-color: var(--ink);
+	}
+
+	::selection {
+		background: var(--mark-strong);
+		color: #121413;
+	}
+
+	:focus-visible {
+		outline: 2px solid var(--ink);
+		outline-offset: 3px;
 	}
 
 	body {
@@ -307,6 +292,10 @@ const slotStill = (await loadDemo('errand', [480])).poster.src;
 		text-decoration-thickness: 1px;
 	}
 
+	a:hover {
+		text-decoration-thickness: 2px;
+	}
+
 	h1,
 	h2,
 	h3,
@@ -315,71 +304,144 @@ const slotStill = (await loadDemo('errand', [480])).poster.src;
 	ol {
 		margin: 0;
 	}
+
+	.vh {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+	}
 </style>
 
 <style>
 	.skip {
 		position: absolute;
 		left: 1rem;
-		top: 0.75rem;
-		z-index: 3;
+		top: -4rem;
+		z-index: 9;
 		padding: 0.75rem 1rem;
-		background: var(--ncu-ink);
-		color: var(--ncu-ground);
-		border-radius: 999px;
+		background: var(--ink);
+		color: var(--paper);
+		border-radius: 3px;
 	}
 
-	.skip:not(:focus) {
-		width: 1px;
-		height: 1px; /* taste-skill-ignore: hidden until focused, not a rule */
-		padding: 0;
-		overflow: hidden;
-		clip-path: inset(50%);
+	.skip:focus {
+		top: 0.75rem;
+	}
+
+	.sheet {
+		max-width: 86rem;
+		margin: 0 auto;
+		padding: 0 clamp(1rem, 3vw, 2.5rem);
+	}
+
+	.top {
+		display: grid;
+		grid-template-columns: 1fr auto 1fr;
+		align-items: center;
+		gap: 1rem;
+		min-height: 3.5rem;
+		border-bottom: 1px solid var(--ink);
+		font-size: 0.875rem;
+	}
+
+	.name {
+		font-weight: 760;
+		font-stretch: 88%;
+		font-size: 1.125rem;
+		letter-spacing: -0.01em;
+		text-decoration: none;
 		white-space: nowrap;
 	}
 
-	/* The margins and the type every section shares. */
-	.top,
-	.hero,
-	.stop,
-	.clips,
-	.install,
-	.end {
-		padding-inline: var(--margin);
+	.running {
+		color: var(--ink-2);
+		white-space: nowrap;
 	}
 
-	main,
-	.top,
-	.end {
-		--margin: clamp(1rem, 3.2vw, 3rem);
+	.top nav {
+		justify-self: end;
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
 	}
 
-	.poster {
-		font-weight: 860;
-		font-stretch: 70%;
-		font-size: clamp(3.75rem, 17vw, 28rem);
-		line-height: 0.86;
-		letter-spacing: -0.035em;
+	.top nav > a:not(.button) {
+		display: inline-flex;
+		align-items: center;
+		min-height: 2.75rem;
+		padding: 0 0.6rem;
+		font-weight: 550;
+		text-decoration: none;
 	}
 
-	.poster .line {
-		display: block;
+	.top nav > a:not(.button):hover {
+		text-decoration: underline;
 	}
 
-	.heading {
-		font-weight: 820;
-		font-stretch: 72%;
-		font-size: clamp(2.5rem, 7vw, 6rem);
-		line-height: 0.9;
-		letter-spacing: -0.03em;
+	.theme {
+		display: inline-grid;
+		place-items: center;
+		width: 2.75rem;
+		height: 2.75rem;
+		border: 0;
+		background: none;
+		color: inherit;
+		cursor: pointer;
 	}
 
-	.lede-text,
-	.lede p {
-		font-size: clamp(1.125rem, 0.9rem + 0.6vw, 2rem);
-		line-height: 1.35;
-		max-width: 30ch;
-		text-wrap: pretty;
+	.theme svg {
+		width: 1.1rem;
+		height: 1.1rem;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 1.6;
+		transition: transform 400ms var(--ease);
+	}
+
+	.theme path {
+		fill: currentColor;
+		stroke: none;
+	}
+
+	:global([data-theme='dark']) .theme svg {
+		transform: rotate(180deg);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.theme svg,
+		h1 em {
+			transition: none;
+		}
+	}
+
+	.button {
+		display: inline-flex;
+		align-items: center;
+		min-height: 2.75rem;
+		padding: 0 1.4rem;
+		border-radius: 3px;
+		background: var(--ink);
+		color: var(--paper);
+		font-weight: 650;
+		text-decoration: none;
+		transition: transform 140ms var(--ease), background-color 160ms var(--ease);
+	}
+
+	.button.small {
+		margin-left: 0.5rem;
+		min-height: 2.5rem;
+		padding: 0 1rem;
+	}
+
+	.button:hover {
+		background: var(--ink-2);
+	}
+
+	.button:active {
+		transform: scale(0.97);
 	}
 
 	.more {
@@ -389,389 +451,220 @@ const slotStill = (await loadDemo('errand', [480])).poster.src;
 		font-weight: 600;
 	}
 
-	.button {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		min-height: 3.25rem;
-		padding: 0 1.75rem;
-		border-radius: 999px;
-		background: var(--ncu-ink);
-		color: var(--ncu-ground);
-		font-weight: 650;
-		font-size: 1rem;
-		text-decoration: none;
-		transition:
-			transform 140ms var(--ncu-ease),
-			background-color 180ms ease;
-	}
-
-	.button:hover {
-		background: var(--ncu-ink-2);
-	}
-
-	.button:active {
-		transform: scale(0.97);
-	}
-
-	/* Header */
-	.top {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0 0.5rem;
-		padding-block: 0.5rem;
-	}
-
-	.name {
-		display: inline-flex;
-		align-items: center;
-		min-height: 2.75rem;
-		font-weight: 760;
-		font-stretch: 88%;
-		font-size: clamp(1.0625rem, 1rem + 0.3vw, 1.25rem);
-		white-space: nowrap;
-		letter-spacing: -0.01em;
-		text-decoration: none;
-		view-transition-name: ncu-name;
-	}
-
-	.top nav {
-		display: flex;
-		align-items: center;
-	}
-
-	.top nav a {
-		display: inline-flex;
-		align-items: center;
-		min-height: 2.75rem;
-		padding: 0 0.45rem;
-		font-weight: 550;
-		text-decoration: none;
-	}
-
-	.top nav a:hover {
-		text-decoration: underline;
-	}
-
-	.theme {
-		display: grid;
-		place-items: center;
-		width: 2.75rem;
-		height: 2.75rem;
-		border: 0;
-		border-radius: 999px;
-		background: none;
-		color: inherit;
-		cursor: pointer;
-	}
-
-	.theme svg {
-		width: 1.25rem;
-		height: 1.25rem;
-		fill: none;
-		stroke: currentColor;
-		stroke-width: 1.6;
-	}
-
-	@media (prefers-reduced-motion: no-preference) {
-		.theme svg {
-			transition: rotate 300ms var(--ncu-ease);
-		}
-	}
-
-	.theme svg path {
-		fill: currentColor;
-		stroke: none;
-	}
-
-	:global([data-theme='dark']) .theme svg {
-		rotate: 180deg;
-	}
-
-	/* Hero: the poster, its frame, and the line and action under it. */
 	.hero {
-		display: flex;
-		flex-direction: column;
-		gap: clamp(2rem, 6vh, 4.5rem);
-		padding-block: clamp(1.25rem, 6vh, 6rem) 1.5rem;
+		padding: clamp(2rem, 6vh, 3.5rem) 0 clamp(1.75rem, 4vh, 2.5rem);
 	}
 
-	/* On a screen wider than tall the poster and its line have the first view to themselves,
-	   and the recording waits below it. */
-	@media (min-aspect-ratio: 5 / 4) and (min-width: 48rem) {
-		.hero {
-			min-height: calc(100svh - 3.75rem);
-			padding-bottom: clamp(1.5rem, 5vh, 3rem);
-		}
+	h1 {
+		font-weight: 780;
+		font-stretch: 84%;
+		font-size: clamp(2.375rem, 1.1rem + 4vw, 4.75rem);
+		line-height: 0.95;
+		letter-spacing: -0.03em;
+		text-wrap: balance;
 	}
 
-	.slot {
+	h1 span,
+	h1 em {
 		display: inline-block;
-		vertical-align: -0.04em;
-		height: 0.74em;
-		aspect-ratio: 8 / 9;
-		background: var(--ncu-plate) var(--slot-still) 100% 0 / 200% auto no-repeat;
 	}
 
-	@media (min-width: 48rem) {
-		.slot {
-			aspect-ratio: 16 / 9;
-			background-position: 0 0;
-			background-size: 100% auto;
-		}
+	h1 em {
+		font-style: normal;
+		color: var(--red);
+		/* A highlighter stroke under the line, drawn when a stop lands in the diagram. */
+		background: linear-gradient(var(--mark-strong), var(--mark-strong)) no-repeat 0 88% / 0% 0.28em;
+		transition: background-size 700ms var(--ease);
+	}
+
+	h1 em:global(.hit) {
+		background-size: 100% 0.28em;
 	}
 
 	.lede {
 		display: flex;
 		flex-wrap: wrap;
-		align-items: end;
 		justify-content: space-between;
-		gap: 1.5rem 3rem;
+		align-items: end;
+		gap: 1.25rem 3rem;
+		margin-top: clamp(1.25rem, 3vh, 1.75rem);
 	}
 
-	/* The recording under the hero, and the frame's journey into it. */
-	.run {
-		position: relative;
-		z-index: 1;
+	.lede p {
+		max-width: 58ch;
+		font-size: clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem);
+		line-height: 1.5;
 	}
 
-	@keyframes grow {
-		from {
-			transform: translate(var(--from-x), var(--from-y)) scale(var(--from-scale));
-		}
-	}
-
-	.run :global([data-frame]) {
-		transform-origin: 0 0;
-	}
-
-	.run.wait :global([data-frame]) {
-		visibility: hidden;
-	}
-
-	.run.morph :global([data-frame]) {
-		animation: grow linear both;
-		will-change: transform;
-	}
-
-	/* Apart from the shorthand, which the minifier would otherwise fold the timeline into, and
-	   above it in the cascade, since the shorthand resets the timeline. */
-	:root .run.morph :global([data-frame]) {
-		animation-timeline: scroll(root);
-		animation-range: 0 var(--morph-end);
-	}
-
-	.run.drop :global([data-frame]) {
-		animation: grow 1100ms cubic-bezier(0.65, 0, 0.15, 1) 400ms both;
-	}
-
-	/* Below the hero, each section's parts rise into place as they scroll into view. */
-	@keyframes rise {
-		from {
-			opacity: 0;
-			translate: 0 2.5rem;
-		}
-	}
-
-	@media (prefers-reduced-motion: no-preference) {
-		.stop .line,
-		.facts > *,
-		.stop-run,
-		.clips .heading,
-		.clip,
-		.install .poster,
-		.install .lede-text,
-		.install li,
-		.wordmark {
-			animation: rise linear both;
-		}
-
-		/* Apart from the shorthand, as for the frame above. */
-		:root :is(.stop .line, .facts > *, .stop-run, .clips .heading, .clip, .install .poster, .install .lede-text, .install li, .wordmark) {
-			animation-timeline: view();
-			animation-range: entry 5% cover 30%;
-		}
-	}
-
-	/* Stop */
-	.stop {
-		padding-block: clamp(6rem, 18vh, 12rem) clamp(4rem, 10vh, 8rem);
-	}
-
-	/* A button sits on the baseline of its label, here centred in the key, 0.3em above its
-	   bottom edge; raised by that much, the key stands on the line's baseline as tall as the
-	   capitals. */
-	.key {
-		display: inline-grid;
-		place-items: center;
-		box-sizing: border-box;
-		vertical-align: 0.28em;
-		height: 0.74em;
-		padding: 0 0.2em;
-		line-height: 1;
-		border: 0;
-		border-radius: 0.09em;
-		border-bottom: 0.08em solid var(--ncu-red-lip);
-		background: var(--ncu-red);
-		color: #fff;
-		font: inherit;
-		cursor: pointer;
-		transition:
-			transform 120ms var(--ncu-ease),
-			border-bottom-width 120ms var(--ncu-ease);
-	}
-
-	.key span {
-		font-size: 0.32em;
-		font-weight: 700;
-		font-stretch: 100%;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
-	}
-
-	.key:active,
-	.key.pressed {
-		transform: translateY(0.06em);
-		border-bottom-width: 0.02em;
-	}
-
-	.key:focus-visible {
-		outline-offset: 0.06em;
-	}
-
-	.stop-body {
-		display: grid;
-		gap: 2.5rem;
-		margin-top: clamp(2.5rem, 6vh, 4.5rem);
-	}
-
-	.facts {
+	.actions {
 		display: flex;
-		flex-direction: column;
-		align-items: start;
-		gap: 1.25rem;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem 1.5rem;
 	}
 
-	.facts ul {
-		list-style: none;
-		padding: 0;
-		display: grid;
-		gap: 0.4rem;
-		font-weight: 600;
-		font-size: 1.25rem;
+	.part {
+		position: relative;
+		margin-top: clamp(4rem, 10vh, 6.5rem);
+		border-top: 2px solid var(--ink);
+		padding-top: 1rem;
 	}
 
-	.stop-run {
-		margin-inline: calc(var(--margin) * -1);
+	/* Each section's rule is drawn across as the section scrolls in. */
+	@supports (animation-timeline: view()) {
+		@media (prefers-reduced-motion: no-preference) {
+			.part {
+				border-top-color: transparent;
+			}
+
+			.part::before {
+				content: '';
+				position: absolute;
+				top: -2px;
+				left: 0;
+				right: 0;
+				height: 2px;
+				background: var(--ink);
+				transform-origin: left;
+				animation: rule linear both;
+				animation-timeline: view();
+				animation-range: entry 10% entry 70%;
+			}
+		}
 	}
 
-	@media (min-width: 62rem) {
-		.stop-body {
-			grid-template-columns: minmax(16rem, 1fr) 2fr;
-			align-items: start;
+	@keyframes rule {
+		from {
+			transform: scaleX(0);
 		}
 
-		.stop-run {
-			margin-inline: 0 calc(var(--margin) * -1);
+		to {
+			transform: scaleX(1);
 		}
 	}
 
-	/* More sessions */
-	.clips {
-		padding-block: clamp(4rem, 10vh, 8rem);
-		background: var(--ncu-raised);
-	}
-
-	.clips ul {
-		list-style: none;
-		padding: 0;
+	.part-head {
 		display: grid;
-		gap: 3rem;
-		margin-top: clamp(2rem, 5vh, 3.5rem);
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
+		gap: 0.75rem 3rem;
+		margin-bottom: 2rem;
 	}
 
-	.clip h3 {
-		font-size: 1.25rem;
-		line-height: 1.25;
+	h2 {
+		font-weight: 760;
+		font-stretch: 84%;
+		font-size: clamp(1.875rem, 1.2rem + 2vw, 2.875rem);
+		line-height: 1;
+		letter-spacing: -0.025em;
+		text-wrap: balance;
+	}
+
+	.part-head p {
+		max-width: 56ch;
+		font-size: 1.0625rem;
+		line-height: 1.5;
+		color: var(--ink-2);
+		padding-top: 0.35rem;
+	}
+
+	.part > .more {
+		margin-top: 0.75rem;
+	}
+
+	.limits {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 2rem 3rem;
+	}
+
+	h3 {
+		font-size: 0.75rem;
 		font-weight: 650;
-		max-width: 26ch;
-		margin-bottom: 1rem;
+		letter-spacing: 0.07em;
+		text-transform: uppercase;
+		color: var(--ink-2);
+		padding-bottom: 0.5rem;
+		border-bottom: 1px solid var(--ink);
 	}
 
-	.clips-note {
-		margin-top: 2rem;
-		color: var(--ncu-ink-2);
-		font-size: 0.875rem;
-		max-width: 46ch;
-	}
-
-	@media (min-width: 62rem) {
-		.clips ul {
-			grid-template-columns: 1fr 1fr;
-			column-gap: clamp(1.5rem, 3vw, 3rem);
-			row-gap: 3rem;
-		}
-
-		.clip-layout {
-			grid-column: 1 / -1;
-		}
-	}
-
-	/* Install */
-	.install {
-		padding-block: clamp(6rem, 16vh, 11rem) clamp(4rem, 10vh, 7rem);
-	}
-
-	.install .lede-text {
-		margin-top: 1.25rem;
-	}
-
-	.install ol {
+	.limits ul {
 		list-style: none;
 		padding: 0;
-		display: grid;
-		gap: 2rem;
-		margin: clamp(2.5rem, 6vh, 4rem) 0 1.5rem;
-		max-width: 60rem;
+	}
+
+	.limits li {
+		padding: 0.65rem 0;
+		border-bottom: 1px solid var(--rule);
+		line-height: 1.5;
+	}
+
+	.needs {
+		width: 100%;
+		border-collapse: collapse;
+		border-top: 1px solid var(--ink);
+	}
+
+	.needs th,
+	.needs td {
+		text-align: left;
+		vertical-align: top;
+		padding: 0.7rem 0;
+		border-bottom: 1px solid var(--rule);
+		line-height: 1.5;
+	}
+
+	.needs th {
+		width: 12rem;
+		padding-right: 2rem;
+		font-weight: 650;
+	}
+
+	.steps {
+		list-style: none;
+		padding: 0;
 		counter-reset: step;
+		display: grid;
+		gap: 1.75rem;
+		max-width: 60rem;
 	}
 
-	.install li p {
+	.steps li {
+		counter-increment: step;
+		display: grid;
+		grid-template-columns: 2.25rem minmax(0, 1fr);
+		gap: 0.6rem 0.5rem;
+	}
+
+	.steps li::before {
+		content: counter(step);
+		grid-row: span 4;
+		font: 700 1.25rem/1.4 var(--mono);
+	}
+
+	.steps p {
+		line-height: 1.5;
+	}
+
+	.steps a {
 		font-weight: 600;
-		font-size: 1.25rem;
-		margin-bottom: 0.6rem;
 	}
 
-	.install li p a {
-		font-weight: 500;
-	}
-
-	/* Footer: the name returns at the width of the page, on the recordings' plate. */
 	.end {
-		padding-block: 3rem 2rem;
-		background: var(--ncu-plate);
-		color: var(--ncu-plate-ink);
-		container-type: inline-size;
-	}
-
-	/* The wordmark set 5.62 times narrower than the footer is as wide as it. */
-	.wordmark {
-		font-weight: 880;
-		font-stretch: 62%;
-		font-size: calc(100cqi / 5.62);
-		line-height: 0.8;
-		letter-spacing: -0.04em;
-		white-space: nowrap;
-		margin-inline: -0.02em;
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: space-between;
+		align-items: center;
+		gap: 1rem;
+		margin-top: clamp(4rem, 10vh, 6rem);
+		padding: 1rem 0 2.5rem;
+		border-top: 1px solid var(--ink);
+		font-size: 0.875rem;
 	}
 
 	.end nav {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0 1.25rem;
-		margin-top: 2rem;
 	}
 
 	.end nav a {
@@ -780,7 +673,33 @@ const slotStill = (await loadDemo('errand', [480])).poster.src;
 		min-height: 2.75rem;
 	}
 
-	.end :focus-visible {
-		outline-color: var(--ncu-plate-ink);
+	@media (max-width: 56rem) {
+		.running {
+			display: none;
+		}
+
+		.top {
+			grid-template-columns: 1fr auto;
+		}
+
+		.part-head,
+		.limits {
+			grid-template-columns: minmax(0, 1fr);
+		}
+	}
+
+	@media (max-width: 30rem) {
+		.top nav > a:not(.button) {
+			padding: 0 0.4rem;
+		}
+
+		.button.small {
+			display: none;
+		}
+
+		.needs th {
+			width: 6.5rem;
+			padding-right: 1rem;
+		}
 	}
 </style>

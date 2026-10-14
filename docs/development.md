@@ -371,6 +371,15 @@ python3 -I scripts/demo-encode.py target/demo/errand/cut --width 1920 --name err
 
 `scripts/demo-encode.py` needs ffmpeg with libx264 and libsvtav1, `rsvg-convert` (librsvg) and `avifenc` (libavif). It scales the desktop to `--width` and draws a caption band under it: the prompt, each call as it went out, a summary of its answer when it came back with its round trip, and the lease's state. For `desktop_state` it names only the focused workspace's windows. After a user command, which prints nothing, the band shows the record's narration marked `#`. It writes an MP4 and an AV1 WebM, `<name>.json` with the calls for the page's text version, optional stills as PNG and AVIF, a GIF for the README, and `og.png`, the link-preview card. Times are seconds into the cut recording.
 
+The home page draws its own calls under each recording from `<name>.json`, so it plays the desktop without the band, from `site/public/clips/<name>.mp4`, and takes its poster from the top of `<name>.png`. Cut the band off the MP4 and keep the 16:9 desktop:
+
+```sh
+ffmpeg -i site/public/demo/errand.mp4 -vf "crop=iw:iw*9/16:0:0,scale=1280:720:flags=lanczos" -an \
+    -c:v libx264 -preset slow -crf 30 -tune animation -pix_fmt yuv420p -movflags +faststart site/public/clips/errand.mp4
+```
+
+The README links `errand.gif`, `errand.png` and `errand.mp4` in `site/public/demo/`, and link previews use `og.png`; the other sessions' MP4 and WebM files aren't used, so delete them once their clips are cut.
+
 `make nested-demo SCENE=<scene>` still plays a scripted scene in a headless nested niri (`errand`, `layout`, `keyboard` and `stop`, against `harness/fixtures/chat.py`, a GTK 4 chat window) and writes the same `frames/` and `timeline.jsonl` to `target/e2e/<run>/`, which `scripts/demo-encode.py` takes at its default width of 1280. It makes the same calls each take, which helps when comparing builds; the site no longer uses it.
 
 ## Real-session pointer check

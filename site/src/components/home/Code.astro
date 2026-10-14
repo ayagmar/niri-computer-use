@@ -34,16 +34,16 @@ const { code, lang } = Astro.props;
 		grid-template-columns: 1fr auto;
 		align-items: start;
 		gap: 0.5rem;
-		padding: 0.5rem 0.5rem 0.5rem clamp(1rem, 2vw, 1.25rem);
-		border-radius: 0.75rem;
-		background: var(--ncu-plate);
-		color: var(--ncu-plate-ink);
+		padding: 0.35rem 0.35rem 0.35rem 1rem;
+		border-radius: 3px;
+		background: var(--plate);
+		color: var(--plate-ink);
 	}
 
 	pre {
 		margin: 0;
-		padding-block: 0.6rem;
-		font: 0.875rem/1.6 var(--ncu-mono);
+		padding-block: 0.65rem;
+		font: 0.8125rem/1.6 var(--mono);
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 	}
@@ -56,19 +56,19 @@ const { code, lang } = Astro.props;
 		min-width: 4.5rem;
 		min-height: 2.75rem;
 		padding: 0 0.9rem;
-		border: 0;
-		border-radius: 999px;
-		background: var(--ncu-plate-raised);
-		color: var(--ncu-plate-ink);
-		font: 600 0.875rem/1 var(--ncu-sans);
+		border: 1px solid var(--plate-rule);
+		border-radius: 3px;
+		background: transparent;
+		color: var(--plate-ink);
+		font: 600 0.8125rem/1 var(--sans);
 		cursor: pointer;
 		transition:
 			background-color 160ms ease,
-			transform 140ms var(--ncu-ease);
+			transform 140ms var(--ease);
 	}
 
 	button:hover {
-		background: var(--ncu-plate-hover);
+		background: var(--plate-rule);
 	}
 
 	button:active {
@@ -76,6 +76,11 @@ const { code, lang } = Astro.props;
 	}
 
 	button:focus-visible {
-		outline-color: var(--ncu-plate-ink);
+		outline-color: var(--plate-ink);
+	}
+
+	/* Without the script there is nothing to copy with; the text stays selectable. */
+	:global(html:not(.js)) button {
+		display: none;
 	}
 </style>

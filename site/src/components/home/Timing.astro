@@ -1,0 +1,1186 @@
+---
+// The recorded sessions, one tab each: the recording, and under it a timing diagram of its
+// calls. The diagram is drawn at build time and reads without JavaScript. The script plays
+// the recording when it comes into view and draws the diagram in step with it, a pen on each
+// trace; a click or the arrow keys pick a call, and the stop key shows what the server would
+// have answered from that moment.
+import { at, loadClip } from '../../lib/demo';
+import { timing, WIDTH, type Label, type Timing } from '../../lib/timing';
+
+interface Props {
+	items: { name: string; tab: string; text: string }[];
+	caption: string;
+	note: string;
+	try: string;
+}
+
+const { items, caption, note, try: tryIt } = Astro.props;
+const clips = await Promise.all(items.map(async (item) => ({ ...item, clip: await loadClip(item.name) })));
+
+/** Units per label row. */
+const ROW = 15;
+const height = (labels: Label[], below: number) => (Math.max(0, ...labels.map((l) => l.row)) + 1) * ROW + below;
+const ms = (value: number | null) => (value === null ? '' : ` · ${value} ms`);
+const LEASE_HIGH = 16;
+const LEASE_LOW = 38;
+
+function geometry(t: Timing) {
+	const callsTop = height(t.calls, 8);
+	const niriTop = height(t.niri, 4);
+	const youTop = Math.max(height(t.you, 6), 22);
+	return { callsTop, callsH: callsTop + 28, niriH: niriTop + 20, youTop, youH: youTop + 22 };
+}
+
+/** The lease as a path: high while held, low when free or taken back. */
+function leasePath(t: Timing) {
+	let d = `M0,${LEASE_LOW}`;
+	for (const step of t.lease.slice(1)) d += ` H${step.x} V${step.state === 'held' ? LEASE_HIGH : LEASE_LOW}`;
+	return `${d} H${WIDTH}`;
+}
+
+const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
+---
+
+<div class="sessions" data-sessions>
+	<div class="head">
+		<p class="caption"><b>Figure 1.</b> {caption}</p>
+		<fieldset class="tabs">
+			<legend class="vh">Session</legend>
+			{
+				clips.map((item, index) => (
+					<label class="tab">
+						<input type="radio" name="session" value={item.name} checked={index === 0} />
+						<span>{item.tab}</span>
+					</label>
+				))
+			}
+		</fieldset>
+	</div>
+	{
+		clips.map((item) => {
+			const t = timing(item.clip);
+			const g = geometry(t);
+			const stopX = t.lease.find((step) => step.state === 'stopped')?.x;
+			const calls = item.clip.calls;
+			const base = g.callsH - 4;
+			return (
+				<article class="panel" data-panel data-duration={t.duration} data-held={JSON.stringify(t.held.map(([a, b]) => [seconds(t, a), seconds(t, b)]))} aria-label={item.tab}>
+					<div class="stage">
+						<figure class="figure">
+							<div class="frame" data-frame data-src={item.clip.mp4} data-label={`Recording: ${item.text}`}>
+								<img class="still" src={item.clip.poster.src} srcset={item.clip.poster.srcset} sizes="(min-width: 84rem) 56rem, calc(100vw - 2rem)" alt="" width="1280" height="720" loading="lazy" decoding="async" />
+								<noscript>
+									<video preload="none" muted playsinline controls poster={item.clip.poster.src} width="1280" height="720" aria-label={`Recording: ${item.text}`}>
+										<source src={item.clip.mp4} type="video/mp4" />
+									</video>
+								</noscript>
+								<button class="play" type="button" data-play hidden>
+									<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 1.5v9l7.5-4.5z" /></svg>
+									<span>Play recording</span>
+								</button>
+							</div>
+							<figcaption>
+								<b>{item.tab}.</b> {item.text}
+							</figcaption>
+						</figure>
+						<div class="side">
+							<p class="ask">
+								<span>Asked</span> “{item.clip.prompt}”
+							</p>
+							<div class="stopbar" data-stopbar hidden>
+								<button class="key" type="button" data-stop aria-describedby={`try-${item.name}`}>
+									<span>Esc</span>
+								</button>
+								<p id={`try-${item.name}`} data-try>{tryIt}</p>
+							</div>
+						</div>
+					</div>
+					<div class="diagram">
+						<div class="chart" tabindex="0" data-chart aria-label={`Timing diagram of ${calls.length} calls over ${t.duration} seconds. Left and right arrows step through the calls.`}>
+							<div class="grid">
+								<span class="lane">Calls</span>
+								<svg viewBox={`0 0 ${WIDTH} ${g.callsH}`} aria-hidden="true" data-lane="calls" data-high={g.callsTop} data-low={base}>
+									{t.seconds.map((s) => <line class="sec" x1={(WIDTH * s) / t.duration} x2={(WIDTH * s) / t.duration} y1="0" y2={g.callsH} />)}
+									<line class="trace" x1="0" x2={WIDTH} y1={base} y2={base} />
+									{t.calls.map((p) => (
+										<g class:list={['call', { error: p.error }]} data-from={seconds(t, p.x)} data-to={seconds(t, p.x1)} data-after={p.afterStop}>
+											<path class="pulse" d={`M${p.x},${base} V${g.callsTop} H${p.x1} V${base}`} data-x={p.x} data-x1={p.x1} data-top={g.callsTop} data-base={base} />
+											<text x={p.x} y={(p.row + 1) * ROW - 3} class="label" data-t={seconds(t, p.x)}>
+												{p.text}
+											</text>
+										</g>
+									))}
+									<circle class="pen" r="4" cx="0" cy={base} />
+								</svg>
+								<span class="lane">Lease</span>
+								<svg viewBox={`0 0 ${WIDTH} 44`} aria-hidden="true" data-lane="lease">
+									{t.seconds.map((s) => <line class="sec" x1={(WIDTH * s) / t.duration} x2={(WIDTH * s) / t.duration} y1="0" y2="44" />)}
+									{t.held.map(([a, b]) => <rect class="band" x={a} y={LEASE_HIGH} width={b - a} height={LEASE_LOW - LEASE_HIGH} />)}
+									<path class="trace" d={leasePath(t)} />
+									{stopX !== undefined && <path class="trace stop" d={`M${stopX},${LEASE_HIGH} V${LEASE_LOW} H${WIDTH}`} />}
+									{t.lease.slice(1).map((step) => (
+										<text x={step.x + 6} y={step.state === 'held' ? 11 : 32} class:list={['label', { stop: step.state === 'stopped' }]} data-t={seconds(t, step.x)}>
+											{step.state === 'held' ? 'held by the agent' : step.state === 'stopped' ? 'taken back' : 'given back'}
+										</text>
+									))}
+									<g class="sim" data-sim-lease>
+										<rect class="blank" y="0" height="44" />
+										<path class="trace stop" />
+										<text class="label stop" y="32">taken back</text>
+									</g>
+									<circle class="pen" r="4" cx="0" cy={LEASE_LOW} />
+								</svg>
+								<span class="lane">niri saw</span>
+								<svg viewBox={`0 0 ${WIDTH} ${g.niriH}`} aria-hidden="true" data-lane="niri">
+									{t.seconds.map((s) => <line class="sec" x1={(WIDTH * s) / t.duration} x2={(WIDTH * s) / t.duration} y1="0" y2={g.niriH} />)}
+									<line class="base" x1="0" x2={WIDTH} y1={g.niriH - 4} y2={g.niriH - 4} />
+									{t.niri.map((l) => (
+										<g class="event" data-from={seconds(t, l.x)}>
+											<line class="tick" x1={l.x} x2={l.x} y1={l.row * ROW + 2} y2={g.niriH - 4} />
+											<text x={l.x + 5} y={(l.row + 1) * ROW - 3} class="label" data-t={seconds(t, l.x)}>
+												{l.text}
+											</text>
+										</g>
+									))}
+								</svg>
+								<span class="lane">You</span>
+								<svg viewBox={`0 0 ${WIDTH} ${g.youH}`} aria-hidden="true" data-lane="you" data-high={g.youTop} data-low={g.youH - 4}>
+									{t.seconds.map((s) => <line class="sec" x1={(WIDTH * s) / t.duration} x2={(WIDTH * s) / t.duration} y1="0" y2={g.youH} />)}
+									<line class="base" x1="0" x2={WIDTH} y1={g.youH - 4} y2={g.youH - 4} />
+									{t.you.map((p) => (
+										<g class="call you" data-from={seconds(t, p.x)}>
+											<path class="trace you" d={`M${p.x},${g.youH - 4} V${g.youTop} H${p.x1} V${g.youH - 4}`} />
+											<text x={p.x - 6} y={(p.row + 1) * ROW - 3} class="label you" text-anchor="end" data-t={seconds(t, p.x)}>
+												{p.text}
+											</text>
+										</g>
+									))}
+									<g class="sim" data-sim-you>
+										<path class="trace you" />
+										<text class="label you" text-anchor="end" y={ROW - 3}>your stop key</text>
+									</g>
+								</svg>
+								<span class="lane" />
+								<div class="axis" aria-hidden="true">
+									{t.seconds
+										.filter((s) => t.duration <= 14 || s % 2 === 0)
+										.map((s) => (
+											<span style={`left:${(100 * s) / t.duration}%`}>{s} s</span>
+										))}
+								</div>
+								<div class="cover" data-cover />
+								<div class="cursor" data-cursor />
+								<div class="flash" data-flash />
+							</div>
+						</div>
+						<output class="readout" data-readout>
+							<span>{calls.length} calls in {t.duration} s.</span>
+						</output>
+						<details class="list">
+							<summary>All {calls.length} calls, as text</summary>
+							<ol>
+								{calls.map((call) => (
+									<li data-start={call.start} data-kind={call.you ? 'you' : call.error ? 'error' : 'call'}>
+										<time>{at(call.start)}</time>
+										<code class="req">{call.you ? `$ ${call.request}` : `→ ${call.request}`}</code>
+										<code class="ans">{call.you ? `# ${call.answer}` : `← ${call.answer}${ms(call.ms)}`}</code>
+									</li>
+								))}
+							</ol>
+						</details>
+					</div>
+				</article>
+			);
+		})
+	}
+	<p class="note">{note}</p>
+</div>
+
+<script>
+	const still = matchMedia('(prefers-reduced-motion: reduce)');
+	// With Save-Data on, a recording loads only when the reader presses Play.
+	const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData === true;
+	const WIDTH = 1000;
+	type Panel = ReturnType<typeof panel>;
+
+	for (const root of document.querySelectorAll<HTMLElement>('[data-sessions]')) {
+		const radios = [...root.querySelectorAll<HTMLInputElement>('input[name="session"]')];
+		const controls = [...root.querySelectorAll<HTMLElement>('[data-panel]')].map(panel);
+		const current = (): Panel => controls[radios.findIndex((radio) => radio.checked)];
+		let inView = false;
+
+		radios.forEach((radio, index) =>
+			radio.addEventListener('change', () => {
+				controls.forEach((control, other) => other !== index && control.pause());
+				controls[index].begin();
+			}),
+		);
+		// The first session starts once most of its recording is on screen.
+		let begun = false;
+		const frames = new IntersectionObserver((entries) => {
+			if (begun || !entries.some((entry) => entry.isIntersecting)) return;
+			begun = true;
+			frames.disconnect();
+			current().begin();
+		}, { threshold: 0.6 });
+		root.querySelectorAll('[data-frame]').forEach((frame) => frames.observe(frame));
+		new IntersectionObserver(([entry]) => (inView = entry.isIntersecting), { threshold: 0.15 }).observe(root);
+
+		// Escape on the keyboard is the stop key while the diagrams are in view.
+		addEventListener('keydown', (event) => {
+			if (event.key !== 'Escape' || !inView || document.fullscreenElement) return;
+			if ((event.target as HTMLElement).closest('input:not([type=radio]), textarea, select')) return;
+			current().press();
+		});
+	}
+
+	function panel(root: HTMLElement) {
+		const duration = Number(root.dataset.duration);
+		const held: [number, number][] = JSON.parse(root.dataset.held!);
+		const chart = root.querySelector<HTMLElement>('[data-chart]')!;
+		const cover = root.querySelector<HTMLElement>('[data-cover]')!;
+		const cursor = root.querySelector<HTMLElement>('[data-cursor]')!;
+		const flash = root.querySelector<HTMLElement>('[data-flash]')!;
+		const readout = root.querySelector<HTMLOutputElement>('[data-readout]')!;
+		const frameBox = root.querySelector<HTMLElement>('[data-frame]')!;
+		const play = root.querySelector<HTMLButtonElement>('[data-play]')!;
+		const stopbar = root.querySelector<HTMLElement>('[data-stopbar]')!;
+		const key = root.querySelector<HTMLButtonElement>('[data-stop]')!;
+		const hint = root.querySelector<HTMLElement>('[data-try]')!;
+		const hintText = hint.textContent!;
+		const items = [...root.querySelectorAll<HTMLLIElement>('li[data-start]')];
+		const starts = items.map((item) => Number(item.dataset.start));
+		const labels = [...root.querySelectorAll<SVGTextElement>('.label[data-t]')];
+		const calls = [...root.querySelectorAll<SVGGElement>('[data-lane="calls"] .call')];
+		const later = [...root.querySelectorAll<SVGGElement>('.call[data-from], .event[data-from]')];
+		const callsLane = root.querySelector<SVGSVGElement>('[data-lane="calls"]')!;
+		const pens = [...root.querySelectorAll<SVGCircleElement>('.pen')];
+		const simLease = root.querySelector<SVGGElement>('[data-sim-lease]')!;
+		const simYou = root.querySelector<SVGGElement>('[data-sim-you]')!;
+		const youLane = root.querySelector<SVGSVGElement>('[data-lane="you"]')!;
+		const x = (time: number) => (WIDTH * time) / duration;
+		let frame = 0;
+		let shown = -1;
+		let now = 0;
+		let drawing = false;
+		// Whether the diagram is drawing itself in with the recording, rather than complete.
+		let syncing = false;
+		let stoppedAt: number | null = null;
+		// The recording's own stop, when it has one, lands like the reader's.
+		const recorded = items.find((item) => item.dataset.kind === 'you' && item.textContent!.includes('niri-computer-use stop'));
+		const recordedStop = recorded ? Number(recorded.dataset.start) : null;
+		let landed = false;
+
+		// The video exists only once the recording starts, so a reader who never reaches it
+		// never loads a byte of it; until then the still stands in. It has no sound track.
+		const video = document.createElement('video');
+		Object.assign(video, { muted: true, playsInline: true, preload: 'none', controls: true });
+		video.setAttribute('aria-label', frameBox.dataset.label!);
+		for (const hidden of [play, stopbar]) hidden.hidden = false;
+
+		const at = (time: number) => {
+			now = time;
+			cursor.style.setProperty('--at', String(Math.min(1, Math.max(0, time / duration))));
+			cursor.classList.add('on');
+			let index = -1;
+			while (index + 1 < starts.length && starts[index + 1] <= time) index++;
+			if (stoppedAt === null) show(index);
+		};
+
+		const show = (index: number) => {
+			if (index === shown) return;
+			shown = index;
+			items.forEach((item, other) => item.classList.toggle('on', other === index));
+			if (index < 0) return;
+			const item = items[index];
+			say(item.dataset.kind!, [...item.querySelectorAll('code')].map((code) => code.textContent!));
+		};
+
+		const say = (kind: string, lines: string[]) => {
+			readout.dataset.kind = kind;
+			readout.replaceChildren(...lines.map((line) => Object.assign(document.createElement('code'), { textContent: line })));
+		};
+
+		// The pens ride the calls and lease traces at the cursor.
+		const pen = (time: number) => {
+			const [callPen, leasePen] = pens;
+			const high = Number(callsLane.dataset.high);
+			const low = Number(callsLane.dataset.low);
+			const busy = calls.some((call) => time >= Number(call.dataset.from) && time <= Number(call.dataset.to));
+			callPen.setAttribute('cx', String(x(time)));
+			callPen.setAttribute('cy', String(busy ? high : low));
+			const holding = held.some(([from, to]) => time >= from && time < to) && (stoppedAt === null || time < stoppedAt);
+			leasePen.setAttribute('cx', String(x(time)));
+			leasePen.setAttribute('cy', String(holding ? 16 : 38));
+		};
+
+		const reveal = (share: number) => (cover.style.transform = `scaleX(${1 - share})`);
+		const seen = (time: number) => labels.forEach((label) => label.classList.toggle('seen', Number(label.dataset.t) <= time + 0.05));
+
+		// Where the diagram is wider than the screen, it scrolls to keep now in view.
+		const keepInView = () => {
+			const room = chart.scrollWidth - chart.clientWidth;
+			if (room > 0) chart.scrollLeft = Math.min(room, Math.max(0, cursor.offsetLeft - chart.clientWidth * 0.6));
+		};
+
+		const land = () => {
+			if (!still.matches) {
+				flash.classList.remove('go');
+				void flash.offsetWidth;
+				flash.classList.add('go');
+			}
+			document.dispatchEvent(new CustomEvent('ncu-stop'));
+		};
+
+		const tick = (time: number, drawn = true) => {
+			if (!landed && recordedStop !== null && time >= recordedStop) {
+				landed = true;
+				land();
+			}
+			if (drawn) {
+				reveal(time / duration);
+				seen(time);
+			}
+			at(time);
+			pen(time);
+			keepInView();
+		};
+
+		const draw = () => {
+			cancelAnimationFrame(frame);
+			reset();
+			if (still.matches) {
+				finish();
+				return;
+			}
+			drawing = true;
+			landed = false;
+			root.classList.add('live');
+			const begin = performance.now();
+			const step = (stamp: number) => {
+				const time = (stamp - begin) / 1000;
+				tick(Math.min(time, duration));
+				if (time < duration) frame = requestAnimationFrame(step);
+				else finish();
+			};
+			frame = requestAnimationFrame(step);
+		};
+
+		const finish = () => {
+			drawing = false;
+			root.classList.remove('live');
+			reveal(1);
+			seen(duration);
+			at(duration);
+			pen(duration);
+		};
+
+		const follow = () => {
+			tick(video.currentTime, syncing);
+			if (!video.paused) frame = requestAnimationFrame(follow);
+		};
+
+		// Plays the recording from `time`. Played from the start, it draws the diagram in as it
+		// goes; a browser that refuses to play draws it in without the recording.
+		const start = async (time: number) => {
+			if (!video.src) {
+				video.src = frameBox.dataset.src!;
+				frameBox.append(video);
+			}
+			play.hidden = true;
+			if (time > 0) whole();
+			video.currentTime = time;
+			await video.play().catch(() => {
+				play.hidden = false;
+				draw();
+			});
+		};
+
+		const whole = () => {
+			syncing = false;
+			root.classList.remove('live');
+			reveal(1);
+			seen(duration);
+		};
+
+		const begin = () => (still.matches || saveData ? draw() : start(0));
+
+		// The reader's stop: from `time`, actions are refused, a running one is cut short,
+		// looks still answer, and the lease goes back.
+		const stopAt = (time: number) => {
+			stoppedAt = time;
+			cancelAnimationFrame(frame);
+			drawing = false;
+			video.pause();
+			root.classList.remove('live');
+			root.classList.add('stopped');
+			reveal(1);
+			seen(duration);
+			at(time);
+			pen(time);
+			let cut: string | null = null;
+			let next: string | null = null;
+			for (const node of later) {
+				const from = Number(node.dataset.from);
+				const to = Number(node.dataset.to ?? from);
+				if (node.closest('[data-lane="calls"]') && from <= time && time < to) {
+					const pulse = node.querySelector<SVGPathElement>('.pulse')!;
+					pulse.setAttribute('d', `M${pulse.dataset.x},${pulse.dataset.base} V${pulse.dataset.top} H${x(time)} V${pulse.dataset.base}`);
+					node.classList.add('cut');
+					cut ??= node.querySelector('text')!.textContent!.trim();
+				} else if (from > time) {
+					const after = node.dataset.after;
+					node.classList.add(after === 'refused' ? 'refused' : after === 'answered' ? 'answered' : 'void');
+					if (after === 'refused') next ??= node.querySelector('text')!.textContent!.trim();
+				}
+			}
+			const holding = held.some(([from, to]) => time >= from && time < to);
+			const sx = x(time);
+			const blank = simLease.querySelector('rect')!;
+			blank.setAttribute('x', String(sx + 1));
+			blank.setAttribute('width', String(WIDTH - sx));
+			simLease.querySelector('path')!.setAttribute('d', `M${sx},${holding ? 16 : 38} V38 H${WIDTH}`);
+			simLease.querySelector('text')!.setAttribute('x', String(sx + 6));
+			const low = Number(youLane.dataset.low);
+			simYou.querySelector('path')!.setAttribute('d', `M${sx},${low} V${Number(youLane.dataset.high)} H${sx + 14} V${low}`);
+			simYou.querySelector('text')!.setAttribute('x', String(sx - 6));
+			simLease.classList.add('on');
+			simYou.classList.add('on');
+			say('you', [
+				`$ niri-computer-use stop   # you, at ${time.toFixed(1)} s`,
+				cut ? `← ${cut}: stopped, or uncertain if its input had gone out` : holding ? '# the lease goes back to you' : '# no action was running',
+				next ? `← ${next}: refused: stopped` : '# nothing else was asked of the desktop',
+			]);
+			key.classList.add('down');
+			hint.textContent = 'Stopped. Every later action is refused until you run resume. Press again to replay.';
+			land();
+		};
+
+		const reset = () => {
+			stoppedAt = null;
+			shown = -1;
+			root.classList.remove('stopped');
+			key.classList.remove('down');
+			hint.textContent = hintText;
+			simLease.classList.remove('on');
+			simYou.classList.remove('on');
+			for (const node of later) {
+				node.classList.remove('cut', 'refused', 'answered', 'void');
+				const pulse = node.querySelector<SVGPathElement>('.pulse');
+				if (pulse) pulse.setAttribute('d', `M${pulse.dataset.x},${pulse.dataset.base} V${pulse.dataset.top} H${pulse.dataset.x1} V${pulse.dataset.base}`);
+			}
+		};
+
+		const press = () => {
+			if (stoppedAt !== null || (!drawing && video.paused)) {
+				begin();
+				return;
+			}
+			stopAt(drawing ? now : video.currentTime);
+		};
+
+		key.addEventListener('click', press);
+		video.addEventListener('play', () => {
+			cancelAnimationFrame(frame);
+			drawing = false;
+			if (stoppedAt !== null) reset();
+			syncing = video.currentTime < 0.3;
+			if (syncing) {
+				reset();
+				landed = false;
+				root.classList.add('live');
+			} else finish();
+			frame = requestAnimationFrame(follow);
+		});
+		// Paused or ended, the diagram is shown whole, with the cursor where the recording is.
+		video.addEventListener('pause', whole);
+		// Also fires after a seek, which moves the cursor while the video is paused.
+		video.addEventListener('timeupdate', () => video.paused && stoppedAt === null && at(video.currentTime));
+		play.addEventListener('click', () => start(0));
+
+		const timeAt = (event: PointerEvent) => {
+			const box = root.querySelector('.axis')!.getBoundingClientRect();
+			return ((event.clientX - box.left) / box.width) * duration;
+		};
+		chart.addEventListener('pointermove', (event) => {
+			if (!video.paused || drawing || stoppedAt !== null) return;
+			const time = timeAt(event);
+			at(time);
+			pen(time);
+		});
+		// A tap on a phone scrolls the diagram; only a pointer's click plays from there.
+		chart.addEventListener('click', (event) => {
+			if ((event as PointerEvent).pointerType !== 'touch') start(Math.max(0, timeAt(event)));
+		});
+		chart.addEventListener('keydown', (event) => {
+			if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+			event.preventDefault();
+			if (drawing || stoppedAt !== null) {
+				cancelAnimationFrame(frame);
+				reset();
+				finish();
+			}
+			const next = Math.min(starts.length - 1, Math.max(0, shown + (event.key === 'ArrowRight' ? 1 : -1)));
+			at(starts[next] + 0.001);
+			pen(starts[next] + 0.001);
+			if (!video.paused) {
+				whole();
+				video.currentTime = starts[next];
+			}
+		});
+
+		return {
+			begin,
+			press,
+			pause: () => {
+				cancelAnimationFrame(frame);
+				drawing = false;
+				video.pause();
+			},
+		};
+	}
+</script>
+
+<style>
+	.sessions {
+		--lanes: 5.5rem;
+		border-top: 2px solid var(--ink);
+		padding-top: 0.9rem;
+	}
+
+	.head {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: space-between;
+		align-items: center;
+		gap: 0.75rem 2rem;
+	}
+
+	.caption,
+	.note,
+	figcaption {
+		font-size: 0.875rem;
+		line-height: 1.45;
+		color: var(--ink-2);
+	}
+
+	.caption b,
+	figcaption b {
+		color: var(--ink);
+		font-weight: 650;
+	}
+
+	.tabs {
+		display: flex;
+		gap: 0;
+		margin: 0;
+		padding: 0;
+		border: 1px solid var(--ink);
+		border-radius: 3px;
+		overflow-x: auto;
+		max-width: 100%;
+	}
+
+	.tab {
+		position: relative;
+		flex: none;
+	}
+
+	.tab + .tab {
+		border-left: 1px solid var(--ink);
+	}
+
+	.tab input {
+		position: absolute;
+		inset: 0;
+		opacity: 0;
+		margin: 0;
+		cursor: pointer;
+	}
+
+	.tab span {
+		display: flex;
+		align-items: center;
+		min-height: 2.5rem;
+		padding: 0 0.95rem;
+		font-size: 0.875rem;
+		font-weight: 600;
+		white-space: nowrap;
+		transition: background-color 160ms var(--ease), color 160ms var(--ease);
+	}
+
+	.tab:hover span {
+		background: var(--grid);
+	}
+
+	.tab input:checked + span {
+		background: var(--ink);
+		color: var(--paper);
+	}
+
+	.tab input:focus-visible + span {
+		outline: 2px solid var(--ink);
+		outline-offset: 2px;
+	}
+
+	/* One panel at a time, by the checked tab; this works without the script. */
+	.panel {
+		display: none;
+		margin-top: 1.1rem;
+	}
+
+	.sessions:has(.tab:nth-of-type(1) input:checked) .panel:nth-of-type(1),
+	.sessions:has(.tab:nth-of-type(2) input:checked) .panel:nth-of-type(2),
+	.sessions:has(.tab:nth-of-type(3) input:checked) .panel:nth-of-type(3),
+	.sessions:has(.tab:nth-of-type(4) input:checked) .panel:nth-of-type(4),
+	.sessions:has(.tab:nth-of-type(5) input:checked) .panel:nth-of-type(5) {
+		display: block;
+	}
+
+
+	/* The recording and, beside it, what was asked and the stop key; sized so the recording
+	   and the diagram under it fit one laptop screen together. */
+	.stage {
+		display: grid;
+		grid-template-columns: minmax(0, 5fr) minmax(15rem, 2fr);
+		gap: 0 2rem;
+	}
+
+	.side {
+		display: flex;
+		flex-direction: column;
+		justify-content: space-between;
+		gap: 1.5rem;
+		padding-bottom: 2.5rem;
+	}
+
+	.ask {
+		font-size: 1rem;
+		line-height: 1.45;
+		max-width: 70ch;
+		margin-bottom: 0.9rem;
+	}
+
+	.ask span {
+		font-size: 0.75rem;
+		font-weight: 650;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--ink-2);
+		margin-right: 0.35rem;
+	}
+
+	.chart {
+		overflow-x: auto;
+		overscroll-behavior-x: contain;
+		cursor: crosshair;
+		border-radius: 2px;
+	}
+
+	.chart:focus-visible {
+		outline: 2px solid var(--ink);
+		outline-offset: 4px;
+	}
+
+	.grid {
+		position: relative;
+		display: grid;
+		min-width: calc(var(--lanes) + 44rem);
+		grid-template-columns: var(--lanes) minmax(0, 1fr);
+		align-items: end;
+	}
+
+	.lane {
+		position: sticky;
+		left: 0;
+		z-index: 2;
+		align-self: stretch;
+		display: flex;
+		align-items: flex-end;
+		padding-bottom: 0.15rem;
+		background: var(--paper);
+		font-size: 0.6875rem;
+		font-weight: 650;
+		letter-spacing: 0.07em;
+		text-transform: uppercase;
+		color: var(--ink-2);
+		border-bottom: 1px solid var(--rule);
+	}
+
+	svg {
+		display: block;
+		width: 100%;
+		height: auto;
+		overflow: visible;
+		border-bottom: 1px solid var(--rule);
+	}
+
+	.sec {
+		stroke: var(--grid);
+		stroke-width: 1;
+		vector-effect: non-scaling-stroke;
+	}
+
+	.base {
+		stroke: var(--ink);
+		stroke-width: 1;
+		vector-effect: non-scaling-stroke;
+	}
+
+	.trace,
+	.tick {
+		fill: none;
+		stroke: var(--ink);
+		stroke-width: 1.75;
+		stroke-linejoin: miter;
+		vector-effect: non-scaling-stroke;
+	}
+
+	.trace.stop,
+	.trace.you {
+		stroke: var(--red);
+	}
+
+	.pulse {
+		fill: none;
+		stroke: var(--ink);
+		stroke-width: 1.75;
+		vector-effect: non-scaling-stroke;
+		transition: stroke 200ms var(--ease);
+	}
+
+	.call.error .pulse,
+	.call:global(.cut) .pulse,
+	.call:global(.refused) .pulse {
+		stroke: var(--red);
+	}
+
+	.call:global(.refused) .pulse {
+		stroke-dasharray: 4 3;
+	}
+
+	.label {
+		font: 12.5px var(--mono);
+		fill: var(--ink);
+		transform-box: fill-box;
+		transition:
+			opacity 280ms var(--ease),
+			transform 380ms var(--ease),
+			fill 200ms var(--ease);
+	}
+
+	.label.stop,
+	.label.you,
+	.call.error .label,
+	.call:global(.cut) .label,
+	.call:global(.refused) .label {
+		fill: var(--red);
+	}
+
+	.call:global(.refused) .label {
+		text-decoration: line-through;
+	}
+
+	/* What the reader's stop leaves: looks still answer, the rest never happened. */
+	:global(.answered),
+	:global(.void) {
+		transition: opacity 300ms var(--ease);
+	}
+
+	:global(.answered) {
+		opacity: 0.55;
+	}
+
+	:global(.void) {
+		opacity: 0.18;
+	}
+
+	/* Labels arrive as the cursor reaches them. */
+	:global(html.sweep) .panel:global(.live) .label:not(:global(.seen)) {
+		opacity: 0;
+		transform: translateY(5px);
+	}
+
+	.band {
+		fill: var(--mark);
+	}
+
+	.sim {
+		display: none;
+	}
+
+	.sim:global(.on) {
+		display: inline;
+	}
+
+	.blank {
+		fill: var(--paper);
+	}
+
+	.pen {
+		fill: var(--paper);
+		stroke: var(--ink);
+		stroke-width: 2;
+		vector-effect: non-scaling-stroke;
+		opacity: 0;
+		transition: opacity 200ms var(--ease);
+	}
+
+	.panel:global(.live) .pen,
+	.panel:global(.stopped) .pen {
+		opacity: 1;
+	}
+
+	.panel:global(.stopped) .pen {
+		stroke: var(--red);
+	}
+
+	.stopbar {
+		display: flex;
+		align-items: center;
+		gap: 0.9rem;
+		margin-bottom: 0.9rem;
+	}
+
+	.stopbar[hidden] {
+		display: none;
+	}
+
+	.stopbar p {
+		font-size: 0.875rem;
+		line-height: 1.4;
+		color: var(--ink-2);
+		max-width: 52ch;
+	}
+
+	/* The stop key, as a key: a red cap on a darker lip that it sinks into. */
+	.key {
+		position: relative;
+		flex: none;
+		display: grid;
+		place-items: center;
+		width: 3.4rem;
+		height: 2.9rem;
+		border: 0;
+		border-radius: 6px;
+		background: var(--red);
+		color: #fff;
+		font: 700 0.8125rem/1 var(--sans);
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		cursor: pointer;
+		box-shadow:
+			0 4px 0 var(--red-lip),
+			0 6px 12px -4px rgb(0 0 0 / 0.35);
+		transform: translateY(0);
+		transition:
+			transform 90ms var(--ease),
+			box-shadow 90ms var(--ease);
+	}
+
+	.key:active,
+	.key:global(.down) {
+		transform: translateY(3px);
+		box-shadow:
+			0 1px 0 var(--red-lip),
+			0 2px 4px -2px rgb(0 0 0 / 0.35);
+	}
+
+	/* While the agent works, the key asks to be pressed. */
+	.key::after {
+		content: '';
+		position: absolute;
+		inset: -5px;
+		border-radius: 9px;
+		border: 2px solid var(--red);
+		opacity: 0;
+	}
+
+	@media (prefers-reduced-motion: no-preference) {
+		.panel:global(.live) .key::after {
+			animation: ask 1.6s var(--ease) infinite;
+		}
+	}
+
+	@keyframes ask {
+		0% {
+			opacity: 0.7;
+			transform: scale(0.92);
+		}
+
+		100% {
+			opacity: 0;
+			transform: scale(1.18);
+		}
+	}
+
+	.flash {
+		position: absolute;
+		top: 0;
+		bottom: 1.5rem;
+		left: var(--lanes);
+		right: 0;
+		background: var(--red);
+		opacity: 0;
+		pointer-events: none;
+	}
+
+	.flash:global(.go) {
+		animation: flash 750ms var(--ease);
+	}
+
+	@keyframes flash {
+		0% {
+			opacity: 0.28;
+		}
+
+		100% {
+			opacity: 0;
+		}
+	}
+
+	.panel:global(.stopped) .cursor {
+		border-left: 2px solid var(--red);
+	}
+
+	.axis {
+		position: relative;
+		height: 1.5rem;
+		font: 0.6875rem var(--mono);
+		color: var(--ink-2);
+	}
+
+	.axis span {
+		position: absolute;
+		top: 0.35rem;
+		transform: translateX(-50%);
+		white-space: nowrap;
+	}
+
+	.axis span:first-child {
+		transform: none;
+	}
+
+	.axis span:last-child:not(:first-child) {
+		transform: translateX(-100%);
+	}
+
+	/* The paper over what hasn't happened yet, and the cursor at now. Both sit over the
+	   diagram's column, not the lanes' names. */
+	.cover,
+	.cursor {
+		position: absolute;
+		top: 0;
+		bottom: 1.5rem;
+		left: var(--lanes);
+		right: 0;
+		pointer-events: none;
+	}
+
+	.cover {
+		background: var(--paper);
+		transform-origin: right;
+		transform: scaleX(0);
+	}
+
+	:global(html.sweep) .cover {
+		transform: scaleX(1);
+	}
+
+	.cursor {
+		right: auto;
+		width: 0;
+		left: calc(var(--lanes) + (100% - var(--lanes)) * var(--at, 0));
+		border-left: 1px solid var(--ink);
+		opacity: 0;
+		transition: opacity 200ms var(--ease);
+	}
+
+	.cursor:global(.on) {
+		opacity: 1;
+	}
+
+	.readout {
+		display: block;
+		min-height: 3.4rem;
+		margin-top: 0.7rem;
+		padding: 0.55rem 0.75rem;
+		background: var(--mark);
+		font: 0.8125rem/1.55 var(--mono);
+		color: var(--ink);
+		overflow-wrap: anywhere;
+	}
+
+	.readout > :global(*) {
+		display: block;
+		font: inherit;
+	}
+
+	.readout > :global(.ans) {
+		color: var(--ink-2);
+	}
+
+	.readout[data-kind='error'] > :global(.ans),
+	.readout[data-kind='you'] > :global(*) {
+		color: var(--red);
+	}
+
+	.readout > span {
+		font-family: var(--sans);
+		color: var(--ink-2);
+	}
+
+	.list {
+		margin-top: 0.6rem;
+		font-size: 0.875rem;
+	}
+
+	.list summary {
+		display: inline-flex;
+		align-items: center;
+		min-height: 2.75rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.list ol {
+		list-style: none;
+		padding: 0;
+		margin: 0 0 1rem;
+		border-top: 1px solid var(--rule);
+	}
+
+	.list li {
+		display: grid;
+		grid-template-columns: 3.5rem minmax(0, 1fr);
+		gap: 0 0.75rem;
+		padding: 0.4rem 0;
+		border-bottom: 1px solid var(--rule);
+		font: 0.75rem/1.5 var(--mono);
+	}
+
+	.list li:global(.on) {
+		background: var(--mark);
+	}
+
+	.list time {
+		grid-row: span 2;
+		color: var(--ink-2);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.list code {
+		font: inherit;
+		overflow-wrap: anywhere;
+	}
+
+	.list .ans {
+		color: var(--ink-2);
+	}
+
+	.list li[data-kind='error'] .ans,
+	.list li[data-kind='you'] code {
+		color: var(--red);
+	}
+
+	.figure {
+		margin: 0 0 1.5rem;
+	}
+
+	.frame {
+		position: relative;
+		aspect-ratio: 16 / 9;
+		background: var(--plate);
+		border: 1px solid var(--ink);
+	}
+
+	.frame :global(video),
+	.frame .still {
+		position: absolute;
+		inset: 0;
+		display: block;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+	}
+
+	.play[hidden] {
+		display: none;
+	}
+
+	.play {
+		position: absolute;
+		left: 0.6rem;
+		bottom: 0.6rem;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		min-height: 2.75rem;
+		padding: 0 1rem 0 0.85rem;
+		border: 0;
+		border-radius: 3px;
+		background: var(--paper);
+		color: var(--ink);
+		font: 600 0.875rem/1 var(--sans);
+		cursor: pointer;
+		box-shadow: 0 4px 14px -6px rgb(0 0 0 / 0.5);
+		transition: transform 140ms var(--ease);
+	}
+
+	.play svg {
+		width: 0.75rem;
+		height: 0.75rem;
+		border: 0;
+		fill: currentColor;
+	}
+
+	.play:active {
+		transform: scale(0.96);
+	}
+
+	figcaption {
+		margin-top: 0.6rem;
+	}
+
+
+	.note {
+		margin-top: 1rem;
+		max-width: 70ch;
+	}
+
+	@media (max-width: 52rem) {
+		.stage {
+			display: flex;
+			flex-direction: column;
+		}
+
+		.side {
+			display: contents;
+		}
+
+		.ask {
+			order: -1;
+		}
+	}
+
+	@media (max-width: 40rem) {
+		.sessions {
+			--lanes: 4.5rem;
+		}
+
+		.tabs {
+			flex-wrap: wrap;
+			gap: 0.35rem;
+			border: 0;
+		}
+
+		.tab span {
+			border: 1px solid var(--ink);
+			border-radius: 3px;
+		}
+
+		.tab + .tab {
+			border-left: 0;
+		}
+	}
+</style>
