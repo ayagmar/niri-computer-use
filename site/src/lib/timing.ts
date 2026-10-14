@@ -48,8 +48,9 @@ const end = (call: Call) => call.start + (call.ms ?? 0) / 1000;
 
 /** The diagram's width in SVG units; the lanes' labels sit outside it, in HTML. */
 export const WIDTH = 1000;
-/** Units per character of the 11-unit mono labels, to keep labels from overlapping. */
-const CHAR = 6.7;
+/** Units per character of the 12.5-unit mono labels (0.6 em each), to keep labels from
+ * overlapping. */
+const CHAR = 7.5;
 const GAP = 10;
 
 export interface Label {
@@ -209,10 +210,12 @@ function afterStop(call: Call): Fate {
 const nullable = (index: number) => (index === -1 ? null : index);
 
 /** The last call started by `time`, or -1 before the first. Of calls that start together,
- * the last one. */
-export function callAt(calls: Call[], time: number): number {
+ * the last one, unless the reader `picked` another of them with the arrow keys: that one stays
+ * until the recording reaches a call that starts later. */
+export function callAt(calls: Call[], time: number, picked = -1): number {
 	let index = -1;
 	while (index + 1 < calls.length && calls[index + 1].start <= time) index++;
+	if (picked >= 0 && index >= 0 && calls[picked].start === calls[index].start) return picked;
 	return index;
 }
 
@@ -232,3 +235,14 @@ export const brief = (calls: Call[]): Call[] =>
 		request: isStop(call) ? `${tool(call)} stop` : tool(call),
 		answer: call.answer.slice(0, 12),
 	}));
+
+/** Width of the user's stop pulse, in units. */
+const MARK = 14;
+
+/** Where the reader's stop is drawn at `x`: its pulse in the You lane, and the lease's label,
+ * which turns to end at the stop when it would run past the diagram. */
+export function stopMarks(x: number, label: string): { pulse: [number, number]; label: { x: number; end: boolean } } {
+	const from = Math.min(x, WIDTH - MARK);
+	const end = x + 6 + label.length * CHAR > WIDTH;
+	return { pulse: [from, from + MARK], label: { x: end ? x - 6 : x + 6, end } };
+}

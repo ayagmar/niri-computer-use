@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
-import { brief, callAt, clamp, step, stopAt, timing, WIDTH, type Call, type Run } from './timing.ts';
+import { brief, callAt, clamp, step, stopAt, stopMarks, timing, WIDTH, type Call, type Run } from './timing.ts';
 
 const DEMO = new URL('../../public/demo/', import.meta.url);
 const runs: [string, Run][] = readdirSync(DEMO)
@@ -96,5 +96,24 @@ test('the page stops on the brief calls exactly as on the whole ones', () => {
 		for (let time = 0; time <= timing(run).duration; time += 0.05) {
 			assert.deepEqual(stopAt(short, time), stopAt(run.calls, time), `${file} at ${time.toFixed(2)} s`);
 		}
+	}
+});
+
+test('a call picked with the arrow keys stays picked while the recording plays on to the next call', () => {
+	const { calls } = recorded('errand');
+	const together = calls[0].start;
+	const next = calls.find((c) => c.start > together)!.start;
+	assert.equal(callAt(calls, together + 0.4, 0), 0);
+	assert.equal(callAt(calls, together + 0.4), 1);
+	assert.equal(callAt(calls, next, 0), callAt(calls, next));
+});
+
+test('a stop drawn at the end of the diagram stays inside it', () => {
+	for (const x of [0, 500, WIDTH - 40, WIDTH]) {
+		const marks = stopMarks(x, 'taken back');
+		assert.ok(marks.pulse[0] >= 0 && marks.pulse[1] <= WIDTH, `pulse at ${x}`);
+		const width = 'taken back'.length * 7.5;
+		const [left, right] = marks.label.end ? [marks.label.x - width, marks.label.x] : [marks.label.x, marks.label.x + width];
+		assert.ok(left >= 0 && right <= WIDTH, `label at ${x}`);
 	}
 });

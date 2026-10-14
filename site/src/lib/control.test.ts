@@ -1,6 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { demo } from './control.ts';
+import { demo, tickets } from './control.ts';
+
+test('a start that a pause overtook is stale when it settles', () => {
+	const starts = tickets();
+	const pending = starts.take();
+	starts.cancel();
+	assert.equal(starts.current(pending), false);
+});
+
+test('a start that a newer start overtook is stale, and the newer one counts', () => {
+	const starts = tickets();
+	const first = starts.take();
+	const second = starts.take();
+	assert.equal(starts.current(first), false);
+	assert.equal(starts.current(second), true);
+});
 
 test('the demo plays once, when first seen, and then its follow-up', () => {
 	const run = demo();

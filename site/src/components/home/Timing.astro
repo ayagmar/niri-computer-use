@@ -197,7 +197,8 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 </div>
 
 <script>
-	import { callAt, clamp, step, stopAt as stopFates, type Call } from '../../lib/timing';
+	import { tickets } from '../../lib/control';
+	import { callAt, clamp, step, stopAt as stopFates, stopMarks, type Call } from '../../lib/timing';
 
 	const still = matchMedia('(prefers-reduced-motion: reduce)');
 	// With Save-Data on, a recording loads only when the reader presses Play.
@@ -226,10 +227,10 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 			current().begin();
 		}, { threshold: 0.6 });
 		root.querySelectorAll('[data-frame]').forEach((frame) => frames.observe(frame));
-		// Out of view, the recording and the diagram stop where they are.
+		// Out of view, a running recording or drawing stops where it is.
 		new IntersectionObserver(([entry]) => {
 			inView = entry.intersectionRatio >= 0.15;
-			if (!entry.isIntersecting) current().pause();
+			if (!entry.isIntersecting && current().running()) current().pause();
 		}, { threshold: [0, 0.15] }).observe(root);
 		// Turning on reduced motion stops what moves; Play still plays the recording.
 		still.addEventListener('change', () => still.matches && controls.forEach((control) => control.pause()));
@@ -269,6 +270,9 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 		const tool = (index: number) => runCalls[index].request.split(' ')[0];
 		let frame = 0;
 		let shown = -1;
+		// The call the reader stepped to with the arrow keys, kept among calls that start with it.
+		let picked = -1;
+		const plays = tickets();
 		let now = 0;
 		let drawing = false;
 		// Whether the diagram is drawing itself in with the recording, rather than complete.
@@ -288,7 +292,7 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 
 		// The cursor at `time`, and the call there; the arrow keys name the call, since calls
 		// can start at the same moment.
-		const at = (time: number, index = callAt(runCalls, time)) => {
+		const at = (time: number, index = callAt(runCalls, time, picked)) => {
 			now = time;
 			cursor.style.setProperty('--at', String(clamp(time, duration) / duration));
 			cursor.classList.add('on');
@@ -307,6 +311,7 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 		// The readout announces only what the reader asked for, not every call as it plays.
 		const say = (kind: string, lines: string[], asked = false) => {
 			readout.setAttribute('aria-live', asked ? 'polite' : 'off');
+			delete readout.dataset.stop;
 			readout.dataset.kind = kind;
 			readout.replaceChildren(...lines.map((line) => Object.assign(document.createElement('code'), { textContent: line })));
 		};
@@ -392,7 +397,8 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 		};
 
 		// Plays the recording from `time`. Played from the start, it draws the diagram in as it
-		// goes; a browser that refuses to play draws it in without the recording.
+		// goes; a browser that refuses to play draws it in without the recording. A start that a
+		// pause or a newer start overtook does nothing when it settles.
 		const start = async (time: number) => {
 			if (!video.src) {
 				video.src = frameBox.dataset.src!;
@@ -401,7 +407,9 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 			play.hidden = true;
 			if (time > 0) whole();
 			video.currentTime = time;
+			const ticket = plays.take();
 			await video.play().catch(() => {
+				if (!plays.current(ticket)) return;
 				play.hidden = false;
 				draw();
 			});
@@ -439,21 +447,26 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 				node.classList.add(node.classList.contains('event') ? 'void' : fate);
 			}
 			const sx = x(time);
+			const leaseLabel = simLease.querySelector('text')!;
+			const marks = stopMarks(sx, leaseLabel.textContent!);
 			const blank = simLease.querySelector('rect')!;
 			blank.setAttribute('x', String(sx + 1));
 			blank.setAttribute('width', String(WIDTH - sx));
 			simLease.querySelector('path')!.setAttribute('d', `M${sx},${stop.held ? 16 : 38} V38 H${WIDTH}`);
-			simLease.querySelector('text')!.setAttribute('x', String(sx + 6));
+			leaseLabel.setAttribute('x', String(marks.label.x));
+			leaseLabel.setAttribute('text-anchor', marks.label.end ? 'end' : 'start');
 			const low = Number(youLane.dataset.low);
-			simYou.querySelector('path')!.setAttribute('d', `M${sx},${low} V${Number(youLane.dataset.high)} H${sx + 14} V${low}`);
-			simYou.querySelector('text')!.setAttribute('x', String(sx - 6));
+			const [from, to] = marks.pulse;
+			simYou.querySelector('path')!.setAttribute('d', `M${from},${low} V${Number(youLane.dataset.high)} H${to} V${low}`);
+			simYou.querySelector('text')!.setAttribute('x', String(from - 6));
 			simLease.classList.add('on');
 			simYou.classList.add('on');
 			say('you', [
-				`$ niri-computer-use stop   # you, at ${time.toFixed(1)} s`,
-				stop.cut !== null ? `← ${tool(stop.cut)}: stopped, or uncertain if its input had gone out` : stop.held ? '# the lease goes back to you' : '# no action was running',
+				'$ niri-computer-use stop',
+				stop.cut !== null ? `← ${tool(stop.cut)}: stopped, or uncertain` : stop.held ? '# the lease goes back to you' : '# no action was running',
 				stop.refused !== null ? `← ${tool(stop.refused)}: refused: stopped` : '# nothing else was asked of the desktop',
 			], true);
+			readout.dataset.stop = '';
 			key.classList.add('down');
 			hint.textContent = 'Stopped. Every later action is refused until you run resume. Press again to replay.';
 			land();
@@ -462,6 +475,7 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 		const reset = () => {
 			stoppedAt = null;
 			shown = -1;
+			picked = -1;
 			root.classList.remove('stopped');
 			key.classList.remove('down');
 			hint.textContent = hintText;
@@ -509,6 +523,7 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 		};
 		chart.addEventListener('pointermove', (event) => {
 			if (running() || stoppedAt !== null) return;
+			picked = -1;
 			const time = timeAt(event);
 			at(time);
 			pen(time);
@@ -526,6 +541,7 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 				finish();
 			}
 			const next = step(runCalls, shown, event.key === 'ArrowRight' ? 1 : -1);
+			picked = next;
 			const time = runCalls[next].start;
 			if (!video.paused) {
 				whole();
@@ -543,6 +559,7 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 			running,
 			// Stops the recording and any drawing where they are, and shows the diagram whole.
 			pause: () => {
+				plays.cancel();
 				cancelAnimationFrame(frame);
 				drawing = false;
 				video.pause();
@@ -1011,11 +1028,12 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 		opacity: 1;
 	}
 
-	/* Three lines high whatever it says, so the page below doesn't move as the calls go by;
-	   a long request is cut short here and is whole in the list of calls. */
+	/* Four lines high whatever it says, so the page below doesn't move as the calls go by. A
+	   long request is cut short here and is whole in the list of calls; the stop's answer, which
+	   is nowhere else, wraps. */
 	.readout {
 		display: block;
-		height: calc(3 * 1.55em + 1.1rem);
+		height: calc(4 * 1.55em + 1.1rem);
 		margin-top: 0.7rem;
 		padding: 0.55rem 0.75rem;
 		background: var(--mark);
@@ -1030,6 +1048,11 @@ const seconds = (t: Timing, x: number) => (x * t.duration) / WIDTH;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		font: inherit;
+	}
+
+	.readout[data-stop] > :global(*) {
+		white-space: normal;
+		overflow-wrap: anywhere;
 	}
 
 	.readout > :global(.ans) {
