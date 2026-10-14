@@ -449,13 +449,17 @@ async fn switched(switch: &Switch, policy: &Loaded, deadline: Instant) -> String
             Ok(Turned::AlreadyOn) => on,
             Ok(Turned::LetGo) => "the session's accessibility is off: something turned it off while the server's listener held it on, so the server let its listener go and leaves it off until the server restarts".to_owned(),
             Ok(Turned::Unsupported(why)) => format!("the session's accessibility is off: {why}"),
-            Ok(Turned::Late) => "the session's accessibility is off, and this call's time ran out before the server's listener turned it on; the server let the listener go and tries again on the next call".to_owned(),
+            Ok(Turned::Late) => format!("the session's accessibility is off, and this call's time ran out before the server's listener turned it on; the server let the listener go and tries again on the next call; {MAY_HAVE_SET}"),
+            Ok(Turned::Unread(why)) => format!(
+                "the session's accessibility is {}, and reading IsEnabled after registering the server's listener failed: {why}; the server let the listener go and tries again on the next call; {MAY_HAVE_SET}",
+                if enabled { "on" } else { "off" }
+            ),
             Ok(Turned::Busy) => format!(
                 "the session's accessibility is {}, and the server was still turning it on for another call when this one's time ran out; {RESTART}",
                 if enabled { "on" } else { "off" }
             ),
             Err(error) => format!(
-                "the session's accessibility is {}, and registering the server's listener failed: {}",
+                "the session's accessibility is {}, and registering the server's listener failed: {}; {MAY_HAVE_SET}",
                 if enabled { "on" } else { "off" },
                 error.detail
             ),
@@ -465,6 +469,10 @@ async fn switched(switch: &Switch, policy: &Loaded, deadline: Instant) -> String
 
 /// What at-spi2-core does beside turning accessibility on, which the server can't undo.
 const GSETTINGS: &str = "at-spi2-core also sets GSettings org.gnome.desktop.interface toolkit-accessibility to true when it turns accessibility on, and that stays after the server ends";
+
+/// What at-spi2-core may have done for a listener the server let go, which the server can't
+/// undo: the launcher counts a listener as it registers, before the server knows.
+const MAY_HAVE_SET: &str = "at-spi2-core may have set GSettings org.gnome.desktop.interface toolkit-accessibility to true if it counted the listener before the server let it go, and that stays after the server ends";
 
 /// What a Chromium-family app started while the session's accessibility was off needs.
 const RESTART: &str = "its process is a Chromium, Electron or CEF app's, which checks only when it starts, so if it started while accessibility was off, it lists its elements only after a restart: ask the user before restarting it";

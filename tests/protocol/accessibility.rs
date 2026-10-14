@@ -14,6 +14,10 @@ use crate::elements::{WINDOW, app_window, objects, workspace};
 use crate::fixture::{self, Fixture, SPAWNING, shared_mode};
 use crate::niri::{Niri, Stream};
 
+/// What a detail says when the launcher may have written its settings key for a listener
+/// the server let go.
+const MAY_HAVE_SET: &str =
+    "at-spi2-core may have set GSettings org.gnome.desktop.interface toolkit-accessibility";
 /// The server's budget for a request on the accessibility bus.
 const BUDGET: Duration = Duration::from_secs(3);
 
@@ -290,6 +294,13 @@ async fn a_launcher_still_turning_on_when_a_call_runs_out_is_asked_again() {
         .structured_with("wait_for", json!({"until": until, "timeout_ms": 200}))
         .await;
     assert_ne!(desk.switch().await, "unsupported", "{waited}");
+    // The registry counted the listener before the server let it go.
+    assert!(
+        waited["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains(MAY_HAVE_SET)),
+        "{waited}"
+    );
     let (_, detail) = desk.refused().await;
     assert!(
         detail.contains("was off, so the server turned it on"),
@@ -316,12 +327,42 @@ async fn a_registry_that_never_answers_holds_neither_elements_past_its_budget_no
     let (name, detail) = tool_error(&result["result"]);
     assert_eq!(name, "not_accessible");
     assert!(
-        detail.contains("registering the server's listener failed") && detail.contains("no answer"),
+        detail.contains("registering the server's listener failed")
+            && detail.contains("no answer")
+            && detail.contains(MAY_HAVE_SET),
         "{detail}"
     );
     assert!(took < BUDGET + Duration::from_millis(500), "{took:?}");
     assert_eq!(desk.switch().await, "off");
     held.release();
+}
+
+/// A listener registered and then let go, because `IsEnabled` couldn't be read, may have
+/// made the launcher write its settings key; the detail says so, and that it was the read
+/// that failed, not the registration.
+#[tokio::test]
+async fn a_status_read_failing_after_the_listener_registered_says_what_it_may_have_left() {
+    let mut desk = Desk::start("acc-unread", "").await;
+    let held = desk
+        .mock
+        .hold_on("RegisterEvent", "/org/a11y/atspi/registry");
+    let id = desk
+        .server
+        .start_call("elements", json!({"window_id": WINDOW}))
+        .await;
+    held.arrived().await;
+    desk.mock.fail("IsEnabled", "the launcher is gone");
+    held.release();
+    let result = desk.server.response(id).await;
+    let (name, detail) = tool_error(&result["result"]);
+    assert_eq!(name, "not_accessible");
+    assert!(
+        detail.contains("reading IsEnabled after registering the server's listener failed")
+            && detail.contains("the launcher is gone")
+            && detail.contains(MAY_HAVE_SET),
+        "{detail}"
+    );
+    assert_eq!(desk.switch().await, "off");
 }
 
 #[tokio::test]

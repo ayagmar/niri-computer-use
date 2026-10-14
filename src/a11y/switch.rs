@@ -87,6 +87,9 @@ pub(crate) enum Turned {
     /// This call's time ran out before the launcher's `TURNING_ON` did, with `IsEnabled`
     /// still false, so the listener was let go for a later call to try again.
     Late,
+    /// `IsEnabled` couldn't be read after the listener registered, so the listener was let
+    /// go for a later call to try again: why.
+    Unread(String),
 }
 
 /// How `IsEnabled` read while the server waited for it.
@@ -196,7 +199,11 @@ impl Switch {
             ),
         )
         .await?;
-        match self.turned_on(deadline).await? {
+        let waited = match self.turned_on(deadline).await {
+            Ok(waited) => waited,
+            Err(error) => return Ok(Turned::Unread(error.detail)),
+        };
+        match waited {
             Waited::On => {
                 *held = Held::On {
                     _listener: listener,
