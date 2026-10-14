@@ -263,7 +263,7 @@ Flat. Depth is material and order: the ground, a raised ground one step off it, 
 
 ## Shapes
 
-Pills (rounded.pill) for every button, the theme toggle and the lease tag. Command blocks have a 0.75rem radius. Recordings and their plates are square-cornered; docs stills on the plate are rounded 4px. The keycap is rounded 0.09em, so it scales with the poster. The theme icon is an inline SVG circle, half filled, that turns 180° in the dark theme.
+Pills (rounded.pill) for every button, the theme toggle and the lease tag. Command blocks have a 0.75rem radius. Recordings and their plates are square-cornered; docs stills on the plate are rounded 4px. The keycap is rounded 0.09em, so it scales with the poster. The theme icon is an inline SVG circle, half filled, that turns 180° in the dark theme (at once under reduced motion).
 
 ## Components
 
@@ -279,7 +279,7 @@ Pills (rounded.pill) for every button, the theme toggle and the lease tag. Comma
 
 ### Stage (recording)
 The site's signature unit: a recording on the plate with its calls as subtitles.
-- **Frame:** 16:9 (8:9 on a phone with a crop). The AVIF still is the recording's last frame; the video loads after the page, fades in over 400ms, plays while 35% of it is in view, and stays still under reduced motion or Save-Data until Play is pressed. Paused, it keeps the paused frame.
+- **Frame:** 16:9 (8:9 on a phone with a crop). The AVIF still is the recording's last frame; the video loads after the page, fades in over 400ms, plays while 35% of it is in view, and stays still under reduced motion or Save-Data until Play is pressed. Paused, it keeps the paused frame. Turning reduced motion on while the page is open pauses it.
 - **Bar:** the prompt in quiet plate ink, clamped to two lines; the Play/Pause pill; the subtitle, three lines tall whatever the call (request on one, answer on two), `→` for a call and `←` for its answer, `$` and `#` for a command the user ran; the lease tag.
 - **Lease tag:** reads `lease free`, `lease held` or `lease stopped`, following the calls. Free is plate-control with quiet text, held is plate ink with plate text, stopped is stop red with white text.
 - **Caption:** the note on how the recording was made, then a disclosure, "All N calls", listing every call with its time (m:ss.s, tabular figures).
@@ -295,7 +295,7 @@ A command on the plate, 0.75rem corners, wrapped to the width rather than scroll
 Starlight with theme.css: tokens, wordmark, Archivo titles at 72% and 84% width, links underlined at 1px and 2px on hover, code in table first columns kept on one line, code in headings without a chip. Code blocks are Expressive Code set in astro.config.mjs to match the home page's: on the plate in both themes with github-dark colours, 0.75rem corners, no border or window frame, lines wrapped to the width, and the first line wrapping short of the copy button.
 
 ### Motion
-One easing for UI (`cubic-bezier(0.22, 1, 0.36, 1)`). The hero frame either drops into the first recording over 1100ms after 400ms (when the recording is already in the first view, as on an upright phone) or grows into it on the root scroll timeline (when it is below). Below the hero, poster lines, facts, recordings, clips, install steps and the footer wordmark rise 2.5rem and fade in on a view timeline (entry 5% to cover 30%). Under reduced motion none of this runs, scrolling is instant, and pages do not crossfade.
+One easing for UI (`cubic-bezier(0.22, 1, 0.36, 1)`). The hero frame either drops into the first recording over 1100ms after 400ms (when the recording is already in the first view, as on an upright phone) or grows into it on the root scroll timeline (when it is below). Below the hero, poster lines, facts, recordings, clips, install steps and the footer wordmark rise 2.5rem and fade in on a view timeline (entry 5% to cover 30%). Under reduced motion none of this runs, the theme icon doesn't turn, scrolling is instant, and pages do not crossfade.
 
 ## Do's and Don'ts
 

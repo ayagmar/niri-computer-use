@@ -447,7 +447,12 @@ const slotStill = (await loadDemo('errand', [480])).poster.src;
 		fill: none;
 		stroke: currentColor;
 		stroke-width: 1.6;
-		transition: rotate 300ms var(--ncu-ease);
+	}
+
+	@media (prefers-reduced-motion: no-preference) {
+		.theme svg {
+			transition: rotate 300ms var(--ncu-ease);
+		}
 	}
 
 	.theme svg path {

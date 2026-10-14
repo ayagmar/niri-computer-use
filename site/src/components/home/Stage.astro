@@ -91,10 +91,11 @@ const last = demo.calls.at(-1)!;
 <script>
 	// Each recording loads once the page has, plays while a third of it is in view, and drives
 	// its subtitles and lease tag from the call list. Reduced motion and Save-Data leave it
-	// still until its Play button is pressed.
-	const still =
-		matchMedia('(prefers-reduced-motion: reduce)').matches ||
+	// still until its Play button is pressed; turning reduced motion on pauses it.
+	const reduce = matchMedia('(prefers-reduced-motion: reduce)');
+	const saveData =
 		(navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData === true;
+	const still = () => reduce.matches || saveData;
 	const loaded = new Promise((resolve) => {
 		if (document.readyState === 'complete') resolve(null);
 		else addEventListener('load', resolve, { once: true });
@@ -107,7 +108,7 @@ const last = demo.calls.at(-1)!;
 		const lease = stage.querySelector<HTMLElement>('[data-lease]')!;
 		const calls = [...stage.querySelectorAll<HTMLLIElement>('li[data-start]')];
 		const label = video.getAttribute('aria-label');
-		let wanted = !still;
+		let wanted = !still();
 		let inView = false;
 		let shown = calls.length - 1;
 
@@ -137,7 +138,7 @@ const last = demo.calls.at(-1)!;
 			lease.dataset.lease = call.dataset.lease;
 			lease.textContent = `lease ${call.dataset.lease}`;
 			stage.dispatchEvent(new CustomEvent('ncu-call', { detail: call }));
-			if (!still) {
+			if (!still()) {
 				sub.animate([{ transform: 'translateY(0.6em)', opacity: 0 }, { transform: 'none', opacity: 1 }], {
 					duration: 260,
 					easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
@@ -179,6 +180,12 @@ const last = demo.calls.at(-1)!;
 			},
 			{ threshold: 0.35 },
 		).observe(stage.querySelector('[data-frame]')!);
+
+		reduce.addEventListener('change', () => {
+			wanted = !still();
+			if (!wanted) video.pause();
+			else if (inView) loaded.then(() => inView && wanted && play());
+		});
 	}
 </script>
 
