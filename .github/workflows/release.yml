@@ -16,9 +16,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$GITHUB_SHA" --jq .status)
+          # The commit the tag names, also when the tag is annotated.
+          commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF" --jq .sha)
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$commit" --jq .status)
           if [ "$status" != identical ] && [ "$status" != behind ]; then
-            echo "$GITHUB_REF_NAME ($GITHUB_SHA) isn't on main: compare says $status" >&2
+            echo "$GITHUB_REF_NAME ($commit) isn't on main: compare says $status" >&2
             exit 1
           fi
 
@@ -89,7 +91,7 @@ jobs:
             dist/*.tar.gz.sha256
             dist/notes.md
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 30
 
   draft:
     needs: build
