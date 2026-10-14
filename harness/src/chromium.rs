@@ -50,8 +50,12 @@ const TERM_GRACE: Duration = Duration::from_secs(5);
 #[derive(Debug, Clone, Copy)]
 enum Typed {
     Exact,
-    /// Known to arrive otherwise, for this reason.
-    Lost(&'static str),
+    /// Known to arrive as `arrives`, for reason `why`. Anything else fails, as the rest of
+    /// the text is still promised.
+    Lost {
+        arrives: &'static str,
+        why: &'static str,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -120,9 +124,10 @@ const CASES: [Case; 12] = [
     Case {
         name: "emoji",
         text: "ok 🤖 🌙 done",
-        typed: Typed::Lost(
-            "Chromium cuts characters outside the Basic Multilingual Plane to 16 bits",
-        ),
+        typed: Typed::Lost {
+            arrives: "ok \u{f916} \u{f319} done",
+            why: "Chromium cuts characters outside the Basic Multilingual Plane to 16 bits",
+        },
     },
 ];
 
@@ -454,6 +459,14 @@ fn typed_report(
     keys: &[(String, String)],
 ) -> (String, Option<String>) {
     let exact = received.iter().copied().eq(case.text.encode_utf16());
+    let known = match case.typed {
+        Typed::Lost { arrives, why } => received
+            .iter()
+            .copied()
+            .eq(arrives.encode_utf16())
+            .then_some(why),
+        Typed::Exact => None,
+    };
     let codes: Vec<String> = keys
         .iter()
         .filter(|(_, key)| !(key.len() == 1 && key.is_ascii()))
@@ -464,17 +477,17 @@ fn typed_report(
     } else {
         format!("; keydowns {}", codes.join(", "))
     };
-    let (outcome, failed) = match (exact, case.typed) {
-        (true, Typed::Exact) => ("exact".to_owned(), None),
-        (true, Typed::Lost(_)) => (
+    let (outcome, failed) = match (exact, case.typed, known) {
+        (true, Typed::Exact, _) => ("exact".to_owned(), None),
+        (true, Typed::Lost { .. }, _) => (
             "exact, though known to be lost: a fix landed".to_owned(),
             None,
         ),
-        (false, Typed::Lost(why)) => (
+        (false, _, Some(why)) => (
             format!("known loss ({why}), received {}", shown(received)),
             None,
         ),
-        (false, Typed::Exact) => (
+        (false, _, None) => (
             format!("DIFFERS, received {}", shown(received)),
             Some(format!("{} typed as {}", case.name, shown(received))),
         ),
@@ -598,7 +611,10 @@ mod tests {
             text: "é",
             typed,
         };
-        let lost = Typed::Lost("why");
+        let lost = Typed::Lost {
+            arrives: "a",
+            why: "why",
+        };
         let keys = [
             ("IntlRo".to_owned(), "é".to_owned()),
             ("KeyA".to_owned(), "a".to_owned()),
@@ -615,6 +631,13 @@ mod tests {
             "{lost_line}"
         );
         assert_eq!(lost_failed, None);
+        // Only the known loss passes: less than it, or something else, fails.
+        for other in [&[][..], &[0x62], &[0x61, 0x61]] {
+            assert!(
+                typed_report(&case(lost), other, &[]).1.is_some(),
+                "{other:?}"
+            );
+        }
         assert!(
             typed_report(&case(lost), &[0xe9], &[])
                 .0
