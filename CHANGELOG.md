@@ -12,7 +12,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
-- `type_text` refuses text, typed or pasted, that ends with tool-call closing tags such as `</parameter>` or `</invoke>` that nothing earlier in the text opens, with `leaked_tag` and the tags named in `detail`. Models sometimes leak their own tool-call markup into the end of a long argument. Nothing is typed or pasted; send the text again without the tags.
+- `type_text` refuses text, typed or pasted, that ends with tool-call closing tags such as `</parameter>` or `</invoke>` that no opening tag earlier in the text balances, each opening tag balancing one closing tag, with `leaked_tag` and the tags named in `detail`. Models sometimes leak their own tool-call markup into the end of a long argument. Nothing is typed or pasted; send the text again without the tags.
 - `set_element_text` reads the field's text back and compares it with the text sent, instead of comparing only the character count. A field that reformats or masks text without changing its length is now `differs`, not `matched`. Neither text is returned or logged.
 
 ### Fixed

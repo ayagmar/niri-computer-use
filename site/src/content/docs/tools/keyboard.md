@@ -11,7 +11,7 @@ The keyboard tools type into the focused app. They need the lease, and each take
 
 The server types through a virtual keyboard of its own, with the compositor's keymap. The keys go to the app, not to niri: niri's own keybinds don't fire from them. They run through the same gate as the other action tools, then check, before anything is typed:
 
-1. the arguments: `type_text` refuses over 1000 characters, counted as Unicode scalar values, with `text_too_long`, text ending with tool-call closing tags that nothing earlier in it opens, such as `</invoke>`, with `leaked_tag`, and an empty text, an empty list of keys, more than 16 keys, or any combination it can't read is an argument mistake
+1. the arguments: `type_text` refuses over 1000 characters, counted as Unicode scalar values, with `text_too_long`, text ending with tool-call closing tags that no opening tag earlier in it balances, such as `</invoke>`, with `leaked_tag`, and an empty text, an empty list of keys, more than 16 keys, or any combination it can't read is an argument mistake
 2. `expect` against the window with keyboard focus: `focus_mismatch` when it doesn't match. A lock screen, the overview or a shell panel leaves no window focused, so only `"none"` types there
 3. the focused window: `app_denied` if its `app_id` is on the policy's deny list
 

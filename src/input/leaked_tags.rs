@@ -2,9 +2,9 @@
 //! sometimes carry their own tool-call markup, such as `[/parameter]` or `[/invoke]` (with
 //! angle brackets; written with square ones here), past the end of a long argument, and a
 //! tag typed into a chat box with `submit` can't be taken back. Only a trailing run counts,
-//! only of known tag names, and only closing tags that no opening tag of the same name
-//! earlier in the text balances, so a document that opens and closes such a tag goes out
-//! as it is.
+//! only of known tag names, and only from its first closing tag that no opening tag of the
+//! same name earlier in the text balances, each opening tag balancing one closing tag, so a
+//! document that opens and closes such tags goes out as it is.
 
 use std::fmt;
 
@@ -31,33 +31,44 @@ pub(super) struct Leaked {
     pub(super) names: Vec<&'static str>,
 }
 
-/// The trailing run of closing tags with known names that nothing earlier in `text`
-/// opens, ignoring whitespace between and after them; none when `text` doesn't end with
-/// one.
+/// The trailing run of closing tags with known names, ignoring whitespace between and
+/// after them, from its first tag that no opening tag earlier in `text` balances; none
+/// when every tag of the run is balanced or `text` doesn't end with one.
 pub(super) fn leaked(text: &str) -> Option<Leaked> {
-    // Each name's first opening tag in `text`, looked up once, which keeps a long run of
-    // tags linear in the text's length.
-    let mut openers: [Option<Option<usize>>; NAMES.len()] = [None; NAMES.len()];
-    let mut head = text.trim_end();
-    let mut found = Vec::new();
-    while let Some((before, index, name)) = last_closing(head) {
-        let opener = openers
-            .get_mut(index)
-            .and_then(|slot| *slot.get_or_insert_with(|| first_opener(text, name)));
-        if opener.is_some_and(|at| at < before.len()) {
-            break;
-        }
-        found.push(name);
-        head = before.trim_end();
-    }
-    let tags = found.len();
+    let (before, run) = trailing_run(text);
+    let mut open = unclosed(before);
+    // Each opening tag still open before the run balances one of its closing tags, in
+    // order.
+    let first = run.iter().position(|&(index, _)| {
+        open.get_mut(index)
+            .filter(|depth| **depth > 0)
+            .map(|depth| *depth -= 1)
+            .is_none()
+    })?;
+    let leaked = run.get(first..).unwrap_or_default();
     let mut names = Vec::new();
-    for name in found.into_iter().rev() {
+    for &(_, name) in leaked {
         if !names.contains(&name) {
             names.push(name);
         }
     }
-    (tags > 0).then_some(Leaked { tags, names })
+    Some(Leaked {
+        tags: leaked.len(),
+        names,
+    })
+}
+
+/// The text before the run of known closing tags `text` ends with, and the run in order:
+/// each tag's index in `NAMES` and its name as listed there.
+fn trailing_run(text: &str) -> (&str, Vec<(usize, &'static str)>) {
+    let mut head = text.trim_end();
+    let mut run = Vec::new();
+    while let Some((before, index, name)) = last_closing(head) {
+        run.push((index, name));
+        head = before.trim_end();
+    }
+    run.reverse();
+    (head, run)
 }
 
 /// What comes before the closing tag `head` ends with, and the tag's name, when it is a
@@ -72,18 +83,33 @@ fn last_closing(head: &str) -> Option<(&str, usize, &'static str)> {
     Some((before, index, name))
 }
 
-/// Where `text` first opens a `name` tag, matched without regard to ASCII case: `<name`
-/// followed by `>`, whitespace or the end of the text.
-fn first_opener(text: &str, name: &str) -> Option<usize> {
-    let name = name.as_bytes();
-    text.match_indices('<').map(|(at, _)| at).find(|&at| {
+/// How many tags of each name `text` leaves open, matched without regard to ASCII case,
+/// in one pass: an opening tag, `<name` followed by `>`, whitespace or the end, opens
+/// one, and a closing tag closes the latest still open, if any.
+fn unclosed(text: &str) -> [usize; NAMES.len()] {
+    let mut open = [0_usize; NAMES.len()];
+    for (at, _) in text.match_indices('<') {
         let rest = text.as_bytes().get(at + 1..).unwrap_or_default();
-        rest.get(..name.len())
-            .is_some_and(|written| written.eq_ignore_ascii_case(name))
-            && rest
-                .get(name.len())
-                .is_none_or(|next| *next == b'>' || next.is_ascii_whitespace())
-    })
+        let (closing, rest) = rest
+            .strip_prefix(b"/")
+            .map_or((false, rest), |rest| (true, rest));
+        for (depth, name) in open.iter_mut().zip(NAMES) {
+            let named = rest
+                .get(..name.len())
+                .is_some_and(|written| written.eq_ignore_ascii_case(name.as_bytes()));
+            let next = rest.get(name.len()).copied();
+            if !named {
+                continue;
+            }
+            if closing && next == Some(b'>') {
+                *depth = depth.saturating_sub(1);
+            } else if !closing && next.is_none_or(|next| next == b'>' || next.is_ascii_whitespace())
+            {
+                *depth += 1;
+            }
+        }
+    }
+    open
 }
 
 impl fmt::Display for Leaked {
@@ -97,12 +123,12 @@ impl fmt::Display for Leaked {
         if self.tags == 1 {
             write!(
                 f,
-                "`text` ends with {tags}, a tool-call closing tag that nothing before it opens, which agents leak from their own tool calls by mistake; send the text again without it"
+                "`text` ends with {tags}, a tool-call closing tag that no opening tag before it balances, which agents leak from their own tool calls by mistake; send the text again without it"
             )
         } else {
             write!(
                 f,
-                "`text` ends with {} tool-call closing tags that nothing before them opens ({tags}), which agents leak from their own tool calls by mistake; send the text again without them",
+                "`text` ends with {} tool-call closing tags that no opening tags before them balance ({tags}), which agents leak from their own tool calls by mistake; send the text again without them",
                 self.tags
             )
         }
@@ -180,6 +206,30 @@ mod tests {
         assert_eq!(names(&format!("<texts>a{text}")), ["text"]);
         // An opener after the closing tag doesn't balance it.
         assert_eq!(names(&format!("a{text} <text> {invoke}")), ["invoke"]);
+    }
+
+    /// Found in review: one opening tag let every later closing tag of its name through.
+    #[test]
+    fn each_opening_tag_balances_only_one_closing_tag() {
+        let (text, parameter, invoke) = (close("text"), close("parameter"), close("invoke"));
+        let doubled = leaked(&format!("<text>a{text}{text}")).unwrap();
+        assert_eq!((doubled.tags, doubled.names), (1, vec!["text"]));
+        // A quoted tool call, then the agent's own leaked tags.
+        let quoted = format!(r#"<invoke name="x"><parameter name="y">v{parameter}{invoke}"#);
+        let leak = leaked(&format!("{quoted}\n{parameter}\n{invoke}")).unwrap();
+        assert_eq!((leak.tags, leak.names), (2, vec!["parameter", "invoke"]));
+        assert_eq!(leaked(&quoted), None);
+    }
+
+    #[test]
+    fn a_closing_tag_before_an_opening_tag_leaves_it_open() {
+        let text = close("text");
+        assert_eq!(leaked(&format!("{text}<text>a{text}")), None);
+        assert_eq!(
+            names(&format!("<text>{text}{text}<text>a{text}")),
+            Vec::<&str>::new()
+        );
+        assert_eq!(names(&format!("<text>{text}a{text}")), ["text"]);
     }
 
     #[test]
