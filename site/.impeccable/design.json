@@ -1,691 +1,645 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-13T20:40:00+00:00",
+  "generatedAt": "2026-10-14T00:00:00+00:00",
   "title": "Design System: niri-computer-use",
   "extensions": {
     "colorMeta": {
-      "amber-ring": {
-        "role": "primary",
-        "displayName": "Focus Amber",
+      "concrete-ground": {
+        "role": "neutral",
+        "displayName": "Concrete Ground",
+        "purpose": "Page background, light theme.",
         "tonalRamp": [
-          "#3a2a12",
-          "#4d2e00",
-          "#8a5300",
-          "#9a5a06",
-          "#d98a1f",
-          "#f2a33a",
-          "#ffd08a",
-          "#f6e3c4"
+          "#0a0c09",
+          "#242622",
+          "#41433f",
+          "#60625e",
+          "#81837f",
+          "#a4a6a1",
+          "#c8cac5",
+          "#edefea"
         ]
       },
-      "amber-high": {
-        "role": "primary",
-        "displayName": "Lit Amber",
+      "concrete-raised": {
+        "role": "neutral",
+        "displayName": "Raised Concrete",
+        "purpose": "The clips band and docs low accent, light theme.",
         "tonalRamp": [
-          "#3a2a12",
-          "#4d2e00",
-          "#8a5300",
-          "#9a5a06",
-          "#d98a1f",
-          "#f2a33a",
-          "#ffd08a",
-          "#f6e3c4"
+          "#0a0c08",
+          "#242621",
+          "#41433e",
+          "#60625d",
+          "#81837e",
+          "#a3a6a0",
+          "#c7cac4",
+          "#edf0ea"
         ]
       },
-      "amber-low": {
-        "role": "primary",
-        "displayName": "Amber Wash",
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "purpose": "Text, links, Install pill, focus outline, light theme.",
         "tonalRamp": [
-          "#3a2a12",
-          "#4d2e00",
-          "#8a5300",
-          "#9a5a06",
-          "#d98a1f",
-          "#f2a33a",
-          "#ffd08a",
-          "#f6e3c4"
+          "#0a0c0b",
+          "#232624",
+          "#404341",
+          "#5f6261",
+          "#808382",
+          "#a3a6a4",
+          "#c7cac8",
+          "#ecefee"
         ]
       },
-      "amber-ring-light": {
-        "role": "primary",
-        "displayName": "Deepened Ring",
+      "ink-quiet": {
+        "role": "neutral",
+        "displayName": "Quiet Ink",
+        "purpose": "Hover on the Install pill, notes, scrollbar, light theme.",
         "tonalRamp": [
-          "#3a2a12",
-          "#4d2e00",
-          "#8a5300",
-          "#9a5a06",
-          "#d98a1f",
-          "#f2a33a",
-          "#ffd08a",
-          "#f6e3c4"
+          "#080c09",
+          "#212723",
+          "#3e4440",
+          "#5d635f",
+          "#7e8480",
+          "#a0a7a2",
+          "#c4cbc6",
+          "#e9f1ec"
         ]
       },
-      "amber-deep-light": {
-        "role": "primary",
-        "displayName": "Deep Amber",
+      "concrete-ground-dark": {
+        "role": "neutral",
+        "displayName": "Dark Concrete Ground",
+        "purpose": "Page background, dark theme.",
         "tonalRamp": [
-          "#3a2a12",
-          "#4d2e00",
-          "#8a5300",
-          "#9a5a06",
-          "#d98a1f",
-          "#f2a33a",
-          "#ffd08a",
-          "#f6e3c4"
+          "#090c0a",
+          "#232624",
+          "#3f4341",
+          "#5f6260",
+          "#7f8381",
+          "#a2a6a3",
+          "#c6cac7",
+          "#ebf0ed"
         ]
       },
-      "amber-ink-light": {
-        "role": "primary",
-        "displayName": "Amber Ink",
+      "concrete-raised-dark": {
+        "role": "neutral",
+        "displayName": "Dark Raised Concrete",
+        "purpose": "The clips band and docs low accent, dark theme.",
         "tonalRamp": [
-          "#3a2a12",
-          "#4d2e00",
-          "#8a5300",
-          "#9a5a06",
-          "#d98a1f",
-          "#f2a33a",
-          "#ffd08a",
-          "#f6e3c4"
+          "#090c0a",
+          "#222623",
+          "#3f4340",
+          "#5e635f",
+          "#7f8480",
+          "#a1a7a3",
+          "#c5cbc7",
+          "#ebf0ec"
         ]
       },
-      "amber-low-light": {
-        "role": "primary",
-        "displayName": "Pale Amber",
+      "ink-dark": {
+        "role": "neutral",
+        "displayName": "Light Ink",
+        "purpose": "Text and the Install pill, dark theme.",
         "tonalRamp": [
-          "#3a2a12",
-          "#4d2e00",
-          "#8a5300",
-          "#9a5a06",
-          "#d98a1f",
-          "#f2a33a",
-          "#ffd08a",
-          "#f6e3c4"
+          "#0a0c09",
+          "#242622",
+          "#41433f",
+          "#60625e",
+          "#81837f",
+          "#a4a6a1",
+          "#c8cac5",
+          "#edefea"
+        ]
+      },
+      "ink-quiet-dark": {
+        "role": "neutral",
+        "displayName": "Quiet Light Ink",
+        "purpose": "Quiet text, dark theme.",
+        "tonalRamp": [
+          "#080d09",
+          "#212723",
+          "#3e443f",
+          "#5d635f",
+          "#7e847f",
+          "#a0a7a2",
+          "#c4cbc6",
+          "#e9f1eb"
+        ]
+      },
+      "plate": {
+        "role": "neutral",
+        "displayName": "Plate",
+        "purpose": "Recordings, caption bars, command blocks, footer, docs stills.",
+        "tonalRamp": [
+          "#0a0b0a",
+          "#242524",
+          "#414241",
+          "#606260",
+          "#818381",
+          "#a4a5a4",
+          "#c8c9c8",
+          "#edefed"
+        ]
+      },
+      "plate-dark": {
+        "role": "neutral",
+        "displayName": "Dark Plate",
+        "purpose": "The plate in the dark theme, darker than the dark ground.",
+        "tonalRamp": [
+          "#0a0c0a",
+          "#242524",
+          "#414241",
+          "#606260",
+          "#818381",
+          "#a4a5a4",
+          "#c8cac8",
+          "#edefed"
+        ]
+      },
+      "plate-ink": {
+        "role": "neutral",
+        "displayName": "Plate Ink",
+        "purpose": "Text on the plate.",
+        "tonalRamp": [
+          "#0a0c09",
+          "#242622",
+          "#41433f",
+          "#60625e",
+          "#81837f",
+          "#a4a6a1",
+          "#c8cac5",
+          "#edefea"
+        ]
+      },
+      "plate-ink-quiet": {
+        "role": "neutral",
+        "displayName": "Quiet Plate Ink",
+        "purpose": "Prompts, answers, times and notes on the plate.",
+        "tonalRamp": [
+          "#070d09",
+          "#202723",
+          "#3d4440",
+          "#5c635f",
+          "#7d8580",
+          "#9fa7a2",
+          "#c3ccc6",
+          "#e8f1ec"
+        ]
+      },
+      "plate-control": {
+        "role": "neutral",
+        "displayName": "Plate Control",
+        "purpose": "Play/Pause and Copy pills, free lease tag. Literal in Stage.astro and Code.astro.",
+        "tonalRamp": [
+          "#090c0a",
+          "#232624",
+          "#404341",
+          "#5f6260",
+          "#808381",
+          "#a2a6a3",
+          "#c6cac7",
+          "#ebf0ed"
+        ]
+      },
+      "plate-control-hover": {
+        "role": "neutral",
+        "displayName": "Plate Control Hover",
+        "purpose": "Hover on plate pills. Literal in Stage.astro and Code.astro.",
+        "tonalRamp": [
+          "#090c0a",
+          "#222623",
+          "#3f4340",
+          "#5e635f",
+          "#7f8480",
+          "#a1a6a3",
+          "#c5cbc7",
+          "#ebf0ec"
         ]
       },
       "stop-red": {
-        "role": "secondary",
+        "role": "primary",
         "displayName": "Stop Red",
+        "purpose": "Face of the Esc keycap; background of the stopped lease tag.",
         "tonalRamp": [
-          "#3d0f0f",
-          "#6e1a1a",
-          "#a02222",
-          "#c62828",
-          "#e04848",
-          "#ff6b6b",
-          "#ff9e9e",
-          "#ffd6d6"
+          "#1e0100",
+          "#4b0602",
+          "#7d0f06",
+          "#b61001",
+          "#e33c2a",
+          "#fc7663",
+          "#ffb3a6",
+          "#fee9e5"
         ]
       },
-      "stop-red-light": {
-        "role": "secondary",
-        "displayName": "Stop Red (light)",
+      "stop-red-lip": {
+        "role": "primary",
+        "displayName": "Key Lip",
+        "purpose": "Bottom edge of the keycap only.",
         "tonalRamp": [
-          "#3d0f0f",
-          "#6e1a1a",
-          "#a02222",
-          "#c62828",
-          "#e04848",
-          "#ff6b6b",
-          "#ff9e9e",
-          "#ffd6d6"
+          "#1e0100",
+          "#4c0300",
+          "#7f0901",
+          "#a53628",
+          "#cc5949",
+          "#f47d6b",
+          "#feb4a6",
+          "#ffe9e5"
         ]
       },
-      "graphite-black": {
-        "role": "neutral",
-        "displayName": "Graphite",
+      "stop-text": {
+        "role": "primary",
+        "displayName": "Stop Text on Ground",
+        "purpose": "Red text or stroke on the light ground: caret, docs cautions, stopped paths in docs diagrams.",
         "tonalRamp": [
-          "#121416",
-          "#1c1f22",
-          "#2e3337",
-          "#555c62",
-          "#8b9399",
-          "#b4bbc0",
-          "#dde0e2",
-          "#f3f4f5"
+          "#1e0100",
+          "#4c0301",
+          "#7f0a02",
+          "#b51507",
+          "#de4534",
+          "#ff7460",
+          "#feb4a7",
+          "#ffe9e5"
         ]
       },
-      "graphite-panel": {
-        "role": "neutral",
-        "displayName": "Panel Graphite",
+      "stop-text-dark": {
+        "role": "primary",
+        "displayName": "Stop Text on Dark Ground",
+        "purpose": "stop-text in the dark theme.",
         "tonalRamp": [
-          "#121416",
-          "#1c1f22",
-          "#2e3337",
-          "#555c62",
-          "#8b9399",
-          "#b4bbc0",
-          "#dde0e2",
-          "#f3f4f5"
+          "#1e0000",
+          "#4c0201",
+          "#7f0602",
+          "#b31c11",
+          "#db4938",
+          "#fc7664",
+          "#ffb3a7",
+          "#fee9e5"
         ]
       },
-      "graphite-rule": {
-        "role": "neutral",
-        "displayName": "Rule Graphite",
+      "stop-text-plate": {
+        "role": "primary",
+        "displayName": "Stop Text on Plate",
+        "purpose": "Stopped or refused answers in subtitles and call lists.",
         "tonalRamp": [
-          "#121416",
-          "#1c1f22",
-          "#2e3337",
-          "#555c62",
-          "#8b9399",
-          "#b4bbc0",
-          "#dde0e2",
-          "#f3f4f5"
+          "#1e0000",
+          "#4c0300",
+          "#7f0800",
+          "#b61303",
+          "#e23e2b",
+          "#fc7763",
+          "#feb4a6",
+          "#ffe9e5"
         ]
       },
-      "graphite-ring-off": {
-        "role": "neutral",
-        "displayName": "Unlit Column",
+      "key-legend": {
+        "role": "primary",
+        "displayName": "Key Legend White",
+        "purpose": "Text on stop red: the Esc legend and the stopped lease tag.",
         "tonalRamp": [
-          "#121416",
-          "#1c1f22",
-          "#2e3337",
-          "#555c62",
-          "#8b9399",
-          "#b4bbc0",
-          "#dde0e2",
-          "#f3f4f5"
-        ]
-      },
-      "graphite-gray-6": {
-        "role": "neutral",
-        "displayName": "Gray 6",
-        "tonalRamp": [
-          "#121416",
-          "#1c1f22",
-          "#2e3337",
-          "#555c62",
-          "#8b9399",
-          "#b4bbc0",
-          "#dde0e2",
-          "#f3f4f5"
-        ]
-      },
-      "graphite-gray-5": {
-        "role": "neutral",
-        "displayName": "Gray 5",
-        "tonalRamp": [
-          "#121416",
-          "#1c1f22",
-          "#2e3337",
-          "#555c62",
-          "#8b9399",
-          "#b4bbc0",
-          "#dde0e2",
-          "#f3f4f5"
-        ]
-      },
-      "graphite-gray-4": {
-        "role": "neutral",
-        "displayName": "Gray 4",
-        "tonalRamp": [
-          "#121416",
-          "#1c1f22",
-          "#2e3337",
-          "#555c62",
-          "#8b9399",
-          "#b4bbc0",
-          "#dde0e2",
-          "#f3f4f5"
-        ]
-      },
-      "graphite-gray-3": {
-        "role": "neutral",
-        "displayName": "Gray 3",
-        "tonalRamp": [
-          "#121416",
-          "#1c1f22",
-          "#2e3337",
-          "#555c62",
-          "#8b9399",
-          "#b4bbc0",
-          "#dde0e2",
-          "#f3f4f5"
-        ]
-      },
-      "graphite-gray-2": {
-        "role": "neutral",
-        "displayName": "Gray 2",
-        "tonalRamp": [
-          "#121416",
-          "#1c1f22",
-          "#2e3337",
-          "#555c62",
-          "#8b9399",
-          "#b4bbc0",
-          "#dde0e2",
-          "#f3f4f5"
-        ]
-      },
-      "graphite-gray-1": {
-        "role": "neutral",
-        "displayName": "Gray 1",
-        "tonalRamp": [
-          "#121416",
-          "#1c1f22",
-          "#2e3337",
-          "#555c62",
-          "#8b9399",
-          "#b4bbc0",
-          "#dde0e2",
-          "#f3f4f5"
-        ]
-      },
-      "graphite-white": {
-        "role": "neutral",
-        "displayName": "Graphite White",
-        "tonalRamp": [
-          "#121416",
-          "#1c1f22",
-          "#2e3337",
-          "#555c62",
-          "#8b9399",
-          "#b4bbc0",
-          "#dde0e2",
-          "#f3f4f5"
-        ]
-      },
-      "paper": {
-        "role": "neutral",
-        "displayName": "Paper",
-        "tonalRamp": [
-          "#121416",
-          "#1c1f22",
-          "#2e3337",
-          "#555c62",
-          "#8b9399",
-          "#b4bbc0",
-          "#dde0e2",
-          "#f3f4f5"
-        ]
-      },
-      "paper-panel": {
-        "role": "neutral",
-        "displayName": "Paper Panel",
-        "tonalRamp": [
-          "#121416",
-          "#1c1f22",
-          "#2e3337",
-          "#555c62",
-          "#8b9399",
-          "#b4bbc0",
-          "#dde0e2",
-          "#f3f4f5"
-        ]
-      },
-      "paper-rule": {
-        "role": "neutral",
-        "displayName": "Paper Rule",
-        "tonalRamp": [
-          "#121416",
-          "#1c1f22",
-          "#2e3337",
-          "#555c62",
-          "#8b9399",
-          "#b4bbc0",
-          "#dde0e2",
-          "#f3f4f5"
-        ]
-      },
-      "paper-ring-off": {
-        "role": "neutral",
-        "displayName": "Unlit Column (light)",
-        "tonalRamp": [
-          "#121416",
-          "#1c1f22",
-          "#2e3337",
-          "#555c62",
-          "#8b9399",
-          "#b4bbc0",
-          "#dde0e2",
-          "#f3f4f5"
-        ]
-      },
-      "paper-gray-3": {
-        "role": "neutral",
-        "displayName": "Paper Gray 3",
-        "tonalRamp": [
-          "#121416",
-          "#1c1f22",
-          "#2e3337",
-          "#555c62",
-          "#8b9399",
-          "#b4bbc0",
-          "#dde0e2",
-          "#f3f4f5"
-        ]
-      },
-      "paper-gray-2": {
-        "role": "neutral",
-        "displayName": "Paper Gray 2",
-        "tonalRamp": [
-          "#121416",
-          "#1c1f22",
-          "#2e3337",
-          "#555c62",
-          "#8b9399",
-          "#b4bbc0",
-          "#dde0e2",
-          "#f3f4f5"
-        ]
-      },
-      "paper-ink": {
-        "role": "neutral",
-        "displayName": "Ink",
-        "tonalRamp": [
-          "#121416",
-          "#1c1f22",
-          "#2e3337",
-          "#555c62",
-          "#8b9399",
-          "#b4bbc0",
-          "#dde0e2",
-          "#f3f4f5"
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
         ]
       }
     },
     "typographyMeta": {
-      "display": {
-        "displayName": "Display",
-        "purpose": "The home page promise only, in the focused window; second line in amber."
+      "poster": {
+        "displayName": "Poster",
+        "purpose": "Home section headlines; each line a block."
       },
-      "headline": {
-        "displayName": "Headline",
-        "purpose": "One per home section, max 40rem, balanced."
+      "footer-wordmark": {
+        "displayName": "Footer Wordmark",
+        "purpose": "The name across the footer, sized to its container."
       },
-      "title": {
-        "displayName": "Title",
-        "purpose": "Window and column headings, docs subheads."
+      "heading": {
+        "displayName": "Heading",
+        "purpose": "Section heads that are not posters."
       },
-      "lead": {
-        "displayName": "Lead",
-        "purpose": "The hero tagline, gray 2, max 34rem."
+      "docs-title": {
+        "displayName": "Docs Title",
+        "purpose": "Docs page titles."
+      },
+      "docs-section": {
+        "displayName": "Docs Section",
+        "purpose": "Docs h2 and h3."
+      },
+      "wordmark": {
+        "displayName": "Wordmark",
+        "purpose": "Site name in every header."
+      },
+      "lede": {
+        "displayName": "Lede",
+        "purpose": "The sentence under a poster, at most 30ch."
+      },
+      "sub-head": {
+        "displayName": "Sub-head",
+        "purpose": "Clip titles, install step labels, stop facts."
       },
       "body": {
         "displayName": "Body",
-        "purpose": "Starlight prose at its default sizes; sm inside hero windows."
+        "purpose": "Running text; 1rem is 17px."
+      },
+      "small": {
+        "displayName": "Small",
+        "purpose": "Notes, call lists, lease tag, plate buttons."
+      },
+      "key-legend": {
+        "displayName": "Key Legend",
+        "purpose": "\"Esc\" on the keycap only."
       },
       "call": {
         "displayName": "Call",
-        "purpose": "Request and answer lines, 1.5ch hanging indent, wrapped anywhere."
+        "purpose": "Subtitles under a recording."
       },
-      "label": {
-        "displayName": "Label",
-        "purpose": "Call timestamps, the lease tag, the bar's keycaps, the recording's output line; tabular numbers."
+      "command": {
+        "displayName": "Command",
+        "purpose": "Copyable commands and the full call list."
       }
     },
-    "shadows": [],
-    "focus": [
-      {
-        "name": "focus-visible",
-        "value": "outline: 2px solid var(--ncu-ring); outline-offset: 2px",
-        "purpose": "Keyboard focus on every element."
+    "themes": {
+      "light": {
+        "ground": "concrete-ground",
+        "raised": "concrete-raised",
+        "ink": "ink",
+        "ink-2": "ink-quiet",
+        "plate": "plate",
+        "stop": "stop-text"
       },
-      {
-        "name": "page-ring",
-        "value": "2px solid var(--ncu-ring) at inset -4px, radius calc(var(--ncu-radius) + 4px), on one <ncu-ring> element",
-        "purpose": "The page's one focus ring: on the promise window first, then on the focused column of the section crossing the middle of the view."
+      "dark": {
+        "ground": "concrete-ground-dark",
+        "raised": "concrete-raised-dark",
+        "ink": "ink-dark",
+        "ink-2": "ink-quiet-dark",
+        "plate": "plate-dark",
+        "stop": "stop-text-dark"
       },
-      {
-        "name": "pill-ring",
-        "value": "1px solid var(--ncu-ring) at inset -1px, radius 999px, on an <ncu-ring> element",
-        "purpose": "The lit workspace pill in the bar."
+      "source": "src/styles/tokens.css (:root and :root[data-theme=dark]); stored under localStorage starlight-theme"
+    },
+    "docsGreys": {
+      "source": "src/styles/theme.css",
+      "dark": {
+        "white": "#e6e8e3",
+        "gray-1": "#d3d7d1",
+        "gray-2": "#b9bfba",
+        "gray-3": "#8a918c",
+        "gray-4": "#5d645f",
+        "gray-5": "#343a36",
+        "gray-6": "#1f2320",
+        "black": "#161917",
+        "accent-low": "#1f2320",
+        "accent": "#b9bfba",
+        "accent-high": "#e6e8e3"
       },
-      {
-        "name": "call-ring",
-        "value": "1px solid var(--ncu-ring) at inset 0, radius 6px, on an <ncu-ring> element",
-        "purpose": "The call the recording is showing."
+      "light": {
+        "white": "#0c0e0d",
+        "gray-1": "#1d211f",
+        "gray-2": "#2d332f",
+        "gray-3": "#464c48",
+        "gray-4": "#6c736e",
+        "gray-5": "#b8bdb7",
+        "gray-6": "#dcdfd9",
+        "gray-7": "#e1e4de",
+        "black": "#e6e8e3",
+        "accent-low": "#dcdfd9",
+        "accent": "#0c0e0d",
+        "accent-high": "#2d332f"
       }
-    ],
+    },
+    "fonts": {
+      "archivoCut": {
+        "script": "scripts/subset-font.mjs",
+        "widthAxis": "62–100%",
+        "widthsUsed": [
+          "62%",
+          "70%",
+          "72%",
+          "84%",
+          "88%",
+          "100%"
+        ],
+        "characters": "printable ASCII, U+A0, U+A9, U+B7, U+D7, U+2013-2014, U+2018-2019, U+201C-201D, U+2026",
+        "preloaded": true
+      },
+      "rootSize": "17px (html font-size 1.0625rem)"
+    },
+    "shadows": [],
+    "focus": {
+      "default": "outline: 2px solid var(--ncu-ink); outline-offset: 3px",
+      "onPlate": "outline-color: var(--ncu-plate-ink)",
+      "stopKey": "outline-offset: 0.06em"
+    },
     "motion": [
       {
-        "name": "button-color",
-        "value": "background-color 150ms ease, border-color 150ms ease",
-        "purpose": "Button hover; also pill and keycap color on hover."
+        "name": "ncu-ease",
+        "value": "cubic-bezier(0.22, 1, 0.36, 1)",
+        "purpose": "All UI transitions: presses, the theme icon, the video fade, subtitles."
       },
       {
-        "name": "strip-open",
-        "value": "each hero column translate 4rem to 0, 680ms cubic-bezier(0.16, 1, 0.3, 1), delays 0, 70, 140ms",
-        "purpose": "The hero's columns open from the right as niri opens columns. Off under reduced motion."
+        "name": "frame-drop",
+        "value": "grow 1100ms cubic-bezier(0.65, 0, 0.15, 1) 400ms both",
+        "purpose": "The headline frame drops into the first recording when that recording is in the first view."
       },
       {
-        "name": "ring-land",
-        "value": "border-color from var(--ncu-rule) and scale 1.012 to amber and 1, 320ms cubic-bezier(0.16, 1, 0.3, 1), 420ms delay",
-        "purpose": "The page's ring lands on the promise window once the columns are in. Off under reduced motion."
+        "name": "frame-morph",
+        "value": "grow linear both; animation-timeline: scroll(root); animation-range: 0 var(--morph-end)",
+        "purpose": "The headline frame grows into the first recording as the page scrolls."
       },
       {
-        "name": "ring-move",
-        "value": "re-parent, then translate and width/height from the old box, cubic-bezier(0.16, 1, 0.3, 1), 220 + 0.35 x distance ms, at most 560ms; a move over a third of the view's height instead lands at the new size, translate 3rem along the path and opacity 0 to 1, 420ms",
-        "purpose": "Every ring moving to what has focus: the page's ring between sections, the lit pill, the current call. Instant under reduced motion."
+        "name": "rise",
+        "value": "from { opacity: 0; translate: 0 2.5rem } linear both; animation-timeline: view(); animation-range: entry 5% cover 30%",
+        "purpose": "Section parts below the hero rise into place on scroll."
       },
       {
-        "name": "workspace-label",
-        "value": "old name out by 100% vertically 200ms, new name in from 100% 320ms, cubic-bezier(0.16, 1, 0.3, 1); up when moving down the page",
-        "purpose": "The bar's workspace name below 80rem. Instant under reduced motion."
+        "name": "subtitle-change",
+        "value": "translateY(0.6em), opacity 0 to none, 260ms ncu-ease",
+        "purpose": "Each new call in a recording’s subtitle."
       },
       {
-        "name": "column-arrive",
-        "value": "from 50rem: animation-timeline: view(); animation-range: entry 0% entry 33vh; translate 3rem to 0, cubic-bezier(0.16, 1, 0.3, 1)",
-        "purpose": "Section columns side by side arriving from the right. Off on stacked phones, under reduced motion and without scroll timelines."
-      },
-      {
-        "name": "call-follow",
-        "value": "call text color 200ms ease-out; list scrolls smoothly to keep the current call a third down",
-        "purpose": "The call log following its recording."
+        "name": "video-fade",
+        "value": "opacity 400ms ncu-ease",
+        "purpose": "A recording fades in over its still once playing."
       },
       {
         "name": "key-press",
-        "value": "border-width 3px/1px swap (top/bottom) with transparent top, 80ms",
-        "purpose": "A keycap sinking while the reader holds the key; no change in size."
+        "value": "translateY(0.06em), border-bottom-width 0.08em to 0.02em, 120ms ncu-ease",
+        "purpose": "The stop key sinking."
       },
       {
-        "name": "details-open",
-        "value": "::details-content height 0 to auto, interpolate-size: allow-keywords, 360ms cubic-bezier(0.16, 1, 0.3, 1)",
-        "purpose": "The All N calls disclosure. Off under reduced motion."
+        "name": "button-press",
+        "value": "scale(0.97) Install, scale(0.96) plate pills, 140ms ncu-ease",
+        "purpose": "Press feedback."
       },
       {
-        "name": "page-transition",
-        "value": "@view-transition { navigation: auto }, header view-transition-name ncu-header; scroll-behavior: smooth on the home page",
-        "purpose": "Between pages and to anchors. Off under reduced motion."
+        "name": "theme-icon",
+        "value": "rotate 180deg, 300ms ncu-ease",
+        "purpose": "The theme icon in the dark theme."
       },
       {
-        "name": "demo-playback",
-        "value": "play at 35% in view after page load, pause otherwise; never under reduced motion or save-data; stays stopped after the stop keycaps are pressed until played",
-        "purpose": "Recordings."
+        "name": "page-crossfade",
+        "value": "@view-transition { navigation: auto }; header and wordmark named ncu-header and ncu-name",
+        "purpose": "Pages crossfade while the header and wordmark hold still."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "prefers-reduced-motion: reduce",
+        "purpose": "No morph, drop, rise, subtitle animation, smooth scroll or crossfade; recordings stay on their still until Play."
       }
     ],
     "breakpoints": [
       {
-        "name": "diagram-list",
-        "value": "40rem",
-        "purpose": "Below: the diagram slot shows a mono list."
+        "name": "phone-crop",
+        "value": "max-width: 47.99rem",
+        "purpose": "8:9 recording crop and headline frame."
       },
       {
-        "name": "columns",
-        "value": "50rem",
-        "purpose": "From here: section columns sit side by side; the bar shows the lease tag, stop keys and controls."
+        "name": "frame-wide",
+        "value": "min-width: 48rem",
+        "purpose": "16:9 headline frame."
       },
       {
-        "name": "hero-strip",
-        "value": "62rem",
-        "purpose": "From here: the hero is a sideways-scrolling strip of three columns, as tall as the view."
+        "name": "hero-fill",
+        "value": "min-aspect-ratio: 5/4 and min-width: 48rem",
+        "purpose": "The hero fills the first view."
       },
       {
-        "name": "split-list",
-        "value": "72rem",
-        "purpose": "From here: long lists in a wide column read in two."
+        "name": "two-column",
+        "value": "min-width: 62rem",
+        "purpose": "Stop facts beside the recording; clips in two columns."
       },
       {
-        "name": "bar-pills",
-        "value": "80rem",
-        "purpose": "From here: the bar shows the workspace pills."
+        "name": "coarse-pointer",
+        "value": "pointer: coarse",
+        "purpose": "Docs anchors and copy buttons grow to 2.75rem."
       }
     ],
-    "contentWidths": [
-      {
-        "name": "docs",
-        "value": "46rem"
-      },
-      {
-        "name": "home",
-        "value": "96rem"
-      }
-    ],
-    "browser": [
-      {
-        "name": "selection",
-        "value": "background: var(--sl-color-accent-low); color: var(--sl-color-white)"
-      },
-      {
-        "name": "caret",
-        "value": "caret-color: var(--ncu-ring)"
-      },
-      {
-        "name": "scrollbars",
-        "value": "scrollbar-color: var(--sl-color-gray-5) var(--sl-color-black); thin and on transparent inside the hero strip and call log"
-      }
-    ],
-    "heroStrip": {
-      "columns": "clamp(24rem, 33vw, 36rem) clamp(34rem, 52vw, 68rem) clamp(18rem, 24vw, 26rem)",
-      "height": "clamp(38rem, calc(100svh - var(--sl-nav-height)), 72rem)",
-      "gap": "1rem",
-      "fitsFrom": "about 2150px"
+    "measured": {
+      "lighthouseMobile": "Performance 100 on 3 runs",
+      "lcp": "1.65–1.73 s",
+      "cls": 0,
+      "tbt": "0 ms",
+      "homeJsGzip": "3.3 KB"
     }
   },
   "components": [
     {
-      "name": "Primary Button",
+      "name": "Install Button",
       "kind": "button",
       "refersTo": "button-primary",
-      "description": "The one primary action, amber.",
-      "html": "<a class=\"ds-btn-primary\" href=\"#\">Install from source</a>",
-      "css": ".ds-btn-primary { display:inline-flex; align-items:center; min-height:2.75rem; padding-inline:1.15rem; border-radius:8px; font-family:'Archivo Variable',ui-sans-serif,system-ui,sans-serif; font-weight:600; text-decoration:none; background:var(--ncu-ring,#f2a33a); color:var(--sl-color-black,#121416); transition:background-color 150ms ease; } .ds-btn-primary:hover { background:var(--sl-color-accent-high,#ffd08a); } .ds-btn-primary:focus-visible { outline:2px solid var(--ncu-ring,#f2a33a); outline-offset:2px; }"
+      "description": "The ink pill on the ground; the one primary action on the home page.",
+      "html": "<a class=\"ds-button\" href=\"#install\">Install</a>",
+      "css": ".ds-button { display: inline-flex; align-items: center; justify-content: center; min-height: 3.25rem; padding: 0 1.75rem; border-radius: 999px; background: var(--ncu-ink, #0c0e0d); color: var(--ncu-ground, #e6e8e3); font: 650 1rem/1 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; text-decoration: none; transition: transform 140ms cubic-bezier(0.22, 1, 0.36, 1), background-color 180ms ease; } .ds-button:hover { background: var(--ncu-ink-2, #464c48); } .ds-button:active { transform: scale(0.97); } .ds-button:focus-visible { outline: 2px solid var(--ncu-ink, #0c0e0d); outline-offset: 3px; }"
     },
     {
-      "name": "Quiet Button",
+      "name": "Plate Button",
       "kind": "button",
-      "refersTo": "button-quiet",
-      "description": "Secondary action, rule-bordered.",
-      "html": "<a class=\"ds-btn-quiet\" href=\"#\">How the safety works</a>",
-      "css": ".ds-btn-quiet { display:inline-flex; align-items:center; min-height:2.75rem; padding-inline:1.15rem; border-radius:8px; border:1px solid var(--ncu-rule,#2a2e32); color:var(--sl-color-white,#eef0f1); font-family:'Archivo Variable',ui-sans-serif,system-ui,sans-serif; font-weight:600; text-decoration:none; transition:border-color 150ms ease; } .ds-btn-quiet:hover { border-color:var(--sl-color-gray-3,#8b9399); } .ds-btn-quiet:focus-visible { outline:2px solid var(--ncu-ring,#f2a33a); outline-offset:2px; }"
-    },
-    {
-      "name": "Column",
-      "kind": "card",
-      "refersTo": "column",
-      "description": "A bordered panel inside a section.",
-      "html": "<div class=\"ds-column\"><h3>Typing, checked against focus</h3><p><code>type_text</code> names the window it means.</p></div>",
-      "css": ".ds-column { padding:clamp(1rem,0.75rem + 0.8vw,1.25rem); border:1px solid var(--ncu-rule,#2a2e32); border-radius:var(--ncu-radius,10px); background:var(--ncu-panel,#181b1e); color:var(--sl-color-gray-2,#b4bbc0); font-family:'Archivo Variable',ui-sans-serif,system-ui,sans-serif; } .ds-column h3 { margin:0 0 .5rem; color:var(--sl-color-white,#eef0f1); letter-spacing:-0.01em; } .ds-column code { font-family:'JetBrains Mono Variable',ui-monospace,monospace; font-size:.85em; }"
-    },
-    {
-      "name": "Focused Column",
-      "kind": "card",
-      "refersTo": "column",
-      "description": "The focused column of the section in view, with its ring shown lit.",
-      "html": "<div class=\"ds-col-focused\"><h3>Keys, checked against focus</h3><p>The next key is refused with <code>focus_mismatch</code>.</p></div>",
-      "css": ".ds-col-focused { position:relative; padding:1.25rem; border:1px solid var(--ncu-rule,#2a2e32); border-radius:10px; background:var(--ncu-panel,#181b1e); color:var(--sl-color-gray-2,#b4bbc0); font-family:'Archivo Variable',ui-sans-serif,system-ui,sans-serif; } .ds-col-focused::after { content:''; position:absolute; inset:-4px; border:2px solid var(--ncu-ring,#f2a33a); border-radius:14px; pointer-events:none; } .ds-col-focused h3 { margin:0 0 .5rem; color:var(--sl-color-white,#eef0f1); letter-spacing:-0.01em; } .ds-col-focused code { font-family:'JetBrains Mono Variable',ui-monospace,monospace; font-size:.85em; }"
-    },
-    {
-      "name": "Promise Window",
-      "kind": "custom",
-      "refersTo": "window",
-      "description": "The hero's focused window: display headline with the amber second line, requirements at its foot.",
-      "html": "<div class=\"ds-win\"><h1>Your agent can drive your niri desktop. <span>One key takes it back.</span></h1><p class=\"ds-needs\">niri 26.04 · Linux, Wayland · built from source</p></div>",
-      "css": ".ds-win { display:flex; flex-direction:column; gap:1.5rem; max-width:36rem; padding:clamp(1.25rem,0.9rem + 1vw,2.25rem); border:1px solid var(--ncu-rule,#2a2e32); border-radius:10px; background:var(--ncu-panel,#181b1e); outline:2px solid var(--ncu-ring,#f2a33a); outline-offset:2px; font-family:'Archivo Variable',ui-sans-serif,system-ui,sans-serif; } .ds-win h1 { margin:0; font-size:clamp(2.2rem,1rem + 2.6vw,4.75rem); line-height:1.02; font-weight:680; letter-spacing:-0.03em; color:var(--sl-color-white,#eef0f1); text-wrap:balance; } .ds-win h1 span { display:block; margin-top:.15em; color:var(--ncu-ring,#f2a33a); } .ds-needs { margin:0; font-size:.875rem; color:var(--sl-color-gray-3,#8b9399); }"
-    },
-    {
-      "name": "Plate",
-      "kind": "custom",
-      "refersTo": "plate",
-      "description": "A recording on its graphite plate, with the note and output under it.",
-      "html": "<figure class=\"ds-plate-fig\"><div class=\"ds-plate\"><div class=\"ds-screen\"></div></div><figcaption><span>A real Claude Code session on a real niri 26.04 desktop; nothing was scripted.</span><span class=\"ds-out\">DP-1 · 2560×1440, shown at 1920×1080</span></figcaption></figure>",
-      "css": ".ds-plate-fig { margin:0; } .ds-plate { border:2px solid var(--ncu-rule,#2a2e32); border-radius:12px; background:#121416; padding:2px; } .ds-screen { aspect-ratio:16/9; border-radius:10px; background:#1c1f22; } .ds-plate-fig figcaption { display:flex; flex-wrap:wrap; justify-content:space-between; gap:.25rem 1.5rem; margin-top:.5rem; font-family:'Archivo Variable',ui-sans-serif,system-ui,sans-serif; font-size:.75rem; line-height:1.5; color:var(--sl-color-gray-3,#8b9399); } .ds-out { font-family:'JetBrains Mono Variable',ui-monospace,monospace; font-size:.7rem; }"
-    },
-    {
-      "name": "Call Line",
-      "kind": "custom",
-      "refersTo": "call",
-      "description": "Calls in a log: the shown call wears the ring, calls to come are gray 3, a stopped answer is red.",
-      "html": "<ol class=\"ds-calls\"><li class=\"ds-past\"><span class=\"ds-at\">0:01.2</span><code class=\"ds-req\"><span class=\"ds-mark\">→</span> acquire_desktop</code><code class=\"ds-ans\"><span class=\"ds-mark\">←</span> lease taken <span class=\"ds-ms\">3 ms</span></code></li><li class=\"ds-now\"><span class=\"ds-at\">0:04.0</span><code class=\"ds-req\"><span class=\"ds-mark\">→</span> focus {\"window_id\": 3}</code><code class=\"ds-ans\"><span class=\"ds-mark\">←</span> accepted: true · observed: focused <span class=\"ds-ms\">303 ms</span></code></li><li class=\"ds-next ds-error\"><span class=\"ds-at\">0:09.2</span><code class=\"ds-req\"><span class=\"ds-mark\">→</span> type_text</code><code class=\"ds-ans\"><span class=\"ds-mark\">←</span> stopped <span class=\"ds-ms\">2 ms</span></code></li></ol>",
-      "css": ".ds-calls { list-style:none; padding:0; margin:0; display:grid; gap:.25rem; } .ds-calls li { display:grid; grid-template-columns:auto minmax(0,1fr); column-gap:.75rem; padding:.3rem .5rem; border-radius:6px; outline:1px solid transparent; transition:outline-color 200ms ease-out; } .ds-calls li.ds-now { outline-color:var(--ncu-ring,#f2a33a); } .ds-at { grid-row:span 2; font-family:'JetBrains Mono Variable',ui-monospace,monospace; font-size:.7rem; line-height:1.75; color:var(--sl-color-gray-3,#8b9399); font-variant-numeric:tabular-nums; } .ds-calls code { display:block; padding-left:1.5ch; text-indent:-1.5ch; overflow-wrap:anywhere; font-family:'JetBrains Mono Variable',ui-monospace,monospace; font-size:.75rem; line-height:1.6; } .ds-req { color:var(--sl-color-white,#eef0f1); } .ds-ans { color:var(--sl-color-gray-2,#b4bbc0); } .ds-mark { color:var(--ncu-ring,#f2a33a); } .ds-error .ds-ans, .ds-error .ds-ans .ds-mark { color:var(--ncu-stop,#ff6b6b); } .ds-ms { color:var(--sl-color-gray-3,#8b9399); white-space:nowrap; } .ds-ms::before { content:'· '; } .ds-next :is(.ds-req,.ds-ans,.ds-ms) { color:var(--sl-color-gray-3,#8b9399); }"
-    },
-    {
-      "name": "Workspace Pills",
-      "kind": "nav",
-      "refersTo": "workspace-pill",
-      "description": "The bar's sections; the one in view is lit.",
-      "html": "<nav class=\"ds-pills\"><a href=\"#\">demo</a><a href=\"#\" class=\"ds-lit\">tools</a><a href=\"#\">gate</a><a href=\"#\">safety</a></nav>",
-      "css": ".ds-pills { display:flex; gap:.35rem; } .ds-pills a { padding:.15rem .6rem; border:1px solid var(--ncu-rule,#2a2e32); border-radius:999px; font-family:'Archivo Variable',ui-sans-serif,system-ui,sans-serif; font-size:.8125rem; line-height:1.4; color:var(--sl-color-gray-3,#8b9399); text-decoration:none; transition:color 150ms ease; } .ds-pills a:hover { color:var(--sl-color-white,#eef0f1); } .ds-pills a.ds-lit { border-color:var(--ncu-ring,#f2a33a); color:var(--sl-color-white,#eef0f1); } .ds-pills a:focus-visible { outline:2px solid var(--ncu-ring,#f2a33a); outline-offset:2px; }"
+      "refersTo": "button-plate",
+      "description": "Play/Pause on a recording and Copy on a command, on the plate.",
+      "html": "<div class=\"ds-plate\"><button class=\"ds-plate-btn\" type=\"button\">Play</button></div>",
+      "css": ".ds-plate { background: #0b0c0b; padding: 1rem; } .ds-plate-btn { min-width: 4.5rem; min-height: 2.75rem; padding: 0 1rem; border: 0; border-radius: 999px; background: #1d201e; color: #e6e8e3; font: 600 0.875rem/1 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; cursor: pointer; transition: background-color 160ms ease, transform 140ms cubic-bezier(0.22, 1, 0.36, 1); } .ds-plate-btn:hover { background: #2b2f2c; } .ds-plate-btn:active { transform: scale(0.96); } .ds-plate-btn:focus-visible { outline: 2px solid #e6e8e3; outline-offset: 3px; }"
     },
     {
       "name": "Lease Tag",
       "kind": "chip",
-      "refersTo": "lease-tag",
-      "description": "Dashed and gray when free; solid amber when the agent holds the lease.",
-      "html": "<p class=\"ds-lease\">lease free</p> <p class=\"ds-lease ds-held\">lease held by the agent</p>",
-      "css": ".ds-lease { display:inline-flex; margin:0; padding:.15rem .6rem; border:1px dashed var(--sl-color-gray-4,#555c62); border-radius:6px; font-family:'JetBrains Mono Variable',ui-monospace,monospace; font-size:.7rem; color:var(--sl-color-gray-3,#8b9399); white-space:nowrap; } .ds-lease.ds-held { border-style:solid; border-color:var(--ncu-ring,#f2a33a); color:var(--sl-color-white,#eef0f1); }"
+      "refersTo": "lease-tag-free",
+      "description": "Who holds the lease, following the recording: free, held, stopped.",
+      "html": "<div class=\"ds-plate\"><span class=\"ds-lease\">lease free</span> <span class=\"ds-lease ds-held\">lease held</span> <span class=\"ds-lease ds-stopped\">lease stopped</span></div>",
+      "css": ".ds-plate { background: #0b0c0b; padding: 1rem; display: flex; gap: 0.5rem; } .ds-lease { padding: 0.15rem 0.6rem; border-radius: 999px; font: 600 0.875rem/1.45 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; white-space: nowrap; color: #9ba39e; background: #1d201e; transition: background-color 200ms ease, color 200ms ease; } .ds-held { color: #0b0c0b; background: #e6e8e3; } .ds-stopped { color: #fff; background: #d8301f; }"
     },
     {
-      "name": "Stop Keycaps",
+      "name": "Stop Key",
       "kind": "custom",
-      "refersTo": "keycap",
-      "description": "The stop key as keycaps: large in the stop window, small in the bar.",
-      "html": "<p class=\"ds-keys\"><kbd>Mod</kbd><kbd>Shift</kbd><kbd>Escape</kbd></p><a class=\"ds-keys-bar\" href=\"#\"><kbd>Mod</kbd><kbd>Shift</kbd><kbd>Esc</kbd></a>",
-      "css": ".ds-keys { display:flex; gap:.4rem; margin:0 0 1rem; } .ds-keys kbd { display:inline-flex; align-items:center; min-height:2.5rem; padding:0 .8rem; border:1px solid var(--sl-color-gray-4,#555c62); border-bottom-width:3px; border-radius:8px; font-family:'JetBrains Mono Variable',ui-monospace,monospace; font-size:.875rem; color:var(--sl-color-white,#eef0f1); background:var(--sl-color-black,#121416); } .ds-keys-bar { display:inline-flex; gap:.2rem; text-decoration:none; } .ds-keys-bar kbd { padding:.05rem .4rem; border:1px solid var(--sl-color-gray-4,#555c62); border-bottom-width:2px; border-radius:5px; font-family:'JetBrains Mono Variable',ui-monospace,monospace; font-size:.7rem; color:var(--sl-color-gray-2,#b4bbc0); background:none; } .ds-keys-bar:hover kbd { border-color:var(--sl-color-gray-3,#8b9399); color:var(--sl-color-white,#eef0f1); } .ds-keys-bar:focus-visible { outline:2px solid var(--ncu-ring,#f2a33a); outline-offset:2px; }"
+      "refersTo": "stop-key",
+      "description": "The red Esc keycap set inline in the stop poster; sinks when the stop lands.",
+      "html": "<p class=\"ds-poster\">One key <button class=\"ds-key\" type=\"button\"><span>Esc</span></button></p>",
+      "css": ".ds-poster { margin: 0; font: 860 4rem/0.86 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; font-stretch: 70%; letter-spacing: -0.035em; color: #0c0e0d; } .ds-key { display: inline-grid; place-items: center; box-sizing: border-box; vertical-align: 0.28em; height: 0.74em; padding: 0 0.2em; line-height: 1; border: 0; border-radius: 0.09em; border-bottom: 0.08em solid #8f1f13; background: #d8301f; color: #fff; font: inherit; cursor: pointer; transition: transform 120ms cubic-bezier(0.22, 1, 0.36, 1), border-bottom-width 120ms cubic-bezier(0.22, 1, 0.36, 1); } .ds-key span { font-size: 0.32em; font-weight: 700; font-stretch: 100%; letter-spacing: 0.04em; text-transform: uppercase; } .ds-key:active { transform: translateY(0.06em); border-bottom-width: 0.02em; } .ds-key:focus-visible { outline: 2px solid #0c0e0d; outline-offset: 0.06em; }"
+    },
+    {
+      "name": "Stage Bar",
+      "kind": "card",
+      "refersTo": "stage-bar",
+      "description": "The caption bar under a recording: prompt, Play, the current call as a subtitle, the lease tag.",
+      "html": "<div class=\"ds-bar\"><p class=\"ds-ask\">“In Files, put the two screenshots into a new folder.”</p><button class=\"ds-plate-btn\" type=\"button\">Play</button><div class=\"ds-sub\"><code>→ status</code><code class=\"ds-ans\">← ok · 3 ms</code></div><span class=\"ds-lease\">lease free</span></div>",
+      "css": ".ds-bar { display: grid; grid-template-columns: 1fr auto; gap: 0.5rem 1rem; padding: 0.9rem clamp(1rem, 3vw, 2.5rem) 1.1rem; background: #0b0c0b; color: #e6e8e3; font-family: 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; } .ds-ask { margin: 0; align-self: center; color: #9ba39e; font-size: 1rem; line-height: 1.4; } .ds-plate-btn { min-width: 4.5rem; min-height: 2.75rem; padding: 0 1rem; border: 0; border-radius: 999px; background: #1d201e; color: #e6e8e3; font: 600 0.875rem/1 inherit; cursor: pointer; } .ds-plate-btn:hover { background: #2b2f2c; } .ds-sub { grid-row: 2; font-size: clamp(0.875rem, 0.7rem + 0.6vw, 1.25rem); line-height: 1.45; } .ds-sub code { display: block; font-family: 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace; } .ds-ans { color: #9ba39e; } .ds-lease { grid-row: 2; grid-column: 2; justify-self: end; align-self: start; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.875rem; font-weight: 600; color: #9ba39e; background: #1d201e; }"
+    },
+    {
+      "name": "Code Block",
+      "kind": "card",
+      "refersTo": "code-block",
+      "description": "A command on the plate, wrapped, with a Copy pill.",
+      "html": "<div class=\"ds-code\"><pre><code>cargo install --locked --path niri-computer-use</code></pre><button type=\"button\">Copy</button></div>",
+      "css": ".ds-code { display: grid; grid-template-columns: 1fr auto; align-items: start; gap: 0.5rem; padding: 0.5rem 0.5rem 0.5rem clamp(1rem, 2vw, 1.25rem); border-radius: 0.75rem; background: #0b0c0b; color: #e6e8e3; } .ds-code pre { margin: 0; padding-block: 0.6rem; font: 0.875rem/1.6 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace; white-space: pre-wrap; overflow-wrap: anywhere; } .ds-code button { min-width: 4.5rem; min-height: 2.75rem; padding: 0 0.9rem; border: 0; border-radius: 999px; background: #1d201e; color: #e6e8e3; font: 600 0.875rem/1 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; cursor: pointer; transition: background-color 160ms ease, transform 140ms cubic-bezier(0.22, 1, 0.36, 1); } .ds-code button:hover { background: #2b2f2c; } .ds-code button:active { transform: scale(0.96); }"
+    },
+    {
+      "name": "Header",
+      "kind": "nav",
+      "refersTo": "nav-link",
+      "description": "Wordmark left; Docs, GitHub and the theme toggle right.",
+      "html": "<header class=\"ds-top\"><a class=\"ds-name\" href=\"#\">niri-computer-use</a><nav><a href=\"#\">Docs</a><a href=\"#\">GitHub</a><button class=\"ds-theme\" type=\"button\" aria-label=\"Use the dark theme\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"5.5\"></circle><path d=\"M12 6.5a5.5 5.5 0 0 1 0 11z\"></path></svg></button></nav></header>",
+      "css": ".ds-top { display: flex; align-items: center; justify-content: space-between; padding: 0.5rem clamp(1rem, 3.2vw, 3rem); background: #e6e8e3; color: #0c0e0d; font-family: 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; } .ds-name { display: inline-flex; align-items: center; min-height: 2.75rem; color: inherit; font-weight: 760; font-stretch: 88%; font-size: clamp(1.0625rem, 1rem + 0.3vw, 1.25rem); letter-spacing: -0.01em; text-decoration: none; } .ds-top nav { display: flex; align-items: center; } .ds-top nav a { display: inline-flex; align-items: center; min-height: 2.75rem; padding: 0 0.45rem; color: inherit; font-weight: 550; text-decoration: none; } .ds-top nav a:hover { text-decoration: underline; text-underline-offset: 0.2em; } .ds-theme { display: grid; place-items: center; width: 2.75rem; height: 2.75rem; border: 0; border-radius: 999px; background: none; color: inherit; cursor: pointer; } .ds-theme svg { width: 1.25rem; height: 1.25rem; fill: none; stroke: currentColor; stroke-width: 1.6; transition: rotate 300ms cubic-bezier(0.22, 1, 0.36, 1); } .ds-theme svg path { fill: currentColor; stroke: none; } :focus-visible { outline: 2px solid #0c0e0d; outline-offset: 3px; }"
     }
   ],
   "narrative": {
-    "northStar": "The Column in Focus",
-    "overview": "The home page is drawn as a niri screen. A bar runs across the top with the page's sections as workspace pills, a lease tag and the stop key. Under it, edge to edge, sits a strip of graphite windows split by niri's 16px gaps: the focused promise window wearing the amber ring, a column holding the recording above the agent's call log, and a stop-key window that runs off the right edge until the screen is wide enough for it. Below the strip each section is a workspace of columns. The page has one focus ring, as niri has one focused window: as the page scrolls, the ring slides from the promise window into the focused column of the section in view, and the bar's lit pill slides to that section's workspace. Starlight supplies search, the sidebar on docs pages and the theme switch; the system lives in the theme tokens and the components layered on top.\n\nEvidence is the decoration. The recordings are real Claude Code sessions on a real niri desktop, each with a note saying so and naming its output. The calls beside them are the requests and answers from the same run, written as `→ request` and `← answer · ms`; while the hero recording plays, a ring moves down the list with the call it shows, the calls still to come dim, and the bar's lease tag turns held and free with the run. There are no illustrations, gradient fills, glows or shadows. The page is dense and quiet, and color is spent only on focus, action and refusal.\n\nBoth themes are first class. Dark is graphite with a bright amber ring; light is pale paper with the amber deepened to a brown that holds contrast on white. The browser's own parts follow: text selection takes the low amber, the caret is amber, and scrollbars are gray on the page color.",
+    "northStar": "Poster and Plate",
+    "overview": "Two materials carry the whole site. The concrete ground holds type set like a street poster: Archivo condensed to 62–72% width at weights 820–880, lines packed to 0.8–0.9 leading, sizes tied to the viewport width. The black plate holds the evidence: real desktop recordings, the calls under them in JetBrains Mono, copyable commands, and the footer. Nothing else is decorated. There are no shadows, gradients or ornaments on the home page; a section changes by changing material (ground, raised ground, plate), not by drawing a line.\n\nThe home page (`src/pages/index.astro`) sits outside Starlight and loads only its own styles. The docs are Starlight restyled through `src/styles/theme.css`: the same tokens, the same wordmark, Archivo titles a size down from the posters, and Starlight's greys remapped onto the concrete. Both read `src/styles/tokens.css`, so both themes (light and dark, stored under Starlight's `starlight-theme` key) are the same on every page, and the header and wordmark hold still while pages crossfade.\n\nMotion follows the recordings rather than decorating the page: the frame in the headline grows into the first recording, subtitles and the lease tag change at each call's real time, and the stop key sinks when the recorded stop lands. Measured on the built home page: Lighthouse mobile Performance 100 on three runs, LCP 1.65–1.73 s, CLS 0, TBT 0, and 3.3 KB of JS gzipped.",
     "keyCharacteristics": [
-      "Graphite windows and 1px rules on niri's 16px gaps, no shadows.",
-      "One accent, amber, taken from the focus ring.",
-      "Red only for an answer that refused or stopped.",
-      "Archivo for prose and headings, JetBrains Mono for calls, keys, geometry and metadata.",
-      "State shown the way niri shows it: a ring that moves, a pill that lights, a tag that goes held.",
-      "Motion in niri's directions: columns arrive from the right, workspaces change vertically, focus slides."
+      "One Archivo variable face from 62% to 100% width; width carries the hierarchy as much as size does.",
+      "Root text at 17px (`html` font-size 1.0625rem), so every rem on the home page is 17px.",
+      "Recordings, calls and commands always sit on the black plate, in both themes.",
+      "One red, in four steps, reserved for the stop key and stopped or refused answers.",
+      "Pill controls in ink on the ground, in a dark grey on the plate.",
+      "Light and dark themes share the plate; only the ground, raised ground, inks and on-ground red change."
     ],
     "rules": [
       {
-        "name": "The One Ring Rule",
-        "body": "Amber means focus: what is in view, what is held, what acts, what to press. It never fills a panel, tints a background or decorates a heading for emphasis alone.",
+        "name": "The One Red Rule",
+        "body": "Red means the stop key, or an answer that was stopped or refused. Pick the step by surface: stop-red with stop-red-lip for the key face, stop-text on the ground, stop-text-plate on the plate. Never use red for emphasis, links or calls to action.",
         "section": "colors"
       },
       {
-        "name": "The Refusal Red Rule",
-        "body": "Red appears only on an answer that refused or stopped. Nothing else on the site is red.",
+        "name": "The Plate Rule",
+        "body": "Anything recorded or copyable (a recording, its calls, a command) sits on the plate in plate ink, in both themes. The ground never carries monospace call text.",
         "section": "colors"
       },
       {
-        "name": "The Machine Speaks Mono Rule",
-        "body": "Anything the server, niri or a shell said or will be told (requests, answers, timings, geometry, commands, keys) is mono. Prose and headings are never mono.",
+        "name": "The Width Ladder Rule",
+        "body": "Archivo is set only at 62%, 70%, 72%, 84%, 88% and 100% width; narrower is heavier and larger. A new role takes one of these steps; the cut face holds nothing outside 62–100%.",
         "section": "typography"
       },
       {
-        "name": "The Column Strip Rule",
-        "body": "New sections are workspaces on the strip: a rule above, a headline, then content or bordered columns with one focused. The hero screen is the only full-bleed band; there are no floating cards, centered heroes or split heroes with cards below.",
+        "name": "The Mono for Machines Rule",
+        "body": "JetBrains Mono is for calls and commands only, never for labels, headings or decoration.",
+        "section": "typography"
+      },
+      {
+        "name": "The Phone Crop Rule",
+        "body": "Below 48rem a recording shows the half of the desktop where the agent works (left, centre or right): the still is cut to that half at 8:9 and the video is drawn at twice the width and shifted, so the text in it stays legible.",
         "section": "layout"
       },
       {
-        "name": "The Ring, Not Lift Rule",
-        "body": "Focus and state are shown by a ring or a border color, never by raising something with a shadow.",
+        "name": "The Material Not Line Rule",
+        "body": "On the home page a change of surface is a change of colour: no borders, outlines, dividers, shadows or gradients. The keycap's lip is the one border, and it is part of the key.",
         "section": "elevation"
       }
     ],
     "dos": [
-      "**Do** draw new home sections with the Workspace component and list them in the workspaces file, so the rule, the pill and the ring come with them.",
-      "**Do** mark exactly one column per section as focused.",
-      "**Do** show real requests and answers from a run, with their timings, in `→` and `←` notation, and say how each recording was made.",
-      "**Do** keep the recording plate graphite in both themes.",
-      "**Do** give every video an `aria-label` and its calls as text, and keep autoplay off under reduced motion.",
-      "**Do** check every new color pair in both themes: body text at 4.5:1, ring and focus at 3:1."
+      "**Do** set every surface from `tokens.css`: concrete ground, raised concrete, plate.",
+      "**Do** pick the red step by surface: stop-red and stop-red-lip on the key, stop-text on the ground, stop-text-plate on the plate.",
+      "**Do** put recordings, calls and commands on the plate, with the calls as text under the recording and the note saying how it was recorded.",
+      "**Do** take headline widths from the ladder (62, 70, 72, 84, 88, 100%) and keep running text at 100%.",
+      "**Do** keep every target at least 2.75rem tall and the focus outline visible on both the ground and the plate.",
+      "**Do** give every motion a calm, complete reduced-motion state.",
+      "**Do** keep the home page within its measured budget: Lighthouse mobile Performance 100, CLS 0, 3.3 KB JS gzipped."
     ],
     "donts": [
-      "**Don't** add shadows, glows or gradient fills; depth is tone and rules.",
-      "**Don't** use amber outside the One Ring Rule, or red for anything but a refusal or stop.",
-      "**Don't** put a mono label or wordmark above a heading as an eyebrow.",
-      "**Don't** show mocked output or a drawn terminal; recordings and transcripts come from real runs.",
-      "**Don't** let anything but the hero's strip scroll sideways.",
-      "**Don't** add a logo beside the name; the name is set in type, and the favicon's three columns are the only mark."
+      "**Don't** add borders, divider rules, shadows or gradients to the home page; change the surface instead.",
+      "**Don't** use red for anything but the stop key and stopped or refused answers.",
+      "**Don't** set labels, headings or decoration in JetBrains Mono.",
+      "**Don't** set Archivo narrower than 62% or use widths off the ladder; the cut face does not hold them.",
+      "**Don't** show a recording without its calls as text, or a mock-up in place of a recording.",
+      "**Don't** add an accent colour; links and the current page are ink."
     ]
   }
 }
