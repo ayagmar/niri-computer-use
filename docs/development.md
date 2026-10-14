@@ -5,7 +5,7 @@ The repository pins Rust 1.99.0 with rustfmt and Clippy. Cargo builds both the m
 ## Checks
 
 - `make lint` runs rustfmt and Clippy. The pre-commit hook runs this target.
-- `make check` runs three targets. `make check-static` runs formatting, Clippy, rustdoc, cargo-deny, cargo-machete, typos, and ShellCheck. `make test` runs every test target, with the protocol tests in standalone mode, and `make test-shared` runs the protocol tests in shared mode. CI runs the three as parallel jobs, so it runs the same commands as `make check`.
+- `make check` runs three targets. `make check-static` runs formatting, Clippy, rustdoc, cargo-deny, cargo-machete, typos, and ShellCheck. `make test` runs every test target, with the protocol tests in standalone mode, and `make test-shared` runs the protocol tests in shared mode. CI runs the three as parallel jobs, so it runs the same commands as `make check`. A newer push to the same branch or pull request cancels CI's older run; the run a release calls is never cancelled.
 - `make perf` runs the unit tests with `NCU_PERF=1`, which also checks how long a zero-length event wait takes. `make check` leaves that bound out, because a loaded machine can miss it without a bug.
 - `make coverage` invokes cargo-llvm-cov. Install that optional tool before using the target.
 

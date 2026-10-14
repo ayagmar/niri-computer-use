@@ -1382,3 +1382,8 @@ v2.9.2 is the newest release; it is over 7 days old.
 
 - The protocol suite takes about two minutes in each mode, and the stall explorer's full matrix the same, so CI ran four two-minute suites in two jobs. `make check` is now `check-static`, `test` and `test-shared`, and `make stall` is `stall-standalone` and `stall-shared`. CI runs each as a job of its own, and each job calls its make target, so CI and `make check` still run the same commands.
 - `test` saves the test build's cache; `test-shared` and the two stall jobs build a subset of it and only restore it. `check-static` keeps a cache of its own, since Clippy and rustdoc build check metadata rather than test binaries.
+
+## 2026-10-14: a newer push cancels CI's older run
+
+- CI has a concurrency group per ref with `cancel-in-progress`, so a push to a branch or pull request cancels the run of the push before it, which nobody reads any more.
+- A called workflow's `github` context is its caller's, so when `release.yml` calls CI, `github.workflow` is `Release` and `github.ref` is the tag. CI keys on that: under `Release`, its group is the release run's ID and it cancels nothing. A release's gate can't be cancelled by a push, and doesn't wait behind one.

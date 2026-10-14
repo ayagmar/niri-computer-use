@@ -9,6 +9,13 @@ on:
 permissions:
   contents: read
 
+# A newer push to a branch or pull request cancels the run before it. Called from
+# release.yml, github.workflow is "Release", and the run gets a group of its own,
+# so a push can never cancel a release's gate.
+concurrency:
+  group: ${{ github.workflow == 'CI' && format('ci-{0}', github.ref) || format('release-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.workflow == 'CI' }}
+
 jobs:
   check-static:
     runs-on: ubuntu-24.04
