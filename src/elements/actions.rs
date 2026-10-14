@@ -377,7 +377,8 @@ fn busy(took: &str) -> ToolError {
 }
 
 /// Takes the element's action `requested`, or its default one, and looks at the element
-/// a moment later, its states and value against those the last gate read.
+/// a moment later, its states and name against those the last gate read and its value
+/// against the one read before the gate.
 pub(crate) async fn activate(
     input: Input<'_>,
     element: &ElementRef,
@@ -408,14 +409,14 @@ pub(crate) async fn activate(
     )
     .await?;
     let mapped = canonical(&request, element, action).await?;
+    // Read before the last gate, so a slow value never makes the gate run over.
+    let value = value(&request, element).await;
     let checked = gate
-        .last(element, &request, &mut waiter, || async {
-            let at = offered(&request, element, action, &mapped).await?;
-            Ok((at, value(&request, element).await))
+        .last(element, &request, &mut waiter, || {
+            offered(&request, element, action, &mapped)
         })
         .await?;
     gate.send(&checked)?;
-    let (at, value) = checked.read;
     // The last gate found the element's name to be the one it was listed with.
     let before = Before {
         states: checked.states,
@@ -423,7 +424,7 @@ pub(crate) async fn activate(
         name: element.kept.lineage.last().map(|link| link.name),
     };
     let dispatched = request
-        .do_action(element, at)
+        .do_action(element, checked.read)
         .await
         .map_err(gone_is_stale)?;
     let lost = taken(dispatched, &format!("its {} action", action.kind.name()))?;
@@ -493,8 +494,9 @@ async fn settled(
     (after, stream)
 }
 
-/// What the last gate read of an activated element, which the look afterwards is compared
-/// with: its states, its value, and its name as listed, as a hash.
+/// What was read of an activated element before the call, which the look afterwards is
+/// compared with: the last gate's states, the value read before the gate, and its name as
+/// listed, as a hash.
 #[derive(Debug)]
 struct Before {
     states: States,
@@ -1256,7 +1258,7 @@ mod tests {
     }
 
     /// What an activation with no value saw: observed and effect, and the states changed.
-    /// What the last gate read of a button named `Save` with `states` and `value`.
+    /// What was read before the call of a button named `Save` with `states` and `value`.
     fn before(states: States, value: Reading) -> Before {
         Before {
             states,

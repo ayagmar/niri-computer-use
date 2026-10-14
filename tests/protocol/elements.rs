@@ -332,6 +332,25 @@ async fn a_window_change_before_the_call_went_out_never_shows_an_effect() {
     assert_eq!(desk.mock.calls("DoAction"), 1);
 }
 
+// The value was read inside the last gate, whose pass must end within 250 ms: an app that
+// answered `CurrentValue` in 300 ms made every activation of its spin button `element_busy`.
+#[tokio::test]
+async fn a_slow_value_read_never_refuses_the_activation() {
+    let mut desk = desk_with("el-value-slow", spin_button()).await;
+    let spin = desk.element("Count").await;
+    desk.mock
+        .slow_on("CurrentValue", "/extra", Duration::from_millis(300));
+    let arguments = json!({"element": spin, "action": "increase", "expect": {"window_id": WINDOW}});
+    let stepped = desk
+        .server
+        .structured_with("activate_element", arguments)
+        .await;
+    assert_eq!(stepped["accepted"], true, "{stepped}");
+    assert_eq!(stepped["element"]["value_changed"], true, "{stepped}");
+    assert_eq!(stepped["effect"], "seen", "{stepped}");
+    assert_eq!(desk.mock.calls("DoAction"), 1);
+}
+
 // The action already went out when the look afterwards fails: the result says the effect
 // couldn't be checked, with why, and is never an error.
 #[tokio::test]
