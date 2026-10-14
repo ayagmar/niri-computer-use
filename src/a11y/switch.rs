@@ -74,6 +74,8 @@ pub(crate) enum Turned {
     AlreadyOn,
     /// The listener didn't turn it on, as an at-spi2-core before 2.61 doesn't: why.
     Unsupported(String),
+    /// Another call was still turning it on when this one's time ran out.
+    Busy,
 }
 
 impl Switch {
@@ -132,10 +134,13 @@ impl Switch {
     }
 
     /// Registers the listener, unless the server's already holds accessibility on, and
-    /// waits for `IsEnabled` to turn true, all by `deadline`. A launcher that doesn't turn
-    /// it on is remembered, and the listener let go.
+    /// waits for `IsEnabled` to turn true, all by `deadline`, waiting for another call
+    /// turning it on no longer. A launcher that doesn't turn it on is remembered, and the
+    /// listener let go.
     pub(crate) async fn listen(&self, deadline: Instant) -> Result<Turned, ToolError> {
-        let mut held = self.held.lock().await;
+        let Ok(mut held) = tokio::time::timeout_at(deadline, self.held.lock()).await else {
+            return Ok(Turned::Busy);
+        };
         match &*held {
             Held::On { .. } => return Ok(Turned::AlreadyOn),
             Held::Unsupported(why) => return Ok(Turned::Unsupported(why.clone())),
@@ -224,4 +229,21 @@ async fn is_enabled(connection: &Connection, deadline: Instant) -> Result<bool, 
 /// What is left until `deadline`, at most one call's deadline.
 fn left(deadline: Instant) -> Duration {
     deadline.saturating_duration_since(Instant::now()).min(CALL)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_call_waiting_for_another_turning_it_on_ends_by_its_deadline() {
+        let switch = Switch::new(None, "unix:path=/nonexistent".to_owned());
+        // Another call, stuck registering its listener.
+        let _turning = switch.held.lock().await;
+        let deadline = Instant::now() + Duration::from_millis(100);
+        let turned = tokio::time::timeout(Duration::from_secs(2), switch.listen(deadline))
+            .await
+            .expect("the call waited past its deadline");
+        assert_eq!(turned.unwrap(), Turned::Busy);
+    }
 }

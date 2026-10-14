@@ -427,6 +427,10 @@ async fn switched(switch: &Switch, policy: &Loaded, deadline: Instant) -> String
             ),
             Ok(Turned::AlreadyOn) => "the session's accessibility is off though the server's listener asks for it, so something else turned it off; the server leaves it off".to_owned(),
             Ok(Turned::Unsupported(why)) => format!("the session's accessibility is off: {why}"),
+            Ok(Turned::Busy) => format!(
+                "the session's accessibility is {}, and the server was still turning it on for another call when this one's time ran out; {RESTART}",
+                if enabled { "on" } else { "off" }
+            ),
             Err(error) => format!(
                 "the session's accessibility is {}, and registering the server's listener failed: {}",
                 if enabled { "on" } else { "off" },
