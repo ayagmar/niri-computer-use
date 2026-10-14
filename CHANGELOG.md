@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Added
+
+- `install.sh` offers to register the server in each of Claude Code, Pi and Codex it finds on `PATH`, through the agent's own `mcp add` command, asking per agent when its output is a terminal. `NCU_REGISTER=1` registers in all of them without asking, `NCU_REGISTER=0` in none. An agent that refuses doesn't fail the install; its command is printed under the next steps.
+
 ## 0.1.0 - 2026-10-14
 
 The first release: an MCP server over stdio that lets an AI agent read and act on a niri 26.04 desktop.

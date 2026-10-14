@@ -7,7 +7,7 @@ sidebar:
 
 niri-computer-use is a stdio MCP server: the client starts `niri-computer-use serve` and talks to it over stdin and stdout. No client needs more than the command. The server finds your niri session itself when its environment lacks `XDG_RUNTIME_DIR`, `NIRI_SOCKET` or `WAYLAND_DISPLAY`, as it does under Codex; see [Session variables](#session-variables).
 
-The commands below use `~/.local/bin/niri-computer-use`, where the [install script](../install/) puts it. After `cargo install`, the binary is `~/.cargo/bin/niri-computer-use`.
+The commands below use `~/.local/bin/niri-computer-use`, where the [install script](../install/) puts it. That script offers to run the Claude Code, Pi and Codex commands for you, for each agent it finds on `PATH`; see [Registering in your agents](../install-script/#registering-in-your-agents). After `cargo install`, the binary is `~/.cargo/bin/niri-computer-use`.
 
 ## Claude Code
 

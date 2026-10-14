@@ -35,7 +35,7 @@ less install.sh
 sh install.sh
 ```
 
-It downloads the release tarball for your machine, checks it, puts the binary in `~/.local/bin`, copies the skill to `~/.local/share/niri-computer-use` and links it from `~/.claude/skills` and `~/.agents/skills`. It ends by printing the [next steps](#check-it). [The install script](../install-script/) lists every file it writes, what it checks, `NCU_VERSION` and `NCU_BIN_DIR`, and how to uninstall.
+It downloads the release tarball for your machine, checks it, puts the binary in `~/.local/bin`, copies the skill to `~/.local/share/niri-computer-use` and links it from `~/.claude/skills` and `~/.agents/skills`. Then it offers to register the server in each of Claude Code, Pi and Codex it finds on `PATH`, through that agent's own `mcp add` command, and ends by printing the [next steps](#check-it). [The install script](../install-script/) lists every file it writes, what it checks, `NCU_VERSION` and `NCU_BIN_DIR`, and how to uninstall.
 
 ### With cargo
 
