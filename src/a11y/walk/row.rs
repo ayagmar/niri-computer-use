@@ -23,6 +23,12 @@ impl Walked {
             Some(_) | None => Row::Lineage,
         }
     }
+
+    /// Whether `row` binds the node at `at` only because no other node read has its role
+    /// and name: it sits in no row, so a walk that stopped early may have missed one.
+    pub(crate) fn bound_by_count(&self, at: usize) -> bool {
+        self.rows.get(at).copied().flatten().is_none() && self.row(at) == Row::Lineage
+    }
 }
 
 #[cfg(test)]
@@ -176,6 +182,24 @@ mod tests {
         ]);
         assert_eq!(rows_named(&walked, "Save"), [Row::Lineage]);
         assert_eq!(rows_named(&walked, "Record 1"), [Row::Own]);
+    }
+
+    // Only a ref bound for want of a look-alike depends on how far the walk read.
+    #[test]
+    fn only_a_unique_control_outside_rows_is_bound_by_the_count() {
+        let walked = walked(&[
+            (0, PANEL, ""),
+            (1, BUTTON, "Save"),
+            (1, BUTTON, "Delete"),
+            (1, BUTTON, "Delete"),
+            (1, LIST, ""),
+            (2, LIST_ITEM, "Record 1"),
+            (3, BUTTON, "Open"),
+        ]);
+        let counted: Vec<bool> = (0..walked.nodes.len())
+            .map(|at| walked.bound_by_count(at))
+            .collect();
+        assert_eq!(counted, [true, true, false, false, true, false, false]);
     }
 
     // The 11.8 s regression: finding every node's row asks once per node whether it is a

@@ -213,6 +213,7 @@ impl ElementsArgs {
                 self.interactive_only,
             ),
             limit: usize::from(self.limit),
+            whole: false,
         })
     }
 }

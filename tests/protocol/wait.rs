@@ -398,6 +398,44 @@ async fn an_absent_wait_names_no_actions() {
     assert_eq!(app.mock.calls("GetName"), 0);
 }
 
+// The bug: a walk that stopped at its second match, before the second `Delete` of a list
+// put on the bus without rows, handed back a bound ref that `elements`, reading on, marks
+// `unbound: repeated`, so it could act on another record.
+#[tokio::test]
+async fn an_appeared_element_alike_another_further_on_is_unbound() {
+    let mut app = App::start("wait-el-repeated", true).await;
+    app.mock.change("/panel", |panel| {
+        panel.children = ["/button", "/odd", "/later"].map(str::to_owned).to_vec();
+    });
+    app.mock
+        .change("/button", |button| button.name = "Delete".to_owned());
+    app.mock
+        .change("/odd", |odd| odd.name = "Delete all".to_owned());
+    app.mock
+        .change("/later", |later| later.name = "Delete".to_owned());
+    let wanted = json!({"role": "button", "name_contains": "del"});
+    let (outcome, _) = app.wait(wanted, 3000).await;
+    assert_eq!(outcome["observed"], "met", "{outcome}");
+    assert_eq!(outcome["element"]["unbound"], "repeated", "{outcome}");
+}
+
+// The bug: a ref bound only because no element read had its role and name, from a walk
+// that ran out of time before the rest of the tree. Each object after `Safe` answers in
+// 0.9 s, as does the panel holding them, so the walk runs out of time before the last.
+#[tokio::test]
+async fn an_appeared_element_a_cut_walk_cant_tell_apart_gets_no_ref() {
+    let mut app = App::start("wait-el-unchecked", true).await;
+    for path in ["/panel", "/odd", "/entry", "/password"] {
+        app.mock
+            .slow_on("GetState", path, Duration::from_millis(900));
+    }
+    let (outcome, _) = app.wait(json!({"name_contains": "safe"}), 5000).await;
+    assert_eq!(outcome["observed"], "met", "{outcome}");
+    assert_eq!(outcome["element"]["element_ref"], Value::Null, "{outcome}");
+    let detail = outcome["detail"].as_str().unwrap_or_default();
+    assert!(detail.contains("role and name"), "{outcome}");
+}
+
 // The bug: a window that closes during the wait left to the timeout.
 #[tokio::test]
 async fn a_window_that_closes_ends_an_element_wait_at_once() {

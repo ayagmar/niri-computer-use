@@ -30,6 +30,10 @@ pub(crate) struct Ask {
     /// The most elements to list. 0 lists none: the walk stops at the first match, names
     /// no actions, and `truncated` says whether there was one.
     pub(crate) limit: usize,
+    /// Read on past the matches listed, so that a ref bound only because no other element
+    /// has its role and name (`Walked::bound_by_count`) is one a fuller listing would bind
+    /// too. Such a ref is left out when the walk stopped before the end of the tree.
+    pub(crate) whole: bool,
 }
 
 /// What `elements` returns.
@@ -45,6 +49,10 @@ pub(crate) struct Listing {
     pub(crate) capped: bool,
     /// Why: `node_cap`, or `budget_exhausted` when the request's three seconds ran out.
     pub(crate) capped_reason: Option<Capped>,
+    /// With `Ask::whole`, a listed element's ref was left out: the walk stopped before it
+    /// could tell whether another element has its role and name.
+    #[serde(skip)]
+    pub(crate) withheld: bool,
 }
 
 /// One element.
@@ -273,6 +281,13 @@ impl Read {
         }
     }
 
+    /// Whether a ref to the object at `at` is bound only because no object read has its
+    /// role and name, by a walk that stopped before the end of the tree and may have
+    /// missed one that does.
+    fn unchecked(&self, at: usize) -> bool {
+        self.walked.capped.is_some() && self.walked.bound_by_count(at)
+    }
+
     /// The objects `filter` lists, with where each sits in the walk.
     fn listed<'a>(&'a self, filter: &'a Filter) -> impl Iterator<Item = (usize, &'a Node)> {
         self.walked
@@ -375,7 +390,7 @@ async fn look(
 ) -> Result<Option<Listing>, ToolError> {
     let walk = Walk {
         filter: &ask.filter,
-        limit: ask.limit,
+        limit: if ask.whole { usize::MAX } else { ask.limit },
         names_only: false,
     };
     let Some(read) = read(socket, a11y, policy, ask.window_id, walk).await? else {
@@ -384,7 +399,7 @@ async fn look(
     let naming = a11y.request(NAMING).await?;
     let mut matching = read.listed(&ask.filter);
     let mut elements = Vec::new();
-    let mut cut = false;
+    let (mut cut, mut withheld) = (false, false);
     for (at, node) in matching.by_ref().take(ask.limit) {
         let actions = naming.named((&read.bus, &node.path), node.actions.clone());
         let actions = match actions.await {
@@ -395,7 +410,10 @@ async fn look(
             }
             Err(error) => return Err(error),
         };
-        elements.push(read.listed_element(at, node, actions, &mut remember));
+        let unchecked = ask.whole && read.unchecked(at);
+        withheld |= unchecked;
+        let mut keep = |element| if unchecked { None } else { remember(element) };
+        elements.push(read.listed_element(at, node, actions, &mut keep));
     }
     let capped = if cut {
         Some(Capped::BudgetExhausted)
@@ -409,6 +427,7 @@ async fn look(
         walked: read.walked.nodes.len(),
         capped: capped.is_some(),
         capped_reason: capped,
+        withheld,
     }))
 }
 
@@ -804,6 +823,7 @@ mod tests {
             walked: 40,
             capped: true,
             capped_reason: Some(Capped::BudgetExhausted),
+            withheld: false,
         };
         let compact = listing.compact();
         assert_eq!(

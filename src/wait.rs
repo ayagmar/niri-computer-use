@@ -185,6 +185,11 @@ pub(crate) struct Appeared {
     pub(crate) unbound: Option<Unbound>,
 }
 
+/// Why an element that appeared has no ref, though the lease is held.
+const WITHHELD: &str = "no element_ref: the walk was cut short before it could tell whether \
+    another element has this one's role and name, as a list's rows put on the bus without \
+    containers do; aim at its pixels on a fresh screenshot";
+
 /// How one walk left an element condition.
 #[derive(Debug, PartialEq, Eq)]
 enum Checked {
@@ -212,6 +217,7 @@ fn check(
         }
         Err(error) => return Err(error),
     };
+    let withheld = listing.withheld.then(|| WITHHELD.to_owned());
     let first = listing.elements.into_iter().next();
     Ok(match (first, element.absent) {
         (Some(found), false) => Checked::Ends(
@@ -223,7 +229,7 @@ fn check(
                 unmappable: found.unmappable,
                 unbound: found.unbound,
             }),
-            None,
+            withheld,
         ),
         // An `absent` check lists nothing: `truncated` says the walk read a match.
         (Some(_), true) => Checked::Unmet(None),
@@ -421,6 +427,7 @@ mod tests {
             walked: 10,
             capped: capped.is_some(),
             capped_reason: capped,
+            withheld: false,
         }
     }
 
@@ -604,5 +611,21 @@ mod tests {
         let json = serde_json::to_value(&appeared).unwrap();
         assert_eq!(json["unbound"], "repeated");
         assert_eq!(json["unmappable"], "frame_size_mismatch");
+    }
+
+    // The bug: an element with no ref and no word of why, which the agent takes for a
+    // missing lease.
+    #[test]
+    fn an_appeared_element_whose_ref_was_withheld_says_why() {
+        let mut unchecked = listing(&[], Some(Capped::BudgetExhausted));
+        unchecked.elements = listing(&["x"], None).elements;
+        unchecked.elements[0].element_ref = None;
+        unchecked.withheld = true;
+        let checked = check(&save_button(false), Ok(Some(unchecked))).unwrap();
+        let Checked::Ends(Ended::Met, Some(appeared), Some(detail)) = checked else {
+            panic!("{checked:?}");
+        };
+        assert_eq!(appeared.element_ref, None);
+        assert!(detail.contains("role and name"), "{detail}");
     }
 }

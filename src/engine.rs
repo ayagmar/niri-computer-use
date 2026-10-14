@@ -505,6 +505,7 @@ impl Engine {
             window_id: element.window_id,
             filter: element.filter.clone(),
             limit: usize::from(!element.absent),
+            whole: !element.absent,
         };
         let lease = self.desk.ref_lease(session).filter(|_| !element.absent);
         let remember = |found| lease.and_then(|lease| self.desk.remember_element(lease, found));
