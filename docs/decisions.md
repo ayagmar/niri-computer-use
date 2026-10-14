@@ -24,7 +24,7 @@ Version rule: use the newest stable release that is at least 7 days old, and rec
 
 - Actions are pinned to a major tag, so patch releases arrive without the 7-day delay. `install-action` publishes almost daily.
 - Dependabot only proposes major-version bumps for these, with a 7-day cooldown.
-- Pinning exact versions or commit SHAs would enforce the delay, at the cost of frequent update PRs. Revisit if that trade-off changes.
+- Pinning exact versions or commit SHAs would enforce the delay, at the cost of frequent update PRs. Revisit if that trade-off changes (superseded on 2026-10-14: every action is pinned to a commit SHA).
 
 ## 2026-10-06: CI tool versions
 
@@ -1337,3 +1337,21 @@ These match the versions installed locally.
 - A case whose point no run reached is now no break when all of this holds. The point is a lock read, `noctalia:status`, or `loginctl` where niri runs in a session. The call succeeded and acted as many times as with nothing held. Each call that acts went out within `LAST_GATE` of the lock read before it in that run. The last condition keeps a real break visible: a server that should have read the lock again and acted on the old read instead fails as before, with the read's age in the message. Any other point left unreached still fails. A reached case is judged as before.
 - `stall::only_a_lock_read_a_call_had_no_need_to_make_goes_unreached` checks the rule on made-up traces: the missed third read with strokes within 12 ms passes, and fails with the last stroke 300 ms after the read or with the point being `niri:Version`. With the temporary change applied, `stall::a_marker_set_while_a_reply_is_held` passes in both modes.
 - A read's age counts from its first answer. A read asks Noctalia and logind side by side, so in the session worlds one read passes both points; taking the later answer as the read's time let a logind reply 300 ms after Noctalia's make a stale read look fresh (Sol's review after the release candidate). A point from a source that already answered starts the next read. `stall::a_late_second_lock_source_doesnt_make_the_read_younger` is that trace.
+
+## 2026-10-14: every action pinned to a commit SHA
+
+- A tag can be moved to other code by whoever controls the action's repository; a commit SHA can't. The release workflow builds the tarball users install and `draft` holds a token that can write releases, so the code each action runs is fixed. Fable's release-path review raised it.
+- Each `uses:` names the commit and keeps the version as a comment, which Dependabot reads and updates with the SHA, still after its 7-day cooldown. The repository's Actions settings require SHA pins (`sha_pinning_required`), so a tag or branch pin fails the run instead of slipping in.
+- The versions are the newest at least 7 days old on 2026-10-14:
+
+  | Action | Version | Published | Commit |
+  |---|---|---|---|
+  | `actions/checkout` | v7.0.1 | 2026-07-20 | `3d3c42e5aac5ba805825da76410c181273ba90b1` |
+  | `actions/setup-node` | v7.0.0 | 2026-07-14 | `820762786026740c76f36085b0efc47a31fe5020` |
+  | `actions/upload-pages-artifact` | v5.0.0 | 2026-04-10 | `fc324d3547104276b827a68afc52ff2a11cc49c9` |
+  | `actions/deploy-pages` | v5.0.1 | 2026-09-01 | `368f82528645a54fb793d4d04e342629a3f51346` |
+  | `taiki-e/install-action` | v2.87.26 | 2026-10-06 | `f7e5d7c961414b23f5b25b2da9294395d08513ad` |
+  | `actions/upload-artifact` | v7.0.1 | 2026-04-10 | `043fb46d1a93c77aae656e7c1c64a875d1fc6a0a` |
+  | `actions/download-artifact` | v8.0.1 | 2026-03-11 | `3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c` |
+
+  `setup-node` v7.1.0 (2026-10-08), `install-action` v2.87.27 (2026-10-09), `upload-artifact` v7.0.2 and `download-artifact` v8.0.2 (both 2026-10-07) are under 7 days old and fix no security issue.
