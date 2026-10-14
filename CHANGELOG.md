@@ -17,6 +17,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- `elements` no longer binds a ref by a count of look-alike elements it didn't finish. A control outside any list row whose twin, with the same role and name, lay past the listing's `limit` got a ref that could act on the wrong record, as with two `Delete` buttons of a list put on the bus without rows. The walk now reads on past `limit` to the end of the window's tree, so such a control is `unbound: repeated`. When the walk is still cut short, at its 2,000 objects or its three seconds, a control in no row is `unbound: cut_short`, and every tool refuses its ref: aim at its pixels. In a window that large, only elements in a named list row keep a ref that acts. A listing now reads the whole tree whatever its `limit` and filters: about 55 ms for 600 objects and 190 ms at the cap in a nested GTK 4 window, where a listing that stopped at its limit took 2 to 13 ms.
 - A screenshot or element ref spelled with a sign or leading zeros in its number, such as `shot-<tag>-+1` or `shot-<tag>-01`, no longer names the ref issued as `shot-<tag>-1`. Such a ref worked while the audit log recorded it as `invalid_ref`; it is now `unknown_ref` or `element_stale`, as any ref the server didn't issue.
 
 ## 0.1.1 - 2026-10-14

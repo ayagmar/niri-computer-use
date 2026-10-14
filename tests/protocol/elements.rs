@@ -1569,18 +1569,86 @@ async fn a_listing_stopped_before_the_rows_record_still_binds_or_refuses_by_the_
     assert_eq!(refused["unbound"], "unnamed_row", "{refused}");
 }
 
-// The documented limit: in rows with no row role, a control whose look-alike elements
-// the walk never read can't be told from a control of its own, so its ref keeps only
-// the lineage check, and a row reused in place isn't caught. The docs and the skill say
-// to aim the pointer tools at a list record's pixels instead.
+/// A list put on the bus without rows: `Delete` for record 1, `Delete all`, `between`'s
+/// labels, then `Delete` for record 2.
+fn deletes(between: &[&'static str]) -> Vec<(&'static str, Object)> {
+    let mut children = vec!["/delete1", "/deleteall"];
+    children.extend(between);
+    children.push("/delete2");
+    let mut objects = vec![
+        ("/frame", Object::frame("Mock", (800, 600), &["/list"])),
+        ("/list", Object::panel(&children)),
+        ("/delete1", Object::button("Delete", &["click"])),
+        ("/deleteall", Object::button("Delete all", &["click"])),
+        ("/delete2", Object::button("Delete", &["click"])),
+    ];
+    objects.extend(between.iter().map(|path| (*path, Object::label("Size"))));
+    objects
+}
+
+/// The first button `elements` lists with `limit`, checked to be record 1's `Delete`,
+/// marked unbound for `why` and refused by `activate_element` with nothing sent.
+async fn first_delete_unbound(desk: &mut Desk, limit: u16, why: &str) -> Value {
+    let arguments =
+        json!({"window_id": WINDOW, "role": "button", "limit": limit, "format": "json"});
+    let listing = desk.server.structured_with("elements", arguments).await;
+    let first = &listing["elements"][0];
+    assert_eq!(first["name"], "Delete", "{listing}");
+    assert_eq!(first["unbound"], why, "{listing}");
+    let result = activate(desk, first["element_ref"].as_str().unwrap()).await;
+    let (error, detail) = tool_error(&result);
+    assert_eq!(error, "element_unbound", "{result}");
+    assert!(
+        detail.contains("aim the pointer tools at its pixels"),
+        "{detail}"
+    );
+    assert_eq!(desk.mock.calls("DoAction"), 0);
+    listing
+}
+
+// The bug: a listing with `limit` 1 stopped at its second match, `Delete all`, before
+// record 2's `Delete`, and bound record 1's by the count of what it had read, so its ref
+// could act on another record. The walk now reads on past the limit to finish the count.
 #[tokio::test]
-async fn a_control_outside_rows_whose_look_alike_elements_went_unread_keeps_its_ref() {
-    let mut desk = list_desk("el-row-cut-panels", long_rows(Rows::Panels)).await;
-    let delete = first_listed(&mut desk).await;
-    assert!(delete.get("unbound").is_none(), "{delete}");
-    reuse_first_row(&desk, Rows::Panels);
-    let result = activate(&mut desk, delete["element_ref"].as_str().unwrap()).await;
+async fn a_listing_stopped_at_its_limit_still_counts_what_lies_past_it() {
+    let mut desk = list_desk("el-bind-limit", deletes(&[])).await;
+    let listing = first_delete_unbound(&mut desk, 1, "repeated").await;
+    assert_eq!(listing["truncated"], true, "{listing}");
+}
+
+// The bug, with the walk cut short: four labels answering in 0.9 s each run it out of its
+// three seconds before record 2's `Delete`. Nothing read shows that record 1's has no
+// look-alike, so it is `unbound: cut_short`, where it was bound by the count.
+#[tokio::test]
+async fn a_control_outside_rows_a_cut_walk_cant_tell_apart_is_unbound() {
+    let slow = ["/size1", "/size2", "/size3", "/size4"];
+    let mut desk = list_desk("el-bind-cut", deletes(&slow)).await;
+    for path in slow {
+        desk.mock
+            .slow_on("GetState", path, Duration::from_millis(900));
+    }
+    let listing = first_delete_unbound(&mut desk, 1, "cut_short").await;
+    assert_eq!(listing["capped_reason"], "budget_exhausted", "{listing}");
+}
+
+// A walk cut short after a named row still binds that row's `Delete` by the row's name:
+// rows 2 and 3 answer in 0.9 s an object, and the walk runs out before the end.
+#[tokio::test]
+async fn a_control_in_a_named_row_keeps_its_ref_when_the_walk_is_cut() {
+    let objects = list(Rows::Named, 3, record_row, Vec::new());
+    let mut desk = list_desk("el-bind-cut-named", objects).await;
+    for path in ["/row2", "/label2", "/delete2", "/row3"] {
+        desk.mock
+            .slow_on("GetState", path, Duration::from_millis(900));
+    }
+    let arguments = json!({"window_id": WINDOW, "role": "button", "format": "json"});
+    let listing = desk.server.structured_with("elements", arguments).await;
+    assert_eq!(listing["capped_reason"], "budget_exhausted", "{listing}");
+    let first = &listing["elements"][0];
+    assert!(first.get("unbound").is_none(), "{listing}");
+    let result = activate(&mut desk, first["element_ref"].as_str().unwrap()).await;
     assert_eq!(report(&result)["accepted"], true, "{result}");
+    assert_eq!(desk.mock.calls("DoAction"), 1);
 }
 
 // A control whose role and name tell it apart from everything beside it keeps its ref

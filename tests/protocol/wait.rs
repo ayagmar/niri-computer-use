@@ -435,6 +435,7 @@ async fn an_appeared_element_a_cut_walk_cant_tell_apart_gets_no_ref() {
     let (outcome, _) = app.wait(json!({"name_contains": "safe"}), 5000).await;
     assert_eq!(outcome["observed"], "met", "{outcome}");
     assert_eq!(outcome["element"]["element_ref"], Value::Null, "{outcome}");
+    assert_eq!(outcome["element"]["unbound"], "cut_short", "{outcome}");
     let detail = outcome["detail"].as_str().unwrap_or_default();
     assert!(detail.contains("role and name"), "{outcome}");
 }

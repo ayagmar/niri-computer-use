@@ -5,7 +5,8 @@
 //! row or tree item. A named row binds the record, since the lineage compares its name;
 //! an unnamed one binds nothing. Without a row, an element whose role and name other
 //! elements read share may be one of a list's rows put on the bus without containers, so
-//! nothing binds it either. Nothing here guesses a row from the tree's shape.
+//! nothing binds it either, nor one that a walk which stopped before the end of the tree
+//! can't show has no such look-alike. Nothing here guesses a row from the tree's shape.
 
 use super::Walked;
 use crate::a11y::model::{Row, Unbound};
@@ -20,14 +21,9 @@ impl Walked {
             None if self.alike.get(at).is_some_and(|&alike| alike > 1) => {
                 Row::Unbound(Unbound::Repeated)
             }
+            None if self.capped.is_some() || self.stopped => Row::Unbound(Unbound::CutShort),
             Some(_) | None => Row::Lineage,
         }
-    }
-
-    /// Whether `row` binds the node at `at` only because no other node read has its role
-    /// and name: it sits in no row, so a walk that stopped early may have missed one.
-    pub(crate) fn bound_by_count(&self, at: usize) -> bool {
-        self.rows.get(at).copied().flatten().is_none() && self.row(at) == Row::Lineage
     }
 }
 
@@ -35,7 +31,7 @@ impl Walked {
 mod tests {
     use std::cell::Cell;
 
-    use super::super::{Node, Walked, rows};
+    use super::super::{Capped, Node, Walked, rows};
     use crate::a11y::model::{Row, States, Unbound};
 
     const FILLER: u32 = 20;
@@ -184,10 +180,11 @@ mod tests {
         assert_eq!(rows_named(&walked, "Record 1"), [Row::Own]);
     }
 
-    // Only a ref bound for want of a look-alike depends on how far the walk read.
+    // A walk that stopped before the end of the tree may have missed a look-alike of a
+    // control outside rows, so it binds none; a row binds its controls however far it read.
     #[test]
-    fn only_a_unique_control_outside_rows_is_bound_by_the_count() {
-        let walked = walked(&[
+    fn a_cut_walk_binds_no_unique_control_outside_rows() {
+        let mut walked = walked(&[
             (0, PANEL, ""),
             (1, BUTTON, "Save"),
             (1, BUTTON, "Delete"),
@@ -196,10 +193,17 @@ mod tests {
             (2, LIST_ITEM, "Record 1"),
             (3, BUTTON, "Open"),
         ]);
-        let counted: Vec<bool> = (0..walked.nodes.len())
-            .map(|at| walked.bound_by_count(at))
-            .collect();
-        assert_eq!(counted, [true, true, false, false, true, false, false]);
+        let each =
+            |tree: &Walked| -> Vec<Row> { (0..tree.nodes.len()).map(|at| tree.row(at)).collect() };
+        let (bound, repeated) = (Row::Lineage, Row::Unbound(Unbound::Repeated));
+        let whole = [bound, bound, repeated, repeated, bound, Row::Own, bound];
+        assert_eq!(each(&walked), whole);
+        walked.capped = Some(Capped::BudgetExhausted);
+        let cut = Row::Unbound(Unbound::CutShort);
+        assert_eq!(
+            each(&walked),
+            [cut, cut, repeated, repeated, cut, Row::Own, bound]
+        );
     }
 
     // The 11.8 s regression: finding every node's row asks once per node whether it is a

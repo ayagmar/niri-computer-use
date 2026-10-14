@@ -744,8 +744,8 @@ pub(crate) struct Kept {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Row {
     /// The lineage binds it: its row has a name, which the lineage keeps as it keeps every
-    /// name above the element, or it sits in no row and no other element read has its
-    /// role and name.
+    /// name above the element, or it sits in no row and no other element of the whole
+    /// tree has its role and name.
     Lineage,
     /// It is a named row itself, so its own name is compared for the pointer tools too.
     Own,
@@ -762,6 +762,9 @@ pub(crate) enum Unbound {
     /// It sits in no row, and other elements read have its role and name, as when a
     /// toolkit puts a list's rows on the bus without containers.
     Repeated,
+    /// It sits in no row, and the walk stopped before the end of the tree, so it can't
+    /// tell whether another element has its role and name.
+    CutShort,
 }
 
 /// One object on the way from a window's frame down to an element: its path, its index

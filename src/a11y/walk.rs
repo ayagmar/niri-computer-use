@@ -69,6 +69,8 @@ pub(crate) struct Walked {
     rows: Vec<Option<usize>>,
     /// Set when the walk stopped early with nodes left that might have matched.
     pub(crate) capped: Option<Capped>,
+    /// Set when the walk stopped once it found more matches than wanted, with nodes left.
+    stopped: bool,
 }
 
 impl Walked {
@@ -149,6 +151,7 @@ pub(crate) async fn walk<F: Fn(&Node) -> bool + Sync>(
         walked.nodes.push(node);
         walked.places.push((parent, child.index));
         if found > want.wanted {
+            walked.stopped = !pending.is_empty();
             break;
         }
     }
@@ -206,7 +209,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::*;
-    use crate::a11y::model::State;
+    use crate::a11y::model::{Row, State, Unbound};
 
     const SHOWING: u32 = (1 << 25) | (1 << 30);
 
@@ -384,6 +387,8 @@ mod tests {
             ["/a", "/a/1", "/b/1", "/hidden", "/b/2", "/b/3"]
         );
         assert_eq!(walked.capped, None);
+        // /b/4 went unread, so no count binds a node outside rows.
+        assert_eq!(walked.row(0), Row::Unbound(Unbound::CutShort));
     }
 
     #[tokio::test]
@@ -399,6 +404,7 @@ mod tests {
             .unwrap();
         assert_eq!(paths(&walked), ["/b/1", "/a", "/b/2"]);
         assert_eq!(walked.capped, None);
+        assert_eq!(walked.row(0), Row::Lineage);
     }
 
     #[tokio::test]

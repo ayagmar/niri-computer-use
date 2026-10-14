@@ -31,9 +31,10 @@ pub(crate) struct Ask {
     /// The most elements to list. 0 lists none: the walk stops at the first match, names
     /// no actions, and `truncated` says whether there was one.
     pub(crate) limit: usize,
-    /// Read on past the matches listed, so that a ref bound only because no other element
-    /// has its role and name (`Walked::bound_by_count`) is one a fuller listing would bind
-    /// too. Such a ref is left out when the walk stopped before the end of the tree.
+    /// Read on past the matches listed, to the end of the tree, its budget or the cap, so
+    /// that an element outside any row is bound only when no other element of the tree has
+    /// its role and name. When the walk still stopped before the end, such an element is
+    /// `Unbound::CutShort`, and `look` leaves its ref out for a wait (`by`).
     pub(crate) whole: bool,
     /// When the walk and the naming of its actions must be done by, if sooner than their
     /// own budgets allow: a wait's end. A walk that runs out of it gives what it read, cut
@@ -46,7 +47,7 @@ pub(crate) struct Ask {
 pub(crate) struct Listing {
     pub(crate) window_id: u64,
     pub(crate) elements: Vec<Listed>,
-    /// The walk found more matching elements than `limit` and stopped there.
+    /// More elements matched than `limit`, and those past it aren't listed.
     pub(crate) truncated: bool,
     /// How many accessible objects the walk read.
     pub(crate) walked: usize,
@@ -63,7 +64,7 @@ pub(crate) struct Listing {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Withheld {
     /// The walk stopped before it could tell whether another element has its role and
-    /// name (`Ask::whole`).
+    /// name (`Unbound::CutShort`). `elements` gives such a ref, which every tool refuses.
     Unchecked,
     /// Naming its actions ran out of `Ask::by`'s time, so they are as the walk read them,
     /// and a ref would be refused rather than guessed.
@@ -312,11 +313,10 @@ impl Read {
         }
     }
 
-    /// Whether a ref to the object at `at` is bound only because no object read has its
-    /// role and name, by a walk that stopped before the end of the tree and may have
-    /// missed one that does.
+    /// Whether the object at `at` sits in no row, and the walk stopped before the end of
+    /// the tree, so it can't tell whether another object has its role and name.
     fn unchecked(&self, at: usize) -> bool {
-        self.walked.capped.is_some() && self.walked.bound_by_count(at)
+        self.walked.row(at) == Row::Unbound(Unbound::CutShort)
     }
 
     /// The objects `filter` lists, with where each sits in the walk.
@@ -450,9 +450,10 @@ async fn look(
     for (at, node) in matching.by_ref().take(ask.limit) {
         let actions = naming.named((&read.bus, &node.path), node.actions.clone());
         let (actions, why) = match actions.await {
+            // A wait says why in its `detail` rather than give a ref every tool refuses.
             Ok(actions) => (
                 actions,
-                (ask.whole && read.unchecked(at)).then_some(Withheld::Unchecked),
+                (ask.by.is_some() && read.unchecked(at)).then_some(Withheld::Unchecked),
             ),
             Err(error) if error.name == ErrorName::DeadlineExceeded && naming.spent() => {
                 cut = true;
@@ -693,6 +694,9 @@ const fn unbound(why: Unbound) -> &'static str {
         }
         Unbound::Repeated => {
             "other elements of its role and name sit in no row of their own on the accessibility bus, as a list's rows do in some toolkits, so nothing tells which record it acts on; aim the pointer tools at its pixels on a fresh screenshot instead"
+        }
+        Unbound::CutShort => {
+            "it sits in no row on the accessibility bus, and the listing was cut short before it could tell whether another element of its role and name sits further on, as a list's rows do in some toolkits; aim the pointer tools at its pixels on a fresh screenshot instead"
         }
     }
 }
