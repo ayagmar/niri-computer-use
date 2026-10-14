@@ -324,7 +324,7 @@ The video element is created only when the recording starts, muted and inline. T
 A red keycap with an uppercase Esc legend. Pressing it, or Esc while a session runs in view, stops the session at that moment: the action running then is cut and turns red (a look runs on to its answer), later actions are struck through and dashed red, later looks fade to 0.55 and everything else later to 0.18, the lease drops to "taken back" in red, a red "your stop key" pulse appears in the You lane, the cursor and pens turn red, the video pauses, and the readout states what the server answers from then on. Pressing again replays.
 
 ### Block diagram and Table 1
-Each check is a paper block with an ink outline; passed checks fill ink, a refused check fills red. In Table 1 each row's check name is a button that runs that case; the running row is highlighted and the answer appears in the readout above the table, announced to screen readers only for a row the reader picked. Picking a row cancels the demo run. Without JavaScript the readout is hidden.
+Each check is a paper block with an ink outline; passed checks fill ink, a refused check fills red. In Table 1 each row's check name is a button that runs that case; the running row is highlighted and the answer appears in the readout above the table, announced to screen readers only for a row the reader picked. Picking a row, even before the diagram has been seen, cancels the demo run. Without JavaScript the readout is hidden.
 
 ### Result
 The answer JSON between two ink rules, beside its fields. Pointing at a field highlights its lines; the fields aren't focus stops, since they do nothing.

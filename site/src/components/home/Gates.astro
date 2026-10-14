@@ -92,6 +92,8 @@ const quoted = (text: string) => text.replace(/`/g, '');
 </div>
 
 <script>
+	import { demo } from '../../lib/control';
+
 	const reduce = matchMedia('(prefers-reduced-motion: reduce)');
 	const HOP = 260;
 
@@ -182,19 +184,20 @@ const quoted = (text: string) => text.replace(/`/g, '');
 		};
 
 		// Once in view: one action that passes, then one the stop flag refuses, unless the
-		// reader has picked a row by then.
-		let demo = 0;
+		// reader has picked a row by then, even before the diagram came into view.
+		const auto = demo();
 		buttons.forEach((button, index) =>
 			button.addEventListener('click', () => {
-				clearTimeout(demo);
+				auto.pick();
 				run(index);
 			}),
 		);
 		const seen = new IntersectionObserver(([entry]) => {
 			if (!entry.isIntersecting) return;
 			seen.disconnect();
+			if (!auto.see()) return;
 			run(buttons.length - 1, false);
-			if (!reduce.matches) demo = window.setTimeout(() => run(0, false), HOP * (checks.length + 2) + 1400);
+			if (!reduce.matches) window.setTimeout(() => auto.follow() && run(0, false), HOP * (checks.length + 2) + 1400);
 		}, { threshold: 0.5 });
 		seen.observe(flow);
 	}
