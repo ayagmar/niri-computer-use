@@ -1355,3 +1355,12 @@ These match the versions installed locally.
   | `actions/download-artifact` | v8.0.1 | 2026-03-11 | `3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c` |
 
   `setup-node` v7.1.0 (2026-10-08), `install-action` v2.87.27 (2026-10-09), `upload-artifact` v7.0.2 and `download-artifact` v8.0.2 (both 2026-10-07) are under 7 days old and fix no security issue.
+
+## 2026-10-14: rmcp 3.5.1
+
+| Crate | Version | Published | Why |
+|---|---|---|---|
+| `rmcp` | 3.5.1 | 2026-10-05 | The newest release at least 7 days old, which the version rule asks for. `rmcp-macros` moves with it (3.5.1, 2026-10-05); no other crate in `Cargo.lock` changes. |
+
+- What 3.5.1 changes, from its release notes and pull requests. A session that starts with `server/discover`, as Claude Code 2.1.296's do, picks its lifecycle from the first ordinary request rather than from `discover` itself (#1248). `-32602` errors map to HTTP 400 only when required `_meta` is missing (#1322); the server speaks stdio, so this doesn't reach it. Results to 2026-07-28 peers get `ttlMs` and `cacheScope` when the handler left them out (#1308); `#[tool_handler]` already sets them on `tools/list`, and the server has no resource or prompt handlers. The other two entries are the `object!` macro without the `macros` feature and OAuth credential stores, neither of which the server uses.
+- `audit::a_client_named_only_in_each_requests_meta_is_logged_by_that_name` sends `server/discover` and then `tools/call` without `initialize`, the shape #1248 changes, and passes on 3.5.1.
