@@ -439,6 +439,22 @@ async fn an_appeared_element_a_cut_walk_cant_tell_apart_gets_no_ref() {
     assert!(detail.contains("role and name"), "{outcome}");
 }
 
+// The bug: the walk that read the match went on through the rest of the tree past
+// `timeout_ms`, and the wait cut it off and lost the match. `Safe` and `Odd` come before
+// two objects that answer in 0.9 s each.
+#[tokio::test]
+async fn a_match_read_by_a_walk_longer_than_the_wait_ends_it_met() {
+    let mut app = App::start("wait-el-short", true).await;
+    for path in ["/entry", "/password"] {
+        app.mock
+            .slow_on("GetState", path, Duration::from_millis(900));
+    }
+    let (outcome, took) = app.wait(json!({"role": "button"}), 1000).await;
+    assert_eq!(outcome["observed"], "met", "{outcome}");
+    assert_eq!(outcome["element"]["role"], "button", "{outcome}");
+    assert!(took < Duration::from_millis(1200), "{took:?}");
+}
+
 // The bug: `disabled`, the one state the default listing prints for a button that can't
 // be pressed, refused as unknown, and `state` named by what only the JSON listing shows.
 // The mock's `Safe` button loses `sensitive`, then gets it back.

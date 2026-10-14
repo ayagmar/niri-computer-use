@@ -214,6 +214,7 @@ impl ElementsArgs {
             ),
             limit: usize::from(self.limit),
             whole: false,
+            by: None,
         })
     }
 }

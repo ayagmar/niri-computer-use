@@ -22,6 +22,10 @@ use crate::{niri, settle};
 /// noticeable time.
 const PAUSE: Duration = Duration::from_millis(250);
 
+/// How long before the wait's end each walk must be done, so that a match it read reaches
+/// the wait before the wait gives up on it. Under `wait_for`'s 100 ms minimum.
+const RESERVE: Duration = Duration::from_millis(50);
+
 /// What to wait for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Until {
@@ -245,7 +249,7 @@ pub(crate) async fn element<F>(
     events: niri::Events<'_>,
     element: &Element,
     limit: Duration,
-    poll: impl FnMut() -> F,
+    poll: impl FnMut(Instant) -> F,
 ) -> Result<Report, CallError>
 where
     F: Future<Output = Result<Option<Listing>, ToolError>>,
@@ -262,7 +266,8 @@ where
 }
 
 /// Walks through `poll` until `element` holds, the window closes or `deadline` passes. A
-/// walk keeps its own per-call deadline and budget and is cut off at `deadline`. Walks
+/// walk keeps its own per-call deadline and budget, and `poll` ends it `RESERVE` before
+/// `deadline` with what it read, cut short; one that doesn't is cut off at `deadline`. Walks
 /// never overlap, and the pause after one is at least as long as it took, so a slow app
 /// spends at most half the wait answering. niri's event stream ends the wait the moment
 /// the window closes, mid-walk too; without the stream, the next walk finds it gone. An
@@ -272,7 +277,7 @@ async fn watch<F>(
     mut waiter: Waiter,
     element: &Element,
     deadline: Instant,
-    mut poll: impl FnMut() -> F,
+    mut poll: impl FnMut(Instant) -> F,
 ) -> Result<Report, ToolError>
 where
     F: Future<Output = Result<Option<Listing>, ToolError>>,
@@ -280,10 +285,14 @@ where
     let started = Instant::now();
     let id = element.window_id;
     let (mut cut, mut read) = (None, false);
+    let by = deadline.checked_sub(RESERVE).unwrap_or(deadline);
     let walking = async {
         loop {
+            if Instant::now() >= by {
+                std::future::pending::<()>().await;
+            }
             let walk = Instant::now();
-            match check(element, poll().await)? {
+            match check(element, poll(by).await)? {
                 // An app that quits leaves the bus as niri closes its window, and may leave
                 // first: after a walk that read it, look once more.
                 Checked::Ends(Ended::NotAccessible, ..) if read => read = false,
@@ -460,7 +469,7 @@ mod tests {
             AtomicUsize::new(0),
         );
         let running = &running;
-        let poll = || {
+        let poll = |_| {
             let (took, listed) = walk(walks.fetch_add(1, Ordering::Relaxed));
             let now = running.fetch_add(1, Ordering::Relaxed) + 1;
             most.fetch_max(now, Ordering::Relaxed);
@@ -550,7 +559,7 @@ mod tests {
             let closed = niri_ipc::Event::WindowClosed { id: 1 };
             sender.send(Update::Event(2, Box::new(closed))).unwrap();
         };
-        let hung = || std::future::pending::<Result<Option<Listing>, ToolError>>();
+        let hung = |_| std::future::pending::<Result<Option<Listing>, ToolError>>();
         let deadline = Instant::now() + Duration::from_secs(10);
         let element = save_button(false);
         let (report, ()) = tokio::join!(watch(waiter, &element, deadline, hung), close);
@@ -649,7 +658,7 @@ mod tests {
     async fn an_app_that_leaves_the_bus_with_its_window_ends_the_wait_window_gone() {
         let (waiter, sender) = waiter(view(vec![window(1, Some("a"), 1, true)]), 1);
         let walks = AtomicUsize::new(0);
-        let poll = || {
+        let poll = |_| {
             let listed = match walks.fetch_add(1, Ordering::Relaxed) {
                 0 => Ok(Some(listing(&[], None))),
                 _ => Err(ToolError::new(ErrorName::NotAccessible, "no app for pid 7")),
@@ -689,5 +698,22 @@ mod tests {
         let (at_once, first_walks, _) =
             watched(&save_button(false), Duration::from_secs(5), first).await;
         assert_eq!((at_once.observed, first_walks), (Ended::NotAccessible, 1));
+    }
+
+    // The bug: a walk that read the match but went on past the wait's end, and was cut off
+    // with it. A walk that ends when told to gives the wait its match in time.
+    #[tokio::test(start_paused = true)]
+    async fn a_walk_that_ends_when_told_gives_its_match_before_the_deadline() {
+        let (waiter, _sender) = waiter(view(vec![window(1, Some("a"), 1, true)]), 1);
+        let poll = |by: Instant| async move {
+            tokio::time::sleep_until(by).await;
+            Ok(Some(listing(&["elem-ab-1"], Some(Capped::BudgetExhausted))))
+        };
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let report = watch(waiter, &save_button(false), deadline, poll)
+            .await
+            .unwrap();
+        assert_eq!(report.observed, Ended::Met);
+        assert_eq!(report.waited_ms, 950);
     }
 }

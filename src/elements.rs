@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use niri_ipc::Window;
 use serde::Serialize;
+use tokio::time::Instant;
 
 use crate::a11y::model::{
     self, Extents, Filter, Fresh, LayoutBox, Link, NameHash, Origin, Placement, Refused, Row,
@@ -34,6 +35,10 @@ pub(crate) struct Ask {
     /// has its role and name (`Walked::bound_by_count`) is one a fuller listing would bind
     /// too. Such a ref is left out when the walk stopped before the end of the tree.
     pub(crate) whole: bool,
+    /// When the walk and the naming of its actions must be done by, if sooner than their
+    /// own budgets allow: a wait's end. A walk that runs out of it gives what it read, cut
+    /// short, rather than nothing.
+    pub(crate) by: Option<Instant>,
 }
 
 /// What `elements` returns.
@@ -81,6 +86,19 @@ const NAMING: Duration = Duration::from_secs(1);
 const USUAL_STATES: [&str; 5] = ["enabled", "focusable", "sensitive", "showing", "visible"];
 
 impl Listing {
+    /// The listing of a walk of window `window_id` cut short before it read anything.
+    const fn cut(window_id: u64) -> Self {
+        Self {
+            window_id,
+            elements: Vec::new(),
+            truncated: false,
+            walked: 0,
+            capped: true,
+            capped_reason: Some(Capped::BudgetExhausted),
+            withheld: false,
+        }
+    }
+
     /// The listing as text, a few tokens per element: a line about the walk, then one line
     /// per element.
     pub(crate) fn compact(&self) -> String {
@@ -298,12 +316,13 @@ impl Read {
     }
 }
 
-/// What a walk looks for: the objects `filter` lists, until it found more than `limit`;
-/// with `names_only`, its failures leave the app's error messages out.
+/// What a walk looks for: the objects `filter` lists, until it found more than `limit`,
+/// within `budget`; with `names_only`, its failures leave the app's error messages out.
 #[derive(Debug, Clone, Copy)]
 struct Walk<'a> {
     filter: &'a Filter,
     limit: usize,
+    budget: Duration,
     names_only: bool,
 }
 
@@ -326,7 +345,7 @@ async fn read(
     let pid = window.pid.ok_or_else(|| {
         a11y::not_accessible(format!("niri knows no process for window {}", window.id))
     })?;
-    let request = a11y.request(a11y::BUDGET).await?;
+    let request = a11y.request(walk.budget).await?;
     let request = if walk.names_only {
         request.names_only()
     } else {
@@ -376,8 +395,22 @@ pub(crate) async fn poll(
 ) -> Result<Option<Listing>, ToolError> {
     match look(socket, a11y, policy, ask, remember).await {
         Err(_) if matches!(placed(socket, ask.window_id).await, Ok(None)) => Ok(None),
+        // Out of time before the walk began, finding the app or its frame.
+        Err(error)
+            if error.name == ErrorName::DeadlineExceeded
+                && ask.by.is_some_and(|by| Instant::now() >= by) =>
+        {
+            Ok(Some(Listing::cut(ask.window_id)))
+        }
         looked => looked,
     }
+}
+
+/// What is left until `by`, at most `budget`.
+fn budget_by(budget: Duration, by: Option<Instant>) -> Duration {
+    by.map_or(budget, |by| {
+        budget.min(by.saturating_duration_since(Instant::now()))
+    })
 }
 
 /// `list`'s work, or none when niri has no window `ask.window_id`.
@@ -391,12 +424,13 @@ async fn look(
     let walk = Walk {
         filter: &ask.filter,
         limit: if ask.whole { usize::MAX } else { ask.limit },
+        budget: budget_by(a11y::BUDGET, ask.by),
         names_only: false,
     };
     let Some(read) = read(socket, a11y, policy, ask.window_id, walk).await? else {
         return Ok(None);
     };
-    let naming = a11y.request(NAMING).await?;
+    let naming = a11y.request(budget_by(NAMING, ask.by)).await?;
     let mut matching = read.listed(&ask.filter);
     let mut elements = Vec::new();
     let (mut cut, mut withheld) = (false, false);
@@ -444,6 +478,7 @@ pub(crate) async fn survey(
     let walk = Walk {
         filter: &filter,
         limit: usize::MAX,
+        budget: a11y::BUDGET,
         names_only: true,
     };
     let read = read(socket, a11y, policy, window_id, walk)

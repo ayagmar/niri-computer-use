@@ -491,10 +491,12 @@ impl Engine {
     /// An `absent` check lists nothing, only whether anything matches: it would throw the
     /// element away, and naming its actions and keeping its ref on each walk that still
     /// sees it would cost time and push the agent's own refs out of those the lease keeps.
+    /// The walk and its naming end by `by`, giving what they read.
     async fn poll(
         &self,
         session: &Session,
         element: &wait::Element,
+        by: Instant,
     ) -> Result<Option<elements::Listing>, ToolError> {
         let Some(a11y) = &self.a11y else {
             return Err(a11y::not_accessible(
@@ -506,6 +508,7 @@ impl Engine {
             filter: element.filter.clone(),
             limit: usize::from(!element.absent),
             whole: !element.absent,
+            by: Some(by),
         };
         let lease = self.desk.ref_lease(session).filter(|_| !element.absent);
         let remember = |found| lease.and_then(|lease| self.desk.remember_element(lease, found));
@@ -626,7 +629,7 @@ impl Engine {
             return Ok((report, screenshot.then_some(last)));
         }
         let report = if let wait::Until::Element(element) = until {
-            let poll = || self.poll(session, element);
+            let poll = |by| self.poll(session, element, by);
             wait::element(self.events.as_ref(), element, limit, poll).await?
         } else {
             wait::window(self.events.as_ref(), until, limit).await?
