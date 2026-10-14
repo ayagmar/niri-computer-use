@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## Unreleased
 
+### Added
+
+- `install.sh` offers to register the server in each of Claude Code, Pi and Codex it finds on `PATH`, through the agent's own `mcp add` command, asking per agent when its output is a terminal. `NCU_REGISTER=1` registers in all of them without asking, `NCU_REGISTER=0` in none. An agent that refuses doesn't fail the install; its command is printed under the next steps.
+
 ### Changed
 
 - `key`, `type_text` and a paste's key always go through the server's own virtual keyboard with the compositor's keymap, and `click`, `drag` and `scroll` take held `keys` without configuration. In Chromium and Electron apps, wtype's keys lost spaces and punctuation and missed shortcuts such as VS Code's `ctrl+s`; the native keyboard types text your layout has exactly. Symbols your layout lacks, such as accented letters, Greek, Cyrillic or arrows on a US layout, arrive exactly there too, because native puts them on keycodes Chromium knows, F13 to F24 among them. Emoji and other characters outside the Basic Multilingual Plane still arrive as other characters there, so paste them.

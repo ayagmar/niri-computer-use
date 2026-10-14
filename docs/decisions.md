@@ -1443,6 +1443,14 @@ v2.9.2 is the newest release; it is over 7 days old.
 - Characters outside the Basic Multilingual Plane arrive cut to 16 bits with either backend: `🤖` (U+1F916) as U+F916 and `🌙` (U+1F319) as U+F319, a private-use box. That is Chromium's handling of the keysym, not the keymap, so only `via: "paste"` sends an emoji there.
 - The native backend typed the same three probes into the same box exactly, emoji aside, since it uses the layout's own codes. Whether it becomes the default is still the separate decision of 2026-10-13; until then the skill and the `via` description tell the agent to paste in Chromium and Electron apps rather than type.
 
+## 2026-10-14: the install script registers the server through the agents' own commands
+
+- The step people get wrong after installing is the `mcp add` with the binary's full path. The script now runs that command itself for each of `claude`, `pi` and `codex` it finds on `PATH`, using exactly the commands the client setup page gives, so it still edits no config file of any agent, which keeps the plug-and-play rule: the agent's own CLI owns its config.
+- It asks per agent, reading the answer from `/dev/tty`, because `curl | sh` leaves stdin as the pipe. It asks only when stdout is a terminal; otherwise, and with `NCU_REGISTER=0`, it registers in none and prints the commands as before, so a scripted install changes nothing it wasn't told to. `NCU_REGISTER=1` is the unattended yes. Any other value is refused before anything is registered.
+- Claude Code's `mcp add` exits non-zero when the name exists, so the script asks `claude mcp get` first and reports an existing registration rather than an error. Pi's and Codex's are tried as they are; a refusal is reported with the agent's last output line and the command is listed for the user, and the install still succeeds.
+- The stop-key binding stays manual: that is an edit to the user's niri config, which the script never touches.
+- Tested in `tests/install.rs` with fake agent programs that record their arguments: registration in every agent found, an existing registration left alone, a refusing agent, no terminal and `NCU_REGISTER=0`, and a bad value. The prompt itself isn't under test, since the tests have no terminal.
+
 ## 2026-10-14: the native keyboard is the default
 
 - With `NIRI_COMPUTER_USE_KEYBOARD` unset, the server now types through its own virtual keyboard. `wtype` selects wtype, `native` is still accepted, and any other value still refuses input. The reason is the Discord evidence above: with wtype, a 100-character part that began with a space lost every space, a period on wtype's fourteenth code deleted the letter before it, and VS Code's `ctrl+s` arrived as Ctrl+Escape. The native backend typed the same probes into the same Vesktop box exactly, because it uses the layout's own keycodes. Chromium and Electron apps are where agents type messages, so the old default failed where it matters most.

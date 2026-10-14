@@ -6,6 +6,9 @@
 # NCU_VERSION       the release to install, such as 0.1.0; the latest one by default
 # NCU_BIN_DIR       where the binary goes; ~/.local/bin by default
 # NCU_RELEASES_URL  where the releases are; the GitHub repository's by default
+# NCU_REGISTER      1 registers the server in every agent found on PATH (claude, pi,
+#                   codex) without asking, 0 registers in none; unset asks per agent
+#                   when the output is a terminal, and otherwise registers in none
 set -eu
 
 releases=${NCU_RELEASES_URL:-https://github.com/ayagmar/niri-computer-use/releases}
@@ -97,6 +100,65 @@ for skills_dir in "${HOME}/.claude/skills" "${HOME}/.agents/skills"; do
 	ln -s "${skill}" "${link}"
 done
 
+# Registration in the agents on PATH, each through its own `mcp add`, so no config file
+# is edited. Nothing here fails the install: an agent that refuses is reported with the
+# command to run by hand.
+case ${NCU_REGISTER:-} in
+1) register=yes ;;
+0) register=no ;;
+'') if [ -t 1 ] && [ -r /dev/tty ]; then register=ask; else register=no; fi ;;
+*) fail "NCU_REGISTER must be 1 or 0, not ${NCU_REGISTER}" ;;
+esac
+registered=""
+todo=""
+
+# $1 the agent's name, $2 its program, $3 the command as shown, the rest the command.
+try_register() {
+	agent=$1
+	program=$2
+	shown=$3
+	shift 3
+	command -v "${program}" >/dev/null || return 0
+	if [ "${register}" = ask ]; then
+		printf 'Register it in %s now, with %s? [y/N] ' "${agent}" "${shown}" >/dev/tty
+		read -r answer </dev/tty || answer=
+		case ${answer} in
+		y | Y | yes) ;;
+		*) todo="${todo}       ${shown}
+" && return 0 ;;
+		esac
+	elif [ "${register}" = no ]; then
+		todo="${todo}       ${shown}
+"
+		return 0
+	fi
+	if [ "${program}" = claude ] && claude mcp get niri-computer-use >/dev/null 2>&1; then
+		registered="${registered}     Already registered in ${agent}; left as it is.
+"
+		return 0
+	fi
+	if output=$("$@" 2>&1); then
+		registered="${registered}     Registered in ${agent}.
+"
+	else
+		last=$(printf '%s\n' "${output}" | tail -n 1)
+		echo "Registering in ${agent} failed: ${last}" >&2
+		todo="${todo}       ${shown}
+"
+	fi
+}
+
+try_register "Claude Code" claude "claude mcp add --scope user niri-computer-use -- \"${binary}\" serve" \
+	claude mcp add --scope user niri-computer-use -- "${binary}" serve
+try_register Pi pi "pi mcp add niri-computer-use --exposure direct -- \"${binary}\" serve" \
+	pi mcp add niri-computer-use --exposure direct -- "${binary}" serve
+try_register Codex codex "codex mcp add niri-computer-use -- \"${binary}\" serve" \
+	codex mcp add niri-computer-use -- "${binary}" serve
+if [ -z "${registered}${todo}" ]; then
+	todo="       claude mcp add --scope user niri-computer-use -- \"${binary}\" serve
+"
+fi
+
 cat <<EOF
 
 Installed ${installed_version} to ${binary} and its skill to ${skill}.
@@ -104,8 +166,13 @@ Installed ${installed_version} to ${binary} and its skill to ${skill}.
 Next:
   1. Check it from a shell inside your niri session; niri.compat should be "ok":
        "${binary}" status
-  2. Register it in your agent, for Claude Code:
-       claude mcp add --scope user niri-computer-use -- "${binary}" serve
+  2. Register it in your agent:
+EOF
+printf '%s' "${registered}"
+if [ -n "${todo}" ]; then
+	printf '%s' "${todo}"
+fi
+cat <<EOF
      Other clients: https://ayagmar.github.io/niri-computer-use/start/clients/
   3. Bind the stop key inside the binds block of your niri config:
        Mod+Shift+Escape allow-inhibiting=false allow-when-locked=true hotkey-overlay-title="Stop the AI agent (niri-computer-use)" { spawn "${binary}" "stop"; }

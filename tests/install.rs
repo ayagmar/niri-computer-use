@@ -243,6 +243,145 @@ mod script {
         assert!(release.tmp_is_empty());
     }
 
+    /// A fake agent CLI that appends each call's arguments to `<HOME>/<program>-calls`.
+    /// `mcp get niri-computer-use` succeeds once `<HOME>/<program>-registered` exists, and
+    /// `mcp add` creates it, or fails when `<HOME>/<program>-refuses` exists.
+    fn fake_agent(release: &Release, program: &str) {
+        release.fake(
+            program,
+            &format!(
+                "echo \"$*\" >> \"$HOME/{program}-calls\"\n\
+                 case \"$1 $2\" in\n\
+                 'mcp get') test -e \"$HOME/{program}-registered\" ;;\n\
+                 'mcp add') if [ -e \"$HOME/{program}-refuses\" ]; then echo 'error: no'; exit 1; fi; : > \"$HOME/{program}-registered\" ;;\n\
+                 *) exit 2 ;;\n\
+                 esac\n"
+            ),
+        );
+    }
+
+    fn calls(release: &Release, program: &str) -> String {
+        std::fs::read_to_string(release.home().join(format!("{program}-calls"))).unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn ncu_register_registers_in_every_agent_found_through_its_own_mcp_add() {
+        let release = Release::new("register", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        fake_agent(&release, "claude");
+        fake_agent(&release, "codex");
+
+        let output = release.install(&[("NCU_REGISTER", "1")]).await;
+
+        assert!(output.status.success(), "{output:?}");
+        let binary = release.home().join(".local/bin/niri-computer-use");
+        let b = binary.display();
+        assert_eq!(
+            calls(&release, "claude"),
+            format!(
+                "mcp get niri-computer-use\nmcp add --scope user niri-computer-use -- {b} serve\n"
+            )
+        );
+        assert_eq!(
+            calls(&release, "codex"),
+            format!("mcp add niri-computer-use -- {b} serve\n")
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("Registered in Claude Code."), "{stdout}");
+        assert!(stdout.contains("Registered in Codex."), "{stdout}");
+        assert!(!stdout.contains("claude mcp add"), "{stdout}");
+        assert!(!stdout.contains("pi mcp add"), "{stdout}");
+    }
+
+    #[tokio::test]
+    async fn an_agent_already_registered_is_left_as_it_is() {
+        let release = Release::new("registered", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        fake_agent(&release, "claude");
+        std::fs::write(release.home().join("claude-registered"), "").unwrap();
+
+        let output = release.install(&[("NCU_REGISTER", "1")]).await;
+
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(calls(&release, "claude"), "mcp get niri-computer-use\n");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            stdout.contains("Already registered in Claude Code"),
+            "{stdout}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_agent_that_refuses_does_not_fail_the_install_and_its_command_is_printed() {
+        let release = Release::new("refuses", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        fake_agent(&release, "pi");
+        std::fs::write(release.home().join("pi-refuses"), "").unwrap();
+
+        let output = release.install(&[("NCU_REGISTER", "1")]).await;
+
+        assert!(output.status.success(), "{output:?}");
+        let binary = release.home().join(".local/bin/niri-computer-use");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.contains("Registering in Pi failed: error: no"),
+            "{stderr}"
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let command = format!(
+            "pi mcp add niri-computer-use --exposure direct -- \"{}\" serve",
+            binary.display()
+        );
+        assert!(stdout.contains(&command), "{stdout}");
+        assert!(!stdout.contains("Registered in"), "{stdout}");
+    }
+
+    #[tokio::test]
+    async fn without_a_terminal_or_ncu_register_no_agent_is_touched_and_its_command_is_printed() {
+        let release = Release::new("quiet", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        fake_agent(&release, "claude");
+        fake_agent(&release, "pi");
+
+        let unset = release.install(&[]).await;
+        let off = release.install(&[("NCU_REGISTER", "0")]).await;
+
+        assert!(unset.status.success(), "{unset:?}");
+        assert!(off.status.success(), "{off:?}");
+        assert_eq!(calls(&release, "claude"), "");
+        assert_eq!(calls(&release, "pi"), "");
+        let binary = release.home().join(".local/bin/niri-computer-use");
+        for output in [unset, off] {
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            assert!(
+                stdout.contains(&format!(
+                    "claude mcp add --scope user niri-computer-use -- \"{}\" serve",
+                    binary.display()
+                )),
+                "{stdout}"
+            );
+            assert!(
+                stdout.contains("pi mcp add niri-computer-use --exposure direct"),
+                "{stdout}"
+            );
+            assert!(!stdout.contains("codex mcp add"), "{stdout}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unknown_ncu_register_value_is_refused_before_anything_is_registered() {
+        let release = Release::new("bad-register", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        fake_agent(&release, "claude");
+
+        let output = release.install(&[("NCU_REGISTER", "maybe")]).await;
+
+        assert!(!output.status.success());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains("NCU_REGISTER must be 1 or 0"), "{stderr}");
+        assert_eq!(calls(&release, "claude"), "");
+    }
+
     #[tokio::test]
     async fn installs_the_named_version_for_aarch64_into_a_relative_directory() {
         let release = Release::new("named", "aarch64");
