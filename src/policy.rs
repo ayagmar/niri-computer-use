@@ -122,6 +122,10 @@ pub(crate) struct Policy {
     /// Which tools to list: `observe`, `act` or `full`.
     #[serde(default)]
     pub(crate) tools: Profile,
+    /// `false` keeps the server from turning the session's accessibility on when a
+    /// window's app isn't on the accessibility bus; unset, it may.
+    #[serde(default)]
+    pub(crate) turn_on_accessibility: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -176,6 +180,8 @@ pub(crate) struct PolicyStatus {
     /// What `launch` takes.
     preset_names: Vec<String>,
     denied_app_ids: usize,
+    /// Whether the server may turn the session's accessibility on.
+    turn_on_accessibility: bool,
     /// Where `screenshot`'s `save_path` writes, as written; null when saving is off.
     capture_dir: Option<String>,
     /// Whether the file chose `capture_dir`, an empty one included, or the default
@@ -311,6 +317,7 @@ impl Loaded {
                     .collect()
             }),
             denied_app_ids: policy.map_or(0, |policy| policy.deny_input_app_ids.len()),
+            turn_on_accessibility: off_bus(self, false, false) == OffBus::Listen,
             capture_dir: self.capture_dir().ok().map(|(dir, _)| dir.to_owned()),
             capture_dir_source: match (self, self.capture_dir()) {
                 (_, Ok((_, source))) => Some(source),
@@ -494,6 +501,40 @@ fn check_env(preset: &Preset, program: &str) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// What the server does about the session's accessibility when a window's app isn't on
+/// the accessibility bus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OffBus {
+    /// Register a listener: it turns accessibility on, or keeps it on with the others'.
+    Listen,
+    /// It is on, and no listener keeps it so: something wrote it on, and the server's
+    /// listener leaving would turn it off. Left as it is.
+    Leave,
+    /// It is off, and the server may not turn it on: why.
+    Refused(&'static str),
+}
+
+/// What the server does when an app isn't on the accessibility bus, with the session's
+/// accessibility `enabled` or not, and `listened` to by any client: add a listener when it
+/// is off, or on through listeners, unless the policy file says
+/// `turn_on_accessibility = false`. An invalid file might, so it refuses too. With
+/// accessibility on and no listener, the server leaves it alone.
+pub(crate) const fn off_bus(policy: &Loaded, enabled: bool, listened: bool) -> OffBus {
+    let refused = match policy {
+        Loaded::Valid(Policy {
+            turn_on_accessibility: Some(false),
+            ..
+        }) => Some("the policy file sets turn_on_accessibility = false"),
+        Loaded::Invalid(_) => Some("the policy file is invalid"),
+        Loaded::Valid(_) | Loaded::Missing => None,
+    };
+    match (enabled, listened, refused) {
+        (true, false, _) | (true, true, Some(_)) => OffBus::Leave,
+        (false, _, Some(why)) => OffBus::Refused(why),
+        (_, _, None) => OffBus::Listen,
+    }
 }
 
 /// A key the user turns on in the policy file or, for one client, with a variable in that
@@ -1596,6 +1637,36 @@ app_id = "foot"
         assert!(!Loaded::Valid(parse(EXAMPLE, false).unwrap()).unrestricted());
         assert!(Loaded::Valid(parse("unrestricted = true", false).unwrap()).unrestricted());
         assert!(parse("unrestricted = \"yes\"", false).is_err());
+    }
+
+    #[test]
+    fn accessibility_is_listened_for_unless_written_on_or_refused() {
+        let file = |text| Loaded::Valid(parse(text, false).unwrap());
+        let allowed = [
+            Loaded::Missing,
+            file(""),
+            file("turn_on_accessibility = true"),
+        ];
+        for policy in &allowed {
+            assert_eq!(off_bus(policy, false, false), OffBus::Listen);
+            // On through listeners, a screen reader's or another server's: joined.
+            assert_eq!(off_bus(policy, true, true), OffBus::Listen);
+            // Written on with no listener: the server's leaving would turn it off.
+            assert_eq!(off_bus(policy, true, false), OffBus::Leave);
+        }
+        let refused = [
+            file("turn_on_accessibility = false"),
+            Loaded::Invalid("bad".to_owned()),
+        ];
+        for policy in &refused {
+            assert!(matches!(off_bus(policy, false, false), OffBus::Refused(_)));
+            assert_eq!(off_bus(policy, true, true), OffBus::Leave);
+            assert_eq!(off_bus(policy, true, false), OffBus::Leave);
+        }
+        assert!(matches!(
+            off_bus(&refused[0], false, false),
+            OffBus::Refused(why) if why.contains("turn_on_accessibility = false")
+        ));
     }
 
     #[test]

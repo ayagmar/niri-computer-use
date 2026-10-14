@@ -42,9 +42,11 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `noctalia` | `running`, `not_running` or `not_installed` |
 | `noctalia_error` | why Noctalia counts as not running, or null |
 | `accessibility.available`, `accessibility.address`, `accessibility.reason` | whether the session has an accessibility bus, its address, and why not; `elements`, `activate_element` and `set_element_text` are listed only when it has one |
+| `accessibility_switch` | what the server did about the session's accessibility for [Chromium and Electron apps](../elements/#chromium-and-electron-apps): `off`, `on` while its listener holds it on, `turning_on`, or `unsupported` when at-spi2-core is older than 2.61; null from the `status` subcommand |
 | `policy.state` | `loaded`, `missing` (valid: no presets, no denied apps) or `invalid` |
 | `policy.presets`, `policy.denied_app_ids`, `policy.error` | how many presets and denied apps the policy file has, and why it is invalid |
 | `policy.preset_names` | the preset names `launch` takes |
+| `policy.turn_on_accessibility` | whether the server may turn the session's accessibility on ([`turn_on_accessibility`](../../concepts/configuration/#turn_on_accessibility)) |
 | `policy.capture_dir`, `policy.capture_dir_source` | where `screenshot` saves, as written (`~/Pictures/niri-computer-use` by default), or null when saving is off; and `policy` or `default` for where that came from |
 | `unrestricted.enabled`, `unrestricted.source`, `unrestricted.error` | whether gated `niri_action`s and unrestricted presets are allowed, whether the policy file, `NIRI_COMPUTER_USE_UNRESTRICTED` or both allowed them, and why the variable was ignored |
 | `confirm_lease.enabled`, `confirm_lease.source`, `confirm_lease.error` | whether `acquire_desktop` waits for the user to allow it on the desktop, whether the policy file, `NIRI_COMPUTER_USE_CONFIRM_LEASE` or both asked for that, and why the variable was ignored |

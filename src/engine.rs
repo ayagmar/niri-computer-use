@@ -164,7 +164,15 @@ impl Engine {
         audit: Audit,
         accessibility: Presence,
     ) -> Self {
-        let a11y = accessibility.address.clone().map(A11y::new);
+        let session_bus = env
+            .session_bus
+            .as_ref()
+            .and_then(|bus| bus.to_str())
+            .map(str::to_owned);
+        let a11y = accessibility
+            .address
+            .clone()
+            .map(|address| A11y::new(address, session_bus));
         Self {
             desk: Desk::start(&env),
             env,
@@ -308,6 +316,7 @@ impl Engine {
             tools: &settings.tools,
             place: settings.place(),
             accessibility: &self.accessibility,
+            accessibility_switch: self.a11y.as_ref().map(|a11y| a11y.switch().report()),
         };
         Box::pin(status::collect(&self.env, sources)).await
     }

@@ -455,6 +455,7 @@ mod tests {
             capped: capped.is_some(),
             capped_reason: capped,
             withheld: None,
+            building: false,
         }
     }
 

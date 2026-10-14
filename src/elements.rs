@@ -15,13 +15,13 @@ use crate::a11y::model::{
     self, Extents, Filter, Fresh, LayoutBox, Link, NameHash, Origin, Placement, Refused, Row,
     Scene, Shape, Unbound, Unmappable,
 };
-use crate::a11y::{self, A11y, Capped, ElementRef, Failed, Node, Want};
+use crate::a11y::{self, A11y, Capped, ElementRef, Failed, Node, Switch, Turned, Want};
 use crate::changes::elements::{Seen, Unknown};
 use crate::coords::LayoutPt;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri;
 use crate::niri::Socket;
-use crate::policy::{self, Loaded};
+use crate::policy::{self, Loaded, OffBus};
 
 /// What `elements` was asked for.
 #[derive(Debug, Clone)]
@@ -58,6 +58,10 @@ pub(crate) struct Listing {
     /// Why a listed element's ref was left out, with `Ask::whole` or `Ask::by`.
     #[serde(skip)]
     pub(crate) withheld: Option<Withheld>,
+    /// The app built its tree at this call's asking, as Chromium builds it only when an
+    /// assistive technology asks, and may not have sent all of it yet: list again.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) building: bool,
 }
 
 /// Why `look` left a listed element's ref out.
@@ -110,6 +114,7 @@ impl Listing {
             capped: true,
             capped_reason: Some(Capped::BudgetExhausted),
             withheld: None,
+            building: false,
         }
     }
 
@@ -127,6 +132,9 @@ impl Listing {
         }
         if let Some(reason) = self.capped_reason {
             walk = format!("{walk}; walk cut short: {}", word(reason));
+        }
+        if self.building {
+            walk.push_str("; the app built its tree just now, so list again for the rest");
         }
         std::iter::once(walk)
             .chain(self.elements.iter().map(Listed::line))
@@ -364,7 +372,9 @@ async fn read(
     } else {
         request
     };
-    let app = request.app(pid).await?;
+    let Some(app) = request.find_app(pid).await? else {
+        return Err(off_bus(a11y, policy, pid, request.deadline()).await);
+    };
     let frame = request
         .frame(&app, shape(window), &others(window, &placed.others))
         .await?;
@@ -381,6 +391,53 @@ async fn read(
         walked,
     }))
 }
+
+/// `not_accessible` for `pid`'s app, which isn't on the accessibility bus, saying what the
+/// server did about the session's accessibility by `deadline`. Apps such as Chromium and
+/// Electron check it only when they start, so the agent is told to ask the user before
+/// restarting the app.
+async fn off_bus(a11y: &A11y, policy: &Loaded, pid: i32, deadline: Instant) -> ToolError {
+    let note = switched(a11y.switch(), policy, deadline).await;
+    a11y::not_accessible(format!("{}; {note}", a11y::off_bus(pid)))
+}
+
+/// What the server did about the session's accessibility, as `policy::off_bus` decides.
+async fn switched(switch: &Switch, policy: &Loaded, deadline: Instant) -> String {
+    let enabled = match switch.session_enabled(deadline).await {
+        Ok(enabled) => enabled,
+        Err(error) => {
+            return format!(
+                "whether the session's accessibility is on couldn't be read: {}",
+                error.detail
+            );
+        }
+    };
+    // Unread, the listeners count as none, so accessibility that is on is left alone.
+    let listened = enabled && switch.listened(deadline).await.unwrap_or(false);
+    let on = format!(
+        "the session's accessibility is on: the app may not support it, or started while it was off; {RESTART}"
+    );
+    match policy::off_bus(policy, enabled, listened) {
+        OffBus::Leave => on,
+        OffBus::Refused(why) => format!("the session's accessibility is off, and {why}"),
+        OffBus::Listen => match switch.listen(deadline).await {
+            Ok(Turned::On | Turned::AlreadyOn) if enabled => on,
+            Ok(Turned::On) => {
+                format!("the session's accessibility was off, so the server turned it on; {RESTART}")
+            }
+            Ok(Turned::AlreadyOn) => "the session's accessibility is off though the server's listener asks for it, so something else turned it off; the server leaves it off".to_owned(),
+            Ok(Turned::Unsupported(why)) => format!("the session's accessibility is off: {why}"),
+            Err(error) => format!(
+                "the session's accessibility is {}, and registering the server's listener failed: {}",
+                if enabled { "on" } else { "off" },
+                error.detail
+            ),
+        },
+    }
+}
+
+/// What an app started while the session's accessibility was off needs.
+const RESTART: &str = "apps such as Chromium and Electron check it only when they start, so one started while it was off lists its elements only after a restart: ask the user before restarting it";
 
 /// Lists the accessible elements of window `ask.window_id`, keeping a ref of each through
 /// `remember` while there is a lease.
@@ -497,6 +554,7 @@ async fn look(
         capped: capped.is_some(),
         capped_reason: capped,
         withheld,
+        building: read.frame.building,
     }))
 }
 
@@ -897,6 +955,7 @@ mod tests {
             capped: true,
             capped_reason: Some(Capped::BudgetExhausted),
             withheld: None,
+            building: false,
         };
         let compact = listing.compact();
         assert_eq!(

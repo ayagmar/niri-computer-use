@@ -48,6 +48,9 @@ pub(crate) struct Status {
     noctalia_error: Option<ToolError>,
     /// Whether this session has an accessibility bus, for `elements`.
     accessibility: a11y::Presence,
+    /// Whether this server turned the session's accessibility on: `on` while its listener
+    /// holds it on. Null in the `status` subcommand and without an accessibility bus.
+    accessibility_switch: Option<a11y::SwitchReport>,
     audit: AuditStatus,
     policy: PolicyStatus,
     /// Whether gated actions are allowed, and whether the policy file or the environment
@@ -81,6 +84,8 @@ pub(crate) struct Sources<'a> {
     pub(crate) place: Place<'a>,
     /// Decided once at startup for the server, whose tool list depends on it.
     pub(crate) accessibility: &'a a11y::Presence,
+    /// The engine's switch; none for the `status` subcommand.
+    pub(crate) accessibility_switch: Option<a11y::SwitchReport>,
 }
 
 /// The engine that serves the session asking.
@@ -164,6 +169,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         tools,
         place,
         accessibility,
+        accessibility_switch,
     } = sources;
     let socket = &env.niri_socket;
     let noctalia = async {
@@ -213,6 +219,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         noctalia: presence,
         noctalia_error,
         accessibility: accessibility.clone(),
+        accessibility_switch,
         audit: audit.status(),
         policy: policy.status(),
         unrestricted: unrestricted.status(),
@@ -269,6 +276,7 @@ mod tests {
             },
             place: crate::test_support::no_programs(),
             accessibility: &a11y::detect(None).await,
+            accessibility_switch: None,
         };
         let status = serde_json::to_value(collect(&Env::default(), sources).await).unwrap();
         assert_eq!(
@@ -310,9 +318,10 @@ mod tests {
                     "address": null,
                     "reason": "neither DBUS_SESSION_BUS_ADDRESS nor XDG_RUNTIME_DIR is set"
                 },
+                "accessibility_switch": null,
                 "audit": {"path": null, "last_error": "neither XDG_STATE_HOME nor HOME is set"},
                 "policy": {
-                    "state": "missing", "presets": 0, "preset_names": [], "denied_app_ids": 0,
+                    "state": "missing", "presets": 0, "preset_names": [], "denied_app_ids": 0, "turn_on_accessibility": true,
                     "capture_dir": "~/Pictures/niri-computer-use",
                     "capture_dir_source": "default",
                     "error": null

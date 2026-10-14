@@ -16,6 +16,7 @@ The server reads `~/.config/niri-computer-use/policy.toml`, or `$XDG_CONFIG_HOME
 | `state` | `loaded`, `missing` or `invalid` |
 | `presets`, `preset_names` | how many presets there are, and the names `launch` takes |
 | `denied_app_ids` | how many apps are on the deny list |
+| `turn_on_accessibility` | whether the server may turn the session's accessibility on: false when the file sets it to `false` or is invalid |
 | `capture_dir` | where `save_path` writes, as the file writes it or `~/Pictures/niri-computer-use` by default, or null when saving is off |
 | `capture_dir_source` | `policy` when the file sets `capture_dir`, `""` included, `default` when it doesn't or there is no file, null while the file is invalid |
 | `error` | why the file is invalid |
@@ -63,6 +64,10 @@ With this file, `status` reports:
 A list of `app_id`s, default empty. While the window with keyboard focus has one of them, `click`, `drag`, `scroll`, `pointer_move`, `key` and `type_text` refuse with `app_denied`, even with `expect: "none"`. `elements`, `activate_element`, `set_element_text` and a pointer tool aimed at an `element` refuse for a window of a denied app whatever has focus, and so do `close_window` and `niri_action`'s `CloseWindow`, for the window they name or the focused one. Focus and layout actions aren't checked.
 
 The check follows keyboard focus, and apps choose their own `app_id`, so this guards against mistakes. A click can still land on a denied window while an allowed app has focus. `desktop_state` shows each window's `app_id`.
+
+### `turn_on_accessibility`
+
+`true` or `false`, default `true`. Chromium, Electron and CEF apps join the accessibility bus only when the session's accessibility was on when they started. With `true`, when `elements`, an element wait or an action's `element_changes` finds a window's app off the bus while accessibility is off, the server turns it on by registering a listener with the accessibility registry, as a screen reader does, and accessibility goes back off when the server ends. It never writes the setting itself, and leaves it alone when something else turned it on. With `false`, it does nothing, and `elements` refuses such apps with `not_accessible` until you turn accessibility on yourself, for example by running a screen reader. While the policy file is invalid it does nothing either. See [Chromium and Electron apps](../../tools/elements/#chromium-and-electron-apps).
 
 ### `capture_dir`
 

@@ -24,6 +24,8 @@ mod noctalia;
 mod output_mode;
 
 #[cfg(test)]
+mod accessibility;
+#[cfg(test)]
 mod act;
 #[cfg(test)]
 mod audit;

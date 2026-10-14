@@ -9,6 +9,7 @@
 //! application elsewhere can't stall the request.
 
 pub(crate) mod model;
+mod switch;
 mod walk;
 
 use std::ffi::OsStr;
@@ -25,6 +26,7 @@ use zbus::zvariant::{DynamicType, OwnedObjectPath, OwnedValue};
 
 use crate::error::{ErrorName, ToolError};
 use model::{Extents, Frame, Kept, NoFrame, Picked, Shape, States};
+pub(crate) use switch::{Report as SwitchReport, Switch, Turned};
 pub(crate) use walk::{Capped, Child, Node, Walked, Want};
 
 /// Each call's deadline.
@@ -42,6 +44,9 @@ const EDITABLE_TEXT: &str = "org.a11y.atspi.EditableText";
 const TEXT: &str = "org.a11y.atspi.Text";
 const VALUE: &str = "org.a11y.atspi.Value";
 const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
+/// AT-SPI's null reference, which Chromium gives as a frame's child until an assistive
+/// technology asks it for an object's attributes, and only then builds its tree.
+const NULL: &str = "/org/a11y/atspi/null";
 /// `ATSPI_COORD_TYPE_WINDOW`: relative to the toolkit's window.
 const WINDOW_COORDS: u32 = 1;
 /// D-Bus errors that mean the object or its application is gone.
@@ -117,19 +122,28 @@ async fn connect(address: &str) -> Result<Connection, zbus::Error> {
     zbus::connection::Builder::address(address)?.build().await
 }
 
-/// The accessibility bus, connected on first use and again after a connection fails.
+/// The accessibility bus, connected on first use and again after a connection fails, and
+/// the switch that turns the session's accessibility on.
 #[derive(Debug, Clone)]
 pub(crate) struct A11y {
     address: String,
     connection: Arc<tokio::sync::Mutex<Option<Connection>>>,
+    switch: Arc<Switch>,
 }
 
 impl A11y {
-    pub(crate) fn new(address: String) -> Self {
+    /// The accessibility bus at `address`, whose status is on the session bus at
+    /// `session_bus`.
+    pub(crate) fn new(address: String, session_bus: Option<String>) -> Self {
         Self {
+            switch: Arc::new(Switch::new(session_bus, address.clone())),
             address,
             connection: Arc::default(),
         }
+    }
+
+    pub(crate) fn switch(&self) -> &Switch {
+        &self.switch
     }
 
     /// A request against the bus with `budget` from now for all its calls.
@@ -216,6 +230,9 @@ pub(crate) struct FoundFrame {
     pub(crate) node: Node,
     /// Whether it passes the frame guard.
     pub(crate) fits: bool,
+    /// Whether the app built its tree at this request's asking (`Request::built`), and may
+    /// not have sent all of it yet.
+    pub(crate) building: bool,
 }
 
 impl Request {
@@ -369,15 +386,19 @@ impl Request {
 
     /// The application whose process is `pid`, or `not_accessible`.
     pub(crate) async fn app(&self, pid: i32) -> Result<App, ToolError> {
-        self.apps()
+        self.find_app(pid)
             .await?
-            .into_iter()
-            .find(|app| app.pid == pid)
-            .ok_or_else(|| {
-                not_accessible(format!(
-                    "no application with pid {pid} is on the accessibility bus; it may not support accessibility"
-                ))
-            })
+            .ok_or_else(|| not_accessible(off_bus(pid)))
+    }
+
+    /// The application whose process is `pid`, if it is on the bus.
+    pub(crate) async fn find_app(&self, pid: i32) -> Result<Option<App>, ToolError> {
+        Ok(self.apps().await?.into_iter().find(|app| app.pid == pid))
+    }
+
+    /// When the request's budget runs out.
+    pub(crate) const fn deadline(&self) -> Instant {
+        self.deadline
     }
 
     /// The application's frame that is niri's `window`, decided with the app's `others`
@@ -447,7 +468,34 @@ impl Request {
             .and_then(|(index, _)| frames.get(*index))
             .cloned()
             .ok_or_else(|| ToolError::new(ErrorName::UpstreamError, "frame index out of range"))?;
-        Ok(FoundFrame { node, fits })
+        let (node, building) = self.built(&app.bus, node).await?;
+        Ok(FoundFrame {
+            node,
+            fits,
+            building,
+        })
+    }
+
+    /// `frame` with its tree built, and whether it was built just now: a frame whose
+    /// children are all null references, as Chromium's are until an assistive technology
+    /// asks for an object's attributes, is asked for its own, then read again. Chromium
+    /// then builds its own window's tree at once and the page's within a second or so.
+    async fn built(&self, bus: &str, frame: Node) -> Result<(Node, bool), ToolError> {
+        if frame.children.is_empty() || frame.children.iter().any(|child| child.path != NULL) {
+            return Ok((frame, false));
+        }
+        let attributes = self
+            .call::<_, std::collections::HashMap<String, String>>(
+                (bus, &frame.path),
+                (ACCESSIBLE, "GetAttributes"),
+                &(),
+            )
+            .await;
+        if let Err(Failed::Error(error)) = attributes {
+            return Err(error);
+        }
+        let read = self.node(bus, &frame.path).await?.unwrap_or(frame);
+        Ok((read, true))
     }
 
     /// The node at `path` in application `bus`, or `None` once it is gone. A node without
@@ -843,6 +891,13 @@ fn standard_name(name: &OwnedErrorName, reply: &Message) -> String {
 
 fn upstream(what: &str, error: &zbus::Error) -> ToolError {
     ToolError::new(ErrorName::UpstreamError, format!("{what}: {error}"))
+}
+
+/// Why `not_accessible` for an application that isn't on the bus.
+pub(crate) fn off_bus(pid: i32) -> String {
+    format!(
+        "no application with pid {pid} is on the accessibility bus; it may not support accessibility"
+    )
 }
 
 pub(crate) fn not_accessible(detail: String) -> ToolError {

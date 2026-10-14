@@ -139,9 +139,9 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 ### `not_accessible`
 
-**Cause:** the window's app isn't on the accessibility bus, or has no accessible window that is this one.
+**Cause:** the window's app isn't on the accessibility bus, or has no accessible window that is this one. Chromium, Electron and CEF apps join the bus only when the session's accessibility was on when they started. The server then turns it on, unless the policy file sets [`turn_on_accessibility = false`](../../concepts/configuration/#turn_on_accessibility), and `detail` says what it did.
 
-**What to do:** aim at screenshot pixels for that window.
+**What to do:** aim at screenshot pixels for that window. When `detail` says the app needs a restart, ask the user before restarting it; after a restart, `elements` lists it.
 
 ### `ambiguous_window`
 

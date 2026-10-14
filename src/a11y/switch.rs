@@ -1,0 +1,227 @@
+//! Turning the session's accessibility on, for apps that check it before they put
+//! themselves on the accessibility bus: Chromium, Electron and CEF apps read
+//! `org.a11y.Status.IsEnabled` on the session bus once, when they start. The server never
+//! writes that property. It registers an event listener with the registry, as a screen
+//! reader does, on a connection of its own: at-spi2-core 2.61 and later keep `IsEnabled`
+//! true while any client has a listener registered, and turn it off once none is left. The
+//! listener lasts as long as the connection, so the session's accessibility goes back off
+//! when the server ends, however it ends, unless another listener, such as a screen
+//! reader's or another server's, keeps it on. A server that finds it on through others'
+//! listeners adds its own, so it stays on while the server needs it. An older at-spi2-core
+//! doesn't turn it on for a listener; the server then lets go and says so.
+
+use std::time::Duration;
+
+use serde::Serialize;
+use tokio::time::Instant;
+use zbus::Connection;
+
+use super::{CALL, connect, upstream, within};
+use crate::error::{ErrorName, ToolError};
+
+/// The registry's object, which takes listeners.
+const REGISTRY: &str = "/org/a11y/atspi/registry";
+/// The event the listener asks for: one an app sends seldom, as only a window's activation
+/// sends it.
+const EVENT: &str = "window:activate";
+/// How long the bus launcher has to turn `IsEnabled` on after the listener is registered.
+const TURNING_ON: Duration = Duration::from_millis(500);
+/// How often `IsEnabled` is read while it turns on.
+const POLL: Duration = Duration::from_millis(20);
+
+/// The server's listener, and whether it turned the session's accessibility on.
+#[derive(Debug)]
+pub(crate) struct Switch {
+    /// The session bus's address, where `org.a11y.Status` is.
+    session_bus: Option<String>,
+    /// The accessibility bus's address, where the registry is.
+    a11y_bus: String,
+    held: tokio::sync::Mutex<Held>,
+}
+
+/// What the server has done to the session's accessibility.
+#[derive(Debug, Default)]
+enum Held {
+    /// Nothing.
+    #[default]
+    Off,
+    /// Its listener holds accessibility on for as long as the connection lasts.
+    On { _listener: Connection },
+    /// It registered a listener, and the bus launcher didn't turn accessibility on: why.
+    Unsupported(String),
+}
+
+/// What `status` reports of the switch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Report {
+    /// The server hasn't turned the session's accessibility on.
+    Off,
+    /// The server's listener holds it on.
+    On,
+    /// The server is turning it on now.
+    TurningOn,
+    /// The bus launcher doesn't turn it on for a listener.
+    Unsupported,
+}
+
+/// What `listen` did.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Turned {
+    /// The listener is registered and `IsEnabled` is true.
+    On,
+    /// The server's listener already held it on.
+    AlreadyOn,
+    /// The listener didn't turn it on, as an at-spi2-core before 2.61 doesn't: why.
+    Unsupported(String),
+}
+
+impl Switch {
+    pub(crate) const fn new(session_bus: Option<String>, a11y_bus: String) -> Self {
+        Self {
+            session_bus,
+            a11y_bus,
+            held: tokio::sync::Mutex::const_new(Held::Off),
+        }
+    }
+
+    /// Whether the session's accessibility is on: `org.a11y.Status.IsEnabled`, read by
+    /// `deadline`.
+    pub(crate) async fn session_enabled(&self, deadline: Instant) -> Result<bool, ToolError> {
+        let session_bus = self.session_bus.as_deref().ok_or_else(|| {
+            ToolError::new(
+                ErrorName::UpstreamError,
+                "neither DBUS_SESSION_BUS_ADDRESS nor XDG_RUNTIME_DIR is set",
+            )
+        })?;
+        let connection = within(
+            left(deadline),
+            "connect to the session bus",
+            connect(session_bus),
+        )
+        .await?;
+        is_enabled(&connection, deadline).await
+    }
+
+    /// Whether any client has a listener registered with the registry, by `deadline`.
+    pub(crate) async fn listened(&self, deadline: Instant) -> Result<bool, ToolError> {
+        let connection = within(
+            left(deadline),
+            "connect to the accessibility bus",
+            connect(&self.a11y_bus),
+        )
+        .await?;
+        let what = "org.a11y.atspi.Registry.GetRegisteredEvents";
+        let reply = within(
+            left(deadline),
+            what,
+            connection.call_method(
+                Some("org.a11y.atspi.Registry"),
+                REGISTRY,
+                Some("org.a11y.atspi.Registry"),
+                "GetRegisteredEvents",
+                &(),
+            ),
+        )
+        .await?;
+        let events: Vec<(String, String)> = reply
+            .body()
+            .deserialize()
+            .map_err(|error| upstream(what, &error))?;
+        Ok(!events.is_empty())
+    }
+
+    /// Registers the listener, unless the server's already holds accessibility on, and
+    /// waits for `IsEnabled` to turn true, all by `deadline`. A launcher that doesn't turn
+    /// it on is remembered, and the listener let go.
+    pub(crate) async fn listen(&self, deadline: Instant) -> Result<Turned, ToolError> {
+        let mut held = self.held.lock().await;
+        match &*held {
+            Held::On { .. } => return Ok(Turned::AlreadyOn),
+            Held::Unsupported(why) => return Ok(Turned::Unsupported(why.clone())),
+            Held::Off => {}
+        }
+        let listener = within(
+            left(deadline),
+            "connect to the accessibility bus",
+            connect(&self.a11y_bus),
+        )
+        .await?;
+        within(
+            left(deadline),
+            "org.a11y.atspi.Registry.RegisterEvent",
+            listener.call_method(
+                Some("org.a11y.atspi.Registry"),
+                REGISTRY,
+                Some("org.a11y.atspi.Registry"),
+                "RegisterEvent",
+                &(EVENT,),
+            ),
+        )
+        .await?;
+        if self.turned_on(deadline).await? {
+            *held = Held::On {
+                _listener: listener,
+            };
+            drop(held);
+            return Ok(Turned::On);
+        }
+        let why = format!(
+            "org.a11y.Status IsEnabled stayed false {} ms after the server registered a listener; at-spi2-core before 2.61 doesn't turn it on for one",
+            TURNING_ON.as_millis()
+        );
+        *held = Held::Unsupported(why.clone());
+        drop(held);
+        Ok(Turned::Unsupported(why))
+    }
+
+    /// Whether `IsEnabled` turns true within `TURNING_ON`, read by `deadline`.
+    async fn turned_on(&self, deadline: Instant) -> Result<bool, ToolError> {
+        let deadline = deadline.min(Instant::now() + TURNING_ON);
+        loop {
+            if self.session_enabled(deadline).await? {
+                return Ok(true);
+            }
+            if Instant::now() + POLL >= deadline {
+                return Ok(false);
+            }
+            tokio::time::sleep(POLL).await;
+        }
+    }
+
+    pub(crate) fn report(&self) -> Report {
+        match self.held.try_lock().as_deref() {
+            Ok(Held::Off) => Report::Off,
+            Ok(Held::On { .. }) => Report::On,
+            Ok(Held::Unsupported(_)) => Report::Unsupported,
+            Err(_) => Report::TurningOn,
+        }
+    }
+}
+
+/// `IsEnabled` on the session bus `connection`, read by `deadline`.
+async fn is_enabled(connection: &Connection, deadline: Instant) -> Result<bool, ToolError> {
+    let what = "org.a11y.Status IsEnabled";
+    let reply = within(
+        left(deadline),
+        what,
+        connection.call_method(
+            Some("org.a11y.Bus"),
+            "/org/a11y/bus",
+            Some("org.freedesktop.DBus.Properties"),
+            "Get",
+            &("org.a11y.Status", "IsEnabled"),
+        ),
+    )
+    .await?;
+    let value: zbus::zvariant::OwnedValue = reply
+        .body()
+        .deserialize()
+        .map_err(|error| upstream(what, &error))?;
+    bool::try_from(value).map_err(|error| upstream(what, &zbus::Error::Variant(error)))
+}
+
+/// What is left until `deadline`, at most one call's deadline.
+fn left(deadline: Instant) -> Duration {
+    deadline.saturating_duration_since(Instant::now()).min(CALL)
+}

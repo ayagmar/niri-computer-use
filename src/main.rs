@@ -243,6 +243,7 @@ async fn main() -> ExitCode {
                 tools: &settings.tools,
                 place: settings.place(),
                 accessibility: &accessibility,
+                accessibility_switch: None,
             };
             cli::print_json(&status::collect(&env, sources).await)
                 .map_err(|error| format!("print status: {error}"))
