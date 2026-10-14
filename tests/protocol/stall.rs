@@ -741,12 +741,22 @@ fn unreached(case: &Case<'_>, missed: &Missed) -> Result<(), String> {
     if !reads_lock(&case.at.point) || verdict(&missed.result).is_err() || acted != case.acts {
         return never();
     }
-    let mut read = None;
+    // A read asks every lock source side by side, so it is as old as its first answer;
+    // a source that already answered starts the next read.
+    let mut read: Option<(Instant, Vec<&str>)> = None;
     for passed in &missed.trace {
         if reads_lock(&passed.point) {
-            read = Some(passed.at);
+            read = match read {
+                Some((began, mut sources)) if !sources.contains(&passed.point.as_str()) => {
+                    sources.push(&passed.point);
+                    Some((began, sources))
+                }
+                _ => Some((passed.at, vec![passed.point.as_str()])),
+            };
         } else if case.tool.acts(&passed.point) {
-            let age = read.map(|read| passed.at.saturating_duration_since(read));
+            let age = read
+                .as_ref()
+                .map(|(began, _)| passed.at.saturating_duration_since(*began));
             if age.is_none_or(|age| age > LAST_GATE) {
                 return Err(format!(
                     "never reached, and acted on a lock read {age:?} old: {}",
@@ -1090,4 +1100,40 @@ fn only_a_lock_read_a_call_had_no_need_to_make_goes_unreached() {
     assert_eq!(missed_third("noctalia:status", 12), Ok(()));
     assert!(missed_third("noctalia:status", 300).is_err());
     assert!(missed_third("niri:Version", 12).is_err());
+}
+
+/// A lock read asks Noctalia and logind side by side, so it is as old as its first answer:
+/// logind answering late doesn't make a read Noctalia answered 300 ms ago fresh again.
+#[test]
+fn a_late_second_lock_source_doesnt_make_the_read_younger() {
+    let start = Instant::now();
+    let passed = |point: &str, nth, ms| Passed {
+        point: point.to_owned(),
+        nth,
+        at: start + Duration::from_millis(ms),
+    };
+    let missed = Missed {
+        result: json!({"isError": false, "structuredContent": {"observed": "sent"}}),
+        trace: vec![
+            passed("noctalia:status", 1, 0),
+            passed("loginctl", 1, 0),
+            passed("noctalia:status", 2, 1),
+            passed("loginctl", 2, 301),
+            passed("wtype", 1, 304),
+            passed("wtype", 2, 308),
+            passed("wtype", 3, 312),
+        ],
+    };
+    let at = passed("noctalia:status", 3, 300);
+    let case = Case {
+        tool: Tool::TypeText,
+        fact: Fact::ScreenLocked,
+        at: &at,
+        sends: 5,
+        last: 7,
+        acts: 3,
+        index: 6,
+        hold: Hold::Short,
+    };
+    assert!(unreached(&case, &missed).is_err());
 }
