@@ -295,7 +295,7 @@ A command on the plate, 0.75rem corners, wrapped to the width rather than scroll
 Starlight with theme.css: tokens, wordmark, Archivo titles at 72% and 84% width, links underlined at 1px and 2px on hover, code in table first columns kept on one line, code in headings without a chip. Code blocks are Expressive Code set in astro.config.mjs to match the home page's: on the plate in both themes with github-dark colours, 0.75rem corners, no border or window frame, lines wrapped to the width, and the first line wrapping short of the copy button.
 
 ### Motion
-One easing for UI (`cubic-bezier(0.22, 1, 0.36, 1)`). The hero frame either drops into the first recording over 1100ms after 400ms (when the recording is already in the first view, as on an upright phone) or grows into it on the root scroll timeline (when it is below). Below the hero, poster lines, facts, recordings, clips, install steps and the footer wordmark rise 2.5rem and fade in on a view timeline (entry 5% to cover 30%). Under reduced motion none of this runs, the theme icon doesn't turn, scrolling is instant, and pages do not crossfade.
+One easing for UI (`cubic-bezier(0.22, 1, 0.36, 1)`). The hero frame either drops into the first recording over 1100ms after 400ms (when the recording is already in the first view, as on an upright phone) or grows into it on the root scroll timeline (when it is below), measured once the headline's face has loaded. Below the hero, poster lines, facts, recordings, clips, install steps and the footer wordmark rise 2.5rem and fade in on a view timeline (entry 5% to cover 30%). Under reduced motion none of this runs, the theme icon doesn't turn, scrolling is instant, and pages do not crossfade.
 
 ## Do's and Don'ts
 

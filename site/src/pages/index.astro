@@ -114,14 +114,21 @@ const slotStill = (await loadDemo('errand', [480])).poster.src;
 							run.classList.add('morph');
 						}
 					};
-					// Before the text face loads the frame may sit on another line, so wait for it.
-					if (document.fonts.status === 'loaded') place();
+					// Before the text face loads the frame may sit on another line, so with motion on,
+					// wait for it. `document.fonts.status` can read `loaded` before the face is even
+					// asked for.
+					const face = '1em "Archivo Variable"';
+					const text = slot.parentElement.textContent;
+					if (!motion.matches || document.fonts.check(face, text)) place();
 					else {
 						run.classList.add('wait');
-						document.fonts.ready.then(() => {
-							run.classList.remove('wait');
-							place();
-						});
+						document.fonts
+							.load(face, text)
+							.catch(() => {})
+							.then(() => {
+								run.classList.remove('wait');
+								place();
+							});
 					}
 					let pending = 0;
 					addEventListener('resize', () => {
