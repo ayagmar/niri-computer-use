@@ -524,7 +524,7 @@ impl Engine {
         .await;
         polled.map(|listing| {
             listing.map(|mut listing| {
-                listing.withheld &= lease.is_some();
+                listing.withheld = listing.withheld.filter(|_| lease.is_some());
                 listing
             })
         })

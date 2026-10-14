@@ -10,7 +10,7 @@ use tokio::time::Instant;
 
 use crate::a11y::Capped;
 use crate::a11y::model::{Filter, Unbound, Unmappable};
-use crate::elements::{self, Listing};
+use crate::elements::{self, Listing, Withheld};
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::waiter::{View, Waited, Waiter};
 use crate::observe::{Metadata, Screenshot};
@@ -190,9 +190,19 @@ pub(crate) struct Appeared {
 }
 
 /// Why an element that appeared has no ref, though the lease is held.
-const WITHHELD: &str = "no element_ref: the walk was cut short before it could tell whether \
-    another element has this one's role and name, as a list's rows put on the bus without \
-    containers do; aim at its pixels on a fresh screenshot";
+const fn withheld(why: Withheld) -> &'static str {
+    match why {
+        Withheld::Unchecked => {
+            "no element_ref: the walk was cut short before it could tell whether another \
+             element has this one's role and name, as a list's rows put on the bus without \
+             containers do; aim at its pixels on a fresh screenshot"
+        }
+        Withheld::Unnamed => {
+            "no element_ref: the wait ran out of time naming its actions, which a ref needs; \
+             wait again with a longer timeout_ms, or aim at its pixels on a fresh screenshot"
+        }
+    }
+}
 
 /// How one walk left an element condition.
 #[derive(Debug, PartialEq, Eq)]
@@ -221,7 +231,7 @@ fn check(
         }
         Err(error) => return Err(error),
     };
-    let withheld = listing.withheld.then(|| WITHHELD.to_owned());
+    let withheld = listing.withheld.map(|why| withheld(why).to_owned());
     let first = listing.elements.into_iter().next();
     Ok(match (first, element.absent) {
         (Some(found), false) => Checked::Ends(
@@ -440,7 +450,7 @@ mod tests {
             walked: 10,
             capped: capped.is_some(),
             capped_reason: capped,
-            withheld: false,
+            withheld: None,
         }
     }
 
@@ -643,13 +653,21 @@ mod tests {
         let mut unchecked = listing(&[], Some(Capped::BudgetExhausted));
         unchecked.elements = listing(&["x"], None).elements;
         unchecked.elements[0].element_ref = None;
-        unchecked.withheld = true;
-        let checked = check(&save_button(false), Ok(Some(unchecked))).unwrap();
-        let Checked::Ends(Ended::Met, Some(appeared), Some(detail)) = checked else {
-            panic!("{checked:?}");
-        };
-        assert_eq!(appeared.element_ref, None);
-        assert!(detail.contains("role and name"), "{detail}");
+        let mut unnamed = listing(&["x"], Some(Capped::BudgetExhausted));
+        unnamed.elements[0].element_ref = None;
+        unnamed.withheld = Some(Withheld::Unnamed);
+        unchecked.withheld = Some(Withheld::Unchecked);
+        for (listed, says) in [
+            (unchecked, "role and name"),
+            (unnamed, "naming its actions"),
+        ] {
+            let checked = check(&save_button(false), Ok(Some(listed))).unwrap();
+            let Checked::Ends(Ended::Met, Some(appeared), Some(detail)) = checked else {
+                panic!("{checked:?}");
+            };
+            assert_eq!(appeared.element_ref, None);
+            assert!(detail.contains(says), "{detail}");
+        }
     }
 
     // The bug: an app that quits leaves the accessibility bus a moment before niri reports

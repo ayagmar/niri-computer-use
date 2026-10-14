@@ -498,6 +498,27 @@ async fn a_disabled_button_is_waited_on_as_the_compact_listing_names_it() {
     assert!(took >= Duration::from_millis(400), "{took:?}");
 }
 
+// The bug: after a walk that used the time the wait left it, naming the match's actions
+// had none, and an app that names them only through `GetName`, as Chromium does, lost the
+// match it had read: the wait timed out and blamed a cut walk.
+#[tokio::test]
+async fn a_match_whose_actions_the_wait_had_no_time_to_name_ends_it_met() {
+    let mut app = App::start("wait-el-unnamed", true).await;
+    app.mock.change("/button", |button| {
+        button.listed = Some(vec![String::new()]);
+    });
+    for path in ["/entry", "/password"] {
+        app.mock
+            .slow_on("GetState", path, Duration::from_millis(900));
+    }
+    let (outcome, took) = app.wait(json!({"role": "button"}), 1000).await;
+    assert_eq!(outcome["observed"], "met", "{outcome}");
+    assert_eq!(outcome["element"]["element_ref"], Value::Null, "{outcome}");
+    let detail = outcome["detail"].as_str().unwrap_or_default();
+    assert!(detail.contains("naming its actions"), "{outcome}");
+    assert!(took < Duration::from_millis(1200), "{took:?}");
+}
+
 // The bug: a window that closes during the wait left to the timeout, or to the end of a
 // walk. niri goes on listing the window, so only its event stream can end the wait, and
 // the panel takes 0.9 s to answer, so the close comes mid-walk.

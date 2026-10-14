@@ -54,10 +54,20 @@ pub(crate) struct Listing {
     pub(crate) capped: bool,
     /// Why: `node_cap`, or `budget_exhausted` when the request's three seconds ran out.
     pub(crate) capped_reason: Option<Capped>,
-    /// With `Ask::whole`, a listed element's ref was left out: the walk stopped before it
-    /// could tell whether another element has its role and name.
+    /// Why a listed element's ref was left out, with `Ask::whole` or `Ask::by`.
     #[serde(skip)]
-    pub(crate) withheld: bool,
+    pub(crate) withheld: Option<Withheld>,
+}
+
+/// Why `look` left a listed element's ref out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Withheld {
+    /// The walk stopped before it could tell whether another element has its role and
+    /// name (`Ask::whole`).
+    Unchecked,
+    /// Naming its actions ran out of `Ask::by`'s time, so they are as the walk read them,
+    /// and a ref would be refused rather than guessed.
+    Unnamed,
 }
 
 /// One element.
@@ -95,7 +105,7 @@ impl Listing {
             walked: 0,
             capped: true,
             capped_reason: Some(Capped::BudgetExhausted),
-            withheld: false,
+            withheld: None,
         }
     }
 
@@ -433,21 +443,36 @@ async fn look(
     let naming = a11y.request(budget_by(NAMING, ask.by)).await?;
     let mut matching = read.listed(&ask.filter);
     let mut elements = Vec::new();
-    let (mut cut, mut withheld) = (false, false);
+    let (mut cut, mut withheld) = (false, None);
     for (at, node) in matching.by_ref().take(ask.limit) {
         let actions = naming.named((&read.bus, &node.path), node.actions.clone());
-        let actions = match actions.await {
-            Ok(actions) => actions,
+        let (actions, why) = match actions.await {
+            Ok(actions) => (
+                actions,
+                (ask.whole && read.unchecked(at)).then_some(Withheld::Unchecked),
+            ),
             Err(error) if error.name == ErrorName::DeadlineExceeded && naming.spent() => {
                 cut = true;
-                break;
+                // A wait that ran out keeps the match it read, without a ref.
+                if ask.by.is_none() {
+                    break;
+                }
+                (node.actions.clone(), Some(Withheld::Unnamed))
             }
             Err(error) => return Err(error),
         };
-        let unchecked = ask.whole && read.unchecked(at);
-        withheld |= unchecked;
-        let mut keep = |element| if unchecked { None } else { remember(element) };
+        withheld = withheld.or(why);
+        let mut keep = |element| {
+            if why.is_some() {
+                None
+            } else {
+                remember(element)
+            }
+        };
         elements.push(read.listed_element(at, node, actions, &mut keep));
+        if cut {
+            break;
+        }
     }
     let capped = if cut {
         Some(Capped::BudgetExhausted)
@@ -858,7 +883,7 @@ mod tests {
             walked: 40,
             capped: true,
             capped_reason: Some(Capped::BudgetExhausted),
-            withheld: false,
+            withheld: None,
         };
         let compact = listing.compact();
         assert_eq!(
