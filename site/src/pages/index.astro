@@ -2,9 +2,10 @@
 // The home page. It sits outside Starlight so the first view carries only its own styles;
 // the docs share its colours, type and wordmark through `styles/tokens.css`.
 import '@fontsource-variable/archivo/wdth.css';
+import '../generated/archivo-text.css';
 import '@fontsource-variable/jetbrains-mono/wght.css';
 import '../styles/tokens.css';
-import archivo from '@fontsource-variable/archivo/files/archivo-latin-wdth-normal.woff2?url';
+import archivo from '../generated/archivo-text.woff2?url';
 import Stage from '../components/home/Stage.astro';
 import Code from '../components/home/Code.astro';
 import { loadDemo } from '../lib/demo';

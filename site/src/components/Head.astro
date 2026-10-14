@@ -1,8 +1,8 @@
 ---
-// Starlight's head, plus a preload of the text face, so headings are set in it from the first
-// paint instead of moving when it arrives.
+// Starlight's head, plus a preload of the text face cut to the site's characters, so headings
+// are set in it from the first paint instead of moving when it arrives.
 import Default from '@astrojs/starlight/components/Head.astro';
-import archivo from '@fontsource-variable/archivo/files/archivo-latin-wdth-normal.woff2?url';
+import archivo from '../generated/archivo-text.woff2?url';
 ---
 
 <Default />

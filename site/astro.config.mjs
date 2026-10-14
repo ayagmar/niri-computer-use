@@ -22,6 +22,7 @@ export default defineConfig({
 			],
 			customCss: [
 				'@fontsource-variable/archivo/wdth.css',
+				'./src/generated/archivo-text.css',
 				'@fontsource-variable/jetbrains-mono/wght.css',
 				'./src/styles/tokens.css',
 				'./src/styles/theme.css',
