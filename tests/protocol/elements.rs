@@ -2210,6 +2210,9 @@ async fn a_stop_or_lost_lease_after_the_call_went_out_leaves_it_uncertain() {
             let outcome = &report(&result);
             assert_eq!(outcome["accepted"], Value::Null, "{outcome}");
             assert_eq!(outcome["observed"], "uncertain", "{outcome}");
+            // Before the app answered, nothing is known of the effect, which says so.
+            assert_eq!(outcome["effect"], "unverified", "{outcome}");
+            assert_eq!(outcome["element"]["role"], held.role, "{outcome}");
             let detail = outcome["detail"].as_str().unwrap();
             assert!(detail.contains(why), "{detail}");
             assert!(detail.contains("may have taken effect"), "{detail}");
@@ -2218,6 +2221,7 @@ async fn a_stop_or_lost_lease_after_the_call_went_out_leaves_it_uncertain() {
             assert_eq!(line["tool"], held.tool);
             assert_eq!(line["accepted"], Value::Null, "{line}");
             assert_eq!(line["observed"], "uncertain", "{line}");
+            assert_eq!(line["effect"], "unverified", "{line}");
         }
     }
 }

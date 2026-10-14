@@ -314,14 +314,18 @@ impl<R: Recheck> Gate<'_, R> {
     }
 
     /// Tells the desk the call that acts goes out, if the answers the last gate relied on
-    /// are still at most `LAST_GATE` old: this is the moment before it goes out.
-    fn send<T>(&self, checked: &Checked<T>) -> Result<(), CallError> {
+    /// are still at most `LAST_GATE` old: this is the moment before it goes out. A stop or a
+    /// moved lease from then on, before the app answers, reports `acted` with `accepted`
+    /// null and its effect `unverified`.
+    fn send<T>(&self, checked: &Checked<T>, acted: &Acted) -> Result<(), CallError> {
         let age = checked.began.elapsed();
         self.times.sent(age);
         if age > LAST_GATE {
             let took = format!("ended over {} ms after they began", LAST_GATE.as_millis());
             return Err(busy(&took).into());
         }
+        self.recheck
+            .answered(known(checked.focus, acted.clone(), None));
         self.recheck.sending()?;
         Ok(())
     }
@@ -416,7 +420,9 @@ pub(crate) async fn activate(
             offered(&request, element, action, &mapped)
         })
         .await?;
-    gate.send(&checked)?;
+    let window = element.kept.window;
+    let acted = Acted::new(checked.role, window, Some(action));
+    gate.send(&checked, &acted)?;
     // The last gate found the element's name to be the one it was listed with.
     let before = Before {
         states: checked.states,
@@ -428,11 +434,9 @@ pub(crate) async fn activate(
         .await
         .map_err(gone_is_stale)?;
     let lost = taken(dispatched, &format!("its {} action", action.kind.name()))?;
-    let window = element.kept.window;
-    let acted = Acted::new(checked.role, window, Some(action));
     if lost.is_none() {
         gate.recheck
-            .answered(answered(checked.focus, acted.clone()));
+            .answered(known(checked.focus, acted.clone(), Some(true)));
     }
     let (after, stream) = settled(&mut waiter, &request, element, &before).await;
     let doubt = Doubt {
@@ -692,16 +696,16 @@ pub(crate) async fn set_text(
             "the element isn't in the `editable` state, so its text can't be set".to_owned(),
         ));
     }
-    gate.send(&checked)?;
+    let acted = Acted::new(checked.role, element.kept.window, None);
+    gate.send(&checked, &acted)?;
     let dispatched = request
         .set_text(element, text)
         .await
         .map_err(gone_is_stale)?;
     let lost = taken(dispatched, "the new text")?;
-    let acted = Acted::new(checked.role, element.kept.window, None);
     if lost.is_none() {
         gate.recheck
-            .answered(answered(checked.focus, acted.clone()));
+            .answered(known(checked.focus, acted.clone(), Some(true)));
     }
     let held = read_back(&request, element, text).await;
     let doubt = Doubt {
@@ -1029,15 +1033,15 @@ fn done(seen: Seen, doubt: Doubt, view: &View, focus: Focus, acted: Acted) -> Ou
     }
 }
 
-/// The outcome as far as it is known once the app took the call: accepted, and the look
-/// afterwards still to come, so its effect `unverified`. A stop or a moved lease from then
-/// on reports it, with why.
-fn answered(focus: Focus, acted: Acted) -> Outcome {
+/// The outcome as far as it is known once the call goes out, `accepted` null, or once the
+/// app took it, `accepted` true: the look afterwards still to come, so its effect
+/// `unverified`. A stop or a moved lease from then on reports it, with why.
+fn known(focus: Focus, acted: Acted, accepted: Option<bool>) -> Outcome {
     Outcome {
         focus: Some(focus),
         element: Some(acted),
         effect: Some(Effect::Unverified),
-        ..Outcome::uncertain(Some(true), None, String::new())
+        ..Outcome::uncertain(accepted, None, String::new())
     }
 }
 
@@ -1125,11 +1129,12 @@ mod tests {
             began,
         };
         let now = Instant::now();
-        assert!(gate.send(&checked(now)).is_ok());
+        assert!(gate.send(&checked(now), &Acted::new(43, 3, None)).is_ok());
         let late = now
             .checked_sub(LAST_GATE + Duration::from_millis(1))
             .unwrap();
-        let Err(CallError::Tool(refused)) = gate.send(&checked(late)) else {
+        let Err(CallError::Tool(refused)) = gate.send(&checked(late), &Acted::new(43, 3, None))
+        else {
             panic!("a late call went out");
         };
         // The audit log gets the age of the answers the refused call would have relied on.
