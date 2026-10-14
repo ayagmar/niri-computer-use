@@ -2,9 +2,9 @@
 //! sometimes carry their own tool-call markup, such as `[/parameter]` or `[/invoke]` (with
 //! angle brackets; written with square ones here), past the end of a long argument, and a
 //! tag typed into a chat box with `submit` can't be taken back. Only a trailing run counts,
-//! only of known tag names, and only from its first closing tag that no opening tag of the
-//! same name earlier in the text balances, each opening tag balancing one closing tag, so a
-//! document that opens and closes such tags goes out as it is.
+//! only of known tag names, and only the closing tags after the last one that an opening
+//! tag of the same name earlier in the text balances, each opening tag balancing one
+//! closing tag, so a document that opens and closes such tags goes out as it is.
 
 use std::fmt;
 
@@ -31,21 +31,24 @@ pub(super) struct Leaked {
     pub(super) names: Vec<&'static str>,
 }
 
-/// The trailing run of closing tags with known names, ignoring whitespace between and
-/// after them, from its first tag that no opening tag earlier in `text` balances; none
-/// when every tag of the run is balanced or `text` doesn't end with one.
+/// The closing tags with known names at the end of `text`, ignoring whitespace between and
+/// after them, after the last one an opening tag earlier in `text` balances; none when the
+/// last is balanced or `text` doesn't end with one.
 pub(super) fn leaked(text: &str) -> Option<Leaked> {
     let (before, run) = trailing_run(text);
     let mut open = unclosed(before);
     // Each opening tag still open before the run balances one of its closing tags, in
-    // order.
-    let first = run.iter().position(|&(index, _)| {
-        open.get_mut(index)
-            .filter(|depth| **depth > 0)
-            .map(|depth| *depth -= 1)
-            .is_none()
-    })?;
-    let leaked = run.get(first..).unwrap_or_default();
+    // order. A leak is at the very end, so a balanced tag ends any leak before it.
+    let mut last_balanced = None;
+    for (at, &(index, _)) in run.iter().enumerate() {
+        if let Some(depth) = open.get_mut(index).filter(|depth| **depth > 0) {
+            *depth -= 1;
+            last_balanced = Some(at);
+        }
+    }
+    let leaked = run
+        .get(last_balanced.map_or(0, |at| at + 1)..)
+        .filter(|leaked| !leaked.is_empty())?;
     let mut names = Vec::new();
     for &(_, name) in leaked {
         if !names.contains(&name) {
@@ -219,6 +222,15 @@ mod tests {
         let leak = leaked(&format!("{quoted}\n{parameter}\n{invoke}")).unwrap();
         assert_eq!((leak.tags, leak.names), (2, vec!["parameter", "invoke"]));
         assert_eq!(leaked(&quoted), None);
+    }
+
+    /// Found in review: the run was reported from its first unbalanced tag, so the
+    /// document's own last closing tag was named with the stray one before it.
+    #[test]
+    fn a_balanced_last_tag_ends_the_leak() {
+        let (text, invoke) = (close("text"), close("invoke"));
+        assert_eq!(leaked(&format!("<text>a{invoke}{text}")), None);
+        assert_eq!(names(&format!("<text>a{invoke}{text}{invoke}")), ["invoke"]);
     }
 
     #[test]
