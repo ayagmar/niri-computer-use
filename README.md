@@ -65,11 +65,17 @@ rm -rf ~/.local/share/niri-computer-use/skills
 cp -r "niri-computer-use-0.1.0-$arch-linux/skills" ~/.local/share/niri-computer-use/
 ```
 
-With Rust 1.99 or newer and libxkbcommon's headers (`libxkbcommon-dev` on Debian and Ubuntu, `libxkbcommon` on Arch), cargo builds it from crates.io into `~/.cargo/bin`. The crate has no skill; take it from the tarball or a clone.
+With Rust 1.99 or newer and libxkbcommon's headers (`libxkbcommon-dev` on Debian and Ubuntu, `libxkbcommon` on Arch), cargo builds it from crates.io into `~/.cargo/bin`. The crate has no skill; the [skills CLI](https://skills.sh) installs it from this repository, or take it from the tarball or a clone.
 
 ```sh
 cargo install --locked niri-computer-use
 ```
+
+```sh
+npx skills add ayagmar/niri-computer-use --skill niri-computer-use --agent claude-code --agent pi --agent codex -g
+```
+
+The CLI copies the skill into `~/.agents/skills` and links it from `~/.claude/skills`. Run the same command to update it.
 
 From source, run `cargo install` inside the clone. rustup takes the Rust version the repository pins from `rust-toolchain.toml` in the current directory, so outside the clone it builds with your default toolchain instead. The skill is in the clone at `skills/niri-computer-use`:
 

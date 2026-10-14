@@ -90,6 +90,12 @@ ln -s "$PWD/skills/niri-computer-use" ~/.claude/skills/niri-computer-use
 ln -s "$PWD/skills/niri-computer-use" ~/.agents/skills/niri-computer-use
 ```
 
+Without a tarball or a clone, as after `cargo install`, the [skills CLI](https://skills.sh) installs it from the repository: it copies the skill into `~/.agents/skills` and links it from `~/.claude/skills`. Run it again to update.
+
+```sh
+npx skills add ayagmar/niri-computer-use --skill niri-computer-use --agent claude-code --agent pi --agent codex -g
+```
+
 Claude Code reads `~/.claude/skills`; Pi and Codex read `~/.agents/skills`. The same files are on this site under [For agents](../../reference/agents/).
 
 Next: [bind the stop key and run a first session](../first-session/).
