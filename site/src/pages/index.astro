@@ -537,8 +537,9 @@ const slotStill = (await loadDemo('errand', [480])).poster.src;
 		will-change: transform;
 	}
 
-	/* Apart from the shorthand, which the minifier would otherwise fold the timeline into. */
-	.morph :global([data-frame]) {
+	/* Apart from the shorthand, which the minifier would otherwise fold the timeline into, and
+	   above it in the cascade, since the shorthand resets the timeline. */
+	:root .run.morph :global([data-frame]) {
 		animation-timeline: scroll(root);
 		animation-range: 0 var(--morph-end);
 	}
