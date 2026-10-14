@@ -1,4 +1,4 @@
-.PHONY: check check-static test test-shared stall stall-standalone stall-shared perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-latency nested-chromium nested-chromium-a11y nested-eval nested-demo sitting host-capture
+.PHONY: check check-static test test-shared stall stall-standalone stall-shared perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-latency nested-chromium nested-chromium-a11y nested-big nested-eval nested-demo sitting host-capture
 
 SCALE ?= 1
 NESTED_FLAGS = $(if $(VISIBLE),--visible) $(if $(SHARED),--shared)
@@ -94,6 +94,11 @@ nested-chromium:
 nested-chromium-a11y:
 	cargo build --locked -p niri-computer-use
 	cargo run --locked -p harness -- run $(NESTED_FLAGS) --chromium-a11y
+
+# Windows with one big container, from fixtures/big.py, read whole by a release build.
+nested-big:
+	cargo build --locked --release -p niri-computer-use
+	cargo run --locked -p harness -- run $(NESTED_FLAGS) --big --server target/release/niri-computer-use
 
 # One skill eval in the nested niri: make nested-eval SCENARIO=compose-message SKILL=skills/niri-computer-use MODEL=sonnet
 nested-eval:

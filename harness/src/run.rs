@@ -97,6 +97,8 @@ pub(crate) enum ServerChecks {
     Chromium,
     /// What Chromium needs before its pages are on the accessibility bus.
     ChromiumA11y,
+    /// Windows with one big container, read whole.
+    Big,
 }
 
 impl ServerChecks {
@@ -112,6 +114,7 @@ impl ServerChecks {
             Self::Latency => "--latency",
             Self::Chromium => "--chromium",
             Self::ChromiumA11y => "--chromium-a11y",
+            Self::Big => "--big",
         }
     }
 
@@ -127,6 +130,7 @@ impl ServerChecks {
             Self::Latency,
             Self::Chromium,
             Self::ChromiumA11y,
+            Self::Big,
         ]
         .into_iter()
         .find(|checks| checks.flag() == flag)
@@ -138,7 +142,7 @@ impl ServerChecks {
             Self::Actions => ACTIONS_DEADLINE,
             Self::Input => INPUT_DEADLINE,
             Self::Shell => SHELL_DEADLINE,
-            Self::A11y => A11Y_DEADLINE,
+            Self::A11y | Self::Big => A11Y_DEADLINE,
             Self::Engine => ENGINE_DEADLINE,
             Self::Measure => MEASURE_DEADLINE,
             Self::Latency => LATENCY_DEADLINE,

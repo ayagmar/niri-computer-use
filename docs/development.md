@@ -302,6 +302,17 @@ The run has a 130-second deadline. Its files are in `target/e2e/<run>/`, includi
 
 Every call on a bus from the harness goes through `busctl --address=… --json=short` with the step deadline. The run has a 240-second deadline. It needs at-spi2-core (`at-spi-bus-launcher`, `at-spi2-registryd`), `busctl` from systemd, Python 3 with PyGObject, GTK 4 and GTK 3, and `qml6` with Qt Quick Controls (qt6-declarative).
 
+## Nested big-container checks
+
+`make nested-big` lists windows with one big container through a release build of the server, as users run it, on the nested accessibility bus `make nested-a11y` starts, with the nested Noctalia as the lock source. Each window is `harness/fixtures/big.py`, a `Save` button and a `Search` entry above the container and an `Apply` button and a `Notes` entry below it:
+
+- GTK 4, a box of 3,000 `Open <n>` buttons (6,026 objects);
+- GTK 4, a list box of 1,500 rows, each named after its record and holding its label and a `Delete` button (7,526 objects);
+- GTK 3, a box of 3,000 buttons (3,020 objects);
+- GTK 3, a tree view of 5,000 rows of three text columns (15,022 objects).
+
+Each listing must read the whole window, with `capped` false, and `elements` must list `Save`, `Search`, `Apply` and `Notes` with a ref and no `unbound`. It logs each listing's time and how many objects it walked. The run has a 240-second deadline and needs what `make nested-a11y` needs, without Qt.
+
 ## Nested shared-engine checks
 
 `SHARED=1` (or `harness run --shared`) runs any of the server checks in shared mode: the nested session's environment leaves `NIRI_COMPUTER_USE_SHARED` unset, so every server the supervisor starts bridges its client to the nested niri's one engine. Without it the variable is `0` and every server serves its client itself. The kill checks of `make nested-input` then kill the engine that `status.engine.pid` names, since its guardian is the one that releases input, and the clients connected to it must report `engine_lost` once before their next call reaches a new engine. After the nested session, the run fails if any server's log says it served its client standalone, or if the engine's socket is still there five seconds later.

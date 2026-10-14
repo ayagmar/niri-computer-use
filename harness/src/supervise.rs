@@ -80,6 +80,7 @@ pub(crate) fn supervise(
                 ServerChecks::Input => crate::input::run(&mut session, &output, server),
                 ServerChecks::Shell => crate::shell::run(&mut session, server),
                 ServerChecks::A11y => crate::a11y::run(&mut session, server, probes.decorations),
+                ServerChecks::Big => crate::a11y::big::run(&mut session, server),
                 ServerChecks::Engine => crate::input::run_engine(&mut session, &output, server),
                 ServerChecks::Measure => crate::measure::run(&mut session, server),
                 ServerChecks::Latency => crate::measure::latency::run(&mut session, server),

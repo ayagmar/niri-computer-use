@@ -12,6 +12,7 @@ use std::time::Duration;
 use niri_ipc::{Request, Response, Window};
 use serde_json::Value;
 
+pub(crate) mod big;
 mod hidden;
 mod rows;
 mod server;

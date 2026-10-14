@@ -50,13 +50,13 @@ use scale::Scale;
 use supervise::Probes;
 use test_dir::TestDir;
 
-const USAGE: &str = "usage: harness run [--visible] [--shared] [--server <path>] [--scale <scale>] [--ssd] [--noctalia | --sitting | --control | --actions | --input | --shell | --a11y | --engine | --measure | --latency | --chromium | --chromium-a11y | --eval <scenario> --skill <dir|none> --model <model> | --demo <scene>]
+const USAGE: &str = "usage: harness run [--visible] [--shared] [--server <path>] [--scale <scale>] [--ssd] [--noctalia | --sitting | --control | --actions | --input | --shell | --a11y | --engine | --measure | --latency | --chromium | --chromium-a11y | --big | --eval <scenario> --skill <dir|none> --model <model> | --demo <scene>]
        harness host-capture <output>
        harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--started <file>]
        harness keymaps <TEST_DIR> <directory> <deadline-ms>
        harness clipboard <TEST_DIR> <deadline-ms> [--secret]
        harness slow-reader <TEST_DIR> <delay-ms> <deadline-ms>
-       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--ssd] [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --a11y <server> | --engine <server> | --measure <server> | --latency <server> | --chromium <server> <browser> | --chromium-a11y <server> <browser> | --eval <server> <scenario> <skill|none> <model> | --demo <server> <scene>]";
+       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--ssd] [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --a11y <server> | --engine <server> | --measure <server> | --latency <server> | --chromium <server> <browser> | --chromium-a11y <server> <browser> | --big <server> | --eval <server> <scenario> <skill|none> <model> | --demo <server> <scene>]";
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -173,7 +173,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
                 options.binary = Some(path);
             }
             "--control" | "--actions" | "--input" | "--shell" | "--a11y" | "--measure"
-            | "--latency" | "--chromium" | "--chromium-a11y" => {
+            | "--latency" | "--chromium" | "--chromium-a11y" | "--big" => {
                 options.server = run::ServerChecks::from_flag(arg);
             }
             "--engine" => {
@@ -204,7 +204,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
         > 1
     {
         return Err(Failure::new(
-            "--sitting, --noctalia, --control, --actions, --input, --shell, --a11y, --engine, --measure, --latency, --chromium, --chromium-a11y, --eval and --demo cannot be combined",
+            "--sitting, --noctalia, --control, --actions, --input, --shell, --a11y, --engine, --measure, --latency, --chromium, --chromium-a11y, --big, --eval and --demo cannot be combined",
         ));
     }
     options.visible |= options.sitting;

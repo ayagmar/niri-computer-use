@@ -33,8 +33,10 @@ pub(crate) use walk::{Capped, Child, Node, Walked, Want};
 const CALL: Duration = Duration::from_secs(1);
 /// Each request's budget, all its calls together.
 pub(crate) const BUDGET: Duration = Duration::from_secs(3);
-/// The most nodes one walk reads.
-pub(crate) const NODE_CAP: usize = 2000;
+/// The most nodes one walk reads. Above the largest window measured, 15,022 objects read
+/// in about 0.8 s, and under the budget at the slowest rate measured (docs/decisions.md),
+/// so the budget, not the cap, ends a walk of a slow app.
+pub(crate) const NODE_CAP: usize = 20_000;
 const REGISTRY: &str = "org.a11y.atspi.Registry";
 const ROOT: &str = "/org/a11y/atspi/accessible/root";
 const ACCESSIBLE: &str = "org.a11y.atspi.Accessible";
