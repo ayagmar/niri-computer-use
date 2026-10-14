@@ -375,11 +375,11 @@ fn cases(session: &mut Session<'_>, client: &mut Client, page: &Page) -> Result<
     let mut differed = Vec::new();
     for case in CASES {
         let offset = page.log_len()?;
-        let typed = arrived(session, client, page, json!({"text": case.text}), case.text)?;
+        let typed = arrived(session, client, page, json!({"text": case.text}))?;
         let typed_line = typed_report(&case, &typed, &page.keydowns(offset)?);
         clear(session, client, page)?;
         let args = json!({"text": case.text, "via": "paste", "paste_keys": "ctrl+v"});
-        let pasted = arrived(session, client, page, args, case.text)?;
+        let pasted = arrived(session, client, page, args)?;
         let pasted_line = pasted_report(&case, &pasted);
         clear(session, client, page)?;
         for (line, failed) in [typed_line, pasted_line] {
@@ -390,33 +390,41 @@ fn cases(session: &mut Session<'_>, client: &mut Client, page: &Page) -> Result<
     Ok(differed)
 }
 
-/// Sends `type_text` with `args` and returns what the field holds once it shows `text`,
-/// or once it stopped changing for `SETTLED` after the call.
+/// Sends `type_text` with `args` and returns what the field holds once it has stopped
+/// changing for `SETTLED`. The text sent has to hold that long too, so a key repeated or
+/// delivered late after it is still caught.
 fn arrived(
     session: &mut Session<'_>,
     client: &mut Client,
     page: &Page,
     args: Value,
-    text: &str,
 ) -> Result<Vec<u16>> {
     send(session, client, page, "type_text", args)?;
-    let expected: Vec<u16> = text.encode_utf16().collect();
-    let mut last: Option<(Vec<u16>, Instant)> = None;
+    let mut settling = Settling::default();
     session.wait_until("chromium-text", "the field settling", WAIT, |session| {
-        let value = page.value(session)?;
-        if value == expected {
-            return Ok(Some(value));
-        }
-        match &last {
+        Ok(settling.see(page.value(session)?, Instant::now()))
+    })
+}
+
+/// The field's last value and when it was first seen.
+#[derive(Debug, Default)]
+struct Settling {
+    last: Option<(Vec<u16>, Instant)>,
+}
+
+impl Settling {
+    /// `value`, once it has been the field's value for `SETTLED`.
+    fn see(&mut self, value: Vec<u16>, now: Instant) -> Option<Vec<u16>> {
+        match &self.last {
             Some((seen, since)) if *seen == value => {
-                Ok((since.elapsed() >= SETTLED).then_some(value))
+                (now.duration_since(*since) >= SETTLED).then_some(value)
             }
             _ => {
-                last = Some((value, Instant::now()));
-                Ok(None)
+                self.last = Some((value, now));
+                None
             }
         }
-    })
+    }
 }
 
 /// `ctrl+a`, then `BackSpace`, empties the field.
@@ -665,6 +673,21 @@ mod tests {
             .unwrap();
         assert!(Path::new(profile).starts_with(root), "{profile}");
         assert_eq!(args.get(2), Some(&"/usr/bin/chromium"));
+    }
+
+    #[test]
+    fn the_text_sent_counts_only_once_nothing_follows_it() {
+        let start = Instant::now();
+        let at = |ms| start + Duration::from_millis(ms);
+        let mut settling = Settling::default();
+        let sent = vec![0x61];
+        let repeated = vec![0x61, 0x61];
+        assert_eq!(settling.see(sent.clone(), at(0)), None);
+        assert_eq!(settling.see(sent, at(600)), None);
+        // A key repeated after the text: what counts is what the field ends with.
+        assert_eq!(settling.see(repeated.clone(), at(700)), None);
+        assert_eq!(settling.see(repeated.clone(), at(1500)), None);
+        assert_eq!(settling.see(repeated.clone(), at(1700)), Some(repeated));
     }
 
     #[test]
