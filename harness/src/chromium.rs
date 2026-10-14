@@ -127,7 +127,9 @@ const CASES: [Case; 12] = [
 ];
 
 /// The browser: `NCU_CHROMIUM` when set, which must then be an executable file, or else
-/// the first of `NAMES` on `PATH`. `None` when there is neither.
+/// the first of `NAMES` on `PATH`. `None` when there is neither. The path is made absolute
+/// but links are kept, since a launcher such as `/snap/bin/chromium` picks what to run
+/// from its own name. A snap is refused.
 pub(crate) fn find(chosen: Option<OsString>, path: Option<OsString>) -> Result<Option<PathBuf>> {
     if let Some(chosen) = chosen {
         let chosen = PathBuf::from(chosen);
@@ -154,7 +156,21 @@ fn executable(path: &Path) -> bool {
 }
 
 fn absolute(path: &Path) -> Result<PathBuf> {
-    fs::canonicalize(path).context(format!("resolve {}", path.display()))
+    let path = std::path::absolute(path).context(format!("resolve {}", path.display()))?;
+    not_a_snap(&path)?;
+    Ok(path)
+}
+
+/// A snap keeps its data under the user's `~/snap/<name>`, whatever `HOME` is set to, so
+/// it would write outside `TEST_DIR`.
+fn not_a_snap(path: &Path) -> Result<()> {
+    if path.starts_with("/snap") {
+        return Err(Failure::new(format!(
+            "{} is a snap, which keeps its data in your ~/snap whatever HOME is; set {OVERRIDE} to a browser that isn't",
+            path.display()
+        )));
+    }
+    Ok(())
 }
 
 pub(crate) fn run(session: &mut Session<'_>, server: &str, browser: &str) -> Result<()> {
@@ -597,6 +613,14 @@ mod tests {
     }
 
     #[test]
+    fn a_snap_is_refused() {
+        let refused = not_a_snap(Path::new("/snap/bin/chromium")).unwrap_err();
+        assert!(refused.to_string().contains("is a snap"), "{refused}");
+        not_a_snap(Path::new("/usr/bin/chromium")).unwrap();
+        not_a_snap(Path::new("/snapshots/chromium")).unwrap();
+    }
+
+    #[test]
     fn the_override_wins_and_must_be_executable() {
         let dir = std::env::temp_dir().join(format!("harness-chromium-{}", std::process::id()));
         let (first, second) = (dir.join("first"), dir.join("second"));
@@ -621,6 +645,10 @@ mod tests {
             Some(chosen)
         );
         assert!(find(Some(first.join("chromium").into()), Some(path)).is_err());
+        // A launcher that picks its app from its own name must keep that name.
+        let link = second.join("google-chrome");
+        std::os::unix::fs::symlink(second.join("chromium"), &link).unwrap();
+        assert_eq!(find(Some(link.clone().into()), None).unwrap(), Some(link));
         assert_eq!(find(None, Some(dir.join("none").into())).unwrap(), None);
         assert_eq!(find(None, None).unwrap(), None);
         fs::remove_dir_all(dir).unwrap();

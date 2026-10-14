@@ -337,7 +337,7 @@ One server holds the lease, and 30 rounds each call `focus` on the empty workspa
 
 ## Nested Chromium checks
 
-`make nested-chromium` types and pastes text through the server into a Chromium text area and compares what arrived with what was sent. It runs in the headless nested niri, with Noctalia as the lock source, and has a 240-second deadline. It needs a Chromium-based browser: `NCU_CHROMIUM=<path>` picks one, which must then be an executable file, and otherwise it takes the first of `chromium`, `chromium-browser`, `google-chrome-stable`, `google-chrome`, `brave` and `helium-browser` on `PATH`. With neither, the run logs that it is skipped and exits 0, so it needs nothing in CI.
+`make nested-chromium` types and pastes text through the server into a Chromium text area and compares what arrived with what was sent. It runs in the headless nested niri, with Noctalia as the lock source, and has a 240-second deadline. It needs a Chromium-based browser: `NCU_CHROMIUM=<path>` picks one, which must then be an executable file, and otherwise it takes the first of `chromium`, `chromium-browser`, `google-chrome-stable`, `google-chrome`, `brave` and `helium-browser` on `PATH`. The path is used as found, links unresolved, since some launchers pick what to run from their own name. A browser under `/snap` is refused, because a snap keeps its data in `~/snap` whatever `HOME` is. With neither, the run logs that it is skipped and exits 0, so it needs nothing in CI.
 
 ```sh
 make nested-chromium
