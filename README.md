@@ -80,7 +80,7 @@ binds {
 }
 ```
 
-The key cancels the running action and takes the lease back; `niri-computer-use resume` lets agents act again. [First session](https://ayagmar.github.io/niri-computer-use/start/first-session/) walks through the rest.
+The key cancels the running action and takes the lease back; `~/.local/bin/niri-computer-use resume` (or `~/.cargo/bin/…` after `cargo install`) lets agents act again. [First session](https://ayagmar.github.io/niri-computer-use/start/first-session/) walks through the rest.
 
 ## Example
 

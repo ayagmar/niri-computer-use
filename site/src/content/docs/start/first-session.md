@@ -17,11 +17,13 @@ binds {
 
 Put the line inside your existing `binds` block, with the binary's full path: the install script prints this line with yours, and `cargo install` puts the binary in `~/.cargo/bin`. niri reloads its config when you save it; `niri validate` checks it first. `allow-inhibiting=false` keeps the key working while an app inhibits shortcuts, and `allow-when-locked=true` on the lock screen. niri passes `NIRI_SOCKET` to what it spawns, so the stop reaches this niri instance.
 
-The key cancels the running action, takes the lease back and refuses further actions until you run:
+The key cancels the running action, takes the lease back and refuses further actions until you run, with the same full path:
 
 ```sh
-niri-computer-use resume
+~/.local/bin/niri-computer-use resume
 ```
+
+After `cargo install` it's `~/.cargo/bin/niri-computer-use resume`.
 
 See [Safety](../../concepts/safety/#stop-and-resume) for what a stop does and doesn't undo.
 

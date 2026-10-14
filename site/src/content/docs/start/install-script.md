@@ -39,7 +39,7 @@ Before it writes anywhere it keeps, the script checks three things. Any failure 
 | `~/.claude/skills/niri-computer-use` | A symlink to the skill, for Claude Code |
 | `~/.agents/skills/niri-computer-use` | A symlink to the skill, for Pi, Codex and other agents that read `~/.agents/skills` |
 
-`~/.claude/skills` and `~/.agents/skills` are created if they are missing. Each file goes into place with a rename, so a server that is running keeps the binary it started with until its clients restart. The temporary directory and the `.niri-computer-use.new` staging copies are removed when the script ends, however it ends.
+`~/.claude/skills` and `~/.agents/skills` are created if they are missing. The binary goes into place with a rename, so a server that is running keeps the binary it started with until its clients restart. The temporary directory and the `.niri-computer-use.new` staging copies are removed when the script ends, however it ends.
 
 If a link already exists at one of the two skill paths and points somewhere else, such as into a clone, the script replaces it and prints a line naming what it pointed to. If something that isn't a link is there, a directory for example, the script leaves it alone, prints where the skill is, and goes on.
 
@@ -75,4 +75,6 @@ rm ~/.local/bin/niri-computer-use ~/.claude/skills/niri-computer-use ~/.agents/s
 rm -r ~/.local/share/niri-computer-use
 ```
 
-The empty `~/.local/bin`, `~/.claude/skills` and `~/.agents/skills` directories stay, in case other programs use them. Things you set up afterwards aren't the script's, so they stay too: the server's entry in your agent (`claude mcp remove niri-computer-use` for Claude Code), the stop key bind in your niri config, the policy file at `~/.config/niri-computer-use/`, the audit log under `~/.local/state/niri-computer-use/`, and screenshots the agent saved under `~/Pictures/niri-computer-use`.
+If the script said it replaced or left one of the skill paths, that path wasn't its own: leave it out of the first `rm`, and point a replaced link back where the script said it pointed.
+
+The directories the script created around these paths, such as `~/.local/bin` and `~/.claude/skills`, stay, in case other programs use them. Things you set up afterwards aren't the script's, so they stay too: the server's entry in your agent (`claude mcp remove niri-computer-use` for Claude Code), the stop key bind in your niri config, the policy file at `~/.config/niri-computer-use/`, the audit log under `~/.local/state/niri-computer-use/`, and screenshots the agent saved under `~/Pictures/niri-computer-use`.
