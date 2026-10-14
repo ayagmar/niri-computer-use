@@ -1,5 +1,5 @@
-//! An experimental virtual keyboard with the compositor's keymap, or for one call an
-//! extended copy of it. niri sends a virtual keyboard's map to every `wl_keyboard` when
+//! The native keyboard backend's virtual keyboard, with the compositor's keymap, or for
+//! one part of a call's text an extended copy of it. niri sends a virtual keyboard's map to every `wl_keyboard` when
 //! the device next sends input, this one's included, so this keyboard sees what clients
 //! were sent. Destruction does not release input in niri; callers must acknowledge
 //! explicit releases.

@@ -39,12 +39,18 @@ pub(super) fn run(
     engine_killed_mid_drag(session, clients, wev, server, engine)
 }
 
-/// Starts the ten clients, the first one ready.
+/// Starts the ten clients, the first one ready. The first types with wtype, which E4
+/// expects to finish its text after a stop; the others keep the default.
 pub(super) fn start(session: &mut Session<'_>, server: &str) -> Result<Vec<Client>> {
     let mut clients = Vec::new();
     for n in 0..CLIENTS {
         let name = format!("harness-e{n}");
-        clients.push(Client::start(session, server, &name, SERVER_DEADLINE)?);
+        let client = if n == 0 {
+            Client::start_keyboard(session, server, "wtype", &name, SERVER_DEADLINE)?
+        } else {
+            Client::start(session, server, &name, SERVER_DEADLINE)?
+        };
+        clients.push(client);
     }
     Ok(clients)
 }

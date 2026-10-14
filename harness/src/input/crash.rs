@@ -22,9 +22,9 @@ pub(super) fn run(session: &mut Session<'_>, wev: &Wev<'_>, server: &str) -> Res
     guardian_killed_too(session, wev, server)
 }
 
-/// Starts server A with the lease.
+/// Starts server A with the lease, typing with wtype, which outlives A.
 fn server_a(session: &mut Session<'_>, server: &str, name: &str) -> Result<Client> {
-    let mut a = Client::start(session, server, name, SERVER_DEADLINE)?;
+    let mut a = Client::start_keyboard(session, server, "wtype", name, SERVER_DEADLINE)?;
     structured(&a.call(session, "acquire_desktop", json!({}))?)?;
     Ok(a)
 }

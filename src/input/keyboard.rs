@@ -1,6 +1,7 @@
-//! The keyboard tools' work (plan §6, §11): one `wtype` call per stroke, each behind the
-//! stdin gate. A stroke is one of `key`'s combinations, or a part of at most 100 characters
-//! of `type_text`'s text, or the `Return` that submits it. Focus is checked after every
+//! The keyboard tools' work (plan §6, §11), through the native keyboard in `native`, or
+//! with `NIRI_COMPUTER_USE_KEYBOARD=wtype` here, one `wtype` call per stroke, each behind
+//! the stdin gate. A stroke is one of `key`'s combinations, or a part of at most 100
+//! characters of `type_text`'s text, or the `Return` that submits it. Focus is checked after every
 //! stroke, and the rest isn't typed once it moved. `wtype -` waits at its open stdin before
 //! it sends anything, so the input-dirty marker names its PID before any key goes out.
 //!
@@ -313,9 +314,10 @@ pub(crate) fn check_expect(expect: &Expect, view: &View) -> Result<Focus, ToolEr
     ))
 }
 
-/// Types `typing`, one `wtype` call per stroke. `observed` is `sent` once every stroke
-/// went out, or `interrupted` when focus moved off the window that had it; then the
-/// strokes after that one aren't typed, and the outcome says how much was.
+/// Types `typing`, through the native keyboard or one `wtype` call per stroke. `observed`
+/// is `sent` once every stroke went out, or `interrupted` when focus moved off the window
+/// that had it; then the strokes after that one aren't typed, and the outcome says how
+/// much was.
 pub(crate) async fn type_input(
     input: Input<'_>,
     typing: Typing,
@@ -334,19 +336,8 @@ pub(crate) async fn type_input_then(
     aftercare: &mut Option<Aftercare>,
 ) -> Result<Outcome, CallError> {
     typing.check()?;
-    match input.keyboard.and_then(std::ffi::OsStr::to_str) {
-        Some("native") => {
-            return super::native::type_input(input, typing, expect, aftercare).await;
-        }
-        None if input.keyboard.is_none() => {}
-        Some("wtype") => {}
-        _ => {
-            return Err(ToolError::new(
-                ErrorName::Refused,
-                "NIRI_COMPUTER_USE_KEYBOARD must be wtype or native",
-            )
-            .into());
-        }
+    if super::native_keyboard(input.keyboard)? {
+        return super::native::type_input(input, typing, expect, aftercare).await;
     }
     let mut waiter = niri::waiter(input.niri.events).await?;
     let focus = check_expect(&expect, waiter.view())?;

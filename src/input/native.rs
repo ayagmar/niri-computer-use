@@ -38,26 +38,34 @@ pub(super) async fn type_input(
     expect: Expect,
     aftercare: &mut Option<Aftercare>,
 ) -> Result<Outcome, CallError> {
-    let mut waiter = niri::waiter(input.niri.events).await?;
+    let waiter = niri::waiter(input.niri.events).await?;
+    type_seen(input, waiter, typing, expect, aftercare).await
+}
+
+/// `type_input` with niri's events from `waiter`. Each part of the plan's text goes out
+/// with its own map, uploaded right before its first key, once that key may go out.
+async fn type_seen(
+    input: Input<'_>,
+    mut waiter: Waiter,
+    typing: Typing,
+    expect: Expect,
+    aftercare: &mut Option<Aftercare>,
+) -> Result<Outcome, CallError> {
     let focus = check_expect(&expect, waiter.view())?;
     if let Some(refused) = policy::refuse_input(input.policy, focused_app_id(waiter.view())) {
         return Err(refused.into());
     }
     let (keyboard, group, plan) = bind(input, waiter.view(), &typing).await?;
-    let keys = plan.keys;
     let revision = keyboard.revision();
     let before = waiter.view().focused_window();
-    let mut device = Device::new(keyboard, input, &typing, &keys, group).await?;
-    if let Some(map) = &plan.extended {
-        device.keyboard()?.extend(map)?;
-    }
+    let mut device = Device::new(keyboard, input, &typing, plan.keys(), group).await?;
     let call = Call {
         typing: &typing,
-        budget: Budget::start(keys.len()),
+        budget: Budget::start(plan.keys().count()),
         marks: aftercare.is_none(),
     };
     let mut sent = Sent::default();
-    for key in keys {
+    for (extended, key) in plan.strokes() {
         act::fresh_lock(input.niri)
             .await
             .map_err(|error| partly(error, &typing, sent))?;
@@ -70,6 +78,11 @@ pub(super) async fn type_input(
             return Ok(ended(outcome, focus, &typing, sent));
         }
         may_press(input, waiter.view(), &call, sent).await?;
+        if let Some(map) = extended {
+            device
+                .extend(&map)
+                .map_err(|error| partly(error, &typing, sent))?;
+        }
         device.commit(aftercare, input.niri.desk).await?;
         // Sent to niri before it failed or ran out of time, the key may still have gone out.
         call.budget
@@ -265,10 +278,10 @@ impl Device {
         keyboard: Keyboard,
         input: Input<'_>,
         typing: &Typing,
-        keys: &[Key],
+        keys: impl Iterator<Item = &Key>,
         group: u32,
     ) -> Result<Self, ToolError> {
-        let mut codes: Vec<u32> = keys.iter().map(|key| key.code.0).collect();
+        let mut codes: Vec<u32> = keys.map(|key| key.code.0).collect();
         codes.sort_unstable();
         codes.dedup();
         let mut marker = Marker::pending(typing.tool(), Vec::new());
@@ -299,6 +312,11 @@ impl Device {
         Ok(self.keyboard()?.revision())
     }
 
+    /// Uploads `map` for the keys that follow.
+    fn extend(&mut self, map: &str) -> Result<(), ToolError> {
+        self.keyboard()?.extend(map)
+    }
+
     /// Takes `aftercare`, if it is still there, and arms it.
     async fn commit(
         &mut self,
@@ -312,12 +330,16 @@ impl Device {
         Ok(())
     }
 
+    /// Sends one key pair with the key's modifiers in the key's layout, then zero modifiers
+    /// in the active layout, so a key found in another layout leaves the client in the one
+    /// niri has active.
     async fn stroke(&mut self, key: Key) -> Result<(), ToolError> {
+        let active = self.group;
         let keyboard = self.keyboard()?;
         keyboard.modifiers(key.modifiers, key.group)?;
         keyboard.key(key.code.0, true)?;
         keyboard.key(key.code.0, false)?;
-        keyboard.modifiers(0, key.group)?;
+        keyboard.modifiers(0, active)?;
         keyboard.sync().await
     }
 
@@ -444,6 +466,7 @@ mod tests {
     use super::*;
     use crate::control::runtime::RuntimeDir;
     use crate::input::keyboard::Typing;
+    use crate::input::keymap::Part;
     use std::path::Path;
 
     use crate::act::Niri;
@@ -452,12 +475,14 @@ mod tests {
     use crate::input::paste::{
         Clipboard, Report, SLOW_ADMISSION, STOPPED_WAITING, desk_read, fake_aftercare,
     };
+    use crate::niri::waiter::{Update, tests as events};
     use crate::noctalia;
     use crate::policy::Loaded;
     use crate::test_support::{
         fresh_dir,
-        wayland::{APP_ID, Compositor},
+        wayland::{APP_ID, Compositor, initial_events},
     };
+    use niri_ipc::Event;
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
     const BASE: &str = include_str!("../../tests/fixtures/us-de.xkb");
@@ -465,6 +490,19 @@ mod tests {
     const A: u32 = 40;
     const Z: u32 = 44;
     const HELD: u32 = 42;
+    /// evdev codes of the fixture's spare keys, `<I60>` and `<I61>`.
+    const I60: u32 = 60 - 8;
+    const I61: u32 = 61 - 8;
+
+    /// A character's key on `code`, with no modifiers, in the first layout.
+    const fn character(code: u32) -> Key {
+        Key {
+            code: crate::input::keymap::Evdev(code),
+            modifiers: 0,
+            group: 0,
+            character: true,
+        }
+    }
 
     /// Each key's press, then its release.
     fn presses(keys: &[Key]) -> Vec<(u32, bool)> {
@@ -473,8 +511,8 @@ mod tests {
             .collect()
     }
 
-    /// A device on the fake niri in `dir`, with `text` planned in layout 0: its extended
-    /// keymap uploaded, if the layout lacks some of the text's symbols.
+    /// A device on the fake niri in `dir`, with `text` planned in layout 0 in one part: its
+    /// extended keymap uploaded, if the layout lacks some of the text's symbols.
     async fn typing(niri: &Compositor, text: &str) -> (Device, Vec<Key>) {
         let keyboard = Keyboard::bind(niri.display(), std::process::id())
             .await
@@ -483,7 +521,9 @@ mod tests {
             text: text.to_owned(),
             submit: false,
         };
-        let plan = plan(keyboard.map().unwrap(), 0, &typing).unwrap();
+        let [part] =
+            <[Part; 1]>::try_from(plan(keyboard.map().unwrap(), 0, &typing).unwrap().parts)
+                .unwrap();
         let mut device = Device {
             keyboard: Some(keyboard),
             marker: None,
@@ -492,10 +532,10 @@ mod tests {
             aftercare: None,
             ends: None,
         };
-        if let Some(map) = &plan.extended {
-            device.keyboard().unwrap().extend(map).unwrap();
+        if let Some(map) = &part.extended {
+            device.extend(map).unwrap();
         }
-        (device, plan.keys)
+        (device, part.keys)
     }
 
     /// Text beyond the layout goes out through an extended keymap, which clients then hold;
@@ -583,9 +623,21 @@ mod tests {
         });
     }
 
-    /// Types `text` through the entry point with `expect` on the fake's focused window,
-    /// with the screen unlocked.
-    async fn type_through(niri: &Compositor, dir: &Path, text: &str) -> Result<Outcome, CallError> {
+    fn text(text: &str) -> Typing {
+        Typing::Text {
+            text: text.to_owned(),
+            submit: false,
+        }
+    }
+
+    /// Types `typing` through the entry point with `expect` on the fake's focused window,
+    /// with the screen unlocked, and niri's events from `waiter` when given.
+    async fn type_through(
+        niri: &Compositor,
+        dir: &Path,
+        typing: Typing,
+        waiter: Option<Waiter>,
+    ) -> Result<Outcome, CallError> {
         let env = crate::Env {
             wayland_display: Some("fake-noctalia".into()),
             ..niri.env(dir)
@@ -613,11 +665,11 @@ mod tests {
             place: crate::test_support::no_programs(),
             a11y: None,
         };
-        let typing = Typing::Text {
-            text: text.to_owned(),
-            submit: false,
-        };
-        type_input(input, typing, Expect::App(APP_ID.to_owned()), &mut None).await
+        let expect = Expect::App(APP_ID.to_owned());
+        match waiter {
+            Some(waiter) => type_seen(input, waiter, typing, expect, &mut None).await,
+            None => type_input(input, typing, expect, &mut None).await,
+        }
     }
 
     /// Waits until the call's marker in `dir` is gone, as the cleanup's deadline allows.
@@ -634,13 +686,121 @@ mod tests {
     async fn a_call_types_each_key_once_and_clears_its_marker() {
         let dir = fresh_dir("native-entry");
         let niri = Compositor::start(&dir, BASE);
-        let outcome = type_through(&niri, &dir, "az").await.unwrap();
+        let outcome = type_through(&niri, &dir, text("az"), None).await.unwrap();
         assert_eq!(outcome.observed, Observed::Sent);
         assert_eq!(
             niri.seen().keys,
             [(A, true), (A, false), (Z, true), (Z, false)]
         );
         marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Text needing more spare keys than the map has goes out in parts: clients get each
+    /// part's map before its keys, `é` and `ß` the same spare key in turn, and then the
+    /// compositor's map back.
+    #[tokio::test]
+    async fn a_call_with_more_missing_symbols_than_spare_keys_types_them_all() {
+        let dir = fresh_dir("native-parts");
+        let niri = Compositor::start(&dir, BASE);
+        let outcome = type_through(&niri, &dir, text("é→ß"), None).await.unwrap();
+        assert_eq!(outcome.observed, Observed::Sent);
+        assert_eq!(outcome.typed, None, "all of it went out");
+        marker_cleared(&niri, &dir).await;
+        let seen = niri.seen();
+        assert_eq!(seen.keys, presses(&[I60, I61, I60].map(character)));
+        assert_eq!(seen.keymaps.len(), 3, "two maps, then the compositor's");
+        assert_ne!(seen.keymaps[0], seen.keymaps[1]);
+        assert!(!seen.keymaps[..2].contains(&seen.compositor));
+        assert_eq!(seen.active, seen.compositor);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Focus moves once the first part went out: the call ends `interrupted` with what it
+    /// typed, and never uploads the second part's map: the device holds the compositor's
+    /// map, then the first part's, then the compositor's again.
+    #[tokio::test]
+    async fn a_focus_change_between_parts_ends_the_call_with_the_first_part() {
+        let dir = fresh_dir("native-parts-moved");
+        let niri = Compositor::start(&dir, BASE);
+        let view = events::view_of(initial_events(0));
+        let (waiter, updates) = events::waiter(view, 0);
+        let moved = Event::WindowFocusChanged { id: Some(2) };
+        niri.on_press(2, move || {
+            updates.send(Update::Event(1, Box::new(moved))).ok();
+        })
+        .await;
+        let outcome = type_through(&niri, &dir, text("é→ß"), Some(waiter))
+            .await
+            .unwrap();
+        assert_eq!(outcome.observed, Observed::Interrupted);
+        assert_eq!(outcome.typed, Some(2));
+        marker_cleared(&niri, &dir).await;
+        let seen = niri.seen();
+        assert_eq!(seen.keys, presses(&[I60, I61].map(character)));
+        assert_eq!(
+            seen.uploads,
+            [
+                seen.compositor.clone(),
+                seen.keymaps[0].clone(),
+                seen.compositor.clone()
+            ],
+            "bound with the compositor's map, the first part's, then the compositor's back"
+        );
+        assert_ne!(seen.keymaps[0], seen.compositor);
+        assert_eq!(seen.active, seen.compositor);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The stop flag set once the first part went out: the call ends `stopped`, and never
+    /// uploads the second part's map.
+    #[tokio::test]
+    async fn a_stop_between_parts_ends_the_call_before_the_next_map() {
+        let dir = fresh_dir("native-parts-stopped");
+        let niri = Compositor::start(&dir, BASE);
+        let runtime = RuntimeDir::of(&niri.env(&dir)).unwrap();
+        niri.on_press(2, move || runtime.stop().unwrap()).await;
+        let Err(CallError::Tool(error)) = type_through(&niri, &dir, text("é→ß"), None).await
+        else {
+            panic!("the call went on past the stop");
+        };
+        assert_eq!(error.name, ErrorName::Stopped, "{}", error.detail);
+        assert_eq!(error.detail, "stopped after 2 characters and 0 keys");
+        marker_cleared(&niri, &dir).await;
+        let seen = niri.seen();
+        assert_eq!(seen.keys, presses(&[I60, I61].map(character)));
+        assert_eq!(
+            seen.keymaps.len(),
+            2,
+            "the first part's map, then the compositor's"
+        );
+        assert_eq!(
+            seen.uploads.len(),
+            3,
+            "bound, the first part's, the compositor's"
+        );
+        assert_eq!(seen.active, seen.compositor);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// With the second layout active, which lacks `a`, `ctrl+a` goes out in the first
+    /// layout, and the call leaves the focused client in the second.
+    #[tokio::test]
+    async fn a_key_from_another_layout_leaves_the_active_layout_in_place() {
+        let dir = fresh_dir("native-other-layout");
+        let niri = Compositor::start(&dir, BASE);
+        niri.switch(1).await;
+        let keys = Typing::Keys(vec!["ctrl+a".to_owned()]);
+        let outcome = type_through(&niri, &dir, keys, None).await.unwrap();
+        assert_eq!(outcome.observed, Observed::Sent);
+        marker_cleared(&niri, &dir).await;
+        let seen = niri.seen();
+        assert_eq!(seen.keys, [(A, true), (A, false)]);
+        let ctrl = crate::input::keymap::held_mask(BASE, &["ctrl"]).unwrap();
+        let sent = seen.modifiers.iter().position(|&mods| mods == (ctrl, 0));
+        let after = sent.and_then(|at| seen.modifiers.get(at + 1));
+        assert_eq!(after, Some(&(0, 1)), "{:?}", seen.modifiers);
+        assert_eq!(seen.last_modifiers(), Some((0, 1)), "{:?}", seen.modifiers);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -653,7 +813,7 @@ mod tests {
         let niri = Compositor::start(&dir, BASE);
         niri.slow_keys(Duration::from_millis(1900)).await;
         let started = Instant::now();
-        let Err(CallError::Tool(error)) = type_through(&niri, &dir, "az").await else {
+        let Err(CallError::Tool(error)) = type_through(&niri, &dir, text("az"), None).await else {
             panic!("the call ended in time");
         };
         assert!(
@@ -687,7 +847,7 @@ mod tests {
         let dir = fresh_dir("native-first-late");
         let niri = Compositor::start(&dir, BASE);
         niri.slow_keys(Duration::from_millis(2100)).await;
-        let Err(CallError::Tool(error)) = type_through(&niri, &dir, "a").await else {
+        let Err(CallError::Tool(error)) = type_through(&niri, &dir, text("a"), None).await else {
             panic!("the call ended in time");
         };
         assert_eq!(error.name, ErrorName::DeadlineExceeded);

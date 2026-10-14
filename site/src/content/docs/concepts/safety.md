@@ -77,7 +77,7 @@ Each call that reaches a tool is appended to `~/.local/state/niri-computer-use/a
 - Apps choose their own `app_id`, so any app can call itself anything.
 - The preset rules refuse shells, interpreters and terminals with arguments, but a wrapper script gets past any list. With `unrestricted` on there are no preset rules.
 - You can still type and click while an agent works. The server notices focus moving and stops typing, but nothing keeps you and an agent from moving the pointer at the same time.
-- With the default `wtype` backend, a part of up to 100 characters that has started keeps typing after a stop or a focus change.
+- With the [wtype backend](../../tools/keyboard/#the-wtype-backend) selected, a part of up to 100 characters that has started keeps typing after a stop or a focus change.
 - The lease belongs to a server process. Anything that runs as your user can start `niri-computer-use` too.
 
 For a stronger limit, give the agent a separate desktop holding only the apps it may use, such as a nested niri session.

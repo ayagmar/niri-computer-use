@@ -160,6 +160,6 @@ The server reads these once, at startup. When `XDG_RUNTIME_DIR`, `NIRI_SOCKET` o
 | `NIRI_COMPUTER_USE_CONFIRM_LEASE` | `1` turns on [`confirm_lease`](#confirm_lease) for this server; unset or empty leaves the policy file to decide |
 | `NIRI_COMPUTER_USE_TOOLS` | `observe`, `act` or `full`: the [tool profile](#tools) for this server; unset or empty leaves the policy file to decide |
 | `NIRI_COMPUTER_USE_SHARED` | `1` turns on [`shared`](#shared) mode for this server and `0` turns it off; unset or empty leaves the policy file to decide |
-| `NIRI_COMPUTER_USE_KEYBOARD` | the keyboard backend: unset or `wtype` for the default, `native` for the [experimental native backend](../../tools/keyboard/#the-native-backend) |
+| `NIRI_COMPUTER_USE_KEYBOARD` | the keyboard backend: unset or `native` for the default, `wtype` for the [wtype backend](../../tools/keyboard/#the-wtype-backend) |
 
 The lock state comes from logind's session for niri's own process, which the server finds through niri's socket, so the server's own `XDG_SESSION_ID` doesn't matter.

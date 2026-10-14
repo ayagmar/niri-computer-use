@@ -595,8 +595,7 @@ struct TypeTextArgs {
     /// or `"none"` to skip the check, as for a shell panel.
     expect: ExpectArg,
     /// `keys` types the text; `paste` pastes it through the clipboard, then puts the user's
-    /// clipboard back: for long text, and in Chromium and Electron apps, which lose
-    /// typed spaces.
+    /// clipboard back: for long text, and for emoji in Chromium and Electron apps.
     #[serde(default)]
     via: ViaArg,
     /// With `via: "paste"`: the combination that pastes in that app, `ctrl+v`, or
@@ -1636,7 +1635,7 @@ impl Server {
         .await
     }
 
-    /// Runs a keyboard tool's `wtype` calls through the action gate.
+    /// Runs a keyboard tool's keys through the action gate.
     async fn type_input(
         &self,
         context: &RequestContext<RoleServer>,

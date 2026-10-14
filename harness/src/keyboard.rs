@@ -12,6 +12,9 @@ use crate::wev::keyboard::{self, Modifiers, Trace};
 const WAIT: Duration = Duration::from_secs(5);
 pub(crate) const WTYPE_DEADLINE: Duration = Duration::from_secs(3);
 pub(crate) const CORPUS: &str = include_str!("../corpus.txt");
+/// Twenty-four Greek letters and six arrows: more symbols a US layout lacks than its map
+/// has spare keys, so native types them in parts with a map each.
+pub(crate) const PARTS: &str = "αβγδεζηθικλμνξοπρστυφχψω←↑→↓↔↕";
 const CTRL_A: &[&str] = &["-M", "ctrl", "-k", "a", "-m", "ctrl"];
 const ROUTING: &[&str] = &[
     "-M", "ctrl", "-M", "shift", "-k", "F12", "-m", "shift", "-m", "ctrl",

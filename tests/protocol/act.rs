@@ -1198,25 +1198,30 @@ async fn held_pointer_keys_validate_before_any_input() {
     );
 }
 
+/// Native, chosen by name or by default, never falls back to wtype. An empty variable
+/// counts as unset, as for a client that never sets it.
 #[tokio::test]
 async fn native_selection_never_falls_back_to_wtype() {
-    let mut desk = Desk::start_backend("native-no-fallback", "", "native").await;
-    desk.unplug_display();
-    fake_wtype(&desk.fixture, "cat >/dev/null");
-    let result = desk
-        .server
-        .call("type_text", json!({"text": "hi", "expect": "none"}))
-        .await;
-    let (name, detail) = tool_error(&result);
-    assert_eq!(name, "upstream_error");
-    assert!(detail.starts_with("connect to"), "{detail}");
-    assert!(!desk.fixture.path("wtype.args").exists());
-    assert!(
-        !desk
-            .fixture
-            .path("run/niri-computer-use/niri.test/input-dirty")
-            .exists()
-    );
+    for backend in ["native", ""] {
+        let fixture = format!("native-no-fallback-{}", backend.len());
+        let mut desk = Desk::start_backend(&fixture, "", backend).await;
+        desk.unplug_display();
+        fake_wtype(&desk.fixture, "cat >/dev/null");
+        let result = desk
+            .server
+            .call("type_text", json!({"text": "hi", "expect": "none"}))
+            .await;
+        let (name, detail) = tool_error(&result);
+        assert_eq!(name, "upstream_error", "{backend:?}");
+        assert!(detail.starts_with("connect to"), "{backend:?}: {detail}");
+        assert!(!desk.fixture.path("wtype.args").exists(), "{backend:?}");
+        assert!(
+            !desk
+                .fixture
+                .path("run/niri-computer-use/niri.test/input-dirty")
+                .exists()
+        );
+    }
 }
 
 #[tokio::test]

@@ -10,7 +10,7 @@ sidebar:
 - niri 26.04. With another major or minor version the server is read-only: it looks but refuses to act.
 - For a release build, x86_64 or aarch64 Linux with glibc 2.39 or newer; both builds have the same requirements. To build it yourself, Rust 1.99 or newer.
 - libxkbcommon, which the keyboard code links against. To build, its headers too (`libxkbcommon-dev` on Debian and Ubuntu, `libxkbcommon` on Arch).
-- At run time: `grim` for screenshots, `wtype` for the keyboard, and `loginctl` from systemd for the lock state.
+- At run time: `grim` for screenshots, `wtype`, still required although the keyboard uses it only when you select the [wtype backend](../../tools/keyboard/#the-wtype-backend), and `loginctl` from systemd for the lock state.
 - Optional: [Noctalia](../../concepts/noctalia/) 5.2 for its panels and lock state, and an accessibility bus (at-spi2-core) for [`elements`](../../tools/elements/).
 - One monitor, for the pointer tools. `pointer_move`, `click`, `drag` and `scroll` run only with one enabled output at transform `Normal`; with a second monitor or a rotated one they refuse with [`untested_output_config`](../../reference/troubleshooting/#the-pointer-tools-fail-with-untested_output_config). The other tools, the keyboard and screenshots among them, work with any monitors.
 

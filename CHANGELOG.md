@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Changed
+
+- The native keyboard is the default. With `NIRI_COMPUTER_USE_KEYBOARD` unset, `key`, `type_text` and a paste's key go through the server's own virtual keyboard with the compositor's keymap, and `click`, `drag` and `scroll` take held `keys` without configuration. Set `NIRI_COMPUTER_USE_KEYBOARD=wtype` to keep typing with `wtype`. In Chromium and Electron apps, wtype's keys lost spaces and punctuation and missed shortcuts such as VS Code's `ctrl+s`; the native keyboard types text your layout has exactly. There, a native call still types at most two distinct symbols your layout lacks and loses the rest, so paste such text.
+- Native text with more distinct symbols the layout lacks than the keymap has spare keycodes, 14 in a US layout, is typed in parts, each with a temporary keymap of its own, instead of refused.
+- A native `key` combination, a paste's key included, that the active layout lacks goes out in another of your layouts that has it, so `ctrl+v` and `ctrl+s` work while a layout such as Russian is active.
+- After a native call, a lock that was on, such as Caps Lock or Num Lock, reads as off in the focused application until you press a modifier or lock key, the keymap changes or focus moves. wtype's calls don't do this.
+
 ## 0.1.0 - 2026-10-14
 
 The first release: an MCP server over stdio that lets an AI agent read and act on a niri 26.04 desktop.

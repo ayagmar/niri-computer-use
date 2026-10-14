@@ -73,6 +73,9 @@ pub(crate) struct Seen {
     /// Every keymap sent to the `wl_keyboard`s, serialized; the first `wl_keyboard`'s
     /// compositor keymap isn't one.
     pub(crate) keymaps: Vec<String>,
+    /// Every keymap a virtual keyboard uploaded, serialized, in order; one that doesn't
+    /// compile isn't one.
+    pub(crate) uploads: Vec<String>,
     /// Keys sent to the focus: evdev code and whether pressed.
     pub(crate) keys: Vec<(u32, bool)>,
     /// Modifiers sent to the focus: depressed mask and layout.
@@ -137,6 +140,18 @@ enum Command {
     HoldClient,
     /// Serves the held connection, or the next one if it hasn't come yet.
     ServeHeld,
+    /// Runs the hook at the virtual keyboards' press with this number, counted from 1,
+    /// before handling anything after it.
+    OnPress(usize, Hook),
+}
+
+/// What a test runs at a virtual key press (`Compositor::on_press`).
+pub(crate) struct Hook(Box<dyn FnOnce() + Send>);
+
+impl std::fmt::Debug for Hook {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Hook")
+    }
 }
 
 /// The fake niri, served from a thread of its own until dropped.
@@ -256,6 +271,14 @@ impl Compositor {
         self.send(Command::ServeHeld).await;
     }
 
+    /// Runs `hook` at the virtual keyboards' `press`-th key press, counted from 1, before
+    /// the fake handles anything after it, so whatever it does happens before the press is
+    /// acknowledged: a test can have niri report an event to a waiter, or set the stop flag.
+    pub(crate) async fn on_press(&self, press: usize, hook: impl FnOnce() + Send + 'static) {
+        self.send(Command::OnPress(press, Hook(Box::new(hook))))
+            .await;
+    }
+
     /// niri's event stream from the fake's socket.
     pub(crate) fn events(&self) -> crate::niri::events::EventStream {
         crate::niri::events::EventStream::spawn(self.socket.clone())
@@ -358,7 +381,7 @@ fn layouts(group: u32) -> KeyboardLayouts {
 
 /// What niri's event stream starts with: one workspace with one focused window, the
 /// keyboard layouts with `group` active, and the overview closed.
-fn initial_events(group: u32) -> Vec<Event> {
+pub(crate) fn initial_events(group: u32) -> Vec<Event> {
     let workspace = Workspace {
         id: 1,
         idx: 1,
@@ -497,6 +520,8 @@ struct State {
     hold_next: bool,
     /// The display client held, unanswered.
     held: Option<std::os::unix::net::UnixStream>,
+    /// What to run at which press (`Command::OnPress`).
+    on_press: Option<(usize, Hook)>,
 }
 
 impl State {
@@ -512,6 +537,7 @@ impl State {
             modifier_delay: Duration::ZERO,
             hold_next: false,
             held: None,
+            on_press: None,
         }
     }
 
@@ -563,6 +589,7 @@ impl State {
             Command::SlowKeys(delay) => self.key_delay = delay,
             Command::SlowModifiers(delay) => self.modifier_delay = delay,
             Command::HoldClient => self.hold_next = true,
+            Command::OnPress(press, hook) => self.on_press = Some((press, hook)),
             Command::ServeHeld => {
                 self.hold_next = false;
                 if let Some(stream) = self.held.take() {
@@ -570,6 +597,14 @@ impl State {
                     self.admit(handle, stream);
                 }
             }
+        }
+    }
+
+    /// Runs the hook `Command::OnPress` set for the press just seen, if it is that press.
+    fn pressed(&mut self) {
+        let presses = self.seen().keys.iter().filter(|(_, down)| *down).count();
+        if let Some((_, Hook(hook))) = self.on_press.take_if(|(at, _)| *at == presses) {
+            hook();
         }
     }
 
@@ -811,6 +846,7 @@ impl Dispatch<ZwpVirtualKeyboardV1, Mutex<Virtual>> for State {
         let mut data = data.lock().unwrap_or_else(PoisonError::into_inner);
         if let zwp_virtual_keyboard_v1::Request::Keymap { fd, size, .. } = request {
             if let Some(keymap) = read_keymap(fd, size).as_deref().and_then(serialize) {
+                state.seen().uploads.push(keymap.clone());
                 data.keymap = Some(keymap);
             }
             return;
@@ -836,6 +872,9 @@ impl Dispatch<ZwpVirtualKeyboardV1, Mutex<Virtual>> for State {
             }
             state.send_keymap(&keymap, data.modifiers);
             state.seen().keys.push((key, pressed == 1));
+            if pressed == 1 {
+                state.pressed();
+            }
         } else if let zwp_virtual_keyboard_v1::Request::Modifiers {
             mods_depressed,
             group,

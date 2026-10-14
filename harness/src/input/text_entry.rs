@@ -1,5 +1,6 @@
 //! Native and wtype text in a real GTK 4 entry, read back from the application: ASCII,
-//! the C10 corpus and a submitted line, then `paste` (see `paste` and `dropped_paste`).
+//! the C10 corpus, `PARTS`, which native types with several keymaps in turn, and a
+//! submitted line, then `paste` (see `paste` and `dropped_paste`).
 //! Optional dev fixture, like A05's button.
 
 use std::fs;
@@ -9,7 +10,7 @@ use serde_json::{Value, json};
 
 use super::{SERVER_DEADLINE, WAIT, stop};
 use crate::failure::{Context as _, Failure, Result};
-use crate::keyboard::CORPUS;
+use crate::keyboard::{CORPUS, PARTS};
 use crate::mcp::{Client, field, structured};
 use crate::session::Session;
 
@@ -47,19 +48,16 @@ pub(super) fn run(session: &mut Session<'_>, owner: &mut Client, server: &str) -
     super::paste::secret(session, owner)?;
     structured(&owner.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     super::dropped_paste::run(session, owner, server, process.pid())?;
-    let mut native = Client::start_command(
+    let mut native = Client::start_keyboard(
         session,
-        "env",
-        &[
-            "NIRI_COMPUTER_USE_KEYBOARD=native".into(),
-            server.into(),
-            "serve".into(),
-        ],
+        server,
+        "native",
         "harness-m7-entry",
         SERVER_DEADLINE,
     )?;
     structured(&native.call(session, "acquire_desktop", json!({}))?)?;
     let native_times = rounds(session, &mut native, "native")?;
+    super::other_layout::in_entry(session, &mut native)?;
     super::paste::run(session, &mut native, server, "native")?;
     structured(&native.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     native.stop()?;
@@ -91,14 +89,20 @@ fn rounds(session: &mut Session<'_>, client: &mut Client, backend: &str) -> Resu
         clear(session, client)?;
         times.corpus.push(typed(session, client, CORPUS)?);
         clear(session, client)?;
+        typed(session, client, PARTS)?;
+        clear(session, client)?;
         times.submit.push(submitted(session, client)?);
         stop::marker_gone(session)?;
     }
-    session.log(&format!("M7 GTK entry {backend}: ASCII, the C10 corpus and a submitted line read back exactly from the entry, {ROUNDS} times"))?;
+    session.log(&format!("M7 GTK entry {backend}: ASCII, the C10 corpus, a text needing several native keymaps and a submitted line read back exactly from the entry, {ROUNDS} times"))?;
     Ok(times)
 }
 
-fn typed(session: &mut Session<'_>, client: &mut Client, text: &str) -> Result<Duration> {
+pub(super) fn typed(
+    session: &mut Session<'_>,
+    client: &mut Client,
+    text: &str,
+) -> Result<Duration> {
     let start = Instant::now();
     call(session, client, "type_text", json!({"text": text}))?;
     entry_shows(session, text)?;

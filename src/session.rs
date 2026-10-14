@@ -24,7 +24,8 @@ pub(crate) struct Given {
     pub(crate) confirm_lease: Option<OsString>,
     /// `NIRI_COMPUTER_USE_TOOLS`, as given: the profile of tools to list.
     pub(crate) tools: Option<OsString>,
-    /// `NIRI_COMPUTER_USE_KEYBOARD`: the experimental backend; absent means wtype.
+    /// `NIRI_COMPUTER_USE_KEYBOARD`: `wtype` selects wtype; absent or `native`, the native
+    /// keyboard.
     pub(crate) keyboard: Option<OsString>,
     /// `$HOME`, for a `capture_dir` under `~/`.
     pub(crate) home: Option<PathBuf>,

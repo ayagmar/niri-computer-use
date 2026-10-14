@@ -36,6 +36,8 @@ const RETRY: Duration = Duration::from_millis(10);
 /// Linux input event codes.
 pub(super) const LEFT_SHIFT: u32 = 42;
 pub(super) const CAPS_LOCK: u32 = 58;
+pub(super) const NUM_LOCK: u32 = 69;
+pub(super) const KEYPAD_1: u32 = 79;
 pub(super) const A: u32 = 30;
 
 pub(super) struct Physical {

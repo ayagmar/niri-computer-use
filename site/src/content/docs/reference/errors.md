@@ -77,9 +77,9 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 ### `refused`
 
-**Cause:** the selected keyboard backend can't send the requested input safely: an unknown `NIRI_COMPUTER_USE_KEYBOARD` value, a text with more symbols missing from the layout than the native backend has spare keys, a missing control character, a `key` keysym the layout lacks under native, or held pointer `keys` without the native backend.
+**Cause:** the selected keyboard backend can't send the requested input safely: an unknown `NIRI_COMPUTER_USE_KEYBOARD` value, a missing control character or a `key` keysym none of your layouts has under the native backend, a layout with no spare keycode for a missing symbol, or held pointer `keys` with the wtype backend.
 
-**What to do:** split the text, or type it with the default backend; the `detail` says which limit was hit. An agent shouldn't change the backend itself.
+**What to do:** the `detail` says which limit was hit. Paste text the layout can't type with `via: "paste"`. An agent shouldn't change the backend itself.
 
 ## Mistakes an agent can correct
 

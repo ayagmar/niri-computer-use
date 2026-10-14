@@ -1,6 +1,7 @@
 //! Native C10: the UTF-8 corpus, with the symbols the nested layout lacks on spare keys
-//! of a call-long extended keymap. An unfocused client saves every map niri sends, so
-//! the check compares contents: the compositor's map must come back byte for byte.
+//! of a call-long extended keymap, and a text needing more spare keys than the map has, in
+//! parts with a map each. An unfocused client saves every map niri sends, so the check
+//! compares contents: the compositor's map must come back byte for byte.
 
 use std::ffi::OsString;
 use std::fs;
@@ -13,7 +14,7 @@ use serde_json::{Value, json};
 
 use super::{WAIT, Wev, stop};
 use crate::failure::{Context as _, Failure, Result};
-use crate::keyboard::{self, CORPUS};
+use crate::keyboard::{self, CORPUS, PARTS};
 use crate::keymaps;
 use crate::mcp::{self, Client, field, structured};
 use crate::runner::Process;
@@ -46,6 +47,7 @@ pub(super) fn run(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>)
         stop::marker_gone(session)?;
         session.log(&format!("M7 native C10 run {run}: 100 decoded pairs in {:.3} ms, extended keymap sent, then the compositor's keymap byte for byte", elapsed.as_secs_f64() * 1000.0))?;
     }
+    parts(session, client, wev, &directory, &original)?;
     quiet_after(session, client, wev, &directory)?;
     observer.stop()?;
     times.sort_unstable();
@@ -163,7 +165,24 @@ fn restored(
     original: &[u8],
     before: usize,
 ) -> Result<()> {
-    let sent = session.wait_until(
+    let sent = sent_back(session, directory, original, before)?;
+    match sent.as_slice() {
+        [extended, _] if extended.as_slice() != original => Ok(()),
+        _ => Err(Failure::new(format!(
+            "M7 native C10: expected the extended keymap then the compositor's, got {} maps",
+            sent.len()
+        ))),
+    }
+}
+
+/// The maps niri sent after the first `before`, once the last is the compositor's.
+fn sent_back(
+    session: &mut Session<'_>,
+    directory: &Path,
+    original: &[u8],
+    before: usize,
+) -> Result<Vec<Vec<u8>>> {
+    session.wait_until(
         "m7-keymap-restored",
         "the compositor's keymap sent back",
         WAIT,
@@ -172,14 +191,47 @@ fn restored(
             let sent = maps.get(before..).unwrap_or_default().to_vec();
             Ok((sent.last().map(Vec::as_slice) == Some(original)).then_some(sent))
         },
+    )
+}
+
+/// `PARTS` in one call: every character must decode exactly, clients must get one
+/// extended map per part, each another than the one before, and then the compositor's
+/// byte for byte.
+fn parts(
+    session: &mut Session<'_>,
+    client: &mut Client,
+    wev: &Wev<'_>,
+    directory: &Path,
+    original: &[u8],
+) -> Result<()> {
+    let before = keymaps::saved(directory)?.len();
+    let offset = wev.offset()?;
+    structured(&client.call(
+        session,
+        "type_text",
+        json!({"text": PARTS, "expect": {"app_id": "wev"}}),
+    )?)?;
+    let count = PARTS.chars().count();
+    keyboard::text(
+        &trace(&keyboard::observed(session, wev.log, offset, count, true)?)?,
+        PARTS,
     )?;
-    match sent.as_slice() {
-        [extended, _] if extended.as_slice() != original => Ok(()),
-        _ => Err(Failure::new(format!(
-            "M7 native C10: expected the extended keymap then the compositor's, got {} maps",
+    let sent = sent_back(session, directory, original, before)?;
+    let extended = sent.split_last().map_or(&[][..], |(_, rest)| rest);
+    if extended.len() < 2
+        || extended.iter().any(|map| map.as_slice() == original)
+        || extended.windows(2).any(|pair| pair.first() == pair.last())
+    {
+        return Err(Failure::new(format!(
+            "M7 native parts: expected an extended keymap per part, each new, then the compositor's, got {} maps",
             sent.len()
-        ))),
+        )));
     }
+    stop::marker_gone(session)?;
+    session.log(&format!(
+        "M7 native parts: {count} characters decoded exactly, {} extended keymaps in turn, then the compositor's byte for byte",
+        extended.len()
+    ))
 }
 
 /// After restoration niri's active map is the compositor's again, so a call that needs
@@ -497,6 +549,10 @@ fn layouts(session: &mut Session<'_>) -> Result<KeyboardLayouts> {
         ));
     };
     Ok(layouts)
+}
+
+pub(super) fn layout_count(session: &mut Session<'_>) -> Result<usize> {
+    Ok(layouts(session)?.names.len())
 }
 
 pub(super) fn current_layout(session: &mut Session<'_>) -> Result<u8> {

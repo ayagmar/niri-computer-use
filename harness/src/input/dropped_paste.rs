@@ -220,14 +220,19 @@ fn end_engine(session: &mut Session<'_>, owner: &mut Client) -> Result<bool> {
     Ok(true)
 }
 
-/// A server whose `wtype` is the wrapper in `wrapper`, holding the lease.
+/// A server typing with wtype, whose `wtype` is the wrapper in `wrapper`, holding the lease.
 fn start(session: &mut Session<'_>, server: &str, wrapper: &Path, name: &str) -> Result<Client> {
     let path = std::env::var_os("PATH").unwrap_or_default();
     let mut assignment = OsString::from("PATH=");
     assignment.push(wrapper);
     assignment.push(":");
     assignment.push(path);
-    let args = [assignment, server.into(), "serve".into()];
+    let args = [
+        assignment,
+        "NIRI_COMPUTER_USE_KEYBOARD=wtype".into(),
+        server.into(),
+        "serve".into(),
+    ];
     let mut client = Client::start_command(session, "env", &args, name, SERVER_DEADLINE)?;
     structured(&client.call(session, "acquire_desktop", json!({}))?)?;
     Ok(client)
@@ -235,15 +240,10 @@ fn start(session: &mut Session<'_>, server: &str, wrapper: &Path, name: &str) ->
 
 /// A server with the native keyboard, holding the lease.
 fn start_native(session: &mut Session<'_>, server: &str) -> Result<Client> {
-    let args = [
-        "NIRI_COMPUTER_USE_KEYBOARD=native".into(),
-        server.into(),
-        "serve".into(),
-    ];
-    let mut client = Client::start_command(
+    let mut client = Client::start_keyboard(
         session,
-        "env",
-        &args,
+        server,
+        "native",
         "harness-m7-late-native",
         SERVER_DEADLINE,
     )?;

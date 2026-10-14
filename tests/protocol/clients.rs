@@ -99,7 +99,8 @@ async fn clients_racing_for_the_lease_leave_exactly_one_owner() {
 /// until `resume`, after which another client takes it.
 #[tokio::test]
 async fn a_stop_during_one_clients_action_holds_every_client_back_until_resume() {
-    let fixture = shared("many-stop");
+    let mut fixture = shared("many-stop");
+    fixture.set("NIRI_COMPUTER_USE_KEYBOARD", "wtype");
     let mut desktop = Desktop::new(&fixture);
     fixture.program(
         "wtype",
@@ -155,7 +156,8 @@ async fn a_stop_during_one_clients_action_holds_every_client_back_until_resume()
 /// client takes the lease.
 #[tokio::test]
 async fn a_client_killed_mid_key_frees_the_lease_while_others_keep_working() {
-    let fixture = shared("many-killed");
+    let mut fixture = shared("many-killed");
+    fixture.set("NIRI_COMPUTER_USE_KEYBOARD", "wtype");
     let mut desktop = Desktop::new(&fixture);
     fixture.program(
         "wtype",
@@ -606,6 +608,7 @@ async fn each_client_runs_grim_and_wtype_from_its_own_path_and_directory() {
         fixture.program_at(&fixture.path(&format!("{name}/bin/wtype")), &wtype);
     }
     fixture.set("PATH", "bin");
+    fixture.set("NIRI_COMPUTER_USE_KEYBOARD", "wtype");
     let mut clients = Vec::new();
     for name in ["a", "b"] {
         fixture.work_in(fixture.path(name));
@@ -713,8 +716,9 @@ async fn a_grim_that_cant_start_is_passed_over_for_the_next_on_path() {
     }
 }
 
-/// Starts a client in `work` with `bin` and then `extra` on its `PATH`.
+/// Starts a client in `work` with `bin` and then `extra` on its `PATH`, typing with wtype.
 async fn client_in(fixture: &mut Fixture, work: &str, extra: &str) -> Server {
+    fixture.set("NIRI_COMPUTER_USE_KEYBOARD", "wtype");
     let mut path = OsString::from("bin:");
     path.push(fixture.path(extra));
     fixture.set("PATH", path);

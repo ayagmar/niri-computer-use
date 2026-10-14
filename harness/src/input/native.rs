@@ -1,4 +1,4 @@
-//! Experimental native acceptance, separate from unchanged wtype M4 criteria.
+//! Native keyboard acceptance, separate from the wtype M4 criteria.
 
 use std::time::{Duration, Instant};
 
@@ -18,17 +18,8 @@ pub(super) fn run(
     server: &str,
 ) -> Result<()> {
     structured(&owner.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
-    let mut native = Client::start_command(
-        session,
-        "env",
-        &[
-            "NIRI_COMPUTER_USE_KEYBOARD=native".into(),
-            server.into(),
-            "serve".into(),
-        ],
-        "harness-m7",
-        SERVER_DEADLINE,
-    )?;
+    let mut native =
+        Client::start_keyboard(session, server, "native", "harness-m7", SERVER_DEADLINE)?;
     structured(&native.call(session, "acquire_desktop", json!({}))?)?;
     normal(session, &mut native, wev)?;
     let window = super::wev_window(session, &mut native)?;
@@ -36,6 +27,7 @@ pub(super) fn run(
     super::routing(session, &mut native, wev, window)?;
     super::native_unicode::run(session, &mut native, wev)?;
     super::native_unicode::layout_change(session, &mut native, wev)?;
+    super::other_layout::in_wev(session, &mut native, wev)?;
     measure(session, &mut native, wev, "native")?;
     let pacer = super::pacer::start(session)?;
     super::exposure::run(session, &mut native, wev, "native")?;

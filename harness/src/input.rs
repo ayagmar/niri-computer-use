@@ -17,6 +17,7 @@ mod keeper;
 mod native;
 mod native_gestures;
 mod native_unicode;
+mod other_layout;
 mod pacer;
 mod paste;
 mod physical;
@@ -63,7 +64,10 @@ pub(crate) fn run(session: &mut Session<'_>, output: &LogicalOutput, server: &st
         session.artifact("noctalia.log"),
         NOCTALIA_DEADLINE,
     )?;
-    let mut client = Client::start(session, server, "harness-m4", SERVER_DEADLINE)?;
+    // The wtype baseline: M4's keyboard, stop and paste checks, and the comparisons M7's
+    // native checks make, expect wtype.
+    let mut client =
+        Client::start_keyboard(session, server, "wtype", "harness-m4", SERVER_DEADLINE)?;
     let status = mcp::ready(session, &mut client, "m4-ready", READY)?;
     session.log(&format!(
         "M4 status: niri {}, lock {}, outputs {}",

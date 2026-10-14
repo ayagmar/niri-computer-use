@@ -38,10 +38,10 @@ impl Held {
         if keys.is_empty() {
             return Ok(None);
         }
-        if input.keyboard.and_then(std::ffi::OsStr::to_str) != Some("native") {
+        if !super::native_keyboard(input.keyboard)? {
             return Err(ToolError::new(
                 ErrorName::Refused,
-                "held pointer keys require NIRI_COMPUTER_USE_KEYBOARD=native",
+                "held pointer keys need the native keyboard, which NIRI_COMPUTER_USE_KEYBOARD=wtype turns off",
             )
             .into());
         }
