@@ -594,8 +594,9 @@ struct TypeTextArgs {
     /// The window that must have focus: `{"window_id": <id>}`, `{"app_id": "<app_id>"}`,
     /// or `"none"` to skip the check, as for a shell panel.
     expect: ExpectArg,
-    /// `keys` types the text; `paste` pastes it through the clipboard, for long text, and
-    /// then puts the user's clipboard back.
+    /// `keys` types the text; `paste` pastes it through the clipboard, then puts the user's
+    /// clipboard back: for long text, and in Chromium and Electron apps, which lose
+    /// typed spaces.
     #[serde(default)]
     via: ViaArg,
     /// With `via: "paste"`: the combination that pastes in that app, `ctrl+v`, or
