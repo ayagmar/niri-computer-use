@@ -512,6 +512,11 @@ async fn a_match_whose_actions_the_wait_had_no_time_to_name_ends_it_met() {
         app.mock
             .slow_on("GetState", path, Duration::from_millis(900));
     }
+    // Naming starts with no time left, but tokio's timer rounds that deadline up to its next
+    // tick, so on a loaded machine a reply quicker than a tick still arrived in time, and the
+    // wait blamed the cut walk instead. An app slower than any tick leaves no such margin.
+    app.mock
+        .slow_on("GetName", "/button", Duration::from_millis(500));
     let (outcome, took) = app.wait(json!({"role": "button"}), 1000).await;
     assert_eq!(outcome["observed"], "met", "{outcome}");
     assert_eq!(outcome["element"]["element_ref"], Value::Null, "{outcome}");
