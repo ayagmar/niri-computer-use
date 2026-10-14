@@ -35,7 +35,7 @@ It asks niri for its version and outputs, logind for the lock state and, when it
 niri-computer-use stop
 ```
 
-Sets the stop flag for this niri instance, prints nothing and exits 0. A running action ends with `stopped`, the lease holder gives the lease up, and `acquire_desktop` and every action refuse with `stopped` until `resume`. Bind it to a key: see [First session](../../start/first-session/#bind-the-stop-key).
+Sets the stop flag for this niri instance, prints nothing and exits 0. A running action is cancelled: it ends with `stopped`, or `uncertain` once what it sent may have taken effect (see [Safety](../../concepts/safety/#stop-and-resume)). The lease holder gives the lease up, and `acquire_desktop` and every action refuse with `stopped` until `resume`. Bind it to a key: see [First session](../../start/first-session/#bind-the-stop-key).
 
 It never connects to niri, so it works while niri hangs. Without `NIRI_SOCKET`, it takes the one socket in the runtime directory that niri names, owned by you, whose PID is a running `niri`, without checking that this niri still listens on it. It fails, exiting 1, when there is no such socket or several, when niri's socket doesn't resolve to a socket of yours, with no hard link, in a directory only you can use, or when the flag can't be written.
 
