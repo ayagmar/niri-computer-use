@@ -1,6 +1,6 @@
 ---
 title: Install
-description: Install niri-computer-use from the release tarball, crates.io or source, and check it against your niri session.
+description: Install niri-computer-use with the install script or with cargo, add the agent skill, and check it against your niri session.
 sidebar:
   order: 1
 ---
@@ -14,9 +14,20 @@ sidebar:
 - Optional: [Noctalia](../../concepts/noctalia/) 5.2 for its panels and lock state, and an accessibility bus (at-spi2-core) for [`elements`](../../tools/elements/).
 - One monitor, for the pointer tools. `pointer_move`, `click`, `drag` and `scroll` run only with one enabled output at transform `Normal`; with a second monitor or a rotated one they refuse with [`untested_output_config`](../../reference/troubleshooting/#the-pointer-tools-fail-with-untested_output_config). The other tools, the keyboard and screenshots among them, work with any monitors.
 
-## Install the release
+## Two ways to install
 
-The install script picks the tarball for your machine, checks it against its `.sha256`, puts the binary in `~/.local/bin`, copies the skill that tells your agents how to use the server to `~/.local/share/niri-computer-use`, and links it from `~/.claude/skills` and `~/.agents/skills`. Download it, read it, then run it:
+Both give you the same server. The script is quicker and also installs the agent skill; cargo builds the crate on your machine and leaves the skill to you.
+
+| | Install script | Cargo |
+|---|---|---|
+| Gets | The release binary for your machine, checked against its `.sha256` | The crate from crates.io, built on your machine |
+| Binary | `~/.local/bin/niri-computer-use` | `~/.cargo/bin/niri-computer-use` |
+| Skill | Installed and linked for Claude Code, Pi and Codex | From the [skills CLI](#the-skill) or the clone |
+| Update | Run the script again | Run `cargo install` again |
+
+### With the install script
+
+Download it, read it, then run it:
 
 ```sh
 curl -fsSLO https://github.com/ayagmar/niri-computer-use/releases/latest/download/install.sh
@@ -24,20 +35,51 @@ less install.sh
 sh install.sh
 ```
 
-| Variable | Effect |
-|---|---|
-| `NCU_VERSION` | The release to install, such as `0.1.0`, instead of the latest |
-| `NCU_BIN_DIR` | Where the binary goes, instead of `~/.local/bin` |
+It downloads the release tarball for your machine, checks it, puts the binary in `~/.local/bin`, copies the skill to `~/.local/share/niri-computer-use` and links it from `~/.claude/skills` and `~/.agents/skills`. It ends by printing the [next steps](#check-it). [The install script](../install-script/) lists every file it writes, what it checks, `NCU_VERSION` and `NCU_BIN_DIR`, and how to uninstall.
 
-It refuses a tarball that doesn't match its `.sha256`, and a binary that doesn't run on your system, such as one that needs a newer glibc, before it changes anything. It copies the new binary and skill beside the old ones before replacing either, so a copy that fails, on a full disk for example, leaves the previous install as it was.
+### With cargo
 
-Run it again to update: it replaces the binary and the skill. It points `~/.claude/skills/niri-computer-use` and `~/.agents/skills/niri-computer-use` at the skill it installed. A link there that points elsewhere, such as into a clone, is replaced and named in the output; a directory there is left alone.
+With Rust 1.99 or newer and libxkbcommon's headers, cargo builds the crate from crates.io into `~/.cargo/bin`:
 
-The `.sha256` catches a download that is broken or cut off. It isn't a signature: it comes from the same release as the tarball and the script, so whoever can change the release's files can change all three.
+```sh
+cargo install --locked niri-computer-use
+```
 
-### By hand
+The crate holds no skill, so install [the skill](#the-skill) next. To update, run the same command again.
 
-Download your machine's tarball, check it, and put the binary in `~/.local/bin` or another directory on your `PATH`. `uname -m` prints `x86_64` or `aarch64` on the machines there are builds for:
+To build from source instead, run `cargo install` inside a clone. rustup takes the Rust version the repository pins from `rust-toolchain.toml` in the current directory, so outside the clone it builds with your default toolchain instead. The skill is in the clone at `skills/niri-computer-use`:
+
+```sh
+git clone https://github.com/ayagmar/niri-computer-use.git
+cd niri-computer-use
+cargo install --locked --path .
+```
+
+To update a source build, run `git pull` and the same `cargo install` again, inside the clone.
+
+## The skill
+
+The skill tells an agent how to use the tools: start with `status`, prefer structured data to screenshots, read `accepted` and `observed`, and when to stop and hand back. Claude Code reads it from `~/.claude/skills`; Pi and Codex read `~/.agents/skills`. The install script puts it there. After `cargo install`, do one of these.
+
+The [skills CLI](https://skills.sh) installs it from the repository: it copies the skill into `~/.agents/skills` and links it from `~/.claude/skills`. Run the same command to update it:
+
+```sh
+npx skills add ayagmar/niri-computer-use --skill niri-computer-use --agent claude-code --agent pi --agent codex -g
+```
+
+Or link the clone's copy, from inside the clone, so `git pull` updates it:
+
+```sh
+mkdir -p ~/.claude/skills ~/.agents/skills
+ln -s "$PWD/skills/niri-computer-use" ~/.claude/skills/niri-computer-use
+ln -s "$PWD/skills/niri-computer-use" ~/.agents/skills/niri-computer-use
+```
+
+The same files are on this site under [For agents](../../reference/agents/).
+
+## By hand
+
+Without the script, download your machine's tarball, check it, and put the binary in `~/.local/bin` or another directory on your `PATH`. `uname -m` prints `x86_64` or `aarch64` on the machines there are builds for:
 
 ```sh
 arch=$(uname -m)
@@ -48,6 +90,8 @@ tar -xzf "niri-computer-use-0.1.0-$arch-linux.tar.gz"
 install -Dm755 -t ~/.local/bin "niri-computer-use-0.1.0-$arch-linux/niri-computer-use"
 ~/.local/bin/niri-computer-use --version
 ```
+
+The `.sha256` catches a download that is broken or cut off. It isn't a signature: it comes from the same release as the tarball, so whoever can change the release's files can change both.
 
 The tarball also holds the skill, with the README, the changelog and the licenses of the crates built into the binary. Copy the skill somewhere it stays and link it where your agents look for skills:
 
@@ -65,25 +109,7 @@ rm -rf ~/.local/share/niri-computer-use/skills
 cp -r "niri-computer-use-0.1.0-$arch-linux/skills" ~/.local/share/niri-computer-use/
 ```
 
-## Install with cargo
-
-From crates.io, into `~/.cargo/bin`:
-
-```sh
-cargo install --locked niri-computer-use
-```
-
-The crate has no skill; take it from the release tarball or a clone.
-
-From source, run `cargo install` inside the clone. rustup takes the Rust version the repository pins from `rust-toolchain.toml` in the current directory, so outside the clone it builds with your default toolchain instead:
-
-```sh
-git clone https://github.com/ayagmar/niri-computer-use.git
-cd niri-computer-use
-cargo install --locked --path .
-```
-
-The skill is in the clone at `skills/niri-computer-use`. To update, run `git pull` and the same `cargo install` again, inside the clone.
+## Updating while agents run
 
 Updating while agents run is safe. A [shared](../../concepts/configuration/#shared) engine keeps serving the clients it has with the build it started with, and their `status.engine.replaced` turns `true`. Clients started after the update are served standalone, sharing the lease, the stop flag and the input-dirty marker, and their `status.engine.fallback` names the old engine's PID. Once the old engine's last client has ended it exits, two seconds later, and the next client starts an engine of the new build. Restart your agent sessions to move all of them to the new build. This lists the processes still running:
 

@@ -25,7 +25,16 @@ It offers up to 22 tools over stdio: reading the desktop, screenshots it can sav
 
 Release builds exist for x86_64 and aarch64 Linux, and both need glibc 2.39 or newer and libxkbcommon. Either way you need niri 26.04, and `grim`, `wtype` and `loginctl` at run time, plus `notify-send` if you turn on `confirm_lease`.
 
-The install script picks the tarball for your machine, checks it against its `.sha256`, puts the binary in `~/.local/bin` and links the skill that tells your agents how to use the server. Download it, read it, then run it:
+Two ways to install, both giving the same server:
+
+| | Install script | Cargo |
+|---|---|---|
+| Gets | The release binary for your machine, checked against its `.sha256` | The crate from crates.io, built on your machine |
+| Binary | `~/.local/bin/niri-computer-use` | `~/.cargo/bin/niri-computer-use` |
+| Skill | Installed and linked for Claude Code, Pi and Codex | From the skills CLI or the clone, below |
+| Update | Run the script again | Run `cargo install` again |
+
+**With the install script.** Download it, read it, then run it. It puts the binary in `~/.local/bin`, copies the skill that tells your agents how to use the server to `~/.local/share/niri-computer-use`, links it from `~/.claude/skills` and `~/.agents/skills`, and ends with the steps in the Quickstart below. [The install script](https://ayagmar.github.io/niri-computer-use/start/install-script/) lists every file it writes, what it checks, `NCU_VERSION` and `NCU_BIN_DIR`, and how to uninstall.
 
 ```sh
 curl -fsSLO https://github.com/ayagmar/niri-computer-use/releases/latest/download/install.sh
@@ -33,57 +42,19 @@ less install.sh
 sh install.sh
 ```
 
-`NCU_VERSION=0.1.0` installs that release instead of the latest, and `NCU_BIN_DIR` puts the binary somewhere else. Run it again to update. It points `~/.claude/skills/niri-computer-use` and `~/.agents/skills/niri-computer-use` at the skill it installed: a link there that points elsewhere, such as into a clone, is replaced and named in the output, and a directory there is left alone. It ends with the steps in the Quickstart below.
-
-The `.sha256` catches a download that is broken or cut off. It isn't a signature: it comes from the same release as the tarball and the script, so whoever can change the release's files can change all three.
-
-To install by hand, download your machine's tarball, check it, and put the binary in `~/.local/bin` or another directory on your `PATH`. `uname -m` prints `x86_64` or `aarch64` on the machines there are builds for:
-
-```sh
-arch=$(uname -m)
-curl -LO "https://github.com/ayagmar/niri-computer-use/releases/download/v0.1.0/niri-computer-use-0.1.0-$arch-linux.tar.gz"
-curl -LO "https://github.com/ayagmar/niri-computer-use/releases/download/v0.1.0/niri-computer-use-0.1.0-$arch-linux.tar.gz.sha256"
-sha256sum -c "niri-computer-use-0.1.0-$arch-linux.tar.gz.sha256"
-tar -xzf "niri-computer-use-0.1.0-$arch-linux.tar.gz"
-install -Dm755 -t ~/.local/bin "niri-computer-use-0.1.0-$arch-linux/niri-computer-use"
-~/.local/bin/niri-computer-use --version
-```
-
-Then copy the skill somewhere it stays and link it where your agents look for skills:
-
-```sh
-mkdir -p ~/.local/share/niri-computer-use ~/.claude/skills ~/.agents/skills
-cp -r "niri-computer-use-0.1.0-$arch-linux/skills" ~/.local/share/niri-computer-use/
-ln -s ~/.local/share/niri-computer-use/skills/niri-computer-use ~/.claude/skills/niri-computer-use
-ln -s ~/.local/share/niri-computer-use/skills/niri-computer-use ~/.agents/skills/niri-computer-use
-```
-
-To update by hand, install the new release's binary the same way. Remove the old skill before copying the new one, or files the new release dropped stay behind; the links keep working:
-
-```sh
-rm -rf ~/.local/share/niri-computer-use/skills
-cp -r "niri-computer-use-0.1.0-$arch-linux/skills" ~/.local/share/niri-computer-use/
-```
-
-With Rust 1.99 or newer and libxkbcommon's headers (`libxkbcommon-dev` on Debian and Ubuntu, `libxkbcommon` on Arch), cargo builds it from crates.io into `~/.cargo/bin`. The crate has no skill; the [skills CLI](https://skills.sh) installs it from this repository, or take it from the tarball or a clone.
+**With cargo.** With Rust 1.99 or newer and libxkbcommon's headers (`libxkbcommon-dev` on Debian and Ubuntu, `libxkbcommon` on Arch), cargo builds the crate from crates.io into `~/.cargo/bin`:
 
 ```sh
 cargo install --locked niri-computer-use
 ```
 
+The crate holds no skill. Install it with the [skills CLI](https://skills.sh), which copies it into `~/.agents/skills` and links it from `~/.claude/skills`, or link `skills/niri-computer-use` from a clone:
+
 ```sh
 npx skills add ayagmar/niri-computer-use --skill niri-computer-use --agent claude-code --agent pi --agent codex -g
 ```
 
-The CLI copies the skill into `~/.agents/skills` and links it from `~/.claude/skills`. Run the same command to update it.
-
-From source, run `cargo install` inside the clone. rustup takes the Rust version the repository pins from `rust-toolchain.toml` in the current directory, so outside the clone it builds with your default toolchain instead. The skill is in the clone at `skills/niri-computer-use`:
-
-```sh
-git clone https://github.com/ayagmar/niri-computer-use.git
-cd niri-computer-use
-cargo install --locked --path .
-```
+[Install](https://ayagmar.github.io/niri-computer-use/start/install/) has the full steps, among them building from a clone, installing by hand from the tarball and updating while agents run.
 
 ## Quickstart
 
@@ -174,7 +145,7 @@ What isn't protected: any connected agent sees your screen and window titles, a 
 
 ## Documentation
 
-- [Install](https://ayagmar.github.io/niri-computer-use/start/install/) and [Client setup](https://ayagmar.github.io/niri-computer-use/start/clients/): install, check, and register the server in your agent
+- [Install](https://ayagmar.github.io/niri-computer-use/start/install/), [The install script](https://ayagmar.github.io/niri-computer-use/start/install-script/) and [Client setup](https://ayagmar.github.io/niri-computer-use/start/clients/): install, check, and register the server in your agent
 - [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/): what the server enforces, what it doesn't, and how you take the desktop back
 - [Configuration](https://ayagmar.github.io/niri-computer-use/concepts/configuration/): `policy.toml`, launch presets, the deny list, `unrestricted`, `confirm_lease`, the shared engine and tool profiles
 - [Tools](https://ayagmar.github.io/niri-computer-use/tools/overview/): every tool, its arguments and results

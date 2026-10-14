@@ -307,7 +307,7 @@ One easing for UI (`cubic-bezier(0.22, 1, 0.36, 1)`). The hero frame either drop
 - **Do** keep every target at least 2.75rem tall and the focus outline visible on both the ground and the plate.
 - **Do** give every motion a calm, complete reduced-motion state.
 - **Do** keep the home page within its measured budget: Lighthouse mobile Performance 100, CLS 0, 3.8 KB JS gzipped.
-- **Do** keep the home page's HTML inside the first round trip: Lighthouse's simulated network sends 14,600 bytes before it waits for an acknowledgement, and the page is 14,302 bytes as served. Comments in `is:inline` scripts ship as written, so they go in template comments above the script.
+- **Do** keep the home page's HTML inside the first round trip: Lighthouse's simulated network sends 14,600 bytes before it waits for an acknowledgement, and `gzip -9` of the built `dist/index.html` is 14,020 bytes. Comments in `is:inline` scripts ship as written, so they go in template comments above the script.
 
 ### Don't:
 - **Don't** add borders, divider rules, shadows or gradients to the home page; change the surface instead.

@@ -27,12 +27,19 @@ export const home = {
 		lede: 'Needs niri 26.04 on x86_64 or aarch64 Linux.',
 		steps: [
 			{
-				text: 'Download the install script, read it, run it.',
+				text: 'Download the install script, read it, run it. It also installs the skill.',
 				lang: 'sh',
 				code: 'curl -fsSLO https://github.com/ayagmar/niri-computer-use/releases/latest/download/install.sh\nless install.sh\nsh install.sh',
+				more: { text: 'What the script does', link: 'start/install-script/' },
+				or: {
+					text: 'Or build the crate with cargo; then add the skill.',
+					lang: 'sh',
+					code: 'cargo install --locked niri-computer-use',
+					more: { text: 'The skill', link: 'start/install/#the-skill' },
+				},
 			},
 			{
-				text: 'Add it to Claude Code.',
+				text: 'Add it to Claude Code, with the binary\u2019s path (~/.cargo/bin after cargo).',
 				lang: 'sh',
 				code: 'claude mcp add --scope user niri-computer-use -- ~/.local/bin/niri-computer-use serve',
 				more: { text: 'Codex, Pi and other clients', link: 'start/clients/' },

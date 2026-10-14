@@ -7,7 +7,7 @@ sidebar:
 
 niri-computer-use is a stdio MCP server: the client starts `niri-computer-use serve` and talks to it over stdin and stdout. No client needs more than the command. The server finds your niri session itself when its environment lacks `XDG_RUNTIME_DIR`, `NIRI_SOCKET` or `WAYLAND_DISPLAY`, as it does under Codex; see [Session variables](#session-variables).
 
-The commands below use `~/.local/bin/niri-computer-use`, where the [install script and the release tarball](../install/) put it. After `cargo install`, the binary is `~/.cargo/bin/niri-computer-use`.
+The commands below use `~/.local/bin/niri-computer-use`, where the [install script](../install/) puts it. After `cargo install`, the binary is `~/.cargo/bin/niri-computer-use`.
 
 ## Claude Code
 
@@ -82,20 +82,4 @@ Without the variables, a server started over SSH, from a TTY or as a systemd ser
 
 ## The skill
 
-The skill tells an agent how to use the tools: start with `status`, prefer structured data to screenshots, read `accepted` and `observed`, and when to stop and hand back. The install script and the [steps by hand](../install/#by-hand) link it from `~/.claude/skills` and `~/.agents/skills`. With a clone, link the clone's copy instead, from inside the clone:
-
-```sh
-mkdir -p ~/.claude/skills ~/.agents/skills
-ln -s "$PWD/skills/niri-computer-use" ~/.claude/skills/niri-computer-use
-ln -s "$PWD/skills/niri-computer-use" ~/.agents/skills/niri-computer-use
-```
-
-Without a tarball or a clone, as after `cargo install`, the [skills CLI](https://skills.sh) installs it from the repository: it copies the skill into `~/.agents/skills` and links it from `~/.claude/skills`. Run it again to update.
-
-```sh
-npx skills add ayagmar/niri-computer-use --skill niri-computer-use --agent claude-code --agent pi --agent codex -g
-```
-
-Claude Code reads `~/.claude/skills`; Pi and Codex read `~/.agents/skills`. The same files are on this site under [For agents](../../reference/agents/).
-
-Next: [bind the stop key and run a first session](../first-session/).
+The skill tells an agent how to use the tools: start with `status`, prefer structured data to screenshots, read `accepted` and `observed`, and when to stop and hand back. Claude Code reads `~/.claude/skills`; Pi and Codex read `~/.agents/skills`. The install script puts it there; after `cargo install`, [install the skill](../install/#the-skill) with the skills CLI or from the clone. The same files are on this site under [For agents](../../reference/agents/).

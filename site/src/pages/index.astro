@@ -212,6 +212,14 @@ const slotStill = (await loadDemo('errand', [480])).poster.src;
 									)}
 								</p>
 								<Code code={step.code} lang={step.lang} />
+								{step.or && (
+									<>
+										<p>
+											{step.or.text} <a href={link(step.or.more.link)}>{step.or.more.text}</a>
+										</p>
+										<Code code={step.or.code} lang={step.or.lang} />
+									</>
+								)}
 							</li>
 						))
 					}
