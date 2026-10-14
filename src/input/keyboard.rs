@@ -106,7 +106,7 @@ fn check_text(text: &str) -> Result<(), CallError> {
     if length > MAX_TEXT {
         return Err(ToolError::new(
             ErrorName::TextTooLong,
-            format!("{length} characters; at most {MAX_TEXT} per call, so split the text, ending no part right after a `>`, or pass `via: \"paste\"`; nothing was typed"),
+            format!("{length} characters; at most {MAX_TEXT} per call, so split the text, ending no part with a `>`, even one followed by spaces, or pass `via: \"paste\"`; nothing was typed"),
         )
         .into());
     }
@@ -360,7 +360,9 @@ mod tests {
             error.detail
         );
         assert!(
-            error.detail.contains("ending no part right after a `>`"),
+            error
+                .detail
+                .contains("ending no part with a `>`, even one followed by spaces,"),
             "{}",
             error.detail
         );
