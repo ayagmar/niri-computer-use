@@ -4,43 +4,28 @@
   "title": "Design System: niri-computer-use",
   "extensions": {
     "colorMeta": {
-      "concrete-ground": {
+      "paper": {
         "role": "neutral",
-        "displayName": "Concrete Ground",
-        "purpose": "Page background, light theme.",
+        "displayName": "Paper",
+        "purpose": "The page, diagram blocks, pinned lane names, the diagram cover; light theme.",
         "tonalRamp": [
-          "#0a0c09",
-          "#242622",
-          "#41433f",
-          "#60625e",
-          "#81837f",
-          "#a4a6a1",
-          "#c8cac5",
-          "#edefea"
-        ]
-      },
-      "concrete-raised": {
-        "role": "neutral",
-        "displayName": "Raised Concrete",
-        "purpose": "The clips band and docs low accent, light theme.",
-        "tonalRamp": [
-          "#0a0c08",
-          "#242621",
-          "#41433e",
-          "#60625d",
-          "#81837e",
-          "#a3a6a0",
-          "#c7cac4",
-          "#edf0ea"
+          "#0b0b0a",
+          "#252523",
+          "#414240",
+          "#61625f",
+          "#828380",
+          "#a4a5a3",
+          "#c8c9c7",
+          "#eeefec"
         ]
       },
       "ink": {
         "role": "neutral",
         "displayName": "Ink",
-        "purpose": "Text, links, Install pill, focus outline, light theme.",
+        "purpose": "Text, section and table rules, traces, outlines, buttons, checked tab, passed check; light theme.",
         "tonalRamp": [
           "#0a0c0b",
-          "#232624",
+          "#232625",
           "#404341",
           "#5f6261",
           "#808382",
@@ -49,10 +34,10 @@
           "#ecefee"
         ]
       },
-      "ink-quiet": {
+      "ink-2": {
         "role": "neutral",
-        "displayName": "Quiet Ink",
-        "purpose": "Hover on the Install pill, notes, scrollbar, light theme.",
+        "displayName": "Second Ink",
+        "purpose": "Captions, ledes, lane and column labels, answers in call lists, times; light theme.",
         "tonalRamp": [
           "#080c09",
           "#212723",
@@ -64,40 +49,115 @@
           "#e9f1ec"
         ]
       },
-      "concrete-ground-dark": {
+      "rule": {
         "role": "neutral",
-        "displayName": "Dark Concrete Ground",
-        "purpose": "Page background, dark theme.",
+        "displayName": "Rule",
+        "purpose": "Row separators, version tag border, dashed path through the checks; light theme.",
         "tonalRamp": [
-          "#090c0a",
-          "#232624",
-          "#3f4341",
-          "#5f6260",
-          "#7f8381",
-          "#a2a6a3",
-          "#c6cac7",
-          "#ebf0ed"
+          "#0a0c08",
+          "#232621",
+          "#40433d",
+          "#5f635c",
+          "#80847d",
+          "#a3a6a0",
+          "#c7cbc4",
+          "#ecf0e9"
         ]
       },
-      "concrete-raised-dark": {
+      "grid": {
         "role": "neutral",
-        "displayName": "Dark Raised Concrete",
-        "purpose": "The clips band and docs low accent, dark theme.",
+        "displayName": "Grid",
+        "purpose": "One-second lines in the timing diagram, tab hover; light theme.",
         "tonalRamp": [
-          "#090c0a",
-          "#222623",
-          "#3f4340",
-          "#5e635f",
-          "#7f8480",
-          "#a1a7a3",
-          "#c5cbc7",
-          "#ebf0ec"
+          "#0a0c08",
+          "#242621",
+          "#41433e",
+          "#60625d",
+          "#81837e",
+          "#a3a6a0",
+          "#c7cac4",
+          "#edf0ea"
         ]
       },
-      "ink-dark": {
+      "red": {
+        "role": "primary",
+        "displayName": "Stop Red",
+        "purpose": "Keycap face, headline stop line, refused check, red traces and refused answers; light theme.",
+        "tonalRamp": [
+          "#1f0000",
+          "#4d0100",
+          "#7e0d05",
+          "#b70b01",
+          "#e04131",
+          "#fd7562",
+          "#fdb4a8",
+          "#fee9e5"
+        ]
+      },
+      "red-lip": {
+        "role": "primary",
+        "displayName": "Key Lip",
+        "purpose": "The keycap lower edge only; light theme.",
+        "tonalRamp": [
+          "#1f0000",
+          "#4c0301",
+          "#7f0a03",
+          "#a53629",
+          "#cc5a4a",
+          "#f47d6c",
+          "#feb4a7",
+          "#ffe9e5"
+        ]
+      },
+      "mark": {
+        "role": "secondary",
+        "displayName": "Highlighter",
+        "purpose": "Held-lease band, readouts, highlighted answer lines and rows, current call; light theme.",
+        "tonalRamp": [
+          "#0e0b00",
+          "#2b2501",
+          "#4c4203",
+          "#6e6214",
+          "#90833b",
+          "#b3a65f",
+          "#d8cb82",
+          "#fdf0a6"
+        ]
+      },
+      "mark-strong": {
+        "role": "secondary",
+        "displayName": "Strong Highlighter",
+        "purpose": "Headline stroke when a stop lands, the packet, text selection; both themes.",
+        "tonalRamp": [
+          "#0f0b00",
+          "#2d2401",
+          "#4f4104",
+          "#73600a",
+          "#998113",
+          "#c2a306",
+          "#edc600",
+          "#feefb5"
+        ]
+      },
+      "plate": {
         "role": "neutral",
-        "displayName": "Light Ink",
-        "purpose": "Text and the Install pill, dark theme.",
+        "displayName": "Plate",
+        "purpose": "Install command blocks; same value as ink in the light theme.",
+        "tonalRamp": [
+          "#0a0c0b",
+          "#232625",
+          "#404341",
+          "#5f6261",
+          "#808382",
+          "#a3a6a4",
+          "#c7cac8",
+          "#ecefee"
+        ]
+      },
+      "plate-ink": {
+        "role": "neutral",
+        "displayName": "Plate Ink",
+        "purpose": "Text on the plate; both themes.",
         "tonalRamp": [
           "#0a0c09",
           "#242622",
@@ -109,10 +169,55 @@
           "#edefea"
         ]
       },
-      "ink-quiet-dark": {
+      "plate-rule": {
         "role": "neutral",
-        "displayName": "Quiet Light Ink",
-        "purpose": "Quiet text, dark theme.",
+        "displayName": "Plate Rule",
+        "purpose": "Copy button outline and hover fill; light theme.",
+        "tonalRamp": [
+          "#080c0a",
+          "#222624",
+          "#3e4340",
+          "#5d635f",
+          "#7e8480",
+          "#a1a7a3",
+          "#c5cbc7",
+          "#eaf0ec"
+        ]
+      },
+      "paper-dark": {
+        "role": "neutral",
+        "displayName": "Paper (dark)",
+        "purpose": "The page, diagram blocks, pinned lane names, the diagram cover; dark theme.",
+        "tonalRamp": [
+          "#0a0c0b",
+          "#232624",
+          "#404341",
+          "#5f6261",
+          "#808382",
+          "#a3a6a4",
+          "#c7cac8",
+          "#ecefee"
+        ]
+      },
+      "ink-dark": {
+        "role": "neutral",
+        "displayName": "Ink (dark)",
+        "purpose": "Text, section and table rules, traces, outlines, buttons, checked tab, passed check; dark theme.",
+        "tonalRamp": [
+          "#0a0c09",
+          "#242622",
+          "#41433f",
+          "#60625e",
+          "#81837f",
+          "#a4a6a1",
+          "#c8cac5",
+          "#edefea"
+        ]
+      },
+      "ink-2-dark": {
+        "role": "neutral",
+        "displayName": "Second Ink (dark)",
+        "purpose": "Captions, ledes, lane and column labels, answers in call lists, times; dark theme.",
         "tonalRamp": [
           "#080d09",
           "#212723",
@@ -124,70 +229,85 @@
           "#e9f1eb"
         ]
       },
-      "plate": {
+      "rule-dark": {
         "role": "neutral",
-        "displayName": "Plate",
-        "purpose": "Recordings, caption bars, command blocks, footer, docs stills.",
+        "displayName": "Rule (dark)",
+        "purpose": "Row separators, version tag border, dashed path through the checks; dark theme.",
         "tonalRamp": [
-          "#0a0b0a",
-          "#242524",
-          "#414241",
-          "#606260",
-          "#818381",
-          "#a4a5a4",
-          "#c8c9c8",
-          "#edefed"
+          "#080c09",
+          "#222623",
+          "#3e443f",
+          "#5d635e",
+          "#7e847f",
+          "#a1a7a2",
+          "#c5cbc6",
+          "#eaf0eb"
+        ]
+      },
+      "grid-dark": {
+        "role": "neutral",
+        "displayName": "Grid (dark)",
+        "purpose": "One-second lines in the timing diagram, tab hover; dark theme.",
+        "tonalRamp": [
+          "#090c0a",
+          "#222624",
+          "#3f4341",
+          "#5e6260",
+          "#7f8481",
+          "#a1a6a4",
+          "#c5cbc8",
+          "#eaf0ed"
+        ]
+      },
+      "red-dark": {
+        "role": "primary",
+        "displayName": "Stop Red (dark)",
+        "purpose": "Keycap face, headline stop line, refused check, red traces and refused answers; dark theme.",
+        "tonalRamp": [
+          "#1f0000",
+          "#4c0201",
+          "#800503",
+          "#b60f09",
+          "#df4335",
+          "#fc7665",
+          "#ffb3a7",
+          "#fee9e5"
+        ]
+      },
+      "red-lip-dark": {
+        "role": "primary",
+        "displayName": "Key Lip (dark)",
+        "purpose": "The keycap lower edge only; dark theme.",
+        "tonalRamp": [
+          "#1f0000",
+          "#4b0402",
+          "#7e0c05",
+          "#aa2e22",
+          "#d25444",
+          "#fa7866",
+          "#fdb4a8",
+          "#ffe9e5"
+        ]
+      },
+      "mark-dark": {
+        "role": "secondary",
+        "displayName": "Highlighter (dark)",
+        "purpose": "Held-lease band, readouts, highlighted answer lines and rows, current call; dark theme.",
+        "tonalRamp": [
+          "#0e0b00",
+          "#2b2601",
+          "#48431f",
+          "#67623d",
+          "#89845e",
+          "#aca77f",
+          "#d0cba2",
+          "#f6f0c7"
         ]
       },
       "plate-dark": {
         "role": "neutral",
-        "displayName": "Dark Plate",
-        "purpose": "The plate in the dark theme, darker than the dark ground.",
-        "tonalRamp": [
-          "#0a0c0a",
-          "#242524",
-          "#414241",
-          "#606260",
-          "#818381",
-          "#a4a5a4",
-          "#c8cac8",
-          "#edefed"
-        ]
-      },
-      "plate-ink": {
-        "role": "neutral",
-        "displayName": "Plate Ink",
-        "purpose": "Text on the plate.",
-        "tonalRamp": [
-          "#0a0c09",
-          "#242622",
-          "#41433f",
-          "#60625e",
-          "#81837f",
-          "#a4a6a1",
-          "#c8cac5",
-          "#edefea"
-        ]
-      },
-      "plate-ink-quiet": {
-        "role": "neutral",
-        "displayName": "Quiet Plate Ink",
-        "purpose": "Prompts, answers, times and notes on the plate.",
-        "tonalRamp": [
-          "#070d09",
-          "#202723",
-          "#3d4440",
-          "#5c635f",
-          "#7d8580",
-          "#9fa7a2",
-          "#c3ccc6",
-          "#e8f1ec"
-        ]
-      },
-      "plate-control": {
-        "role": "neutral",
-        "displayName": "Plate Control",
-        "purpose": "Play/Pause and Copy pills, free lease tag. Literal in Stage.astro and Code.astro.",
+        "displayName": "Plate (dark)",
+        "purpose": "Install command blocks; same value as ink in the dark theme.",
         "tonalRamp": [
           "#090c0a",
           "#232624",
@@ -199,100 +319,25 @@
           "#ebf0ed"
         ]
       },
-      "plate-control-hover": {
+      "plate-rule-dark": {
         "role": "neutral",
-        "displayName": "Plate Control Hover",
-        "purpose": "Hover on plate pills. Literal in Stage.astro and Code.astro.",
+        "displayName": "Plate Rule (dark)",
+        "purpose": "Copy button outline and hover fill; dark theme.",
         "tonalRamp": [
-          "#090c0a",
-          "#222623",
-          "#3f4340",
-          "#5e635f",
-          "#7f8480",
-          "#a1a6a3",
-          "#c5cbc7",
-          "#ebf0ec"
+          "#080d09",
+          "#212723",
+          "#3e4440",
+          "#5d635f",
+          "#7e8480",
+          "#a0a7a2",
+          "#c4cbc6",
+          "#e9f1ec"
         ]
       },
-      "stop-red": {
+      "on-red": {
         "role": "primary",
-        "displayName": "Stop Red",
-        "purpose": "Face of the Esc keycap; background of the stopped lease tag.",
-        "tonalRamp": [
-          "#1e0100",
-          "#4b0602",
-          "#7d0f06",
-          "#b61001",
-          "#e33c2a",
-          "#fc7663",
-          "#ffb3a6",
-          "#fee9e5"
-        ]
-      },
-      "stop-red-lip": {
-        "role": "primary",
-        "displayName": "Key Lip",
-        "purpose": "Bottom edge of the keycap only.",
-        "tonalRamp": [
-          "#1e0100",
-          "#4c0300",
-          "#7f0901",
-          "#a53628",
-          "#cc5949",
-          "#f47d6b",
-          "#feb4a6",
-          "#ffe9e5"
-        ]
-      },
-      "stop-text": {
-        "role": "primary",
-        "displayName": "Stop Text on Ground",
-        "purpose": "Red text or stroke on the light ground: caret, docs cautions, stopped paths in docs diagrams.",
-        "tonalRamp": [
-          "#1e0100",
-          "#4c0301",
-          "#7f0a02",
-          "#b51507",
-          "#de4534",
-          "#ff7460",
-          "#feb4a7",
-          "#ffe9e5"
-        ]
-      },
-      "stop-text-dark": {
-        "role": "primary",
-        "displayName": "Stop Text on Dark Ground",
-        "purpose": "stop-text in the dark theme.",
-        "tonalRamp": [
-          "#1e0000",
-          "#4c0201",
-          "#7f0602",
-          "#b31c11",
-          "#db4938",
-          "#fc7664",
-          "#ffb3a7",
-          "#fee9e5"
-        ]
-      },
-      "stop-text-plate": {
-        "role": "primary",
-        "displayName": "Stop Text on Plate",
-        "purpose": "Stopped or refused answers in subtitles and call lists.",
-        "tonalRamp": [
-          "#1e0000",
-          "#4c0300",
-          "#7f0800",
-          "#b61303",
-          "#e23e2b",
-          "#fc7763",
-          "#feb4a6",
-          "#ffe9e5"
-        ]
-      },
-      "key-legend": {
-        "role": "primary",
-        "displayName": "Key Legend White",
-        "purpose": "Text on stop red: the Esc legend and the stopped lease tag.",
+        "displayName": "On Red",
+        "purpose": "Text on red: the Esc legend and a refused check. The --on-red property: white in light, #0f1110 in dark; red text on the highlighter uses --red-on-mark, #ff7a6b in dark.",
         "tonalRamp": [
           "#0b0b0b",
           "#252525",
@@ -303,80 +348,254 @@
           "#c9c9c9",
           "#eeeeee"
         ]
+      },
+      "docs-ground": {
+        "role": "neutral",
+        "displayName": "Docs Concrete Ground",
+        "purpose": "Docs page background (tokens.css --ncu-ground); light theme.",
+        "tonalRamp": [
+          "#0a0c09",
+          "#242622",
+          "#41433f",
+          "#60625e",
+          "#81837f",
+          "#a4a6a1",
+          "#c8cac5",
+          "#edefea"
+        ]
+      },
+      "docs-ink": {
+        "role": "neutral",
+        "displayName": "Docs Ink",
+        "purpose": "tokens.css --ncu-ink: selection, focus, accent on docs; light theme.",
+        "tonalRamp": [
+          "#0a0c0b",
+          "#232624",
+          "#404341",
+          "#5f6261",
+          "#808382",
+          "#a3a6a4",
+          "#c7cac8",
+          "#ecefee"
+        ]
+      },
+      "docs-ink-2": {
+        "role": "neutral",
+        "displayName": "Docs Second Ink",
+        "purpose": "tokens.css --ncu-ink-2: scrollbar thumb; light theme.",
+        "tonalRamp": [
+          "#080c09",
+          "#212723",
+          "#3e4440",
+          "#5d635f",
+          "#7e8480",
+          "#a0a7a2",
+          "#c4cbc6",
+          "#e9f1ec"
+        ]
+      },
+      "docs-plate": {
+        "role": "neutral",
+        "displayName": "Docs Plate",
+        "purpose": "Expressive Code background and docs stills; light theme.",
+        "tonalRamp": [
+          "#0a0b0a",
+          "#242524",
+          "#414241",
+          "#606260",
+          "#818381",
+          "#a4a5a4",
+          "#c8c9c8",
+          "#edefed"
+        ]
+      },
+      "docs-stop": {
+        "role": "primary",
+        "displayName": "Docs Stop Red",
+        "purpose": "Starlight red, caret, stopped paths in docs diagrams; light theme.",
+        "tonalRamp": [
+          "#1f0000",
+          "#4c0301",
+          "#7f0a02",
+          "#b51507",
+          "#de4534",
+          "#ff7460",
+          "#feb4a7",
+          "#ffe9e5"
+        ]
+      },
+      "docs-ground-dark": {
+        "role": "neutral",
+        "displayName": "Docs Concrete Ground (dark)",
+        "purpose": "Docs page background (tokens.css --ncu-ground); dark theme.",
+        "tonalRamp": [
+          "#090c0a",
+          "#232624",
+          "#3f4341",
+          "#5f6260",
+          "#7f8381",
+          "#a2a6a3",
+          "#c6cac7",
+          "#ebf0ed"
+        ]
+      },
+      "docs-ink-dark": {
+        "role": "neutral",
+        "displayName": "Docs Ink (dark)",
+        "purpose": "tokens.css --ncu-ink: selection, focus, accent on docs; dark theme.",
+        "tonalRamp": [
+          "#0a0c09",
+          "#242622",
+          "#41433f",
+          "#60625e",
+          "#81837f",
+          "#a4a6a1",
+          "#c8cac5",
+          "#edefea"
+        ]
+      },
+      "docs-ink-2-dark": {
+        "role": "neutral",
+        "displayName": "Docs Second Ink (dark)",
+        "purpose": "tokens.css --ncu-ink-2: scrollbar thumb; dark theme.",
+        "tonalRamp": [
+          "#080d09",
+          "#212723",
+          "#3e443f",
+          "#5d635f",
+          "#7e847f",
+          "#a0a7a2",
+          "#c4cbc6",
+          "#e9f1eb"
+        ]
+      },
+      "docs-plate-dark": {
+        "role": "neutral",
+        "displayName": "Docs Plate (dark)",
+        "purpose": "Expressive Code background and docs stills; dark theme.",
+        "tonalRamp": [
+          "#0a0c0a",
+          "#242524",
+          "#414241",
+          "#606260",
+          "#818381",
+          "#a4a5a4",
+          "#c8cac8",
+          "#edefed"
+        ]
+      },
+      "docs-stop-dark": {
+        "role": "primary",
+        "displayName": "Docs Stop Red (dark)",
+        "purpose": "Starlight red, caret, stopped paths in docs diagrams; dark theme.",
+        "tonalRamp": [
+          "#1e0000",
+          "#4c0201",
+          "#7f0602",
+          "#b31c11",
+          "#db4938",
+          "#fc7664",
+          "#ffb3a7",
+          "#fee9e5"
+        ]
       }
     },
     "typographyMeta": {
-      "poster": {
-        "displayName": "Poster",
-        "purpose": "Home section headlines; each line a block."
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "The hero two lines; the second, the stop line, in red."
       },
-      "footer-wordmark": {
-        "displayName": "Footer Wordmark",
-        "purpose": "The name across the footer, sized to its container."
-      },
-      "heading": {
-        "displayName": "Heading",
-        "purpose": "Section heads that are not posters."
-      },
-      "docs-title": {
-        "displayName": "Docs Title",
-        "purpose": "Docs page titles."
-      },
-      "docs-section": {
-        "displayName": "Docs Section",
-        "purpose": "Docs h2 and h3."
+      "section": {
+        "displayName": "Section",
+        "purpose": "The head of each ruled section."
       },
       "wordmark": {
         "displayName": "Wordmark",
-        "purpose": "Site name in every header."
+        "purpose": "The name in the header and footer."
       },
       "lede": {
         "displayName": "Lede",
-        "purpose": "The sentence under a poster, at most 30ch."
-      },
-      "sub-head": {
-        "displayName": "Sub-head",
-        "purpose": "Clip titles, install step labels, stop facts."
+        "purpose": "The sentence under the headline, at most 58ch."
       },
       "body": {
         "displayName": "Body",
-        "purpose": "Running text; 1rem is 17px."
+        "purpose": "Running text, list items, table cells, the prompt."
       },
       "small": {
         "displayName": "Small",
-        "purpose": "Notes, call lists, lease tag, plate buttons."
+        "purpose": "Captions, notes, header, tabs, footer, stop hint."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Uppercase lane names, column heads, list heads, \"Asked\"."
       },
       "key-legend": {
         "displayName": "Key Legend",
-        "purpose": "\"Esc\" on the keycap only."
+        "purpose": "\"Esc\" on the keycap."
       },
-      "call": {
-        "displayName": "Call",
-        "purpose": "Subtitles under a recording."
+      "docs-title": {
+        "displayName": "Docs Title",
+        "purpose": "Starlight page titles."
+      },
+      "docs-section": {
+        "displayName": "Docs Section",
+        "purpose": "Starlight h2 and h3."
+      },
+      "answer": {
+        "displayName": "Answer",
+        "purpose": "The answer JSON in Result."
+      },
+      "readout": {
+        "displayName": "Readout",
+        "purpose": "Readouts under the timing diagram and the block diagram."
       },
       "command": {
         "displayName": "Command",
-        "purpose": "Copyable commands and the full call list."
+        "purpose": "Install command blocks."
+      },
+      "call-list": {
+        "displayName": "Call List",
+        "purpose": "All calls as text; error codes in Table 1."
+      },
+      "trace-label": {
+        "displayName": "Trace Label",
+        "purpose": "Labels on the timing diagram traces."
+      },
+      "figure": {
+        "displayName": "Figure",
+        "purpose": "The version tag."
       }
     },
     "themes": {
       "light": {
-        "ground": "concrete-ground",
-        "raised": "concrete-raised",
+        "paper": "paper",
         "ink": "ink",
-        "ink-2": "ink-quiet",
+        "ink-2": "ink-2",
+        "rule": "rule",
+        "grid": "grid",
+        "red": "red",
+        "red-lip": "red-lip",
+        "mark": "mark",
+        "mark-strong": "mark-strong",
         "plate": "plate",
-        "stop": "stop-text"
+        "plate-ink": "plate-ink",
+        "plate-rule": "plate-rule"
       },
       "dark": {
-        "ground": "concrete-ground-dark",
-        "raised": "concrete-raised-dark",
+        "paper": "paper-dark",
         "ink": "ink-dark",
-        "ink-2": "ink-quiet-dark",
+        "ink-2": "ink-2-dark",
+        "rule": "rule-dark",
+        "grid": "grid-dark",
+        "red": "red-dark",
+        "red-lip": "red-lip-dark",
+        "mark": "mark-dark",
+        "mark-strong": "mark-strong",
         "plate": "plate-dark",
-        "stop": "stop-text-dark"
+        "plate-ink": "plate-ink",
+        "plate-rule": "plate-rule-dark"
       },
-      "source": "src/styles/tokens.css (:root and :root[data-theme=dark]); stored under localStorage starlight-theme"
+      "source": "src/pages/index.astro global style (:root and :root[data-theme=dark]); docs pages use src/styles/tokens.css (docs-* tokens); both store the theme under localStorage starlight-theme"
     },
     "docsGreys": {
       "source": "src/styles/theme.css",
@@ -413,101 +632,139 @@
         "script": "scripts/subset-font.mjs",
         "widthAxis": "62–100%",
         "widthsUsed": [
-          "62%",
-          "70%",
-          "72%",
           "84%",
           "88%",
           "100%"
         ],
-        "characters": "printable ASCII, U+A0, U+A9, U+B7, U+D7, U+2013-2014, U+2018-2019, U+201C-201D, U+2026",
+        "docsWidthsUsed": [
+          "72%",
+          "84%",
+          "88%"
+        ],
         "preloaded": true
       },
-      "rootSize": "17px (html font-size 1.0625rem)"
+      "rootSize": "16px (html font: 400 1rem/1.5)"
     },
-    "shadows": [],
+    "shadows": [
+      {
+        "name": "keycap",
+        "value": "0 4px 0 var(--red-lip), 0 6px 12px -4px rgb(0 0 0 / 0.35)",
+        "purpose": "The Esc keycap at rest: its lip and a soft drop."
+      },
+      {
+        "name": "keycap-down",
+        "value": "0 1px 0 var(--red-lip), 0 2px 4px -2px rgb(0 0 0 / 0.35)",
+        "purpose": "The keycap pressed or after a stop."
+      },
+      {
+        "name": "play-over-still",
+        "value": "0 4px 14px -6px rgb(0 0 0 / 0.5)",
+        "purpose": "The Play button laid over the recording still."
+      }
+    ],
     "focus": {
-      "default": "outline: 2px solid var(--ncu-ink); outline-offset: 3px",
-      "onPlate": "outline-color: var(--ncu-plate-ink)",
-      "stopKey": "outline-offset: 0.06em"
+      "default": "outline: 2px solid var(--ink); outline-offset: 3px",
+      "onPlate": "outline-color: var(--plate-ink)",
+      "chart": "outline-offset: 4px",
+      "tab": "outline-offset: 2px on the label"
     },
     "motion": [
       {
-        "name": "ncu-ease",
+        "name": "ease",
         "value": "cubic-bezier(0.22, 1, 0.36, 1)",
-        "purpose": "All UI transitions: presses, the theme icon, the video fade, subtitles."
+        "purpose": "All UI transitions and the diagram animations."
       },
       {
-        "name": "frame-drop",
-        "value": "grow 1100ms cubic-bezier(0.65, 0, 0.15, 1) 400ms both",
-        "purpose": "The headline frame drops into the first recording when that recording is in the first view."
+        "name": "rule-draw",
+        "value": "scaleX 0 to 1 from the left, linear both; animation-timeline: view(); animation-range: entry 10% entry 70%",
+        "purpose": "Each section rule draws across as the section scrolls in."
       },
       {
-        "name": "frame-morph",
-        "value": "grow linear both; animation-timeline: scroll(root); animation-range: 0 var(--morph-end)",
-        "purpose": "The headline frame grows into the first recording as the page scrolls."
+        "name": "diagram-sweep",
+        "value": "cover scaleX(1 - t/duration), labels opacity 0 and translateY(5px) until seen (280ms, 380ms), pens on the traces",
+        "purpose": "The timing diagram draws in step with the recording."
       },
       {
-        "name": "rise",
-        "value": "from { opacity: 0; translate: 0 2.5rem } linear both; animation-timeline: view(); animation-range: entry 5% cover 30%",
-        "purpose": "Section parts below the hero rise into place on scroll."
-      },
-      {
-        "name": "subtitle-change",
-        "value": "translateY(0.6em), opacity 0 to none, 260ms ncu-ease",
-        "purpose": "Each new call in a recording’s subtitle."
-      },
-      {
-        "name": "video-fade",
-        "value": "opacity 400ms ncu-ease",
-        "purpose": "A recording fades in over its still once playing."
+        "name": "key-ask",
+        "value": "ask 1.6s ease infinite: ring opacity 0.7 to 0, scale 0.92 to 1.18",
+        "purpose": "The keycap invites a press while the agent works."
       },
       {
         "name": "key-press",
-        "value": "translateY(0.06em), border-bottom-width 0.08em to 0.02em, 120ms ncu-ease",
-        "purpose": "The stop key sinking."
+        "value": "translateY(3px) and the short shadow, 90ms ease",
+        "purpose": "The keycap sinks when pressed or when a stop lands."
+      },
+      {
+        "name": "stop-flash",
+        "value": "flash 750ms ease: red overlay opacity 0.28 to 0",
+        "purpose": "The diagram flashes when a stop lands."
+      },
+      {
+        "name": "headline-stroke",
+        "value": "background-size 0% to 100% 0.28em, 700ms ease",
+        "purpose": "The highlighter stroke under the headline stop line when a stop lands."
+      },
+      {
+        "name": "packet",
+        "value": "260ms per hop, linear; refused check shakes 420ms ease-out",
+        "purpose": "An action travelling through the checks."
+      },
+      {
+        "name": "field-sequence",
+        "value": "one field every 1300ms once 60% in view, until the reader points",
+        "purpose": "Result fields highlight their lines in turn."
+      },
+      {
+        "name": "stop-fades",
+        "value": "answered opacity 0.55, void opacity 0.18, 300ms ease",
+        "purpose": "What later calls become after a stop."
       },
       {
         "name": "button-press",
-        "value": "scale(0.97) Install, scale(0.96) plate pills, 140ms ncu-ease",
+        "value": "scale(0.97) Install, scale(0.96) Copy and Play, 140ms ease",
         "purpose": "Press feedback."
       },
       {
         "name": "theme-icon",
-        "value": "rotate 180deg, 300ms ncu-ease",
+        "value": "rotate 180deg, 400ms ease",
         "purpose": "The theme icon in the dark theme."
       },
       {
         "name": "page-crossfade",
-        "value": "@view-transition { navigation: auto }; header and wordmark named ncu-header and ncu-name",
-        "purpose": "Pages crossfade while the header and wordmark hold still."
+        "value": "@view-transition { navigation: auto } (tokens.css)",
+        "purpose": "Pages crossfade."
       },
       {
         "name": "reduced-motion",
         "value": "prefers-reduced-motion: reduce",
-        "purpose": "No morph, drop, rise, subtitle animation, smooth scroll or crossfade; recordings stay on their still until Play."
+        "purpose": "No rule draw, sweep, packet, shake, flash, ring, field sequence, smooth scroll or crossfade; recordings wait for Play; diagrams appear complete."
       }
     ],
     "breakpoints": [
       {
-        "name": "phone-crop",
-        "value": "max-width: 47.99rem",
-        "purpose": "8:9 recording crop and headline frame."
+        "name": "gates-upright",
+        "value": "max-width: 60rem",
+        "purpose": "The block diagram stands upright; Table 1 stacks."
       },
       {
-        "name": "frame-wide",
-        "value": "min-width: 48rem",
-        "purpose": "16:9 headline frame."
+        "name": "one-column",
+        "value": "max-width: 56rem",
+        "purpose": "Running head hides; section heads and limits go to one column."
       },
       {
-        "name": "hero-fill",
-        "value": "min-aspect-ratio: 5/4 and min-width: 48rem",
-        "purpose": "The hero fills the first view."
+        "name": "stage-stack",
+        "value": "max-width: 52rem",
+        "purpose": "Recording, prompt and keycap stack; Result goes to one column."
       },
       {
-        "name": "two-column",
-        "value": "min-width: 62rem",
-        "purpose": "Stop facts beside the recording; clips in two columns."
+        "name": "narrow-lanes",
+        "value": "max-width: 40rem",
+        "purpose": "Lanes 4.5rem; tabs become separate boxes."
+      },
+      {
+        "name": "phone",
+        "value": "max-width: 30rem",
+        "purpose": "The header Install button hides."
       },
       {
         "name": "coarse-pointer",
@@ -516,12 +773,7 @@
       }
     ],
     "measured": {
-      "lighthouseMobile": "Performance 100 on 3 runs",
-      "lcp": "1.73 s",
-      "cls": 0,
-      "tbt": "0 ms",
-      "homeJsGzip": "3.8 KB",
-      "homeHtmlTransfer": "14,302 B, inside the 14,600 B first round trip"
+      "status": "not measured for this build"
     }
   },
   "components": [
@@ -529,119 +781,120 @@
       "name": "Install Button",
       "kind": "button",
       "refersTo": "button-primary",
-      "description": "The ink pill on the ground; the one primary action on the home page.",
+      "description": "The ink button on paper; the one primary action.",
       "html": "<a class=\"ds-button\" href=\"#install\">Install</a>",
-      "css": ".ds-button { display: inline-flex; align-items: center; justify-content: center; min-height: 3.25rem; padding: 0 1.75rem; border-radius: 999px; background: var(--ncu-ink, #0c0e0d); color: var(--ncu-ground, #e6e8e3); font: 650 1rem/1 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; text-decoration: none; transition: transform 140ms cubic-bezier(0.22, 1, 0.36, 1), background-color 180ms ease; } .ds-button:hover { background: var(--ncu-ink-2, #464c48); } .ds-button:active { transform: scale(0.97); } .ds-button:focus-visible { outline: 2px solid var(--ncu-ink, #0c0e0d); outline-offset: 3px; }"
+      "css": ".ds-button { display: inline-flex; align-items: center; min-height: 2.75rem; padding: 0 1.4rem; border-radius: 3px; background: var(--ink, #121413); color: var(--paper, #f4f5f2); font: 650 1rem/1.5 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; text-decoration: none; transition: transform 140ms cubic-bezier(0.22, 1, 0.36, 1), background-color 160ms cubic-bezier(0.22, 1, 0.36, 1); } .ds-button:hover { background: var(--ink-2, #545a56); } .ds-button:active { transform: scale(0.97); } .ds-button:focus-visible { outline: 2px solid var(--ink, #121413); outline-offset: 3px; }"
     },
     {
-      "name": "Plate Button",
-      "kind": "button",
-      "refersTo": "button-plate",
-      "description": "Play/Pause on a recording and Copy on a command, on the plate.",
-      "html": "<div class=\"ds-plate\"><button class=\"ds-plate-btn\" type=\"button\">Play</button></div>",
-      "css": ".ds-plate { background: #0b0c0b; padding: 1rem; } .ds-plate-btn { min-width: 4.5rem; min-height: 2.75rem; padding: 0 1rem; border: 0; border-radius: 999px; background: #1d201e; color: #e6e8e3; font: 600 0.875rem/1 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; cursor: pointer; transition: background-color 160ms ease, transform 140ms cubic-bezier(0.22, 1, 0.36, 1); } .ds-plate-btn:hover { background: #2b2f2c; } .ds-plate-btn:active { transform: scale(0.96); } .ds-plate-btn:focus-visible { outline: 2px solid #e6e8e3; outline-offset: 3px; }"
-    },
-    {
-      "name": "Lease Tag",
-      "kind": "chip",
-      "refersTo": "lease-tag-free",
-      "description": "Who holds the lease, following the recording: free, held, stopped.",
-      "html": "<div class=\"ds-plate\"><span class=\"ds-lease\">lease free</span> <span class=\"ds-lease ds-held\">lease held</span> <span class=\"ds-lease ds-stopped\">lease stopped</span></div>",
-      "css": ".ds-plate { background: #0b0c0b; padding: 1rem; display: flex; gap: 0.5rem; } .ds-lease { padding: 0.15rem 0.6rem; border-radius: 999px; font: 600 0.875rem/1.45 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; white-space: nowrap; color: #9ba39e; background: #1d201e; transition: background-color 200ms ease, color 200ms ease; } .ds-held { color: #0b0c0b; background: #e6e8e3; } .ds-stopped { color: #fff; background: #d8301f; }"
+      "name": "Session Tabs",
+      "kind": "nav",
+      "refersTo": "tab-checked",
+      "description": "CSS radio tabs that pick the recorded session; work without JavaScript.",
+      "html": "<fieldset class=\"ds-tabs\"><label class=\"ds-tab\"><input type=\"radio\" name=\"ds-s\" checked><span>Stop key</span></label><label class=\"ds-tab\"><input type=\"radio\" name=\"ds-s\"><span>Focus moved</span></label><label class=\"ds-tab\"><input type=\"radio\" name=\"ds-s\"><span>Errand</span></label></fieldset>",
+      "css": ".ds-tabs { display: flex; margin: 0; padding: 0; border: 1px solid var(--ink, #121413); border-radius: 3px; font-family: 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; } .ds-tab { position: relative; } .ds-tab + .ds-tab { border-left: 1px solid var(--ink, #121413); } .ds-tab input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; } .ds-tab span { display: flex; align-items: center; min-height: 2.5rem; padding: 0 0.95rem; font-size: 0.875rem; font-weight: 600; white-space: nowrap; color: var(--ink, #121413); transition: background-color 160ms cubic-bezier(0.22, 1, 0.36, 1), color 160ms cubic-bezier(0.22, 1, 0.36, 1); } .ds-tab:hover span { background: var(--grid, #e3e6e0); } .ds-tab input:checked + span { background: var(--ink, #121413); color: var(--paper, #f4f5f2); } .ds-tab input:focus-visible + span { outline: 2px solid var(--ink, #121413); outline-offset: 2px; }"
     },
     {
       "name": "Stop Key",
       "kind": "custom",
       "refersTo": "stop-key",
-      "description": "The red Esc keycap set inline in the stop poster; sinks when the stop lands.",
-      "html": "<p class=\"ds-poster\">One key <button class=\"ds-key\" type=\"button\"><span>Esc</span></button></p>",
-      "css": ".ds-poster { margin: 0; font: 860 4rem/0.86 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; font-stretch: 70%; letter-spacing: -0.035em; color: #0c0e0d; } .ds-key { display: inline-grid; place-items: center; box-sizing: border-box; vertical-align: 0.28em; height: 0.74em; padding: 0 0.2em; line-height: 1; border: 0; border-radius: 0.09em; border-bottom: 0.08em solid #8f1f13; background: #d8301f; color: #fff; font: inherit; cursor: pointer; transition: transform 120ms cubic-bezier(0.22, 1, 0.36, 1), border-bottom-width 120ms cubic-bezier(0.22, 1, 0.36, 1); } .ds-key span { font-size: 0.32em; font-weight: 700; font-stretch: 100%; letter-spacing: 0.04em; text-transform: uppercase; } .ds-key:active { transform: translateY(0.06em); border-bottom-width: 0.02em; } .ds-key:focus-visible { outline: 2px solid #0c0e0d; outline-offset: 0.06em; }"
+      "description": "The red Esc keycap beside the recording; sinks into its lip when pressed or when a stop lands.",
+      "html": "<button class=\"ds-key\" type=\"button\"><span>Esc</span></button>",
+      "css": ".ds-key { display: grid; place-items: center; width: 3.4rem; height: 2.9rem; border: 0; border-radius: 6px; background: var(--red, #c9281a); color: #fff; font: 700 0.8125rem/1 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.04em; text-transform: uppercase; cursor: pointer; box-shadow: 0 4px 0 var(--red-lip, #8a1a10), 0 6px 12px -4px rgb(0 0 0 / 0.35); transition: transform 90ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 90ms cubic-bezier(0.22, 1, 0.36, 1); } .ds-key:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--red-lip, #8a1a10), 0 2px 4px -2px rgb(0 0 0 / 0.35); } .ds-key:focus-visible { outline: 2px solid var(--ink, #121413); outline-offset: 3px; }"
     },
     {
-      "name": "Stage Bar",
+      "name": "Readout",
       "kind": "card",
-      "refersTo": "stage-bar",
-      "description": "The caption bar under a recording: prompt, Play, the current call as a subtitle, the lease tag.",
-      "html": "<div class=\"ds-bar\"><p class=\"ds-ask\">“In Files, put the two screenshots into a new folder.”</p><button class=\"ds-plate-btn\" type=\"button\">Play</button><div class=\"ds-sub\"><code>→ status</code><code class=\"ds-ans\">← ok · 3 ms</code></div><span class=\"ds-lease\">lease free</span></div>",
-      "css": ".ds-bar { display: grid; grid-template-columns: 1fr auto; gap: 0.5rem 1rem; padding: 0.9rem clamp(1rem, 3vw, 2.5rem) 1.1rem; background: #0b0c0b; color: #e6e8e3; font-family: 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; } .ds-ask { margin: 0; align-self: center; color: #9ba39e; font-size: 1rem; line-height: 1.4; } .ds-plate-btn { min-width: 4.5rem; min-height: 2.75rem; padding: 0 1rem; border: 0; border-radius: 999px; background: #1d201e; color: #e6e8e3; font: 600 0.875rem/1 inherit; cursor: pointer; } .ds-plate-btn:hover { background: #2b2f2c; } .ds-sub { grid-row: 2; font-size: clamp(0.875rem, 0.7rem + 0.6vw, 1.25rem); line-height: 1.45; } .ds-sub code { display: block; font-family: 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace; } .ds-ans { color: #9ba39e; } .ds-lease { grid-row: 2; grid-column: 2; justify-self: end; align-self: start; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.875rem; font-weight: 600; color: #9ba39e; background: #1d201e; }"
+      "refersTo": "readout",
+      "description": "The highlighted mono readout under a diagram: the current call, or what the server answers after a stop.",
+      "html": "<output class=\"ds-readout\"><code>$ niri-computer-use stop   # you, at 4.2 s</code><code class=\"ds-red\">← click: refused: stopped</code></output>",
+      "css": ".ds-readout { display: block; min-height: 3.4rem; padding: 0.55rem 0.75rem; background: var(--mark, #fdf0a6); color: var(--ink, #121413); font: 0.8125rem/1.55 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace; overflow-wrap: anywhere; } .ds-readout code { display: block; font: inherit; } .ds-red { color: var(--red, #c9281a); }"
+    },
+    {
+      "name": "Check Blocks",
+      "kind": "custom",
+      "refersTo": "check",
+      "description": "The server checks in the block diagram: paper at rest, ink when passed, red when refusing.",
+      "html": "<ol class=\"ds-checks\"><li class=\"ds-check ds-ok\"><b>Stop flag</b></li><li class=\"ds-check ds-no\"><b>Lease</b></li><li class=\"ds-check\"><b>Lock state</b></li></ol>",
+      "css": ".ds-checks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.6rem; list-style: none; padding: 0; margin: 0; font-family: 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; } .ds-check { min-height: 4.4rem; padding: 0.55rem 0.6rem; border: 1px solid var(--ink, #121413); border-radius: 3px; background: var(--paper, #f4f5f2); color: var(--ink, #121413); font-size: 0.8125rem; line-height: 1.3; transition: background-color 200ms cubic-bezier(0.22, 1, 0.36, 1), color 200ms cubic-bezier(0.22, 1, 0.36, 1), border-color 200ms cubic-bezier(0.22, 1, 0.36, 1); } .ds-check b { font-weight: 650; } .ds-ok { background: var(--ink, #121413); color: var(--paper, #f4f5f2); } .ds-no { background: var(--red, #c9281a); border-color: var(--red, #c9281a); color: #fff; }"
+    },
+    {
+      "name": "Datasheet Table",
+      "kind": "card",
+      "refersTo": "readout",
+      "description": "Table 1: numbered caption, uppercase column heads over an ink rule, rows split by light rules, the running row highlighted.",
+      "html": "<table class=\"ds-table\"><caption><b>Table 1.</b> When an action is refused.</caption><thead><tr><th>Check</th><th>The agent gets</th></tr></thead><tbody><tr class=\"ds-on\"><th><button type=\"button\">Stop flag</button></th><td><code>stopped</code></td></tr><tr><th><button type=\"button\">Lease</button></th><td><code>lease_required</code></td></tr></tbody></table>",
+      "css": ".ds-table { width: 100%; border-collapse: collapse; font: 0.875rem/1.45 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; color: var(--ink, #121413); } .ds-table caption { text-align: left; padding-bottom: 0.6rem; color: var(--ink-2, #545a56); } .ds-table caption b { color: var(--ink, #121413); font-weight: 650; } .ds-table th, .ds-table td { text-align: left; padding: 0.55rem 1rem 0.55rem 0; border-bottom: 1px solid var(--rule, #c8ccc5); } .ds-table thead th { font-size: 0.6875rem; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-2, #545a56); border-bottom: 1px solid var(--ink, #121413); } .ds-table .ds-on th, .ds-table .ds-on td { background: var(--mark, #fdf0a6); } .ds-table button { min-height: 2.75rem; padding: 0 0.3rem; border: 0; background: none; color: inherit; font: 650 0.875rem/1.2 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 0.22em; cursor: pointer; } .ds-table button:hover { text-decoration-thickness: 2px; } .ds-table code { font: 0.75rem/1.5 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace; }"
     },
     {
       "name": "Code Block",
       "kind": "card",
       "refersTo": "code-block",
-      "description": "A command on the plate, wrapped, with a Copy pill.",
-      "html": "<div class=\"ds-code\"><pre><code>cargo install --locked --path .</code></pre><button type=\"button\">Copy</button></div>",
-      "css": ".ds-code { display: grid; grid-template-columns: 1fr auto; align-items: start; gap: 0.5rem; padding: 0.5rem 0.5rem 0.5rem clamp(1rem, 2vw, 1.25rem); border-radius: 0.75rem; background: #0b0c0b; color: #e6e8e3; } .ds-code pre { margin: 0; padding-block: 0.6rem; font: 0.875rem/1.6 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace; white-space: pre-wrap; overflow-wrap: anywhere; } .ds-code button { min-width: 4.5rem; min-height: 2.75rem; padding: 0 0.9rem; border: 0; border-radius: 999px; background: #1d201e; color: #e6e8e3; font: 600 0.875rem/1 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; cursor: pointer; transition: background-color 160ms ease, transform 140ms cubic-bezier(0.22, 1, 0.36, 1); } .ds-code button:hover { background: #2b2f2c; } .ds-code button:active { transform: scale(0.96); }"
+      "description": "An install command on the plate, wrapped, with a Copy button.",
+      "html": "<div class=\"ds-code\"><pre><code>cargo install --locked niri-computer-use</code></pre><button type=\"button\">Copy</button></div>",
+      "css": ".ds-code { display: grid; grid-template-columns: 1fr auto; align-items: start; gap: 0.5rem; padding: 0.35rem 0.35rem 0.35rem 1rem; border-radius: 3px; background: var(--plate, #121413); color: var(--plate-ink, #eceee9); } .ds-code pre { margin: 0; padding-block: 0.65rem; font: 0.8125rem/1.6 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace; white-space: pre-wrap; overflow-wrap: anywhere; } .ds-code button { min-width: 4.5rem; min-height: 2.75rem; padding: 0 0.9rem; border: 1px solid var(--plate-rule, #3a3f3c); border-radius: 3px; background: transparent; color: var(--plate-ink, #eceee9); font: 600 0.8125rem/1 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; cursor: pointer; transition: background-color 160ms ease, transform 140ms cubic-bezier(0.22, 1, 0.36, 1); } .ds-code button:hover { background: var(--plate-rule, #3a3f3c); } .ds-code button:active { transform: scale(0.96); } .ds-code button:focus-visible { outline: 2px solid var(--plate-ink, #eceee9); outline-offset: 3px; }"
     },
     {
       "name": "Header",
       "kind": "nav",
       "refersTo": "nav-link",
-      "description": "Wordmark left; Docs, GitHub and the theme toggle right.",
-      "html": "<header class=\"ds-top\"><a class=\"ds-name\" href=\"#\">niri-computer-use</a><nav><a href=\"#\">Docs</a><a href=\"#\">GitHub</a><button class=\"ds-theme\" type=\"button\" aria-label=\"Use the dark theme\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"5.5\"></circle><path d=\"M12 6.5a5.5 5.5 0 0 1 0 11z\"></path></svg></button></nav></header>",
-      "css": ".ds-top { display: flex; align-items: center; justify-content: space-between; padding: 0.5rem clamp(1rem, 3.2vw, 3rem); background: #e6e8e3; color: #0c0e0d; font-family: 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; } .ds-name { display: inline-flex; align-items: center; min-height: 2.75rem; color: inherit; font-weight: 760; font-stretch: 88%; font-size: clamp(1.0625rem, 1rem + 0.3vw, 1.25rem); letter-spacing: -0.01em; text-decoration: none; } .ds-top nav { display: flex; align-items: center; } .ds-top nav a { display: inline-flex; align-items: center; min-height: 2.75rem; padding: 0 0.45rem; color: inherit; font-weight: 550; text-decoration: none; } .ds-top nav a:hover { text-decoration: underline; text-underline-offset: 0.2em; } .ds-theme { display: grid; place-items: center; width: 2.75rem; height: 2.75rem; border: 0; border-radius: 999px; background: none; color: inherit; cursor: pointer; } .ds-theme svg { width: 1.25rem; height: 1.25rem; fill: none; stroke: currentColor; stroke-width: 1.6; transition: rotate 300ms cubic-bezier(0.22, 1, 0.36, 1); } .ds-theme svg path { fill: currentColor; stroke: none; } :focus-visible { outline: 2px solid #0c0e0d; outline-offset: 3px; }"
+      "description": "Wordmark and version tag, running head, nav with theme toggle and Install, over a 1px ink rule.",
+      "html": "<header class=\"ds-top\"><span class=\"ds-mast\"><a class=\"ds-name\" href=\"#\">niri-computer-use</a><a class=\"ds-version\" href=\"#\">0.1.0</a></span><span class=\"ds-running\">MCP server for niri 26.04 on Linux</span><nav><a href=\"#\">Docs</a><a href=\"#\">GitHub</a></nav></header>",
+      "css": ".ds-top { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 1rem; min-height: 3.5rem; border-bottom: 1px solid var(--ink, #121413); background: var(--paper, #f4f5f2); color: var(--ink, #121413); font: 0.875rem/1.5 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; } .ds-mast { display: flex; align-items: baseline; gap: 0.5rem; } .ds-name { color: inherit; font-weight: 760; font-stretch: 88%; font-size: 1.125rem; letter-spacing: -0.01em; text-decoration: none; } .ds-version { padding: 0.05rem 0.35rem; border: 1px solid var(--rule, #c8ccc5); font: 500 0.75rem/1.4 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace; color: var(--ink-2, #545a56); text-decoration: none; transition: background-color 160ms cubic-bezier(0.22, 1, 0.36, 1), color 160ms cubic-bezier(0.22, 1, 0.36, 1); } .ds-version:hover, .ds-version:focus-visible { background: var(--mark, #fdf0a6); color: var(--ink, #121413); } .ds-running { color: var(--ink-2, #545a56); white-space: nowrap; } .ds-top nav { justify-self: end; display: flex; gap: 0.25rem; } .ds-top nav a { display: inline-flex; align-items: center; min-height: 2.75rem; padding: 0 0.6rem; color: inherit; font-weight: 550; text-decoration: none; } .ds-top nav a:hover { text-decoration: underline; } .ds-top a:focus-visible { outline: 2px solid var(--ink, #121413); outline-offset: 3px; }"
     }
   ],
   "narrative": {
-    "northStar": "Poster and Plate",
-    "overview": "Two materials carry the whole site. The concrete ground holds type set like a street poster: Archivo condensed to 62–72% width at weights 820–880, lines packed to 0.8–0.9 leading, sizes tied to the viewport width. The black plate holds the evidence: real desktop recordings, the calls under them in JetBrains Mono, copyable commands, and the footer. Nothing else is decorated. There are no shadows, gradients or ornaments on the home page; a section changes by changing material (ground, raised ground, plate), not by drawing a line.\n\nThe home page (`src/pages/index.astro`) sits outside Starlight and loads only its own styles. The docs are Starlight restyled through `src/styles/theme.css`: the same tokens, the same wordmark, Archivo titles a size down from the posters, Starlight's greys remapped onto the concrete, and code blocks on the plate without a window frame. Both read `src/styles/tokens.css`, so both themes (light and dark, stored under Starlight's `starlight-theme` key) are the same on every page, and the header and wordmark hold still while pages crossfade.\n\nMotion follows the recordings rather than decorating the page: the frame in the headline grows into the first recording, subtitles and the lease tag change at each call's real time, and the stop key sinks when the recorded stop lands. Measured on the built home page: Lighthouse mobile Performance 100 on three runs, LCP 1.73 s, CLS 0, TBT 0, and 3.8 KB of JS gzipped.",
+    "northStar": "The Datasheet",
+    "overview": "**Creative North Star: \"The Datasheet\"**\n\nThe home page reads like a component datasheet: a running head across the top, ruled sections, one numbered figure (Figure 1, the recorded sessions as timing diagrams) and one numbered table (Table 1, when an action is refused), then the install steps. Paper and ink carry everything. Rules do the work that panels and cards would do elsewhere: a 2px ink rule opens each section, 1px ink rules head tables and lists, and 1px light rules separate rows.\n\nColour has two jobs and no decorative ones. The highlighter (mark, mark-strong) shows what is held or pointed at: the stretch where the agent holds the lease, the call under the cursor, the answer lines a field explains, the table row being run, the action travelling through the checks. Red is the stop key, the stop line of the headline, and every refused, cut or stopped answer.\n\nThe home page (`src/pages/index.astro`) sits outside Starlight and defines its own palette in a global style block, light and dark. The docs pages are Starlight restyled by `src/styles/theme.css` and keep the older concrete palette from `src/styles/tokens.css` (the docs-* tokens). The two palettes are separate. Both kinds of page share Archivo, JetBrains Mono, the theme stored under `starlight-theme`, and the crossfade between pages.",
     "keyCharacteristics": [
-      "One Archivo variable face from 62% to 100% width; width carries the hierarchy as much as size does.",
-      "Root text at 17px (`html` font-size 1.0625rem), so every rem on the home page is 17px.",
-      "Recordings, calls and commands always sit on the black plate, in both themes.",
-      "One red, in four steps, reserved for the stop key and stopped or refused answers.",
-      "Pill controls in ink on the ground, in a dark grey on the plate.",
-      "Light and dark themes share the plate; only the ground, raised ground, inks and on-ground red change."
+      "Paper, ink and rules; no panels, cards or section backgrounds.",
+      "A yellow highlighter for state and attention, never for decoration.",
+      "One red, for the stop key and refused answers.",
+      "Archivo for text; JetBrains Mono for calls, commands, answers and the numbers that go with them (times, version).",
+      "Numbered figure and table captions in the datasheet manner.",
+      "Motion only where it explains, all of it off under reduced motion, and every part readable without JavaScript."
     ],
     "rules": [
       {
+        "name": "The Highlighter Rule",
+        "body": "Yellow marks state or attention: held, current, running, pointed at. If nothing is held or pointed at, nothing is yellow.",
+        "section": "colors"
+      },
+      {
         "name": "The One Red Rule",
-        "body": "Red means the stop key, or an answer that was stopped or refused. Pick the step by surface: stop-red with stop-red-lip for the key face, stop-text on the ground, stop-text-plate on the plate. Never use red for emphasis, links or calls to action.",
+        "body": "Red is the stop key and the answers it causes (refused, cut, stopped, taken back). Never use red for links, emphasis or calls to action.",
         "section": "colors"
       },
       {
-        "name": "The Plate Rule",
-        "body": "Anything recorded or copyable (a recording, its calls, a command) sits on the plate in plate ink, in both themes. The ground never carries monospace call text.",
-        "section": "colors"
-      },
-      {
-        "name": "The Width Ladder Rule",
-        "body": "Archivo is set only at 62%, 70%, 72%, 84%, 88% and 100% width; narrower is heavier and larger. A new role takes one of these steps; the cut face holds nothing outside 62–100%.",
+        "name": "The Caption Rule",
+        "body": "A figure or table that carries evidence is captioned with its number in bold ink (\"Figure 1.\", \"Table 1.\") followed by the caption in second ink.",
         "section": "typography"
       },
       {
         "name": "The Mono for Machines Rule",
-        "body": "JetBrains Mono is for calls and commands only, never for labels, headings or decoration.",
+        "body": "JetBrains Mono is for calls, commands, answers and the numbers attached to them. Headings, labels and prose stay in Archivo.",
         "section": "typography"
       },
       {
-        "name": "The Phone Crop Rule",
-        "body": "Below 48rem a recording shows the half of the desktop where the agent works (left, centre or right): the still is cut to that half at 8:9 and the video is drawn at twice the width and shifted, so the text in it stays legible.",
-        "section": "layout"
-      },
-      {
-        "name": "The Material Not Line Rule",
-        "body": "On the home page a change of surface is a change of colour: no borders, outlines, dividers, shadows or gradients. The keycap's lip is the one border, and it is part of the key.",
+        "name": "The Rule Not Panel Rule",
+        "body": "Separate content with rules (2px ink to open a section, 1px ink to head a table or list, 1px rule between rows), not with background panels or shadows.",
         "section": "elevation"
       }
     ],
     "dos": [
-      "**Do** set every surface from `tokens.css`: concrete ground, raised concrete, plate.",
-      "**Do** pick the red step by surface: stop-red and stop-red-lip on the key, stop-text on the ground, stop-text-plate on the plate.",
-      "**Do** put recordings, calls and commands on the plate, with the calls as text under the recording and the note saying how it was recorded.",
-      "**Do** take headline widths from the ladder (62, 70, 72, 84, 88, 100%) and keep running text at 100%.",
-      "**Do** keep every target at least 2.75rem tall and the focus outline visible on both the ground and the plate.",
-      "**Do** give every motion a calm, complete reduced-motion state.",
-      "**Do** keep the home page within its measured budget: Lighthouse mobile Performance 100, CLS 0, 3.8 KB JS gzipped.",
-      "**Do** keep the home page's HTML inside the first round trip: Lighthouse's simulated network sends 14,600 bytes before it waits for an acknowledgement, and the page is 14,302 bytes as served. Comments in `is:inline` scripts ship as written, so they go in template comments above the script."
+      "**Do** caption evidence as numbered figures and tables, with the number in bold ink.",
+      "**Do** use the highlighter only for what is held, current, running or pointed at.",
+      "**Do** keep red for the stop key and the answers it causes, with on-red text on it.",
+      "**Do** separate sections and rows with rules: 2px ink to open, 1px ink to head, 1px rule between.",
+      "**Do** draw diagrams at build time so they read complete without JavaScript, and give every interactive part a no-JS state.",
+      "**Do** tie each motion to what it explains, and give it a complete reduced-motion state.",
+      "**Do** keep the docs pages on the `tokens.css` palette and the home page on its own; change either on purpose, not by drift."
     ],
     "donts": [
-      "**Don't** add borders, divider rules, shadows or gradients to the home page; change the surface instead.",
-      "**Don't** use red for anything but the stop key and stopped or refused answers.",
-      "**Don't** set labels, headings or decoration in JetBrains Mono.",
-      "**Don't** set Archivo narrower than 62% or use widths off the ladder; the cut face does not hold them.",
-      "**Don't** show a recording without its calls as text, or a mock-up in place of a recording.",
-      "**Don't** add an accent colour; links and the current page are ink."
+      "**Don't** add card panels, background bands or decorative shadows; the keycap and the Play button over the still are the only shadows.",
+      "**Don't** use yellow or red as decoration, emphasis or link colour.",
+      "**Don't** set headings, prose or labels in JetBrains Mono.",
+      "**Don't** put a small uppercase label above a heading; uppercase labels name lanes, columns and lists.",
+      "**Don't** show a recording without its calls as text."
     ]
   }
 }

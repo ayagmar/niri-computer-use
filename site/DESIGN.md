@@ -1,49 +1,89 @@
 ---
 name: niri-computer-use
-description: Condensed heavy posters on a cool concrete ground, real recordings on a black plate with their calls as subtitles, and one red for the stop key and a stopped answer.
+description: A datasheet on paper and ink, with a highlighter for what is held or pointed at, one red for the stop key and refused answers, and numbered figures and tables drawn from real sessions.
 colors:
-  concrete-ground: "#e6e8e3"
-  concrete-raised: "#dcdfd9"
-  ink: "#0c0e0d"
-  ink-quiet: "#464c48"
-  concrete-ground-dark: "#161917"
-  concrete-raised-dark: "#1f2320"
-  ink-dark: "#e6e8e3"
-  ink-quiet-dark: "#a5aca7"
-  plate: "#0b0c0b"
-  plate-dark: "#070807"
-  plate-ink: "#e6e8e3"
-  plate-ink-quiet: "#9ba39e"
-  plate-control: "#1d201e"
-  plate-control-hover: "#2b2f2c"
-  stop-red: "#d8301f"
-  stop-red-lip: "#8f1f13"
-  stop-text: "#c42a1b"
-  stop-text-dark: "#ff6a57"
-  stop-text-plate: "#ff5a45"
-  key-legend: "#ffffff"
+  paper: "#f4f5f2"
+  ink: "#121413"
+  ink-2: "#545a56"
+  rule: "#c8ccc5"
+  grid: "#e3e6e0"
+  red: "#c9281a"
+  red-lip: "#8a1a10"
+  mark: "#fdf0a6"
+  mark-strong: "#ffd60a"
+  plate: "#121413"
+  plate-ink: "#eceee9"
+  plate-rule: "#3a3f3c"
+  paper-dark: "#0f1110"
+  ink-dark: "#e9ebe6"
+  ink-2-dark: "#a3aaa5"
+  rule-dark: "#343935"
+  grid-dark: "#1c201e"
+  red-dark: "#ff6150"
+  red-lip-dark: "#a3271b"
+  mark-dark: "#39340f"
+  plate-dark: "#1b1e1c"
+  plate-rule-dark: "#3d433f"
+  on-red: "#ffffff"
+  on-red-dark: "#0f1110"
+  red-on-mark-dark: "#ff7a6b"
+  docs-ground: "#e6e8e3"
+  docs-ink: "#0c0e0d"
+  docs-ink-2: "#464c48"
+  docs-plate: "#0b0c0b"
+  docs-stop: "#c42a1b"
+  docs-ground-dark: "#161917"
+  docs-ink-dark: "#e6e8e3"
+  docs-ink-2-dark: "#a5aca7"
+  docs-plate-dark: "#070807"
+  docs-stop-dark: "#ff6a57"
 typography:
-  poster:
+  headline:
     fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontSize: "clamp(3.75rem, 17vw, 28rem)"
-    fontWeight: 860
-    lineHeight: 0.86
-    letterSpacing: "-0.035em"
-    fontVariation: "'wdth' 70"
-  footer-wordmark:
-    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontSize: "calc(100cqi / 5.62)"
-    fontWeight: 880
-    lineHeight: 0.8
-    letterSpacing: "-0.04em"
-    fontVariation: "'wdth' 62"
-  heading:
-    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontSize: "clamp(2.5rem, 7vw, 6rem)"
-    fontWeight: 820
-    lineHeight: 0.9
+    fontSize: "clamp(2.375rem, 1.1rem + 4vw, 4.75rem)"
+    fontWeight: 780
+    lineHeight: 0.95
     letterSpacing: "-0.03em"
-    fontVariation: "'wdth' 72"
+    fontVariation: "'wdth' 84"
+  section:
+    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
+    fontSize: "clamp(1.875rem, 1.2rem + 2vw, 2.875rem)"
+    fontWeight: 760
+    lineHeight: 1
+    letterSpacing: "-0.025em"
+    fontVariation: "'wdth' 84"
+  wordmark:
+    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
+    fontSize: "1.125rem"
+    fontWeight: 760
+    letterSpacing: "-0.01em"
+    fontVariation: "'wdth' 88"
+  lede:
+    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
+    fontSize: "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)"
+    fontWeight: 400
+    lineHeight: 1.5
+  body:
+    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
+    fontSize: "1rem"
+    fontWeight: 400
+    lineHeight: 1.5
+  small:
+    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
+    fontSize: "0.875rem"
+    fontWeight: 400
+    lineHeight: 1.45
+  label:
+    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
+    fontSize: "0.6875rem"
+    fontWeight: 650
+    letterSpacing: "0.07em"
+  key-legend:
+    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
+    fontSize: "0.8125rem"
+    fontWeight: 700
+    lineHeight: 1
+    letterSpacing: "0.04em"
   docs-title:
     fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
     fontSize: "clamp(2.5rem, 1.6rem + 3vw, 3.75rem)"
@@ -56,113 +96,111 @@ typography:
     fontWeight: 760
     letterSpacing: "-0.015em"
     fontVariation: "'wdth' 84"
-  wordmark:
-    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontSize: "clamp(1.0625rem, 1rem + 0.3vw, 1.25rem)"
-    fontWeight: 760
-    letterSpacing: "-0.01em"
-    fontVariation: "'wdth' 88"
-  lede:
-    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontSize: "clamp(1.125rem, 0.9rem + 0.6vw, 2rem)"
-    fontWeight: 400
-    lineHeight: 1.35
-  sub-head:
-    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontSize: "1.25rem"
-    fontWeight: 600
-    lineHeight: 1.25
-  body:
-    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontSize: "1rem"
-    fontWeight: 400
-    lineHeight: 1.5
-  small:
-    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontSize: "0.875rem"
-    fontWeight: 400
-    lineHeight: 1.45
-  key-legend:
-    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontSize: "0.32em"
-    fontWeight: 700
-    letterSpacing: "0.04em"
-    fontVariation: "'wdth' 100"
-  call:
+  answer:
     fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
-    fontSize: "clamp(0.875rem, 0.7rem + 0.6vw, 1.25rem)"
-    lineHeight: 1.45
+    fontSize: "0.875rem"
+    lineHeight: 1.65
+  readout:
+    fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
+    fontSize: "0.8125rem"
+    lineHeight: 1.55
   command:
     fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
-    fontSize: "0.875rem"
+    fontSize: "0.8125rem"
     lineHeight: 1.6
+  call-list:
+    fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
+    fontSize: "0.75rem"
+    lineHeight: 1.5
+  trace-label:
+    fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
+    fontSize: "12.5px"
+  figure:
+    fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
+    fontSize: "0.75rem"
+    fontWeight: 500
+    lineHeight: 1.4
 rounded:
-  pill: "999px"
-  code: "0.75rem"
-  still: "4px"
-  key: "0.09em"
+  corner: "3px"
+  chart: "2px"
+  key: "6px"
+  docs-still: "4px"
+  docs-code: "0.75rem"
 spacing:
-  margin: "clamp(1rem, 3.2vw, 3rem)"
+  margin: "clamp(1rem, 3vw, 2.5rem)"
+  sheet: "86rem"
+  section: "clamp(4rem, 10vh, 6.5rem)"
+  head-gap: "2rem"
   touch: "2.75rem"
-  plate-inset: "clamp(1rem, 3vw, 2.5rem)"
-  section: "clamp(4rem, 10vh, 8rem)"
-  section-open: "clamp(6rem, 18vh, 12rem)"
-  stack: "2rem"
-  stack-tight: "1.25rem"
+  lanes: "5.5rem"
+  docs-content: "46rem"
 components:
   button-primary:
     backgroundColor: "{colors.ink}"
-    textColor: "{colors.concrete-ground}"
-    rounded: "{rounded.pill}"
-    padding: "0 1.75rem"
-    height: "3.25rem"
-  button-primary-hover:
-    backgroundColor: "{colors.ink-quiet}"
-    textColor: "{colors.concrete-ground}"
-  button-plate:
-    backgroundColor: "{colors.plate-control}"
-    textColor: "{colors.plate-ink}"
-    typography: "{typography.small}"
-    rounded: "{rounded.pill}"
-    padding: "0 1rem"
+    textColor: "{colors.paper}"
+    rounded: "{rounded.corner}"
+    padding: "0 1.4rem"
     height: "2.75rem"
-    width: "4.5rem"
-  button-plate-hover:
-    backgroundColor: "{colors.plate-control-hover}"
-  lease-tag-free:
-    backgroundColor: "{colors.plate-control}"
-    textColor: "{colors.plate-ink-quiet}"
+  button-primary-hover:
+    backgroundColor: "{colors.ink-2}"
+    textColor: "{colors.paper}"
+  button-small:
+    backgroundColor: "{colors.ink}"
+    textColor: "{colors.paper}"
+    rounded: "{rounded.corner}"
+    padding: "0 1rem"
+    height: "2.5rem"
+  version-tag:
+    textColor: "{colors.ink-2}"
+    typography: "{typography.figure}"
+    padding: "0.05rem 0.35rem"
+  version-tag-hover:
+    backgroundColor: "{colors.mark}"
+    textColor: "{colors.ink}"
+  tab:
+    textColor: "{colors.ink}"
     typography: "{typography.small}"
-    rounded: "{rounded.pill}"
-    padding: "0.15rem 0.6rem"
-  lease-tag-held:
-    backgroundColor: "{colors.plate-ink}"
-    textColor: "{colors.plate}"
-  lease-tag-stopped:
-    backgroundColor: "{colors.stop-red}"
-    textColor: "{colors.key-legend}"
+    padding: "0 0.95rem"
+    height: "2.5rem"
+  tab-hover:
+    backgroundColor: "{colors.grid}"
+  tab-checked:
+    backgroundColor: "{colors.ink}"
+    textColor: "{colors.paper}"
   stop-key:
-    backgroundColor: "{colors.stop-red}"
-    textColor: "{colors.key-legend}"
+    backgroundColor: "{colors.red}"
+    textColor: "{colors.on-red}"
     typography: "{typography.key-legend}"
     rounded: "{rounded.key}"
-    padding: "0 0.2em"
-    height: "0.74em"
+    width: "3.4rem"
+    height: "2.9rem"
+  readout:
+    backgroundColor: "{colors.mark}"
+    textColor: "{colors.ink}"
+    typography: "{typography.readout}"
+    padding: "0.55rem 0.75rem"
+    height: "3.4rem"
+  check:
+    backgroundColor: "{colors.paper}"
+    textColor: "{colors.ink}"
+    rounded: "{rounded.corner}"
+    padding: "0.55rem 0.6rem"
+  check-ok:
+    backgroundColor: "{colors.ink}"
+    textColor: "{colors.paper}"
+  check-no:
+    backgroundColor: "{colors.red}"
+    textColor: "{colors.on-red}"
   code-block:
     backgroundColor: "{colors.plate}"
     textColor: "{colors.plate-ink}"
     typography: "{typography.command}"
-    rounded: "{rounded.code}"
-    padding: "0.5rem 0.5rem 0.5rem clamp(1rem, 2vw, 1.25rem)"
-  stage-bar:
-    backgroundColor: "{colors.plate}"
-    textColor: "{colors.plate-ink}"
-    typography: "{typography.call}"
-    padding: "0.9rem clamp(1rem, 3vw, 2.5rem) 1.1rem"
+    rounded: "{rounded.corner}"
+    padding: "0.35rem 0.35rem 0.35rem 1rem"
   nav-link:
     textColor: "{colors.ink}"
-    typography: "{typography.body}"
-    padding: "0 0.45rem"
+    typography: "{typography.small}"
+    padding: "0 0.6rem"
     height: "2.75rem"
 ---
 
@@ -170,149 +208,144 @@ components:
 
 ## Overview
 
-**Creative North Star: "Poster and Plate"**
+**Creative North Star: "The Datasheet"**
 
-Two materials carry the whole site. The concrete ground holds type set like a street poster: Archivo condensed to 62–72% width at weights 820–880, lines packed to 0.8–0.9 leading, sizes tied to the viewport width. The black plate holds the evidence: real desktop recordings, the calls under them in JetBrains Mono, copyable commands, and the footer. Nothing else is decorated. There are no shadows, gradients or ornaments on the home page; a section changes by changing material (ground, raised ground, plate), not by drawing a line.
+The home page reads like a component datasheet: a running head across the top, ruled sections, one numbered figure (Figure 1, the recorded sessions as timing diagrams) and one numbered table (Table 1, when an action is refused), then the install steps. Paper and ink carry everything. Rules do the work that panels and cards would do elsewhere: a 2px ink rule opens each section, 1px ink rules head tables and lists, and 1px light rules separate rows.
 
-The home page (`src/pages/index.astro`) sits outside Starlight and loads only its own styles. The docs are Starlight restyled through `src/styles/theme.css`: the same tokens, the same wordmark, Archivo titles a size down from the posters, and Starlight's greys remapped onto the concrete. Both read `src/styles/tokens.css`, so both themes (light and dark, stored under Starlight's `starlight-theme` key) are the same on every page, and the header and wordmark hold still while pages crossfade.
+Colour has two jobs and no decorative ones. The highlighter (mark, mark-strong) shows what is held or pointed at: the stretch where the agent holds the lease, the call under the cursor, the answer lines a field explains, the table row being run, the action travelling through the checks. Red is the stop key, the stop line of the headline, and every refused, cut or stopped answer.
 
-Motion follows the recordings rather than decorating the page: the frame in the headline grows into the first recording, subtitles and the lease tag change at each call's real time, and the stop key sinks when the recorded stop lands. Measured on the built home page: Lighthouse mobile Performance 100 on three runs, LCP 1.73 s, CLS 0, TBT 0, and 3.8 KB of JS gzipped.
+The home page (`src/pages/index.astro`) sits outside Starlight and defines its own palette in a global style block, light and dark. The docs pages are Starlight restyled by `src/styles/theme.css` and keep the older concrete palette from `src/styles/tokens.css` (the docs-* tokens). The two palettes are separate. Both kinds of page share Archivo, JetBrains Mono, the theme stored under `starlight-theme`, and the crossfade between pages.
 
 **Key Characteristics:**
-- One Archivo variable face from 62% to 100% width; width carries the hierarchy as much as size does.
-- Root text at 17px (`html` font-size 1.0625rem), so every rem on the home page is 17px.
-- Recordings, calls and commands always sit on the black plate, in both themes.
-- One red, in four steps, reserved for the stop key and stopped or refused answers.
-- Pill controls in ink on the ground, in a dark grey on the plate.
-- Light and dark themes share the plate; only the ground, raised ground, inks and on-ground red change.
+- Paper, ink and rules; no panels, cards or section backgrounds.
+- A yellow highlighter for state and attention, never for decoration.
+- One red, for the stop key and refused answers.
+- Archivo for text; JetBrains Mono for calls, commands, answers and the numbers that go with them (times, version).
+- Numbered figure and table captions in the datasheet manner.
+- Motion only where it explains, all of it off under reduced motion, and every part readable without JavaScript.
 
 ## Colors
 
-A cool, slightly green-grey concrete with near-black ink, a black plate that does not change much between themes, and one red.
+Pale neutral paper with near-black ink, two greys for rules and grid lines, a pale and a strong yellow, and one red with a darker lip.
 
 ### Primary
-- **Stop Red** (stop-red): the face of the Esc keycap in the stop headline and the background of the lease tag when the lease reads `stopped`. Text on it is white (key-legend).
-- **Key Lip** (stop-red-lip): the keycap's bottom edge, a 0.08em border that shrinks to 0.02em when the key is pressed. It exists only on the key.
-- **Stop Text on Ground** (stop-text, stop-text-dark in the dark theme): red as text or stroke on the concrete. It is the caret colour, Starlight's red (caution asides) on the docs, and the stopped path in the docs diagrams.
-- **Stop Text on Plate** (stop-text-plate): a refused or stopped answer in the subtitles and the call list, set on the plate.
+- **Stop Red** (red, red-dark): the Esc keycap face, the headline's stop line, the "set by your stop key" note, a refused check in the block diagram, red traces and labels in the timing diagram (your stop, a cut call, a refused call, the lease taken back), the cursor and pen after a stop, and refused answers in readouts and call lists.
+- **Key Lip** (red-lip, red-lip-dark): the keycap's lower edge, and nowhere else.
+- **On Red** (on-red, on-red-dark): text on a red fill, the Esc legend and a refused check; white in light, the dark paper in dark, where white on the lighter red is too faint.
+- **Red on the Highlighter** (red-on-mark-dark): refused and stopped lines in the readouts and the highlighted call; the light theme uses the stop red itself.
+
+### Secondary
+- **Highlighter** (mark, mark-dark): the held-lease band in the diagram, the readouts under the timing diagram and the block diagram, the answer lines and field rows in Result, the running table row, the current call in the call list, and the version tag on hover.
+- **Strong Highlighter** (mark-strong): the stroke drawn under the headline's stop line when a stop lands, the packet that travels through the checks, and text selection. It has one value for both themes.
 
 ### Neutral
-- **Concrete Ground** (concrete-ground, concrete-ground-dark): the page background. The meta `theme-color` uses the same two values.
-- **Raised Concrete** (concrete-raised, concrete-raised-dark): one tonal step off the ground (darker in the light theme, lighter in the dark), used for the band behind "More real sessions" and as the docs' low-accent grey.
-- **Ink** (ink, ink-dark): text, links, the Install pill, the focus outline, text selection (ink background, ground text) and form accents.
-- **Quiet Ink** (ink-quiet, ink-quiet-dark): the Install pill's hover, the note under the clips, the scrollbar thumb.
-- **Plate** (plate, plate-dark): recordings, their caption bars, command blocks, the footer, and the background behind docs stills. Darker than the dark ground, so a plate reads as a plate in the dark theme too.
-- **Plate Ink** (plate-ink) and **Quiet Plate Ink** (plate-ink-quiet): text on the plate; the quiet step carries prompts, answers, times, notes and the commands the user ran.
-- **Plate Control** (plate-control, plate-control-hover): the Play/Pause and Copy pills and the free lease tag. These two are written as literals in `Stage.astro` and `Code.astro`, not as custom properties.
+- **Paper** (paper, paper-dark): the page, the blocks of the block diagram, the pinned lane names, and the cover that hides the diagram until it is drawn. The meta `theme-color` uses the same two values.
+- **Ink** (ink, ink-dark): text, the rules that open sections and head tables, traces, block outlines, buttons, the checked tab and a passed check.
+- **Second Ink** (ink-2, ink-2-dark): captions, ledes beside section heads, lane and column labels, answers in call lists, times, and the Install button's hover.
+- **Rule** (rule, rule-dark): row separators, the version tag's border and the dashed path through the checks.
+- **Grid** (grid, grid-dark): the one-second lines in the timing diagram and the tab hover.
+- **Plate** (plate, plate-dark), **Plate Ink** (plate-ink) and **Plate Rule** (plate-rule, plate-rule-dark): the install command blocks and their Copy button. In the light theme the plate is the same value as ink.
 
-The docs map Starlight's grey ramp onto these: in the dark theme from `#e6e8e3` (white) through `#d3d7d1`, `#b9bfba`, `#8a918c`, `#5d645f`, `#343a36`, `#1f2320` to `#161917` (black); in the light theme from `#0c0e0d` through `#1d211f`, `#2d332f`, `#464c48`, `#6c736e`, `#b8bdb7`, `#dcdfd9`, `#e1e4de` to `#e6e8e3`. The docs accent is grey, not a colour: links and the current page are ink.
+### Docs palette
+The docs pages keep `tokens.css`: concrete ground, ink, second ink, plate and stop red (the docs-* tokens, light and dark). `theme.css` maps Starlight's grey ramp from the ink to the ground (`#0c0e0d` to `#e6e8e3` in light, `#e6e8e3` to `#161917` in dark), makes links and the current page ink, and sets Starlight's red to docs-stop. Code blocks are Expressive Code with `github-dark` on docs-plate, 0.75rem corners, no frame, lines wrapped.
 
 ### Named Rules
-**The One Red Rule.** Red means the stop key, or an answer that was stopped or refused. Pick the step by surface: stop-red with stop-red-lip for the key face, stop-text on the ground, stop-text-plate on the plate. Never use red for emphasis, links or calls to action.
+**The Highlighter Rule.** Yellow marks state or attention: held, current, running, pointed at. If nothing is held or pointed at, nothing is yellow.
 
-**The Plate Rule.** Anything recorded or copyable (a recording, its calls, a command) sits on the plate in plate ink, in both themes. The ground never carries monospace call text.
+**The One Red Rule.** Red is the stop key and the answers it causes (refused, cut, stopped, taken back). Never use red for links, emphasis or calls to action.
 
 ## Typography
 
 **Display and Body Font:** Archivo Variable (with ui-sans-serif, system-ui, sans-serif)
 **Mono Font:** JetBrains Mono Variable (with ui-monospace, 'DejaVu Sans Mono', monospace)
 
-**Character:** one grotesque doing two jobs by width: condensed and very heavy for posters, full width and regular for reading. Mono appears only where the text is a call or a command someone could type.
+**Character:** a narrow, heavy grotesque for heads (84% and 88% width) over the same face at full width for reading; mono wherever the text is something a machine said or a reader could type.
 
-Archivo is cut by `scripts/subset-font.mjs` to printable ASCII plus the copy's typographic punctuation (no-break space, ©, ·, ×, en and em dashes, curly quotes, ellipsis) and to the 62–100% width range, then declared after Fontsource's faces under the same name with matching weight and width ranges, so any other character falls back to the full face. The home page preloads the cut file.
+The home page preloads a cut of Archivo made by `scripts/subset-font.mjs` (width axis 62% to 100%), with Fontsource's full face under the same name for anything the cut lacks.
 
 ### Hierarchy
-- **Poster** (860, 70% width, clamp(3.75rem, 17vw, 28rem), 0.86): the home page's three section headlines, "Your agent drives niri.", "One key takes it back.", "Install". Each line is its own block.
-- **Footer wordmark** (880, 62% width, 100cqi / 5.62, 0.8): the name across the full width of the footer, sized to the footer's container.
-- **Heading** (820, 72% width, clamp(2.5rem, 7vw, 6rem), 0.9): section heads that are not posters ("More real sessions").
-- **Docs title** (840, 72% width, clamp(2.5rem, 1.6rem + 3vw, 3.75rem), 0.95) and **Docs section** (760, 84% width): page titles and h2/h3 on docs pages.
-- **Wordmark** (760, 88% width, clamp(1.0625rem, 1rem + 0.3vw, 1.25rem)): the site name in the header of every page.
-- **Lede** (400, clamp(1.125rem, 0.9rem + 0.6vw, 2rem), 1.35, at most 30ch): the sentence under a poster.
-- **Sub-head** (600–650, 1.25rem, 1.25): clip titles, install step labels, the stop facts.
-- **Body** (400, 1rem = 17px, 1.5): running text and the prompts on the plate.
-- **Small** (0.875rem, 1.45): notes, the call list, the lease tag, plate buttons. Notes stop at 46ch.
-- **Key legend** (700, 100% width, 0.32em of the poster, uppercase, 0.04em): "Esc" on the keycap, and nowhere else.
-- **Call** (JetBrains Mono, clamp(0.875rem, 0.7rem + 0.6vw, 1.25rem), 1.45): subtitles under a recording.
-- **Command** (JetBrains Mono, 0.875rem, 1.6): copyable commands and the full call list.
+- **Headline** (780, 84% width, clamp(2.375rem, 1.1rem + 4vw, 4.75rem), 0.95): the hero's two lines, "Your agent can use your niri desktop." and the red "One key takes it back.", each an inline block, balanced.
+- **Section** (760, 84% width, clamp(1.875rem, 1.2rem + 2vw, 2.875rem), 1): the head of each ruled section, with its lede (1.0625rem, second ink, at most 56ch) in the next column.
+- **Wordmark** (760, 88% width, 1.125rem): the name in the header and footer. On docs pages it is clamp(1.0625rem, 1rem + 0.3vw, 1.25rem).
+- **Lede** (400, clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem), 1.5, at most 58ch): the sentence under the headline.
+- **Body** (400, 1rem, 1.5): running text, list items, table cells, the prompt beside a recording.
+- **Small** (0.875rem, 1.45): captions, notes, the header, tabs, the footer, the stop hint.
+- **Label** (650, 0.6875rem to 0.75rem, 0.07em, uppercase, second ink): lane names, table column heads, the two list heads under the limits, and "Asked" before the prompt.
+- **Key legend** (700, 0.8125rem, 0.04em, uppercase): "Esc" on the keycap.
+- **Mono roles:** answer JSON (0.875rem, 1.65); readouts and command blocks (0.8125rem); call lists and table error codes (0.75rem); trace labels in the diagram (12.5px); axis ticks and wire labels (0.6875rem); the version tag (500, 0.75rem); install step numbers (700, 1.25rem).
+- **Docs title** (840, 72% width) and **Docs section** (760, 84% width): Starlight page titles and h2/h3.
 
 ### Named Rules
-**The Width Ladder Rule.** Archivo is set only at 62%, 70%, 72%, 84%, 88% and 100% width; narrower is heavier and larger. A new role takes one of these steps; the cut face holds nothing outside 62–100%.
+**The Caption Rule.** A figure or table that carries evidence is captioned with its number in bold ink ("Figure 1.", "Table 1.") followed by the caption in second ink.
 
-**The Mono for Machines Rule.** JetBrains Mono is for calls and commands only, never for labels, headings or decoration.
+**The Mono for Machines Rule.** JetBrains Mono is for calls, commands, answers and the numbers attached to them. Headings, labels and prose stay in Archivo.
 
 ## Layout
 
-One column with a fluid side margin (spacing.margin), shared by header, sections and footer. Sections are separated by vertical padding in viewport-height clamps (spacing.section, and spacing.section-open before the stop and install posters), not by lines. Recordings run edge to edge on a phone; on wide screens the stop recording bleeds off the right margin.
+One centred sheet, at most 86rem wide (sheet), with a fluid side margin (margin). The header is a three-column grid (wordmark and version tag, the running head, the nav) over a 1px ink rule. Sections follow at a vertical gap (section), each opened by a 2px ink rule and a two-column head (head and lede, 1fr to 1.35fr). The footer sits on a 1px ink rule.
 
-- **Hero:** the poster on two lines, with the recording's frame inline after "Your agent", 0.74em tall. Below 48rem the frame is an 8:9 crop of the still; from 48rem it is 16:9. On a screen wider than tall (aspect ratio at least 5:4 and at least 48rem wide) the hero fills the first view less the header, so the recording waits below it. The lede and Install button follow the poster after a clamp(2rem, 6vh, 4.5rem) gap, the lede left and the button right, and the spare height falls below them.
-- **Stop:** poster with the keycap inline after "One key", then the facts and the recording. From 62rem they sit in two columns, minmax(16rem, 1fr) and 2fr.
-- **Clips:** on the raised ground; one column, then two from 62rem with the layout clip spanning both.
-- **Install:** poster, lede, three numbered steps each with a command, up to 60rem wide.
-- **Footer:** on the plate, the full-width wordmark, then links.
+- **Hero:** the headline, then the lede on the left and the actions (Install, the stop key link) on the right, wrapping on narrow screens.
+- **Figure 1:** the caption and the tabs on one row; then the recording (5fr) beside a side column (at least 15rem, 2fr) with the prompt and, under it, the keycap and its hint; under both, the timing diagram across the full width with four lanes (Calls, Lease, niri saw, You) whose names (lanes) stay pinned as it scrolls; then the readout, four lines high so the page below never moves, a call's lines cut short rather than wrapped and the stop's answer wrapped, the call list and the note. The diagram is at least 44rem wide plus the lanes and scrolls sideways on smaller screens, keeping the cursor in view.
+- **Result:** the answer JSON (1.1fr) beside the field list (1fr).
+- **Gates:** Agent, the server's checks in order, niri, joined by arrowed wires; then the answer readout and Table 1.
+- **Limits:** two lists side by side. **Requirements:** a two-column table. **Install:** numbered steps, at most 60rem wide.
 
-Breakpoints are 48rem (frame and recording crop) and 62rem (two columns). Every interactive target is at least 2.75rem tall; on docs pages, heading anchors and copy buttons grow to that size under `pointer: coarse`. Docs content is 46rem wide.
-
-**The Phone Crop Rule.** Below 48rem a recording shows the half of the desktop where the agent works (left, centre or right): the still is cut to that half at 8:9 and the video is drawn at twice the width and shifted, so the text in it stays legible.
+Breakpoints, all max-width: 60rem (the block diagram stands upright and Table 1 stacks), 56rem (the running head hides; section heads and limits go to one column), 52rem (the recording, prompt and keycap stack; Result goes to one column), 40rem (narrower lanes; tabs become separate boxes), 30rem (the header's Install button hides). Targets are at least 2.75rem (touch) tall, except the tabs and the header's Install button at 2.5rem.
 
 ## Elevation & Depth
 
-Flat. Depth is material and order: the ground, a raised ground one step off it, and the plate. The only shape that suggests height is the keycap, whose lip is a solid bottom border in stop-red-lip, not a shadow. The recording rides one stacking level above the hero (z-index 1) so it can grow over the text.
+Flat. Depth is rules and fills: an ink outline around a block, an ink fill when a check passes or a tab is checked, a highlighter fill for state. Two elements cast shadows, both physical objects: the keycap (`0 4px 0 var(--red-lip), 0 6px 12px -4px rgb(0 0 0 / 0.35)`, shrinking to `0 1px 0` and `0 2px 4px -2px` when pressed) and the Play button laid over the still (`0 4px 14px -6px rgb(0 0 0 / 0.5)`).
 
 ### Named Rules
-**The Material Not Line Rule.** On the home page a change of surface is a change of colour: no borders, outlines, dividers, shadows or gradients. The keycap's lip is the one border, and it is part of the key.
+**The Rule Not Panel Rule.** Separate content with rules (2px ink to open a section, 1px ink to head a table or list, 1px rule between rows), not with background panels or shadows.
 
 ## Shapes
 
-Pills (rounded.pill) for every button, the theme toggle and the lease tag. Command blocks have a 0.75rem radius. Recordings and their plates are square-cornered; docs stills on the plate are rounded 4px. The keycap is rounded 0.09em, so it scales with the poster. The theme icon is an inline SVG circle, half filled, that turns 180° in the dark theme (at once under reduced motion).
+Small corners: 3px (corner) on buttons, tabs, command blocks, diagram blocks and the skip link; 2px on the diagram's focus area; 6px on the keycap. The recording frame is square with a 1px ink border. The packet is a circle with a 2px ink ring. Wires end in solid arrowheads; the path through the checks is dashed. Traces in the diagram are square steps (miter joins, 1.75 stroke). The theme icon is an inline SVG circle, half filled, turned 180 degrees in the dark theme.
 
 ## Components
 
 ### Buttons
-- **Primary (Install):** ink pill on the ground, 3.25rem tall, 1.75rem side padding, 650 weight. Hover goes to quiet ink; press scales to 0.97 over 140ms.
-- **Plate buttons (Play/Pause, Copy):** plate-control pills, at least 4.5rem by 2.75rem, small text at 600. Hover lightens to plate-control-hover; press scales to 0.96. Labels change in place: Play and Pause; Copy, then Copied (or "Select it" if the clipboard refuses) for 1.6 s.
-- **Text links ("Guardrails, not a sandbox", "Full install guide"):** 600 weight, underlined 1px at 0.2em offset, 2.75rem tall.
-- **Focus:** a 2px outline in ink, 3px off; on the plate the outline is plate ink.
+- **Install:** ink on paper, 2.75rem tall, 1.4rem side padding, 650 weight, 3px corners. Hover goes to second ink; press scales to 0.97 over 140ms. A smaller copy (2.5rem) sits in the header.
+- **Text links:** underlined 1px at 0.2em offset, 2px on hover; standalone ones are 600 weight and 2.75rem tall.
+- **Copy:** on the plate, a 1px plate-rule outline that fills on hover, press 0.96. It reads Copied, or "Select it" if the clipboard refuses, for 1.6 s, and is hidden without JavaScript.
+- **Focus:** a 2px ink outline, 3px off (4px around the diagram; plate ink on the plate).
 
 ### Navigation
-- **Header:** the wordmark on the left; Docs, GitHub and the theme toggle on the right. Links are 550 weight with no underline until hover. The docs header shares the wordmark and holds still during view transitions.
-- **Footer nav:** Docs, GitHub, "For agents: llms.txt", MIT license, on the plate.
+- **Header:** wordmark with the version tag (mono, 1px rule border, highlighter on hover, linking to the release), the running head "MCP server for niri 26.04 on Linux", then Docs, GitHub, the theme toggle (hidden without JavaScript) and Install. Below 24rem the version tag is left to the footer, and below 21rem the header's gaps tighten so it fits 320px. Links are 550 weight, underlined on hover.
+- **Footer:** wordmark and version; Docs, GitHub, llms.txt, MIT license.
 
-### Stage (recording)
-The site's signature unit: a recording on the plate with its calls as subtitles.
-- **Frame:** 16:9 (8:9 on a phone with a crop). The AVIF still is the recording's last frame; the video loads after the page, fades in over 400ms, plays while 35% of it is in view, and stays still under reduced motion or Save-Data until Play is pressed. Paused, it keeps the paused frame. Turning reduced motion on while the page is open pauses it.
-- **Bar:** the prompt in quiet plate ink, clamped to two lines; the Play/Pause pill; the subtitle, three lines tall whatever the call (request on one, answer on two), `→` for a call and `←` for its answer, `$` and `#` for a command the user ran; the lease tag.
-- **Lease tag:** reads `lease free`, `lease held` or `lease stopped`, following the calls. Free is plate-control with quiet text, held is plate ink with plate text, stopped is stop red with white text.
-- **Caption:** the note on how the recording was made, then a disclosure, "All N calls", listing every call with its time (m:ss.s, tabular figures).
-- **Subtitle change:** the new call rises 0.6em and fades in over 260ms (none under reduced motion).
+### Figure 1: Sessions
+Tabs are CSS radio buttons inside a 1px ink box; the checked tab is ink, and `:has()` picks the panel shown, so switching works without JavaScript. Each panel holds the still (with a `<noscript>` video with controls), its caption, the prompt, the keycap and hint, the timing diagram drawn at build time, the readout and "All N calls, as text". Without JavaScript the diagram is complete and the keycap and Play button stay hidden.
+
+The video element is created only when the recording starts, muted and inline. The first session starts when 60% of its frame is in view; under reduced motion the diagram is shown whole, with Save-Data on it draws itself in without the recording, and in both the recording waits for Play. Played from the start, the diagram draws in with it. Hovering or the arrow keys move the cursor over the calls, and a click plays from that time. The arrow keys step call by call, including calls that start at the same moment, and the call stepped to stays shown while the recording plays on to the next one. Leaving the view, or turning on reduced motion, pauses the recording and shows the diagram whole. The recording runs a little past the last call; the cursor waits at the diagram's end. The readout is announced to screen readers only for what the reader asked for: an arrow key or a stop.
 
 ### Stop Key
-A red Esc keycap set inline in the poster, as tall as the capitals and standing on the baseline. It sinks 0.06em and loses most of its lip when the stop recording reaches the user's stop command, and over 120ms when pressed. Pressing it replays the recording from 2.5 s before the stop.
+A red keycap with an uppercase Esc legend. Pressing it, or Esc while a session runs in view, stops the session at that moment: the action running then is cut and turns red (a look runs on to its answer), later actions are struck through and dashed red, later looks fade to 0.55 and everything else later to 0.18, the lease drops to "taken back" in red, a red "your stop key" pulse appears in the You lane, the cursor and pens turn red, the video pauses, and the readout states what the server answers from then on. Pressing again replays.
 
-### Code Block
-A command on the plate, 0.75rem corners, wrapped to the width rather than scrolled, with a Copy pill at its right.
+### Block diagram and Table 1
+Each check is a paper block with an ink outline; passed checks fill ink, a refused check fills red. In Table 1 each row's check name is a button that runs that case; the running row is highlighted and the answer appears in the readout above the table, announced to screen readers only for a row the reader picked. Picking a row, even before the diagram has been seen, cancels the demo run. Without JavaScript the readout is hidden.
 
-### Docs pages
-Starlight with theme.css: tokens, wordmark, Archivo titles at 72% and 84% width, links underlined at 1px and 2px on hover, code in table first columns kept on one line, code in headings without a chip. Code blocks are Expressive Code set in astro.config.mjs to match the home page's: on the plate in both themes with github-dark colours, 0.75rem corners, no border or window frame, lines wrapped to the width, and the first line wrapping short of the copy button.
+### Result
+The answer JSON between two ink rules, beside its fields. Pointing at a field highlights its lines; the fields aren't focus stops, since they do nothing.
 
 ### Motion
-One easing for UI (`cubic-bezier(0.22, 1, 0.36, 1)`). The hero frame either drops into the first recording over 1100ms after 400ms (when the recording is already in the first view, as on an upright phone) or grows into it on the root scroll timeline (when it is below), measured once the headline's face has loaded. Below the hero, poster lines, facts, recordings, clips, install steps and the footer wordmark rise 2.5rem and fade in on a view timeline (entry 5% to cover 30%). Under reduced motion none of this runs, the theme icon doesn't turn, scrolling is instant, and pages do not crossfade.
+One easing, `cubic-bezier(0.22, 1, 0.36, 1)`. Section rules draw across from the left on a view timeline (entry 10% to entry 70%). In the timing diagram a paper cover pulls back, labels fade up 5px as the cursor reaches them, and pens ride the call and lease traces, in step with the recording. While the agent works a ring pulses out from the keycap every 1.6 s; when a stop lands the diagram flashes red for 750ms, the key sinks 3px over 90ms, and the highlighter stroke draws under the headline's stop line over 700ms. In the block diagram the packet hops 260ms per block and a refused check shakes for 420ms; in view, it runs one pass and then the stop flag. In Result the fields light up in turn every 1.3 s once 60% is in view, until the reader points. Under reduced motion there is no rule draw, theme icon turn, headline stroke, cover, packet, shake, flash, ring, field sequence, smooth scroll or page crossfade; the diagram and answers appear complete.
 
 ## Do's and Don'ts
 
 ### Do:
-- **Do** set every surface from `tokens.css`: concrete ground, raised concrete, plate.
-- **Do** pick the red step by surface: stop-red and stop-red-lip on the key, stop-text on the ground, stop-text-plate on the plate.
-- **Do** put recordings, calls and commands on the plate, with the calls as text under the recording and the note saying how it was recorded.
-- **Do** take headline widths from the ladder (62, 70, 72, 84, 88, 100%) and keep running text at 100%.
-- **Do** keep every target at least 2.75rem tall and the focus outline visible on both the ground and the plate.
-- **Do** give every motion a calm, complete reduced-motion state.
-- **Do** keep the home page within its measured budget: Lighthouse mobile Performance 100, CLS 0, 3.8 KB JS gzipped.
-- **Do** keep the home page's HTML inside the first round trip: Lighthouse's simulated network sends 14,600 bytes before it waits for an acknowledgement, and `gzip -9` of the built `dist/index.html` is 14,020 bytes. Comments in `is:inline` scripts ship as written, so they go in template comments above the script.
+- **Do** caption evidence as numbered figures and tables, with the number in bold ink.
+- **Do** use the highlighter only for what is held, current, running or pointed at.
+- **Do** keep red for the stop key and the answers it causes, with on-red text on it.
+- **Do** separate sections and rows with rules: 2px ink to open, 1px ink to head, 1px rule between.
+- **Do** draw diagrams at build time so they read complete without JavaScript, and give every interactive part a no-JS state.
+- **Do** tie each motion to what it explains, and give it a complete reduced-motion state.
+- **Do** keep the docs pages on the `tokens.css` palette and the home page on its own; change either on purpose, not by drift.
 
 ### Don't:
-- **Don't** add borders, divider rules, shadows or gradients to the home page; change the surface instead.
-- **Don't** use red for anything but the stop key and stopped or refused answers.
-- **Don't** set labels, headings or decoration in JetBrains Mono.
-- **Don't** set Archivo narrower than 62% or use widths off the ladder; the cut face does not hold them.
-- **Don't** show a recording without its calls as text, or a mock-up in place of a recording.
-- **Don't** add an accent colour; links and the current page are ink.
+- **Don't** add card panels, background bands or decorative shadows; the keycap and the Play button over the still are the only shadows.
+- **Don't** use yellow or red as decoration, emphasis or link colour.
+- **Don't** set headings, prose or labels in JetBrains Mono.
+- **Don't** put a small uppercase label above a heading; uppercase labels name lanes, columns and lists.
+- **Don't** show a recording without its calls as text.

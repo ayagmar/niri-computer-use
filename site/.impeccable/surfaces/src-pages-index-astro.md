@@ -7,22 +7,22 @@ related_targets: ["src/components/home","src/styles/theme.css"]
 
 # Landing page (site home)
 
-Scope: the standalone home page `src/pages/index.astro` and its components in `src/components/home/`; the Starlight docs pages share its type, colour and header through `src/styles/theme.css`. Visitor mode: Persuade.
+Scope: the standalone home page `src/pages/index.astro` and its components in `src/components/home/` (Timing, Result, Gates, Code), with its words in `src/lib/home.ts`. The Starlight docs pages keep the concrete palette of `src/styles/tokens.css` and `src/styles/theme.css`; they share the fonts, the stored theme and the page crossfade. Visitor mode: Persuade.
 
-Audience and job: a niri user with an MCP coding agent deciding whether to let it act on their desktop. Action: install from source (the commands are on the page). Proof: the real-desktop recordings, with their calls as text. Constraints: under about 200 words of prose; Lighthouse mobile Performance ≥ 98, the rest 100, LCP ≤ 1.8 s, CLS ≤ 0.01, TBT ≤ 50 ms; home JS ≤ 15 KB gzipped; reduced motion is calm and complete; dark and light.
+Audience and job: a niri user with an MCP coding agent deciding whether to let it act on their desktop. Action: install (the commands are on the page). Proof: five real-desktop recordings, each with a timing diagram of its calls, a real action's answer explained field by field, and the table of checks that refuse an action. Constraints: dark and light; reduced motion is calm and complete; every part reads without JavaScript.
 
 ## Direction contract
 
-THESIS: The recording lives inside the sentence. A poster-scale line, "Your agent [live recording] drives niri.", carries a frame where a word would be, and scrolling opens that frame into the full recording. Refuses the centred headline over a framed product shot, and the previous niri-screen-at-page-scale costume.
+THESIS: A datasheet for the server. The page shows what the server does the way a component datasheet would: a numbered figure of timing diagrams drawn from real sessions, the answer format, a numbered table of when an action is refused, limits, requirements, install. Refuses a marketing hero over a product shot.
 
-OWN-WORLD: Cool concrete ground (#E6E8E3 light, #161917 dark), near-black ink, recordings on a black plate with their calls as subtitles under them. Archivo at 62–100% width: condensed heavy posters, plain text at 100%. JetBrains Mono only for calls and commands. One red, for the stop key and a stopped answer. No rules, outlines, shadows or gradients; pill buttons in ink.
+OWN-WORLD: Paper and ink (#f4f5f2 and #121413 light, #0f1110 and #e9ebe6 dark), rules instead of panels (2px ink to open a section, 1px ink to head a table, 1px rule between rows), a highlighter yellow (mark) for what is held or pointed at, one red for the stop key and refused answers. Archivo Variable for text at 84% and 88% width for heads; JetBrains Mono for calls, commands, answers and their numbers. Small 3px corners. Figures and tables numbered in bold ink.
 
-STORY: The visitor reads what it is in one line, watches the agent work as the frame opens, reads "One key takes it back" while the stop recording shows the refusal, sees three more short clips, copies three commands.
+STORY: The visitor reads what it is and that one key takes it back, then watches Figure 1: a recording beside the prompt and the red Esc keycap, its timing diagram (Calls, Lease, niri saw, You) drawing in with it. Pressing the keycap or Esc stops the session at that moment and the diagram shows what the server answers from then on. Then what an action answers, the checks before anything reaches niri with Table 1, what it enforces and misses, what it needs, and three install steps.
 
-FIRST VIEWPORT: The wordmark, Docs, GitHub and theme at the top. Then the poster on two lines at about 15vw, the live frame inline after "Your agent". Below it, a one-sentence description and the Install button. Phone: the same, the frame a small portrait crop, the hero filling the screen.
+FIRST VIEWPORT: The header with the wordmark, the version tag linking to the release, the running head, Docs, GitHub, the theme toggle and Install over an ink rule. Then the two-line headline with the stop line in red, the lede, Install and the link to how the stop key and lease work. Figure 1 starts below.
 
-FORM: sentence-as-layout (taste-skill draw), chosen over keycaps (B) and the signal box (C, the impeccable roll's assigned index 5; declined because the metaphor needs explaining). Kept from B: the red Esc keycap that sinks when the stop lands. Kept from C: the lease state shown as a lit tag. seed: 0111b2ce
+FORM: datasheet. Tabs are CSS radios; the diagrams are drawn at build time; each recording is a still with a `<noscript>` video until it starts.
 
-Signature interaction: the frame in the headline grows into the stage on a scroll timeline; subtitles, the lease tag and the stop keycap follow each recording's real call times.
+Signature interaction: the timing diagram draws in step with the recording, which plays muted once 60% of it is in view (not under reduced motion or Save-Data); the stop key cuts the running call, refuses later actions, leaves later looks answered, drops the lease in red and writes the result in the readout, while the highlighter stroke draws under the headline's stop line.
 
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance

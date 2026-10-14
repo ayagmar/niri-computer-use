@@ -1,0 +1,159 @@
+---
+// A real action's answer with its fields explained beside it; pointing at a field marks its
+// lines in the answer.
+interface Field {
+	name: string;
+	lines?: number[];
+	text: string;
+}
+
+interface Props {
+	code: string;
+	fields: Field[];
+	source: string;
+	sourceLink: string;
+}
+
+const { code, fields, source, sourceLink } = Astro.props;
+const lines = code.split('\n');
+const owner = (line: number) => fields.findIndex((f) => f.lines && line >= f.lines[0] && line <= f.lines[1]);
+---
+
+<div class="result" data-result>
+	<figure class="answer">
+		<pre><code>{lines.map((line, index) => <span class="line" data-field={owner(index + 1)}>{line}{'\n'}</span>)}</code></pre>
+		<figcaption>{source} <a href={sourceLink}>Every call and the grading</a>.</figcaption>
+	</figure>
+	<dl class="fields">
+		{
+			fields.map((field, index) => (
+				<div class="field" data-field={index} data-lines={field.lines ? '' : undefined}>
+					<dt><code>{field.name}</code></dt>
+					<dd>{field.text}</dd>
+				</div>
+			))
+		}
+	</dl>
+</div>
+
+<script>
+	for (const root of document.querySelectorAll<HTMLElement>('[data-result]')) {
+		const lines = [...root.querySelectorAll<HTMLElement>('.line')];
+		const mark = (index: string | null) =>
+			lines.forEach((line) => line.classList.toggle('on', index !== null && line.dataset.field === index));
+		for (const field of root.querySelectorAll<HTMLElement>('.field')) {
+			const index = field.dataset.field!;
+			field.addEventListener('pointerenter', () => mark(index));
+			field.addEventListener('pointerleave', () => mark(null));
+		}
+		// Once in view, the fields light up in turn, until the reader points at one.
+		if (matchMedia('(prefers-reduced-motion: no-preference)').matches) {
+			const marked = [...root.querySelectorAll<HTMLElement>('.field[data-lines]')];
+			let timer = 0;
+			const stop = () => {
+				clearTimeout(timer);
+				marked.forEach((field) => field.classList.remove('lit'));
+			};
+			root.addEventListener('pointerenter', stop, { once: true });
+			const seen = new IntersectionObserver(([entry]) => {
+				if (!entry.isIntersecting) return;
+				seen.disconnect();
+				const step = (index: number) => {
+					marked.forEach((field, other) => field.classList.toggle('lit', other === index));
+					mark(index < marked.length ? marked[index].dataset.field! : null);
+					if (index < marked.length) timer = window.setTimeout(() => step(index + 1), 1300);
+				};
+				step(0);
+			}, { threshold: 0.6 });
+			seen.observe(root);
+		}
+	}
+</script>
+
+<style>
+	.result {
+		display: grid;
+		grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+		gap: 2rem 3rem;
+		align-items: start;
+	}
+
+	.answer {
+		margin: 0;
+	}
+
+	pre {
+		margin: 0;
+		padding: 1rem 0;
+		border-top: 1px solid var(--ink);
+		border-bottom: 1px solid var(--ink);
+		font: 0.875rem/1.65 var(--mono);
+		overflow-x: auto;
+	}
+
+	pre code {
+		font: inherit;
+	}
+
+	.line {
+		display: block;
+		padding: 0 0.6rem;
+		transition: background-color 160ms var(--ease);
+	}
+
+	.line:global(.on) {
+		background: var(--mark);
+	}
+
+	figcaption {
+		margin-top: 0.6rem;
+		font-size: 0.875rem;
+		color: var(--ink-2);
+	}
+
+	figcaption a {
+		color: var(--ink);
+		font-weight: 600;
+		text-underline-offset: 0.2em;
+	}
+
+	.fields {
+		margin: 0;
+		border-top: 1px solid var(--ink);
+	}
+
+	.field {
+		display: grid;
+		grid-template-columns: 7rem minmax(0, 1fr);
+		gap: 1rem;
+		padding: 0.75rem 0.5rem;
+		border-bottom: 1px solid var(--rule);
+		transition: background-color 160ms var(--ease);
+	}
+
+	.field[data-lines]:hover,
+	.field:global(.lit) {
+		background: var(--mark);
+	}
+
+	dt code {
+		font: 600 0.875rem/1.5 var(--mono);
+	}
+
+	dd {
+		margin: 0;
+		font-size: 0.9375rem;
+		line-height: 1.5;
+	}
+
+	@media (max-width: 52rem) {
+		.result {
+			grid-template-columns: minmax(0, 1fr);
+		}
+
+		.field {
+			grid-template-columns: minmax(0, 1fr);
+			gap: 0.2rem;
+		}
+	}
+</style>

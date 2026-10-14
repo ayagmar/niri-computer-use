@@ -3,6 +3,7 @@
 import { getCollection, type CollectionEntry } from 'astro:content';
 import { groups } from './groups.mjs';
 import { home } from './home';
+import { releaseLink, version } from './version';
 
 type Page = CollectionEntry<'docs'>;
 
@@ -40,16 +41,26 @@ export function homeMarkdownUrl(): string {
 // The home page as Markdown, from the same words the page sets.
 export function homeMarkdown(): string {
 	const url = (link: string) => new URL(link, siteRoot()).href;
-	const { stop, clips, install } = home;
+	const { sessions, result, gates, limits, requirements, install } = home;
+	const list = (items: string[]) => items.map((item) => `- ${item}`).join('\n');
 	return [
 		`# niri-computer-use`,
 		`> ${home.description}`,
-		`${home.headline.join(' ')} ${home.lede}`,
-		`The recordings on the page are real sessions. ${home.note}`,
-		`## ${stop.headline.join(' ')}`,
-		`${stop.lede}\n\n${stop.facts.map((fact) => `- ${fact}`).join('\n')}\n\n[${stop.more.text}](${url(stop.more.link)})`,
-		`## ${clips.headline}`,
-		clips.items.map((clip) => `- ${clip.text}`).join('\n'),
+		`Version ${version}: [release notes](${releaseLink})`,
+		`${home.headline} ${home.stopline} ${home.lede}`,
+		`[${home.safety.text}](${url(home.safety.link)})`,
+		`## Recorded sessions`,
+		`${sessions.note}\n\n${list(sessions.items.map((item) => `${item.tab}: ${item.text}`))}`,
+		`## ${result.headline}`,
+		`${result.lede} ${result.source}\n\n\`\`\`json\n${result.code}\n\`\`\`\n\n${list(result.fields.map((field) => `\`${field.name}\`: ${field.text}`))}`,
+		`## ${gates.headline}`,
+		`${gates.lede}\n\n${gates.items
+			.map((item, index) => `${index + 1}. ${item.gate}: ${item.when} Applies to ${item.covers}. Answer: \`${item.error}\`, ${item.detail.replace(/`/g, '')}`)
+			.join('\n')}\n\n${gates.note}`,
+		`## ${limits.headline}`,
+		`${limits.enforces.title}:\n\n${list(limits.enforces.items)}\n\n${limits.misses.title}:\n\n${list(limits.misses.items)}\n\n[${limits.more.text}](${url(limits.more.link)})`,
+		`## ${requirements.headline}`,
+		list(requirements.rows.map(([what, value]) => `${what}: ${value}`)),
 		`## ${install.headline}`,
 		install.lede,
 		install.steps
