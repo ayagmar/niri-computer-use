@@ -454,10 +454,10 @@ async fn switched(switch: &Switch, policy: &Loaded, deadline: Instant) -> String
                 "the session's accessibility is {}, and reading IsEnabled after registering the server's listener failed: {why}; the server let the listener go and tries again on the next call; {MAY_HAVE_SET}",
                 if enabled { "on" } else { "off" }
             ),
-            Ok(Turned::Busy) => format!(
-                "the session's accessibility is {}, and the server was still turning it on for another call when this one's time ran out; {RESTART}",
-                if enabled { "on" } else { "off" }
+            Ok(Turned::Busy) if enabled => format!(
+                "the session's accessibility is on, and the server was still turning it on for another call when this one's time ran out; {RESTART}"
             ),
+            Ok(Turned::Busy) => "the session's accessibility is off, and the server was still turning it on for another call when this one's time ran out; call again".to_owned(),
             Err(error) => format!(
                 "the session's accessibility is {}, and registering the server's listener failed: {}; {MAY_HAVE_SET}",
                 if enabled { "on" } else { "off" },

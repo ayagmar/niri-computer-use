@@ -365,6 +365,37 @@ async fn a_status_read_failing_after_the_listener_registered_says_what_it_may_ha
     assert_eq!(desk.switch().await, "off");
 }
 
+/// A call that runs out of time while another one is turning accessibility on can't know
+/// whether it will be on, so it asks for another call, not for a restart that may be in
+/// vain.
+#[tokio::test]
+async fn a_call_that_runs_out_while_another_turns_accessibility_on_says_to_call_again() {
+    let mut desk = Desk::start("acc-busy", "").await;
+    let held = desk
+        .mock
+        .hold_on("RegisterEvent", "/org/a11y/atspi/registry");
+    let first = desk
+        .server
+        .start_call("elements", json!({"window_id": WINDOW}))
+        .await;
+    held.arrived().await;
+    // Its one walk has 150 ms, all spent waiting for the first call.
+    let until = json!({"element": {"window_id": WINDOW, "role": "button"}});
+    let waited = desk
+        .server
+        .structured_with("wait_for", json!({"until": until, "timeout_ms": 200}))
+        .await;
+    let detail = waited["detail"].as_str().unwrap_or_default();
+    assert!(
+        detail.contains("still turning it on for another call")
+            && detail.contains("call again")
+            && !detail.contains("restart"),
+        "{waited}"
+    );
+    held.release();
+    desk.server.response(first).await;
+}
+
 #[tokio::test]
 async fn a_launcher_that_never_answers_holds_no_elements_call_past_its_budget() {
     let mut desk = Desk::start("acc-mute", "").await;
