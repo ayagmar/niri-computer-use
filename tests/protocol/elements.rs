@@ -1595,7 +1595,8 @@ fn deletes(between: &[&'static str]) -> Vec<(&'static str, Object)> {
 }
 
 /// The first button `elements` lists with `limit`, checked to be record 1's `Delete`,
-/// marked unbound for `why` and refused by `activate_element` with nothing sent.
+/// marked unbound for `why` and refused by `activate_element` and `click` with nothing
+/// sent.
 async fn first_delete_unbound(desk: &mut Desk, limit: u16, why: &str) -> Value {
     let arguments =
         json!({"window_id": WINDOW, "role": "button", "limit": limit, "format": "json"});
@@ -1603,14 +1604,20 @@ async fn first_delete_unbound(desk: &mut Desk, limit: u16, why: &str) -> Value {
     let first = &listing["elements"][0];
     assert_eq!(first["name"], "Delete", "{listing}");
     assert_eq!(first["unbound"], why, "{listing}");
-    let result = activate(desk, first["element_ref"].as_str().unwrap()).await;
-    let (error, detail) = tool_error(&result);
-    assert_eq!(error, "element_unbound", "{result}");
-    assert!(
-        detail.contains("aim the pointer tools at its pixels"),
-        "{detail}"
-    );
+    let element = first["element_ref"].as_str().unwrap();
+    let shot = desk.screenshot_ref().await;
+    let aimed = json!({"screenshot_ref": shot, "element": element});
+    let clicked = desk.server.call("click", aimed).await;
+    for result in [activate(desk, element).await, clicked] {
+        let (error, detail) = tool_error(&result);
+        assert_eq!(error, "element_unbound", "{result}");
+        assert!(
+            detail.contains("aim the pointer tools at its pixels"),
+            "{detail}"
+        );
+    }
     assert_eq!(desk.mock.calls("DoAction"), 0);
+    assert_eq!(desk.fixture.clipboard.pointed(), []);
     listing
 }
 
