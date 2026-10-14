@@ -491,7 +491,8 @@ impl Engine {
     /// An `absent` check lists nothing, only whether anything matches: it would throw the
     /// element away, and naming its actions and keeping its ref on each walk that still
     /// sees it would cost time and push the agent's own refs out of those the lease keeps.
-    /// The walk and its naming end by `by`, giving what they read.
+    /// The walk and its naming end by `by`, giving what they read. Without the lease no
+    /// ref is withheld, since none would be kept.
     async fn poll(
         &self,
         session: &Session,
@@ -513,14 +514,20 @@ impl Engine {
         let lease = self.desk.ref_lease(session).filter(|_| !element.absent);
         let remember = |found| lease.and_then(|lease| self.desk.remember_element(lease, found));
         // Boxed, because the walk's calls make a large future.
-        Box::pin(elements::poll(
+        let polled = Box::pin(elements::poll(
             &self.env.niri_socket,
             a11y,
             &session.settings().policy,
             &ask,
             remember,
         ))
-        .await
+        .await;
+        polled.map(|listing| {
+            listing.map(|mut listing| {
+                listing.withheld &= lease.is_some();
+                listing
+            })
+        })
     }
 
     /// One snapshot of the event stream, with niri's outputs and, when Noctalia is

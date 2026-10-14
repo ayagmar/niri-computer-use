@@ -439,6 +439,21 @@ async fn an_appeared_element_a_cut_walk_cant_tell_apart_gets_no_ref() {
     assert!(detail.contains("role and name"), "{outcome}");
 }
 
+// The bug: without the lease there is no ref to hold back, yet the result said one was
+// withheld and sent the agent to aim at pixels, which needs the lease.
+#[tokio::test]
+async fn an_appeared_element_without_the_lease_has_no_withheld_detail() {
+    let mut app = App::start("wait-el-unchecked-free", false).await;
+    for path in ["/panel", "/odd", "/entry", "/password"] {
+        app.mock
+            .slow_on("GetState", path, Duration::from_millis(900));
+    }
+    let (outcome, _) = app.wait(json!({"name_contains": "safe"}), 5000).await;
+    assert_eq!(outcome["observed"], "met", "{outcome}");
+    assert_eq!(outcome["element"]["element_ref"], Value::Null, "{outcome}");
+    assert_eq!(outcome["detail"], Value::Null, "{outcome}");
+}
+
 // The bug: the walk that read the match went on through the rest of the tree past
 // `timeout_ms`, and the wait cut it off and lost the match. `Safe` and `Odd` come before
 // two objects that answer in 0.9 s each.
