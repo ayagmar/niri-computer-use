@@ -22,7 +22,7 @@ It talks to niri through niri's IPC and event stream, not pixels alone: every ac
 
 ## Operating Context
 
-The user's own niri session on Arch-style Linux, often with Noctalia as the shell. The agent runs in a terminal (Claude Code, Codex, Pi) or a desktop client and starts `niri-computer-use serve` over stdio. One shared engine per niri instance serves every client. Installed from source with cargo; there is no tagged release yet.
+The user's own niri session on Arch-style Linux, often with Noctalia as the shell. The agent runs in a terminal (Claude Code, Codex, Pi) or a desktop client and starts `niri-computer-use serve` over stdio. One shared engine per niri instance serves every client. Installed from a release, with its install script or by hand from the tarball (x86_64 and aarch64 Linux), or with cargo from crates.io or a clone.
 
 ## Capabilities and Constraints
 

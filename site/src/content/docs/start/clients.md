@@ -7,10 +7,12 @@ sidebar:
 
 niri-computer-use is a stdio MCP server: the client starts `niri-computer-use serve` and talks to it over stdin and stdout. No client needs more than the command. The server finds your niri session itself when its environment lacks `XDG_RUNTIME_DIR`, `NIRI_SOCKET` or `WAYLAND_DISPLAY`, as it does under Codex; see [Session variables](#session-variables).
 
+The commands below use `~/.local/bin/niri-computer-use`, where the [install script and the release tarball](../install/) put it. After `cargo install`, the binary is `~/.cargo/bin/niri-computer-use`.
+
 ## Claude Code
 
 ```sh
-claude mcp add --scope user niri-computer-use -- ~/.cargo/bin/niri-computer-use serve
+claude mcp add --scope user niri-computer-use -- ~/.local/bin/niri-computer-use serve
 claude mcp list
 ```
 
@@ -19,7 +21,7 @@ claude mcp list
 ## Pi
 
 ```sh
-pi mcp add niri-computer-use --exposure direct -- ~/.cargo/bin/niri-computer-use serve
+pi mcp add niri-computer-use --exposure direct -- ~/.local/bin/niri-computer-use serve
 pi mcp list
 ```
 
@@ -28,7 +30,7 @@ pi mcp list
 ## Codex
 
 ```sh
-codex mcp add niri-computer-use -- ~/.cargo/bin/niri-computer-use serve
+codex mcp add niri-computer-use -- ~/.local/bin/niri-computer-use serve
 ```
 
 Codex starts MCP servers with a short list of variables that leaves out niri's, so the server finds the session itself; `env_vars` isn't needed. `codex mcp list` doesn't start the server, so ask the agent to call `status`: `discovery` shows `discovered` for the three session variables, and `niri.error` is null.
@@ -41,7 +43,7 @@ Any client that starts stdio servers can run it. A client that reads the common 
 {
   "mcpServers": {
     "niri-computer-use": {
-      "command": "/home/you/.cargo/bin/niri-computer-use",
+      "command": "/home/you/.local/bin/niri-computer-use",
       "args": ["serve"]
     }
   }
@@ -80,7 +82,7 @@ Without the variables, a server started over SSH, from a TTY or as a systemd ser
 
 ## The skill
 
-The repository's skill tells an agent how to use the tools: start with `status`, prefer structured data to screenshots, read `accepted` and `observed`, and when to stop and hand back. Link it into your agents' skill directories, inside the clone:
+The skill tells an agent how to use the tools: start with `status`, prefer structured data to screenshots, read `accepted` and `observed`, and when to stop and hand back. The install script and the [steps by hand](../install/#by-hand) link it from `~/.claude/skills` and `~/.agents/skills`. With a clone, link the clone's copy instead, from inside the clone:
 
 ```sh
 mkdir -p ~/.claude/skills ~/.agents/skills
