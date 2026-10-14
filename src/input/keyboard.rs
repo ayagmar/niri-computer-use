@@ -10,6 +10,7 @@ use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::waiter::View;
 
 use super::Input;
+use super::leaked_tags;
 use super::paste::Aftercare;
 
 /// `key`'s combinations per call.
@@ -108,6 +109,11 @@ fn check_text(text: &str) -> Result<(), CallError> {
             format!("{length} characters; at most {MAX_TEXT} per call, so split the text or pass `via: \"paste\"`; nothing was typed"),
         )
         .into());
+    }
+    if let Some(leak) = leaked_tags::leaked(text) {
+        return Err(
+            ToolError::new(ErrorName::LeakedTag, format!("{leak}; nothing was typed")).into(),
+        );
     }
     Ok(())
 }

@@ -113,6 +113,12 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 **What to do:** split the text into calls of at most 1000 characters, or pass `via: "paste"`.
 
+### `leaked_tag`
+
+**Cause:** `type_text`'s text, typed or pasted, ends with one or more tool-call closing tags, such as `</parameter>` or `</invoke>`, that no opening tag of the same name earlier in the text balances. Models sometimes leak their own tool-call markup into the end of a long argument. The `detail` names the tags. Nothing was typed or pasted.
+
+**What to do:** send the text again without the tags. Only if the text really should end with such a tag, send the final `>` in a call of its own.
+
 ### `clipboard_unsaved`
 
 **Cause:** a paste (`type_text` with `via: "paste"`) couldn't save the clipboard whole before replacing it: every type it offers, over 16 MiB in all, or not read within two seconds. Or the clipboard holds what its owner marked as a secret (`x-kde-passwordManagerHint`), or something else was copied while it was being saved. Nothing changed. An earlier paste's text, which a `kept` outcome leaves on the clipboard marked as a secret, isn't refused: the next paste replaces it and reports `clipboard: cleared`.

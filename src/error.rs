@@ -54,6 +54,9 @@ pub(crate) enum ErrorName {
     /// `type_text` over 1000 characters, or over 1 MiB with `via: "paste"`, or
     /// `set_element_text` over 64 KiB.
     TextTooLong,
+    /// `type_text`'s text, typed or pasted, ends with tool-call closing tags that nothing
+    /// earlier in it opens, which agents leak from their own tool calls by mistake.
+    LeakedTag,
     /// A screenshot ref that is unknown, expired, for a changed output, or a pixel outside
     /// its image.
     RefInvalid,

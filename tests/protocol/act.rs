@@ -1053,6 +1053,17 @@ async fn keyboard_tools_check_their_text_focus_and_app_before_typing() {
     assert_eq!(name, "text_too_long");
     assert!(detail.starts_with("1001 characters"), "{detail}");
 
+    let leaked = desk
+        .server
+        .call(
+            "type_text",
+            json!({"text": concat!("Done.", "<", "/invoke>"), "expect": "none", "submit": true}),
+        )
+        .await;
+    let (tag, refused) = tool_error(&leaked);
+    assert_eq!(tag, "leaked_tag");
+    assert!(refused.ends_with("nothing was typed"), "{refused}");
+
     let combo = desk
         .server
         .call("key", json!({"keys": ["hyper+a"], "expect": "none"}))
@@ -1092,6 +1103,7 @@ async fn keyboard_tools_check_their_text_focus_and_app_before_typing() {
         desk.audited(),
         [
             json!(["type_text", {"text_len": 1001, "expect": "none"}, null, null, "text_too_long"]),
+            json!(["type_text", {"text_len": 14, "expect": "none", "submit": true}, null, null, "leaked_tag"]),
             json!(["key", {"keys": {"category": "invalid_keys", "count": 1}, "expect": "none"}, null, null, "invalid_arguments"]),
             json!(["key", {"keys": ["ctrl+s"], "expect": {"window_id": 2}}, null, null, "focus_mismatch"]),
             json!(["type_text", {"text_len": 6, "expect": {"app_id_len": 1, "matched": null}}, null, null, "app_denied"]),
@@ -1111,6 +1123,16 @@ async fn a_paste_checks_its_text_focus_app_and_clipboard_before_the_key() {
         )
         .await;
     assert_eq!(tool_error(&long).0, "text_too_long");
+    let leaked = desk
+        .server
+        .call(
+            "type_text",
+            paste(concat!("a\nb\n", "<", "/parameter>\n"), json!("none")),
+        )
+        .await;
+    let (tag, refused) = tool_error(&leaked);
+    assert_eq!(tag, "leaked_tag");
+    assert!(refused.ends_with("nothing was pasted"), "{refused}");
     let elsewhere = desk
         .server
         .call("type_text", paste("x", json!({"window_id": 2})))
@@ -1140,10 +1162,12 @@ async fn a_paste_checks_its_text_focus_app_and_clipboard_before_the_key() {
     assert_eq!(tool_error(&denied).0, "app_denied");
     let audit = std::fs::read_to_string(desk.fixture.audit_log()).unwrap();
     assert!(!audit.contains("pasted words"), "{audit}");
+    assert!(!audit.contains("/parameter"), "{audit}");
     assert_eq!(
         desk.audited(),
         [
             json!(["type_text", {"text_len": 1024 * 1024 + 1, "via": "paste", "paste_keys": "ctrl+v", "expect": "none"}, null, null, "text_too_long"]),
+            json!(["type_text", {"text_len": 17, "via": "paste", "paste_keys": "ctrl+v", "expect": "none"}, null, null, "leaked_tag"]),
             json!(["type_text", {"text_len": 1, "via": "paste", "paste_keys": "ctrl+v", "expect": {"window_id": 2}}, null, null, "focus_mismatch"]),
             json!(["type_text", {"text_len": 12, "via": "paste", "paste_keys": "ctrl+v", "expect": {"app_id_len": 1, "matched": null}}, null, null, "upstream_error"]),
             json!(["type_text", {"text_len": 1, "via": "paste", "paste_keys": "ctrl+v", "expect": {"app_id_len": 1, "matched": null}}, null, null, "app_denied"]),

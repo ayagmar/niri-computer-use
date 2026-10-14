@@ -41,6 +41,7 @@ use crate::runner;
 use super::Input;
 use super::keeper;
 use super::keyboard::{self, Expect, Typing};
+use super::leaked_tags;
 
 /// `paste`'s text, in bytes.
 pub(crate) const MAX_TEXT: usize = 1024 * 1024;
@@ -152,6 +153,11 @@ fn check_text(text: &str) -> Result<(), CallError> {
             ),
         )
         .into());
+    }
+    if let Some(leak) = leaked_tags::leaked(text) {
+        return Err(
+            ToolError::new(ErrorName::LeakedTag, format!("{leak}; nothing was pasted")).into(),
+        );
     }
     Ok(())
 }
