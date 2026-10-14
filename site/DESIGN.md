@@ -25,6 +25,8 @@ colors:
   plate-dark: "#1b1e1c"
   plate-rule-dark: "#3d433f"
   on-red: "#ffffff"
+  on-red-dark: "#0f1110"
+  red-on-mark-dark: "#ff7a6b"
   docs-ground: "#e6e8e3"
   docs-ink: "#0c0e0d"
   docs-ink-2: "#464c48"
@@ -229,7 +231,8 @@ Pale neutral paper with near-black ink, two greys for rules and grid lines, a pa
 ### Primary
 - **Stop Red** (red, red-dark): the Esc keycap face, the headline's stop line, the "set by your stop key" note, a refused check in the block diagram, red traces and labels in the timing diagram (your stop, a cut call, a refused call, the lease taken back), the cursor and pen after a stop, and refused answers in readouts and call lists.
 - **Key Lip** (red-lip, red-lip-dark): the keycap's lower edge, and nowhere else.
-- **On Red** (on-red): text on red, the Esc legend and a refused check. Written as `#fff` in the components, not as a custom property.
+- **On Red** (on-red, on-red-dark): text on a red fill, the Esc legend and a refused check; white in light, the dark paper in dark, where white on the lighter red is too faint.
+- **Red on the Highlighter** (red-on-mark-dark): refused and stopped lines in the readouts and the highlighted call; the light theme uses the stop red itself.
 
 ### Secondary
 - **Highlighter** (mark, mark-dark): the held-lease band in the diagram, the readouts under the timing diagram and the block diagram, the answer lines and field rows in Result, the running table row, the current call in the call list, and the version tag on hover.

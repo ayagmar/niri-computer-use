@@ -329,11 +329,11 @@ const quoted = (text: string) => text.replace(/`/g, '');
 	.check:global(.no) {
 		background: var(--red);
 		border-color: var(--red);
-		color: #fff;
+		color: var(--on-red);
 	}
 
 	.check:global(.no) .you {
-		color: #fff;
+		color: var(--on-red);
 	}
 
 	.audit {
@@ -375,7 +375,7 @@ const quoted = (text: string) => text.replace(/`/g, '');
 	}
 
 	.answer[data-kind='error'] :global(code:first-child) {
-		color: var(--red);
+		color: var(--red-on-mark);
 	}
 
 	.answer > span {

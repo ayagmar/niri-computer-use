@@ -337,7 +337,7 @@
       "on-red": {
         "role": "primary",
         "displayName": "On Red",
-        "purpose": "Text on red: the Esc legend and a refused check. Literal #fff in the components.",
+        "purpose": "Text on red: the Esc legend and a refused check. The --on-red property: white in light, #0f1110 in dark; red text on the highlighter uses --red-on-mark, #ff7a6b in dark.",
         "tonalRamp": [
           "#0b0b0b",
           "#252525",
