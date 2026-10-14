@@ -216,7 +216,7 @@ async fn a_still_screen_is_met_with_its_screenshot() {
 /// and the fixture last.
 struct App {
     server: Server,
-    niri: Niri,
+    _niri: Niri,
     stream: Stream,
     _noctalia: noctalia::Reply,
     _bus: Bus,
@@ -247,7 +247,7 @@ impl App {
         }
         Self {
             server,
-            niri,
+            _niri: niri,
             stream,
             _noctalia: noctalia,
             _bus: bus,
@@ -467,21 +467,23 @@ async fn a_disabled_button_is_waited_on_as_the_compact_listing_names_it() {
     assert!(took >= Duration::from_millis(400), "{took:?}");
 }
 
-// The bug: a window that closes during the wait left to the timeout.
+// The bug: a window that closes during the wait left to the timeout, or to the end of a
+// walk. niri goes on listing the window, so only its event stream can end the wait, and
+// the panel takes 0.9 s to answer, so the close comes mid-walk.
 #[tokio::test]
 async fn a_window_that_closes_ends_an_element_wait_at_once() {
     let mut app = App::start("wait-element-closed", false).await;
+    app.mock
+        .slow_on("GetState", "/panel", Duration::from_millis(900));
     let arguments = json!({"until": {"element": {"window_id": WINDOW, "name_contains": "never"}}});
     let started = Instant::now();
     let id = app.server.start_call("wait_for", arguments).await;
     tokio::time::sleep(Duration::from_millis(300)).await;
-    let windows = [window_on(2, Some("other"), 1, true)];
-    app.niri.set_windows(&windows, &[workspace()]);
     app.stream.send(&json!({"WindowClosed": {"id": WINDOW}}));
     let result = app.server.response(id).await["result"].clone();
     let outcome = report(&result);
     assert_eq!(outcome["observed"], "window_gone", "{outcome}");
-    assert!(started.elapsed() < Duration::from_secs(2), "{outcome}");
+    assert!(started.elapsed() < Duration::from_millis(800), "{outcome}");
 }
 
 #[tokio::test]
