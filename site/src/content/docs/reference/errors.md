@@ -141,7 +141,7 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 **Cause:** the window's app isn't on the accessibility bus, or has no accessible window that is this one. Chromium, Electron and CEF apps join the bus only when the session's accessibility was on when they started. The server then turns it on, unless the policy file sets [`turn_on_accessibility = false`](../../concepts/configuration/#turn_on_accessibility), and `detail` says what it did.
 
-**What to do:** aim at screenshot pixels for that window. `detail` names the window's `app_id`. If it is a Chromium, Electron or CEF app's and `detail` says accessibility is on, ask the user before restarting the app; after a restart, `elements` lists it. A restart doesn't help other apps.
+**What to do:** aim at screenshot pixels for that window. When the window's process is a Chromium, Electron or CEF app's, `detail` says what the server did about the session's accessibility, and that the app needs a restart if it started while accessibility was off: ask the user before restarting it; after a restart, `elements` lists it. For any other app, `detail` says only that it isn't on the bus.
 
 ### `ambiguous_window`
 

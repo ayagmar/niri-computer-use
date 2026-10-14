@@ -74,6 +74,21 @@ pub(crate) fn comm(proc_root: &Path, pid: u32) -> Option<String> {
     Some(comm.trim_end().to_owned())
 }
 
+/// Files every Chromium-family build ships beside its executable: Chromium's ICU data and
+/// V8's context snapshot. Chromium, Chrome, Electron and CEF apps all do.
+const CHROMIUM_FILES: [&str; 2] = ["icudtl.dat", "v8_context_snapshot.bin"];
+
+/// Whether `pid` runs a Chromium-family executable, one with `CHROMIUM_FILES` beside it, as
+/// `/proc/<pid>/exe` names it. A process that can't be read, as another user's, or whose
+/// executable isn't at that path here, as one in a sandbox's own filesystem, isn't.
+pub(crate) fn chromium_family(proc_root: &Path, pid: u32) -> bool {
+    let Ok(exe) = std::fs::read_link(proc_root.join(pid.to_string()).join("exe")) else {
+        return false;
+    };
+    exe.parent()
+        .is_some_and(|dir| CHROMIUM_FILES.iter().any(|file| dir.join(file).is_file()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,5 +153,41 @@ mod tests {
     fn reads_this_process_from_the_real_proc() {
         let me = stat(Path::new("/proc"), std::process::id()).unwrap();
         assert!(!me.exited());
+    }
+
+    #[test]
+    fn tells_a_chromium_family_executable_by_the_files_beside_it() {
+        let root = crate::test_support::fresh_dir("procs-chromium");
+        for (app, file) in [
+            ("browser", Some("icudtl.dat")),
+            ("electron", Some("v8_context_snapshot.bin")),
+            ("terminal", None),
+        ] {
+            std::fs::create_dir(root.join(app)).unwrap();
+            std::fs::write(root.join(app).join(app), b"").unwrap();
+            if let Some(file) = file {
+                std::fs::write(root.join(app).join(file), b"").unwrap();
+            }
+        }
+        // A directory named like the file doesn't count.
+        std::fs::create_dir(root.join("terminal/icudtl.dat")).unwrap();
+        for (pid, exe) in [
+            (5, "browser/browser"),
+            (6, "electron/electron"),
+            (7, "terminal/terminal"),
+            (8, "gone/gone"),
+        ] {
+            std::fs::create_dir_all(root.join(format!("proc/{pid}"))).unwrap();
+            std::os::unix::fs::symlink(root.join(exe), root.join(format!("proc/{pid}/exe")))
+                .unwrap();
+        }
+        let proc_root = root.join("proc");
+        assert!(chromium_family(&proc_root, 5));
+        assert!(chromium_family(&proc_root, 6));
+        assert!(!chromium_family(&proc_root, 7));
+        // An executable not at its path here, as in a sandbox, and no process at all.
+        assert!(!chromium_family(&proc_root, 8));
+        assert!(!chromium_family(&proc_root, 9));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

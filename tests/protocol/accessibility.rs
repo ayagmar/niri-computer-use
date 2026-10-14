@@ -3,6 +3,7 @@
 //! `org.a11y.Status`. The mock launcher keeps `IsEnabled` true while a listener's
 //! connection lasts, as at-spi2-core 2.61 and later do, unless a test makes it older.
 
+use std::sync::PoisonError;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -10,15 +11,23 @@ use serde_json::{Value, json};
 use crate::atspi::{self, Bus, Mock, Object};
 use crate::client::{Server, WAIT, tool_error};
 use crate::elements::{WINDOW, app_window, objects, workspace};
-use crate::fixture::{self, Fixture, shared_mode};
+use crate::fixture::{self, Fixture, SPAWNING, shared_mode};
 use crate::niri::{Niri, Stream};
 
-/// A process ID no application on the mock's bus has.
-const OFF_BUS_PID: u32 = 1;
 /// The server's budget for a request on the accessibility bus.
 const BUDGET: Duration = Duration::from_secs(3);
 
-/// A server on a fake niri whose window 1 belongs to an app off the accessibility bus.
+/// What runs window 1's app when it is off the accessibility bus.
+#[derive(Debug, Clone, Copy)]
+enum OffBus {
+    /// A Chromium-family app: its executable has Chromium's ICU data beside it.
+    Chromium,
+    /// Any other app, such as a terminal.
+    Other,
+}
+
+/// A server on a fake niri whose window 1 belongs to an app off the accessibility bus, or
+/// to the mock application.
 ///
 /// Fields drop in this order: the server first, so it can't react to the rest going away,
 /// and the fixture last.
@@ -26,23 +35,36 @@ struct Desk {
     server: Server,
     _niri: Niri,
     _stream: Stream,
+    _app: Option<tokio::process::Child>,
     bus: Bus,
     mock: Mock,
     fixture: Fixture,
 }
 
 impl Desk {
-    async fn start(name: &str, policy: &str, window: Value) -> Self {
-        Self::start_with(name, policy, window, objects()).await
+    /// Window 1 of a Chromium-family app off the bus, with `policy` as the policy file.
+    async fn start(name: &str, policy: &str) -> Self {
+        Self::off_bus(name, policy, OffBus::Chromium).await
     }
 
+    async fn off_bus(name: &str, policy: &str, off_bus: OffBus) -> Self {
+        Self::start_with(name, policy, Some(off_bus), objects()).await
+    }
+
+    /// With `off_bus`, window 1 belongs to such an app, otherwise to the mock application,
+    /// whose objects are `objects`.
     async fn start_with(
         name: &str,
         policy: &str,
-        window: Value,
+        off_bus: Option<OffBus>,
         objects: Vec<(&'static str, Object)>,
     ) -> Self {
         let mut fixture = Fixture::new(name);
+        let mut window = app_window(WINDOW, true);
+        let app = off_bus.map(|off_bus| app(&fixture, off_bus));
+        if let Some(app) = &app {
+            window["pid"] = json!(app.id().unwrap());
+        }
         std::fs::create_dir_all(fixture.path("config/niri-computer-use")).unwrap();
         std::fs::write(fixture.path("config/niri-computer-use/policy.toml"), policy).unwrap();
         let (bus, mock) = atspi::start(&mut fixture, &["/frame"], objects).await;
@@ -56,6 +78,7 @@ impl Desk {
             server,
             _niri: niri,
             _stream: stream,
+            _app: app,
             bus,
             mock,
             fixture,
@@ -77,11 +100,24 @@ impl Desk {
     }
 }
 
-/// Window 1 of an app that isn't on the accessibility bus.
-fn off_bus_window() -> Value {
-    let mut window = app_window(WINDOW, true);
-    window["pid"] = json!(OFF_BUS_PID);
-    window
+/// A process of its own for an app off the bus: a copy of `sleep`, so that its
+/// `/proc/<pid>/exe` is the copy, beside Chromium's ICU data for a Chromium-family one.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the test runs the window's app itself, as the desktop would"
+)]
+fn app(fixture: &Fixture, off_bus: OffBus) -> tokio::process::Child {
+    let exe = fixture.path("app/app");
+    fixture::copy_of("sleep", &exe);
+    if matches!(off_bus, OffBus::Chromium) {
+        fixture::file_at(&exe.with_file_name("icudtl.dat"), "", 0o644);
+    }
+    let _spawning = SPAWNING.lock().unwrap_or_else(PoisonError::into_inner);
+    tokio::process::Command::new(exe)
+        .arg("60")
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap()
 }
 
 /// Whether `IsEnabled` reads `on` within `WAIT`.
@@ -98,7 +134,7 @@ async fn turns(bus: &Bus, on: bool) -> bool {
 
 #[tokio::test]
 async fn an_app_off_the_bus_turns_accessibility_on_until_the_server_ends_however_it_ends() {
-    let mut desk = Desk::start("acc-on", "", off_bus_window()).await;
+    let mut desk = Desk::start("acc-on", "").await;
     assert!(!desk.bus.is_enabled().await);
     let (name, detail) = desk.refused().await;
     assert_eq!(name, "not_accessible");
@@ -106,11 +142,10 @@ async fn an_app_off_the_bus_turns_accessibility_on_until_the_server_ends_however
         detail.contains("was off, so the server turned it on") && detail.contains("ask the user"),
         "{detail}"
     );
-    // A restart helps only an app that checks at start, which the server can't tell, so the
-    // agent gets the window's app_id and the condition, not a request to pass on.
+    // The window's app is named, and the restart advice is for the app its process is.
     assert!(
         detail.contains("org.ncu.Mock")
-            && detail.contains("if it is a Chromium, Electron or CEF app"),
+            && detail.contains("its process is a Chromium, Electron or CEF app's"),
         "{detail}"
     );
     // The launcher's GSettings write outlives the server, so the agent is told of it.
@@ -139,7 +174,7 @@ async fn an_app_off_the_bus_turns_accessibility_on_until_the_server_ends_however
 /// lets its listener go, or the next screen reader to start or end would turn it back on.
 #[tokio::test]
 async fn accessibility_turned_off_over_the_server_is_let_go_for_good() {
-    let mut desk = Desk::start("acc-off", "", off_bus_window()).await;
+    let mut desk = Desk::start("acc-off", "").await;
     desk.refused().await;
     let listeners = desk.mock.listeners();
     desk.mock.written_off();
@@ -154,9 +189,27 @@ async fn accessibility_turned_off_over_the_server_is_let_go_for_good() {
     assert_eq!(desk.mock.status_writes(), 0);
 }
 
+/// Only Chromium, Electron and CEF apps check the session's accessibility before they join
+/// the bus. Turning it on for any other app off the bus would change the session, and the
+/// user's settings, for nothing, so a terminal's window gets a plain `not_accessible`.
+#[tokio::test]
+async fn an_app_off_the_bus_that_isnt_chromium_never_turns_accessibility_on() {
+    let mut desk = Desk::off_bus("acc-terminal", "", OffBus::Other).await;
+    let (name, detail) = desk.refused().await;
+    assert_eq!(name, "not_accessible");
+    assert!(
+        !detail.contains("accessibility is") && !detail.contains("restart"),
+        "{detail}"
+    );
+    assert_eq!(desk.mock.listeners(), [""; 0]);
+    assert_eq!(desk.mock.calls("IsEnabled"), 0);
+    assert!(!desk.bus.is_enabled().await);
+    assert_eq!(desk.switch().await, "off");
+}
+
 #[tokio::test]
 async fn accessibility_already_on_is_left_alone() {
-    let mut desk = Desk::start("acc-reader", "", off_bus_window()).await;
+    let mut desk = Desk::start("acc-reader", "").await;
     // As a running screen reader leaves it.
     desk.mock.accessibility_on();
     let (name, detail) = desk.refused().await;
@@ -166,7 +219,7 @@ async fn accessibility_already_on_is_left_alone() {
         "{detail}"
     );
     assert!(
-        detail.contains("ask the user") && detail.contains("if it is a Chromium"),
+        detail.contains("ask the user") && detail.contains("its process is a Chromium"),
         "{detail}"
     );
     assert_eq!(desk.mock.listeners(), [""; 0]);
@@ -176,12 +229,7 @@ async fn accessibility_already_on_is_left_alone() {
 
 #[tokio::test]
 async fn the_policy_file_keeps_the_server_from_turning_accessibility_on() {
-    let mut desk = Desk::start(
-        "acc-refused",
-        "turn_on_accessibility = false",
-        off_bus_window(),
-    )
-    .await;
+    let mut desk = Desk::start("acc-refused", "turn_on_accessibility = false").await;
     let (name, detail) = desk.refused().await;
     assert_eq!(name, "not_accessible");
     assert!(detail.contains("turn_on_accessibility = false"), "{detail}");
@@ -194,7 +242,7 @@ async fn the_policy_file_keeps_the_server_from_turning_accessibility_on() {
 
 #[tokio::test]
 async fn a_launcher_that_ignores_listeners_is_let_go_and_named() {
-    let mut desk = Desk::start("acc-older", "", off_bus_window()).await;
+    let mut desk = Desk::start("acc-older", "").await;
     desk.mock.older_launcher();
     // Reads that take a while, so the last one ends past the 500 ms the server waits.
     desk.mock
@@ -217,7 +265,7 @@ async fn a_launcher_that_ignores_listeners_is_let_go_and_named() {
 /// of an older launcher, so a later call with time to spare still turns it on.
 #[tokio::test]
 async fn a_launcher_still_turning_on_when_a_call_runs_out_is_asked_again() {
-    let mut desk = Desk::start("acc-late", "", off_bus_window()).await;
+    let mut desk = Desk::start("acc-late", "").await;
     desk.mock.slow_launcher(Duration::from_millis(350));
     // Its one walk has 150 ms.
     let until = json!({"element": {"window_id": WINDOW, "role": "button"}});
@@ -236,7 +284,7 @@ async fn a_launcher_still_turning_on_when_a_call_runs_out_is_asked_again() {
 
 #[tokio::test]
 async fn a_registry_that_never_answers_holds_neither_elements_past_its_budget_nor_status() {
-    let mut desk = Desk::start("acc-hung", "", off_bus_window()).await;
+    let mut desk = Desk::start("acc-hung", "").await;
     let held = desk
         .mock
         .hold_on("RegisterEvent", "/org/a11y/atspi/registry");
@@ -262,7 +310,7 @@ async fn a_registry_that_never_answers_holds_neither_elements_past_its_budget_no
 
 #[tokio::test]
 async fn a_launcher_that_never_answers_holds_no_elements_call_past_its_budget() {
-    let mut desk = Desk::start("acc-mute", "", off_bus_window()).await;
+    let mut desk = Desk::start("acc-mute", "").await;
     let held = desk.mock.hold_on("IsEnabled", "/org/a11y/bus");
     let started = Instant::now();
     let (name, detail) = desk.refused().await;
@@ -279,7 +327,7 @@ async fn a_launcher_that_never_answers_holds_no_elements_call_past_its_budget() 
 /// stays on while one is left, and goes off once none is.
 #[tokio::test]
 async fn accessibility_stays_on_while_any_server_still_holds_it() {
-    let mut desk = Desk::start("acc-two", "", off_bus_window()).await;
+    let mut desk = Desk::start("acc-two", "").await;
     let mut second = Server::start(&desk.fixture).await;
     desk.refused().await;
     let (_, detail) = tool_error(&second.call("elements", json!({"window_id": WINDOW})).await);
@@ -311,7 +359,7 @@ async fn a_frame_without_its_tree_is_asked_for_its_attributes_and_read_again() {
     // As Chromium's frame is until an assistive technology asks for attributes.
     frame.built = Some(std::mem::take(&mut frame.children));
     frame.children = vec!["/org/a11y/atspi/null".to_owned()];
-    let mut desk = Desk::start_with("acc-built", "", app_window(WINDOW, true), objects).await;
+    let mut desk = Desk::start_with("acc-built", "", None, objects).await;
     let listing = desk
         .server
         .structured_with("elements", json!({"window_id": WINDOW, "format": "json"}))
@@ -347,7 +395,7 @@ async fn a_frame_that_builds_nothing_when_asked_isnt_reported_as_building() {
         .unwrap();
     frame.children = vec!["/org/a11y/atspi/null".to_owned()];
     frame.built = Some(frame.children.clone());
-    let mut desk = Desk::start_with("acc-unbuilt", "", app_window(WINDOW, true), objects).await;
+    let mut desk = Desk::start_with("acc-unbuilt", "", None, objects).await;
     let listing = desk
         .server
         .structured_with("elements", json!({"window_id": WINDOW, "format": "json"}))
