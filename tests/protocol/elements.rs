@@ -1521,8 +1521,7 @@ async fn named_rows_of_different_shapes_and_changing_labels_keep_their_refs() {
     assert_eq!(desk.mock.calls("DoAction"), 2);
 }
 
-/// Unnamed rows of `[Delete, More, 64 static labels, record label]`, listed with `limit:
-/// 1`: the walk stops after the first row's `More`, before its label and the next row.
+/// Rows of `[Delete, More, 64 static labels, record label]`, named or not as `rows` says.
 fn long_rows(rows: Rows) -> Vec<(&'static str, Object)> {
     let row = |n: usize| {
         let mut objects = record_row(n);
@@ -1537,7 +1536,15 @@ fn long_rows(rows: Rows) -> Vec<(&'static str, Object)> {
     list(rows, 2, row, Vec::new())
 }
 
+/// The first element listed with `limit` 1, from a walk cut short in the first row: four
+/// of its static labels answer in 0.9 s each, so the walk runs out of its three seconds
+/// before the row's label and the next row.
 async fn first_listed(desk: &mut Desk) -> Value {
+    for extra in 0..4 {
+        let path = format!("/static1_{extra}");
+        desk.mock
+            .slow_on("GetState", &path, Duration::from_millis(900));
+    }
     let listing = desk
         .server
         .structured_with(
@@ -1545,13 +1552,14 @@ async fn first_listed(desk: &mut Desk) -> Value {
             json!({"window_id": WINDOW, "limit": 1, "format": "json"}),
         )
         .await;
+    assert_eq!(listing["capped_reason"], "budget_exhausted", "{listing}");
     assert_eq!(listing["truncated"], true, "{listing}");
     listing["elements"][0].clone()
 }
 
-// A listing stopped at its limit, its object cap or its time budget before the row's
-// record or the next row: a row's role and name are read before anything in it, so a
-// named row still binds the ref and an unnamed one is still refused.
+// A walk cut short before the row's record and the next row: a row's role and name are
+// read before anything in it, so a named row still binds the ref, which goes stale once
+// the row shows another record, and an unnamed one is still refused.
 #[tokio::test]
 async fn a_listing_stopped_before_the_rows_record_still_binds_or_refuses_by_the_row() {
     let mut named = list_desk("el-row-cut-named", long_rows(Rows::Named)).await;
