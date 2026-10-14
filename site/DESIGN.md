@@ -279,7 +279,7 @@ Pills (rounded.pill) for every button, the theme toggle and the lease tag. Comma
 
 ### Stage (recording)
 The site's signature unit: a recording on the plate with its calls as subtitles.
-- **Frame:** 16:9 (8:9 on a phone with a crop). The AVIF still is the recording's last frame; the video loads after the page, fades in over 400ms, plays while 35% of it is in view, and stays still under reduced motion or Save-Data until Play is pressed.
+- **Frame:** 16:9 (8:9 on a phone with a crop). The AVIF still is the recording's last frame; the video loads after the page, fades in over 400ms, plays while 35% of it is in view, and stays still under reduced motion or Save-Data until Play is pressed. Paused, it keeps the paused frame.
 - **Bar:** the prompt in quiet plate ink, clamped to two lines; the Play/Pause pill; the subtitle, three lines tall whatever the call (request on one, answer on two), `→` for a call and `←` for its answer, `$` and `#` for a command the user ran; the lease tag.
 - **Lease tag:** reads `lease free`, `lease held` or `lease stopped`, following the calls. Free is plate-control with quiet text, held is plate ink with plate text, stopped is stop red with white text.
 - **Caption:** the note on how the recording was made, then a disclosure, "All N calls", listing every call with its time (m:ss.s, tabular figures).
