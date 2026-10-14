@@ -284,7 +284,16 @@ pub(crate) fn well_formed(id: &str) -> bool {
     };
     tag.len() == 8
         && tag.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f'))
-        && number.parse::<u64>().is_ok_and(|n| n.to_string() == number)
+        && issued_number(number).is_some()
+}
+
+/// The number at the end of an id, spelled as ids are issued: decimal digits without a
+/// sign or leading zeros, so `+1` or `01` names no ref.
+fn issued_number(digits: &str) -> Option<u64> {
+    digits
+        .parse()
+        .ok()
+        .filter(|number: &u64| number.to_string() == digits)
 }
 
 /// The refs of the current lease, and the screenshot refs of sessions without it, which
@@ -348,10 +357,7 @@ impl Refs {
     /// The number in `id`, if it is an id of `kind` with this tag.
     fn number(&self, id: &str, kind: &str) -> Option<u64> {
         let rest = id.strip_prefix(kind)?.strip_prefix('-')?;
-        rest.strip_prefix(self.tag.as_str())?
-            .strip_prefix('-')?
-            .parse()
-            .ok()
+        issued_number(rest.strip_prefix(self.tag.as_str())?.strip_prefix('-')?)
     }
 
     /// A new lease, for `owner`: earlier refs of the lease and `owner`'s refs from before
@@ -769,6 +775,25 @@ mod tests {
             .unwrap();
         refs.forget(other);
         assert!(refs.view(other, &theirs).is_err());
+    }
+
+    /// Found by a property test: `parse` takes a sign and leading zeros, so these named
+    /// ref 1 while the audit log called them `invalid_ref`.
+    #[test]
+    fn an_id_names_a_ref_only_as_it_was_issued() {
+        let mut refs = Refs::new("0123abcd".to_owned());
+        refs.start(SessionId(1));
+        let lease = refs.lease().unwrap();
+        assert_eq!(
+            refs.insert(lease, shot()).as_deref(),
+            Some("shot-0123abcd-1")
+        );
+        assert!(refs.get("shot-0123abcd-1").is_ok());
+        for misspelled in ["shot-0123abcd-+1", "shot-0123abcd-01"] {
+            let error = refs.get(misspelled).unwrap_err();
+            assert!(error.detail.starts_with("unknown_ref"), "{misspelled}");
+            assert!(!well_formed(misspelled), "{misspelled}");
+        }
     }
 
     #[test]

@@ -15,6 +15,10 @@ All notable changes to this project are documented here. The format follows [Kee
 - `type_text` refuses text, typed or pasted, that ends with tool-call closing tags such as `</parameter>` or `</invoke>` that nothing earlier in the text opens, with `leaked_tag` and the tags named in `detail`. Models sometimes leak their own tool-call markup into the end of a long argument. Nothing is typed or pasted; send the text again without the tags.
 - `set_element_text` reads the field's text back and compares it with the text sent, instead of comparing only the character count. A field that reformats or masks text without changing its length is now `differs`, not `matched`. Neither text is returned or logged.
 
+### Fixed
+
+- A screenshot or element ref spelled with a sign or leading zeros in its number, such as `shot-<tag>-+1` or `shot-<tag>-01`, no longer names the ref issued as `shot-<tag>-1`. Such a ref worked while the audit log recorded it as `invalid_ref`; it is now `unknown_ref` or `element_stale`, as any ref the server didn't issue.
+
 ## 0.1.1 - 2026-10-14
 
 ### Added
