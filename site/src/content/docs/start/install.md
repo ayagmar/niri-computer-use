@@ -8,7 +8,7 @@ sidebar:
 ## Requirements
 
 - niri 26.04. With another major or minor version the server is read-only: it looks but refuses to act.
-- x86_64 Linux with glibc 2.39 or newer, for the release tarball. To build it yourself, Rust 1.99 or newer.
+- For a release build, x86_64 or aarch64 Linux with glibc 2.39 or newer; both builds have the same requirements. To build it yourself, Rust 1.99 or newer.
 - libxkbcommon, which the keyboard code links against. To build, its headers too (`libxkbcommon-dev` on Debian and Ubuntu, `libxkbcommon` on Arch).
 - At run time: `grim` for screenshots, `wtype` for the keyboard, and `loginctl` from systemd for the lock state.
 - Optional: [Noctalia](../../concepts/noctalia/) 5.2 for its panels and lock state, and an accessibility bus (at-spi2-core) for [`elements`](../../tools/elements/).
@@ -16,22 +16,23 @@ sidebar:
 
 ## Install the release
 
-Download the tarball, check it, and put the binary in `~/.local/bin` or another directory on your `PATH`:
+Download your machine's tarball, check it, and put the binary in `~/.local/bin` or another directory on your `PATH`. `uname -m` prints `x86_64` or `aarch64` on the machines there are builds for:
 
 ```sh
-curl -LO https://github.com/ayagmar/niri-computer-use/releases/download/v0.1.0/niri-computer-use-0.1.0-x86_64-linux.tar.gz
-curl -LO https://github.com/ayagmar/niri-computer-use/releases/download/v0.1.0/niri-computer-use-0.1.0-x86_64-linux.tar.gz.sha256
-sha256sum -c niri-computer-use-0.1.0-x86_64-linux.tar.gz.sha256
-tar -xzf niri-computer-use-0.1.0-x86_64-linux.tar.gz
-install -Dm755 -t ~/.local/bin niri-computer-use-0.1.0-x86_64-linux/niri-computer-use
+arch=$(uname -m)
+curl -LO "https://github.com/ayagmar/niri-computer-use/releases/download/v0.1.0/niri-computer-use-0.1.0-$arch-linux.tar.gz"
+curl -LO "https://github.com/ayagmar/niri-computer-use/releases/download/v0.1.0/niri-computer-use-0.1.0-$arch-linux.tar.gz.sha256"
+sha256sum -c "niri-computer-use-0.1.0-$arch-linux.tar.gz.sha256"
+tar -xzf "niri-computer-use-0.1.0-$arch-linux.tar.gz"
+install -Dm755 -t ~/.local/bin "niri-computer-use-0.1.0-$arch-linux/niri-computer-use"
 ~/.local/bin/niri-computer-use --version
 ```
 
-The tarball also holds the skill that tells your agents how to use the server, with the README, the changelog and the licenses of the crates built into the binary. Copy the skill somewhere it stays and link it where your agents look for skills:
+The tarball also holds the skill, with the README, the changelog and the licenses of the crates built into the binary. Copy the skill somewhere it stays and link it where your agents look for skills:
 
 ```sh
 mkdir -p ~/.local/share/niri-computer-use ~/.claude/skills ~/.agents/skills
-cp -r niri-computer-use-0.1.0-x86_64-linux/skills ~/.local/share/niri-computer-use/
+cp -r "niri-computer-use-0.1.0-$arch-linux/skills" ~/.local/share/niri-computer-use/
 ln -s ~/.local/share/niri-computer-use/skills/niri-computer-use ~/.claude/skills/niri-computer-use
 ln -s ~/.local/share/niri-computer-use/skills/niri-computer-use ~/.agents/skills/niri-computer-use
 ```

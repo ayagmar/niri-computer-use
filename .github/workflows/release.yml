@@ -30,7 +30,14 @@ jobs:
 
   build:
     needs: ci
-    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -61,20 +68,25 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Build
-        run: cargo build --locked --release -p niri-computer-use --target x86_64-unknown-linux-gnu
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: cargo build --locked --release -p niri-computer-use --target "$ARCH-unknown-linux-gnu"
 
       - name: Package
         env:
+          ARCH: ${{ matrix.arch }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          name="niri-computer-use-$VERSION-x86_64-linux"
+          target="$ARCH-unknown-linux-gnu"
+          name="niri-computer-use-$VERSION-$ARCH-linux"
           mkdir -p "dist/$name/skills"
-          cp target/x86_64-unknown-linux-gnu/release/niri-computer-use README.md LICENSE CHANGELOG.md "dist/$name/"
+          cp "target/$target/release/niri-computer-use" README.md LICENSE CHANGELOG.md "dist/$name/"
           strip --strip-debug "dist/$name/niri-computer-use"
+          "dist/$name/niri-computer-use" --version
           cp -r skills/niri-computer-use "dist/$name/skills/"
           # cargo-about reads every platform's crates, and the build fetched only this one's.
           cargo fetch --locked
-          cargo about generate --frozen -c .github/release/about.toml -m Cargo.toml \
+          cargo about generate --frozen --target "$target" -c .github/release/about.toml -m Cargo.toml \
             .github/release/licenses.hbs -o "dist/$name/THIRD-PARTY-LICENSES.txt"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
@@ -84,14 +96,22 @@ jobs:
             exit 1
           fi
 
-      - name: Hand the release files on
+      - name: Hand the tarball on
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release
+          name: release-${{ matrix.arch }}
           path: |
             dist/*.tar.gz
             dist/*.tar.gz.sha256
-            dist/notes.md
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Hand the notes on
+        if: matrix.arch == 'x86_64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-notes
+          path: dist/notes.md
           if-no-files-found: error
           retention-days: 30
 
@@ -105,7 +125,8 @@ jobs:
       - name: Take the release files
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: release
+          pattern: release-*
+          merge-multiple: true
           path: dist
 
       - name: Create a draft release
@@ -113,7 +134,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.build.outputs.version }}
         run: |
-          name="niri-computer-use-$VERSION-x86_64-linux"
+          name="niri-computer-use-$VERSION"
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
             --title "$GITHUB_REF_NAME" --notes-file dist/notes.md \
-            "dist/$name.tar.gz" "dist/$name.tar.gz.sha256"
+            "dist/$name-x86_64-linux.tar.gz" "dist/$name-x86_64-linux.tar.gz.sha256" \
+            "dist/$name-aarch64-linux.tar.gz" "dist/$name-aarch64-linux.tar.gz.sha256"

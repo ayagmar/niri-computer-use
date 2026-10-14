@@ -23,24 +23,25 @@ It offers up to 22 tools over stdio: reading the desktop, screenshots it can sav
 
 ## Install
 
-Needs niri 26.04 on x86_64 Linux with glibc 2.39 or newer and libxkbcommon, and `grim`, `wtype` and `loginctl` at run time, plus `notify-send` if you turn on `confirm_lease`.
+Release builds exist for x86_64 and aarch64 Linux, and both need glibc 2.39 or newer and libxkbcommon. Either way you need niri 26.04, and `grim`, `wtype` and `loginctl` at run time, plus `notify-send` if you turn on `confirm_lease`.
 
-Download the release tarball, check it, and put the binary in `~/.local/bin` or another directory on your `PATH`:
+Download your machine's tarball, check it, and put the binary in `~/.local/bin` or another directory on your `PATH`. `uname -m` prints `x86_64` or `aarch64` on the machines there are builds for:
 
 ```sh
-curl -LO https://github.com/ayagmar/niri-computer-use/releases/download/v0.1.0/niri-computer-use-0.1.0-x86_64-linux.tar.gz
-curl -LO https://github.com/ayagmar/niri-computer-use/releases/download/v0.1.0/niri-computer-use-0.1.0-x86_64-linux.tar.gz.sha256
-sha256sum -c niri-computer-use-0.1.0-x86_64-linux.tar.gz.sha256
-tar -xzf niri-computer-use-0.1.0-x86_64-linux.tar.gz
-install -Dm755 -t ~/.local/bin niri-computer-use-0.1.0-x86_64-linux/niri-computer-use
+arch=$(uname -m)
+curl -LO "https://github.com/ayagmar/niri-computer-use/releases/download/v0.1.0/niri-computer-use-0.1.0-$arch-linux.tar.gz"
+curl -LO "https://github.com/ayagmar/niri-computer-use/releases/download/v0.1.0/niri-computer-use-0.1.0-$arch-linux.tar.gz.sha256"
+sha256sum -c "niri-computer-use-0.1.0-$arch-linux.tar.gz.sha256"
+tar -xzf "niri-computer-use-0.1.0-$arch-linux.tar.gz"
+install -Dm755 -t ~/.local/bin "niri-computer-use-0.1.0-$arch-linux/niri-computer-use"
 ~/.local/bin/niri-computer-use --version
 ```
 
-The tarball also holds the skill that tells your agents how to use the server. Copy it somewhere it stays and link it where your agents look for skills:
+Then copy the skill somewhere it stays and link it where your agents look for skills:
 
 ```sh
 mkdir -p ~/.local/share/niri-computer-use ~/.claude/skills ~/.agents/skills
-cp -r niri-computer-use-0.1.0-x86_64-linux/skills ~/.local/share/niri-computer-use/
+cp -r "niri-computer-use-0.1.0-$arch-linux/skills" ~/.local/share/niri-computer-use/
 ln -s ~/.local/share/niri-computer-use/skills/niri-computer-use ~/.claude/skills/niri-computer-use
 ln -s ~/.local/share/niri-computer-use/skills/niri-computer-use ~/.agents/skills/niri-computer-use
 ```
@@ -144,7 +145,7 @@ What isn't protected: any connected agent sees your screen and window titles, a 
 
 - niri 26.04 only. With another major or minor release the server is read-only.
 - The pointer tools need one monitor at transform `Normal`. The keyboard, screenshots and the other tools work with any monitors.
-- The release tarball is built for x86_64 only.
+- Release builds exist for x86_64 and aarch64 only.
 - Accessibility varies by toolkit. GTK 4 works; GTK 3 and Qt apps that draw their own title bar give no element boxes, and niri 26.04 gives tiled windows none until they float. Activating an element and setting its text work in both cases.
 
 ## Documentation
