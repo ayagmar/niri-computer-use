@@ -373,7 +373,8 @@ async fn read(
         request
     };
     let Some(app) = request.find_app(pid).await? else {
-        return Err(off_bus(a11y, policy, pid, request.deadline()).await);
+        let app_id = window.app_id.as_deref();
+        return Err(off_bus(a11y, policy, (pid, app_id), request.deadline()).await);
     };
     let frame = request
         .frame(&app, shape(window), &others(window, &placed.others))
@@ -392,13 +393,23 @@ async fn read(
     }))
 }
 
-/// `not_accessible` for `pid`'s app, which isn't on the accessibility bus, saying what the
-/// server did about the session's accessibility by `deadline`. Apps such as Chromium and
-/// Electron check it only when they start, so the agent is told to ask the user before
-/// restarting the app.
-async fn off_bus(a11y: &A11y, policy: &Loaded, pid: i32, deadline: Instant) -> ToolError {
+/// `not_accessible` for the app of process `pid` and `app_id`, which isn't on the
+/// accessibility bus, saying what the server did about the session's accessibility by
+/// `deadline`. Chromium, Electron and CEF apps check it only when they start, which the
+/// server can't tell from the window, so the agent gets the `app_id` and is told to ask the
+/// user before restarting such an app.
+async fn off_bus(
+    a11y: &A11y,
+    policy: &Loaded,
+    (pid, app_id): (i32, Option<&str>),
+    deadline: Instant,
+) -> ToolError {
     let note = switched(a11y.switch(), policy, deadline).await;
-    a11y::not_accessible(format!("{}; {note}", a11y::off_bus(pid)))
+    let app = app_id.map_or_else(
+        || "niri knows no app_id for its window".to_owned(),
+        |app_id| format!("its window's app_id is {app_id:?}"),
+    );
+    a11y::not_accessible(format!("{}; {app}; {note}", a11y::off_bus(pid)))
 }
 
 /// What the server did about the session's accessibility, as `policy::off_bus` decides.
@@ -445,8 +456,9 @@ async fn switched(switch: &Switch, policy: &Loaded, deadline: Instant) -> String
 /// What at-spi2-core does beside turning accessibility on, which the server can't undo.
 const GSETTINGS: &str = "at-spi2-core also sets GSettings org.gnome.desktop.interface toolkit-accessibility to true when it turns accessibility on, and that stays after the server ends";
 
-/// What an app started while the session's accessibility was off needs.
-const RESTART: &str = "apps such as Chromium and Electron check it only when they start, so one started while it was off lists its elements only after a restart: ask the user before restarting it";
+/// What an app started while the session's accessibility was off needs, if it is one that
+/// checks it at start.
+const RESTART: &str = "if it is a Chromium, Electron or CEF app, it checks only when it starts, so if it started while accessibility was off, it lists its elements only after a restart: ask the user before restarting it; a restart doesn't help other apps";
 
 /// Lists the accessible elements of window `ask.window_id`, keeping a ref of each through
 /// `remember` while there is a lease.
