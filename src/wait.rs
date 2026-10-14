@@ -9,7 +9,7 @@ use serde::Serialize;
 use tokio::time::Instant;
 
 use crate::a11y::Capped;
-use crate::a11y::model::Filter;
+use crate::a11y::model::{Filter, Unbound, Unmappable};
 use crate::elements::{self, Listing};
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::waiter::{View, Waited, Waiter};
@@ -172,12 +172,17 @@ pub(crate) async fn window(
 }
 
 /// The element that met an appearing condition: its ref in the form `elements` issues,
-/// while there is a lease, its role and its states. Never its name, the app's text.
+/// while there is a lease, its role and its states, and as in `elements`, why it has no
+/// box and why every tool refuses its ref, when it does. Never its name, the app's text.
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct Appeared {
     pub(crate) element_ref: Option<String>,
     pub(crate) role: &'static str,
     pub(crate) states: Vec<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) unmappable: Option<Unmappable>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) unbound: Option<Unbound>,
 }
 
 /// How one walk left an element condition.
@@ -215,6 +220,8 @@ fn check(
                 element_ref: found.element_ref,
                 role: found.role,
                 states: found.states,
+                unmappable: found.unmappable,
+                unbound: found.unbound,
             }),
             None,
         ),
@@ -476,6 +483,8 @@ mod tests {
                 element_ref: Some("elem-ab-3".to_owned()),
                 role: "button",
                 states: vec!["enabled", "sensitive", "showing"],
+                unmappable: None,
+                unbound: None,
             })
         );
         assert_eq!(walks, 3);
@@ -576,5 +585,24 @@ mod tests {
             check(&element, refused).unwrap_err().name,
             ErrorName::UpstreamError
         );
+    }
+
+    // The bug: a ref every tool refuses handed back as if it worked, where `elements`
+    // would have said `unbound:repeated`, and a box-less element with no word of why.
+    #[test]
+    fn an_appeared_element_says_why_its_ref_is_refused_or_it_has_no_box() {
+        let mut row = listing(&["elem-ab-1"], None);
+        row.elements[0].unbound = Some(Unbound::Repeated);
+        row.elements[0].unmappable = Some(Unmappable::FrameSizeMismatch);
+        let Ok(Checked::Ends(Ended::Met, Some(appeared), None)) =
+            check(&save_button(false), Ok(Some(row)))
+        else {
+            panic!("not met");
+        };
+        assert_eq!(appeared.unbound, Some(Unbound::Repeated));
+        assert_eq!(appeared.unmappable, Some(Unmappable::FrameSizeMismatch));
+        let json = serde_json::to_value(&appeared).unwrap();
+        assert_eq!(json["unbound"], "repeated");
+        assert_eq!(json["unmappable"], "frame_size_mismatch");
     }
 }
