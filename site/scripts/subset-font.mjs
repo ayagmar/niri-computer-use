@@ -3,8 +3,9 @@
 // Fontsource's faces under the same name, so any other character falls back to those, which a
 // page downloads only when it has such a character.
 //
-// Writes `src/generated/archivo-text.woff2` and the `@font-face` for it,
-// `src/generated/archivo-text.css`.
+// Writes `src/generated/archivo-text.woff2`, the `@font-face` for it,
+// `src/generated/archivo-text.css`, and its unicode-range, `src/generated/archivo-text.json`,
+// by which the home page finds the face among Fontsource's.
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import subsetFont from 'subset-font';
 
@@ -57,4 +58,5 @@ const css = `@font-face {
 await mkdir(out, { recursive: true });
 await writeFile(new URL('archivo-text.woff2', out), font);
 await writeFile(new URL('archivo-text.css', out), css);
+await writeFile(new URL('archivo-text.json', out), `${JSON.stringify({ unicodeRange })}\n`);
 console.log(`subset-font: Archivo ${Math.round(font.length / 1024)} KB, ${text.length} characters`);

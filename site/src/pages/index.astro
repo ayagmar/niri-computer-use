@@ -6,6 +6,7 @@ import '../generated/archivo-text.css';
 import '@fontsource-variable/jetbrains-mono/wght.css';
 import '../styles/tokens.css';
 import archivo from '../generated/archivo-text.woff2?url';
+import archivoText from '../generated/archivo-text.json';
 import Stage from '../components/home/Stage.astro';
 import Code from '../components/home/Code.astro';
 import { loadDemo } from '../lib/demo';
@@ -83,7 +84,7 @@ const slotStill = (await loadDemo('errand', [480])).poster.src;
 					note={home.note}
 				/>
 			</div>
-			<script is:inline>
+			<script is:inline define:vars={{ textRange: archivoText.unicodeRange }}>
 				// The frame in the headline is the recording itself, drawn small. Where the recording
 				// sits in the first view (a phone held upright), it drops from the frame into place
 				// as the page opens; where it sits below the first view, it grows from the frame into
@@ -115,15 +116,19 @@ const slotStill = (await loadDemo('errand', [480])).poster.src;
 						}
 					};
 					// Before the text face loads the frame may sit on another line, so with motion on,
-					// wait for it. `document.fonts.status` can read `loaded` before the face is even
-					// asked for.
-					const face = '1em "Archivo Variable"';
-					const text = slot.parentElement.textContent;
-					if (!motion.matches || document.fonts.check(face, text)) place();
+					// wait for it: the cut face itself, found by its unicode-range. Loading the family
+					// by name would fetch Fontsource's full face too, which covers the same characters,
+					// and `document.fonts.status` can read `loaded` before the face is even asked for.
+					const codes = (range) =>
+						range
+							.split(',')
+							.map((part) => part.trim().slice(2).split('-').map((hex) => parseInt(hex, 16)).join('-'))
+							.join();
+					const cut = [...document.fonts].find((face) => codes(face.unicodeRange) === codes(textRange));
+					if (!motion.matches || cut?.status === 'loaded') place();
 					else {
 						run.classList.add('wait');
-						document.fonts
-							.load(face, text)
+						(cut ? cut.load() : document.fonts.ready)
 							.catch(() => {})
 							.then(() => {
 								run.classList.remove('wait');
