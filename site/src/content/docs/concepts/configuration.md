@@ -69,6 +69,12 @@ The check follows keyboard focus, and apps choose their own `app_id`, so this gu
 
 `true` or `false`, default `true`. Chromium, Electron and CEF apps join the accessibility bus only when the session's accessibility was on when they started. With `true`, when `elements`, an element wait or an action's `element_changes` finds a window's app off the bus while accessibility is off, the server turns it on by registering a listener with the accessibility registry, as a screen reader does, and accessibility goes back off when the server ends. It never writes the setting itself, and leaves it alone when something else turned it on. With `false`, it does nothing, and `elements` refuses such apps with `not_accessible` until you turn accessibility on yourself, for example by running a screen reader. While the policy file is invalid it does nothing either. See [Chromium and Electron apps](../../tools/elements/#chromium-and-electron-apps).
 
+Any window whose app isn't on the accessibility bus can set this off, a terminal's included, since the server can't tell which apps would join the bus. When accessibility turns on, at-spi2-core also sets the GSettings key `org.gnome.desktop.interface toolkit-accessibility` to true, in your dconf database, and nothing sets it back: it stays after the server ends, across sessions. The `not_accessible` detail says so when it happens. at-spi2-core's own autostart and GTK module files name the key: a session that honours them starts the accessibility bus at login and loads `at-spi2-atk` into GTK 3 apps while it is true. To put it back to its default:
+
+```sh
+gsettings reset org.gnome.desktop.interface toolkit-accessibility
+```
+
 ### `capture_dir`
 
 Where `screenshot` saves files, default `~/Pictures/niri-computer-use`. It is an absolute path or one starting with `~/`, resolved against the `HOME` of the client's session, so in [shared](#shared) mode each client saves under its own home. `capture_dir = ""` turns saving off, and `screenshot` then refuses `save_path` with `save_not_enabled`. While the policy file is invalid, saving is off too, since the file might have turned it off.

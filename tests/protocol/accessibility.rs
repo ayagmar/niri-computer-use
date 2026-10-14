@@ -106,6 +106,12 @@ async fn an_app_off_the_bus_turns_accessibility_on_until_the_server_ends_however
         detail.contains("was off, so the server turned it on") && detail.contains("ask the user"),
         "{detail}"
     );
+    // The launcher's GSettings write outlives the server, so the agent is told of it.
+    assert!(
+        detail.contains("org.gnome.desktop.interface toolkit-accessibility")
+            && detail.contains("stays after the server ends"),
+        "{detail}"
+    );
     assert!(desk.bus.is_enabled().await);
     assert_eq!(desk.mock.listeners().len(), 1);
     assert_eq!(desk.switch().await, "on");

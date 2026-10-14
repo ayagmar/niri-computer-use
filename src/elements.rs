@@ -422,9 +422,9 @@ async fn switched(switch: &Switch, policy: &Loaded, deadline: Instant) -> String
         OffBus::Refused(why) => format!("the session's accessibility is off, and {why}"),
         OffBus::Listen => match switch.listen(deadline).await {
             Ok(Turned::On | Turned::AlreadyOn) if enabled => on,
-            Ok(Turned::On) => {
-                format!("the session's accessibility was off, so the server turned it on; {RESTART}")
-            }
+            Ok(Turned::On) => format!(
+                "the session's accessibility was off, so the server turned it on; {GSETTINGS}; {RESTART}"
+            ),
             Ok(Turned::AlreadyOn) => "the session's accessibility is off though the server's listener asks for it, so something else turned it off; the server leaves it off".to_owned(),
             Ok(Turned::Unsupported(why)) => format!("the session's accessibility is off: {why}"),
             Err(error) => format!(
@@ -435,6 +435,9 @@ async fn switched(switch: &Switch, policy: &Loaded, deadline: Instant) -> String
         },
     }
 }
+
+/// What at-spi2-core does beside turning accessibility on, which the server can't undo.
+const GSETTINGS: &str = "at-spi2-core also sets GSettings org.gnome.desktop.interface toolkit-accessibility to true when it turns accessibility on, and that stays after the server ends";
 
 /// What an app started while the session's accessibility was off needs.
 const RESTART: &str = "apps such as Chromium and Electron check it only when they start, so one started while it was off lists its elements only after a restart: ask the user before restarting it";
