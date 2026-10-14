@@ -1646,6 +1646,41 @@ async fn a_control_outside_rows_a_cut_walk_cant_tell_apart_is_unbound() {
     assert_eq!(listing["capped_reason"], "budget_exhausted", "{listing}");
 }
 
+// The bug: a grid of 65 buttons before `Save`, four of them answering in 0.9 s, ran the
+// walk out of its three seconds inside the grid, so `Save` was never read or listed. A big
+// container's children now wait until the rest of the window is read. The grid still
+// isn't finished, so `Save` may have a look-alike in it: it is `unbound: cut_short`, and
+// its ref is refused with nothing sent.
+#[tokio::test]
+async fn a_big_container_early_in_the_window_no_longer_hides_the_controls_after_it() {
+    let cells: Vec<&'static str> = (0..65).map(|n| leak(format!("/open{n}"))).collect();
+    let mut objects = vec![
+        (
+            "/frame",
+            Object::frame("Mock", (800, 600), &["/grid", "/save"]),
+        ),
+        ("/grid", Object::panel(&cells)),
+        ("/save", Object::button("Save", &["click"])),
+    ];
+    for (n, path) in cells.iter().enumerate() {
+        objects.push((*path, Object::button(&format!("Open {n}"), &["click"])));
+    }
+    let mut desk = list_desk("el-big-grid", objects).await;
+    for path in cells.iter().take(4) {
+        desk.mock
+            .slow_on("GetState", path, Duration::from_millis(900));
+    }
+    let arguments = json!({"window_id": WINDOW, "name_contains": "Save", "format": "json"});
+    let listing = desk.server.structured_with("elements", arguments).await;
+    assert_eq!(listing["capped_reason"], "budget_exhausted", "{listing}");
+    let save = &listing["elements"][0];
+    assert_eq!(save["name"], "Save", "{listing}");
+    assert_eq!(save["unbound"], "cut_short", "{listing}");
+    let result = activate(&mut desk, save["element_ref"].as_str().unwrap()).await;
+    assert_eq!(tool_error(&result).0, "element_unbound", "{result}");
+    assert_eq!(desk.mock.calls("DoAction"), 0);
+}
+
 // A walk cut short after a named row still binds that row's `Delete` by the row's name:
 // rows 2 and 3 answer in 0.9 s an object, and the walk runs out before the end.
 #[tokio::test]

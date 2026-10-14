@@ -2,9 +2,12 @@
 //! nodes depth first in document order, goes into a node's children only while the node
 //! is showing, and stops after a fixed number of nodes, once it has found more matching
 //! nodes than were asked for, or when the request's budget runs out, so a huge or hidden
-//! tree can't hold the request.
+//! tree can't hold the request. The children of a big container, a node with more than
+//! `BIG` children such as a long list, table or grid, are read only after everything
+//! outside big containers, so one grid early in the tree can't use up the walk before
+//! the window's own controls after it are read.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 
 use serde::Serialize;
@@ -56,7 +59,8 @@ pub(crate) enum Capped {
     BudgetExhausted,
 }
 
-/// The nodes under a root, in document order, without the root.
+/// The nodes under a root, in the order the walk read them, without the root: document
+/// order, but for big containers' children, which come after everything else.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Walked {
     pub(crate) nodes: Vec<Node>,
@@ -107,7 +111,8 @@ pub(crate) struct Want<F> {
 }
 
 /// Reads at most `cap` nodes under `root`, depth first, going into the children of
-/// showing nodes only, matching or not, and stops early once `want` has more matches than
+/// showing nodes only, matching or not, and into a big container's only once nothing
+/// outside big containers is left; it stops early once `want` has more matches than
 /// it asked for. A node that is gone by the time it is read is skipped. A deadline once
 /// the request's budget is spent ends the walk with the nodes read so far,
 /// `BudgetExhausted`. One call's own deadline, as for a hung app, and any other failure
@@ -120,12 +125,8 @@ pub(crate) async fn walk<F: Fn(&Node) -> bool + Sync>(
 ) -> Result<Walked, ToolError> {
     let mut walked = Walked::default();
     let mut found = 0;
-    let mut pending: Vec<(Option<usize>, Child)> = root
-        .children
-        .iter()
-        .rev()
-        .map(|child| (None, child.clone()))
-        .collect();
+    let mut pending = Pending::default();
+    pending.push(None, &root.children);
     while let Some((parent, child)) = pending.pop() {
         if walked.nodes.len() == cap {
             walked.capped = Some(Capped::NodeCap);
@@ -145,12 +146,11 @@ pub(crate) async fn walk<F: Fn(&Node) -> bool + Sync>(
         };
         let at = walked.nodes.len();
         if node.states.has(model::State::Showing) {
-            pending.extend(
-                node.children
-                    .iter()
-                    .rev()
-                    .map(|grandchild| (Some(at), grandchild.clone())),
-            );
+            if node.children.len() > BIG {
+                pending.defer(at, &node.children);
+            } else {
+                pending.push(Some(at), &node.children);
+            }
         }
         found += usize::from((want.matches)(&node));
         walked.nodes.push(node);
@@ -162,6 +162,45 @@ pub(crate) async fn walk<F: Fn(&Node) -> bool + Sync>(
     }
     walked.finish();
     Ok(walked)
+}
+
+/// A node with more children than this is a big container. In the windows measured for
+/// it, every container with more than 11 children held a list's records, from 104 to
+/// 15,003 of them (docs/decisions.md).
+const BIG: usize = 64;
+
+/// The nodes left to read: those to read next, depth first, and the big containers whose
+/// children wait until nothing else is left, in the order they were found.
+#[derive(Default)]
+struct Pending {
+    next: Vec<(Option<usize>, Child)>,
+    deferred: VecDeque<(usize, Vec<Child>)>,
+}
+
+impl Pending {
+    /// Reads `children` of the node at `parent` next, in document order.
+    fn push(&mut self, parent: Option<usize>, children: &[Child]) {
+        self.next
+            .extend(children.iter().rev().map(|child| (parent, child.clone())));
+    }
+
+    /// Reads `children` of the big container at `parent` once nothing else is left.
+    fn defer(&mut self, parent: usize, children: &[Child]) {
+        self.deferred.push_back((parent, children.to_vec()));
+    }
+
+    /// The next node to read and its parent's place, or `None` when none is left.
+    fn pop(&mut self) -> Option<(Option<usize>, Child)> {
+        while self.next.is_empty() {
+            let (parent, children) = self.deferred.pop_front()?;
+            self.push(Some(parent), &children);
+        }
+        self.next.pop()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.next.is_empty() && self.deferred.is_empty()
+    }
 }
 
 impl Walked {
@@ -198,7 +237,7 @@ fn alike(nodes: &[Node]) -> Vec<usize> {
 }
 
 /// For each node, the nearest node that `is_row`, itself or above it, in one pass: a
-/// node's parent comes before it in document order, so its answer is already known.
+/// node's parent is read before it, so its answer is already known.
 fn rows(places: &[(Option<usize>, i32)], is_row: impl Fn(usize) -> bool) -> Vec<Option<usize>> {
     let mut rows: Vec<Option<usize>> = Vec::with_capacity(places.len());
     for (index, (parent, _)) in places.iter().enumerate() {
@@ -445,6 +484,76 @@ mod tests {
             .unwrap();
         assert_eq!(paths(&after), ["/b/1", "/a"]);
         assert_eq!(after.capped, Some(Capped::BudgetExhausted));
+    }
+
+    /// A tree of `nodes`, each showing, plus a showing `/grid` with `BIG` + 1 leaves,
+    /// `/grid/0` on.
+    fn with_grid(nodes: &[(&'static str, &[&'static str])]) -> Tree {
+        let cells: Vec<&'static str> = (0..=BIG)
+            .map(|cell| &*Box::leak(format!("/grid/{cell}").into_boxed_str()))
+            .collect();
+        let mut tree = Tree::new([("/grid", (true, cells.clone()))]);
+        tree.nodes
+            .extend(cells.iter().map(|&cell| (cell, (true, Vec::new()))));
+        tree.nodes.extend(
+            nodes
+                .iter()
+                .map(|&(path, children)| (path, (true, children.to_vec()))),
+        );
+        tree
+    }
+
+    // The bug: one grid early in the tree used up the cap depth first, so the window's
+    // controls after it were never read, let alone listed.
+    #[tokio::test]
+    async fn a_big_container_early_in_the_tree_no_longer_hides_the_controls_after_it() {
+        let tree = with_grid(&[("/save", &[])]);
+        let walked = walk(&tree, &root(&["/grid", "/save"]), 10, everything())
+            .await
+            .unwrap();
+        assert_eq!(&paths(&walked)[..3], ["/grid", "/save", "/grid/0"]);
+        assert_eq!(walked.capped, Some(Capped::NodeCap));
+        // The grid wasn't read to its end, so `/save` may have a look-alike in it.
+        assert_eq!(walked.row(1), Row::Unbound(Unbound::CutShort));
+    }
+
+    // A big container's children are read last, in document order, and each still knows
+    // its place under the container, which its ref's lineage checks.
+    #[tokio::test]
+    async fn a_big_containers_children_come_last_and_keep_their_place() {
+        let tree = with_grid(&[("/a", &["/a/1"]), ("/a/1", &[]), ("/b", &[])]);
+        let walked = walk(&tree, &root(&["/a", "/grid", "/b"]), 2000, everything())
+            .await
+            .unwrap();
+        let read = paths(&walked);
+        assert_eq!(
+            &read[..6],
+            ["/a", "/a/1", "/grid", "/b", "/grid/0", "/grid/1"]
+        );
+        assert_eq!(read.len(), 4 + BIG + 1);
+        assert_eq!(walked.capped, None);
+        let at = read.iter().position(|path| *path == "/grid/3").unwrap();
+        let link = |path: &str, index| Link {
+            path: path.to_owned(),
+            index,
+            name: NameHash::of(&format!("name of {path}")),
+        };
+        assert_eq!(walked.lineage(at), [link("/grid", 1), link("/grid/3", 3)]);
+        assert_eq!(walked.row(at), Row::Lineage);
+    }
+
+    // The bug a walk stopped at its limit with only a big container's children left
+    // would have: nothing left to read next, so the count looked finished and bound
+    // `/b/1`, whose look-alike may sit in the grid.
+    #[tokio::test]
+    async fn a_walk_stopped_with_a_big_container_unread_leaves_the_count_unfinished() {
+        let tree = with_grid(&[("/b/1", &[]), ("/b/2", &[])]);
+        let tree_root = root(&["/grid", "/b/1", "/b/2"]);
+        let walked = walk(&tree, &tree_root, 2000, showing_under("/b", 1))
+            .await
+            .unwrap();
+        assert_eq!(paths(&walked), ["/grid", "/b/1", "/b/2"]);
+        assert_eq!(walked.row(1), Row::Unbound(Unbound::CutShort));
     }
 
     #[tokio::test]

@@ -1,7 +1,9 @@
 //! `--big`: windows with one big container, listed through the server. Each window has a
 //! `Save` button and a `Search` entry above the container and an `Apply` button and a
 //! `Notes` entry below it (`fixtures/big.py`). A window the walk reads whole must list
-//! all four with a bound ref. Each listing's time and size are logged.
+//! all four with a bound ref. One past the walk's 20,000 objects must still list them,
+//! since the container's children are read last, but as `unbound: cut_short`, since the
+//! container may hold a look-alike of each. Each listing's time and size are logged.
 
 use std::ffi::OsString;
 use std::fs;
@@ -25,11 +27,13 @@ const STARTUP: Duration = Duration::from_secs(30);
 /// The window's own controls, outside the container.
 const CONTROLS: [&str; 4] = ["Save", "Search", "Apply", "Notes"];
 
-/// A window of `fixtures/big.py`: its toolkit, the container's kind and its size.
+/// A window of `fixtures/big.py`: its toolkit, the container's kind and its size, and
+/// what ends its walk short, if anything.
 struct Case {
     toolkit: &'static str,
     kind: &'static str,
     count: &'static str,
+    cut: Option<&'static str>,
 }
 
 impl Case {
@@ -38,27 +42,37 @@ impl Case {
     }
 }
 
-/// Each over the 2,000 objects the walk read before.
-const CASES: [Case; 4] = [
+/// Each over the 2,000 objects the walk read before; the last over its 20,000.
+const CASES: [Case; 5] = [
     Case {
         toolkit: "gtk4",
         kind: "buttons",
         count: "3000",
+        cut: None,
     },
     Case {
         toolkit: "gtk4",
         kind: "rows",
         count: "1500",
+        cut: None,
     },
     Case {
         toolkit: "gtk3",
         kind: "buttons",
         count: "3000",
+        cut: None,
     },
     Case {
         toolkit: "gtk3",
         kind: "tree",
         count: "5000",
+        cut: None,
+    },
+    Case {
+        toolkit: "gtk3",
+        kind: "tree",
+        count: "8000",
+        cut: Some("node_cap"),
     },
 ];
 
@@ -76,7 +90,7 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
     for case in &CASES {
         let fixture = start(session, case)?;
         let window = window(session, &bus, case, fixture.pid())?;
-        whole(session, &mut client, case, window)?;
+        listed(session, &mut client, case, window)?;
         fixture.stop()?;
     }
     structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
@@ -116,8 +130,9 @@ fn window(session: &mut Session<'_>, bus: &Bus, case: &Case, pid: i32) -> Result
     Ok(window.id)
 }
 
-/// The walk reads the window whole, and lists each of its own controls with a bound ref.
-fn whole(session: &mut Session<'_>, client: &mut Client, case: &Case, window: u64) -> Result<()> {
+/// The walk ends as `case` says, and lists each of the window's own controls, with a
+/// bound ref when it read the whole window and `cut_short` when it didn't.
+fn listed(session: &mut Session<'_>, client: &mut Client, case: &Case, window: u64) -> Result<()> {
     let label = case.label();
     let args = json!({"window_id": window, "limit": 500, "format": "json"});
     let (result, took) = client.timed_call("elements", args)?;
@@ -127,21 +142,27 @@ fn whole(session: &mut Session<'_>, client: &mut Client, case: &Case, window: u6
         field(&listing, "/walked"),
         field(&listing, "/capped_reason"),
     ))?;
-    if field(&listing, "/capped") != false {
+    if field(&listing, "/capped_reason").as_str() != case.cut {
         return Err(Failure::new(format!(
-            "big: {label}: the walk was cut short: {}",
+            "big: {label}: expected the walk cut by {:?}, got {}",
+            case.cut,
             field(&listing, "/capped_reason")
         )));
     }
+    let unbound = case.cut.map(|_| "cut_short");
     for name in CONTROLS {
         let element = control(client, window, name)?;
-        if field(&element, "/element_ref").is_null() || !field(&element, "/unbound").is_null() {
+        if field(&element, "/element_ref").is_null()
+            || field(&element, "/unbound").as_str() != unbound
+        {
             return Err(Failure::new(format!(
-                "big: {label}: {name} has no bound ref: {element}"
+                "big: {label}: expected {name} with a ref, unbound {unbound:?}: {element}"
             )));
         }
     }
-    session.log(&format!("big: {label}: {CONTROLS:?} listed and bound"))
+    session.log(&format!(
+        "big: {label}: {CONTROLS:?} listed, unbound {unbound:?}"
+    ))
 }
 
 /// The first element `elements` lists by `name`.
