@@ -1393,3 +1393,13 @@ v2.9.2 is the newest release; it is over 7 days old.
 
 - The release's Package step failed in a dry run on GitHub's runners: `cargo about generate --frozen` stopped with "failed to download `android_system_properties v0.1.6` … --frozen was specified". cargo-about reads `cargo metadata` for every platform before it filters by target, and the build had fetched only the crates its own target needs. The earlier checks of the step (the release entries above, Fable's review, the first release branch) ran with a local cargo cache that already held every crate, so they passed. The same failure reproduces locally with an empty `CARGO_HOME` after `cargo fetch --locked --target x86_64-unknown-linux-gnu`, whether the target comes from `about.toml` or from `--target`.
 - Package now runs `cargo fetch --locked` before cargo-about: 137 crates, 15 MB, against the 114 the x86_64 build fetches. cargo-about still runs `--frozen`, so it reads only crates the lock names. The license list it writes is unchanged.
+
+## 2026-10-14: the landing page's text face is cut to its characters
+
+| Package | Version | Published | Why |
+|---|---|---|---|
+| `subset-font` | 2.9.0 | 2026-09-20 | A build step, `site/scripts/subset-font.mjs`, cuts Archivo down to the characters the site's text uses. BSD-3-Clause, development only. |
+
+- The redesigned home page sets its headline in Archivo's narrow widths, which need Fontsource's width-axis file: 88 KB of WOFF2 for Latin, where the weight-only file was 35 KB. Lighthouse's simulated LCP for the headline went from 1.73 s to 2.10–2.40 s, over the site's 1.8 s budget. Cut to printable ASCII and the punctuation the copy uses, and to widths from 62% to 100%, the file is 37 KB, and LCP measured 1.726, 1.726 and 1.727 s.
+- The cut face is declared after Fontsource's faces under the same name and the same weight and width ranges, so any other character falls back to Fontsource's full face, which a page downloads only when it has such a character. Chrome downloaded both faces when the ranges differed.
+- It brings in `harfbuzzjs` 1.6.3 (2026-10-06), `fontverter` 2.0.0, `wawoff2` 2.0.1, `woff2sfnt-sfnt2woff` 1.0.0, `pako` 1.0.11, `p-limit` 3.1.0 and `yocto-queue` 0.1.0, all MIT, BSD-3-Clause or zlib, all older than seven days. The output goes to `site/src/generated/`, which git ignores; `npm run dev` and `npm run build` write it first.

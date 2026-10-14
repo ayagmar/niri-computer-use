@@ -1,0 +1,60 @@
+/* The site's colours and type, shared by the home page and the docs pages. A cool concrete
+   ground, near-black ink, recordings on a black plate, and one red for the stop key and a
+   stopped answer, in four steps: the key's face and its lip, and as text on the ground and on
+   the plate. Archivo runs from 62% wide (the posters) to 100% (text). */
+
+:root {
+	--ncu-sans: 'Archivo Variable', ui-sans-serif, system-ui, sans-serif;
+	--ncu-mono: 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace; /* taste-skill-ignore: calls and commands only */
+
+	--ncu-ground: #e6e8e3;
+	--ncu-raised: #dcdfd9;
+	--ncu-ink: #0c0e0d;
+	--ncu-ink-2: #464c48;
+	--ncu-plate: #0b0c0b;
+	--ncu-plate-ink: #e6e8e3;
+	--ncu-plate-ink-2: #9ba39e;
+	--ncu-plate-raised: #1d201e;
+	--ncu-plate-hover: #2b2f2c;
+	--ncu-red: #d8301f;
+	--ncu-red-lip: #8f1f13;
+	--ncu-stop: #c42a1b;
+	--ncu-stop-plate: #ff5a45;
+
+	--ncu-ease: cubic-bezier(0.22, 1, 0.36, 1);
+	color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+	--ncu-ground: #161917;
+	--ncu-raised: #1f2320;
+	--ncu-ink: #e6e8e3;
+	--ncu-ink-2: #a5aca7;
+	--ncu-plate: #070807;
+	--ncu-stop: #ff6a57;
+	color-scheme: dark;
+}
+
+/* The parts the browser draws, in the page's colours. */
+::selection {
+	background: var(--ncu-ink);
+	color: var(--ncu-ground);
+}
+
+:root {
+	caret-color: var(--ncu-stop);
+	scrollbar-color: var(--ncu-ink-2) var(--ncu-ground);
+	accent-color: var(--ncu-ink);
+}
+
+:focus-visible {
+	outline: 2px solid var(--ncu-ink);
+	outline-offset: 3px;
+}
+
+/* Pages crossfade into each other while the wordmark holds still. */
+@media (prefers-reduced-motion: no-preference) {
+	@view-transition {
+		navigation: auto;
+	}
+}

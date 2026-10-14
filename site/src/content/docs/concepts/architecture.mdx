@@ -32,7 +32,7 @@ The drawing follows a niri action such as `focus`. Keys and text go to `wtype`, 
 
 <LeaseStates />
 
-`acquire_desktop` locks the lease file before it asks anything slow, so a second agent gets `lease_held` at once. With [`confirm_lease`](../configuration/#confirm_lease) on, a notification asks you to Allow or Deny before the lease is granted. `niri-computer-use stop` sets the stop flag: the running action is cancelled and the lease is taken back. `resume` clears the flag, except while the input-dirty marker says a key or button may be stuck. Then `recover` ends or releases what was held and asks you to check before it clears the marker.
+`acquire_desktop` locks the lease file before it asks anything slow, so an agent on another server gets `lease_held` at once. Another session of the same engine waits until the first `acquire_desktop` is done, which with `confirm_lease` can take up to a minute, and then gets `lease_held`, or the lease if the first was refused. With [`confirm_lease`](../configuration/#confirm_lease) on, a notification asks you to Allow or Deny before the lease is granted. `niri-computer-use stop` sets the stop flag: the running action is cancelled and the lease is taken back. `resume` clears the flag, except while the input-dirty marker says a key or button may be stuck. Then `recover` ends or releases what was held and asks you to check before it clears the marker.
 
 ## Coordinates
 

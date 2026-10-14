@@ -21,16 +21,28 @@ export default defineConfig({
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/ayagmar/niri-computer-use' },
 			],
 			customCss: [
-				'@fontsource-variable/archivo/wght.css',
+				'@fontsource-variable/archivo/wdth.css',
+				'./src/generated/archivo-text.css',
 				'@fontsource-variable/jetbrains-mono/wght.css',
+				'./src/styles/tokens.css',
 				'./src/styles/theme.css',
 			],
 			components: {
 				Head: './src/components/Head.astro',
-				Header: './src/components/Header.astro',
-				Hero: './src/components/Hero.astro',
 			},
-			// The card link previews show, from the hero demo's recording.
+			// Code on the black plate, as the home page's install steps show it: no window frame,
+			// the same dark theme in both modes, and lines wrapped to the width.
+			expressiveCode: {
+				themes: ['github-dark'],
+				defaultProps: { frame: 'none', wrap: true },
+				styleOverrides: {
+					borderWidth: '0px',
+					borderRadius: '0.75rem',
+					codeBackground: 'var(--ncu-plate)',
+					frames: { frameBoxShadowCssValue: 'none' },
+				},
+			},
+			// The card link previews show, from the home page's recording.
 			head: [
 				{
 					tag: 'meta',

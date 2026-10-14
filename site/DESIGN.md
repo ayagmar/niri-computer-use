@@ -1,319 +1,318 @@
 ---
 name: niri-computer-use
-description: A niri screen at page scale. Graphite windows on a strip, one amber focus ring, and every claim shown as a call with the answer that came back.
+description: Condensed heavy posters on a cool concrete ground, real recordings on a black plate with their calls as subtitles, and one red for the stop key and a stopped answer.
 colors:
-  amber-ring: "#f2a33a"
-  amber-high: "#ffd08a"
-  amber-low: "#3a2a12"
-  amber-ring-light: "#9a5a06"
-  amber-deep-light: "#8a5300"
-  amber-ink-light: "#4d2e00"
-  amber-low-light: "#f6e3c4"
-  stop-red: "#ff6b6b"
-  stop-red-light: "#c62828"
-  graphite-black: "#121416"
-  graphite-panel: "#181b1e"
-  graphite-rule: "#2a2e32"
-  graphite-ring-off: "#3a3f44"
-  graphite-gray-6: "#1c1f22"
-  graphite-gray-5: "#2e3337"
-  graphite-gray-4: "#555c62"
-  graphite-gray-3: "#8b9399"
-  graphite-gray-2: "#b4bbc0"
-  graphite-gray-1: "#dde0e2"
-  graphite-white: "#eef0f1"
-  paper: "#f3f4f5"
-  paper-panel: "#fbfbfc"
-  paper-rule: "#d5d9dc"
-  paper-ring-off: "#c9ced2"
-  paper-gray-3: "#555d62"
-  paper-gray-2: "#3a4145"
-  paper-ink: "#15181a"
+  concrete-ground: "#e6e8e3"
+  concrete-raised: "#dcdfd9"
+  ink: "#0c0e0d"
+  ink-quiet: "#464c48"
+  concrete-ground-dark: "#161917"
+  concrete-raised-dark: "#1f2320"
+  ink-dark: "#e6e8e3"
+  ink-quiet-dark: "#a5aca7"
+  plate: "#0b0c0b"
+  plate-dark: "#070807"
+  plate-ink: "#e6e8e3"
+  plate-ink-quiet: "#9ba39e"
+  plate-control: "#1d201e"
+  plate-control-hover: "#2b2f2c"
+  stop-red: "#d8301f"
+  stop-red-lip: "#8f1f13"
+  stop-text: "#c42a1b"
+  stop-text-dark: "#ff6a57"
+  stop-text-plate: "#ff5a45"
+  key-legend: "#ffffff"
 typography:
-  display:
+  poster:
     fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontSize: "clamp(2.2rem, 1rem + 2.6vw, 4.75rem)"
-    fontWeight: 680
-    lineHeight: 1.02
+    fontSize: "clamp(3.75rem, 17vw, 28rem)"
+    fontWeight: 860
+    lineHeight: 0.86
+    letterSpacing: "-0.035em"
+    fontVariation: "'wdth' 70"
+  footer-wordmark:
+    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
+    fontSize: "calc(100cqi / 5.62)"
+    fontWeight: 880
+    lineHeight: 0.8
+    letterSpacing: "-0.04em"
+    fontVariation: "'wdth' 62"
+  heading:
+    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
+    fontSize: "clamp(2.5rem, 7vw, 6rem)"
+    fontWeight: 820
+    lineHeight: 0.9
     letterSpacing: "-0.03em"
-  headline:
+    fontVariation: "'wdth' 72"
+  docs-title:
     fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontSize: "clamp(1.75rem, 1.2rem + 1.6vw, 2.6rem)"
-    fontWeight: 660
-    lineHeight: 1.08
+    fontSize: "clamp(2.5rem, 1.6rem + 3vw, 3.75rem)"
+    fontWeight: 840
+    lineHeight: 0.95
     letterSpacing: "-0.025em"
-  title:
+    fontVariation: "'wdth' 72"
+  docs-section:
     fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontWeight: 660
+    fontWeight: 760
+    letterSpacing: "-0.015em"
+    fontVariation: "'wdth' 84"
+  wordmark:
+    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
+    fontSize: "clamp(1.0625rem, 1rem + 0.3vw, 1.25rem)"
+    fontWeight: 760
     letterSpacing: "-0.01em"
-  lead:
+    fontVariation: "'wdth' 88"
+  lede:
     fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontSize: "clamp(var(--sl-text-base), 0.9rem + 0.3vw, var(--sl-text-lg))"
-    lineHeight: 1.55
+    fontSize: "clamp(1.125rem, 0.9rem + 0.6vw, 2rem)"
+    fontWeight: 400
+    lineHeight: 1.35
+  sub-head:
+    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
+    fontSize: "1.25rem"
+    fontWeight: 600
+    lineHeight: 1.25
   body:
     fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
+    fontSize: "1rem"
+    fontWeight: 400
+    lineHeight: 1.5
+  small:
+    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
+    fontSize: "0.875rem"
+    fontWeight: 400
+    lineHeight: 1.45
+  key-legend:
+    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
+    fontSize: "0.32em"
+    fontWeight: 700
+    letterSpacing: "0.04em"
+    fontVariation: "'wdth' 100"
   call:
     fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
-    fontSize: "0.75rem"
-    lineHeight: 1.6
-  call-phone:
+    fontSize: "clamp(0.875rem, 0.7rem + 0.6vw, 1.25rem)"
+    lineHeight: 1.45
+  command:
     fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
-    fontSize: "0.8125rem"
+    fontSize: "0.875rem"
     lineHeight: 1.6
-  label:
-    fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
-    fontSize: "0.7rem"
-    fontFeature: "tnum"
 rounded:
   pill: "999px"
-  tag: "6px"
-  keycap-bar: "5px"
-  keycap: "8px"
-  button: "8px"
-  panel: "10px"
-  plate: "12px"
-  ring: "14px"
+  code: "0.75rem"
+  still: "4px"
+  key: "0.09em"
 spacing:
-  gap: "1rem"
-  column: "1.25rem"
-  window: "clamp(1.25rem, 0.9rem + 1vw, 2.25rem)"
-  section: "clamp(3rem, 2rem + 3vw, 5rem)"
+  margin: "clamp(1rem, 3.2vw, 3rem)"
+  touch: "2.75rem"
+  plate-inset: "clamp(1rem, 3vw, 2.5rem)"
+  section: "clamp(4rem, 10vh, 8rem)"
+  section-open: "clamp(6rem, 18vh, 12rem)"
+  stack: "2rem"
+  stack-tight: "1.25rem"
 components:
   button-primary:
-    backgroundColor: "{colors.amber-ring}"
-    textColor: "{colors.graphite-black}"
-    rounded: "{rounded.button}"
-    padding: "0 1.15rem"
-    height: "2.75rem"
+    backgroundColor: "{colors.ink}"
+    textColor: "{colors.concrete-ground}"
+    rounded: "{rounded.pill}"
+    padding: "0 1.75rem"
+    height: "3.25rem"
   button-primary-hover:
-    backgroundColor: "{colors.amber-high}"
-  button-primary-light:
-    backgroundColor: "{colors.amber-ring-light}"
-    textColor: "#ffffff"
-  button-primary-light-hover:
-    backgroundColor: "{colors.amber-deep-light}"
-  button-quiet:
-    textColor: "{colors.graphite-white}"
-    rounded: "{rounded.button}"
-    padding: "0 1.15rem"
+    backgroundColor: "{colors.ink-quiet}"
+    textColor: "{colors.concrete-ground}"
+  button-plate:
+    backgroundColor: "{colors.plate-control}"
+    textColor: "{colors.plate-ink}"
+    typography: "{typography.small}"
+    rounded: "{rounded.pill}"
+    padding: "0 1rem"
     height: "2.75rem"
-  window:
-    backgroundColor: "{colors.graphite-panel}"
-    rounded: "{rounded.panel}"
-    padding: "{spacing.window}"
-  column:
-    backgroundColor: "{colors.graphite-panel}"
-    rounded: "{rounded.panel}"
-    padding: "{spacing.column}"
-  plate:
-    backgroundColor: "{colors.graphite-black}"
-    rounded: "{rounded.plate}"
-    padding: "2px"
-  workspace-pill:
-    textColor: "{colors.graphite-gray-3}"
+    width: "4.5rem"
+  button-plate-hover:
+    backgroundColor: "{colors.plate-control-hover}"
+  lease-tag-free:
+    backgroundColor: "{colors.plate-control}"
+    textColor: "{colors.plate-ink-quiet}"
+    typography: "{typography.small}"
     rounded: "{rounded.pill}"
-    padding: "0.15rem 0.6rem"
-  workspace-pill-lit:
-    textColor: "{colors.graphite-white}"
-    rounded: "{rounded.pill}"
-    padding: "0.15rem 0.6rem"
-  lease-tag:
-    textColor: "{colors.graphite-gray-3}"
-    typography: "{typography.label}"
-    rounded: "{rounded.tag}"
     padding: "0.15rem 0.6rem"
   lease-tag-held:
-    textColor: "{colors.graphite-white}"
-  keycap:
-    backgroundColor: "{colors.graphite-black}"
-    textColor: "{colors.graphite-white}"
-    rounded: "{rounded.keycap}"
-    padding: "0 0.8rem"
-    height: "2.5rem"
-  keycap-bar:
-    textColor: "{colors.graphite-gray-2}"
-    typography: "{typography.label}"
-    rounded: "{rounded.keycap-bar}"
-    padding: "0.05rem 0.4rem"
-  call:
+    backgroundColor: "{colors.plate-ink}"
+    textColor: "{colors.plate}"
+  lease-tag-stopped:
+    backgroundColor: "{colors.stop-red}"
+    textColor: "{colors.key-legend}"
+  stop-key:
+    backgroundColor: "{colors.stop-red}"
+    textColor: "{colors.key-legend}"
+    typography: "{typography.key-legend}"
+    rounded: "{rounded.key}"
+    padding: "0 0.2em"
+    height: "0.74em"
+  code-block:
+    backgroundColor: "{colors.plate}"
+    textColor: "{colors.plate-ink}"
+    typography: "{typography.command}"
+    rounded: "{rounded.code}"
+    padding: "0.5rem 0.5rem 0.5rem clamp(1rem, 2vw, 1.25rem)"
+  stage-bar:
+    backgroundColor: "{colors.plate}"
+    textColor: "{colors.plate-ink}"
     typography: "{typography.call}"
-    rounded: "{rounded.tag}"
-    padding: "0.3rem 0.5rem"
+    padding: "0.9rem clamp(1rem, 3vw, 2.5rem) 1.1rem"
+  nav-link:
+    textColor: "{colors.ink}"
+    typography: "{typography.body}"
+    padding: "0 0.45rem"
+    height: "2.75rem"
 ---
 
 # Design System: niri-computer-use
 
 ## Overview
 
-**Creative North Star: "The Column in Focus"**
+**Creative North Star: "Poster and Plate"**
 
-The home page is drawn as a niri screen. A bar runs across the top with the page's sections as workspace pills, a lease tag and the stop key. Under it, edge to edge, sits a strip of graphite windows split by niri's 16px gaps: the focused promise window wearing the amber ring, a column holding the recording above the agent's call log, and a stop-key window that runs off the right edge until the screen is wide enough for it. Below the strip each section is a workspace of columns. The page has one focus ring, as niri has one focused window: as the page scrolls, the ring slides from the promise window into the focused column of the section in view, and the bar's lit pill slides to that section's workspace. Starlight supplies search, the sidebar on docs pages and the theme switch; the system lives in the theme tokens and the components layered on top.
+Two materials carry the whole site. The concrete ground holds type set like a street poster: Archivo condensed to 62–72% width at weights 820–880, lines packed to 0.8–0.9 leading, sizes tied to the viewport width. The black plate holds the evidence: real desktop recordings, the calls under them in JetBrains Mono, copyable commands, and the footer. Nothing else is decorated. There are no shadows, gradients or ornaments on the home page; a section changes by changing material (ground, raised ground, plate), not by drawing a line.
 
-Evidence is the decoration. The recordings are real Claude Code sessions on a real niri desktop, each with a note saying so and naming its output. The calls beside them are the requests and answers from the same run, written as `→ request` and `← answer · ms`; while the hero recording plays, a ring moves down the list with the call it shows, the calls still to come dim, and the bar's lease tag turns held and free with the run. There are no illustrations, gradient fills, glows or shadows. The page is dense and quiet, and color is spent only on focus, action and refusal.
+The home page (`src/pages/index.astro`) sits outside Starlight and loads only its own styles. The docs are Starlight restyled through `src/styles/theme.css`: the same tokens, the same wordmark, Archivo titles a size down from the posters, and Starlight's greys remapped onto the concrete. Both read `src/styles/tokens.css`, so both themes (light and dark, stored under Starlight's `starlight-theme` key) are the same on every page, and the header and wordmark hold still while pages crossfade.
 
-Both themes are first class. Dark is graphite with a bright amber ring; light is pale paper with the amber deepened to a brown that holds contrast on white. The browser's own parts follow: text selection takes the low amber, the caret is amber, and scrollbars are gray on the page color.
+Motion follows the recordings rather than decorating the page: the frame in the headline grows into the first recording, subtitles and the lease tag change at each call's real time, and the stop key sinks when the recorded stop lands. Measured on the built home page: Lighthouse mobile Performance 100 on three runs, LCP 1.73 s, CLS 0, TBT 0, and 3.8 KB of JS gzipped.
 
 **Key Characteristics:**
-- Graphite windows and 1px rules on niri's 16px gaps, no shadows.
-- One accent, amber, taken from the focus ring.
-- Red only for an answer that refused or stopped.
-- Archivo for prose and headings, JetBrains Mono for calls, keys, geometry and metadata.
-- State shown the way niri shows it: a ring that moves, a pill that lights, a tag that goes held.
-- Motion in niri's directions: columns arrive from the right, workspaces change vertically, focus slides.
+- One Archivo variable face from 62% to 100% width; width carries the hierarchy as much as size does.
+- Root text at 17px (`html` font-size 1.0625rem), so every rem on the home page is 17px.
+- Recordings, calls and commands always sit on the black plate, in both themes.
+- One red, in four steps, reserved for the stop key and stopped or refused answers.
+- Pill controls in ink on the ground, in a dark grey on the plate.
+- Light and dark themes share the plate; only the ground, raised ground, inks and on-ground red change.
 
 ## Colors
 
-Cool graphite neutrals with a single warm amber, and a red held back for refusals.
+A cool, slightly green-grey concrete with near-black ink, a black plate that does not change much between themes, and one red.
 
 ### Primary
-- **Focus Amber** (amber-ring): the focus ring. It rings the promise window, the focused column of the section in view, the lit workspace pill, the lease tag while held, and the call currently playing. It also fills the primary button, sets the second line of the hero headline (the stop key's promise), colors the `→ ←` marks and the caret, draws the act path in the diagram, and outlines keyboard focus everywhere (2px outline, 2px offset). Starlight's accent uses the same value, so links and the active sidebar item share it.
-- **Lit Amber** (amber-high): hover on the dark primary button.
-- **Amber Wash** (amber-low): Starlight's low accent in dark, and the text selection background.
-- **Deepened Ring** (amber-ring-light): the focus ring in the light theme, deepened so it reads on paper. Primary buttons carry white text on it.
-- **Deep Amber** (amber-deep-light) and **Amber Ink** (amber-ink-light): Starlight's light accent and its high step; the deep amber is also the light primary button's hover. **Pale Amber** (amber-low-light) is the light low accent and selection.
-
-### Secondary
-- **Stop Red** (stop-red dark, stop-red-light light): only the answer line of a call that ended in an error, `stopped` or a refusal, mark included.
+- **Stop Red** (stop-red): the face of the Esc keycap in the stop headline and the background of the lease tag when the lease reads `stopped`. Text on it is white (key-legend).
+- **Key Lip** (stop-red-lip): the keycap's bottom edge, a 0.08em border that shrinks to 0.02em when the key is pressed. It exists only on the key.
+- **Stop Text on Ground** (stop-text, stop-text-dark in the dark theme): red as text or stroke on the concrete. It is the caret colour, Starlight's red (caution asides) on the docs, and the stopped path in the docs diagrams.
+- **Stop Text on Plate** (stop-text-plate): a refused or stopped answer in the subtitles and the call list, set on the plate.
 
 ### Neutral
-- **Graphite** (graphite-black): the dark page, the keycaps' face, and the recording plate's backing. The plate keeps this graphite in the light theme too, because the recordings are of a dark desktop.
-- **Panel Graphite** (graphite-panel): window, column and diagram box fill in dark.
-- **Rule Graphite** (graphite-rule): 1px rules between sections, window and column borders, the recording plate's border, workspace pill borders, the quiet button border, diagram box strokes, and the color the promise window's ring lands from as the page opens.
-- **Unlit Column** (graphite-ring-off dark, paper-ring-off light): the unlit columns in the favicon. Paper Ring-off is also light gray 5.
-- **Gray steps** (graphite-gray-6 to graphite-gray-1): Starlight's gray scale. Gray 5 draws scrollbars and the divider before the bar's icons; gray 4 draws keycap borders, the free lease tag's dashes and diagram wires; gray 3 is muted metadata (timestamps, milliseconds, the `asked` tag, recording notes and output, the requirements line, unlit pills, calls still to come, the user's own `$` lines); gray 2 is secondary text such as the tagline, section intros and answer lines.
-- **Graphite White** (graphite-white): primary text and headings in dark.
-- **Paper** (paper), **Paper Panel** (paper-panel), **Paper Rule** (paper-rule), **Paper Grays** (paper-gray-3, paper-gray-2) and **Ink** (paper-ink): the same roles in the light theme.
+- **Concrete Ground** (concrete-ground, concrete-ground-dark): the page background. The meta `theme-color` uses the same two values.
+- **Raised Concrete** (concrete-raised, concrete-raised-dark): one tonal step off the ground (darker in the light theme, lighter in the dark), used for the band behind "More real sessions" and as the docs' low-accent grey.
+- **Ink** (ink, ink-dark): text, links, the Install pill, the focus outline, text selection (ink background, ground text) and form accents.
+- **Quiet Ink** (ink-quiet, ink-quiet-dark): the Install pill's hover, the note under the clips, the scrollbar thumb.
+- **Plate** (plate, plate-dark): recordings, their caption bars, command blocks, the footer, and the background behind docs stills. Darker than the dark ground, so a plate reads as a plate in the dark theme too.
+- **Plate Ink** (plate-ink) and **Quiet Plate Ink** (plate-ink-quiet): text on the plate; the quiet step carries prompts, answers, times, notes and the commands the user ran.
+- **Plate Control** (plate-control, plate-control-hover): the Play/Pause and Copy pills and the free lease tag. These two are written as literals in `Stage.astro` and `Code.astro`, not as custom properties.
+
+The docs map Starlight's grey ramp onto these: in the dark theme from `#e6e8e3` (white) through `#d3d7d1`, `#b9bfba`, `#8a918c`, `#5d645f`, `#343a36`, `#1f2320` to `#161917` (black); in the light theme from `#0c0e0d` through `#1d211f`, `#2d332f`, `#464c48`, `#6c736e`, `#b8bdb7`, `#dcdfd9`, `#e1e4de` to `#e6e8e3`. The docs accent is grey, not a colour: links and the current page are ink.
 
 ### Named Rules
-**The One Ring Rule.** Amber means focus: what is in view, what is held, what acts, what to press. It never fills a panel, tints a background or decorates a heading for emphasis alone.
+**The One Red Rule.** Red means the stop key, or an answer that was stopped or refused. Pick the step by surface: stop-red with stop-red-lip for the key face, stop-text on the ground, stop-text-plate on the plate. Never use red for emphasis, links or calls to action.
 
-**The Refusal Red Rule.** Red appears only on an answer that refused or stopped. Nothing else on the site is red.
+**The Plate Rule.** Anything recorded or copyable (a recording, its calls, a command) sits on the plate in plate ink, in both themes. The ground never carries monospace call text.
 
 ## Typography
 
-**Display Font:** Archivo Variable (with ui-sans-serif, system-ui), preloaded so headings never shift
-**Body Font:** Archivo Variable
-**Label/Mono Font:** JetBrains Mono Variable (with ui-monospace, DejaVu Sans Mono)
+**Display and Body Font:** Archivo Variable (with ui-sans-serif, system-ui, sans-serif)
+**Mono Font:** JetBrains Mono Variable (with ui-monospace, 'DejaVu Sans Mono', monospace)
 
-**Character:** A firm, slightly condensed grotesque set tight at large sizes, beside a plain mono that carries everything the machine said and every key you press.
+**Character:** one grotesque doing two jobs by width: condensed and very heavy for posters, full width and regular for reading. Mono appears only where the text is a call or a command someone could type.
+
+Archivo is cut by `scripts/subset-font.mjs` to printable ASCII plus the copy's typographic punctuation (no-break space, ©, ·, ×, en and em dashes, curly quotes, ellipsis) and to the 62–100% width range, then declared after Fontsource's faces under the same name with matching weight and width ranges, so any other character falls back to the full face. The home page preloads the cut file.
 
 ### Hierarchy
-- **Display** (680, fluid 2.2rem to 4.75rem, 1.02, -0.03em): the home page promise only, in the focused window. Balanced wrapping; its second line drops to its own line in amber.
-- **Headline** (660, fluid 1.75rem to 2.6rem, 1.08, -0.025em, max 40rem, balanced): one per home section, a plain sentence. The paragraph under it is gray 2 at the same 40rem.
-- **Title** (660 on the stop window's heading at Starlight's h4 size; Starlight's h3 size elsewhere; -0.01em): window and column headings and docs subheads. Code inside h2 and h3 loses its chip and drops to 0.85em.
-- **Lead** (fluid base to large, 1.55, max 34rem): the hero tagline, in gray 2.
-- **Body** (Starlight defaults): prose at a 46rem content width on docs pages; Starlight's sm size inside the hero's windows.
-- **Call** (mono 0.75rem, 1.6; 0.8125rem below 50rem): request and answer lines, wrapped anywhere with a 1.5ch hanging indent so the marks stay in a column.
-- **Label** (mono 0.7rem, tabular numbers): call timestamps, the lease tag, the bar's keycaps and the recording's output line. Mono at Starlight's xs size carries the `asked` tag and the "All N calls as text" toggle.
+- **Poster** (860, 70% width, clamp(3.75rem, 17vw, 28rem), 0.86): the home page's three section headlines, "Your agent drives niri.", "One key takes it back.", "Install". Each line is its own block.
+- **Footer wordmark** (880, 62% width, 100cqi / 5.62, 0.8): the name across the full width of the footer, sized to the footer's container.
+- **Heading** (820, 72% width, clamp(2.5rem, 7vw, 6rem), 0.9): section heads that are not posters ("More real sessions").
+- **Docs title** (840, 72% width, clamp(2.5rem, 1.6rem + 3vw, 3.75rem), 0.95) and **Docs section** (760, 84% width): page titles and h2/h3 on docs pages.
+- **Wordmark** (760, 88% width, clamp(1.0625rem, 1rem + 0.3vw, 1.25rem)): the site name in the header of every page.
+- **Lede** (400, clamp(1.125rem, 0.9rem + 0.6vw, 2rem), 1.35, at most 30ch): the sentence under a poster.
+- **Sub-head** (600–650, 1.25rem, 1.25): clip titles, install step labels, the stop facts.
+- **Body** (400, 1rem = 17px, 1.5): running text and the prompts on the plate.
+- **Small** (0.875rem, 1.45): notes, the call list, the lease tag, plate buttons. Notes stop at 46ch.
+- **Key legend** (700, 100% width, 0.32em of the poster, uppercase, 0.04em): "Esc" on the keycap, and nowhere else.
+- **Call** (JetBrains Mono, clamp(0.875rem, 0.7rem + 0.6vw, 1.25rem), 1.45): subtitles under a recording.
+- **Command** (JetBrains Mono, 0.875rem, 1.6): copyable commands and the full call list.
 
 ### Named Rules
-**The Machine Speaks Mono Rule.** Anything the server, niri or a shell said or will be told (requests, answers, timings, geometry, commands, keys) is mono. Prose and headings are never mono.
+**The Width Ladder Rule.** Archivo is set only at 62%, 70%, 72%, 84%, 88% and 100% width; narrower is heavier and larger. A new role takes one of these steps; the cut face holds nothing outside 62–100%.
+
+**The Mono for Machines Rule.** JetBrains Mono is for calls and commands only, never for labels, headings or decoration.
 
 ## Layout
 
-On docs pages Starlight's layout holds with a 46rem content width; the home page widens it to 96rem. Spacing follows niri's gap: 1rem between windows and columns, everywhere on the home page.
+One column with a fluid side margin (spacing.margin), shared by header, sections and footer. Sections are separated by vertical padding in viewport-height clamps (spacing.section, and spacing.section-open before the stop and install posters), not by lines. Recordings run edge to edge on a phone; on wide screens the stop recording bleeds off the right margin.
 
-**The bar.** On the home page the header is a desktop bar: the site name, then from 80rem the six workspace pills (demo, tools, gate, safety, limits, install), then from 50rem the lease tag pushed right, the stop keycaps, search, and a gray divider before the social and theme controls. Below 80rem a single lit pill after the name says which workspace is in view. Below 50rem only the name, that pill and search remain, each at least 44px tall to tap. Docs pages keep Starlight's header.
+- **Hero:** the poster on two lines, with the recording's frame inline after "Your agent", 0.74em tall. Below 48rem the frame is an 8:9 crop of the still; from 48rem it is 16:9. On a screen wider than tall (aspect ratio at least 5:4 and at least 48rem wide) the hero fills the first view less the header, so the recording waits below it. The lede and Install button follow the poster after a clamp(2rem, 6vh, 4.5rem) gap, the lede left and the button right, and the spare height falls below them.
+- **Stop:** poster with the keycap inline after "One key", then the facts and the recording. From 62rem they sit in two columns, minmax(16rem, 1fr) and 2fr.
+- **Clips:** on the raised ground; one column, then two from 62rem with the layout clip spanning both.
+- **Install:** poster, lede, three numbered steps each with a command, up to 60rem wide.
+- **Footer:** on the plate, the full-width wordmark, then links.
 
-**The screen.** The hero runs the full width of the window directly under the bar. Below 62rem its windows stack: promise, recording, calls (capped at 22rem tall and scrolling inside their window), stop key. From 62rem the strip runs sideways as niri's does: as tall as the view (between 38rem and 72rem), three columns at their own widths (the promise at 24 to 36rem around 33vw, the recording column at 34 to 68rem around 52vw, the stop window at 18 to 26rem around 24vw), centered, and scrolling sideways when wider than the window, which it is until about 2150px. The last window runs off the right edge rather than shrinking, and keyboard focus inside it scrolls it into view. The page itself never scrolls sideways: the pane holding the content clips sideways overflow, so windows and columns sliding in from the right can't widen it on a phone.
+Breakpoints are 48rem (frame and recording crop) and 62rem (two columns). Every interactive target is at least 2.75rem tall; on docs pages, heading anchors and copy buttons grow to that size under `pointer: coarse`. Docs content is 46rem wide.
 
-**Sections.** Each section is opened by a 1px rule with fluid 3rem to 5rem vertical padding, a headline, an optional intro, then columns 2rem below. From 50rem columns sit side by side: equal columns auto-fit at a 15rem minimum, or a 3:2 split with the wide column first or last (each at least 15rem on its narrow side), where columns stand only as tall as their content. From 72rem a long list in a wide column reads in two text columns. Below 50rem everything stacks.
-
-Calls lay out as a two-column grid: the timestamp spanning two rows on the left, request and answer stacked on the right.
-
-The diagram slot holds an SVG of how a call travels, swapped for a mono list below 40rem; it is being redrawn and is not described further here.
-
-**The Column Strip Rule.** New sections are workspaces on the strip: a rule above, a headline, then content or bordered columns with one focused. The hero screen is the only full-bleed band; there are no floating cards, centered heroes or split heroes with cards below.
+**The Phone Crop Rule.** Below 48rem a recording shows the half of the desktop where the agent works (left, centre or right): the still is cut to that half at 8:9 and the video is drawn at twice the width and shifted, so the text in it stays legible.
 
 ## Elevation & Depth
 
-Flat. No element uses a shadow. Depth comes from tonal layering (windows and columns one step off the page), 1px rules, and the amber ring drawn outside the thing it marks: a 2px border 4px outside the promise window or a focused column, whichever has the ring. The recording plate is the one recessed surface: graphite backing inside a 2px rule-colored border. Keycaps are the one place a border thickens, to 3px at the bottom in the stop window and 2px in the bar, which draws the key's travel without a shadow. A held key moves that travel to its top edge, so it sinks without changing size.
+Flat. Depth is material and order: the ground, a raised ground one step off it, and the plate. The only shape that suggests height is the keycap, whose lip is a solid bottom border in stop-red-lip, not a shadow. The recording rides one stacking level above the hero (z-index 1) so it can grow over the text.
 
-**The Ring, Not Lift Rule.** Focus and state are shown by a ring or a border color, never by raising something with a shadow.
+### Named Rules
+**The Material Not Line Rule.** On the home page a change of surface is a change of colour: no borders, outlines, dividers, shadows or gradients. The keycap's lip is the one border, and it is part of the key.
 
 ## Shapes
 
-Gently rounded rectangles throughout. Windows, columns, video and docs images use a 10px radius; a border drawn around a panel adds its offset to the radius (12px for the plate, 14px for a focused column's ring) so the curves stay concentric. Buttons and the stop window's keycaps use 8px, the bar's keycaps 5px, the lease tag and the current call's ring 6px, and workspace pills are fully round (999px). Dashes mean unheld or gated: the free lease tag and the diagram's gate are the only dashed outlines. Lines are 1px for structure and 2px for focus, rings and the plate.
-
-## Motion
-
-Motion follows niri: new columns open from the right and the view scrolls them in, workspaces stack vertically, and one focus ring marks the focused window. Everything moves with the same ease-out-expo curve, `cubic-bezier(0.16, 1, 0.3, 1)`. Only transforms, opacity, colors and the rings move, so nothing shifts the layout. There is no animation library; CSS does the opening and the column arrivals, and small inline scripts move the rings.
-
-- **Opening.** The hero's three columns slide in from 4rem to the right over 680ms, each 70ms after the one before. At 420ms the ring lands on the promise window, from rule color to amber and from 1.2% larger, over 320ms. The first paint already holds everything in place, and the recording's still, the largest paint, never fades.
-- **The ring.** A `<ncu-ring>` element, defined in `FocusRing.astro`, that moves into whatever has focus. A move re-parents it and slides it from where it was, by its offset and size, over 220 to 560ms depending on the distance. A move of more than a third of the view's height, such as to another section, doesn't sweep across the page: the ring lands at its new size, sliding 3rem along its path and fading in over 420ms. A move made mid-flight starts from where the ring is. The page's ring follows the section crossing the middle of the view (an IntersectionObserver), the bar's lit pill follows the same section, and each call list's ring follows its recording.
-- **Workspace label.** Below 80rem the lit pill's name changes by sliding: the old name leaves upward and the new one enters from below when moving down the page (200ms out, 320ms in), and the other way when moving up, as niri switches workspaces.
-- **Column arrival.** From 50rem, where a section's columns sit side by side, they slide in from 3rem to the right on a `view()` scroll timeline, from the moment they enter until they are a third of the way up the view. They never fade. Stacked on a phone, and in browsers without scroll timelines, they stay in place.
-- **Calls.** The list follows the recording: its ring moves to the call shown, the calls still to come fade to gray 3 over 200ms, and the list scrolls to keep that call a third of the way down.
-- **Disclosure.** "All N calls as text" opens to its height over 360ms (`interpolate-size`) where the browser supports it.
-- **Between pages.** Same-site navigation crossfades with a cross-document view transition while the header holds still, and links within the home page scroll smoothly to their section.
-
-**Reduced motion.** Nothing slides, fades or scrolls smoothly, and recordings don't play on their own. The page is complete and still: the ring, the lit pill and the workspace label still move to the section in view, at once. Keycaps still sink while held, and a call still plays its recording when pressed.
+Pills (rounded.pill) for every button, the theme toggle and the lease tag. Command blocks have a 0.75rem radius. Recordings and their plates are square-cornered; docs stills on the plate are rounded 4px. The keycap is rounded 0.09em, so it scales with the poster. The theme icon is an inline SVG circle, half filled, that turns 180° in the dark theme (at once under reduced motion).
 
 ## Components
 
 ### Buttons
-Two buttons, both 2.75rem tall, semibold, 8px corners, with a 150ms color transition.
-- **Primary:** amber fill with graphite text in dark; deepened amber with white text in light. Hover lightens it in dark and deepens it in light.
-- **Quiet:** transparent with a 1px rule border and primary text. Hover darkens the border to gray 3.
-- **Focus:** the global amber outline.
+- **Primary (Install):** ink pill on the ground, 3.25rem tall, 1.75rem side padding, 650 weight. Hover goes to quiet ink; press scales to 0.97 over 140ms.
+- **Plate buttons (Play/Pause, Copy):** plate-control pills, at least 4.5rem by 2.75rem, small text at 600. Hover lightens to plate-control-hover; press scales to 0.96. Labels change in place: Play and Pause; Copy, then Copied (or "Select it" if the clipboard refuses) for 1.6 s.
+- **Text links ("Guardrails, not a sandbox", "Full install guide"):** 600 weight, underlined 1px at 0.2em offset, 2.75rem tall.
+- **Focus:** a 2px outline in ink, 3px off; on the plate the outline is plate ink.
 
-### Bar
-- **Workspace pill:** 1px rule border, fully round, 0.6rem side padding, xs text in gray 3. The pill of the section crossing the middle of the view is lit: a 1px amber ring slides along the bar to it, its text turns white and it carries `aria-current="location"`. Pills never change size. Hover whitens the text. Each pill links to its section.
-- **Workspace label:** below 80rem, in place of the pills, one lit pill (amber border, white xs text, at least 4.5rem wide) naming the workspace in view. It is hidden from screen readers, which have the headings.
-- **Lease tag:** mono label, 6px corners, `lease free` in gray 3 inside a dashed gray 4 border. While the hero recording's run holds the lease, the border turns solid amber and the text reads `lease held by the agent` in white. It follows the run's `acquire_desktop`, `release_desktop` and `stop` lines.
-- **Stop keycaps:** `Mod Shift Esc` as three small mono keys with 5px corners, gray 4 borders and a 2px bottom edge; hover whitens them. They link to the stop window. Each key sinks and takes an amber border while the reader holds the same key.
+### Navigation
+- **Header:** the wordmark on the left; Docs, GitHub and the theme toggle on the right. Links are 550 weight with no underline until hover. The docs header shares the wordmark and holds still during view transitions.
+- **Footer nav:** Docs, GitHub, "For agents: llms.txt", MIT license, on the plate.
 
-### Window (hero)
-- **Structure:** panel fill, 1px rule border, 10px corners.
-- **Promise window:** fluid 1.25rem to 2.25rem padding. Display headline, then lead, the two buttons and a gray 3 requirements line pinned to the window's foot like a status line. The page's ring starts here, and stays here without scripts.
-- **Recording window:** the plate with no window chrome, and under it the recording's note on the left and its output (`DP-1 · 2560×1440, shown at 1920×1080`) in mono on the right, both gray 3 xs.
-- **Agent window:** the `asked` tag and prompt, then the full call log, which scrolls inside the window and keeps the current call about a third of the way down.
-- **Stop window:** large keycaps (`Mod Shift Escape`, mono sm, 2.5rem tall, graphite face, gray 4 border with a 3px bottom edge, 8px corners), a title, and two short paragraphs in gray 2. The keycaps are one button, 2.75rem tall, named "Mod Shift Escape: stop the recording". Each key sinks while the reader holds it, but no key stops anything: the real chord belongs to niri and Shift+Escape to the browser. A press on the button stops the hero recording, frees the bar's lease tag and puts a gray 2 xs line under the keys, "The recording is stopped. Play it again from its controls or a call.", announced politely to screen readers. The recording and the line stay until the reader plays it again. The line is the page's own words, not a call answer: the page shows no output that a run didn't produce.
-- **Opening:** see Motion. Off under reduced motion.
+### Stage (recording)
+The site's signature unit: a recording on the plate with its calls as subtitles.
+- **Frame:** 16:9 (8:9 on a phone with a crop). The AVIF still is the recording's last frame; the video loads after the page, fades in over 400ms, plays while 35% of it is in view, and stays still under reduced motion or Save-Data until Play is pressed. Paused, it keeps the paused frame. Turning reduced motion on while the page is open pauses it.
+- **Bar:** the prompt in quiet plate ink, clamped to two lines; the Play/Pause pill; the subtitle, three lines tall whatever the call (request on one, answer on two), `→` for a call and `←` for its answer, `$` and `#` for a command the user ran; the lease tag.
+- **Lease tag:** reads `lease free`, `lease held` or `lease stopped`, following the calls. Free is plate-control with quiet text, held is plate ink with plate text, stopped is stop red with white text.
+- **Caption:** the note on how the recording was made, then a disclosure, "All N calls", listing every call with its time (m:ss.s, tabular figures).
+- **Subtitle change:** the new call rises 0.6em and fades in over 260ms (none under reduced motion).
 
-### Section (Workspace)
-- **Structure:** a 1px top rule, fluid 3rem to 5rem vertical padding, headline and intro at 40rem.
-- **Each section** carries `data-workspace` with its id, which the ring and the bar follow. Its columns arrive from the right as they scroll in (see Motion).
+### Stop Key
+A red Esc keycap set inline in the poster, as tall as the capitals and standing on the baseline. It sinks 0.06em and loses most of its lip when the stop recording reaches the user's stop command, and over 120ms when pressed. Pressing it replays the recording from 2.5 s before the stop.
 
-### Column
-- **Corner Style:** 10px.
-- **Background:** panel graphite or paper panel.
-- **Border:** 1px rule.
-- **Internal Padding:** fluid 1rem to 1.25rem.
-- **Focused column:** one per section, marked with the `focused` class. While the section crosses the middle of the view, the page's ring (2px amber, 4px outside, 14px corners) slides into it from wherever it was. Under reduced motion the ring moves there at once. Without scripts the ring stays on the promise window.
+### Code Block
+A command on the plate, 0.75rem corners, wrapped to the width rather than scrolled, with a Copy pill at its right.
 
-### Plate (recording)
-- The video sits on a graphite plate with a 2px rule-colored border, 2px padding and 12px corners; the video inside has 10px corners. There are no corner ticks or geometry line above it.
-- A still shows first and stays until the video has a frame. The video plays muted and looped while 35% in view, only after the page has loaded, never under reduced motion or save-data, where it shows the still as its poster with controls. Stills below the first view load as they come near; until then the plate shows its graphite, not a broken image. The controls drop download, casting and picture-in-picture, which a muted demo doesn't need, and keep playback speed for readers who want the real-time recording slower.
-- Every video carries an `aria-label` describing what happens in it.
+### Docs pages
+Starlight with theme.css: tokens, wordmark, Archivo titles at 72% and 84% width, links underlined at 1px and 2px on hover, code in table first columns kept on one line, code in headings without a chip. Code blocks are Expressive Code set in astro.config.mjs to match the home page's: on the plate in both themes with github-dark colours, 0.75rem corners, no border or window frame, lines wrapped to the width, and the first line wrapping short of the copy button.
 
-### Calls
-- Each call: its time (`m:ss.s`), `→ request`, `← answer · 303 ms` with the milliseconds in gray 3. A command the user ran is `$ command` with a `#` line saying what it did, both in gray 3.
-- Below 50rem the calls are a step larger, 0.8125rem with times at 0.75rem, so they read on a phone without zooming.
-- While the recording plays, the call it shows wears a 1px amber ring with 6px corners that moves from call to call, and the calls still to come drop to gray 3.
-- The time is a button, "Play from 0:07.1", that plays the recording from that call; a click anywhere on the call does the same unless it ends a text selection. Only one time per list is in the tab order, the call being shown, and the arrow keys, Home and End move between calls. Each time is described by its request and a hidden line saying the arrow keys move between calls. On a pointer that hovers, a call's row takes the gray 6 fill and its time turns white.
-- **In a column (Demo):** under the plate, the `asked` tag and prompt, the one call the recording is about with its answer, the recording's note, and a disclosure, "All N calls as text", holding the full list. Its toggle is 44px tall to tap.
-
-### Diagram
-The diagram slot. Its current drawing uses panel boxes with rule strokes, gray wires and an amber act path and dashed gate; it is being replaced.
+### Motion
+One easing for UI (`cubic-bezier(0.22, 1, 0.36, 1)`). The hero frame either drops into the first recording over 1100ms after 400ms (when the recording is already in the first view, as on an upright phone) or grows into it on the root scroll timeline (when it is below), measured once the headline's face has loaded. Below the hero, poster lines, facts, recordings, clips, install steps and the footer wordmark rise 2.5rem and fade in on a view timeline (entry 5% to cover 30%). Under reduced motion none of this runs, the theme icon doesn't turn, scrolling is instant, and pages do not crossfade.
 
 ## Do's and Don'ts
 
 ### Do:
-- **Do** draw new home sections with the Workspace component and list them in the workspaces file, so the rule, the pill and the ring come with them.
-- **Do** mark a new thing that takes focus with a `<ncu-ring>` moved into it, rather than a second kind of highlight.
-- **Do** give every motion a reduced-motion path that ends in the same state.
-- **Do** mark exactly one column per section as focused.
-- **Do** show real requests and answers from a run, with their timings, in `→` and `←` notation, and say how each recording was made.
-- **Do** keep the recording plate graphite in both themes.
-- **Do** give every video an `aria-label` and its calls as text, and keep autoplay off under reduced motion.
-- **Do** check every new color pair in both themes: body text at 4.5:1, ring and focus at 3:1.
+- **Do** set every surface from `tokens.css`: concrete ground, raised concrete, plate.
+- **Do** pick the red step by surface: stop-red and stop-red-lip on the key, stop-text on the ground, stop-text-plate on the plate.
+- **Do** put recordings, calls and commands on the plate, with the calls as text under the recording and the note saying how it was recorded.
+- **Do** take headline widths from the ladder (62, 70, 72, 84, 88, 100%) and keep running text at 100%.
+- **Do** keep every target at least 2.75rem tall and the focus outline visible on both the ground and the plate.
+- **Do** give every motion a calm, complete reduced-motion state.
+- **Do** keep the home page within its measured budget: Lighthouse mobile Performance 100, CLS 0, 3.8 KB JS gzipped.
+- **Do** keep the home page's HTML inside the first round trip: Lighthouse's simulated network sends 14,600 bytes before it waits for an acknowledgement, and the page is 14,302 bytes as served. Comments in `is:inline` scripts ship as written, so they go in template comments above the script.
 
 ### Don't:
-- **Don't** animate anything that moves other boxes (padding, width, margins of laid-out elements); slide, fade or move a ring instead.
-- **Don't** add shadows, glows or gradient fills; depth is tone and rules.
-- **Don't** use amber outside the One Ring Rule, or red for anything but a refusal or stop.
-- **Don't** put a mono label or wordmark above a heading as an eyebrow.
-- **Don't** show mocked output or a drawn terminal; recordings and transcripts come from real runs.
-- **Don't** let anything but the hero's strip scroll sideways.
-- **Don't** add a logo beside the name; the name is set in type, and the favicon's three columns are the only mark.
+- **Don't** add borders, divider rules, shadows or gradients to the home page; change the surface instead.
+- **Don't** use red for anything but the stop key and stopped or refused answers.
+- **Don't** set labels, headings or decoration in JetBrains Mono.
+- **Don't** set Archivo narrower than 62% or use widths off the ladder; the cut face does not hold them.
+- **Don't** show a recording without its calls as text, or a mock-up in place of a recording.
+- **Don't** add an accent colour; links and the current page are ink.

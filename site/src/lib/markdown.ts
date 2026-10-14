@@ -2,6 +2,7 @@
 // llms-full.txt.
 import { getCollection, type CollectionEntry } from 'astro:content';
 import { groups } from './groups.mjs';
+import { home } from './home';
 
 type Page = CollectionEntry<'docs'>;
 
@@ -10,14 +11,11 @@ export function siteRoot(): string {
 	return new URL(import.meta.env.BASE_URL.replace(/\/?$/, '/'), import.meta.env.SITE).href;
 }
 
-// Every page, in sidebar order: the home page, then each group by `sidebar.order`.
+// Every docs page, in sidebar order: each group by `sidebar.order`.
 export async function pages(): Promise<Page[]> {
 	const all = await getCollection('docs');
-	const rank = (page: Page) => {
-		if (page.id === 'index') return -1;
-		return groups.findIndex((group) => page.id.startsWith(`${group.directory}/`));
-	};
-	const unplaced = all.filter((page) => rank(page) === -1 && page.id !== 'index');
+	const rank = (page: Page) => groups.findIndex((group) => page.id.startsWith(`${group.directory}/`));
+	const unplaced = all.filter((page) => rank(page) === -1);
 	if (unplaced.length > 0) {
 		throw new Error(`pages outside every sidebar group: ${unplaced.map((p) => p.id).join(', ')}`);
 	}
@@ -31,7 +29,37 @@ export async function pages(): Promise<Page[]> {
 
 // The page's HTML address, absolute.
 export function pageUrl(page: Page): string {
-	return page.id === 'index' ? siteRoot() : new URL(`${page.id}/`, siteRoot()).href;
+	return new URL(`${page.id}/`, siteRoot()).href;
+}
+
+// The home page's Markdown address, absolute.
+export function homeMarkdownUrl(): string {
+	return new URL('index.md', siteRoot()).href;
+}
+
+// The home page as Markdown, from the same words the page sets.
+export function homeMarkdown(): string {
+	const url = (link: string) => new URL(link, siteRoot()).href;
+	const { stop, clips, install } = home;
+	return [
+		`# niri-computer-use`,
+		`> ${home.description}`,
+		`${home.headline.join(' ')} ${home.lede}`,
+		`The recordings on the page are real sessions. ${home.note}`,
+		`## ${stop.headline.join(' ')}`,
+		`${stop.lede}\n\n${stop.facts.map((fact) => `- ${fact}`).join('\n')}\n\n[${stop.more.text}](${url(stop.more.link)})`,
+		`## ${clips.headline}`,
+		clips.items.map((clip) => `- ${clip.text}`).join('\n'),
+		`## ${install.headline}`,
+		install.lede,
+		install.steps
+			.map((step, index) => {
+				const more = step.more ? ` [${step.more.text}](${url(step.more.link)})` : '';
+				return `${index + 1}. ${step.text}${more}\n\n   \`\`\`${step.lang}\n${step.code.replace(/^/gm, '   ')}\n   \`\`\``;
+			})
+			.join('\n\n'),
+		`[${install.more.text}](${url(install.more.link)})`,
+	].join('\n\n') + '\n';
 }
 
 // The page's Markdown address, absolute.

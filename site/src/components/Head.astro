@@ -1,25 +1,9 @@
 ---
-// Starlight's head, plus preloads: the text face, so headings are set in it from the first
-// paint instead of moving when it arrives, and on the home page the hero recording's still,
-// the largest thing in the first view.
+// Starlight's head, plus a preload of the text face cut to the site's characters, so headings
+// are set in it from the first paint instead of moving when it arrives.
 import Default from '@astrojs/starlight/components/Head.astro';
-import archivo from '@fontsource-variable/archivo/files/archivo-latin-wght-normal.woff2?url';
-import { HERO_SIZES, HERO_WIDTHS, loadDemo } from '../lib/demo';
-
-const hero = Astro.locals.starlightRoute.id === '' ? await loadDemo('errand', HERO_WIDTHS) : undefined;
+import archivo from '../generated/archivo-text.woff2?url';
 ---
 
 <Default />
 <link rel="preload" href={archivo} as="font" type="font/woff2" crossorigin />
-{
-	hero && (
-		<link
-			rel="preload"
-			as="image"
-			type="image/avif"
-			imagesrcset={hero.poster.srcset}
-			imagesizes={HERO_SIZES}
-			fetchpriority="high"
-		/>
-	)
-}

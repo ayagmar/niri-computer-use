@@ -19,7 +19,7 @@ With [`confirm_lease`](../configuration/#confirm_lease) on, `acquire_desktop` al
 
 Bind `niri-computer-use stop` to a key in your niri config (see [First session](../../start/first-session/#bind-the-stop-key)). Pressing it:
 
-- cancels the action that is running, which ends with `stopped`. A niri action, an element action or a Noctalia command whose request had already gone out, and `key` or `type_text` once a stroke had, end as `uncertain` instead, since they may have taken effect, with `accepted: true` if niri, the app or Noctalia had answered or a stroke was typed and `null` if not. The pointer tools and a paste end with `stopped` either way, and anything they had already sent may have taken effect
+- cancels the action that is running, which ends with `stopped`. A niri action, an element action or a Noctalia command whose request had already gone out, `key` or `type_text` once a stroke had, and the pointer tools once their first motion or held modifier had, end as `uncertain` instead, since they may have taken effect, with `accepted: true` if niri, the app or Noctalia had answered or a stroke was typed and `null` if not. A paste ends with `stopped` either way, and a key it had already sent may have taken effect
 - takes the lease back from the agent, once a screenshot or readiness check under way has finished
 - refuses every later `acquire_desktop` and action with `stopped`
 

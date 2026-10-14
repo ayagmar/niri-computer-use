@@ -1,62 +1,71 @@
-/* Graphite panels, one amber accent taken from the focus ring, red only for stopped or
-   refused. Archivo for text, JetBrains Mono for requests, answers and code. */
+/* The docs pages in the home page's colours and type: Starlight's greys run from the ink to
+   the concrete ground, links and the current page are ink, and titles are the home page's
+   narrow, heavy Archivo. Red stays for the stop key and for warnings. */
 
 :root {
-	--sl-font: 'Archivo Variable', ui-sans-serif, system-ui, sans-serif;
-	--sl-font-mono: 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace;
+	--sl-font: var(--ncu-sans);
+	--sl-font-mono: var(--ncu-mono); /* taste-skill-ignore: code only */
 
-	--sl-color-accent-low: #3a2a12;
-	--sl-color-accent: #f2a33a;
-	--sl-color-accent-high: #ffd08a;
+	--sl-color-white: #e6e8e3;
+	--sl-color-gray-1: #d3d7d1;
+	--sl-color-gray-2: #b9bfba;
+	--sl-color-gray-3: #8a918c;
+	--sl-color-gray-4: #5d645f;
+	--sl-color-gray-5: #343a36;
+	--sl-color-gray-6: #1f2320;
+	--sl-color-black: #161917;
 
-	--sl-color-white: #eef0f1;
-	--sl-color-gray-1: #dde0e2;
-	--sl-color-gray-2: #b4bbc0;
-	--sl-color-gray-3: #8b9399;
-	--sl-color-gray-4: #555c62;
-	--sl-color-gray-5: #2e3337;
-	--sl-color-gray-6: #1c1f22;
-	--sl-color-black: #121416;
+	--sl-color-accent-low: #1f2320;
+	--sl-color-accent: #b9bfba;
+	--sl-color-accent-high: #e6e8e3;
 
-	--ncu-ring: #f2a33a;
-	--ncu-stop: #ff6b6b;
-	--ncu-panel: #181b1e;
-	--ncu-rule: #2a2e32;
-	--ncu-gap: 1rem;
-	--ncu-radius: 10px;
+	--sl-color-bg-nav: var(--sl-color-black);
+	--sl-color-bg-sidebar: var(--sl-color-black);
+	--sl-color-red: var(--ncu-stop);
 
 	--sl-content-width: 46rem;
 }
 
 :root[data-theme='light'] {
-	--sl-color-accent-low: #f6e3c4;
-	--sl-color-accent: #8a5300;
-	--sl-color-accent-high: #4d2e00;
+	--sl-color-white: #0c0e0d;
+	--sl-color-gray-1: #1d211f;
+	--sl-color-gray-2: #2d332f;
+	--sl-color-gray-3: #464c48;
+	--sl-color-gray-4: #6c736e;
+	--sl-color-gray-5: #b8bdb7;
+	--sl-color-gray-6: #dcdfd9;
+	--sl-color-gray-7: #e1e4de;
+	--sl-color-black: #e6e8e3;
 
-	--sl-color-white: #15181a;
-	--sl-color-gray-1: #23282b;
-	--sl-color-gray-2: #3a4145;
-	--sl-color-gray-3: #555d62;
-	--sl-color-gray-4: #8b9399;
-	--sl-color-gray-5: #c9ced2;
-	--sl-color-gray-6: #e8eaec;
-	--sl-color-gray-7: #f8f9f9;
-	--sl-color-black: #f3f4f5;
+	--sl-color-accent-low: #dcdfd9;
+	--sl-color-accent: #0c0e0d;
+	--sl-color-accent-high: #2d332f;
 
-	--ncu-ring: #9a5a06;
-	--ncu-stop: #c62828;
-	--ncu-panel: #fbfbfc;
-	--ncu-rule: #d5d9dc;
+	--sl-color-bg-nav: var(--sl-color-black);
 }
 
-/* Keyboard focus wears the focus ring. */
-:focus-visible {
-	outline: 2px solid var(--ncu-ring);
-	outline-offset: 2px;
+/* The wordmark as on the home page, where it holds still while pages crossfade. */
+.site-title {
+	font-weight: 760;
+	font-stretch: 88%;
+	font-size: clamp(1.0625rem, 1rem + 0.3vw, 1.25rem);
+	letter-spacing: -0.01em;
+	color: var(--sl-color-white);
+}
+
+/* Page titles and section headings in the home page's poster type, a size down. */
+h1#_top {
+	font-weight: 840;
+	font-stretch: 72%;
+	font-size: clamp(2.5rem, 1.6rem + 3vw, 3.75rem);
+	line-height: 0.95;
+	letter-spacing: -0.025em;
 }
 
 .sl-markdown-content :is(h2, h3) {
-	letter-spacing: -0.01em;
+	font-weight: 760;
+	font-stretch: 84%;
+	letter-spacing: -0.015em;
 }
 
 /* Code in headings, as on the error reference: no chip, a little smaller. */
@@ -66,40 +75,24 @@
 	font-size: 0.85em;
 }
 
+.sl-markdown-content a:not(:where(.not-content *)) {
+	text-underline-offset: 0.2em;
+	text-decoration-thickness: 1px;
+}
+
+.sl-markdown-content a:not(:where(.not-content *)):hover {
+	text-decoration-thickness: 2px;
+}
+
 /* Reference tables: keep code in the first column on one line. */
 .sl-markdown-content table td:first-child code {
 	white-space: nowrap;
 }
 
-/* Stills from nested runs. */
+/* Stills from nested runs sit on the recordings' black plate. */
 .sl-markdown-content img {
-	border: 1px solid var(--ncu-rule);
-	border-radius: var(--ncu-radius);
-}
-
-/* The home page's sections run wider than a docs page, toward its screen of windows.
-   Starlight sets the width for pages without a sidebar on `html:not([data-has-sidebar])`. */
-:root[data-has-hero]:not([data-has-sidebar]) {
-	--sl-content-width: 96rem;
-}
-
-/* The parts the browser draws, in the page's colours. */
-::selection {
-	background: var(--sl-color-accent-low);
-	color: var(--sl-color-white);
-}
-
-:root {
-	caret-color: var(--ncu-ring);
-	scrollbar-color: var(--sl-color-gray-5) var(--sl-color-black);
-}
-
-/* The home page's screen runs edge to edge, and its windows and columns slide in from the
-   right; none of it may widen the page. The clip sits on the pane holding the content, as
-   wide as the window, so a ring just outside a column still shows; on the root, phones
-   would widen the page anyway. */
-[data-has-hero] .main-pane {
-	overflow-x: clip;
+	background: var(--ncu-plate);
+	border-radius: 4px;
 }
 
 /* On a touch screen, heading anchors and code copy buttons are at least 44px to tap. */
@@ -112,20 +105,19 @@
 		width: 2.75rem;
 		height: 2.75rem;
 	}
+
+	/* The first line wraps short of the larger button. */
+	.expressive-code :nth-child(1 of .ec-line) .code {
+		padding-inline-end: calc(3.25rem + var(--ec-codePadInl));
+	}
 }
 
-/* Moving between pages crossfades while the header holds still, and links within the home
-   page scroll to their section rather than jump. */
 @media (prefers-reduced-motion: no-preference) {
-	@view-transition {
-		navigation: auto;
-	}
-
 	.header {
 		view-transition-name: ncu-header;
 	}
 
-	:root[data-has-hero] {
-		scroll-behavior: smooth;
+	.site-title {
+		view-transition-name: ncu-name;
 	}
 }

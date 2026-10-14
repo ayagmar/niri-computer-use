@@ -33,6 +33,8 @@ export interface Demo extends Run {
 	height: number;
 	/** Poster images by width, AVIF. */
 	poster: { src: string; srcset: string };
+	/** The phone's crop of the poster by width, AVIF, when the recording has one. */
+	cropped?: string;
 	webm: string;
 	mp4: string;
 }
@@ -43,11 +45,20 @@ const stills = import.meta.glob<ImageMetadata>(['../../public/demo/*.png', '!../
 	import: 'default',
 });
 
-/** The hero recording's still, by width, and its slot: beside the copy or under it. */
-export const HERO_WIDTHS = [480, 720, 960, 1280];
-export const HERO_SIZES = '(min-width: 62rem) 52vw, 96vw';
+/** Widths the stills are made at. */
+export const STILL_WIDTHS = [640, 800, 960, 1280, 1920];
 
-export async function loadDemo(name: string, widths: number[]): Promise<Demo> {
+/** Which half of the recording's width a phone shows, so it stays legible: the left, middle
+ * or right half. */
+export type Crop = 'left' | 'centre' | 'right';
+
+/** How far a crop's left edge sits from the recording's, as a fraction of its width. */
+export const CROP_LEFT: Record<Crop, number> = { left: 0, centre: 0.25, right: 0.5 };
+
+/** Widths the phone's crop is made at, up to the half of the recording it shows. */
+const CROP_WIDTHS = [480, 800, 960];
+
+export async function loadDemo(name: string, widths: number[], crop?: Crop): Promise<Demo> {
 	const run = runs[`../../public/demo/${name}.json`];
 	const still = stills[`../../public/demo/${name}.png`];
 	if (!run || !still) throw new Error(`public/demo/${name}.json or .png is missing`);
@@ -64,9 +75,41 @@ export async function loadDemo(name: string, widths: number[]): Promise<Demo> {
 			src: posters.at(-1)!.src,
 			srcset: posters.map((poster, index) => `${poster.src} ${widths[index]}w`).join(', '),
 		},
+		cropped: crop && (await cropped(still, crop)),
 		webm: `${base}demo/${name}.webm`,
 		mp4: `${base}demo/${name}.mp4`,
 	};
+}
+
+/** Half the still's width at its full height, cut where `crop` says: the same part of the
+ * frame the video shows at twice the width of a phone. */
+async function cropped(still: ImageMetadata, crop: Crop): Promise<string> {
+	const images = await Promise.all(
+		CROP_WIDTHS.map((width) =>
+			getImage({
+				src: still,
+				width,
+				height: Math.round((width * still.height * 2) / still.width),
+				fit: 'cover',
+				position: crop,
+				format: 'avif',
+				quality: 50,
+			}),
+		),
+	);
+	return images.map((image, index) => `${image.src} ${CROP_WIDTHS[index]}w`).join(', ');
+}
+
+/** Who holds the lease after each call: taken by `acquire_desktop`, given back by
+ * `release_desktop`, taken back by the user's stop command. */
+export function leaseAfter(calls: Call[]): ('free' | 'held' | 'stopped')[] {
+	let lease: 'free' | 'held' | 'stopped' = 'free';
+	return calls.map((call) => {
+		if (call.you && call.request.endsWith(' stop')) lease = 'stopped';
+		else if (call.request.startsWith('acquire_desktop') && call.answer.startsWith('lease taken')) lease = 'held';
+		else if (call.request.startsWith('release_desktop') && call.answer.startsWith('released')) lease = 'free';
+		return lease;
+	});
 }
 
 /** Seconds into the recording as m:ss.s, as a player shows them. */
