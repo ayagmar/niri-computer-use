@@ -235,6 +235,9 @@ struct Status {
     older: bool,
     /// `IsEnabled` apart from the listeners: true as a screen reader's running made it.
     on: bool,
+    /// `IsEnabled` written false over the listeners, until the next one registers, as
+    /// at-spi2-core counts them again only when one comes or goes.
+    written_off: bool,
     /// Each listener registered, in order.
     listeners: Vec<Listener>,
     /// How long after a listener registers `IsEnabled` counts it, as a busy launcher
@@ -245,10 +248,22 @@ struct Status {
 }
 
 impl Status {
-    /// The listeners `IsEnabled` counts: those registered `lag` ago or longer.
-    fn counted(&self) -> Vec<String> {
+    /// `IsEnabled`, or the listeners it depends on, those registered `lag` ago or longer,
+    /// when it is true while one of them lasts.
+    fn reads(&self) -> Result<bool, Vec<String>> {
+        if self.written_off || (self.older && !self.on) {
+            return Ok(false);
+        }
+        if self.on {
+            return Ok(true);
+        }
         let counted = self.listeners.iter().filter(|l| l.at.elapsed() >= self.lag);
-        counted.map(|listener| listener.name.clone()).collect()
+        Err(counted.map(|listener| listener.name.clone()).collect())
+    }
+
+    fn register(&mut self, listener: Listener) {
+        self.listeners.push(listener);
+        self.written_off = false;
     }
 }
 
@@ -322,6 +337,11 @@ impl Mock {
     /// `IsEnabled` on for a listener.
     pub(crate) fn older_launcher(&self) {
         self.state.lock().unwrap().status.older = true;
+    }
+
+    /// Makes `IsEnabled` false whatever listeners there are, as the user writing it does.
+    pub(crate) fn written_off(&self) {
+        self.state.lock().unwrap().status.written_off = true;
     }
 
     /// Makes the bus launcher turn `IsEnabled` on only `lag` after a listener registers.
@@ -832,7 +852,7 @@ impl Listeners {
             event,
             at: Instant::now(),
         };
-        self.0.state.lock().unwrap().status.listeners.push(listener);
+        self.0.state.lock().unwrap().status.register(listener);
         Ok(())
     }
 
@@ -877,14 +897,11 @@ impl Launcher {
     #[zbus(property)]
     async fn is_enabled(&self, #[zbus(connection)] bus: &Connection) -> fdo::Result<bool> {
         self.0.called("IsEnabled", "/org/a11y/bus").await?;
-        let (older, on, listeners) = {
-            let state = self.0.state.lock().unwrap();
-            (state.status.older, state.status.on, state.status.counted())
-        };
-        if on {
-            return Ok(true);
+        let reads = self.0.state.lock().unwrap().status.reads();
+        match reads {
+            Ok(enabled) => Ok(enabled),
+            Err(listeners) => Ok(!live(bus, listeners).await?.is_empty()),
         }
-        Ok(!older && !live(bus, listeners).await?.is_empty())
     }
 
     #[zbus(property)]

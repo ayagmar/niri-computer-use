@@ -420,12 +420,13 @@ async fn switched(switch: &Switch, policy: &Loaded, deadline: Instant) -> String
     match policy::off_bus(policy, enabled, listened) {
         OffBus::Leave => on,
         OffBus::Refused(why) => format!("the session's accessibility is off, and {why}"),
-        OffBus::Listen => match switch.listen(deadline).await {
-            Ok(Turned::On | Turned::AlreadyOn) if enabled => on,
+        OffBus::Listen => match switch.listen(deadline, enabled).await {
+            Ok(Turned::On) if enabled => on,
             Ok(Turned::On) => format!(
                 "the session's accessibility was off, so the server turned it on; {GSETTINGS}; {RESTART}"
             ),
-            Ok(Turned::AlreadyOn) => "the session's accessibility is off though the server's listener asks for it, so something else turned it off; the server leaves it off".to_owned(),
+            Ok(Turned::AlreadyOn) => on,
+            Ok(Turned::LetGo) => "the session's accessibility is off: something turned it off while the server's listener held it on, so the server let its listener go and leaves it off until the server restarts".to_owned(),
             Ok(Turned::Unsupported(why)) => format!("the session's accessibility is off: {why}"),
             Ok(Turned::Late) => "the session's accessibility is off, and this call's time ran out before the server's listener turned it on; the server let the listener go and tries again on the next call".to_owned(),
             Ok(Turned::Busy) => format!(

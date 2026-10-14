@@ -49,6 +49,9 @@ enum Held {
     On { _listener: Connection },
     /// It registered a listener, and the bus launcher didn't turn accessibility on: why.
     Unsupported(String),
+    /// Something turned accessibility off while its listener held it on, so it let the
+    /// listener go and doesn't register another.
+    LetGo,
 }
 
 /// What `status` reports of the switch.
@@ -63,6 +66,8 @@ pub(crate) enum Report {
     TurningOn,
     /// The bus launcher doesn't turn it on for a listener.
     Unsupported,
+    /// Something turned it off while the server held it on, and the server let go.
+    LetGo,
 }
 
 /// What `listen` did.
@@ -76,6 +81,9 @@ pub(crate) enum Turned {
     Unsupported(String),
     /// Another call was still turning it on when this one's time ran out.
     Busy,
+    /// Something turned it off while the server's listener held it on; the listener is let
+    /// go, now or before.
+    LetGo,
     /// This call's time ran out before the launcher's `TURNING_ON` did, with `IsEnabled`
     /// still false, so the listener was let go for a later call to try again.
     Late,
@@ -149,13 +157,24 @@ impl Switch {
     /// Registers the listener, unless the server's already holds accessibility on, and
     /// waits for `IsEnabled` to turn true, all by `deadline`, waiting for another call
     /// turning it on no longer. A launcher that doesn't turn it on is remembered, and the
-    /// listener let go.
-    pub(crate) async fn listen(&self, deadline: Instant) -> Result<Turned, ToolError> {
+    /// listener let go. So is a listener that holds it on while it reads off, as `enabled`
+    /// says it did just now: something turned it off over the listener, and the launcher
+    /// would turn it back on the next time any listener comes or goes.
+    pub(crate) async fn listen(
+        &self,
+        deadline: Instant,
+        enabled: bool,
+    ) -> Result<Turned, ToolError> {
         let Ok(mut held) = tokio::time::timeout_at(deadline, self.held.lock()).await else {
             return Ok(Turned::Busy);
         };
         match &*held {
-            Held::On { .. } => return Ok(Turned::AlreadyOn),
+            Held::On { .. } if enabled => return Ok(Turned::AlreadyOn),
+            Held::On { .. } => {
+                *held = Held::LetGo;
+                return Ok(Turned::LetGo);
+            }
+            Held::LetGo => return Ok(Turned::LetGo),
             Held::Unsupported(why) => return Ok(Turned::Unsupported(why.clone())),
             Held::Off => {}
         }
@@ -224,6 +243,7 @@ impl Switch {
             Ok(Held::Off) => Report::Off,
             Ok(Held::On { .. }) => Report::On,
             Ok(Held::Unsupported(_)) => Report::Unsupported,
+            Ok(Held::LetGo) => Report::LetGo,
             Err(_) => Report::TurningOn,
         }
     }
@@ -266,7 +286,7 @@ mod tests {
         // Another call, stuck registering its listener.
         let _turning = switch.held.lock().await;
         let deadline = Instant::now() + Duration::from_millis(100);
-        let turned = tokio::time::timeout(Duration::from_secs(2), switch.listen(deadline))
+        let turned = tokio::time::timeout(Duration::from_secs(2), switch.listen(deadline, false))
             .await
             .expect("the call waited past its deadline");
         assert_eq!(turned.unwrap(), Turned::Busy);

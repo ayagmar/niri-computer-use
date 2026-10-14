@@ -128,6 +128,25 @@ async fn an_app_off_the_bus_turns_accessibility_on_until_the_server_ends_however
     desk.fixture.started(engine);
 }
 
+/// The user turning accessibility off over the server's listener means it off: the server
+/// lets its listener go, or the next screen reader to start or end would turn it back on.
+#[tokio::test]
+async fn accessibility_turned_off_over_the_server_is_let_go_for_good() {
+    let mut desk = Desk::start("acc-off", "", off_bus_window()).await;
+    desk.refused().await;
+    let listeners = desk.mock.listeners();
+    desk.mock.written_off();
+    let (_, detail) = desk.refused().await;
+    assert!(detail.contains("let its listener go"), "{detail}");
+    assert!(!desk.bus.connected(&listeners[0]).await);
+    assert_eq!(desk.switch().await, "let_go");
+    let (_, again) = desk.refused().await;
+    assert!(again.contains("let its listener go"), "{again}");
+    assert_eq!(desk.mock.listeners().len(), 1);
+    assert!(!desk.bus.is_enabled().await);
+    assert_eq!(desk.mock.status_writes(), 0);
+}
+
 #[tokio::test]
 async fn accessibility_already_on_is_left_alone() {
     let mut desk = Desk::start("acc-reader", "", off_bus_window()).await;

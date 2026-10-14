@@ -42,7 +42,7 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `noctalia` | `running`, `not_running` or `not_installed` |
 | `noctalia_error` | why Noctalia counts as not running, or null |
 | `accessibility.available`, `accessibility.address`, `accessibility.reason` | whether the session has an accessibility bus, its address, and why not; `elements`, `activate_element` and `set_element_text` are listed only when it has one |
-| `accessibility_switch` | what the server did about the session's accessibility for [Chromium and Electron apps](../elements/#chromium-and-electron-apps): `off`, `on` while its listener holds it on, `turning_on`, or `unsupported` when at-spi2-core is older than 2.61; null from the `status` subcommand |
+| `accessibility_switch` | what the server did about the session's accessibility for [Chromium and Electron apps](../elements/#chromium-and-electron-apps): `off`, `on` while its listener holds it on, `turning_on`, `unsupported` when at-spi2-core is older than 2.61, or `let_go` when something turned accessibility off while the server held it on; null from the `status` subcommand |
 | `policy.state` | `loaded`, `missing` (valid: no presets, no denied apps) or `invalid` |
 | `policy.presets`, `policy.denied_app_ids`, `policy.error` | how many presets and denied apps the policy file has, and why it is invalid |
 | `policy.preset_names` | the preset names `launch` takes |
