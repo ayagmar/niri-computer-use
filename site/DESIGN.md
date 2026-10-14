@@ -327,7 +327,7 @@ A red keycap with an uppercase Esc legend. Pressing it, or Esc while the figure 
 Each check is a paper block with an ink outline; passed checks fill ink, a refused check fills red. In Table 1 each row's check name is a button that runs that case; the running row is highlighted and the answer appears in the readout above the table, announced to screen readers only for a row the reader picked. Picking a row cancels the demo run. Without JavaScript the readout is hidden.
 
 ### Result
-The answer JSON between two ink rules, beside its fields. Pointing at or focusing a field highlights its lines.
+The answer JSON between two ink rules, beside its fields. Pointing at a field highlights its lines; the fields aren't focus stops, since they do nothing.
 
 ### Motion
 One easing, `cubic-bezier(0.22, 1, 0.36, 1)`. Section rules draw across from the left on a view timeline (entry 10% to entry 70%). In the timing diagram a paper cover pulls back, labels fade up 5px as the cursor reaches them, and pens ride the call and lease traces, in step with the recording. While the agent works a ring pulses out from the keycap every 1.6 s; when a stop lands the diagram flashes red for 750ms, the key sinks 3px over 90ms, and the highlighter stroke draws under the headline's stop line over 700ms. In the block diagram the packet hops 260ms per block and a refused check shakes for 420ms; in view, it runs one pass and then the stop flag. In Result the fields light up in turn every 1.3 s once 60% is in view, until the reader points. Under reduced motion there is no rule draw, theme icon turn, headline stroke, cover, packet, shake, flash, ring, field sequence, smooth scroll or page crossfade; the diagram and answers appear complete.

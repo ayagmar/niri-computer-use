@@ -27,7 +27,7 @@ const owner = (line: number) => fields.findIndex((f) => f.lines && line >= f.lin
 	<dl class="fields">
 		{
 			fields.map((field, index) => (
-				<div class="field" data-field={index} tabindex={field.lines ? 0 : undefined}>
+				<div class="field" data-field={index} data-lines={field.lines ? '' : undefined}>
 					<dt><code>{field.name}</code></dt>
 					<dd>{field.text}</dd>
 				</div>
@@ -44,13 +44,11 @@ const owner = (line: number) => fields.findIndex((f) => f.lines && line >= f.lin
 		for (const field of root.querySelectorAll<HTMLElement>('.field')) {
 			const index = field.dataset.field!;
 			field.addEventListener('pointerenter', () => mark(index));
-			field.addEventListener('focus', () => mark(index));
 			field.addEventListener('pointerleave', () => mark(null));
-			field.addEventListener('blur', () => mark(null));
 		}
 		// Once in view, the fields light up in turn, until the reader points at one.
 		if (matchMedia('(prefers-reduced-motion: no-preference)').matches) {
-			const marked = [...root.querySelectorAll<HTMLElement>('.field[tabindex]')];
+			const marked = [...root.querySelectorAll<HTMLElement>('.field[data-lines]')];
 			let timer = 0;
 			const stop = () => {
 				clearTimeout(timer);
@@ -133,8 +131,7 @@ const owner = (line: number) => fields.findIndex((f) => f.lines && line >= f.lin
 		transition: background-color 160ms var(--ease);
 	}
 
-	.field[tabindex]:hover,
-	.field[tabindex]:focus-visible,
+	.field[data-lines]:hover,
 	.field:global(.lit) {
 		background: var(--mark);
 	}
