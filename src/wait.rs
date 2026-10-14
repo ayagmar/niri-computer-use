@@ -225,10 +225,10 @@ fn check(
             }),
             None,
         ),
-        (None, true) if !listing.truncated && listing.capped_reason.is_none() => {
-            Checked::Ends(Ended::Met, None, None)
-        }
+        // An `absent` check lists nothing: `truncated` says the walk read a match.
         (Some(_), true) => Checked::Unmet(None),
+        (None, true) if listing.truncated => Checked::Unmet(None),
+        (None, true) if listing.capped_reason.is_none() => Checked::Ends(Ended::Met, None, None),
         (None, _) => Checked::Unmet(listing.capped_reason),
     })
 }

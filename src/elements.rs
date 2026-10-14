@@ -27,6 +27,8 @@ use crate::policy::{self, Loaded};
 pub(crate) struct Ask {
     pub(crate) window_id: u64,
     pub(crate) filter: Filter,
+    /// The most elements to list. 0 lists none: the walk stops at the first match, names
+    /// no actions, and `truncated` says whether there was one.
     pub(crate) limit: usize,
 }
 

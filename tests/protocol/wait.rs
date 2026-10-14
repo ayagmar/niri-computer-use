@@ -380,6 +380,24 @@ async fn absent_waits_for_a_whole_walk_and_a_slow_walk_keeps_the_timeout() {
     assert_eq!(whole["observed"], "met", "{whole}");
 }
 
+// The bug: an `absent` wait that named the actions of the element it still saw, which it
+// throws away, so an app slow to name them made every walk look cut short, and a
+// timeout told the agent to narrow a condition whose walks had read the whole tree.
+#[tokio::test]
+async fn an_absent_wait_names_no_actions() {
+    let mut app = App::start("wait-el-unnamed", false).await;
+    app.mock.change("/button", |button| {
+        button.listed = Some(vec![String::new()]);
+    });
+    app.mock
+        .slow_on("GetName", "/button", Duration::from_millis(1500));
+    let present = json!({"name_contains": "safe", "absent": true});
+    let (outcome, _) = app.wait(present, 1500).await;
+    assert_eq!(outcome["observed"], "timeout", "{outcome}");
+    assert_eq!(outcome["detail"], Value::Null, "{outcome}");
+    assert_eq!(app.mock.calls("GetName"), 0);
+}
+
 // The bug: a window that closes during the wait left to the timeout.
 #[tokio::test]
 async fn a_window_that_closes_ends_an_element_wait_at_once() {

@@ -487,9 +487,10 @@ impl Engine {
     }
 
     /// What `elements` lists for `element` now, for one check of `wait_for`'s element
-    /// condition. While the lease is held, an appearing element is kept as an element ref;
-    /// an `absent` one isn't, since a ref for each walk that still sees it would push the
-    /// agent's own refs out of those the lease keeps.
+    /// condition. While the lease is held, an appearing element is kept as an element ref.
+    /// An `absent` check lists nothing, only whether anything matches: it would throw the
+    /// element away, and naming its actions and keeping its ref on each walk that still
+    /// sees it would cost time and push the agent's own refs out of those the lease keeps.
     async fn poll(
         &self,
         session: &Session,
@@ -503,7 +504,7 @@ impl Engine {
         let ask = elements::Ask {
             window_id: element.window_id,
             filter: element.filter.clone(),
-            limit: 1,
+            limit: usize::from(!element.absent),
         };
         let lease = self.desk.ref_lease(session).filter(|_| !element.absent);
         let remember = |found| lease.and_then(|lease| self.desk.remember_element(lease, found));
