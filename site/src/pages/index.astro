@@ -424,6 +424,11 @@ const { sessions, result, gates, limits, requirements, install } = home;
 		cursor: pointer;
 	}
 
+	/* Without the script the button can't switch anything. */
+	:global(html:not(.js)) .theme {
+		display: none;
+	}
+
 	.theme svg {
 		width: 1.1rem;
 		height: 1.1rem;
@@ -732,6 +737,13 @@ const { sessions, result, gates, limits, requirements, install } = home;
 		.needs th {
 			width: 6.5rem;
 			padding-right: 1rem;
+		}
+	}
+
+	/* Too narrow for the version beside the name; the footer still gives it. */
+	@media (max-width: 24rem) {
+		.mast .version {
+			display: none;
 		}
 	}
 </style>
