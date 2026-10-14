@@ -5,7 +5,9 @@
 // the `Password entry` field, which hides its text and counts its changes in
 // `qt-password-changes` without the text, and the `Hidden entry`, which shows none of its
 // synthetic text, as a field in `NoEcho` mode does, and counts its changes in
-// `qt-hidden-changes`. Qt drops the password field's accessible name. The files are written with an
+// `qt-hidden-changes`. The `Spin` spin box reports its value in `qt-spin-value`, and the
+// `Upper entry` field upper-cases what it is given and reports it in `qt-upper-text`.
+// Qt drops the password field's accessible name. The files are written with an
 // XMLHttpRequest PUT to a file URL, which Qt allows only with QML_XHR_ALLOW_FILE_WRITE=1,
 // set for this process alone.
 import QtQuick
@@ -67,6 +69,21 @@ ApplicationWindow {
                 report("qt-hidden-changes", String(hiddenChanges))
             }
         }
+        SpinBox {
+            Accessible.name: "Spin"
+            from: 0
+            to: 10
+            value: 2
+            onValueChanged: report("qt-spin-value", String(value))
+        }
+        TextField {
+            Accessible.name: "Upper entry"
+            onTextChanged: {
+                if (text !== text.toUpperCase())
+                    text = text.toUpperCase()
+                report("qt-upper-text", text)
+            }
+        }
     }
 
     Component.onCompleted: {
@@ -74,6 +91,8 @@ ApplicationWindow {
         report("qt-entry-text", "")
         report("qt-password-changes", "0")
         report("qt-hidden-changes", "0")
+        report("qt-spin-value", "2")
+        report("qt-upper-text", "")
     }
     Timer { interval: 240000; running: true; onTriggered: Qt.quit() }
 }

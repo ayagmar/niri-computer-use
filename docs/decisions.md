@@ -1500,4 +1500,5 @@ v2.9.2 is the newest release; it is over 7 days old.
 - `effect` is a top-level field rather than part of `element` so other tools can take it later without a second shape. The audit log keeps it beside `accepted` and `observed`; it is a closed set of names.
 - The names follow trycua/cua's cua-driver `effect` contract (`confirmed`, `partial`, `unverifiable`, `suspected_noop`, `refused`) only in spirit. Refusals here are errors, never outcomes, and `none_seen` says what was read rather than suspecting a no-op.
 - The protocol mock serves `GetText` and a `Value` interface, and its field can keep less or other text than it is given.
+- The nested suite's Qt fixture has a `SpinBox` and a field that upper-cases its text. Qt Quick lists the spin box's `Increase` action and `Value` interface, and its read-back is `value_changed: true` with `effect: seen`; the field is `differs` at the text's own character count. The GTK entries' `matched` and 64 KiB `differs` now check `effect` too. The counted buttons, which relabel themselves and change no state, read `none_seen` without `element_changes` and `seen` with it, as the rules say.
 - No dependency was added.

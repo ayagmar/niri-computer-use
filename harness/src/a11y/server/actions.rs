@@ -108,6 +108,10 @@ impl Checks<'_, '_> {
         if toolkit == Toolkit::Gtk4 {
             self.dialog(window)?;
         }
+        if toolkit == Toolkit::Qt {
+            self.stepped(window)?;
+            self.upper_cased(window)?;
+        }
         for (name, changes) in files.passwords {
             self.secret(window, *name, changes)?;
         }
@@ -148,6 +152,7 @@ impl Checks<'_, '_> {
         let started = Instant::now();
         let mut took = Vec::new();
         let mut on_return = 0;
+        let mut effects = Vec::new();
         let mut button = String::new();
         for count in 1..=ACTIVATIONS {
             button = self.named(window, Some("button"), files.button)?;
@@ -166,8 +171,15 @@ impl Checks<'_, '_> {
                     "{toolkit:?} activation with element_changes in {elapsed} ms: the button relabelled"
                 );
                 told(self.session, &what, &outcome, relabelled)?;
+                // The relabel is in its window's element changes, so the effect was seen.
+                expect(
+                    field(&outcome, "/effect") == "seen",
+                    "an activation that relabelled its button seen",
+                    &outcome,
+                )?;
             } else {
                 took.push(elapsed);
+                effects.push(field(&outcome, "/effect").clone());
             }
             on_return += u32::from(read_count(self.session, files.count)? == Some(count));
             expect(
@@ -183,11 +195,12 @@ impl Checks<'_, '_> {
         }
         took.sort_unstable();
         self.session.log(&format!(
-            "M9b: {toolkit:?} {ACTIVATIONS}/{ACTIVATIONS} activations, each listed first, counted once and present ({on_return} already counted when the call returned), in {:?}; activate_element ms, all but the first, min {:?} median {:?} max {:?}",
+            "M9b: {toolkit:?} {ACTIVATIONS}/{ACTIVATIONS} activations, each listed first, counted once and present ({on_return} already counted when the call returned), in {:?}; activate_element ms, all but the first, min {:?} median {:?} max {:?}; effects without element_changes: {}",
             started.elapsed(),
             took.first(),
             took.get(took.len() / 2),
-            took.last()
+            took.last(),
+            Value::from(effects)
         ))?;
         let relabelled = self.refused("activate_element", activation(&button, window))?;
         expect(
@@ -214,8 +227,9 @@ impl Checks<'_, '_> {
         let took = asked.elapsed();
         expect(
             field(&outcome, "/observed") == "matched"
+                && field(&outcome, "/effect") == "seen"
                 && field(&outcome, "/element/characters") == text.chars().count(),
-            "set_element_text matched",
+            "set_element_text matched and seen",
             &outcome,
         )?;
         let what = format!(
@@ -249,6 +263,7 @@ impl Checks<'_, '_> {
         let took = asked.elapsed();
         expect(
             field(&outcome, "/observed") == "differs"
+                && field(&outcome, "/effect") == "differs"
                 && field(&outcome, "/element/characters") == LARGEST - 2,
             "64 KiB set, of which GTK keeps 65534 characters",
             &outcome,
@@ -264,6 +279,76 @@ impl Checks<'_, '_> {
         )?;
         self.session.log(&format!(
             "M9b: 64 KiB set in {took:?}: {outcome}; a byte more refused: {over}"
+        ))
+    }
+
+    /// The Qt spin box's `Increase` action steps its value and none of its states: the
+    /// value read back before and after shows the effect, which the fixture confirms.
+    fn stepped(&mut self, window: u64) -> Result<()> {
+        let listing = self.list(window, Some("spin_button"), Some("Spin"))?;
+        let spin = field(&listing, "/elements/0").clone();
+        let increase = field(&spin, "/actions")
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|action| {
+                action
+                    .as_str()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("increase"))
+            })
+            .cloned()
+            .ok_or_else(|| {
+                Failure::new(format!(
+                    "M9b: no increase action on the spin box: {listing}"
+                ))
+            })?;
+        let outcome = self.call(
+            "activate_element",
+            json!({"element": element_ref(&spin)?, "action": increase, "expect": {"window_id": window}}),
+        )?;
+        expect(
+            field(&outcome, "/observed") == "present"
+                && field(&outcome, "/element/value_changed") == true
+                && field(&outcome, "/effect") == "seen",
+            "a spin box stepped by its action, its value changed and seen",
+            &outcome,
+        )?;
+        let path = self.session.test_dir().root().join("qt-spin-value");
+        self.session
+            .wait_until("m9b-spin", "the spin box's value read back", WAIT, |_| {
+                let now = fs::read_to_string(&path).context(format!("read {}", path.display()))?;
+                Ok((now == "3").then_some(()))
+            })?;
+        self.session.log(&format!(
+            "M9b: Qt spin box stepped by its Increase action, value 2 to 3 by the fixture: {outcome}"
+        ))
+    }
+
+    /// The Qt field that upper-cases its text keeps as many characters as it was given, so
+    /// only reading the text back tells it `differs`.
+    fn upper_cased(&mut self, window: u64) -> Result<()> {
+        let entry = self.named(window, None, "Upper entry")?;
+        let text = "ncu m9b upper";
+        let outcome = self.call(
+            "set_element_text",
+            json!({"element": entry, "text": text, "expect": {"window_id": window}}),
+        )?;
+        expect(
+            field(&outcome, "/observed") == "differs"
+                && field(&outcome, "/effect") == "differs"
+                && field(&outcome, "/element/characters") == text.chars().count()
+                && !outcome.to_string().contains("NCU M9B"),
+            "an upper-cased field differs at the same count, with no text in the result",
+            &outcome,
+        )?;
+        let path = self.session.test_dir().root().join("qt-upper-text");
+        self.session
+            .wait_until("m9b-upper", "the upper-cased text read back", WAIT, |_| {
+                let now = fs::read_to_string(&path).context(format!("read {}", path.display()))?;
+                Ok((now == text.to_uppercase()).then_some(()))
+            })?;
+        self.session.log(&format!(
+            "M9b: Qt field that upper-cases its text, same count, differs: {outcome}"
         ))
     }
 
@@ -460,7 +545,8 @@ impl Checks<'_, '_> {
         fs::write(self.session.artifact("audit-m9b.jsonl"), &audit)
             .context("copy the audit log")?;
         let secrets = [
-            "ncu m9b", "xxxxxxxx", "entry", "Primary", "Dismiss", "Rename", "dialog", "Dialog",
+            "ncu m9b", "NCU M9B", "xxxxxxxx", "entry", "Primary", "Dismiss", "Rename", "dialog",
+            "Dialog",
         ];
         let mut acted: u32 = 0;
         for line in audit.lines() {
