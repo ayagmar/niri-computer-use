@@ -1,15 +1,15 @@
 # niri-computer-use
 
-[![CI](https://github.com/ayagmar/niri-computer-use/actions/workflows/ci.yml/badge.svg)](https://github.com/ayagmar/niri-computer-use/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![niri 26.04](https://img.shields.io/badge/niri-26.04-f2a33a)](https://github.com/niri-wm/niri)
+[![CI](https://github.com/ayagmar/niri-computer-use/actions/workflows/ci.yml/badge.svg)](https://github.com/ayagmar/niri-computer-use/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/ayagmar/niri-computer-use/blob/main/LICENSE) [![niri 26.04](https://img.shields.io/badge/niri-26.04-f2a33a)](https://github.com/niri-wm/niri)
 
 Let Claude Code, Codex, Pi or any MCP agent see and drive your [niri](https://github.com/niri-wm/niri) desktop: windows, screenshots, buttons by name, keys and clicks, with a stop key you hold.
 
 <picture>
-  <source media="(prefers-reduced-motion: reduce)" srcset="site/public/demo/errand.png">
-  <img src="site/public/demo/errand.gif" width="960" alt="A niri desktop with a terminal running Claude Code on the left and Files on the right. The agent selects two screenshots in Files, makes a folder for them from the right-click menu, names it release-0.1, and gives focus back to the terminal. A caption band under the desktop shows each request, a summary of the server's answer, its round trip and whether the agent holds the lease.">
+  <source media="(prefers-reduced-motion: reduce)" srcset="https://ayagmar.github.io/niri-computer-use/demo/errand.png">
+  <img src="https://ayagmar.github.io/niri-computer-use/demo/errand.gif" width="960" alt="A niri desktop with a terminal running Claude Code on the left and Files on the right. The agent selects two screenshots in Files, makes a folder for them from the right-click menu, names it release-0.1, and gives focus back to the terminal. A caption band under the desktop shows each request, a summary of the server's answer, its round trip and whether the agent holds the lease.">
 </picture>
 
-Asked: "In Files, put the two screenshots into a new folder called release-0.1, then bring me back here." This is a real Claude Code session (Opus 5.5) on a niri 26.04 desktop, with the installed server; nothing was scripted. The agent's keyboard shortcut doesn't open the dialog, so it uses the right-click menu instead. Thinking time between calls is shortened; the calls play in real time. [The full 19-second recording (MP4)](site/public/demo/errand.mp4).
+Asked: "In Files, put the two screenshots into a new folder called release-0.1, then bring me back here." This is a real Claude Code session (Opus 5.5) on a niri 26.04 desktop, with the installed server; nothing was scripted. The agent's keyboard shortcut doesn't open the dialog, so it uses the right-click menu instead. Thinking time between calls is shortened; the calls play in real time. [The full 19-second recording (MP4)](https://ayagmar.github.io/niri-computer-use/demo/errand.mp4).
 
 Documentation: **https://ayagmar.github.io/niri-computer-use/**, also as plain Markdown for agents ([llms.txt](https://ayagmar.github.io/niri-computer-use/llms.txt)).
 
@@ -19,35 +19,68 @@ Documentation: **https://ayagmar.github.io/niri-computer-use/**, also as plain M
 - **niri only, through niri's own IPC.** Windows, focus and layout come from niri. Where an app exposes its buttons and fields on the accessibility bus, the agent can act on them by name rather than by pixels. With a niri release other than 26.04 the server only looks; a 26.04 patch release works, with a warning in `status`.
 - **Guardrails, not a sandbox.** A lease, a stop key, a lock check and an audit log. An agent holding the lease can do anything you could do with a mouse and keyboard.
 
-It offers up to 22 tools over stdio: reading the desktop, screenshots it can save to `~/Pictures/niri-computer-use`, zooming into part of a screenshot to read small text, accessible elements, and, under the lease, focus, launch, close, niri's layout actions, pointer, keyboard, paste, element actions and three Noctalia panels. Acceptance evidence for each milestone is in [docs/results/](docs/results/). It is in early development.
+It offers up to 22 tools over stdio: reading the desktop, screenshots it can save to `~/Pictures/niri-computer-use`, zooming into part of a screenshot to read small text, accessible elements, and, under the lease, focus, launch, close, niri's layout actions, pointer, keyboard, paste, element actions and three Noctalia panels. Acceptance evidence for each milestone is in [docs/results/](https://github.com/ayagmar/niri-computer-use/tree/main/docs/results). It is in early development.
 
-## Quickstart
+## Install
 
-Needs niri 26.04, Rust 1.99.0 through rustup, libxkbcommon, and `grim`, `wtype` and `loginctl` at run time, plus `notify-send` if you turn on `confirm_lease`. From a shell inside your niri session:
+Needs niri 26.04 on x86_64 Linux with glibc 2.39 or newer and libxkbcommon, and `grim`, `wtype` and `loginctl` at run time, plus `notify-send` if you turn on `confirm_lease`.
+
+Download the release tarball, check it, and put the binary in `~/.local/bin` or another directory on your `PATH`:
+
+```sh
+curl -LO https://github.com/ayagmar/niri-computer-use/releases/download/v0.1.0/niri-computer-use-0.1.0-x86_64-linux.tar.gz
+curl -LO https://github.com/ayagmar/niri-computer-use/releases/download/v0.1.0/niri-computer-use-0.1.0-x86_64-linux.tar.gz.sha256
+sha256sum -c niri-computer-use-0.1.0-x86_64-linux.tar.gz.sha256
+tar -xzf niri-computer-use-0.1.0-x86_64-linux.tar.gz
+install -Dm755 -t ~/.local/bin niri-computer-use-0.1.0-x86_64-linux/niri-computer-use
+~/.local/bin/niri-computer-use --version
+```
+
+The tarball also holds the skill that tells your agents how to use the server. Copy it somewhere it stays and link it where your agents look for skills:
+
+```sh
+mkdir -p ~/.local/share/niri-computer-use ~/.claude/skills ~/.agents/skills
+cp -r niri-computer-use-0.1.0-x86_64-linux/skills ~/.local/share/niri-computer-use/
+ln -s ~/.local/share/niri-computer-use/skills/niri-computer-use ~/.claude/skills/niri-computer-use
+ln -s ~/.local/share/niri-computer-use/skills/niri-computer-use ~/.agents/skills/niri-computer-use
+```
+
+To update, install the new release's binary and copy its `skills` the same way; the links stay.
+
+With Rust 1.99 or newer and libxkbcommon's headers (`libxkbcommon-dev` on Debian and Ubuntu, `libxkbcommon` on Arch), cargo builds it from crates.io into `~/.cargo/bin`. The crate has no skill; take it from the tarball or a clone.
+
+```sh
+cargo install --locked niri-computer-use
+```
+
+From source, rustup installs the Rust version the repository pins, and the skill is in the clone at `niri-computer-use/skills/niri-computer-use`:
 
 ```sh
 git clone https://github.com/ayagmar/niri-computer-use.git
 cargo install --locked --path niri-computer-use
-~/.cargo/bin/niri-computer-use status
 ```
 
-`status` prints a readiness report as JSON; `niri.compat` should be `ok`. Register the server in your agent, here Claude Code, and give your agents the skill that tells them how to use it:
+## Quickstart
+
+From a shell inside your niri session, with the binary where you put it:
 
 ```sh
-claude mcp add --scope user niri-computer-use -- ~/.cargo/bin/niri-computer-use serve
-cd niri-computer-use
-mkdir -p ~/.claude/skills ~/.agents/skills
-ln -s "$PWD/skills/niri-computer-use" ~/.claude/skills/niri-computer-use
-ln -s "$PWD/skills/niri-computer-use" ~/.agents/skills/niri-computer-use
+~/.local/bin/niri-computer-use status
+```
+
+`status` prints a readiness report as JSON; `niri.compat` should be `ok`. Register the server in your agent, here Claude Code:
+
+```sh
+claude mcp add --scope user niri-computer-use -- ~/.local/bin/niri-computer-use serve
 ```
 
 [Client setup](https://ayagmar.github.io/niri-computer-use/start/clients/) covers Codex, Pi and other MCP clients. None needs more than the command: the server finds your niri session itself when its environment lacks one.
 
-Then bind the stop key in your niri config, with the path `cargo install` printed:
+Then bind the stop key in your niri config, with the binary's full path:
 
 ```kdl
 binds {
-    Mod+Shift+Escape allow-inhibiting=false allow-when-locked=true hotkey-overlay-title="Stop the AI agent (niri-computer-use)" { spawn "/home/you/.cargo/bin/niri-computer-use" "stop"; }
+    Mod+Shift+Escape allow-inhibiting=false allow-when-locked=true hotkey-overlay-title="Stop the AI agent (niri-computer-use)" { spawn "/home/you/.local/bin/niri-computer-use" "stop"; }
 }
 ```
 
@@ -93,7 +126,7 @@ What `launch` answered:
 }
 ```
 
-`accepted` says niri took the request, `observed` what niri saw afterwards, and `changes` what niri saw change. The grader passed all nine of its checks, among them one launch, exactly the 20 characters before a single Enter, the notes window closed, and focus back on the user's window. The calls with their results and the grading are in [docs/results/readme-example.md](docs/results/readme-example.md).
+`accepted` says niri took the request, `observed` what niri saw afterwards, and `changes` what niri saw change. The grader passed all nine of its checks, among them one launch, exactly the 20 characters before a single Enter, the notes window closed, and focus back on the user's window. The calls with their results and the grading are in [docs/results/readme-example.md](https://github.com/ayagmar/niri-computer-use/blob/main/docs/results/readme-example.md).
 
 ## Safety
 
@@ -105,18 +138,18 @@ What `launch` answered:
 - Element actions refuse fields the toolkit marks as password fields. Apps start only from presets you write; `unrestricted` lifts that and allows niri's gated actions such as `Spawn`.
 - Calls that reach a tool go to an audit log, without the text typed, the clipboard, window titles or images. It is moved aside at 10 MiB and the three latest old logs are kept, so it stays under about 40 MiB.
 
-What isn't protected: any connected agent sees your screen and window titles, a click can land on a denied window that doesn't have focus, typing and clicking don't check for password fields, a lock that comes after the last read isn't caught, and an agent that can run shell commands can answer the `confirm_lease` notification itself. With the default `wtype` backend, a part that has started typing finishes even if focus moves, you press the stop key or the screen locks. A click or a key can do anything you could do. Read [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/#what-isnt-a-boundary) before letting an agent act, and [SECURITY.md](SECURITY.md) to report a problem.
+What isn't protected: any connected agent sees your screen and window titles, a click can land on a denied window that doesn't have focus, typing and clicking don't check for password fields, a lock that comes after the last read isn't caught, and an agent that can run shell commands can answer the `confirm_lease` notification itself. With the default `wtype` backend, a part that has started typing finishes even if focus moves, you press the stop key or the screen locks. A click or a key can do anything you could do. Read [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/#what-isnt-a-boundary) before letting an agent act, and [SECURITY.md](https://github.com/ayagmar/niri-computer-use/blob/main/SECURITY.md) to report a problem.
 
 ## Limits
 
 - niri 26.04 only. With another major or minor release the server is read-only.
 - The pointer tools need one monitor at transform `Normal`. The keyboard, screenshots and the other tools work with any monitors.
-- There is no package yet: it is installed from source.
+- The release tarball is built for x86_64 only.
 - Accessibility varies by toolkit. GTK 4 works; GTK 3 and Qt apps that draw their own title bar give no element boxes, and niri 26.04 gives tiled windows none until they float. Activating an element and setting its text work in both cases.
 
 ## Documentation
 
-- [Install](https://ayagmar.github.io/niri-computer-use/start/install/) and [Client setup](https://ayagmar.github.io/niri-computer-use/start/clients/): build, check, and register the server in your agent
+- [Install](https://ayagmar.github.io/niri-computer-use/start/install/) and [Client setup](https://ayagmar.github.io/niri-computer-use/start/clients/): install, check, and register the server in your agent
 - [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/): what the server enforces, what it doesn't, and how you take the desktop back
 - [Configuration](https://ayagmar.github.io/niri-computer-use/concepts/configuration/): `policy.toml`, launch presets, the deny list, `unrestricted`, `confirm_lease`, the shared engine and tool profiles
 - [Tools](https://ayagmar.github.io/niri-computer-use/tools/overview/): every tool, its arguments and results
@@ -126,8 +159,8 @@ What isn't protected: any connected agent sees your screen and window titles, a 
 
 ## Development
 
-See [docs/development.md](docs/development.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+See [docs/development.md](https://github.com/ayagmar/niri-computer-use/blob/main/docs/development.md) and [CONTRIBUTING.md](https://github.com/ayagmar/niri-computer-use/blob/main/CONTRIBUTING.md).
 
 ## License
 
-MIT. See [LICENSE](LICENSE). Built binaries include [`niri-ipc`](https://crates.io/crates/niri-ipc), which is GPL-3.0-or-later, so a distributed binary follows GPL-3.0 terms.
+MIT. See [LICENSE](https://github.com/ayagmar/niri-computer-use/blob/main/LICENSE). Built binaries include [`niri-ipc`](https://crates.io/crates/niri-ipc), which is GPL-3.0-or-later, so a distributed binary follows GPL-3.0 terms.

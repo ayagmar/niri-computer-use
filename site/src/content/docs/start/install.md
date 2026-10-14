@@ -1,30 +1,61 @@
 ---
 title: Install
-description: Build niri-computer-use from source and check it against your niri session.
+description: Install niri-computer-use from the release tarball, crates.io or source, and check it against your niri session.
 sidebar:
   order: 1
 ---
 
-niri-computer-use is installed from source. There is no package yet.
-
 ## Requirements
 
 - niri 26.04. With another major or minor version the server is read-only: it looks but refuses to act.
-- Rust 1.99.0. The repository pins it in `rust-toolchain.toml`, which rustup reads from the directory it runs in, so building inside the clone installs it.
-- libxkbcommon, which the keyboard code links against (`libxkbcommon-dev` on Debian and Ubuntu, `libxkbcommon` on Arch).
+- x86_64 Linux with glibc 2.39 or newer, for the release tarball. To build it yourself, Rust 1.99 or newer.
+- libxkbcommon, which the keyboard code links against. To build, its headers too (`libxkbcommon-dev` on Debian and Ubuntu, `libxkbcommon` on Arch).
 - At run time: `grim` for screenshots, `wtype` for the keyboard, and `loginctl` from systemd for the lock state.
 - Optional: [Noctalia](../../concepts/noctalia/) 5.2 for its panels and lock state, and an accessibility bus (at-spi2-core) for [`elements`](../../tools/elements/).
 - One monitor, for the pointer tools. `pointer_move`, `click`, `drag` and `scroll` run only with one enabled output at transform `Normal`; with a second monitor or a rotated one they refuse with [`untested_output_config`](../../reference/troubleshooting/#the-pointer-tools-fail-with-untested_output_config). The other tools, the keyboard and screenshots among them, work with any monitors.
 
-## Build and install
+## Install the release
+
+Download the tarball, check it, and put the binary in `~/.local/bin` or another directory on your `PATH`:
+
+```sh
+curl -LO https://github.com/ayagmar/niri-computer-use/releases/download/v0.1.0/niri-computer-use-0.1.0-x86_64-linux.tar.gz
+curl -LO https://github.com/ayagmar/niri-computer-use/releases/download/v0.1.0/niri-computer-use-0.1.0-x86_64-linux.tar.gz.sha256
+sha256sum -c niri-computer-use-0.1.0-x86_64-linux.tar.gz.sha256
+tar -xzf niri-computer-use-0.1.0-x86_64-linux.tar.gz
+install -Dm755 -t ~/.local/bin niri-computer-use-0.1.0-x86_64-linux/niri-computer-use
+~/.local/bin/niri-computer-use --version
+```
+
+The tarball also holds the skill that tells your agents how to use the server, with the README, the changelog and the licenses of the crates built into the binary. Copy the skill somewhere it stays and link it where your agents look for skills:
+
+```sh
+mkdir -p ~/.local/share/niri-computer-use ~/.claude/skills ~/.agents/skills
+cp -r niri-computer-use-0.1.0-x86_64-linux/skills ~/.local/share/niri-computer-use/
+ln -s ~/.local/share/niri-computer-use/skills/niri-computer-use ~/.claude/skills/niri-computer-use
+ln -s ~/.local/share/niri-computer-use/skills/niri-computer-use ~/.agents/skills/niri-computer-use
+```
+
+To update, install the new release's binary and copy its `skills` the same way; the links stay.
+
+## Install with cargo
+
+From crates.io, into `~/.cargo/bin`:
+
+```sh
+cargo install --locked niri-computer-use
+```
+
+The crate has no skill; take it from the release tarball or a clone.
+
+From source, rustup installs the Rust version the repository pins in `rust-toolchain.toml`:
 
 ```sh
 git clone https://github.com/ayagmar/niri-computer-use.git
-cd niri-computer-use
-cargo install --locked --path .
+cargo install --locked --path niri-computer-use
 ```
 
-The binary goes to `~/.cargo/bin/niri-computer-use`. To update, run `git pull` and the same `cargo install` inside the clone.
+The skill is in the clone at `niri-computer-use/skills/niri-computer-use`. To update, run `git -C niri-computer-use pull` and the same `cargo install` again.
 
 Updating while agents run is safe. A [shared](../../concepts/configuration/#shared) engine keeps serving the clients it has with the build it started with, and their `status.engine.replaced` turns `true`. Clients started after the update are served standalone, sharing the lease, the stop flag and the input-dirty marker, and their `status.engine.fallback` names the old engine's PID. Once the old engine's last client has ended it exits, two seconds later, and the next client starts an engine of the new build. Restart your agent sessions to move all of them to the new build. This lists the processes still running:
 
@@ -36,10 +67,10 @@ Older development builds keep the lease, the stop flag and the input-dirty marke
 
 ## Check it
 
-From a shell inside your niri session:
+From a shell inside your niri session, with the binary where you put it:
 
 ```sh
-~/.cargo/bin/niri-computer-use status
+~/.local/bin/niri-computer-use status
 ```
 
 It prints the readiness report as JSON. Look at these fields:

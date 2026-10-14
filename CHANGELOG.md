@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## 0.1.0 - unreleased
+## 0.1.0 - 2026-10-14
 
 The first release: an MCP server over stdio that lets an AI agent read and act on a niri 26.04 desktop.
 
