@@ -69,8 +69,10 @@ pub(crate) struct Walked {
     rows: Vec<Option<usize>>,
     /// Set when the walk stopped early with nodes left that might have matched.
     pub(crate) capped: Option<Capped>,
-    /// Set when the walk stopped once it found more matches than wanted, with nodes left.
-    stopped: bool,
+    /// Set when nodes went unread though the walk wasn't capped: it stopped once it found
+    /// more matches than wanted, with nodes left, or a node was gone before it was read,
+    /// with whatever was under it.
+    missed: bool,
 }
 
 impl Walked {
@@ -131,7 +133,10 @@ pub(crate) async fn walk<F: Fn(&Node) -> bool + Sync>(
         }
         let node = match source.node(&child.path).await {
             Ok(Some(node)) => node,
-            Ok(None) => continue,
+            Ok(None) => {
+                walked.missed = true;
+                continue;
+            }
             Err(error) if error.name == ErrorName::DeadlineExceeded && source.spent() => {
                 walked.capped = Some(Capped::BudgetExhausted);
                 break;
@@ -151,7 +156,7 @@ pub(crate) async fn walk<F: Fn(&Node) -> bool + Sync>(
         walked.nodes.push(node);
         walked.places.push((parent, child.index));
         if found > want.wanted {
-            walked.stopped = !pending.is_empty();
+            walked.missed |= !pending.is_empty();
             break;
         }
     }
@@ -405,6 +410,19 @@ mod tests {
         assert_eq!(paths(&walked), ["/b/1", "/a", "/b/2"]);
         assert_eq!(walked.capped, None);
         assert_eq!(walked.row(0), Row::Lineage);
+    }
+
+    // The bug: a node gone before it was read takes its subtree with it, which may hold a
+    // look-alike, yet the count looked finished and bound the node outside rows.
+    #[tokio::test]
+    async fn a_node_gone_before_it_was_read_leaves_the_count_unfinished() {
+        let tree = Tree::new([("/a", (true, vec![]))]);
+        let walked = walk(&tree, &root(&["/a", "/gone"]), 2000, everything())
+            .await
+            .unwrap();
+        assert_eq!(paths(&walked), ["/a"]);
+        assert_eq!(walked.capped, None);
+        assert_eq!(walked.row(0), Row::Unbound(Unbound::CutShort));
     }
 
     #[tokio::test]

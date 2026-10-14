@@ -5,8 +5,8 @@
 //! row or tree item. A named row binds the record, since the lineage compares its name;
 //! an unnamed one binds nothing. Without a row, an element whose role and name other
 //! elements read share may be one of a list's rows put on the bus without containers, so
-//! nothing binds it either, nor one that a walk which stopped before the end of the tree
-//! can't show has no such look-alike. Nothing here guesses a row from the tree's shape.
+//! nothing binds it either, nor one that a walk which didn't read the whole tree, cut
+//! short or missing a node gone before it was read, can't show has no such look-alike. Nothing here guesses a row from the tree's shape.
 
 use super::Walked;
 use crate::a11y::model::{Row, Unbound};
@@ -21,7 +21,7 @@ impl Walked {
             None if self.alike.get(at).is_some_and(|&alike| alike > 1) => {
                 Row::Unbound(Unbound::Repeated)
             }
-            None if self.capped.is_some() || self.stopped => Row::Unbound(Unbound::CutShort),
+            None if self.capped.is_some() || self.missed => Row::Unbound(Unbound::CutShort),
             Some(_) | None => Row::Lineage,
         }
     }

@@ -762,8 +762,9 @@ pub(crate) enum Unbound {
     /// It sits in no row, and other elements read have its role and name, as when a
     /// toolkit puts a list's rows on the bus without containers.
     Repeated,
-    /// It sits in no row, and the walk stopped before the end of the tree, so it can't
-    /// tell whether another element has its role and name.
+    /// It sits in no row, and the walk didn't read the whole tree, since it was cut short
+    /// or a node was gone before it was read, so it can't tell whether another element has
+    /// its role and name.
     CutShort,
 }
 

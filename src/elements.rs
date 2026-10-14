@@ -313,8 +313,8 @@ impl Read {
         }
     }
 
-    /// Whether the object at `at` sits in no row, and the walk stopped before the end of
-    /// the tree, so it can't tell whether another object has its role and name.
+    /// Whether the object at `at` sits in no row, and the walk didn't read the whole tree,
+    /// so it can't tell whether another object has its role and name.
     fn unchecked(&self, at: usize) -> bool {
         self.walked.row(at) == Row::Unbound(Unbound::CutShort)
     }
@@ -696,7 +696,7 @@ const fn unbound(why: Unbound) -> &'static str {
             "other elements of its role and name sit in no row of their own on the accessibility bus, as a list's rows do in some toolkits, so nothing tells which record it acts on; aim the pointer tools at its pixels on a fresh screenshot instead"
         }
         Unbound::CutShort => {
-            "it sits in no row on the accessibility bus, and the listing was cut short before it could tell whether another element of its role and name sits further on, as a list's rows do in some toolkits; aim the pointer tools at its pixels on a fresh screenshot instead"
+            "it sits in no row on the accessibility bus, and the listing didn't read the whole tree, since it was cut short or part of the tree went away while it read, so it can't tell whether another element of its role and name sits there, as a list's rows do in some toolkits; aim the pointer tools at its pixels on a fresh screenshot instead"
         }
     }
 }
