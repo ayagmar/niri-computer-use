@@ -1843,6 +1843,30 @@ app_id = "foot"
             )
         }
 
+        /// `save_path`s an agent could send: names, `.`, `..`, empty parts and parts holding
+        /// a NUL, joined by `/` and sometimes starting at the root, then a file name.
+        fn save_path() -> impl Strategy<Value = String> {
+            let part = prop_oneof![
+                Just("..".to_owned()),
+                Just(".".to_owned()),
+                Just(String::new()),
+                "[a-z ~]{1,4}",
+                "[a-z]{0,2}\\x00",
+            ];
+            let file = prop_oneof![
+                "[a-z]{1,4}\\.(png|PNG)",
+                Just("..".to_owned()),
+                Just(".png".to_owned()),
+                "[a-z]{1,4}",
+            ];
+            (any::<bool>(), prop::collection::vec(part, 0..4), file).prop_map(
+                |(rooted, mut parts, file)| {
+                    parts.push(file);
+                    format!("{}{}", if rooted { "/" } else { "" }, parts.join("/"))
+                },
+            )
+        }
+
         /// Agent text, marked with `~`, which no name niri-ipc or the log uses holds.
         fn agent_text() -> impl Strategy<Value = String> {
             "~\\PC{0,11}"
@@ -1959,7 +1983,7 @@ app_id = "foot"
             /// directory: plain names only, nothing that climbs out or starts over at the root.
             #[test]
             fn an_accepted_save_path_stays_under_the_capture_dir(
-                text in prop_oneof!["[a-z./ ~\\x00]{0,16}(\\.png|\\.PNG)?", any::<String>()],
+                text in prop_oneof![save_path(), any::<String>()],
             ) {
                 if let Ok(path) = SavePath::parse(&text) {
                     let joined: PathBuf = path.dirs.iter().chain([&path.file]).collect();
