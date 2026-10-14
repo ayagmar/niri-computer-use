@@ -106,6 +106,13 @@ async fn an_app_off_the_bus_turns_accessibility_on_until_the_server_ends_however
         detail.contains("was off, so the server turned it on") && detail.contains("ask the user"),
         "{detail}"
     );
+    // A restart helps only an app that checks at start, which the server can't tell, so the
+    // agent gets the window's app_id and the condition, not a request to pass on.
+    assert!(
+        detail.contains("org.ncu.Mock")
+            && detail.contains("if it is a Chromium, Electron or CEF app"),
+        "{detail}"
+    );
     // The launcher's GSettings write outlives the server, so the agent is told of it.
     assert!(
         detail.contains("org.gnome.desktop.interface toolkit-accessibility")
@@ -158,7 +165,10 @@ async fn accessibility_already_on_is_left_alone() {
         detail.contains("the session's accessibility is on"),
         "{detail}"
     );
-    assert!(detail.contains("ask the user"), "{detail}");
+    assert!(
+        detail.contains("ask the user") && detail.contains("if it is a Chromium"),
+        "{detail}"
+    );
     assert_eq!(desk.mock.listeners(), [""; 0]);
     assert_eq!(desk.mock.status_writes(), 0);
     assert_eq!(desk.switch().await, "off");
