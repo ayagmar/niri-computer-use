@@ -234,6 +234,17 @@ impl States {
         self.0 & (1 << state as u64) != 0
     }
 
+    /// The set of the one state `names` gives `name`, for checking a `state` argument.
+    pub(crate) fn named(name: &str) -> Option<Self> {
+        let bit = STATES.iter().position(|state| *state == name)?;
+        Some(Self(1 << bit))
+    }
+
+    /// Whether every state of `wanted` is set.
+    pub(crate) const fn holds(self, wanted: Self) -> bool {
+        self.0 & wanted.0 == wanted.0
+    }
+
     /// The names of the states set, in bit order. Bits past the table are left out.
     pub(crate) fn names(self) -> Vec<&'static str> {
         STATES
@@ -647,14 +658,15 @@ fn only(frames: &[Frame<'_>], candidates: &[usize], title: Option<&str>) -> Resu
 }
 
 /// The `elements` filters: an exact role name, text the name contains, ignoring case, and
-/// whether only interactive elements count.
-#[derive(Debug, Clone, Default)]
+/// whether only interactive elements count; and for `wait_for`, states the element has.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Filter {
     pub(crate) role: Option<String>,
     /// Lowercased.
     name_contains: Option<String>,
     /// Only elements with actions or editable text, unless a role was asked for.
     pub(crate) interactive_only: bool,
+    states: States,
 }
 
 impl Filter {
@@ -667,11 +679,19 @@ impl Filter {
             role,
             name_contains: name_contains.map(str::to_lowercase),
             interactive_only,
+            states: States::default(),
         }
     }
 
-    pub(crate) fn matches(&self, role: &str, name: &str) -> bool {
-        self.role.as_deref().is_none_or(|wanted| wanted == role)
+    /// The same filter, for elements that have every state of `states` too.
+    pub(crate) const fn having(mut self, states: States) -> Self {
+        self.states = states;
+        self
+    }
+
+    pub(crate) fn matches(&self, role: &str, name: &str, states: States) -> bool {
+        states.holds(self.states)
+            && self.role.as_deref().is_none_or(|wanted| wanted == role)
             && self
                 .name_contains
                 .as_deref()
@@ -1340,14 +1360,34 @@ mod tests {
 
     #[test]
     fn filters_by_exact_role_and_name_text_in_any_case() {
+        let none = States::default();
         let all = Filter::default();
-        assert!(all.matches("label", ""));
+        assert!(all.matches("label", "", none));
         let buttons = Filter::new(Some("button".to_owned()), Some("PRIMARY"), false);
-        assert!(buttons.matches("button", "Primary: 3"));
-        assert!(!buttons.matches("button", "Second: 0"));
-        assert!(!buttons.matches("toggle_button", "Primary"));
+        assert!(buttons.matches("button", "Primary: 3", none));
+        assert!(!buttons.matches("button", "Second: 0", none));
+        assert!(!buttons.matches("toggle_button", "Primary", none));
         assert!(is_role("check_box"));
         assert!(!is_role("push button"));
+    }
+
+    // A wait for a button to become enabled must not end on the disabled one.
+    #[test]
+    fn a_state_filter_needs_the_state_and_knows_the_listing_names() {
+        let enabled = Filter::new(Some("button".to_owned()), None, false)
+            .having(States::named("enabled").unwrap());
+        let on = States::from_words(&[(1 << 8) | (1 << 25)]);
+        assert!(enabled.matches("button", "Save", on));
+        assert!(!enabled.matches("button", "Save", States::from_words(&[1 << 25])));
+        assert_eq!(
+            States::named("checked"),
+            Some(States::from_words(&[1 << 4]))
+        );
+        assert_eq!(
+            States::named("read_only"),
+            Some(States::from_words(&[0, 1 << 11]))
+        );
+        assert_eq!(States::named("disabled"), None);
     }
 
     #[test]

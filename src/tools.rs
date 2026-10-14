@@ -204,11 +204,7 @@ impl ElementsArgs {
         if !(1..=500).contains(&self.limit) {
             return Err(format!("limit must be 1 to 500, not {}", self.limit));
         }
-        if let Some(role) = self.role.as_deref().filter(|role| !model::is_role(role)) {
-            return Err(format!(
-                "unknown role {role:?}: use an AT-SPI role name in snake case, such as button"
-            ));
-        }
+        known_role(self.role.as_deref())?;
         Ok(elements::Ask {
             window_id: self.window_id,
             filter: model::Filter::new(
@@ -219,6 +215,16 @@ impl ElementsArgs {
             limit: usize::from(self.limit),
         })
     }
+}
+
+/// Refuses a `role` AT-SPI's table doesn't name.
+fn known_role(role: Option<&str>) -> Result<(), String> {
+    role.filter(|role| !model::is_role(role))
+        .map_or(Ok(()), |role| {
+            Err(format!(
+                "unknown role {role:?}: use an AT-SPI role name in snake case, such as button"
+            ))
+        })
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -241,6 +247,8 @@ enum UntilArg {
     Closed(u64),
     /// That window's title contains the text.
     Title(TitleArg),
+    /// An element `elements` would list is in that window; with `absent`, none is.
+    Element(ElementMatchArg),
     /// The focused output stopped changing.
     ScreenStable,
 }
@@ -262,20 +270,62 @@ struct TitleArg {
     contains: String,
 }
 
-impl From<UntilArg> for wait::Until {
-    fn from(until: UntilArg) -> Self {
-        match until {
-            UntilArg::Window(window) => Self::Window {
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct ElementMatchArg {
+    window_id: u64,
+    #[schemars(with = "String", default)]
+    role: Option<String>,
+    #[schemars(with = "String", default)]
+    name_contains: Option<String>,
+    /// A state it has, such as `enabled`, `checked` or `focused`.
+    #[schemars(with = "String", default)]
+    state: Option<String>,
+    #[serde(default)]
+    absent: bool,
+}
+
+impl ElementMatchArg {
+    fn element(self) -> Result<wait::Element, String> {
+        if self.role.is_none() && self.name_contains.is_none() && self.state.is_none() {
+            return Err("`element` needs a `role`, `name_contains` or `state`".to_owned());
+        }
+        if self.name_contains.as_deref() == Some("") {
+            return Err("`name_contains` must not be empty".to_owned());
+        }
+        known_role(self.role.as_deref())?;
+        let states = match self.state.as_deref() {
+            None => model::States::default(),
+            Some(state) => model::States::named(state).ok_or_else(|| {
+                format!(
+                    "unknown state {state:?}: use a state name `elements` lists, such as enabled"
+                )
+            })?,
+        };
+        Ok(wait::Element {
+            window_id: self.window_id,
+            filter: model::Filter::new(self.role, self.name_contains.as_deref(), false)
+                .having(states),
+            absent: self.absent,
+        })
+    }
+}
+
+impl UntilArg {
+    fn until(self) -> Result<wait::Until, String> {
+        Ok(match self {
+            Self::Window(window) => wait::Until::Window {
                 app_id: window.app_id,
                 title: window.title,
             },
-            UntilArg::Closed(id) => Self::Closed(id),
-            UntilArg::Title(title) => Self::Title {
+            Self::Closed(id) => wait::Until::Closed(id),
+            Self::Title(title) => wait::Until::Title {
                 window_id: title.window_id,
                 contains: title.contains,
             },
-            UntilArg::ScreenStable => Self::ScreenStable,
-        }
+            Self::Element(element) => wait::Until::Element(element.element()?),
+            Self::ScreenStable => wait::Until::ScreenStable,
+        })
     }
 }
 
@@ -1463,9 +1513,11 @@ impl Server {
         .await
     }
 
-    /// Waits until a window appears, closes or gets a title, or the screen stops changing;
-    /// a condition already true returns at once. `observed` is `met` (with the matching
-    /// `windows`), `timeout`, or `uncertain` if niri's event stream was lost.
+    /// Waits until a window appears, closes or gets a title, an element appears or is gone
+    /// (`absent`), or the screen stops changing; a condition already true returns at once.
+    /// `observed` is `met` (with the matching `windows`, and an appeared `element`'s ref),
+    /// `timeout`, `window_gone`, `not_accessible`, or `uncertain` if niri's event stream
+    /// was lost.
     #[tool(
         title = "Wait for a change",
         annotations(read_only_hint = true, open_world_hint = false)
@@ -1481,7 +1533,10 @@ impl Server {
                 return Ok(invalid("`timeout_ms` must be 100 to 30000"));
             }
             let limit = std::time::Duration::from_millis(args.timeout_ms.into());
-            let until = wait::Until::from(args.until);
+            let until = match args.until.until() {
+                Ok(until) => until,
+                Err(message) => return Ok(invalid(&message)),
+            };
             if let Err(message) = until.check() {
                 return Ok(invalid(&message));
             }
@@ -1766,6 +1821,20 @@ fn waited_for(args: &WaitForArgs) -> Value {
             "window_id": title.window_id,
             "contains_len": title.contains.chars().count(),
         }}),
+        UntilArg::Element(element) => {
+            let role = element.role.as_deref();
+            let state = element.state.as_deref();
+            let mut logged = serde_json::json!({
+                "window_id": element.window_id,
+                "role": role.map(|role| audit::known(role, model::is_role(role), "unknown_role")),
+                "name_contains_len": element.name_contains.as_deref().map(str::len),
+                "state": state.map(|state| {
+                    audit::known(state, model::States::named(state).is_some(), "unknown_state")
+                }),
+            });
+            flag(&mut logged, "absent", element.absent);
+            serde_json::json!({ "element": logged })
+        }
         UntilArg::ScreenStable => serde_json::json!("screen_stable"),
     };
     let mut logged = serde_json::json!({ "until": until, "timeout_ms": args.timeout_ms });
@@ -1903,7 +1972,7 @@ fn invalid(message: &str) -> CallToolResult {
 #[tool_handler(
     router = self.tool_router,
     name = "niri-computer-use",
-    instructions = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows, workspaces and monitors; take a `screenshot` only when you need to see pixels. `elements`, when listed, gives a window's accessible elements, which `activate_element` and `set_element_text` act on without the pointer once their window has focus. To act, call `acquire_desktop`, then one action at a time (pointer tools with a fresh `screenshot_ref`, `key` and `type_text` with `expect`, `niri_action` for window layout), reading `accepted` and `observed` (and an element action's `effect`) before the next call. A result's `changes` says what niri saw the action change and is absent when nothing did: read it first, and take a screenshot only when it is empty or unexpected. To see an action's result, pass it `screenshot: true` rather than sending a `screenshot` alongside it, and use `wait_for` rather than repeated screenshots to wait for a window or for the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter, and start apps through `launch` presets; with no preset for the app, use `niri_action` `Spawn` with the program's argv (never a shell or `SpawnSh`) when `status.unrestricted.enabled` is true, then find its window with `wait_for` or `desktop_state` (its `app_id` may differ from the program's name) and never repeat the `Spawn`; otherwise ask the user to add a preset. Actions and `clipboard_read` need the lease. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
+    instructions = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows, workspaces and monitors; take a `screenshot` only when you need to see pixels. `elements`, when listed, gives a window's accessible elements, which `activate_element` and `set_element_text` act on without the pointer once their window has focus. To act, call `acquire_desktop`, then one action at a time (pointer tools with a fresh `screenshot_ref`, `key` and `type_text` with `expect`, `niri_action` for window layout), reading `accepted` and `observed` (and an element action's `effect`) before the next call. A result's `changes` says what niri saw the action change and is absent when nothing did: read it first, and take a screenshot only when it is empty or unexpected. To see an action's result, pass it `screenshot: true` rather than sending a `screenshot` alongside it, and use `wait_for` rather than repeated screenshots to wait for a window, an element or the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter, and start apps through `launch` presets; with no preset for the app, use `niri_action` `Spawn` with the program's argv (never a shell or `SpawnSh`) when `status.unrestricted.enabled` is true, then find its window with `wait_for` or `desktop_state` (its `app_id` may differ from the program's name) and never repeat the `Spawn`; otherwise ask the user to add a preset. Actions and `clipboard_read` need the lease. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
 )]
 impl ServerHandler for Server {}
 
@@ -2133,7 +2202,10 @@ mod tests {
             format: ListingArg::Compact,
         };
         let ask = args(Some("button"), 50).ask().unwrap();
-        assert!(ask.filter.matches("button", "Save as"));
+        assert!(
+            ask.filter
+                .matches("button", "Save as", model::States::default())
+        );
         assert_eq!(ask.limit, 50);
         assert!(args(None, 500).ask().is_ok());
         let typo = args(Some("push button"), 50).ask().unwrap_err();

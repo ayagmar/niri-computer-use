@@ -82,15 +82,19 @@ The hint and the text come from the same copy, so a copy made in between can't p
 
 ## `wait_for`
 
-Waits for a window or the screen instead of taking screenshots until something happens.
+Waits for a window, an element or the screen instead of taking screenshots or listing elements until something happens.
 
 
 | Argument | Value |
 |---|---|
-| `until` (required) | `{"window": {"app_id", "title"}}`: a window with that `app_id` and a title containing that text, either one optional but not both; `{"closed": <id>}`: that window is gone; `{"title": {"window_id", "contains"}}`: that window's title contains the text; or `"screen_stable"`: the focused output stopped changing |
+| `until` (required) | `{"window": {"app_id", "title"}}`: a window with that `app_id` and a title containing that text, either one optional but not both; `{"closed": <id>}`: that window is gone; `{"title": {"window_id", "contains"}}`: that window's title contains the text; `{"element": {"window_id", "role", "name_contains", "state", "absent"}}`: an element of that window matches, or with `absent: true` none does; or `"screen_stable"`: the focused output stopped changing |
 | `timeout_ms` | 100 to 30000; default 10000 |
 | `screenshot` | with true, the result comes with a screenshot of the focused output: for `screen_stable` its last capture, otherwise one taken as for an action's `screenshot: true` once the wait ended |
 
 Read-only, and needs no lease. The window conditions follow niri's event stream; a condition that is already true ends the wait at once. `screen_stable` first waits for a running action of this server to end, then captures the focused output every 100 ms until two captures in a row are the same image. Two captures can't match before the second one starts, about 150 ms in, and large images take longer, so a short `timeout_ms` can end in `timeout` on a still screen. Stable means two images matched, not that an app is ready. A `title` condition on a window that doesn't exist, an empty `contains`, or a `window` without `app_id` and `title` is an argument mistake.
 
-The result has `observed`: `met`, `timeout`, or `uncertain` with a `detail` if niri's event stream was lost; `windows`, the ids that met the condition; `focused_window` for the window conditions; and `waited_ms`. Window titles and app ids are never logged: the audit log keeps their length.
+An `element` condition walks the window's accessible tree as [`elements`](../elements/) does with `interactive_only: false`, so it matches showing elements with a name or an action, or every showing element of `role`. `role` and `name_contains` work as they do there; `state` is one state the element must have, by the name `elements` gives it in `states`, such as `enabled`, `sensitive`, `checked`, `focused` or `busy`. `disabled` isn't a state: wait for `enabled`. It needs at least one of the three. With `absent: true`, the wait ends when no element matches, such as when a spinner or a `Loading…` label goes away.
+
+The server walks the tree, then pauses for as long as the walk took, at least 250 ms, and walks again. Each walk keeps the one-second deadline per call and three-second budget of an `elements` call, walks never overlap, and the wait as a whole ends at `timeout_ms`, mid-walk if need be. A walk cut short by its budget or its 2,000-object cap can't show that nothing matches, so it never ends an `absent` wait; a `timeout` after one says so in `detail`. If the window closes, the wait ends at once as `window_gone`. A window whose app isn't on the accessibility bus ends it as `not_accessible`, with the reason in `detail`. A window id that doesn't exist, an empty `name_contains`, an unknown role or state, or no `role`, `name_contains` or `state` is an argument mistake.
+
+The result has `observed`: `met`, `timeout`, `window_gone`, `not_accessible`, or `uncertain` with a `detail` if niri's event stream was lost; `windows`, the ids that met the condition; for an element that appeared, `element` with its `element_ref`, `role` and `states`; `focused_window` for the window and element conditions; and `waited_ms`. The `element_ref` is issued as `elements` issues it, only while this session holds the lease, and works with `activate_element`, `set_element_text` and the pointer tools' `element` without listing again. The element's name isn't in the result. Window titles and app ids are never logged: the audit log keeps their length. For an element condition it keeps the window id, the role and state when they are known names, the length of `name_contains` and `absent`.

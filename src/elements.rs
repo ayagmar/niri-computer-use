@@ -137,7 +137,7 @@ impl Listed {
 }
 
 /// A unit variant's name as it is serialized.
-fn word(value: impl Serialize) -> String {
+pub(crate) fn word(value: impl Serialize) -> String {
     serde_json::to_value(value)
         .ok()
         .and_then(|value| value.as_str().map(str::to_owned))
@@ -340,18 +340,45 @@ pub(crate) async fn list(
     a11y: &A11y,
     policy: &Loaded,
     ask: &Ask,
-    mut remember: impl FnMut(ElementRef) -> Option<String>,
+    remember: impl FnMut(ElementRef) -> Option<String>,
 ) -> Result<Listing, CallError> {
+    look(socket, a11y, policy, ask, remember)
+        .await?
+        .ok_or_else(|| CallError::InvalidArguments(format!("no window with id {}", ask.window_id)))
+}
+
+/// What `elements` lists for `ask` now, for one check of `wait_for`'s element condition,
+/// or none when niri has no window `ask.window_id`, also when the walk failed because the
+/// window closed during it.
+pub(crate) async fn poll(
+    socket: &Socket,
+    a11y: &A11y,
+    policy: &Loaded,
+    ask: &Ask,
+    remember: impl FnMut(ElementRef) -> Option<String>,
+) -> Result<Option<Listing>, ToolError> {
+    match look(socket, a11y, policy, ask, remember).await {
+        Err(_) if matches!(placed(socket, ask.window_id).await, Ok(None)) => Ok(None),
+        looked => looked,
+    }
+}
+
+/// `list`'s work, or none when niri has no window `ask.window_id`.
+async fn look(
+    socket: &Socket,
+    a11y: &A11y,
+    policy: &Loaded,
+    ask: &Ask,
+    mut remember: impl FnMut(ElementRef) -> Option<String>,
+) -> Result<Option<Listing>, ToolError> {
     let walk = Walk {
         filter: &ask.filter,
         limit: ask.limit,
         names_only: false,
     };
-    let read = read(socket, a11y, policy, ask.window_id, walk)
-        .await?
-        .ok_or_else(|| {
-            CallError::InvalidArguments(format!("no window with id {}", ask.window_id))
-        })?;
+    let Some(read) = read(socket, a11y, policy, ask.window_id, walk).await? else {
+        return Ok(None);
+    };
     let naming = a11y.request(NAMING).await?;
     let mut matching = read.listed(&ask.filter);
     let mut elements = Vec::new();
@@ -364,7 +391,7 @@ pub(crate) async fn list(
                 cut = true;
                 break;
             }
-            Err(error) => return Err(error.into()),
+            Err(error) => return Err(error),
         };
         elements.push(read.listed_element(at, node, actions, &mut remember));
     }
@@ -373,14 +400,14 @@ pub(crate) async fn list(
     } else {
         read.walked.capped
     };
-    Ok(Listing {
+    Ok(Some(Listing {
         window_id: read.placed.window.id,
         truncated: cut || matching.next().is_some(),
         elements,
         walked: read.walked.nodes.len(),
         capped: capped.is_some(),
         capped_reason: capped,
-    })
+    }))
 }
 
 /// Every element of window `window_id` that `elements` would list without filters, for
@@ -448,7 +475,7 @@ fn listed(filter: &Filter, node: &Node) -> bool {
     };
     node.states.has(model::State::Showing)
         && kind
-        && filter.matches(model::role_name(node.role), &node.name)
+        && filter.matches(model::role_name(node.role), &node.name, node.states)
 }
 
 /// Where to aim at `element` now: the centre of its box, from niri's geometry and the

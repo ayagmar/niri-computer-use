@@ -87,7 +87,7 @@ flowchart TB
 | `input/keeper.rs` | The `paste-keeper` subcommand: saves the selection, holds the text, counts the reads and restores the selection. |
 | `input/held.rs` | A pointer gesture's held modifiers with the native keyboard, recorded in the gesture's one input-dirty marker. |
 | `settle.rs` | Waits for the screen to stop changing: captures until two in a row are the same image. |
-| `wait.rs` | `wait_for`'s work: a window condition on the event stream, or a still screen. |
+| `wait.rs` | `wait_for`'s work: a window condition on the event stream, an element condition polled with the `elements` walk, or a still screen. |
 | `a11y.rs` | The only code that talks to AT-SPI: finds the accessibility bus at startup, then reads one application's tree, every call under a deadline. |
 | `a11y/model.rs` | AT-SPI's role and state names, and where an element is in the layout, or why it can't be placed (pure). |
 | `a11y/walk.rs` | The bounded walk of one window's accessible tree, over any source of nodes (pure). |
@@ -397,6 +397,8 @@ Every action takes `screenshot`. `Desk::act` passes the outcome and a capture to
 ## Waiting
 
 `wait_for` changes nothing. Its window-condition wait does not take the action mutex. Both `screen_stable` and the optional final settled screenshot after a window condition hold the mutex only for each individual capture, releasing it between samples. Actions, release and stop's lease takeback can therefore run between captures rather than waiting for the whole visual-settlement timeout. A window condition registers a waiter on the event stream and checks the condition in `wait::met`, a pure function of the waiter's view, after every event, up to `timeout_ms`. `screen_stable` runs `settle` with `timeout_ms` as its budget, including time queued for individual captures. Stop and release may still wait for one capture already running to end; each capture has a runner deadline. Action-return screenshots remain inside the action mutex throughout their sequence.
+
+An element condition polls `elements::poll`, the same walk `elements` runs with `limit` 1 and `interactive_only` false, plus the state the condition names. `wait::watch` runs one walk at a time, each with its own one-second call deadlines and three-second budget, and pauses after each for as long as it took, at least 250 ms. The whole loop is cut off at `timeout_ms`, mid-walk if need be. Beside it, a waiter on the event stream ends the wait as `window_gone` the moment niri reports the window closed; without the stream, the next walk finds it gone, and a walk that fails is checked against niri's windows first, so an app that left with its window reads as `window_gone`, not as an error. `wait::check` decides each walk: an appearing element meets the condition with its ref, and `absent` is met only by a walk that was neither cut short nor stopped while naming actions. Element conditions take no mutex.
 
 ## Change reports
 

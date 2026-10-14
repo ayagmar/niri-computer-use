@@ -486,6 +486,38 @@ impl Engine {
         .await
     }
 
+    /// What `elements` lists for `element` now, for one check of `wait_for`'s element
+    /// condition. While the lease is held, an appearing element is kept as an element ref;
+    /// an `absent` one isn't, since a ref for each walk that still sees it would push the
+    /// agent's own refs out of those the lease keeps.
+    async fn poll(
+        &self,
+        session: &Session,
+        element: &wait::Element,
+    ) -> Result<Option<elements::Listing>, ToolError> {
+        let Some(a11y) = &self.a11y else {
+            return Err(a11y::not_accessible(
+                "this session has no accessibility bus".to_owned(),
+            ));
+        };
+        let ask = elements::Ask {
+            window_id: element.window_id,
+            filter: element.filter.clone(),
+            limit: 1,
+        };
+        let lease = self.desk.ref_lease(session).filter(|_| !element.absent);
+        let remember = |found| lease.and_then(|lease| self.desk.remember_element(lease, found));
+        // Boxed, because the walk's calls make a large future.
+        Box::pin(elements::poll(
+            &self.env.niri_socket,
+            a11y,
+            &session.settings().policy,
+            &ask,
+            remember,
+        ))
+        .await
+    }
+
     /// One snapshot of the event stream, with niri's outputs and, when Noctalia is
     /// installed, its status or why it has none.
     pub(crate) async fn desktop(&self) -> Result<Desktop, ToolError> {
@@ -591,7 +623,12 @@ impl Engine {
             let (report, last) = wait::screen(capture, limit).await?;
             return Ok((report, screenshot.then_some(last)));
         }
-        let report = wait::window(self.events.as_ref(), until, limit).await?;
+        let report = if let wait::Until::Element(element) = until {
+            let poll = || self.poll(session, element);
+            wait::element(self.events.as_ref(), element, limit, poll).await?
+        } else {
+            wait::window(self.events.as_ref(), until, limit).await?
+        };
         if !screenshot {
             return Ok((report, None));
         }
