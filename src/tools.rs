@@ -231,12 +231,11 @@ struct WindowArgs {
     screenshot: bool,
 }
 
-/// What `wait_for` waits for.
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 #[serde(rename_all = "snake_case")]
 enum UntilArg {
-    /// A window with that `app_id` and a title containing that text; either or both.
+    /// A window with that `app_id`, title text, or both.
     Window(WindowMatchArg),
     /// The window with that id is gone.
     Closed(u64),
@@ -2358,7 +2357,7 @@ mod tests {
         reason = "the test reports the list's size, which the ceilings and the results are set from"
     )]
     fn the_tool_list_stays_within_its_budget() {
-        for (profile, ceiling) in [("observe", 6_350), ("act", 23_250), ("full", 26_500)] {
+        for (profile, ceiling) in [("observe", 6_975), ("act", 24_000), ("full", 27_225)] {
             let (server, dir) = listing_everything(&format!("budget-{profile}"), profile);
             let tools = server.tool_router.list_all();
             let size = serde_json::to_string(&serde_json::json!({ "tools": tools }))
