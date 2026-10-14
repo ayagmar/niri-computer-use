@@ -279,7 +279,7 @@ struct ElementMatchArg {
     role: Option<String>,
     #[schemars(with = "String", default)]
     name_contains: Option<String>,
-    /// A state it has, such as `enabled`, `checked` or `focused`.
+    /// A state from a JSON listing's `states`, such as `sensitive`, or `disabled`.
     #[schemars(with = "String", default)]
     state: Option<String>,
     #[serde(default)]
@@ -295,18 +295,18 @@ impl ElementMatchArg {
             return Err("`name_contains` must not be empty".to_owned());
         }
         known_role(self.role.as_deref())?;
-        let states = match self.state.as_deref() {
-            None => model::States::default(),
-            Some(state) => model::States::named(state).ok_or_else(|| {
+        let filter = model::Filter::new(self.role, self.name_contains.as_deref(), false);
+        let filter = match self.state.as_deref() {
+            None => filter,
+            Some(state) => filter.with_state(state).ok_or_else(|| {
                 format!(
-                    "unknown state {state:?}: use a state name `elements` lists, such as enabled"
+                    "unknown state {state:?}: use `disabled` or a name from `states` in a JSON listing, such as sensitive"
                 )
             })?,
         };
         Ok(wait::Element {
             window_id: self.window_id,
-            filter: model::Filter::new(self.role, self.name_contains.as_deref(), false)
-                .having(states),
+            filter,
             absent: self.absent,
         })
     }
@@ -1830,7 +1830,7 @@ fn waited_for(args: &WaitForArgs) -> Value {
                 "role": role.map(|role| audit::known(role, model::is_role(role), "unknown_role")),
                 "name_contains_len": element.name_contains.as_deref().map(str::len),
                 "state": state.map(|state| {
-                    audit::known(state, model::States::named(state).is_some(), "unknown_state")
+                    audit::known(state, model::is_state(state), "unknown_state")
                 }),
             });
             flag(&mut logged, "absent", element.absent);

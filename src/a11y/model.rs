@@ -211,6 +211,15 @@ pub(crate) fn is_role(name: &str) -> bool {
     ROLES.contains(&name)
 }
 
+/// What a compact `elements` line says for an element without `sensitive`, which AT-SPI
+/// has no state for.
+pub(crate) const DISABLED: &str = "disabled";
+
+/// Whether `name` is a `state` argument: a name `States::names` gives, or `DISABLED`.
+pub(crate) fn is_state(name: &str) -> bool {
+    name == DISABLED || STATES.contains(&name)
+}
+
 /// An AT-SPI state, by its bit in the state set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum State {
@@ -243,6 +252,11 @@ impl States {
     /// Whether every state of `wanted` is set.
     pub(crate) const fn holds(self, wanted: Self) -> bool {
         self.0 & wanted.0 == wanted.0
+    }
+
+    /// Whether any state of `other` is set.
+    const fn any(self, other: Self) -> bool {
+        self.0 & other.0 != 0
     }
 
     /// The names of the states set, in bit order. Bits past the table are left out.
@@ -666,7 +680,9 @@ pub(crate) struct Filter {
     name_contains: Option<String>,
     /// Only elements with actions or editable text, unless a role was asked for.
     pub(crate) interactive_only: bool,
+    /// States the element has, and states it lacks.
     states: States,
+    lacking: States,
 }
 
 impl Filter {
@@ -680,17 +696,24 @@ impl Filter {
             name_contains: name_contains.map(str::to_lowercase),
             interactive_only,
             states: States::default(),
+            lacking: States::default(),
         }
     }
 
-    /// The same filter, for elements that have every state of `states` too.
-    pub(crate) const fn having(mut self, states: States) -> Self {
-        self.states = states;
-        self
+    /// The same filter, for elements that have the state named `name` too, or with
+    /// `DISABLED`, that lack `sensitive`; none when `is_state` refuses `name`.
+    pub(crate) fn with_state(mut self, name: &str) -> Option<Self> {
+        if name == DISABLED {
+            self.lacking = States::named("sensitive")?;
+        } else {
+            self.states = States::named(name)?;
+        }
+        Some(self)
     }
 
     pub(crate) fn matches(&self, role: &str, name: &str, states: States) -> bool {
         states.holds(self.states)
+            && !states.any(self.lacking)
             && self.role.as_deref().is_none_or(|wanted| wanted == role)
             && self
                 .name_contains
@@ -1374,8 +1397,8 @@ mod tests {
     // A wait for a button to become enabled must not end on the disabled one.
     #[test]
     fn a_state_filter_needs_the_state_and_knows_the_listing_names() {
-        let enabled = Filter::new(Some("button".to_owned()), None, false)
-            .having(States::named("enabled").unwrap());
+        let button = Filter::new(Some("button".to_owned()), None, false);
+        let enabled = button.clone().with_state("enabled").unwrap();
         let on = States::from_words(&[(1 << 8) | (1 << 25)]);
         assert!(enabled.matches("button", "Save", on));
         assert!(!enabled.matches("button", "Save", States::from_words(&[1 << 25])));
@@ -1388,6 +1411,12 @@ mod tests {
             Some(States::from_words(&[0, 1 << 11]))
         );
         assert_eq!(States::named("disabled"), None);
+        // `disabled` means what a compact line means by it: no `sensitive`.
+        let disabled = button.with_state(DISABLED).unwrap();
+        assert!(disabled.matches("button", "Save", States::from_words(&[1 << 25])));
+        assert!(!disabled.matches("button", "Save", States::from_words(&[1 << 24])));
+        assert!(is_state(DISABLED) && is_state("sensitive") && !is_state("greyed"));
+        assert!(Filter::default().with_state("greyed").is_none());
     }
 
     #[test]

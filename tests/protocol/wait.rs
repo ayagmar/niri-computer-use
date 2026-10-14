@@ -12,6 +12,9 @@ use crate::fixture::{Fixture, jpeg};
 use crate::niri::{Niri, Stream, window_on};
 use crate::noctalia::{self, UNLOCKED};
 
+/// AT-SPI's `sensitive` state, whose absence the compact listing prints as `disabled`.
+const SENSITIVE: u32 = 1 << 24;
+
 /// A server on a fake niri with windows 1 (focused, `a`, titled `t`) and 2 (`b`), and a
 /// grim that always captures the same 1280-wide image. It doesn't take the lease.
 async fn start(name: &str) -> (Fixture, Niri, Stream, Server) {
@@ -125,7 +128,7 @@ async fn conditions_that_cant_be_met_are_argument_mistakes() {
             "must not be empty",
         ),
         (
-            json!({"element": {"window_id": 1, "state": "disabled"}}),
+            json!({"element": {"window_id": 1, "state": "greyed"}}),
             "unknown state",
         ),
         (
@@ -434,6 +437,34 @@ async fn an_appeared_element_a_cut_walk_cant_tell_apart_gets_no_ref() {
     assert_eq!(outcome["element"]["element_ref"], Value::Null, "{outcome}");
     let detail = outcome["detail"].as_str().unwrap_or_default();
     assert!(detail.contains("role and name"), "{outcome}");
+}
+
+// The bug: `disabled`, the one state the default listing prints for a button that can't
+// be pressed, refused as unknown, and `state` named by what only the JSON listing shows.
+// The mock's `Safe` button loses `sensitive`, then gets it back.
+#[tokio::test]
+async fn a_disabled_button_is_waited_on_as_the_compact_listing_names_it() {
+    let mut app = App::start("wait-el-disabled", false).await;
+    app.mock
+        .change("/button", |button| button.states &= !SENSITIVE);
+    let line = app
+        .server
+        .call(
+            "elements",
+            json!({"window_id": WINDOW, "name_contains": "safe"}),
+        )
+        .await;
+    assert!(line.to_string().contains("[disabled]"), "{line}");
+    let mock = app.mock.clone();
+    let enables = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        mock.change("/button", |button| button.states |= SENSITIVE);
+    });
+    let disabled = json!({"name_contains": "safe", "state": "disabled", "absent": true});
+    let (outcome, took) = app.wait(disabled, 3000).await;
+    enables.await.unwrap();
+    assert_eq!(outcome["observed"], "met", "{outcome}");
+    assert!(took >= Duration::from_millis(400), "{took:?}");
 }
 
 // The bug: a window that closes during the wait left to the timeout.

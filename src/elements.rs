@@ -117,7 +117,7 @@ impl Listed {
             .filter(|state| !USUAL_STATES.contains(state))
             .collect();
         if !self.states.contains(&"sensitive") {
-            states.push("disabled");
+            states.push(model::DISABLED);
         }
         let place = match (self.layout_box, self.unmappable) {
             (Some(placed), _) => format!(

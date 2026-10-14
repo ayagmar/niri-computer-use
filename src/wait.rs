@@ -359,7 +359,6 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
-    use crate::a11y::model::States;
     use crate::elements::Listed;
     use crate::error::ErrorName;
     use crate::niri::waiter::Update;
@@ -440,7 +439,8 @@ mod tests {
         Element {
             window_id: 1,
             filter: Filter::new(Some("button".to_owned()), Some("save"), false)
-                .having(States::named("enabled").unwrap()),
+                .with_state("enabled")
+                .unwrap(),
             absent,
         }
     }
