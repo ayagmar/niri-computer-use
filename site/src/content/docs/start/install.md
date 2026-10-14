@@ -10,7 +10,7 @@ niri-computer-use is installed from source. There is no package yet.
 ## Requirements
 
 - niri 26.04. With another major or minor version the server is read-only: it looks but refuses to act.
-- Rust 1.99.0. The repository pins it in `rust-toolchain.toml`, so rustup installs it when you build.
+- Rust 1.99.0. The repository pins it in `rust-toolchain.toml`, which rustup reads from the directory it runs in, so building inside the clone installs it.
 - libxkbcommon, which the keyboard code links against (`libxkbcommon-dev` on Debian and Ubuntu, `libxkbcommon` on Arch).
 - At run time: `grim` for screenshots, `wtype` for the keyboard, and `loginctl` from systemd for the lock state.
 - Optional: [Noctalia](../../concepts/noctalia/) 5.2 for its panels and lock state, and an accessibility bus (at-spi2-core) for [`elements`](../../tools/elements/).
@@ -20,10 +20,11 @@ niri-computer-use is installed from source. There is no package yet.
 
 ```sh
 git clone https://github.com/ayagmar/niri-computer-use.git
-cargo install --locked --path niri-computer-use
+cd niri-computer-use
+cargo install --locked --path .
 ```
 
-The binary goes to `~/.cargo/bin/niri-computer-use`. To update, run `git -C niri-computer-use pull` and the same `cargo install` again.
+The binary goes to `~/.cargo/bin/niri-computer-use`. To update, run `git pull` and the same `cargo install` inside the clone.
 
 Updating while agents run is safe. A [shared](../../concepts/configuration/#shared) engine keeps serving the clients it has with the build it started with, and their `status.engine.replaced` turns `true`. Clients started after the update are served standalone, sharing the lease, the stop flag and the input-dirty marker, and their `status.engine.fallback` names the old engine's PID. Once the old engine's last client has ended it exits, two seconds later, and the next client starts an engine of the new build. Restart your agent sessions to move all of them to the new build. This lists the processes still running:
 

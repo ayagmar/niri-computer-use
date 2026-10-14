@@ -569,7 +569,7 @@
       "kind": "card",
       "refersTo": "code-block",
       "description": "A command on the plate, wrapped, with a Copy pill.",
-      "html": "<div class=\"ds-code\"><pre><code>cargo install --locked --path niri-computer-use</code></pre><button type=\"button\">Copy</button></div>",
+      "html": "<div class=\"ds-code\"><pre><code>cargo install --locked --path .</code></pre><button type=\"button\">Copy</button></div>",
       "css": ".ds-code { display: grid; grid-template-columns: 1fr auto; align-items: start; gap: 0.5rem; padding: 0.5rem 0.5rem 0.5rem clamp(1rem, 2vw, 1.25rem); border-radius: 0.75rem; background: #0b0c0b; color: #e6e8e3; } .ds-code pre { margin: 0; padding-block: 0.6rem; font: 0.875rem/1.6 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace; white-space: pre-wrap; overflow-wrap: anywhere; } .ds-code button { min-width: 4.5rem; min-height: 2.75rem; padding: 0 0.9rem; border: 0; border-radius: 999px; background: #1d201e; color: #e6e8e3; font: 600 0.875rem/1 'Archivo Variable', ui-sans-serif, system-ui, sans-serif; cursor: pointer; transition: background-color 160ms ease, transform 140ms cubic-bezier(0.22, 1, 0.36, 1); } .ds-code button:hover { background: #2b2f2c; } .ds-code button:active { transform: scale(0.96); }"
     },
     {

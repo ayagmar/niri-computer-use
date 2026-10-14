@@ -29,7 +29,7 @@ export const home = {
 			{
 				text: 'Build it.',
 				lang: 'sh',
-				code: 'git clone https://github.com/ayagmar/niri-computer-use.git\ncargo install --locked --path niri-computer-use',
+				code: 'git clone https://github.com/ayagmar/niri-computer-use.git\ncd niri-computer-use\ncargo install --locked --path .',
 			},
 			{
 				text: 'Add it to Claude Code.',
