@@ -16,6 +16,23 @@ sidebar:
 
 ## Install the release
 
+The install script picks the tarball for your machine, checks it against its `.sha256`, puts the binary in `~/.local/bin`, copies the skill that tells your agents how to use the server to `~/.local/share/niri-computer-use`, and links it from `~/.claude/skills` and `~/.agents/skills`. Download it, read it, then run it:
+
+```sh
+curl -fsSLO https://github.com/ayagmar/niri-computer-use/releases/latest/download/install.sh
+less install.sh
+sh install.sh
+```
+
+| Variable | Effect |
+|---|---|
+| `NCU_VERSION` | The release to install, such as `0.1.0`, instead of the latest |
+| `NCU_BIN_DIR` | Where the binary goes, instead of `~/.local/bin` |
+
+It refuses a tarball that doesn't match its `.sha256`, and a binary that doesn't run on your system, such as one that needs a newer glibc, before it changes anything. Run it again to update: it replaces the binary and the skill and keeps the links. It leaves a skill path that isn't a link alone.
+
+### By hand
+
 Download your machine's tarball, check it, and put the binary in `~/.local/bin` or another directory on your `PATH`. `uname -m` prints `x86_64` or `aarch64` on the machines there are builds for:
 
 ```sh

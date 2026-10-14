@@ -424,7 +424,13 @@ cargo package --list -p niri-computer-use
 cargo publish --dry-run -p niri-computer-use --locked
 ```
 
-Pushing a `v<version>` tag runs `.github/workflows/release.yml`. Only repository admins can create `v*` tags, and no one can move or delete one (two tag rulesets). The workflow fails unless the tagged commit is on `main`, then runs the whole CI workflow on that commit itself and builds only if it passed. A tag runs the release workflow of the commit it names, so tag a commit that has this one: older commits' release workflows have none of these gates. It fails unless the tag matches the crate's version and `CHANGELOG.md` has a `## <version> ` section. It builds `x86_64-unknown-linux-gnu` on `ubuntu-24.04` and `aarch64-unknown-linux-gnu` on `ubuntu-24.04-arm`, each with `--locked --release` on its own architecture, checks that the stripped binary prints its version, and packs it with the README, license, changelog, `skills/niri-computer-use/` and a `THIRD-PARTY-LICENSES.txt` that cargo-about writes from `.github/release/` for that target, as `niri-computer-use-<version>-<arch>-linux.tar.gz` with a `.sha256` beside it. It hands both tarballs and their checksums to a second job, which creates a draft GitHub release with that section as its notes. That job runs in the `release` environment, so it waits until the repository owner approves it in the run's page. Only that second job can write to the repository, and it runs no build code. Nothing is published until someone publishes the draft.
+Pushing a `v<version>` tag runs `.github/workflows/release.yml`. Only repository admins can create `v*` tags, and no one can move or delete one (two tag rulesets). The workflow fails unless the tagged commit is on `main`, then runs the whole CI workflow on that commit itself and builds only if it passed. A tag runs the release workflow of the commit it names, so tag a commit that has this one: older commits' release workflows have none of these gates. It fails unless the tag matches the crate's version and `CHANGELOG.md` has a `## <version> ` section. It builds `x86_64-unknown-linux-gnu` on `ubuntu-24.04` and `aarch64-unknown-linux-gnu` on `ubuntu-24.04-arm`, each with `--locked --release` on its own architecture, checks that the stripped binary prints its version, and packs it with the README, license, changelog, `skills/niri-computer-use/` and a `THIRD-PARTY-LICENSES.txt` that cargo-about writes from `.github/release/` for that target, as `niri-computer-use-<version>-<arch>-linux.tar.gz` with a `.sha256` beside it. It hands both tarballs, their checksums and `install.sh` to a second job, which creates a draft GitHub release with that section as its notes. That job runs in the `release` environment, so it waits until the repository owner approves it in the run's page. Only that second job can write to the repository, and it runs no build code. Nothing is published until someone publishes the draft.
+
+`install.sh` installs a release the way the README's manual steps do. `tests/install.rs`, part of `make test`, runs it against fake releases that a thread of the test serves over HTTP, with a fake `uname` and the test's own directory as `HOME`:
+
+```sh
+cargo test --locked --test install
+```
 
 ### Cutting a release
 
@@ -459,7 +465,7 @@ A `v*` tag can't be moved or deleted, and a crates.io version can't be replaced,
    "niri-computer-use-$version-x86_64-linux/niri-computer-use" --version
    ```
 
-   The draft should hold four files: both tarballs and their `.sha256`. Read the draft's notes against the changelog section too.
+   The draft should hold five files: both tarballs, their `.sha256` and `install.sh`. Read the draft's notes against the changelog section too.
 6. Publish the draft:
 
    ```sh

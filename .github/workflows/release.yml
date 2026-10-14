@@ -95,6 +95,7 @@ jobs:
             echo "CHANGELOG.md has no section for $VERSION" >&2
             exit 1
           fi
+          cp install.sh dist/
 
       - name: Hand the tarball on
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -106,12 +107,14 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Hand the notes on
+      - name: Hand the notes and the install script on
         if: matrix.arch == 'x86_64'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-notes
-          path: dist/notes.md
+          path: |
+            dist/notes.md
+            dist/install.sh
           if-no-files-found: error
           retention-days: 30
 
@@ -138,4 +141,5 @@ jobs:
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
             --title "$GITHUB_REF_NAME" --notes-file dist/notes.md \
             "dist/$name-x86_64-linux.tar.gz" "dist/$name-x86_64-linux.tar.gz.sha256" \
-            "dist/$name-aarch64-linux.tar.gz" "dist/$name-aarch64-linux.tar.gz.sha256"
+            "dist/$name-aarch64-linux.tar.gz" "dist/$name-aarch64-linux.tar.gz.sha256" \
+            dist/install.sh

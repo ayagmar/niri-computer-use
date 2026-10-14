@@ -25,7 +25,17 @@ It offers up to 22 tools over stdio: reading the desktop, screenshots it can sav
 
 Release builds exist for x86_64 and aarch64 Linux, and both need glibc 2.39 or newer and libxkbcommon. Either way you need niri 26.04, and `grim`, `wtype` and `loginctl` at run time, plus `notify-send` if you turn on `confirm_lease`.
 
-Download your machine's tarball, check it, and put the binary in `~/.local/bin` or another directory on your `PATH`. `uname -m` prints `x86_64` or `aarch64` on the machines there are builds for:
+The install script picks the tarball for your machine, checks it against its `.sha256`, puts the binary in `~/.local/bin` and links the skill that tells your agents how to use the server. Download it, read it, then run it:
+
+```sh
+curl -fsSLO https://github.com/ayagmar/niri-computer-use/releases/latest/download/install.sh
+less install.sh
+sh install.sh
+```
+
+`NCU_VERSION=0.1.0` installs that release instead of the latest, and `NCU_BIN_DIR` puts the binary somewhere else. Run it again to update. It ends with the steps in the Quickstart below.
+
+To install by hand, download your machine's tarball, check it, and put the binary in `~/.local/bin` or another directory on your `PATH`. `uname -m` prints `x86_64` or `aarch64` on the machines there are builds for:
 
 ```sh
 arch=$(uname -m)
@@ -46,7 +56,7 @@ ln -s ~/.local/share/niri-computer-use/skills/niri-computer-use ~/.claude/skills
 ln -s ~/.local/share/niri-computer-use/skills/niri-computer-use ~/.agents/skills/niri-computer-use
 ```
 
-To update, install the new release's binary and copy its `skills` the same way; the links stay.
+To update by hand, install the new release's binary and copy its `skills` the same way; the links stay.
 
 With Rust 1.99 or newer and libxkbcommon's headers (`libxkbcommon-dev` on Debian and Ubuntu, `libxkbcommon` on Arch), cargo builds it from crates.io into `~/.cargo/bin`. The crate has no skill; take it from the tarball or a clone.
 
