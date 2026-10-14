@@ -21,16 +21,15 @@ export default defineConfig({
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/ayagmar/niri-computer-use' },
 			],
 			customCss: [
-				'@fontsource-variable/archivo/wght.css',
+				'@fontsource-variable/archivo/wdth.css',
 				'@fontsource-variable/jetbrains-mono/wght.css',
+				'./src/styles/tokens.css',
 				'./src/styles/theme.css',
 			],
 			components: {
 				Head: './src/components/Head.astro',
-				Header: './src/components/Header.astro',
-				Hero: './src/components/Hero.astro',
 			},
-			// The card link previews show, from the hero demo's recording.
+			// The card link previews show, from the home page's recording.
 			head: [
 				{
 					tag: 'meta',

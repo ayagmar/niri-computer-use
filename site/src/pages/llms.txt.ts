@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
-import { markdownUrl, pages, siteRoot, text } from '../lib/markdown';
+import { home } from '../lib/home';
+import { homeMarkdownUrl, markdownUrl, pages, siteRoot, text } from '../lib/markdown';
 
 // Pages by who needs them first: an agent about to use the tools, then whoever installs
 // the server. Pages named nowhere here are listed under "More", in sidebar order, so a new
@@ -22,11 +23,7 @@ const skill = [
 
 export const GET: APIRoute = async () => {
 	const all = await pages();
-	const home = all.find((page) => page.id === 'index');
-	const line = (page: (typeof all)[number]) =>
-		page.id === 'index'
-			? `- [Home page](${markdownUrl(page)}): what the server does, what it needs, its limits, and install in five steps`
-			: `- [${page.data.title}](${markdownUrl(page)}): ${page.data.description}`;
+	const line = (page: (typeof all)[number]) => `- [${page.data.title}](${markdownUrl(page)}): ${page.data.description}`;
 	const list = (ids: string[]) =>
 		ids.map((id) => {
 			const page = all.find((candidate) => candidate.id === id);
@@ -34,13 +31,16 @@ export const GET: APIRoute = async () => {
 			return line(page);
 		});
 	const named = new Set([...using, ...installing, ...optional]);
-	const more = all.filter((page) => !named.has(page.id)).map(line);
+	const more = [
+		`- [Home page](${homeMarkdownUrl()}): what the server does, the stop key, and install in three steps`,
+		...all.filter((page) => !named.has(page.id)).map(line),
+	];
 	const skillLines = skill.map(
 		([file, what]) => `- [skill/${file}](${new URL(`skill/${file}`, siteRoot()).href}): ${what}`,
 	);
 	const body = [
 		`# niri-computer-use`,
-		`> ${home?.data.description ?? ''}`,
+		`> ${home.description}`,
 		`It runs only on Linux, under niri 26.04 on Wayland, built from source; with another major or minor release of niri it only looks. Every page is also plain Markdown at its address with \`.md\` in place of the trailing slash. [llms-full.txt](${new URL('llms-full.txt', siteRoot()).href}) has all of them in one file.`,
 		`If the user turned on \`confirm_lease\`, \`acquire_desktop\` waits up to a minute for them to choose Allow on the desktop, and fails with \`lease_declined\` if they don't. To read small text, call \`screenshot\` with target \`region\`, an earlier screenshot's \`screenshot_ref\`, and \`region\` in that image's pixels. A \`save_path\` saves the screenshot as a full-resolution PNG under \`~/Pictures/niri-computer-use\`, or the user's \`capture_dir\`.`,
 		`## Using the tools (for agents operating a desktop)\n\n${[...skillLines, ...list(using)].join('\n')}`,
