@@ -169,7 +169,7 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 ### `text_not_settable`
 
-**Cause:** `set_element_text` was aimed at a field in the `editable` state that has no `EditableText` interface, as Chromium's text fields don't: `<input>`, `<textarea>` and `contenteditable` alike expose only `Text` and `Action`, so nothing on the accessibility bus sets their text. Nothing was set. An element that isn't editable at all, such as a button, is an argument mistake instead.
+**Cause:** `set_element_text` was aimed at a field in the `editable` state that has no `EditableText` interface, as Chromium's text fields don't: `<input>`, `<textarea>` and `contenteditable` alike expose `Text` and `Action` but neither `EditableText` nor `Value`, so nothing on the accessibility bus sets their text. Nothing was set. A password field without `EditableText` is `secret_field` instead, and an element that isn't editable at all, such as a button, is an argument mistake.
 
 **What to do:** focus the field with `activate_element`, then send the text with `type_text`, its `expect` naming the field's window. To replace what the field holds, press `ctrl+a` with `key` before typing.
 

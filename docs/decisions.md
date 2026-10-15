@@ -1741,3 +1741,7 @@ v2.9.2 is the newest release; it is over 7 days old.
 - What works instead, checked through the server in both browsers: `activate_element` on each field focused it (`states_set: ["focused"]`), `type_text` then reached it exactly, and `key` `ctrl+a` followed by `type_text` replaced its whole text.
 - Tests: a protocol test needs `text_not_settable` and the advice for an editable field without `EditableText`, and the plain mistake for a button; it fails on the old refusal. `make nested-chromium-a11y` now needs `text_not_settable` on the page's field.
 - No dependency was added.
+
+## 2026-10-15: fixes after the review of Chromium's page boxes and text fields
+
+- A Chromium password field (`password_text`, `editable`) has no `EditableText` either, and `set_element_text` refused it `text_not_settable`, whose detail says to type with `type_text`: that teaches typing a secret. The role is read with the states on that refusal, and a password field is `secret_field` before the `editable` state counts, as the last gate would make it. A protocol test needs `secret_field` for such a field; it failed with `text_not_settable` before.

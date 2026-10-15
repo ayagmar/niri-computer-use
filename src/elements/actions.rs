@@ -766,7 +766,8 @@ async fn caught_up(waiter: &mut Waiter) -> Option<String> {
     }
 }
 
-/// Checks the element has an `EditableText` interface, or its text can't be set: an
+/// Checks the element has an `EditableText` interface, or its text can't be set: a
+/// password field without one is `secret_field`, as the last gate would make it, an
 /// editable field without one, as Chromium's text fields are, is `text_not_settable`,
 /// with what to do instead, and anything else a mistake.
 async fn editable(request: &Request, element: &ElementRef) -> Result<(), CallError> {
@@ -777,7 +778,10 @@ async fn editable(request: &Request, element: &ElementRef) -> Result<(), CallErr
     {
         return Ok(());
     }
-    let (_, states) = request.state(element).await.map_err(gone_is_stale)?;
+    let (role, states) = request.state(element).await.map_err(gone_is_stale)?;
+    if let Some(refused) = policy::refuse_secret_field(model::role_name(role)) {
+        return Err(refused.into());
+    }
     if !states.has(State::Editable) {
         return Err(CallError::InvalidArguments(
             "the element has no EditableText interface, so its text can't be set".to_owned(),

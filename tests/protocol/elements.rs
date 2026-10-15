@@ -196,8 +196,9 @@ async fn desk_with(name: &str, extra: Object) -> Desk {
 // Chromium's text fields are editable but have no EditableText interface, and
 // `set_element_text` refused them as a plain `invalid arguments:`, which the skill reads
 // as a mistake in the call to fix and send again. The refusal now has its own name
-// and says what works instead. A button, which isn't editable, is still a mistake.
-// Nothing is set either way.
+// and says what works instead. A button, which isn't editable, is still a mistake. A
+// password field, which Chromium's are too, is `secret_field`: telling the agent to type
+// into it would type a secret. Nothing is set either way.
 #[tokio::test]
 async fn an_editable_field_without_editable_text_says_to_focus_and_type() {
     let web = Object {
@@ -225,6 +226,18 @@ async fn an_editable_field_without_editable_text_says_to_focus_and_type() {
         "invalid arguments: the element has no EditableText interface, so its text can't be set"
     );
     assert_eq!(desk.mock.calls("SetTextContents"), 0);
+
+    let password = Object {
+        text: None,
+        ..Object::entry(PASSWORD_TEXT, "Web password")
+    };
+    let mut secret = desk_with("el-not-settable-secret", password).await;
+    let hidden = secret.element("Web password").await;
+    let kept = secret.server.call("set_element_text", set(hidden)).await;
+    let (error, why) = tool_error(&kept);
+    assert_eq!(error, "secret_field", "{kept}");
+    assert!(!why.contains("type_text"), "{why}");
+    assert_eq!(secret.mock.calls("SetTextContents"), 0);
 }
 
 /// `set_element_text` on the mock's field, `/entry`, with `text`.
