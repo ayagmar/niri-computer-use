@@ -24,6 +24,9 @@ const HOLD: &str = "25";
 const HOLDER_DEADLINE: Duration = Duration::from_secs(35);
 /// How long a one-shot server keeps stdin open for its replies.
 const ANSWER: &str = "3";
+/// What `recover` says once it has zeroed the modifiers a 0.1.0 marker's `wtype` child may
+/// have left held.
+pub(crate) const ZEROED: &str = "Sent zero modifiers from a fresh virtual keyboard";
 
 pub(crate) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
     let noctalia = session.start(
@@ -165,11 +168,24 @@ fn stops(
     session.log("M2: after resume, server B took the lease")
 }
 
-/// An input-dirty marker: `recover` clears it once the user answers yes.
+/// A marker naming a running child: `recover` ends it and clears the marker. The child
+/// shares the supervisor's process group, so `recover` ends it alone; the unit tests cover
+/// the group kill.
 fn recovers(session: &mut Session<'_>, server: &str, control: &Path) -> Result<()> {
+    let pid_file = control.join("child.pid");
+    let script = format!("echo $$ > '{}'; exec sleep 60", pid_file.display());
+    let args = ["-c".into(), OsString::from(script)];
+    let child = session.start("sh", &args, session.artifact("child.log"), HOLDER_DEADLINE)?;
+    let pid = session.wait_until("m2-child", "the child's PID", WAIT, |_| {
+        Ok(fs::read_to_string(&pid_file)
+            .ok()
+            .and_then(|text| text.trim().parse::<u32>().ok()))
+    })?;
+    let start_time = start_time(pid)?;
     let marker = serde_json::json!({
         "operation": "type_text", "phase": "running", "server_pid": 1,
         "since": "2026-10-08T00:00:00.000Z",
+        "child": {"pid": pid, "start_time": start_time}
     });
     let path = control.join("input-dirty");
     fs::write(&path, marker.to_string()).context(format!("write {}", path.display()))?;
@@ -177,9 +193,21 @@ fn recovers(session: &mut Session<'_>, server: &str, control: &Path) -> Result<(
         session,
         &format!("echo yes | '{server}' recover 2>&1; echo exit=$?"),
     )?;
-    expect(output.contains("exit=0"), "recover with a marker", &output)?;
+    expect(
+        output.contains("exit=0") && output.contains(ZEROED),
+        "recover with a marker",
+        &output,
+    )?;
+    session.wait_until("m2-recover", "the child ended", WAIT, |_| {
+        Ok(start_time_of(pid)
+            .is_none_or(|(state, start)| start != start_time || state == 'Z')
+            .then_some(()))
+    })?;
     expect(!path.exists(), "the marker cleared", &output)?;
-    session.log("M2: recover cleared the marker")
+    drop(child);
+    session.log(&format!(
+        "M2: recover ended child {pid}, zeroed the modifiers and cleared the marker"
+    ))
 }
 
 /// One server for one call: initialize, the tool, and a few seconds for the replies.
@@ -224,6 +252,21 @@ fn printf(lines: &[String]) -> String {
 fn shell(session: &Session<'_>, script: &str) -> Result<String> {
     let output = session.run("sh", &["-c".into(), script.into()])?;
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn start_time(pid: u32) -> Result<u64> {
+    start_time_of(pid)
+        .map(|(_, start)| start)
+        .ok_or_else(|| Failure::new(format!("no /proc entry for child {pid}")))
+}
+
+/// The state and start time from `/proc/<pid>/stat`, counted from the last `)`.
+fn start_time_of(pid: u32) -> Option<(char, u64)> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let (_, rest) = stat.rsplit_once(") ")?;
+    let mut fields = rest.split(' ');
+    let state = fields.next()?.chars().next()?;
+    Some((state, fields.nth(18)?.parse().ok()?))
 }
 
 /// The value at a JSON pointer, or null.

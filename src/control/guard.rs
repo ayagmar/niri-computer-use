@@ -111,7 +111,8 @@ async fn send(env: &Env, marker: &Marker) -> Result<(), String> {
     if let Some(keyboard) = &marker.keyboard {
         match tokio::time::timeout(KEYS_DEADLINE, recover::send_key_releases(env, keyboard)).await {
             Ok(Ok(recover::Layout::Active(_))) => {}
-            Ok(Ok(recover::Layout::Marked(why))) => {
+            Ok(Ok(recover::Layout::Marked(detail))) => {
+                let why = recover::in_marked(&detail, keyboard.group);
                 cli::print_error(&format!("the native key releases: {why}"));
             }
             Ok(Err(error)) => failures.push(format!("the native key releases: {error}")),

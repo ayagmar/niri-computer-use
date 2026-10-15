@@ -112,15 +112,22 @@ cp -r "niri-computer-use-0.1.1-$arch-linux/skills" ~/.local/share/niri-computer-
 
 ## Updating while agents run
 
-Updating while agents run is safe, except from 0.1.0 or older development builds (below). A [shared](../../concepts/configuration/#shared) engine keeps serving the clients it has with the build it started with, and their `status.engine.replaced` turns `true`. Clients started after the update are served standalone, sharing the lease, the stop flag and the input-dirty marker, and their `status.engine.fallback` names the old engine's PID. Once the old engine's last client has ended it exits, two seconds later, and the next client starts an engine of the new build. Restart your agent sessions to move all of them to the new build. This lists the processes still running:
+You can update from 0.1.0 or 0.1.1 while agents run. Before each release, a test installs every earlier release with the install script, leaves agents running on it, and updates over it while one of them is mid-input; these steps are what it checks.
 
-```sh
-pgrep -a '^niri-computer-u'
-```
+1. Install the new release the way you installed the old one, with the [install script](../install-script/#update) or by hand. The binary is replaced by a rename, so every server, bridge and [shared](../../concepts/configuration/#shared) engine already running keeps the build it started with, and its clients' `status.engine.replaced` turns `true`.
+2. Restart every MCP client, that is every agent session, so that its server runs the new build. Until you do, old and new servers share the lease, the stop flag and the input-dirty marker, and each reads the other's marker. The old engine keeps serving the clients it has, and exits two seconds after the last of them ends; the next client of the new build then starts an engine of the new build. A client started after the update is served standalone meanwhile, and its `status.engine.fallback` says the old engine refused it, names that engine's PID, and says to restart the clients it serves. A client of the old build whose engine has ended starts an engine of the old build again if no engine of the new build runs, and the new clients wait it out standalone as before. If one does run, it refuses the old client: after one `engine_lost`, its calls fail with `engine_unavailable`, with a `detail` saying to restart that client. Either way, restarting the old clients is what ends the old build.
+3. Check that nothing of the old build still runs. The kernel marks a process whose file the update replaced with `(deleted)` after its path:
 
-Older development builds keep the lease, the stop flag and the input-dirty marker under `XDG_RUNTIME_DIR` rather than beside niri's socket, and don't take the marker's lock, so an old and a new server on one niri would act as if the other weren't there. When updating from one of those, end every running `niri-computer-use` process first, and start your clients again once nothing is listed.
+   ```sh
+   pgrep -a '^niri-computer-u'
+   for pid in $(pgrep '^niri-computer-u'); do ls -l "/proc/$pid/exe"; done
+   ```
 
-Updating from 0.1.0 is the same: 0.1.0 types through `wtype`, and an input-dirty marker it writes can't be read by later versions, so a server beside it sends agents to `recover` until it finishes. End every running `niri-computer-use` process before you install, and if `status` then shows `input_dirty`, run `niri-computer-use recover`.
+4. If an agent still gets `recovery_required` once the old clients have ended, run `niri-computer-use recover` from the new build. It reads the markers 0.1.0 and 0.1.1 write, releases the keys and buttons they name, and ends the `wtype` child a 0.1.0 marker names, which can still be running after its server was killed, then zeroes the modifiers that child may have held. 0.1.1 read 0.1.0's marker as unreadable and left that child running.
+
+A policy file written for 0.1.0 or 0.1.1 loads unchanged. A key added later, such as `turn_on_accessibility`, makes an older build read the whole file as invalid, which leaves its servers read-only, so add new keys once nothing of the older build runs. Going back to an older release isn't covered by the test.
+
+Older development builds keep the lease, the stop flag and the input-dirty marker under `XDG_RUNTIME_DIR` rather than beside niri's socket, and don't take the marker's lock, so an old and a new server on one niri would act as if the other weren't there. When updating from one of those, end every running `niri-computer-use` process first, and start your clients again once `pgrep` lists nothing.
 
 ## Check it
 

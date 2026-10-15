@@ -339,7 +339,9 @@ async fn reach_engine(
     given: session::Given,
 ) -> Result<(bridge::Target, bridge::Link), String> {
     let target = bridge::Target::new(env, given)?;
-    let link = bridge::connect(&target).await?;
+    let link = bridge::connect(&target)
+        .await
+        .map_err(bridge::Unreached::detail)?;
     Ok((target, link))
 }
 

@@ -231,8 +231,8 @@ These come only from a server in [shared mode](../../concepts/configuration/#sha
 
 ### `engine_unavailable`
 
-**Cause:** after an engine was lost, the server couldn't reach or start a new one within five seconds, or the new one refused it. The `detail` says why. The next call tries again.
+**Cause:** after an engine was lost, the server couldn't reach or start a new one within five seconds, or the new one refused it. The `detail` says why. The next call tries again. After an `engine_version` refusal that helps only once that engine has ended: it runs another build of `niri-computer-use`, as after an upgrade while the client ran, and refuses this server for as long as it runs.
 
 With [`shared = "required"`](../../concepts/configuration/#shared), it also comes from a server that couldn't reach the engine when it started, or was refused by it: every call fails with it, and the `detail` says why and that the server must be restarted. Such a server never tries again.
 
-**What to do:** read the `detail` and `engine.log` in the runtime directory. A server that can't reach an engine when it starts serves its client on its own instead, unless the shared engine is required; otherwise this happens only after a loss. When the `detail` says to restart the server, fix the cause it names, then restart it from the client.
+**What to do:** read the `detail` and `engine.log` in the runtime directory. After an `engine_version` refusal, the `detail` says what to do, from the files the engine and this client's server were started from: restart this MCP client when an install replaced its server's file, or the clients that engine serves when an install replaced the engine's. When neither was, as with two installs on different paths, it names both files: point every MCP client at one of them. A server that can't reach an engine when it starts serves its client on its own instead, unless the shared engine is required; otherwise this happens only after a loss. When the `detail` says to restart the server, fix the cause it names, then restart it from the client.

@@ -68,6 +68,7 @@ pub(crate) async fn run(env: Env, unscoped: Option<String>) -> Result<(), String
     let own = Own {
         pid: std::process::id(),
         exe: hello::Exe::current()?,
+        file: hello::Build::current().exe,
         niri_socket: env.instance.socket().map_err(Clone::clone)?.to_path_buf(),
         wayland_socket: env.display.path().ok().map(hello::resolved),
         desktop_path: env.desktop.search.clone(),
@@ -190,33 +191,32 @@ async fn connection(engine: Arc<Engine>, own: Arc<Own>, stream: UnixStream, busy
     let Ok(Some(line)) = tokio::time::timeout(hello::DEADLINE, read_hello(&mut input)).await else {
         return;
     };
+    let pid = peer
+        .pid()
+        .and_then(|pid| u32::try_from(pid).ok())
+        .unwrap_or(0);
     let taken = if busy {
         Err((
             Refusal::EngineBusy,
             format!("the engine serves {MAX_CONNECTIONS} connections already"),
         ))
     } else {
-        own.take(&line)
+        own.take(&line, &hello::Build::of(pid))
     };
     let hello = match taken {
         Ok(hello) => hello,
         Err((error, detail)) => {
-            reply(&mut output, &Reply::Refused { error, detail })
+            reply(&mut output, &Reply::refused(error, detail))
                 .await
                 .ok();
             return;
         }
     };
-    let pid = peer
-        .pid()
-        .and_then(|pid| u32::try_from(pid).ok())
-        .unwrap_or(0);
     // The client's own directory, held from now on, wherever its path leads later.
     let dir = match Dir::of_process(pid) {
         Ok(dir) => dir,
         Err(detail) => {
-            let error = Refusal::NoDirectory;
-            reply(&mut output, &Reply::Refused { error, detail })
+            reply(&mut output, &Reply::refused(Refusal::NoDirectory, detail))
                 .await
                 .ok();
             return;

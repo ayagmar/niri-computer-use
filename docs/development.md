@@ -203,7 +203,7 @@ Each run keeps its files in `target/e2e/<unix time>-<pid>/`:
 3. Starts server B, whose `acquire_desktop` must fail with `lease_held` naming server A.
 4. Runs `recover`, which must refuse because a server holds the lease.
 5. Asks niri to `spawn` `niri-computer-use stop`, as the stop keybind does, and waits for the flag and for server A to give the lease up. Server B must then get `stopped`; after `resume` it must take the lease.
-6. Writes an input-dirty marker and pipes `yes` into `recover`, which must exit 0 and clear the marker.
+6. Starts a child that runs until it is killed, writes an input-dirty marker naming it as a 0.1.0 marker names its `wtype` child, and pipes `yes` into `recover`, which must end the child, send zero modifiers and clear the marker.
 
 Every server talks MCP over a shell pipeline (`printf` of the requests, then `sleep` to keep stdin open), and every flag and marker lives in `TEST_DIR`. The run has a 90-second deadline. Its files are in `target/e2e/<run>/`, with `server-a.log` holding server A's replies.
 
@@ -351,6 +351,30 @@ make nested-latency SERVER=/path/to/older/niri-computer-use
 ```
 
 One server holds the lease, and 30 rounds each call `focus` on the empty workspace below the fixture's and back on the fixture, `click` on its entry by element, `type_text` of two characters and `key` with two `BackSpace`s into it, `activate_element` on its `Primary` button, `niri_action` setting its height, and `shell_panel` opening and closing the control center, none with a screenshot. Before the click it waits 1.2 seconds, outside the timing, because the server refuses an element aim for a second after a workspace switch or a move or resize of its window. For each call it gives the median and 95th percentile round trip, how often each `observed` came back, and how often each set of `changes` keys came back, with the fields of its `windows` entries, such as `focus+workspace`, `windows[size]` or `none`. The results are in `docs/results/action-latency.md`.
+
+## Nested upgrade checks
+
+`make nested-upgrade` checks an upgrade from each published release to this checkout's release build, in shared mode, with Noctalia as the lock source and `wev` to type into. It runs one nested session per release in `UPGRADE_FROM`, `0.1.0 0.1.1` by default, each with a 240-second deadline, and needs the network to download them:
+
+```sh
+make nested-upgrade
+make nested-upgrade UPGRADE_FROM=0.1.1
+```
+
+Every command it runs gets `HOME=TEST_DIR/home` and `TMPDIR=TEST_DIR/tmp`, so neither install touches your HOME, `~/.local/bin` or runtime directory. The supervisor:
+
+1. Packs the release build as the release workflow packs one, with `skills/niri-computer-use` and a `.sha256`, under `TEST_DIR/releases` as release `current`.
+2. Installs the old release with `install.sh`, `NCU_VERSION=<release>`, `NCU_BIN_DIR=TEST_DIR/home/.local/bin` and `NCU_REGISTER=0`, from GitHub, which checks the tarball against its `.sha256`. The binary must be in place and the skill linked from `.claude/skills` and `.agents/skills`.
+3. Writes a policy file every release reads. The old binary's `status`, given a policy file with `turn_on_accessibility = false`, a key added since 0.1.1, must report it `invalid`. Then it starts two clients of the old binary, A and B. Both must be on one shared engine whose `status.engine.version` is the release's, and A takes the lease. The audit log's lines so far are kept.
+4. A types 1000 characters into `wev`. Once the marker names a key, or the `wtype` child of a 0.1.0 marker, the old engine is stopped with `SIGSTOP`, and `current` is installed the same way, from `file://TEST_DIR/releases`; the engine then continues, and A's `type_text` must finish without an error and the marker go. The binary and the skill's `SKILL.md` must then be the build's, byte for byte, and the old engine must still run its deleted file and report `replaced: true`.
+5. Starts client N of the new binary. Refused by the old engine with `engine_version`, it must be served standalone, saying so in `status.engine.fallback`, which must name the old engine's PID and say to restart the clients that engine serves, and its `acquire_desktop` must fail with `lease_held` naming A.
+6. A gives the lease up and N takes it. N types 1000 characters into `wev`; once the marker names a key, N's server is stopped with `SIGSTOP` while B's `status` reads the marker, which must read as a marker, not as unreadable. Typing takes less than a tenth of a second, so the marker is looked for every millisecond. N then finishes, the marker goes, and A takes the lease again.
+7. A types the same way. Once the marker names a key, or the `wtype` child of a 0.1.0 marker, the old engine is stopped. N's `status` must read the marker whole, and N's `acquire_desktop` must fail with `recovery_required` saying another server's input may still be finishing. The old engine is then killed with `SIGKILL`; once the engine's crash guardian, which holds the lease while it sends the releases the marker names, has exited, N must get `recovery_required`, and the new binary's `recover`, answered `yes`, must exit 0 and clear the marker, saying it ended or found exited the input child a 0.1.0 marker names and sent zero modifiers. N then takes the lease.
+8. Starts client S of the new binary, which must be served by a shared engine, with no fallback, as no old engine runs any more and B hasn't called since its engine ended, so it hasn't started one of the old build again. B's next call reaches that engine, which refuses it: it must fail with `engine_unavailable`, its `detail` saying to restart this MCP client.
+9. The audit log must keep every line the old build wrote, in order, followed by the new build's, each one JSON. N's `status.policy.state` must be `loaded`.
+10. Ends B, N and S, and waits for the new engine to exit.
+
+The supervisor log has what each side read and what `recover` said. The run doesn't check that every server bridged to the engine, as other shared runs do: N is served standalone on purpose.
 
 ## Nested Chromium checks
 
@@ -520,14 +544,15 @@ cargo test --locked --test install
 
 A `v*` tag can't be moved or deleted, and a crates.io version can't be replaced, so each step checks what the next one freezes.
 
-1. Merge the release branch into `main`. It dates the version's `CHANGELOG.md` section as `## <version> - <date>`, keeping the space after the version that the workflow looks for, and names the version in the Install page's download links.
-2. Wait for `main`'s CI to pass on the merge commit:
+1. On the release branch, run `make nested-upgrade` with every published release in `UPGRADE_FROM` and check that it passes; after the release, add it to `UPGRADE_FROM`'s default.
+2. Merge the release branch into `main`. It dates the version's `CHANGELOG.md` section as `## <version> - <date>`, keeping the space after the version that the workflow looks for, and names the version in the Install page's download links.
+3. Wait for `main`'s CI to pass on the merge commit:
 
    ```sh
    gh run list --repo ayagmar/niri-computer-use --workflow ci.yml --branch main --limit 1
    ```
 
-3. Tag that commit with a lightweight tag and push the tag:
+4. Tag that commit with a lightweight tag and push the tag:
 
    ```sh
    version=0.1.1
@@ -538,8 +563,8 @@ A `v*` tag can't be moved or deleted, and a crates.io version can't be replaced,
    git push origin "v$version"
    ```
 
-4. In the Release run's page, approve the `release` environment once `build` has passed. The build's files are kept for 30 days.
-5. Check the draft's files the way the Install page's steps by hand do. The draft isn't public, so download it as the owner:
+5. In the Release run's page, approve the `release` environment once `build` has passed. The build's files are kept for 30 days.
+6. Check the draft's files the way the Install page's steps by hand do. The draft isn't public, so download it as the owner:
 
    ```sh
    gh release download "v$version" --repo ayagmar/niri-computer-use --dir "/tmp/ncu-v$version"
@@ -550,13 +575,13 @@ A `v*` tag can't be moved or deleted, and a crates.io version can't be replaced,
    ```
 
    The draft should hold five files: both tarballs, their `.sha256` and `install.sh`. Read the draft's notes against the changelog section too.
-6. Publish the draft:
+7. Publish the draft:
 
    ```sh
    gh release edit "v$version" --repo ayagmar/niri-computer-use --draft=false
    ```
 
-7. Publish the crate from the tagged commit:
+8. Publish the crate from the tagged commit:
 
    ```sh
    cargo publish --locked -p niri-computer-use

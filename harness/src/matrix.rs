@@ -145,6 +145,7 @@ fn nested(
         binary: None,
         niri: Some(niri.to_path_buf()),
         browser: None,
+        from: None,
     };
     let outcome = run::run_named(&options, name).map_err(|failure| failure.to_string());
     if interrupt::requested() {

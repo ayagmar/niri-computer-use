@@ -398,8 +398,36 @@ async fn an_engine_refusing_the_hello_after_a_loss_leaves_calls_unavailable() {
     }
 }
 
-/// Answers every hello on the engine's socket, in place of any a killed engine left, with
-/// an `engine_version` refusal.
+/// An engine of 0.1.1 refuses a client of this build without naming its release or what
+/// to do. The client is served standalone, and its fallback names the engine's PID and
+/// says what to do from the engine's file: here, the test's binary, still installed
+/// beside the client's, so restarting either side's clients runs the same builds again.
+/// The nested upgrade check covers an engine whose file an upgrade replaced.
+#[tokio::test]
+async fn a_client_beside_an_installed_engine_of_0_1_1_is_told_to_run_one_build() {
+    let fixture = shared("shared-older");
+    let _niri = Niri::start(&fixture);
+    std::fs::create_dir_all(fixture.runtime_dir()).unwrap();
+    let _older = refusing_engine(&fixture);
+    let mut server = Server::start(&fixture).await;
+    let engine = server.structured("status").await["engine"].clone();
+    assert_eq!(engine["mode"], "standalone", "{engine}");
+    let fallback = engine["fallback"].as_str().unwrap();
+    assert!(
+        fallback.contains("(engine_version): another build")
+            && fallback.contains(&format!(
+                "that engine, PID {}, runs niri-computer-use 0.1.1 or older from {}",
+                std::process::id(),
+                std::env::current_exe().unwrap().display()
+            ))
+            && fallback.contains("both builds are still installed: point this MCP client at")
+            && !fallback.contains("restart"),
+        "{fallback}"
+    );
+}
+
+/// Answers every hello on the engine's socket with an `engine_version` refusal, as an
+/// engine of 0.1.1 sends it: with no release. A socket a killed engine left is replaced.
 fn refusing_engine(fixture: &Fixture) -> tokio::task::JoinHandle<()> {
     let path = fixture.runtime_dir().join("engine.sock");
     std::fs::create_dir_all(fixture.runtime_dir()).unwrap();
