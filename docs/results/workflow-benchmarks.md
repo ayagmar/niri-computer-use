@@ -76,3 +76,27 @@ niri gave the dialog keyboard focus and routed 19 keys to it about 5 ms before i
 ## Files and accessibility
 
 Nautilus 51.1 runs in the nested session with `HOME` set to `TEST_DIR/files-home`. It logs that it can't reach Tracker or mount `network:///`, since the nested bus has no service files. Moving files in it works: in all three `copy-files` runs the agent made the folder with `ctrl+shift+n` and dragged the screenshots into it, both at once or one at a time. The harness's host snapshot check (C1) reported the host unchanged after all 21 runs. `form`, `copy-files` and `modal-recovery` start an accessibility bus before the server, so `elements` is listed; agents used `elements`, `set_element_text` and `activate_element` in `form`.
+
+## After the skill changes
+
+`2698f31` and `4f3b209` change SKILL.md for the failures above, keeping it no longer than before (127 to 126 lines, 3188 to 3187 words):
+
+- An alert or error from the app the agent works in, with only OK or Close, is dismissed, the task finished and the alert mentioned in the answer. A dialog that asks for a decision with consequences, such as Save, Discard or Delete, means releasing the desktop and asking. Other windows the agent didn't open stay as they were.
+- `release_desktop` comes before stopping to ask the user anything, not only at the end.
+- One action per turn, with no other desktop call beside it, even when actions look independent, because each changes what the next depends on. Reads may go together without an action, which is what the grading allows.
+- Tool names: call the names the client lists, such as `mcp__niri-computer-use__status`, since a bare `status` fails.
+- On `interrupted`, or `changes.focus` leaving the window, check what has focus and where the text went before going on. This matches the contract the `focus-race` branch gives `type_text` and `key`: a call during which focus left the window reports `interrupted`, never `sent`. These runs used the server without that change, so `type_text` still answered `sent` when the dialog took focus, and the agents went by `changes.focus`.
+
+Each of the three failing workflow scenarios ran twice and `key-screenshots` once, with Sonnet and the skill. The first `form` run used `2698f31`; the rest used `4f3b209`, which only puts back the general `interrupted` rule, since `focus` and `launch` also report it.
+
+| Scenario | Run | Commit | Result | Expectations | Calls | Turns | Time | Cost |
+|---|---|---|---|---|---|---|---|---|
+| `form` | 1792095049-2153277 | `2698f31` | pass | 8/8 | 13 | 16 | 29.8 s | $0.142 |
+| `form` | 1792095085-2159432 | `4f3b209` | pass | 8/8 | 13 | 16 | 18.0 s | $0.137 |
+| `rearrange` | 1792095108-2161322 | `4f3b209` | pass | 7/7 | 7 | 10 | 14.2 s | $0.091 |
+| `rearrange` | 1792095128-2162590 | `4f3b209` | pass | 7/7 | 7 | 10 | 14.7 s | $0.091 |
+| `modal-recovery` | 1792095148-2163787 | `4f3b209` | pass | 8/8 | 11 | 14 | 18.4 s | $0.139 |
+| `modal-recovery` | 1792095172-2166759 | `4f3b209` | pass | 8/8 | 13 | 16 | 30.6 s | $0.163 |
+| `key-screenshots` | 1792095208-2169101 | `4f3b209` | pass | 4/4 | 8 | 11 | 17.9 s | $0.115 |
+
+All seven passed, $0.88 in all. No run called a tool without its prefix, against 15 of 21 before. Every action went alone in its turn: `form` set or typed the two fields in separate turns, `rearrange` sent each `niri_action` alone, and `key-screenshots` released in a turn of its own. In both `modal-recovery` runs the agent read `Autosave failed` in `changes.opened`, clicked `OK`, saw that only "M" had reached the box, replaced it with the whole message, clicked Send, and told the user about the read-only drafts folder. In 1792095172-2166759 the box had lost focus after the dialog, so a `ctrl+a` and the retyped message didn't reach it; the agent saw that on the result's screenshot, clicked into the box and typed it again. `form` still aimed several clicks with one screenshot taken before them, one per turn, at check boxes and a drop-down that didn't move. The host snapshot check reported the host unchanged after all seven runs.
