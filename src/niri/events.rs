@@ -5,13 +5,17 @@
 //! doesn't parse also drops the state and reconnects at once; a second one stops the
 //! stream for good (`schema_incompatible`), because this build doesn't understand the
 //! running niri. Events of the kinds in `IGNORED`, which nothing here reads, are dropped
-//! unread, so one that doesn't parse never ends the stream. The task ends, closing its
-//! connection, once no tool holds the stream.
+//! unread, so one that doesn't parse never ends the stream. An event that panics
+//! niri-ipc's reducer stops the stream for good at once, also as `schema_incompatible`,
+//! since the replica can no longer follow niri. The task ends, closing its connection,
+//! once no tool holds the stream.
 //!
 //! Besides the replica, the task passes every event it applies, numbered, to the action
 //! tools' waiters (`waiter.rs`), and tells them when a connection ends.
 
+use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::panic::{self, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -51,8 +55,9 @@ enum Connection {
         last_error: Option<ToolError>,
     },
     Connected(Box<Replica>),
+    /// Why the stream stopped for good.
     SchemaIncompatible {
-        event: String,
+        reason: String,
     },
 }
 
@@ -421,11 +426,9 @@ impl EventStream {
                 ErrorName::DeadlineExceeded,
                 format!("niri's event stream didn't connect within {deadline:?}"),
             )),
-            Connection::SchemaIncompatible { event } => Err(ToolError::new(
+            Connection::SchemaIncompatible { reason } => Err(ToolError::new(
                 ErrorName::UpstreamError,
-                format!(
-                    "niri sent an event this build can't parse ({event}); the event stream stays stopped until the server restarts"
-                ),
+                format!("{reason}; the event stream stays stopped until the server restarts"),
             )),
         }
     }
@@ -453,10 +456,14 @@ fn snapshot(state: &EventStreamState) -> DesktopState {
 enum Ended {
     Disconnected(ToolError),
     Unparsable(String),
+    /// niri-ipc's reducer panicked on an event, with the event's type name and the
+    /// panic's message.
+    Panicked(String),
 }
 
 /// Connects, reads until the connection ends, and reconnects, until a second
-/// unparsable event or until no tool holds the stream any more.
+/// unparsable event, an event the reducer panics on, or until no tool holds the stream
+/// any more.
 async fn run<S, F>(mut connect: impl FnMut() -> F, senders: Senders, reconnect_delay: Duration)
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -476,7 +483,9 @@ where
             Ended::Unparsable(event) => {
                 parse_failures += 1;
                 if parse_failures >= PARSE_FAILURES {
-                    sender.send_replace(Connection::SchemaIncompatible { event });
+                    sender.send_replace(Connection::SchemaIncompatible {
+                        reason: format!("niri sent an event this build can't parse ({event})"),
+                    });
                     return;
                 }
                 sender.send_replace(Connection::Connecting {
@@ -485,6 +494,10 @@ where
                         format!("unparsable event {event}"),
                     )),
                 });
+            }
+            Ended::Panicked(reason) => {
+                sender.send_replace(Connection::SchemaIncompatible { reason });
+                return;
             }
             Ended::Disconnected(error) => {
                 sender.send_replace(Connection::Connecting {
@@ -523,7 +536,8 @@ where
 }
 
 /// Requests the event stream on `stream` and applies every event to a fresh replica, then
-/// passes it on to the waiters with its number.
+/// passes it on to the waiters with its number. An event the reducer panics on reaches
+/// no waiter.
 async fn read(
     stream: impl AsyncRead + AsyncWrite + Unpin,
     senders: &Senders,
@@ -556,11 +570,22 @@ async fn read(
         };
         numbers.seq += 1;
         let seq = numbers.seq;
+        let mut panicked = None;
         senders.connection.send_modify(|connection| {
             if let Connection::Connected(replica) = connection {
-                replica.apply(seq, event.clone());
+                // The half-applied replica is replaced right after, so nothing reads it.
+                let applied =
+                    panic::catch_unwind(AssertUnwindSafe(|| replica.apply(seq, event.clone())));
+                panicked = applied.err();
             }
         });
+        if let Some(payload) = panicked {
+            return Ended::Panicked(format!(
+                "niri-ipc's state panicked on a {} event: {}",
+                name(&serde_json::from_str(&line).unwrap_or_default()),
+                message(&*payload)
+            ));
+        }
         senders
             .updates
             .send(Update::Event(seq, Box::new(event)))
@@ -617,19 +642,34 @@ fn unavailable(detail: impl Into<String>) -> ToolError {
 }
 
 /// Parses one event line: `None`, unparsed, for an event of a kind in `IGNORED`. On
-/// failure, returns the event's type name: the single key of the JSON object, as niri
-/// serializes its `Event` enum.
+/// failure, returns the event's type name (`name`).
 fn parse(line: &str) -> Result<Option<Event>, String> {
     let value: serde_json::Value =
         serde_json::from_str(line).map_err(|_| "a line that isn't JSON".to_owned())?;
-    let object = value.as_object();
-    let name = object
-        .and_then(|object| object.keys().next().cloned())
-        .unwrap_or_else(|| "a value that isn't an object".to_owned());
-    if object.is_some_and(|object| object.len() == 1) && IGNORED.contains(&name.as_str()) {
+    let name = name(&value);
+    if value.as_object().is_some_and(|object| object.len() == 1) && IGNORED.contains(&name.as_str())
+    {
         return Ok(None);
     }
     serde_json::from_value(value).map(Some).map_err(|_| name)
+}
+
+/// The event's type name: the single key of the JSON object, as niri serializes its
+/// `Event` enum.
+fn name(value: &serde_json::Value) -> String {
+    value
+        .as_object()
+        .and_then(|object| object.keys().next().cloned())
+        .unwrap_or_else(|| "a value that isn't an object".to_owned())
+}
+
+/// A panic's message, which `panic!` and `expect` give as a `&str` or a `String`.
+fn message(payload: &(dyn Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("a panic without a message")
 }
 
 #[cfg(test)]
@@ -870,6 +910,8 @@ mod tests {
     const CAST_OF_UNKNOWN_KIND: &str = "{\"CastsChanged\":{\"casts\":[{\"stream_id\":3,\"session_id\":1,\"kind\":\"ExtImageCopyCapture\",\"target\":{\"Output\":{\"name\":\"winit\"}},\"is_dynamic_target\":false,\"is_active\":true,\"pid\":40,\"pw_node_id\":null}]}}\n";
     /// The end of that cast, which parses, though no start of it was applied.
     const CAST_STOPPED: &str = "{\"CastStopped\":{\"stream_id\":3}}\n";
+    /// The close of a window niri never reported, which niri-ipc's reducer panics on.
+    const CLOSED_UNKNOWN: &str = "{\"WindowClosed\":{\"id\":42}}\n";
     const UNPARSABLE_WINDOWS: &str = "{\"WindowsChanged\":{\"windows\":[{\"id\":\"nine\"}]}}\n";
     const OPENED: &str = "{\"WindowOpenedOrChanged\":{\"window\":{\"id\":11,\"title\":\"c\",\"app_id\":\"foot\",\"pid\":3,\"workspace_id\":1,\"is_focused\":false,\"is_floating\":true,\"is_urgent\":false,\"layout\":{\"pos_in_scrolling_layout\":null,\"tile_size\":[400.0,300.0],\"window_size\":[400,300],\"tile_pos_in_workspace_view\":[0.0,0.0],\"window_offset_in_tile\":[0.0,0.0]}}}}\n";
     /// Longer than any wait in these tests, so the task doesn't reconnect during one.
@@ -1122,6 +1164,40 @@ mod tests {
         .unwrap();
         assert_eq!(events.state(), StreamState::Connected);
         assert_eq!(events.connection(), Some(1));
+    }
+
+    // A panic in the reader task used to end it inside the update, which left the
+    // replica as it was and `status` saying `connected` while nothing applied any more.
+    #[tokio::test(start_paused = true)]
+    async fn an_event_the_reducer_panics_on_stops_the_stream_with_the_panic_message() {
+        let (client, mut niri) = Niri::pair();
+        let events = stream_retrying_after(vec![client], NO_RETRY);
+        niri.expect_request().await;
+        niri.send(&[HANDLED, WORKSPACES, WINDOWS, OVERVIEW]).await;
+        assert!(events.desktop().await.is_ok());
+        let mut updates = events.updates.subscribe();
+        niri.send(&[CLOSED_UNKNOWN, OPENED]).await;
+        let mut connection = events.connection.clone();
+        tokio::time::timeout(
+            WAIT,
+            connection.wait_for(|current| matches!(current, Connection::SchemaIncompatible { .. })),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(events.state(), StreamState::SchemaIncompatible);
+        let error = events.desktop().await.unwrap_err();
+        assert_eq!(error.name, ErrorName::UpstreamError);
+        assert!(
+            error.detail.contains("WindowClosed")
+                && error
+                    .detail
+                    .contains("closed window was missing from the map"),
+            "{error:?}"
+        );
+        // The waiters hear that the replica is gone, not the event.
+        assert!(matches!(updates.recv().await, Ok(Update::Reset(1))));
+        assert!(niri.closed().await);
     }
 
     #[tokio::test(start_paused = true)]
