@@ -886,7 +886,7 @@ pub(crate) fn unmappable(why: Unmappable) -> ToolError {
         ),
         Unmappable::PageScaleUnknown => (
             "page_scale_unknown",
-            "the element is in a web page whose coordinates may be in the output's pixels rather than the window's, and its document isn't the size of the view holding it or that size times the output's scale, so which unit isn't known; use activate_element or set_element_text, or aim with a screenshot pixel instead",
+            "the element is in a web page whose coordinates may be in the output's pixels rather than the window's, and its document isn't the size of the view holding it or that size times the output's scale, so which unit isn't known; use activate_element, or aim with a screenshot pixel instead",
         ),
         Unmappable::NotShowing => (
             "not_showing",

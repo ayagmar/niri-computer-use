@@ -3043,6 +3043,9 @@ async fn a_chromium_pages_button_is_aimed_at_in_logical_pixels() {
     let (name, detail) = tool_error(&refused);
     assert_eq!(name, "element_unmappable", "{refused}");
     assert!(detail.starts_with("page_scale_unknown: "), "{detail}");
+    // Chromium's text fields refuse `set_element_text`, so the advice mustn't send there.
+    assert!(detail.contains("activate_element"), "{detail}");
+    assert!(!detail.contains("set_element_text"), "{detail}");
     assert_eq!(desk.fixture.clipboard.pointed(), []);
     let relisted = safe(&mut desk).await;
     assert_eq!(relisted["layout_box"], Value::Null, "{relisted}");
