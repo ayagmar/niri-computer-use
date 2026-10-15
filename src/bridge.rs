@@ -7,6 +7,7 @@
 
 mod client;
 pub(crate) mod envelope;
+pub(crate) mod unavailable;
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;

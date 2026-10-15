@@ -241,6 +241,7 @@ async fn main() -> ExitCode {
                 unrestricted: &settings.unrestricted,
                 confirm_lease: &settings.confirm_lease,
                 tools: &settings.tools,
+                shared: &settings.shared,
                 place: settings.place(),
                 accessibility: &accessibility,
                 accessibility_switch: None,
@@ -297,28 +298,40 @@ fn command(args: &[OsString]) -> Option<Command> {
 }
 
 /// Serves the client on stdin and stdout: through the shared engine in shared mode, unless
-/// it can't be reached or refuses this client, and standalone otherwise. Decided before
-/// the client's first byte is read.
+/// it can't be reached or refuses this client, and standalone otherwise. A client that
+/// requires the shared engine is never served standalone: without it, every tool fails with
+/// `engine_unavailable`. Decided before the client's first byte is read.
 async fn serve(env: Env, given: session::Given) -> Result<(), String> {
     let settings = session::Settings::new(given.clone());
-    let shared = policy::shared(
-        &settings.policy,
-        std::env::var_os("NIRI_COMPUTER_USE_SHARED").as_deref(),
-    );
-    let reached = match shared {
-        Ok(true) => reach_engine(&env, given.clone()).await.map(Some),
-        Ok(false) => Ok(None),
-        Err(note) => Err(note),
-    };
-    let fallback = match reached {
-        Ok(Some((target, link))) => return bridge::run(target, link).await,
-        Ok(None) => None,
-        Err(reason) => {
-            cli::print_error(&format!("serving this client standalone: {reason}"));
-            Some(reason)
+    let sharing = settings.shared.setting();
+    let reached = match (&settings.shared.env, sharing) {
+        (Err(note), _) => Err(note.clone()),
+        (Ok(_), policy::Sharing::Off) => return standalone(env, settings, None).await,
+        (Ok(_), policy::Sharing::On | policy::Sharing::Required) => {
+            // The engine reports the setting decided here, from the whole policy file, which
+            // the hello may not carry.
+            let given = session::Given {
+                shared: Some(sharing.variable().into()),
+                ..given
+            };
+            reach_engine(&env, given).await
         }
     };
-    standalone(env, settings, fallback).await
+    let reason = match reached {
+        Ok((target, link)) => return bridge::run(target, link).await,
+        Err(reason) => reason,
+    };
+    if sharing == policy::Sharing::Required {
+        cli::print_error(&format!(
+            "the shared engine is required, so every tool fails with engine_unavailable: {reason}"
+        ));
+        let tools = tools::Server::listed(settings.tools.profile());
+        return bridge::unavailable::Unavailable::new(tools, &reason)
+            .run()
+            .await;
+    }
+    cli::print_error(&format!("serving this client standalone: {reason}"));
+    standalone(env, settings, Some(reason)).await
 }
 
 async fn reach_engine(

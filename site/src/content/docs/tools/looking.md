@@ -17,7 +17,7 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `discovery.runtime_dir`, `discovery.niri_socket`, `discovery.wayland_display` | where each came from: `{"source": "environment"}`, `{"source": "discovered"}`, or `{"source": "missing", "detail": …}` with why (see [Session variables](../../start/clients/#session-variables)) |
 | `engine.pid`, `engine.mode` | the process serving this client, and how: `standalone` serves one client over stdin and stdout, `shared` is the instance's [shared engine](../../concepts/configuration/#shared); `engine` is null from the `status` subcommand |
 | `engine.sessions` | how many clients that process serves, this one included |
-| `engine.fallback` | why a client in shared mode is served standalone, such as a `NIRI_COMPUTER_USE_SHARED` other than `1` or `0`, or null |
+| `engine.fallback` | why a client in shared mode is served standalone, such as a `NIRI_COMPUTER_USE_SHARED` other than `1`, `0` or `required`, or null |
 | `engine.version`, `engine.exe` | that process's version and the file it was started from |
 | `engine.replaced` | `true` once `engine.exe` holds another build, as after a reinstall: the process still runs the build it started with until its clients restart |
 | `engine.cgroup` | that process's cgroup; a shared engine has a scope of its own when its bridge could reach the user's systemd |
@@ -51,6 +51,7 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `unrestricted.enabled`, `unrestricted.source`, `unrestricted.error` | whether gated `niri_action`s and unrestricted presets are allowed, whether the policy file, `NIRI_COMPUTER_USE_UNRESTRICTED` or both allowed them, and why the variable was ignored |
 | `confirm_lease.enabled`, `confirm_lease.source`, `confirm_lease.error` | whether `acquire_desktop` waits for the user to allow it on the desktop, whether the policy file, `NIRI_COMPUTER_USE_CONFIRM_LEASE` or both asked for that, and why the variable was ignored |
 | `audit.path`, `audit.last_error` | the audit log and the last failure to write it |
+| `shared.setting`, `shared.error` | this client's [`shared`](../../concepts/configuration/#shared) setting, `on`, `off` or `required`, from `NIRI_COMPUTER_USE_SHARED` or else the policy file, and why the variable was refused |
 | `tools.profile`, `tools.source`, `tools.error` | the [tool profile](../../concepts/configuration/#tools) this server lists, whether the policy file, `NIRI_COMPUTER_USE_TOOLS` or both chose it, and why the variable was ignored |
 | `binaries` | whether `grim` and `notify-send` are on this client's `PATH` |
 | `desktop_programs` | the directories searched for `loginctl` and `noctalia` at startup (`search`), and the path found for each, or null |

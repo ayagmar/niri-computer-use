@@ -11,10 +11,10 @@ use rustix::fs::{Mode, OFlags};
 use tokio::io::{AsyncRead, ReadBuf};
 use tokio::sync::{Semaphore, SemaphorePermit, oneshot, watch};
 
-use crate::policy::{self, Loaded, Switch, Tools};
+use crate::policy::{self, Loaded, Shared, Switch, Tools};
 use crate::runner::Place;
 
-/// What a client's own environment gives its session, and no other: its three variables,
+/// What a client's own environment gives its session, and no other: its four variables,
 /// its home, and the policy file as read from its config directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Given {
@@ -24,6 +24,9 @@ pub(crate) struct Given {
     pub(crate) confirm_lease: Option<OsString>,
     /// `NIRI_COMPUTER_USE_TOOLS`, as given: the profile of tools to list.
     pub(crate) tools: Option<OsString>,
+    /// `NIRI_COMPUTER_USE_SHARED`, as given: whether the client is served by the shared
+    /// engine. A shared engine's session gets the setting its bridge decided instead.
+    pub(crate) shared: Option<OsString>,
     /// `$HOME`, for a `capture_dir` under `~/`.
     pub(crate) home: Option<PathBuf>,
     /// `$PATH`, where the session's own programs, such as `grim`, are found. Empty
@@ -46,6 +49,7 @@ impl Given {
             unrestricted: var("NIRI_COMPUTER_USE_UNRESTRICTED"),
             confirm_lease: var("NIRI_COMPUTER_USE_CONFIRM_LEASE"),
             tools: var("NIRI_COMPUTER_USE_TOOLS"),
+            shared: var("NIRI_COMPUTER_USE_SHARED"),
             home,
             path,
             policy: policy::Source::read(config_dir.as_deref()),
@@ -65,6 +69,9 @@ pub(crate) struct Settings {
     pub(crate) confirm_lease: Switch,
     /// Which tools the session lists, from the policy file and the session's variable.
     pub(crate) tools: Tools,
+    /// Whether the client is served by the shared engine, from the policy file and the
+    /// session's variable.
+    pub(crate) shared: Shared,
     /// The session's home, for a `capture_dir` under `~/`.
     pub(crate) home: Option<PathBuf>,
     /// The session's `PATH`, where `grim` is found for its calls.
@@ -104,6 +111,10 @@ impl Settings {
             tools: Tools {
                 policy: policy.tools(),
                 env: Tools::parse_env(given.tools.as_deref()),
+            },
+            shared: Shared {
+                policy: policy.shared(&given.policy),
+                env: Shared::parse_env(given.shared.as_deref()),
             },
             policy,
             home: given.home,
@@ -469,6 +480,7 @@ mod tests {
             unrestricted: Some("true".into()),
             confirm_lease: Some("true".into()),
             tools: None,
+            shared: None,
             home: None,
             path: None,
             policy: policy::Source::Missing,

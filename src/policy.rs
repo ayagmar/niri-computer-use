@@ -116,9 +116,9 @@ pub(crate) struct Policy {
     #[serde(default)]
     pub(crate) confirm_lease: bool,
     /// `false` serves this client standalone rather than through the instance's shared
-    /// engine; unset, it is shared.
+    /// engine, and `"required"` only through it; unset or `true`, it is shared.
     #[serde(default)]
-    pub(crate) shared: Option<bool>,
+    pub(crate) shared: Sharing,
     /// Which tools to list: `observe`, `act` or `full`.
     #[serde(default)]
     pub(crate) tools: Profile,
@@ -289,6 +289,19 @@ impl Loaded {
         match self {
             Self::Valid(policy) => policy.confirm_lease,
             Self::Missing | Self::Invalid(_) => false,
+        }
+    }
+
+    /// The file's `shared`; `on` when the file is missing, and when it is invalid, unless
+    /// `source`, the text it was read from, is TOML whose own `shared` says `"required"`: a
+    /// mistake elsewhere in the file mustn't drop the requirement.
+    pub(crate) fn shared(&self, source: &Source) -> Sharing {
+        match (self, source) {
+            (Self::Valid(policy), _) => policy.shared,
+            (Self::Invalid(_), Source::Text { text, .. }) if requires_shared(text) => {
+                Sharing::Required
+            }
+            (Self::Missing | Self::Invalid(_), _) => Sharing::On,
         }
     }
 
@@ -551,22 +564,121 @@ pub(crate) struct Switch {
     pub(crate) when_wrong: bool,
 }
 
-/// Whether `serve` bridges its client to the shared engine: `NIRI_COMPUTER_USE_SHARED`,
-/// given as `env`, when it is `0` or `1`, otherwise the policy file's `shared`, which is
-/// on unless the file turns it off. Any other value of the variable is the error, and the
-/// client is served standalone with it as the reason.
-pub(crate) fn shared(policy: &Loaded, env: Option<&std::ffi::OsStr>) -> Result<bool, String> {
-    match env.filter(|value| !value.is_empty()) {
-        Some(value) if value == "1" => Ok(true),
-        Some(value) if value == "0" => Ok(false),
-        Some(value) => Err(format!(
-            "NIRI_COMPUTER_USE_SHARED is \"{}\"; it takes 1 for shared or 0 for standalone",
-            value.display()
-        )),
-        None => Ok(match policy {
-            Loaded::Valid(policy) => policy.shared.unwrap_or(true),
-            Loaded::Missing | Loaded::Invalid(_) => true,
-        }),
+/// How `serve` serves its client: through the instance's shared engine or standalone. The
+/// policy file spells it `true`, `false` or `"required"`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Sharing {
+    /// Standalone.
+    Off,
+    /// Through the shared engine, and standalone when it can't be reached or refuses the
+    /// client.
+    #[default]
+    On,
+    /// Only through the shared engine: when it can't be reached or refuses the client,
+    /// every tool fails with `engine_unavailable`.
+    Required,
+}
+
+impl Sharing {
+    /// How `NIRI_COMPUTER_USE_SHARED` spells it.
+    pub(crate) const fn variable(self) -> &'static str {
+        match self {
+            Self::Off => "0",
+            Self::On => "1",
+            Self::Required => "required",
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Sharing {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(SharingVisitor)
+    }
+}
+
+struct SharingVisitor;
+
+impl serde::de::Visitor<'_> for SharingVisitor {
+    type Value = Sharing;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("true, false or \"required\"")
+    }
+
+    fn visit_bool<E: serde::de::Error>(self, value: bool) -> Result<Sharing, E> {
+        Ok(if value { Sharing::On } else { Sharing::Off })
+    }
+
+    fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Sharing, E> {
+        if value == "required" {
+            Ok(Sharing::Required)
+        } else {
+            Err(E::invalid_value(serde::de::Unexpected::Str(value), &self))
+        }
+    }
+}
+
+/// Whether `text` is TOML whose top-level `shared` is `"required"`, whatever the rest of it
+/// holds.
+fn requires_shared(text: &str) -> bool {
+    toml::from_str::<toml::Table>(text)
+        .ok()
+        .and_then(|table| table.get("shared")?.clone().try_into::<Sharing>().ok())
+        == Some(Sharing::Required)
+}
+
+/// Whether `serve` bridges its client to the shared engine, from the policy file's
+/// `shared` and `NIRI_COMPUTER_USE_SHARED`, which wins when it is `0`, `1` or `required`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Shared {
+    /// The policy file's key; `on` when the file is missing or invalid.
+    pub(crate) policy: Sharing,
+    /// The variable: none when unset or empty, and an error for any other value.
+    pub(crate) env: Result<Option<Sharing>, String>,
+}
+
+/// What `status` reports about the shared setting.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct SharedStatus {
+    setting: Sharing,
+    /// Why the variable was refused.
+    error: Option<String>,
+}
+
+impl Shared {
+    /// The variable's value, read as `Shared::env` says.
+    pub(crate) fn parse_env(value: Option<&std::ffi::OsStr>) -> Result<Option<Sharing>, String> {
+        let Some(value) = value.filter(|value| !value.is_empty()) else {
+            return Ok(None);
+        };
+        match value.to_str() {
+            Some("0") => Ok(Some(Sharing::Off)),
+            Some("1") => Ok(Some(Sharing::On)),
+            Some("required") => Ok(Some(Sharing::Required)),
+            _ => Err(format!(
+                "NIRI_COMPUTER_USE_SHARED is \"{}\"; it takes 1 for shared, 0 for standalone or required",
+                value.display()
+            )),
+        }
+    }
+
+    /// The variable's setting, or else the file's. A wrong variable serves the client
+    /// standalone, with the error as the reason, unless the file requires the shared
+    /// engine: then the client gets no engine, with the error as the reason.
+    pub(crate) fn setting(&self) -> Sharing {
+        match &self.env {
+            Ok(env) => env.unwrap_or(self.policy),
+            Err(_) if self.policy == Sharing::Required => Sharing::Required,
+            Err(_) => Sharing::Off,
+        }
+    }
+
+    pub(crate) fn status(&self) -> SharedStatus {
+        SharedStatus {
+            setting: self.setting(),
+            error: self.env.clone().err(),
+        }
     }
 }
 
@@ -1118,37 +1230,84 @@ argv = ["/usr/bin/foot"]
 app_id = "foot"
 "#;
 
+    /// The `shared` setting of a policy file holding `text`, or of none for `None`.
+    fn shared_in(text: Option<&str>) -> Sharing {
+        let source = text.map_or(Source::Missing, |text| Source::Text {
+            path: "/p.toml".into(),
+            text: text.to_owned(),
+        });
+        Loaded::from_source(&source, false).shared(&source)
+    }
+
     #[test]
-    fn shared_mode_is_on_unless_the_variable_or_the_file_turns_it_off() {
-        let file = |shared| {
-            Loaded::Valid(Policy {
-                shared,
-                ..Policy::default()
-            })
+    fn the_shared_variable_wins_over_the_file_but_a_wrong_one_keeps_required() {
+        let setting = |file: Option<&str>, env: Option<&str>| {
+            Shared {
+                policy: shared_in(file),
+                env: Shared::parse_env(env.map(std::ffi::OsStr::new)),
+            }
+            .setting()
         };
-        let env = |value: &'static str| Some(std::ffi::OsStr::new(value));
-        assert_eq!(shared(&Loaded::Missing, None), Ok(true));
-        assert_eq!(shared(&Loaded::Invalid("bad".to_owned()), None), Ok(true));
-        assert_eq!(shared(&file(None), None), Ok(true));
-        assert_eq!(shared(&file(Some(false)), None), Ok(false));
-        assert_eq!(shared(&file(Some(false)), env("1")), Ok(true));
-        assert_eq!(shared(&file(None), env("0")), Ok(false));
-        assert_eq!(shared(&file(Some(false)), env("")), Ok(false));
+        let (off, on, required) = (
+            Some("shared = false"),
+            Some("shared = true"),
+            Some("shared = \"required\""),
+        );
+        assert_eq!(setting(None, None), Sharing::On);
+        assert_eq!(setting(Some(""), None), Sharing::On);
+        assert_eq!(setting(on, None), Sharing::On);
+        assert_eq!(setting(off, None), Sharing::Off);
+        assert_eq!(setting(required, None), Sharing::Required);
+        assert_eq!(setting(off, Some("1")), Sharing::On);
+        assert_eq!(setting(required, Some("1")), Sharing::On);
+        assert_eq!(setting(required, Some("0")), Sharing::Off);
+        assert_eq!(setting(off, Some("required")), Sharing::Required);
+        assert_eq!(setting(off, Some("")), Sharing::Off);
+        // A wrong variable can't drop the file's requirement.
+        assert_eq!(setting(on, Some("yes")), Sharing::Off);
+        assert_eq!(setting(required, Some("yes")), Sharing::Required);
         assert!(
-            shared(&file(None), env("yes"))
+            Shared::parse_env(Some(std::ffi::OsStr::new("yes")))
                 .unwrap_err()
                 .contains("\"yes\"")
         );
-        assert_eq!(
-            Loaded::from_source(
-                &Source::Text {
-                    path: "/p.toml".into(),
-                    text: "shared = false".to_owned()
-                },
-                false
-            ),
-            file(Some(false))
-        );
+    }
+
+    #[test]
+    fn the_file_spells_shared_true_false_or_required() {
+        assert_eq!(shared_in(Some("shared = \"required\"")), Sharing::Required);
+        for wrong in ["shared = \"yes\"", "shared = 1", "shared = \"Required\""] {
+            let source = Source::Text {
+                path: "/p.toml".into(),
+                text: wrong.to_owned(),
+            };
+            let Loaded::Invalid(error) = Loaded::from_source(&source, false) else {
+                panic!("{wrong} is valid");
+            };
+            assert!(error.contains("true, false or \"required\""), "{error}");
+            assert_eq!(shared_in(Some(wrong)), Sharing::On, "{wrong}");
+        }
+    }
+
+    /// A mistake elsewhere in the file makes it invalid, but mustn't drop the requirement;
+    /// only `"required"` is read from an invalid file, which otherwise leaves shared mode on.
+    #[test]
+    fn an_invalid_file_still_requires_the_shared_engine() {
+        for invalid in [
+            "shared = \"required\"\ncapture_dir = \"shots\"",
+            "shared = \"required\"\nnot_a_key = 1",
+            "deny_input_app_ids = 3\nshared = \"required\"",
+        ] {
+            assert_eq!(shared_in(Some(invalid)), Sharing::Required, "{invalid}");
+        }
+        for invalid in [
+            "shared = false\ncapture_dir = \"shots\"",
+            "not_a_key = \"required\"",
+            "shared = \"required\"\n[[",
+            "[preset]\nshared = \"required\"",
+        ] {
+            assert_eq!(shared_in(Some(invalid)), Sharing::On, "{invalid}");
+        }
     }
 
     #[test]
