@@ -63,7 +63,8 @@ Without a marker it prints `No input-dirty marker: nothing to recover.` and exit
 
 - held pointer buttons: sends their release from a fresh virtual pointer, or, if it can't, asks you to press and release each of them
 - native keys: sends their release and zero modifiers from a fresh virtual keyboard, which also makes niri send the compositor's keymap again. The modifiers go out in the layout niri has active; if niri doesn't say which that is, they go out in the layout the call started in, and `recover` says the focused application may show another layout until the next key
-- none of these, or a marker it can't read, such as one an older version wrote: nothing to release, so only the check below
+- the `wtype` child a 0.1.0 server's marker names: ends it, with its process group when it leads one, if it is still the process the marker names, and waits up to five seconds for it to exit. A child that already exited is reported as such
+- none of these, or a marker it can't read: nothing to release, so only the check below
 
 Then it asks you to check by hand:
 

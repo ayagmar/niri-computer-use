@@ -119,7 +119,7 @@ pgrep -a '^niri-computer-u'
 
 Older development builds keep the lease, the stop flag and the input-dirty marker under `XDG_RUNTIME_DIR` rather than beside niri's socket, and don't take the marker's lock, so an old and a new server on one niri would act as if the other weren't there. When updating from one of those, end every running `niri-computer-use` process first, and start your clients again once nothing is listed.
 
-Updating from 0.1.0 is the same: 0.1.0 types through `wtype`, and an input-dirty marker it writes can't be read by later versions, so a server beside it sends agents to `recover` until it finishes. End every running `niri-computer-use` process before you install, and if `status` then shows `input_dirty`, run `niri-computer-use recover`.
+From 0.1.0, which types through `wtype`, this version reads the input-dirty marker 0.1.0 writes while `wtype` runs, and `recover` ends the `wtype` child it names. 0.1.1 couldn't read that marker, so its servers sent agents to `recover` while a 0.1.0 server still typed, and its `recover` left the child running.
 
 ## Check it
 

@@ -33,7 +33,7 @@ If the call is cancelled midway, the server releases any held button or key. A p
 
 If the input can't be released, or its cleanup ended without removing the marker, for example because niri didn't acknowledge the release within the cleanup's ten seconds, the marker stays. Every action then refuses with `recovery_required`, and the `detail` tells the agent to call `release_desktop` and you to run `niri-computer-use recover`, which needs the lease. A server can only tell whether its own input is still finishing: for a marker another server wrote, such as a shared engine's seen by a standalone server, while that server still runs, the `detail` says that input may still be finishing and to try again in a few seconds before `recover`. A marker whose server has exited, or whose crash guardian has sent its releases, gets the `recover` wording at once.
 
-`recover` releases any pointer button or key the marker names, then asks you to check that no key or button is held. It clears the marker only when you type `yes`. See the [CLI reference](../../reference/cli/#recover).
+`recover` releases any pointer button or key the marker names, and ends the `wtype` child a 0.1.0 server's marker names, then asks you to check that no key or button is held. It clears the marker only when you type `yes`. See the [CLI reference](../../reference/cli/#recover).
 
 ## The crash guardian
 
