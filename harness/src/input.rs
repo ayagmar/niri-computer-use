@@ -12,7 +12,7 @@ mod dropped_paste;
 mod engine;
 mod engine_scope;
 mod exposure;
-mod guardian;
+pub(crate) mod guardian;
 mod keeper;
 mod native;
 mod native_gestures;

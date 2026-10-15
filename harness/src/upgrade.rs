@@ -32,6 +32,8 @@ const WAIT: Duration = Duration::from_secs(5);
 /// Long enough to be typing still when the other side looks.
 const TYPED: usize = 1000;
 const MARKER_POLL: Duration = Duration::from_millis(1);
+/// The guardian's own ten seconds for its releases, and room to exit.
+const GUARDIAN_WAIT: Duration = Duration::from_secs(12);
 /// Valid in every release: a key each one reads.
 const POLICY: &str = "deny_input_app_ids = [\"org.keepassxc.KeePassXC\"]\n";
 /// A key added after 0.1.1.
@@ -295,6 +297,14 @@ fn signal(pid: i32, signal: Signal) -> Result<()> {
     kill_process(pid, signal).context(format!("send {signal:?} to PID {}", pid.as_raw_nonzero()))
 }
 
+/// Whether `pid` has exited: gone, or a zombie not yet reaped.
+fn ended(pid: u32) -> bool {
+    fs::read_to_string(format!("/proc/{pid}/stat")).map_or(true, |stat| {
+        stat.rsplit_once(") ")
+            .is_some_and(|(_, rest)| rest.starts_with('Z') || rest.starts_with('X'))
+    })
+}
+
 fn marker(session: &Session<'_>) -> Result<PathBuf> {
     Ok(session.control_dir()?.join("input-dirty"))
 }
@@ -319,6 +329,7 @@ fn crashed(
     start_typing(session, &mut a, serving)?;
     let read = structured(&new.call(session, "status", json!({}))?);
     let waited = new.call(session, "acquire_desktop", json!({}));
+    let guardian = crate::input::guardian::of(u32::try_from(engine).context("the engine's PID")?)?;
     signal(serving, Signal::KILL)?;
     let seen = field(&read?, "/input_dirty").clone();
     session.log(&format!(
@@ -338,6 +349,14 @@ fn crashed(
         &waited.to_string(),
     )?;
     a.stop()?;
+    // The guardian holds the lease while it sends the releases the marker names, and
+    // `recover` needs the lease.
+    session.wait_until(
+        "upgrade-guardian",
+        "the killed engine's crash guardian ending",
+        GUARDIAN_WAIT,
+        |_| Ok(ended(guardian).then_some(())),
+    )?;
     let left = fs::read_to_string(marker(session)?).context("read the marker left")?;
     session.log(&format!(
         "upgrade: the killed engine left the marker {left}"
