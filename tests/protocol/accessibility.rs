@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use crate::atspi::{self, Bus, Mock, Object};
 use crate::client::{Server, WAIT, tool_error};
 use crate::elements::{WINDOW, app_window, objects, workspace};
-use crate::fixture::{self, Fixture, SPAWNING, shared_mode};
+use crate::fixture::{self, Fixture, SPAWNING, eventually, exited, shared_mode};
 use crate::niri::{Niri, Stream};
 
 /// What a detail says when the launcher may have written its settings key for a listener
@@ -188,6 +188,7 @@ async fn an_app_off_the_bus_turns_accessibility_on_until_the_server_ends_however
     assert!(turns(&desk.bus, false).await);
     assert_eq!(desk.mock.status_writes(), 0);
     desk.fixture.started(engine);
+    killed(engine).await;
 }
 
 /// The user turning accessibility off over the server's listener means it off: the server
@@ -427,6 +428,7 @@ async fn accessibility_stays_on_while_any_server_still_holds_it() {
     if !shared_mode() {
         fixture::kill(first);
         desk.fixture.started(first);
+        killed(first).await;
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert!(desk.bus.is_enabled().await);
     }
@@ -434,6 +436,14 @@ async fn accessibility_stays_on_while_any_server_still_holds_it() {
     desk.fixture.started(other);
     assert!(turns(&desk.bus, false).await);
     assert_eq!(desk.mock.status_writes(), 0);
+    killed(other).await;
+}
+
+/// Waits for `pid`, killed, to have exited. A shared engine isn't the test's child, so
+/// nothing reaps it, and its bus connection closes while the kernel is still ending it: the
+/// fixture would find it running.
+async fn killed(pid: u32) {
+    assert!(eventually(WAIT, || exited(i32::try_from(pid).unwrap())).await);
 }
 
 #[tokio::test]
