@@ -202,7 +202,7 @@ async fn connection(engine: Arc<Engine>, own: Arc<Own>, stream: UnixStream, busy
     let hello = match taken {
         Ok(hello) => hello,
         Err((error, detail)) => {
-            reply(&mut output, &Reply::Refused { error, detail })
+            reply(&mut output, &Reply::refused(error, detail))
                 .await
                 .ok();
             return;
@@ -216,8 +216,7 @@ async fn connection(engine: Arc<Engine>, own: Arc<Own>, stream: UnixStream, busy
     let dir = match Dir::of_process(pid) {
         Ok(dir) => dir,
         Err(detail) => {
-            let error = Refusal::NoDirectory;
-            reply(&mut output, &Reply::Refused { error, detail })
+            reply(&mut output, &Reply::refused(Refusal::NoDirectory, detail))
                 .await
                 .ok();
             return;

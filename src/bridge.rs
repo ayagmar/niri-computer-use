@@ -62,6 +62,9 @@ const SYSTEMD_RUN: &str = "systemd-run";
 const REAP: Duration = Duration::from_secs(1);
 /// The most of what `systemd-run` wrote that an engine started without it is told.
 const MAX_SCOPE_ERROR: u64 = 2048;
+/// What a bridge adds to an `engine_version` refusal from an engine of 0.1.1 or older,
+/// which says only that it runs another build.
+const OLDER_ENGINE: &str = "that engine, of niri-computer-use 0.1.1 or older, serves the MCP clients started before this build was installed until the last of them ends: restart those clients to end it";
 /// Why a bridge's second or third start skips `systemd-run`.
 const EARLIER: &str = "the engine an earlier start ran through systemd-run never listened";
 
@@ -225,7 +228,11 @@ async fn say_hello(target: &Target) -> Result<Link, Failed> {
         .map_err(|detail| Failed::Retry(format!("the hello: {detail}")))?;
     match serde_json::from_slice::<Reply>(&reply) {
         Ok(Reply::Engine { pid }) => Ok(Link::new(pid, input, output)),
-        Ok(Reply::Refused { error, detail }) => {
+        Ok(Reply::Refused {
+            error,
+            detail,
+            release,
+        }) => {
             let detail = format!(
                 "the shared engine refused this client ({}): {detail}",
                 serde_json::to_value(error)
@@ -233,10 +240,12 @@ async fn say_hello(target: &Target) -> Result<Link, Failed> {
                     .and_then(|name| name.as_str().map(str::to_owned))
                     .unwrap_or_default()
             );
-            Err(if error == Refusal::EngineVersion {
-                Failed::OtherBuild(detail)
-            } else {
-                Failed::Refused(detail)
+            Err(match (error, release) {
+                (Refusal::EngineVersion, None) => {
+                    Failed::OtherBuild(format!("{detail}; {OLDER_ENGINE}"))
+                }
+                (Refusal::EngineVersion, Some(_)) => Failed::OtherBuild(detail),
+                _ => Failed::Refused(detail),
             })
         }
         Err(error) => Err(Failed::Retry(format!("read the engine's hello: {error}"))),
@@ -969,10 +978,7 @@ mod tests {
         let listener = tokio::net::UnixListener::bind(runtime.path().join(SOCKET)).unwrap();
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
-                let refused = Reply::Refused {
-                    error: refusal,
-                    detail: "what the engine says".to_owned(),
-                };
+                let refused = Reply::refused(refusal, "what the engine says".to_owned());
                 let mut line = serde_json::to_vec(&refused).unwrap();
                 line.push(b'\n');
                 stream.into_split().1.write_all(&line).await.ok();

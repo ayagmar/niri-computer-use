@@ -314,6 +314,13 @@ async fn after_the_binary_is_replaced_new_clients_wait_out_the_old_engine_standa
     assert_eq!(served["mode"], "standalone", "{served}");
     let fallback = served["fallback"].as_str().unwrap();
     assert!(fallback.contains("(engine_version)"), "{fallback}");
+    // The old engine is the stale one, and says so; the client's server adds nothing.
+    assert!(
+        fallback.contains("a build since replaced at")
+            && fallback.contains("Restart the MCP clients this engine serves")
+            && !fallback.contains("0.1.1 or older"),
+        "{fallback}"
+    );
     assert!(
         fallback.contains(&format!("PID {old_engine}")),
         "{fallback}"

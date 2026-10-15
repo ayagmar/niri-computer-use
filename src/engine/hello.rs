@@ -169,8 +169,28 @@ impl Hello {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Reply {
-    Engine { pid: u32 },
-    Refused { error: Refusal, detail: String },
+    Engine {
+        pid: u32,
+    },
+    Refused {
+        error: Refusal,
+        detail: String,
+        /// The engine's release. Engines of 0.1.1 and older send none, and their bridges
+        /// ignore it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        release: Option<String>,
+    },
+}
+
+impl Reply {
+    /// This engine's refusal.
+    pub(crate) fn refused(error: Refusal, detail: String) -> Self {
+        Self::Refused {
+            error,
+            detail,
+            release: Some(RELEASE.to_owned()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

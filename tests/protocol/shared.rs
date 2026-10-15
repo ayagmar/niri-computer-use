@@ -393,11 +393,35 @@ async fn an_engine_refusing_the_hello_after_a_loss_leaves_calls_unavailable() {
     }
 }
 
-/// Answers every hello on the engine's socket, which a killed engine left, with an
-/// `engine_version` refusal.
+/// An engine of 0.1.1, as a client started after an upgrade to this build meets it: it
+/// refuses the client's hello without naming its release or what to do. The client is
+/// served standalone, and its fallback says how to end that engine.
+#[tokio::test]
+async fn a_client_beside_an_engine_of_0_1_1_is_told_which_clients_to_restart() {
+    let fixture = shared("shared-older");
+    let _niri = Niri::start(&fixture);
+    std::fs::create_dir_all(fixture.runtime_dir()).unwrap();
+    let _older = refusing_engine(&fixture);
+    let mut server = Server::start(&fixture).await;
+    let engine = server.structured("status").await["engine"].clone();
+    assert_eq!(engine["mode"], "standalone", "{engine}");
+    let fallback = engine["fallback"].as_str().unwrap();
+    assert!(
+        fallback.contains("(engine_version): another build")
+            && fallback.contains(
+                "serves the MCP clients started before this build was installed until the last of them ends: restart those clients"
+            ),
+        "{fallback}"
+    );
+}
+
+/// Answers every hello on the engine's socket with an `engine_version` refusal, as an
+/// engine of 0.1.1 sends it: with no release. A socket a killed engine left is replaced.
 fn refusing_engine(fixture: &Fixture) -> tokio::task::JoinHandle<()> {
     let path = fixture.runtime_dir().join("engine.sock");
-    std::fs::remove_file(&path).unwrap();
+    if path.exists() {
+        std::fs::remove_file(&path).unwrap();
+    }
     let listener = tokio::net::UnixListener::bind(path).unwrap();
     tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {

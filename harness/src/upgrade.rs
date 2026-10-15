@@ -168,10 +168,10 @@ fn beside(session: &mut Session<'_>, old: &mut Old, new: &mut Client) -> Result<
     ))?;
     expect(
         field(&status, "/engine/mode") == "standalone"
-            && fallback
-                .as_str()
-                .is_some_and(|text| text.contains("engine_version")),
-        "the new client served standalone, refused by the old engine",
+            && fallback.as_str().is_some_and(|text| {
+                text.contains("engine_version") && text.contains("restart those clients")
+            }),
+        "the new client served standalone, refused by the old engine, and told what to do",
         &status.to_string(),
     )?;
     let refused = new.call(session, "acquire_desktop", json!({}))?;
