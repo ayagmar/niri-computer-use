@@ -13,7 +13,7 @@ This skill uses short tool names, but your client adds its MCP prefix: call the 
 
 ## Looking
 
-Start with `status`: it says whether the screen is locked, whether Noctalia runs, which launch presets exist and who holds the lease. Then prefer structured data, which is exact and cheap, to screenshots:
+Start with `status`: it says whether the screen is locked, whether Noctalia runs, which launch presets exist and who holds the lease. Then prefer structured data, exact and cheap, to screenshots:
 
 - `desktop_state` for windows (ids, `app_id`, title), workspaces, the focused window, monitors (`outputs`) and Noctalia's panels (`shell`)
 - `elements` for what is in one window, when the app exposes accessibility: buttons, fields and menu items with their names, states and places on the screen
@@ -22,13 +22,11 @@ Take a `screenshot` when you need pixels. To wait for something, such as a windo
 
 ## Acting
 
-When `acquire_desktop` isn't listed, `status.tools.profile` is `observe`: the user set this client to look only, so say what you would do instead of doing it.
-
-Acting needs the lease. Take it with `acquire_desktop` only when the user asked you to act, wait for its result, then work in a loop:
+When `acquire_desktop` isn't listed, `status.tools.profile` is `observe`: the user set this client to look only, so say what you would do instead of doing it. Acting needs the lease. Take it with `acquire_desktop` only when the user asked you to act, wait for its result, then work in a loop:
 
 1. Look: `desktop_state`, and a fresh `screenshot` when pixels matter.
 2. Do one action. When you need to see what it did, pass `screenshot: true`: the result then comes with a screenshot taken once the screen stopped changing, and its `screenshot_ref` serves your next click.
-3. Read its result: `accepted` says whether niri or Noctalia took the request, `observed` what happened. `sent` only means the input arrived; it says nothing about what the app did with it.
+3. Read its result: `accepted` says whether niri or Noctalia took the request, `observed` what happened. `sent` only means the input arrived, not what the app did with it.
 4. Read `changes` next: what niri saw the action change, windows `opened` and `closed`, `focus` and `workspace` moving from one id to another, and `windows` whose title, size, workspace, floating or urgency changed. A dialog that opened and took focus shows there. When `changes` says what you expected, go on without a screenshot.
 5. Look again, with a screenshot, when `changes` is absent or unexpected, or the effect is inside a window. Absent `changes` means niri saw nothing change, not that the app did nothing, as when text goes into a field.
 
@@ -62,16 +60,17 @@ For text over 1000 characters, or when typing is slow, pass `via: "paste"` to `t
 
 To send a message, pass `submit: true`. The server presses Enter only once every character went out, and `submitted` says whether it did. Don't press Enter yourself after a call that stopped early: Enter sends whatever is in the box, and a half-typed message that gets sent can't be taken back. Look at the result's screenshot, then finish or fix the text first.
 
-A window can open in the middle of your work, a dialog or a notification that takes focus. If focus leaves your window during `type_text` or `key`, the call reports `interrupted`, not `sent`, and some input may have reached the other window. On `interrupted`, or `changes.focus` leaving your window, see what has focus now and check with a screenshot or `elements` where the text went. If no window opened, the user is probably using the desktop: release it and tell them. Otherwise:
+A window can open in the middle of your work, a dialog or a notification that takes focus. If focus leaves your window during `type_text` or `key`, the call reports `interrupted`, not `sent`, and some input may have reached the other window. On `interrupted`, or `changes.focus` leaving your window, see what has focus now and check with a screenshot or `elements` where the text went. Then:
 
 - An alert or error from the app you are working in, with only OK or Close, such as "Autosave failed": dismiss it, finish the task, and mention the alert in your answer.
 - A dialog that asks for a decision with consequences, such as Save, Discard or Delete: release the desktop and ask the user.
-- Any other window you didn't open: don't close it. Tell the user about it, and if your task can go on, focus your window again and continue.
+- Any other window you didn't open: don't close it. Tell the user, and if your task can go on, focus your window again and continue.
 
 ## Outcomes that need care
 
 - `timeout`, `pending`, `none` or `uncertain`: something may still be happening. The result already carries a fresh screenshot of the focused output; look at it before anything else.
 - Never repeat a `launch` or `close_window` on your own. A second launch opens a second window, and a second close can answer the app's "save changes?" dialog.
+- `interrupted`: another window took focus during the call. If none opened, the user is probably using the desktop; stop and tell them.
 
 ## When to stop and hand back
 
