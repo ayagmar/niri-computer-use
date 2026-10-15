@@ -10,6 +10,7 @@ use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler, ServiceExt as _};
 
 use crate::error::{ErrorName, ToolError};
+use crate::session::Incoming;
 
 /// Answers every call with `engine_unavailable`.
 pub(crate) struct Unavailable {
@@ -29,10 +30,12 @@ impl Unavailable {
         }
     }
 
-    /// Serves the client on stdin and stdout until its end.
+    /// Serves the client on stdin and stdout until its end, or a line over `MAX_LINE`, as
+    /// every other session.
     pub(crate) async fn run(self) -> Result<(), String> {
+        let (input, _gone) = Incoming::new(tokio::io::stdin());
         let service = self
-            .serve((tokio::io::stdin(), tokio::io::stdout()))
+            .serve((input, tokio::io::stdout()))
             .await
             .map_err(|error| format!("start MCP session: {error}"))?;
         service

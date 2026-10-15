@@ -307,7 +307,15 @@ async fn serve(env: Env, given: session::Given) -> Result<(), String> {
     let reached = match (&settings.shared.env, sharing) {
         (Err(note), _) => Err(note.clone()),
         (Ok(_), policy::Sharing::Off) => return standalone(env, settings, None).await,
-        (Ok(_), policy::Sharing::On | policy::Sharing::Required) => reach_engine(&env, given).await,
+        (Ok(_), policy::Sharing::On | policy::Sharing::Required) => {
+            // The engine reports the setting decided here, from the whole policy file, which
+            // the hello may not carry.
+            let given = session::Given {
+                shared: Some(sharing.variable().into()),
+                ..given
+            };
+            reach_engine(&env, given).await
+        }
     };
     let reason = match reached {
         Ok((target, link)) => return bridge::run(target, link).await,

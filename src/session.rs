@@ -25,7 +25,7 @@ pub(crate) struct Given {
     /// `NIRI_COMPUTER_USE_TOOLS`, as given: the profile of tools to list.
     pub(crate) tools: Option<OsString>,
     /// `NIRI_COMPUTER_USE_SHARED`, as given: whether the client is served by the shared
-    /// engine.
+    /// engine. A shared engine's session gets the setting its bridge decided instead.
     pub(crate) shared: Option<OsString>,
     /// `$HOME`, for a `capture_dir` under `~/`.
     pub(crate) home: Option<PathBuf>,
@@ -113,7 +113,7 @@ impl Settings {
                 env: Tools::parse_env(given.tools.as_deref()),
             },
             shared: Shared {
-                policy: policy.shared(),
+                policy: policy.shared(&given.policy),
                 env: Shared::parse_env(given.shared.as_deref()),
             },
             policy,

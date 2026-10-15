@@ -11,6 +11,7 @@ use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 
 use crate::client::{CLIENT, Server, WAIT, tool_error};
 use crate::fixture::{Fixture, eventually, exited, kill, signal};
+use crate::framing;
 use crate::niri::{Niri, Stream, window_on};
 use crate::noctalia::{self, UNLOCKED};
 use crate::session::NiriProcess;
@@ -476,6 +477,54 @@ async fn an_engine_refusing_a_client_that_requires_it_leaves_every_call_unavaila
         "the shared engine refused this client (engine_version): another build",
     )
     .await;
+}
+
+/// A mistake elsewhere in the policy file doesn't drop its requirement: an engine that
+/// refuses the client still leaves every call unavailable.
+#[tokio::test]
+async fn an_invalid_policy_file_still_requires_the_engine() {
+    let fixture = shared("required-invalid");
+    policy(&fixture, "shared = \"required\"\nnot_a_key = 1\n");
+    let _niri = Niri::start(&fixture);
+    let _refusing = refusing_engine(&fixture);
+    let mut server = Server::start(&fixture).await;
+    every_call_unavailable(&mut server, "the shared engine refused this client").await;
+}
+
+/// The engine reports the setting the bridge decided from the whole policy file, for a
+/// file over the 64 KiB the hello carries and for an invalid one.
+#[tokio::test]
+async fn the_engine_reports_the_requirement_of_a_file_it_cant_read() {
+    let fixture = shared("required-reported");
+    let _niri = Niri::start(&fixture);
+    let comment = format!("# {}\n", "x".repeat(70 * 1024));
+    for text in [
+        format!("shared = \"required\"\n{comment}"),
+        "shared = \"required\"\nnot_a_key = 1\n".to_owned(),
+    ] {
+        policy(&fixture, &text);
+        let mut server = Server::start(&fixture).await;
+        let status = server.structured("status").await;
+        assert_eq!(status["engine"]["mode"], "shared", "{status}");
+        assert_eq!(status["policy"]["state"], "invalid", "{status}");
+        assert_eq!(status["shared"]["setting"], "required", "{status}");
+    }
+}
+
+/// A line over the limit ends a session that requires the engine and has none, as it ends
+/// every other session, rather than being read whole.
+#[tokio::test]
+async fn a_line_over_the_limit_ends_a_session_without_the_engine() {
+    let mut fixture = shared("required-line");
+    fixture.set("NIRI_COMPUTER_USE_SHARED", "required");
+    let _niri = Niri::start(&fixture);
+    let _refusing = refusing_engine(&fixture);
+    let mut server = Server::start(&fixture).await;
+    server.send_raw(&framing::oversized_between(100)).await;
+    assert!(server.exit_within(WAIT).await.is_some());
+    let (_, unread, _) = server.stop().await;
+    assert!(framing::answers(&unread, &[100]), "{unread:?}");
+    assert!(!framing::answers(&unread, &[101, 102]), "{unread:?}");
 }
 
 /// A wrong variable doesn't drop the file's requirement, and a client that requires the
