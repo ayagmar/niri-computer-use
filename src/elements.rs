@@ -53,9 +53,10 @@ pub(crate) struct Listing {
     pub(crate) truncated: bool,
     /// How many accessible objects the walk read.
     pub(crate) walked: usize,
-    /// The walk stopped early, so elements further on are missing.
+    /// The walk didn't read the whole tree, so elements in the part not read are missing.
     pub(crate) capped: bool,
-    /// Why: `node_cap`, or `budget_exhausted` when the request's three seconds ran out.
+    /// Why: `node_cap`, `budget_exhausted` when the request's three seconds ran out, or
+    /// `children_refused` when the app refused to list an object's children.
     pub(crate) capped_reason: Option<Capped>,
     /// Why a listed element's ref was left out, with `Ask::whole` or `Ask::by`.
     #[serde(skip)]

@@ -52,7 +52,7 @@ pub(crate) trait Source: Sync {
     fn spent(&self) -> bool;
 }
 
-/// Why a walk ended with nodes left to read.
+/// Why a walk didn't read the whole tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Capped {
