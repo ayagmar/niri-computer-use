@@ -1,7 +1,7 @@
 //! The hello: the first line each way on a connection to the engine, before MCP. The
 //! bridge says which build it is, which niri and display it found, and what its client's
 //! environment gives the session; the engine takes it as a new session or refuses it.
-//! Pure, apart from reading this binary's identity.
+//! Pure, apart from reading the identity of this binary and of the process at the other end.
 
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::MetadataExt as _;
@@ -66,19 +66,81 @@ pub(crate) struct Build {
 
 impl Build {
     pub(crate) fn current() -> Self {
-        let exe = std::fs::read_link("/proc/self/exe").ok().map(|path| {
+        Self::at(Path::new("/proc/self/exe"))
+    }
+
+    /// The build process `pid` runs, with no file when its link can't be read, as for a
+    /// process that has ended or a PID of 0.
+    pub(crate) fn of(pid: u32) -> Self {
+        Self::at(&PathBuf::from(format!("/proc/{pid}/exe")))
+    }
+
+    /// From a process's `exe` link.
+    fn at(link: &Path) -> Self {
+        let exe = std::fs::read_link(link).ok().map(|path| {
             // The kernel names a file removed or replaced since with this suffix.
             let kept = path.as_os_str().as_bytes().strip_suffix(b" (deleted)");
             kept.map(|kept| PathBuf::from(std::ffi::OsStr::from_bytes(kept)))
                 .unwrap_or(path)
         });
-        let running = Exe::current().ok();
+        let running = Exe::of(link).ok();
         let at_path = exe.as_deref().and_then(|path| Exe::of(path).ok());
         Self {
             replaced: running.is_none() || at_path != running,
             exe,
         }
     }
+
+    /// Whether another build has replaced the file this process was started from, as an
+    /// install does: restarting the process runs that build.
+    const fn stale(&self) -> bool {
+        self.exe.is_some() && self.replaced
+    }
+
+    /// Where the process runs from, as a refusal names it.
+    fn whence(&self) -> String {
+        match &self.exe {
+            Some(file) if self.replaced => {
+                format!(
+                    " from {}, which another build has since replaced",
+                    file.display()
+                )
+            }
+            Some(file) => format!(" from {}", file.display()),
+            None => String::new(),
+        }
+    }
+}
+
+/// What the user does when an engine running `engine` refuses a client whose server runs
+/// `client`, another build: restart whichever an install replaced, as restarting it runs
+/// the installed build; when neither was, both builds are installed, and restarting
+/// either runs the same build again.
+pub(crate) fn restart(engine: &Build, client: &Build) -> String {
+    match (engine.stale(), client.stale(), &engine.exe, &client.exe) {
+        (true, true, ..) => "restart this MCP client and the ones the engine serves, so that each runs the build now installed".to_owned(),
+        (true, false, ..) => "restart the MCP clients the engine serves, so that it exits and the next client starts an engine of the installed build".to_owned(),
+        (false, true, ..) => "restart this MCP client, so that its server runs the build now installed".to_owned(),
+        (false, false, Some(theirs), Some(ours)) => format!(
+            "both builds are still installed: point this MCP client at {}, or the ones the engine serves at {}, so that all of them run one build",
+            theirs.display(),
+            ours.display()
+        ),
+        (false, false, ..) => "restart this MCP client if another build has since replaced its server's file; otherwise point it at the file the engine runs, so that both run one build".to_owned(),
+    }
+}
+
+/// What a client's server adds to an `engine_version` refusal by an engine of 0.1.1 or
+/// older, which says only that it runs another build, from what the engine process,
+/// `engine`, and this one run.
+pub(crate) fn older_engine(engine: &Build) -> String {
+    let client = Build::current();
+    format!(
+        "that engine runs niri-computer-use 0.1.1 or older{}, and this client's server runs {RELEASE}{}: {}",
+        engine.whence(),
+        client.whence(),
+        restart(engine, &client)
+    )
 }
 
 /// What a bridge sends.
@@ -230,8 +292,8 @@ pub(crate) struct Own {
 }
 
 impl Own {
-    /// Takes `line` as a hello, or says why not.
-    pub(crate) fn take(&self, line: &[u8]) -> Result<Hello, (Refusal, String)> {
+    /// Takes `line` as a hello from a process running `peer`, or says why not.
+    pub(crate) fn take(&self, line: &[u8], peer: &Build) -> Result<Hello, (Refusal, String)> {
         let value = serde_json::from_slice::<serde_json::Value>(line).ok();
         let version = value
             .as_ref()
@@ -239,7 +301,7 @@ impl Own {
         if let Some(version) = version.filter(|version| *version != u64::from(VERSION)) {
             let theirs =
                 format!(" (one speaking hello {version}, where this engine speaks {VERSION})");
-            return Err((Refusal::EngineVersion, self.another_build(&theirs)));
+            return Err((Refusal::EngineVersion, self.another_build(&theirs, peer)));
         }
         let hello: Hello = serde_json::from_slice(line)
             .map_err(|error| (Refusal::BadHello, format!("read the hello: {error}")))?;
@@ -248,7 +310,7 @@ impl Own {
                 || " (0.1.1 or older)".to_owned(),
                 |release| format!(" ({release})"),
             );
-            return Err((Refusal::EngineVersion, self.another_build(&theirs)));
+            return Err((Refusal::EngineVersion, self.another_build(&theirs, peer)));
         }
         if hello.niri_socket != self.niri_socket || hello.wayland_socket != self.wayland_socket {
             return Err((
@@ -276,30 +338,25 @@ impl Own {
         Ok(hello)
     }
 
-    /// Why a bridge of another build, `theirs` saying what it is, is refused, and what
-    /// the user does about it. An engine refuses such a bridge for as long as it runs,
-    /// which is until its last client leaves, so retrying doesn't help: restarting does.
-    /// Which client to restart depends on whether this engine's file was replaced since it
-    /// started, as by an upgrade.
-    fn another_build(&self, theirs: &str) -> String {
-        let pid = self.pid;
-        let replaced = self
-            .file
-            .as_deref()
-            .is_none_or(|file| Exe::of(file).ok() != Some(self.exe));
-        let file = self
-            .file
-            .as_deref()
-            .map_or_else(|| "its file".to_owned(), |file| file.display().to_string());
-        if replaced {
-            format!(
-                "this engine, PID {pid}, runs niri-computer-use {RELEASE}, a build since replaced at {file}, and keeps it until its last client leaves; this client's server runs another build{theirs}. Restart the MCP clients this engine serves, so that it exits and the next client starts an engine of the installed build"
-            )
-        } else {
-            format!(
-                "this engine, PID {pid}, runs niri-computer-use {RELEASE} from {file}, and this client's server runs another build{theirs}, as after an upgrade replaced it: restart this MCP client, so that its server runs the engine's build. Until then the engine refuses it, whatever the client retries"
-            )
-        }
+    /// Why a bridge of another build, `theirs` saying what it is, run by a process
+    /// running `peer`, is refused, and what the user does about it. An engine refuses such
+    /// a bridge for as long as it runs, which is until its last client leaves, so retrying
+    /// doesn't help: restarting or reconfiguring a client does.
+    fn another_build(&self, theirs: &str, peer: &Build) -> String {
+        let own = Build {
+            replaced: self
+                .file
+                .as_deref()
+                .is_none_or(|file| Exe::of(file).ok() != Some(self.exe)),
+            exe: self.file.clone(),
+        };
+        format!(
+            "this engine, PID {}, runs niri-computer-use {RELEASE}{}; it keeps that build until its last client leaves, and this client's server runs another build{theirs}{}: {}. Until then the engine refuses this client, whatever it retries",
+            self.pid,
+            own.whence(),
+            peer.whence(),
+            restart(&own, peer)
+        )
     }
 }
 
@@ -346,17 +403,26 @@ mod tests {
     }
 
     const NIRI: &str = "/run/user/1000/niri.wayland-1.42.sock";
+    /// A bridge whose process the engine couldn't read.
+    const UNKNOWN: Build = Build {
+        exe: None,
+        replaced: true,
+    };
     const DISPLAY: Option<&str> = Some("/run/user/1000/wayland-1");
 
     fn refusal(own: &Own, sent: &Hello) -> Refusal {
-        own.take(&serde_json::to_vec(sent).unwrap()).unwrap_err().0
+        own.take(&serde_json::to_vec(sent).unwrap(), &UNKNOWN)
+            .unwrap_err()
+            .0
     }
 
     #[test]
     fn a_matching_hello_brings_the_clients_environment() {
         let own = own();
         let sent = hello(own.exe, NIRI, DISPLAY);
-        let taken = own.take(&serde_json::to_vec(&sent).unwrap()).unwrap();
+        let taken = own
+            .take(&serde_json::to_vec(&sent).unwrap(), &UNKNOWN)
+            .unwrap();
         assert_eq!(
             taken.given(),
             Given {
@@ -408,9 +474,12 @@ mod tests {
         previous["hello"] = 1.into();
         previous.as_object_mut().unwrap().remove("desktop_path");
         let previous = serde_json::to_vec(&previous).unwrap();
-        assert_eq!(own.take(&previous).unwrap_err().0, Refusal::EngineVersion);
         assert_eq!(
-            own.take(b"GET / HTTP/1.1").unwrap_err().0,
+            own.take(&previous, &UNKNOWN).unwrap_err().0,
+            Refusal::EngineVersion
+        );
+        assert_eq!(
+            own.take(b"GET / HTTP/1.1", &UNKNOWN).unwrap_err().0,
             Refusal::BadHello
         );
     }
@@ -428,29 +497,48 @@ mod tests {
         serde_json::to_vec(&hello).unwrap()
     }
 
+    /// An engine of this build started from a file in a fresh directory, which the test
+    /// removes.
+    fn installed_engine(name: &str) -> (Own, PathBuf) {
+        let dir = crate::test_support::fresh_dir(name);
+        let file = dir.join("niri-computer-use");
+        std::fs::write(&file, "the build the engine started from").unwrap();
+        let own = Own {
+            exe: Exe::of(&file).unwrap(),
+            file: Some(file),
+            ..own()
+        };
+        (own, dir)
+    }
+
+    /// The server of a client started from `file`, which another build has since
+    /// replaced, as after an upgrade, when `replaced`.
+    fn bridge_from(file: &str, replaced: bool) -> Build {
+        Build {
+            exe: Some(PathBuf::from(file)),
+            replaced,
+        }
+    }
+
     /// After an upgrade, a client still running the old build meets the new build's
-    /// engine, which refuses it for as long as it runs: its detail says to restart that
-    /// client and names both builds, as the bridge's own words say only that the next call
+    /// engine, which refuses it for as long as it runs: its detail names both builds and
+    /// says to restart that client, as its own bridge's words say only that the next call
     /// tries again.
     #[test]
     fn a_bridge_an_upgrade_replaced_is_told_to_restart_its_client() {
-        let dir = crate::test_support::fresh_dir("hello-upgrade");
-        let file = dir.join("niri-computer-use");
-        std::fs::write(&file, "the installed build").unwrap();
-        let own = Own {
-            exe: Exe::of(&file).unwrap(),
-            file: Some(file.clone()),
-            ..own()
-        };
+        let (own, dir) = installed_engine("hello-upgrade");
+        let file = own.file.clone().unwrap();
         let old = Exe { size: 9, ..own.exe };
+        let peer = bridge_from(&file.to_string_lossy(), true);
         for release in ["0.1.0", "0.1.1"] {
-            let (error, detail) = own.take(&released_hello(release, old)).unwrap_err();
+            let (error, detail) = own.take(&released_hello(release, old), &peer).unwrap_err();
             assert_eq!(error, Refusal::EngineVersion);
             assert!(
                 detail.contains(&format!(
-                    "niri-computer-use {RELEASE} from {}",
+                    "niri-computer-use {RELEASE} from {};",
                     file.display()
-                )) && detail.contains("restart this MCP client"),
+                )) && detail
+                    .contains("which another build has since replaced: restart this MCP client"),
                 "{release}: {detail}"
             );
         }
@@ -458,8 +546,36 @@ mod tests {
             release: Some("9.9.9".to_owned()),
             ..hello(old, NIRI, DISPLAY)
         };
-        let (_, detail) = own.take(&serde_json::to_vec(&newer).unwrap()).unwrap_err();
+        let (_, detail) = own
+            .take(&serde_json::to_vec(&newer).unwrap(), &peer)
+            .unwrap_err();
         assert!(detail.contains("another build (9.9.9)"), "{detail}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Two installs, such as one by `cargo install` and one by the install script, each
+    /// with clients: neither file was replaced, so restarting either client runs the same
+    /// build again, and the engine says to point the clients at one file instead.
+    #[test]
+    fn a_bridge_of_another_install_is_told_to_run_one_build() {
+        let (own, dir) = installed_engine("hello-two-installs");
+        let file = own.file.clone().unwrap();
+        let cargo = "/home/me/.cargo/bin/niri-computer-use";
+        let other = Exe { size: 9, ..own.exe };
+        let (error, detail) = own
+            .take(
+                &serde_json::to_vec(&hello(other, NIRI, DISPLAY)).unwrap(),
+                &bridge_from(cargo, false),
+            )
+            .unwrap_err();
+        assert_eq!(error, Refusal::EngineVersion);
+        assert!(
+            detail.contains(&format!(
+                "both builds are still installed: point this MCP client at {}, or the ones the engine serves at {cargo}",
+                file.display()
+            )) && !detail.contains("restart"),
+            "{detail}"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -467,24 +583,21 @@ mod tests {
     /// leaves: a client of the installed build is told to restart the engine's clients.
     #[test]
     fn an_engine_an_upgrade_replaced_says_to_restart_its_clients() {
-        let dir = crate::test_support::fresh_dir("hello-replaced");
-        let file = dir.join("niri-computer-use");
-        std::fs::write(&file, "the build the engine started from").unwrap();
-        let own = Own {
-            exe: Exe::of(&file).unwrap(),
-            file: Some(file.clone()),
-            ..own()
-        };
+        let (own, dir) = installed_engine("hello-replaced");
+        let file = own.file.clone().unwrap();
         std::fs::remove_file(&file).unwrap();
         std::fs::write(&file, "the installed build, replacing it").unwrap();
         let installed = Exe::of(&file).unwrap();
         let (error, detail) = own
-            .take(&serde_json::to_vec(&hello(installed, NIRI, DISPLAY)).unwrap())
+            .take(
+                &serde_json::to_vec(&hello(installed, NIRI, DISPLAY)).unwrap(),
+                &bridge_from(&file.to_string_lossy(), false),
+            )
             .unwrap_err();
         assert_eq!(error, Refusal::EngineVersion);
         assert!(
-            detail.contains("a build since replaced at")
-                && detail.contains("Restart the MCP clients this engine serves"),
+            detail.contains("which another build has since replaced; it keeps that build")
+                && detail.contains("restart the MCP clients the engine serves"),
             "{detail}"
         );
         std::fs::remove_dir_all(dir).unwrap();

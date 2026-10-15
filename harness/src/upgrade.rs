@@ -200,7 +200,8 @@ fn beside(session: &mut Session<'_>, old: &mut Old, new: &mut Client) -> Result<
     expect(
         field(&status, "/engine/mode") == "standalone"
             && fallback.as_str().is_some_and(|text| {
-                text.contains("engine_version") && text.contains("restart those clients")
+                text.contains("engine_version")
+                    && text.contains("restart the MCP clients the engine serves")
             }),
         "the new client served standalone, refused by the old engine, and told what to do",
         &status.to_string(),

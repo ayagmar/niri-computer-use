@@ -316,8 +316,8 @@ async fn after_the_binary_is_replaced_new_clients_wait_out_the_old_engine_standa
     assert!(fallback.contains("(engine_version)"), "{fallback}");
     // The old engine is the stale one, and says so; the client's server adds nothing.
     assert!(
-        fallback.contains("a build since replaced at")
-            && fallback.contains("Restart the MCP clients this engine serves")
+        fallback.contains("which another build has since replaced; it keeps that build")
+            && fallback.contains("restart the MCP clients the engine serves")
             && !fallback.contains("0.1.1 or older"),
         "{fallback}"
     );
@@ -340,6 +340,35 @@ async fn after_the_binary_is_replaced_new_clients_wait_out_the_old_engine_standa
     assert_eq!(engine_status["replaced"], false, "{engine_status}");
     assert_ne!(engine_status["pid"], old_engine);
     assert_eq!(upgraded.call("status", json!({})).await["isError"], false);
+}
+
+/// Two installs of different builds, as by `cargo install` and the install script, each
+/// with a client: neither file was replaced, so restarting either client would run its
+/// build again. The engine tells the other install's client to run one build instead.
+#[tokio::test]
+async fn a_client_of_another_install_is_told_to_run_one_build() {
+    let fixture = shared("many-two-installs");
+    let mut desktop = Desktop::new(&fixture);
+    let cargo = copy_of_the_binary(&fixture, "cargo");
+    let mut first = Server::start_from(&fixture, &cargo).await;
+    let _engine_stream = desktop.stream().await;
+    assert_eq!(first.structured("status").await["engine"]["mode"], "shared");
+    let script = copy_of_the_binary(&fixture, "script");
+    let mut other = Server::start_from(&fixture, &script).await;
+    let _own_stream = desktop.stream().await;
+    let served = other.structured("status").await["engine"].clone();
+    assert_eq!(served["mode"], "standalone", "{served}");
+    let fallback = served["fallback"].as_str().unwrap();
+    assert!(
+        fallback.contains(&format!(
+            "both builds are still installed: point this MCP client at {}, or the ones the engine serves at {}",
+            cargo.display(),
+            script.display()
+        )) && !fallback.contains("restart"),
+        "{fallback}"
+    );
+    other.stop().await;
+    first.stop().await;
 }
 
 /// What one client's environment gives its session, for `settings_stay_with_their_session`.

@@ -52,7 +52,7 @@ These are the user's decisions. Don't call the refused action again and don't tr
 
 ## Shared mode
 
-`engine_lost` means the shared engine serving this session ended. What a call in flight did is unknown, and the lease is gone: look at `desktop_state` or a screenshot before acting again, and call `acquire_desktop` again if you still need it. `engine_unavailable` means no shared engine could be reached for this call; the next call tries again. When its `detail` says to restart an MCP client, an engine of another build runs, as after an upgrade: no retry gets past it, so tell the user which client to restart. Tell the user too if it keeps happening.
+`engine_lost` means the shared engine serving this session ended. What a call in flight did is unknown, and the lease is gone: look at `desktop_state` or a screenshot before acting again, and call `acquire_desktop` again if you still need it. `engine_unavailable` means no shared engine could be reached for this call; the next call tries again. When its `detail` says to restart an MCP client or to point clients at one file, an engine of another build runs, as after an upgrade or beside a second install: no retry gets past it, so tell the user what the `detail` says to do. Tell the user too if it keeps happening.
 
 ## Not an error
 

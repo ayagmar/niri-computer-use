@@ -393,11 +393,13 @@ async fn an_engine_refusing_the_hello_after_a_loss_leaves_calls_unavailable() {
     }
 }
 
-/// An engine of 0.1.1, as a client started after an upgrade to this build meets it: it
-/// refuses the client's hello without naming its release or what to do. The client is
-/// served standalone, and its fallback says how to end that engine.
+/// An engine of 0.1.1 refuses a client of this build without naming its release or what
+/// to do. The client is served standalone, and its fallback says what to do from the
+/// engine's file: here, the test's binary, still installed beside the client's, so
+/// restarting either side's clients runs the same builds again. The nested upgrade check
+/// covers an engine whose file an upgrade replaced.
 #[tokio::test]
-async fn a_client_beside_an_engine_of_0_1_1_is_told_which_clients_to_restart() {
+async fn a_client_beside_an_installed_engine_of_0_1_1_is_told_to_run_one_build() {
     let fixture = shared("shared-older");
     let _niri = Niri::start(&fixture);
     std::fs::create_dir_all(fixture.runtime_dir()).unwrap();
@@ -408,9 +410,12 @@ async fn a_client_beside_an_engine_of_0_1_1_is_told_which_clients_to_restart() {
     let fallback = engine["fallback"].as_str().unwrap();
     assert!(
         fallback.contains("(engine_version): another build")
-            && fallback.contains(
-                "serves the MCP clients started before this build was installed until the last of them ends: restart those clients"
-            ),
+            && fallback.contains(&format!(
+                "that engine runs niri-computer-use 0.1.1 or older from {}",
+                std::env::current_exe().unwrap().display()
+            ))
+            && fallback.contains("both builds are still installed: point this MCP client at")
+            && !fallback.contains("restart"),
         "{fallback}"
     );
 }

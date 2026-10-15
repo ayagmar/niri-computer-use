@@ -62,9 +62,6 @@ const SYSTEMD_RUN: &str = "systemd-run";
 const REAP: Duration = Duration::from_secs(1);
 /// The most of what `systemd-run` wrote that an engine started without it is told.
 const MAX_SCOPE_ERROR: u64 = 2048;
-/// What a bridge adds to an `engine_version` refusal from an engine of 0.1.1 or older,
-/// which says only that it runs another build.
-const OLDER_ENGINE: &str = "that engine, of niri-computer-use 0.1.1 or older, serves the MCP clients started before this build was installed until the last of them ends: restart those clients to end it";
 /// Why a bridge's second or third start skips `systemd-run`.
 const EARLIER: &str = "the engine an earlier start ran through systemd-run never listened";
 
@@ -209,6 +206,13 @@ async fn say_hello(target: &Target) -> Result<Link, Failed> {
             )));
         }
     };
+    // The process that listens: the engine.
+    let engine = stream
+        .peer_cred()
+        .ok()
+        .and_then(|peer| peer.pid())
+        .and_then(|pid| u32::try_from(pid).ok())
+        .unwrap_or(0);
     let (input, mut output) = stream.into_split();
     let mut input = BufReader::new(input);
     let exchange = async {
@@ -241,9 +245,10 @@ async fn say_hello(target: &Target) -> Result<Link, Failed> {
                     .unwrap_or_default()
             );
             Err(match (error, release) {
-                (Refusal::EngineVersion, None) => {
-                    Failed::OtherBuild(format!("{detail}; {OLDER_ENGINE}"))
-                }
+                (Refusal::EngineVersion, None) => Failed::OtherBuild(format!(
+                    "{detail}; {}",
+                    hello::older_engine(&hello::Build::of(engine))
+                )),
                 (Refusal::EngineVersion, Some(_)) => Failed::OtherBuild(detail),
                 _ => Failed::Refused(detail),
             })
