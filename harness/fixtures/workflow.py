@@ -5,12 +5,14 @@ check box, a `Plan` drop-down (Free, Team or Enterprise) and a `Sign up` button,
 appends the fields' values to `signups.jsonl` and says who signed up. `draft` is a
 `Message` entry and a `Send` button; Enter in the entry sends too, and each send appends
 the text to `sent.jsonl` and clears the entry. The first time the entry gets text, a
-modal `Autosave failed` window opens over it and the form takes no input until its `OK`
-button, Escape or a close request dismisses it; `draft-events.jsonl` records when it was
-shown and dismissed.
+modal `Autosave failed` window opens over it and the form takes no input until a click
+on its `OK` button, Escape or a close request dismisses it; other keys don't.
+`draft-events.jsonl` records each change of the entry's text, the keys the dialog got,
+and when it was shown and dismissed.
 """
 
 import json
+import time
 import os
 from pathlib import Path
 import sys
@@ -43,6 +45,11 @@ PLANS = ["Free", "Team", "Enterprise"]
 def append(name, record):
     with open(root / name, "a", encoding="utf-8") as file:
         file.write(json.dumps(record) + "\n")
+
+
+def event(name, **fields):
+    """One line of `draft-events.jsonl`, with the fixture's monotonic time in seconds."""
+    append("draft-events.jsonl", {"event": name, "t": time.monotonic(), **fields})
 
 
 def labelled(widget, label):
@@ -99,13 +106,13 @@ def autosave_failed(parent, form):
     box.append(
         Gtk.Label(label="Autosave failed: the drafts folder is read-only.\nYour text is still here.")
     )
-    ok = Gtk.Button(label="OK")
+    # Neither focused nor the default, so keys typed into the dialog can't dismiss it.
+    ok = Gtk.Button(label="OK", focusable=False)
     box.append(ok)
     dialog.set_child(box)
-    dialog.set_default_widget(ok)
 
     def dismissed(how):
-        append("draft-events.jsonl", {"event": "dismissed", "how": how})
+        event("dismissed", how=how)
         form.set_sensitive(True)
         dialog.destroy()
 
@@ -119,8 +126,14 @@ def autosave_failed(parent, form):
         )
     )
     dialog.add_controller(escape)
+    keys = Gtk.EventControllerKey()
+    keys.connect(
+        "key-pressed",
+        lambda _keys, keyval, _code, _state: event("dialog-key", key=Gdk.keyval_name(keyval)),
+    )
+    dialog.add_controller(keys)
     form.set_sensitive(False)
-    append("draft-events.jsonl", {"event": "shown"})
+    event("shown")
     dialog.present()
 
 
@@ -135,9 +148,11 @@ def draft_window(window):
 
     def changed(entry):
         nonlocal shown
+        event("text", text=entry.get_text())
         if entry.get_text() and not shown:
             shown = True
-            GLib.idle_add(autosave_failed, window, grid)
+            # Right away, so the keys already on their way find the form insensitive.
+            autosave_failed(window, grid)
 
     def sent(_widget):
         append("sent.jsonl", {"text": message.get_text()})

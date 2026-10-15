@@ -176,6 +176,7 @@ pub(super) fn recovered(events: &[Value], sent: &[Value]) -> Vec<Expectation> {
     let events: Vec<&str> = events
         .iter()
         .filter_map(|event| field(event, "/event").as_str())
+        .filter(|event| ["shown", "dismissed"].contains(event))
         .collect();
     let texts: Vec<&str> = sent
         .iter()
@@ -449,7 +450,9 @@ mod tests {
     #[test]
     fn a_message_cut_by_the_dialog_or_sent_twice_is_not_recovered() {
         let events = [
+            json!({"event": "text", "text": "M"}),
             json!({"event": "shown"}),
+            json!({"event": "dialog-key", "key": "e"}),
             json!({"event": "dismissed", "how": "ok"}),
         ];
         let whole = [json!({"text": MESSAGE})];
@@ -459,7 +462,7 @@ mod tests {
         let twice = [json!({"text": "M"}), json!({"text": MESSAGE})];
         assert_eq!(passed(&recovered(&events, &twice)), [true, false]);
         // Still up at the end: the message can't have gone out.
-        assert_eq!(passed(&recovered(&events[..1], &[])), [false, false]);
+        assert_eq!(passed(&recovered(&events[..3], &[])), [false, false]);
     }
 
     fn placed(app_id: &str, workspace: u8, column: Option<usize>, width: f64) -> Placed {
