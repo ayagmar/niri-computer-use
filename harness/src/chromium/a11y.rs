@@ -10,20 +10,23 @@
 //! accessibility was off isn't listed and is reported as needing a restart, that the server
 //! turned accessibility on, that a browser started after lists the fixture's field and
 //! button and that activating the button reaches the page, that a fresh page's first
-//! listing says the page is building its tree, and that accessibility goes back off when
-//! the server ends. It logs what listing a long
-//! page costs and what a running browser does when accessibility turns on or off.
+//! listing says the page is building its tree, that a floating page's button is clicked
+//! by its ref with server-side decorations and refused `frame_size_mismatch` with
+//! client-side ones, and that accessibility goes back off when the server ends. It logs
+//! what listing a long page costs and what a running browser does when accessibility
+//! turns on or off.
 //! Everything runs on the nested session bus, which is checked to be under `TEST_DIR/run`
 //! first.
 
 use std::ffi::OsString;
 use std::time::{Duration, Instant};
 
-use niri_ipc::{Request, Response, Window};
+use niri_ipc::{Action, Request, Response, Window};
 use serde_json::{Value, json};
 
 use super::Launch;
 use crate::a11y::{self, Bus};
+use crate::config::Decorations;
 use crate::failure::{Context as _, Failure, Result};
 use crate::mcp::{self, Client, field, report, structured};
 use crate::nested;
@@ -45,10 +48,18 @@ const TERM_GRACE: Duration = Duration::from_secs(5);
 /// The files the server looks for in a process's `/proc` maps to tell a Chromium-family
 /// app.
 const CHROMIUM_FILES: [&str; 2] = ["icudtl.dat", "v8_context_snapshot.bin"];
+/// How long after niri moves a window the server takes the view to be still moving, and
+/// refuses to aim at its elements, with some to spare.
+const SETTLE: Duration = Duration::from_millis(1200);
 /// Long pages: one within the walk's node cap, one past it.
 const ROWS: [u32; 2] = [300, 2000];
 
-pub(crate) fn run(session: &mut Session<'_>, server: &str, browser: &str) -> Result<()> {
+pub(crate) fn run(
+    session: &mut Session<'_>,
+    server: &str,
+    browser: &str,
+    decorations: Decorations,
+) -> Result<()> {
     let status = Status::private(session)?;
     let bus = Bus::start(session)?;
     status.expect(session, false, "before the server")?;
@@ -72,6 +83,9 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str, browser: &str) -> Res
     let button = after.element(session, &mut client, "button", "ncu send")?;
     after.activate(session, &mut client, &button)?;
     after.frame(session, &bus)?;
+    let boxed = Page::open(session, browser, "boxed", 0)?;
+    boxed.registered(session, &bus)?;
+    boxed.clicked(session, &mut client, decorations)?;
     before.watch(session, &bus, "after accessibility turned on")?;
     before.refused(session, &mut client, "the session's accessibility is on")?;
     for rows in ROWS {
@@ -82,6 +96,7 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str, browser: &str) -> Res
     status.expect(session, false, "after the server ended")?;
     after.watch(session, &bus, "after accessibility turned off")?;
     after.process.terminate(TERM_GRACE)?;
+    boxed.process.terminate(TERM_GRACE)?;
     before.process.terminate(TERM_GRACE)?;
     noctalia.stop()?;
     bus.stop()
@@ -301,24 +316,110 @@ impl Page {
     fn activate(&self, session: &mut Session<'_>, client: &mut Client, id: &str) -> Result<()> {
         let args = json!({"element": id, "expect": {"window_id": self.window.id}});
         let result = structured(&client.call(session, "activate_element", args)?)?;
-        let title = format!("{TITLE}0:sent");
+        self.titled(session, "the button's click", &format!("{TITLE}0:sent"))?;
+        session.log(&format!(
+            "Chromium a11y: activate_element reached the page: {result}"
+        ))
+    }
+
+    /// Floats the window and clicks the page's button by its ref. With server-side
+    /// decorations the frame is the window's size, and the button's box, from the page's
+    /// document, is in logical pixels at every scale, so the click must reach the page.
+    /// With client-side ones the frame is larger than the window by its shadow, and the
+    /// ref must be refused `frame_size_mismatch`.
+    fn clicked(
+        &self,
+        session: &mut Session<'_>,
+        client: &mut Client,
+        decorations: Decorations,
+    ) -> Result<()> {
+        self.float(session)?;
+        let button = self.button(session, client)?;
+        let placed = field(&button, "/layout_box");
+        match decorations {
+            Decorations::Server if !placed.is_null() => {}
+            Decorations::Client if field(&button, "/unmappable") == "frame_size_mismatch" => {
+                return session.log(&format!(
+                    "Chromium a11y: floating with client-side decorations, the button is refused: {button}"
+                ));
+            }
+            Decorations::Server | Decorations::Client => {
+                return Err(Failure::new(format!(
+                    "Chromium a11y: the floating page's button with {decorations:?} decorations: {button}"
+                )));
+            }
+        }
+        let shot = structured(&client.call(
+            session,
+            "screenshot",
+            json!({"target": "focused_output"}),
+        )?)?;
+        let click = json!({
+            "screenshot_ref": field(&shot, "/screenshot_ref"),
+            "element": field(&button, "/element_ref"),
+            "button": "left"
+        });
+        let result = structured(&client.call(session, "click", click)?)?;
+        self.titled(
+            session,
+            "the click on the button",
+            &format!("{TITLE}0:sent"),
+        )?;
+        session.log(&format!(
+            "Chromium a11y: the button at {placed} clicked by its ref reached the page: {result}"
+        ))
+    }
+
+    /// Moves the window to the floating layout, waits for niri to place it, then for the
+    /// server to take the view as settled.
+    fn float(&self, session: &mut Session<'_>) -> Result<()> {
+        let id = self.window.id;
+        session.request(&Request::Action(Action::MoveWindowToFloating {
+            id: Some(id),
+        }))?;
         session.wait_until(
-            "chromium-a11y-click",
-            "the button's click",
+            "chromium-a11y-floating",
+            "the floating page",
             WAIT,
             |session| {
                 Ok(windows(session)?
                     .iter()
                     .any(|window| {
-                        window.id == self.window.id
-                            && window.title.as_deref() == Some(title.as_str())
+                        window.id == id && window.layout.tile_pos_in_workspace_view.is_some()
                     })
                     .then_some(()))
             },
         )?;
-        session.log(&format!(
-            "Chromium a11y: activate_element reached the page: {result}"
-        ))
+        pause(SETTLE);
+        Ok(())
+    }
+
+    /// The page's button as `elements` lists it once it has a ref.
+    fn button(&self, session: &mut Session<'_>, client: &mut Client) -> Result<Value> {
+        let listed = json!({
+            "window_id": self.window.id, "role": "button", "name_contains": "ncu send",
+            "format": "json"
+        });
+        session.wait_until(
+            "chromium-a11y-button",
+            "the page's button",
+            STARTUP,
+            |session| {
+                let listing = structured(&client.call(session, "elements", listed.clone())?)?;
+                let button = field(&listing, "/elements/0").clone();
+                Ok((!field(&button, "/element_ref").is_null()).then_some(button))
+            },
+        )
+    }
+
+    /// Waits for the window's title to be `title`, which `what` brings.
+    fn titled(&self, session: &mut Session<'_>, what: &str, title: &str) -> Result<()> {
+        session.wait_until("chromium-a11y-title", what, WAIT, |session| {
+            Ok(windows(session)?
+                .iter()
+                .any(|window| window.id == self.window.id && window.title.as_deref() == Some(title))
+                .then_some(()))
+        })
     }
 
     /// Logs the frame's extents beside niri's window size, which `elements` compares.

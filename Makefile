@@ -93,7 +93,7 @@ nested-chromium:
 
 nested-chromium-a11y:
 	cargo build --locked -p niri-computer-use
-	cargo run --locked -p harness -- run $(NESTED_FLAGS) --chromium-a11y
+	cargo run --locked -p harness -- run $(NESTED_FLAGS) --scale $(SCALE) $(if $(SSD),--ssd) --chromium-a11y
 
 # Windows with one big container, from fixtures/big.py, read whole by a release build.
 nested-big:
