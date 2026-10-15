@@ -902,7 +902,7 @@ fn activation(before: Before, after: After) -> (Seen, Looked) {
         After::WindowGone | After::Probed(Err(Failed::Gone(_))) => (gone, Looked::default()),
         After::Probed(Ok(now)) if now.states.has(State::Defunct) => (gone, Looked::default()),
         After::Probed(Ok(now)) => present(before, now),
-        After::Probed(Err(Failed::Refused(error) | Failed::Error(error))) => {
+        After::Probed(Err(Failed::Refused(error, _) | Failed::Error(error))) => {
             let unknown = Seen::new(Observed::Unknown, Effect::Unverified, Some(error.detail));
             (unknown, Looked::default())
         }
@@ -1423,7 +1423,10 @@ mod tests {
         }
         let refused = ToolError::new(ErrorName::UpstreamError, "no Text interface");
         assert_eq!(
-            written(Err(Failed::Refused(refused))),
+            written(Err(Failed::Refused(
+                refused,
+                "org.freedesktop.DBus.Error.UnknownInterface".to_owned()
+            ))),
             (
                 Seen::new(
                     Observed::Unknown,

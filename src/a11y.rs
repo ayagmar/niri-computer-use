@@ -65,6 +65,9 @@ const APPLICATION_ERROR: &str = "application_error";
 /// What the bus answers in place of a reply when the application left without sending one.
 const NO_REPLY: &str = "org.freedesktop.DBus.Error.NoReply";
 
+/// What at-spi2-atk answers `GetChildren` with for more than 65,536 children.
+const TOO_MANY_CHILDREN: &str = "org.freedesktop.DBus.Error.InvalidArgs";
+
 /// Whether this session has an accessibility bus, decided once at startup.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct Presence {
@@ -193,9 +196,9 @@ pub(crate) struct Request {
 pub(crate) enum Failed {
     /// The object or its application is gone.
     Gone(String),
-    /// The application answered with another D-Bus error, as toolkits do for an
-    /// interface the object doesn't have.
-    Refused(ToolError),
+    /// The application answered with another D-Bus error, named second, as toolkits do
+    /// for an interface the object doesn't have.
+    Refused(ToolError, String),
     /// No answer: the deadline passed, or the connection failed.
     Error(ToolError),
 }
@@ -204,7 +207,7 @@ impl From<Failed> for ToolError {
     fn from(failed: Failed) -> Self {
         match failed {
             Failed::Gone(detail) => Self::new(ErrorName::UpstreamError, detail),
-            Failed::Refused(error) | Failed::Error(error) => error,
+            Failed::Refused(error, _) | Failed::Error(error) => error,
         }
     }
 }
@@ -336,7 +339,7 @@ impl Request {
             if GONE.contains(&name.as_str()) {
                 return Failed::Gone(self.upstream(what, &error).detail);
             }
-            return Failed::Refused(self.upstream(what, &error));
+            return Failed::Refused(self.upstream(what, &error), name.to_string());
         }
         *self.shared.lock().await = None;
         Failed::Error(self.upstream(what, &error))
@@ -510,9 +513,9 @@ impl Request {
         self.read_node((bus, path), false).await
     }
 
-    /// `node` for the walk: children the app refuses to list, as at-spi2-atk refuses more
-    /// than 65,536, leave it `children_refused` with none, so the walk reads on without
-    /// them instead of failing.
+    /// `node` for the walk: children the app refuses to list with `InvalidArgs`, as
+    /// at-spi2-atk refuses more than 65,536, leave it `children_refused` with none, so the
+    /// walk reads on without them instead of failing. Any other error still fails.
     async fn walked_node(&self, bus: &str, path: &str) -> Result<Option<Node>, ToolError> {
         self.read_node((bus, path), true).await
     }
@@ -532,7 +535,9 @@ impl Request {
             self.listed_actions(at),
         );
         let (children, children_refused) = match children {
-            Err(Failed::Refused(_)) if unread_if_refused => (Ok(Vec::new()), true),
+            Err(Failed::Refused(_, error)) if unread_if_refused && error == TOO_MANY_CHILDREN => {
+                (Ok(Vec::new()), true)
+            }
             listed => (listed, false),
         };
         let (Some(role), Some(name), Some(states), Some(children)) = (
@@ -673,7 +678,7 @@ impl Request {
                 .await
             {
                 Ok(own) => *name = own,
-                Err(Failed::Refused(_) | Failed::Gone(_)) => {}
+                Err(Failed::Refused(..) | Failed::Gone(_)) => {}
                 Err(Failed::Error(error)) => return Err(error),
             }
         }
@@ -709,7 +714,7 @@ impl Request {
             .await
         {
             Ok(name) => Ok(Some(name)),
-            Err(Failed::Refused(_) | Failed::Gone(_)) => Ok(None),
+            Err(Failed::Refused(..) | Failed::Gone(_)) => Ok(None),
             Err(failed) => Err(failed),
         }
     }
@@ -853,7 +858,7 @@ fn present<T>(result: Result<T, Failed>) -> Result<Option<T>, ToolError> {
 fn optional<T>(result: Result<T, Failed>) -> Result<Option<T>, ToolError> {
     match result {
         Ok(value) => Ok(Some(value)),
-        Err(Failed::Gone(_) | Failed::Refused(_)) => Ok(None),
+        Err(Failed::Gone(_) | Failed::Refused(..)) => Ok(None),
         Err(Failed::Error(error)) => Err(error),
     }
 }

@@ -842,7 +842,7 @@ async fn same_name(
 pub(crate) fn gone_is_stale(failed: Failed) -> ToolError {
     match failed {
         Failed::Gone(detail) => stale(&detail),
-        Failed::Refused(error) | Failed::Error(error) => error,
+        Failed::Refused(error, _) | Failed::Error(error) => error,
     }
 }
 

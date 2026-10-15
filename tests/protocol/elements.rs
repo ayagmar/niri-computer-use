@@ -1720,6 +1720,35 @@ async fn children_the_app_refuses_to_list_cut_the_listing_short_instead_of_faili
     assert_eq!(save["unbound"], "cut_short", "{save}");
 }
 
+// Only at-spi2-atk's refusal is read as unread children. The bus's `NoReply`, as when the
+// app quits before it answers, still fails the listing with the bus's error, not a
+// refusal the app never made.
+#[tokio::test]
+async fn children_the_app_never_answered_for_still_fail_the_listing() {
+    let (objects, _) = grid_then_save(2, |n| Object::label(&format!("Cell {n}")));
+    let mut desk = list_desk("el-big-no-reply", objects).await;
+    desk.mock
+        .fail_named("GetChildren", "/grid", "org.freedesktop.DBus.Error.NoReply");
+    let arguments = json!({"window_id": WINDOW, "name_contains": "Save", "format": "json"});
+    let result = desk.server.call("elements", arguments).await;
+    let (error, detail) = tool_error(&result);
+    assert_eq!(error, "upstream_error", "{result}");
+    assert!(detail.contains("NoReply"), "{detail}");
+}
+
+// A `GetChildren` past its one-second deadline is no answer, not a refusal: the listing
+// fails `deadline_exceeded`.
+#[tokio::test]
+async fn children_past_the_calls_deadline_fail_the_listing() {
+    let (objects, _) = grid_then_save(2, |n| Object::label(&format!("Cell {n}")));
+    let mut desk = list_desk("el-big-late", objects).await;
+    desk.mock
+        .slow_on("GetChildren", "/grid", Duration::from_millis(1500));
+    let arguments = json!({"window_id": WINDOW, "name_contains": "Save", "format": "json"});
+    let result = desk.server.call("elements", arguments).await;
+    assert_eq!(tool_error(&result).0, "deadline_exceeded", "{result}");
+}
+
 // A walk cut short after a named row still binds that row's `Delete` by the row's name:
 // rows 2 and 3 answer in 0.9 s an object, and the walk runs out before the end.
 #[tokio::test]

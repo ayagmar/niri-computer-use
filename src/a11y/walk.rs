@@ -30,8 +30,8 @@ pub(crate) struct Node {
     pub(crate) actions: Vec<String>,
     /// Its children in the same application.
     pub(crate) children: Vec<Child>,
-    /// Set when the app refused to list its children, as at-spi2-atk does for more than
-    /// 65,536 of them; `children` is then empty, though it has some.
+    /// Set when the app refused to list its children with `InvalidArgs`, as at-spi2-atk
+    /// does for more than 65,536 of them; `children` is then empty, though it has some.
     pub(crate) children_refused: bool,
 }
 
