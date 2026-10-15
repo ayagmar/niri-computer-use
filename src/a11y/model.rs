@@ -350,6 +350,11 @@ pub(crate) enum Unmappable {
     /// reach past its output's edge, and shows that part nowhere.
     #[serde(rename = "not_showing")]
     OffOutput,
+    /// The element's centre is outside its web page's document, as under a browser's
+    /// toolbar once the page is scrolled: Chromium hides a web object only when nothing of
+    /// it is left in the page.
+    #[serde(rename = "not_showing")]
+    OffPage,
     /// The element has no area.
     Empty,
     /// The element's centre is outside the screenshot the pointer aims through.
@@ -570,20 +575,29 @@ pub(crate) fn place(placement: Placement) -> Result<LayoutBox, Unmappable> {
     }
     let origin = origin?;
     let unit = page_unit(page, origin.area.scale)?;
-    let found = LayoutBox {
-        x: origin.at.x + f64::from(extents.x) / unit,
-        y: origin.at.y + f64::from(extents.y) / unit,
-        width: f64::from(extents.width) / unit,
-        height: f64::from(extents.height) / unit,
-    };
+    let found = laid(origin.at, extents, unit);
     let centre = found.centre();
     if !on(&origin.area, centre) {
         return Err(Unmappable::OffOutput);
+    }
+    let document = page.and_then(|page| page.document);
+    if document.is_some_and(|document| !laid(origin.at, document, unit).contains(centre)) {
+        return Err(Unmappable::OffPage);
     }
     if origin.floating.iter().any(|tile| tile.contains(centre)) {
         return Err(Unmappable::Overlapped);
     }
     Ok(found)
+}
+
+/// `extents`, in `unit`s to the logical pixel, from the window's origin `at`.
+fn laid(at: LayoutPt, extents: Extents, unit: f64) -> LayoutBox {
+    LayoutBox {
+        x: at.x + f64::from(extents.x) / unit,
+        y: at.y + f64::from(extents.y) / unit,
+        width: f64::from(extents.width) / unit,
+        height: f64::from(extents.height) / unit,
+    }
 }
 
 /// Whether `point` lies on the output whose layout area is `area`.
@@ -1104,6 +1118,38 @@ mod tests {
         }
     }
 
+    // Chromium leaves a web object `showing` until nothing of it is left in the page, so a
+    // link scrolled half under a browser's toolbar was placed with its centre on the
+    // toolbar, where a click by its ref would land. At every scale and frame shape
+    // measured, a field whose centre is a pixel above or left of its document is refused,
+    // and one a pixel inside is placed.
+    #[test]
+    fn a_pages_element_whose_centre_is_outside_the_page_is_never_placed() {
+        for run in MEASURED {
+            let page = Some(page(run.document, run.container));
+            let (top, left) = (run.document.y, run.document.x);
+            let (half_height, half_width) = (run.field.height / 2, run.field.width / 2);
+            for (y, x, refused) in [
+                (
+                    top - half_height - 1,
+                    run.field.x,
+                    Some(Unmappable::OffPage),
+                ),
+                (
+                    run.field.y,
+                    left - half_width - 1,
+                    Some(Unmappable::OffPage),
+                ),
+                (top - half_height + 1, run.field.x, None),
+                (run.field.y, left - half_width + 1, None),
+            ] {
+                let field = Extents { x, y, ..run.field };
+                let found = place(floating(field, run.tile, run.scale, page));
+                assert_eq!(found.err(), refused, "{}", run.scale);
+            }
+        }
+    }
+
     // Chromium's own views, outside any page, stay in logical pixels at every scale: Chrome
     // for Testing's infobar link at 245,16 141x23 in a window 402 wide at scale 1.5.
     // Dividing every element's extents by the scale would move such a control to two
@@ -1124,8 +1170,7 @@ mod tests {
 
     // Where the page's unit can't be told, its elements get no box rather than a guess: a
     // document narrower than its view in either unit; one with no extents; and a view so
-    // small both units fit. A box from
-    // the wrong unit would send a click elsewhere.
+    // small both units fit. A box from the wrong unit would send a click elsewhere.
     #[test]
     fn a_page_whose_unit_cant_be_told_is_never_placed() {
         let container = extents(0, 56, 402, 358);
@@ -1151,8 +1196,9 @@ mod tests {
                 "{page:?}"
             );
             // At scale 1 both units are one, so nothing about the page needs telling.
-            assert!(
-                place(floating(field, (66.0, 66.0), 1.0, page)).is_ok(),
+            assert_ne!(
+                place(floating(field, (66.0, 66.0), 1.0, page)),
+                Err(Unmappable::PageScaleUnknown),
                 "{page:?}"
             );
         }

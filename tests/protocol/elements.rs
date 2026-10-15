@@ -3065,6 +3065,46 @@ async fn a_chromium_pages_button_is_aimed_at_in_logical_pixels() {
     assert_eq!(relisted["unmappable"], "page_scale_unknown", "{relisted}");
 }
 
+// Chromium leaves a web object `showing` until nothing of it is left in the page, so once
+// the page scrolled its button half under the browser's toolbar, the button kept a box
+// centred on the toolbar, and a click by its ref landed there. Its centre is now checked
+// against the page's document, at the listing and again right before the aim.
+#[tokio::test]
+async fn a_chromium_pages_button_scrolled_under_the_toolbar_is_never_aimed_at() {
+    let mut objects = chromium_page();
+    for (path, object) in &mut objects {
+        match *path {
+            "/view" => object.extents = Some((0, 56, 800, 544)),
+            "/page" => object.extents = Some((0, 84, 1200, 816)),
+            "/button" => object.extents = Some((60, 150, 120, 45)),
+            _ => {}
+        }
+    }
+    let windows = [floating_window()];
+    let mut desk = Desk::start_with("el-page-scrolled", &["/frame"], objects, &windows).await;
+    let scaled = output("DP-1", Some((0, 0, 2560, 1440, 1.5)));
+    desk.niri.set_outputs(vec![scaled], Some("DP-1"));
+    let listed = safe(&mut desk).await;
+    let placed = json!({"x": 60.0, "y": 120.0, "width": 80.0, "height": 30.0});
+    assert_eq!(listed["layout_box"], placed, "{listed}");
+    let button = listed["element_ref"].as_str().unwrap().to_owned();
+    let shot = desk.screenshot_ref().await;
+    let aimed = json!({"screenshot_ref": shot, "element": button});
+
+    desk.mock.change("/button", |scrolled| {
+        scrolled.extents = Some((60, 30, 120, 45));
+    });
+    let refused = desk.server.call("pointer_move", aimed).await;
+    let (name, detail) = tool_error(&refused);
+    assert_eq!(name, "element_unmappable", "{refused}");
+    assert!(detail.starts_with("not_showing: "), "{detail}");
+    assert!(detail.contains("outside its web page"), "{detail}");
+    assert_eq!(desk.fixture.clipboard.pointed(), []);
+    let relisted = safe(&mut desk).await;
+    assert_eq!(relisted["layout_box"], Value::Null, "{relisted}");
+    assert_eq!(relisted["unmappable"], "not_showing", "{relisted}");
+}
+
 // A failed `Workspaces`, `Outputs` or `OverviewState` request fails the listing and the
 // ref's aim with niri's error, instead of passing for a window that isn't shown or taking
 // the overview as closed.

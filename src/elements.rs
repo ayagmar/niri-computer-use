@@ -916,6 +916,10 @@ pub(crate) fn unmappable(why: Unmappable) -> ToolError {
             "not_showing",
             "the element's centre is past its output's edge, where niri shows nothing of its window; move the window so the element is on screen, and call elements again",
         ),
+        Unmappable::OffPage => (
+            "not_showing",
+            "the element's centre is outside its web page, as under the browser's toolbar when the page is scrolled; scroll it into the page and call elements again, or use activate_element",
+        ),
         Unmappable::Empty => ("empty", "the element has no area"),
         Unmappable::OutsideScreenshot => (
             "outside_screenshot",
