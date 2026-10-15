@@ -253,7 +253,7 @@ impl Page {
     }
 
     /// The `element_ref` of the element with `role` and `name` as `elements` lists it,
-    /// which must be bound.
+    /// which must be bound, waiting while a fresh page builds its tree.
     fn element(
         &self,
         session: &mut Session<'_>,
@@ -264,20 +264,24 @@ impl Page {
         let args = json!({
             "window_id": self.window.id, "role": role, "name_contains": name, "format": "json"
         });
-        let (result, took) = client.timed_call("elements", args)?;
-        let listing = structured(&result)?;
-        let element = field(&listing, "/elements/0");
-        let id = field(element, "/element_ref")
-            .as_str()
-            .filter(|_| field(element, "/unbound").is_null())
-            .ok_or_else(|| Failure::new(format!("Chromium a11y: no bound {name} in {listing}")))?
-            .to_owned();
+        let started = Instant::now();
+        let (element, walked) =
+            session.wait_until("chromium-a11y-element", name, STARTUP, |session| {
+                let listing = structured(&client.call(session, "elements", args.clone())?)?;
+                let element = field(&listing, "/elements/0").clone();
+                let bound = element.get("element_ref").is_some_and(Value::is_string)
+                    && field(&element, "/unbound").is_null();
+                Ok(bound.then(|| (element, field(&listing, "/walked").clone())))
+            })?;
         session.log(&format!(
-            "Chromium a11y: {}'s {name} listed in {took:?}, {} objects walked: {element}",
+            "Chromium a11y: {}'s {name} bound {:?} after the first listing began, {walked} objects walked: {element}",
             self.name,
-            field(&listing, "/walked")
+            started.elapsed()
         ))?;
-        Ok(id)
+        Ok(field(&element, "/element_ref")
+            .as_str()
+            .unwrap_or_default()
+            .to_owned())
     }
 
     /// Logs what `set_element_text` on the field does: Chromium 155's text fields have no
