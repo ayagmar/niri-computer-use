@@ -245,10 +245,9 @@ async fn say_hello(target: &Target) -> Result<Link, Failed> {
                     .unwrap_or_default()
             );
             Err(match (error, release) {
-                (Refusal::EngineVersion, None) => Failed::OtherBuild(format!(
-                    "{detail}; {}",
-                    hello::older_engine(&hello::Build::of(engine))
-                )),
+                (Refusal::EngineVersion, None) => {
+                    Failed::OtherBuild(format!("{detail}; {}", hello::older_engine(engine)))
+                }
                 (Refusal::EngineVersion, Some(_)) => Failed::OtherBuild(detail),
                 _ => Failed::Refused(detail),
             })

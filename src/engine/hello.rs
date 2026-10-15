@@ -132,14 +132,20 @@ pub(crate) fn restart(engine: &Build, client: &Build) -> String {
 
 /// What a client's server adds to an `engine_version` refusal by an engine of 0.1.1 or
 /// older, which says only that it runs another build, from what the engine process,
-/// `engine`, and this one run.
-pub(crate) fn older_engine(engine: &Build) -> String {
+/// PID `pid` or 0 if unknown, and this one run.
+pub(crate) fn older_engine(pid: u32) -> String {
+    let engine = Build::of(pid);
     let client = Build::current();
+    let named = if pid == 0 {
+        String::new()
+    } else {
+        format!(", PID {pid},")
+    };
     format!(
-        "that engine runs niri-computer-use 0.1.1 or older{}, and this client's server runs {RELEASE}{}: {}",
+        "that engine{named} runs niri-computer-use 0.1.1 or older{}, and this client's server runs {RELEASE}{}: {}",
         engine.whence(),
         client.whence(),
-        restart(engine, &client)
+        restart(&engine, &client)
     )
 }
 
