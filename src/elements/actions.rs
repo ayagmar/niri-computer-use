@@ -1090,6 +1090,7 @@ mod tests {
             bus: ":1.7".to_owned(),
             path: "/org/a11y/atspi/accessible/9".to_owned(),
             frame: "/org/a11y/atspi/accessible/1".to_owned(),
+            page: None,
             kept: Kept {
                 role: 43,
                 window,

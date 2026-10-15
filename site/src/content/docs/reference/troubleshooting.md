@@ -53,9 +53,11 @@ The server found no accessibility bus when it started; `status` shows why under 
 
 ## `elements` lists elements without a `layout_box`
 
-With `unmappable: frame_size_mismatch`, the app draws its own title bar and its coordinates can't be matched to niri's window. GTK 3 and Qt apps do this; with server-side decorations they work. Aim at screenshot pixels for that window, or use `activate_element` and `set_element_text`, which don't need a box. A click on such an element is refused with `element_unmappable` rather than land in the wrong place.
+With `unmappable: frame_size_mismatch`, the app draws its own title bar and its coordinates can't be matched to niri's window. GTK 3, Qt, Chromium and Electron apps do this; with server-side decorations, `prefer-no-csd` in niri's config, GTK 3, Qt and Chromium work. Aim at screenshot pixels for that window, or use `activate_element` and `set_element_text`, which don't need a box. A click on such an element is refused with `element_unmappable` rather than land in the wrong place.
 
 With `unmappable: tiled`, the window is tiled. niri 26.04 gives only floating windows a place in the workspace's view, which the box is measured from. `activate_element` and `set_element_text` work on tiled windows; to click an element by its ref when changing the user's layout is fine, float the window first with `niri_action` `ToggleWindowFloating`, then call `elements` again. Floating doesn't help a `frame_size_mismatch`.
+
+With `unmappable: page_scale_unknown`, the element is in a web page, as in Chromium, at an output scale other than 1, whose coordinates the server can't tell to be in logical pixels or the output's. Aim at screenshot pixels, or use `activate_element`, which doesn't need a box.
 
 ## `elements` fails with `deadline_exceeded`
 

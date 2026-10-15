@@ -6,11 +6,13 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use crate::atspi::{self, Bus, LIST_ITEM, Mock, Object, PANEL, PASSWORD_TEXT, SHOWING, TEXT};
+use crate::atspi::{
+    self, Bus, DOCUMENT_WEB, LIST_ITEM, Mock, Object, PANEL, PASSWORD_TEXT, SHOWING, TEXT,
+};
 use crate::client::{Server, mistake, report, tool_error};
 use crate::clipboard::Pointed;
 use crate::fixture::{Fixture, jpeg};
-use crate::niri::{Niri, Stream, window_on};
+use crate::niri::{Niri, Stream, output, window_on};
 use crate::noctalia::{self, LOCKED, UNLOCKED};
 
 /// An action name an app could put private text in.
@@ -2942,6 +2944,75 @@ async fn a_floating_window_on_a_workspace_not_shown_is_never_aimed_at() {
     let relisted = safe(&mut desk).await;
     assert_eq!(relisted["layout_box"], Value::Null, "{relisted}");
     assert_eq!(relisted["unmappable"], "not_showing", "{relisted}");
+}
+
+/// A floating window's tree as Chromium gives it with server-side decorations at scale
+/// 1.5: the frame and the view holding the page in logical pixels, the page's document
+/// and the `Safe` button in it in the output's pixels.
+fn chromium_page() -> Vec<(&'static str, Object)> {
+    vec![
+        ("/frame", Object::frame("Mock", (800, 600), &["/view"])),
+        (
+            "/view",
+            Object {
+                extents: Some((0, 0, 800, 600)),
+                ..Object::panel(&["/page"])
+            },
+        ),
+        (
+            "/page",
+            Object {
+                role: DOCUMENT_WEB,
+                extents: Some((0, 0, 1200, 900)),
+                ..Object::panel(&["/button"])
+            },
+        ),
+        (
+            "/button",
+            Object {
+                extents: Some((60, 60, 120, 45)),
+                ..Object::button("Safe", &["click"])
+            },
+        ),
+    ]
+}
+
+// The bug: Chromium's frame fits with server-side decorations, and its page's extents are
+// in the output's pixels, so at scale 1.5 the button was listed half as large again and
+// away from the window's corner, and a click by its ref went past it. The listing and
+// the aim now take the page's unit from its document, read again right before the aim:
+// once the document no longer matches the view in either unit, as when developer tools
+// open beside the page, the same ref sends nothing.
+#[tokio::test]
+async fn a_chromium_pages_button_is_aimed_at_in_logical_pixels() {
+    let windows = [floating_window()];
+    let mut desk = Desk::start_with("el-page-scale", &["/frame"], chromium_page(), &windows).await;
+    let scaled = output("DP-1", Some((0, 0, 2560, 1440, 1.5)));
+    desk.niri.set_outputs(vec![scaled], Some("DP-1"));
+    let listed = safe(&mut desk).await;
+    let placed = json!({"x": 60.0, "y": 60.0, "width": 80.0, "height": 30.0});
+    assert_eq!(listed["layout_box"], placed, "{listed}");
+    let button = listed["element_ref"].as_str().unwrap().to_owned();
+    let shot = desk.screenshot_ref().await;
+    let aimed = json!({"screenshot_ref": shot, "element": button});
+    let moved = desk.server.call("pointer_move", aimed.clone()).await;
+    assert_eq!(moved["isError"], false, "{moved}");
+    // The box's centre, (100, 75), on the 2560x1440 output, in thousandths of a pixel.
+    assert_eq!(
+        desk.fixture.clipboard.pointed(),
+        [Pointed::Motion(100_000, 75_000, 2_560_000, 1_440_000)]
+    );
+
+    desk.mock
+        .change("/page", |page| page.extents = Some((0, 0, 900, 900)));
+    let refused = desk.server.call("pointer_move", aimed).await;
+    let (name, detail) = tool_error(&refused);
+    assert_eq!(name, "element_unmappable", "{refused}");
+    assert!(detail.starts_with("page_scale_unknown: "), "{detail}");
+    assert_eq!(desk.fixture.clipboard.pointed(), []);
+    let relisted = safe(&mut desk).await;
+    assert_eq!(relisted["layout_box"], Value::Null, "{relisted}");
+    assert_eq!(relisted["unmappable"], "page_scale_unknown", "{relisted}");
 }
 
 // A failed `Workspaces`, `Outputs` or `OverviewState` request fails the listing and the

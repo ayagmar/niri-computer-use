@@ -29,6 +29,7 @@ pub(crate) const PANEL: u32 = 39;
 pub(crate) const PASSWORD_TEXT: u32 = 40;
 pub(crate) const BUTTON: u32 = 43;
 pub(crate) const TEXT: u32 = 61;
+pub(crate) const DOCUMENT_WEB: u32 = 95;
 const APPLICATION: u32 = 75;
 /// `ATSPI_COORD_TYPE_WINDOW`, the only coordinates the server asks for.
 const WINDOW_COORDS: u32 = 1;
