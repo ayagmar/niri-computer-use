@@ -313,7 +313,7 @@ Every call on a bus from the harness goes through `busctl --address=… --json=s
 - GTK 3, a tree view of 8,000 rows, past the walk's 20,000 objects;
 - GTK 3, a tree view of 22,000 rows, whose table has 66,003 children, more than at-spi2-atk lists.
 
-Each listing of the first four must read the whole window, with `capped` false, and `elements` must list `Save`, `Search`, `Apply` and `Notes` with a ref and no `unbound`. The fifth must be cut with `capped_reason: node_cap` and the last with `capped_reason: children_refused`, and both must still list all four, read before the tree's cells, each with `unbound: cut_short`. It logs each listing's time and how many objects it walked. The run has a 240-second deadline and needs what `make nested-a11y` needs, without Qt.
+Each listing of the first four must read the whole window, with `capped` false, and `elements` must list `Save`, `Search`, `Apply` and `Notes` with a ref and no `unbound`; `activate_element` on `Apply`'s ref must be accepted, and the fixture must count the click in `big-apply` within five seconds. The fifth must be cut with `capped_reason: node_cap` and the last with `capped_reason: children_refused`, and both must still list all four, read before the tree's cells, each with `unbound: cut_short`. It logs each listing's time and how many objects it walked. The run has a 240-second deadline and needs what `make nested-a11y` needs, without Qt.
 
 ## Nested shared-engine checks
 

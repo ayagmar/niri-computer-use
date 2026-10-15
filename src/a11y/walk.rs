@@ -507,18 +507,24 @@ mod tests {
     /// A tree of `nodes`, each showing, plus a showing `/grid` with `BIG` + 1 leaves,
     /// `/grid/0` on.
     fn with_grid(nodes: &[(&'static str, &[&'static str])]) -> Tree {
-        let cells: Vec<&'static str> = (0..=BIG)
-            .map(|cell| &*Box::leak(format!("/grid/{cell}").into_boxed_str()))
-            .collect();
-        let mut tree = Tree::new([("/grid", (true, cells.clone()))]);
-        tree.nodes
-            .extend(cells.iter().map(|&cell| (cell, (true, Vec::new()))));
+        let mut tree = Tree::new([]);
+        add_grid(&mut tree, "/grid");
         tree.nodes.extend(
             nodes
                 .iter()
                 .map(|&(path, children)| (path, (true, children.to_vec()))),
         );
         tree
+    }
+
+    /// Adds a showing `grid` with `BIG` + 1 leaves, `<grid>/0` on.
+    fn add_grid(tree: &mut Tree, grid: &'static str) {
+        let cells: Vec<&'static str> = (0..=BIG)
+            .map(|cell| &*Box::leak(format!("{grid}/{cell}").into_boxed_str()))
+            .collect();
+        tree.nodes
+            .extend(cells.iter().map(|&cell| (cell, (true, Vec::new()))));
+        tree.nodes.insert(grid, (true, cells));
     }
 
     // The bug: one grid early in the tree used up the cap depth first, so the window's
@@ -558,6 +564,41 @@ mod tests {
         };
         assert_eq!(walked.lineage(at), [link("/grid", 1), link("/grid/3", 3)]);
         assert_eq!(walked.row(at), Row::Lineage);
+    }
+
+    // The server's cap reads a window of 2,500 objects whole. The old cap of 2,000 cut it
+    // short, so no control outside a named row bound a ref.
+    #[tokio::test]
+    async fn a_window_of_2500_objects_is_read_whole_at_the_servers_cap() {
+        let cells: Vec<&'static str> = (0..2500)
+            .map(|cell| &*Box::leak(format!("/cell/{cell}").into_boxed_str()))
+            .collect();
+        let mut tree = Tree::new([("/save", (true, vec![]))]);
+        tree.nodes
+            .extend(cells.iter().map(|&cell| (cell, (true, Vec::new()))));
+        let mut children = cells;
+        children.push("/save");
+        let walked = walk(&tree, &root(&children), crate::a11y::NODE_CAP, everything())
+            .await
+            .unwrap();
+        assert_eq!(walked.nodes.len(), 2501);
+        assert_eq!(walked.capped, None);
+        assert_eq!(walked.row(2500), Row::Lineage);
+    }
+
+    // Two big containers are read in the order they were found: the first grid's cells
+    // before the second's, as a table above a list keeps the table's rows first.
+    #[tokio::test]
+    async fn big_containers_are_read_in_the_order_they_were_found() {
+        let mut tree = with_grid(&[]);
+        add_grid(&mut tree, "/list");
+        let walked = walk(&tree, &root(&["/grid", "/list"]), 2000, everything())
+            .await
+            .unwrap();
+        let read = paths(&walked);
+        let first = |prefix: &str| read.iter().position(|path| path.starts_with(prefix));
+        assert_eq!(&read[..3], ["/grid", "/list", "/grid/0"]);
+        assert!(first("/list/").unwrap() > read.len() - BIG - 2, "{read:?}");
     }
 
     // The bug: at-spi2-atk refuses `GetChildren` for more than 65,536 children, and that

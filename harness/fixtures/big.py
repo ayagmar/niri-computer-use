@@ -6,8 +6,9 @@ a `Save` button and a `Search` entry above a scrolled container of `count` child
 then an `Apply` button, a `Close` button and a `Notes` entry below it. `buttons` holds
 `Open 1` to `Open <count>` buttons in a box. `rows` (GTK 4 only) holds a list box of
 `count` rows, each a `Record <n>` label and a `Delete` button, whose accessible name is
-its record. `tree` (GTK 3 only) is a tree view of `count` rows of three text columns. Every name and
-value is synthetic.
+its record. `tree` (GTK 3 only) is a tree view of `count` rows of three text columns.
+`Apply` counts its activations in `TEST_DIR/big-apply`. Every name and value is
+synthetic.
 """
 
 import os
@@ -38,6 +39,20 @@ gi.require_version("Gtk", "3.0" if toolkit == "gtk3" else "4.0")
 from gi.repository import Gio, GLib, Gtk
 
 GTK3 = toolkit == "gtk3"
+applied = 0
+
+
+def report(name, text):
+    """Replaces the file whole, so a reader never sees half of it."""
+    partial = root / f".{name}"
+    partial.write_text(text, encoding="utf-8")
+    partial.replace(root / name)
+
+
+def apply(_button):
+    global applied
+    applied += 1
+    report("big-apply", str(applied))
 
 
 def button(name):
@@ -80,6 +95,13 @@ def rows():
     return listing
 
 
+def applying():
+    widget = button("Apply")
+    widget.connect("clicked", apply)
+    report("big-apply", "0")
+    return widget
+
+
 def tree():
     store = Gtk.ListStore(str, str, str)
     for n in range(1, count + 1):
@@ -99,7 +121,7 @@ def activate(application):
     top = box(Gtk.Orientation.HORIZONTAL, [button("Save"), labelled(Gtk.Entry(), "Search")])
     bottom = box(
         Gtk.Orientation.HORIZONTAL,
-        [button("Apply"), button("Close"), labelled(Gtk.Entry(), "Notes")],
+        [applying(), button("Close"), labelled(Gtk.Entry(), "Notes")],
     )
     if GTK3:
         scrolled.add(content)
