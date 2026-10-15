@@ -193,6 +193,40 @@ async fn desk_with(name: &str, extra: Object) -> Desk {
     Desk::start_with(name, &["/frame"], objects, &windows).await
 }
 
+// Chromium's text fields are editable but have no EditableText interface, and
+// `set_element_text` refused them as a plain `invalid arguments:`, which the skill reads
+// as a mistake in the call to fix and send again. The refusal now has its own name
+// and says what works instead. A button, which isn't editable, is still a mistake.
+// Nothing is set either way.
+#[tokio::test]
+async fn an_editable_field_without_editable_text_says_to_focus_and_type() {
+    let web = Object {
+        text: None,
+        ..Object::entry(TEXT, "Web field")
+    };
+    let mut desk = desk_with("el-not-settable", web).await;
+    let set = |element: String| json!({"element": element, "text": "abc", "expect": {"window_id": WINDOW}});
+    let field = desk.element("Web field").await;
+    let refused = desk.server.call("set_element_text", set(field)).await;
+    let (name, detail) = tool_error(&refused);
+    assert_eq!(name, "text_not_settable", "{refused}");
+    for advice in [
+        "activate_element",
+        "type_text",
+        "ctrl+a",
+        "nothing was sent",
+    ] {
+        assert!(detail.contains(advice), "{advice}: {detail}");
+    }
+    let button = desk.element("Safe").await;
+    let wrong = desk.server.call("set_element_text", set(button)).await;
+    assert_eq!(
+        mistake(&wrong),
+        "invalid arguments: the element has no EditableText interface, so its text can't be set"
+    );
+    assert_eq!(desk.mock.calls("SetTextContents"), 0);
+}
+
 /// `set_element_text` on the mock's field, `/entry`, with `text`.
 async fn set_entry(desk: &mut Desk, text: &str) -> Value {
     let entry = desk.element("Field").await;

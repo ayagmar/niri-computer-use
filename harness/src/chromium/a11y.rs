@@ -9,7 +9,8 @@
 //! snapshot, by which the server tells a Chromium-family app, that a browser started while
 //! accessibility was off isn't listed and is reported as needing a restart, that the server
 //! turned accessibility on, that a browser started after lists the fixture's field and
-//! button and that activating the button reaches the page, that a fresh page's first
+//! button, that `set_element_text` on the field fails `text_not_settable` and that
+//! activating the button reaches the page, that a fresh page's first
 //! listing says the page is building its tree, that a floating page's button is clicked
 //! by its ref with server-side decorations and refused `frame_size_mismatch` with
 //! client-side ones, and that accessibility goes back off when the server ends. It logs
@@ -299,16 +300,26 @@ impl Page {
             .to_owned())
     }
 
-    /// Logs what `set_element_text` on the field does: Chromium 155's text fields have no
+    /// `set_element_text` on the field must fail `text_not_settable`, its detail saying to
+    /// use `activate_element` and `type_text`: Chromium's text fields have no
     /// `EditableText` interface.
     fn set_text(&self, session: &mut Session<'_>, client: &mut Client, id: &str) -> Result<()> {
         let args = json!({
             "element": id, "text": "typed", "expect": {"window_id": self.window.id}
         });
         let result = client.call(session, "set_element_text", args)?;
+        let error = report(&result);
+        let detail = field(&error, "/detail").as_str().unwrap_or_default();
+        if field(&error, "/error") != "text_not_settable"
+            || !detail.contains("activate_element")
+            || !detail.contains("type_text")
+        {
+            return Err(Failure::new(format!(
+                "Chromium a11y: set_element_text on the field: {result}"
+            )));
+        }
         session.log(&format!(
-            "Chromium a11y: set_element_text on the field: {}",
-            field_text(&result)
+            "Chromium a11y: set_element_text on the field: text_not_settable, {detail}"
         ))
     }
 

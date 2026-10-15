@@ -766,7 +766,9 @@ async fn caught_up(waiter: &mut Waiter) -> Option<String> {
     }
 }
 
-/// Checks the element has an `EditableText` interface, or its text can't be set.
+/// Checks the element has an `EditableText` interface, or its text can't be set: an
+/// editable field without one, as Chromium's text fields are, is `text_not_settable`,
+/// with what to do instead, and anything else a mistake.
 async fn editable(request: &Request, element: &ElementRef) -> Result<(), CallError> {
     if request
         .editable_text(element)
@@ -775,9 +777,17 @@ async fn editable(request: &Request, element: &ElementRef) -> Result<(), CallErr
     {
         return Ok(());
     }
-    Err(CallError::InvalidArguments(
-        "the element has no EditableText interface, so its text can't be set".to_owned(),
-    ))
+    let (_, states) = request.state(element).await.map_err(gone_is_stale)?;
+    if !states.has(State::Editable) {
+        return Err(CallError::InvalidArguments(
+            "the element has no EditableText interface, so its text can't be set".to_owned(),
+        ));
+    }
+    Err(ToolError::new(
+        ErrorName::TextNotSettable,
+        "the field is editable but has no EditableText interface, as Chromium's text fields have none, so its text can't be set through accessibility; nothing was sent. Focus it with activate_element, then type with type_text, its expect naming the field's window; to replace what it holds, press ctrl+a with key before typing",
+    )
+    .into())
 }
 
 /// Refuses text over `MAX_TEXT` bytes before anything is asked.

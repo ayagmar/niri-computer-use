@@ -377,13 +377,13 @@ make nested-chromium-a11y SSD=1 SCALE=1.5
 
 1. The first browser's window process maps `icudtl.dat` or `v8_context_snapshot.bin`, as its `/proc/<pid>/maps` shows, which is how the server tells a Chromium-family app.
 1. `IsEnabled` is false before the server, and a browser started then is refused with `not_accessible`, whose detail says the server turned accessibility on, after which `IsEnabled` is true.
-2. A browser started after that is on the registry, `elements` lists its field and button, and `activate_element` on the button changes the page's title to the field's `sent`.
+2. A browser started after that is on the registry, `elements` lists its field and button, `set_element_text` on the field fails `text_not_settable`, since the field has no `EditableText`, with a detail that names `activate_element` and `type_text`, and `activate_element` on the button changes the page's title to the field's `sent`.
 3. Another browser's window, moved to the floating layout, lists its button with a `layout_box` under `SSD=1`, and `click` with the button's `element_ref` changes the page's title to `sent`; without `SSD=1` the button is `unmappable: frame_size_mismatch`, since Chromium's frame then includes its shadow.
 4. The first browser is still refused, with a detail that says accessibility is on.
 5. On pages of 300 and 2,000 rows, the first listing says `building: true`, and the page's field is listed within 30 seconds.
 6. After the server ends, `IsEnabled` is false again.
 
-It also logs what isn't promised: `set_element_text`'s refusal on the field, which has no `EditableText`, the frame's extents beside niri's window size, whether each browser joined or left the bus three seconds after accessibility turned on or off, and each long page's listings with their times, refs and `unbound` reasons. `docs/decisions.md` has the numbers.
+It also logs what isn't promised: the frame's extents beside niri's window size, whether each browser joined or left the bus three seconds after accessibility turned on or off, and each long page's listings with their times, refs and `unbound` reasons. `docs/decisions.md` has the numbers.
 
 ## Skill evals
 

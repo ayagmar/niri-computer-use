@@ -167,6 +167,12 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 **What to do:** don't list again, which gives the same answer: take a screenshot and aim `click` at the element's pixels in the row you mean.
 
+### `text_not_settable`
+
+**Cause:** `set_element_text` was aimed at a field in the `editable` state that has no `EditableText` interface, as Chromium's text fields don't: `<input>`, `<textarea>` and `contenteditable` alike expose only `Text` and `Action`, so nothing on the accessibility bus sets their text. Nothing was set. An element that isn't editable at all, such as a button, is an argument mistake instead.
+
+**What to do:** focus the field with `activate_element`, then send the text with `type_text`, its `expect` naming the field's window. To replace what the field holds, press `ctrl+a` with `key` before typing.
+
 ### `secret_field`
 
 **Cause:** `activate_element` or `set_element_text` was aimed at a field the toolkit marks as a password field: an element whose role is `password_text`, as GTK 4's password entry and its entries for a password or PIN, GTK 3's entries that hide their text and Qt's password fields and fields that hide their text (`NoEcho`) are. The role is read again right before acting, so a field that became one is refused too. Nothing was sent.
