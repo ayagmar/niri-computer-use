@@ -33,6 +33,8 @@ const ENGINE_DEADLINE: Duration = Duration::from_secs(150);
 const MEASURE_DEADLINE: Duration = Duration::from_secs(300);
 const LATENCY_DEADLINE: Duration = Duration::from_secs(240);
 const CHROMIUM_DEADLINE: Duration = Duration::from_secs(240);
+/// Two installs, one of them downloaded, and the checks between them.
+const UPGRADE_DEADLINE: Duration = Duration::from_secs(240);
 /// The agent's twelve minutes, with the fixtures and Noctalia around it.
 const EVAL_DEADLINE: Duration = Duration::from_mins(15);
 /// A scene with its desktop around it.
@@ -63,6 +65,8 @@ pub(crate) struct Options {
     pub(crate) binary: Option<PathBuf>,
     /// The Chromium-based browser `--chromium` found.
     pub(crate) browser: Option<PathBuf>,
+    /// The release `--upgrade` upgrades from.
+    pub(crate) from: Option<String>,
 }
 
 /// How the servers under test serve their clients.
@@ -99,6 +103,8 @@ pub(crate) enum ServerChecks {
     ChromiumA11y,
     /// Windows with one big container, read whole.
     Big,
+    /// An upgrade from a published release to this build; always in shared mode.
+    Upgrade,
 }
 
 impl ServerChecks {
@@ -115,6 +121,7 @@ impl ServerChecks {
             Self::Chromium => "--chromium",
             Self::ChromiumA11y => "--chromium-a11y",
             Self::Big => "--big",
+            Self::Upgrade => "--upgrade",
         }
     }
 
@@ -131,6 +138,7 @@ impl ServerChecks {
             Self::Chromium,
             Self::ChromiumA11y,
             Self::Big,
+            Self::Upgrade,
         ]
         .into_iter()
         .find(|checks| checks.flag() == flag)
@@ -147,6 +155,7 @@ impl ServerChecks {
             Self::Measure => MEASURE_DEADLINE,
             Self::Latency => LATENCY_DEADLINE,
             Self::Chromium | Self::ChromiumA11y => CHROMIUM_DEADLINE,
+            Self::Upgrade => UPGRADE_DEADLINE,
         }
     }
 }
@@ -166,7 +175,9 @@ pub(crate) fn run(options: &Options) -> Result<()> {
     log.line(&format!("artifacts {}", artifacts.display()))?;
 
     let mut outcome = run_nested(&host, &test_dir, &artifacts, options, &mut log);
-    if options.mode == ServerMode::Shared {
+    // An upgrade's new clients are served standalone beside the old engine on purpose; it
+    // checks that every engine exited itself.
+    if options.mode == ServerMode::Shared && options.server != Some(ServerChecks::Upgrade) {
         let checked = shared::check(&test_dir, &artifacts, &mut log);
         outcome = outcome.and(checked);
     }
@@ -447,6 +458,9 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: &Optio
         args.push(server(options)?.into());
         if let Some(browser) = &options.browser {
             args.push(browser.into());
+        }
+        if let Some(from) = &options.from {
+            args.push(from.into());
         }
     } else if let Some(eval) = &options.eval {
         args.extend(eval_args(eval, options)?);

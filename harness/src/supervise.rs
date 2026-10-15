@@ -38,6 +38,8 @@ pub(crate) struct Probes<'a> {
     pub(crate) server: Option<(ServerChecks, &'a str)>,
     /// The browser for `ServerChecks::Chromium`.
     pub(crate) browser: Option<&'a str>,
+    /// The release `ServerChecks::Upgrade` upgrades from.
+    pub(crate) from: Option<&'a str>,
     pub(crate) eval: Option<(crate::eval::Options, &'a str)>,
     /// A demo recording, with the `niri-computer-use` binary.
     pub(crate) demo: Option<(crate::demo::Scene, &'a str)>,
@@ -92,6 +94,10 @@ pub(crate) fn supervise(
                     .browser
                     .ok_or_else(|| Failure::new("--chromium-a11y needs a browser"))
                     .and_then(|browser| crate::chromium::a11y::run(&mut session, server, browser)),
+                ServerChecks::Upgrade => probes
+                    .from
+                    .ok_or_else(|| Failure::new("--upgrade needs a release"))
+                    .and_then(|from| crate::upgrade::run(&mut session, server, from)),
             }
         } else {
             steps(&mut session, &output, probes)

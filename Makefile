@@ -1,4 +1,4 @@
-.PHONY: check check-static test test-shared stall stall-standalone stall-shared perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-latency nested-chromium nested-chromium-a11y nested-big nested-eval nested-demo sitting host-capture
+.PHONY: check check-static test test-shared stall stall-standalone stall-shared perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-latency nested-chromium nested-chromium-a11y nested-big nested-upgrade nested-eval nested-demo sitting host-capture
 
 SCALE ?= 1
 NESTED_FLAGS = $(if $(VISIBLE),--visible) $(if $(SHARED),--shared)
@@ -99,6 +99,15 @@ nested-chromium-a11y:
 nested-big:
 	cargo build --locked --release -p niri-computer-use
 	cargo run --locked -p harness -- run $(NESTED_FLAGS) --big --server target/release/niri-computer-use
+
+# An upgrade from each published release to this release build, installed with install.sh
+# into a throwaway HOME: make nested-upgrade UPGRADE_FROM=0.1.1 picks one.
+UPGRADE_FROM ?= 0.1.0 0.1.1
+nested-upgrade:
+	cargo build --locked --release -p niri-computer-use
+	for from in $(UPGRADE_FROM); do \
+		cargo run --locked -p harness -- run $(NESTED_FLAGS) --upgrade $$from --server target/release/niri-computer-use || exit 1; \
+	done
 
 # One skill eval in the nested niri: make nested-eval SCENARIO=compose-message SKILL=skills/niri-computer-use MODEL=sonnet
 nested-eval:

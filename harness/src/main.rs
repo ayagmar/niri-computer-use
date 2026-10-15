@@ -38,6 +38,7 @@ mod slow_reader;
 mod snapshot;
 mod supervise;
 mod test_dir;
+mod upgrade;
 mod wev;
 mod window;
 
@@ -50,13 +51,13 @@ use scale::Scale;
 use supervise::Probes;
 use test_dir::TestDir;
 
-const USAGE: &str = "usage: harness run [--visible] [--shared] [--server <path>] [--scale <scale>] [--ssd] [--noctalia | --sitting | --control | --actions | --input | --shell | --a11y | --engine | --measure | --latency | --chromium | --chromium-a11y | --big | --eval <scenario> --skill <dir|none> --model <model> | --demo <scene>]
+const USAGE: &str = "usage: harness run [--visible] [--shared] [--server <path>] [--scale <scale>] [--ssd] [--noctalia | --sitting | --control | --actions | --input | --shell | --a11y | --engine | --measure | --latency | --chromium | --chromium-a11y | --big | --upgrade <version> | --eval <scenario> --skill <dir|none> --model <model> | --demo <scene>]
        harness host-capture <output>
        harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--started <file>]
        harness keymaps <TEST_DIR> <directory> <deadline-ms>
        harness clipboard <TEST_DIR> <deadline-ms> [--secret]
        harness slow-reader <TEST_DIR> <delay-ms> <deadline-ms>
-       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--ssd] [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --a11y <server> | --engine <server> | --measure <server> | --latency <server> | --chromium <server> <browser> | --chromium-a11y <server> <browser> | --big <server> | --eval <server> <scenario> <skill|none> <model> | --demo <server> <scene>]";
+       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--ssd] [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --a11y <server> | --engine <server> | --measure <server> | --latency <server> | --chromium <server> <browser> | --chromium-a11y <server> <browser> | --big <server> | --upgrade <server> <version> | --eval <server> <scenario> <skill|none> <model> | --demo <server> <scene>]";
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -104,6 +105,7 @@ fn dispatch(args: &[OsString]) -> Result<()> {
                 sitting: false,
                 server: None,
                 browser: None,
+                from: None,
                 eval: None,
                 demo: None,
             };
@@ -118,6 +120,10 @@ fn dispatch(args: &[OsString]) -> Result<()> {
                         run::ServerChecks::from_flag(flag).ok_or_else(|| Failure::new(USAGE))?;
                     probes.server = Some((checks, *server));
                     probes.browser = Some(*browser);
+                }
+                ["--upgrade", server, from] => {
+                    probes.server = Some((run::ServerChecks::Upgrade, *server));
+                    probes.from = Some(*from);
                 }
                 ["--sitting"] => probes.sitting = true,
                 ["--noctalia", server] => probes.noctalia = Some(*server),
@@ -153,6 +159,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
         mode: run::ServerMode::Standalone,
         binary: None,
         browser: None,
+        from: None,
     };
     let (mut scenario, mut skill, mut model) = (None, None, None);
     let mut args = args.iter();
@@ -180,6 +187,12 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
                 options.server = Some(run::ServerChecks::Engine);
                 options.mode = run::ServerMode::Shared;
             }
+            "--upgrade" => {
+                let from = args.next().ok_or_else(|| Failure::new(USAGE))?;
+                options.server = Some(run::ServerChecks::Upgrade);
+                options.from = Some((*from).to_owned());
+                options.mode = run::ServerMode::Shared;
+            }
             "--eval" => scenario = Some(*args.next().ok_or_else(|| Failure::new(USAGE))?),
             "--skill" => skill = Some(*args.next().ok_or_else(|| Failure::new(USAGE))?),
             "--model" => model = Some(*args.next().ok_or_else(|| Failure::new(USAGE))?),
@@ -204,7 +217,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
         > 1
     {
         return Err(Failure::new(
-            "--sitting, --noctalia, --control, --actions, --input, --shell, --a11y, --engine, --measure, --latency, --chromium, --chromium-a11y, --big, --eval and --demo cannot be combined",
+            "--sitting, --noctalia, --control, --actions, --input, --shell, --a11y, --engine, --measure, --latency, --chromium, --chromium-a11y, --big, --upgrade, --eval and --demo cannot be combined",
         ));
     }
     options.visible |= options.sitting;
