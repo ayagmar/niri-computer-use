@@ -34,6 +34,8 @@ const TYPED: usize = 1000;
 const MARKER_POLL: Duration = Duration::from_millis(1);
 /// Valid in every release: a key each one reads.
 const POLICY: &str = "deny_input_app_ids = [\"org.keepassxc.KeePassXC\"]\n";
+/// A key added after 0.1.1.
+const NEWER_POLICY: &str = "turn_on_accessibility = false\n";
 
 pub(crate) fn run(session: &mut Session<'_>, server: &str, from: &str) -> Result<()> {
     let noctalia = session.start(
@@ -50,6 +52,7 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str, from: &str) -> Result
         first_line(&printed)
     ))?;
     write_policy(session)?;
+    newer_key_refused(session, &place)?;
     let wev = start_wev(session)?;
     let mut old = Old::start(session, &place, from)?;
     let audit_before = audit(session)?;
@@ -86,6 +89,31 @@ fn write_policy(session: &Session<'_>) -> Result<()> {
     fs::create_dir_all(&dir).context(format!("create {}", dir.display()))?;
     let path = dir.join("policy.toml");
     fs::write(&path, POLICY).context(format!("write {}", path.display()))
+}
+
+/// The old build's `status` reads a policy file with a key added since as invalid, which
+/// leaves its servers read-only.
+fn newer_key_refused(session: &mut Session<'_>, place: &Place) -> Result<()> {
+    let config = session.test_dir().root().join("newer-config");
+    let dir = config.join("niri-computer-use");
+    fs::create_dir_all(&dir).context(format!("create {}", dir.display()))?;
+    let path = dir.join("policy.toml");
+    fs::write(&path, NEWER_POLICY).context(format!("write {}", path.display()))?;
+    let mut xdg = OsString::from("XDG_CONFIG_HOME=");
+    xdg.push(&config);
+    let args = place.env(&[xdg, place.binary().into(), "status".into()]);
+    let output = session.run("env", &args)?;
+    let status: Value = serde_json::from_slice(&output.stdout).context("parse the old status")?;
+    let policy = field(&status, "/policy");
+    expect(
+        field(policy, "/state") == "invalid",
+        "the old build refusing a newer policy key",
+        &policy.to_string(),
+    )?;
+    session.log(&format!(
+        "upgrade: the old build reads a policy file with {} as {policy}",
+        NEWER_POLICY.trim_end()
+    ))
 }
 
 fn start_wev(session: &mut Session<'_>) -> Result<Process> {
