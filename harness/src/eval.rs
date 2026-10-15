@@ -505,11 +505,7 @@ fn assess(
             let placed = workflows::placements(session)?;
             expectations.extend(workflows::arranged(&placed));
         }
-        Scenario::CopyFiles => {
-            let after = workflows::Folder::read(&workflows::pictures(session))?;
-            let before = setup.pictures.as_ref().unwrap_or(&after);
-            expectations.extend(workflows::moved_files(before, &after));
-        }
+        Scenario::CopyFiles => expectations.extend(copy_checks(session, setup)?),
         Scenario::ModalRecovery => {
             expectations.extend(modal_checks(session, &calls, &answer)?);
         }
@@ -563,6 +559,16 @@ fn errand_checks(
     ));
     expectations.push(grade::focus_returned(focused(session)?, users_window));
     Ok(expectations)
+}
+
+/// `Pictures` now against what it held at set-up.
+fn copy_checks(session: &Session<'_>, setup: &Setup) -> Result<Vec<Expectation>> {
+    let before = setup
+        .pictures
+        .as_ref()
+        .ok_or_else(|| Failure::new("copy-files read no Pictures folder at set-up"))?;
+    let after = workflows::Folder::read(&workflows::pictures(session))?;
+    Ok(workflows::moved_files(before, &after))
 }
 
 /// The dialog was dealt with, the whole message went out once from the window that stays
