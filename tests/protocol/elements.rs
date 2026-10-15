@@ -1653,18 +1653,7 @@ async fn a_control_outside_rows_a_cut_walk_cant_tell_apart_is_unbound() {
 // its ref is refused with nothing sent.
 #[tokio::test]
 async fn a_big_container_early_in_the_window_no_longer_hides_the_controls_after_it() {
-    let cells: Vec<&'static str> = (0..65).map(|n| leak(format!("/open{n}"))).collect();
-    let mut objects = vec![
-        (
-            "/frame",
-            Object::frame("Mock", (800, 600), &["/grid", "/save"]),
-        ),
-        ("/grid", Object::panel(&cells)),
-        ("/save", Object::button("Save", &["click"])),
-    ];
-    for (n, path) in cells.iter().enumerate() {
-        objects.push((*path, Object::button(&format!("Open {n}"), &["click"])));
-    }
+    let (objects, cells) = grid_then_save(65, |n| Object::button(&format!("Open {n}"), &["click"]));
     let mut desk = list_desk("el-big-grid", objects).await;
     for path in cells.iter().take(4) {
         desk.mock
@@ -1679,6 +1668,56 @@ async fn a_big_container_early_in_the_window_no_longer_hides_the_controls_after_
     let result = activate(&mut desk, save["element_ref"].as_str().unwrap()).await;
     assert_eq!(tool_error(&result).0, "element_unbound", "{result}");
     assert_eq!(desk.mock.calls("DoAction"), 0);
+}
+
+/// A window of a `/grid` panel of `count` objects that `cell` makes, then a `Save` button,
+/// and the grid's cells' paths.
+fn grid_then_save(
+    count: usize,
+    cell: impl Fn(usize) -> Object,
+) -> (Vec<(&'static str, Object)>, Vec<&'static str>) {
+    let cells: Vec<&'static str> = (0..count).map(|n| leak(format!("/cell{n}"))).collect();
+    let mut objects = vec![
+        (
+            "/frame",
+            Object::frame("Mock", (800, 600), &["/grid", "/save"]),
+        ),
+        ("/grid", Object::panel(&cells)),
+        ("/save", Object::button("Save", &["click"])),
+    ];
+    for (n, path) in cells.iter().enumerate() {
+        objects.push((*path, cell(n)));
+    }
+    (objects, cells)
+}
+
+/// `Save` as `elements` lists it, in a listing that must have been cut by `capped`, or not
+/// cut at all.
+async fn listed_save(desk: &mut Desk, capped: Option<&str>) -> Value {
+    let arguments = json!({"window_id": WINDOW, "name_contains": "Save", "format": "json"});
+    let listing = desk.server.structured_with("elements", arguments).await;
+    assert_eq!(listing["capped_reason"].as_str(), capped, "{listing}");
+    let save = listing["elements"][0].clone();
+    assert_eq!(save["name"], "Save", "{listing}");
+    save
+}
+
+// The bug: at-spi2-atk refuses `GetChildren` on an object of more than 65,536 children,
+// as a GTK 3 tree view of 22,000 rows of three columns has, and that refusal failed the
+// whole listing with `upstream_error`. The grid's children now go unread: the listing is
+// cut short by `children_refused`, and `Save`, which a look-alike in the grid could share
+// its role and name with, is listed `unbound: cut_short`.
+#[tokio::test]
+async fn children_the_app_refuses_to_list_cut_the_listing_short_instead_of_failing_it() {
+    let (objects, _) = grid_then_save(2, |n| Object::label(&format!("Cell {n}")));
+    let mut desk = list_desk("el-big-refused", objects).await;
+    desk.mock.fail_named(
+        "GetChildren",
+        "/grid",
+        "org.freedesktop.DBus.Error.InvalidArgs",
+    );
+    let save = listed_save(&mut desk, Some("children_refused")).await;
+    assert_eq!(save["unbound"], "cut_short", "{save}");
 }
 
 // A walk cut short after a named row still binds that row's `Delete` by the row's name:
@@ -2632,6 +2671,31 @@ async fn a_walk_that_fails_after_the_action_leaves_the_elements_unknown_not_the_
     assert_eq!(elements["window_id"], WINDOW, "{outcome}");
     assert_eq!(elements["unknown"], "deadline_exceeded", "{outcome}");
     assert_eq!(desk.mock.calls("DoAction"), 1);
+}
+
+#[tokio::test]
+async fn children_the_app_refuses_after_the_action_leave_the_elements_unknown() {
+    let mut desk = Desk::start("chg-refused").await;
+    let button = desk.element("Safe").await;
+    let acting = desk.mock.hold_on("DoAction", "/button");
+    let arguments = json!({
+        "element": button, "expect": {"window_id": WINDOW}, "element_changes": true
+    });
+    let id = desk.server.start_call("activate_element", arguments).await;
+    acting.arrived().await;
+    desk.mock.fail_named(
+        "GetChildren",
+        "/panel",
+        "org.freedesktop.DBus.Error.InvalidArgs",
+    );
+    acting.release();
+    let result = desk.server.response(id).await["result"].clone();
+    let outcome = &report(&result);
+    assert_eq!(outcome["accepted"], true, "{outcome}");
+    assert_eq!(
+        outcome["changes"]["elements"]["unknown"], "children_refused",
+        "{outcome}"
+    );
 }
 
 #[tokio::test]

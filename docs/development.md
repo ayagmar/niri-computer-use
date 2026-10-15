@@ -310,9 +310,10 @@ Every call on a bus from the harness goes through `busctl --address=… --json=s
 - GTK 4, a list box of 1,500 rows, each named after its record and holding its label and a `Delete` button (7,526 objects);
 - GTK 3, a box of 3,000 buttons (3,020 objects);
 - GTK 3, a tree view of 5,000 rows of three text columns (15,022 objects);
-- GTK 3, a tree view of 8,000 rows, past the walk's 20,000 objects.
+- GTK 3, a tree view of 8,000 rows, past the walk's 20,000 objects;
+- GTK 3, a tree view of 22,000 rows, whose table has 66,003 children, more than at-spi2-atk lists.
 
-Each listing of the first four must read the whole window, with `capped` false, and `elements` must list `Save`, `Search`, `Apply` and `Notes` with a ref and no `unbound`. The last must be cut with `capped_reason: node_cap` and still list all four, read before the tree's cells, each with `unbound: cut_short`. It logs each listing's time and how many objects it walked. The run has a 240-second deadline and needs what `make nested-a11y` needs, without Qt.
+Each listing of the first four must read the whole window, with `capped` false, and `elements` must list `Save`, `Search`, `Apply` and `Notes` with a ref and no `unbound`. The fifth must be cut with `capped_reason: node_cap` and the last with `capped_reason: children_refused`, and both must still list all four, read before the tree's cells, each with `unbound: cut_short`. It logs each listing's time and how many objects it walked. The run has a 240-second deadline and needs what `make nested-a11y` needs, without Qt.
 
 ## Nested shared-engine checks
 

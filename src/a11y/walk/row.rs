@@ -59,6 +59,7 @@ mod tests {
                 extents: None,
                 actions: Vec::new(),
                 children: Vec::new(),
+                children_refused: false,
             });
             walked.places.push((above.last().copied(), 0));
             above.push(at);

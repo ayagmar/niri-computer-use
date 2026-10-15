@@ -84,6 +84,7 @@ pub(crate) enum Why {
     WindowGone,
     NodeCap,
     BudgetExhausted,
+    ChildrenRefused,
     #[serde(untagged)]
     Error(ErrorName),
 }
@@ -122,6 +123,10 @@ impl Unknown {
             Capped::BudgetExhausted => {
                 (Why::BudgetExhausted, "a walk ran out of its three seconds")
             }
+            Capped::ChildrenRefused => (
+                Why::ChildrenRefused,
+                "the app refused to list an object's children",
+            ),
         };
         Self {
             window_id: Some(window_id),

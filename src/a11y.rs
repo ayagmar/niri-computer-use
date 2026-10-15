@@ -504,8 +504,24 @@ impl Request {
 
     /// The node at `path` in application `bus`, or `None` once it is gone. A node without
     /// a Component or Action interface has no extents or no actions. Its action names are
-    /// as the app lists them, empty ones too (`named`).
+    /// as the app lists them, empty ones too (`named`). An app's refusal to list its
+    /// children is an error.
     pub(crate) async fn node(&self, bus: &str, path: &str) -> Result<Option<Node>, ToolError> {
+        self.read_node((bus, path), false).await
+    }
+
+    /// `node` for the walk: children the app refuses to list, as at-spi2-atk refuses more
+    /// than 65,536, leave it `children_refused` with none, so the walk reads on without
+    /// them instead of failing.
+    async fn walked_node(&self, bus: &str, path: &str) -> Result<Option<Node>, ToolError> {
+        self.read_node((bus, path), true).await
+    }
+
+    async fn read_node(
+        &self,
+        (bus, path): (&str, &str),
+        unread_if_refused: bool,
+    ) -> Result<Option<Node>, ToolError> {
         let at = (bus, path);
         let (role, name, states, children, extents, actions) = tokio::join!(
             self.call::<_, u32>(at, (ACCESSIBLE, "GetRole"), &()),
@@ -515,6 +531,10 @@ impl Request {
             self.extents(bus, path),
             self.listed_actions(at),
         );
+        let (children, children_refused) = match children {
+            Err(Failed::Refused(_)) if unread_if_refused => (Ok(Vec::new()), true),
+            listed => (listed, false),
+        };
         let (Some(role), Some(name), Some(states), Some(children)) = (
             present(role)?,
             present(name)?,
@@ -538,6 +558,7 @@ impl Request {
                     path: child.to_string(),
                 })
                 .collect(),
+            children_refused,
         }))
     }
 
@@ -774,7 +795,7 @@ struct AppTree<'a> {
 
 impl walk::Source for AppTree<'_> {
     async fn node(&self, path: &str) -> Result<Option<Node>, ToolError> {
-        self.request.node(self.bus, path).await
+        self.request.walked_node(self.bus, path).await
     }
 
     fn spent(&self) -> bool {

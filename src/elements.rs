@@ -919,6 +919,7 @@ mod tests {
             extents: None,
             actions: actions.iter().map(|&action| action.to_owned()).collect(),
             children: Vec::new(),
+            children_refused: false,
         }
     }
 

@@ -30,6 +30,9 @@ pub(crate) struct Node {
     pub(crate) actions: Vec<String>,
     /// Its children in the same application.
     pub(crate) children: Vec<Child>,
+    /// Set when the app refused to list its children, as at-spi2-atk does for more than
+    /// 65,536 of them; `children` is then empty, though it has some.
+    pub(crate) children_refused: bool,
 }
 
 /// A child of a node: its object path, and its index among all of the node's children.
@@ -57,6 +60,9 @@ pub(crate) enum Capped {
     NodeCap,
     /// The request's whole budget ran out.
     BudgetExhausted,
+    /// The app refused to list a showing node's children, so they went unread, though the
+    /// walk read on past them.
+    ChildrenRefused,
 }
 
 /// The nodes under a root, in the order the walk read them, without the root: document
@@ -125,6 +131,7 @@ pub(crate) async fn walk<F: Fn(&Node) -> bool + Sync>(
 ) -> Result<Walked, ToolError> {
     let mut walked = Walked::default();
     let mut found = 0;
+    let mut refused = false;
     let mut pending = Pending::default();
     pending.push(None, &root.children);
     while let Some((parent, child)) = pending.pop() {
@@ -146,6 +153,7 @@ pub(crate) async fn walk<F: Fn(&Node) -> bool + Sync>(
         };
         let at = walked.nodes.len();
         if node.states.has(model::State::Showing) {
+            refused |= node.children_refused;
             if node.children.len() > BIG {
                 pending.defer(at, &node.children);
             } else {
@@ -159,6 +167,9 @@ pub(crate) async fn walk<F: Fn(&Node) -> bool + Sync>(
             walked.missed |= !pending.is_empty();
             break;
         }
+    }
+    if refused {
+        walked.capped = walked.capped.or(Some(Capped::ChildrenRefused));
     }
     walked.finish();
     Ok(walked)
@@ -258,7 +269,8 @@ mod tests {
     const SHOWING: u32 = (1 << 25) | (1 << 30);
 
     /// An in-memory tree: path → (showing, children), each node named after its path.
-    /// Missing paths are gone. `/late` times out with the request's budget spent, `/hung`
+    /// Missing paths are gone, and `/refused`'s children are refused, as at-spi2-atk
+    /// refuses more than 65,536. `/late` times out with the request's budget spent, `/hung`
     /// times out on its own call with budget left, as a hung app does, and `/lost` fails
     /// as a lost bus connection does.
     struct Tree {
@@ -296,7 +308,12 @@ mod tests {
                 states: States::from_words(&[if *showing { SHOWING } else { 0 }]),
                 extents: None,
                 actions: Vec::new(),
-                children: kids(children),
+                children: if path == "/refused" {
+                    Vec::new()
+                } else {
+                    kids(children)
+                },
+                children_refused: path == "/refused",
             })))
         }
 
@@ -325,6 +342,7 @@ mod tests {
             extents: None,
             actions: Vec::new(),
             children: kids(children),
+            children_refused: false,
         }
     }
 
@@ -540,6 +558,24 @@ mod tests {
         };
         assert_eq!(walked.lineage(at), [link("/grid", 1), link("/grid/3", 3)]);
         assert_eq!(walked.row(at), Row::Lineage);
+    }
+
+    // The bug: at-spi2-atk refuses `GetChildren` for more than 65,536 children, and that
+    // refusal failed the whole listing. The node's children now go unread, the walk reads
+    // on, and the walk is cut short, so `/save` is listed but binds nothing.
+    #[tokio::test]
+    async fn children_the_app_refuses_go_unread_and_leave_the_walk_cut_short() {
+        let tree = Tree::new([
+            ("/refused", (true, vec!["/refused/1"])),
+            ("/refused/1", (true, vec![])),
+            ("/save", (true, vec![])),
+        ]);
+        let walked = walk(&tree, &root(&["/refused", "/save"]), 2000, everything())
+            .await
+            .unwrap();
+        assert_eq!(paths(&walked), ["/refused", "/save"]);
+        assert_eq!(walked.capped, Some(Capped::ChildrenRefused));
+        assert_eq!(walked.row(1), Row::Unbound(Unbound::CutShort));
     }
 
     // The bug a walk stopped at its limit with only a big container's children left

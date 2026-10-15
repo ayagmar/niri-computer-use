@@ -1,9 +1,10 @@
 //! `--big`: windows with one big container, listed through the server. Each window has a
 //! `Save` button and a `Search` entry above the container and an `Apply` button and a
 //! `Notes` entry below it (`fixtures/big.py`). A window the walk reads whole must list
-//! all four with a bound ref. One past the walk's 20,000 objects must still list them,
-//! since the container's children are read last, but as `unbound: cut_short`, since the
-//! container may hold a look-alike of each. Each listing's time and size are logged.
+//! all four with a bound ref. One past the walk's 20,000 objects, or with more children
+//! than the app will list, must still list them, since the container's children are read
+//! last, but as `unbound: cut_short`, since the container may hold a look-alike of each.
+//! Each listing's time and size are logged.
 
 use std::ffi::OsString;
 use std::fs;
@@ -22,7 +23,7 @@ const NOCTALIA_DEADLINE: Duration = Duration::from_secs(225);
 const SERVER_DEADLINE: Duration = Duration::from_secs(220);
 const FIXTURE_DEADLINE: Duration = Duration::from_secs(60);
 const READY: Duration = Duration::from_secs(20);
-/// Building a few thousand widgets, then the window.
+/// Building up to 22,000 rows, then the window.
 const STARTUP: Duration = Duration::from_secs(30);
 /// The window's own controls, outside the container.
 const CONTROLS: [&str; 4] = ["Save", "Search", "Apply", "Notes"];
@@ -42,8 +43,9 @@ impl Case {
     }
 }
 
-/// Each over the 2,000 objects the walk read before; the last over its 20,000.
-const CASES: [Case; 5] = [
+/// Each over the 2,000 objects the walk read before. The fifth is over the walk's 20,000;
+/// the last has a table of 66,003 children, which at-spi2-atk refuses to list past 65,536.
+const CASES: [Case; 6] = [
     Case {
         toolkit: "gtk4",
         kind: "buttons",
@@ -73,6 +75,12 @@ const CASES: [Case; 5] = [
         kind: "tree",
         count: "8000",
         cut: Some("node_cap"),
+    },
+    Case {
+        toolkit: "gtk3",
+        kind: "tree",
+        count: "22000",
+        cut: Some("children_refused"),
     },
 ];
 
