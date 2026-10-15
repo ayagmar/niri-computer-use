@@ -59,7 +59,7 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str, from: &str) -> Result
     let wev = start_wev(session)?;
     let mut old = Old::start(session, &place, from)?;
     let audit_before = audit(session)?;
-    place.install(session, CURRENT)?;
+    old.install_while_typing(session, &place)?;
     if !place.holds_current()? {
         return Err(Failure::new(
             "upgrade: the installed binary or skill isn't the build under test's",
@@ -166,6 +166,24 @@ impl Old {
             "upgrade: {from}'s engine {engine} serves two clients, one holding the lease"
         ))?;
         Ok(Self { a, b, engine })
+    }
+
+    /// Installs the build under test while A's `type_text` is held mid-input, as an
+    /// upgrade may land while an agent types, and requires that typing to finish.
+    fn install_while_typing(&mut self, session: &mut Session<'_>, place: &Place) -> Result<()> {
+        let serving = i32::try_from(self.engine).context("the engine's PID")?;
+        let id = start_typing(session, &mut self.a, serving)?;
+        let installed = place.install(session, CURRENT);
+        signal(serving, Signal::CONT)?;
+        installed?;
+        let typed = self.a.result(session, id)?;
+        expect(
+            field(&typed, "/isError") == false,
+            "the typing held over the install finished",
+            &typed.to_string(),
+        )?;
+        marker_gone(session)?;
+        session.log("upgrade: installed the build under test while A's type_text was held mid-input; it finished")
     }
 
     /// After the install, the old engine runs the build it started with, whose file is
