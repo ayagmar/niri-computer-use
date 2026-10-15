@@ -3028,8 +3028,8 @@ fn chromium_page() -> Vec<(&'static str, Object)> {
 // in the output's pixels, so at scale 1.5 the button was listed half as large again and
 // away from the window's corner, and a click by its ref went past it. The listing and
 // the aim now take the page's unit from its document, read again right before the aim:
-// once the document no longer matches the view in either unit, as when developer tools
-// open beside the page, the same ref sends nothing.
+// once the document no longer matches the view in either unit, the same ref sends
+// nothing.
 #[tokio::test]
 async fn a_chromium_pages_button_is_aimed_at_in_logical_pixels() {
     let windows = [floating_window()];
