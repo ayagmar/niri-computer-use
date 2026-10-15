@@ -168,6 +168,7 @@ On connect, niri sends its current state as a burst of events: workspaces, windo
 
 - If the connection ends, the state is dropped and the task reconnects after one second. Meanwhile `desktop_state` returns the last connection's error under the same names a request uses: `niri_unavailable` for a failed connect or a closed connection, `upstream_error` for a refusal or an unreadable reply from niri, and `deadline_exceeded` when niri doesn't answer within two seconds. `status` reports the stream as `disconnected`.
 - If an event doesn't parse, the state is dropped and the task reconnects at once. A second unparsable event stops the stream until the server restarts: `status` reports `schema_incompatible`, and `desktop_state` returns `upstream_error` naming the event type. Ordinary disconnects don't count toward this.
+- Events of the kinds in `events::IGNORED`, `CastsChanged`, `CastStartedOrChanged` and `CastStopped`, are dropped before they are parsed, so one that doesn't parse doesn't count. Only niri-ipc's screencast state takes them, which the server never reads, and the waiters see no change in them. They are dropped even when they parse, because niri-ipc's reducer panics on a `CastStopped` whose start it never saw. The kind is the event object's only key. Any other kind, including one niri adds later, still counts as unparsable.
 - The `status` subcommand keeps no stream open, so it reports `event_stream` as null.
 - The task stops, closing its connection, once the server drops its last handle on the stream.
 

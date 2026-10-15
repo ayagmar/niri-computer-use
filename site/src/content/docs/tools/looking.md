@@ -27,7 +27,7 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `niri.version` | niri's version string, such as `26.04 (8ed0da4)` |
 | `niri.ipc_crate` | the `niri-ipc` version this build uses, `26.4.0` |
 | `niri.compat` | `ok` when the major and minor versions match, `patch_warning` when only the patch differs, `read_only` otherwise, and null when niri's version can't be read |
-| `niri.event_stream` | `connected`, `disconnected`, or `schema_incompatible` after niri sent two events this build can't parse; null from the `status` subcommand, which opens no stream |
+| `niri.event_stream` | `connected`, `disconnected`, or `schema_incompatible` after niri sent two events this build can't parse (screencast events don't count: the server doesn't read them); null from the `status` subcommand, which opens no stream |
 | `niri.error` | why niri's version couldn't be read, as `{"error", "detail"}` with an [error name](../../reference/errors/), or null |
 | `lease.held_by_me` | whether this server holds the lease |
 | `lease.holder` | the holder's `pid`, `label` (client name and server PID, such as `claude-code/4711`) and `since`, or null; `pending: true` while the lease isn't granted yet, as while the user is asked to allow it |
