@@ -4,12 +4,18 @@
 //! An ordinary disconnect drops the state and reconnects after a second. An event that
 //! doesn't parse also drops the state and reconnects at once; a second one stops the
 //! stream for good (`schema_incompatible`), because this build doesn't understand the
-//! running niri. The task ends, closing its connection, once no tool holds the stream.
+//! running niri. Events of the kinds in `IGNORED`, which nothing here reads, are dropped
+//! unread, so one that doesn't parse never ends the stream. An event that panics
+//! niri-ipc's reducer stops the stream for good at once, also as `schema_incompatible`,
+//! since the replica can no longer follow niri. The task ends, closing its connection,
+//! once no tool holds the stream.
 //!
 //! Besides the replica, the task passes every event it applies, numbered, to the action
 //! tools' waiters (`waiter.rs`), and tells them when a connection ends.
 
+use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::panic::{self, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -29,6 +35,14 @@ const DEADLINE: Duration = Duration::from_secs(2);
 const RECONNECT_DELAY: Duration = Duration::from_secs(1);
 /// Parse failures before the stream stops. Ordinary disconnects don't count.
 const PARSE_FAILURES: u32 = 2;
+/// The kinds of event the server never reads: only niri-ipc's `casts` state takes them,
+/// which nothing reads, and the waiters see no change in them. They are dropped before
+/// parsing, so one that doesn't parse, such as a cast of a kind added after the pinned
+/// niri-ipc, doesn't end the stream. All of them are dropped, not only those that don't
+/// parse: niri-ipc's reducer panics on a `CastStopped` whose cast it never saw. Any other
+/// kind, including one niri adds later, still ends the stream when it doesn't parse, since
+/// the state or a waiter may depend on it.
+const IGNORED: [&str; 3] = ["CastsChanged", "CastStartedOrChanged", "CastStopped"];
 /// Events a waiter may fall behind by before it gives up. niri itself drops readers 64
 /// events behind.
 const UPDATES: usize = 256;
@@ -41,8 +55,9 @@ enum Connection {
         last_error: Option<ToolError>,
     },
     Connected(Box<Replica>),
+    /// Why the stream stopped for good.
     SchemaIncompatible {
-        event: String,
+        reason: String,
     },
 }
 
@@ -411,11 +426,9 @@ impl EventStream {
                 ErrorName::DeadlineExceeded,
                 format!("niri's event stream didn't connect within {deadline:?}"),
             )),
-            Connection::SchemaIncompatible { event } => Err(ToolError::new(
+            Connection::SchemaIncompatible { reason } => Err(ToolError::new(
                 ErrorName::UpstreamError,
-                format!(
-                    "niri sent an event this build can't parse ({event}); the event stream stays stopped until the server restarts"
-                ),
+                format!("{reason}; the event stream stays stopped until the server restarts"),
             )),
         }
     }
@@ -443,10 +456,14 @@ fn snapshot(state: &EventStreamState) -> DesktopState {
 enum Ended {
     Disconnected(ToolError),
     Unparsable(String),
+    /// niri-ipc's reducer panicked on an event, with the event's type name and the
+    /// panic's message.
+    Panicked(String),
 }
 
 /// Connects, reads until the connection ends, and reconnects, until a second
-/// unparsable event or until no tool holds the stream any more.
+/// unparsable event, an event the reducer panics on, or until no tool holds the stream
+/// any more.
 async fn run<S, F>(mut connect: impl FnMut() -> F, senders: Senders, reconnect_delay: Duration)
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -466,7 +483,9 @@ where
             Ended::Unparsable(event) => {
                 parse_failures += 1;
                 if parse_failures >= PARSE_FAILURES {
-                    sender.send_replace(Connection::SchemaIncompatible { event });
+                    sender.send_replace(Connection::SchemaIncompatible {
+                        reason: format!("niri sent an event this build can't parse ({event})"),
+                    });
                     return;
                 }
                 sender.send_replace(Connection::Connecting {
@@ -475,6 +494,10 @@ where
                         format!("unparsable event {event}"),
                     )),
                 });
+            }
+            Ended::Panicked(reason) => {
+                sender.send_replace(Connection::SchemaIncompatible { reason });
+                return;
             }
             Ended::Disconnected(error) => {
                 sender.send_replace(Connection::Connecting {
@@ -513,7 +536,8 @@ where
 }
 
 /// Requests the event stream on `stream` and applies every event to a fresh replica, then
-/// passes it on to the waiters with its number.
+/// passes it on to the waiters with its number. An event the reducer panics on reaches
+/// no waiter.
 async fn read(
     stream: impl AsyncRead + AsyncWrite + Unpin,
     senders: &Senders,
@@ -540,16 +564,28 @@ async fn read(
             Err(error) => return Ended::Disconnected(unavailable(format!("read event: {error}"))),
         }
         let event = match parse(&line) {
-            Ok(event) => event,
+            Ok(Some(event)) => event,
+            Ok(None) => continue,
             Err(name) => return Ended::Unparsable(name),
         };
         numbers.seq += 1;
         let seq = numbers.seq;
+        let mut panicked = None;
         senders.connection.send_modify(|connection| {
             if let Connection::Connected(replica) = connection {
-                replica.apply(seq, event.clone());
+                // The half-applied replica is replaced right after, so nothing reads it.
+                let applied =
+                    panic::catch_unwind(AssertUnwindSafe(|| replica.apply(seq, event.clone())));
+                panicked = applied.err();
             }
         });
+        if let Some(payload) = panicked {
+            return Ended::Panicked(format!(
+                "niri-ipc's state panicked on a {} event: {}",
+                name(&serde_json::from_str(&line).unwrap_or_default()),
+                message(&*payload)
+            ));
+        }
         senders
             .updates
             .send(Update::Event(seq, Box::new(event)))
@@ -605,16 +641,35 @@ fn unavailable(detail: impl Into<String>) -> ToolError {
     ToolError::new(ErrorName::NiriUnavailable, detail)
 }
 
-/// Parses one event line. On failure, returns the event's type name: the single key of
-/// the JSON object, as niri serializes its `Event` enum.
-fn parse(line: &str) -> Result<Event, String> {
+/// Parses one event line: `None`, unparsed, for an event of a kind in `IGNORED`. On
+/// failure, returns the event's type name (`name`).
+fn parse(line: &str) -> Result<Option<Event>, String> {
     let value: serde_json::Value =
         serde_json::from_str(line).map_err(|_| "a line that isn't JSON".to_owned())?;
-    let name = value
+    let name = name(&value);
+    if value.as_object().is_some_and(|object| object.len() == 1) && IGNORED.contains(&name.as_str())
+    {
+        return Ok(None);
+    }
+    serde_json::from_value(value).map(Some).map_err(|_| name)
+}
+
+/// The event's type name: the single key of the JSON object, as niri serializes its
+/// `Event` enum.
+fn name(value: &serde_json::Value) -> String {
+    value
         .as_object()
         .and_then(|object| object.keys().next().cloned())
-        .unwrap_or_else(|| "a value that isn't an object".to_owned());
-    serde_json::from_value(value).map_err(|_| name)
+        .unwrap_or_else(|| "a value that isn't an object".to_owned())
+}
+
+/// A panic's message, which `panic!` and `expect` give as a `&str` or a `String`.
+fn message(payload: &(dyn Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("a panic without a message")
 }
 
 #[cfg(test)]
@@ -850,6 +905,15 @@ mod tests {
     const LAYOUTS: &str = "{\"KeyboardLayoutsChanged\":{\"keyboard_layouts\":{\"names\":[\"English (US)\"],\"current_idx\":0}}}\n";
     const OVERVIEW: &str = "{\"OverviewOpenedOrClosed\":{\"is_open\":false}}\n";
     const UNKNOWN: &str = "{\"NotARealEvent\":{}}\n";
+    /// A cast as niri `main` after 26.04 reports grim's capture, of a kind niri-ipc 26.4.0
+    /// doesn't have.
+    const CAST_OF_UNKNOWN_KIND: &str = "{\"CastsChanged\":{\"casts\":[{\"stream_id\":3,\"session_id\":1,\"kind\":\"ExtImageCopyCapture\",\"target\":{\"Output\":{\"name\":\"winit\"}},\"is_dynamic_target\":false,\"is_active\":true,\"pid\":40,\"pw_node_id\":null}]}}\n";
+    /// The end of that cast, which parses, though no start of it was applied.
+    const CAST_STOPPED: &str = "{\"CastStopped\":{\"stream_id\":3}}\n";
+    /// The close of a window niri never reported, which niri-ipc's reducer panics on.
+    const CLOSED_UNKNOWN: &str = "{\"WindowClosed\":{\"id\":42}}\n";
+    const UNPARSABLE_WINDOWS: &str = "{\"WindowsChanged\":{\"windows\":[{\"id\":\"nine\"}]}}\n";
+    const OPENED: &str = "{\"WindowOpenedOrChanged\":{\"window\":{\"id\":11,\"title\":\"c\",\"app_id\":\"foot\",\"pid\":3,\"workspace_id\":1,\"is_focused\":false,\"is_floating\":true,\"is_urgent\":false,\"layout\":{\"pos_in_scrolling_layout\":null,\"tile_size\":[400.0,300.0],\"window_size\":[400,300],\"tile_pos_in_workspace_view\":[0.0,0.0],\"window_offset_in_tile\":[0.0,0.0]}}}}\n";
     /// Longer than any wait in these tests, so the task doesn't reconnect during one.
     const NO_RETRY: Duration = Duration::from_secs(600);
     /// Longer than the two-second handshake deadline. Paused time makes it instant.
@@ -955,8 +1019,23 @@ mod tests {
         // A missing `Option` field is allowed: this is "focus cleared".
         assert!(matches!(
             parse("{\"WindowFocusChanged\":{}}"),
-            Ok(Event::WindowFocusChanged { id: None })
+            Ok(Some(Event::WindowFocusChanged { id: None }))
         ));
+    }
+
+    #[test]
+    fn events_of_an_ignored_kind_are_dropped_whether_or_not_they_parse() {
+        assert!(parse(CAST_OF_UNKNOWN_KIND).unwrap().is_none());
+        assert!(parse(CAST_STOPPED).unwrap().is_none());
+        assert!(
+            parse("{\"CastsChanged\":{\"casts\":[]}}")
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(parse(UNPARSABLE_WINDOWS).unwrap_err(), "WindowsChanged");
+        // The kind is the object's only key, as niri writes it.
+        let two_keys = "{\"CastStopped\":{},\"WindowClosed\":{}}";
+        assert_eq!(parse(two_keys).unwrap_err(), "CastStopped");
     }
 
     #[tokio::test(start_paused = true)]
@@ -1057,6 +1136,87 @@ mod tests {
         assert_eq!(error.name, ErrorName::UpstreamError);
         assert!(error.detail.contains("(NotARealEvent)"), "{error:?}");
         assert_eq!(twice.state(), StreamState::SchemaIncompatible);
+    }
+
+    // niri `main` after 26.04 sends such a cast after every grim capture and again in each
+    // connection's initial state, which twice ended the stream for good; its end then
+    // parses, and applying it without its start panicked in niri-ipc's reducer.
+    #[tokio::test(start_paused = true)]
+    async fn a_cast_of_an_unknown_kind_keeps_the_stream_and_later_windows_apply() {
+        let (client, mut niri) = Niri::pair();
+        let events = stream_retrying_after(vec![client], NO_RETRY);
+        niri.expect_request().await;
+        niri.send(&[HANDLED, WORKSPACES, CAST_OF_UNKNOWN_KIND, WINDOWS, OVERVIEW])
+            .await;
+        assert!(events.desktop().await.is_ok());
+        niri.send(&[CAST_OF_UNKNOWN_KIND, CAST_STOPPED, OPENED])
+            .await;
+        let mut connection = events.connection.clone();
+        tokio::time::timeout(
+            WAIT,
+            connection.wait_for(|current| {
+                matches!(current, Connection::Connected(replica)
+                    if replica.state.windows.windows.contains_key(&11))
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(events.state(), StreamState::Connected);
+        assert_eq!(events.connection(), Some(1));
+    }
+
+    // A panic in the reader task used to end it inside the update, which left the
+    // replica as it was and `status` saying `connected` while nothing applied any more.
+    #[tokio::test(start_paused = true)]
+    async fn an_event_the_reducer_panics_on_stops_the_stream_with_the_panic_message() {
+        let (client, mut niri) = Niri::pair();
+        let events = stream_retrying_after(vec![client], NO_RETRY);
+        niri.expect_request().await;
+        niri.send(&[HANDLED, WORKSPACES, WINDOWS, OVERVIEW]).await;
+        assert!(events.desktop().await.is_ok());
+        let mut updates = events.updates.subscribe();
+        niri.send(&[CLOSED_UNKNOWN, OPENED]).await;
+        let mut connection = events.connection.clone();
+        tokio::time::timeout(
+            WAIT,
+            connection.wait_for(|current| matches!(current, Connection::SchemaIncompatible { .. })),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(events.state(), StreamState::SchemaIncompatible);
+        let error = events.desktop().await.unwrap_err();
+        assert_eq!(error.name, ErrorName::UpstreamError);
+        assert!(
+            error.detail.contains("WindowClosed")
+                && error
+                    .detail
+                    .contains("closed window was missing from the map"),
+            "{error:?}"
+        );
+        // The waiters hear that the replica is gone, not the event.
+        assert!(matches!(updates.recv().await, Ok(Update::Reset(1))));
+        assert!(niri.closed().await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_unparsable_windows_event_still_ends_the_stream() {
+        let events = stream(vec![
+            niri(vec![HANDLED, WORKSPACES, UNPARSABLE_WINDOWS], false),
+            niri(vec![HANDLED, WORKSPACES, UNPARSABLE_WINDOWS], false),
+        ]);
+        let mut connection = events.connection.clone();
+        tokio::time::timeout(
+            WAIT,
+            connection.wait_for(|current| matches!(current, Connection::SchemaIncompatible { .. })),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let error = events.desktop().await.unwrap_err();
+        assert!(error.detail.contains("(WindowsChanged)"), "{error:?}");
+        assert_eq!(events.state(), StreamState::SchemaIncompatible);
     }
 
     #[tokio::test(start_paused = true)]

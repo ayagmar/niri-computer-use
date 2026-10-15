@@ -8,6 +8,7 @@ sidebar:
 ## Requirements
 
 - niri 26.04. With another major or minor version the server is read-only: it looks but refuses to act.
+- niri built from `main` (niri-git) still reports 26.04, so the server acts on it, but it isn't a supported release. Against `main` at `fc9e8c4` (2026-10-14), the nested checks of the lease, launching, focusing and closing windows, accessibility and Noctalia passed; the keyboard checks failed once niri switched keyboard layout during typing, and the checks after that didn't run.
 - For a release build, x86_64 or aarch64 Linux with glibc 2.39 or newer; both builds have the same requirements. To build it yourself, Rust 1.99 or newer.
 - libxkbcommon, which the keyboard code links against. To build, its headers too (`libxkbcommon-dev` on Debian and Ubuntu, `libxkbcommon` on Arch).
 - At run time: `grim` for screenshots and `loginctl` from systemd for the lock state.

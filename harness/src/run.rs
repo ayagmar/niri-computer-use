@@ -33,6 +33,7 @@ const ENGINE_DEADLINE: Duration = Duration::from_secs(150);
 const MEASURE_DEADLINE: Duration = Duration::from_secs(300);
 const LATENCY_DEADLINE: Duration = Duration::from_secs(240);
 const CHROMIUM_DEADLINE: Duration = Duration::from_secs(240);
+const COMPAT_DEADLINE: Duration = Duration::from_secs(130);
 /// The agent's twelve minutes, with the fixtures and Noctalia around it.
 const EVAL_DEADLINE: Duration = Duration::from_mins(15);
 /// A scene with its desktop around it.
@@ -61,6 +62,10 @@ pub(crate) struct Options {
     pub(crate) mode: ServerMode,
     /// The server under test, instead of this checkout's debug build.
     pub(crate) binary: Option<PathBuf>,
+    /// The niri to nest, instead of the one on `PATH`. Only the nested session uses it:
+    /// it validates the nested config, runs as the nested niri, and is first on the nested
+    /// session's `PATH`. The host checks keep the host's niri.
+    pub(crate) niri: Option<PathBuf>,
     /// The Chromium-based browser `--chromium` found.
     pub(crate) browser: Option<PathBuf>,
 }
@@ -99,6 +104,8 @@ pub(crate) enum ServerChecks {
     ChromiumA11y,
     /// Windows with one big container, read whole.
     Big,
+    /// What the server does on this niri version, for `harness matrix`.
+    Compat,
 }
 
 impl ServerChecks {
@@ -115,6 +122,7 @@ impl ServerChecks {
             Self::Chromium => "--chromium",
             Self::ChromiumA11y => "--chromium-a11y",
             Self::Big => "--big",
+            Self::Compat => "--compat",
         }
     }
 
@@ -131,6 +139,7 @@ impl ServerChecks {
             Self::Chromium,
             Self::ChromiumA11y,
             Self::Big,
+            Self::Compat,
         ]
         .into_iter()
         .find(|checks| checks.flag() == flag)
@@ -147,21 +156,27 @@ impl ServerChecks {
             Self::Measure => MEASURE_DEADLINE,
             Self::Latency => LATENCY_DEADLINE,
             Self::Chromium | Self::ChromiumA11y => CHROMIUM_DEADLINE,
+            Self::Compat => COMPAT_DEADLINE,
         }
     }
 }
 
 pub(crate) fn run(options: &Options) -> Result<()> {
+    run_named(options, &stamp()?)
+}
+
+/// As [`run`], with the run's directories named `stamp`, such as `harness matrix` gives
+/// each of its runs.
+pub(crate) fn run_named(options: &Options, stamp: &str) -> Result<()> {
     let host = Host::from_env()?;
-    let stamp = stamp()?;
-    let artifacts = create_artifacts(&stamp)?;
+    let artifacts = create_artifacts(stamp)?;
     let mut log = Log::create(&artifacts.join("harness.log"), true)?;
     let Some(options) = with_browser(options, &mut log)? else {
         return log.line("result: skipped");
     };
     let options = &options;
     // Short, so that the shared engine's socket fits a Unix socket's 108 bytes.
-    let test_dir = TestDir::create(&host.runtime_dir.join("ncu-test"), &stamp)?;
+    let test_dir = TestDir::create(&host.runtime_dir.join("ncu-test"), stamp)?;
     log.line(&format!("TEST_DIR {}", test_dir.root().display()))?;
     log.line(&format!("artifacts {}", artifacts.display()))?;
 
@@ -272,12 +287,18 @@ fn run_name(seconds: u64, pid: u32) -> String {
 
 /// `target/e2e/<stamp>` under the working directory.
 pub(crate) fn create_artifacts(stamp: &str) -> Result<PathBuf> {
-    let base = env::current_dir().context("read the working directory")?;
-    let base = base.join("target/e2e");
-    fs::create_dir_all(&base).context(format!("create {}", base.display()))?;
-    let artifacts = base.join(stamp);
+    let artifacts = artifacts(stamp)?;
+    if let Some(base) = artifacts.parent() {
+        fs::create_dir_all(base).context(format!("create {}", base.display()))?;
+    }
     fs::create_dir(&artifacts).context(format!("create {}", artifacts.display()))?;
     Ok(artifacts)
+}
+
+/// Where the run named `stamp` keeps its artifacts.
+pub(crate) fn artifacts(stamp: &str) -> Result<PathBuf> {
+    let base = env::current_dir().context("read the working directory")?;
+    Ok(base.join("target/e2e").join(stamp))
 }
 
 fn run_nested(
@@ -350,10 +371,13 @@ fn preflight(
     write(&artifacts.join("niri.kdl"), &niri_config)?;
     write(&test_dir.dbus_config(), &config::dbus(&test_dir.run()))?;
 
-    let env = environment::parent(test_dir, host, display, options.mode == ServerMode::Shared);
+    let mut env = environment::parent(test_dir, host, display, options.mode == ServerMode::Shared);
+    if let Some(dir) = options.niri.as_deref().and_then(Path::parent) {
+        env.insert("PATH", environment::first_on_path(dir, host)?);
+    }
     environment::check_containment(&env, test_dir)?;
     runner::run(&Invocation {
-        program: "niri",
+        program: niri(options)?,
         args: vec![
             "validate".into(),
             "-c".into(),
@@ -424,7 +448,7 @@ fn start_nested(env: &Env, test_dir: &TestDir, artifacts: &Path, options: &Optio
     let mut args = vec![
         bus_config,
         "--".into(),
-        "niri".into(),
+        niri(options)?.into(),
         "-c".into(),
         test_dir.niri_config().into(),
         "--".into(),
@@ -498,6 +522,14 @@ fn eval_args(eval: &eval::Options, options: &Options) -> Result<Vec<OsString>> {
         skill,
         eval.model.clone().into(),
     ])
+}
+
+/// The niri to nest: `--niri`'s, or `niri` from `PATH`.
+fn niri(options: &Options) -> Result<&str> {
+    options.niri.as_deref().map_or(Ok("niri"), |path| {
+        path.to_str()
+            .ok_or_else(|| Failure::new(format!("--niri {} is not UTF-8", path.display())))
+    })
 }
 
 /// The `niri-computer-use` binary the make targets build.

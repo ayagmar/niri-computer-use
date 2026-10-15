@@ -59,7 +59,7 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 ### `read_only`
 
-**Cause:** this build doesn't support the running niri's major or minor version, niri sent events this build can't parse, or the policy file is invalid. The `detail` says which.
+**Cause:** this build doesn't support the running niri's major or minor version, niri sent events this build can't parse or apply, or the policy file is invalid. The `detail` says which.
 
 **What to do:** for niri's version, use a build that matches it (`status` shows `niri.version` and `niri.ipc_crate`). For the policy file, fix the error `status` shows under `policy.error`, then restart the agent's session.
 

@@ -879,7 +879,7 @@ pub(crate) fn refuse_control(facts: Facts<'_>) -> Option<ToolError> {
         Some(Compat::Ok | Compat::PatchWarning) => {}
     }
     if facts.event_stream == Some(StreamState::SchemaIncompatible) {
-        return read_only("niri sent events this build can't parse".to_owned());
+        return read_only("niri sent events this build can't parse or apply".to_owned());
     }
     if let Loaded::Invalid(error) = facts.policy {
         return read_only(format!("the policy file is invalid: {error}"));

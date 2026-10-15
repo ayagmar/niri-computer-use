@@ -331,7 +331,7 @@ impl Fixture {
 
     /// The GTK 4 fixture's 400x300 window with a long list and a `Delete` on each row.
     pub(crate) fn start_list(session: &Session<'_>) -> Result<Self> {
-        Self::start_gtk(session, "list", "fixture-list.log")
+        Self::start_gtk(session, &[], "list", "fixture-list.log")
     }
 
     /// The Qt Quick fixture's 400x300 window with two long lists that reuse their rows,
@@ -353,18 +353,31 @@ impl Fixture {
 
     /// A GTK 4 window that isn't a fixture of the checks, to take focus from them.
     pub(crate) fn start_decoy(session: &Session<'_>) -> Result<Self> {
-        Self::start_gtk(session, "button", "fixture-decoy.log")
+        Self::start_gtk(session, &[], "button", "fixture-decoy.log")
     }
 
-    /// Writes the GTK 4 fixture into `TEST_DIR` and starts it in `mode`, its output kept
-    /// as the artifact `log`.
-    fn start_gtk(session: &Session<'_>, mode: &str, log: &str) -> Result<Self> {
+    /// The GTK 4 fixture drawn by GTK's Cairo renderer. niri 25.11 in the headless cage
+    /// didn't show the window GTK's default GL renderer drew, and showed this one.
+    pub(crate) fn start_cairo(session: &Session<'_>) -> Result<Self> {
+        Self::start_gtk(session, &["GSK_RENDERER=cairo"], "a11y", "fixture-gtk4.log")
+    }
+
+    /// Writes the GTK 4 fixture into `TEST_DIR` and starts it in `mode` with `variables`
+    /// added to its environment, its output kept as the artifact `log`.
+    fn start_gtk(session: &Session<'_>, variables: &[&str], mode: &str, log: &str) -> Result<Self> {
         let root = session.test_dir().root();
         let file = root.join("gtk.py");
         fs::write(&file, include_str!("../fixtures/gtk.py"))
             .context(format!("write {}", file.display()))?;
-        let args = vec!["-I".into(), file.into(), root.into(), mode.into()];
-        let process = session.start("python3", &args, session.artifact(log), FIXTURE_DEADLINE)?;
+        let mut args: Vec<OsString> = variables.iter().map(OsString::from).collect();
+        args.extend([
+            "python3".into(),
+            "-I".into(),
+            file.into(),
+            root.into(),
+            mode.into(),
+        ]);
+        let process = session.start("env", &args, session.artifact(log), FIXTURE_DEADLINE)?;
         Ok(Self {
             toolkit: Toolkit::Gtk4,
             process,

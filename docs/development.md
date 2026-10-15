@@ -153,8 +153,8 @@ Later steps need the nested output to be at least 400x300 logical pixels at scal
 What a run does:
 
 1. Creates a fresh `TEST_DIR` at `$XDG_RUNTIME_DIR/ncu-test/<unix time>-<pid>/`, mode 0700, with `run/`, `state/`, `cache/`, `config/` and `data/`. The name is short so that the shared engine's socket under it fits a Unix socket's 108 bytes. The `ncu-test` directory itself stays after the run, empty.
-2. Writes a niri config (no startup commands, animations, borders or Xwayland; a magenta background; a fixed 400x300 floating `wev`; one `Ctrl+Shift+F12` test bind) and checks it with `niri validate`.
-3. Builds the environment for the nested niri from scratch. The XDG and Noctalia directories point into `TEST_DIR`, `WAYLAND_DISPLAY` is the absolute path of cage's private Wayland socket (your Wayland socket only in visible mode), and `HOME`, `PATH` and `LANG` are kept. `DBUS_SYSTEM_BUS_ADDRESS` points to `TEST_DIR/run/no-system-bus`, where nothing exists, so nothing in the nested session can reach your system bus. `NIRI_SOCKET`, `WAYLAND_SOCKET`, `DISPLAY`, `XDG_SESSION_ID` and `DBUS_SESSION_BUS_ADDRESS` are not set. The run stops if any other variable is present or a path points outside `TEST_DIR`.
+2. Writes a niri config (no startup commands, animations, borders or Xwayland; a magenta background; a fixed 400x300 floating `wev`; one `Ctrl+Shift+F12` test bind) and checks it with `niri validate`, run by the niri the session will nest.
+3. Builds the environment for the nested niri from scratch. The XDG and Noctalia directories point into `TEST_DIR`, `WAYLAND_DISPLAY` is the absolute path of cage's private Wayland socket (your Wayland socket only in visible mode), and `HOME`, `PATH` and `LANG` are kept, with `--niri`'s directory put first on `PATH`. `DBUS_SYSTEM_BUS_ADDRESS` points to `TEST_DIR/run/no-system-bus`, where nothing exists, so nothing in the nested session can reach your system bus. `NIRI_SOCKET`, `WAYLAND_SOCKET`, `DISPLAY`, `XDG_SESSION_ID` and `DBUS_SESSION_BUS_ADDRESS` are not set. The run stops if any other variable is present or a path points outside `TEST_DIR`.
    With `NOCTALIA=1` it also writes a Noctalia config that turns off the first-run setup wizard and weather, lists no plugin sources, and points the wallpaper directory at an empty `TEST_DIR/data/wallpapers`, so the wallpaper panel never lists your pictures, and checks it with `noctalia config validate`. That command exits 0 even when it warns, for example about an unknown key, so the harness requires its plain "Config is valid" line.
 4. Records a host snapshot before starting cage or the nested session: `niri msg --json outputs`, `noctalia msg status`, the entries of `$XDG_RUNTIME_DIR` and `/tmp/.X11-unix`, and the modification time of `~/.config/dconf/user`. It also reads the harness's cgroup from `/proc/self/cgroup` and the user journal's current cursor (`journalctl --user --show-cursor -n 0`).
 5. Runs `dbus-run-session --config-file=… -- niri -c … -- harness supervise …`. The private bus listens only in `TEST_DIR/run` and activates no services.
@@ -203,7 +203,7 @@ Each run keeps its files in `target/e2e/<unix time>-<pid>/`:
 3. Starts server B, whose `acquire_desktop` must fail with `lease_held` naming server A.
 4. Runs `recover`, which must refuse because a server holds the lease.
 5. Asks niri to `spawn` `niri-computer-use stop`, as the stop keybind does, and waits for the flag and for server A to give the lease up. Server B must then get `stopped`; after `resume` it must take the lease.
-6. Starts a child that runs until it is killed, writes an input-dirty marker naming it, and pipes `yes` into `recover`, which must end the child and clear the marker.
+6. Writes an input-dirty marker and pipes `yes` into `recover`, which must exit 0 and clear the marker.
 
 Every server talks MCP over a shell pipeline (`printf` of the requests, then `sleep` to keep stdin open), and every flag and marker lives in `TEST_DIR`. The run has a 90-second deadline. Its files are in `target/e2e/<run>/`, with `server-a.log` holding server A's replies.
 
@@ -466,6 +466,38 @@ make host-capture OUTPUT=DP-1
 ```
 
 The report goes to the terminal and to `target/e2e/<unix time>-<pid>/harness.log`.
+
+## niri compatibility matrix
+
+`make niri-matrix` builds niri from source at each git ref in `NIRI_VERSIONS` and runs this checkout's server against each build in the headless nested session. It writes the table to `docs/results/niri-matrix.md` and exits non-zero when a release does other than what is expected of it:
+
+```sh
+make niri-matrix
+make niri-matrix NIRI_VERSIONS="v26.04 main"
+```
+
+`NIRI_VERSIONS` defaults to `v25.08 v25.11 v26.04 main`. Any tag, branch or commit of niri works.
+
+`scripts/niri-build.sh` does the builds. It clones niri from `NIRI_REPO` (default `https://github.com/YaLTeR/niri.git`) into `NIRI_MATRIX_DIR` (default `~/.cache/niri-computer-use/niri-matrix`), fetches it again on each run, and builds each commit in its own worktree with `cargo build --release --locked`, sharing one Cargo target directory. A commit that already has `bin/<commit>/niri` isn't built again, so `main` is rebuilt only when it has moved. The script runs no niri binary and installs nothing. Before building, it checks for `git`, `cargo`, `clang`, `pkg-config`, `timeout` and the pkg-config modules niri's Building section asks for, and stops with the list of what is missing. A ref that fails to build is recorded with the line naming a missing system library, or else its first `error` line, and its build output is kept in `logs/<commit>.log`; the other refs still build. Fetching has a 10-minute deadline and each build an hour.
+
+`NIRI=<path>` (or `harness run --niri <path>`) runs any nested target with that niri instead of the one on `PATH`; `make nested-compat NIRI=<path>` runs only the probe below. The binary must be named `niri`, since the server finds niri by its process name. Only the nested session uses it: it validates the nested config (`niri validate`, with the nested session's environment), runs as the nested niri, and comes first on the nested session's `PATH`. C1's host snapshot still runs the host's `niri msg`.
+
+For each niri, the matrix first runs `--compat`, a probe in the nested session. With Noctalia and the GTK 4 fixture open, the fixture drawn by GTK's Cairo renderer because niri 25.11 in the headless cage didn't show the window GTK's default GL renderer drew, it:
+
+1. waits up to 20 seconds for `status` to see niri's version, Noctalia running and the screen unlocked, and goes on with `status` as it is when that doesn't come;
+2. calls `status`, `desktop_state`, `screenshot`, `elements` on the fixture's window and `wait_for` its `app_id`, each of which must answer;
+3. calls every other tool the server lists, without the lease and with arguments it accepts: `release_desktop` must answer, and each of the others must be refused with `lease_required`. A tool the probe has no arguments for counts as a miss;
+4. reads `status` again, since a capture can make niri send an event, and calls `acquire_desktop`, which must succeed when `niri.compat` is `ok` or `patch_warning` and be refused with `read_only` when it is `read_only`.
+
+Each call's outcome goes to `compat.json` in the run's artifacts, also when a call goes otherwise. A niri whose ref is a release tag (`v<major>.<minor>` or `v<major>.<minor>.<patch>`) with the pinned `niri-ipc`'s major and minor is expected `Full`: it must report `ok` or `patch_warning`, have its event stream `connected` at step 4's `status`, pass the probe and pass `--control`, `--actions`, `--input`, `--shell` and `--a11y`, which the matrix then runs; one that didn't build fails the matrix too. Any other release is expected `Observe`: it must report `read_only`, have its event stream `connected` at step 4's `status` and pass the probe; one that didn't build is recorded as not built, since an old release can stop building against newer system libraries. A ref that isn't a release tag, such as `main`, is `Record`: it gets the probe and the five suites, and whatever they do is recorded without failing the matrix. The results file lists each miss and each failed suite with its error, and the run names under `target/e2e/`.
+
+### Supporting a new niri release
+
+1. Read niri's release notes and `git diff <old tag> <new tag> -- niri-ipc` for new or changed requests, replies, events, actions and enum variants. The pinned `niri-ipc` can't parse an enum variant it doesn't know. A reply it can't parse fails that tool with `upstream_error`; an event it can't parse twice stops the server's event stream until the server restarts (`event_stream: schema_incompatible`), and the server is read-only meanwhile. Screencast events are the exception: the server drops them unread (`events::IGNORED` in `src/niri/events.rs`). A new kind of event isn't on that list, so it still stops the stream until it is either read or shown safe to drop.
+2. Before bumping, run `make niri-matrix NIRI_VERSIONS="<old tag> <new tag>"`. The new release should be read-only with the observation tools working; anything else is what breaks for users who update niri before the server.
+3. Bump the `niri-ipc` pin in both `Cargo.toml` and `harness/Cargo.toml`, the `IPC_CRATE` constants in `src/niri/version.rs` and `harness/src/matrix.rs` (tests check each against the pins), and the version `docs/decisions.md` records. Fix what the new types break, such as a new field to fill in or a new variant to match.
+4. Run `make check` and the matrix with the new tag, the previous one and `main`. The new tag must pass everything and the previous one must now be read-only.
+5. Update the niri version the docs name: the README's badge and its niri-only paragraph, `docs/architecture.md`'s version rule, the site's install and looking pages, and this file's requirements.
 
 ## Releases
 

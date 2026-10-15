@@ -1,7 +1,8 @@
-.PHONY: check check-static test test-shared stall stall-standalone stall-shared perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-latency nested-chromium nested-chromium-a11y nested-big nested-eval nested-demo sitting host-capture
+.PHONY: check check-static test test-shared stall stall-standalone stall-shared perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-latency nested-chromium nested-chromium-a11y nested-big nested-compat niri-matrix nested-eval nested-demo sitting host-capture
 
 SCALE ?= 1
-NESTED_FLAGS = $(if $(VISIBLE),--visible) $(if $(SHARED),--shared)
+NESTED_FLAGS = $(if $(VISIBLE),--visible) $(if $(SHARED),--shared) $(if $(NIRI),--niri $(NIRI))
+NIRI_VERSIONS ?= v25.08 v25.11 v26.04 main
 
 # CI runs each of check's parts as a job of its own.
 check: check-static test test-shared
@@ -99,6 +100,18 @@ nested-chromium-a11y:
 nested-big:
 	cargo build --locked --release -p niri-computer-use
 	cargo run --locked -p harness -- run $(NESTED_FLAGS) --big --server target/release/niri-computer-use
+
+# What the server does on one niri version: make nested-compat NIRI=<path to a niri binary>
+nested-compat:
+	cargo build --locked -p niri-computer-use
+	cargo run --locked -p harness -- run $(NESTED_FLAGS) --compat
+
+# Each niri in NIRI_VERSIONS built from source, then checked against this checkout's server.
+niri-matrix:
+	cargo build --locked -p niri-computer-use
+	mkdir -p target/niri-matrix
+	scripts/niri-build.sh $(NIRI_VERSIONS) > target/niri-matrix/builds.txt
+	cargo run --locked -p harness -- matrix target/niri-matrix/builds.txt docs/results/niri-matrix.md
 
 # One skill eval in the nested niri: make nested-eval SCENARIO=compose-message SKILL=skills/niri-computer-use MODEL=sonnet
 nested-eval:
