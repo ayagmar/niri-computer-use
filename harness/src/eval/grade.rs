@@ -11,10 +11,11 @@ use crate::wev::Pointer;
 use crate::wev::keyboard::Trace;
 
 /// Tools that only read; every other tool acts on the desktop.
-const READS: [&str; 7] = [
+const READS: [&str; 8] = [
     "status",
     "desktop_state",
     "screenshot",
+    "elements",
     "clipboard_read",
     "wait_for",
     "acquire_desktop",
@@ -582,7 +583,11 @@ mod tests {
                 .collect();
             json!({"type": "assistant", "message": {"id": id, "content": content}}).to_string()
         };
-        let reads = [turn("a", &["status", "desktop_state"]), turn("b", &["key"])];
+        let reads = [
+            turn("a", &["status", "desktop_state"]),
+            turn("b", &["key"]),
+            turn("d", &["elements", "screenshot"]),
+        ];
         assert!(sent_together(&reads.join("\n")).passed);
         // Claude Code streams each block of one message as its own record.
         let raced = [turn("c", &["key"]), turn("c", &["screenshot"])];
