@@ -13,10 +13,10 @@ use serde::Serialize;
 use tokio::time::Instant;
 
 use crate::a11y::model::{
-    self, Extents, Filter, Fresh, LayoutBox, Link, NameHash, Origin, Placement, Refused, Row,
+    self, Extents, Filter, Fresh, LayoutBox, Link, NameHash, Origin, Page, Placement, Refused, Row,
     Scene, Shape, Unbound, Unmappable,
 };
-use crate::a11y::{self, A11y, Capped, ElementRef, Failed, Node, Switch, Turned, Want};
+use crate::a11y::{self, A11y, Capped, ElementRef, Failed, Node, PagePaths, Switch, Turned, Want};
 use crate::changes::elements::{Seen, Unknown};
 use crate::control::procs;
 use crate::coords::LayoutPt;
@@ -274,6 +274,7 @@ impl Read {
             bus: self.bus.clone(),
             path: node.path.clone(),
             frame: self.frame.node.path.clone(),
+            page: self.page(at).map(|(paths, _)| paths),
             kept: model::Kept {
                 role: node.role,
                 window: self.placed.window.id,
@@ -304,6 +305,7 @@ impl Read {
             }),
             frame_fits: self.frame.fits,
             origin: self.placed.origin.clone(),
+            page: self.page(at).map(|(_, page)| page),
         };
         let placed_box = model::place(placement);
         let mut element = self.element(at, node);
@@ -322,6 +324,26 @@ impl Read {
             unmappable: placed_box.err(),
             unbound,
         }
+    }
+
+    /// The web page the object at `at` is in, if any: where its document and the object
+    /// holding it are, and their extents as the walk read them.
+    fn page(&self, at: usize) -> Option<(PagePaths, Page)> {
+        let (document, container) = self.walked.page(at)?;
+        let document = self.walked.nodes.get(document)?;
+        let container = match container {
+            Some(container) => self.walked.nodes.get(container)?,
+            None => &self.frame.node,
+        };
+        let paths = PagePaths {
+            document: document.path.clone(),
+            container: container.path.clone(),
+        };
+        let page = Page {
+            document: document.extents,
+            container: container.extents,
+        };
+        Some((paths, page))
     }
 
     /// Whether the object at `at` sits in no row, and the walk didn't read the whole tree,
@@ -698,6 +720,7 @@ pub(crate) async fn aim(
             extents: probe.extents,
             frame_fits: model::frame_fits(probe.frame, window.layout.window_size),
             origin: placed.origin.clone(),
+            page: probe.page,
         },
     };
     match (model::recheck(kept, fresh), placed.origin) {
@@ -861,6 +884,10 @@ pub(crate) fn unmappable(why: Unmappable) -> ToolError {
             "frame_size_mismatch",
             "the app's accessible window isn't the size niri gives the window, so its coordinates can't be trusted; aim with a screenshot pixel instead",
         ),
+        Unmappable::PageScaleUnknown => (
+            "page_scale_unknown",
+            "the element is in a web page whose coordinates may be in the output's pixels rather than the window's, and its document isn't the size of the view holding it or that size times the output's scale, so which unit isn't known; use activate_element, or aim with a screenshot pixel instead",
+        ),
         Unmappable::NotShowing => (
             "not_showing",
             "the element or its window isn't showing, or niri's overview is open; bring it into view or close the overview, and call elements again",
@@ -888,6 +915,10 @@ pub(crate) fn unmappable(why: Unmappable) -> ToolError {
         Unmappable::OffOutput => (
             "not_showing",
             "the element's centre is past its output's edge, where niri shows nothing of its window; move the window so the element is on screen, and call elements again",
+        ),
+        Unmappable::OffPage => (
+            "not_showing",
+            "the element's centre is outside its web page, as under the browser's toolbar when the page is scrolled; scroll it into the page and call elements again, or use activate_element",
         ),
         Unmappable::Empty => ("empty", "the element has no area"),
         Unmappable::OutsideScreenshot => (

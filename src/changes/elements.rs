@@ -295,6 +295,7 @@ mod tests {
                 bus: ":1.5".to_owned(),
                 path: (*paths.last().unwrap()).to_owned(),
                 frame: "/frame".to_owned(),
+                page: None,
                 kept: Kept {
                     role,
                     window: 3,

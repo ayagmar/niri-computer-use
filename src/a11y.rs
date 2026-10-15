@@ -25,7 +25,7 @@ use zbus::names::OwnedErrorName;
 use zbus::zvariant::{DynamicType, OwnedObjectPath, OwnedValue};
 
 use crate::error::{ErrorName, ToolError};
-use model::{Extents, Frame, Kept, NoFrame, Picked, Shape, States};
+use model::{Extents, Frame, Kept, NoFrame, Page, Picked, Shape, States};
 pub(crate) use switch::{Report as SwitchReport, Switch, Turned};
 pub(crate) use walk::{Capped, Child, Node, Walked, Want};
 
@@ -618,22 +618,40 @@ impl Request {
         })
     }
 
-    /// What a kept element is now: its role, states and extents, and its frame's extents,
-    /// read together.
+    /// What a kept element is now: its role, states and extents, its frame's extents, and
+    /// its page's, read together.
     pub(crate) async fn probe(&self, element: &ElementRef) -> Result<Probe, Failed> {
         let at = element.at();
-        let (role, states, extents, frame) = tokio::join!(
+        let (role, states, extents, frame, page) = tokio::join!(
             self.call::<_, u32>(at, (ACCESSIBLE, "GetRole"), &()),
             self.call::<_, Vec<u32>>(at, (ACCESSIBLE, "GetState"), &()),
             self.extents(&element.bus, &element.path),
             self.extents(&element.bus, &element.frame),
+            self.page(element),
         );
         Ok(Probe {
             role: role?,
             states: States::from_words(&states?),
             extents: extents?,
             frame: frame?,
+            page: page?,
         })
+    }
+
+    /// The extents of the kept element's page now, each `None` without a Component
+    /// interface, as the walk reads them.
+    async fn page(&self, element: &ElementRef) -> Result<Option<Page>, Failed> {
+        let Some(page) = &element.page else {
+            return Ok(None);
+        };
+        let (document, container) = tokio::join!(
+            self.extents(&element.bus, &page.document),
+            self.extents(&element.bus, &page.container),
+        );
+        Ok(Some(Page {
+            document: component(document)?,
+            container: component(container)?,
+        }))
     }
 
     /// The kept element's role and states now: its states, then its role, one call after
@@ -825,6 +843,7 @@ pub(crate) struct Probe {
     pub(crate) states: States,
     pub(crate) extents: Extents,
     pub(crate) frame: Extents,
+    pub(crate) page: Option<Page>,
 }
 
 /// An element listed under the lease, kept so a pointer tool can aim at it.
@@ -835,7 +854,17 @@ pub(crate) struct ElementRef {
     pub(crate) path: String,
     /// The path of the frame that is the window, for the frame guard.
     pub(crate) frame: String,
+    /// Where the web page it is in sits, for `model::page_unit`.
+    pub(crate) page: Option<PagePaths>,
     pub(crate) kept: Kept,
+}
+
+/// The paths of a page's document and of the object that holds it, the frame for one
+/// right under the frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PagePaths {
+    pub(crate) document: String,
+    pub(crate) container: String,
 }
 
 impl ElementRef {
@@ -851,6 +880,16 @@ fn present<T>(result: Result<T, Failed>) -> Result<Option<T>, ToolError> {
         Ok(value) => Ok(Some(value)),
         Err(Failed::Gone(_)) => Ok(None),
         Err(failed) => Err(failed.into()),
+    }
+}
+
+/// Extents from an optional Component interface: `None` when the app refuses the call, as
+/// for an object without one.
+fn component(result: Result<Extents, Failed>) -> Result<Option<Extents>, Failed> {
+    match result {
+        Ok(extents) => Ok(Some(extents)),
+        Err(Failed::Refused(..)) => Ok(None),
+        Err(failed) => Err(failed),
     }
 }
 

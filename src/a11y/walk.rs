@@ -106,6 +106,24 @@ impl Walked {
         chain.reverse();
         chain
     }
+
+    /// The outermost `document_web` from the root's child down to the node at `at`, that
+    /// node included, and the document's parent among the nodes, none under the root.
+    pub(crate) fn page(&self, at: usize) -> Option<(usize, Option<usize>)> {
+        let mut page = None;
+        let mut next = Some(at);
+        while let Some(this) = next {
+            let (Some(node), Some(&(parent, _))) = (self.nodes.get(this), self.places.get(this))
+            else {
+                break;
+            };
+            if model::role_name(node.role) == "document_web" {
+                page = Some((this, parent));
+            }
+            next = parent;
+        }
+        page
+    }
 }
 
 /// What the walk is looking for: nodes for which `matches` holds, and how many of them
@@ -645,5 +663,44 @@ mod tests {
                 .unwrap_err();
             assert_eq!(error.name, name, "{failing}");
         }
+    }
+
+    // Chromium puts a frame's page under the page that holds it, as a `document_web` of its
+    // own, in the same output pixels as the outer page's: the nested runs placed a button
+    // in a same-origin frame by the outer page's unit. Taking the nearest document instead
+    // would read that unit from the frame's document, the size of what holds it, as
+    // logical pixels.
+    #[test]
+    fn a_page_is_the_outermost_document_above_the_node() {
+        const DOCUMENT_WEB: u32 = 95;
+        const INTERNAL_FRAME: u32 = 115;
+        let mut walked = Walked::default();
+        let tree = [
+            (None, 39),
+            (Some(0), DOCUMENT_WEB),
+            (Some(1), 85),
+            (Some(2), INTERNAL_FRAME),
+            (Some(3), DOCUMENT_WEB),
+            (Some(4), 43),
+            (None, DOCUMENT_WEB),
+        ];
+        for (at, (parent, role)) in tree.into_iter().enumerate() {
+            walked.nodes.push(Node {
+                path: format!("/{at}"),
+                role,
+                name: String::new(),
+                states: States::from_words(&[SHOWING]),
+                extents: None,
+                actions: Vec::new(),
+                children: Vec::new(),
+                children_refused: false,
+            });
+            walked.places.push((parent, 0));
+        }
+        assert_eq!(walked.page(0), None);
+        assert_eq!(walked.page(1), Some((1, Some(0))));
+        assert_eq!(walked.page(5), Some((1, Some(0))));
+        assert_eq!(walked.page(4), Some((1, Some(0))));
+        assert_eq!(walked.page(6), Some((6, None)));
     }
 }

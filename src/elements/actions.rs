@@ -766,7 +766,10 @@ async fn caught_up(waiter: &mut Waiter) -> Option<String> {
     }
 }
 
-/// Checks the element has an `EditableText` interface, or its text can't be set.
+/// Checks the element has an `EditableText` interface, or its text can't be set: a
+/// password field without one is `secret_field`, as the last gate would make it, an
+/// editable field without one, as Chromium's text fields are, is `text_not_settable`,
+/// with what to do instead, and anything else a mistake.
 async fn editable(request: &Request, element: &ElementRef) -> Result<(), CallError> {
     if request
         .editable_text(element)
@@ -775,9 +778,20 @@ async fn editable(request: &Request, element: &ElementRef) -> Result<(), CallErr
     {
         return Ok(());
     }
-    Err(CallError::InvalidArguments(
-        "the element has no EditableText interface, so its text can't be set".to_owned(),
-    ))
+    let (role, states) = request.state(element).await.map_err(gone_is_stale)?;
+    if let Some(refused) = policy::refuse_secret_field(model::role_name(role)) {
+        return Err(refused.into());
+    }
+    if !states.has(State::Editable) {
+        return Err(CallError::InvalidArguments(
+            "the element has no EditableText interface, so its text can't be set".to_owned(),
+        ));
+    }
+    Err(ToolError::new(
+        ErrorName::TextNotSettable,
+        "the field is editable but has no EditableText interface, as Chromium's text fields have none, so its text can't be set through accessibility; nothing was sent. Focus it with activate_element, then type with type_text, its expect naming the field's window; to replace what it holds, press ctrl+a with key before typing",
+    )
+    .into())
 }
 
 /// Refuses text over `MAX_TEXT` bytes before anything is asked.
@@ -1090,6 +1104,7 @@ mod tests {
             bus: ":1.7".to_owned(),
             path: "/org/a11y/atspi/accessible/9".to_owned(),
             frame: "/org/a11y/atspi/accessible/1".to_owned(),
+            page: None,
             kept: Kept {
                 role: 43,
                 window,

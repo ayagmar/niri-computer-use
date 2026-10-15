@@ -82,6 +82,9 @@ pub(crate) enum ErrorName {
     /// `activate_element` or `set_element_text` on a password field: element actions
     /// never act on one.
     SecretField,
+    /// `set_element_text` on an editable field without an `EditableText` interface, as
+    /// Chromium's are: its text can't be set through accessibility.
+    TextNotSettable,
     /// An element action's last checks before its call took too long, twice, so what they
     /// read may have changed: nothing was sent.
     ElementBusy,
