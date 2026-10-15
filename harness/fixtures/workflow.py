@@ -8,7 +8,8 @@ the text to `sent.jsonl` and clears the entry. The first time the entry gets tex
 modal `Autosave failed` window opens over it and the form takes no input until a click
 on its `OK` button, Escape or a close request dismisses it; other keys don't.
 `draft-events.jsonl` records each change of the entry's text, the keys the dialog got,
-and when it was shown and dismissed.
+with whether niri sent each to the dialog's own surface or to the form's, and when it was
+shown and dismissed.
 """
 
 import json
@@ -127,10 +128,15 @@ def autosave_failed(parent, form):
     )
     dialog.add_controller(escape)
     keys = Gtk.EventControllerKey()
-    keys.connect(
-        "key-pressed",
-        lambda _keys, keyval, _code, _state: event("dialog-key", key=Gdk.keyval_name(keyval)),
-    )
+
+    def dialog_key(controller, keyval, _code, _state):
+        # The surface niri sent the key to: the dialog's, or the form's, which GTK passes
+        # on to its modal dialog.
+        surface = controller.get_current_event().get_surface()
+        to = "dialog" if surface == dialog.get_surface() else "form"
+        event("dialog-key", key=Gdk.keyval_name(keyval), to=to)
+
+    keys.connect("key-pressed", dialog_key)
     dialog.add_controller(keys)
     form.set_sensitive(False)
     event("shown")

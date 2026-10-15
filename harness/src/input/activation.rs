@@ -79,16 +79,7 @@ pub(super) fn start_fixture(
     mode: &str,
     check: &str,
 ) -> Result<Option<Process>> {
-    let probe = [
-        "-I",
-        "-c",
-        "import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk",
-    ]
-    .map(OsString::from);
-    if let Err(error) = session.run("python3", &probe) {
-        session.log(&format!(
-            "{check}: skipped (Python GTK 4 unavailable: {error})"
-        ))?;
+    if !gtk4(session, check)? {
         return Ok(None);
     }
     let fixture = session.test_dir().root().join("gtk.py");
@@ -107,4 +98,21 @@ pub(super) fn start_fixture(
             Duration::from_secs(45),
         )
         .map(Some)
+}
+
+/// Whether Python's GTK 4 bindings load; logs that `check` is skipped when they don't.
+pub(super) fn gtk4(session: &mut Session<'_>, check: &str) -> Result<bool> {
+    let probe = [
+        "-I",
+        "-c",
+        "import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk",
+    ]
+    .map(OsString::from);
+    if let Err(error) = session.run("python3", &probe) {
+        session.log(&format!(
+            "{check}: skipped (Python GTK 4 unavailable: {error})"
+        ))?;
+        return Ok(false);
+    }
+    Ok(true)
 }

@@ -157,7 +157,8 @@ pub(crate) struct Outcome {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) changes: Option<Changes>,
     /// Why the outcome is uncertain or `unknown`, or why an element action's effect is
-    /// `unverified`.
+    /// `unverified`; for `key` and `type_text` ending `interrupted` once keys went out, what
+    /// went out and where some of it may have gone.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) detail: Option<String>,
     /// The metadata of the focused output's screenshot that comes with the result: one asked

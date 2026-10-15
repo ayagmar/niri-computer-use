@@ -14,6 +14,7 @@ mod engine_scope;
 mod exposure;
 pub(crate) mod guardian;
 mod keeper;
+mod modal;
 mod native;
 mod native_gestures;
 mod native_unicode;
@@ -97,6 +98,7 @@ pub(crate) fn run(session: &mut Session<'_>, output: &LogicalOutput, server: &st
     // After `text_entry`, whose empty-clipboard check needs a session that never copied.
     copy::run(session, &mut client)?;
     apps::run(session, &mut client)?;
+    modal::run(session, &mut client)?;
     client.stop()?;
     noctalia.stop().map(drop)
 }
