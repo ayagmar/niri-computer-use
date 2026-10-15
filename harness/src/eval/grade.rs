@@ -415,6 +415,22 @@ pub(crate) fn answer_mentions(text: &'static str, answer: &str, words: &[&str]) 
     }
 }
 
+/// Whether the final answer names at least one of `words`, ignoring case.
+pub(crate) fn answer_mentions_any(text: &'static str, answer: &str, words: &[&str]) -> Expectation {
+    let lower = answer.to_lowercase();
+    let found = words
+        .iter()
+        .find(|word| lower.contains(&word.to_lowercase()));
+    Expectation {
+        text,
+        passed: found.is_some(),
+        evidence: found.map_or_else(
+            || format!("the answer mentions none of {words:?}"),
+            |word| format!("the answer mentions {word}"),
+        ),
+    }
+}
+
 /// With no preset for the app, typing or key combos aim at whatever has focus.
 pub(crate) fn no_keyboard(calls: &[Call]) -> Expectation {
     let keyboard = calls
@@ -639,6 +655,13 @@ mod tests {
             ..Trace::default()
         };
         assert!(typed_then_sent(&trace, &calls)[0].passed);
+    }
+
+    #[test]
+    fn any_one_of_the_words_in_any_case_is_enough() {
+        let words = ["autosave", "auto-save", "dialog"];
+        assert!(answer_mentions_any("", "The Auto-save failed.", &words).passed);
+        assert!(!answer_mentions_any("", "Sent the message.", &words).passed);
     }
 
     #[test]

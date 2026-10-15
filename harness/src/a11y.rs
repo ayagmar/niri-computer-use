@@ -60,9 +60,15 @@ pub(crate) struct Bus {
 }
 
 impl Bus {
+    /// Starts the bus for one of M9's checks, which end within `BUS_DEADLINE`.
+    pub(crate) fn start(session: &mut Session<'_>) -> Result<Self> {
+        Self::start_for(session, BUS_DEADLINE)
+    }
+
     /// Starts the launcher, waits for the address on the session bus and checks that its
     /// socket is under `TEST_DIR/run`, then starts the registry and waits for its name.
-    pub(crate) fn start(session: &mut Session<'_>) -> Result<Self> {
+    /// Both run until `deadline`.
+    pub(crate) fn start_for(session: &mut Session<'_>, deadline: Duration) -> Result<Self> {
         let session_bus =
             std::env::var("DBUS_SESSION_BUS_ADDRESS").context("read DBUS_SESSION_BUS_ADDRESS")?;
         // dbus-broker-launch, the launcher's first choice under systemd, logs to the
@@ -73,12 +79,7 @@ impl Bus {
             "--launch-immediately",
         ]
         .map(OsString::from);
-        let launcher = session.start(
-            "env",
-            &args,
-            session.artifact("at-spi-bus.log"),
-            BUS_DEADLINE,
-        )?;
+        let launcher = session.start("env", &args, session.artifact("at-spi-bus.log"), deadline)?;
         owned(session, &session_bus, "org.a11y.Bus")?;
         let reply = busctl(
             session,
@@ -98,7 +99,7 @@ impl Bus {
             REGISTRY,
             &[],
             session.artifact("at-spi-registry.log"),
-            BUS_DEADLINE,
+            deadline,
         )?;
         owned(session, &address, REGISTRY_NAME)?;
         Ok(Self {
