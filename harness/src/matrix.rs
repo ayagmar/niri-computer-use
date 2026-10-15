@@ -242,6 +242,16 @@ fn verdict(row: &Row) -> Verdict {
             compat.unwrap_or("nothing")
         ));
     }
+    let stream = row
+        .report
+        .as_ref()
+        .and_then(|report| field(report, "/event_stream").as_str());
+    if stream != Some("connected") {
+        return Verdict::Failed(format!(
+            "status said the event stream was {}",
+            stream.unwrap_or("nothing")
+        ));
+    }
     if row.probe.is_err() {
         return Verdict::Failed("the probe went otherwise".to_owned());
     }
@@ -427,7 +437,7 @@ mod tests {
                 niri: Ok(PathBuf::from("/b/niri")),
             },
             expectation: expectation(reference),
-            report: Some(json!({"compat": compat, "calls": []})),
+            report: Some(json!({"compat": compat, "event_stream": "connected", "calls": []})),
             probe: if probe { Ok(()) } else { Err("x".to_owned()) },
             suites: suites
                 .iter()
@@ -475,6 +485,11 @@ mod tests {
             verdict(&row("v25.11", "read_only", false, &[])),
             Verdict::Failed(_)
         ));
+        let mut stopped = row("v25.11", "read_only", true, &[]);
+        stopped.report = Some(json!({
+            "compat": "read_only", "event_stream": "schema_incompatible", "calls": []
+        }));
+        assert!(matches!(verdict(&stopped), Verdict::Failed(_)));
         let mut unbuilt = row("v25.08", "read_only", true, &[]);
         unbuilt.build.niri = Err("no".to_owned());
         assert_eq!(verdict(&unbuilt), Verdict::NotBuilt);
