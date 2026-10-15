@@ -28,7 +28,7 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 use crate::control::runtime::RuntimeDir;
-use crate::engine::hello::{self, Exe, Hello, Reply};
+use crate::engine::hello::{self, Exe, Hello, Refusal, Reply};
 use crate::engine::host::{LOG, RUNTIME_DIR_DISCOVERED, SOCKET, UNSCOPED};
 use crate::error::{ErrorName, ToolError};
 use crate::session::{Given, LineLimit, MAX_LINE};
@@ -139,32 +139,55 @@ enum Failed {
     Absent(String),
     /// An engine answered and refused this bridge, or none can ever be reached.
     Refused(String),
+    /// An engine of another build refused this bridge, as it does for as long as it runs.
+    OtherBuild(String),
     /// Anything else, which a retry may get past.
     Retry(String),
 }
 
+/// Why `connect` reached no engine.
+#[derive(Debug)]
+pub(crate) enum Unreached {
+    /// An engine of another build refused this bridge, as it does for as long as it runs.
+    /// Its detail says what the user does about it.
+    OtherBuild(String),
+    /// Anything else.
+    Other(String),
+}
+
+impl Unreached {
+    pub(crate) fn detail(self) -> String {
+        match self {
+            Self::OtherBuild(detail) | Self::Other(detail) => detail,
+        }
+    }
+}
+
 /// Reaches the engine, starting one if there is none, within `BUDGET`.
-pub(crate) async fn connect(target: &Target) -> Result<Link, String> {
+pub(crate) async fn connect(target: &Target) -> Result<Link, Unreached> {
     let deadline = Instant::now() + BUDGET;
     let mut starts = 0;
     let mut retry = RETRY_FIRST;
     loop {
         let detail = match say_hello(target).await {
             Ok(link) => return Ok(link),
-            Err(Failed::Refused(detail)) => return Err(detail),
+            Err(Failed::Refused(detail)) => return Err(Unreached::Other(detail)),
+            Err(Failed::OtherBuild(detail)) => return Err(Unreached::OtherBuild(detail)),
             Err(Failed::Absent(detail)) if starts < MAX_STARTS => {
                 // Only the first start tries `systemd-run`, which may still be at work.
-                start(target, deadline, starts == 0).await?;
+                start(target, deadline, starts == 0)
+                    .await
+                    .map_err(Unreached::Other)?;
                 starts += 1;
                 detail
             }
             Err(Failed::Absent(detail) | Failed::Retry(detail)) => detail,
         };
         if Instant::now() + retry >= deadline {
-            return Err(format!(
+            return Err(Unreached::Other(format!(
                 "no shared engine answered within {} s: {detail}",
                 BUDGET.as_secs()
-            ));
+            )));
         }
         tokio::time::sleep(retry).await;
         retry = (retry * 2).min(RETRY_MAX);
@@ -202,13 +225,20 @@ async fn say_hello(target: &Target) -> Result<Link, Failed> {
         .map_err(|detail| Failed::Retry(format!("the hello: {detail}")))?;
     match serde_json::from_slice::<Reply>(&reply) {
         Ok(Reply::Engine { pid }) => Ok(Link::new(pid, input, output)),
-        Ok(Reply::Refused { error, detail }) => Err(Failed::Refused(format!(
-            "the shared engine refused this client ({}): {detail}",
-            serde_json::to_value(error)
-                .ok()
-                .and_then(|name| name.as_str().map(str::to_owned))
-                .unwrap_or_default()
-        ))),
+        Ok(Reply::Refused { error, detail }) => {
+            let detail = format!(
+                "the shared engine refused this client ({}): {detail}",
+                serde_json::to_value(error)
+                    .ok()
+                    .and_then(|name| name.as_str().map(str::to_owned))
+                    .unwrap_or_default()
+            );
+            Err(if error == Refusal::EngineVersion {
+                Failed::OtherBuild(detail)
+            } else {
+                Failed::Refused(detail)
+            })
+        }
         Err(error) => Err(Failed::Retry(format!("read the engine's hello: {error}"))),
     }
 }
@@ -684,11 +714,13 @@ impl Relay {
             let replay = self.initialize.as_ref().filter(|_| !initializing);
             match first(&mut self.ends, reconnect(&self.target, replay)).await? {
                 Ok(engine) => self.engine = Some(engine),
-                Err(detail) => {
-                    let error = ToolError::new(
-                        ErrorName::EngineUnavailable,
-                        format!("{detail}; the next call tries again"),
-                    );
+                Err(unreached) => {
+                    // An engine of another build says what to do; retrying doesn't help.
+                    let detail = match unreached {
+                        Unreached::OtherBuild(detail) => detail,
+                        Unreached::Other(detail) => format!("{detail}; the next call tries again"),
+                    };
+                    let error = ToolError::new(ErrorName::EngineUnavailable, detail);
                     return self.answer(&id, &method, error).map_err(Stop::Writer);
                 }
             }
@@ -786,15 +818,17 @@ async fn engine_read(engine: &mut Option<Link>) -> Read {
 /// Reaches an engine again and, given the client's `initialize`, sends it to the new
 /// engine. Its response is the first the new engine sends, matched by the client's own
 /// id, and isn't passed on; `notifications/initialized` follows.
-async fn reconnect(target: &Target, replay: Option<&(Value, Vec<u8>)>) -> Result<Link, String> {
+async fn reconnect(target: &Target, replay: Option<&(Value, Vec<u8>)>) -> Result<Link, Unreached> {
     let mut engine = connect(target).await?;
     let Some((id, line)) = replay else {
         return Ok(engine);
     };
     tokio::time::timeout(hello::DEADLINE, engine.initialize(id, line))
         .await
-        .map_err(|_| "the new engine didn't answer initialize in time".to_owned())?
-        .map_err(|detail| format!("initialize the new engine: {detail}"))?;
+        .map_err(|_| {
+            Unreached::Other("the new engine didn't answer initialize in time".to_owned())
+        })?
+        .map_err(|detail| Unreached::Other(format!("initialize the new engine: {detail}")))?;
     Ok(engine)
 }
 
@@ -921,6 +955,62 @@ mod tests {
             read.push(serde_json::from_str(&line).unwrap());
         }
         read
+    }
+
+    /// A relay whose engine went, with no engine to reach now but one at `runtime`'s
+    /// socket that refuses every hello with `refusal`, the client's end of its stdout, and
+    /// what keeps the client from counting as ended.
+    fn refused_on_reconnect(
+        dir: &Path,
+        refusal: Refusal,
+    ) -> (Relay, DuplexStream, watch::Sender<Option<Ended>>) {
+        let runtime = RuntimeDir::of(&crate::test_support::niri_env(dir)).unwrap();
+        runtime.create().unwrap();
+        let listener = tokio::net::UnixListener::bind(runtime.path().join(SOCKET)).unwrap();
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let refused = Reply::Refused {
+                    error: refusal,
+                    detail: "what the engine says".to_owned(),
+                };
+                let mut line = serde_json::to_vec(&refused).unwrap();
+                line.push(b'\n');
+                stream.into_split().1.write_all(&line).await.ok();
+            }
+        });
+        let (ours, _engine) = UnixStream::pair().unwrap();
+        let (ended, client) = watch::channel(None);
+        let (stdout, client_end) = duplex(1024);
+        let mut relay = relay(dir, ours, client, stdout);
+        relay.engine = None;
+        (relay, client_end, ended)
+    }
+
+    /// An engine of another build refuses a bridge for as long as it runs, and its detail
+    /// says what to do, so a refused call doesn't add that the next call tries again, as
+    /// it does for a refusal a retry may get past.
+    #[tokio::test]
+    async fn a_refusal_by_another_build_isnt_called_retryable() {
+        for (refusal, retried) in [(Refusal::EngineVersion, false), (Refusal::EngineBusy, true)] {
+            let dir = crate::test_support::fresh_dir("bridge-ob");
+            let (mut relay, client_end, _ended) = refused_on_reconnect(&dir, refusal);
+            let reading = tokio::spawn(read_all(client_end));
+            let line = b"{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/list\"}\n".to_vec();
+            relay
+                .request(json!(7), "tools/list".to_owned(), line)
+                .await
+                .unwrap();
+            relay.writer.finish().await.unwrap();
+            let answered = reading.await.unwrap();
+            let message = answered[0]["error"]["message"].as_str().unwrap();
+            assert!(
+                message.starts_with("engine_unavailable: ")
+                    && message.contains("what the engine says")
+                    && message.contains("the next call tries again") == retried,
+                "{refusal:?}: {message}"
+            );
+            std::fs::remove_dir_all(dir).unwrap();
+        }
     }
 
     /// Only calls are limited, so more requests than the client's queue holds can be in

@@ -379,8 +379,11 @@ fn shared_again(session: &mut Session<'_>, shared: &mut Client, old: &mut Client
         field(&met, "/structuredContent")
     ))?;
     expect(
-        field(&met, "/structuredContent/error") == "engine_unavailable",
-        "the old client refused by the new engine",
+        field(&met, "/structuredContent/error") == "engine_unavailable"
+            && field(&met, "/structuredContent/detail")
+                .as_str()
+                .is_some_and(|detail| detail.contains("restart this MCP client")),
+        "the old client refused by the new engine and told to restart",
         &met.to_string(),
     )
 }

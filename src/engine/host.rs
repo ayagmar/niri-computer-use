@@ -68,6 +68,7 @@ pub(crate) async fn run(env: Env, unscoped: Option<String>) -> Result<(), String
     let own = Own {
         pid: std::process::id(),
         exe: hello::Exe::current()?,
+        file: hello::Build::current().exe,
         niri_socket: env.instance.socket().map_err(Clone::clone)?.to_path_buf(),
         wayland_socket: env.display.path().ok().map(hello::resolved),
         desktop_path: env.desktop.search.clone(),

@@ -14,6 +14,8 @@ use crate::policy;
 use crate::session::Given;
 
 const VERSION: u32 = 3;
+/// The release this build is, as a bridge names it in its hello.
+const RELEASE: &str = env!("CARGO_PKG_VERSION");
 /// A hello line, newline included. The policy file's text, at most `MAX_POLICY`, can grow
 /// up to six times in JSON.
 pub(crate) const MAX_LINE: usize = 512 * 1024;
@@ -84,6 +86,10 @@ impl Build {
 pub(crate) struct Hello {
     #[serde(rename = "hello")]
     version: u32,
+    /// The bridge's release, such as `0.1.1`. Bridges of 0.1.1 and older send none, and
+    /// engines of 0.1.1 and older ignore it.
+    #[serde(default)]
+    release: Option<String>,
     exe: Exe,
     niri_socket: PathBuf,
     wayland_socket: Option<PathBuf>,
@@ -132,6 +138,7 @@ impl Hello {
         };
         Ok(Self {
             version: VERSION,
+            release: Some(RELEASE.to_owned()),
             exe,
             niri_socket: niri_socket.to_path_buf(),
             wayland_socket: wayland_socket.map(Path::to_path_buf),
@@ -195,6 +202,8 @@ pub(crate) fn resolved(display: &Path) -> PathBuf {
 pub(crate) struct Own {
     pub(crate) pid: u32,
     pub(crate) exe: Exe,
+    /// The file the engine was started from, as `Build` names it.
+    pub(crate) file: Option<PathBuf>,
     pub(crate) niri_socket: PathBuf,
     pub(crate) wayland_socket: Option<PathBuf>,
     pub(crate) desktop_path: String,
@@ -203,25 +212,23 @@ pub(crate) struct Own {
 impl Own {
     /// Takes `line` as a hello, or says why not.
     pub(crate) fn take(&self, line: &[u8]) -> Result<Hello, (Refusal, String)> {
-        let version = serde_json::from_slice::<serde_json::Value>(line)
-            .ok()
+        let value = serde_json::from_slice::<serde_json::Value>(line).ok();
+        let version = value
+            .as_ref()
             .and_then(|value| value.get("hello")?.as_u64());
-        if version.is_some_and(|version| version != u64::from(VERSION)) {
-            return Err((
-                Refusal::EngineVersion,
-                format!("the bridge speaks hello {version:?}; this engine speaks {VERSION}"),
-            ));
+        if let Some(version) = version.filter(|version| *version != u64::from(VERSION)) {
+            let theirs =
+                format!(" (one speaking hello {version}, where this engine speaks {VERSION})");
+            return Err((Refusal::EngineVersion, self.another_build(&theirs)));
         }
         let hello: Hello = serde_json::from_slice(line)
             .map_err(|error| (Refusal::BadHello, format!("read the hello: {error}")))?;
         if hello.exe != self.exe {
-            return Err((
-                Refusal::EngineVersion,
-                format!(
-                    "the engine, PID {}, runs another build of niri-computer-use, which it keeps until its last client leaves",
-                    self.pid
-                ),
-            ));
+            let theirs = hello.release.as_ref().map_or_else(
+                || " (0.1.1 or older)".to_owned(),
+                |release| format!(" ({release})"),
+            );
+            return Err((Refusal::EngineVersion, self.another_build(&theirs)));
         }
         if hello.niri_socket != self.niri_socket || hello.wayland_socket != self.wayland_socket {
             return Err((
@@ -248,6 +255,32 @@ impl Own {
         }
         Ok(hello)
     }
+
+    /// Why a bridge of another build, `theirs` saying what it is, is refused, and what
+    /// the user does about it. An engine refuses such a bridge for as long as it runs,
+    /// which is until its last client leaves, so retrying doesn't help: restarting does.
+    /// Which client to restart depends on whether this engine's file was replaced since it
+    /// started, as by an upgrade.
+    fn another_build(&self, theirs: &str) -> String {
+        let pid = self.pid;
+        let replaced = self
+            .file
+            .as_deref()
+            .is_none_or(|file| Exe::of(file).ok() != Some(self.exe));
+        let file = self
+            .file
+            .as_deref()
+            .map_or_else(|| "its file".to_owned(), |file| file.display().to_string());
+        if replaced {
+            format!(
+                "this engine, PID {pid}, runs niri-computer-use {RELEASE}, a build since replaced at {file}, and keeps it until its last client leaves; this client's server runs another build{theirs}. Restart the MCP clients this engine serves, so that it exits and the next client starts an engine of the installed build"
+            )
+        } else {
+            format!(
+                "this engine, PID {pid}, runs niri-computer-use {RELEASE} from {file}, and this client's server runs another build{theirs}, as after an upgrade replaced it: restart this MCP client, so that its server runs the engine's build. Until then the engine refuses it, whatever the client retries"
+            )
+        }
+    }
 }
 
 #[cfg(test)]
@@ -264,6 +297,7 @@ mod tests {
                 mtime: 4,
                 mtime_nsec: 5,
             },
+            file: None,
             niri_socket: PathBuf::from("/run/user/1000/niri.wayland-1.42.sock"),
             wayland_socket: Some(PathBuf::from("/run/user/1000/wayland-1")),
             desktop_path: "/usr/bin".to_owned(),
@@ -274,6 +308,7 @@ mod tests {
     fn hello(exe: Exe, niri: &str, display: Option<&str>) -> Hello {
         Hello {
             version: VERSION,
+            release: Some(RELEASE.to_owned()),
             exe,
             niri_socket: PathBuf::from(niri),
             wayland_socket: display.map(PathBuf::from),
@@ -358,6 +393,81 @@ mod tests {
             own.take(b"GET / HTTP/1.1").unwrap_err().0,
             Refusal::BadHello
         );
+    }
+
+    /// The hello lines of 0.1.0's and 0.1.1's bridges, as they send them, with `exe` for
+    /// their file.
+    fn released_hello(release: &str, exe: Exe) -> Vec<u8> {
+        let mut hello = serde_json::to_value(hello(exe, NIRI, DISPLAY)).unwrap();
+        let hello = hello.as_object_mut().unwrap();
+        hello.remove("release");
+        if release == "0.1.0" {
+            hello.insert("hello".to_owned(), 2.into());
+            hello.insert("keyboard".to_owned(), serde_json::Value::Null);
+        }
+        serde_json::to_vec(&hello).unwrap()
+    }
+
+    /// After an upgrade, a client still running the old build meets the new build's
+    /// engine, which refuses it for as long as it runs: its detail says to restart that
+    /// client and names both builds, as the bridge's own words say only that the next call
+    /// tries again.
+    #[test]
+    fn a_bridge_an_upgrade_replaced_is_told_to_restart_its_client() {
+        let dir = crate::test_support::fresh_dir("hello-upgrade");
+        let file = dir.join("niri-computer-use");
+        std::fs::write(&file, "the installed build").unwrap();
+        let own = Own {
+            exe: Exe::of(&file).unwrap(),
+            file: Some(file.clone()),
+            ..own()
+        };
+        let old = Exe { size: 9, ..own.exe };
+        for release in ["0.1.0", "0.1.1"] {
+            let (error, detail) = own.take(&released_hello(release, old)).unwrap_err();
+            assert_eq!(error, Refusal::EngineVersion);
+            assert!(
+                detail.contains(&format!(
+                    "niri-computer-use {RELEASE} from {}",
+                    file.display()
+                )) && detail.contains("restart this MCP client"),
+                "{release}: {detail}"
+            );
+        }
+        let newer = Hello {
+            release: Some("9.9.9".to_owned()),
+            ..hello(old, NIRI, DISPLAY)
+        };
+        let (_, detail) = own.take(&serde_json::to_vec(&newer).unwrap()).unwrap_err();
+        assert!(detail.contains("another build (9.9.9)"), "{detail}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// An engine whose own file an upgrade replaced keeps its build until its last client
+    /// leaves: a client of the installed build is told to restart the engine's clients.
+    #[test]
+    fn an_engine_an_upgrade_replaced_says_to_restart_its_clients() {
+        let dir = crate::test_support::fresh_dir("hello-replaced");
+        let file = dir.join("niri-computer-use");
+        std::fs::write(&file, "the build the engine started from").unwrap();
+        let own = Own {
+            exe: Exe::of(&file).unwrap(),
+            file: Some(file.clone()),
+            ..own()
+        };
+        std::fs::remove_file(&file).unwrap();
+        std::fs::write(&file, "the installed build, replacing it").unwrap();
+        let installed = Exe::of(&file).unwrap();
+        let (error, detail) = own
+            .take(&serde_json::to_vec(&hello(installed, NIRI, DISPLAY)).unwrap())
+            .unwrap_err();
+        assert_eq!(error, Refusal::EngineVersion);
+        assert!(
+            detail.contains("a build since replaced at")
+                && detail.contains("Restart the MCP clients this engine serves"),
+            "{detail}"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
