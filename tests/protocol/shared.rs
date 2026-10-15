@@ -125,7 +125,11 @@ async fn a_server_with_shared_mode_off_serves_its_one_client_itself() {
     fixture.set("NIRI_COMPUTER_USE_SHARED", "yes");
     let _niri = Niri::start(&fixture);
     let mut typo = Server::start(&fixture).await;
-    let refused = typo.structured("status").await["engine"].clone();
+    let status = typo.structured("status").await;
+    assert_eq!(status["shared"]["setting"], "off", "{status}");
+    let error = status["shared"]["error"].as_str().unwrap();
+    assert!(error.contains("\"yes\""), "{error}");
+    let refused = status["engine"].clone();
     assert_eq!(refused["mode"], "standalone", "{refused}");
     let fallback = refused["fallback"].as_str().unwrap();
     assert!(
@@ -393,11 +397,12 @@ async fn an_engine_refusing_the_hello_after_a_loss_leaves_calls_unavailable() {
     }
 }
 
-/// Answers every hello on the engine's socket, which a killed engine left, with an
-/// `engine_version` refusal.
+/// Answers every hello on the engine's socket, in place of any a killed engine left, with
+/// an `engine_version` refusal.
 fn refusing_engine(fixture: &Fixture) -> tokio::task::JoinHandle<()> {
     let path = fixture.runtime_dir().join("engine.sock");
-    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir_all(fixture.runtime_dir()).unwrap();
+    std::fs::remove_file(&path).ok();
     let listener = tokio::net::UnixListener::bind(path).unwrap();
     tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
@@ -410,6 +415,89 @@ fn refusing_engine(fixture: &Fixture) -> tokio::task::JoinHandle<()> {
                 .ok();
         }
     })
+}
+
+/// Writes the policy file of every client of `fixture`.
+fn policy(fixture: &Fixture, text: &str) {
+    std::fs::create_dir_all(fixture.path("config/niri-computer-use")).unwrap();
+    std::fs::write(fixture.path("config/niri-computer-use/policy.toml"), text).unwrap();
+}
+
+/// Calls each tool and requires `engine_unavailable`, with `reason` in the detail.
+async fn every_call_unavailable(server: &mut Server, reason: &str) {
+    let tools = server.tools().await;
+    let names: Vec<&str> = tools
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    for tool in ["status", "desktop_state", "acquire_desktop", "screenshot"] {
+        assert!(names.contains(&tool), "{names:?}");
+        let (error, detail) = tool_error(&server.call(tool, json!({})).await);
+        assert_eq!(error, "engine_unavailable", "{tool}");
+        assert!(detail.contains(reason), "{tool}: {detail}");
+    }
+    assert_eq!(guardians(i32::try_from(server.pid).unwrap()), 0);
+}
+
+/// A client that requires the shared engine, with none answering in time, is never served
+/// standalone: its tools are listed, and every call fails with `engine_unavailable` and the
+/// bridge's reason.
+#[tokio::test]
+async fn without_an_engine_in_time_a_client_that_requires_one_gets_no_standalone_server() {
+    let mut fixture = shared("required-cold");
+    fixture.set("NIRI_COMPUTER_USE_SHARED", "required");
+    let _niri = Niri::start(&fixture);
+    let _lock = hold_engine_lock(&fixture);
+    let mut server = Server::start(&fixture).await;
+    let socket = fixture.runtime_dir().join("engine.sock");
+    let reason = format!(
+        "no shared engine answered within 5 s: connect to {}",
+        socket.display()
+    );
+    every_call_unavailable(&mut server, &reason).await;
+    let (_, _, stderr) = server.stop().await;
+    assert!(
+        stderr.contains("the shared engine is required, so every tool fails with engine_unavailable: no shared engine answered"),
+        "{stderr}"
+    );
+}
+
+/// An engine that refuses a client that requires it, as the policy file says, counts as
+/// unreachable.
+#[tokio::test]
+async fn an_engine_refusing_a_client_that_requires_it_leaves_every_call_unavailable() {
+    let fixture = shared("required-refused");
+    policy(&fixture, "shared = \"required\"\n");
+    let _niri = Niri::start(&fixture);
+    let _refusing = refusing_engine(&fixture);
+    let mut server = Server::start(&fixture).await;
+    every_call_unavailable(
+        &mut server,
+        "the shared engine refused this client (engine_version): another build",
+    )
+    .await;
+}
+
+/// A wrong variable doesn't drop the file's requirement, and a client that requires the
+/// engine is served by it when it answers.
+#[tokio::test]
+async fn a_wrong_variable_keeps_the_files_requirement() {
+    let mut fixture = shared("required-typo");
+    policy(&fixture, "shared = \"required\"\n");
+    let _niri = Niri::start(&fixture);
+    fixture.set("NIRI_COMPUTER_USE_SHARED", "yes");
+    let mut typo = Server::start(&fixture).await;
+    every_call_unavailable(&mut typo, "NIRI_COMPUTER_USE_SHARED is \"yes\"").await;
+    assert_eq!(engines(&fixture), Vec::<i32>::new());
+    fixture.unset("NIRI_COMPUTER_USE_SHARED");
+    let mut server = Server::start(&fixture).await;
+    let status = server.structured("status").await;
+    assert_eq!(
+        status["shared"],
+        json!({"setting": "required", "error": null})
+    );
+    assert_eq!(status["engine"]["mode"], "shared", "{status}");
+    assert_eq!(status["engine"]["pid"], engine(&fixture).await, "{status}");
 }
 
 #[tokio::test]

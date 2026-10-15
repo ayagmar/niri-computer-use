@@ -314,6 +314,7 @@ impl Engine {
             unrestricted: &settings.unrestricted,
             confirm_lease: &settings.confirm_lease,
             tools: &settings.tools,
+            shared: &settings.shared,
             place: settings.place(),
             accessibility: &self.accessibility,
             accessibility_switch: self.a11y.as_ref().map(|a11y| a11y.switch().report()),

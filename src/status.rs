@@ -15,7 +15,10 @@ use crate::error::ToolError;
 use crate::niri::events::StreamState;
 use crate::niri::{self, version::Compat};
 use crate::noctalia::{self, Presence};
-use crate::policy::{self, Facts, Loaded, PolicyStatus, Switch, SwitchStatus, Tools, ToolsStatus};
+use crate::policy::{
+    self, Facts, Loaded, PolicyStatus, Shared, SharedStatus, Switch, SwitchStatus, Tools,
+    ToolsStatus,
+};
 use crate::runner::{self, Place};
 use crate::{Env, a11y, discover};
 
@@ -61,6 +64,9 @@ pub(crate) struct Status {
     confirm_lease: SwitchStatus,
     /// Which tools this session lists, and what narrowed them.
     tools: ToolsStatus,
+    /// Whether this client is served by the shared engine, standalone, or only by the
+    /// shared engine.
+    shared: SharedStatus,
     binaries: BTreeMap<&'static str, bool>,
     /// Where `loginctl` and `noctalia` were found at startup, for every session alike.
     desktop_programs: runner::Desktop,
@@ -80,6 +86,7 @@ pub(crate) struct Sources<'a> {
     pub(crate) unrestricted: &'a Switch,
     pub(crate) confirm_lease: &'a Switch,
     pub(crate) tools: &'a Tools,
+    pub(crate) shared: &'a Shared,
     /// Where the session's own programs are found.
     pub(crate) place: Place<'a>,
     /// Decided once at startup for the server, whose tool list depends on it.
@@ -167,6 +174,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         unrestricted,
         confirm_lease,
         tools,
+        shared,
         place,
         accessibility,
         accessibility_switch,
@@ -225,6 +233,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         unrestricted: unrestricted.status(),
         confirm_lease: confirm_lease.status(),
         tools: tools.status(),
+        shared: shared.status(),
         binaries: SESSION_BINARIES
             .map(|name| (name, runner::finds(place, name)))
             .into_iter()
@@ -254,26 +263,18 @@ mod tests {
     #[tokio::test]
     async fn reports_what_it_can_without_failing() {
         let audit = Audit::new(None);
+        let session = crate::test_support::session(1);
+        let settings = session.settings();
         let sources = Sources {
             engine: None,
             event_stream: None,
             audit: &audit,
             lease: status_without_desk(&Env::default()),
-            policy: &Loaded::Missing,
-            unrestricted: &Switch {
-                policy: false,
-                env: Ok(false),
-                when_wrong: false,
-            },
-            confirm_lease: &Switch {
-                policy: false,
-                env: Ok(false),
-                when_wrong: true,
-            },
-            tools: &Tools {
-                policy: policy::Profile::Full,
-                env: Ok(None),
-            },
+            policy: &settings.policy,
+            unrestricted: &settings.unrestricted,
+            confirm_lease: &settings.confirm_lease,
+            tools: &settings.tools,
+            shared: &settings.shared,
             place: crate::test_support::no_programs(),
             accessibility: &a11y::detect(None).await,
             accessibility_switch: None,
@@ -329,6 +330,7 @@ mod tests {
                 "unrestricted": {"enabled": false, "source": null, "error": null},
                 "confirm_lease": {"enabled": false, "source": null, "error": null},
                 "tools": {"profile": "full", "source": null, "error": null},
+                "shared": {"setting": "on", "error": null},
                 "binaries": {"grim": false, "notify-send": false},
                 "desktop_programs": {"search": "", "loginctl": null, "noctalia": null}
             })

@@ -91,6 +91,7 @@ pub(crate) fn session(id: u64) -> crate::session::Session {
         unrestricted: None,
         confirm_lease: None,
         tools: None,
+        shared: None,
         home: None,
         path: Some(NO_PROGRAMS.into()),
         policy: crate::policy::Source::Missing,

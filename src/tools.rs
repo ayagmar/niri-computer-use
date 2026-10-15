@@ -790,9 +790,7 @@ impl Server {
     /// list stays fixed for the session. A call to a tool not listed fails as an unknown
     /// tool.
     pub(crate) fn new(engine: Arc<Engine>, session: Session) -> Self {
-        let mut tool_router = Self::tool_router();
-        let profile = session.settings().tools.profile();
-        tool_router.map.retain(|name, _| profile.lists(name));
+        let mut tool_router = Self::profile_router(session.settings().tools.profile());
         if !engine.noctalia_installed() {
             tool_router.remove_route("shell_panel");
         }
@@ -804,15 +802,28 @@ impl Server {
                 tool_router.remove_route(tool);
             }
         }
-        for route in tool_router.map.values_mut() {
-            // The dialect MCP assumes anyway, which every tool would repeat.
-            Arc::make_mut(&mut route.attr.input_schema).remove("$schema");
-        }
         Self {
             engine,
             session,
             tool_router,
         }
+    }
+
+    /// Every tool `profile` lists, before what the engine finds narrows them.
+    fn profile_router(profile: policy::Profile) -> ToolRouter<Self> {
+        let mut tool_router = Self::tool_router();
+        tool_router.map.retain(|name, _| profile.lists(name));
+        for route in tool_router.map.values_mut() {
+            // The dialect MCP assumes anyway, which every tool would repeat.
+            Arc::make_mut(&mut route.attr.input_schema).remove("$schema");
+        }
+        tool_router
+    }
+
+    /// The tools `profile` lists, as a session without an engine lists them: none is left
+    /// out for what only the engine finds, Noctalia or the accessibility bus.
+    pub(crate) fn listed(profile: policy::Profile) -> Vec<rmcp::model::Tool> {
+        Self::profile_router(profile).list_all()
     }
 
     /// Readiness: the niri instance, niri's version and whether this server supports it,
@@ -2281,6 +2292,7 @@ mod tests {
             unrestricted: unrestricted.then(|| "1".into()),
             confirm_lease: None,
             tools: tools.map(Into::into),
+            shared: None,
             home: None,
             path: Some(crate::test_support::NO_PROGRAMS.into()),
             policy: Source::Missing,

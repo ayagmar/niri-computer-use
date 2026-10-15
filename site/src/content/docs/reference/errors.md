@@ -227,4 +227,6 @@ These come only from a server in [shared mode](../../concepts/configuration/#sha
 
 **Cause:** after an engine was lost, the server couldn't reach or start a new one within five seconds, or the new one refused it. The `detail` says why. The next call tries again.
 
-**What to do:** read the `detail` and `engine.log` in the runtime directory. A server that can't reach an engine when it starts serves its client on its own instead, so this happens only after a loss.
+With [`shared = "required"`](../../concepts/configuration/#shared), it also comes from a server that couldn't reach the engine when it started, or was refused by it: every call fails with it, and the `detail` says why and that the server must be restarted. Such a server never tries again.
+
+**What to do:** read the `detail` and `engine.log` in the runtime directory. A server that can't reach an engine when it starts serves its client on its own instead, unless the shared engine is required; otherwise this happens only after a loss. When the `detail` says to restart the server, fix the cause it names, then restart it from the client.
