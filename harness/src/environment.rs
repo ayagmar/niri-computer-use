@@ -117,6 +117,13 @@ pub(crate) fn parent(test_dir: &TestDir, host: &Host, display: &Path, shared: bo
     env
 }
 
+/// The host's `PATH` with `dir` first, for a nested session whose niri is in `dir`.
+pub(crate) fn first_on_path(dir: &Path, host: &Host) -> Result<OsString> {
+    let rest = env::split_paths(&host.path);
+    env::join_paths(std::iter::once(dir.to_path_buf()).chain(rest))
+        .context(format!("put {} first on PATH", dir.display()))
+}
+
 /// Checks PARENT before anything is started: only known variables, every path variable
 /// and the system bus address under `TEST_DIR`, and an absolute host Wayland socket as the
 /// one exemption.
@@ -220,6 +227,15 @@ mod tests {
         }
         check_containment(&env, &test_dir).unwrap();
         fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn a_chosen_niri_comes_first_on_path() {
+        let path = first_on_path(Path::new("/c/bin/abc"), &host()).unwrap();
+        assert_eq!(
+            env::split_paths(&path).collect::<Vec<_>>(),
+            [PathBuf::from("/c/bin/abc"), PathBuf::from("/usr/bin")]
+        );
     }
 
     #[test]
