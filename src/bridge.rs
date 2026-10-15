@@ -724,7 +724,7 @@ impl Relay {
             match first(&mut self.ends, reconnect(&self.target, replay)).await? {
                 Ok(engine) => self.engine = Some(engine),
                 Err(unreached) => {
-                    // An engine of another build says what to do; retrying doesn't help.
+                    // An engine of another build says what to do; a retry helps only once it has ended.
                     let detail = match unreached {
                         Unreached::OtherBuild(detail) => detail,
                         Unreached::Other(detail) => format!("{detail}; the next call tries again"),
