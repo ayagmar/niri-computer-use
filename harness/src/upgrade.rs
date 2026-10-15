@@ -17,6 +17,7 @@ use rustix::process::{Pid, Signal, kill_process};
 
 use serde_json::{Value, json};
 
+use crate::control::ZEROED;
 use crate::failure::{Context as _, Failure, Result};
 use crate::mcp::{self, Client, field, structured};
 use crate::runner::Process;
@@ -399,7 +400,8 @@ fn recover(session: &mut Session<'_>, place: &Place, left: &str) -> Result<()> {
     let child =
         serde_json::from_str::<Value>(left).is_ok_and(|marker| marker.get("child").is_some());
     expect(
-        said.contains("exit=0") && (!child || said.contains("input child, PID")),
+        said.contains("exit=0")
+            && (!child || said.contains("input child, PID") && said.contains(ZEROED)),
         "recover of the old marker",
         &said,
     )?;

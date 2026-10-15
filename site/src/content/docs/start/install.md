@@ -122,7 +122,7 @@ You can update from 0.1.0 or 0.1.1 while agents run. Before each release, a test
    for pid in $(pgrep '^niri-computer-u'); do ls -l "/proc/$pid/exe"; done
    ```
 
-4. If an agent still gets `recovery_required` once the old clients have ended, run `niri-computer-use recover` from the new build. It reads the markers 0.1.0 and 0.1.1 write, releases the keys and buttons they name, and ends the `wtype` child a 0.1.0 marker names, which can still be running after its server was killed. 0.1.1 read 0.1.0's marker as unreadable and left that child running.
+4. If an agent still gets `recovery_required` once the old clients have ended, run `niri-computer-use recover` from the new build. It reads the markers 0.1.0 and 0.1.1 write, releases the keys and buttons they name, and ends the `wtype` child a 0.1.0 marker names, which can still be running after its server was killed, then zeroes the modifiers that child may have held. 0.1.1 read 0.1.0's marker as unreadable and left that child running.
 
 A policy file written for 0.1.0 or 0.1.1 loads unchanged. A key added later, such as `turn_on_accessibility`, makes an older build read the whole file as invalid, which leaves its servers read-only, so add new keys once nothing of the older build runs. Going back to an older release isn't covered by the test.
 

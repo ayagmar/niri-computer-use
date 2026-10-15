@@ -23,7 +23,7 @@ fn marker_exists(fixture: &Fixture) -> bool {
     fixture.path(&format!("{DIR}/input-dirty")).exists()
 }
 
-/// A marker 0.1.0 wrote for its input child, which this version can't read.
+/// A marker 0.1.0 wrote for its input child.
 fn with_child() -> Value {
     json!({
         "operation": "type_text", "phase": "running", "server_pid": 1,
@@ -55,10 +55,12 @@ async fn recover_refuses_while_a_server_holds_the_lease() {
     assert!(marker_exists(&fixture));
 }
 
-/// An unreadable marker, such as one an older version wrote, blocks the lease like any
-/// other until the human confirms the input is released.
+/// A marker 0.1.0 wrote for its input child blocks the lease like any other until the
+/// human confirms the input is released. Where the modifiers that child may have held
+/// can't be zeroed, as here without a display, `recover` says so and that a physical key
+/// may not release them, and the human's check still decides.
 #[tokio::test]
-async fn recover_clears_an_unreadable_marker_once_confirmed() {
+async fn recover_clears_a_0_1_0_marker_once_confirmed() {
     let fixture = Fixture::new("recover-old");
     let _niri = NiriProcess::unlocked(&fixture).await;
     write_marker(&fixture, &with_child());
@@ -70,6 +72,11 @@ async fn recover_clears_an_unreadable_marker_once_confirmed() {
     let out = answer(&fixture, "recover", "yes\n").await;
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(out.status.success(), "{stdout}");
+    assert!(
+        stdout.contains("Zero modifiers couldn't be sent")
+            && stdout.contains("doesn't always release a key wtype pressed"),
+        "{stdout}"
+    );
     assert!(!marker_exists(&fixture));
     server.structured("acquire_desktop").await;
 }

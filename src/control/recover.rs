@@ -58,13 +58,16 @@ pub(crate) async fn run(env: &Env) -> Result<(), String> {
 }
 
 /// Ends the input child the marker names, then releases the keys and pointer buttons it
-/// names. A marker naming none of them leaves the human's check as all there is.
+/// names, or after a child only zeroes the modifiers. A marker naming none of them leaves
+/// the human's check as all there is.
 async fn release(env: &Env, marker: &Marker) -> Result<(), String> {
     if let Some(child) = marker.child {
         end_child(Path::new(PROC), child).await?;
     }
-    if let Some(keyboard) = &marker.keyboard {
-        release_keyboard(env, keyboard).await?;
+    match (&marker.keyboard, marker.child) {
+        (Some(keyboard), _) => release_keyboard(env, keyboard).await?,
+        (None, Some(_)) => zero_modifiers(env).await,
+        (None, None) => {}
     }
     if !marker.buttons.is_empty() {
         release_buttons(env, &marker.buttons, marker.output.as_deref()).await;
@@ -124,20 +127,51 @@ async fn release_keyboard(env: &Env, marked: &marker::Native) -> Result<(), Stri
         Layout::Active(group) => format!(
             "Sent native key releases and zero synthetic modifiers from a fresh virtual keyboard, in niri's active layout (index {group})."
         ),
-        Layout::Marked(why) => format!(
-            "Sent native key releases and zero synthetic modifiers from a fresh virtual keyboard. {why}; the focused application may show another layout until the next key."
+        Layout::Marked(detail) => format!(
+            "Sent native key releases and zero synthetic modifiers from a fresh virtual keyboard. {}; the focused application may show another layout until the next key.",
+            in_marked(&detail, marked.group)
         ),
     };
     cli::say(&line);
     Ok(())
 }
 
+/// Zeroes the modifiers from a fresh virtual keyboard after a 0.1.0 server's `wtype`
+/// child, which pressed modifiers on a keyboard of its own that a physical key doesn't
+/// always release. Its marker names no keys or layout. If they can't be sent, the human's
+/// check is all there is, as for 0.1.0's own `recover`.
+async fn zero_modifiers(env: &Env) {
+    let none = marker::Native {
+        codes: Vec::new(),
+        group: 0,
+    };
+    let line = match send_key_releases(env, &none).await {
+        Ok(Layout::Active(group)) => format!(
+            "Sent zero modifiers from a fresh virtual keyboard, in niri's active layout (index {group}), for any wtype left held."
+        ),
+        Ok(Layout::Marked(detail)) => format!(
+            "Sent zero modifiers from a fresh virtual keyboard, for any wtype left held. niri didn't say which layout is active ({detail}), so they went out in its first layout; the focused application may show that layout until the next key."
+        ),
+        Err(error) => format!(
+            "Zero modifiers couldn't be sent from a fresh virtual keyboard ({error}). A physical key doesn't always release a key wtype pressed."
+        ),
+    };
+    cli::say(&line);
+}
+
 /// The layout a fresh keyboard's zero modifiers went out in.
 pub(super) enum Layout {
     /// The one niri has active, by its index.
     Active(u32),
-    /// The marker's, from the call's start, since niri didn't say: why.
+    /// The marker's, from the call's start, since niri didn't say: its error.
     Marked(String),
+}
+
+/// Why the releases went out in the marker's layout `group`: niri's `detail`.
+pub(super) fn in_marked(detail: &str, group: u32) -> String {
+    format!(
+        "niri didn't say which layout is active ({detail}), so they went out in layout index {group}, where the call started"
+    )
 }
 
 /// Releases the marker's keycodes and zeroes the modifiers from a fresh virtual keyboard,
@@ -164,10 +198,7 @@ pub(super) async fn send_key_releases(
         .map_err(|error| error.detail)?;
     let layout = match niri::keyboard_group(&env.niri_socket).await {
         Ok(group) => Layout::Active(group),
-        Err(error) => Layout::Marked(format!(
-            "niri didn't say which layout is active ({}), so they went out in layout index {}, where the call started",
-            error.detail, marked.group
-        )),
+        Err(error) => Layout::Marked(error.detail),
     };
     let group = match layout {
         Layout::Active(group) => group,
