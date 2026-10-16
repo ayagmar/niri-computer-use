@@ -1,6 +1,6 @@
 //! A click aimed through a screenshot taken before the window it shows moved, as when the
 //! user moves or resizes a window while the agent looks at its last screenshot: the
-//! harness moves the floating `wev` 200 px right with niri's own action, and a click at the
+//! harness moves the floating `wev` 250 px right with niri's own action, and a click at the
 //! pixel that showed `wev`'s centre must fail with `ref_invalid` `layout_changed` and reach
 //! nothing. `wev` then moves back where the other checks expect it.
 
