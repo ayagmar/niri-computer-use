@@ -168,9 +168,7 @@ fn stops(
     session.log("M2: after resume, server B took the lease")
 }
 
-/// A marker naming a running child: `recover` ends it and clears the marker. The child
-/// shares the supervisor's process group, so `recover` ends it alone; the unit tests cover
-/// the group kill.
+/// A marker naming a running child: `recover` ends it and clears the marker.
 fn recovers(session: &mut Session<'_>, server: &str, control: &Path) -> Result<()> {
     let pid_file = control.join("child.pid");
     let script = format!("echo $$ > '{}'; exec sleep 60", pid_file.display());
