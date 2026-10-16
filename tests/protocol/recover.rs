@@ -23,12 +23,13 @@ fn marker_exists(fixture: &Fixture) -> bool {
     fixture.path(&format!("{DIR}/input-dirty")).exists()
 }
 
-/// A marker 0.1.0 wrote for its input child.
+/// A marker 0.1.0 wrote for its input child, which has exited. Its PID is the kernel's
+/// `PID_MAX_LIMIT`, which no process gets, so the test never names a real process.
 fn with_child() -> Value {
     json!({
         "operation": "type_text", "phase": "running", "server_pid": 1,
         "since": "2026-10-08T00:00:00.000Z",
-        "child": {"pid": 1, "start_time": 1}
+        "child": {"pid": 4_194_304, "start_time": 1}
     })
 }
 
@@ -73,7 +74,8 @@ async fn recover_clears_a_0_1_0_marker_once_confirmed() {
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(out.status.success(), "{stdout}");
     assert!(
-        stdout.contains("Zero modifiers couldn't be sent")
+        stdout.contains("The input child, PID 4194304, has already exited.")
+            && stdout.contains("Zero modifiers couldn't be sent")
             && stdout.contains("doesn't always release a key wtype pressed"),
         "{stdout}"
     );

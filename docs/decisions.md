@@ -1865,3 +1865,11 @@ v2.9.2 is the newest release; it is over 7 days old.
 - The other option was not starting a walk with less time left than the last one took. Walk times vary on a loaded machine, so a walk could still be cut, and the wait would read less often near its end.
 - Tests: a unit test with paused time has a whole walk, then one that runs to `by` and comes back cut short, and requires no `detail`; with only the cut walk, it requires the `budget_exhausted` detail. It failed before the change with the CI failure's detail. The protocol test is unchanged: beside 64 CPU burners on a 32-thread machine, with eight copies running at once, it failed 20 of 120 runs before the change, all with that detail, and 0 of 320 after.
 - No dependency was added.
+
+## 2026-10-16: `recover` never takes init for the input child
+
+- `recover` ends the input child a 0.1.0 marker names if `/proc/<pid>/stat` still gives the marker's start time, by its group when it leads one. The protocol test of a 0.1.0 marker named PID 1 at start time 1 as a child that had exited. Init leads group 1, and killing group 1 is `kill(-1)`, which signals every process the user may signal, so on a machine whose init started within the first tick of boot the test's `recover` would kill everything running as the test's user.
+- Reproduced locally: the unchanged test, run in a user, PID and time namespace whose PID 1 leads its group and reports start time 1, killed the test binary (exit 137) and a `sleep` beside it. With init at its real start time, and with main's version of the test, both survived. Whether the `ubuntu-24.04-arm` runner's init reports start time 1 isn't confirmed: every `test-aarch64` run of this branch lost its runner after about 47 minutes with no log uploaded.
+- `recover` now treats PID 1 as no input child and says so; no 0.1.0 server could have one there. The protocol test names PID 4,194,304, the kernel's `PID_MAX_LIMIT`, which no process gets, so it names no real process, as the 2026-10-08 entry requires of the `recover` tests.
+- Tests: a unit test reads a fake `/proc` whose PID 1 and PID 7 have the same stat, and requires PID 1 to be refused and PID 7 to be ended by its group. It calls only the decision, so a regression fails without sending a signal. The protocol test now requires `recover` to say the child has exited.
+- No dependency was added.

@@ -80,24 +80,29 @@ async fn release(env: &Env, marker: &Marker) -> Result<(), String> {
 /// A server killed mid-input leaves its `wtype` child typing its part of the text.
 async fn end_child(root: &Path, child: Child) -> Result<(), String> {
     let pid = child.pid;
-    let Some(stat) = running(root, child) else {
-        cli::say(&format!("The input child, PID {pid}, has already exited."));
-        return Ok(());
-    };
-    let target = i32::try_from(pid)
-        .ok()
-        .and_then(Pid::from_raw)
-        .ok_or_else(|| format!("{pid} isn't a process ID; the marker stays"))?;
-    let killed = if stat.group == pid {
-        cli::say(&format!(
-            "Ending the input child, PID {pid}, and its process group."
-        ));
-        kill_process_group(target, Signal::KILL)
-    } else {
-        cli::say(&format!(
-            "Ending the input child, PID {pid}. It leads no process group, so only it is ended."
-        ));
-        kill_process(target, Signal::KILL)
+    let killed = match ending(root, child)? {
+        Ending::Init => {
+            cli::say(
+                "The marker names PID 1, init, as its input child, which it can't be, so no process is ended.",
+            );
+            return Ok(());
+        }
+        Ending::Gone => {
+            cli::say(&format!("The input child, PID {pid}, has already exited."));
+            return Ok(());
+        }
+        Ending::Group(target) => {
+            cli::say(&format!(
+                "Ending the input child, PID {pid}, and its process group."
+            ));
+            kill_process_group(target, Signal::KILL)
+        }
+        Ending::Alone(target) => {
+            cli::say(&format!(
+                "Ending the input child, PID {pid}. It leads no process group, so only it is ended."
+            ));
+            kill_process(target, Signal::KILL)
+        }
     };
     // A process already gone is what killing it was for.
     match killed {
@@ -114,6 +119,40 @@ async fn end_child(root: &Path, child: Child) -> Result<(), String> {
         tokio::time::sleep(EXIT_POLL).await;
     }
     Ok(())
+}
+
+/// How `end_child` ends the child a marker names.
+#[derive(Debug, PartialEq, Eq)]
+enum Ending {
+    /// PID 1 is init, never an input child. It leads its own group, and killing group 1,
+    /// `kill(-1)`, would kill every process the user may signal.
+    Init,
+    /// It no longer runs as the process the marker names.
+    Gone,
+    /// It leads its own process group, which is ended with it.
+    Group(Pid),
+    /// It is in another process's group, so only it is ended.
+    Alone(Pid),
+}
+
+/// How to end `child`, read from the `/proc` at `root`.
+fn ending(root: &Path, child: Child) -> Result<Ending, String> {
+    let pid = child.pid;
+    if pid == 1 {
+        return Ok(Ending::Init);
+    }
+    let Some(stat) = running(root, child) else {
+        return Ok(Ending::Gone);
+    };
+    let target = i32::try_from(pid)
+        .ok()
+        .and_then(Pid::from_raw)
+        .ok_or_else(|| format!("{pid} isn't a process ID; the marker stays"))?;
+    Ok(if stat.group == pid {
+        Ending::Group(target)
+    } else {
+        Ending::Alone(target)
+    })
 }
 
 /// The child, if it still runs as the process the marker names.
@@ -308,5 +347,27 @@ mod tests {
         };
         end_child(Path::new(PROC), reused).await.unwrap();
         assert!(!ended(other));
+    }
+
+    /// The bug: a marker naming PID 1 at init's start time took init for the child, which
+    /// leads its own group, and killing group 1 is `kill(-1)`, every process the user may
+    /// signal. A protocol test's marker named PID 1 at start time 1, which init has on a
+    /// machine that starts it within the first tick of boot. Only `ending` is called, so a
+    /// regression here fails without sending a signal.
+    #[test]
+    fn init_is_never_taken_for_the_input_child() {
+        let root = crate::test_support::fresh_dir("recover-init");
+        for pid in [1, 7] {
+            let process = root.join(pid.to_string());
+            std::fs::create_dir(&process).unwrap();
+            let stat =
+                format!("{pid} (init) S 0 {pid} {pid} 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 1 0 0");
+            std::fs::write(process.join("stat"), stat).unwrap();
+        }
+        let named = |pid| Child { pid, start_time: 1 };
+        assert_eq!(ending(&root, named(1)), Ok(Ending::Init));
+        // The same stat under another PID is a child leading its own group.
+        assert!(matches!(ending(&root, named(7)), Ok(Ending::Group(_))));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
