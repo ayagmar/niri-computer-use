@@ -67,7 +67,7 @@ pub(super) fn kill_known(client: Client, engine: Option<u64>) -> Result<Killed> 
 
 /// The crash guardian watching `pid`, the process whose command line is
 /// `<binary> guard <pid>`.
-pub(super) fn of(pid: u32) -> Result<u32> {
+pub(crate) fn of(pid: u32) -> Result<u32> {
     let wanted = pid.to_string();
     for entry in fs::read_dir("/proc").context("list /proc")? {
         let Some(candidate) = entry

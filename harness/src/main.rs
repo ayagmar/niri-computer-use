@@ -4,7 +4,9 @@ mod a11y;
 mod actions;
 mod capture;
 mod changes;
+mod chromium;
 mod clipboard;
+mod compat;
 mod config;
 mod control;
 mod demo;
@@ -21,6 +23,7 @@ mod journal;
 mod keyboard;
 mod keymaps;
 mod log;
+mod matrix;
 mod mcp;
 mod measure;
 mod nested;
@@ -37,6 +40,7 @@ mod slow_reader;
 mod snapshot;
 mod supervise;
 mod test_dir;
+mod upgrade;
 mod wev;
 mod window;
 
@@ -49,13 +53,14 @@ use scale::Scale;
 use supervise::Probes;
 use test_dir::TestDir;
 
-const USAGE: &str = "usage: harness run [--visible] [--shared] [--server <path>] [--scale <scale>] [--ssd] [--noctalia | --sitting | --control | --actions | --input | --shell | --a11y | --engine | --measure | --latency | --eval <scenario> --skill <dir|none> --model <model> | --demo <scene>]
+const USAGE: &str = "usage: harness run [--visible] [--shared] [--server <path>] [--niri <path>] [--scale <scale>] [--ssd] [--noctalia | --sitting | --control | --actions | --input | --shell | --a11y | --engine | --measure | --latency | --chromium | --chromium-a11y | --big | --compat | --upgrade <version> | --eval <scenario> --skill <dir|none> --model <model> | --demo <scene>]
+       harness matrix <builds> <output>
        harness host-capture <output>
        harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--started <file>]
        harness keymaps <TEST_DIR> <directory> <deadline-ms>
        harness clipboard <TEST_DIR> <deadline-ms> [--secret]
        harness slow-reader <TEST_DIR> <delay-ms> <deadline-ms>
-       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--ssd] [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --a11y <server> | --engine <server> | --measure <server> | --latency <server> | --eval <server> <scenario> <skill|none> <model> | --demo <server> <scene>]";
+       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--ssd] [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --a11y <server> | --engine <server> | --measure <server> | --latency <server> | --chromium <server> <browser> | --chromium-a11y <server> <browser> | --big <server> | --compat <server> | --upgrade <server> <version> | --eval <server> <scenario> <skill|none> <model> | --demo <server> <scene>]";
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -82,6 +87,10 @@ fn dispatch(args: &[OsString]) -> Result<()> {
             interrupt::install()?;
             run::run(&options)
         }
+        ["matrix", builds, output] => {
+            interrupt::install()?;
+            matrix::run(builds, output)
+        }
         ["window", options @ ..] => window::run(&window::Options::parse(options)?),
         ["keymaps", options @ ..] => keymaps::run(options),
         ["clipboard", options @ ..] => clipboard::run(options),
@@ -102,6 +111,8 @@ fn dispatch(args: &[OsString]) -> Result<()> {
                 noctalia: None,
                 sitting: false,
                 server: None,
+                browser: None,
+                from: None,
                 eval: None,
                 demo: None,
             };
@@ -110,6 +121,16 @@ fn dispatch(args: &[OsString]) -> Result<()> {
                 ["--demo", server, scene] => probes.demo = Some((scene_option(scene)?, *server)),
                 ["--eval", server, scenario, skill, model] => {
                     probes.eval = Some((eval_options(scenario, skill, model)?, *server));
+                }
+                [flag @ ("--chromium" | "--chromium-a11y"), server, browser] => {
+                    let checks =
+                        run::ServerChecks::from_flag(flag).ok_or_else(|| Failure::new(USAGE))?;
+                    probes.server = Some((checks, *server));
+                    probes.browser = Some(*browser);
+                }
+                ["--upgrade", server, from] => {
+                    probes.server = Some((run::ServerChecks::Upgrade, *server));
+                    probes.from = Some(*from);
                 }
                 ["--sitting"] => probes.sitting = true,
                 ["--noctalia", server] => probes.noctalia = Some(*server),
@@ -144,6 +165,9 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
         demo: None,
         mode: run::ServerMode::Standalone,
         binary: None,
+        niri: None,
+        browser: None,
+        from: None,
     };
     let (mut scenario, mut skill, mut model) = (None, None, None);
     let mut args = args.iter();
@@ -163,12 +187,23 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
                     .map_err(|error| Failure::new(format!("server {path}: {error}")))?;
                 options.binary = Some(path);
             }
+            "--niri" => {
+                options.niri = Some(niri_option(
+                    args.next().ok_or_else(|| Failure::new(USAGE))?,
+                )?);
+            }
             "--control" | "--actions" | "--input" | "--shell" | "--a11y" | "--measure"
-            | "--latency" => {
+            | "--latency" | "--chromium" | "--chromium-a11y" | "--big" | "--compat" => {
                 options.server = run::ServerChecks::from_flag(arg);
             }
             "--engine" => {
                 options.server = Some(run::ServerChecks::Engine);
+                options.mode = run::ServerMode::Shared;
+            }
+            "--upgrade" => {
+                let from = args.next().ok_or_else(|| Failure::new(USAGE))?;
+                options.server = Some(run::ServerChecks::Upgrade);
+                options.from = Some((*from).to_owned());
                 options.mode = run::ServerMode::Shared;
             }
             "--eval" => scenario = Some(*args.next().ok_or_else(|| Failure::new(USAGE))?),
@@ -187,6 +222,14 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
         (Some(scenario), Some(skill), Some(model)) => Some(eval_options(scenario, skill, model)?),
         _ => return Err(Failure::new("--eval needs --skill and --model")),
     };
+    one_mode(&options)?;
+    options.visible |= options.sitting;
+    Ok(options)
+}
+
+/// At most one of the run's modes: a sitting, Noctalia's checks, the server's, an eval or
+/// a demo.
+fn one_mode(options: &run::Options) -> Result<()> {
     if usize::from(options.sitting)
         + usize::from(options.noctalia)
         + usize::from(options.server.is_some())
@@ -195,11 +238,24 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
         > 1
     {
         return Err(Failure::new(
-            "--sitting, --noctalia, --control, --actions, --input, --shell, --a11y, --engine, --measure, --latency, --eval and --demo cannot be combined",
+            "--sitting, --noctalia, --control, --actions, --input, --shell, --a11y, --engine, --measure, --latency, --chromium, --chromium-a11y, --big, --compat, --upgrade, --eval and --demo cannot be combined",
         ));
     }
-    options.visible |= options.sitting;
-    Ok(options)
+    Ok(())
+}
+
+/// An existing niri binary, made absolute. It must be named `niri`: the server finds the
+/// nested niri by its process name.
+fn niri_option(path: &str) -> Result<PathBuf> {
+    let absolute = std::fs::canonicalize(path)
+        .map_err(|error| Failure::new(format!("--niri {path}: {error}")))?;
+    if absolute.file_name() != Some("niri".as_ref()) {
+        return Err(Failure::new(format!(
+            "--niri {}: the binary must be named niri, which the server looks for",
+            absolute.display()
+        )));
+    }
+    Ok(absolute)
 }
 
 /// A known demo scene.
@@ -282,6 +338,29 @@ mod tests {
         );
         assert!(run_options(&["--sitting", "--noctalia"]).is_err());
         assert!(run_options(&["--sitting-from-c8"]).is_err());
+    }
+
+    #[test]
+    fn niri_must_exist_and_be_named_niri() {
+        let dir = std::env::temp_dir().join(format!("harness-niri-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        std::fs::write(dir.join("bin/niri"), "").unwrap();
+        std::fs::write(dir.join("niri-26.04"), "").unwrap();
+        let path = |name: &str| dir.join(name).to_string_lossy().into_owned();
+        let chosen = run_options(&["--niri", &path("bin/niri"), "--compat"]).unwrap();
+        assert_eq!(
+            chosen.niri,
+            Some(std::fs::canonicalize(dir.join("bin/niri")).unwrap())
+        );
+        let renamed = run_options(&["--niri", &path("niri-26.04")]).unwrap_err();
+        assert!(
+            renamed.to_string().contains("must be named niri"),
+            "{renamed}"
+        );
+        assert!(run_options(&["--niri", &path("bin/none")]).is_err());
+        assert!(run_options(&["--niri"]).is_err());
+        assert_eq!(run_options(&[]).unwrap().niri, None);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

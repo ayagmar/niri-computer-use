@@ -208,6 +208,7 @@ async fn outcome(
         window: None,
         paste: None,
         element: None,
+        effect: None,
         changes: None,
         detail: None,
         screenshot: None,

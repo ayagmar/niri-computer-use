@@ -8,6 +8,7 @@
 //! user's login, so `claude` writes this session's transcript under `~/.claude/projects/`.
 
 mod grade;
+mod workflows;
 
 use std::ffi::OsString;
 use std::fs;
@@ -17,6 +18,7 @@ use std::time::Duration;
 use niri_ipc::{Action, Request, Response, Window};
 use serde_json::{Value, json};
 
+use crate::a11y::Bus;
 use crate::actions;
 use crate::failure::{Context as _, Failure, Result};
 use crate::keyboard;
@@ -34,7 +36,7 @@ const READY: Duration = Duration::from_secs(20);
 const WAIT: Duration = Duration::from_secs(5);
 /// The keys `KeyScreenshots` asks for.
 const KEYS: [&str; 4] = ["F1", "F2", "F3", "F4"];
-/// The message `DialogMidway` and `Errand` ask the agent to send.
+/// The message `DialogMidway`, `Errand` and `ModalRecovery` ask the agent to send.
 const MESSAGE: &str = "Meeting moved to 3pm";
 
 /// What `harness run --eval` was asked to do.
@@ -63,10 +65,18 @@ pub(crate) enum Scenario {
     /// Several steps in a row: open an app, send a message elsewhere, close the app, and
     /// leave the user where they were.
     Errand,
+    /// Fill in a sign-up form's entries, check box and drop-down, and submit it.
+    Form,
+    /// Put two windows side by side and move a third to another workspace.
+    Rearrange,
+    /// Move two files into a new folder in Files.
+    CopyFiles,
+    /// A modal error dialog blocks a message box as soon as the agent starts typing.
+    ModalRecovery,
 }
 
 impl Scenario {
-    pub(crate) const ALL: [Self; 7] = [
+    pub(crate) const ALL: [Self; 11] = [
         Self::ComposeMessage,
         Self::KeyScreenshots,
         Self::ClickElsewhere,
@@ -74,6 +84,10 @@ impl Scenario {
         Self::NoPreset,
         Self::DialogMidway,
         Self::Errand,
+        Self::Form,
+        Self::Rearrange,
+        Self::CopyFiles,
+        Self::ModalRecovery,
     ];
 
     pub(crate) const fn name(self) -> &'static str {
@@ -85,6 +99,10 @@ impl Scenario {
             Self::NoPreset => "no-preset",
             Self::DialogMidway => "dialog-midway",
             Self::Errand => "errand",
+            Self::Form => "form",
+            Self::Rearrange => "rearrange",
+            Self::CopyFiles => "copy-files",
+            Self::ModalRecovery => "modal-recovery",
         }
     }
 
@@ -113,7 +131,24 @@ impl Scenario {
             Self::Errand => {
                 "Open my notes app, then type exactly `Meeting moved to 3pm` into the wev window and press Enter once to send it, then close the notes window you opened, and leave me on the window I was on."
             }
+            Self::Form => {
+                "Fill in the sign-up form on my desktop and submit it: name Ada Lovelace, email ada@example.com, yes to the newsletter, and the Team plan."
+            }
+            Self::Rearrange => {
+                "Put my notes and calendar windows side by side, each taking half the screen, and move the music window to workspace 2."
+            }
+            Self::CopyFiles => {
+                "In Files, move the two screenshots into a new folder called release-0.1."
+            }
+            Self::ModalRecovery => {
+                "In the Draft window on my desktop, type exactly `Meeting moved to 3pm` in the message box and send it."
+            }
         }
+    }
+
+    /// Whether the scenario's apps and the server need the accessibility bus.
+    const fn accessible(self) -> bool {
+        matches!(self, Self::Form | Self::CopyFiles | Self::ModalRecovery)
     }
 }
 /// What the scenario set up and the grading needs afterwards.
@@ -123,6 +158,9 @@ struct Setup {
     wev_log: Option<PathBuf>,
     /// The window that had focus when the agent started.
     users_window: Option<u64>,
+    bus: Option<Bus>,
+    /// What `CopyFiles`' folder held before the agent started.
+    pictures: Option<workflows::Folder>,
 }
 
 pub(crate) fn run(session: &mut Session<'_>, server: &str, options: &Options) -> Result<()> {
@@ -146,11 +184,17 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str, options: &Options) ->
     for process in setup.processes {
         process.stop()?;
     }
+    if let Some(bus) = setup.bus {
+        bus.stop()?;
+    }
     noctalia.stop().map(drop)
 }
 
 fn set_up(session: &mut Session<'_>, server: &str, scenario: Scenario) -> Result<Setup> {
     let mut setup = Setup::default();
+    if scenario.accessible() {
+        workflows::start_bus(session, &mut setup)?;
+    }
     match scenario {
         Scenario::ComposeMessage | Scenario::KeyScreenshots => {
             start_wev(session, &mut setup)?;
@@ -173,8 +217,23 @@ fn set_up(session: &mut Session<'_>, server: &str, scenario: Scenario) -> Result
         }
         Scenario::Errand => {
             start_wev(session, &mut setup)?;
-            start_fixture(session, &mut setup, "home")?;
+            start_fixture(session, &mut setup, "home", &[])?;
             setup.users_window = Some(focus(session, "home")?);
+        }
+        Scenario::Form | Scenario::ModalRecovery => {
+            let mode = if scenario == Scenario::Form {
+                "signup"
+            } else {
+                "draft"
+            };
+            let id = workflows::start_gtk(session, &mut setup, mode)?;
+            setup.users_window = Some(focus_id(session, id)?);
+        }
+        Scenario::Rearrange => workflows::start_rearrange(session, &mut setup)?,
+        Scenario::CopyFiles => {
+            let id = workflows::start_files(session, &mut setup)?;
+            setup.users_window = Some(focus_id(session, id)?);
+            setup.pictures = Some(workflows::Folder::read(&workflows::pictures(session))?);
         }
     }
     session.log(&format!("eval {}: set up", scenario.name()))?;
@@ -195,19 +254,26 @@ fn start_wev(session: &mut Session<'_>, setup: &mut Setup) -> Result<()> {
 }
 
 fn start_notes(session: &mut Session<'_>, setup: &mut Setup) -> Result<()> {
-    start_fixture(session, setup, "notes")
+    start_fixture(session, setup, "notes", &[])
 }
 
-/// A fixture window with `app_id` that stays open as long as the fixtures run.
-fn start_fixture(session: &mut Session<'_>, setup: &mut Setup, app_id: &str) -> Result<()> {
+/// A fixture window with `app_id` and the `extra` options that stays open as long as the
+/// fixtures run.
+fn start_fixture(
+    session: &mut Session<'_>,
+    setup: &mut Setup,
+    app_id: &str,
+    extra: &[&str],
+) -> Result<()> {
     let harness = std::env::current_exe().context("find the harness binary")?;
-    let args: Vec<OsString> = vec![
+    let mut args: Vec<OsString> = vec![
         "window".into(),
         session.test_dir().root().into(),
         app_id.into(),
         "--deadline".into(),
         fixture_deadline().into(),
     ];
+    args.extend(extra.iter().map(OsString::from));
     let process = session.start(
         &harness.to_string_lossy(),
         &args,
@@ -255,12 +321,16 @@ fn fixture_deadline() -> String {
     FIXTURE_DEADLINE.as_millis().to_string()
 }
 
-/// How many windows with `app_id` niri has.
-fn count(session: &mut Session<'_>, app_id: &str) -> Result<usize> {
+fn windows(session: &mut Session<'_>) -> Result<Vec<Window>> {
     let Response::Windows(windows) = session.request(&Request::Windows)? else {
         return Err(Failure::new("niri answered Windows with another response"));
     };
-    Ok(windows
+    Ok(windows)
+}
+
+/// How many windows with `app_id` niri has.
+fn count(session: &mut Session<'_>, app_id: &str) -> Result<usize> {
+    Ok(windows(session)?
         .iter()
         .filter(|window| window.app_id.as_deref() == Some(app_id))
         .count())
@@ -269,10 +339,7 @@ fn count(session: &mut Session<'_>, app_id: &str) -> Result<usize> {
 /// The window with `app_id`, once niri has it.
 fn window(session: &mut Session<'_>, app_id: &str) -> Result<Window> {
     session.wait_until("eval-window", app_id, WAIT, |session| {
-        let Response::Windows(windows) = session.request(&Request::Windows)? else {
-            return Err(Failure::new("niri answered Windows with another response"));
-        };
-        Ok(windows
+        Ok(windows(session)?
             .into_iter()
             .find(|window| window.app_id.as_deref() == Some(app_id)))
     })
@@ -280,8 +347,12 @@ fn window(session: &mut Session<'_>, app_id: &str) -> Result<Window> {
 
 fn focus(session: &mut Session<'_>, app_id: &str) -> Result<u64> {
     let id = window(session, app_id)?.id;
+    focus_id(session, id)
+}
+
+fn focus_id(session: &mut Session<'_>, id: u64) -> Result<u64> {
     session.request(&Request::Action(Action::FocusWindow { id }))?;
-    session.wait_until("eval-focus", app_id, WAIT, |session| {
+    session.wait_until("eval-focus", &format!("window {id}"), WAIT, |session| {
         Ok((focused(session)? == Some(id)).then_some(id))
     })
 }
@@ -426,6 +497,18 @@ fn assess(
             let expected = setup.users_window.unwrap_or_default();
             expectations.extend(errand_checks(session, &calls, &trace, expected)?);
         }
+        Scenario::Form => {
+            let signups = workflows::records(session, "signups.jsonl")?;
+            expectations.extend(workflows::signed_up(&signups));
+        }
+        Scenario::Rearrange => {
+            let placed = workflows::placements(session)?;
+            expectations.extend(workflows::arranged(&placed));
+        }
+        Scenario::CopyFiles => expectations.extend(copy_checks(session, setup)?),
+        Scenario::ModalRecovery => {
+            expectations.extend(modal_checks(session, &calls, &answer)?);
+        }
     }
     Ok((expectations, calls.len()))
 }
@@ -475,6 +558,42 @@ fn errand_checks(
         false,
     ));
     expectations.push(grade::focus_returned(focused(session)?, users_window));
+    Ok(expectations)
+}
+
+/// `Pictures` now against what it held at set-up.
+fn copy_checks(session: &Session<'_>, setup: &Setup) -> Result<Vec<Expectation>> {
+    let before = setup
+        .pictures
+        .as_ref()
+        .ok_or_else(|| Failure::new("copy-files read no Pictures folder at set-up"))?;
+    let after = workflows::Folder::read(&workflows::pictures(session))?;
+    Ok(workflows::moved_files(before, &after))
+}
+
+/// The dialog was dealt with, the whole message went out once from the window that stays
+/// open, and the user hears about the failed autosave.
+fn modal_checks(
+    session: &mut Session<'_>,
+    calls: &[grade::Call],
+    answer: &str,
+) -> Result<Vec<Expectation>> {
+    let events = workflows::records(session, "draft-events.jsonl")?;
+    let sent = workflows::records(session, "sent.jsonl")?;
+    let mut expectations = vec![grade::no_enter_after_failed_text(calls)];
+    expectations.extend(workflows::recovered(&events, &sent));
+    let drafts = count(session, "org.ncu.Draft")?;
+    expectations.push(grade::still_open(
+        "Left the Draft window open",
+        "org.ncu.Draft",
+        drafts,
+        true,
+    ));
+    expectations.push(grade::answer_mentions_any(
+        "Told the user the autosave failed",
+        answer,
+        &["autosave", "auto-save", "dialog"],
+    ));
     Ok(expectations)
 }
 

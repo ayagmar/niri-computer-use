@@ -9,6 +9,7 @@
 //! application elsewhere can't stall the request.
 
 pub(crate) mod model;
+mod switch;
 mod walk;
 
 use std::ffi::OsStr;
@@ -24,15 +25,18 @@ use zbus::names::OwnedErrorName;
 use zbus::zvariant::{DynamicType, OwnedObjectPath, OwnedValue};
 
 use crate::error::{ErrorName, ToolError};
-use model::{Extents, Frame, Kept, NoFrame, Picked, Shape, States};
+use model::{Extents, Frame, Kept, NoFrame, Page, Picked, Shape, States};
+pub(crate) use switch::{Report as SwitchReport, Switch, Turned};
 pub(crate) use walk::{Capped, Child, Node, Walked, Want};
 
 /// Each call's deadline.
 const CALL: Duration = Duration::from_secs(1);
 /// Each request's budget, all its calls together.
 pub(crate) const BUDGET: Duration = Duration::from_secs(3);
-/// The most nodes one walk reads.
-pub(crate) const NODE_CAP: usize = 2000;
+/// The most nodes one walk reads. Above the largest window measured, 15,022 objects read
+/// in about 0.8 s, and under the budget at the slowest rate measured (docs/decisions.md),
+/// so the budget, not the cap, ends a walk of a slow app.
+pub(crate) const NODE_CAP: usize = 20_000;
 const REGISTRY: &str = "org.a11y.atspi.Registry";
 const ROOT: &str = "/org/a11y/atspi/accessible/root";
 const ACCESSIBLE: &str = "org.a11y.atspi.Accessible";
@@ -40,6 +44,11 @@ const COMPONENT: &str = "org.a11y.atspi.Component";
 const ACTION: &str = "org.a11y.atspi.Action";
 const EDITABLE_TEXT: &str = "org.a11y.atspi.EditableText";
 const TEXT: &str = "org.a11y.atspi.Text";
+const VALUE: &str = "org.a11y.atspi.Value";
+const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
+/// AT-SPI's null reference, which Chromium gives as a frame's child until an assistive
+/// technology asks it for an object's attributes, and only then builds its tree.
+const NULL: &str = "/org/a11y/atspi/null";
 /// `ATSPI_COORD_TYPE_WINDOW`: relative to the toolkit's window.
 const WINDOW_COORDS: u32 = 1;
 /// D-Bus errors that mean the object or its application is gone.
@@ -55,6 +64,9 @@ const APPLICATION_ERROR: &str = "application_error";
 
 /// What the bus answers in place of a reply when the application left without sending one.
 const NO_REPLY: &str = "org.freedesktop.DBus.Error.NoReply";
+
+/// What at-spi2-atk answers `GetChildren` with for more than 65,536 children.
+const TOO_MANY_CHILDREN: &str = "org.freedesktop.DBus.Error.InvalidArgs";
 
 /// Whether this session has an accessibility bus, decided once at startup.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -115,19 +127,28 @@ async fn connect(address: &str) -> Result<Connection, zbus::Error> {
     zbus::connection::Builder::address(address)?.build().await
 }
 
-/// The accessibility bus, connected on first use and again after a connection fails.
+/// The accessibility bus, connected on first use and again after a connection fails, and
+/// the switch that turns the session's accessibility on.
 #[derive(Debug, Clone)]
 pub(crate) struct A11y {
     address: String,
     connection: Arc<tokio::sync::Mutex<Option<Connection>>>,
+    switch: Arc<Switch>,
 }
 
 impl A11y {
-    pub(crate) fn new(address: String) -> Self {
+    /// The accessibility bus at `address`, whose status is on the session bus at
+    /// `session_bus`.
+    pub(crate) fn new(address: String, session_bus: Option<String>) -> Self {
         Self {
+            switch: Arc::new(Switch::new(session_bus, address.clone())),
             address,
             connection: Arc::default(),
         }
+    }
+
+    pub(crate) fn switch(&self) -> &Switch {
+        &self.switch
     }
 
     /// A request against the bus with `budget` from now for all its calls.
@@ -175,9 +196,9 @@ pub(crate) struct Request {
 pub(crate) enum Failed {
     /// The object or its application is gone.
     Gone(String),
-    /// The application answered with another D-Bus error, as toolkits do for an
-    /// interface the object doesn't have.
-    Refused(ToolError),
+    /// The application answered with another D-Bus error, named second, as toolkits do
+    /// for an interface the object doesn't have.
+    Refused(ToolError, String),
     /// No answer: the deadline passed, or the connection failed.
     Error(ToolError),
 }
@@ -186,7 +207,7 @@ impl From<Failed> for ToolError {
     fn from(failed: Failed) -> Self {
         match failed {
             Failed::Gone(detail) => Self::new(ErrorName::UpstreamError, detail),
-            Failed::Refused(error) | Failed::Error(error) => error,
+            Failed::Refused(error, _) | Failed::Error(error) => error,
         }
     }
 }
@@ -214,6 +235,9 @@ pub(crate) struct FoundFrame {
     pub(crate) node: Node,
     /// Whether it passes the frame guard.
     pub(crate) fits: bool,
+    /// Whether the app built its tree at this request's asking (`Request::built`), and may
+    /// not have sent all of it yet.
+    pub(crate) building: bool,
 }
 
 impl Request {
@@ -315,7 +339,7 @@ impl Request {
             if GONE.contains(&name.as_str()) {
                 return Failed::Gone(self.upstream(what, &error).detail);
             }
-            return Failed::Refused(self.upstream(what, &error));
+            return Failed::Refused(self.upstream(what, &error), name.to_string());
         }
         *self.shared.lock().await = None;
         Failed::Error(self.upstream(what, &error))
@@ -367,15 +391,19 @@ impl Request {
 
     /// The application whose process is `pid`, or `not_accessible`.
     pub(crate) async fn app(&self, pid: i32) -> Result<App, ToolError> {
-        self.apps()
+        self.find_app(pid)
             .await?
-            .into_iter()
-            .find(|app| app.pid == pid)
-            .ok_or_else(|| {
-                not_accessible(format!(
-                    "no application with pid {pid} is on the accessibility bus; it may not support accessibility"
-                ))
-            })
+            .ok_or_else(|| not_accessible(off_bus(pid)))
+    }
+
+    /// The application whose process is `pid`, if it is on the bus.
+    pub(crate) async fn find_app(&self, pid: i32) -> Result<Option<App>, ToolError> {
+        Ok(self.apps().await?.into_iter().find(|app| app.pid == pid))
+    }
+
+    /// When the request's budget runs out.
+    pub(crate) const fn deadline(&self) -> Instant {
+        self.deadline
     }
 
     /// The application's frame that is niri's `window`, decided with the app's `others`
@@ -445,13 +473,58 @@ impl Request {
             .and_then(|(index, _)| frames.get(*index))
             .cloned()
             .ok_or_else(|| ToolError::new(ErrorName::UpstreamError, "frame index out of range"))?;
-        Ok(FoundFrame { node, fits })
+        let (node, building) = self.built(&app.bus, node).await?;
+        Ok(FoundFrame {
+            node,
+            fits,
+            building,
+        })
+    }
+
+    /// `frame` with its tree built, and whether it was built just now: a frame whose
+    /// children are all null references, as Chromium's are until an assistive technology
+    /// asks for an object's attributes, is asked for its own, then read again. Chromium
+    /// then builds its own window's tree at once and the page's within a second or so. A
+    /// frame read again with no child but null references built nothing.
+    async fn built(&self, bus: &str, frame: Node) -> Result<(Node, bool), ToolError> {
+        if frame.children.is_empty() || has_tree(&frame) {
+            return Ok((frame, false));
+        }
+        let attributes = self
+            .call::<_, std::collections::HashMap<String, String>>(
+                (bus, &frame.path),
+                (ACCESSIBLE, "GetAttributes"),
+                &(),
+            )
+            .await;
+        if let Err(Failed::Error(error)) = attributes {
+            return Err(error);
+        }
+        let read = self.node(bus, &frame.path).await?.unwrap_or(frame);
+        let building = has_tree(&read);
+        Ok((read, building))
     }
 
     /// The node at `path` in application `bus`, or `None` once it is gone. A node without
     /// a Component or Action interface has no extents or no actions. Its action names are
-    /// as the app lists them, empty ones too (`named`).
+    /// as the app lists them, empty ones too (`named`). An app's refusal to list its
+    /// children is an error.
     pub(crate) async fn node(&self, bus: &str, path: &str) -> Result<Option<Node>, ToolError> {
+        self.read_node((bus, path), false).await
+    }
+
+    /// `node` for the walk: children the app refuses to list with `InvalidArgs`, as
+    /// at-spi2-atk refuses more than 65,536, leave it `children_refused` with none, so the
+    /// walk reads on without them instead of failing. Any other error still fails.
+    async fn walked_node(&self, bus: &str, path: &str) -> Result<Option<Node>, ToolError> {
+        self.read_node((bus, path), true).await
+    }
+
+    async fn read_node(
+        &self,
+        (bus, path): (&str, &str),
+        unread_if_refused: bool,
+    ) -> Result<Option<Node>, ToolError> {
         let at = (bus, path);
         let (role, name, states, children, extents, actions) = tokio::join!(
             self.call::<_, u32>(at, (ACCESSIBLE, "GetRole"), &()),
@@ -461,6 +534,12 @@ impl Request {
             self.extents(bus, path),
             self.listed_actions(at),
         );
+        let (children, children_refused) = match children {
+            Err(Failed::Refused(_, error)) if unread_if_refused && error == TOO_MANY_CHILDREN => {
+                (Ok(Vec::new()), true)
+            }
+            listed => (listed, false),
+        };
         let (Some(role), Some(name), Some(states), Some(children)) = (
             present(role)?,
             present(name)?,
@@ -484,6 +563,7 @@ impl Request {
                     path: child.to_string(),
                 })
                 .collect(),
+            children_refused,
         }))
     }
 
@@ -506,11 +586,7 @@ impl Request {
     /// The accessible name of the object at `at`.
     pub(crate) async fn name(&self, at: (&str, &str)) -> Result<String, Failed> {
         let value: OwnedValue = self
-            .call(
-                at,
-                ("org.freedesktop.DBus.Properties", "Get"),
-                &(ACCESSIBLE, "Name"),
-            )
+            .call(at, (PROPERTIES, "Get"), &(ACCESSIBLE, "Name"))
             .await?;
         Ok(String::try_from(value).unwrap_or_default())
     }
@@ -542,22 +618,40 @@ impl Request {
         })
     }
 
-    /// What a kept element is now: its role, states and extents, and its frame's extents,
-    /// read together.
+    /// What a kept element is now: its role, states and extents, its frame's extents, and
+    /// its page's, read together.
     pub(crate) async fn probe(&self, element: &ElementRef) -> Result<Probe, Failed> {
         let at = element.at();
-        let (role, states, extents, frame) = tokio::join!(
+        let (role, states, extents, frame, page) = tokio::join!(
             self.call::<_, u32>(at, (ACCESSIBLE, "GetRole"), &()),
             self.call::<_, Vec<u32>>(at, (ACCESSIBLE, "GetState"), &()),
             self.extents(&element.bus, &element.path),
             self.extents(&element.bus, &element.frame),
+            self.page(element),
         );
         Ok(Probe {
             role: role?,
             states: States::from_words(&states?),
             extents: extents?,
             frame: frame?,
+            page: page?,
         })
+    }
+
+    /// The extents of the kept element's page now, each `None` without a Component
+    /// interface, as the walk reads them.
+    async fn page(&self, element: &ElementRef) -> Result<Option<Page>, Failed> {
+        let Some(page) = &element.page else {
+            return Ok(None);
+        };
+        let (document, container) = tokio::join!(
+            self.extents(&element.bus, &page.document),
+            self.extents(&element.bus, &page.container),
+        );
+        Ok(Some(Page {
+            document: component(document)?,
+            container: component(container)?,
+        }))
     }
 
     /// The kept element's role and states now: its states, then its role, one call after
@@ -602,7 +696,7 @@ impl Request {
                 .await
             {
                 Ok(own) => *name = own,
-                Err(Failed::Refused(_) | Failed::Gone(_)) => {}
+                Err(Failed::Refused(..) | Failed::Gone(_)) => {}
                 Err(Failed::Error(error)) => return Err(error),
             }
         }
@@ -638,19 +732,22 @@ impl Request {
             .await
         {
             Ok(name) => Ok(Some(name)),
-            Err(Failed::Refused(_) | Failed::Gone(_)) => Ok(None),
+            Err(Failed::Refused(..) | Failed::Gone(_)) => Ok(None),
             Err(failed) => Err(failed),
         }
     }
 
     /// Whether the element has an `EditableText` interface.
     pub(crate) async fn editable_text(&self, element: &ElementRef) -> Result<bool, Failed> {
+        self.has_interface(element, EDITABLE_TEXT).await
+    }
+
+    /// Whether the element lists `interface` among its interfaces.
+    async fn has_interface(&self, element: &ElementRef, interface: &str) -> Result<bool, Failed> {
         let interfaces: Vec<String> = self
             .call(element.at(), (ACCESSIBLE, "GetInterfaces"), &())
             .await?;
-        Ok(interfaces
-            .iter()
-            .any(|interface| interface == EDITABLE_TEXT))
+        Ok(interfaces.iter().any(|listed| listed == interface))
     }
 
     /// Asks the application to do the element's action at `index`. The answer only says
@@ -677,16 +774,37 @@ impl Request {
     /// How many characters the element's text has now.
     pub(crate) async fn character_count(&self, element: &ElementRef) -> Result<i32, Failed> {
         let value: OwnedValue = self
-            .call(
-                element.at(),
-                ("org.freedesktop.DBus.Properties", "Get"),
-                &(TEXT, "CharacterCount"),
-            )
+            .call(element.at(), (PROPERTIES, "Get"), &(TEXT, "CharacterCount"))
             .await?;
         i32::try_from(value).map_err(|_| {
             Failed::Error(ToolError::new(
                 ErrorName::UpstreamError,
                 format!("{TEXT}.CharacterCount on {}: not an integer", element.bus),
+            ))
+        })
+    }
+
+    /// The element's first `count` characters of text. The caller bounds `count`.
+    pub(crate) async fn text(&self, element: &ElementRef, count: i32) -> Result<String, Failed> {
+        self.call(element.at(), (TEXT, "GetText"), &(0_i32, count))
+            .await
+    }
+
+    /// The element's `Value.CurrentValue`, or `None` when it has no `Value` interface, as
+    /// most elements don't. The interfaces are asked first: the error an app answers for a
+    /// property of an interface the element lacks varies, and may be one that `GONE` reads
+    /// as the object gone.
+    pub(crate) async fn current_value(&self, element: &ElementRef) -> Result<Option<f64>, Failed> {
+        if !self.has_interface(element, VALUE).await? {
+            return Ok(None);
+        }
+        let value: OwnedValue = self
+            .call(element.at(), (PROPERTIES, "Get"), &(VALUE, "CurrentValue"))
+            .await?;
+        f64::try_from(value).map(Some).map_err(|_| {
+            Failed::Error(ToolError::new(
+                ErrorName::UpstreamError,
+                format!("{VALUE}.CurrentValue on {}: not a number", element.bus),
             ))
         })
     }
@@ -700,7 +818,7 @@ struct AppTree<'a> {
 
 impl walk::Source for AppTree<'_> {
     async fn node(&self, path: &str) -> Result<Option<Node>, ToolError> {
-        self.request.node(self.bus, path).await
+        self.request.walked_node(self.bus, path).await
     }
 
     fn spent(&self) -> bool {
@@ -725,6 +843,7 @@ pub(crate) struct Probe {
     pub(crate) states: States,
     pub(crate) extents: Extents,
     pub(crate) frame: Extents,
+    pub(crate) page: Option<Page>,
 }
 
 /// An element listed under the lease, kept so a pointer tool can aim at it.
@@ -735,7 +854,17 @@ pub(crate) struct ElementRef {
     pub(crate) path: String,
     /// The path of the frame that is the window, for the frame guard.
     pub(crate) frame: String,
+    /// Where the web page it is in sits, for `model::page_unit`.
+    pub(crate) page: Option<PagePaths>,
     pub(crate) kept: Kept,
+}
+
+/// The paths of a page's document and of the object that holds it, the frame for one
+/// right under the frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PagePaths {
+    pub(crate) document: String,
+    pub(crate) container: String,
 }
 
 impl ElementRef {
@@ -754,11 +883,21 @@ fn present<T>(result: Result<T, Failed>) -> Result<Option<T>, ToolError> {
     }
 }
 
+/// Extents from an optional Component interface: `None` when the app refuses the call, as
+/// for an object without one.
+fn component(result: Result<Extents, Failed>) -> Result<Option<Extents>, Failed> {
+    match result {
+        Ok(extents) => Ok(Some(extents)),
+        Err(Failed::Refused(..)) => Ok(None),
+        Err(failed) => Err(failed),
+    }
+}
+
 /// A method call's optional interface: absent when the object doesn't have it.
 fn optional<T>(result: Result<T, Failed>) -> Result<Option<T>, ToolError> {
     match result {
         Ok(value) => Ok(Some(value)),
-        Err(Failed::Gone(_) | Failed::Refused(_)) => Ok(None),
+        Err(Failed::Gone(_) | Failed::Refused(..)) => Ok(None),
         Err(Failed::Error(error)) => Err(error),
     }
 }
@@ -821,6 +960,18 @@ fn standard_name(name: &OwnedErrorName, reply: &Message) -> String {
 
 fn upstream(what: &str, error: &zbus::Error) -> ToolError {
     ToolError::new(ErrorName::UpstreamError, format!("{what}: {error}"))
+}
+
+/// Whether `node` has a child that isn't AT-SPI's null reference.
+fn has_tree(node: &Node) -> bool {
+    node.children.iter().any(|child| child.path != NULL)
+}
+
+/// Why `not_accessible` for an application that isn't on the bus.
+pub(crate) fn off_bus(pid: i32) -> String {
+    format!(
+        "no application with pid {pid} is on the accessibility bus; it may not support accessibility"
+    )
 }
 
 pub(crate) fn not_accessible(detail: String) -> ToolError {

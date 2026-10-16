@@ -4,6 +4,7 @@ pub(crate) mod events;
 pub(crate) mod keyboard;
 pub(crate) mod pointer;
 mod request;
+pub(crate) mod scene;
 pub(crate) mod selection;
 pub(crate) mod version;
 pub(crate) mod waiter;
@@ -18,6 +19,7 @@ use serde::Serialize;
 
 use crate::error::{ErrorName, ToolError, Unanswered};
 use events::{DesktopState, EventStream};
+use scene::Moves;
 use waiter::Waiter;
 
 /// The server's event stream, or why it has none: the socket's error.
@@ -165,6 +167,19 @@ pub(crate) async fn workspaces(socket: &Socket) -> Result<Vec<Workspace>, ToolEr
     Ok(workspaces)
 }
 
+/// The window with keyboard focus, as niri reports it right now: `None` when focus isn't on
+/// a window. niri answers from the state it refreshed before it last flushed its clients, so
+/// the answer is at least as new as any Wayland reply a client got before asking, which its
+/// event stream may not have caught up with yet.
+pub(crate) async fn focused_window(socket: &Socket) -> Result<Option<u64>, ToolError> {
+    let Response::FocusedWindow(window) =
+        request::send(known(socket)?, &Request::FocusedWindow).await?
+    else {
+        return Err(unexpected("FocusedWindow"));
+    };
+    Ok(window.map(|window| window.id))
+}
+
 /// Whether niri's overview is open, as niri reports it right now.
 pub(crate) async fn overview_open(socket: &Socket) -> Result<bool, ToolError> {
     let Response::OverviewState(overview) =
@@ -189,6 +204,12 @@ pub(crate) async fn focused_output(socket: &Socket) -> Result<Option<Output>, To
 /// the error says why.
 pub(crate) async fn desktop(events: Events<'_>) -> Result<DesktopState, ToolError> {
     events.map_err(Clone::clone)?.desktop().await
+}
+
+/// When the windows on `output` last moved, and how, on which connection
+/// (`EventStream::shifted`).
+pub(crate) async fn shifted(events: Events<'_>, output: &str) -> Result<Moves, ToolError> {
+    events.map_err(Clone::clone)?.shifted(output).await
 }
 
 /// Registers a waiter on niri's event stream, before an action is dispatched.

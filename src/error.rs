@@ -54,6 +54,9 @@ pub(crate) enum ErrorName {
     /// `type_text` over 1000 characters, or over 1 MiB with `via: "paste"`, or
     /// `set_element_text` over 64 KiB.
     TextTooLong,
+    /// `type_text`'s text, typed or pasted, ends with tool-call closing tags that nothing
+    /// earlier in it opens, which agents leak from their own tool calls by mistake.
+    LeakedTag,
     /// A screenshot ref that is unknown, expired, for a changed output, or a pixel outside
     /// its image.
     RefInvalid,
@@ -79,6 +82,9 @@ pub(crate) enum ErrorName {
     /// `activate_element` or `set_element_text` on a password field: element actions
     /// never act on one.
     SecretField,
+    /// `set_element_text` on an editable field without an `EditableText` interface, as
+    /// Chromium's are: its text can't be set through accessibility.
+    TextNotSettable,
     /// An element action's last checks before its call took too long, twice, so what they
     /// read may have changed: nothing was sent.
     ElementBusy,

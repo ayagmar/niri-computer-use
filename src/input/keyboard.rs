@@ -4,12 +4,13 @@
 
 use serde::Serialize;
 
-use crate::act::Outcome;
+use crate::act::{Observed, Outcome};
 use crate::control::desk::partway;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::waiter::View;
 
 use super::Input;
+use super::leaked_tags;
 use super::paste::Aftercare;
 
 /// `key`'s combinations per call.
@@ -105,9 +106,14 @@ fn check_text(text: &str) -> Result<(), CallError> {
     if length > MAX_TEXT {
         return Err(ToolError::new(
             ErrorName::TextTooLong,
-            format!("{length} characters; at most {MAX_TEXT} per call, so split the text or pass `via: \"paste\"`; nothing was typed"),
+            format!("{length} characters; at most {MAX_TEXT} per call, so split the text, ending no part with a `>`, even one followed by spaces, or pass `via: \"paste\"`; nothing was typed"),
         )
         .into());
+    }
+    if let Some(leak) = leaked_tags::leaked(text) {
+        return Err(
+            ToolError::new(ErrorName::LeakedTag, format!("{leak}; nothing was typed")).into(),
+        );
     }
     Ok(())
 }
@@ -258,8 +264,17 @@ pub(super) fn typed_so_far(view: &View, focus: Focus, typing: &Typing, sent: Sen
 }
 
 /// The outcome with what went out: for a call that stopped early, how many characters or
-/// keys; for `submit`, whether `Return` was pressed.
+/// keys; for `submit`, whether `Return` was pressed. An `interrupted` outcome's detail says
+/// what changed while keys went out; it becomes what went out and where some of it may have
+/// gone, and is dropped when nothing did.
 pub(super) fn ended(outcome: Outcome, focus: Focus, typing: &Typing, sent: Sent) -> Outcome {
+    let detail = match (outcome.observed, outcome.detail) {
+        (Observed::Interrupted, Some(changed)) if !sent.nothing() => {
+            Some(format!("{}; {changed}", sent.describe(typing)))
+        }
+        (Observed::Interrupted, _) => None,
+        (_, detail) => detail,
+    };
     let (typed, pressed, submitted) = match typing {
         Typing::Keys(keys) => (None, (sent.keys < keys.len()).then_some(sent.keys), None),
         Typing::Text { text, submit } => {
@@ -273,6 +288,7 @@ pub(super) fn ended(outcome: Outcome, focus: Focus, typing: &Typing, sent: Sent)
         typed,
         pressed,
         submitted,
+        detail,
         ..outcome
     }
 }
@@ -292,8 +308,9 @@ pub(super) fn partly(error: ToolError, typing: &Typing, sent: Sent) -> ToolError
 }
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
-    use crate::act::Observed;
     use crate::niri::waiter::tests::{view, window};
 
     fn text(text: &str, submit: bool) -> Typing {
@@ -348,6 +365,13 @@ mod tests {
         assert_eq!(error.name, ErrorName::TextTooLong);
         assert!(
             error.detail.starts_with("1001 characters"),
+            "{}",
+            error.detail
+        );
+        assert!(
+            error
+                .detail
+                .contains("ending no part with a `>`, even one followed by spaces,"),
             "{}",
             error.detail
         );
@@ -437,5 +461,58 @@ mod tests {
             .unwrap_err()
             .detail;
         assert!(detail.contains("window 1"), "{detail}");
+    }
+
+    /// `name` with each ASCII letter's case picked by the matching bit of `cases`.
+    fn recased(name: &str, cases: u64) -> String {
+        name.chars()
+            .enumerate()
+            .map(|(at, c)| {
+                if cases >> (at % 64) & 1 == 1 {
+                    c.to_ascii_uppercase()
+                } else {
+                    c
+                }
+            })
+            .collect()
+    }
+
+    proptest! {
+        #![proptest_config(crate::test_support::properties(512))]
+
+        /// Distinct modifiers, under any name and in any case, before a keysym name parse
+        /// to the modifiers in the order given and that very key.
+        #[test]
+        fn a_combination_parses_to_its_modifiers_and_key(
+            picked in prop::sample::subsequence(MODIFIERS.to_vec(), 0..=MODIFIERS.len()).prop_shuffle(),
+            cases in any::<u64>(),
+            key in "[A-Za-z0-9_]{1,12}",
+        ) {
+            let mut wanted: Vec<&str> = Vec::new();
+            let mut names = Vec::new();
+            for (name, modifier) in picked {
+                if !wanted.contains(&modifier) {
+                    wanted.push(modifier);
+                    names.push(recased(name, cases));
+                }
+            }
+            names.push(key.clone());
+            let combo = names.join("+");
+            prop_assert_eq!(parse_combo(&combo), Ok((wanted, key.as_str())));
+        }
+
+        /// Any text is accepted or refused as `key`'s combination without a panic, through
+        /// the parser and the keymap's lookup the audit log uses, and a combination that
+        /// parses names the key it ends with.
+        #[test]
+        fn any_combination_is_parsed_or_refused(combo in any::<String>()) {
+            let known = crate::input::keymap::known_combo(&combo);
+            match parse_combo(&combo) {
+                Ok((_, key)) => {
+                    prop_assert!(!key.is_empty() && combo.ends_with(key), "{combo:?}");
+                }
+                Err(_) => prop_assert!(!known, "{combo:?}"),
+            }
+        }
     }
 }

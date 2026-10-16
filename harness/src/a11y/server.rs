@@ -452,7 +452,7 @@ impl Checks<'_, '_> {
     }
 
     /// A button that removes itself: the click's `element_changes` says it was removed,
-    /// and once it is gone its ref is stale.
+    /// `wait_for` sees it gone, and then its ref is stale.
     fn vanished(&mut self, window: u64) -> Result<()> {
         let vanish = self.button(window, "Vanish")?;
         let shot = self.screenshot_ref()?;
@@ -472,15 +472,17 @@ impl Checks<'_, '_> {
                     removed.contains(&json!({"role": "button", "name": "Vanish"}))
                 })
         })?;
-        let what = "the Vanish button gone from elements";
+        let gone = json!({"until": {"element": {
+            "window_id": window, "role": "button", "name_contains": "Vanish", "absent": true,
+        }}, "timeout_ms": WAIT.as_millis()});
+        let waited = self.call("wait_for", gone)?;
+        expect(
+            field(&waited, "/observed") == "met",
+            "wait_for absent: the Vanish button gone from elements",
+            &waited,
+        )?;
         self.session
-            .wait_until("m9-vanished", what, WAIT, |session| {
-                let listing = elements(session, &mut self.client, window, "Vanish")?;
-                Ok(field(&listing, "/elements")
-                    .as_array()
-                    .is_some_and(Vec::is_empty)
-                    .then_some(()))
-            })?;
+            .log(&format!("M9: wait_for absent Vanish: {waited}"))?;
         let refused = self.refused_click(&vanish.id)?;
         expect(
             field(&refused, "/error") == "element_stale",

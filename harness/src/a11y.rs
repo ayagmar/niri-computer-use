@@ -12,6 +12,7 @@ use std::time::Duration;
 use niri_ipc::{Request, Response, Window};
 use serde_json::Value;
 
+pub(crate) mod big;
 mod hidden;
 mod rows;
 mod server;
@@ -29,7 +30,7 @@ const BUS_DEADLINE: Duration = Duration::from_secs(230);
 const STARTUP: Duration = Duration::from_secs(10);
 const FIXTURE_DEADLINE: Duration = Duration::from_secs(220);
 const REGISTRY_NAME: &str = "org.a11y.atspi.Registry";
-const ROOT: &str = "/org/a11y/atspi/accessible/root";
+pub(crate) const ROOT: &str = "/org/a11y/atspi/accessible/root";
 
 pub(crate) fn run(session: &mut Session<'_>, server: &str, decorations: Decorations) -> Result<()> {
     session.log(&format!("M9: decorations {decorations:?}"))?;
@@ -59,9 +60,15 @@ pub(crate) struct Bus {
 }
 
 impl Bus {
+    /// Starts the bus for one of M9's checks, which end within `BUS_DEADLINE`.
+    pub(crate) fn start(session: &mut Session<'_>) -> Result<Self> {
+        Self::start_for(session, BUS_DEADLINE)
+    }
+
     /// Starts the launcher, waits for the address on the session bus and checks that its
     /// socket is under `TEST_DIR/run`, then starts the registry and waits for its name.
-    pub(crate) fn start(session: &mut Session<'_>) -> Result<Self> {
+    /// Both run until `deadline`.
+    pub(crate) fn start_for(session: &mut Session<'_>, deadline: Duration) -> Result<Self> {
         let session_bus =
             std::env::var("DBUS_SESSION_BUS_ADDRESS").context("read DBUS_SESSION_BUS_ADDRESS")?;
         // dbus-broker-launch, the launcher's first choice under systemd, logs to the
@@ -72,12 +79,7 @@ impl Bus {
             "--launch-immediately",
         ]
         .map(OsString::from);
-        let launcher = session.start(
-            "env",
-            &args,
-            session.artifact("at-spi-bus.log"),
-            BUS_DEADLINE,
-        )?;
+        let launcher = session.start("env", &args, session.artifact("at-spi-bus.log"), deadline)?;
         owned(session, &session_bus, "org.a11y.Bus")?;
         let reply = busctl(
             session,
@@ -97,7 +99,7 @@ impl Bus {
             REGISTRY,
             &[],
             session.artifact("at-spi-registry.log"),
-            BUS_DEADLINE,
+            deadline,
         )?;
         owned(session, &address, REGISTRY_NAME)?;
         Ok(Self {
@@ -174,6 +176,11 @@ impl Bus {
         Ok(false)
     }
 
+    /// One method call on the bus, `busctl call`'s arguments.
+    pub(crate) fn call(&self, session: &Session<'_>, call: &[&str]) -> Result<Value> {
+        busctl(session, &self.address, call)
+    }
+
     pub(crate) fn stop(self) -> Result<()> {
         self.registry.stop()?;
         self.launcher.stop().map(drop)
@@ -246,7 +253,7 @@ fn children(reply: &Value) -> Result<Vec<String>> {
 }
 
 /// Whether `pid` is `ancestor` or one of its descendants, following `/proc/<pid>/stat`.
-fn descends_from(pid: i32, ancestor: i32) -> Result<bool> {
+pub(crate) fn descends_from(pid: i32, ancestor: i32) -> Result<bool> {
     let mut current = pid;
     while current > 1 {
         if current == ancestor {
@@ -325,7 +332,7 @@ impl Fixture {
 
     /// The GTK 4 fixture's 400x300 window with a long list and a `Delete` on each row.
     pub(crate) fn start_list(session: &Session<'_>) -> Result<Self> {
-        Self::start_gtk(session, "list", "fixture-list.log")
+        Self::start_gtk(session, &[], "list", "fixture-list.log")
     }
 
     /// The Qt Quick fixture's 400x300 window with two long lists that reuse their rows,
@@ -347,18 +354,31 @@ impl Fixture {
 
     /// A GTK 4 window that isn't a fixture of the checks, to take focus from them.
     pub(crate) fn start_decoy(session: &Session<'_>) -> Result<Self> {
-        Self::start_gtk(session, "button", "fixture-decoy.log")
+        Self::start_gtk(session, &[], "button", "fixture-decoy.log")
     }
 
-    /// Writes the GTK 4 fixture into `TEST_DIR` and starts it in `mode`, its output kept
-    /// as the artifact `log`.
-    fn start_gtk(session: &Session<'_>, mode: &str, log: &str) -> Result<Self> {
+    /// The GTK 4 fixture drawn by GTK's Cairo renderer. niri 25.11 in the headless cage
+    /// didn't show the window GTK's default GL renderer drew, and showed this one.
+    pub(crate) fn start_cairo(session: &Session<'_>) -> Result<Self> {
+        Self::start_gtk(session, &["GSK_RENDERER=cairo"], "a11y", "fixture-gtk4.log")
+    }
+
+    /// Writes the GTK 4 fixture into `TEST_DIR` and starts it in `mode` with `variables`
+    /// added to its environment, its output kept as the artifact `log`.
+    fn start_gtk(session: &Session<'_>, variables: &[&str], mode: &str, log: &str) -> Result<Self> {
         let root = session.test_dir().root();
         let file = root.join("gtk.py");
         fs::write(&file, include_str!("../fixtures/gtk.py"))
             .context(format!("write {}", file.display()))?;
-        let args = vec!["-I".into(), file.into(), root.into(), mode.into()];
-        let process = session.start("python3", &args, session.artifact(log), FIXTURE_DEADLINE)?;
+        let mut args: Vec<OsString> = variables.iter().map(OsString::from).collect();
+        args.extend([
+            "python3".into(),
+            "-I".into(),
+            file.into(),
+            root.into(),
+            mode.into(),
+        ]);
+        let process = session.start("env", &args, session.artifact(log), FIXTURE_DEADLINE)?;
         Ok(Self {
             toolkit: Toolkit::Gtk4,
             process,

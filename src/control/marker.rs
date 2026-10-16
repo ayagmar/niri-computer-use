@@ -44,6 +44,10 @@ pub(crate) struct Marker {
     /// The server that wrote it.
     pub(crate) server_pid: u32,
     pub(crate) since: String,
+    /// 0.1.0's input child, `wtype`, once it ran. This build starts no input child and
+    /// never writes one; `recover` ends one that a 0.1.0 server's marker names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) child: Option<Child>,
     /// Pointer buttons pressed and not yet released, as evdev codes such as 272.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) buttons: Vec<u32>,
@@ -74,9 +78,21 @@ pub(crate) struct Native {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Phase {
-    /// Written before any input goes out. Input runs in the server, so there is no other
-    /// phase.
+    /// Written before any input goes out. Input runs in the server, so this build writes
+    /// no other phase.
     Pending,
+    /// 0.1.0's, while its input child ran.
+    Running,
+}
+
+/// A process the marker names, pinned by its start time so a reused PID isn't taken for
+/// it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Child {
+    pub(crate) pid: u32,
+    /// From `/proc/<pid>/stat`.
+    pub(crate) start_time: u64,
 }
 
 impl Marker {
@@ -87,6 +103,7 @@ impl Marker {
             phase: Phase::Pending,
             server_pid: std::process::id(),
             since: now(),
+            child: None,
             buttons,
             output: None,
             keyboard: None,
@@ -358,12 +375,17 @@ impl Found {
     pub(crate) fn summary(&self) -> String {
         match self {
             Self::Marker(marker) => format!(
-                "{} {} since {}{}",
+                "{} {} since {}{}{}",
                 marker.operation,
                 match marker.phase {
                     Phase::Pending => "pending",
+                    Phase::Running => "running",
                 },
                 marker.since,
+                marker
+                    .child
+                    .map(|child| format!(", input child PID {}", child.pid))
+                    .unwrap_or_default(),
                 marker
                     .released
                     .as_ref()
@@ -414,6 +436,40 @@ mod tests {
         assert_eq!(click.buttons, [272]);
         std::fs::write(&path, r#"{"operation":"x","surprise":1}"#).unwrap();
         assert!(matches!(read(&runtime), Some(Found::Unreadable { .. })));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A marker 0.1.0 wrote while its `wtype` child ran, as the upgrade check finds one an
+    /// engine killed mid-input left, reads as a marker naming the child, not as
+    /// unreadable.
+    #[test]
+    fn reads_the_marker_0_1_0_wrote_while_wtype_ran() {
+        let dir = crate::test_support::fresh_dir("marker-0.1.0");
+        let runtime = runtime(&dir);
+        runtime.create().unwrap();
+        std::fs::write(
+            runtime.path().join(INPUT_DIRTY),
+            r#"{"operation":"type_text","phase":"running","server_pid":982748,"since":"2026-10-15T00:55:40.430Z","child":{"pid":982899,"start_time":10869159},"owner":"982748-1792025740430780025-0"}"#,
+        )
+        .unwrap();
+        let Some(Found::Marker(marker)) = read(&runtime) else {
+            panic!("not read as a marker: {:?}", read(&runtime))
+        };
+        assert_eq!(
+            (marker.phase, marker.child, marker.server_pid),
+            (
+                Phase::Running,
+                Some(Child {
+                    pid: 982_899,
+                    start_time: 10_869_159
+                }),
+                982_748
+            )
+        );
+        assert_eq!(
+            Found::Marker(marker).summary(),
+            "type_text running since 2026-10-15T00:55:40.430Z, input child PID 982899"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 

@@ -14,7 +14,7 @@ The server offers up to 22 tools. `shell_panel` is listed only when Noctalia is 
 | `status` | no | the readiness report | [Looking](../looking/#status) |
 | `desktop_state` | no | windows, workspaces, the focused window, the overview, keyboard layouts, monitors, Noctalia's state | [Looking](../looking/#desktop_state) |
 | `clipboard_read` | yes | the clipboard's text, if copied during the lease | [Looking](../looking/#clipboard_read) |
-| `wait_for` | no | waits for a window to appear, close or change title, or for the screen to settle | [Looking](../looking/#wait_for) |
+| `wait_for` | no | waits for a window to appear, close or change title, an element to appear or go away, or the screen to settle | [Looking](../looking/#wait_for) |
 | `screenshot` | no | an image of an output or a region, with its geometry; optionally saved as a PNG | [Screenshots](../screenshots/) |
 | `elements` | no | one window's accessible elements and where they are | [Elements](../elements/) |
 | `acquire_desktop` | takes it | takes the lease and notes the user's window | [Acting](../acting/#acquire_desktop) |

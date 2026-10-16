@@ -4,9 +4,9 @@
 //! window: it must still be the ref's, not be on the deny list, have keyboard focus, and
 //! match `expect`. A last gate right before the one call that acts asks all of that
 //! again, with the action gate's own checks and the element as it is then, and nothing is
-//! retried. That call only says the app took the request (research A4), so
-//! the result is what was observed afterwards. Names and text are never returned or
-//! logged.
+//! retried. That call only says the app took the request (research A4), so the result
+//! is what was read back afterwards, and its `effect` whether that showed the action's
+//! effect. Names, text and values are never returned or logged.
 
 mod index;
 
@@ -15,11 +15,11 @@ use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use tokio::time::{Instant, timeout_at};
+use tokio::time::{Instant, timeout, timeout_at};
 
-use crate::a11y::model::{self, State, States};
+use crate::a11y::model::{self, NameHash, State, States};
 use crate::a11y::{self, A11y, Dispatched, ElementRef, Failed, Request};
-use crate::act::{Observed, Outcome};
+use crate::act::{Effect, Observed, Outcome};
 use crate::control::desk::LAST_GATE;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::input::Input;
@@ -95,20 +95,35 @@ pub(crate) struct Acted {
     /// `activate_element`, observed `present`: the states cleared since.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) states_cleared: Vec<&'static str>,
+    /// `activate_element`, observed `present`, on an element with a value, read before and
+    /// after: whether it changed. Never the value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) value_changed: Option<bool>,
+    /// `activate_element`, observed `present`: whether the element's name changed, as a
+    /// button that relabels itself does. Never either name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) name_changed: Option<bool>,
     /// `set_element_text`: the characters the element says it holds now.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) characters: Option<i32>,
+    /// The element's window, for reading niri's change report.
+    #[serde(skip)]
+    pub(crate) window: u64,
 }
 
 impl Acted {
-    /// An element of `role` the app took `action` of, or its text, before anything was seen.
-    fn new(role: u32, action: Option<Chosen>) -> Self {
+    /// An element of `role` in `window` the app took `action` of, or its text, before
+    /// anything was seen.
+    fn new(role: u32, window: u64, action: Option<Chosen>) -> Self {
         Self {
             role: model::role_name(role),
             action,
             states_set: Vec::new(),
             states_cleared: Vec::new(),
+            value_changed: None,
+            name_changed: None,
             characters: None,
+            window,
         }
     }
 }
@@ -299,14 +314,18 @@ impl<R: Recheck> Gate<'_, R> {
     }
 
     /// Tells the desk the call that acts goes out, if the answers the last gate relied on
-    /// are still at most `LAST_GATE` old: this is the moment before it goes out.
-    fn send<T>(&self, checked: &Checked<T>) -> Result<(), CallError> {
+    /// are still at most `LAST_GATE` old: this is the moment before it goes out. A stop or a
+    /// moved lease from then on, before the app answers, reports `acted` with `accepted`
+    /// null and its effect `unverified`.
+    fn send<T>(&self, checked: &Checked<T>, acted: &Acted) -> Result<(), CallError> {
         let age = checked.began.elapsed();
         self.times.sent(age);
         if age > LAST_GATE {
             let took = format!("ended over {} ms after they began", LAST_GATE.as_millis());
             return Err(busy(&took).into());
         }
+        self.recheck
+            .answered(known(checked.focus, acted.clone(), None));
         self.recheck.sending()?;
         Ok(())
     }
@@ -362,7 +381,8 @@ fn busy(took: &str) -> ToolError {
 }
 
 /// Takes the element's action `requested`, or its default one, and looks at the element
-/// a moment later.
+/// a moment later, its states and name against those the last gate read and its value
+/// against the one read before the gate.
 pub(crate) async fn activate(
     input: Input<'_>,
     element: &ElementRef,
@@ -393,55 +413,137 @@ pub(crate) async fn activate(
     )
     .await?;
     let mapped = canonical(&request, element, action).await?;
+    // Read before the last gate, so a slow value never makes the gate run over.
+    let value = value_before(&request, element).await;
     let checked = gate
         .last(element, &request, &mut waiter, || {
             offered(&request, element, action, &mapped)
         })
         .await?;
-    gate.send(&checked)?;
+    let window = element.kept.window;
+    let acted = Acted::new(checked.role, window, Some(action));
+    gate.send(&checked, &acted)?;
+    // The last gate found the element's name to be the one it was listed with.
+    let before = Before {
+        states: checked.states,
+        value,
+        name: element.kept.lineage.last().map(|link| link.name),
+    };
     let dispatched = request
         .do_action(element, checked.read)
         .await
         .map_err(gone_is_stale)?;
     let lost = taken(dispatched, &format!("its {} action", action.kind.name()))?;
-    let acted = Acted::new(checked.role, Some(action));
     if lost.is_none() {
         gate.recheck
-            .answered(answered(checked.focus, acted.clone()));
+            .answered(known(checked.focus, acted.clone(), Some(true)));
     }
+    let (after, stream) = settled(&mut waiter, &request, element, &before).await;
+    let doubt = Doubt {
+        reply: lost,
+        stream,
+    };
+    let (seen, looked) = activation(before, after);
+    let acted = Acted {
+        states_set: looked.states_set,
+        states_cleared: looked.states_cleared,
+        value_changed: looked.value_changed,
+        name_changed: looked.name_changed,
+        ..acted
+    };
+    Ok(done(seen, doubt, waiter.view(), checked.focus, acted))
+}
+
+/// The element's value as read: `None` when it has no `Value` interface, or why it
+/// couldn't be read.
+type Reading = Result<Option<f64>, String>;
+
+/// Reads the element's value. A failure is kept as why, since it never stops the action.
+async fn value(request: &Request, element: &ElementRef) -> Reading {
+    request
+        .current_value(element)
+        .await
+        .map_err(|failed| ToolError::from(failed).detail)
+}
+
+/// Reads the element's value before the action within `LAST_GATE`, so a slow app can't
+/// spend the request's budget the action needs: past that it is kept as why.
+async fn value_before(request: &Request, element: &ElementRef) -> Reading {
+    timeout(LAST_GATE, value(request, element))
+        .await
+        .unwrap_or_else(|_| {
+            let limit = LAST_GATE.as_millis();
+            Err(format!("the element's value took over {limit} ms to read"))
+        })
+}
+
+/// Waits `SETTLE` for the activation's effect, ended sooner by the element's window closing,
+/// then reads the element again unless it did; and why niri's event stream was lost, if it
+/// was.
+async fn settled(
+    waiter: &mut Waiter,
+    request: &Request,
+    element: &ElementRef,
+    before: &Before,
+) -> (After, Option<String>) {
     let window = element.kept.window;
-    let (after, stream) = match waiter
+    let (gone, stream) = match waiter
         .until(SETTLE, |view| {
             (!view.windows().contains_key(&window)).then_some(())
         })
         .await
     {
-        Waited::Done(()) => (After::WindowGone, None),
-        Waited::Timeout => (After::Probed(request.state(element).await), None),
-        Waited::Lost(why) => (After::Probed(request.state(element).await), Some(why)),
+        Waited::Done(()) => (true, None),
+        Waited::Timeout => (false, None),
+        Waited::Lost(why) => (false, Some(why)),
+    };
+    let after = if gone {
+        After::WindowGone
+    } else {
+        probe(request, element, before).await
     };
     let stream = match stream {
         Some(why) => Some(why),
-        None => caught_up(&mut waiter).await,
+        None => caught_up(waiter).await,
     };
-    let doubt = Doubt {
-        reply: lost,
-        stream,
+    (after, stream)
+}
+
+/// What was read of an activated element before the call, which the look afterwards is
+/// compared with: the last gate's states, the value read before the gate, and its name as
+/// listed, as a hash.
+#[derive(Debug)]
+struct Before {
+    states: States,
+    value: Reading,
+    name: Option<NameHash>,
+}
+
+/// The element's name as a hash, which is all that is kept of it, or why it couldn't be
+/// read.
+type Label = Result<NameHash, String>;
+
+/// The activated element's role and states now, then its value when it had one `before`,
+/// then its name.
+async fn probe(request: &Request, element: &ElementRef, before: &Before) -> After {
+    let states = match request.state(element).await {
+        Ok((_, states)) => states,
+        Err(failed) => return After::Probed(Err(failed)),
     };
-    let (observed, changes, detail) = activation(checked.states, after);
-    let (states_set, states_cleared) = changes.unwrap_or_default();
-    let acted = Acted {
-        states_set,
-        states_cleared,
-        ..acted
+    let value = match before.value {
+        Ok(Some(_)) => value(request, element).await,
+        _ => Ok(None),
     };
-    Ok(done(
-        (observed, detail),
-        doubt,
-        waiter.view(),
-        checked.focus,
-        acted,
-    ))
+    let name = request
+        .name(element.at())
+        .await
+        .map(|name| NameHash::of(&name))
+        .map_err(|failed| ToolError::from(failed).detail);
+    After::Probed(Ok(Now {
+        states,
+        value,
+        name,
+    }))
 }
 
 /// The most action indices `canonical` asks about.
@@ -573,8 +675,7 @@ fn unmapped_action(action: Chosen) -> CallError {
     .into()
 }
 
-/// Replaces the element's whole text with `text` and reads back how many characters it
-/// holds.
+/// Replaces the element's whole text with `text` and reads it back.
 pub(crate) async fn set_text(
     input: Input<'_>,
     element: &ElementRef,
@@ -606,34 +707,54 @@ pub(crate) async fn set_text(
             "the element isn't in the `editable` state, so its text can't be set".to_owned(),
         ));
     }
-    gate.send(&checked)?;
+    let acted = Acted::new(checked.role, element.kept.window, None);
+    gate.send(&checked, &acted)?;
     let dispatched = request
         .set_text(element, text)
         .await
         .map_err(gone_is_stale)?;
     let lost = taken(dispatched, "the new text")?;
-    let acted = Acted::new(checked.role, None);
     if lost.is_none() {
         gate.recheck
-            .answered(answered(checked.focus, acted.clone()));
+            .answered(known(checked.focus, acted.clone(), Some(true)));
     }
-    let count = request.character_count(element).await;
+    let held = read_back(&request, element, text).await;
     let doubt = Doubt {
         reply: lost,
         stream: caught_up(&mut waiter).await,
     };
-    let (observed, characters, detail) = written(text.chars().count(), count);
+    let (seen, characters) = written(held);
     let acted = Acted {
         characters,
         ..acted
     };
-    Ok(done(
-        (observed, detail),
-        doubt,
-        waiter.view(),
-        checked.focus,
-        acted,
-    ))
+    Ok(done(seen, doubt, waiter.view(), checked.focus, acted))
+}
+
+/// What a field holds after its text was set, by how many characters, compared with the
+/// text sent. Never the text.
+#[derive(Debug, PartialEq, Eq)]
+enum Held {
+    /// The text sent.
+    Same(i32),
+    /// Other text.
+    Other(i32),
+}
+
+/// Reads the field's text back and compares it with `sent`: its character count first,
+/// and only when that is the text's, at most `MAX_TEXT` characters, the text itself, which
+/// is dropped once compared.
+async fn read_back(request: &Request, element: &ElementRef, sent: &str) -> Result<Held, Failed> {
+    let count = request.character_count(element).await?;
+    if usize::try_from(count) != Ok(sent.chars().count()) {
+        return Ok(Held::Other(count));
+    }
+    let text = request.text(element, count).await?;
+    Ok(if text == sent {
+        Held::Same(count)
+    } else {
+        Held::Other(count)
+    })
 }
 
 /// Applies niri's events received so far to the waiter's view, so its focus is the one now;
@@ -645,7 +766,10 @@ async fn caught_up(waiter: &mut Waiter) -> Option<String> {
     }
 }
 
-/// Checks the element has an `EditableText` interface, or its text can't be set.
+/// Checks the element has an `EditableText` interface, or its text can't be set: a
+/// password field without one is `secret_field`, as the last gate would make it, an
+/// editable field without one, as Chromium's text fields are, is `text_not_settable`,
+/// with what to do instead, and anything else a mistake.
 async fn editable(request: &Request, element: &ElementRef) -> Result<(), CallError> {
     if request
         .editable_text(element)
@@ -654,9 +778,20 @@ async fn editable(request: &Request, element: &ElementRef) -> Result<(), CallErr
     {
         return Ok(());
     }
-    Err(CallError::InvalidArguments(
-        "the element has no EditableText interface, so its text can't be set".to_owned(),
-    ))
+    let (role, states) = request.state(element).await.map_err(gone_is_stale)?;
+    if let Some(refused) = policy::refuse_secret_field(model::role_name(role)) {
+        return Err(refused.into());
+    }
+    if !states.has(State::Editable) {
+        return Err(CallError::InvalidArguments(
+            "the element has no EditableText interface, so its text can't be set".to_owned(),
+        ));
+    }
+    Err(ToolError::new(
+        ErrorName::TextNotSettable,
+        "the field is editable but has no EditableText interface, as Chromium's text fields have none, so its text can't be set through accessibility; nothing was sent. Focus it with activate_element, then type with type_text, its expect naming the field's window; to replace what it holds, press ctrl+a with key before typing",
+    )
+    .into())
 }
 
 /// Refuses text over `MAX_TEXT` bytes before anything is asked.
@@ -751,46 +886,127 @@ async fn current(request: &Request, element: &ElementRef) -> Result<(u32, States
 enum After {
     /// niri closed its window.
     WindowGone,
-    /// Its role and states, or why they couldn't be read.
-    Probed(Result<(u32, States), Failed>),
+    /// It as read again, or why its states couldn't be read.
+    Probed(Result<Now, Failed>),
 }
 
-/// The states set and cleared, by name.
-type Changes = (Vec<&'static str>, Vec<&'static str>);
+/// An activated element as read after the settle.
+#[derive(Debug)]
+struct Now {
+    states: States,
+    value: Reading,
+    name: Label,
+}
+
+/// What an activation changed in an element still present.
+#[derive(Debug, Default, PartialEq)]
+struct Looked {
+    states_set: Vec<&'static str>,
+    states_cleared: Vec<&'static str>,
+    value_changed: Option<bool>,
+    name_changed: Option<bool>,
+}
 
 /// `gone` when the window or the element went away, or the element says it is `defunct`,
-/// as Chromium's does once it replaced the element; `present` with the states that
-/// changed since `before`; or `unknown` with why the element couldn't be read.
-fn activation(before: States, after: After) -> (Observed, Option<Changes>, Option<String>) {
+/// as Chromium's does once it replaced the element; `present` with what changed since
+/// `before`; or `unknown` with why the element couldn't be read.
+fn activation(before: Before, after: After) -> (Seen, Looked) {
+    let gone = Seen::new(Observed::Gone, Effect::Seen, None);
     match after {
-        After::WindowGone | After::Probed(Err(Failed::Gone(_))) => (Observed::Gone, None, None),
-        After::Probed(Ok((_, now))) if now.has(State::Defunct) => (Observed::Gone, None, None),
-        After::Probed(Ok((_, now))) => (Observed::Present, Some(now.changes(before)), None),
-        After::Probed(Err(Failed::Refused(error) | Failed::Error(error))) => {
-            (Observed::Unknown, None, Some(error.detail))
+        After::WindowGone | After::Probed(Err(Failed::Gone(_))) => (gone, Looked::default()),
+        After::Probed(Ok(now)) if now.states.has(State::Defunct) => (gone, Looked::default()),
+        After::Probed(Ok(now)) => present(before, now),
+        After::Probed(Err(Failed::Refused(error, _) | Failed::Error(error))) => {
+            let unknown = Seen::new(Observed::Unknown, Effect::Unverified, Some(error.detail));
+            (unknown, Looked::default())
         }
     }
 }
 
-/// `matched` when the element holds as many characters as were set, `differs` when an
-/// app kept other text, as one that filters input does, or `unknown` with why the count
-/// couldn't be read.
-fn written(expected: usize, count: Result<i32, Failed>) -> (Observed, Option<i32>, Option<String>) {
-    match count {
-        Ok(count) if usize::try_from(count) == Ok(expected) => {
-            (Observed::Matched, Some(count), None)
-        }
-        Ok(count) => (Observed::Differs, Some(count), None),
-        Err(failed) => (
-            Observed::Unknown,
-            None,
-            Some(ToolError::from(failed).detail),
+/// An element still present: its states, value and name compared with `before`. The effect
+/// is `seen` when any of them changed, `none_seen` when none did, and `unverified` when its
+/// value or name couldn't be compared and nothing else changed.
+fn present(before: Before, now: Now) -> (Seen, Looked) {
+    let (states_set, states_cleared) = now.states.changes(before.states);
+    let value = compare(before.value, now.value);
+    let name = renamed(before.name, now.name);
+    let value_changed = value.as_ref().ok().copied().flatten();
+    let name_changed = name.as_ref().ok().copied().flatten();
+    let changed = !(states_set.is_empty() && states_cleared.is_empty())
+        || value_changed == Some(true)
+        || name_changed == Some(true);
+    let seen = match (changed, value.and(name)) {
+        (true, _) => Seen::new(Observed::Present, Effect::Seen, None),
+        (false, Ok(_)) => Seen::new(Observed::Present, Effect::NoneSeen, None),
+        (false, Err(why)) => Seen::new(Observed::Present, Effect::Unverified, Some(why)),
+    };
+    let looked = Looked {
+        states_set,
+        states_cleared,
+        value_changed,
+        name_changed,
+    };
+    (seen, looked)
+}
+
+/// Whether the element's name changed since it was listed: `None` with no name to compare
+/// with, or why the name couldn't be read again.
+fn renamed(before: Option<NameHash>, after: Label) -> Result<Option<bool>, String> {
+    let Some(before) = before else {
+        return Ok(None);
+    };
+    after.map(|after| Some(after != before))
+}
+
+/// Whether an element's value changed between two readings: `None` when it has none, or
+/// why the two can't be compared.
+fn compare(before: Reading, after: Reading) -> Result<Option<bool>, String> {
+    match (before?, after?) {
+        (None, _) => Ok(None),
+        (Some(before), Some(after)) => Ok(Some(before.total_cmp(&after).is_ne())),
+        (Some(_), None) => Err("the element's value couldn't be read again".to_owned()),
+    }
+}
+
+/// `matched` when the field holds the text that was set, `differs` with its character
+/// count when it holds other text right after the app answered, as when it filters, caps
+/// or reformats input or sets the text later, or
+/// `unknown` with why it couldn't be read back.
+fn written(held: Result<Held, Failed>) -> (Seen, Option<i32>) {
+    match held {
+        Ok(Held::Same(count)) => (
+            Seen::new(Observed::Matched, Effect::Seen, None),
+            Some(count),
         ),
+        Ok(Held::Other(count)) => (
+            Seen::new(Observed::Differs, Effect::Differs, None),
+            Some(count),
+        ),
+        Err(failed) => {
+            let why = Some(ToolError::from(failed).detail);
+            (Seen::new(Observed::Unknown, Effect::Unverified, why), None)
+        }
     }
 }
 
-/// What was observed after the call, and why it is `unknown`.
-type Seen = (Observed, Option<String>);
+/// What was read back after the call: what was observed, whether it showed the effect,
+/// and why not when it couldn't.
+#[derive(Debug, PartialEq, Eq)]
+struct Seen {
+    observed: Observed,
+    effect: Effect,
+    detail: Option<String>,
+}
+
+impl Seen {
+    const fn new(observed: Observed, effect: Effect, detail: Option<String>) -> Self {
+        Self {
+            observed,
+            effect,
+            detail,
+        }
+    }
+}
 
 /// Why an element action's outcome is `uncertain`, if it is.
 #[derive(Debug)]
@@ -805,11 +1021,16 @@ struct Doubt {
 /// seen in `detail`: with `accepted: null` when the reply was lost, and with no focused
 /// window when niri's events were.
 fn done(seen: Seen, doubt: Doubt, view: &View, focus: Focus, acted: Acted) -> Outcome {
-    let (observed, detail) = seen;
+    let Seen {
+        observed,
+        effect,
+        detail,
+    } = seen;
     if doubt.reply.is_none() && doubt.stream.is_none() {
         return Outcome {
             focus: Some(focus),
             element: Some(acted),
+            effect: Some(effect),
             detail,
             ..Outcome::seen(observed, view, Vec::new())
         };
@@ -829,6 +1050,7 @@ fn done(seen: Seen, doubt: Doubt, view: &View, focus: Focus, acted: Acted) -> Ou
     Outcome {
         focus: Some(focus),
         element: Some(acted),
+        effect: Some(effect),
         ..Outcome::uncertain(
             accepted,
             view,
@@ -837,13 +1059,15 @@ fn done(seen: Seen, doubt: Doubt, view: &View, focus: Focus, acted: Acted) -> Ou
     }
 }
 
-/// The outcome as far as it is known once the app took the call: accepted, and the look
-/// afterwards still to come. A stop or a moved lease from then on reports it, with why.
-fn answered(focus: Focus, acted: Acted) -> Outcome {
+/// The outcome as far as it is known once the call goes out, `accepted` null, or once the
+/// app took it, `accepted` true: the look afterwards still to come, so its effect
+/// `unverified`. A stop or a moved lease from then on reports it, with why.
+fn known(focus: Focus, acted: Acted, accepted: Option<bool>) -> Outcome {
     Outcome {
         focus: Some(focus),
         element: Some(acted),
-        ..Outcome::uncertain(Some(true), None, String::new())
+        effect: Some(Effect::Unverified),
+        ..Outcome::uncertain(accepted, None, String::new())
     }
 }
 
@@ -880,6 +1104,7 @@ mod tests {
             bus: ":1.7".to_owned(),
             path: "/org/a11y/atspi/accessible/9".to_owned(),
             frame: "/org/a11y/atspi/accessible/1".to_owned(),
+            page: None,
             kept: Kept {
                 role: 43,
                 window,
@@ -931,11 +1156,12 @@ mod tests {
             began,
         };
         let now = Instant::now();
-        assert!(gate.send(&checked(now)).is_ok());
+        assert!(gate.send(&checked(now), &Acted::new(43, 3, None)).is_ok());
         let late = now
             .checked_sub(LAST_GATE + Duration::from_millis(1))
             .unwrap();
-        let Err(CallError::Tool(refused)) = gate.send(&checked(late)) else {
+        let Err(CallError::Tool(refused)) = gate.send(&checked(late), &Acted::new(43, 3, None))
+        else {
             panic!("a late call went out");
         };
         // The audit log gets the age of the answers the refused call would have relied on.
@@ -1063,59 +1289,166 @@ mod tests {
         );
     }
 
+    /// What an activation with no value saw: observed and effect, and the states changed.
+    /// What was read before the call of a button named `Save` with `states` and `value`.
+    fn before(states: States, value: Reading) -> Before {
+        Before {
+            states,
+            value,
+            name: Some(NameHash::of("Save")),
+        }
+    }
+
+    /// The element read again with `states`, `value` and `name`.
+    fn now(states: States, value: Reading, name: &str) -> After {
+        After::Probed(Ok(Now {
+            states,
+            value,
+            name: Ok(NameHash::of(name)),
+        }))
+    }
+
+    /// What an activation of `Save` with no value saw: observed and effect, and what changed.
+    fn activated(states: States, after: After) -> (Observed, Effect, Looked) {
+        let (seen, looked) = activation(before(states, Ok(None)), after);
+        (seen.observed, seen.effect, looked)
+    }
+
+    /// Nothing changed, the name compared.
+    const UNCHANGED: Looked = Looked {
+        states_set: Vec::new(),
+        states_cleared: Vec::new(),
+        value_changed: None,
+        name_changed: Some(false),
+    };
+
     #[test]
     fn an_activation_is_gone_present_with_its_state_changes_or_unknown() {
         let unchecked = States::from_words(&[(1 << 25) | (1 << 30)]);
         let checked = States::from_words(&[(1 << 4) | (1 << 25) | (1 << 30)]);
+        let gone = (Observed::Gone, Effect::Seen, Looked::default());
+        assert_eq!(activated(unchecked, After::WindowGone), gone);
+        let left = After::Probed(Err(Failed::Gone("gone".to_owned())));
+        assert_eq!(activated(unchecked, left), gone);
+        let toggled = Looked {
+            states_set: vec!["checked"],
+            ..UNCHANGED
+        };
         assert_eq!(
-            activation(unchecked, After::WindowGone),
-            (Observed::Gone, None, None)
+            activated(unchecked, now(checked, Ok(None), "Save")),
+            (Observed::Present, Effect::Seen, toggled)
         );
+        // A plain button whose states and name don't change: nothing to see, which isn't a
+        // failure.
         assert_eq!(
-            activation(
-                unchecked,
-                After::Probed(Err(Failed::Gone("gone".to_owned())))
-            ),
-            (Observed::Gone, None, None)
-        );
-        assert_eq!(
-            activation(unchecked, After::Probed(Ok((43, checked)))),
-            (Observed::Present, Some((vec!["checked"], vec![])), None)
-        );
-        assert_eq!(
-            activation(checked, After::Probed(Ok((43, checked)))),
-            (Observed::Present, Some((vec![], vec![])), None)
+            activated(checked, now(checked, Ok(None), "Save")),
+            (Observed::Present, Effect::NoneSeen, UNCHANGED)
         );
         // Chromium keeps a replaced element on the bus with only `defunct` set.
         let defunct = States::from_words(&[1 << 6]);
-        assert_eq!(
-            activation(unchecked, After::Probed(Ok((62, defunct)))),
-            (Observed::Gone, None, None)
-        );
+        assert_eq!(activated(unchecked, now(defunct, Ok(None), "")), gone);
         let late = ToolError::new(ErrorName::DeadlineExceeded, "no answer within 1 s");
+        let (seen, _) = activation(
+            before(unchecked, Ok(None)),
+            After::Probed(Err(Failed::Error(late))),
+        );
         assert_eq!(
-            activation(unchecked, After::Probed(Err(Failed::Error(late)))),
-            (
+            seen,
+            Seen::new(
                 Observed::Unknown,
-                None,
+                Effect::Unverified,
                 Some("no answer within 1 s".to_owned())
             )
         );
     }
 
+    // A counter or play/pause button relabels itself and changes no state: compared by
+    // states alone, that read as nothing seen.
     #[test]
-    fn written_text_is_matched_by_its_character_count() {
-        assert_eq!(written(4, Ok(4)), (Observed::Matched, Some(4), None));
-        // An app that filters input keeps less, or more.
-        assert_eq!(written(4, Ok(2)), (Observed::Differs, Some(2), None));
-        assert_eq!(written(0, Ok(-1)), (Observed::Differs, Some(-1), None));
+    fn a_button_that_relabelled_itself_is_seen() {
+        let showing = States::from_words(&[(1 << 25) | (1 << 30)]);
+        let relabelled = Looked {
+            name_changed: Some(true),
+            ..UNCHANGED
+        };
+        assert_eq!(
+            activated(showing, now(showing, Ok(None), "Saved")),
+            (Observed::Present, Effect::Seen, relabelled)
+        );
+        // A name that couldn't be read again can't show there was no effect.
+        let unread = After::Probed(Ok(Now {
+            states: showing,
+            value: Ok(None),
+            name: Err("Properties.Get: no answer within 1 s".to_owned()),
+        }));
+        let (seen, looked) = activation(before(showing, Ok(None)), unread);
+        assert_eq!(seen.effect, Effect::Unverified);
+        assert!(seen.detail.unwrap().contains("no answer"));
+        assert_eq!(looked.name_changed, None);
+    }
+
+    // A slider or spin button stepped by its action changes its value and none of its
+    // states: without the value, that read as nothing seen.
+    #[test]
+    fn a_value_that_changed_with_no_state_change_is_seen() {
+        let showing = States::from_words(&[(1 << 25) | (1 << 30)]);
+        let stepped =
+            |was: Reading, is: Reading| activation(before(showing, was), now(showing, is, "Save"));
+        let (up, up_looked) = stepped(Ok(Some(2.0)), Ok(Some(3.0)));
+        assert_eq!(up.effect, Effect::Seen);
+        assert_eq!(up.observed, Observed::Present);
+        assert_eq!(up_looked.value_changed, Some(true));
+        let (still, still_looked) = stepped(Ok(Some(3.0)), Ok(Some(3.0)));
+        assert_eq!(still.effect, Effect::NoneSeen);
+        assert_eq!(still_looked.value_changed, Some(false));
+    }
+
+    // A value that couldn't be read, before or after, leaves the effect unverified rather
+    // than `none_seen`, with why; states that changed still show the effect.
+    #[test]
+    fn a_value_that_couldnt_be_compared_is_unverified_unless_states_changed() {
+        let showing = States::from_words(&[(1 << 25) | (1 << 30)]);
+        let checked = States::from_words(&[(1 << 4) | (1 << 25) | (1 << 30)]);
+        let failed = || Err("Value.CurrentValue: no answer within 1 s".to_owned());
+        for (was, is) in [(failed(), Ok(None)), (Ok(Some(1.0)), failed())] {
+            let (still, looked) = activation(
+                before(showing, was.clone()),
+                now(showing, is.clone(), "Save"),
+            );
+            assert_eq!(still.observed, Observed::Present);
+            assert_eq!(still.effect, Effect::Unverified);
+            assert!(still.detail.unwrap().contains("no answer"));
+            assert_eq!(looked.value_changed, None);
+            let (toggled, _) = activation(before(showing, was), now(checked, is, "Save"));
+            assert_eq!(toggled.effect, Effect::Seen);
+            assert_eq!(toggled.detail, None);
+        }
+    }
+
+    // A field that truncates, caps or reformats what it is given holds other text: that is
+    // `differs`, never the success a matching count alone used to give.
+    #[test]
+    fn written_text_is_matched_only_when_the_field_holds_it() {
+        let (same, characters) = written(Ok(Held::Same(4)));
+        assert_eq!(same, Seen::new(Observed::Matched, Effect::Seen, None));
+        assert_eq!(characters, Some(4));
+        for held in [Held::Other(2), Held::Other(4), Held::Other(-1)] {
+            let (seen, _) = written(Ok(held));
+            assert_eq!(seen, Seen::new(Observed::Differs, Effect::Differs, None));
+        }
         let refused = ToolError::new(ErrorName::UpstreamError, "no Text interface");
         assert_eq!(
-            written(4, Err(Failed::Refused(refused))),
+            written(Err(Failed::Refused(
+                refused,
+                "org.freedesktop.DBus.Error.UnknownInterface".to_owned()
+            ))),
             (
-                Observed::Unknown,
-                None,
-                Some("no Text interface".to_owned())
+                Seen::new(
+                    Observed::Unknown,
+                    Effect::Unverified,
+                    Some("no Text interface".to_owned())
+                ),
+                None
             )
         );
     }

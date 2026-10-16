@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 use tokio::process::{Child, Command};
@@ -29,6 +29,7 @@ pub(crate) const PANEL: u32 = 39;
 pub(crate) const PASSWORD_TEXT: u32 = 40;
 pub(crate) const BUTTON: u32 = 43;
 pub(crate) const TEXT: u32 = 61;
+pub(crate) const DOCUMENT_WEB: u32 = 95;
 const APPLICATION: u32 = 75;
 /// `ATSPI_COORD_TYPE_WINDOW`, the only coordinates the server asks for.
 const WINDOW_COORDS: u32 = 1;
@@ -54,12 +55,20 @@ pub(crate) struct Object {
     pub(crate) localized: Option<Vec<String>>,
     /// The naming methods it refuses at every index, as Qt has no `GetLocalizedName`.
     pub(crate) refused: Vec<&'static str>,
-    /// With `Text` and `EditableText` interfaces: how many characters it holds.
-    pub(crate) text: Option<i32>,
+    /// With `Text` and `EditableText` interfaces: the text it holds.
+    pub(crate) text: Option<String>,
+    /// What it keeps of text it is given, when not all of it, as a field that caps or
+    /// reformats its input.
+    pub(crate) keeps: Option<fn(&str) -> String>,
+    /// With a `Value` interface: its current value, which each `DoAction` adds one to.
+    pub(crate) value: Option<f64>,
     /// A counter button's count, which each `DoAction` adds one to and names it after.
     pub(crate) counter: Option<u32>,
     /// The objects each `DoAction` shows when hidden and hides when shown.
     pub(crate) toggles: Vec<String>,
+    /// The children it has once `GetAttributes` is called on it, as Chromium builds its
+    /// tree only once an assistive technology asks for an object's attributes.
+    pub(crate) built: Option<Vec<String>>,
 }
 
 impl Object {
@@ -112,7 +121,7 @@ impl Object {
             states: SHOWING | EDITABLE,
             extents: Some((10, 50, 200, 30)),
             actions: vec!["activate".to_owned()],
-            text: Some(0),
+            text: Some(String::new()),
             ..Self::default()
         }
     }
@@ -127,6 +136,9 @@ impl Object {
         }
         if self.text.is_some() {
             interfaces.extend(["org.a11y.atspi.Text", "org.a11y.atspi.EditableText"]);
+        }
+        if self.value.is_some() {
+            interfaces.push("org.a11y.atspi.Value");
         }
         interfaces.into_iter().map(str::to_owned).collect()
     }
@@ -213,6 +225,56 @@ struct State {
     calls: BTreeMap<&'static str, usize>,
     /// The index each `DoAction` asked for, in the order they arrived.
     done: Vec<i32>,
+    status: Status,
+}
+
+/// `org.a11y.Status` as the bus launcher keeps it.
+#[derive(Debug, Default)]
+struct Status {
+    /// Whether `IsEnabled` is true while a listener is registered, as at-spi2-core 2.61
+    /// and later have it.
+    older: bool,
+    /// `IsEnabled` apart from the listeners: true as a screen reader's running made it.
+    on: bool,
+    /// `IsEnabled` written false over the listeners, until the next one registers, as
+    /// at-spi2-core counts them again only when one comes or goes.
+    written_off: bool,
+    /// Each listener registered, in order.
+    listeners: Vec<Listener>,
+    /// How long after a listener registers `IsEnabled` counts it, as a busy launcher
+    /// takes a moment.
+    lag: Duration,
+    /// How many times a client wrote a property.
+    writes: usize,
+}
+
+impl Status {
+    /// `IsEnabled`, or the listeners it depends on, those registered `lag` ago or longer,
+    /// when it is true while one of them lasts.
+    fn reads(&self) -> Result<bool, Vec<String>> {
+        if self.written_off || (self.older && !self.on) {
+            return Ok(false);
+        }
+        if self.on {
+            return Ok(true);
+        }
+        let counted = self.listeners.iter().filter(|l| l.at.elapsed() >= self.lag);
+        Err(counted.map(|listener| listener.name.clone()).collect())
+    }
+
+    fn register(&mut self, listener: Listener) {
+        self.listeners.push(listener);
+        self.written_off = false;
+    }
+}
+
+/// A listener registered with the registry.
+#[derive(Debug, Clone)]
+struct Listener {
+    /// The unique name that registered it.
+    name: String,
+    event: String,
+    at: Instant,
 }
 
 /// The mock application, which the test changes.
@@ -265,6 +327,43 @@ impl Mock {
             .get(member)
             .copied()
             .unwrap_or(0)
+    }
+
+    /// Makes `IsEnabled` true apart from any listener, as a running screen reader does.
+    pub(crate) fn accessibility_on(&self) {
+        self.state.lock().unwrap().status.on = true;
+    }
+
+    /// Makes the bus launcher one from before at-spi2-core 2.61, which doesn't turn
+    /// `IsEnabled` on for a listener.
+    pub(crate) fn older_launcher(&self) {
+        self.state.lock().unwrap().status.older = true;
+    }
+
+    /// Makes `IsEnabled` false whatever listeners there are, as the user writing it does.
+    pub(crate) fn written_off(&self) {
+        self.state.lock().unwrap().status.written_off = true;
+    }
+
+    /// Makes the bus launcher turn `IsEnabled` on only `lag` after a listener registers.
+    pub(crate) fn slow_launcher(&self, lag: Duration) {
+        self.state.lock().unwrap().status.lag = lag;
+    }
+
+    /// The unique names that registered a listener.
+    pub(crate) fn listeners(&self) -> Vec<String> {
+        let state = self.state.lock().unwrap();
+        state
+            .status
+            .listeners
+            .iter()
+            .map(|listener| listener.name.clone())
+            .collect()
+    }
+
+    /// How many times a client wrote an `org.a11y.Status` property.
+    pub(crate) fn status_writes(&self) -> usize {
+        self.state.lock().unwrap().status.writes
     }
 
     /// Changes the object at `path`.
@@ -327,11 +426,37 @@ fn point(member: &str, path: &str) -> String {
 #[derive(Debug)]
 pub(crate) struct Bus {
     daemon: Child,
-    _registry: Connection,
+    registry: Connection,
     _app: Connection,
 }
 
 impl Bus {
+    /// `org.a11y.Status.IsEnabled`, as a client of the session bus reads it.
+    pub(crate) async fn is_enabled(&self) -> bool {
+        let reply = self
+            .registry
+            .call_method(
+                Some("org.a11y.Bus"),
+                "/org/a11y/bus",
+                Some("org.freedesktop.DBus.Properties"),
+                "Get",
+                &("org.a11y.Status", "IsEnabled"),
+            )
+            .await
+            .unwrap();
+        let value: zbus::zvariant::OwnedValue = reply.body().deserialize().unwrap();
+        bool::try_from(value).unwrap()
+    }
+
+    /// Whether a connection still has the unique name `name`.
+    pub(crate) async fn connected(&self, name: &str) -> bool {
+        let daemon = fdo::DBusProxy::new(&self.registry).await.unwrap();
+        daemon
+            .name_has_owner(zbus::names::BusName::try_from(name).unwrap())
+            .await
+            .unwrap()
+    }
+
     /// Kills the daemon, which ends every connection to it.
     pub(crate) async fn kill(&mut self) {
         self.daemon.kill().await.unwrap();
@@ -382,8 +507,13 @@ pub(crate) async fn start(
     let server = registry.object_server();
     let apps = vec![(unique, OwnedObjectPath::try_from(ROOT).unwrap())];
     server.at(ROOT, Registry { apps }).await.unwrap();
+    server.at(REGISTRY, Listeners(mock.clone())).await.unwrap();
     server
         .at("/org/a11y/bus", A11yBus { address })
+        .await
+        .unwrap();
+    server
+        .at("/org/a11y/bus", Launcher(mock.clone()))
         .await
         .unwrap();
     registry
@@ -393,7 +523,7 @@ pub(crate) async fn start(
     registry.request_name("org.a11y.Bus").await.unwrap();
     let bus = Bus {
         daemon,
-        _registry: registry,
+        registry,
         _app: app,
     };
     (bus, mock)
@@ -468,6 +598,9 @@ async fn serve(app: &Connection, mock: &Mock, path: &str, object: &Object) {
         server.at(path, Text(at())).await.unwrap();
         server.at(path, EditableText(at())).await.unwrap();
     }
+    if object.value.is_some() {
+        server.at(path, Value(at())).await.unwrap();
+    }
 }
 
 /// An object's place in the mock.
@@ -532,6 +665,16 @@ impl Accessible {
     async fn get_interfaces(&self) -> answer::Result<Vec<String>> {
         self.0.called("GetInterfaces").await?;
         self.0.read(|object, _| object.interfaces())
+    }
+
+    async fn get_attributes(&self) -> answer::Result<BTreeMap<String, String>> {
+        self.0.called("GetAttributes").await?;
+        self.0.mock.change(&self.0.path, |object| {
+            if let Some(built) = object.built.take() {
+                object.children = built;
+            }
+        });
+        Ok(BTreeMap::new())
     }
 
     #[zbus(property, name = "Name")]
@@ -613,6 +756,9 @@ impl Action {
                 *count += 1;
                 object.name = format!("Count: {count}");
             }
+            if let Some(value) = object.value.as_mut() {
+                *value += 1.0;
+            }
         });
         for path in self.0.read(|object, _| object.toggles.clone())? {
             self.0.mock.change(&path, |object| object.states ^= SHOWING);
@@ -630,7 +776,31 @@ impl Text {
     #[zbus(property)]
     async fn character_count(&self) -> fdo::Result<i32> {
         self.0.called("CharacterCount").await?;
-        Ok(self.0.read(|object, _| object.text.unwrap_or_default())?)
+        let text = self
+            .0
+            .read(|object, _| object.text.clone().unwrap_or_default())?;
+        Ok(i32::try_from(text.chars().count()).unwrap())
+    }
+
+    async fn get_text(&self, start: i32, end: i32) -> answer::Result<String> {
+        self.0.called("GetText").await?;
+        let text = self
+            .0
+            .read(|object, _| object.text.clone().unwrap_or_default())?;
+        let start = usize::try_from(start).unwrap();
+        let taken = usize::try_from(end).map_or(usize::MAX, |end| end - start);
+        Ok(text.chars().skip(start).take(taken).collect())
+    }
+}
+
+struct Value(Node);
+
+#[interface(name = "org.a11y.atspi.Value")]
+impl Value {
+    #[zbus(property)]
+    async fn current_value(&self) -> fdo::Result<f64> {
+        self.0.called("CurrentValue").await?;
+        Ok(self.0.read(|object, _| object.value.unwrap_or_default())?)
     }
 }
 
@@ -640,10 +810,13 @@ struct EditableText(Node);
 impl EditableText {
     async fn set_text_contents(&self, text: String) -> answer::Result<bool> {
         self.0.called("SetTextContents").await?;
-        let characters = i32::try_from(text.chars().count()).unwrap();
-        self.0
-            .mock
-            .change(&self.0.path, |object| object.text = Some(characters));
+        self.0.mock.change(&self.0.path, |object| {
+            object.text = Some(
+                object
+                    .keeps
+                    .map_or_else(|| text.clone(), |keeps| keeps(&text)),
+            );
+        });
         Ok(true)
     }
 }
@@ -657,6 +830,86 @@ struct Registry {
 impl Registry {
     fn get_children(&self) -> Vec<(String, OwnedObjectPath)> {
         self.apps.clone()
+    }
+}
+
+/// The registry's object that takes listeners.
+const REGISTRY: &str = "/org/a11y/atspi/registry";
+
+/// The registry's listeners, which an assistive technology registers.
+struct Listeners(Mock);
+
+#[interface(name = "org.a11y.atspi.Registry")]
+impl Listeners {
+    async fn register_event(
+        &self,
+        event: String,
+        #[zbus(header)] header: Header<'_>,
+    ) -> answer::Result<()> {
+        self.0.called("RegisterEvent", REGISTRY).await?;
+        let sender = header.sender().map(ToString::to_string).unwrap_or_default();
+        let listener = Listener {
+            name: sender,
+            event,
+            at: Instant::now(),
+        };
+        self.0.state.lock().unwrap().status.register(listener);
+        Ok(())
+    }
+
+    /// Each listener whose connection lasts, and its event, as the registry forgets those
+    /// whose connection ended.
+    async fn get_registered_events(
+        &self,
+        #[zbus(connection)] bus: &Connection,
+    ) -> answer::Result<Vec<(String, String)>> {
+        self.0.called("GetRegisteredEvents", REGISTRY).await?;
+        let listeners = self.0.state.lock().unwrap().status.listeners.clone();
+        let live = live(bus, self.0.listeners()).await?;
+        Ok(listeners
+            .into_iter()
+            .filter(|listener| live.contains(&listener.name))
+            .map(|listener| (listener.name, listener.event))
+            .collect())
+    }
+}
+
+/// Those of `names` whose connection lasts.
+async fn live(bus: &Connection, names: Vec<String>) -> fdo::Result<Vec<String>> {
+    let daemon = fdo::DBusProxy::new(bus).await?;
+    let mut live = Vec::new();
+    for name in names {
+        let bus_name = zbus::names::BusName::try_from(name.as_str())
+            .map_err(|error| fdo::Error::Failed(error.to_string()))?;
+        if daemon.name_has_owner(bus_name).await? {
+            live.push(name);
+        }
+    }
+    Ok(live)
+}
+
+/// `org.a11y.Status`: `IsEnabled` is true while a registered listener's connection lasts,
+/// as at-spi2-core 2.61 and later keep it, unless the launcher is older, or when a screen
+/// reader made it so.
+struct Launcher(Mock);
+
+#[interface(name = "org.a11y.Status")]
+impl Launcher {
+    #[zbus(property)]
+    async fn is_enabled(&self, #[zbus(connection)] bus: &Connection) -> fdo::Result<bool> {
+        self.0.called("IsEnabled", "/org/a11y/bus").await?;
+        let reads = self.0.state.lock().unwrap().status.reads();
+        match reads {
+            Ok(enabled) => Ok(enabled),
+            Err(listeners) => Ok(!live(bus, listeners).await?.is_empty()),
+        }
+    }
+
+    #[zbus(property)]
+    fn set_is_enabled(&self, on: bool) {
+        let mut state = self.0.state.lock().unwrap();
+        state.status.writes += 1;
+        state.status.on = on;
     }
 }
 

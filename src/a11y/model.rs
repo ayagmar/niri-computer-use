@@ -211,6 +211,15 @@ pub(crate) fn is_role(name: &str) -> bool {
     ROLES.contains(&name)
 }
 
+/// What a compact `elements` line says for an element without `sensitive`, which AT-SPI
+/// has no state for.
+pub(crate) const DISABLED: &str = "disabled";
+
+/// Whether `name` is a `state` argument: a name `States::names` gives, or `DISABLED`.
+pub(crate) fn is_state(name: &str) -> bool {
+    name == DISABLED || STATES.contains(&name)
+}
+
 /// An AT-SPI state, by its bit in the state set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum State {
@@ -234,6 +243,22 @@ impl States {
         self.0 & (1 << state as u64) != 0
     }
 
+    /// The set of the one state `names` gives `name`, for checking a `state` argument.
+    pub(crate) fn named(name: &str) -> Option<Self> {
+        let bit = STATES.iter().position(|state| *state == name)?;
+        Some(Self(1 << bit))
+    }
+
+    /// Whether every state of `wanted` is set.
+    pub(crate) const fn holds(self, wanted: Self) -> bool {
+        self.0 & wanted.0 == wanted.0
+    }
+
+    /// Whether any state of `other` is set.
+    const fn any(self, other: Self) -> bool {
+        self.0 & other.0 != 0
+    }
+
     /// The names of the states set, in bit order. Bits past the table are left out.
     pub(crate) fn names(self) -> Vec<&'static str> {
         STATES
@@ -253,7 +278,8 @@ impl States {
     }
 }
 
-/// A rectangle as `Component.GetExtents` returns it, in logical pixels.
+/// A rectangle as `Component.GetExtents` returns it: in logical pixels, but for a
+/// Chromium page's objects, which `page_unit` tells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub(crate) struct Extents {
     pub(crate) x: i32,
@@ -313,6 +339,10 @@ pub(crate) enum Unmappable {
     /// it.
     #[serde(rename = "not_showing")]
     Restless,
+    /// The element is in a web page whose extents are in a unit the server can't tell: its
+    /// document is neither the size and place of the object that holds it nor those times
+    /// the output's scale.
+    PageScaleUnknown,
     /// The window is tiled: niri 26.04 gives only floating windows a place in their
     /// workspace's view, so where a tiled one is on screen isn't known.
     Tiled,
@@ -320,6 +350,11 @@ pub(crate) enum Unmappable {
     /// reach past its output's edge, and shows that part nowhere.
     #[serde(rename = "not_showing")]
     OffOutput,
+    /// The element's centre is outside its web page's document, as under a browser's
+    /// toolbar once the page is scrolled: Chromium hides a web object only when nothing of
+    /// it is left in the page.
+    #[serde(rename = "not_showing")]
+    OffPage,
     /// The element has no area.
     Empty,
     /// The element's centre is outside the screenshot the pointer aims through.
@@ -458,6 +493,56 @@ pub(crate) const fn frame_fits(frame: Extents, window_size: (i32, i32)) -> bool 
     (frame.width - window_size.0).abs() <= 1 && (frame.height - window_size.1).abs() <= 1
 }
 
+/// The web page an element is in: the WINDOW extents of the outermost `document_web` at
+/// or above it, and of the object that holds that document, each `None` without a
+/// Component interface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Page {
+    pub(crate) document: Option<Extents>,
+    pub(crate) container: Option<Extents>,
+}
+
+/// How many of the element's units make a logical pixel on an output at `scale`: 1 for
+/// an element in no page. Chromium gives its own views, the frame among them, in logical
+/// pixels, but a web page and everything in it, its frames' pages too, in the output's
+/// pixels: the place in the frame times the scale. Nothing on the bus names the unit, but a
+/// page's document has the size and place of the view that holds it, so its extents tell:
+/// the container's own in logical pixels, or the container's times `scale` in the output's
+/// (docs/decisions.md). At scale 1 the two units are one. A document that is neither, or
+/// both, or that has no extents, leaves the unit unknown.
+pub(crate) fn page_unit(page: Option<Page>, scale: f64) -> Result<f64, Unmappable> {
+    let Some(page) = page else {
+        return Ok(1.0);
+    };
+    if (scale - 1.0).abs() < f64::EPSILON {
+        return Ok(1.0);
+    }
+    let (Some(document), Some(container)) = (page.document, page.container) else {
+        return Err(Unmappable::PageScaleUnknown);
+    };
+    match (
+        times(document, container, 1.0),
+        times(document, container, scale),
+    ) {
+        (true, false) => Ok(1.0),
+        (false, true) => Ok(scale),
+        _ => Err(Unmappable::PageScaleUnknown),
+    }
+}
+
+/// Whether `document` is `container` times `by`, give or take a pixel of rounding, and
+/// `container` has an area.
+fn times(document: Extents, container: Extents, by: f64) -> bool {
+    let near =
+        |part: i32, whole: i32| (f64::from(whole).mul_add(-by, f64::from(part))).abs() <= 1.0;
+    container.width > 0
+        && container.height > 0
+        && near(document.x, container.x)
+        && near(document.y, container.y)
+        && near(document.width, container.width)
+        && near(document.height, container.height)
+}
+
 /// What decides whether an element can be aimed at.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Placement {
@@ -465,15 +550,19 @@ pub(crate) struct Placement {
     pub(crate) extents: Extents,
     pub(crate) frame_fits: bool,
     pub(crate) origin: Result<Origin, Unmappable>,
+    /// The web page it is in, if any.
+    pub(crate) page: Option<Page>,
 }
 
-/// The element's box in the layout, or why it has none.
+/// The element's box in the layout, or why it has none: its extents, in its page's unit
+/// (`page_unit`) when it is in one, from the window's origin.
 pub(crate) fn place(placement: Placement) -> Result<LayoutBox, Unmappable> {
     let Placement {
         states,
         extents,
         frame_fits,
         origin,
+        page,
     } = placement;
     if !(states.has(State::Showing) && states.has(State::Visible)) {
         return Err(Unmappable::NotShowing);
@@ -485,20 +574,30 @@ pub(crate) fn place(placement: Placement) -> Result<LayoutBox, Unmappable> {
         return Err(Unmappable::FrameSizeMismatch);
     }
     let origin = origin?;
-    let found = LayoutBox {
-        x: origin.at.x + f64::from(extents.x),
-        y: origin.at.y + f64::from(extents.y),
-        width: f64::from(extents.width),
-        height: f64::from(extents.height),
-    };
+    let unit = page_unit(page, origin.area.scale)?;
+    let found = laid(origin.at, extents, unit);
     let centre = found.centre();
     if !on(&origin.area, centre) {
         return Err(Unmappable::OffOutput);
+    }
+    let document = page.and_then(|page| page.document);
+    if document.is_some_and(|document| !laid(origin.at, document, unit).contains(centre)) {
+        return Err(Unmappable::OffPage);
     }
     if origin.floating.iter().any(|tile| tile.contains(centre)) {
         return Err(Unmappable::Overlapped);
     }
     Ok(found)
+}
+
+/// `extents`, in `unit`s to the logical pixel, from the window's origin `at`.
+fn laid(at: LayoutPt, extents: Extents, unit: f64) -> LayoutBox {
+    LayoutBox {
+        x: at.x + f64::from(extents.x) / unit,
+        y: at.y + f64::from(extents.y) / unit,
+        width: f64::from(extents.width) / unit,
+        height: f64::from(extents.height) / unit,
+    }
 }
 
 /// Whether `point` lies on the output whose layout area is `area`.
@@ -647,14 +746,17 @@ fn only(frames: &[Frame<'_>], candidates: &[usize], title: Option<&str>) -> Resu
 }
 
 /// The `elements` filters: an exact role name, text the name contains, ignoring case, and
-/// whether only interactive elements count.
-#[derive(Debug, Clone, Default)]
+/// whether only interactive elements count; and for `wait_for`, states the element has.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Filter {
     pub(crate) role: Option<String>,
     /// Lowercased.
     name_contains: Option<String>,
     /// Only elements with actions or editable text, unless a role was asked for.
     pub(crate) interactive_only: bool,
+    /// States the element has, and states it lacks.
+    states: States,
+    lacking: States,
 }
 
 impl Filter {
@@ -667,11 +769,26 @@ impl Filter {
             role,
             name_contains: name_contains.map(str::to_lowercase),
             interactive_only,
+            states: States::default(),
+            lacking: States::default(),
         }
     }
 
-    pub(crate) fn matches(&self, role: &str, name: &str) -> bool {
-        self.role.as_deref().is_none_or(|wanted| wanted == role)
+    /// The same filter, for elements that have the state named `name` too, or with
+    /// `DISABLED`, that lack `sensitive`; none when `is_state` refuses `name`.
+    pub(crate) fn with_state(mut self, name: &str) -> Option<Self> {
+        if name == DISABLED {
+            self.lacking = States::named("sensitive")?;
+        } else {
+            self.states = States::named(name)?;
+        }
+        Some(self)
+    }
+
+    pub(crate) fn matches(&self, role: &str, name: &str, states: States) -> bool {
+        states.holds(self.states)
+            && !states.any(self.lacking)
+            && self.role.as_deref().is_none_or(|wanted| wanted == role)
             && self
                 .name_contains
                 .as_deref()
@@ -701,8 +818,8 @@ pub(crate) struct Kept {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Row {
     /// The lineage binds it: its row has a name, which the lineage keeps as it keeps every
-    /// name above the element, or it sits in no row and no other element read has its
-    /// role and name.
+    /// name above the element, or it sits in no row and no other element of the whole
+    /// tree has its role and name.
     Lineage,
     /// It is a named row itself, so its own name is compared for the pointer tools too.
     Own,
@@ -719,6 +836,10 @@ pub(crate) enum Unbound {
     /// It sits in no row, and other elements read have its role and name, as when a
     /// toolkit puts a list's rows on the bus without containers.
     Repeated,
+    /// It sits in no row, and the walk didn't read the whole tree, since it was cut short
+    /// or a node was gone before it was read, so it can't tell whether another element has
+    /// its role and name.
+    CutShort,
 }
 
 /// One object on the way from a window's frame down to an element: its path, its index
@@ -828,6 +949,7 @@ mod tests {
                 area,
                 floating: Vec::new(),
             }),
+            page: None,
         }
     }
 
@@ -860,6 +982,244 @@ mod tests {
         assert!((found.x - (-1280.0 + 57.333_333 + 1.5 + 40.0)).abs() < 1e-9);
         assert!((found.y - (100.0 + 65.333_333 + 2.25 + 70.0)).abs() < 1e-9);
         assert!((found.centre().x - (found.x + 160.0)).abs() < 1e-9);
+    }
+
+    /// An element of a floating window whose tile is at `tile`, on a 1280x720 output at
+    /// `scale`, as in the nested runs.
+    fn floating(extents: Extents, tile: (f64, f64), scale: f64, page: Option<Page>) -> Placement {
+        let area = LogicalOutput {
+            width: 1280,
+            height: 720,
+            ..output(0, 0, scale)
+        };
+        Placement {
+            states: SHOWN,
+            extents,
+            frame_fits: true,
+            origin: Ok(Origin {
+                at: LayoutPt {
+                    x: tile.0,
+                    y: tile.1,
+                },
+                output: "winit".to_owned(),
+                area,
+                floating: Vec::new(),
+            }),
+            page,
+        }
+    }
+
+    const fn page(document: Extents, container: Extents) -> Page {
+        Page {
+            document: Some(document),
+            container: Some(container),
+        }
+    }
+
+    /// A nested run's floating window: the output's scale, where its tile was, the page's
+    /// document and the view holding it, the field's extents, and the field where the
+    /// screenshot showed it, in the layout.
+    struct Measured {
+        scale: f64,
+        tile: (f64, f64),
+        document: Extents,
+        container: Extents,
+        field: Extents,
+        shown: (f64, f64, f64, f64),
+    }
+
+    /// Helium 0.19.2.1's, then Chrome for Testing 153's, whose infobar puts the page 56
+    /// pixels down.
+    const MEASURED: [Measured; 8] = [
+        Measured {
+            scale: 1.0,
+            tile: (66.0, 66.0),
+            document: extents(0, 0, 616, 654),
+            container: extents(0, 0, 616, 654),
+            field: extents(40, 40, 200, 30),
+            shown: (106.0, 106.0, 200.0, 30.0),
+        },
+        Measured {
+            scale: 1.25,
+            tile: (66.4, 65.6),
+            document: extents(0, 0, 610, 638),
+            container: extents(0, 0, 488, 510),
+            field: extents(50, 50, 250, 38),
+            shown: (106.4, 105.6, 200.0, 30.4),
+        },
+        Measured {
+            scale: 1.5,
+            tile: (66.0, 66.0),
+            document: extents(0, 0, 603, 621),
+            container: extents(0, 0, 402, 414),
+            field: extents(60, 60, 300, 45),
+            shown: (106.0, 106.67, 200.0, 29.33),
+        },
+        Measured {
+            scale: 2.0,
+            tile: (66.0, 66.0),
+            document: extents(0, 0, 592, 588),
+            container: extents(0, 0, 296, 294),
+            field: extents(80, 80, 400, 60),
+            shown: (106.0, 106.0, 200.0, 30.0),
+        },
+        Measured {
+            scale: 1.0,
+            tile: (66.0, 66.0),
+            document: extents(0, 56, 616, 598),
+            container: extents(0, 56, 616, 598),
+            field: extents(40, 96, 200, 30),
+            shown: (106.0, 162.0, 200.0, 30.0),
+        },
+        Measured {
+            scale: 1.25,
+            tile: (66.4, 65.6),
+            document: extents(0, 70, 610, 568),
+            container: extents(0, 56, 488, 454),
+            field: extents(50, 120, 250, 38),
+            shown: (106.4, 161.6, 200.0, 30.4),
+        },
+        Measured {
+            scale: 1.5,
+            tile: (66.0, 66.0),
+            document: extents(0, 84, 603, 537),
+            container: extents(0, 56, 402, 358),
+            field: extents(60, 144, 300, 45),
+            shown: (106.0, 162.67, 200.0, 29.33),
+        },
+        Measured {
+            scale: 2.0,
+            tile: (66.0, 66.0),
+            document: extents(0, 112, 592, 476),
+            container: extents(0, 56, 296, 238),
+            field: extents(80, 192, 400, 60),
+            shown: (106.0, 162.0, 200.0, 30.0),
+        },
+    ];
+
+    // The bug: with server-side decorations Chromium's frame is the window's size, so the
+    // frame guard passed, and its page's extents, in the output's pixels, were placed as
+    // logical ones. At scale 1.5 the field the screenshot showed at (106, 106.67) 200x29.33
+    // was listed at (126, 126) 300x45, and a click by its ref landed below it.
+    #[test]
+    fn a_pages_elements_are_placed_where_the_screenshot_shows_them_at_every_scale() {
+        for run in MEASURED {
+            let page = Some(page(run.document, run.container));
+            let found = place(floating(run.field, run.tile, run.scale, page)).unwrap();
+            let (x, y, width, height) = run.shown;
+            for (got, want) in [
+                (found.x, x),
+                (found.y, y),
+                (found.width, width),
+                (found.height, height),
+            ] {
+                assert!((got - want).abs() <= 1.0, "{}: {found:?}", run.scale);
+            }
+        }
+    }
+
+    // Chromium leaves a web object `showing` until nothing of it is left in the page, so a
+    // link scrolled half under a browser's toolbar was placed with its centre on the
+    // toolbar, where a click by its ref would land. At every scale and frame shape
+    // measured, a field whose centre is a pixel above or left of its document is refused,
+    // and one a pixel inside is placed.
+    #[test]
+    fn a_pages_element_whose_centre_is_outside_the_page_is_never_placed() {
+        for run in MEASURED {
+            let page = Some(page(run.document, run.container));
+            let (top, left) = (run.document.y, run.document.x);
+            let (half_height, half_width) = (run.field.height / 2, run.field.width / 2);
+            for (y, x, refused) in [
+                (
+                    top - half_height - 1,
+                    run.field.x,
+                    Some(Unmappable::OffPage),
+                ),
+                (
+                    run.field.y,
+                    left - half_width - 1,
+                    Some(Unmappable::OffPage),
+                ),
+                (top - half_height + 1, run.field.x, None),
+                (run.field.y, left - half_width + 1, None),
+            ] {
+                let field = Extents { x, y, ..run.field };
+                let found = place(floating(field, run.tile, run.scale, page));
+                assert_eq!(found.err(), refused, "{}", run.scale);
+            }
+        }
+    }
+
+    // Chromium's own views, outside any page, stay in logical pixels at every scale: Chrome
+    // for Testing's infobar link at 245,16 141x23 in a window 402 wide at scale 1.5.
+    // Dividing every element's extents by the scale would move such a control to two
+    // thirds of its distance from the window's corner.
+    #[test]
+    fn an_element_outside_any_page_keeps_its_logical_pixels() {
+        let link = place(floating(extents(245, 16, 141, 23), (66.0, 66.0), 1.5, None)).unwrap();
+        assert_eq!(
+            link,
+            LayoutBox {
+                x: 311.0,
+                y: 82.0,
+                width: 141.0,
+                height: 23.0
+            }
+        );
+    }
+
+    // Where the page's unit can't be told, its elements get no box rather than a guess: a
+    // document narrower than its view in either unit; one with no extents; and a view so
+    // small both units fit. A box from the wrong unit would send a click elsewhere.
+    #[test]
+    fn a_page_whose_unit_cant_be_told_is_never_placed() {
+        let container = extents(0, 56, 402, 358);
+        let field = extents(60, 144, 300, 45);
+        let unknown = [
+            Some(page(extents(0, 84, 360, 537), container)),
+            Some(page(extents(0, 56, 300, 358), container)),
+            Some(Page {
+                document: None,
+                container: Some(container),
+            }),
+            Some(Page {
+                document: Some(extents(0, 84, 603, 537)),
+                container: None,
+            }),
+            Some(page(extents(0, 0, 0, 0), extents(0, 0, 0, 0))),
+            Some(page(extents(0, 0, 3, 3), extents(0, 0, 2, 2))),
+        ];
+        for page in unknown {
+            assert_eq!(
+                place(floating(field, (66.0, 66.0), 1.5, page)),
+                Err(Unmappable::PageScaleUnknown),
+                "{page:?}"
+            );
+            // At scale 1 both units are one, so nothing about the page needs telling.
+            assert_ne!(
+                place(floating(field, (66.0, 66.0), 1.0, page)),
+                Err(Unmappable::PageScaleUnknown),
+                "{page:?}"
+            );
+        }
+    }
+
+    // With client-side decorations Chromium's frame is larger than the window by its
+    // shadow, 32 by 42 pixels in every run, and where the window starts in it isn't on the
+    // bus, so the frame guard still refuses, though the page's unit is known: Helium at
+    // scale 1.5, its frame 434x456 for a 402x414 window.
+    #[test]
+    fn a_page_in_a_frame_with_client_side_decorations_is_still_refused() {
+        let csd = Placement {
+            frame_fits: frame_fits(extents(0, 0, 434, 456), (402, 414)),
+            ..floating(
+                extents(474, 109, 150, 45),
+                (66.0, 66.0),
+                1.5,
+                Some(page(extents(24, 49, 603, 587), extents(16, 33, 402, 391))),
+            )
+        };
+        assert_eq!(place(csd), Err(Unmappable::FrameSizeMismatch));
     }
 
     #[test]
@@ -1232,6 +1592,7 @@ mod tests {
                 extents,
                 frame_fits,
                 origin: Err(Unmappable::Tiled),
+                page: None,
             };
             assert_eq!(place(placement.clone()), Err(reason), "{placement:?}");
             let fresh = Fresh {
@@ -1340,14 +1701,40 @@ mod tests {
 
     #[test]
     fn filters_by_exact_role_and_name_text_in_any_case() {
+        let none = States::default();
         let all = Filter::default();
-        assert!(all.matches("label", ""));
+        assert!(all.matches("label", "", none));
         let buttons = Filter::new(Some("button".to_owned()), Some("PRIMARY"), false);
-        assert!(buttons.matches("button", "Primary: 3"));
-        assert!(!buttons.matches("button", "Second: 0"));
-        assert!(!buttons.matches("toggle_button", "Primary"));
+        assert!(buttons.matches("button", "Primary: 3", none));
+        assert!(!buttons.matches("button", "Second: 0", none));
+        assert!(!buttons.matches("toggle_button", "Primary", none));
         assert!(is_role("check_box"));
         assert!(!is_role("push button"));
+    }
+
+    // A wait for a button to become enabled must not end on the disabled one.
+    #[test]
+    fn a_state_filter_needs_the_state_and_knows_the_listing_names() {
+        let button = Filter::new(Some("button".to_owned()), None, false);
+        let enabled = button.clone().with_state("enabled").unwrap();
+        let on = States::from_words(&[(1 << 8) | (1 << 25)]);
+        assert!(enabled.matches("button", "Save", on));
+        assert!(!enabled.matches("button", "Save", States::from_words(&[1 << 25])));
+        assert_eq!(
+            States::named("checked"),
+            Some(States::from_words(&[1 << 4]))
+        );
+        assert_eq!(
+            States::named("read_only"),
+            Some(States::from_words(&[0, 1 << 11]))
+        );
+        assert_eq!(States::named("disabled"), None);
+        // `disabled` means what a compact line means by it: no `sensitive`.
+        let disabled = button.with_state(DISABLED).unwrap();
+        assert!(disabled.matches("button", "Save", States::from_words(&[1 << 25])));
+        assert!(!disabled.matches("button", "Save", States::from_words(&[1 << 24])));
+        assert!(is_state(DISABLED) && is_state("sensitive") && !is_state("greyed"));
+        assert!(Filter::default().with_state("greyed").is_none());
     }
 
     #[test]

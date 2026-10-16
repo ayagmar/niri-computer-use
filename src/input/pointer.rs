@@ -181,13 +181,24 @@ impl<P> Gesture<P> {
 }
 
 impl Gesture<Spot> {
-    /// The element refs among its points.
-    fn elements(&self) -> Vec<&str> {
-        let spots = match self {
+    fn spots(&self) -> Vec<&Spot> {
+        match self {
             Self::Move(at) | Self::Click { at, .. } | Self::Scroll { at, .. } => vec![at],
             Self::Drag { from, to, .. } => vec![from, to],
-        };
-        spots
+        }
+    }
+
+    /// Whether one of its points is a pixel of the screenshot, which only the image says
+    /// what it lands on.
+    fn has_pixel(&self) -> bool {
+        self.spots()
+            .into_iter()
+            .any(|spot| matches!(spot, Spot::Pixel(_)))
+    }
+
+    /// The element refs among its points.
+    fn elements(&self) -> Vec<&str> {
+        self.spots()
             .into_iter()
             .filter_map(|spot| match spot {
                 Spot::Element(id) => Some(id.as_str()),
@@ -321,6 +332,11 @@ pub(crate) async fn point(
         .ok()
         .and_then(niri::events::EventStream::connection);
     shot.check(Instant::now(), &outputs, connection)?;
+    // Checked again right before the first input (`Gate::pass`); this refuses early.
+    let at_pixel = gesture.has_pixel();
+    if at_pixel {
+        shot.unmoved(&niri::shifted(input.niri.events, &shot.output).await?)?;
+    }
     let tool = gesture.tool();
     let button = gesture.button();
     // The windows of the elements it aims at, and of the one a drag ends at.
@@ -360,6 +376,7 @@ pub(crate) async fn point(
     let gate = Gate {
         waiter: &mut waiter,
         input,
+        pixels: at_pixel.then_some(&shot),
         windows: &windows,
         end,
         reading: GESTURE_READING,
@@ -448,6 +465,8 @@ async fn locate(
 struct Gate<'a> {
     waiter: &'a mut niri::waiter::Waiter,
     input: Input<'a>,
+    /// The screenshot, when the gesture aims at its pixels.
+    pixels: Option<&'a Shot>,
     /// The windows of the elements the gesture aims at, none for pixels.
     windows: &'a [u64],
     /// The element a drag ends at, if it ends at one.
@@ -483,7 +502,10 @@ enum Stage {
 impl Gate<'_> {
     /// The checks right before the gesture's next part, with nothing awaited between them
     /// and it: before its first input, and after each wait in it. niri's events up to now
-    /// are applied first (`Waiter::moved`). An element aim is refused by any of them that
+    /// are applied first (`Waiter::moved`). Until a button is pressed, a pixel aim is refused
+    /// when the windows on the screenshot's output moved since the capture began, or just
+    /// before it (`Shot::unmoved`), as at the call's start: preparing the gesture can take
+    /// a while. An element aim is refused by any of them that
     /// can change what is shown where since the call's first look, before its elements were
     /// placed, until a button is pressed: a box may no longer be where its element is. Once
     /// something went out, any gesture is stopped by a workspace switch or the overview,
@@ -494,11 +516,24 @@ impl Gate<'_> {
     /// each time about the focused window and the elements' windows as niri reports them
     /// now. The lock state is read again first when the last read is too old, since a
     /// round trip in the gesture can take seconds, and must still be fresh at the end,
-    /// however long the look took. Before the first input, the desk is told input is going
-    /// out: a motion can open a hover menu or move focus, so a stop or a lost lease from
-    /// then on leaves the call `uncertain`. `pointer` is where the last motion put the
-    /// pointer, if one went out.
+    /// however long the look took. A look that kept a read made before it, still fresh
+    /// then, may find it too old at the end without anything having been slow: that look
+    /// reads again and is made once more. Before the first input, the desk is told input
+    /// is going out: a motion can open a hover menu or move focus, so a stop or a lost
+    /// lease from then on leaves the call `uncertain`. `pointer` is where the last motion
+    /// put the pointer, if one went out.
     async fn pass(&mut self, stage: Stage, pointer: Option<LayoutPt>) -> Result<(), ToolError> {
+        let kept = self.input.niri.desk.lock_fresh();
+        match self.look(stage, pointer).await {
+            Err(error) if kept && error.name == ErrorName::LockStale => {
+                self.look(stage, pointer).await
+            }
+            looked => looked,
+        }
+    }
+
+    /// One look of `pass`.
+    async fn look(&mut self, stage: Stage, pointer: Option<LayoutPt>) -> Result<(), ToolError> {
         self.read_lock(stage).await?;
         let moved = self.waiter.moved().await.map_err(|reason| {
             let sent = if stage == Stage::First {
@@ -509,6 +544,11 @@ impl Gate<'_> {
             ToolError::new(ErrorName::UpstreamError, format!("{reason}; {sent}"))
         })?;
         self.still_aimed(stage, &moved, pointer)?;
+        if stage != Stage::Pressed
+            && let Some(shot) = self.pixels
+        {
+            shot.unmoved(&niri::shifted(self.input.niri.events, &shot.output).await?)?;
+        }
         let view = self.waiter.view();
         if let Some(refused) = policy::refuse_input(self.input.policy, focused_app_id(view)) {
             return Err(refused);
@@ -1073,14 +1113,14 @@ mod tests {
         }
     }
 
-    async fn click_holding_ctrl(name: &str, replies: Vec<(Duration, &'static str)>) -> HeldClick {
-        let bench = Bench::start(name, replies);
-        let (niri, socket, runtime) = (&bench.niri, &bench.socket, &bench.runtime);
-        let input = bench.input();
-        let outputs = niri::outputs(socket).await.unwrap();
+    /// A screenshot ref of the whole of the fake's output at scale 1, taken now and settled
+    /// then, since the event stream counts its initial state as a move.
+    async fn whole_output(bench: &Bench) -> Shot {
+        bench.events.desktop().await.unwrap();
+        let outputs = niri::outputs(&bench.socket).await.unwrap();
         let output = &outputs[crate::test_support::wayland::OUTPUT];
         let geometry = output.logical.unwrap();
-        let shot = Shot {
+        Shot {
             output: output.name.clone(),
             geometry,
             motion_geometry: crate::coords::motion_geometry(output),
@@ -1093,8 +1133,16 @@ mod tests {
             scale: 1.0,
             width: geometry.width,
             height: geometry.height,
+            steady_since: Some(Instant::now()),
             ..crate::test_support::shot()
-        };
+        }
+    }
+
+    async fn click_holding_ctrl(name: &str, replies: Vec<(Duration, &'static str)>) -> HeldClick {
+        let bench = Bench::start(name, replies);
+        let (niri, runtime) = (&bench.niri, &bench.runtime);
+        let input = bench.input();
+        let shot = whole_output(&bench).await;
         niri.slow_modifiers(Duration::from_millis(300)).await;
         let click = Gesture::Click {
             at: Spot::Pixel(PX),
@@ -1112,6 +1160,64 @@ mod tests {
         };
         std::fs::remove_dir_all(&bench.dir).unwrap();
         clicked
+    }
+
+    /// Once the pointer's connection to the display is held, has niri report window 1
+    /// resized, waits until the event stream has it, and serves the connection.
+    async fn resize_once_held(bench: &Bench) {
+        let niri = &bench.niri;
+        while !niri.seen().holding {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let layout = niri_ipc::WindowLayout {
+            pos_in_scrolling_layout: Some((1, 1)),
+            tile_size: (960.0, 1080.0),
+            window_size: (960, 1080),
+            tile_pos_in_workspace_view: None,
+            window_offset_in_tile: (0.0, 0.0),
+        };
+        let resized = Instant::now();
+        niri.event(niri_ipc::Event::WindowLayoutsChanged {
+            changes: vec![(1, layout)],
+        });
+        let output = crate::test_support::wayland::OUTPUT;
+        let shifted = async || bench.events.shifted(output).await.unwrap().shifted;
+        while shifted().await.is_none_or(|shifted| shifted.at < resized) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        niri.serve_held().await;
+    }
+
+    // The bug: a pixel aim was checked against niri's windows once, as the call began, and
+    // the look right before the first input let any window change through for a gesture of
+    // pixels only, so a window that moved while the call got ready, here while niri took
+    // its time with the pointer's connection, didn't stop the click.
+    #[tokio::test]
+    async fn a_pixel_click_is_refused_when_a_window_moves_while_it_gets_ready() {
+        let bench = Bench::start("pointer-moved-ready", Vec::new());
+        let niri = &bench.niri;
+        let shot = whole_output(&bench).await;
+        niri.hold_client().await;
+        let click = Gesture::Click {
+            at: Spot::Pixel(PX),
+            button: Button::Left,
+            count: 1,
+        };
+        let no_element = |id: &str| Err(a11y::not_accessible(format!("no element {id}")));
+        let clicking = point(bench.input(), Ok(shot), click, &[], no_element);
+        let both = async { tokio::join!(clicking, resize_once_held(&bench)).0 };
+        let clicked = tokio::time::timeout(Duration::from_secs(10), Box::pin(both))
+            .await
+            .unwrap();
+        let Err(CallError::Tool(error)) = clicked else {
+            panic!("the click wasn't refused: {clicked:?}");
+        };
+        assert_eq!(error.name, ErrorName::RefInvalid);
+        let moved = "layout_changed: niri moved or resized window 1 since the screenshot";
+        assert!(error.detail.starts_with(moved), "{}", error.detail);
+        assert_eq!(niri.seen().buttons, []);
+        assert!(marker::read(&bench.runtime).is_none());
+        std::fs::remove_dir_all(&bench.dir).unwrap();
     }
 
     // Held modifiers go down after the look before the first input, and niri may take long
@@ -1191,6 +1297,7 @@ mod tests {
         let mut gate = Gate {
             waiter: &mut waiter,
             input,
+            pixels: None,
             windows: &[],
             end: None,
             reading: GESTURE_READING,
@@ -1216,6 +1323,7 @@ mod tests {
         let mut gate = Gate {
             waiter: &mut waiter,
             input,
+            pixels: None,
             windows: &[],
             end: None,
             reading: GESTURE_READING,
@@ -1234,6 +1342,43 @@ mod tests {
         std::fs::remove_dir_all(&bench.dir).unwrap();
     }
 
+    // A look keeps a lock read under 250 ms old, which can turn 250 ms while the look
+    // catches up on niri's events. That says nothing about how slow the desktop is: the
+    // look reads the lock state again and looks once more, before the first input and
+    // during a drag alike, rather than refusing the call or dropping the drag.
+    #[tokio::test]
+    async fn a_lock_read_that_ages_out_during_a_look_is_made_again() {
+        let bench = Bench::start("pointer-gate-aged", vec![(Duration::ZERO, UNLOCKED)]);
+        let (mut waiter, input) = gate_on(&bench).await;
+        let mut gate = Gate {
+            waiter: &mut waiter,
+            input,
+            pixels: None,
+            windows: &[],
+            end: None,
+            reading: GESTURE_READING,
+        };
+        for stage in [Stage::First, Stage::Pressed] {
+            let passed = pass_aging(&mut gate, &bench.desk, stage).await;
+            assert!(passed.is_ok(), "{stage:?}: {passed:?}");
+            assert!(bench.desk.lock_fresh(), "{stage:?}");
+        }
+        std::fs::remove_dir_all(&bench.dir).unwrap();
+    }
+
+    /// `gate`'s pass at `stage`, whose look starts with a fresh lock read on `desk` that
+    /// becomes one begun a second ago once the look yields to catch up on niri's events.
+    async fn pass_aging(
+        gate: &mut Gate<'_>,
+        desk: &crate::control::desk::Desk,
+        stage: Stage,
+    ) -> Result<(), ToolError> {
+        desk.lock_read(Instant::now());
+        let aging = desk.clone();
+        tokio::spawn(async move { aging.lock_read(Instant::now() - Duration::from_secs(1)) });
+        gate.pass(stage, None).await
+    }
+
     // While a gesture reads the lock state again after a read that came back stale, a drag
     // holds its button and an app may autoscroll under it, so those reads stop after a
     // second in all, however long each one would take. The look's first read keeps its
@@ -1246,6 +1391,7 @@ mod tests {
         let mut gate = Gate {
             waiter: &mut waiter,
             input,
+            pixels: None,
             windows: &[],
             end: None,
             reading: GESTURE_READING,
@@ -1315,6 +1461,7 @@ mod tests {
             let gate = Gate {
                 waiter: &mut waiter,
                 input,
+                pixels: None,
                 windows: &[],
                 end: None,
                 reading: GESTURE_READING,
@@ -1371,6 +1518,7 @@ mod tests {
         let gate = Gate {
             waiter: &mut waiter,
             input,
+            pixels: None,
             windows: &[],
             end: None,
             reading: GESTURE_READING,

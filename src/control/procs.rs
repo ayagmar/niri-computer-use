@@ -1,15 +1,18 @@
 //! What the server needs to know about processes, read from `/proc`. The root is a
 //! parameter so tests can use a fake `/proc`.
 
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::io::Read as _;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
+
+use tokio::time::Instant;
 
 /// One process, as `/proc/<pid>/stat` describes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Stat {
     /// `R`, `S`, `Z` and so on.
     pub(crate) state: char,
-    /// The process group.
-    pub(crate) group: u32,
     /// Field 22, in clock ticks since boot. With the PID it names one process for good.
     pub(crate) start_time: u64,
 }
@@ -26,15 +29,9 @@ pub(crate) fn parse_stat(text: &str) -> Option<Stat> {
     let (_, rest) = text.rsplit_once(") ")?;
     let mut fields = rest.split(' ');
     let state = fields.next()?.chars().next()?;
-    // `rest` starts at field 3 (state). Field 4 is the parent, 5 the process group, and
-    // 22 the start time.
-    let group = fields.nth(1)?.parse().ok()?;
-    let start_time = fields.nth(16)?.parse().ok()?;
-    Some(Stat {
-        state,
-        group,
-        start_time,
-    })
+    // `rest` starts at field 3 (state); field 22 is the start time.
+    let start_time = fields.nth(18)?.parse().ok()?;
+    Some(Stat { state, start_time })
 }
 
 /// The process `pid` under `proc_root`, if it exists.
@@ -74,6 +71,77 @@ pub(crate) fn comm(proc_root: &Path, pid: u32) -> Option<String> {
     Some(comm.trim_end().to_owned())
 }
 
+/// Files every Chromium-family process maps: Chromium's ICU data, and V8's context
+/// snapshot. Chromium, Chrome, Electron and CEF apps all ship them.
+const CHROMIUM_FILES: [&str; 2] = ["icudtl.dat", "v8_context_snapshot.bin"];
+/// How much of `/proc/<pid>/maps` is read. A Chromium browser that ran for days had 223 KB.
+const MAPS_LIMIT: u64 = 4 << 20;
+
+/// A read of a `/proc/<pid>/maps` under way: `None` until it ends.
+type Reading = tokio::sync::watch::Receiver<Option<Option<String>>>;
+
+/// The reads under way, by path, so calls on a stuck process share one thread.
+static READING: Mutex<BTreeMap<PathBuf, Reading>> = Mutex::new(BTreeMap::new());
+
+/// Whether `pid` is a Chromium-family process, one that maps one of `CHROMIUM_FILES`, by
+/// `deadline`. Reading `/proc/<pid>/maps` waits for the process's memory map, so it runs
+/// on a thread of its own, abandoned at the deadline, which neither the runtime's shutdown
+/// nor the server's exit waits for; a later call on the same process joins that read while
+/// it lasts, so a stuck process holds one thread. A process that can't be read in time, as
+/// another user's or a stuck one, isn't.
+pub(crate) async fn chromium_family(proc_root: &Path, pid: u32, deadline: Instant) -> bool {
+    let Some(mut read) = reading(proc_root.join(pid.to_string()).join("maps"), pid) else {
+        return false;
+    };
+    let read = tokio::time::timeout_at(deadline, read.wait_for(Option::is_some)).await;
+    matches!(read, Ok(Ok(text)) if text.as_ref().and_then(Option::as_deref).is_some_and(maps_chromium))
+}
+
+/// The read of `maps` under way, or a new one on a thread named for `pid`; none when no
+/// thread could start.
+fn reading(maps: PathBuf, pid: u32) -> Option<Reading> {
+    let mut reading = READING.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(read) = reading.get(&maps) {
+        return Some(read.clone());
+    }
+    let (sender, read) = tokio::sync::watch::channel(None);
+    let key = maps.clone();
+    std::thread::Builder::new()
+        .name(format!("maps {pid}"))
+        .spawn(move || {
+            let text = read_maps(&maps);
+            READING
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&maps);
+            sender.send_replace(Some(text));
+        })
+        .ok()?;
+    reading.insert(key, read.clone());
+    drop(reading);
+    Some(read)
+}
+
+/// At most `MAPS_LIMIT` bytes of a `/proc/<pid>/maps`.
+fn read_maps(maps: &Path) -> Option<String> {
+    let mut text = Vec::new();
+    std::fs::File::open(maps)
+        .ok()?
+        .take(MAPS_LIMIT)
+        .read_to_end(&mut text)
+        .ok()?;
+    Some(String::from_utf8_lossy(&text).into_owned())
+}
+
+/// Whether the text of a `/proc/<pid>/maps` maps one of `CHROMIUM_FILES`, removed since or
+/// not.
+fn maps_chromium(maps: &str) -> bool {
+    maps.lines()
+        .filter_map(|line| line.rsplit_once('/'))
+        .map(|(_, name)| name.strip_suffix(" (deleted)").unwrap_or(name))
+        .any(|name| CHROMIUM_FILES.contains(&name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,7 +154,6 @@ mod tests {
             parse_stat(STAT),
             Some(Stat {
                 state: 'S',
-                group: 4711,
                 start_time: 98765
             })
         );
@@ -138,5 +205,102 @@ mod tests {
     fn reads_this_process_from_the_real_proc() {
         let me = stat(Path::new("/proc"), std::process::id()).unwrap();
         assert!(!me.exited());
+    }
+
+    #[test]
+    fn tells_a_chromium_family_process_by_the_files_it_maps() {
+        let line = |path: &str| format!("7f00-7f10 r--p 00000000 103:02 4242      {path}\n");
+        let maps = |paths: &[&str]| paths.iter().map(|path| line(path)).collect::<String>();
+        assert!(maps_chromium(&maps(&[
+            "/usr/lib/libc.so.6",
+            "/opt/helium/icudtl.dat"
+        ])));
+        assert!(maps_chromium(&maps(&[
+            "/opt/app dir/v8_context_snapshot.bin"
+        ])));
+        // Upgraded under the running app.
+        assert!(maps_chromium(&maps(&["/opt/vesktop/icudtl.dat (deleted)"])));
+        assert!(!maps_chromium(&maps(&[
+            "/usr/bin/foot",
+            "/usr/lib/libc.so.6",
+            "[heap]"
+        ])));
+        assert!(!maps_chromium(&maps(&[
+            "/opt/x/icudtl.dat.bak",
+            "/opt/x/not_icudtl.dat"
+        ])));
+        assert!(!maps_chromium("7f00-7f10 rw-p 00000000 00:00 0\n"));
+    }
+
+    #[tokio::test]
+    async fn reads_whether_a_process_maps_chromium_files_and_no_process_is_none() {
+        let root = crate::test_support::fresh_dir("procs-chromium");
+        for (pid, path) in [(5, "/opt/helium/icudtl.dat"), (6, "/usr/bin/foot")] {
+            std::fs::create_dir(root.join(pid.to_string())).unwrap();
+            let line = format!("7f00-7f10 r--p 00000000 103:02 4242      {path}\n");
+            std::fs::write(root.join(format!("{pid}/maps")), line).unwrap();
+        }
+        let deadline = Instant::now() + std::time::Duration::from_secs(1);
+        assert!(chromium_family(&root, 5, deadline).await);
+        assert!(!chromium_family(&root, 6, deadline).await);
+        assert!(!chromium_family(&root, 7, deadline).await);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_maps_read_that_doesnt_finish_by_the_deadline_isnt_chromium() {
+        let root = crate::test_support::fresh_dir("procs-chromium-stuck");
+        std::fs::create_dir(root.join("5")).unwrap();
+        // A FIFO with no writer blocks the open, as a stuck process's memory map can.
+        let mode = rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR;
+        rustix::fs::mkfifoat(rustix::fs::CWD, root.join("5/maps"), mode).unwrap();
+        let started = Instant::now();
+        let deadline = started + std::time::Duration::from_millis(100);
+        assert!(!chromium_family(&root, 5, deadline).await);
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        // Lets the abandoned open finish.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(root.join("5/maps"))
+            .unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The bug: each call on a stuck process left a thread of its own blocked in the read,
+    /// so an agent polling such a window piled up threads without bound.
+    #[tokio::test]
+    async fn calls_on_a_stuck_process_share_one_read() {
+        const PID: u32 = 31_337;
+        let root = crate::test_support::fresh_dir("procs-chromium-shared");
+        std::fs::create_dir(root.join(PID.to_string())).unwrap();
+        let maps = root.join(format!("{PID}/maps"));
+        let mode = rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR;
+        rustix::fs::mkfifoat(rustix::fs::CWD, &maps, mode).unwrap();
+        for _ in 0..3 {
+            let deadline = Instant::now() + std::time::Duration::from_millis(50);
+            assert!(!chromium_family(&root, PID, deadline).await);
+        }
+        assert_eq!(readers(PID), 1);
+        // Ends the read; a call after it reads again, and sees what the process maps now.
+        std::fs::OpenOptions::new().write(true).open(&maps).unwrap();
+        let ended = Instant::now() + std::time::Duration::from_secs(2);
+        while readers(PID) > 0 && Instant::now() < ended {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        std::fs::remove_file(&maps).unwrap();
+        let line = "7f00-7f10 r--p 00000000 103:02 4242      /opt/helium/icudtl.dat\n";
+        std::fs::write(&maps, line).unwrap();
+        let deadline = Instant::now() + std::time::Duration::from_secs(1);
+        assert!(chromium_family(&root, PID, deadline).await);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// How many threads of this process read the maps of `pid`.
+    fn readers(pid: u32) -> usize {
+        std::fs::read_dir("/proc/self/task")
+            .unwrap()
+            .filter_map(|task| std::fs::read_to_string(task.ok()?.path().join("comm")).ok())
+            .filter(|comm| comm.trim_end() == format!("maps {pid}"))
+            .count()
     }
 }

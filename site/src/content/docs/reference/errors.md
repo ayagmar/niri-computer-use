@@ -59,7 +59,7 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 ### `read_only`
 
-**Cause:** this build doesn't support the running niri's major or minor version, niri sent events this build can't parse, or the policy file is invalid. The `detail` says which.
+**Cause:** this build doesn't support the running niri's major or minor version, niri sent events this build can't parse or apply, or the policy file is invalid. The `detail` says which.
 
 **What to do:** for niri's version, use a build that matches it (`status` shows `niri.version` and `niri.ipc_crate`). For the policy file, fix the error `status` shows under `policy.error`, then restart the agent's session.
 
@@ -97,9 +97,9 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 ### `ref_invalid`
 
-**Cause:** a pointer tool's `screenshot_ref`, or the one a `screenshot` zooms into, can't be used. The `detail` starts with the reason: `unknown_ref` (not a screenshot of this lease, or niri's event stream reconnected since), `expired` (over 60 seconds old), `output_changed` (the output moved, resized, changed scale or transform, or is gone) or `out_of_bounds` (the pixel is outside the image).
+**Cause:** a pointer tool's `screenshot_ref`, or the one a `screenshot` zooms into, can't be used. The `detail` starts with the reason: `unknown_ref` (not a screenshot of this lease, or niri's event stream reconnected since), `expired` (over 60 seconds old), `output_changed` (the output moved, resized, changed scale or transform, or is gone), `layout_changed` (niri moved, resized, opened or closed a window on that output, switched its workspace, opened or closed the overview, or the view followed another window there, as after a focus change, or the server had just started reading niri's events or reconnected to them, after the capture began or less than a second before it, unless the screenshot settled after that; a pixel aim only; it can't see the view scroll with nothing else changing, as with `center-column`, a floating window raised over another, a notification, launcher or panel opening over the target, or a change inside a window) or `out_of_bounds` (the pixel is outside the image).
 
-**What to do:** take a new screenshot and aim from it; for `out_of_bounds`, use a pixel inside the image.
+**What to do:** take a new screenshot and aim from it; for `out_of_bounds`, use a pixel inside the image. For `layout_changed` with `ms before the screenshot`, a plain screenshot taken right away is refused the same way: take one that waits for the screen to settle, with `wait_for` with `until: screen_stable` and `screenshot: true`, or `screenshot: true` on the action.
 
 ### `focus_mismatch`
 
@@ -111,13 +111,19 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 **Cause:** `type_text` with over 1000 characters, or over 1 MiB with `via: "paste"`, or `set_element_text` with over 64 KiB of UTF-8. Nothing was typed or set.
 
-**What to do:** split the text into calls of at most 1000 characters, or pass `via: "paste"`.
+**What to do:** split the text into calls of at most 1000 characters, or pass `via: "paste"`. End no part with a `>`, even one followed by spaces: a part ending in a tool-call closing tag, such as one closing `text` or `parameter`, whose opening tag was in an earlier part is refused with `leaked_tag`.
+
+### `leaked_tag`
+
+**Cause:** `type_text`'s text, typed or pasted, ends with one or more tool-call closing tags, such as `</parameter>` or `</invoke>`, that no opening tag of the same name earlier in the text balances. Each opening tag balances one closing tag, so a quoted tool call followed by the agent's own leaked tags is still caught. Models sometimes leak their own tool-call markup into the end of a long argument. The `detail` names the tags. Nothing was typed or pasted.
+
+**What to do:** send the text again without the tags. Only if the text really should end with such a tag, send the final `>` in a call of its own.
 
 ### `clipboard_unsaved`
 
 **Cause:** a paste (`type_text` with `via: "paste"`) couldn't save the clipboard whole before replacing it: every type it offers, over 16 MiB in all, or not read within two seconds. Or the clipboard holds what its owner marked as a secret (`x-kde-passwordManagerHint`), or something else was copied while it was being saved. Nothing changed. An earlier paste's text, which a `kept` outcome leaves on the clipboard marked as a secret, isn't refused: the next paste replaces it and reports `clipboard: cleared`.
 
-**What to do:** type the text with `type_text` and `via: "keys"` instead, in parts of at most 1000 characters with `submit: false`. Only if the text was meant to be submitted does the last part take `submit: true`, after the others went out whole: a paste never submits, so the fallback mustn't either. Typed text can't hold line breaks, so text with several lines needs another way; the error's detail tells the agent to ask the user.
+**What to do:** type the text with `type_text` and `via: "keys"` instead, in parts of at most 1000 characters with `submit: false`, none ending with a `>`, even one followed by spaces. Only if the text was meant to be submitted does the last part take `submit: true`, after the others went out whole: a paste never submits, so the fallback mustn't either. Typed text can't hold line breaks, so text with several lines needs another way; the error's detail tells the agent to ask the user.
 
 ### `save_not_enabled`
 
@@ -133,9 +139,9 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 ### `not_accessible`
 
-**Cause:** the window's app isn't on the accessibility bus, or has no accessible window that is this one.
+**Cause:** the window's app isn't on the accessibility bus, or has no accessible window that is this one. Chromium, Electron and CEF apps join the bus only when the session's accessibility was on when they started. The server then turns it on, unless the policy file sets [`turn_on_accessibility = false`](../../concepts/configuration/#turn_on_accessibility), and `detail` says what it did.
 
-**What to do:** aim at screenshot pixels for that window.
+**What to do:** aim at screenshot pixels for that window. When the window's process is a Chromium, Electron or CEF app's, `detail` says what the server did about the session's accessibility, and that the app needs a restart if it started while accessibility was off: ask the user before restarting it; after a restart, `elements` lists it. For any other app, `detail` says only that it isn't on the bus.
 
 ### `ambiguous_window`
 
@@ -151,15 +157,21 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 ### `element_unmappable`
 
-**Cause:** the element is still there but can't be aimed at now. The `detail` starts with `frame_size_mismatch` (the app's coordinates for this window can't be trusted), `not_showing`, `tiled` (niri gives its tiled window no place on screen), `empty`, `outside_screenshot` (its centre is outside the screenshot the pointer aims through, or its window is on another output than the screenshot) or, for `activate_element`, `action_unmapped` (not exactly one of the app's actions is known to have the name the element lists the chosen one by, so the server can't tell which action it would run; nothing was sent).
+**Cause:** the element is still there but can't be aimed at now. The `detail` starts with `frame_size_mismatch` (the app's coordinates for this window can't be trusted), `page_scale_unknown` (the element is in a web page at an output scale other than 1, and the page's document isn't the size of the view holding it or that size times the scale, so the unit of its coordinates isn't known; Chromium gives a page's coordinates in the output's pixels), `not_showing`, `tiled` (niri gives its tiled window no place on screen), `empty`, `outside_screenshot` (its centre is outside the screenshot the pointer aims through, or its window is on another output than the screenshot) or, for `activate_element`, `action_unmapped` (not exactly one of the app's actions is known to have the name the element lists the chosen one by, so the server can't tell which action it would run; nothing was sent).
 
-**What to do:** for `frame_size_mismatch`, aim at a screenshot pixel or use `activate_element` instead. For `not_showing`, bring it into view first, close niri's overview if it is open, or, when the detail says a tiled window as large as the output covers it, focus the element's window or leave fullscreen; when it says the view may still be moving, take a new screenshot and try again, but when it says the window moved or resized again, aim at screenshot pixels instead; when it says the element's centre is past its output's edge, move the window so the element is on screen, or aim at a screenshot pixel; when it says another floating window lies over it, use `activate_element` or `set_element_text`, or aim at screenshot pixels on a fresh screenshot. For `tiled`, niri 26.04 gives the window no place to measure from: use `activate_element` or `set_element_text`, which don't need a box, or aim at a screenshot pixel. Only when changing the user's layout is fine, float the window with `niri_action` `{"action": {"ToggleWindowFloating": {"id": <window_id>}}}`, then take a new screenshot and call `elements` again before clicking. For `outside_screenshot`, take a screenshot that shows it. For `action_unmapped`, aim at the element's pixels on a fresh screenshot.
+**What to do:** for `frame_size_mismatch` or `page_scale_unknown`, aim at a screenshot pixel or use `activate_element` instead. For `not_showing`, bring it into view first, close niri's overview if it is open, or, when the detail says a tiled window as large as the output covers it, focus the element's window or leave fullscreen; when it says the view may still be moving, take a new screenshot and try again, but when it says the window moved or resized again, aim at screenshot pixels instead; when it says the element's centre is past its output's edge, move the window so the element is on screen, or aim at a screenshot pixel; when it says another floating window lies over it, use `activate_element` or `set_element_text`, or aim at screenshot pixels on a fresh screenshot. For `tiled`, niri 26.04 gives the window no place to measure from: use `activate_element` or `set_element_text`, which don't need a box, or aim at a screenshot pixel. Only when changing the user's layout is fine, float the window with `niri_action` `{"action": {"ToggleWindowFloating": {"id": <window_id>}}}`, then take a new screenshot and call `elements` again before clicking. For `outside_screenshot`, take a screenshot that shows it. For `action_unmapped`, aim at the element's pixels on a fresh screenshot.
 
 ### `element_unbound`
 
-**Cause:** nothing on the accessibility bus binds the element to the record it acts on, so the server can't tell a list's row reused for another record from the row it listed. The element sits in a list row with no name (`unnamed_row`), as GTK 4's list items have unless the app labels them, or in no row while the walk read other objects of its role and name (`repeated`), as in most of a Qt Quick list. Those objects needn't be listed: the extra match that tells `elements` its `limit` was reached counts too. `elements` marks such an element `unbound`. Nothing was sent.
+**Cause:** nothing on the accessibility bus binds the element to the record it acts on, so the server can't tell a list's row reused for another record from the row it listed. The element sits in a list row with no name (`unnamed_row`), as GTK 4's list items have unless the app labels them, or in no row while the walk read other objects of its role and name (`repeated`), as in most of a Qt Quick list, or in no row in a window whose walk didn't read the whole tree, cut short at its 20,000 objects or its three seconds, past an object whose children the app refused to list, or missing part of the tree that went away while it read, so the part not read may hold its look-alike (`cut_short`). Those objects needn't be listed: the walk reads past `limit` to count them. `elements` marks such an element `unbound`. Nothing was sent.
 
 **What to do:** don't list again, which gives the same answer: take a screenshot and aim `click` at the element's pixels in the row you mean.
+
+### `text_not_settable`
+
+**Cause:** `set_element_text` was aimed at a field in the `editable` state that has no `EditableText` interface, as Chromium's text fields don't: `<input>`, `<textarea>` and `contenteditable` alike expose `Text` and `Action` but neither `EditableText` nor `Value`, so nothing on the accessibility bus sets their text. Nothing was set. A password field without `EditableText` is `secret_field` instead, and an element that isn't editable at all, such as a button, is an argument mistake.
+
+**What to do:** focus the field with `activate_element`, then send the text with `type_text`, its `expect` naming the field's window. To replace what the field holds, press `ctrl+a` with `key` before typing.
 
 ### `secret_field`
 
@@ -219,6 +231,8 @@ These come only from a server in [shared mode](../../concepts/configuration/#sha
 
 ### `engine_unavailable`
 
-**Cause:** after an engine was lost, the server couldn't reach or start a new one within five seconds, or the new one refused it. The `detail` says why. The next call tries again.
+**Cause:** after an engine was lost, the server couldn't reach or start a new one within five seconds, or the new one refused it. The `detail` says why. The next call tries again. After an `engine_version` refusal that helps only once that engine has ended: it runs another build of `niri-computer-use`, as after an upgrade while the client ran, and refuses this server for as long as it runs.
 
-**What to do:** read the `detail` and `engine.log` in the runtime directory. A server that can't reach an engine when it starts serves its client on its own instead, so this happens only after a loss.
+With [`shared = "required"`](../../concepts/configuration/#shared), it also comes from a server that couldn't reach the engine when it started, or was refused by it: every call fails with it, and the `detail` says why and that the server must be restarted. Such a server never tries again.
+
+**What to do:** read the `detail` and `engine.log` in the runtime directory. After an `engine_version` refusal, the `detail` says what to do, from the files the engine and this client's server were started from: restart this MCP client when an install replaced its server's file, or the clients that engine serves when an install replaced the engine's. When neither was, as with two installs on different paths, it names both files: point every MCP client at one of them. A server that can't reach an engine when it starts serves its client on its own instead, unless the shared engine is required; otherwise this happens only after a loss. When the `detail` says to restart the server, fix the cause it names, then restart it from the client.

@@ -23,12 +23,13 @@ fn marker_exists(fixture: &Fixture) -> bool {
     fixture.path(&format!("{DIR}/input-dirty")).exists()
 }
 
-/// A marker 0.1.0 wrote for its input child, which this version can't read.
+/// A marker 0.1.0 wrote for its input child, which has exited. Its PID is the kernel's
+/// `PID_MAX_LIMIT`, which no process gets, so the test never names a real process.
 fn with_child() -> Value {
     json!({
         "operation": "type_text", "phase": "running", "server_pid": 1,
         "since": "2026-10-08T00:00:00.000Z",
-        "child": {"pid": 1, "start_time": 1}
+        "child": {"pid": 4_194_304, "start_time": 1}
     })
 }
 
@@ -55,10 +56,12 @@ async fn recover_refuses_while_a_server_holds_the_lease() {
     assert!(marker_exists(&fixture));
 }
 
-/// An unreadable marker, such as one an older version wrote, blocks the lease like any
-/// other until the human confirms the input is released.
+/// A marker 0.1.0 wrote for its input child blocks the lease like any other until the
+/// human confirms the input is released. Where the modifiers that child may have held
+/// can't be zeroed, as here without a display, `recover` says so and that a physical key
+/// may not release them, and the human's check still decides.
 #[tokio::test]
-async fn recover_clears_an_unreadable_marker_once_confirmed() {
+async fn recover_clears_a_0_1_0_marker_once_confirmed() {
     let fixture = Fixture::new("recover-old");
     let _niri = NiriProcess::unlocked(&fixture).await;
     write_marker(&fixture, &with_child());
@@ -70,6 +73,12 @@ async fn recover_clears_an_unreadable_marker_once_confirmed() {
     let out = answer(&fixture, "recover", "yes\n").await;
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(out.status.success(), "{stdout}");
+    assert!(
+        stdout.contains("The input child, PID 4194304, has already exited.")
+            && stdout.contains("Zero modifiers couldn't be sent")
+            && stdout.contains("doesn't always release a key wtype pressed"),
+        "{stdout}"
+    );
     assert!(!marker_exists(&fixture));
     server.structured("acquire_desktop").await;
 }

@@ -285,6 +285,19 @@ pub(crate) fn file_at(file: &Path, text: &str, mode: u32) {
     std::fs::set_permissions(file, std::fs::Permissions::from_mode(mode)).unwrap();
 }
 
+/// A copy of the utility `utility` at `file`, made as the fake programs are, so that a
+/// process running it has `file` as its executable.
+pub(crate) fn copy_of(utility: &str, file: &Path) {
+    copy_file(&locate(utility), file);
+}
+
+/// A copy of `from` at `file`, made as the fake programs are.
+pub(crate) fn copy_file(from: &Path, file: &Path) {
+    let _spawning = SPAWNING.lock().unwrap_or_else(PoisonError::into_inner);
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::copy(from, file).unwrap();
+}
+
 /// The utility's path on the test's own `PATH`.
 fn locate(utility: &str) -> PathBuf {
     let path = std::env::var_os("PATH").unwrap();

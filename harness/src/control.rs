@@ -24,6 +24,9 @@ const HOLD: &str = "25";
 const HOLDER_DEADLINE: Duration = Duration::from_secs(35);
 /// How long a one-shot server keeps stdin open for its replies.
 const ANSWER: &str = "3";
+/// What `recover` says once it has zeroed the modifiers a 0.1.0 marker's `wtype` child may
+/// have left held.
+pub(crate) const ZEROED: &str = "Sent zero modifiers from a fresh virtual keyboard";
 
 pub(crate) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
     let noctalia = session.start(
@@ -165,9 +168,7 @@ fn stops(
     session.log("M2: after resume, server B took the lease")
 }
 
-/// A marker naming a running child: `recover` ends it and clears the marker. The child
-/// shares the supervisor's process group, so `recover` ends it alone; the unit tests cover
-/// the group kill.
+/// A marker naming a running child: `recover` ends it and clears the marker.
 fn recovers(session: &mut Session<'_>, server: &str, control: &Path) -> Result<()> {
     let pid_file = control.join("child.pid");
     let script = format!("echo $$ > '{}'; exec sleep 60", pid_file.display());
@@ -190,7 +191,11 @@ fn recovers(session: &mut Session<'_>, server: &str, control: &Path) -> Result<(
         session,
         &format!("echo yes | '{server}' recover 2>&1; echo exit=$?"),
     )?;
-    expect(output.contains("exit=0"), "recover with a marker", &output)?;
+    expect(
+        output.contains("exit=0") && output.contains(ZEROED),
+        "recover with a marker",
+        &output,
+    )?;
     session.wait_until("m2-recover", "the child ended", WAIT, |_| {
         Ok(start_time_of(pid)
             .is_none_or(|(state, start)| start != start_time || state == 'Z')
@@ -199,7 +204,7 @@ fn recovers(session: &mut Session<'_>, server: &str, control: &Path) -> Result<(
     expect(!path.exists(), "the marker cleared", &output)?;
     drop(child);
     session.log(&format!(
-        "M2: recover ended child {pid} and cleared the marker"
+        "M2: recover ended child {pid}, zeroed the modifiers and cleared the marker"
     ))
 }
 

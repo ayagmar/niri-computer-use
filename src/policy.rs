@@ -116,12 +116,16 @@ pub(crate) struct Policy {
     #[serde(default)]
     pub(crate) confirm_lease: bool,
     /// `false` serves this client standalone rather than through the instance's shared
-    /// engine; unset, it is shared.
+    /// engine, and `"required"` only through it; unset or `true`, it is shared.
     #[serde(default)]
-    pub(crate) shared: Option<bool>,
+    pub(crate) shared: Sharing,
     /// Which tools to list: `observe`, `act` or `full`.
     #[serde(default)]
     pub(crate) tools: Profile,
+    /// `false` keeps the server from turning the session's accessibility on when a
+    /// window's app isn't on the accessibility bus; unset, it may.
+    #[serde(default)]
+    pub(crate) turn_on_accessibility: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -176,6 +180,8 @@ pub(crate) struct PolicyStatus {
     /// What `launch` takes.
     preset_names: Vec<String>,
     denied_app_ids: usize,
+    /// Whether the server may turn the session's accessibility on.
+    turn_on_accessibility: bool,
     /// Where `screenshot`'s `save_path` writes, as written; null when saving is off.
     capture_dir: Option<String>,
     /// Whether the file chose `capture_dir`, an empty one included, or the default
@@ -286,6 +292,19 @@ impl Loaded {
         }
     }
 
+    /// The file's `shared`; `on` when the file is missing, and when it is invalid, unless
+    /// `source`, the text it was read from, is TOML whose own `shared` says `"required"`: a
+    /// mistake elsewhere in the file mustn't drop the requirement.
+    pub(crate) fn shared(&self, source: &Source) -> Sharing {
+        match (self, source) {
+            (Self::Valid(policy), _) => policy.shared,
+            (Self::Invalid(_), Source::Text { text, .. }) if requires_shared(text) => {
+                Sharing::Required
+            }
+            (Self::Missing | Self::Invalid(_), _) => Sharing::On,
+        }
+    }
+
     /// The profile the file names; `full` when it names none or is missing or invalid.
     pub(crate) const fn tools(&self) -> Profile {
         match self {
@@ -311,6 +330,7 @@ impl Loaded {
                     .collect()
             }),
             denied_app_ids: policy.map_or(0, |policy| policy.deny_input_app_ids.len()),
+            turn_on_accessibility: off_bus(self, false, false) == OffBus::Listen,
             capture_dir: self.capture_dir().ok().map(|(dir, _)| dir.to_owned()),
             capture_dir_source: match (self, self.capture_dir()) {
                 (_, Ok((_, source))) => Some(source),
@@ -496,6 +516,40 @@ fn check_env(preset: &Preset, program: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// What the server does about the session's accessibility when a window's app isn't on
+/// the accessibility bus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OffBus {
+    /// Register a listener: it turns accessibility on, or keeps it on with the others'.
+    Listen,
+    /// It is on, and no listener keeps it so: something wrote it on, and the server's
+    /// listener leaving would turn it off. Left as it is.
+    Leave,
+    /// It is off, and the server may not turn it on: why.
+    Refused(&'static str),
+}
+
+/// What the server does when an app isn't on the accessibility bus, with the session's
+/// accessibility `enabled` or not, and `listened` to by any client: add a listener when it
+/// is off, or on through listeners, unless the policy file says
+/// `turn_on_accessibility = false`. An invalid file might, so it refuses too. With
+/// accessibility on and no listener, the server leaves it alone.
+pub(crate) const fn off_bus(policy: &Loaded, enabled: bool, listened: bool) -> OffBus {
+    let refused = match policy {
+        Loaded::Valid(Policy {
+            turn_on_accessibility: Some(false),
+            ..
+        }) => Some("the policy file sets turn_on_accessibility = false"),
+        Loaded::Invalid(_) => Some("the policy file is invalid"),
+        Loaded::Valid(_) | Loaded::Missing => None,
+    };
+    match (enabled, listened, refused) {
+        (true, false, _) | (true, true, Some(_)) => OffBus::Leave,
+        (false, _, Some(why)) => OffBus::Refused(why),
+        (_, _, None) => OffBus::Listen,
+    }
+}
+
 /// A key the user turns on in the policy file or, for one client, with a variable in that
 /// client's server settings: `unrestricted` or `confirm_lease`. Either source turns it on;
 /// nothing in the environment turns off the file's `true`.
@@ -510,22 +564,132 @@ pub(crate) struct Switch {
     pub(crate) when_wrong: bool,
 }
 
-/// Whether `serve` bridges its client to the shared engine: `NIRI_COMPUTER_USE_SHARED`,
-/// given as `env`, when it is `0` or `1`, otherwise the policy file's `shared`, which is
-/// on unless the file turns it off. Any other value of the variable is the error, and the
-/// client is served standalone with it as the reason.
-pub(crate) fn shared(policy: &Loaded, env: Option<&std::ffi::OsStr>) -> Result<bool, String> {
-    match env.filter(|value| !value.is_empty()) {
-        Some(value) if value == "1" => Ok(true),
-        Some(value) if value == "0" => Ok(false),
-        Some(value) => Err(format!(
-            "NIRI_COMPUTER_USE_SHARED is \"{}\"; it takes 1 for shared or 0 for standalone",
-            value.display()
-        )),
-        None => Ok(match policy {
-            Loaded::Valid(policy) => policy.shared.unwrap_or(true),
-            Loaded::Missing | Loaded::Invalid(_) => true,
-        }),
+/// How `serve` serves its client: through the instance's shared engine or standalone. The
+/// policy file spells it `true`, `false` or `"required"`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Sharing {
+    /// Standalone.
+    Off,
+    /// Through the shared engine, and standalone when it can't be reached or refuses the
+    /// client.
+    #[default]
+    On,
+    /// Only through the shared engine: when it can't be reached or refuses the client,
+    /// every tool fails with `engine_unavailable`.
+    Required,
+}
+
+impl Sharing {
+    /// How `NIRI_COMPUTER_USE_SHARED` spells it.
+    pub(crate) const fn variable(self) -> &'static str {
+        match self {
+            Self::Off => "0",
+            Self::On => "1",
+            Self::Required => "required",
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Sharing {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(SharingVisitor)
+    }
+}
+
+struct SharingVisitor;
+
+impl serde::de::Visitor<'_> for SharingVisitor {
+    type Value = Sharing;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("true, false or \"required\"")
+    }
+
+    fn visit_bool<E: serde::de::Error>(self, value: bool) -> Result<Sharing, E> {
+        Ok(if value { Sharing::On } else { Sharing::Off })
+    }
+
+    fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Sharing, E> {
+        if value == "required" {
+            Ok(Sharing::Required)
+        } else {
+            Err(E::invalid_value(serde::de::Unexpected::Str(value), &self))
+        }
+    }
+}
+
+/// Whether `text`'s top-level `shared` is `"required"`, whatever the rest of it holds.
+/// Text that isn't TOML requires it with a line `shared = "required"`, or the literal
+/// string `'required'`, before the first table header.
+fn requires_shared(text: &str) -> bool {
+    let Ok(table) = toml::from_str::<toml::Table>(text) else {
+        return text
+            .lines()
+            .map(|line| line.split('#').next().unwrap_or_default().trim())
+            .take_while(|line| !line.starts_with('['))
+            .filter_map(|line| line.split_once('='))
+            .any(|(key, value)| {
+                key.trim() == "shared" && matches!(value.trim(), "\"required\"" | "'required'")
+            });
+    };
+    table
+        .get("shared")
+        .and_then(|shared| shared.clone().try_into::<Sharing>().ok())
+        == Some(Sharing::Required)
+}
+
+/// Whether `serve` bridges its client to the shared engine, from the policy file's
+/// `shared` and `NIRI_COMPUTER_USE_SHARED`, which wins when it is `0`, `1` or `required`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Shared {
+    /// The policy file's key; `on` when the file is missing or invalid.
+    pub(crate) policy: Sharing,
+    /// The variable: none when unset or empty, and an error for any other value.
+    pub(crate) env: Result<Option<Sharing>, String>,
+}
+
+/// What `status` reports about the shared setting.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct SharedStatus {
+    setting: Sharing,
+    /// Why the variable was refused.
+    error: Option<String>,
+}
+
+impl Shared {
+    /// The variable's value, read as `Shared::env` says.
+    pub(crate) fn parse_env(value: Option<&std::ffi::OsStr>) -> Result<Option<Sharing>, String> {
+        let Some(value) = value.filter(|value| !value.is_empty()) else {
+            return Ok(None);
+        };
+        match value.to_str() {
+            Some("0") => Ok(Some(Sharing::Off)),
+            Some("1") => Ok(Some(Sharing::On)),
+            Some("required") => Ok(Some(Sharing::Required)),
+            _ => Err(format!(
+                "NIRI_COMPUTER_USE_SHARED is \"{}\"; it takes 1 for shared, 0 for standalone or required",
+                value.display()
+            )),
+        }
+    }
+
+    /// The variable's setting, or else the file's. A wrong variable serves the client
+    /// standalone, with the error as the reason, unless the file requires the shared
+    /// engine: then the client gets no engine, with the error as the reason.
+    pub(crate) fn setting(&self) -> Sharing {
+        match &self.env {
+            Ok(env) => env.unwrap_or(self.policy),
+            Err(_) if self.policy == Sharing::Required => Sharing::Required,
+            Err(_) => Sharing::Off,
+        }
+    }
+
+    pub(crate) fn status(&self) -> SharedStatus {
+        SharedStatus {
+            setting: self.setting(),
+            error: self.env.clone().err(),
+        }
     }
 }
 
@@ -726,7 +890,7 @@ pub(crate) fn refuse_control(facts: Facts<'_>) -> Option<ToolError> {
         Some(Compat::Ok | Compat::PatchWarning) => {}
     }
     if facts.event_stream == Some(StreamState::SchemaIncompatible) {
-        return read_only("niri sent events this build can't parse".to_owned());
+        return read_only("niri sent events this build can't parse or apply".to_owned());
     }
     if let Loaded::Invalid(error) = facts.policy {
         return read_only(format!("the policy file is invalid: {error}"));
@@ -1077,37 +1241,89 @@ argv = ["/usr/bin/foot"]
 app_id = "foot"
 "#;
 
+    /// The `shared` setting of a policy file holding `text`, or of none for `None`.
+    fn shared_in(text: Option<&str>) -> Sharing {
+        let source = text.map_or(Source::Missing, |text| Source::Text {
+            path: "/p.toml".into(),
+            text: text.to_owned(),
+        });
+        Loaded::from_source(&source, false).shared(&source)
+    }
+
     #[test]
-    fn shared_mode_is_on_unless_the_variable_or_the_file_turns_it_off() {
-        let file = |shared| {
-            Loaded::Valid(Policy {
-                shared,
-                ..Policy::default()
-            })
+    fn the_shared_variable_wins_over_the_file_but_a_wrong_one_keeps_required() {
+        let setting = |file: Option<&str>, env: Option<&str>| {
+            Shared {
+                policy: shared_in(file),
+                env: Shared::parse_env(env.map(std::ffi::OsStr::new)),
+            }
+            .setting()
         };
-        let env = |value: &'static str| Some(std::ffi::OsStr::new(value));
-        assert_eq!(shared(&Loaded::Missing, None), Ok(true));
-        assert_eq!(shared(&Loaded::Invalid("bad".to_owned()), None), Ok(true));
-        assert_eq!(shared(&file(None), None), Ok(true));
-        assert_eq!(shared(&file(Some(false)), None), Ok(false));
-        assert_eq!(shared(&file(Some(false)), env("1")), Ok(true));
-        assert_eq!(shared(&file(None), env("0")), Ok(false));
-        assert_eq!(shared(&file(Some(false)), env("")), Ok(false));
+        let (off, on, required) = (
+            Some("shared = false"),
+            Some("shared = true"),
+            Some("shared = \"required\""),
+        );
+        assert_eq!(setting(None, None), Sharing::On);
+        assert_eq!(setting(Some(""), None), Sharing::On);
+        assert_eq!(setting(on, None), Sharing::On);
+        assert_eq!(setting(off, None), Sharing::Off);
+        assert_eq!(setting(required, None), Sharing::Required);
+        assert_eq!(setting(off, Some("1")), Sharing::On);
+        assert_eq!(setting(required, Some("1")), Sharing::On);
+        assert_eq!(setting(required, Some("0")), Sharing::Off);
+        assert_eq!(setting(off, Some("required")), Sharing::Required);
+        assert_eq!(setting(off, Some("")), Sharing::Off);
+        // A wrong variable can't drop the file's requirement.
+        assert_eq!(setting(on, Some("yes")), Sharing::Off);
+        assert_eq!(setting(required, Some("yes")), Sharing::Required);
         assert!(
-            shared(&file(None), env("yes"))
+            Shared::parse_env(Some(std::ffi::OsStr::new("yes")))
                 .unwrap_err()
                 .contains("\"yes\"")
         );
-        assert_eq!(
-            Loaded::from_source(
-                &Source::Text {
-                    path: "/p.toml".into(),
-                    text: "shared = false".to_owned()
-                },
-                false
-            ),
-            file(Some(false))
-        );
+    }
+
+    #[test]
+    fn the_file_spells_shared_true_false_or_required() {
+        assert_eq!(shared_in(Some("shared = \"required\"")), Sharing::Required);
+        for wrong in ["shared = \"yes\"", "shared = 1", "shared = \"Required\""] {
+            let source = Source::Text {
+                path: "/p.toml".into(),
+                text: wrong.to_owned(),
+            };
+            let Loaded::Invalid(error) = Loaded::from_source(&source, false) else {
+                panic!("{wrong} is valid");
+            };
+            assert!(error.contains("true, false or \"required\""), "{error}");
+            assert_eq!(shared_in(Some(wrong)), Sharing::On, "{wrong}");
+        }
+    }
+
+    /// A mistake elsewhere in the file makes it invalid, but mustn't drop the requirement;
+    /// only `"required"` is read from an invalid file, which otherwise leaves shared mode on.
+    #[test]
+    fn an_invalid_file_still_requires_the_shared_engine() {
+        for invalid in [
+            "shared = \"required\"\ncapture_dir = \"shots\"",
+            "shared = \"required\"\nnot_a_key = 1",
+            "deny_input_app_ids = 3\nshared = \"required\"",
+            "shared = \"required\"\n[[",
+            "  shared=\"required\"  # spaced\ncapture_dir =\n",
+            "shared = 'required'\n[[",
+        ] {
+            assert_eq!(shared_in(Some(invalid)), Sharing::Required, "{invalid}");
+        }
+        for invalid in [
+            "shared = false\ncapture_dir = \"shots\"",
+            "not_a_key = \"required\"",
+            "[preset]\nshared = \"required\"",
+            "[[\nshared = \"required\"",
+            "shared = \"required, please\"\n[[",
+            "shared = 'required\"\n[[",
+        ] {
+            assert_eq!(shared_in(Some(invalid)), Sharing::On, "{invalid}");
+        }
     }
 
     #[test]
@@ -1599,6 +1815,36 @@ app_id = "foot"
     }
 
     #[test]
+    fn accessibility_is_listened_for_unless_written_on_or_refused() {
+        let file = |text| Loaded::Valid(parse(text, false).unwrap());
+        let allowed = [
+            Loaded::Missing,
+            file(""),
+            file("turn_on_accessibility = true"),
+        ];
+        for policy in &allowed {
+            assert_eq!(off_bus(policy, false, false), OffBus::Listen);
+            // On through listeners, a screen reader's or another server's: joined.
+            assert_eq!(off_bus(policy, true, true), OffBus::Listen);
+            // Written on with no listener: the server's leaving would turn it off.
+            assert_eq!(off_bus(policy, true, false), OffBus::Leave);
+        }
+        let refused = [
+            file("turn_on_accessibility = false"),
+            Loaded::Invalid("bad".to_owned()),
+        ];
+        for policy in &refused {
+            assert!(matches!(off_bus(policy, false, false), OffBus::Refused(_)));
+            assert_eq!(off_bus(policy, true, true), OffBus::Leave);
+            assert_eq!(off_bus(policy, true, false), OffBus::Leave);
+        }
+        assert!(matches!(
+            off_bus(&refused[0], false, false),
+            OffBus::Refused(why) if why.contains("turn_on_accessibility = false")
+        ));
+    }
+
+    #[test]
     fn unrestricted_lifts_the_preset_rules_and_allows_env() {
         let shot = "[[preset]]\nname = \"shot\"\nargv = [\"kitty\", \"--class\", \"shot\"]\napp_id = \"shot\"\nenv = { GDK_SCALE = \"2\" }\n";
         assert!(
@@ -1778,6 +2024,256 @@ app_id = "foot"
                     .detail
                     .contains("control-center, wallpaper, tray-drawer")
             );
+        }
+    }
+
+    /// Properties of what agents and users write: the policy file, `save_path`, and
+    /// `niri_action`'s JSON.
+    mod properties {
+        use proptest::prelude::*;
+        use serde_json::{Map, Value, json};
+
+        use super::super::*;
+
+        /// A TOML string holding `text`.
+        fn quoted(text: &str) -> String {
+            serde_json::to_string(text).unwrap()
+        }
+
+        /// A `[[preset]]` table.
+        fn preset_table(
+            name: &str,
+            app_id: &str,
+            argv: &[String],
+            env: &BTreeMap<String, String>,
+        ) -> String {
+            let argv: Vec<String> = argv.iter().map(|arg| quoted(arg)).collect();
+            let env: Vec<String> = env
+                .iter()
+                .map(|(variable, value)| format!("{} = {}", quoted(variable), quoted(value)))
+                .collect();
+            format!(
+                "[[preset]]\nname = {}\napp_id = {}\nargv = [{}]\nenv = {{ {} }}\n",
+                quoted(name),
+                quoted(app_id),
+                argv.join(", "),
+                env.join(", ")
+            )
+        }
+
+        /// Policy files with presets of any names, programs, arguments and variables.
+        fn policy_file() -> impl Strategy<Value = String> {
+            let text = || prop_oneof!["[a-z0-9./=_-]{0,10}", any::<String>()];
+            let program = prop_oneof![
+                prop::sample::select(COMMAND_RUNNERS.to_vec()).prop_map(str::to_owned),
+                prop::sample::select(TERMINALS.to_vec()).prop_map(str::to_owned),
+                "(/usr/bin/)?[a-z]{1,8}[0-9.]{0,4}",
+                text(),
+            ];
+            let preset = (
+                text(),
+                text(),
+                program,
+                prop::collection::vec(text(), 0..3),
+                prop::collection::btree_map(text(), text(), 0..2),
+            )
+                .prop_map(|(name, app_id, program, args, env)| {
+                    let argv: Vec<String> =
+                        std::iter::once(&program).chain(&args).cloned().collect();
+                    preset_table(&name, &app_id, &argv, &env)
+                });
+            (any::<bool>(), prop::collection::vec(preset, 0..4)).prop_map(
+                |(unrestricted, presets)| {
+                    format!("unrestricted = {unrestricted}\n{}", presets.concat())
+                },
+            )
+        }
+
+        /// `save_path`s an agent could send: names, `.`, `..`, empty parts and parts holding
+        /// a NUL, joined by `/` and sometimes starting at the root, then a file name.
+        fn save_path() -> impl Strategy<Value = String> {
+            let part = prop_oneof![
+                Just("..".to_owned()),
+                Just(".".to_owned()),
+                Just(String::new()),
+                "[a-z ~]{1,4}",
+                "[a-z]{0,2}\\x00",
+            ];
+            let file = prop_oneof![
+                "[a-z]{1,4}\\.(png|PNG)",
+                Just("..".to_owned()),
+                Just(".png".to_owned()),
+                "[a-z]{1,4}",
+            ];
+            (any::<bool>(), prop::collection::vec(part, 0..4), file).prop_map(
+                |(rooted, mut parts, file)| {
+                    parts.push(file);
+                    format!("{}{}", if rooted { "/" } else { "" }, parts.join("/"))
+                },
+            )
+        }
+
+        /// Agent text, marked with `~`, which no name niri-ipc or the log uses holds.
+        fn agent_text() -> impl Strategy<Value = String> {
+            "~\\PC{0,11}"
+        }
+
+        /// Actions that decode and carry the agent's text, and whether they need
+        /// `unrestricted`.
+        fn texted_action() -> impl Strategy<Value = (Value, bool)> {
+            prop_oneof![
+                prop::collection::vec(agent_text(), 0..4)
+                    .prop_map(|command| (json!({"Spawn": {"command": command}}), true)),
+                agent_text().prop_map(|command| (json!({"SpawnSh": {"command": command}}), true)),
+                prop::option::of(agent_text())
+                    .prop_map(|path| (json!({"LoadConfigFile": {"path": path}}), true)),
+                (any::<bool>(), agent_text()).prop_map(|(write, path)| (
+                    json!({"ScreenshotScreen": {"write_to_disk": write, "show_pointer": false, "path": path}}),
+                    true
+                )),
+                (agent_text(), agent_text()).prop_map(|(name, workspace)| (
+                    json!({"SetWorkspaceName": {"name": name, "workspace": {"Name": workspace}}}),
+                    false
+                )),
+                agent_text().prop_map(|name| (json!({"FocusWorkspace": {"reference": {"Name": name}}}), false)),
+                agent_text().prop_map(|output| (
+                    json!({"MoveWindowToMonitor": {"id": null, "output": output}}),
+                    false
+                )),
+            ]
+        }
+
+        /// Any JSON object an agent could send as `action`: niri's action and field names or
+        /// its own, around any values; most don't decode.
+        fn any_action() -> impl Strategy<Value = Map<String, Value>> {
+            let names = || {
+                prop_oneof![
+                    prop::sample::select(vec![
+                        "Spawn",
+                        "SpawnSh",
+                        "Quit",
+                        "LoadConfigFile",
+                        "FocusWorkspace",
+                        "SetWorkspaceName",
+                        "FullscreenWindow",
+                        "SetWindowWidth",
+                        "FocusWindow",
+                        "ToggleWindowFloating",
+                        "PowerOffMonitors",
+                        "id",
+                        "command",
+                        "path",
+                        "reference",
+                        "name",
+                        "output",
+                        "change",
+                        "skip_confirmation",
+                        "Name",
+                        "Index",
+                        "SetFixed",
+                    ])
+                    .prop_map(str::to_owned),
+                    agent_text(),
+                ]
+            };
+            let leaf = prop_oneof![
+                Just(Value::Null),
+                any::<bool>().prop_map(Value::from),
+                any::<i64>().prop_map(Value::from),
+                agent_text().prop_map(Value::from),
+            ];
+            let value = leaf.prop_recursive(3, 16, 4, move |inner| {
+                prop_oneof![
+                    prop::collection::vec(inner.clone(), 0..4).prop_map(Value::Array),
+                    prop::collection::btree_map(names(), inner, 0..3)
+                        .prop_map(|fields| Value::Object(fields.into_iter().collect())),
+                ]
+            });
+            prop::collection::btree_map(names(), value, 0..3)
+                .prop_map(|fields| fields.into_iter().collect())
+        }
+
+        /// Whether `logged` holds a string, or a key of the agent's.
+        fn holds_agent_text(logged: &Value) -> bool {
+            match logged {
+                Value::String(_) => true,
+                Value::Array(items) => items.iter().any(holds_agent_text),
+                Value::Object(fields) => fields
+                    .iter()
+                    .any(|(key, field)| key.starts_with('~') || holds_agent_text(field)),
+                Value::Null | Value::Bool(_) | Value::Number(_) => false,
+            }
+        }
+
+        proptest! {
+            #![proptest_config(crate::test_support::properties(256))]
+
+            /// Any policy file is read or refused without a panic, and a policy that is read
+            /// has what `launch` relies on: named presets with an app id and a program, unique
+            /// names, and variables only under `unrestricted`.
+            #[test]
+            fn any_policy_file_is_read_or_refused(text in policy_file(), from_env in any::<bool>()) {
+                let Ok(policy) = parse(&text, from_env) else {
+                    return Ok(());
+                };
+                let mut names = BTreeSet::new();
+                for preset in &policy.presets {
+                    prop_assert!(!preset.name.is_empty() && !preset.app_id.is_empty());
+                    prop_assert!(preset.argv.first().is_some_and(|program| !program.is_empty()));
+                    prop_assert!(names.insert(preset.name.clone()), "{text}");
+                    prop_assert!(preset.env.is_empty() || policy.unrestricted || from_env, "{text}");
+                }
+            }
+
+            /// A `save_path` that is accepted names a PNG file in or under the capture
+            /// directory: plain names only, nothing that climbs out or starts over at the root.
+            #[test]
+            fn an_accepted_save_path_stays_under_the_capture_dir(
+                text in prop_oneof![save_path(), any::<String>()],
+            ) {
+                if let Ok(path) = SavePath::parse(&text) {
+                    let joined: PathBuf = path.dirs.iter().chain([&path.file]).collect();
+                    let parts: Vec<_> = joined.components().collect();
+                    prop_assert_eq!(parts.len(), path.dirs.len() + 1, "{:?}", text);
+                    prop_assert!(
+                        parts.iter().all(|part| matches!(part, std::path::Component::Normal(_))),
+                        "{text:?}"
+                    );
+                    prop_assert!(path.file.to_ascii_lowercase().ends_with(".png"), "{text:?}");
+                }
+            }
+
+            /// An action carrying the agent's text is gated as documented, and the audit log
+            /// keeps its shape and lengths, never the text.
+            #[test]
+            fn a_texted_action_is_gated_and_logged_without_its_text(
+                (json, gated) in texted_action(),
+            ) {
+                let action: Action = serde_json::from_value(json).unwrap();
+                prop_assert_eq!(refuse_action(&action, false).is_some(), gated);
+                prop_assert!(refuse_action(&action, true).is_none());
+                let logged = crate::audit::action(&action);
+                prop_assert!(!holds_agent_text(&logged), "{logged}");
+            }
+
+            /// Any JSON is decoded as an action or refused without a panic; either way the
+            /// audit log keeps none of the agent's text.
+            #[test]
+            fn any_action_json_is_gated_and_logged_without_its_text(fields in any_action()) {
+                let decoded = serde_json::from_value::<Action>(Value::Object(fields.clone()));
+                if let Ok(action) = decoded {
+                    if let Some(refused) = refuse_action(&action, false) {
+                        prop_assert_eq!(refused.name, ErrorName::UnrestrictedRequired);
+                    }
+                    let logged = crate::audit::action(&action);
+                    prop_assert!(!holds_agent_text(&logged), "{logged}");
+                } else {
+                    let mut logged = crate::audit::invalid_action(&fields);
+                    let category = logged.as_object_mut().unwrap().remove("category");
+                    prop_assert_eq!(category, Some(json!("invalid_action")));
+                    prop_assert!(!holds_agent_text(&logged), "{logged}");
+                }
+            }
         }
     }
 }

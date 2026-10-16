@@ -220,6 +220,8 @@ pub(crate) fn checked_encode(target: LayoutPt, output: &LogicalOutput) -> Result
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
 
     const ALL: [Transform; 8] = [
@@ -354,5 +356,65 @@ mod tests {
         assert_eq!((edge.x, edge.y), (959_999, 719_999));
         let outside = checked_encode(LayoutPt { x: 1000.0, y: -5.0 }, &out);
         assert!(outside.is_err_and(|error| error > TOLERANCE));
+    }
+
+    /// Any output the pointer space allows, anywhere in the layout.
+    fn any_output() -> impl Strategy<Value = LogicalOutput> {
+        let largest = 4_294_967_u32;
+        (
+            any::<i32>(),
+            any::<i32>(),
+            1..=largest,
+            1..=largest,
+            prop::sample::select(ALL.to_vec()),
+        )
+            .prop_map(|(x, y, width, height, transform)| output(x, y, (width, height), transform))
+    }
+
+    proptest! {
+        #![proptest_config(crate::test_support::properties(1024))]
+
+        /// A point on the output, where a screenshot pixel lies, is always encoded, within
+        /// the request's extents.
+        #[test]
+        fn a_point_on_the_output_is_encoded(
+            out in any_output(),
+            (fx, fy) in (0.0..1.0_f64, 0.0..1.0_f64),
+        ) {
+            let target = LayoutPt {
+                x: fx.mul_add(f64::from(out.width), f64::from(out.x)),
+                y: fy.mul_add(f64::from(out.height), f64::from(out.y)),
+            };
+            let request = checked_encode(target, &out);
+            prop_assert!(request.is_ok(), "{target:?} on {out:?}: {request:?}");
+        }
+
+        /// No target, finite or not, panics, and none is encoded unless niri would put the
+        /// pointer on it: a point off the output is refused rather than clamped to its edge.
+        #[test]
+        fn a_point_is_encoded_only_where_niri_lands_on_it(
+            out in any_output(),
+            near in prop::option::of((-0.01..1.01_f64, -0.01..1.01_f64, -0.01..0.01_f64)),
+            wild in (any::<f64>(), any::<f64>()),
+        ) {
+            // Half the targets lie near the output, around its edges, the rest anywhere.
+            let (x, y) = near.map_or(wild, |(fx, fy, jitter)| {
+                (
+                    fx.mul_add(f64::from(out.width), f64::from(out.x)) + jitter,
+                    fy.mul_add(f64::from(out.height), f64::from(out.y)) - jitter,
+                )
+            });
+            if let Ok(request) = checked_encode(LayoutPt { x, y }, &out) {
+                prop_assert!(request.x < request.x_extent && request.y < request.y_extent);
+                let (left, top) = (f64::from(out.x), f64::from(out.y));
+                let (right, bottom) =
+                    (left + f64::from(out.width), top + f64::from(out.height));
+                prop_assert!(
+                    (left - TOLERANCE..=right + TOLERANCE).contains(&x)
+                        && (top - TOLERANCE..=bottom + TOLERANCE).contains(&y),
+                    "({x}, {y}) encoded on {out:?}"
+                );
+            }
+        }
     }
 }

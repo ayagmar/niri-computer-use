@@ -20,6 +20,7 @@ use tokio::time::Instant;
 use crate::a11y::ElementRef;
 use crate::coords::{self, Capture, ImagePx, ImageRect, LayoutPt, ProtocolPt};
 use crate::error::{ErrorName, ToolError};
+use crate::niri::scene::{Moves, Shifted};
 use crate::observe::{Pin, Rect, Screenshot};
 use crate::session::SessionId;
 
@@ -29,6 +30,9 @@ const KEPT: usize = 64;
 const KEPT_ELEMENTS: usize = 1000;
 /// How long a ref stays usable (plan §6).
 const MAX_AGE: Duration = Duration::from_secs(60);
+/// How long niri may animate windows after it reports them moving, as for an element aim
+/// (`input::pointer`).
+const SETTLE: Duration = Duration::from_secs(1);
 
 /// One screenshot, as a pointer tool needs it.
 #[derive(Debug, Clone, PartialEq)]
@@ -47,6 +51,9 @@ pub(crate) struct Shot {
     pub(crate) taken: Instant,
     /// The event stream's connection at capture: a disconnect drops every ref.
     pub(crate) connection: u64,
+    /// For a screenshot a settle wait returned as settled, when the capture it matched
+    /// started: the screen didn't change from then on.
+    pub(crate) steady_since: Option<Instant>,
 }
 
 impl Shot {
@@ -64,6 +71,7 @@ impl Shot {
             height: metadata.height,
             taken,
             connection,
+            steady_since: None,
         }
     }
 }
@@ -91,6 +99,33 @@ impl Shot {
             ));
         }
         self.encode(point, &motion)
+    }
+
+    /// Whether a pixel of the image still lands on what it shows, as far as niri can tell,
+    /// when the windows on its output last moved as `moves` says: not if the event stream
+    /// reconnected since the capture, nor if they moved after the capture began or within
+    /// `SETTLE` before it, while niri may still have been animating them, unless the screen
+    /// was seen not changing after they moved.
+    pub(crate) fn unmoved(&self, moves: &Moves) -> Result<(), ToolError> {
+        self.same_connection(Some(moves.connection))?;
+        let Some(Shifted { at, what }) = &moves.shifted else {
+            return Ok(());
+        };
+        let detail = if *at > self.taken {
+            format!(
+                "{what} since the screenshot, so it may no longer show what a pixel lands on; take a new screenshot"
+            )
+        } else if self.taken.duration_since(*at) < SETTLE
+            && self.steady_since.is_none_or(|steady| steady <= *at)
+        {
+            let before = self.taken.duration_since(*at).as_millis();
+            format!(
+                "{what} {before} ms before the screenshot, so it may show windows niri was still moving; take one that waits for the screen to settle, with `wait_for` with `until: screen_stable` and `screenshot: true`, or `screenshot: true` on the action"
+            )
+        } else {
+            return Ok(());
+        };
+        Err(invalid("layout_changed", &detail))
     }
 
     /// Whether `point` lies in the captured rectangle.
@@ -227,6 +262,11 @@ impl Shot {
                 &format!("the screenshot is {} s old; take a new one", age.as_secs()),
             ));
         }
+        self.same_connection(connection)
+    }
+
+    /// The event stream is still on the capture's connection.
+    fn same_connection(&self, connection: Option<u64>) -> Result<(), ToolError> {
         if connection != Some(self.connection) {
             return Err(invalid(
                 "unknown_ref",
@@ -284,7 +324,16 @@ pub(crate) fn well_formed(id: &str) -> bool {
     };
     tag.len() == 8
         && tag.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f'))
-        && number.parse::<u64>().is_ok_and(|n| n.to_string() == number)
+        && issued_number(number).is_some()
+}
+
+/// The number at the end of an id, spelled as ids are issued: decimal digits without a
+/// sign or leading zeros, so `+1` or `01` names no ref.
+fn issued_number(digits: &str) -> Option<u64> {
+    digits
+        .parse()
+        .ok()
+        .filter(|number: &u64| number.to_string() == digits)
 }
 
 /// The refs of the current lease, and the screenshot refs of sessions without it, which
@@ -348,10 +397,7 @@ impl Refs {
     /// The number in `id`, if it is an id of `kind` with this tag.
     fn number(&self, id: &str, kind: &str) -> Option<u64> {
         let rest = id.strip_prefix(kind)?.strip_prefix('-')?;
-        rest.strip_prefix(self.tag.as_str())?
-            .strip_prefix('-')?
-            .parse()
-            .ok()
+        issued_number(rest.strip_prefix(self.tag.as_str())?.strip_prefix('-')?)
     }
 
     /// A new lease, for `owner`: earlier refs of the lease and `owner`'s refs from before
@@ -498,6 +544,8 @@ impl Refs {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
     use crate::test_support::shot;
 
@@ -532,6 +580,68 @@ mod tests {
         let error = result.unwrap_err();
         assert_eq!(error.name, ErrorName::RefInvalid);
         error.detail.split(':').next().unwrap().to_owned()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn pixels_stand_unless_the_windows_moved_after_or_just_before_the_capture() {
+        tokio::time::advance(Duration::from_secs(5)).await;
+        let mut shot = shot();
+        let taken = shot.taken;
+        let shifted = |ms: i64| Shifted {
+            at: if ms < 0 {
+                taken - Duration::from_millis(ms.unsigned_abs())
+            } else {
+                taken + Duration::from_millis(ms.unsigned_abs())
+            },
+            what: "niri moved or resized window 7".to_owned(),
+        };
+        let refused = |aimed: &Shot, ms| {
+            let moves = Moves {
+                connection: aimed.connection,
+                shifted: Some(shifted(ms)),
+            };
+            aimed.unmoved(&moves).err().map(|error| error.detail)
+        };
+        let unmoved = Moves {
+            connection: shot.connection,
+            shifted: None,
+        };
+        assert_eq!(shot.unmoved(&unmoved), Ok(()));
+        // Long enough before the capture for niri to have finished moving it.
+        assert_eq!(refused(&shot, -1500), None);
+        let moving = refused(&shot, -300).unwrap();
+        assert!(moving.contains("300 ms before the screenshot"), "{moving}");
+        // Another plain screenshot right away would be refused the same way.
+        let settled = "`wait_for` with `until: screen_stable` and `screenshot: true`";
+        assert!(moving.contains(settled), "{moving}");
+        let since = refused(&shot, 20).unwrap();
+        assert!(since.contains("window 7 since the screenshot"), "{since}");
+        // The screen was seen not changing from after the move on.
+        shot.steady_since = Some(taken - Duration::from_millis(100));
+        assert_eq!(refused(&shot, -300), None);
+        assert!(refused(&shot, -50).is_some());
+        assert!(refused(&shot, 20).is_some());
+    }
+
+    // The bug: the gate before a pixel aim's input read the stamps of whichever connection
+    // the event stream was on, so after a reconnect while it waited, an output with no
+    // workspace in the new initial state had no stamp, and the aim went out by the old
+    // layout.
+    #[tokio::test(start_paused = true)]
+    async fn pixels_are_refused_through_another_connection_than_the_capture() {
+        let shot = shot();
+        let reconnected = Moves {
+            connection: shot.connection + 1,
+            shifted: None,
+        };
+        let refused = shot.unmoved(&reconnected).map_err(|error| error.detail);
+        let unknown = "unknown_ref: niri's event stream reconnected since the screenshot";
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|detail| detail.starts_with(unknown)),
+            "{refused:?}"
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -771,12 +881,32 @@ mod tests {
         assert!(refs.view(other, &theirs).is_err());
     }
 
+    /// Found by a property test: `parse` takes a sign and leading zeros, so these named
+    /// ref 1 while the audit log called them `invalid_ref`.
+    #[test]
+    fn an_id_names_a_ref_only_as_it_was_issued() {
+        let mut refs = Refs::new("0123abcd".to_owned());
+        refs.start(SessionId(1));
+        let lease = refs.lease().unwrap();
+        assert_eq!(
+            refs.insert(lease, shot()).as_deref(),
+            Some("shot-0123abcd-1")
+        );
+        assert!(refs.get("shot-0123abcd-1").is_ok());
+        for misspelled in ["shot-0123abcd-+1", "shot-0123abcd-01"] {
+            let error = refs.get(misspelled).unwrap_err();
+            assert!(error.detail.starts_with("unknown_ref"), "{misspelled}");
+            assert!(!well_formed(misspelled), "{misspelled}");
+        }
+    }
+
     #[test]
     fn element_refs_belong_to_one_lease_and_keep_the_latest_thousand() {
         let element = || ElementRef {
             bus: ":1.7".to_owned(),
             path: "/org/a11y/atspi/accessible/9".to_owned(),
             frame: "/org/a11y/atspi/accessible/1".to_owned(),
+            page: None,
             kept: crate::a11y::model::Kept {
                 role: 43,
                 window: 3,
@@ -842,5 +972,230 @@ mod tests {
         }
         assert_eq!(refs.shots.len(), KEPT);
         assert_eq!(refs.shots.front().map(|(id, _)| *id), Some(3));
+    }
+
+    fn element(pid: i32) -> ElementRef {
+        ElementRef {
+            bus: ":1.7".to_owned(),
+            path: "/org/a11y/atspi/accessible/9".to_owned(),
+            frame: "/org/a11y/atspi/accessible/1".to_owned(),
+            page: None,
+            kept: crate::a11y::model::Kept {
+                role: 43,
+                window: 3,
+                pid,
+                actions: Vec::new(),
+                lineage: Vec::new(),
+                row: crate::a11y::model::Row::Lineage,
+            },
+        }
+    }
+
+    /// Ids close to the issued ones, as an agent could misspell them, and any text.
+    fn asked() -> impl Strategy<Value = String> {
+        prop_oneof![
+            "(shot|elem)-(0123abcd|0123ABCD|[0-9a-f]{8})-[+0 ]?[0-9]{1,2} ?",
+            any::<String>(),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(crate::test_support::properties(512))]
+
+        /// Every ref the server issues has the form the audit log keeps as it is and names
+        /// what it was issued for, and no other spelling names anything: an id resolves
+        /// only as it was issued.
+        #[test]
+        fn only_the_ids_issued_name_a_ref(count in 1..=32_i32, asked in asked()) {
+            let (holder, viewer) = (SessionId(1), SessionId(2));
+            let mut refs = Refs::new("0123abcd".to_owned());
+            refs.start(holder);
+            let lease = refs.lease().unwrap();
+            let stretch = refs.stretch(viewer);
+            let mut issued = (Vec::new(), Vec::new(), Vec::new());
+            for n in 0..count {
+                let mut taken = shot();
+                taken.connection = n.unsigned_abs().into();
+                let shot_id = refs.insert(lease, taken.clone()).unwrap();
+                prop_assert!(well_formed(&shot_id), "{shot_id}");
+                prop_assert_eq!(refs.get(&shot_id), Ok(taken.clone()));
+                issued.0.push(shot_id);
+                let view_id = refs.insert_view(viewer, stretch, taken.clone()).unwrap();
+                prop_assert!(well_formed(&view_id), "{view_id}");
+                prop_assert_eq!(refs.view(viewer, &view_id), Ok(taken));
+                issued.1.push(view_id);
+                let element_id = refs.insert_element(lease, element(n)).unwrap();
+                prop_assert!(well_formed(&element_id), "{element_id}");
+                prop_assert_eq!(refs.element(&element_id), Ok(element(n)));
+                issued.2.push(element_id);
+            }
+            prop_assert_eq!(refs.get(&asked).is_ok(), issued.0.contains(&asked));
+            prop_assert_eq!(refs.view(viewer, &asked).is_ok(), issued.1.contains(&asked));
+            prop_assert_eq!(refs.element(&asked).is_ok(), issued.2.contains(&asked));
+        }
+    }
+
+    /// grim's image size for `logical` pixels at `scale`.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "grim truncates the same way, `int common_width = geometry->width * scale`"
+    )]
+    fn grim_pixels(logical: u32, scale: f64) -> u32 {
+        (f64::from(logical) * scale) as u32
+    }
+
+    /// The pixel `fraction` of the way across `size` pixels.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a fraction below 1 of a u32 size, floored"
+    )]
+    fn across(size: u32, fraction: f64) -> u32 {
+        (f64::from(size) * fraction).floor() as u32
+    }
+
+    /// Outputs as niri reports them: a physical mode, a scale in niri's 1/120 steps and a
+    /// transform, with the logical size truncated, anywhere in the layout.
+    fn any_output() -> impl Strategy<Value = (LogicalOutput, BTreeMap<String, Output>)> {
+        let transforms = prop::sample::select(vec![
+            niri_ipc::Transform::Normal,
+            niri_ipc::Transform::_90,
+            niri_ipc::Transform::_180,
+            niri_ipc::Transform::_270,
+            niri_ipc::Transform::Flipped,
+            niri_ipc::Transform::Flipped90,
+            niri_ipc::Transform::Flipped180,
+            niri_ipc::Transform::Flipped270,
+        ]);
+        (
+            (1..=7680_u32, 1..=4320_u32),
+            60..=480_u32,
+            transforms,
+            (-100_000..=100_000_i32, -100_000..=100_000_i32),
+        )
+            .prop_filter_map(
+                "an output smaller than a logical pixel",
+                |((width, height), steps, transform, (x, y))| {
+                    let scale = f64::from(steps) / 120.0;
+                    let quarter = matches!(
+                        transform,
+                        niri_ipc::Transform::_90
+                            | niri_ipc::Transform::_270
+                            | niri_ipc::Transform::Flipped90
+                            | niri_ipc::Transform::Flipped270
+                    );
+                    let (shown_width, shown_height) = if quarter {
+                        (height, width)
+                    } else {
+                        (width, height)
+                    };
+                    let geometry = LogicalOutput {
+                        x,
+                        y,
+                        width: grim_pixels(shown_width, 1.0 / scale),
+                        height: grim_pixels(shown_height, 1.0 / scale),
+                        scale,
+                        transform,
+                    };
+                    let output = serde_json::from_value(serde_json::json!({
+                        "name": "winit", "make": "", "model": "", "serial": null,
+                        "physical_size": null, "current_mode": 0, "is_custom_mode": false,
+                        "modes": [{"width": width, "height": height, "refresh_rate": 60000,
+                                   "is_preferred": true}],
+                        "vrr_supported": false, "vrr_enabled": false, "logical": geometry
+                    }))
+                    .ok()?;
+                    (geometry.width > 0 && geometry.height > 0)
+                        .then(|| (geometry, BTreeMap::from([("winit".to_owned(), output)])))
+                },
+            )
+    }
+
+    proptest! {
+        #![proptest_config(crate::test_support::properties(512))]
+
+        /// Every pixel of a screenshot of a whole output, at its own scale or one lowered
+        /// for `max_width`, aims the pointer: an agent never gets `out_of_bounds` for a
+        /// pixel it can see.
+        #[test]
+        fn every_pixel_of_an_output_screenshot_aims(
+            (geometry, outputs) in any_output(),
+            lowered in prop_oneof![Just(1.0), 0.05..1.0_f64],
+            (fx, fy) in (0.0..1.0_f64, 0.0..1.0_f64),
+        ) {
+            let scale = geometry.scale * lowered;
+            let (width, height) = (
+                grim_pixels(geometry.width, scale),
+                grim_pixels(geometry.height, scale),
+            );
+            prop_assume!(width > 0 && height > 0);
+            let output = outputs.get("winit").unwrap();
+            let shot = Shot {
+                geometry,
+                motion_geometry: coords::motion_geometry(output),
+                captured: Rect {
+                    x: geometry.x,
+                    y: geometry.y,
+                    width: geometry.width,
+                    height: geometry.height,
+                },
+                scale,
+                width,
+                height,
+                ..shot()
+            };
+            let now = Instant::now();
+            for pixel in [
+                ImagePx { x: across(width, fx), y: across(height, fy) },
+                ImagePx { x: 0, y: 0 },
+                ImagePx { x: width - 1, y: height - 1 },
+                ImagePx { x: 0, y: height - 1 },
+                ImagePx { x: width - 1, y: 0 },
+            ] {
+                let aimed = aim(&shot, pixel, now, &outputs, Some(shot.connection));
+                prop_assert!(aimed.is_ok(), "{pixel:?} of {width}x{height}: {aimed:?}");
+            }
+        }
+
+        /// A zoom into any region inside the image covers every pixel asked for and stays
+        /// inside the screenshot; any other region is `out_of_bounds`, never a panic.
+        #[test]
+        fn a_zoom_covers_its_region_or_refuses_it(
+            (x, y, width, height) in (-100_000..=100_000_i32, -100_000..=100_000_i32, 1..=4000_u32, 1..=4000_u32),
+            scale in 0.05..4.0_f64,
+            region in (0.0..1.2_f64, 0.0..1.2_f64, 0.0..1.2_f64, 0.0..1.2_f64),
+        ) {
+            let captured = Rect { x, y, width, height };
+            let image = (grim_pixels(width, scale), grim_pixels(height, scale));
+            prop_assume!(image.0 > 0 && image.1 > 0);
+            let shot = Shot { captured, scale, width: image.0, height: image.1, ..shot() };
+            let pixels = ImageRect {
+                origin: ImagePx { x: across(image.0, region.0), y: across(image.1, region.1) },
+                width: across(image.0, region.2),
+                height: across(image.1, region.3),
+            };
+            let inside = |start: u32, extent: u32, size: u32| {
+                extent > 0 && u64::from(start) + u64::from(extent) <= u64::from(size)
+            };
+            let zoomed = shot.zoom(pixels, Instant::now(), Some(shot.connection));
+            if inside(pixels.origin.x, pixels.width, image.0)
+                && inside(pixels.origin.y, pixels.height, image.1)
+            {
+                let (rect, _) = zoomed.unwrap();
+                prop_assert!(rect.width > 0 && rect.height > 0, "{rect:?}");
+                prop_assert!(rect.x >= x && rect.y >= y, "{rect:?} in {captured:?}");
+                prop_assert!(
+                    i64::from(rect.x) + i64::from(rect.width) <= i64::from(x) + i64::from(width)
+                        && i64::from(rect.y) + i64::from(rect.height)
+                            <= i64::from(y) + i64::from(height),
+                    "{rect:?} in {captured:?}"
+                );
+                covers(&shot, pixels, rect);
+            } else {
+                let error = zoomed.unwrap_err();
+                prop_assert!(error.detail.starts_with("out_of_bounds"), "{}", error.detail);
+            }
+        }
     }
 }

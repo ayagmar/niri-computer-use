@@ -6,11 +6,13 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use crate::atspi::{self, Bus, LIST_ITEM, Mock, Object, PANEL, PASSWORD_TEXT, SHOWING, TEXT};
+use crate::atspi::{
+    self, Bus, DOCUMENT_WEB, LIST_ITEM, Mock, Object, PANEL, PASSWORD_TEXT, SHOWING, TEXT,
+};
 use crate::client::{Server, mistake, report, tool_error};
 use crate::clipboard::Pointed;
 use crate::fixture::{Fixture, jpeg};
-use crate::niri::{Niri, Stream, window_on};
+use crate::niri::{Niri, Stream, output, window_on};
 use crate::noctalia::{self, LOCKED, UNLOCKED};
 
 /// An action name an app could put private text in.
@@ -20,6 +22,8 @@ const ODD_ACTION: &str = "open ACTION-SENTINEL";
 pub(crate) const WINDOW: u64 = 1;
 /// The app ID the policy denies, which no window has until a test gives one it.
 const DENIED: &str = "org.ncu.Denied";
+/// How long after niri's initial state the server counts the view as possibly moving.
+const SETTLE: Duration = Duration::from_secs(1);
 
 /// A server holding the lease on a fake niri, whose focused window 1 is the mock
 /// application's, beside window 2 of another app.
@@ -85,6 +89,20 @@ impl Desk {
         objects: Vec<(&'static str, Object)>,
         windows: &[Value],
     ) -> Self {
+        let mut desk = Self::starting(name, frames, objects, windows).await;
+        // The server counts its first second of niri's events as the view moving.
+        desk.server.structured("desktop_state").await;
+        tokio::time::sleep(SETTLE).await;
+        desk
+    }
+
+    /// As `start_with`, without waiting out the server's first second.
+    async fn starting(
+        name: &str,
+        frames: &[&str],
+        objects: Vec<(&'static str, Object)>,
+        windows: &[Value],
+    ) -> Self {
         let mut fixture = Fixture::new(name);
         std::fs::create_dir_all(fixture.path("config/niri-computer-use")).unwrap();
         let policy = format!("deny_input_app_ids = [{DENIED:?}]");
@@ -120,6 +138,15 @@ impl Desk {
         id.as_str().unwrap_or_else(|| panic!("{shot}")).to_owned()
     }
 
+    /// The `screenshot_ref` of a screenshot taken once the screen stopped changing, which a
+    /// pixel aim takes right after niri moved the windows.
+    async fn settled_ref(&mut self) -> String {
+        let arguments = json!({"until": "screen_stable", "timeout_ms": 2000, "screenshot": true});
+        let waited = self.server.call("wait_for", arguments).await;
+        let id = &report(&waited)["screenshot"]["screenshot_ref"];
+        id.as_str().unwrap_or_else(|| panic!("{waited}")).to_owned()
+    }
+
     /// The `element_ref` of the listed element named `name`.
     async fn element(&mut self, name: &str) -> String {
         let listing = self
@@ -148,6 +175,9 @@ async fn an_element_of_the_focused_window_is_activated_and_its_text_set_once_eac
         .await;
     assert_eq!(activated["accepted"], true, "{activated}");
     assert_eq!(activated["observed"], "present", "{activated}");
+    // A plain button whose states and name don't change shows nothing the server can read.
+    assert_eq!(activated["effect"], "none_seen", "{activated}");
+    assert_eq!(activated["element"]["name_changed"], false, "{activated}");
     assert_eq!(desk.mock.calls("DoAction"), 1);
     let entry = desk.element("Field").await;
     let set = desk
@@ -158,8 +188,9 @@ async fn an_element_of_the_focused_window_is_activated_and_its_text_set_once_eac
         )
         .await;
     assert_eq!(set["observed"], "matched", "{set}");
+    assert_eq!(set["effect"], "seen", "{set}");
     assert_eq!(desk.mock.calls("SetTextContents"), 1);
-    assert_eq!(desk.mock.object("/entry").text, Some(3));
+    assert_eq!(desk.mock.object("/entry").text.as_deref(), Some("abc"));
     let password = desk.element("Secret").await;
     let refused = desk
         .server
@@ -169,6 +200,273 @@ async fn an_element_of_the_focused_window_is_activated_and_its_text_set_once_eac
         )
         .await;
     assert_eq!(tool_error(&refused).0, "secret_field");
+    assert_eq!(desk.mock.calls("SetTextContents"), 1);
+}
+
+/// A desk whose mock application's panel also holds `extra` at `/extra`.
+async fn desk_with(name: &str, extra: Object) -> Desk {
+    let mut objects = objects();
+    objects[1] = (
+        "/panel",
+        Object::panel(&["/button", "/odd", "/entry", "/password", "/extra"]),
+    );
+    objects.push(("/extra", extra));
+    let windows = [
+        app_window(WINDOW, true),
+        window_on(2, Some("other"), 1, false),
+    ];
+    Desk::start_with(name, &["/frame"], objects, &windows).await
+}
+
+// Chromium's text fields are editable but have no EditableText interface, and
+// `set_element_text` refused them as a plain `invalid arguments:`, which the skill reads
+// as a mistake in the call to fix and send again. The refusal now has its own name
+// and says what works instead. A button, which isn't editable, is still a mistake. A
+// password field, which Chromium's are too, is `secret_field`: telling the agent to type
+// into it would type a secret. Nothing is set either way.
+#[tokio::test]
+async fn an_editable_field_without_editable_text_says_to_focus_and_type() {
+    let web = Object {
+        text: None,
+        ..Object::entry(TEXT, "Web field")
+    };
+    let mut desk = desk_with("el-not-settable", web).await;
+    let set = |element: String| json!({"element": element, "text": "abc", "expect": {"window_id": WINDOW}});
+    let field = desk.element("Web field").await;
+    let refused = desk.server.call("set_element_text", set(field)).await;
+    let (name, detail) = tool_error(&refused);
+    assert_eq!(name, "text_not_settable", "{refused}");
+    for advice in [
+        "activate_element",
+        "type_text",
+        "ctrl+a",
+        "nothing was sent",
+    ] {
+        assert!(detail.contains(advice), "{advice}: {detail}");
+    }
+    let button = desk.element("Safe").await;
+    let wrong = desk.server.call("set_element_text", set(button)).await;
+    assert_eq!(
+        mistake(&wrong),
+        "invalid arguments: the element has no EditableText interface, so its text can't be set"
+    );
+    assert_eq!(desk.mock.calls("SetTextContents"), 0);
+
+    let password = Object {
+        text: None,
+        ..Object::entry(PASSWORD_TEXT, "Web password")
+    };
+    let mut secret = desk_with("el-not-settable-secret", password).await;
+    let hidden = secret.element("Web password").await;
+    let kept = secret.server.call("set_element_text", set(hidden)).await;
+    let (error, why) = tool_error(&kept);
+    assert_eq!(error, "secret_field", "{kept}");
+    assert!(!why.contains("type_text"), "{why}");
+    assert_eq!(secret.mock.calls("SetTextContents"), 0);
+}
+
+/// `set_element_text` on the mock's field, `/entry`, with `text`.
+async fn set_entry(desk: &mut Desk, text: &str) -> Value {
+    let entry = desk.element("Field").await;
+    let arguments = json!({"element": entry, "text": text, "expect": {"window_id": WINDOW}});
+    desk.server
+        .structured_with("set_element_text", arguments)
+        .await
+}
+
+// A field that caps or reformats its input used to pass as `matched` whenever the count
+// happened to match: one that upper-cases keeps as many characters as it was given.
+#[tokio::test]
+async fn a_field_that_reformats_or_caps_its_text_differs() {
+    let mut desk = Desk::start("el-text-differs").await;
+    desk.mock.change("/entry", |entry| {
+        entry.keeps = Some(str::to_uppercase);
+    });
+    let upper = set_entry(&mut desk, "abc").await;
+    assert_eq!(upper["accepted"], true, "{upper}");
+    assert_eq!(upper["observed"], "differs", "{upper}");
+    assert_eq!(upper["effect"], "differs", "{upper}");
+    assert_eq!(upper["element"]["characters"], 3, "{upper}");
+    desk.mock.change("/entry", |entry| {
+        entry.keeps = Some(|text| text.chars().take(2).collect());
+    });
+    let capped = set_entry(&mut desk, "abc").await;
+    assert_eq!(capped["effect"], "differs", "{capped}");
+    assert_eq!(capped["element"]["characters"], 2, "{capped}");
+    // A count that differs needs no text read back.
+    assert_eq!(desk.mock.calls("GetText"), 1);
+    desk.mock.change("/entry", |entry| entry.keeps = None);
+    let kept = set_entry(&mut desk, "abc").await;
+    assert_eq!(kept["observed"], "matched", "{kept}");
+    assert_eq!(kept["effect"], "seen", "{kept}");
+}
+
+/// Text only the field holds, which must reach neither the result nor the audit log.
+const TEXT_SENTINEL: &str = "PRIVATE-FIELD-SENTINEL";
+
+#[tokio::test]
+async fn the_text_sent_or_read_back_reaches_neither_the_result_nor_the_audit_log() {
+    let mut desk = Desk::start("el-text-private").await;
+    let sent = format!("{TEXT_SENTINEL} sent");
+    let matched = set_entry(&mut desk, &sent).await;
+    assert_eq!(matched["effect"], "seen", "{matched}");
+    // The field adds text of its own, which the read-back sees and drops.
+    desk.mock.change("/entry", |entry| {
+        entry.keeps = Some(|text| format!("{text} {TEXT_SENTINEL} kept"));
+    });
+    let differs = set_entry(&mut desk, &sent).await;
+    assert_eq!(differs["effect"], "differs", "{differs}");
+    for result in [&matched, &differs] {
+        assert!(!result.to_string().contains(TEXT_SENTINEL), "{result}");
+    }
+    let audit = std::fs::read_to_string(desk.fixture.audit_log()).unwrap();
+    assert!(!audit.contains(TEXT_SENTINEL), "{audit}");
+    let line = desk.fixture.audit_lines().pop().unwrap();
+    assert_eq!(line["effect"], "differs", "{line}");
+}
+
+/// A spin button whose `increase` action steps its value and none of its states.
+fn spin_button() -> Object {
+    Object {
+        role: 52,
+        value: Some(2.0),
+        ..Object::button("Count", &["increase"])
+    }
+}
+
+// A slider or spin button stepped by its action changed only its value, which read as no
+// effect at all when only states were compared.
+#[tokio::test]
+async fn a_value_changed_with_no_state_change_is_seen() {
+    let mut desk = desk_with("el-value", spin_button()).await;
+    let spin = desk.element("Count").await;
+    let arguments = json!({"element": spin, "action": "increase", "expect": {"window_id": WINDOW}});
+    let stepped = desk
+        .server
+        .structured_with("activate_element", arguments)
+        .await;
+    assert_eq!(stepped["observed"], "present", "{stepped}");
+    assert_eq!(stepped["element"]["value_changed"], true, "{stepped}");
+    assert_eq!(stepped["effect"], "seen", "{stepped}");
+    assert_eq!(stepped["element"].get("states_set"), None, "{stepped}");
+    // Never the value itself.
+    assert!(!stepped.to_string().contains("3.0"), "{stepped}");
+    assert_eq!(desk.mock.object("/extra").value, Some(3.0));
+    assert_eq!(desk.mock.calls("CurrentValue"), 2);
+}
+
+// A counter button relabels itself and changes no state: compared by states alone it read
+// as `none_seen`. Its names, before and after, reach neither the result nor the audit log.
+#[tokio::test]
+async fn a_button_that_relabels_itself_is_seen_without_its_names() {
+    let counter = Object {
+        counter: Some(41),
+        ..Object::button("PRIVATE-COUNT 0", &["click"])
+    };
+    let mut desk = desk_with("el-relabel", counter).await;
+    let button = desk.element("PRIVATE-COUNT 0").await;
+    let arguments = json!({"element": button, "expect": {"window_id": WINDOW}});
+    let relabelled = desk
+        .server
+        .structured_with("activate_element", arguments)
+        .await;
+    assert_eq!(relabelled["observed"], "present", "{relabelled}");
+    assert_eq!(relabelled["element"]["name_changed"], true, "{relabelled}");
+    assert_eq!(relabelled["effect"], "seen", "{relabelled}");
+    assert_eq!(desk.mock.object("/extra").name, "Count: 42");
+    let audit = std::fs::read_to_string(desk.fixture.audit_log()).unwrap();
+    for text in [relabelled.to_string(), audit] {
+        assert!(!text.contains("PRIVATE-COUNT"), "{text}");
+        assert!(!text.contains("Count: 42"), "{text}");
+    }
+}
+
+// The change report starts before the last gate: a window retitled while the element was
+// still being checked, before anything went out, made a button that does nothing `seen`.
+#[tokio::test]
+async fn a_window_change_before_the_call_went_out_never_shows_an_effect() {
+    let mut desk = Desk::start("el-title-before").await;
+    let button = desk.element("Safe").await;
+    let reading = desk.mock.hold_on("GetActions", "/button");
+    let arguments = json!({"element": button, "expect": {"window_id": WINDOW}});
+    let id = desk.server.start_call("activate_element", arguments).await;
+    reading.arrived().await;
+    let mut retitled = app_window(WINDOW, true);
+    retitled["title"] = json!("Mock (1 new message)");
+    desk.stream
+        .send(&json!({"WindowOpenedOrChanged": {"window": retitled}}));
+    assert_eq!(desk.mock.calls("DoAction"), 0);
+    reading.release();
+    let result = desk.server.response(id).await["result"].clone();
+    let outcome = report(&result);
+    assert_eq!(outcome["observed"], "present", "{outcome}");
+    assert_eq!(outcome["effect"], "none_seen", "{outcome}");
+    // The change is still there for the agent to judge.
+    assert_eq!(outcome["changes"]["windows"][0]["id"], WINDOW, "{outcome}");
+    assert_eq!(desk.mock.calls("DoAction"), 1);
+}
+
+// The value was read inside the last gate, whose pass must end within 250 ms: an app that
+// answered `CurrentValue` in 300 ms made every activation of its spin button `element_busy`.
+// Read before the gate with only the call deadlines, `GetInterfaces` in 990 ms and
+// `CurrentValue` cut at 1 s left too little of the request's budget for `DoAction`.
+#[tokio::test]
+async fn a_slow_value_read_never_refuses_the_activation() {
+    for (name, interfaces, value) in [
+        ("el-value-slower", Some(990), 1500),
+        ("el-value-slow", None, 300),
+    ] {
+        let mut desk = desk_with(name, spin_button()).await;
+        let spin = desk.element("Count").await;
+        if let Some(ms) = interfaces {
+            desk.mock
+                .slow_on("GetInterfaces", "/extra", Duration::from_millis(ms));
+        }
+        desk.mock
+            .slow_on("CurrentValue", "/extra", Duration::from_millis(value));
+        let arguments =
+            json!({"element": spin, "action": "increase", "expect": {"window_id": WINDOW}});
+        let stepped = desk
+            .server
+            .structured_with("activate_element", arguments)
+            .await;
+        assert_eq!(stepped["accepted"], true, "{name}: {stepped}");
+        assert_eq!(stepped["effect"], "unverified", "{name}: {stepped}");
+        assert_eq!(desk.mock.calls("DoAction"), 1, "{name}");
+    }
+}
+
+// The action already went out when the look afterwards fails: the result says the effect
+// couldn't be checked, with why, and is never an error.
+#[tokio::test]
+async fn a_read_back_that_fails_is_unverified_not_an_error() {
+    let mut desk = desk_with("el-readback-fails", spin_button()).await;
+    let spin = desk.element("Count").await;
+    let arguments = json!({"element": spin, "action": "increase", "expect": {"window_id": WINDOW}});
+    let acting = desk.mock.hold_on("DoAction", "/extra");
+    let id = desk.server.start_call("activate_element", arguments).await;
+    acting.arrived().await;
+    desk.mock.fail("CurrentValue", "the value is busy");
+    acting.release();
+    let result = desk.server.response(id).await["result"].clone();
+    assert_eq!(result["isError"], false, "{result}");
+    let stepped = report(&result);
+    assert_eq!(stepped["accepted"], true, "{stepped}");
+    assert_eq!(stepped["observed"], "present", "{stepped}");
+    assert_eq!(stepped["effect"], "unverified", "{stepped}");
+    let detail = stepped["detail"].as_str().unwrap();
+    assert!(
+        detail.ends_with("org.freedesktop.DBus.Error.Failed"),
+        "{detail}"
+    );
+    assert_eq!(desk.mock.calls("DoAction"), 1);
+
+    desk.mock.fail("GetText", "the text is busy");
+    let set = set_entry(&mut desk, "abc").await;
+    assert_eq!(set["accepted"], true, "{set}");
+    assert_eq!(set["observed"], "unknown", "{set}");
+    assert_eq!(set["effect"], "unverified", "{set}");
+    assert!(set["detail"].as_str().unwrap().contains("GetText"), "{set}");
     assert_eq!(desk.mock.calls("SetTextContents"), 1);
 }
 
@@ -636,6 +934,7 @@ async fn the_apps_error_messages_reach_neither_the_result_nor_the_audit_log() {
         ("set_element_text", "GetInterfaces"),
         ("set_element_text", "SetTextContents"),
         ("set_element_text", "CharacterCount"),
+        ("set_element_text", "GetText"),
     ] {
         desk.mock.fail(member, &message);
         let arguments = if tool == "activate_element" {
@@ -651,9 +950,10 @@ async fn the_apps_error_messages_reach_neither_the_result_nor_the_audit_log() {
     desk.mock.fail("GetState", &message);
     held.release();
     results.push(desk.server.response(id).await["result"].clone());
-    let unknown = &report(&results[5]);
+    let unknown = &report(&results[6]);
     assert_eq!(unknown["observed"], "unknown", "{unknown}");
     assert_eq!(report(&results[4])["observed"], "unknown");
+    assert_eq!(report(&results[5])["observed"], "unknown");
     for result in &results {
         assert!(!result.to_string().contains(SENTINEL), "{result}");
     }
@@ -1295,8 +1595,7 @@ async fn named_rows_of_different_shapes_and_changing_labels_keep_their_refs() {
     assert_eq!(desk.mock.calls("DoAction"), 2);
 }
 
-/// Unnamed rows of `[Delete, More, 64 static labels, record label]`, listed with `limit:
-/// 1`: the walk stops after the first row's `More`, before its label and the next row.
+/// Rows of `[Delete, More, 64 static labels, record label]`, named or not as `rows` says.
 fn long_rows(rows: Rows) -> Vec<(&'static str, Object)> {
     let row = |n: usize| {
         let mut objects = record_row(n);
@@ -1311,7 +1610,15 @@ fn long_rows(rows: Rows) -> Vec<(&'static str, Object)> {
     list(rows, 2, row, Vec::new())
 }
 
+/// The first element listed with `limit` 1, from a walk cut short in the first row: four
+/// of its static labels answer in 0.9 s each, so the walk runs out of its three seconds
+/// before the row's label and the next row.
 async fn first_listed(desk: &mut Desk) -> Value {
+    for extra in 0..4 {
+        let path = format!("/static1_{extra}");
+        desk.mock
+            .slow_on("GetState", &path, Duration::from_millis(900));
+    }
     let listing = desk
         .server
         .structured_with(
@@ -1319,13 +1626,14 @@ async fn first_listed(desk: &mut Desk) -> Value {
             json!({"window_id": WINDOW, "limit": 1, "format": "json"}),
         )
         .await;
+    assert_eq!(listing["capped_reason"], "budget_exhausted", "{listing}");
     assert_eq!(listing["truncated"], true, "{listing}");
     listing["elements"][0].clone()
 }
 
-// A listing stopped at its limit, its object cap or its time budget before the row's
-// record or the next row: a row's role and name are read before anything in it, so a
-// named row still binds the ref and an unnamed one is still refused.
+// A walk cut short before the row's record and the next row: a row's role and name are
+// read before anything in it, so a named row still binds the ref, which goes stale once
+// the row shows another record, and an unnamed one is still refused.
 #[tokio::test]
 async fn a_listing_stopped_before_the_rows_record_still_binds_or_refuses_by_the_row() {
     let mut named = list_desk("el-row-cut-named", long_rows(Rows::Named)).await;
@@ -1343,18 +1651,196 @@ async fn a_listing_stopped_before_the_rows_record_still_binds_or_refuses_by_the_
     assert_eq!(refused["unbound"], "unnamed_row", "{refused}");
 }
 
-// The documented limit: in rows with no row role, a control whose look-alike elements
-// the walk never read can't be told from a control of its own, so its ref keeps only
-// the lineage check, and a row reused in place isn't caught. The docs and the skill say
-// to aim the pointer tools at a list record's pixels instead.
+/// A list put on the bus without rows: `Delete` for record 1, `Delete all`, `between`'s
+/// labels, then `Delete` for record 2.
+fn deletes(between: &[&'static str]) -> Vec<(&'static str, Object)> {
+    let mut children = vec!["/delete1", "/deleteall"];
+    children.extend(between);
+    children.push("/delete2");
+    let mut objects = vec![
+        ("/frame", Object::frame("Mock", (800, 600), &["/list"])),
+        ("/list", Object::panel(&children)),
+        ("/delete1", Object::button("Delete", &["click"])),
+        ("/deleteall", Object::button("Delete all", &["click"])),
+        ("/delete2", Object::button("Delete", &["click"])),
+    ];
+    objects.extend(between.iter().map(|path| (*path, Object::label("Size"))));
+    objects
+}
+
+/// The first button `elements` lists with `limit`, checked to be record 1's `Delete`,
+/// marked unbound for `why` and refused by `activate_element` and `click` with nothing
+/// sent.
+async fn first_delete_unbound(desk: &mut Desk, limit: u16, why: &str) -> Value {
+    let arguments =
+        json!({"window_id": WINDOW, "role": "button", "limit": limit, "format": "json"});
+    let listing = desk.server.structured_with("elements", arguments).await;
+    let first = &listing["elements"][0];
+    assert_eq!(first["name"], "Delete", "{listing}");
+    assert_eq!(first["unbound"], why, "{listing}");
+    let element = first["element_ref"].as_str().unwrap();
+    let shot = desk.screenshot_ref().await;
+    let aimed = json!({"screenshot_ref": shot, "element": element});
+    let clicked = desk.server.call("click", aimed).await;
+    for result in [activate(desk, element).await, clicked] {
+        let (error, detail) = tool_error(&result);
+        assert_eq!(error, "element_unbound", "{result}");
+        assert!(
+            detail.contains("aim the pointer tools at its pixels"),
+            "{detail}"
+        );
+    }
+    assert_eq!(desk.mock.calls("DoAction"), 0);
+    assert_eq!(desk.fixture.clipboard.pointed(), []);
+    listing
+}
+
+// The bug: a listing with `limit` 1 stopped at its second match, `Delete all`, before
+// record 2's `Delete`, and bound record 1's by the count of what it had read, so its ref
+// could act on another record. The walk now reads on past the limit to finish the count.
 #[tokio::test]
-async fn a_control_outside_rows_whose_look_alike_elements_went_unread_keeps_its_ref() {
-    let mut desk = list_desk("el-row-cut-panels", long_rows(Rows::Panels)).await;
-    let delete = first_listed(&mut desk).await;
-    assert!(delete.get("unbound").is_none(), "{delete}");
-    reuse_first_row(&desk, Rows::Panels);
-    let result = activate(&mut desk, delete["element_ref"].as_str().unwrap()).await;
+async fn a_listing_stopped_at_its_limit_still_counts_what_lies_past_it() {
+    let mut desk = list_desk("el-bind-limit", deletes(&[])).await;
+    let listing = first_delete_unbound(&mut desk, 1, "repeated").await;
+    assert_eq!(listing["truncated"], true, "{listing}");
+}
+
+// The bug, with the walk cut short: four labels answering in 0.9 s each run it out of its
+// three seconds before record 2's `Delete`. Nothing read shows that record 1's has no
+// look-alike, so it is `unbound: cut_short`, where it was bound by the count.
+#[tokio::test]
+async fn a_control_outside_rows_a_cut_walk_cant_tell_apart_is_unbound() {
+    let slow = ["/size1", "/size2", "/size3", "/size4"];
+    let mut desk = list_desk("el-bind-cut", deletes(&slow)).await;
+    for path in slow {
+        desk.mock
+            .slow_on("GetState", path, Duration::from_millis(900));
+    }
+    let listing = first_delete_unbound(&mut desk, 1, "cut_short").await;
+    assert_eq!(listing["capped_reason"], "budget_exhausted", "{listing}");
+}
+
+// The bug: a grid of 65 buttons before `Save`, four of them answering in 0.9 s, ran the
+// walk out of its three seconds inside the grid, so `Save` was never read or listed. A big
+// container's children now wait until the rest of the window is read. The grid still
+// isn't finished, so `Save` may have a look-alike in it: it is `unbound: cut_short`, and
+// its ref is refused with nothing sent.
+#[tokio::test]
+async fn a_big_container_early_in_the_window_no_longer_hides_the_controls_after_it() {
+    let (objects, cells) = grid_then_save(65, |n| Object::button(&format!("Open {n}"), &["click"]));
+    let mut desk = list_desk("el-big-grid", objects).await;
+    for path in cells.iter().take(4) {
+        desk.mock
+            .slow_on("GetState", path, Duration::from_millis(900));
+    }
+    let arguments = json!({"window_id": WINDOW, "name_contains": "Save", "format": "json"});
+    let listing = desk.server.structured_with("elements", arguments).await;
+    assert_eq!(listing["capped_reason"], "budget_exhausted", "{listing}");
+    let save = &listing["elements"][0];
+    assert_eq!(save["name"], "Save", "{listing}");
+    assert_eq!(save["unbound"], "cut_short", "{listing}");
+    let result = activate(&mut desk, save["element_ref"].as_str().unwrap()).await;
+    assert_eq!(tool_error(&result).0, "element_unbound", "{result}");
+    assert_eq!(desk.mock.calls("DoAction"), 0);
+}
+
+/// A window of a `/grid` panel of `count` objects that `cell` makes, then a `Save` button,
+/// and the grid's cells' paths.
+fn grid_then_save(
+    count: usize,
+    cell: impl Fn(usize) -> Object,
+) -> (Vec<(&'static str, Object)>, Vec<&'static str>) {
+    let cells: Vec<&'static str> = (0..count).map(|n| leak(format!("/cell{n}"))).collect();
+    let mut objects = vec![
+        (
+            "/frame",
+            Object::frame("Mock", (800, 600), &["/grid", "/save"]),
+        ),
+        ("/grid", Object::panel(&cells)),
+        ("/save", Object::button("Save", &["click"])),
+    ];
+    for (n, path) in cells.iter().enumerate() {
+        objects.push((*path, cell(n)));
+    }
+    (objects, cells)
+}
+
+/// `Save` as `elements` lists it, in a listing that must have been cut by `capped`, or not
+/// cut at all.
+async fn listed_save(desk: &mut Desk, capped: Option<&str>) -> Value {
+    let arguments = json!({"window_id": WINDOW, "name_contains": "Save", "format": "json"});
+    let listing = desk.server.structured_with("elements", arguments).await;
+    assert_eq!(listing["capped_reason"].as_str(), capped, "{listing}");
+    let save = listing["elements"][0].clone();
+    assert_eq!(save["name"], "Save", "{listing}");
+    save
+}
+
+// The bug: at-spi2-atk refuses `GetChildren` on an object of more than 65,536 children,
+// as a GTK 3 tree view of 22,000 rows of three columns has, and that refusal failed the
+// whole listing with `upstream_error`. The grid's children now go unread: the listing is
+// cut short by `children_refused`, and `Save`, which a look-alike in the grid could share
+// its role and name with, is listed `unbound: cut_short`.
+#[tokio::test]
+async fn children_the_app_refuses_to_list_cut_the_listing_short_instead_of_failing_it() {
+    let (objects, _) = grid_then_save(2, |n| Object::label(&format!("Cell {n}")));
+    let mut desk = list_desk("el-big-refused", objects).await;
+    desk.mock.fail_named(
+        "GetChildren",
+        "/grid",
+        "org.freedesktop.DBus.Error.InvalidArgs",
+    );
+    let save = listed_save(&mut desk, Some("children_refused")).await;
+    assert_eq!(save["unbound"], "cut_short", "{save}");
+}
+
+// Only at-spi2-atk's refusal is read as unread children. The bus's `NoReply`, as when the
+// app quits before it answers, still fails the listing with the bus's error, not a
+// refusal the app never made.
+#[tokio::test]
+async fn children_the_app_never_answered_for_still_fail_the_listing() {
+    let (objects, _) = grid_then_save(2, |n| Object::label(&format!("Cell {n}")));
+    let mut desk = list_desk("el-big-no-reply", objects).await;
+    desk.mock
+        .fail_named("GetChildren", "/grid", "org.freedesktop.DBus.Error.NoReply");
+    let arguments = json!({"window_id": WINDOW, "name_contains": "Save", "format": "json"});
+    let result = desk.server.call("elements", arguments).await;
+    let (error, detail) = tool_error(&result);
+    assert_eq!(error, "upstream_error", "{result}");
+    assert!(detail.contains("NoReply"), "{detail}");
+}
+
+// A `GetChildren` past its one-second deadline is no answer, not a refusal: the listing
+// fails `deadline_exceeded`.
+#[tokio::test]
+async fn children_past_the_calls_deadline_fail_the_listing() {
+    let (objects, _) = grid_then_save(2, |n| Object::label(&format!("Cell {n}")));
+    let mut desk = list_desk("el-big-late", objects).await;
+    desk.mock
+        .slow_on("GetChildren", "/grid", Duration::from_millis(1500));
+    let arguments = json!({"window_id": WINDOW, "name_contains": "Save", "format": "json"});
+    let result = desk.server.call("elements", arguments).await;
+    assert_eq!(tool_error(&result).0, "deadline_exceeded", "{result}");
+}
+
+// A walk cut short after a named row still binds that row's `Delete` by the row's name:
+// rows 2 and 3 answer in 0.9 s an object, and the walk runs out before the end.
+#[tokio::test]
+async fn a_control_in_a_named_row_keeps_its_ref_when_the_walk_is_cut() {
+    let objects = list(Rows::Named, 3, record_row, Vec::new());
+    let mut desk = list_desk("el-bind-cut-named", objects).await;
+    for path in ["/row2", "/label2", "/delete2", "/row3"] {
+        desk.mock
+            .slow_on("GetState", path, Duration::from_millis(900));
+    }
+    let arguments = json!({"window_id": WINDOW, "role": "button", "format": "json"});
+    let listing = desk.server.structured_with("elements", arguments).await;
+    assert_eq!(listing["capped_reason"], "budget_exhausted", "{listing}");
+    let first = &listing["elements"][0];
+    assert!(first.get("unbound").is_none(), "{listing}");
+    let result = activate(&mut desk, first["element_ref"].as_str().unwrap()).await;
     assert_eq!(report(&result)["accepted"], true, "{result}");
+    assert_eq!(desk.mock.calls("DoAction"), 1);
 }
 
 // A control whose role and name tell it apart from everything beside it keeps its ref
@@ -1951,7 +2437,15 @@ async fn an_action_list_changed_before_the_last_gate_never_sends_another_action(
 }
 
 /// The calls that read the element.
-const READS: [&str; 4] = ["GetState", "GetRole", "CharacterCount", "GetActions"];
+const READS: [&str; 7] = [
+    "Name",
+    "GetState",
+    "GetRole",
+    "CharacterCount",
+    "GetText",
+    "CurrentValue",
+    "GetActions",
+];
 
 // A stop or a lease change once the call that acts went out can't recall it: the action is
 // `uncertain`, with why, and nothing more is asked, not even a screenshot. Before it went
@@ -1987,6 +2481,9 @@ async fn a_stop_or_lost_lease_after_the_call_went_out_leaves_it_uncertain() {
             let outcome = &report(&result);
             assert_eq!(outcome["accepted"], Value::Null, "{outcome}");
             assert_eq!(outcome["observed"], "uncertain", "{outcome}");
+            // Before the app answered, nothing is known of the effect, which says so.
+            assert_eq!(outcome["effect"], "unverified", "{outcome}");
+            assert_eq!(outcome["element"]["role"], held.role, "{outcome}");
             let detail = outcome["detail"].as_str().unwrap();
             assert!(detail.contains(why), "{detail}");
             assert!(detail.contains("may have taken effect"), "{detail}");
@@ -1995,6 +2492,7 @@ async fn a_stop_or_lost_lease_after_the_call_went_out_leaves_it_uncertain() {
             assert_eq!(line["tool"], held.tool);
             assert_eq!(line["accepted"], Value::Null, "{line}");
             assert_eq!(line["observed"], "uncertain", "{line}");
+            assert_eq!(line["effect"], "unverified", "{line}");
         }
     }
 }
@@ -2115,6 +2613,7 @@ async fn a_stop_or_lost_lease_after_the_app_answered_keeps_what_it_answered() {
             let outcome = &report(&result);
             assert_eq!(outcome["accepted"], true, "{outcome}");
             assert_eq!(outcome["observed"], "uncertain", "{outcome}");
+            assert_eq!(outcome["effect"], "unverified", "{outcome}");
             assert_eq!(outcome["focus"], "matched", "{outcome}");
             assert_eq!(outcome["element"]["role"], held.role, "{outcome}");
             let detail = outcome["detail"].as_str().unwrap();
@@ -2275,6 +2774,58 @@ async fn a_walk_that_fails_after_the_action_leaves_the_elements_unknown_not_the_
     assert_eq!(elements["window_id"], WINDOW, "{outcome}");
     assert_eq!(elements["unknown"], "deadline_exceeded", "{outcome}");
     assert_eq!(desk.mock.calls("DoAction"), 1);
+}
+
+#[tokio::test]
+async fn children_the_app_refuses_after_the_action_leave_the_elements_unknown() {
+    let mut desk = Desk::start("chg-refused").await;
+    let button = desk.element("Safe").await;
+    let acting = desk.mock.hold_on("DoAction", "/button");
+    let arguments = json!({
+        "element": button, "expect": {"window_id": WINDOW}, "element_changes": true
+    });
+    let id = desk.server.start_call("activate_element", arguments).await;
+    acting.arrived().await;
+    desk.mock.fail_named(
+        "GetChildren",
+        "/panel",
+        "org.freedesktop.DBus.Error.InvalidArgs",
+    );
+    acting.release();
+    let result = desk.server.response(id).await["result"].clone();
+    let outcome = &report(&result);
+    assert_eq!(outcome["accepted"], true, "{outcome}");
+    assert_eq!(
+        outcome["changes"]["elements"]["unknown"], "children_refused",
+        "{outcome}"
+    );
+}
+
+/// An object gone by the time the walk after the action read it takes everything under it
+/// out of that walk, so a diff would report those elements removed.
+#[tokio::test]
+async fn part_of_the_tree_gone_mid_walk_after_the_action_leaves_the_elements_unknown() {
+    let mut desk = Desk::start("chg-lost").await;
+    let button = desk.element("Safe").await;
+    let acting = desk.mock.hold_on("DoAction", "/button");
+    let arguments = json!({
+        "element": button, "expect": {"window_id": WINDOW}, "element_changes": true
+    });
+    let id = desk.server.start_call("activate_element", arguments).await;
+    acting.arrived().await;
+    desk.mock.fail_named(
+        "GetRole",
+        "/panel",
+        "org.freedesktop.DBus.Error.UnknownObject",
+    );
+    acting.release();
+    let result = desk.server.response(id).await["result"].clone();
+    let outcome = &report(&result);
+    assert_eq!(outcome["accepted"], true, "{outcome}");
+    assert_eq!(
+        outcome["changes"]["elements"]["unknown"], "nodes_gone",
+        "{outcome}"
+    );
 }
 
 #[tokio::test]
@@ -2489,6 +3040,118 @@ async fn a_floating_window_on_a_workspace_not_shown_is_never_aimed_at() {
         assert!(detail.starts_with("not_showing: "), "{tool}: {detail}");
         assert_eq!(desk.fixture.clipboard.pointed(), [], "{tool}");
     }
+    let relisted = safe(&mut desk).await;
+    assert_eq!(relisted["layout_box"], Value::Null, "{relisted}");
+    assert_eq!(relisted["unmappable"], "not_showing", "{relisted}");
+}
+
+/// A floating window's tree as Chromium gives it with server-side decorations at scale
+/// 1.5: the frame and the view holding the page in logical pixels, the page's document
+/// and the `Safe` button in it in the output's pixels.
+fn chromium_page() -> Vec<(&'static str, Object)> {
+    vec![
+        ("/frame", Object::frame("Mock", (800, 600), &["/view"])),
+        (
+            "/view",
+            Object {
+                extents: Some((0, 0, 800, 600)),
+                ..Object::panel(&["/page"])
+            },
+        ),
+        (
+            "/page",
+            Object {
+                role: DOCUMENT_WEB,
+                extents: Some((0, 0, 1200, 900)),
+                ..Object::panel(&["/button"])
+            },
+        ),
+        (
+            "/button",
+            Object {
+                extents: Some((60, 60, 120, 45)),
+                ..Object::button("Safe", &["click"])
+            },
+        ),
+    ]
+}
+
+// The bug: Chromium's frame fits with server-side decorations, and its page's extents are
+// in the output's pixels, so at scale 1.5 the button was listed half as large again and
+// away from the window's corner, and a click by its ref went past it. The listing and
+// the aim now take the page's unit from its document, read again right before the aim:
+// once the document no longer matches the view in either unit, the same ref sends
+// nothing.
+#[tokio::test]
+async fn a_chromium_pages_button_is_aimed_at_in_logical_pixels() {
+    let windows = [floating_window()];
+    let mut desk = Desk::start_with("el-page-scale", &["/frame"], chromium_page(), &windows).await;
+    let scaled = output("DP-1", Some((0, 0, 2560, 1440, 1.5)));
+    desk.niri.set_outputs(vec![scaled], Some("DP-1"));
+    let listed = safe(&mut desk).await;
+    let placed = json!({"x": 60.0, "y": 60.0, "width": 80.0, "height": 30.0});
+    assert_eq!(listed["layout_box"], placed, "{listed}");
+    let button = listed["element_ref"].as_str().unwrap().to_owned();
+    let shot = desk.screenshot_ref().await;
+    let aimed = json!({"screenshot_ref": shot, "element": button});
+    let moved = desk.server.call("pointer_move", aimed.clone()).await;
+    assert_eq!(moved["isError"], false, "{moved}");
+    // The box's centre, (100, 75), on the 2560x1440 output, in thousandths of a pixel.
+    assert_eq!(
+        desk.fixture.clipboard.pointed(),
+        [Pointed::Motion(100_000, 75_000, 2_560_000, 1_440_000)]
+    );
+
+    desk.mock
+        .change("/page", |page| page.extents = Some((0, 0, 900, 900)));
+    let refused = desk.server.call("pointer_move", aimed).await;
+    let (name, detail) = tool_error(&refused);
+    assert_eq!(name, "element_unmappable", "{refused}");
+    assert!(detail.starts_with("page_scale_unknown: "), "{detail}");
+    // Chromium's text fields refuse `set_element_text`, so the advice mustn't send there.
+    assert!(detail.contains("activate_element"), "{detail}");
+    assert!(!detail.contains("set_element_text"), "{detail}");
+    assert_eq!(desk.fixture.clipboard.pointed(), []);
+    let relisted = safe(&mut desk).await;
+    assert_eq!(relisted["layout_box"], Value::Null, "{relisted}");
+    assert_eq!(relisted["unmappable"], "page_scale_unknown", "{relisted}");
+}
+
+// Chromium leaves a web object `showing` until nothing of it is left in the page, so once
+// the page scrolled its button half under the browser's toolbar, the button kept a box
+// centred on the toolbar, and a click by its ref landed there. Its centre is now checked
+// against the page's document, at the listing and again right before the aim.
+#[tokio::test]
+async fn a_chromium_pages_button_scrolled_under_the_toolbar_is_never_aimed_at() {
+    let mut objects = chromium_page();
+    for (path, object) in &mut objects {
+        match *path {
+            "/view" => object.extents = Some((0, 56, 800, 544)),
+            "/page" => object.extents = Some((0, 84, 1200, 816)),
+            "/button" => object.extents = Some((60, 150, 120, 45)),
+            _ => {}
+        }
+    }
+    let windows = [floating_window()];
+    let mut desk = Desk::start_with("el-page-scrolled", &["/frame"], objects, &windows).await;
+    let scaled = output("DP-1", Some((0, 0, 2560, 1440, 1.5)));
+    desk.niri.set_outputs(vec![scaled], Some("DP-1"));
+    let listed = safe(&mut desk).await;
+    let placed = json!({"x": 60.0, "y": 120.0, "width": 80.0, "height": 30.0});
+    assert_eq!(listed["layout_box"], placed, "{listed}");
+    let button = listed["element_ref"].as_str().unwrap().to_owned();
+    let shot = desk.screenshot_ref().await;
+    let aimed = json!({"screenshot_ref": shot, "element": button});
+
+    desk.mock.change("/button", |scrolled| {
+        scrolled.extents = Some((60, 30, 120, 45));
+    });
+    let refused = desk.server.call("pointer_move", aimed).await;
+    let (name, detail) = tool_error(&refused);
+    assert_eq!(name, "element_unmappable", "{refused}");
+    assert!(detail.starts_with("not_showing: "), "{detail}");
+    assert!(detail.contains("outside its web page"), "{detail}");
+    assert_eq!(desk.fixture.clipboard.pointed(), []);
     let relisted = safe(&mut desk).await;
     assert_eq!(relisted["layout_box"], Value::Null, "{relisted}");
     assert_eq!(relisted["unmappable"], "not_showing", "{relisted}");
@@ -2740,6 +3403,30 @@ async fn an_element_just_uncovered_by_another_window_moving_away_waits_a_second(
     refused_moving(&refused, "moved away");
     assert_eq!(desk.fixture.clipboard.pointed(), []);
     tokio::time::sleep(Duration::from_millis(1100)).await;
+    let clicked = desk.server.call("click", aimed).await;
+    assert_eq!(clicked["isError"], false, "{clicked}");
+    assert_eq!(desk.fixture.clipboard.pointed().len(), 3);
+}
+
+// The bug: the first connection's initial state counted as no move, so an element aim in
+// the server's first second went out while a switch or a move already under way when it
+// started reading niri's events may still have been moving the view.
+#[tokio::test]
+async fn an_element_is_not_aimed_at_in_the_servers_first_second() {
+    let windows = [floating_window()];
+    let mut desk = Desk::starting("el-started", &["/frame"], objects(), &windows).await;
+    let button = desk.element("Safe").await;
+    let shot = desk.screenshot_ref().await;
+    let aimed = json!({"screenshot_ref": shot, "element": button});
+    let refused = desk.server.call("click", aimed.clone()).await;
+    refused_moving(&refused, "just started");
+    let (_, detail) = tool_error(&refused);
+    assert!(
+        detail.contains("had only just started reading niri's events"),
+        "{detail}"
+    );
+    assert_eq!(desk.fixture.clipboard.pointed(), []);
+    tokio::time::sleep(SETTLE).await;
     let clicked = desk.server.call("click", aimed).await;
     assert_eq!(clicked["isError"], false, "{clicked}");
     assert_eq!(desk.fixture.clipboard.pointed().len(), 3);
@@ -3395,7 +4082,10 @@ async fn a_drag_cancelled_while_it_releases_still_clears_its_marker() {
         );
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    let pixel = json!({"screenshot_ref": shot, "x": 5, "y": 5});
+    // The overview opened since `shot`, so a pixel click needs a new screenshot, taken
+    // once the screen stopped changing.
+    let fresh = desk.settled_ref().await;
+    let pixel = json!({"screenshot_ref": fresh, "x": 5, "y": 5});
     let clicked = desk.server.call("click", pixel).await;
     assert_eq!(clicked["isError"], false, "{clicked}");
 }
@@ -3451,7 +4141,10 @@ async fn moved_before_it_went_out(tool: &str, tag: &str, event: &Value) {
     let response = desk.server.response(id).await;
     refused_moving(&response["result"], &format!("{tag} {tool}"));
     assert_eq!(desk.fixture.clipboard.pointed(), [], "{tag} {tool}");
-    let pixel = json!({"screenshot_ref": shot, "x": 5, "y": 5});
+    // The view moved since `shot`, so a pixel click needs a new screenshot, taken once
+    // the screen stopped changing.
+    let fresh = desk.settled_ref().await;
+    let pixel = json!({"screenshot_ref": fresh, "x": 5, "y": 5});
     let clicked = desk.server.call("click", pixel).await;
     assert_eq!(clicked["isError"], false, "{tag} {tool}: {clicked}");
     assert_eq!(desk.fixture.clipboard.pointed().len(), 3, "{tag} {tool}");

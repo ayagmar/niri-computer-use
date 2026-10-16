@@ -11,6 +11,9 @@ use crate::fixture::{DISPLAY, Fixture, jpeg, shared_mode};
 use crate::niri::{Niri, Stream, output, window_on};
 use crate::noctalia::{self, LOCKED, UNLOCKED};
 
+/// How long after niri's initial state the server counts the windows as possibly moving.
+const SETTLE: Duration = Duration::from_secs(1);
+
 /// A server holding the lease on a fake niri, with windows 1 (focused, `a`), 2 (`b`) and
 /// 3 (`c`) on workspace 1 of two, Noctalia saying the screen is unlocked, and a grim that
 /// captures the focused 2560x1440 output at the default 1280 pixels wide.
@@ -32,6 +35,15 @@ impl Desk {
 
     /// As `start`, with these variables in the server's environment.
     async fn start_with(name: &str, policy: &str, vars: &[(&'static str, &str)]) -> Self {
+        let mut desk = Self::starting(name, policy, vars).await;
+        // A screenshot taken before then can't be aimed at by pixel.
+        desk.server.structured("desktop_state").await;
+        tokio::time::sleep(SETTLE).await;
+        desk
+    }
+
+    /// As `start_with`, without waiting out the server's first second.
+    async fn starting(name: &str, policy: &str, vars: &[(&'static str, &str)]) -> Self {
         let mut fixture = Fixture::new(name);
         for (variable, value) in vars {
             fixture.set(variable, value);
@@ -923,6 +935,178 @@ async fn a_focused_close_names_the_window_it_checked() {
     assert!(!open.niri.sent_action());
 }
 
+/// Sends `event` and waits until `desktop_state` shows `applied` of it.
+async fn applied(desk: &mut Desk, event: &Value, applied: impl Fn(&Value) -> bool + Sync) {
+    desk.stream.send(event);
+    while !applied(&desk.server.structured("desktop_state").await) {
+        tokio::task::yield_now().await;
+    }
+}
+
+/// The ref of a screenshot taken once the screen stopped changing, as an action's
+/// `screenshot: true` returns it.
+async fn settled_ref(desk: &mut Desk) -> String {
+    let arguments = json!({"until": "screen_stable", "timeout_ms": 2000, "screenshot": true});
+    let waited = report(&desk.server.call("wait_for", arguments).await);
+    assert_eq!(waited["observed"], "met", "{waited}");
+    waited["screenshot"]["screenshot_ref"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+#[tokio::test]
+async fn a_pixel_aim_is_refused_once_the_windows_its_screenshot_shows_moved() {
+    let mut desk = Desk::start("act-moved", "").await;
+    let at = |id: &str| json!({"screenshot_ref": id, "x": 10, "y": 10});
+    let before = screenshot_ref(&mut desk).await;
+    // The user focuses another window beside the one shown: niri scrolls to it.
+    let focused =
+        json!({"WorkspaceActiveWindowChanged": {"workspace_id": 1, "active_window_id": 2}});
+    applied(&mut desk, &focused, |state| {
+        state["workspaces"][0]["active_window_id"] == 2
+    })
+    .await;
+    let since = settled_ref(&mut desk).await;
+    // With no Wayland socket, a click that passes every check fails to connect.
+    desk.unplug_display();
+    let refused = desk.server.call("click", at(&before)).await;
+    assert_eq!(
+        reason(&refused),
+        ("ref_invalid", "layout_changed".to_owned())
+    );
+    let (_, why) = tool_error(&refused);
+    assert!(
+        why.contains("follows window 2 instead of no window"),
+        "{why}"
+    );
+
+    // A new title moves nothing.
+    let mut retitled = window_on(2, Some("b"), 1, false);
+    retitled["title"] = json!("loaded");
+    let retitle = json!({"WindowOpenedOrChanged": {"window": retitled}});
+    applied(&mut desk, &retitle, |state| {
+        state["windows"][1]["title"] == "loaded"
+    })
+    .await;
+    let (name, unconnected) = tool_error(&desk.server.call("click", at(&since)).await);
+    assert_eq!(name, "upstream_error", "{unconnected}");
+
+    // The user resizes a window.
+    let mut layout = window_on(1, Some("a"), 1, true)["layout"].clone();
+    layout["tile_size"] = json!([400.0, 600.0]);
+    let resized = json!({"WindowLayoutsChanged": {"changes": [[1, layout]]}});
+    applied(&mut desk, &resized, |state| {
+        state["windows"][0]["layout"]["tile_size"][0] == 400.0
+    })
+    .await;
+    let scroll = json!({"screenshot_ref": since, "x": 10, "y": 10, "notches_y": 1});
+    let (_, stale) = tool_error(&desk.server.call("scroll", scroll).await);
+    let moved = "layout_changed: niri moved or resized window 1 since the screenshot";
+    assert!(stale.starts_with(moved), "{stale}");
+}
+
+// The bug: the check compared the windows at the capture with those at the call, so a
+// change undone in between, which scrolls niri's view and may leave it there, went unseen.
+#[tokio::test]
+async fn a_pixel_aim_is_refused_after_focus_moved_away_and_back() {
+    let mut desk = Desk::start("act-moved-back", "").await;
+    let before = screenshot_ref(&mut desk).await;
+    for active in [json!(2), Value::Null] {
+        let event = json!({"WorkspaceActiveWindowChanged": {"workspace_id": 1, "active_window_id": active}});
+        applied(&mut desk, &event, |state| {
+            state["workspaces"][0]["active_window_id"] == active
+        })
+        .await;
+    }
+    desk.unplug_display();
+    let click = json!({"screenshot_ref": before, "x": 10, "y": 10});
+    let (_, why) = tool_error(&desk.server.call("click", click).await);
+    let moved = "layout_changed: the view now follows no window instead of window 2, as after a focus change since the screenshot";
+    assert!(why.starts_with(moved), "{why}");
+}
+
+// The bug: niri reports where a window goes at once and then animates it there, so a
+// screenshot taken meanwhile shows it on the way, while the windows niri reported at the
+// capture and at the call were the same.
+#[tokio::test]
+async fn a_pixel_aim_is_refused_through_a_screenshot_taken_while_windows_may_move() {
+    let mut desk = Desk::start("act-moving", "").await;
+    let mut layout = window_on(1, Some("a"), 1, true)["layout"].clone();
+    layout["tile_size"] = json!([400.0, 600.0]);
+    let resized = json!({"WindowLayoutsChanged": {"changes": [[1, layout]]}});
+    applied(&mut desk, &resized, |state| {
+        state["windows"][0]["layout"]["tile_size"][0] == 400.0
+    })
+    .await;
+    let moving = screenshot_ref(&mut desk).await;
+    let settled = settled_ref(&mut desk).await;
+    desk.unplug_display();
+    let at = |id: &str| json!({"screenshot_ref": id, "x": 10, "y": 10});
+    let (_, why) = tool_error(&desk.server.call("click", at(&moving)).await);
+    assert!(
+        why.starts_with("layout_changed: niri moved or resized window 1 ")
+            && why.contains(
+                " ms before the screenshot, so it may show windows niri was still moving"
+            ),
+        "{why}"
+    );
+    // Once the screen was seen not changing, the image shows where the window ended.
+    let (name, unconnected) = tool_error(&desk.server.call("click", at(&settled)).await);
+    assert_eq!(name, "upstream_error", "{unconnected}");
+}
+
+// The bug: each connection's stamps started empty, so a screenshot taken right after a
+// reconnect, while a switch or a move that began while the stream was down may still have
+// been animating, aimed as if nothing had moved.
+#[tokio::test]
+async fn a_pixel_aim_is_refused_through_a_screenshot_taken_right_after_a_reconnect() {
+    let mut desk = Desk::start("act-reconnected", "").await;
+    desk.stream.close();
+    desk.stream = desk.niri.stream().await;
+    desk.stream.workspaces(2);
+    desk.stream.send(&json!({"WindowsChanged": {"windows": [
+        window_on(1, Some("a"), 1, true),
+        window_on(2, Some("b"), 1, false),
+    ]}}));
+    desk.stream
+        .send(&json!({"OverviewOpenedOrClosed": {"is_open": false}}));
+    let mut state = desk.server.structured("desktop_state").await;
+    while state["windows"].as_array().map(Vec::len) != Some(2) {
+        state = desk.server.structured("desktop_state").await;
+    }
+    let after = screenshot_ref(&mut desk).await;
+    desk.unplug_display();
+    let click = json!({"screenshot_ref": after, "x": 10, "y": 10});
+    let (_, why) = tool_error(&desk.server.call("click", click).await);
+    let moved = "layout_changed: niri's event stream reconnected, and niri may have moved windows meanwhile, ";
+    assert!(
+        why.starts_with(moved) && why.contains(" ms before the screenshot"),
+        "{why}"
+    );
+}
+
+// The bug: the first connection's stamps started empty, so a screenshot taken as the
+// server started, while a switch or a move already under way may still have been
+// animating, aimed as if nothing had moved.
+#[tokio::test]
+async fn a_pixel_aim_is_refused_through_a_screenshot_taken_as_the_server_starts() {
+    let mut desk = Desk::starting("act-started", "", &[]).await;
+    let early = screenshot_ref(&mut desk).await;
+    let settled = settled_ref(&mut desk).await;
+    desk.unplug_display();
+    let at = |id: &str| json!({"screenshot_ref": id, "x": 10, "y": 10});
+    let (_, why) = tool_error(&desk.server.call("click", at(&early)).await);
+    let moved = "layout_changed: the server had just started reading niri's events, and niri may have been moving windows then, ";
+    assert!(
+        why.starts_with(moved) && why.contains(" ms before the screenshot"),
+        "{why}"
+    );
+    // The refusal's advice, a screenshot that waited for the screen to settle, gets through.
+    let (name, unconnected) = tool_error(&desk.server.call("click", at(&settled)).await);
+    assert_eq!(name, "upstream_error", "{unconnected}");
+}
+
 #[tokio::test]
 async fn pointer_tools_check_the_ref_the_outputs_and_their_arguments_first() {
     let mut desk = Desk::start("act-pointer", "").await;
@@ -1053,6 +1237,17 @@ async fn keyboard_tools_check_their_text_focus_and_app_before_typing() {
     assert_eq!(name, "text_too_long");
     assert!(detail.starts_with("1001 characters"), "{detail}");
 
+    let leaked = desk
+        .server
+        .call(
+            "type_text",
+            json!({"text": concat!("Done.", "<", "/invoke>"), "expect": "none", "submit": true}),
+        )
+        .await;
+    let (tag, refused) = tool_error(&leaked);
+    assert_eq!(tag, "leaked_tag");
+    assert!(refused.ends_with("nothing was typed"), "{refused}");
+
     let combo = desk
         .server
         .call("key", json!({"keys": ["hyper+a"], "expect": "none"}))
@@ -1092,6 +1287,7 @@ async fn keyboard_tools_check_their_text_focus_and_app_before_typing() {
         desk.audited(),
         [
             json!(["type_text", {"text_len": 1001, "expect": "none"}, null, null, "text_too_long"]),
+            json!(["type_text", {"text_len": 14, "expect": "none", "submit": true}, null, null, "leaked_tag"]),
             json!(["key", {"keys": {"category": "invalid_keys", "count": 1}, "expect": "none"}, null, null, "invalid_arguments"]),
             json!(["key", {"keys": ["ctrl+s"], "expect": {"window_id": 2}}, null, null, "focus_mismatch"]),
             json!(["type_text", {"text_len": 6, "expect": {"app_id_len": 1, "matched": null}}, null, null, "app_denied"]),
@@ -1111,6 +1307,16 @@ async fn a_paste_checks_its_text_focus_app_and_clipboard_before_the_key() {
         )
         .await;
     assert_eq!(tool_error(&long).0, "text_too_long");
+    let leaked = desk
+        .server
+        .call(
+            "type_text",
+            paste(concat!("a\nb\n", "<", "/parameter>\n"), json!("none")),
+        )
+        .await;
+    let (tag, refused) = tool_error(&leaked);
+    assert_eq!(tag, "leaked_tag");
+    assert!(refused.ends_with("nothing was pasted"), "{refused}");
     let elsewhere = desk
         .server
         .call("type_text", paste("x", json!({"window_id": 2})))
@@ -1140,10 +1346,12 @@ async fn a_paste_checks_its_text_focus_app_and_clipboard_before_the_key() {
     assert_eq!(tool_error(&denied).0, "app_denied");
     let audit = std::fs::read_to_string(desk.fixture.audit_log()).unwrap();
     assert!(!audit.contains("pasted words"), "{audit}");
+    assert!(!audit.contains("/parameter"), "{audit}");
     assert_eq!(
         desk.audited(),
         [
             json!(["type_text", {"text_len": 1024 * 1024 + 1, "via": "paste", "paste_keys": "ctrl+v", "expect": "none"}, null, null, "text_too_long"]),
+            json!(["type_text", {"text_len": 17, "via": "paste", "paste_keys": "ctrl+v", "expect": "none"}, null, null, "leaked_tag"]),
             json!(["type_text", {"text_len": 1, "via": "paste", "paste_keys": "ctrl+v", "expect": {"window_id": 2}}, null, null, "focus_mismatch"]),
             json!(["type_text", {"text_len": 12, "via": "paste", "paste_keys": "ctrl+v", "expect": {"app_id_len": 1, "matched": null}}, null, null, "upstream_error"]),
             json!(["type_text", {"text_len": 1, "via": "paste", "paste_keys": "ctrl+v", "expect": {"app_id_len": 1, "matched": null}}, null, null, "app_denied"]),

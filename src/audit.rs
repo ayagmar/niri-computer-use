@@ -56,6 +56,9 @@ struct Record<'a> {
     /// For action tools, from their result; null for read-only tools and for failures.
     accepted: Option<bool>,
     observed: Option<&'a str>,
+    /// For element actions, whether their effect was read back, from their result.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effect: Option<&'a str>,
     /// For action tools that reported changes, how many of each kind, from their result.
     #[serde(skip_serializing_if = "Option::is_none")]
     changes: Option<Value>,
@@ -138,10 +141,10 @@ impl Audit {
         result: &Result<CallToolResult, ErrorData>,
     ) {
         matched(&mut args, result);
-        let (accepted, observed, changes) = if call.action {
-            effect(result)
+        let reported = if call.action {
+            reported(result)
         } else {
-            (None, None, None)
+            Reported::default()
         };
         self.write(&Record {
             ts: &call.ts,
@@ -149,9 +152,10 @@ impl Audit {
             instance: caller.instance,
             tool: call.tool,
             args: &args,
-            accepted,
-            observed,
-            changes,
+            accepted: reported.accepted,
+            observed: reported.observed,
+            effect: reported.effect,
+            changes: reported.changes,
             error: outcome(result),
             may_have_sent: may_have_sent(result),
             duration_ms: call.started.elapsed().as_millis(),
@@ -404,24 +408,32 @@ fn may_have_sent(result: &Result<CallToolResult, ErrorData>) -> bool {
         .unwrap_or(false)
 }
 
-/// An action's `accepted` and `observed` fields, which hold only booleans and outcome
-/// names, and its change report as counts. Failures have none of them.
-fn effect(
-    result: &Result<CallToolResult, ErrorData>,
-) -> (Option<bool>, Option<&str>, Option<Value>) {
+/// What an action's result says it did, as the log keeps it.
+#[derive(Debug, Default)]
+struct Reported<'a> {
+    accepted: Option<bool>,
+    observed: Option<&'a str>,
+    effect: Option<&'a str>,
+    changes: Option<Value>,
+}
+
+/// An action's `accepted`, `observed` and `effect` fields, which hold only booleans and
+/// outcome names, and its change report as counts. Failures have none of them.
+fn reported(result: &Result<CallToolResult, ErrorData>) -> Reported<'_> {
     let Some(content) = result
         .as_ref()
         .ok()
         .filter(|result| result.is_error != Some(true))
         .and_then(|result| result.structured_content.as_ref())
     else {
-        return (None, None, None);
+        return Reported::default();
     };
-    (
-        content.get("accepted").and_then(Value::as_bool),
-        content.get("observed").and_then(Value::as_str),
-        content.get("changes").map(counted),
-    )
+    Reported {
+        accepted: content.get("accepted").and_then(Value::as_bool),
+        observed: content.get("observed").and_then(Value::as_str),
+        effect: content.get("effect").and_then(Value::as_str),
+        changes: content.get("changes").map(counted),
+    }
 }
 
 /// A change report as counts: windows opened, closed and changed, whether focus and the
@@ -472,6 +484,7 @@ mod tests {
             args,
             accepted: None,
             observed: None,
+            effect: None,
             changes: None,
             error,
             may_have_sent: false,

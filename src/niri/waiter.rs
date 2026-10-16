@@ -325,6 +325,8 @@ pub(super) fn relaid_by(known: &HashMap<u64, Window>, event: &Event) -> Vec<u64>
         | Event::OverviewOpenedOrClosed { .. }
         | Event::ConfigLoaded { .. }
         | Event::ScreenshotCaptured { .. }
+        // `events::IGNORED`: the stream drops these unread, so no waiter gets them. Reading
+        // them here or in `shift` means taking them out of that list.
         | Event::CastsChanged { .. }
         | Event::CastStartedOrChanged { .. }
         | Event::CastStopped { .. } => Vec::new(),

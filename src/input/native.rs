@@ -61,14 +61,16 @@ async fn type_seen(
         typing: &typing,
         budget: Budget::start(plan.keys().count()),
         marks: aftercare.is_none(),
+        before,
+        group,
     };
+    let decisive = decisive(&typing, plan.keys().count());
     let mut sent = Sent::default();
-    for (extended, key) in plan.strokes() {
-        act::fresh_lock(input.niri)
+    for (index, (extended, key)) in plan.strokes().enumerate() {
+        let left = checked_before(input, &mut waiter, before, group, Some(index) == decisive)
             .await
             .map_err(|error| partly(error, &typing, sent))?;
-        // niri's events since the lock was read or the last key, right before this one.
-        if let Some(outcome) = interrupted(&mut waiter, before, group).await {
+        if let Some(outcome) = left {
             device
                 .finish(waiter.view().keyboard_group())
                 .await
@@ -81,7 +83,17 @@ async fn type_seen(
                 .extend(&map)
                 .map_err(|error| partly(error, &typing, sent))?;
         }
-        device.commit(aftercare, input.niri.desk).await?;
+        if device.commit(aftercare, input.niri.desk).await?
+            && let Some(outcome) = admitted(input, &mut waiter, &mut device, &call, sent)
+                .await
+                .map_err(|error| partly(error, &typing, sent))?
+        {
+            device
+                .finish(waiter.view().keyboard_group())
+                .await
+                .map_err(|error| partly(error, &typing, sent))?;
+            return Ok(ended(outcome, focus, &typing, sent));
+        }
         // Sent to niri before it failed or ran out of time, the key may still have gone out.
         call.budget
             .bound(device.stroke(key))
@@ -103,10 +115,123 @@ async fn type_seen(
         .finish(waiter.view().keyboard_group())
         .await
         .map_err(|error| partly(error, &typing, sent))?;
-    let outcome = interrupted(&mut waiter, before, group)
-        .await
-        .unwrap_or_else(|| Outcome::seen(Observed::Sent, waiter.view(), Vec::new()));
+    let outcome = settled(input.niri.socket, &mut waiter, before, group).await;
     Ok(ended(outcome, focus, &typing, sent))
+}
+
+/// The outcome once every key went out and niri acknowledged the last. niri sends keys to a
+/// window it has just focused before its event stream reports the move, so that window may
+/// not be in the stream yet; niri's own answer, asked after the last key, has it. The stream
+/// is read too, after that answer, up to what it has passed on, so focus that left and came
+/// back is seen as far as the stream has reported it.
+async fn settled(socket: &Socket, waiter: &mut Waiter, before: Option<u64>, group: u32) -> Outcome {
+    let focused = niri::focused_window(socket).await;
+    if let Some(outcome) = interrupted(waiter, before, group).await {
+        return outcome;
+    }
+    match focused {
+        Ok(focused) if focused == before => {
+            Outcome::seen(Observed::Sent, waiter.view(), Vec::new())
+        }
+        Ok(focused) => moved(focused, waiter.view()),
+        Err(error) => Outcome::uncertain(
+            Some(true),
+            Some(waiter.view()),
+            format!(
+                "niri didn't say which window had focus after the last key: {}",
+                error.detail
+            ),
+        ),
+    }
+}
+
+/// The stroke that commits the call: the submitting `Return`, or the last key of a `key`
+/// call, such as the `Return` of `["Down", "Down", "Return"]`. niri sends keys to a window
+/// it has just focused before its event stream reports the move, so before that stroke
+/// niri itself is asked which window has focus.
+const fn decisive(typing: &Typing, keys: usize) -> Option<usize> {
+    match typing {
+        Typing::Text { submit: true, .. } | Typing::Keys(_) => keys.checked_sub(1),
+        Typing::Text { .. } => None,
+    }
+}
+
+/// The lock state, read again if its last read is older than `LAST_GATE`, then
+/// `left_before`: niri's events since the lock was read or the last key, right before this
+/// one. niri's answer before the `decisive` stroke can come late enough that the lock read
+/// is older than `LAST_GATE` by then; the lock is then read and niri asked once more, so
+/// both checks still come right before the key. A second answer as slow leaves the read
+/// stale, and `may_press` refuses the key with `lock_stale`.
+async fn checked_before(
+    input: Input<'_>,
+    waiter: &mut Waiter,
+    before: Option<u64>,
+    group: u32,
+    decisive: bool,
+) -> Result<Option<Outcome>, ToolError> {
+    act::fresh_lock(input.niri).await?;
+    let left = left_before(input.niri.socket, waiter, before, group, decisive).await?;
+    if left.is_some() || input.niri.desk.lock_fresh() {
+        return Ok(left);
+    }
+    act::fresh_lock(input.niri).await?;
+    left_before(input.niri.socket, waiter, before, group, decisive).await
+}
+
+/// `interrupted`, and before the `decisive` stroke also focus away from `before` in niri's
+/// own answer, then `interrupted` again for what the stream reported while niri answered.
+async fn left_before(
+    socket: &Socket,
+    waiter: &mut Waiter,
+    before: Option<u64>,
+    group: u32,
+    decisive: bool,
+) -> Result<Option<Outcome>, ToolError> {
+    if let Some(outcome) = interrupted(waiter, before, group).await {
+        return Ok(Some(outcome));
+    }
+    if !decisive {
+        return Ok(None);
+    }
+    let focused = niri::focused_window(socket).await?;
+    if focused != before {
+        return Ok(Some(moved(focused, waiter.view())));
+    }
+    Ok(interrupted(waiter, before, group).await)
+}
+
+/// After a paste's keeper admitted its key, which can take up to `ADMIT`, the decisive
+/// stroke's checks again, right before the key: `checked_before`, which reads the lock
+/// again if its last read has aged and asks niri itself which window has focus, since
+/// niri can send the key to a window it has just focused before its stream says so, then
+/// `may_press`. Nothing is awaited between those and the key. On a refusal or a failed
+/// query, the keeper hears `n` and restores the clipboard.
+async fn admitted(
+    input: Input<'_>,
+    waiter: &mut Waiter,
+    device: &mut Device,
+    call: &Call<'_>,
+    sent: Sent,
+) -> Result<Option<Outcome>, ToolError> {
+    let checked = match checked_before(input, waiter, call.before, call.group, true).await {
+        Ok(None) => may_press(input, waiter.view(), call, sent)
+            .await
+            .map(|()| None),
+        other => other,
+    };
+    if !matches!(checked, Ok(None)) {
+        device.withdraw().await;
+    }
+    checked
+}
+
+/// The outcome once niri says focus moved to `focused`.
+fn moved(focused: Option<u64>, view: &View) -> Outcome {
+    Outcome {
+        focused_window: focused,
+        detail: Some(moved_to(focused)),
+        ..Outcome::seen(Observed::Interrupted, view, Vec::new())
+    }
 }
 
 /// Binds a virtual keyboard on niri's display and plans `typing`'s keys in the layout
@@ -144,6 +269,10 @@ struct Call<'a> {
     /// Whether to tell the desk each key is going out. `paste`'s keeper reports whether
     /// its key went out instead.
     marks: bool,
+    /// The window that had focus when the call began.
+    before: Option<u64>,
+    /// The layout the keys were planned in.
+    group: u32,
 }
 
 /// Whether the next key may go out: the stop flag isn't set, the focused app in `view` isn't
@@ -195,13 +324,28 @@ async fn interrupted(waiter: &mut Waiter, before: Option<u64>, group: u32) -> Op
         .await
     {
         Waited::Timeout => None,
-        Waited::Done(()) => Some(Outcome::seen(
-            Observed::Interrupted,
-            waiter.view(),
-            Vec::new(),
-        )),
+        Waited::Done(()) => {
+            let view = waiter.view();
+            let detail = if view.focused_window() == before {
+                "the active keyboard layout changed while they went out, so some of them may have typed other characters".to_owned()
+            } else {
+                moved_to(view.focused_window())
+            };
+            Some(Outcome {
+                detail: Some(detail),
+                ..Outcome::seen(Observed::Interrupted, view, Vec::new())
+            })
+        }
         Waited::Lost(reason) => Some(Outcome::uncertain(Some(true), Some(waiter.view()), reason)),
     }
+}
+
+/// What an `interrupted` call says of the keys that went out once focus moved to `focused`.
+fn moved_to(focused: Option<u64>) -> String {
+    focused.map_or_else(
+        || "focus left the window while they went out, so some of them may have reached what took it".to_owned(),
+        |id| format!("focus moved to window {id} while they went out, so some of them may have reached it"),
+    )
 }
 
 /// A key's share of its call's time: three frames at 60 Hz. The slowest steady rate
@@ -317,17 +461,24 @@ impl Device {
         self.keyboard()?.extend(map)
     }
 
-    /// Takes `aftercare`, if it is still there, and arms it.
+    /// Takes `aftercare`, if it is still there, and arms it. Says whether it did.
     async fn commit(
         &mut self,
         aftercare: &mut Option<Aftercare>,
         desk: &Desk,
-    ) -> Result<(), ToolError> {
+    ) -> Result<bool, ToolError> {
         let Some(taken) = aftercare.take() else {
-            return Ok(());
+            return Ok(false);
         };
         self.aftercare = Some(taken.arm(desk).await?);
-        Ok(())
+        Ok(true)
+    }
+
+    /// Tells a paste's keeper, which admitted the key, that it won't go out after all.
+    async fn withdraw(&mut self) {
+        if let Some(aftercare) = self.aftercare.take() {
+            aftercare.withdraw().await;
+        }
     }
 
     /// Sends one key pair with the key's modifiers in the key's layout, then zero modifiers
@@ -473,7 +624,7 @@ mod tests {
     use crate::control::LockSources;
     use crate::error::CallError;
     use crate::input::paste::{
-        Clipboard, Report, SLOW_ADMISSION, STOPPED_WAITING, desk_read, fake_aftercare,
+        Aftercare, Clipboard, Report, SLOW_ADMISSION, STOPPED_WAITING, desk_read, fake_aftercare,
     };
     use crate::niri::waiter::{Update, tests as events};
     use crate::noctalia;
@@ -484,6 +635,7 @@ mod tests {
     };
     use niri_ipc::Event;
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio::sync::broadcast;
 
     const BASE: &str = include_str!("../../tests/fixtures/us-de.xkb");
     /// evdev codes in the fixture's first layout: `a`, `z` and Shift.
@@ -630,16 +782,18 @@ mod tests {
         });
     }
 
-    /// What a test's call types against besides the fake: the policy, and from which
-    /// read on Noctalia says the screen is locked.
+    /// What a test's call types against besides the fake: the policy, from which read on
+    /// Noctalia says the screen is locked, and a paste's keeper, if the call pastes.
     struct Setup {
         policy: Loaded,
         locked_from: Option<usize>,
+        aftercare: Option<Aftercare>,
     }
 
     const PLAIN: Setup = Setup {
         policy: Loaded::Missing,
         locked_from: None,
+        aftercare: None,
     };
 
     fn text(text: &str) -> Typing {
@@ -657,16 +811,16 @@ mod tests {
         typing: Typing,
         waiter: Option<Waiter>,
     ) -> Result<Outcome, CallError> {
-        type_with(niri, dir, typing, waiter, &PLAIN).await
+        type_with(niri, dir, typing, waiter, PLAIN).await
     }
 
-    /// `type_through` with `setup`'s policy and lock state.
+    /// `type_through` with `setup`'s policy, lock state and paste keeper.
     async fn type_with(
         niri: &Compositor,
         dir: &Path,
         typing: Typing,
         waiter: Option<Waiter>,
-        setup: &Setup,
+        mut setup: Setup,
     ) -> Result<Outcome, CallError> {
         let env = crate::Env {
             wayland_display: Some("fake-noctalia".into()),
@@ -695,8 +849,8 @@ mod tests {
         };
         let expect = Expect::App(APP_ID.to_owned());
         match waiter {
-            Some(waiter) => type_seen(input, waiter, typing, expect, &mut None).await,
-            None => type_input(input, typing, expect, &mut None).await,
+            Some(waiter) => type_seen(input, waiter, typing, expect, &mut setup.aftercare).await,
+            None => type_input(input, typing, expect, &mut setup.aftercare).await,
         }
     }
 
@@ -779,7 +933,182 @@ mod tests {
             .unwrap();
         assert_eq!(outcome.observed, Observed::Interrupted);
         assert_eq!((outcome.typed, outcome.submitted), (Some(1), Some(false)));
+        assert_eq!(
+            outcome.detail.as_deref(),
+            Some(
+                "typed 1 of 2 characters, not yet the submitting Return; focus left the window while they went out, so some of them may have reached what took it"
+            )
+        );
         assert_eq!(niri.seen().keys, [(A, true), (A, false)]);
+        marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// niri gives another window focus while it handles the last key, and its event stream
+    /// hasn't said so when the call ends: niri's own answer makes the call `interrupted`,
+    /// with all of the text counted and where some of it may have gone.
+    #[tokio::test]
+    async fn focus_the_stream_reports_only_after_the_last_key_interrupts_the_call() {
+        let dir = fresh_dir("native-quiet-focus");
+        let niri = Compositor::start(&dir, BASE);
+        niri.focus_quietly_at(2, Some(2)).await;
+        let outcome = type_through(&niri, &dir, text("az"), None).await.unwrap();
+        assert_eq!(outcome.observed, Observed::Interrupted);
+        assert_eq!((outcome.typed, outcome.focused_window), (None, Some(2)));
+        assert_eq!(
+            outcome.detail.as_deref(),
+            Some(
+                "typed 2 of 2 characters; focus moved to window 2 while they went out, so some of them may have reached it"
+            )
+        );
+        assert_eq!(
+            niri.seen().keys,
+            [(A, true), (A, false), (Z, true), (Z, false)]
+        );
+        marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// niri gives another window focus while it handles the last character, and its event
+    /// stream hasn't said so before the submitting `Return`: niri's own answer, asked before
+    /// `Return`, stops the call, so `Return` doesn't confirm whatever took focus.
+    #[tokio::test]
+    async fn focus_the_stream_hasnt_reported_before_the_return_stops_it() {
+        let dir = fresh_dir("native-quiet-submit");
+        let niri = Compositor::start(&dir, BASE);
+        niri.focus_quietly_at(2, Some(2)).await;
+        let typing = Typing::Text {
+            text: "az".to_owned(),
+            submit: true,
+        };
+        let outcome = type_through(&niri, &dir, typing, None).await.unwrap();
+        assert_eq!(niri.seen().keys, presses(&[A, Z].map(character)));
+        assert_eq!(outcome.observed, Observed::Interrupted);
+        assert_eq!(
+            (outcome.submitted, outcome.focused_window),
+            (Some(false), Some(2))
+        );
+        marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A one-key `key` call goes nowhere once niri has given another window focus that its
+    /// event stream hasn't reported yet.
+    #[tokio::test]
+    async fn a_single_key_waits_for_niri_to_confirm_focus() {
+        let dir = fresh_dir("native-quiet-key");
+        let niri = Compositor::start(&dir, BASE);
+        niri.focus_quietly(Some(2));
+        let typing = Typing::Keys(vec!["Return".to_owned()]);
+        let outcome = type_through(&niri, &dir, typing, None).await.unwrap();
+        assert_eq!(niri.seen().keys, []);
+        assert_eq!(
+            (outcome.observed, outcome.pressed),
+            (Observed::Interrupted, Some(0))
+        );
+        marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The event stream reports focus moving while niri answers the request before the
+    /// decisive key, and niri's answer, from just before, still names the window: the key
+    /// doesn't go out.
+    #[tokio::test]
+    async fn focus_the_stream_reports_during_the_check_before_the_last_key_stops_it() {
+        let dir = fresh_dir("native-focus-asked");
+        let niri = Compositor::start(&dir, BASE);
+        let view = events::view_of(initial_events(0));
+        let (waiter, updates) = events::waiter(view, 0);
+        let moved = Event::WindowFocusChanged { id: Some(2) };
+        niri.on_focus_request(move || {
+            updates.send(Update::Event(1, Box::new(moved))).ok();
+        });
+        let typing = Typing::Keys(vec!["Return".to_owned()]);
+        let outcome = type_through(&niri, &dir, typing, Some(waiter))
+            .await
+            .unwrap();
+        assert_eq!(niri.seen().keys, []);
+        assert_eq!(outcome.observed, Observed::Interrupted);
+        marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// niri answers the request before the decisive key slowly enough that the lock read
+    /// checked before it is older than `LAST_GATE` by the answer: the lock is read again and
+    /// niri asked again, and the key goes out rather than failing `lock_stale`.
+    #[tokio::test]
+    async fn a_slow_focus_answer_before_the_last_key_doesnt_leave_the_lock_read_stale() {
+        let dir = fresh_dir("native-slow-focus-answer");
+        let niri = Compositor::start(&dir, BASE);
+        niri.answer_focus_late(crate::control::desk::LAST_GATE + Duration::from_millis(50));
+        let typing = Typing::Keys(vec!["Return".to_owned()]);
+        let outcome = type_through(&niri, &dir, typing, None).await.unwrap();
+        assert_eq!(outcome.observed, Observed::Sent);
+        assert_eq!(niri.seen().keys, [(RETURN, true), (RETURN, false)]);
+        marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The last key of a `key` call with several, such as the `Return` of
+    /// `["Down", "Down", "Return"]`, doesn't go out once niri has given another window focus
+    /// that its event stream hasn't reported.
+    #[tokio::test]
+    async fn the_last_of_several_keys_waits_for_niri_to_confirm_focus() {
+        let dir = fresh_dir("native-quiet-last-key");
+        let niri = Compositor::start(&dir, BASE);
+        niri.focus_quietly_at(2, Some(2)).await;
+        let outcome = type_through(&niri, &dir, three_keys(), None).await.unwrap();
+        assert_eq!(niri.seen().keys, presses(&[Z, A].map(character)));
+        assert_eq!(
+            (outcome.observed, outcome.pressed),
+            (Observed::Interrupted, Some(2))
+        );
+        marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// niri can't say where focus is once the keys went out: the call isn't `sent` but
+    /// `uncertain`, with niri's message.
+    #[tokio::test]
+    async fn no_answer_on_focus_after_the_last_key_leaves_the_call_uncertain() {
+        let dir = fresh_dir("native-focus-unanswered");
+        let niri = Compositor::start(&dir, BASE);
+        niri.fail_focus_at(1, "niri is shutting down").await;
+        let outcome = type_through(&niri, &dir, text("zaz"), None).await.unwrap();
+        assert_eq!(
+            (outcome.observed, outcome.accepted),
+            (Observed::Uncertain, Some(true))
+        );
+        let detail = outcome.detail.unwrap_or_default();
+        assert!(detail.contains("niri is shutting down"), "{detail}");
+        assert_eq!(niri.seen().keys, presses(&[Z, A, Z].map(character)));
+        marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// niri can't say where focus is before a `key` call's last key: that key doesn't go
+    /// out, and the failure counts the keys that did.
+    #[tokio::test]
+    async fn no_answer_on_focus_before_the_last_key_keeps_it_back() {
+        let dir = fresh_dir("native-focus-unanswered-key");
+        let niri = Compositor::start(&dir, BASE);
+        niri.fail_focus_at(1, "niri is shutting down").await;
+        let Err(CallError::Tool(error)) = type_through(&niri, &dir, three_keys(), None).await
+        else {
+            panic!("the last key wasn't refused");
+        };
+        assert!(error.may_have_sent);
+        assert!(
+            error.detail.starts_with("pressed 2 of 3"),
+            "{}",
+            error.detail
+        );
+        assert!(
+            error.detail.contains("niri is shutting down"),
+            "{}",
+            error.detail
+        );
+        assert_eq!(niri.seen().keys, presses(&[Z, A].map(character)));
         marker_cleared(&niri, &dir).await;
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -836,9 +1165,10 @@ mod tests {
         let setup = Setup {
             policy: Loaded::Valid(policy::parse("deny_input_app_ids = [\"b\"]\n", false).unwrap()),
             locked_from: None,
+            aftercare: None,
         };
         let Err(CallError::Tool(error)) =
-            type_with(&niri, &dir, three_keys(), Some(waiter), &setup).await
+            type_with(&niri, &dir, three_keys(), Some(waiter), setup).await
         else {
             panic!("the third key wasn't refused");
         };
@@ -865,8 +1195,9 @@ mod tests {
         let setup = Setup {
             policy: Loaded::Missing,
             locked_from: Some(2),
+            aftercare: None,
         };
-        let Err(CallError::Tool(error)) = type_with(&niri, &dir, text("az"), None, &setup).await
+        let Err(CallError::Tool(error)) = type_with(&niri, &dir, text("az"), None, setup).await
         else {
             panic!("the second key wasn't refused");
         };
@@ -1081,6 +1412,8 @@ mod tests {
                 ends,
             },
             marks: true,
+            before: None,
+            group: 0,
         };
         let mut sent = Sent::default();
         sent.add_key(true);
@@ -1218,5 +1551,147 @@ mod tests {
             }
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A paste's call on the fake, with `setup`'s policy and lock state, whose keeper
+    /// admits the key only once `meanwhile` has run with the fake and the sender of niri's
+    /// event stream, and the keeper's last report.
+    async fn pasted_while_admitting(
+        test: &str,
+        setup: Setup,
+        meanwhile: impl FnOnce(&Compositor, &broadcast::Sender<Update>),
+    ) -> (Result<Outcome, CallError>, Report, Vec<(u32, bool)>) {
+        let dir = fresh_dir(test);
+        let niri = Compositor::start(&dir, BASE);
+        let (waiter, updates) = events::waiter(events::view_of(initial_events(0)), 0);
+        let (k, go) = (dir.join("k"), dir.join("go"));
+        let script = format!(
+            r#"dd bs=1 count=1 status=none >/dev/null; touch '{}'; while [ ! -e '{}' ]; do sleep 0.01; done; echo '{{"report":"armed"}}'; c=$(dd bs=1 count=1 status=none); echo "{{\"report\":\"done\",\"read\":false,\"clipboard\":\"restored\",\"detail\":\"after $c\"}}""#,
+            k.display(),
+            go.display()
+        );
+        let (aftercare, done) = fake_aftercare(&script).await;
+        let admitting = async {
+            while !k.exists() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            meanwhile(&niri, &updates);
+            std::fs::write(&go, "").unwrap();
+        };
+        let setup = Setup {
+            aftercare: Some(aftercare),
+            ..setup
+        };
+        // The fixture's layouts have no `v`; any combination stands in for the paste key.
+        let paste = Typing::Keys(vec!["ctrl+a".to_owned()]);
+        let (typed, ()) = tokio::join!(
+            type_with(&niri, &dir, paste, Some(waiter), setup),
+            admitting
+        );
+        let report = done.await.unwrap().unwrap();
+        marker_cleared(&niri, &dir).await;
+        let keys = niri.seen().keys;
+        std::fs::remove_dir_all(dir).unwrap();
+        (typed, report, keys)
+    }
+
+    /// `meanwhile` for `pasted_while_admitting`: niri's stream reports `event`.
+    fn reported(event: Event) -> impl FnOnce(&Compositor, &broadcast::Sender<Update>) {
+        move |_, updates| {
+            updates.send(Update::Event(1, Box::new(event))).ok();
+        }
+    }
+
+    /// The keeper's last report once it heard `n` after admitting the key.
+    fn withdrawn() -> Report {
+        Report::Done {
+            read: false,
+            clipboard: Clipboard::Restored,
+            detail: Some("after n".to_owned()),
+        }
+    }
+
+    /// The user focuses another window while the keeper admits the paste key, after niri
+    /// last confirmed focus: the key doesn't go out, the keeper hears `n` and restores the
+    /// clipboard, and the call ends `interrupted` with nothing pressed.
+    #[tokio::test]
+    async fn focus_moving_while_the_keeper_admits_the_paste_key_keeps_it_back() {
+        let moved = Event::WindowFocusChanged { id: Some(2) };
+        let (typed, report, keys) =
+            pasted_while_admitting("paste-admit-moved", PLAIN, reported(moved)).await;
+        assert_eq!(keys, []);
+        assert_eq!(report, withdrawn());
+        let outcome = typed.unwrap();
+        assert_eq!(
+            (outcome.observed, outcome.pressed),
+            (Observed::Interrupted, Some(0))
+        );
+    }
+
+    /// The focused window's app becomes one the policy denies while the keeper admits the
+    /// paste key: the key doesn't go out, the keeper hears `n`, and the call is refused
+    /// with `app_denied`, nothing sent.
+    #[tokio::test]
+    async fn an_app_denied_while_the_keeper_admits_the_paste_key_gets_none() {
+        let view = events::view_of(initial_events(0));
+        let mut window = view.windows()[&1].clone();
+        window.app_id = Some("b".to_owned());
+        let denied = Event::WindowOpenedOrChanged { window };
+        let policy = Loaded::Valid(policy::parse("deny_input_app_ids = [\"b\"]\n", false).unwrap());
+        let setup = Setup { policy, ..PLAIN };
+        let (typed, report, keys) =
+            pasted_while_admitting("paste-admit-denied", setup, reported(denied)).await;
+        assert_eq!(keys, []);
+        assert_eq!(report, withdrawn());
+        let Err(CallError::Tool(error)) = typed else {
+            panic!("the paste key wasn't refused");
+        };
+        assert_eq!(error.name, ErrorName::AppDenied);
+        assert!(!error.may_have_sent);
+    }
+
+    /// niri gives another window focus while the keeper admits the paste key, and its
+    /// event stream hasn't said so when the key would go out: niri's own answer, asked
+    /// after the admission, keeps the key back, the keeper hears `n`, and the call ends
+    /// `interrupted` with nothing pressed.
+    #[tokio::test]
+    async fn focus_only_niri_reports_while_the_keeper_admits_the_paste_key_keeps_it_back() {
+        let (typed, report, keys) =
+            pasted_while_admitting("paste-admit-quiet", PLAIN, |niri, _| {
+                niri.focus_quietly(Some(2));
+            })
+            .await;
+        assert_eq!(keys, []);
+        assert_eq!(report, withdrawn());
+        let outcome = typed.unwrap();
+        assert_eq!(
+            (outcome.observed, outcome.pressed, outcome.focused_window),
+            (Observed::Interrupted, Some(0), Some(2))
+        );
+    }
+
+    /// niri's answer after the keeper admitted the paste key comes once the lock read is
+    /// older than `LAST_GATE`, and the screen locks meanwhile: the lock is read again before
+    /// the key, which then doesn't go out, the keeper hears `n`, and the call is refused
+    /// with `screen_locked`, nothing sent. A refusal for the aged read alone would be
+    /// `lock_stale`.
+    #[tokio::test]
+    async fn a_lock_read_aged_after_the_paste_key_was_admitted_is_read_again() {
+        // The first read is the call's own; the second, the one after admission.
+        let setup = Setup {
+            locked_from: Some(2),
+            ..PLAIN
+        };
+        let (typed, report, keys) = pasted_while_admitting("paste-admit-aged", setup, |niri, _| {
+            niri.answer_focus_late(crate::control::desk::LAST_GATE + Duration::from_millis(50));
+        })
+        .await;
+        assert_eq!(keys, []);
+        assert_eq!(report, withdrawn());
+        let Err(CallError::Tool(error)) = typed else {
+            panic!("the paste key went out on an aged lock read");
+        };
+        assert_eq!(error.name, ErrorName::ScreenLocked, "{}", error.detail);
+        assert!(!error.may_have_sent);
     }
 }

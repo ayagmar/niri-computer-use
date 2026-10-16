@@ -53,9 +53,11 @@ The server found no accessibility bus when it started; `status` shows why under 
 
 ## `elements` lists elements without a `layout_box`
 
-With `unmappable: frame_size_mismatch`, the app draws its own title bar and its coordinates can't be matched to niri's window. GTK 3 and Qt apps do this; with server-side decorations they work. Aim at screenshot pixels for that window, or use `activate_element` and `set_element_text`, which don't need a box. A click on such an element is refused with `element_unmappable` rather than land in the wrong place.
+With `unmappable: frame_size_mismatch`, the app draws its own title bar and its coordinates can't be matched to niri's window. GTK 3, Qt, Chromium and Electron apps do this; with server-side decorations, `prefer-no-csd` in niri's config, GTK 3, Qt and Chromium work. Aim at screenshot pixels for that window, or use `activate_element` and `set_element_text`, which don't need a box; Chromium's text fields refuse `set_element_text`, so focus them with `activate_element` and use `type_text`. A click on such an element is refused with `element_unmappable` rather than land in the wrong place.
 
 With `unmappable: tiled`, the window is tiled. niri 26.04 gives only floating windows a place in the workspace's view, which the box is measured from. `activate_element` and `set_element_text` work on tiled windows; to click an element by its ref when changing the user's layout is fine, float the window first with `niri_action` `ToggleWindowFloating`, then call `elements` again. Floating doesn't help a `frame_size_mismatch`.
+
+With `unmappable: page_scale_unknown`, the element is in a web page, as in Chromium, at an output scale other than 1, whose coordinates the server can't tell to be in logical pixels or the output's. Aim at screenshot pixels, or use `activate_element`, which doesn't need a box.
 
 ## `elements` fails with `deadline_exceeded`
 
@@ -83,7 +85,7 @@ If something removes the runtime directory, `niri-computer-use/<instance>/` besi
 
 ## Shared mode serves the client standalone
 
-With [`shared`](../../concepts/configuration/#shared) on, the default, `status.engine.mode` says `standalone` and `engine.fallback` says why; the server's stderr has the same line. If the engine runs another build, you reinstalled while it ran: new clients are served standalone until the old engine's clients have ended and it exits, and the next client starts a new one. The fallback names the old engine's PID, and its clients see `engine.replaced: true`; restarting them ends the wait. If the engine's socket path is too long, niri's socket directory is: the socket is `niri-computer-use/<instance>/engine.sock` in the directory holding niri's socket, with every symlink resolved, where `<instance>` is niri's socket name without `.sock`, and it must fit in 108 bytes. `/run/user/<uid>` fits; a long test or container directory may not. If no engine answered, read `engine.log` next to that socket.
+With [`shared`](../../concepts/configuration/#shared) on, the default, `status.engine.mode` says `standalone` and `engine.fallback` says why; the server's stderr has the same line. If the engine runs another build, you reinstalled while it ran: new clients are served standalone until the old engine's clients have ended and it exits, and the next client starts a new one. The fallback names the old engine's PID and says to restart the clients it serves, and those clients see `engine.replaced: true`; restarting them ends the wait. If neither build was replaced, as with one install by `cargo install` and another by the install script, the fallback names both files instead: point every MCP client at one of them, since restarting a client runs its own build again. If the engine's socket path is too long, niri's socket directory is: the socket is `niri-computer-use/<instance>/engine.sock` in the directory holding niri's socket, with every symlink resolved, where `<instance>` is niri's socket name without `.sock`, and it must fit in 108 bytes. `/run/user/<uid>` fits; a long test or container directory may not. If no engine answered, read `engine.log` next to that socket.
 
 ## An action comes back `timeout`, `pending` or `interrupted`
 

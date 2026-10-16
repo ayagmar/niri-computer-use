@@ -5,29 +5,43 @@
 
 pub(crate) mod actions;
 
+use std::path::Path;
 use std::time::Duration;
 
 use niri_ipc::Window;
 use serde::Serialize;
+use tokio::time::Instant;
 
 use crate::a11y::model::{
-    self, Extents, Filter, Fresh, LayoutBox, Link, NameHash, Origin, Placement, Refused, Row,
+    self, Extents, Filter, Fresh, LayoutBox, Link, NameHash, Origin, Page, Placement, Refused, Row,
     Scene, Shape, Unbound, Unmappable,
 };
-use crate::a11y::{self, A11y, Capped, ElementRef, Failed, Node, Want};
+use crate::a11y::{self, A11y, Capped, ElementRef, Failed, Node, PagePaths, Switch, Turned, Want};
 use crate::changes::elements::{Seen, Unknown};
+use crate::control::procs;
 use crate::coords::LayoutPt;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri;
 use crate::niri::Socket;
-use crate::policy::{self, Loaded};
+use crate::policy::{self, Loaded, OffBus};
 
 /// What `elements` was asked for.
 #[derive(Debug, Clone)]
 pub(crate) struct Ask {
     pub(crate) window_id: u64,
     pub(crate) filter: Filter,
+    /// The most elements to list. 0 lists none: the walk stops at the first match, names
+    /// no actions, and `truncated` says whether there was one.
     pub(crate) limit: usize,
+    /// Read on past the matches listed, to the end of the tree, its budget or the cap, so
+    /// that an element outside any row is bound only when no other element of the tree has
+    /// its role and name. When the walk still stopped before the end, such an element is
+    /// `Unbound::CutShort`, and `look` leaves its ref out for a wait (`by`).
+    pub(crate) whole: bool,
+    /// When the walk and the naming of its actions must be done by, if sooner than their
+    /// own budgets allow: a wait's end. A walk that runs out of it gives what it read, cut
+    /// short, rather than nothing.
+    pub(crate) by: Option<Instant>,
 }
 
 /// What `elements` returns.
@@ -35,14 +49,48 @@ pub(crate) struct Ask {
 pub(crate) struct Listing {
     pub(crate) window_id: u64,
     pub(crate) elements: Vec<Listed>,
-    /// The walk found more matching elements than `limit` and stopped there.
+    /// More elements matched than `limit`, and those past it aren't listed.
     pub(crate) truncated: bool,
     /// How many accessible objects the walk read.
     pub(crate) walked: usize,
-    /// The walk stopped early, so elements further on are missing.
+    /// The walk didn't read the whole tree, so elements in the part not read are missing.
     pub(crate) capped: bool,
-    /// Why: `node_cap`, or `budget_exhausted` when the request's three seconds ran out.
+    /// Why: `node_cap`, `budget_exhausted` when the request's three seconds ran out, or
+    /// `children_refused` when the app refused to list an object's children.
     pub(crate) capped_reason: Option<Capped>,
+    /// Whether nodes went unread though the walk wasn't capped.
+    #[serde(skip)]
+    pub(crate) coverage: Coverage,
+    /// Why a listed element's ref was left out, with `Ask::whole` or `Ask::by`.
+    #[serde(skip)]
+    pub(crate) withheld: Option<Withheld>,
+    /// The app built its tree at this call's asking, as Chromium builds it only when an
+    /// assistive technology asks, and may not have sent all of it yet: list again.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) building: bool,
+}
+
+/// Whether a walk that wasn't capped read every node it reached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Coverage {
+    Whole,
+    /// Some went unread, as when an object was gone by the time the walk read it, with
+    /// everything under it: no proof that an element is absent.
+    Missed,
+}
+
+/// Why `look` left a listed element's ref out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Withheld {
+    /// The walk stopped before it could tell whether another element has its role and
+    /// name (`Unbound::CutShort`). `elements` gives such a ref, which every tool refuses.
+    Unchecked,
+    /// Naming its actions ran out of `Ask::by`'s time, so they are as the walk read them,
+    /// and a ref would be refused rather than guessed.
+    Unnamed,
+    /// As `Unnamed`, but naming ran out of its own `NAMING` with `Ask::by`'s time left: the
+    /// app names actions slower than naming allows, and more time wouldn't help.
+    SlowNames,
 }
 
 /// One element.
@@ -71,6 +119,21 @@ const NAMING: Duration = Duration::from_secs(1);
 const USUAL_STATES: [&str; 5] = ["enabled", "focusable", "sensitive", "showing", "visible"];
 
 impl Listing {
+    /// The listing of a walk of window `window_id` cut short before it read anything.
+    const fn cut(window_id: u64) -> Self {
+        Self {
+            window_id,
+            elements: Vec::new(),
+            truncated: false,
+            walked: 0,
+            capped: true,
+            capped_reason: Some(Capped::BudgetExhausted),
+            coverage: Coverage::Whole,
+            withheld: None,
+            building: false,
+        }
+    }
+
     /// The listing as text, a few tokens per element: a line about the walk, then one line
     /// per element.
     pub(crate) fn compact(&self) -> String {
@@ -85,6 +148,9 @@ impl Listing {
         }
         if let Some(reason) = self.capped_reason {
             walk = format!("{walk}; walk cut short: {}", word(reason));
+        }
+        if self.building {
+            walk.push_str("; the app built its tree just now, so list again for the rest");
         }
         std::iter::once(walk)
             .chain(self.elements.iter().map(Listed::line))
@@ -107,7 +173,7 @@ impl Listed {
             .filter(|state| !USUAL_STATES.contains(state))
             .collect();
         if !self.states.contains(&"sensitive") {
-            states.push("disabled");
+            states.push(model::DISABLED);
         }
         let place = match (self.layout_box, self.unmappable) {
             (Some(placed), _) => format!(
@@ -137,7 +203,7 @@ impl Listed {
 }
 
 /// A unit variant's name as it is serialized.
-fn word(value: impl Serialize) -> String {
+pub(crate) fn word(value: impl Serialize) -> String {
     serde_json::to_value(value)
         .ok()
         .and_then(|value| value.as_str().map(str::to_owned))
@@ -221,6 +287,7 @@ impl Read {
             bus: self.bus.clone(),
             path: node.path.clone(),
             frame: self.frame.node.path.clone(),
+            page: self.page(at).map(|(paths, _)| paths),
             kept: model::Kept {
                 role: node.role,
                 window: self.placed.window.id,
@@ -251,6 +318,7 @@ impl Read {
             }),
             frame_fits: self.frame.fits,
             origin: self.placed.origin.clone(),
+            page: self.page(at).map(|(_, page)| page),
         };
         let placed_box = model::place(placement);
         let mut element = self.element(at, node);
@@ -271,6 +339,32 @@ impl Read {
         }
     }
 
+    /// The web page the object at `at` is in, if any: where its document and the object
+    /// holding it are, and their extents as the walk read them.
+    fn page(&self, at: usize) -> Option<(PagePaths, Page)> {
+        let (document, container) = self.walked.page(at)?;
+        let document = self.walked.nodes.get(document)?;
+        let container = match container {
+            Some(container) => self.walked.nodes.get(container)?,
+            None => &self.frame.node,
+        };
+        let paths = PagePaths {
+            document: document.path.clone(),
+            container: container.path.clone(),
+        };
+        let page = Page {
+            document: document.extents,
+            container: container.extents,
+        };
+        Some((paths, page))
+    }
+
+    /// Whether the object at `at` sits in no row, and the walk didn't read the whole tree,
+    /// so it can't tell whether another object has its role and name.
+    fn unchecked(&self, at: usize) -> bool {
+        self.walked.row(at) == Row::Unbound(Unbound::CutShort)
+    }
+
     /// The objects `filter` lists, with where each sits in the walk.
     fn listed<'a>(&'a self, filter: &'a Filter) -> impl Iterator<Item = (usize, &'a Node)> {
         self.walked
@@ -281,12 +375,13 @@ impl Read {
     }
 }
 
-/// What a walk looks for: the objects `filter` lists, until it found more than `limit`;
-/// with `names_only`, its failures leave the app's error messages out.
+/// What a walk looks for: the objects `filter` lists, until it found more than `limit`,
+/// within `budget`; with `names_only`, its failures leave the app's error messages out.
 #[derive(Debug, Clone, Copy)]
 struct Walk<'a> {
     filter: &'a Filter,
     limit: usize,
+    budget: Duration,
     names_only: bool,
 }
 
@@ -309,13 +404,16 @@ async fn read(
     let pid = window.pid.ok_or_else(|| {
         a11y::not_accessible(format!("niri knows no process for window {}", window.id))
     })?;
-    let request = a11y.request(a11y::BUDGET).await?;
+    let request = a11y.request(walk.budget).await?;
     let request = if walk.names_only {
         request.names_only()
     } else {
         request
     };
-    let app = request.app(pid).await?;
+    let Some(app) = request.find_app(pid).await? else {
+        let app_id = window.app_id.as_deref();
+        return Err(off_bus(a11y, policy, (pid, app_id), request.deadline()).await);
+    };
     let frame = request
         .frame(&app, shape(window), &others(window, &placed.others))
         .await?;
@@ -333,6 +431,88 @@ async fn read(
     }))
 }
 
+/// `not_accessible` for the app of process `pid` and `app_id`, which isn't on the
+/// accessibility bus. Only a Chromium-family app, Chromium, Electron or CEF, checks the
+/// session's accessibility before it joins the bus, and only when it starts, so only for
+/// its process does the server read and switch it, by `deadline`, and say what it did and
+/// that the app needs a restart. Any other app gets the plain error: turning accessibility
+/// on wouldn't bring it onto the bus, and would still change the session and its settings.
+async fn off_bus(
+    a11y: &A11y,
+    policy: &Loaded,
+    (pid, app_id): (i32, Option<&str>),
+    deadline: Instant,
+) -> ToolError {
+    let chromium = match u32::try_from(pid) {
+        Ok(pid) => procs::chromium_family(Path::new("/proc"), pid, deadline).await,
+        Err(_) => false,
+    };
+    if !chromium {
+        return a11y::not_accessible(a11y::off_bus(pid));
+    }
+    let note = switched(a11y.switch(), policy, deadline).await;
+    let app = app_id.map_or_else(
+        || "niri knows no app_id for its window".to_owned(),
+        |app_id| format!("its window's app_id is {app_id:?}"),
+    );
+    a11y::not_accessible(format!("{}; {app}; {note}", a11y::off_bus(pid)))
+}
+
+/// What the server did about the session's accessibility, as `policy::off_bus` decides.
+async fn switched(switch: &Switch, policy: &Loaded, deadline: Instant) -> String {
+    let enabled = match switch.session_enabled(deadline).await {
+        Ok(enabled) => enabled,
+        Err(error) => {
+            return format!(
+                "whether the session's accessibility is on couldn't be read: {}",
+                error.detail
+            );
+        }
+    };
+    // Unread, the listeners count as none, so accessibility that is on is left alone.
+    let listened = enabled && switch.listened(deadline).await.unwrap_or(false);
+    let on = format!(
+        "the session's accessibility is on: the app may not support it, or started while it was off; {RESTART}"
+    );
+    match policy::off_bus(policy, enabled, listened) {
+        OffBus::Leave => on,
+        OffBus::Refused(why) => format!("the session's accessibility is off, and {why}"),
+        OffBus::Listen => match switch.listen(deadline, enabled).await {
+            Ok(Turned::On) if enabled => on,
+            Ok(Turned::On) => format!(
+                "the session's accessibility was off, so the server turned it on; {GSETTINGS}; {RESTART}"
+            ),
+            Ok(Turned::AlreadyOn) => on,
+            Ok(Turned::LetGo) => "the session's accessibility is off: something turned it off while the server's listener held it on, so the server let its listener go and leaves it off until the server restarts".to_owned(),
+            Ok(Turned::Unsupported(why)) => format!("the session's accessibility is off: {why}"),
+            Ok(Turned::Late) => format!("the session's accessibility is off, and this call's time ran out before the server's listener turned it on; the server let the listener go and tries again on the next call; {MAY_HAVE_SET}"),
+            Ok(Turned::Unread(why)) => format!(
+                "the session's accessibility is {}, and reading IsEnabled after registering the server's listener failed: {why}; the server let the listener go and tries again on the next call; {MAY_HAVE_SET}",
+                if enabled { "on" } else { "off" }
+            ),
+            Ok(Turned::Busy) if enabled => format!(
+                "the session's accessibility is on, and the server was still turning it on for another call when this one's time ran out; {RESTART}"
+            ),
+            Ok(Turned::Busy) => "the session's accessibility is off, and the server was still turning it on for another call when this one's time ran out; call again".to_owned(),
+            Err(error) => format!(
+                "the session's accessibility is {}, and registering the server's listener failed: {}; {MAY_HAVE_SET}",
+                if enabled { "on" } else { "off" },
+                error.detail
+            ),
+        },
+    }
+}
+
+/// What at-spi2-core does beside turning accessibility on, which the server can't undo.
+const GSETTINGS: &str = "at-spi2-core also sets GSettings org.gnome.desktop.interface toolkit-accessibility to true when it turns accessibility on, and that stays after the server ends";
+
+/// What at-spi2-core may have done for a listener the server let go, which the server can't
+/// undo: the launcher counts a listener as it registers, before the server knows.
+const MAY_HAVE_SET: &str = "at-spi2-core may have set GSettings org.gnome.desktop.interface toolkit-accessibility to true if it counted the listener before the server let it go, and that stays after the server ends";
+
+/// What a Chromium-family app started while the session's accessibility was off needs.
+const RESTART: &str = "its process is a Chromium, Electron or CEF app's, which checks only when it starts, so if it started while accessibility was off, it lists its elements only after a restart: ask the user before restarting it";
+
 /// Lists the accessible elements of window `ask.window_id`, keeping a ref of each through
 /// `remember` while there is a lease.
 pub(crate) async fn list(
@@ -340,47 +520,121 @@ pub(crate) async fn list(
     a11y: &A11y,
     policy: &Loaded,
     ask: &Ask,
-    mut remember: impl FnMut(ElementRef) -> Option<String>,
+    remember: impl FnMut(ElementRef) -> Option<String>,
 ) -> Result<Listing, CallError> {
+    look(socket, a11y, policy, ask, remember)
+        .await?
+        .ok_or_else(|| CallError::InvalidArguments(format!("no window with id {}", ask.window_id)))
+}
+
+/// What `elements` lists for `ask` now, for one check of `wait_for`'s element condition,
+/// or none when niri has no window `ask.window_id`, also when the walk failed because the
+/// window closed during it.
+pub(crate) async fn poll(
+    socket: &Socket,
+    a11y: &A11y,
+    policy: &Loaded,
+    ask: &Ask,
+    remember: impl FnMut(ElementRef) -> Option<String>,
+) -> Result<Option<Listing>, ToolError> {
+    match look(socket, a11y, policy, ask, remember).await {
+        Err(_) if matches!(placed(socket, ask.window_id).await, Ok(None)) => Ok(None),
+        // Out of time before the walk began, finding the app or its frame.
+        Err(error)
+            if error.name == ErrorName::DeadlineExceeded
+                && ask.by.is_some_and(|by| Instant::now() >= by) =>
+        {
+            Ok(Some(Listing::cut(ask.window_id)))
+        }
+        looked => looked,
+    }
+}
+
+/// What is left until `by`, at most `budget`.
+fn budget_by(budget: Duration, by: Option<Instant>) -> Duration {
+    by.map_or(budget, |by| {
+        budget.min(by.saturating_duration_since(Instant::now()))
+    })
+}
+
+/// `list`'s work, or none when niri has no window `ask.window_id`.
+async fn look(
+    socket: &Socket,
+    a11y: &A11y,
+    policy: &Loaded,
+    ask: &Ask,
+    mut remember: impl FnMut(ElementRef) -> Option<String>,
+) -> Result<Option<Listing>, ToolError> {
     let walk = Walk {
         filter: &ask.filter,
-        limit: ask.limit,
+        limit: if ask.whole { usize::MAX } else { ask.limit },
+        budget: budget_by(a11y::BUDGET, ask.by),
         names_only: false,
     };
-    let read = read(socket, a11y, policy, ask.window_id, walk)
-        .await?
-        .ok_or_else(|| {
-            CallError::InvalidArguments(format!("no window with id {}", ask.window_id))
-        })?;
-    let naming = a11y.request(NAMING).await?;
+    let Some(read) = read(socket, a11y, policy, ask.window_id, walk).await? else {
+        return Ok(None);
+    };
+    let naming = a11y.request(budget_by(NAMING, ask.by)).await?;
     let mut matching = read.listed(&ask.filter);
     let mut elements = Vec::new();
-    let mut cut = false;
+    let (mut cut, mut withheld) = (false, None);
     for (at, node) in matching.by_ref().take(ask.limit) {
         let actions = naming.named((&read.bus, &node.path), node.actions.clone());
-        let actions = match actions.await {
-            Ok(actions) => actions,
+        let (actions, why) = match actions.await {
+            // A wait says why in its `detail` rather than give a ref every tool refuses.
+            Ok(actions) => (
+                actions,
+                (ask.by.is_some() && read.unchecked(at)).then_some(Withheld::Unchecked),
+            ),
             Err(error) if error.name == ErrorName::DeadlineExceeded && naming.spent() => {
                 cut = true;
-                break;
+                // A wait that ran out keeps the match it read, without a ref.
+                if ask.by.is_none() {
+                    break;
+                }
+                let out = ask.by.is_some_and(|by| Instant::now() >= by);
+                let why = if out {
+                    Withheld::Unnamed
+                } else {
+                    Withheld::SlowNames
+                };
+                (node.actions.clone(), Some(why))
             }
-            Err(error) => return Err(error.into()),
+            Err(error) => return Err(error),
         };
-        elements.push(read.listed_element(at, node, actions, &mut remember));
+        withheld = withheld.or(why);
+        let mut keep = |element| {
+            if why.is_some() {
+                None
+            } else {
+                remember(element)
+            }
+        };
+        elements.push(read.listed_element(at, node, actions, &mut keep));
+        if cut {
+            break;
+        }
     }
     let capped = if cut {
         Some(Capped::BudgetExhausted)
     } else {
         read.walked.capped
     };
-    Ok(Listing {
+    Ok(Some(Listing {
         window_id: read.placed.window.id,
         truncated: cut || matching.next().is_some(),
         elements,
         walked: read.walked.nodes.len(),
         capped: capped.is_some(),
         capped_reason: capped,
-    })
+        coverage: if read.walked.missed() {
+            Coverage::Missed
+        } else {
+            Coverage::Whole
+        },
+        withheld,
+        building: read.frame.building,
+    }))
 }
 
 /// Every element of window `window_id` that `elements` would list without filters, for
@@ -396,6 +650,7 @@ pub(crate) async fn survey(
     let walk = Walk {
         filter: &filter,
         limit: usize::MAX,
+        budget: a11y::BUDGET,
         names_only: true,
     };
     let read = read(socket, a11y, policy, window_id, walk)
@@ -404,6 +659,9 @@ pub(crate) async fn survey(
         .ok_or_else(|| Unknown::gone(window_id))?;
     if let Some(capped) = read.walked.capped {
         return Err(Unknown::capped(window_id, capped));
+    }
+    if read.walked.missed() {
+        return Err(Unknown::nodes_gone(window_id));
     }
     Ok(read
         .listed(&filter)
@@ -448,7 +706,7 @@ fn listed(filter: &Filter, node: &Node) -> bool {
     };
     node.states.has(model::State::Showing)
         && kind
-        && filter.matches(model::role_name(node.role), &node.name)
+        && filter.matches(model::role_name(node.role), &node.name, node.states)
 }
 
 /// Where to aim at `element` now: the centre of its box, from niri's geometry and the
@@ -483,6 +741,7 @@ pub(crate) async fn aim(
             extents: probe.extents,
             frame_fits: model::frame_fits(probe.frame, window.layout.window_size),
             origin: placed.origin.clone(),
+            page: probe.page,
         },
     };
     match (model::recheck(kept, fresh), placed.origin) {
@@ -577,6 +836,9 @@ const fn unbound(why: Unbound) -> &'static str {
         Unbound::Repeated => {
             "other elements of its role and name sit in no row of their own on the accessibility bus, as a list's rows do in some toolkits, so nothing tells which record it acts on; aim the pointer tools at its pixels on a fresh screenshot instead"
         }
+        Unbound::CutShort => {
+            "it sits in no row on the accessibility bus, and the listing didn't read the whole tree, since it was cut short or part of the tree went away while it read, so it can't tell whether another element of its role and name sits there, as a list's rows do in some toolkits; aim the pointer tools at its pixels on a fresh screenshot instead"
+        }
     }
 }
 
@@ -625,7 +887,7 @@ async fn same_name(
 pub(crate) fn gone_is_stale(failed: Failed) -> ToolError {
     match failed {
         Failed::Gone(detail) => stale(&detail),
-        Failed::Refused(error) | Failed::Error(error) => error,
+        Failed::Refused(error, _) | Failed::Error(error) => error,
     }
 }
 
@@ -643,6 +905,10 @@ pub(crate) fn unmappable(why: Unmappable) -> ToolError {
             "frame_size_mismatch",
             "the app's accessible window isn't the size niri gives the window, so its coordinates can't be trusted; aim with a screenshot pixel instead",
         ),
+        Unmappable::PageScaleUnknown => (
+            "page_scale_unknown",
+            "the element is in a web page whose coordinates may be in the output's pixels rather than the window's, and its document isn't the size of the view holding it or that size times the output's scale, so which unit isn't known; use activate_element, or aim with a screenshot pixel instead",
+        ),
         Unmappable::NotShowing => (
             "not_showing",
             "the element or its window isn't showing, or niri's overview is open; bring it into view or close the overview, and call elements again",
@@ -657,7 +923,7 @@ pub(crate) fn unmappable(why: Unmappable) -> ToolError {
         ),
         Unmappable::Moving => (
             "not_showing",
-            "the view may still be moving: niri switched a workspace, opened or closed the overview, or moved, resized or opened a window a moment ago; take a screenshot and try again",
+            "the view may still be moving: niri switched a workspace, opened or closed the overview, or moved, resized or opened a window a moment ago, or the server had only just started reading niri's events or reconnected to them; take a screenshot and try again",
         ),
         Unmappable::Restless => (
             "not_showing",
@@ -670,6 +936,10 @@ pub(crate) fn unmappable(why: Unmappable) -> ToolError {
         Unmappable::OffOutput => (
             "not_showing",
             "the element's centre is past its output's edge, where niri shows nothing of its window; move the window so the element is on screen, and call elements again",
+        ),
+        Unmappable::OffPage => (
+            "not_showing",
+            "the element's centre is outside its web page, as under the browser's toolbar when the page is scrolled; scroll it into the page and call elements again, or use activate_element",
         ),
         Unmappable::Empty => ("empty", "the element has no area"),
         Unmappable::OutsideScreenshot => (
@@ -702,6 +972,7 @@ mod tests {
             extents: None,
             actions: actions.iter().map(|&action| action.to_owned()).collect(),
             children: Vec::new(),
+            children_refused: false,
         }
     }
 
@@ -775,6 +1046,9 @@ mod tests {
             walked: 40,
             capped: true,
             capped_reason: Some(Capped::BudgetExhausted),
+            coverage: Coverage::Whole,
+            withheld: None,
+            building: false,
         };
         let compact = listing.compact();
         assert_eq!(

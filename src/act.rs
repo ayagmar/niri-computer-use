@@ -77,11 +77,30 @@ pub(crate) enum Observed {
     Gone,
     /// Element actions: the element couldn't be read afterwards; `detail` says why.
     Unknown,
-    /// `set_element_text`: the element holds as many characters as were set.
+    /// `set_element_text`: the element holds the text that was set.
     Matched,
-    /// `set_element_text`: the element holds another number of characters, as when an app
-    /// filters what it is given.
+    /// `set_element_text`: the element holds other text right after the app answered, as
+    /// when it filters, caps or reformats what it is given, or sets the text later.
     Differs,
+}
+
+/// Element actions: whether reading the element back showed the action's effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Effect {
+    /// The field holds the text sent; a state, the value or the name changed; the element or
+    /// its window went away; or niri saw its window close or lose focus to a window that
+    /// opened.
+    Seen,
+    /// `set_element_text`: the field holds other text than was sent.
+    Differs,
+    /// `activate_element`: the element's states and name, and its value when it has one,
+    /// read the same before and after, and niri saw its window neither close nor lose focus
+    /// to a window that opened. An action that acts elsewhere, such as saving a file, looks
+    /// like this too.
+    NoneSeen,
+    /// Nothing could be compared: a read failed or ran out of time.
+    Unverified,
 }
 
 /// An action's result.
@@ -129,12 +148,17 @@ pub(crate) struct Outcome {
     /// Element actions: the element's role and what the action did to it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) element: Option<Acted>,
+    /// Element actions: whether the effect was read back.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) effect: Option<Effect>,
     /// What niri reported changing from the start of the action until its report ended,
     /// and with `element_changes` what changed among a window's elements; absent when
     /// nothing did.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) changes: Option<Changes>,
-    /// Why the outcome is uncertain.
+    /// Why the outcome is uncertain or `unknown`, or why an element action's effect is
+    /// `unverified`; for `key` and `type_text` ending `interrupted` once keys went out, what
+    /// went out and where some of it may have gone.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) detail: Option<String>,
     /// The metadata of the focused output's screenshot that comes with the result: one asked
@@ -181,6 +205,7 @@ impl Outcome {
             window: None,
             paste: None,
             element: None,
+            effect: None,
             changes: None,
             detail: None,
             screenshot: None,
@@ -203,6 +228,7 @@ impl Outcome {
             window: None,
             paste: None,
             element: None,
+            effect: None,
             changes: None,
             detail: Some(detail),
             screenshot: None,
@@ -222,6 +248,20 @@ impl Outcome {
             },
             Worked::CutAfterSending(cut, None) => Self::uncertain(None, None, cut.detail),
         }
+    }
+
+    /// Adds what niri reported changing, absent when nothing did. An activation whose
+    /// element read the same before and after is `seen` when the report shows its window
+    /// closed or losing focus to a window that opened (`Changes::shows`). A read that
+    /// failed stays `unverified`.
+    pub(crate) fn report(&mut self, changes: Changes) {
+        if let (Some(element), Some(effect)) = (&self.element, &mut self.effect)
+            && *effect == Effect::NoneSeen
+            && changes.shows(element.window)
+        {
+            *effect = Effect::Seen;
+        }
+        self.changes = (!changes.is_empty()).then_some(changes);
     }
 
     /// Outcomes after which the agent can't tell what the desktop looks like.
@@ -612,6 +652,66 @@ mod tests {
     use super::*;
     use crate::niri::waiter::Update;
     use crate::niri::waiter::tests::{view, view_on, waiter, window, workspace};
+
+    /// An activation's outcome on window 1, with `effect`.
+    fn element_outcome(effect: Effect) -> Outcome {
+        let acted = Acted {
+            role: "button",
+            action: Some(crate::elements::actions::Chosen {
+                kind: crate::elements::actions::ActionKind::Click,
+                index: 0,
+            }),
+            states_set: Vec::new(),
+            states_cleared: Vec::new(),
+            value_changed: None,
+            name_changed: None,
+            characters: None,
+            window: 1,
+        };
+        Outcome {
+            element: Some(acted),
+            effect: Some(effect),
+            ..Outcome::seen(Observed::Present, &view(Vec::new()), Vec::new())
+        }
+    }
+
+    // The change report starts before the last gate. A title that changed may have changed
+    // before the call went out, so it never makes a no-op `seen`, and nothing makes a failed
+    // read `seen`: that read is all the outcome can say about the element.
+    #[test]
+    fn only_the_elements_window_closing_after_the_gate_makes_a_quiet_activation_seen() {
+        let closed = || Changes {
+            closed: vec![crate::changes::Closed {
+                id: 1,
+                app_id: Some("app".to_owned()),
+            }],
+            ..Changes::default()
+        };
+        let renamed = || Changes {
+            windows: vec![crate::changes::Changed {
+                id: 1,
+                title: Some("Mock (1 new message)".to_owned()),
+                ..crate::changes::Changed::default()
+            }],
+            ..Changes::default()
+        };
+        let mut quiet = element_outcome(Effect::NoneSeen);
+        quiet.report(closed());
+        assert_eq!(quiet.effect, Some(Effect::Seen));
+        let mut retitled = element_outcome(Effect::NoneSeen);
+        retitled.report(renamed());
+        assert_eq!(retitled.effect, Some(Effect::NoneSeen));
+        assert!(retitled.changes.is_some());
+        for effect in [Effect::Unverified, Effect::Differs] {
+            let mut read = element_outcome(effect);
+            read.report(closed());
+            assert_eq!(read.effect, Some(effect));
+        }
+        let mut nothing = element_outcome(Effect::NoneSeen);
+        nothing.report(Changes::default());
+        assert_eq!(nothing.effect, Some(Effect::NoneSeen));
+        assert_eq!(nothing.changes, None);
+    }
 
     #[test]
     fn reuse_spawns_for_none_focuses_one_and_refuses_to_pick_among_several() {

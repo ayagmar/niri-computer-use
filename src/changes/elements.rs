@@ -84,6 +84,9 @@ pub(crate) enum Why {
     WindowGone,
     NodeCap,
     BudgetExhausted,
+    ChildrenRefused,
+    /// An object was gone by the time a walk read it, so what was under it went unread.
+    NodesGone,
     #[serde(untagged)]
     Error(ErrorName),
 }
@@ -122,11 +125,25 @@ impl Unknown {
             Capped::BudgetExhausted => {
                 (Why::BudgetExhausted, "a walk ran out of its three seconds")
             }
+            Capped::ChildrenRefused => (
+                Why::ChildrenRefused,
+                "the app refused to list an object's children",
+            ),
         };
         Self {
             window_id: Some(window_id),
             why,
             detail: detail.to_owned(),
+        }
+    }
+
+    pub(crate) fn nodes_gone(window_id: u64) -> Self {
+        Self {
+            window_id: Some(window_id),
+            why: Why::NodesGone,
+            detail:
+                "an object went away while a walk read the tree, so what was under it went unread"
+                    .to_owned(),
         }
     }
 }
@@ -290,6 +307,7 @@ mod tests {
                 bus: ":1.5".to_owned(),
                 path: (*paths.last().unwrap()).to_owned(),
                 frame: "/frame".to_owned(),
+                page: None,
                 kept: Kept {
                     role,
                     window: 3,

@@ -5,6 +5,16 @@ pub(crate) mod wayland;
 
 use std::path::PathBuf;
 
+/// Settings for a property test: `cases` inputs, and no file of failing inputs written into
+/// the source tree. A failure's minimised input becomes a regression test of its own.
+pub(crate) fn properties(cases: u32) -> proptest::test_runner::Config {
+    proptest::test_runner::Config {
+        cases,
+        failure_persistence: None,
+        ..proptest::test_runner::Config::default()
+    }
+}
+
 /// A directory the calling test creates itself, so the test reads and removes nothing
 /// else. Creation fails if the name already exists.
 pub(crate) fn fresh_dir(name: &str) -> PathBuf {
@@ -81,6 +91,7 @@ pub(crate) fn session(id: u64) -> crate::session::Session {
         unrestricted: None,
         confirm_lease: None,
         tools: None,
+        shared: None,
         home: None,
         path: Some(NO_PROGRAMS.into()),
         policy: crate::policy::Source::Missing,
@@ -119,5 +130,6 @@ pub(crate) fn shot() -> crate::refs::Shot {
         height: 1080,
         taken: tokio::time::Instant::now(),
         connection: 1,
+        steady_since: None,
     }
 }

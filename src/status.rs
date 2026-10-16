@@ -15,7 +15,10 @@ use crate::error::ToolError;
 use crate::niri::events::StreamState;
 use crate::niri::{self, version::Compat};
 use crate::noctalia::{self, Presence};
-use crate::policy::{self, Facts, Loaded, PolicyStatus, Switch, SwitchStatus, Tools, ToolsStatus};
+use crate::policy::{
+    self, Facts, Loaded, PolicyStatus, Shared, SharedStatus, Switch, SwitchStatus, Tools,
+    ToolsStatus,
+};
 use crate::runner::{self, Place};
 use crate::{Env, a11y, discover};
 
@@ -48,6 +51,9 @@ pub(crate) struct Status {
     noctalia_error: Option<ToolError>,
     /// Whether this session has an accessibility bus, for `elements`.
     accessibility: a11y::Presence,
+    /// Whether this server turned the session's accessibility on: `on` while its listener
+    /// holds it on. Null in the `status` subcommand and without an accessibility bus.
+    accessibility_switch: Option<a11y::SwitchReport>,
     audit: AuditStatus,
     policy: PolicyStatus,
     /// Whether gated actions are allowed, and whether the policy file or the environment
@@ -58,6 +64,9 @@ pub(crate) struct Status {
     confirm_lease: SwitchStatus,
     /// Which tools this session lists, and what narrowed them.
     tools: ToolsStatus,
+    /// Whether this client is served by the shared engine, standalone, or only by the
+    /// shared engine.
+    shared: SharedStatus,
     binaries: BTreeMap<&'static str, bool>,
     /// Where `loginctl` and `noctalia` were found at startup, for every session alike.
     desktop_programs: runner::Desktop,
@@ -77,10 +86,13 @@ pub(crate) struct Sources<'a> {
     pub(crate) unrestricted: &'a Switch,
     pub(crate) confirm_lease: &'a Switch,
     pub(crate) tools: &'a Tools,
+    pub(crate) shared: &'a Shared,
     /// Where the session's own programs are found.
     pub(crate) place: Place<'a>,
     /// Decided once at startup for the server, whose tool list depends on it.
     pub(crate) accessibility: &'a a11y::Presence,
+    /// The engine's switch; none for the `status` subcommand.
+    pub(crate) accessibility_switch: Option<a11y::SwitchReport>,
 }
 
 /// The engine that serves the session asking.
@@ -162,8 +174,10 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         unrestricted,
         confirm_lease,
         tools,
+        shared,
         place,
         accessibility,
+        accessibility_switch,
     } = sources;
     let socket = &env.niri_socket;
     let noctalia = async {
@@ -213,11 +227,13 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         noctalia: presence,
         noctalia_error,
         accessibility: accessibility.clone(),
+        accessibility_switch,
         audit: audit.status(),
         policy: policy.status(),
         unrestricted: unrestricted.status(),
         confirm_lease: confirm_lease.status(),
         tools: tools.status(),
+        shared: shared.status(),
         binaries: SESSION_BINARIES
             .map(|name| (name, runner::finds(place, name)))
             .into_iter()
@@ -247,28 +263,21 @@ mod tests {
     #[tokio::test]
     async fn reports_what_it_can_without_failing() {
         let audit = Audit::new(None);
+        let session = crate::test_support::session(1);
+        let settings = session.settings();
         let sources = Sources {
             engine: None,
             event_stream: None,
             audit: &audit,
             lease: status_without_desk(&Env::default()),
-            policy: &Loaded::Missing,
-            unrestricted: &Switch {
-                policy: false,
-                env: Ok(false),
-                when_wrong: false,
-            },
-            confirm_lease: &Switch {
-                policy: false,
-                env: Ok(false),
-                when_wrong: true,
-            },
-            tools: &Tools {
-                policy: policy::Profile::Full,
-                env: Ok(None),
-            },
+            policy: &settings.policy,
+            unrestricted: &settings.unrestricted,
+            confirm_lease: &settings.confirm_lease,
+            tools: &settings.tools,
+            shared: &settings.shared,
             place: crate::test_support::no_programs(),
             accessibility: &a11y::detect(None).await,
+            accessibility_switch: None,
         };
         let status = serde_json::to_value(collect(&Env::default(), sources).await).unwrap();
         assert_eq!(
@@ -310,9 +319,10 @@ mod tests {
                     "address": null,
                     "reason": "neither DBUS_SESSION_BUS_ADDRESS nor XDG_RUNTIME_DIR is set"
                 },
+                "accessibility_switch": null,
                 "audit": {"path": null, "last_error": "neither XDG_STATE_HOME nor HOME is set"},
                 "policy": {
-                    "state": "missing", "presets": 0, "preset_names": [], "denied_app_ids": 0,
+                    "state": "missing", "presets": 0, "preset_names": [], "denied_app_ids": 0, "turn_on_accessibility": true,
                     "capture_dir": "~/Pictures/niri-computer-use",
                     "capture_dir_source": "default",
                     "error": null
@@ -320,6 +330,7 @@ mod tests {
                 "unrestricted": {"enabled": false, "source": null, "error": null},
                 "confirm_lease": {"enabled": false, "source": null, "error": null},
                 "tools": {"profile": "full", "source": null, "error": null},
+                "shared": {"setting": "on", "error": null},
                 "binaries": {"grim": false, "notify-send": false},
                 "desktop_programs": {"search": "", "loginctl": null, "noctalia": null}
             })
