@@ -87,7 +87,7 @@ Nautilus 51.1 runs in the nested session with `HOME` set to `TEST_DIR/files-home
 - `release_desktop` comes before stopping to ask the user anything, not only at the end.
 - One action per turn, with no other desktop call beside it, even when actions look independent, because each changes what the next depends on. Reads may go together without an action, which is what the grading allows.
 - Tool names: call the names the client lists, such as `mcp__niri-computer-use__status`, since a bare `status` fails.
-- On `interrupted`, or `changes.focus` leaving the window, check what has focus and where the text went before going on. This matches the contract the `focus-race` branch gives `type_text` and `key`: a call during which focus left the window reports `interrupted`, never `sent`. These runs used the server without that change, so `type_text` still answered `sent` when the dialog took focus, and the agents went by `changes.focus`.
+- On `interrupted`, or `changes.focus` leaving the window, check what has focus and where the text went before going on. This matches the contract `732f573` gives `type_text` and `key`: a call during which niri moved focus away reports `interrupted`, never `sent`. These runs used the server without that change. In this fixture `type_text` answers `sent` with or without it, since niri focuses the dialog only after the call (see the correction above), so the agents went by `changes.focus`.
 
 Each of the three failing workflow scenarios ran twice and `key-screenshots` once, with Sonnet and the skill. The first `form` run used `2698f31`; the rest used `4f3b209`, which only puts back the general `interrupted` rule, since `focus` and `launch` also report it.
 
