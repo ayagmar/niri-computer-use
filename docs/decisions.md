@@ -1848,3 +1848,11 @@ v2.9.2 is the newest release; it is over 7 days old.
 - The other option was saying in the docs that only a mistake that still parses as TOML keeps the requirement. The scan is a few lines and keeps the promise.
 - Tests: the unit test of invalid files now requires `"required"` from text that isn't TOML, and nothing from such a line after a table header or with another value. It failed before the change.
 - No dependency was added.
+
+## 2026-10-16: the key that commits a call waits for niri to confirm focus
+
+- The 2026-10-15 change asked niri for the focused window only after the last key, so it reported a key that reached a window niri had just focused but still sent it. The submitting `Return` of `type_text` and the last key of a `key` call, such as the `Return` of `["Down", "Down", "Return"]`, are the keys that confirm a dialog or run a line in a terminal, so before that key the work now asks niri for `FocusedWindow` too, and stops `interrupted` with nothing more sent when focus moved. Once niri has answered, it applies the events the stream passed on meanwhile, as the check after the last key does, so a focus move or a denied `app_id` reported during the request stops the key as well. A failed request fails the call before that key, with niri's error and the count of what went out.
+- The other keys keep the stream-only check of 2026-10-15. Asking niri before every key would add a round trip per key to every call, and a stray character typed into a window that just took focus does less harm than a key that confirms it.
+- Cost: one more niri round trip in each `key` call and each `type_text` with `submit`. It was not measured with `make nested-latency`; the round trip after the last key, which is the same request, added about 0.5 ms there.
+- Tests: unit tests against the fake niri send focus to another window quietly before the submitting `Return`, before a one-key call's key and before the last of three keys, report a focus move on the stream while niri answers the request before the key, and fail that request. Each checks that the key isn't among those the fake received. The four that move focus failed before their changes, with the key sent.
+- No dependency was added.
