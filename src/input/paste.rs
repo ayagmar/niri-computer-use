@@ -9,7 +9,8 @@
 //!
 //! Whoever commits the key, right before it can go out, takes the keeper's end as an
 //! `Aftercare`: the native device. It says `k` and waits for the keeper to
-//! admit the key; without that, the key doesn't go out. Then it sends the key, says `p`
+//! admit the key; without that, the key doesn't go out. Focus, the layout or a denied app
+//! that niri reported meanwhile withdraws the key with `n`. Then it sends the key, says `p`
 //! even if the key failed partway, and only then takes its input-dirty marker off, so a
 //! stop, a cancelled call or the session's end can't drop the keeper's end while a key may
 //! still arrive, and no new input, from this server or another, starts until the keeper

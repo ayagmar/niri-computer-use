@@ -81,7 +81,17 @@ async fn type_seen(
                 .extend(&map)
                 .map_err(|error| partly(error, &typing, sent))?;
         }
-        device.commit(aftercare, input.niri.desk).await?;
+        if device.commit(aftercare, input.niri.desk).await?
+            && let Some(outcome) = admitted(input, &mut waiter, &mut device, before, group)
+                .await
+                .map_err(|error| partly(error, &typing, sent))?
+        {
+            device
+                .finish(waiter.view().keyboard_group())
+                .await
+                .map_err(|error| partly(error, &typing, sent))?;
+            return Ok(ended(outcome, focus, &typing, sent));
+        }
         // Sent to niri before it failed or ran out of time, the key may still have gone out.
         call.budget
             .bound(device.stroke(key))
@@ -186,6 +196,30 @@ async fn left_before(
         return Ok(Some(moved(focused, waiter.view())));
     }
     Ok(interrupted(waiter, before, group).await)
+}
+
+/// After a paste's keeper admitted its key, which can take up to `ADMIT`, what niri's
+/// stream reported meanwhile, read again right before the key: focus or the layout moving,
+/// or the focused app now denied, keeps the key back, and the keeper hears `n` and restores
+/// the clipboard. niri itself was asked right before the `k`, so, as before the keys that
+/// aren't decisive, only its stream is read.
+async fn admitted(
+    input: Input<'_>,
+    waiter: &mut Waiter,
+    device: &mut Device,
+    before: Option<u64>,
+    group: u32,
+) -> Result<Option<Outcome>, ToolError> {
+    let left = interrupted(waiter, before, group).await;
+    let refused = policy::refuse_input(input.policy, focused_app_id(waiter.view()));
+    if left.is_none() && refused.is_none() {
+        return Ok(None);
+    }
+    device.withdraw().await;
+    match (left, refused) {
+        (None, Some(refused)) => Err(refused),
+        (left, _) => Ok(left),
+    }
 }
 
 /// The outcome once niri says focus moved to `focused`.
@@ -420,17 +454,24 @@ impl Device {
         self.keyboard()?.extend(map)
     }
 
-    /// Takes `aftercare`, if it is still there, and arms it.
+    /// Takes `aftercare`, if it is still there, and arms it. Says whether it did.
     async fn commit(
         &mut self,
         aftercare: &mut Option<Aftercare>,
         desk: &Desk,
-    ) -> Result<(), ToolError> {
+    ) -> Result<bool, ToolError> {
         let Some(taken) = aftercare.take() else {
-            return Ok(());
+            return Ok(false);
         };
         self.aftercare = Some(taken.arm(desk).await?);
-        Ok(())
+        Ok(true)
+    }
+
+    /// Tells a paste's keeper, which admitted the key, that it won't go out after all.
+    async fn withdraw(&mut self) {
+        if let Some(aftercare) = self.aftercare.take() {
+            aftercare.withdraw().await;
+        }
     }
 
     /// Sends one key pair with the key's modifiers in the key's layout, then zero modifiers
@@ -576,7 +617,7 @@ mod tests {
     use crate::control::LockSources;
     use crate::error::CallError;
     use crate::input::paste::{
-        Clipboard, Report, SLOW_ADMISSION, STOPPED_WAITING, desk_read, fake_aftercare,
+        Aftercare, Clipboard, Report, SLOW_ADMISSION, STOPPED_WAITING, desk_read, fake_aftercare,
     };
     use crate::niri::waiter::{Update, tests as events};
     use crate::noctalia;
@@ -733,16 +774,18 @@ mod tests {
         });
     }
 
-    /// What a test's call types against besides the fake: the policy, and from which
-    /// read on Noctalia says the screen is locked.
+    /// What a test's call types against besides the fake: the policy, from which read on
+    /// Noctalia says the screen is locked, and a paste's keeper, if the call pastes.
     struct Setup {
         policy: Loaded,
         locked_from: Option<usize>,
+        aftercare: Option<Aftercare>,
     }
 
     const PLAIN: Setup = Setup {
         policy: Loaded::Missing,
         locked_from: None,
+        aftercare: None,
     };
 
     fn text(text: &str) -> Typing {
@@ -760,16 +803,16 @@ mod tests {
         typing: Typing,
         waiter: Option<Waiter>,
     ) -> Result<Outcome, CallError> {
-        type_with(niri, dir, typing, waiter, &PLAIN).await
+        type_with(niri, dir, typing, waiter, PLAIN).await
     }
 
-    /// `type_through` with `setup`'s policy and lock state.
+    /// `type_through` with `setup`'s policy, lock state and paste keeper.
     async fn type_with(
         niri: &Compositor,
         dir: &Path,
         typing: Typing,
         waiter: Option<Waiter>,
-        setup: &Setup,
+        mut setup: Setup,
     ) -> Result<Outcome, CallError> {
         let env = crate::Env {
             wayland_display: Some("fake-noctalia".into()),
@@ -798,8 +841,8 @@ mod tests {
         };
         let expect = Expect::App(APP_ID.to_owned());
         match waiter {
-            Some(waiter) => type_seen(input, waiter, typing, expect, &mut None).await,
-            None => type_input(input, typing, expect, &mut None).await,
+            Some(waiter) => type_seen(input, waiter, typing, expect, &mut setup.aftercare).await,
+            None => type_input(input, typing, expect, &mut setup.aftercare).await,
         }
     }
 
@@ -1114,9 +1157,10 @@ mod tests {
         let setup = Setup {
             policy: Loaded::Valid(policy::parse("deny_input_app_ids = [\"b\"]\n", false).unwrap()),
             locked_from: None,
+            aftercare: None,
         };
         let Err(CallError::Tool(error)) =
-            type_with(&niri, &dir, three_keys(), Some(waiter), &setup).await
+            type_with(&niri, &dir, three_keys(), Some(waiter), setup).await
         else {
             panic!("the third key wasn't refused");
         };
@@ -1143,8 +1187,9 @@ mod tests {
         let setup = Setup {
             policy: Loaded::Missing,
             locked_from: Some(2),
+            aftercare: None,
         };
-        let Err(CallError::Tool(error)) = type_with(&niri, &dir, text("az"), None, &setup).await
+        let Err(CallError::Tool(error)) = type_with(&niri, &dir, text("az"), None, setup).await
         else {
             panic!("the second key wasn't refused");
         };
@@ -1496,5 +1541,92 @@ mod tests {
             }
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A paste's call on the fake whose keeper admits the key only once the test has sent
+    /// `meanwhile` on niri's event stream, and the keeper's last report.
+    async fn pasted_while_admitting(
+        test: &str,
+        meanwhile: Event,
+        policy: Loaded,
+    ) -> (Result<Outcome, CallError>, Report, Vec<(u32, bool)>) {
+        let dir = fresh_dir(test);
+        let niri = Compositor::start(&dir, BASE);
+        let (waiter, updates) = events::waiter(events::view_of(initial_events(0)), 0);
+        let (k, go) = (dir.join("k"), dir.join("go"));
+        let script = format!(
+            r#"dd bs=1 count=1 status=none >/dev/null; touch '{}'; while [ ! -e '{}' ]; do sleep 0.01; done; echo '{{"report":"armed"}}'; c=$(dd bs=1 count=1 status=none); echo "{{\"report\":\"done\",\"read\":false,\"clipboard\":\"restored\",\"detail\":\"after $c\"}}""#,
+            k.display(),
+            go.display()
+        );
+        let (aftercare, done) = fake_aftercare(&script).await;
+        let admitting = tokio::spawn(async move {
+            while !k.exists() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            updates.send(Update::Event(1, Box::new(meanwhile))).ok();
+            std::fs::write(go, "").unwrap();
+        });
+        let setup = Setup {
+            policy,
+            locked_from: None,
+            aftercare: Some(aftercare),
+        };
+        // The fixture's layouts have no `v`; any combination stands in for the paste key.
+        let paste = Typing::Keys(vec!["ctrl+a".to_owned()]);
+        let typed = type_with(&niri, &dir, paste, Some(waiter), setup).await;
+        admitting.await.unwrap();
+        let report = done.await.unwrap().unwrap();
+        marker_cleared(&niri, &dir).await;
+        let keys = niri.seen().keys;
+        std::fs::remove_dir_all(dir).unwrap();
+        (typed, report, keys)
+    }
+
+    /// The keeper's last report once it heard `n` after admitting the key.
+    fn withdrawn() -> Report {
+        Report::Done {
+            read: false,
+            clipboard: Clipboard::Restored,
+            detail: Some("after n".to_owned()),
+        }
+    }
+
+    /// The user focuses another window while the keeper admits the paste key, after niri
+    /// last confirmed focus: the key doesn't go out, the keeper hears `n` and restores the
+    /// clipboard, and the call ends `interrupted` with nothing pressed.
+    #[tokio::test]
+    async fn focus_moving_while_the_keeper_admits_the_paste_key_keeps_it_back() {
+        let moved = Event::WindowFocusChanged { id: Some(2) };
+        let (typed, report, keys) =
+            pasted_while_admitting("paste-admit-moved", moved, Loaded::Missing).await;
+        assert_eq!(keys, []);
+        assert_eq!(report, withdrawn());
+        let outcome = typed.unwrap();
+        assert_eq!(
+            (outcome.observed, outcome.pressed),
+            (Observed::Interrupted, Some(0))
+        );
+    }
+
+    /// The focused window's app becomes one the policy denies while the keeper admits the
+    /// paste key: the key doesn't go out, the keeper hears `n`, and the call is refused
+    /// with `app_denied`, nothing sent.
+    #[tokio::test]
+    async fn an_app_denied_while_the_keeper_admits_the_paste_key_gets_none() {
+        let view = events::view_of(initial_events(0));
+        let mut window = view.windows()[&1].clone();
+        window.app_id = Some("b".to_owned());
+        let denied = Event::WindowOpenedOrChanged { window };
+        let policy = Loaded::Valid(policy::parse("deny_input_app_ids = [\"b\"]\n", false).unwrap());
+        let (typed, report, keys) =
+            pasted_while_admitting("paste-admit-denied", denied, policy).await;
+        assert_eq!(keys, []);
+        assert_eq!(report, withdrawn());
+        let Err(CallError::Tool(error)) = typed else {
+            panic!("the paste key wasn't refused");
+        };
+        assert_eq!(error.name, ErrorName::AppDenied);
+        assert!(!error.may_have_sent);
     }
 }
