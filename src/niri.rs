@@ -165,6 +165,19 @@ pub(crate) async fn workspaces(socket: &Socket) -> Result<Vec<Workspace>, ToolEr
     Ok(workspaces)
 }
 
+/// The window with keyboard focus, as niri reports it right now: `None` when focus isn't on
+/// a window. niri answers from the state it refreshed before it last flushed its clients, so
+/// the answer is at least as new as any Wayland reply a client got before asking, which its
+/// event stream may not have caught up with yet.
+pub(crate) async fn focused_window(socket: &Socket) -> Result<Option<u64>, ToolError> {
+    let Response::FocusedWindow(window) =
+        request::send(known(socket)?, &Request::FocusedWindow).await?
+    else {
+        return Err(unexpected("FocusedWindow"));
+    };
+    Ok(window.map(|window| window.id))
+}
+
 /// Whether niri's overview is open, as niri reports it right now.
 pub(crate) async fn overview_open(socket: &Socket) -> Result<bool, ToolError> {
     let Response::OverviewState(overview) =

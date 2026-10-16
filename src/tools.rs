@@ -1215,8 +1215,8 @@ impl Server {
     /// Presses key combinations in the focused app, in order, such as `["ctrl+l"]` or
     /// `["Down", "Down", "Return"]`. They reach the app, not niri: niri's keybinds don't
     /// fire from them. `expect` must name the focused window or app. `observed` is `sent`,
-    /// or `interrupted` if focus moved, and then the rest isn't pressed and `pressed`
-    /// counts what was.
+    /// or `interrupted` if focus moved, even after the last key: the rest isn't
+    /// pressed and `pressed` counts what was.
     #[tool(
         title = "Press keys",
         annotations(
@@ -1249,8 +1249,9 @@ impl Server {
 
     /// Types text into the focused app; `expect` must name the focused window or app
     /// (`focus_mismatch` otherwise). By default the text goes out as key events, in parts:
-    /// if focus moves, the rest isn't typed, `observed` is `interrupted` and `typed` counts
-    /// what went out. To send a message, pass `submit: true`: `Return` is pressed only once
+    /// if focus moves, even after the last key, the rest isn't typed, `observed` is
+    /// `interrupted` and `typed` counts what went out. See `changes` for new
+    /// dialogs. To send a message, pass `submit: true`: `Return` is pressed only once
     /// all of it went out (`submitted`); never press Enter yourself after a call that
     /// stopped early. `via: "paste"` with `paste_keys` pastes through the clipboard and
     /// puts the user's clipboard back; `paste.read` says whether the app read the text,

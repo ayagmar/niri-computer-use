@@ -103,10 +103,38 @@ async fn type_seen(
         .finish(waiter.view().keyboard_group())
         .await
         .map_err(|error| partly(error, &typing, sent))?;
-    let outcome = interrupted(&mut waiter, before, group)
-        .await
-        .unwrap_or_else(|| Outcome::seen(Observed::Sent, waiter.view(), Vec::new()));
+    let outcome = settled(input.niri.socket, &mut waiter, before, group).await;
     Ok(ended(outcome, focus, &typing, sent))
+}
+
+/// The outcome once every key went out and niri acknowledged the last. niri sends keys to a
+/// window it has just focused before its event stream reports the move, so that window may
+/// not be in the stream yet; niri's own answer, asked after the last key, has it. The stream
+/// is read too, after that answer, up to what it has passed on, so focus that left and came
+/// back is seen as far as the stream has reported it.
+async fn settled(socket: &Socket, waiter: &mut Waiter, before: Option<u64>, group: u32) -> Outcome {
+    let focused = niri::focused_window(socket).await;
+    if let Some(outcome) = interrupted(waiter, before, group).await {
+        return outcome;
+    }
+    match focused {
+        Ok(focused) if focused == before => {
+            Outcome::seen(Observed::Sent, waiter.view(), Vec::new())
+        }
+        Ok(focused) => Outcome {
+            focused_window: focused,
+            detail: Some(moved_to(focused)),
+            ..Outcome::seen(Observed::Interrupted, waiter.view(), Vec::new())
+        },
+        Err(error) => Outcome::uncertain(
+            Some(true),
+            Some(waiter.view()),
+            format!(
+                "niri didn't say which window had focus after the last key: {}",
+                error.detail
+            ),
+        ),
+    }
 }
 
 /// Binds a virtual keyboard on niri's display and plans `typing`'s keys in the layout
@@ -195,13 +223,28 @@ async fn interrupted(waiter: &mut Waiter, before: Option<u64>, group: u32) -> Op
         .await
     {
         Waited::Timeout => None,
-        Waited::Done(()) => Some(Outcome::seen(
-            Observed::Interrupted,
-            waiter.view(),
-            Vec::new(),
-        )),
+        Waited::Done(()) => {
+            let view = waiter.view();
+            let detail = if view.focused_window() == before {
+                "the active keyboard layout changed while they went out, so some of them may have typed other characters".to_owned()
+            } else {
+                moved_to(view.focused_window())
+            };
+            Some(Outcome {
+                detail: Some(detail),
+                ..Outcome::seen(Observed::Interrupted, view, Vec::new())
+            })
+        }
         Waited::Lost(reason) => Some(Outcome::uncertain(Some(true), Some(waiter.view()), reason)),
     }
+}
+
+/// What an `interrupted` call says of the keys that went out once focus moved to `focused`.
+fn moved_to(focused: Option<u64>) -> String {
+    focused.map_or_else(
+        || "focus left the window while they went out, so some of them may have reached what took it".to_owned(),
+        |id| format!("focus moved to window {id} while they went out, so some of them may have reached it"),
+    )
 }
 
 /// A key's share of its call's time: three frames at 60 Hz. The slowest steady rate
@@ -779,7 +822,57 @@ mod tests {
             .unwrap();
         assert_eq!(outcome.observed, Observed::Interrupted);
         assert_eq!((outcome.typed, outcome.submitted), (Some(1), Some(false)));
+        assert_eq!(
+            outcome.detail.as_deref(),
+            Some(
+                "typed 1 of 2 characters, not yet the submitting Return; focus left the window while they went out, so some of them may have reached what took it"
+            )
+        );
         assert_eq!(niri.seen().keys, [(A, true), (A, false)]);
+        marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// niri gives another window focus while it handles the last key, and its event stream
+    /// hasn't said so when the call ends: niri's own answer makes the call `interrupted`,
+    /// with all of the text counted and where some of it may have gone.
+    #[tokio::test]
+    async fn focus_the_stream_reports_only_after_the_last_key_interrupts_the_call() {
+        let dir = fresh_dir("native-quiet-focus");
+        let niri = Compositor::start(&dir, BASE);
+        niri.focus_quietly_at(2, Some(2)).await;
+        let outcome = type_through(&niri, &dir, text("az"), None).await.unwrap();
+        assert_eq!(outcome.observed, Observed::Interrupted);
+        assert_eq!((outcome.typed, outcome.focused_window), (None, Some(2)));
+        assert_eq!(
+            outcome.detail.as_deref(),
+            Some(
+                "typed 2 of 2 characters; focus moved to window 2 while they went out, so some of them may have reached it"
+            )
+        );
+        assert_eq!(
+            niri.seen().keys,
+            [(A, true), (A, false), (Z, true), (Z, false)]
+        );
+        marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// niri can't say where focus is once the keys went out: the call isn't `sent` but
+    /// `uncertain`, with niri's message.
+    #[tokio::test]
+    async fn no_answer_on_focus_after_the_last_key_leaves_the_call_uncertain() {
+        let dir = fresh_dir("native-focus-unanswered");
+        let niri = Compositor::start(&dir, BASE);
+        niri.fail_focus_at(1, "niri is shutting down").await;
+        let outcome = type_through(&niri, &dir, three_keys(), None).await.unwrap();
+        assert_eq!(
+            (outcome.observed, outcome.accepted),
+            (Observed::Uncertain, Some(true))
+        );
+        let detail = outcome.detail.unwrap_or_default();
+        assert!(detail.contains("niri is shutting down"), "{detail}");
+        assert_eq!(niri.seen().keys, presses(&[Z, A, Z].map(character)));
         marker_cleared(&niri, &dir).await;
         std::fs::remove_dir_all(dir).unwrap();
     }

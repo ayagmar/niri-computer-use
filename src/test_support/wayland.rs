@@ -160,6 +160,8 @@ pub(crate) struct Compositor {
     display: PathBuf,
     socket: PathBuf,
     seen: Arc<Mutex<Seen>>,
+    /// What niri answers `FocusedWindow` with: the window, or its error.
+    focused: Arc<Mutex<Reply>>,
     commands: Option<mpsc::UnboundedSender<(Command, oneshot::Sender<()>)>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -182,17 +184,22 @@ impl Compositor {
             std::os::unix::net::UnixListener::bind(&socket).unwrap(),
         );
         let state = State::new(Arc::clone(&seen));
+        let focused = Arc::new(Mutex::new(Ok(Response::FocusedWindow(Some(
+            focused_window(1),
+        )))));
+        let answered = Arc::clone(&focused);
         let thread = std::thread::spawn(move || {
             tokio::runtime::Builder::new_current_thread()
                 .enable_io()
                 .build()
                 .unwrap()
-                .block_on(serve(listeners, state, received));
+                .block_on(serve(listeners, state, answered, received));
         });
         Self {
             display,
             socket,
             seen,
+            focused,
             commands: Some(commands),
             thread: Some(thread),
         }
@@ -202,7 +209,8 @@ impl Compositor {
         &self.display
     }
 
-    /// niri's socket: it answers the keyboard layouts.
+    /// niri's socket: it answers the keyboard layouts, the outputs and the focused window,
+    /// and serves the event stream.
     pub(crate) fn niri_socket(&self) -> crate::niri::Socket {
         crate::niri::Socket::at(self.socket.clone())
     }
@@ -279,6 +287,28 @@ impl Compositor {
             .await;
     }
 
+    /// Moves focus to window `id` while niri handles the `press`-th key press, as
+    /// `on_press` runs its hook: niri answers `FocusedWindow` with it from then on, but its
+    /// event stream never says so, as a stream trailing niri wouldn't yet.
+    pub(crate) async fn focus_quietly_at(&self, press: usize, id: Option<u64>) {
+        self.answer_focus_at(press, Ok(Response::FocusedWindow(id.map(focused_window))))
+            .await;
+    }
+
+    /// Makes niri answer `FocusedWindow` with `message` as its error from the `press`-th
+    /// key press on.
+    pub(crate) async fn fail_focus_at(&self, press: usize, message: &str) {
+        self.answer_focus_at(press, Err(message.to_owned())).await;
+    }
+
+    async fn answer_focus_at(&self, press: usize, reply: Reply) {
+        let focused = Arc::clone(&self.focused);
+        self.on_press(press, move || {
+            *focused.lock().unwrap_or_else(PoisonError::into_inner) = reply;
+        })
+        .await;
+    }
+
     /// niri's event stream from the fake's socket.
     pub(crate) fn events(&self) -> crate::niri::events::EventStream {
         crate::niri::events::EventStream::spawn(self.socket.clone())
@@ -311,6 +341,7 @@ async fn serve(
         std::os::unix::net::UnixListener,
     ),
     mut state: State,
+    focused: Arc<Mutex<Reply>>,
     mut commands: mpsc::UnboundedReceiver<(Command, oneshot::Sender<()>)>,
 ) {
     let (display_listener, niri_listener) = listeners;
@@ -329,7 +360,8 @@ async fn serve(
             }
             accepted = niri_listener.accept() => {
                 let group = state.group;
-                tokio::spawn(answer(accepted.unwrap().0, group));
+                let focused = focused.lock().unwrap_or_else(PoisonError::into_inner).clone();
+                tokio::spawn(answer(accepted.unwrap().0, group, focused));
             }
             ready = readable.readable() => {
                 let mut ready = ready.unwrap();
@@ -392,8 +424,24 @@ pub(crate) fn initial_events(group: u32) -> Vec<Event> {
         is_focused: true,
         active_window_id: Some(1),
     };
-    let window = Window {
-        id: 1,
+    vec![
+        Event::WorkspacesChanged {
+            workspaces: vec![workspace],
+        },
+        Event::WindowsChanged {
+            windows: vec![focused_window(1)],
+        },
+        Event::KeyboardLayoutsChanged {
+            keyboard_layouts: layouts(group),
+        },
+        Event::OverviewOpenedOrClosed { is_open: false },
+    ]
+}
+
+/// Window `id`, focused, with `APP_ID`, filling the output.
+fn focused_window(id: u64) -> Window {
+    Window {
+        id,
         title: Some("fake".to_owned()),
         app_id: Some(APP_ID.to_owned()),
         pid: None,
@@ -409,24 +457,12 @@ pub(crate) fn initial_events(group: u32) -> Vec<Event> {
             window_offset_in_tile: (0.0, 0.0),
         },
         focus_timestamp: None,
-    };
-    vec![
-        Event::WorkspacesChanged {
-            workspaces: vec![workspace],
-        },
-        Event::WindowsChanged {
-            windows: vec![window],
-        },
-        Event::KeyboardLayoutsChanged {
-            keyboard_layouts: layouts(group),
-        },
-        Event::OverviewOpenedOrClosed { is_open: false },
-    ]
+    }
 }
 
-/// Answers one niri request: the keyboard layouts, with `group` active, the outputs, or
-/// the event stream, which then stays open.
-async fn answer(stream: tokio::net::UnixStream, group: u32) {
+/// Answers one niri request: the keyboard layouts, with `group` active, the outputs, the
+/// focused window with `focused`, or the event stream, which then stays open.
+async fn answer(stream: tokio::net::UnixStream, group: u32, focused: Reply) {
     let (reader, mut writer) = stream.into_split();
     let mut line = String::new();
     if BufReader::new(reader).read_line(&mut line).await.is_err() {
@@ -439,8 +475,11 @@ async fn answer(stream: tokio::net::UnixStream, group: u32) {
             OUTPUT.to_owned(),
             output(),
         )]))),
+        Ok(Request::FocusedWindow) => focused,
         Ok(Request::EventStream) => Ok(Response::Handled),
-        _ => Err("the fake answers only KeyboardLayouts, Outputs and EventStream".into()),
+        _ => Err(
+            "the fake answers only KeyboardLayouts, Outputs, FocusedWindow and EventStream".into(),
+        ),
     };
     let mut lines = vec![serde_json::to_string(&reply).unwrap()];
     if matches!(request, Ok(Request::EventStream)) {

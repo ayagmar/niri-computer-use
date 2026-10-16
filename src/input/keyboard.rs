@@ -4,7 +4,7 @@
 
 use serde::Serialize;
 
-use crate::act::Outcome;
+use crate::act::{Observed, Outcome};
 use crate::control::desk::partway;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::waiter::View;
@@ -264,8 +264,17 @@ pub(super) fn typed_so_far(view: &View, focus: Focus, typing: &Typing, sent: Sen
 }
 
 /// The outcome with what went out: for a call that stopped early, how many characters or
-/// keys; for `submit`, whether `Return` was pressed.
+/// keys; for `submit`, whether `Return` was pressed. An `interrupted` outcome's detail says
+/// what changed while keys went out; it becomes what went out and where some of it may have
+/// gone, and is dropped when nothing did.
 pub(super) fn ended(outcome: Outcome, focus: Focus, typing: &Typing, sent: Sent) -> Outcome {
+    let detail = match (outcome.observed, outcome.detail) {
+        (Observed::Interrupted, Some(changed)) if !sent.nothing() => {
+            Some(format!("{}; {changed}", sent.describe(typing)))
+        }
+        (Observed::Interrupted, _) => None,
+        (_, detail) => detail,
+    };
     let (typed, pressed, submitted) = match typing {
         Typing::Keys(keys) => (None, (sent.keys < keys.len()).then_some(sent.keys), None),
         Typing::Text { text, submit } => {
@@ -279,6 +288,7 @@ pub(super) fn ended(outcome: Outcome, focus: Focus, typing: &Typing, sent: Sent)
         typed,
         pressed,
         submitted,
+        detail,
         ..outcome
     }
 }
@@ -301,7 +311,6 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::act::Observed;
     use crate::niri::waiter::tests::{view, window};
 
     fn text(text: &str, submit: bool) -> Typing {
