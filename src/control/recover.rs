@@ -89,7 +89,7 @@ async fn release(env: &Env, marker: &Marker) -> Result<(), String> {
 async fn end_child(root: &Path, child: Child) -> Result<(), String> {
     let pid = child.pid;
     let gone = || cli::say(&format!("The input child, PID {pid}, has already exited."));
-    let Some(pidfd) = pin(pid)? else {
+    let Some((target, pidfd)) = pin(pid)? else {
         gone();
         return Ok(());
     };
@@ -108,7 +108,7 @@ async fn end_child(root: &Path, child: Child) -> Result<(), String> {
             cli::say(&format!(
                 "Ending the input child, PID {pid}, and its process group."
             ));
-            kill_group(root, child, &pidfd).await
+            kill_group(root, child, target, &pidfd).await
         }
         Ending::Alone => {
             cli::say(&format!(
@@ -125,24 +125,29 @@ async fn end_child(root: &Path, child: Child) -> Result<(), String> {
     exited(root, child).await
 }
 
-/// A pidfd for process `pid`, or none when no process has that PID.
-fn pin(pid: u32) -> Result<Option<OwnedFd>, String> {
+/// `pid` and a pidfd for its process, or none when no process has that PID.
+fn pin(pid: u32) -> Result<Option<(Pid, OwnedFd)>, String> {
     let Some(target) = i32::try_from(pid).ok().and_then(Pid::from_raw) else {
         return Ok(None);
     };
     match pidfd_open(target, PidfdFlags::empty()) {
-        Ok(pidfd) => Ok(Some(pidfd)),
+        Ok(pidfd) => Ok(Some((target, pidfd))),
         Err(rustix::io::Errno::SRCH) => Ok(None),
         Err(error) => Err(format!("pidfd_open {pid}: {error}; the marker stays")),
     }
 }
 
-/// Kills the process group `child` leads, `pidfd` naming `child`. The leader is stopped
-/// first, through `pidfd`: a stopped process can't exit until it is killed, so while it is
-/// stopped its PID, which is the group's ID, can't come to name another process or group.
-/// A leader not seen stopped in its group within `STOP_DEADLINE`, as in an uninterruptible
-/// wait, is killed alone.
-async fn kill_group(root: &Path, child: Child, pidfd: &OwnedFd) -> rustix::io::Result<()> {
+/// Kills the process group `child` leads, `leader` being its PID and `pidfd` naming it. The
+/// leader is stopped first, through `pidfd`: a stopped process can't exit until it is
+/// killed, so while it is stopped its PID, which is the group's ID, can't come to name
+/// another process or group. A leader not seen stopped in its group within
+/// `STOP_DEADLINE`, as in an uninterruptible wait, is killed alone.
+async fn kill_group(
+    root: &Path,
+    child: Child,
+    leader: Pid,
+    pidfd: &OwnedFd,
+) -> rustix::io::Result<()> {
     pidfd_send_signal(pidfd, Signal::STOP)?;
     let until = tokio::time::Instant::now() + STOP_DEADLINE;
     loop {
@@ -160,11 +165,7 @@ async fn kill_group(root: &Path, child: Child, pidfd: &OwnedFd) -> rustix::io::R
         }
         tokio::time::sleep(STOP_POLL).await;
     }
-    let group = i32::try_from(child.pid)
-        .ok()
-        .and_then(Pid::from_raw)
-        .ok_or(rustix::io::Errno::SRCH)?;
-    kill_process_group(group, Signal::KILL)
+    kill_process_group(leader, Signal::KILL)
 }
 
 /// Waits until `child` has exited, up to `EXIT_DEADLINE`.
@@ -385,7 +386,7 @@ mod tests {
             .await
             .unwrap();
         let member: u32 = line.trim().parse().unwrap();
-        let pidfd = pin(member).unwrap().unwrap();
+        let (_, pidfd) = pin(member).unwrap().unwrap();
         let stat = |process| procs::stat(Path::new(PROC), process).unwrap();
         assert_eq!(stat(member).group, pid);
         let child = |process| Child {
@@ -453,11 +454,11 @@ mod tests {
     #[tokio::test]
     async fn a_group_whose_leader_exited_after_the_check_isnt_killed() {
         let (mut group, leader, member, member_pidfd) = leader_with_member().await;
-        let pidfd = pin(leader.pid).unwrap().unwrap();
+        let (target, pidfd) = pin(leader.pid).unwrap().unwrap();
         assert_eq!(ending(Path::new(PROC), leader), Ending::Group);
         group.start_kill().unwrap();
         group.wait().await.unwrap();
-        let killed = kill_group(Path::new(PROC), leader, &pidfd).await;
+        let killed = kill_group(Path::new(PROC), leader, target, &pidfd).await;
         assert!(
             matches!(killed, Ok(()) | Err(rustix::io::Errno::SRCH)),
             "{killed:?}"
