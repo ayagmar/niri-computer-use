@@ -335,11 +335,7 @@ pub(crate) async fn point(
     // Checked again right before the first input (`Gate::pass`); this refuses early.
     let at_pixel = gesture.has_pixel();
     if at_pixel {
-        shot.unmoved(
-            niri::shifted(input.niri.events, &shot.output)
-                .await?
-                .as_ref(),
-        )?;
+        shot.unmoved(&niri::shifted(input.niri.events, &shot.output).await?)?;
     }
     let tool = gesture.tool();
     let button = gesture.button();
@@ -538,8 +534,7 @@ impl Gate<'_> {
         if stage != Stage::Pressed
             && let Some(shot) = self.pixels
         {
-            let shifted = niri::shifted(self.input.niri.events, &shot.output).await?;
-            shot.unmoved(shifted.as_ref())?;
+            shot.unmoved(&niri::shifted(self.input.niri.events, &shot.output).await?)?;
         }
         let view = self.waiter.view();
         if let Some(refused) = policy::refuse_input(self.input.policy, focused_app_id(view)) {
@@ -1173,7 +1168,7 @@ mod tests {
             changes: vec![(1, layout)],
         });
         let output = crate::test_support::wayland::OUTPUT;
-        let shifted = async || bench.events.shifted(output).await.unwrap();
+        let shifted = async || bench.events.shifted(output).await.unwrap().shifted;
         while shifted().await.is_none_or(|shifted| shifted.at < resized) {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }

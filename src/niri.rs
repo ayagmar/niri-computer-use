@@ -19,7 +19,7 @@ use serde::Serialize;
 
 use crate::error::{ErrorName, ToolError, Unanswered};
 use events::{DesktopState, EventStream};
-use scene::Shifted;
+use scene::Moves;
 use waiter::Waiter;
 
 /// The server's event stream, or why it has none: the socket's error.
@@ -206,11 +206,9 @@ pub(crate) async fn desktop(events: Events<'_>) -> Result<DesktopState, ToolErro
     events.map_err(Clone::clone)?.desktop().await
 }
 
-/// When the windows on `output` last moved, and how (`EventStream::shifted`).
-pub(crate) async fn shifted(
-    events: Events<'_>,
-    output: &str,
-) -> Result<Option<Shifted>, ToolError> {
+/// When the windows on `output` last moved, and how, on which connection
+/// (`EventStream::shifted`).
+pub(crate) async fn shifted(events: Events<'_>, output: &str) -> Result<Moves, ToolError> {
     events.map_err(Clone::clone)?.shifted(output).await
 }
 

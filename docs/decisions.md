@@ -1882,3 +1882,10 @@ v2.9.2 is the newest release; it is over 7 days old.
 - Tests: a protocol test takes a plain screenshot and a settled one right after the server gets niri's initial state, and requires the plain one's click to fail with the new detail and the settled one's to go out. Another lists an element right away and requires its click to fail as moving, and to go out a second later. Both failed before the change, with the clicks sent. The unit test of the replica now requires the first connection's stamp. The act and elements test desks wait out the first second, and the pointer's unit tests take their screenshot as settled.
 - No dependency was added.
 
+## 2026-10-16: a pixel aim's gate compares the event stream's connection
+
+- Round 2 added no connection check to `Gate::pass`, because the reconnect stamp refuses a screenshot of the old connection. That stamp covers only the outputs the new initial state gives a workspace. After a reconnect and an unplug while the gate waited, the output had no stamp and the aim went out by the old layout. Opus's third check found it.
+- `EventStream::shifted` now returns the connection its replica comes from with the stamp (`scene::Moves`), and `Shot::unmoved` refuses a connection other than the capture's. Since `unmoved` takes only `Moves`, a caller can't read a stamp without its connection.
+- The refusal is `unknown_ref` with the detail the call-start check gives, "niri's event stream reconnected since the screenshot". It is the same condition, so the agent gets the same name wherever the call notices it.
+- Tests: a unit test requires `unmoved` to refuse another connection's `Moves` without a stamp, the unplugged output's case; it fails when `unmoved` ignores the connection. No test drives the gate race itself: the reconnect would have to fall between the waiter's last look and the stamp's read, which neither fake can time.
+- No dependency was added.

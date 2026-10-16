@@ -20,7 +20,7 @@ use tokio::time::Instant;
 use crate::a11y::ElementRef;
 use crate::coords::{self, Capture, ImagePx, ImageRect, LayoutPt, ProtocolPt};
 use crate::error::{ErrorName, ToolError};
-use crate::niri::scene::Shifted;
+use crate::niri::scene::{Moves, Shifted};
 use crate::observe::{Pin, Rect, Screenshot};
 use crate::session::SessionId;
 
@@ -102,11 +102,13 @@ impl Shot {
     }
 
     /// Whether a pixel of the image still lands on what it shows, as far as niri can tell,
-    /// when the windows on its output last moved as `shifted` says: not if they moved after
-    /// the capture began, nor within `SETTLE` before it, while niri may still have been
-    /// animating them, unless the screen was seen not changing after they moved.
-    pub(crate) fn unmoved(&self, shifted: Option<&Shifted>) -> Result<(), ToolError> {
-        let Some(Shifted { at, what }) = shifted else {
+    /// when the windows on its output last moved as `moves` says: not if the event stream
+    /// reconnected since the capture, nor if they moved after the capture began or within
+    /// `SETTLE` before it, while niri may still have been animating them, unless the screen
+    /// was seen not changing after they moved.
+    pub(crate) fn unmoved(&self, moves: &Moves) -> Result<(), ToolError> {
+        self.same_connection(Some(moves.connection))?;
+        let Some(Shifted { at, what }) = &moves.shifted else {
             return Ok(());
         };
         let detail = if *at > self.taken {
@@ -260,6 +262,11 @@ impl Shot {
                 &format!("the screenshot is {} s old; take a new one", age.as_secs()),
             ));
         }
+        self.same_connection(connection)
+    }
+
+    /// The event stream is still on the capture's connection.
+    fn same_connection(&self, connection: Option<u64>) -> Result<(), ToolError> {
         if connection != Some(self.connection) {
             return Err(invalid(
                 "unknown_ref",
@@ -589,12 +596,17 @@ mod tests {
             what: "niri moved or resized window 7".to_owned(),
         };
         let refused = |aimed: &Shot, ms| {
-            aimed
-                .unmoved(Some(&shifted(ms)))
-                .err()
-                .map(|error| error.detail)
+            let moves = Moves {
+                connection: aimed.connection,
+                shifted: Some(shifted(ms)),
+            };
+            aimed.unmoved(&moves).err().map(|error| error.detail)
         };
-        assert_eq!(shot.unmoved(None), Ok(()));
+        let unmoved = Moves {
+            connection: shot.connection,
+            shifted: None,
+        };
+        assert_eq!(shot.unmoved(&unmoved), Ok(()));
         // Long enough before the capture for niri to have finished moving it.
         assert_eq!(refused(&shot, -1500), None);
         let moving = refused(&shot, -300).unwrap();
@@ -609,6 +621,27 @@ mod tests {
         assert_eq!(refused(&shot, -300), None);
         assert!(refused(&shot, -50).is_some());
         assert!(refused(&shot, 20).is_some());
+    }
+
+    // The bug: the gate before a pixel aim's input read the stamps of whichever connection
+    // the event stream was on, so after a reconnect while it waited, an output with no
+    // workspace in the new initial state had no stamp, and the aim went out by the old
+    // layout.
+    #[tokio::test(start_paused = true)]
+    async fn pixels_are_refused_through_another_connection_than_the_capture() {
+        let shot = shot();
+        let reconnected = Moves {
+            connection: shot.connection + 1,
+            shifted: None,
+        };
+        let refused = shot.unmoved(&reconnected).map_err(|error| error.detail);
+        let unknown = "unknown_ref: niri's event stream reconnected since the screenshot";
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|detail| detail.starts_with(unknown)),
+            "{refused:?}"
+        );
     }
 
     #[tokio::test(start_paused = true)]

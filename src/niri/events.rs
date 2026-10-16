@@ -27,7 +27,7 @@ use tokio::net::UnixStream;
 use tokio::sync::{broadcast, watch};
 use tokio::time::Instant;
 
-use super::scene::{self, Shifted};
+use super::scene::{self, Moves, Shifted};
 use super::waiter::{Numbers, Update, View, Waiter, relaid_by};
 use crate::error::{ErrorName, ToolError};
 
@@ -403,10 +403,14 @@ impl EventStream {
     }
 
     /// When the windows on `output` last moved, and how, since the initial state of the
-    /// current connection. Waits up to two seconds for niri's initial state.
-    pub(crate) async fn shifted(&self, output: &str) -> Result<Option<Shifted>, ToolError> {
-        self.current(DEADLINE, |replica| replica.shifted.get(output).cloned())
-            .await
+    /// current connection, and which connection that is. Waits up to two seconds for niri's
+    /// initial state.
+    pub(crate) async fn shifted(&self, output: &str) -> Result<Moves, ToolError> {
+        self.current(DEADLINE, |replica| Moves {
+            connection: replica.connection,
+            shifted: replica.shifted.get(output).cloned(),
+        })
+        .await
     }
 
     /// Registers a waiter for an action: from now on it sees every event niri sends, on top
