@@ -923,7 +923,7 @@ pub(crate) fn unmappable(why: Unmappable) -> ToolError {
         ),
         Unmappable::Moving => (
             "not_showing",
-            "the view may still be moving: niri switched a workspace, opened or closed the overview, or moved, resized or opened a window a moment ago; take a screenshot and try again",
+            "the view may still be moving: niri switched a workspace, opened or closed the overview, or moved, resized or opened a window a moment ago, or the server had only just started reading niri's events or reconnected to them; take a screenshot and try again",
         ),
         Unmappable::Restless => (
             "not_showing",

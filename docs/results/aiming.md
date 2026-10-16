@@ -72,6 +72,11 @@ niri reports no place for a tiled window, no stacking order and no layer-shell s
 - docs(site), the cost of the check before a drag's press: with niri's `focus-follows-mouse` on, a drag's own motion to its start can focus the window under it, which stamps the output, so the drag stops before the press as `uncertain`. Letting a change of only the active window through at that point would have to know it didn't scroll the view, and niri reports no tiled window's place, so the server can't tell. `tools/acting.md` and the changelog now say so, and that a drag from a new screenshot goes through.
 - fix(refs), name the settled screenshots in the refusal: the refusal of a screenshot taken less than a second after a change said to take a new screenshot, and a plain one taken right away is refused the same way. Its `detail` now names `wait_for` with `until: screen_stable` and `screenshot: true`, or `screenshot: true` on the action.
 
+The third check found two more:
+
+- fix(niri), the first connection's initial state counts as a move: only a reconnect stamped the outputs, so a screenshot taken as the server started, while niri may have been animating a switch the user began, aimed as if nothing had moved; an element aim did too. Now every connection's initial state stamps every output. In the server's first second a plain screenshot can't be aimed at by pixel and an element aim is refused as moving; a settled screenshot passes.
+- fix(input), the gate compares the event stream's connection: the reconnect stamp covers only outputs with a workspace in the new state, so a reconnect and an unplug while the gate waited let a click through by the old layout. The gate now refuses another connection's stamps with `unknown_ref`, as at the call's start.
+
 ## Tests
 
 - Protocol `act::a_pixel_aim_is_refused_once_the_windows_its_screenshot_shows_moved`: a click after the active window changed and a scroll after a resize fail with `layout_changed`, and a click after only a title change passes the check. On the code before `351d723`, the first click reached the Wayland connect, failing with `upstream_error` instead of `ref_invalid`.
@@ -83,6 +88,8 @@ niri reports no place for a tiled window, no stacking order and no layer-shell s
 - Unit `input::pointer::a_pixel_click_is_refused_when_a_window_moves_while_it_gets_ready`: the fake niri resizes the window while it holds the pointer's connection. Before `1c37b06` the click went out.
 - Protocol `wait::a_screen_wait_keeps_the_agents_refs`: a fake grim returns a different image each time. With 64 refs kept, a settle wait without a screenshot and one with a screenshot leave every agent ref except the oldest, which the returned screenshot's ref replaced. Before `2e4be5f` the zoom of ref 2 failed with `unknown_ref`.
 - Protocol `act::a_pixel_aim_is_refused_through_a_screenshot_taken_right_after_a_reconnect`: without the reconnect stamp the click went out.
+- Protocol `act::a_pixel_aim_is_refused_through_a_screenshot_taken_as_the_server_starts` and `elements::an_element_is_not_aimed_at_in_the_servers_first_second`: without the first connection's stamp both clicks went out. The first also checks that a settled screenshot taken right after aims.
+- Unit `refs::pixels_are_refused_through_another_connection_than_the_capture`: fails when `Shot::unmoved` ignores the connection.
 - Nested M4 takes each screenshot it aims through 1.1 s after the step before it. An agent's turn takes longer than that; the harness's doesn't.
 
 `make check` passed after each commit, run with `ulimit -n 524288`.

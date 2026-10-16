@@ -34,6 +34,15 @@ pub(crate) struct Shifted {
     pub(crate) what: String,
 }
 
+/// When the windows on an output last moved (`EventStream::shifted`), and which connection
+/// of the event stream says so: a replica of another connection than a screenshot's knows
+/// nothing of what moved before it.
+#[derive(Debug)]
+pub(crate) struct Moves {
+    pub(crate) connection: u64,
+    pub(crate) shifted: Option<Shifted>,
+}
+
 /// Each output's scene in `state`, by output name.
 pub(crate) fn scenes(state: &EventStreamState) -> BTreeMap<String, Scene> {
     let outputs: BTreeSet<&str> = state
