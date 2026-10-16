@@ -102,3 +102,15 @@ Each of the three failing workflow scenarios ran twice and `key-screenshots` onc
 | `key-screenshots` | 1792095208-2169101 | `4f3b209` | pass | 4/4 | 8 | 11 | 17.9 s | $0.115 |
 
 All seven passed, $0.88 in all. No run called a tool without its prefix, against 15 of 21 before. Every action went alone in its turn: `form` set or typed the two fields in separate turns, `rearrange` sent each `niri_action` alone, and `key-screenshots` released in a turn of its own. In both `modal-recovery` runs the agent read `Autosave failed` in `changes.opened`, clicked `OK`, saw that only "M" had reached the box, replaced it with the whole message, clicked Send, and told the user about the read-only drafts folder. In 1792095172-2166759 the box had lost focus after the dialog, so a `ctrl+a` and the retyped message didn't reach it; the agent saw that on the result's screenshot, clicked into the box and typed it again. `form` still aimed several clicks with one screenshot taken before them, one per turn, at check boxes and a drop-down that didn't move. The host snapshot check reported the host unchanged after all seven runs.
+
+## With the focus fix and the skill changes together
+
+`e964ffe` is the first commit with both `732f573` (focus after the last key) and the skill changes. `modal-recovery` ran twice and `key-screenshots` once on it, with Sonnet and the skill:
+
+| Scenario | Run | Commit | Result | Expectations | Calls | Turns | Time | Cost |
+|---|---|---|---|---|---|---|---|---|
+| `modal-recovery` | 1792116850-163808 | `e964ffe` | pass | 8/8 | 11 | 14 | 19.0 s | $0.185 |
+| `modal-recovery` | 1792116875-167269 | `e964ffe` | pass | 8/8 | 10 | 13 | 19.7 s | $0.132 |
+| `key-screenshots` | 1792116900-179027 | `e964ffe` | pass | 4/4 | 8 | 11 | 16.9 s | $0.154 |
+
+All three passed, $0.47 in all. In both `modal-recovery` runs the agent dismissed the alert with `OK`, saw that only "M" had reached the box, typed the whole message again and sent it.
