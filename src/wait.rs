@@ -8,8 +8,8 @@ use std::time::Duration;
 use serde::Serialize;
 use tokio::time::Instant;
 
-use crate::a11y::Capped;
 use crate::a11y::model::{Filter, Unbound, Unmappable};
+use crate::a11y::{self, Capped};
 use crate::elements::{self, Coverage, Listing, Withheld};
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::waiter::{View, Waited, Waiter};
@@ -319,7 +319,9 @@ where
 /// app that leaves the bus after a walk read it gets one more walk before the wait ends
 /// `not_accessible`, so its window closing can end it `window_gone`. A timeout's `detail`
 /// says why the last walk didn't read the whole tree, unless the wait's end cut it short
-/// after an earlier walk, whose verdict it then gives.
+/// after an earlier walk, whose verdict it then gives: a walk that began with at most its
+/// budget, `a11y::BUDGET`, left until `RESERVE` before `deadline`, and ran out of budget
+/// there or later.
 async fn watch<F>(
     mut waiter: Waiter,
     element: &Element,
@@ -340,7 +342,10 @@ where
             }
             let walk = Instant::now();
             let polled = poll(by).await;
-            let out_of_time = Instant::now() >= by;
+            // Begun with at most its budget left, the walk's budget was the time until `by`,
+            // so only then can `by` have cut it.
+            let bounded = by.saturating_duration_since(walk) <= a11y::BUDGET;
+            let cut_by_end = bounded && Instant::now() >= by;
             match check(element, polled)? {
                 // An app that quits leaves the bus as niri closes its window, and may leave
                 // first: after a walk that read it, look once more.
@@ -349,7 +354,7 @@ where
                 // A walk the wait's end cut short read only what the wait left it time for,
                 // so the walk before it, which ran its course, says more.
                 Checked::Unmet(Some(Short::Cut(Capped::BudgetExhausted)))
-                    if out_of_time && before =>
+                    if cut_by_end && before =>
                 {
                     read = true;
                 }
@@ -633,6 +638,29 @@ mod tests {
         assert_eq!((alone.observed, walks_alone), (Ended::Timeout, 1));
         assert_eq!(
             alone.detail.as_deref(),
+            Some("the last walk was cut short: budget_exhausted")
+        );
+    }
+
+    // The bug: a walk begun with more than its own budget of the wait left, which that
+    // budget cut short, ran past `by` on its last request's deadline and was taken for one
+    // the wait's end cut, so the timeout didn't say the app was slow. Walk 1 starts at
+    // 290 ms, 3.86 s before `by`; its 3 s budget starts once niri, 0.9 s late, has said
+    // where the window is, and ends after `by`.
+    #[tokio::test(start_paused = true)]
+    async fn a_walk_its_own_budget_cut_past_the_waits_end_still_says_so() {
+        let slow = |walk| match walk {
+            0 => (WALK, Ok(Some(listing(&["elem-ab-1"], None)))),
+            _ => (
+                Duration::from_millis(3900),
+                Ok(Some(listing(&[], Some(Capped::BudgetExhausted)))),
+            ),
+        };
+        let limit = Duration::from_millis(4200);
+        let (report, walks, _) = watched(&save_button(true), limit, slow).await;
+        assert_eq!((report.observed, walks), (Ended::Timeout, 2));
+        assert_eq!(
+            report.detail.as_deref(),
             Some("the last walk was cut short: budget_exhausted")
         );
     }
