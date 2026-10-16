@@ -64,7 +64,13 @@ The PR's review found four gaps in these fixes, which later commits closed:
 - `1c37b06` fix(input): the check ran only as the call began, so a window that moved while the gesture got ready, during a lock read or the pointer's connection, let the click out. It runs again right before the first input and, for a drag, before the press.
 - `61d51bb` docs: the changelog and both error references now say what the check can't see.
 
+The second review found three more:
+
+- fix(niri), stamp every output when the event stream reconnects: each connection's stamps started empty, so a screenshot taken right after a reconnect, while a switch that began during the outage may still have been animating, aimed as if nothing had moved. A gate check that waited through a reconnect also read the new connection's empty stamps for a screenshot of the old one. The initial state after a reconnect now stamps every output, later than any capture of the connection before.
+
 niri reports no place for a tiled window, no stacking order and no layer-shell surfaces in its events. So the check can't see the view scrolled with nothing else changed, as after `center-column` or a touchpad swipe, a floating window raised over another, or a notification or panel opening over the target. It also can't see changes inside a window, such as a page that reflows. A ref can be refused when nothing under the pixel moved, such as a floating window clicked after focus moved to a tiled window under it, or a plain screenshot taken within a second of any window change on its output. That costs the agent one screenshot.
+- docs(site), the cost of the check before a drag's press: with niri's `focus-follows-mouse` on, a drag's own motion to its start can focus the window under it, which stamps the output, so the drag stops before the press as `uncertain`. Letting a change of only the active window through at that point would have to know it didn't scroll the view, and niri reports no tiled window's place, so the server can't tell. `tools/acting.md` and the changelog now say so, and that a drag from a new screenshot goes through.
+- fix(refs), name the settled screenshots in the refusal: the refusal of a screenshot taken less than a second after a change said to take a new screenshot, and a plain one taken right away is refused the same way. Its `detail` now names `wait_for` with `until: screen_stable` and `screenshot: true`, or `screenshot: true` on the action.
 
 ## Tests
 
@@ -73,9 +79,10 @@ niri reports no place for a tiled window, no stacking order and no layer-shell s
 - Nested M4 (`make nested-input`), new step after the clicks: the supervisor moves the floating `wev` 250 px with niri's `MoveFloatingWindow`, then clicks at the pixel that showed its centre. Before the fix the call answered `{"accepted":true,"focused_window":2,"observed":"sent"}`, with no `changes`, the same shape as clicks 1 and 14. After it, the call fails with `layout_changed: niri moved or resized window 2 since the screenshot` and nothing reaches `wev`. The whole M4 run passed with the fix.
 - Two protocol tests in `elements` reused a ref for a pixel click after they had opened the overview or moved the window. They now take a new settled screenshot first, since that click is refused.
 - Protocol `act::a_pixel_aim_is_refused_after_focus_moved_away_and_back` and `act::a_pixel_aim_is_refused_through_a_screenshot_taken_while_windows_may_move`: before `2fd8f17` both clicks went out. The second also checks that a settled screenshot taken after the change still aims.
-- Unit `refs::pixels_stand_unless_the_windows_moved_after_or_just_before_the_capture`: the second's allowance and the settled exception.
+- Unit `refs::pixels_stand_unless_the_windows_moved_after_or_just_before_the_capture`: the second's allowance and the settled exception, and that the refusal names the settled screenshots.
 - Unit `input::pointer::a_pixel_click_is_refused_when_a_window_moves_while_it_gets_ready`: the fake niri resizes the window while it holds the pointer's connection. Before `1c37b06` the click went out.
 - Protocol `wait::a_screen_wait_keeps_the_agents_refs`: a fake grim returns a different image each time. With 64 refs kept, a settle wait without a screenshot and one with a screenshot leave every agent ref except the oldest, which the returned screenshot's ref replaced. Before `2e4be5f` the zoom of ref 2 failed with `unknown_ref`.
+- Protocol `act::a_pixel_aim_is_refused_through_a_screenshot_taken_right_after_a_reconnect`: without the reconnect stamp the click went out.
 - Nested M4 takes each screenshot it aims through 1.1 s after the step before it. An agent's turn takes longer than that; the harness's doesn't.
 
 `make check` passed after each commit, run with `ulimit -n 524288`.

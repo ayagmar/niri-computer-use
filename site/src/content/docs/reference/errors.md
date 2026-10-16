@@ -99,7 +99,7 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 **Cause:** a pointer tool's `screenshot_ref`, or the one a `screenshot` zooms into, can't be used. The `detail` starts with the reason: `unknown_ref` (not a screenshot of this lease, or niri's event stream reconnected since), `expired` (over 60 seconds old), `output_changed` (the output moved, resized, changed scale or transform, or is gone), `layout_changed` (niri moved, resized, opened or closed a window on that output, switched its workspace, opened or closed the overview, or the view followed another window there, as after a focus change, after the capture began or less than a second before it, unless the screenshot settled after that; a pixel aim only; it can't see the view scroll with nothing else changing, as with `center-column`, a floating window raised over another, a notification, launcher or panel opening over the target, or a change inside a window) or `out_of_bounds` (the pixel is outside the image).
 
-**What to do:** take a new screenshot and aim from it; for `out_of_bounds`, use a pixel inside the image.
+**What to do:** take a new screenshot and aim from it; for `out_of_bounds`, use a pixel inside the image. For `layout_changed` with `ms before the screenshot`, a plain screenshot taken right away is refused the same way: take one that waits for the screen to settle, with `wait_for` with `until: screen_stable` and `screenshot: true`, or `screenshot: true` on the action.
 
 ### `focus_mismatch`
 

@@ -109,22 +109,21 @@ impl Shot {
         let Some(Shifted { at, what }) = shifted else {
             return Ok(());
         };
-        let why = if *at > self.taken {
-            format!("{what} since the screenshot, so it may no longer show what a pixel lands on")
+        let detail = if *at > self.taken {
+            format!(
+                "{what} since the screenshot, so it may no longer show what a pixel lands on; take a new screenshot"
+            )
         } else if self.taken.duration_since(*at) < SETTLE
             && self.steady_since.is_none_or(|steady| steady <= *at)
         {
             let before = self.taken.duration_since(*at).as_millis();
             format!(
-                "{what} {before} ms before the screenshot, so it may show windows niri was still moving"
+                "{what} {before} ms before the screenshot, so it may show windows niri was still moving; take one that waits for the screen to settle, with `wait_for` with `until: screen_stable` and `screenshot: true`, or `screenshot: true` on the action"
             )
         } else {
             return Ok(());
         };
-        Err(invalid(
-            "layout_changed",
-            &format!("{why}; take a new screenshot"),
-        ))
+        Err(invalid("layout_changed", &detail))
     }
 
     /// Whether `point` lies in the captured rectangle.
@@ -600,6 +599,9 @@ mod tests {
         assert_eq!(refused(&shot, -1500), None);
         let moving = refused(&shot, -300).unwrap();
         assert!(moving.contains("300 ms before the screenshot"), "{moving}");
+        // Another plain screenshot right away would be refused the same way.
+        let settled = "`wait_for` with `until: screen_stable` and `screenshot: true`";
+        assert!(moving.contains(settled), "{moving}");
         let since = refused(&shot, 20).unwrap();
         assert!(since.contains("window 7 since the screenshot"), "{since}");
         // The screen was seen not changing from after the move on.

@@ -1044,6 +1044,36 @@ async fn a_pixel_aim_is_refused_through_a_screenshot_taken_while_windows_may_mov
     assert_eq!(name, "upstream_error", "{unconnected}");
 }
 
+// The bug: each connection's stamps started empty, so a screenshot taken right after a
+// reconnect, while a switch or a move that began while the stream was down may still have
+// been animating, aimed as if nothing had moved.
+#[tokio::test]
+async fn a_pixel_aim_is_refused_through_a_screenshot_taken_right_after_a_reconnect() {
+    let mut desk = Desk::start("act-reconnected", "").await;
+    desk.stream.close();
+    desk.stream = desk.niri.stream().await;
+    desk.stream.workspaces(2);
+    desk.stream.send(&json!({"WindowsChanged": {"windows": [
+        window_on(1, Some("a"), 1, true),
+        window_on(2, Some("b"), 1, false),
+    ]}}));
+    desk.stream
+        .send(&json!({"OverviewOpenedOrClosed": {"is_open": false}}));
+    let mut state = desk.server.structured("desktop_state").await;
+    while state["windows"].as_array().map(Vec::len) != Some(2) {
+        state = desk.server.structured("desktop_state").await;
+    }
+    let after = screenshot_ref(&mut desk).await;
+    desk.unplug_display();
+    let click = json!({"screenshot_ref": after, "x": 10, "y": 10});
+    let (_, why) = tool_error(&desk.server.call("click", click).await);
+    let moved = "layout_changed: niri's event stream reconnected, and niri may have moved windows meanwhile, ";
+    assert!(
+        why.starts_with(moved) && why.contains(" ms before the screenshot"),
+        "{why}"
+    );
+}
+
 #[tokio::test]
 async fn pointer_tools_check_the_ref_the_outputs_and_their_arguments_first() {
     let mut desk = Desk::start("act-pointer", "").await;
