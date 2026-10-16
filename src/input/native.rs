@@ -62,13 +62,23 @@ async fn type_seen(
         budget: Budget::start(plan.keys().count()),
         marks: aftercare.is_none(),
     };
+    let decisive = decisive(&typing, plan.keys().count());
     let mut sent = Sent::default();
-    for (extended, key) in plan.strokes() {
+    for (index, (extended, key)) in plan.strokes().enumerate() {
         act::fresh_lock(input.niri)
             .await
             .map_err(|error| partly(error, &typing, sent))?;
         // niri's events since the lock was read or the last key, right before this one.
-        if let Some(outcome) = interrupted(&mut waiter, before, group).await {
+        let left = left_before(
+            input.niri.socket,
+            &mut waiter,
+            before,
+            group,
+            Some(index) == decisive,
+        )
+        .await
+        .map_err(|error| partly(error, &typing, sent))?;
+        if let Some(outcome) = left {
             device
                 .finish(waiter.view().keyboard_group())
                 .await
@@ -121,11 +131,7 @@ async fn settled(socket: &Socket, waiter: &mut Waiter, before: Option<u64>, grou
         Ok(focused) if focused == before => {
             Outcome::seen(Observed::Sent, waiter.view(), Vec::new())
         }
-        Ok(focused) => Outcome {
-            focused_window: focused,
-            detail: Some(moved_to(focused)),
-            ..Outcome::seen(Observed::Interrupted, waiter.view(), Vec::new())
-        },
+        Ok(focused) => moved(focused, waiter.view()),
         Err(error) => Outcome::uncertain(
             Some(true),
             Some(waiter.view()),
@@ -134,6 +140,45 @@ async fn settled(socket: &Socket, waiter: &mut Waiter, before: Option<u64>, grou
                 error.detail
             ),
         ),
+    }
+}
+
+/// The stroke that commits the call: the submitting `Return`, or the only key of a `key`
+/// call with one. niri sends keys to a window it has just focused before its event stream
+/// reports the move, so before that stroke niri itself is asked which window has focus.
+const fn decisive(typing: &Typing, keys: usize) -> Option<usize> {
+    match typing {
+        Typing::Text { submit: true, .. } => keys.checked_sub(1),
+        Typing::Keys(combos) if combos.len() == 1 => Some(0),
+        Typing::Text { .. } | Typing::Keys(_) => None,
+    }
+}
+
+/// `interrupted`, and before the `decisive` stroke also focus away from `before` in niri's
+/// own answer.
+async fn left_before(
+    socket: &Socket,
+    waiter: &mut Waiter,
+    before: Option<u64>,
+    group: u32,
+    decisive: bool,
+) -> Result<Option<Outcome>, ToolError> {
+    if let Some(outcome) = interrupted(waiter, before, group).await {
+        return Ok(Some(outcome));
+    }
+    if !decisive {
+        return Ok(None);
+    }
+    let focused = niri::focused_window(socket).await?;
+    Ok((focused != before).then(|| moved(focused, waiter.view())))
+}
+
+/// The outcome once niri says focus moved to `focused`.
+fn moved(focused: Option<u64>, view: &View) -> Outcome {
+    Outcome {
+        focused_window: focused,
+        detail: Some(moved_to(focused)),
+        ..Outcome::seen(Observed::Interrupted, view, Vec::new())
     }
 }
 
@@ -853,6 +898,47 @@ mod tests {
         assert_eq!(
             niri.seen().keys,
             [(A, true), (A, false), (Z, true), (Z, false)]
+        );
+        marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// niri gives another window focus while it handles the last character, and its event
+    /// stream hasn't said so before the submitting `Return`: niri's own answer, asked before
+    /// `Return`, stops the call, so `Return` doesn't confirm whatever took focus.
+    #[tokio::test]
+    async fn focus_the_stream_hasnt_reported_before_the_return_stops_it() {
+        let dir = fresh_dir("native-quiet-submit");
+        let niri = Compositor::start(&dir, BASE);
+        niri.focus_quietly_at(2, Some(2)).await;
+        let typing = Typing::Text {
+            text: "az".to_owned(),
+            submit: true,
+        };
+        let outcome = type_through(&niri, &dir, typing, None).await.unwrap();
+        assert_eq!(niri.seen().keys, presses(&[A, Z].map(character)));
+        assert_eq!(outcome.observed, Observed::Interrupted);
+        assert_eq!(
+            (outcome.submitted, outcome.focused_window),
+            (Some(false), Some(2))
+        );
+        marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A one-key `key` call goes nowhere once niri has given another window focus that its
+    /// event stream hasn't reported yet.
+    #[tokio::test]
+    async fn a_single_key_waits_for_niri_to_confirm_focus() {
+        let dir = fresh_dir("native-quiet-key");
+        let niri = Compositor::start(&dir, BASE);
+        niri.focus_quietly(Some(2));
+        let typing = Typing::Keys(vec!["Return".to_owned()]);
+        let outcome = type_through(&niri, &dir, typing, None).await.unwrap();
+        assert_eq!(niri.seen().keys, []);
+        assert_eq!(
+            (outcome.observed, outcome.pressed),
+            (Observed::Interrupted, Some(0))
         );
         marker_cleared(&niri, &dir).await;
         std::fs::remove_dir_all(dir).unwrap();
