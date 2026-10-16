@@ -39,6 +39,8 @@ const GUARDIAN_WAIT: Duration = Duration::from_secs(12);
 const POLICY: &str = "deny_input_app_ids = [\"org.keepassxc.KeePassXC\"]\n";
 /// A key added after 0.1.1.
 const NEWER_POLICY: &str = "turn_on_accessibility = false\n";
+/// The releases from before `NEWER_POLICY`'s key, which read a file with it as invalid.
+const BEFORE_NEWER_POLICY: [&str; 2] = ["0.1.0", "0.1.1"];
 
 pub(crate) fn run(session: &mut Session<'_>, server: &str, from: &str) -> Result<()> {
     let noctalia = session.start(
@@ -55,7 +57,14 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str, from: &str) -> Result
         first_line(&printed)
     ))?;
     write_policy(session)?;
-    newer_key_refused(session, &place)?;
+    if BEFORE_NEWER_POLICY.contains(&from) {
+        newer_key_refused(session, &place)?;
+    } else {
+        session.log(&format!(
+            "upgrade: {from} already reads {}, so no newer key is checked",
+            NEWER_POLICY.trim_end()
+        ))?;
+    }
     let wev = start_wev(session)?;
     let mut old = Old::start(session, &place, from)?;
     let audit_before = audit(session)?;
