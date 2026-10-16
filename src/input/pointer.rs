@@ -181,13 +181,24 @@ impl<P> Gesture<P> {
 }
 
 impl Gesture<Spot> {
-    /// The element refs among its points.
-    fn elements(&self) -> Vec<&str> {
-        let spots = match self {
+    fn spots(&self) -> Vec<&Spot> {
+        match self {
             Self::Move(at) | Self::Click { at, .. } | Self::Scroll { at, .. } => vec![at],
             Self::Drag { from, to, .. } => vec![from, to],
-        };
-        spots
+        }
+    }
+
+    /// Whether one of its points is a pixel of the screenshot, which only the image says
+    /// what it lands on.
+    fn has_pixel(&self) -> bool {
+        self.spots()
+            .into_iter()
+            .any(|spot| matches!(spot, Spot::Pixel(_)))
+    }
+
+    /// The element refs among its points.
+    fn elements(&self) -> Vec<&str> {
+        self.spots()
             .into_iter()
             .filter_map(|spot| match spot {
                 Spot::Element(id) => Some(id.as_str()),
@@ -321,6 +332,9 @@ pub(crate) async fn point(
         .ok()
         .and_then(niri::events::EventStream::connection);
     shot.check(Instant::now(), &outputs, connection)?;
+    if gesture.has_pixel() {
+        shot.unmoved(waiter.view())?;
+    }
     let tool = gesture.tool();
     let button = gesture.button();
     // The windows of the elements it aims at, and of the one a drag ends at.
@@ -865,6 +879,7 @@ async fn release(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::refs::scene::Scene;
 
     fn at(x: u32) -> Aim {
         Aim {
@@ -1080,7 +1095,9 @@ mod tests {
         let outputs = niri::outputs(socket).await.unwrap();
         let output = &outputs[crate::test_support::wayland::OUTPUT];
         let geometry = output.logical.unwrap();
+        let view = niri::view(input.niri.events).await.unwrap();
         let shot = Shot {
+            scene: Scene::of(&view, &output.name),
             output: output.name.clone(),
             geometry,
             motion_geometry: crate::coords::motion_geometry(output),

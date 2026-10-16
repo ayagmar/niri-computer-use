@@ -208,6 +208,37 @@ async fn a_still_screen_is_met_with_its_screenshot() {
     assert_eq!(content[1]["type"], "image", "{result}");
 }
 
+// The bug: every capture a screen wait took kept a ref, about ten a second, so a wait of
+// seconds on a screen that kept changing pushed the agent's refs out of the 64 kept, and a
+// zoom into the screenshot it had looked at last failed with `unknown_ref`.
+#[tokio::test]
+async fn a_long_screen_wait_keeps_the_agents_refs() {
+    let (fixture, _niri, _stream, mut server) = start("wait-screen-refs").await;
+    server.structured("desktop_state").await;
+    let shot = server
+        .call("screenshot", json!({"target": "focused_output"}))
+        .await;
+    let looked_at = report(&shot)["screenshot_ref"].as_str().unwrap().to_owned();
+    // Every capture differs, as with a spinner on screen.
+    fixture.program(
+        "grim",
+        r#"n=$(($(cat "$DIR/frames" 2>/dev/null || echo 0) + 1)); echo "$n" > "$DIR/frames"
+cat "$DIR/grim.out"; echo "$n""#,
+    );
+    let arguments = json!({"until": "screen_stable", "timeout_ms": 8000, "screenshot": true});
+    let waited = server.call("wait_for", arguments).await;
+    let outcome = report(&waited);
+    assert_eq!(outcome["observed"], "timeout", "{outcome}");
+    let last = outcome["screenshot"]["screenshot_ref"].as_str().unwrap();
+    for id in [looked_at.as_str(), last] {
+        // At the output's own scale, twice the image's, as large as what grim writes.
+        let region = json!({"x": 0, "y": 0, "width": 640, "height": 360});
+        let zoom = json!({"target": "region", "screenshot_ref": id, "region": region});
+        let zoomed = server.call("screenshot", zoom).await;
+        assert_eq!(zoomed["isError"], false, "{id}: {zoomed}");
+    }
+}
+
 /// A server on a fake niri whose focused window 1 is a mock application's, beside window 2
 /// of an app not on the accessibility bus, holding the lease when `lease` says. The mock has a button
 /// named `Later` that no object lists as its child yet.

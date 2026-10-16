@@ -923,6 +923,65 @@ async fn a_focused_close_names_the_window_it_checked() {
     assert!(!open.niri.sent_action());
 }
 
+/// Sends `event` and waits until `desktop_state` shows `applied` of it.
+async fn applied(desk: &mut Desk, event: &Value, applied: impl Fn(&Value) -> bool + Sync) {
+    desk.stream.send(event);
+    while !applied(&desk.server.structured("desktop_state").await) {
+        tokio::task::yield_now().await;
+    }
+}
+
+#[tokio::test]
+async fn a_pixel_aim_is_refused_once_the_windows_its_screenshot_shows_moved() {
+    let mut desk = Desk::start("act-moved", "").await;
+    let at = |id: &str| json!({"screenshot_ref": id, "x": 10, "y": 10});
+    let before = screenshot_ref(&mut desk).await;
+    // The user focuses another window beside the one shown: niri scrolls to it.
+    let focused =
+        json!({"WorkspaceActiveWindowChanged": {"workspace_id": 1, "active_window_id": 2}});
+    applied(&mut desk, &focused, |state| {
+        state["workspaces"][0]["active_window_id"] == 2
+    })
+    .await;
+    let since = screenshot_ref(&mut desk).await;
+    // With no Wayland socket, a click that passes every check fails to connect.
+    desk.unplug_display();
+    let refused = desk.server.call("click", at(&before)).await;
+    assert_eq!(
+        reason(&refused),
+        ("ref_invalid", "layout_changed".to_owned())
+    );
+    let (_, why) = tool_error(&refused);
+    assert!(
+        why.contains("follows window 2 instead of no window"),
+        "{why}"
+    );
+
+    // A new title moves nothing.
+    let mut retitled = window_on(2, Some("b"), 1, false);
+    retitled["title"] = json!("loaded");
+    let retitle = json!({"WindowOpenedOrChanged": {"window": retitled}});
+    applied(&mut desk, &retitle, |state| {
+        state["windows"][1]["title"] == "loaded"
+    })
+    .await;
+    let (name, unconnected) = tool_error(&desk.server.call("click", at(&since)).await);
+    assert_eq!(name, "upstream_error", "{unconnected}");
+
+    // The user resizes a window.
+    let mut layout = window_on(1, Some("a"), 1, true)["layout"].clone();
+    layout["tile_size"] = json!([400.0, 600.0]);
+    let resized = json!({"WindowLayoutsChanged": {"changes": [[1, layout]]}});
+    applied(&mut desk, &resized, |state| {
+        state["windows"][0]["layout"]["tile_size"][0] == 400.0
+    })
+    .await;
+    let scroll = json!({"screenshot_ref": since, "x": 10, "y": 10, "notches_y": 1});
+    let (_, stale) = tool_error(&desk.server.call("scroll", scroll).await);
+    let moved = "layout_changed: niri moved or resized window 1 since the screenshot";
+    assert!(stale.starts_with(moved), "{stale}");
+}
+
 #[tokio::test]
 async fn pointer_tools_check_the_ref_the_outputs_and_their_arguments_first() {
     let mut desk = Desk::start("act-pointer", "").await;

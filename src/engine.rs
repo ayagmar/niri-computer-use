@@ -128,6 +128,12 @@ pub(crate) struct Release {
     pub(crate) released: bool,
 }
 
+/// The ref of the latest screenshot a settle wait took. A wait of seconds takes a capture
+/// every 100 ms or so; without dropping the refs it can no longer return, they would push
+/// the agent's own refs out of the 64 a lease keeps.
+#[derive(Debug, Default)]
+struct Frames(Mutex<Option<String>>);
+
 impl Engine {
     /// Starts the crash guardian before anything else, then niri's event stream, and looks
     /// for the accessibility bus.
@@ -637,8 +643,9 @@ impl Engine {
         limit: std::time::Duration,
         screenshot: bool,
     ) -> Result<(wait::Report, Option<observe::Screenshot>), CallError> {
+        let frames = Frames::default();
         let capture = || {
-            let capture = self.capture(session, observe::Request::focused());
+            let capture = self.frame(session, observe::Request::focused(), &frames);
             self.desk.observe(session, capture)
         };
         if *until == wait::Until::ScreenStable {
@@ -683,6 +690,26 @@ impl Engine {
         restored.unwrap_or(Value::Null)
     }
 
+    /// One of the screenshots a settle wait takes, kept as `capture` keeps it. The wait
+    /// returns only the latest, so the ref of the one before it goes (`Frames`).
+    async fn frame(
+        &self,
+        session: &Session,
+        request: observe::Request,
+        frames: &Frames,
+    ) -> Result<observe::Screenshot, CallError> {
+        let shot = self.capture(session, request).await?;
+        let latest = shot.metadata.screenshot_ref.clone();
+        let earlier = std::mem::replace(
+            &mut *frames.0.lock().unwrap_or_else(PoisonError::into_inner),
+            latest,
+        );
+        if let Some(earlier) = earlier {
+            self.desk.discard(&earlier);
+        }
+        Ok(shot)
+    }
+
     /// Takes a screenshot and keeps it as a ref that the result names: one of the lease
     /// while `session` holds it, and otherwise one that only a zoom takes.
     async fn capture(
@@ -693,14 +720,19 @@ impl Engine {
         let lease = self.desk.ref_lease(session);
         let stretch = self.desk.stretch(session);
         let connection = self.events.as_ref().ok().and_then(EventStream::connection);
+        // Without a connection there is no ref to keep, and no initial state to wait for.
+        let view = match connection {
+            Some(_) => niri::view(self.events.as_ref()).await.ok(),
+            None => None,
+        };
         let taken = Instant::now();
         let place = session.settings().place();
         let mut shot =
             observe::screenshot(&self.env.niri_socket, &self.env.display, place, &request).await?;
-        let Some(connection) = connection else {
+        let (Some(connection), Some(view)) = (connection, view) else {
             return Ok(shot);
         };
-        let kept = Shot::of(&shot, taken, connection);
+        let kept = Shot::of(&shot, taken, connection, &view);
         shot.metadata.screenshot_ref = match lease {
             Some(lease) => self.desk.remember(lease, kept),
             None => self.desk.remember_view(session, stretch, kept),
@@ -777,7 +809,8 @@ impl Engine {
             mut recorder,
             before,
         } = watched;
-        let capture = |request| self.capture(session, request);
+        let frames = Frames::default();
+        let capture = |request| self.frame(session, request, &frames);
         let evidence = act::with_evidence(outcome, shoot, capture);
         let mut evidenced = match &mut recorder {
             Ok(recorder) => recorder.follow(evidence).await,

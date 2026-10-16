@@ -130,5 +130,6 @@ pub(crate) fn shot() -> crate::refs::Shot {
         height: 1080,
         taken: tokio::time::Instant::now(),
         connection: 1,
+        scene: crate::refs::scene::Scene::default(),
     }
 }
