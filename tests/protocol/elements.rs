@@ -2776,6 +2776,33 @@ async fn children_the_app_refuses_after_the_action_leave_the_elements_unknown() 
     );
 }
 
+/// An object gone by the time the walk after the action read it takes everything under it
+/// out of that walk, so a diff would report those elements removed.
+#[tokio::test]
+async fn part_of_the_tree_gone_mid_walk_after_the_action_leaves_the_elements_unknown() {
+    let mut desk = Desk::start("chg-lost").await;
+    let button = desk.element("Safe").await;
+    let acting = desk.mock.hold_on("DoAction", "/button");
+    let arguments = json!({
+        "element": button, "expect": {"window_id": WINDOW}, "element_changes": true
+    });
+    let id = desk.server.start_call("activate_element", arguments).await;
+    acting.arrived().await;
+    desk.mock.fail_named(
+        "GetRole",
+        "/panel",
+        "org.freedesktop.DBus.Error.UnknownObject",
+    );
+    acting.release();
+    let result = desk.server.response(id).await["result"].clone();
+    let outcome = &report(&result);
+    assert_eq!(outcome["accepted"], true, "{outcome}");
+    assert_eq!(
+        outcome["changes"]["elements"]["unknown"], "nodes_gone",
+        "{outcome}"
+    );
+}
+
 #[tokio::test]
 async fn element_changes_on_a_click_needs_an_element() {
     let mut desk = Desk::start("chg-pixel").await;

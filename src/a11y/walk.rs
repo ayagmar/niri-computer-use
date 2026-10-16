@@ -86,6 +86,11 @@ pub(crate) struct Walked {
 }
 
 impl Walked {
+    /// Whether nodes went unread though the walk wasn't capped (`missed`).
+    pub(crate) const fn missed(&self) -> bool {
+        self.missed
+    }
+
     /// Each node from the root's child down to the node at `at`, with its index in its
     /// parent and its name's hash.
     pub(crate) fn lineage(&self, at: usize) -> Vec<Link> {

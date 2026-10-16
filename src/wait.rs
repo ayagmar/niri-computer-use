@@ -10,7 +10,7 @@ use tokio::time::Instant;
 
 use crate::a11y::Capped;
 use crate::a11y::model::{Filter, Unbound, Unmappable};
-use crate::elements::{self, Listing, Withheld};
+use crate::elements::{self, Coverage, Listing, Withheld};
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::waiter::{View, Waited, Waiter};
 use crate::observe::{Metadata, Screenshot};
@@ -252,7 +252,9 @@ fn check(
         // An `absent` check lists nothing: `truncated` says the walk read a match.
         (Some(_), true) => Checked::Unmet(None),
         (None, true) if listing.truncated => Checked::Unmet(None),
-        (None, true) if listing.capped_reason.is_none() => Checked::Ends(Ended::Met, None, None),
+        (None, true) if listing.capped_reason.is_none() && listing.coverage == Coverage::Whole => {
+            Checked::Ends(Ended::Met, None, None)
+        }
         (None, _) => Checked::Unmet(listing.capped_reason),
     })
 }
@@ -454,6 +456,7 @@ mod tests {
             walked: 10,
             capped: capped.is_some(),
             capped_reason: capped,
+            coverage: Coverage::Whole,
             withheld: None,
             building: false,
         }
