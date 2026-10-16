@@ -115,7 +115,7 @@ niri-matrix:
 
 # An upgrade from each published release to this release build, installed with install.sh
 # into a throwaway HOME: make nested-upgrade UPGRADE_FROM=0.1.1 picks one.
-UPGRADE_FROM ?= 0.1.0 0.1.1
+UPGRADE_FROM ?= 0.1.0 0.1.1 0.1.2
 nested-upgrade:
 	cargo build --locked --release -p niri-computer-use
 	for from in $(UPGRADE_FROM); do \

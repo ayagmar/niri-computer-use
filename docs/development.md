@@ -355,7 +355,7 @@ One server holds the lease, and 30 rounds each call `focus` on the empty workspa
 
 ## Nested upgrade checks
 
-`make nested-upgrade` checks an upgrade from each published release to this checkout's release build, in shared mode, with Noctalia as the lock source and `wev` to type into. It runs one nested session per release in `UPGRADE_FROM`, `0.1.0 0.1.1` by default, each with a 240-second deadline, and needs the network to download them:
+`make nested-upgrade` checks an upgrade from each published release to this checkout's release build, in shared mode, with Noctalia as the lock source and `wev` to type into. It runs one nested session per release in `UPGRADE_FROM`, `0.1.0 0.1.1 0.1.2` by default, each with a 240-second deadline, and needs the network to download them:
 
 ```sh
 make nested-upgrade
@@ -366,7 +366,7 @@ Every command it runs gets `HOME=TEST_DIR/home` and `TMPDIR=TEST_DIR/tmp`, so ne
 
 1. Packs the release build as the release workflow packs one, with `skills/niri-computer-use` and a `.sha256`, under `TEST_DIR/releases` as release `current`.
 2. Installs the old release with `install.sh`, `NCU_VERSION=<release>`, `NCU_BIN_DIR=TEST_DIR/home/.local/bin` and `NCU_REGISTER=0`, from GitHub, which checks the tarball against its `.sha256`. The binary must be in place and the skill linked from `.claude/skills` and `.agents/skills`.
-3. Writes a policy file every release reads. The old binary's `status`, given a policy file with `turn_on_accessibility = false`, a key added since 0.1.1, must report it `invalid`. Then it starts two clients of the old binary, A and B. Both must be on one shared engine whose `status.engine.version` is the release's, and A takes the lease. The audit log's lines so far are kept.
+3. Writes a policy file every release reads. An old binary from before `turn_on_accessibility`, 0.1.0 or 0.1.1, must report a policy file with `turn_on_accessibility = false` `invalid` in its `status`; a release that already reads that key skips this check. Then it starts two clients of the old binary, A and B. Both must be on one shared engine whose `status.engine.version` is the release's, and A takes the lease. The audit log's lines so far are kept.
 4. A types 1000 characters into `wev`. Once the marker names a key, or the `wtype` child of a 0.1.0 marker, the old engine is stopped with `SIGSTOP`, and `current` is installed the same way, from `file://TEST_DIR/releases`; the engine then continues, and A's `type_text` must finish without an error and the marker go. The binary and the skill's `SKILL.md` must then be the build's, byte for byte, and the old engine must still run its deleted file and report `replaced: true`.
 5. Starts client N of the new binary. Refused by the old engine with `engine_version`, it must be served standalone, saying so in `status.engine.fallback`, which must name the old engine's PID and say to restart the clients that engine serves, and its `acquire_desktop` must fail with `lease_held` naming A.
 6. A gives the lease up and N takes it. N types 1000 characters into `wev`; once the marker names a key, N's server is stopped with `SIGSTOP` while B's `status` reads the marker, which must read as a marker, not as unreadable. Typing takes less than a tenth of a second, so the marker is looked for every millisecond. N then finishes, the marker goes, and A takes the lease again.
