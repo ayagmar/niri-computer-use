@@ -516,11 +516,24 @@ impl Gate<'_> {
     /// each time about the focused window and the elements' windows as niri reports them
     /// now. The lock state is read again first when the last read is too old, since a
     /// round trip in the gesture can take seconds, and must still be fresh at the end,
-    /// however long the look took. Before the first input, the desk is told input is going
-    /// out: a motion can open a hover menu or move focus, so a stop or a lost lease from
-    /// then on leaves the call `uncertain`. `pointer` is where the last motion put the
-    /// pointer, if one went out.
+    /// however long the look took. A look that kept a read made before it, still fresh
+    /// then, may find it too old at the end without anything having been slow: that look
+    /// reads again and is made once more. Before the first input, the desk is told input
+    /// is going out: a motion can open a hover menu or move focus, so a stop or a lost
+    /// lease from then on leaves the call `uncertain`. `pointer` is where the last motion
+    /// put the pointer, if one went out.
     async fn pass(&mut self, stage: Stage, pointer: Option<LayoutPt>) -> Result<(), ToolError> {
+        let kept = self.input.niri.desk.lock_fresh();
+        match self.look(stage, pointer).await {
+            Err(error) if kept && error.name == ErrorName::LockStale => {
+                self.look(stage, pointer).await
+            }
+            looked => looked,
+        }
+    }
+
+    /// One look of `pass`.
+    async fn look(&mut self, stage: Stage, pointer: Option<LayoutPt>) -> Result<(), ToolError> {
         self.read_lock(stage).await?;
         let moved = self.waiter.moved().await.map_err(|reason| {
             let sent = if stage == Stage::First {
@@ -1327,6 +1340,43 @@ mod tests {
             );
         }
         std::fs::remove_dir_all(&bench.dir).unwrap();
+    }
+
+    // A look keeps a lock read under 250 ms old, which can turn 250 ms while the look
+    // catches up on niri's events. That says nothing about how slow the desktop is: the
+    // look reads the lock state again and looks once more, before the first input and
+    // during a drag alike, rather than refusing the call or dropping the drag.
+    #[tokio::test]
+    async fn a_lock_read_that_ages_out_during_a_look_is_made_again() {
+        let bench = Bench::start("pointer-gate-aged", vec![(Duration::ZERO, UNLOCKED)]);
+        let (mut waiter, input) = gate_on(&bench).await;
+        let mut gate = Gate {
+            waiter: &mut waiter,
+            input,
+            pixels: None,
+            windows: &[],
+            end: None,
+            reading: GESTURE_READING,
+        };
+        for stage in [Stage::First, Stage::Pressed] {
+            let passed = pass_aging(&mut gate, &bench.desk, stage).await;
+            assert!(passed.is_ok(), "{stage:?}: {passed:?}");
+            assert!(bench.desk.lock_fresh(), "{stage:?}");
+        }
+        std::fs::remove_dir_all(&bench.dir).unwrap();
+    }
+
+    /// `gate`'s pass at `stage`, whose look starts with a fresh lock read on `desk` that
+    /// becomes one begun a second ago once the look yields to catch up on niri's events.
+    async fn pass_aging(
+        gate: &mut Gate<'_>,
+        desk: &crate::control::desk::Desk,
+        stage: Stage,
+    ) -> Result<(), ToolError> {
+        desk.lock_read(Instant::now());
+        let aging = desk.clone();
+        tokio::spawn(async move { aging.lock_read(Instant::now() - Duration::from_secs(1)) });
+        gate.pass(stage, None).await
     }
 
     // While a gesture reads the lock state again after a read that came back stale, a drag
