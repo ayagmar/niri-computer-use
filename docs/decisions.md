@@ -1841,3 +1841,10 @@ v2.9.2 is the newest release; it is over 7 days old.
 - `make nested-input` gained step 19, a modal dialog taking focus mid-type (`docs/development.md`). GTK maps the dialog only after handling the keys already sent, so whether niri sends a key to it during the call varies. The fixed build needed one to three rounds in each of nine runs; a base-build run under load had none in eight, so the check runs up to twelve rounds before it fails for want of a race.
 - The `type_text` and `key` descriptions grew within the `tools/list` ceilings, which were not raised: `act` measures 23,993 bytes of 24,000 and `full` 27,224 of 27,225.
 - No dependency was added.
+
+## 2026-10-16: a policy file that isn't TOML keeps `shared = "required"`
+
+- A syntax error anywhere in the policy file, such as a mistyped `[[preset]]` header, dropped the requirement, since `Loaded::shared` read `shared` only from text that parses as TOML; the docs said a mistake elsewhere in the file doesn't drop it. Text that isn't TOML now requires the shared engine when a line before its first table header, a trailing comment aside, is `shared = "required"`. Such a line can only be the top-level key, and reading it fails closed: at worst a client is refused with `engine_unavailable` instead of served standalone, which is what the line asks for.
+- The other option was saying in the docs that only a mistake that still parses as TOML keeps the requirement. The scan is a few lines and keeps the promise.
+- Tests: the unit test of invalid files now requires `"required"` from text that isn't TOML, and nothing from such a line after a table header or with another value. It failed before the change.
+- No dependency was added.

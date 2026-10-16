@@ -619,12 +619,21 @@ impl serde::de::Visitor<'_> for SharingVisitor {
     }
 }
 
-/// Whether `text` is TOML whose top-level `shared` is `"required"`, whatever the rest of it
-/// holds.
+/// Whether `text`'s top-level `shared` is `"required"`, whatever the rest of it holds.
+/// Text that isn't TOML requires it with a line `shared = "required"` before the first
+/// table header.
 fn requires_shared(text: &str) -> bool {
-    toml::from_str::<toml::Table>(text)
-        .ok()
-        .and_then(|table| table.get("shared")?.clone().try_into::<Sharing>().ok())
+    let Ok(table) = toml::from_str::<toml::Table>(text) else {
+        return text
+            .lines()
+            .map(|line| line.split('#').next().unwrap_or_default().trim())
+            .take_while(|line| !line.starts_with('['))
+            .filter_map(|line| line.split_once('='))
+            .any(|(key, value)| key.trim() == "shared" && value.trim() == "\"required\"");
+    };
+    table
+        .get("shared")
+        .and_then(|shared| shared.clone().try_into::<Sharing>().ok())
         == Some(Sharing::Required)
 }
 
@@ -1297,14 +1306,17 @@ app_id = "foot"
             "shared = \"required\"\ncapture_dir = \"shots\"",
             "shared = \"required\"\nnot_a_key = 1",
             "deny_input_app_ids = 3\nshared = \"required\"",
+            "shared = \"required\"\n[[",
+            "  shared=\"required\"  # spaced\ncapture_dir =\n",
         ] {
             assert_eq!(shared_in(Some(invalid)), Sharing::Required, "{invalid}");
         }
         for invalid in [
             "shared = false\ncapture_dir = \"shots\"",
             "not_a_key = \"required\"",
-            "shared = \"required\"\n[[",
             "[preset]\nshared = \"required\"",
+            "[[\nshared = \"required\"",
+            "shared = \"required, please\"\n[[",
         ] {
             assert_eq!(shared_in(Some(invalid)), Sharing::On, "{invalid}");
         }
