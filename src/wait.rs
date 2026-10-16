@@ -214,7 +214,35 @@ enum Checked {
     /// The wait ends.
     Ends(Ended, Option<Appeared>, Option<String>),
     /// Not met yet, and why the walk might have missed what would meet it.
-    Unmet(Option<Capped>),
+    Unmet(Option<Short>),
+}
+
+/// Why a walk didn't read the whole tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Short {
+    /// It stopped early.
+    Cut(Capped),
+    /// It skipped objects gone by the time it read them, with everything under them.
+    Missed,
+}
+
+impl Short {
+    /// Why a walk that didn't read the whole tree missed what `listing` lists.
+    const fn of(listing: &Listing) -> Option<Self> {
+        match (listing.capped_reason, listing.coverage) {
+            (Some(capped), _) => Some(Self::Cut(capped)),
+            (None, Coverage::Missed) => Some(Self::Missed),
+            (None, Coverage::Whole) => None,
+        }
+    }
+
+    /// What a wait that timed out after such a walk says.
+    fn detail(self) -> String {
+        match self {
+            Self::Cut(capped) => format!("the last walk was cut short: {}", elements::word(capped)),
+            Self::Missed => "the last walk skipped objects that went away while it read".to_owned(),
+        }
+    }
 }
 
 /// How `polled`, one walk's listing or none when the window is gone, leaves `element`. A
@@ -236,6 +264,7 @@ fn check(
         Err(error) => return Err(error),
     };
     let withheld = listing.withheld.map(|why| withheld(why).to_owned());
+    let short = Short::of(&listing);
     let first = listing.elements.into_iter().next();
     Ok(match (first, element.absent) {
         (Some(found), false) => Checked::Ends(
@@ -252,10 +281,10 @@ fn check(
         // An `absent` check lists nothing: `truncated` says the walk read a match.
         (Some(_), true) => Checked::Unmet(None),
         (None, true) if listing.truncated => Checked::Unmet(None),
-        (None, true) if listing.capped_reason.is_none() && listing.coverage == Coverage::Whole => {
-            Checked::Ends(Ended::Met, None, None)
-        }
-        (None, _) => Checked::Unmet(listing.capped_reason),
+        (None, absent) => match short {
+            None if absent => Checked::Ends(Ended::Met, None, None),
+            short => Checked::Unmet(short),
+        },
     })
 }
 
@@ -330,8 +359,7 @@ where
         biased;
         gone = closed => Ok(gone),
         walked = tokio::time::timeout_at(deadline, walking) => walked.unwrap_or_else(|_| {
-            let why = |capped| format!("the last walk was cut short: {}", elements::word(capped));
-            Ok((Ended::Timeout, None, cut.map(why)))
+            Ok((Ended::Timeout, None, cut.map(Short::detail)))
         }),
     };
     let (observed, appeared, detail) = ended?;
