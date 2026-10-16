@@ -85,6 +85,8 @@ pub(crate) enum Why {
     NodeCap,
     BudgetExhausted,
     ChildrenRefused,
+    /// An object was gone by the time a walk read it, so what was under it went unread.
+    NodesGone,
     #[serde(untagged)]
     Error(ErrorName),
 }
@@ -132,6 +134,16 @@ impl Unknown {
             window_id: Some(window_id),
             why,
             detail: detail.to_owned(),
+        }
+    }
+
+    pub(crate) fn nodes_gone(window_id: u64) -> Self {
+        Self {
+            window_id: Some(window_id),
+            why: Why::NodesGone,
+            detail:
+                "an object went away while a walk read the tree, so what was under it went unread"
+                    .to_owned(),
         }
     }
 }

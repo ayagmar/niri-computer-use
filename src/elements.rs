@@ -58,6 +58,9 @@ pub(crate) struct Listing {
     /// Why: `node_cap`, `budget_exhausted` when the request's three seconds ran out, or
     /// `children_refused` when the app refused to list an object's children.
     pub(crate) capped_reason: Option<Capped>,
+    /// Whether nodes went unread though the walk wasn't capped.
+    #[serde(skip)]
+    pub(crate) coverage: Coverage,
     /// Why a listed element's ref was left out, with `Ask::whole` or `Ask::by`.
     #[serde(skip)]
     pub(crate) withheld: Option<Withheld>,
@@ -65,6 +68,15 @@ pub(crate) struct Listing {
     /// assistive technology asks, and may not have sent all of it yet: list again.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub(crate) building: bool,
+}
+
+/// Whether a walk that wasn't capped read every node it reached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Coverage {
+    Whole,
+    /// Some went unread, as when an object was gone by the time the walk read it, with
+    /// everything under it: no proof that an element is absent.
+    Missed,
 }
 
 /// Why `look` left a listed element's ref out.
@@ -116,6 +128,7 @@ impl Listing {
             walked: 0,
             capped: true,
             capped_reason: Some(Capped::BudgetExhausted),
+            coverage: Coverage::Whole,
             withheld: None,
             building: false,
         }
@@ -614,6 +627,11 @@ async fn look(
         walked: read.walked.nodes.len(),
         capped: capped.is_some(),
         capped_reason: capped,
+        coverage: if read.walked.missed() {
+            Coverage::Missed
+        } else {
+            Coverage::Whole
+        },
         withheld,
         building: read.frame.building,
     }))
@@ -641,6 +659,9 @@ pub(crate) async fn survey(
         .ok_or_else(|| Unknown::gone(window_id))?;
     if let Some(capped) = read.walked.capped {
         return Err(Unknown::capped(window_id, capped));
+    }
+    if read.walked.missed() {
+        return Err(Unknown::nodes_gone(window_id));
     }
     Ok(read
         .listed(&filter)
@@ -1025,6 +1046,7 @@ mod tests {
             walked: 40,
             capped: true,
             capped_reason: Some(Capped::BudgetExhausted),
+            coverage: Coverage::Whole,
             withheld: None,
             building: false,
         };

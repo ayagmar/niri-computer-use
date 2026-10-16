@@ -295,6 +295,13 @@ impl Compositor {
             .await;
     }
 
+    /// Moves focus to window `id` now: niri answers `FocusedWindow` with it, but its event
+    /// stream never says so.
+    pub(crate) fn focus_quietly(&self, id: Option<u64>) {
+        *self.focused.lock().unwrap_or_else(PoisonError::into_inner) =
+            Ok(Response::FocusedWindow(id.map(focused_window)));
+    }
+
     /// Makes niri answer `FocusedWindow` with `message` as its error from the `press`-th
     /// key press on.
     pub(crate) async fn fail_focus_at(&self, press: usize, message: &str) {

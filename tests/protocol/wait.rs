@@ -414,6 +414,21 @@ async fn absent_waits_for_a_whole_walk_and_a_slow_walk_keeps_the_timeout() {
     assert_eq!(whole["observed"], "met", "{whole}");
 }
 
+// The bug: `absent` met by a walk that skipped an object gone by the time it read it, and
+// with it everything under it, where the element may still be.
+#[tokio::test]
+async fn absent_isnt_met_by_a_walk_that_lost_part_of_the_tree() {
+    let mut app = App::start("wait-element-lost", false).await;
+    app.mock.fail_named(
+        "GetRole",
+        "/panel",
+        "org.freedesktop.DBus.Error.UnknownObject",
+    );
+    let gone = json!({"name_contains": "safe", "absent": true});
+    let (outcome, _) = app.wait(gone, 1000).await;
+    assert_eq!(outcome["observed"], "timeout", "{outcome}");
+}
+
 // The bug: an `absent` wait that named the actions of the element it still saw, which it
 // throws away, so an app slow to name them made every walk look cut short, and a
 // timeout told the agent to narrow a condition whose walks had read the whole tree.

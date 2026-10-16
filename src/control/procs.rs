@@ -1,8 +1,10 @@
 //! What the server needs to know about processes, read from `/proc`. The root is a
 //! parameter so tests can use a fake `/proc`.
 
+use std::collections::BTreeMap;
 use std::io::Read as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 use tokio::time::Instant;
 
@@ -83,19 +85,49 @@ const CHROMIUM_FILES: [&str; 2] = ["icudtl.dat", "v8_context_snapshot.bin"];
 /// How much of `/proc/<pid>/maps` is read. A Chromium browser that ran for days had 223 KB.
 const MAPS_LIMIT: u64 = 4 << 20;
 
+/// A read of a `/proc/<pid>/maps` under way: `None` until it ends.
+type Reading = tokio::sync::watch::Receiver<Option<Option<String>>>;
+
+/// The reads under way, by path, so calls on a stuck process share one thread.
+static READING: Mutex<BTreeMap<PathBuf, Reading>> = Mutex::new(BTreeMap::new());
+
 /// Whether `pid` is a Chromium-family process, one that maps one of `CHROMIUM_FILES`, by
 /// `deadline`. Reading `/proc/<pid>/maps` waits for the process's memory map, so it runs
 /// on a thread of its own, abandoned at the deadline, which neither the runtime's shutdown
-/// nor the server's exit waits for. A process that can't be read in time, as another
-/// user's or a stuck one, isn't.
+/// nor the server's exit waits for; a later call on the same process joins that read while
+/// it lasts, so a stuck process holds one thread. A process that can't be read in time, as
+/// another user's or a stuck one, isn't.
 pub(crate) async fn chromium_family(proc_root: &Path, pid: u32, deadline: Instant) -> bool {
-    let maps = proc_root.join(pid.to_string()).join("maps");
-    let (sender, read) = tokio::sync::oneshot::channel();
-    std::thread::spawn(move || sender.send(read_maps(&maps)));
-    matches!(
-        tokio::time::timeout_at(deadline, read).await,
-        Ok(Ok(Some(text))) if maps_chromium(&text)
-    )
+    let Some(mut read) = reading(proc_root.join(pid.to_string()).join("maps"), pid) else {
+        return false;
+    };
+    let read = tokio::time::timeout_at(deadline, read.wait_for(Option::is_some)).await;
+    matches!(read, Ok(Ok(text)) if text.as_ref().and_then(Option::as_deref).is_some_and(maps_chromium))
+}
+
+/// The read of `maps` under way, or a new one on a thread named for `pid`; none when no
+/// thread could start.
+fn reading(maps: PathBuf, pid: u32) -> Option<Reading> {
+    let mut reading = READING.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(read) = reading.get(&maps) {
+        return Some(read.clone());
+    }
+    let (sender, read) = tokio::sync::watch::channel(None);
+    let key = maps.clone();
+    std::thread::Builder::new()
+        .name(format!("maps {pid}"))
+        .spawn(move || {
+            let text = read_maps(&maps);
+            READING
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&maps);
+            sender.send_replace(Some(text));
+        })
+        .ok()?;
+    reading.insert(key, read.clone());
+    drop(reading);
+    Some(read)
 }
 
 /// At most `MAPS_LIMIT` bytes of a `/proc/<pid>/maps`.
@@ -241,5 +273,43 @@ mod tests {
             .open(root.join("5/maps"))
             .unwrap();
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The bug: each call on a stuck process left a thread of its own blocked in the read,
+    /// so an agent polling such a window piled up threads without bound.
+    #[tokio::test]
+    async fn calls_on_a_stuck_process_share_one_read() {
+        const PID: u32 = 31_337;
+        let root = crate::test_support::fresh_dir("procs-chromium-shared");
+        std::fs::create_dir(root.join(PID.to_string())).unwrap();
+        let maps = root.join(format!("{PID}/maps"));
+        let mode = rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR;
+        rustix::fs::mkfifoat(rustix::fs::CWD, &maps, mode).unwrap();
+        for _ in 0..3 {
+            let deadline = Instant::now() + std::time::Duration::from_millis(50);
+            assert!(!chromium_family(&root, PID, deadline).await);
+        }
+        assert_eq!(readers(PID), 1);
+        // Ends the read; a call after it reads again, and sees what the process maps now.
+        std::fs::OpenOptions::new().write(true).open(&maps).unwrap();
+        let ended = Instant::now() + std::time::Duration::from_secs(2);
+        while readers(PID) > 0 && Instant::now() < ended {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        std::fs::remove_file(&maps).unwrap();
+        let line = "7f00-7f10 r--p 00000000 103:02 4242      /opt/helium/icudtl.dat\n";
+        std::fs::write(&maps, line).unwrap();
+        let deadline = Instant::now() + std::time::Duration::from_secs(1);
+        assert!(chromium_family(&root, PID, deadline).await);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// How many threads of this process read the maps of `pid`.
+    fn readers(pid: u32) -> usize {
+        std::fs::read_dir("/proc/self/task")
+            .unwrap()
+            .filter_map(|task| std::fs::read_to_string(task.ok()?.path().join("comm")).ok())
+            .filter(|comm| comm.trim_end() == format!("maps {pid}"))
+            .count()
     }
 }
