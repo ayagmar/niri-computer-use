@@ -160,9 +160,11 @@ impl Switch {
     /// Registers the listener, unless the server's already holds accessibility on, and
     /// waits for `IsEnabled` to turn true, all by `deadline`, waiting for another call
     /// turning it on no longer. A launcher that doesn't turn it on is remembered, and the
-    /// listener let go. So is a listener that holds it on while it reads off, as `enabled`
-    /// says it did just now: something turned it off over the listener, and the launcher
-    /// would turn it back on the next time any listener comes or goes.
+    /// listener let go. So is a listener that holds it on while it reads off: something
+    /// turned it off over the listener, and the launcher would turn it back on the next time
+    /// any listener comes or goes. `enabled` may have been read before another call's
+    /// listener turned it on, so it is read again with the listener held before that counts;
+    /// a read that fails is no proof either, and the listener stays.
     pub(crate) async fn listen(
         &self,
         deadline: Instant,
@@ -174,6 +176,9 @@ impl Switch {
         match &*held {
             Held::On { .. } if enabled => return Ok(Turned::AlreadyOn),
             Held::On { .. } => {
+                if self.session_enabled(deadline).await.unwrap_or(true) {
+                    return Ok(Turned::AlreadyOn);
+                }
                 *held = Held::LetGo;
                 return Ok(Turned::LetGo);
             }

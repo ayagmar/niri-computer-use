@@ -397,6 +397,35 @@ async fn a_call_that_runs_out_while_another_turns_accessibility_on_says_to_call_
     desk.server.response(first).await;
 }
 
+/// A second call that read `IsEnabled` false before the first call's listener turned
+/// accessibility on finds the listener holding it on: its read is out of date, not a sign
+/// that something turned accessibility off, so the listener stays.
+#[tokio::test]
+async fn a_call_that_read_accessibility_off_before_another_turned_it_on_keeps_the_listener() {
+    let mut desk = Desk::start("acc-overlap", "").await;
+    let held = desk
+        .mock
+        .hold_on("RegisterEvent", "/org/a11y/atspi/registry");
+    let first = desk
+        .server
+        .start_call("elements", json!({"window_id": WINDOW}))
+        .await;
+    held.arrived().await;
+    let read = desk.mock.calls("IsEnabled");
+    let second = desk
+        .server
+        .start_call("elements", json!({"window_id": WINDOW}))
+        .await;
+    assert!(eventually(WAIT, || desk.mock.calls("IsEnabled") > read).await);
+    held.release();
+    let (_, turned) = tool_error(&desk.server.response(first).await["result"]);
+    assert!(turned.contains("so the server turned it on"), "{turned}");
+    let (_, detail) = tool_error(&desk.server.response(second).await["result"]);
+    assert!(!detail.contains("let its listener go"), "{detail}");
+    assert_eq!(desk.switch().await, "on");
+    assert!(desk.bus.is_enabled().await);
+}
+
 #[tokio::test]
 async fn a_launcher_that_never_answers_holds_no_elements_call_past_its_budget() {
     let mut desk = Desk::start("acc-mute", "").await;
