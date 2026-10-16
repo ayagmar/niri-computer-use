@@ -1924,3 +1924,18 @@ v2.9.2 is the newest release; it is over 7 days old.
 - Reading before every look would also close the gap, at the cost of a Noctalia and `loginctl` read every 20 ms of a drag. Re-reading at a smaller age leaves the same race at a lower threshold.
 - Test: a unit test against the fake compositor starts a look with a fresh read, and a task that runs when the look yields to catch up on niri's events makes that read a second old, so no clock margin decides the outcome. Before the change the look failed with `lock_stale`, before the first input and during a drag; now both pass with the lock read again. In throttled runs of the protocol test, `main`'s gate failed 3 of 130 and this branch's unfixed gate 1 of 42; with the change, 0 of 160.
 - No dependency was added.
+
+## 2026-10-16: dependency updates
+
+Dependabot's six open updates, taken together and checked against the version rule on 2026-10-16, so the newest stable release published on or before 2026-10-09 is used.
+
+| Package or action | From | To | Published | Note |
+|---|---|---|---|---|
+| `tokio` | 1.53.1 | 1.53.2 | 2026-10-03 | 1.53.3 (2026-10-13) is too new; its notes list no security fix. No new crate entered `Cargo.lock`. |
+| `signal-hook` (harness) | 0.4.4 | 0.4.5 | 2026-10-04 | |
+| `astro` (site) | 7.3.5 | 7.3.8 | 2026-10-08 | Dependabot proposed 7.3.6; 7.3.8 is the newest old enough, and 7.4.0 (2026-10-15) is too new. Installed with `npm install --before 2026-10-09`, so every package that changed in `site/package-lock.json` was published by 2026-10-08. astro 7.3.8 no longer depends on `esbuild` or `js-yaml`, which leave the lock file; `yaml` 2.9.1 comes in. |
+| `actions/setup-node` | v7.0.0 | v7.1.0 | 2026-10-08 | `949feb2413d6458794dcd2491c4babbbce0c15c1`, in `ci.yml` and `pages.yml`. |
+| `actions/upload-artifact` | v7.0.1 | v7.0.2 | 2026-10-07 | `cf430e030ddbb5b0abf93d22962f4752f3646cd9`, in `release.yml`. Retries rate-limited transfers. |
+| `actions/download-artifact` | v8.0.1 | v8.0.2 | 2026-10-07 | `9000827ccba6bdab643e8b6fd33ac0654aef8333`, in `release.yml`. |
+
+Each action's commit is the one its tag names in the action's repository (`git ls-remote`), the same as in Dependabot's pull requests.
