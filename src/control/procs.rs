@@ -23,6 +23,11 @@ impl Stat {
     pub(crate) const fn exited(self) -> bool {
         self.state == 'Z' || self.state == 'X'
     }
+
+    /// Stopped by a signal, or by a tracer.
+    pub(crate) const fn stopped(self) -> bool {
+        self.state == 'T' || self.state == 't'
+    }
 }
 
 /// Parses `/proc/<pid>/stat`. The command name in parentheses may hold spaces and

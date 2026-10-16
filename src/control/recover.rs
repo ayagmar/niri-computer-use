@@ -7,7 +7,9 @@
 use std::path::Path;
 use std::time::Duration;
 
-use rustix::process::{Pid, Signal, kill_process, kill_process_group};
+use std::os::fd::OwnedFd;
+
+use rustix::process::{Pid, PidfdFlags, Signal, kill_process_group, pidfd_open, pidfd_send_signal};
 
 use super::lease::{Lease, Refused};
 use super::marker::{self, Child, Found, Marker};
@@ -20,6 +22,10 @@ const PROC: &str = "/proc";
 /// How long an ended input child gets to exit.
 const EXIT_DEADLINE: Duration = Duration::from_secs(5);
 const EXIT_POLL: Duration = Duration::from_millis(50);
+/// How long an input child that leads its process group gets to stop before the group is
+/// killed.
+const STOP_DEADLINE: Duration = Duration::from_secs(1);
+const STOP_POLL: Duration = Duration::from_millis(10);
 
 const MANUAL_CHECK: &str = "Check that no input is held: press and release Shift, Ctrl, Alt and Super, \
 click once in an empty area, and check the application the input went to.";
@@ -77,10 +83,17 @@ async fn release(env: &Env, marker: &Marker) -> Result<(), String> {
 
 /// Kills a 0.1.0 server's input child, with its process group when it leads one, if it is
 /// still the process the marker names, and waits for it to exit, as 0.1.0's `recover` did.
-/// A server killed mid-input leaves its `wtype` child typing its part of the text.
+/// A server killed mid-input leaves its `wtype` child typing its part of the text. The child
+/// is pinned by a pidfd opened before its start time is checked, and signalled through it,
+/// so a PID reused after the check names no process recover signals.
 async fn end_child(root: &Path, child: Child) -> Result<(), String> {
     let pid = child.pid;
-    let killed = match ending(root, child)? {
+    let gone = || cli::say(&format!("The input child, PID {pid}, has already exited."));
+    let Some((target, pidfd)) = pin(pid)? else {
+        gone();
+        return Ok(());
+    };
+    let killed = match ending(root, child) {
         Ending::Init => {
             cli::say(
                 "The marker names PID 1, init, as its input child, which it can't be, so no process is ended.",
@@ -88,20 +101,20 @@ async fn end_child(root: &Path, child: Child) -> Result<(), String> {
             return Ok(());
         }
         Ending::Gone => {
-            cli::say(&format!("The input child, PID {pid}, has already exited."));
+            gone();
             return Ok(());
         }
-        Ending::Group(target) => {
+        Ending::Group => {
             cli::say(&format!(
                 "Ending the input child, PID {pid}, and its process group."
             ));
-            kill_process_group(target, Signal::KILL)
+            kill_group(root, child, target, &pidfd).await
         }
-        Ending::Alone(target) => {
+        Ending::Alone => {
             cli::say(&format!(
                 "Ending the input child, PID {pid}. It leads no process group, so only it is ended."
             ));
-            kill_process(target, Signal::KILL)
+            pidfd_send_signal(&pidfd, Signal::KILL)
         }
     };
     // A process already gone is what killing it was for.
@@ -109,11 +122,60 @@ async fn end_child(root: &Path, child: Child) -> Result<(), String> {
         Ok(()) | Err(rustix::io::Errno::SRCH) => {}
         Err(error) => return Err(format!("kill {pid}: {error}; the marker stays")),
     }
+    exited(root, child).await
+}
+
+/// `pid` and a pidfd for its process, or none when no process has that PID.
+fn pin(pid: u32) -> Result<Option<(Pid, OwnedFd)>, String> {
+    let Some(target) = i32::try_from(pid).ok().and_then(Pid::from_raw) else {
+        return Ok(None);
+    };
+    match pidfd_open(target, PidfdFlags::empty()) {
+        Ok(pidfd) => Ok(Some((target, pidfd))),
+        Err(rustix::io::Errno::SRCH) => Ok(None),
+        Err(error) => Err(format!("pidfd_open {pid}: {error}; the marker stays")),
+    }
+}
+
+/// Kills the process group `child` leads, `leader` being its PID and `pidfd` naming it. The
+/// leader is stopped first, through `pidfd`: a stopped process can't exit until it is
+/// killed, so while it is stopped its PID, which is the group's ID, can't come to name
+/// another process or group. A leader not seen stopped in its group within
+/// `STOP_DEADLINE`, as in an uninterruptible wait, is killed alone.
+async fn kill_group(
+    root: &Path,
+    child: Child,
+    leader: Pid,
+    pidfd: &OwnedFd,
+) -> rustix::io::Result<()> {
+    pidfd_send_signal(pidfd, Signal::STOP)?;
+    let until = tokio::time::Instant::now() + STOP_DEADLINE;
+    loop {
+        let Some(stat) = running(root, child) else {
+            return Ok(());
+        };
+        if stat.stopped() && stat.group == child.pid {
+            break;
+        }
+        if tokio::time::Instant::now() >= until {
+            cli::say(&format!(
+                "It wasn't seen stopped in its process group within {STOP_DEADLINE:?}, so only it is ended."
+            ));
+            return pidfd_send_signal(pidfd, Signal::KILL);
+        }
+        tokio::time::sleep(STOP_POLL).await;
+    }
+    kill_process_group(leader, Signal::KILL)
+}
+
+/// Waits until `child` has exited, up to `EXIT_DEADLINE`.
+async fn exited(root: &Path, child: Child) -> Result<(), String> {
     let until = tokio::time::Instant::now() + EXIT_DEADLINE;
     while running(root, child).is_some() {
         if tokio::time::Instant::now() >= until {
             return Err(format!(
-                "the input child, PID {pid}, didn't exit within {EXIT_DEADLINE:?}; the marker stays"
+                "the input child, PID {}, didn't exit within {EXIT_DEADLINE:?}; the marker stays",
+                child.pid
             ));
         }
         tokio::time::sleep(EXIT_POLL).await;
@@ -130,29 +192,21 @@ enum Ending {
     /// It no longer runs as the process the marker names.
     Gone,
     /// It leads its own process group, which is ended with it.
-    Group(Pid),
+    Group,
     /// It is in another process's group, so only it is ended.
-    Alone(Pid),
+    Alone,
 }
 
 /// How to end `child`, read from the `/proc` at `root`.
-fn ending(root: &Path, child: Child) -> Result<Ending, String> {
-    let pid = child.pid;
-    if pid == 1 {
-        return Ok(Ending::Init);
+fn ending(root: &Path, child: Child) -> Ending {
+    if child.pid == 1 {
+        return Ending::Init;
     }
-    let Some(stat) = running(root, child) else {
-        return Ok(Ending::Gone);
-    };
-    let target = i32::try_from(pid)
-        .ok()
-        .and_then(Pid::from_raw)
-        .ok_or_else(|| format!("{pid} isn't a process ID; the marker stays"))?;
-    Ok(if stat.group == pid {
-        Ending::Group(target)
-    } else {
-        Ending::Alone(target)
-    })
+    match running(root, child) {
+        None => Ending::Gone,
+        Some(stat) if stat.group == child.pid => Ending::Group,
+        Some(_) => Ending::Alone,
+    }
 }
 
 /// The child, if it still runs as the process the marker names.
@@ -314,6 +368,34 @@ mod tests {
         (child, Child { pid, start_time })
     }
 
+    /// A `sleep` leading its own process group, as `sleeper(true)`, and another `sleep` in
+    /// that group, with a pidfd the test ends it through.
+    async fn leader_with_member() -> (tokio::process::Child, Child, Child, OwnedFd) {
+        let mut command = command();
+        command
+            .args(["-c", "sleep 60 & echo $!; exec sleep 60"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .kill_on_drop(true)
+            .process_group(0);
+        let mut leader = command.spawn().unwrap();
+        let pid = leader.id().unwrap();
+        let mut line = String::new();
+        let stdout = leader.stdout.take().unwrap();
+        tokio::io::AsyncBufReadExt::read_line(&mut tokio::io::BufReader::new(stdout), &mut line)
+            .await
+            .unwrap();
+        let member: u32 = line.trim().parse().unwrap();
+        let (_, pidfd) = pin(member).unwrap().unwrap();
+        let stat = |process| procs::stat(Path::new(PROC), process).unwrap();
+        assert_eq!(stat(member).group, pid);
+        let child = |process| Child {
+            pid: process,
+            start_time: stat(process).start_time,
+        };
+        (leader, child(pid), child(member), pidfd)
+    }
+
     #[expect(
         clippy::disallowed_methods,
         reason = "the test starts the processes recover is pointed at"
@@ -327,15 +409,31 @@ mod tests {
         running(Path::new(PROC), child).is_none()
     }
 
+    /// Whether `child` ends `within`: a killed process ends a moment after the signal.
+    async fn ends(child: Child, within: Duration) -> bool {
+        let until = tokio::time::Instant::now() + within;
+        while !ended(child) {
+            if tokio::time::Instant::now() >= until {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        true
+    }
+
     #[tokio::test]
     async fn ends_the_input_child_a_0_1_0_marker_names() {
-        let (_group, leader) = sleeper(true);
+        let (_group, leader, member, _member) = leader_with_member().await;
         end_child(Path::new(PROC), leader).await.unwrap();
         assert!(ended(leader));
+        assert!(
+            ends(member, EXIT_DEADLINE).await,
+            "the rest of its group was left running"
+        );
         // Shares this test's process group, which killing the group would end too.
-        let (_alone, member) = sleeper(false);
-        end_child(Path::new(PROC), member).await.unwrap();
-        assert!(ended(member));
+        let (_alone, alone) = sleeper(false);
+        end_child(Path::new(PROC), alone).await.unwrap();
+        assert!(ended(alone));
     }
 
     #[tokio::test]
@@ -346,7 +444,30 @@ mod tests {
             ..other
         };
         end_child(Path::new(PROC), reused).await.unwrap();
-        assert!(!ended(other));
+        assert!(!ends(other, Duration::from_millis(500)).await);
+    }
+
+    /// The bug: once the start time was checked, the group was killed by its number. The
+    /// leader could exit and be reaped meanwhile, and the number then name a group recover
+    /// never checked. Here the leader is reaped right after the check, and the rest of its
+    /// group stands for such a group: it is left alone.
+    #[tokio::test]
+    async fn a_group_whose_leader_exited_after_the_check_isnt_killed() {
+        let (mut group, leader, member, member_pidfd) = leader_with_member().await;
+        let (target, pidfd) = pin(leader.pid).unwrap().unwrap();
+        assert_eq!(ending(Path::new(PROC), leader), Ending::Group);
+        group.start_kill().unwrap();
+        group.wait().await.unwrap();
+        let killed = kill_group(Path::new(PROC), leader, target, &pidfd).await;
+        assert!(
+            matches!(killed, Ok(()) | Err(rustix::io::Errno::SRCH)),
+            "{killed:?}"
+        );
+        assert!(
+            !ends(member, Duration::from_millis(500)).await,
+            "a group recover didn't check was killed"
+        );
+        pidfd_send_signal(&member_pidfd, Signal::KILL).unwrap();
     }
 
     /// The bug: a marker naming PID 1 at init's start time took init for the child, which
@@ -365,9 +486,9 @@ mod tests {
             std::fs::write(process.join("stat"), stat).unwrap();
         }
         let named = |pid| Child { pid, start_time: 1 };
-        assert_eq!(ending(&root, named(1)), Ok(Ending::Init));
+        assert_eq!(ending(&root, named(1)), Ending::Init);
         // The same stat under another PID is a child leading its own group.
-        assert!(matches!(ending(&root, named(7)), Ok(Ending::Group(_))));
+        assert_eq!(ending(&root, named(7)), Ending::Group);
         std::fs::remove_dir_all(root).unwrap();
     }
 }
