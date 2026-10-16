@@ -143,14 +143,14 @@ async fn settled(socket: &Socket, waiter: &mut Waiter, before: Option<u64>, grou
     }
 }
 
-/// The stroke that commits the call: the submitting `Return`, or the only key of a `key`
-/// call with one. niri sends keys to a window it has just focused before its event stream
-/// reports the move, so before that stroke niri itself is asked which window has focus.
+/// The stroke that commits the call: the submitting `Return`, or the last key of a `key`
+/// call, such as the `Return` of `["Down", "Down", "Return"]`. niri sends keys to a window
+/// it has just focused before its event stream reports the move, so before that stroke
+/// niri itself is asked which window has focus.
 const fn decisive(typing: &Typing, keys: usize) -> Option<usize> {
     match typing {
-        Typing::Text { submit: true, .. } => keys.checked_sub(1),
-        Typing::Keys(combos) if combos.len() == 1 => Some(0),
-        Typing::Text { .. } | Typing::Keys(_) => None,
+        Typing::Text { submit: true, .. } | Typing::Keys(_) => keys.checked_sub(1),
+        Typing::Text { .. } => None,
     }
 }
 
@@ -970,6 +970,24 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// The last key of a `key` call with several, such as the `Return` of
+    /// `["Down", "Down", "Return"]`, doesn't go out once niri has given another window focus
+    /// that its event stream hasn't reported.
+    #[tokio::test]
+    async fn the_last_of_several_keys_waits_for_niri_to_confirm_focus() {
+        let dir = fresh_dir("native-quiet-last-key");
+        let niri = Compositor::start(&dir, BASE);
+        niri.focus_quietly_at(2, Some(2)).await;
+        let outcome = type_through(&niri, &dir, three_keys(), None).await.unwrap();
+        assert_eq!(niri.seen().keys, presses(&[Z, A].map(character)));
+        assert_eq!(
+            (outcome.observed, outcome.pressed),
+            (Observed::Interrupted, Some(2))
+        );
+        marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     /// niri can't say where focus is once the keys went out: the call isn't `sent` but
     /// `uncertain`, with niri's message.
     #[tokio::test]
@@ -977,7 +995,7 @@ mod tests {
         let dir = fresh_dir("native-focus-unanswered");
         let niri = Compositor::start(&dir, BASE);
         niri.fail_focus_at(1, "niri is shutting down").await;
-        let outcome = type_through(&niri, &dir, three_keys(), None).await.unwrap();
+        let outcome = type_through(&niri, &dir, text("zaz"), None).await.unwrap();
         assert_eq!(
             (outcome.observed, outcome.accepted),
             (Observed::Uncertain, Some(true))
@@ -985,6 +1003,33 @@ mod tests {
         let detail = outcome.detail.unwrap_or_default();
         assert!(detail.contains("niri is shutting down"), "{detail}");
         assert_eq!(niri.seen().keys, presses(&[Z, A, Z].map(character)));
+        marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// niri can't say where focus is before a `key` call's last key: that key doesn't go
+    /// out, and the failure counts the keys that did.
+    #[tokio::test]
+    async fn no_answer_on_focus_before_the_last_key_keeps_it_back() {
+        let dir = fresh_dir("native-focus-unanswered-key");
+        let niri = Compositor::start(&dir, BASE);
+        niri.fail_focus_at(1, "niri is shutting down").await;
+        let Err(CallError::Tool(error)) = type_through(&niri, &dir, three_keys(), None).await
+        else {
+            panic!("the last key wasn't refused");
+        };
+        assert!(error.may_have_sent);
+        assert!(
+            error.detail.starts_with("pressed 2 of 3"),
+            "{}",
+            error.detail
+        );
+        assert!(
+            error.detail.contains("niri is shutting down"),
+            "{}",
+            error.detail
+        );
+        assert_eq!(niri.seen().keys, presses(&[Z, A].map(character)));
         marker_cleared(&niri, &dir).await;
         std::fs::remove_dir_all(dir).unwrap();
     }
