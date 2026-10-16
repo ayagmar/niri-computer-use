@@ -1105,8 +1105,10 @@ mod tests {
         }
     }
 
-    /// A screenshot ref of the whole of the fake's output at scale 1, taken now.
+    /// A screenshot ref of the whole of the fake's output at scale 1, taken now and settled
+    /// then, since the event stream counts its initial state as a move.
     async fn whole_output(bench: &Bench) -> Shot {
+        bench.events.desktop().await.unwrap();
         let outputs = niri::outputs(&bench.socket).await.unwrap();
         let output = &outputs[crate::test_support::wayland::OUTPUT];
         let geometry = output.logical.unwrap();
@@ -1123,6 +1125,7 @@ mod tests {
             scale: 1.0,
             width: geometry.width,
             height: geometry.height,
+            steady_since: Some(Instant::now()),
             ..crate::test_support::shot()
         }
     }
@@ -1165,11 +1168,13 @@ mod tests {
             tile_pos_in_workspace_view: None,
             window_offset_in_tile: (0.0, 0.0),
         };
+        let resized = Instant::now();
         niri.event(niri_ipc::Event::WindowLayoutsChanged {
             changes: vec![(1, layout)],
         });
         let output = crate::test_support::wayland::OUTPUT;
-        while bench.events.shifted(output).await.unwrap().is_none() {
+        let shifted = async || bench.events.shifted(output).await.unwrap();
+        while shifted().await.is_none_or(|shifted| shifted.at < resized) {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
         niri.serve_held().await;

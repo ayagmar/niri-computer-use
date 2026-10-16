@@ -44,9 +44,12 @@ const PARSE_FAILURES: u32 = 2;
 /// kind, including one niri adds later, still ends the stream when it doesn't parse, since
 /// the state or a waiter may depend on it.
 const IGNORED: [&str; 3] = ["CastsChanged", "CastStartedOrChanged", "CastStopped"];
-/// What a pixel aim's refusal says moved when the stream reconnected (`Replica::shifted`).
+/// What a pixel aim's refusal says moved when a connection after the first got niri's
+/// initial state (`Replica::shifted`).
 const RECONNECTED: &str =
     "niri's event stream reconnected, and niri may have moved windows meanwhile,";
+/// What it says moved when the first connection got niri's initial state.
+const STARTED: &str = "the server had just started reading niri's events, and niri may have been moving windows then,";
 
 /// Events a waiter may fall behind by before it gives up. niri itself drops readers 64
 /// events behind.
@@ -92,11 +95,11 @@ struct Replica {
     /// still covers it while it animates away.
     floated: HashMap<String, Instant>,
     /// When niri last opened or closed the overview, which animates every output, or when
-    /// this replica got its initial state after a reconnect: a switch may have started
-    /// while the stream was down.
+    /// this replica got its initial state: a switch may have been under way as the server
+    /// started reading, or have started while the stream was down.
     everywhere: Option<Instant>,
     /// When the windows on each output last moved since the initial state, by output name
-    /// (`scene::moved`), or when this replica got its initial state after a reconnect.
+    /// (`scene::moved`), or when this replica got its initial state.
     shifted: HashMap<String, Shifted>,
 }
 
@@ -118,12 +121,18 @@ impl Replica {
             }
         }
         self.seq = seq;
-        if !initialized && self.initialized() && self.connection > 1 {
+        if !initialized && self.initialized() {
             let at = Instant::now();
             self.everywhere = Some(at);
-            // A switch or a move may have started while the stream was down.
+            // A switch or a move may have been under way as the server started reading, or
+            // have started while the stream was down.
+            let what = if self.connection > 1 {
+                RECONNECTED
+            } else {
+                STARTED
+            };
             for output in scene::scenes(&self.state).into_keys() {
-                let what = RECONNECTED.to_owned();
+                let what = what.to_owned();
                 self.shifted.insert(output, Shifted { at, what });
             }
         }
@@ -719,10 +728,13 @@ mod tests {
     }
 
     // A workspace switch animates on its own output, the overview on every output, and
-    // niri's initial state is a change only after a reconnect.
+    // niri's initial state counts as a change on every output, on every connection.
     #[tokio::test(start_paused = true)]
     async fn a_workspace_switch_or_the_overview_animates_the_outputs_it_moves() {
-        let mut replica = Replica::default();
+        let mut replica = Replica {
+            connection: 1,
+            ..Replica::default()
+        };
         let workspaces = vec![
             workspace_on(1, "DP-1", true),
             workspace_on(2, "DP-1", false),
@@ -731,9 +743,13 @@ mod tests {
         replica.apply(1, Event::WorkspacesChanged { workspaces });
         replica.apply(2, Event::WindowsChanged { windows: vec![] });
         replica.apply(3, Event::OverviewOpenedOrClosed { is_open: false });
-        assert_eq!(replica.animated("DP-1", 9), None);
-        // The first connection's initial state is no change.
-        assert_eq!(replica.shifted.get("DP-1"), None);
+        // A switch or a move may have been under way when the server started reading.
+        let started = Instant::now();
+        assert_eq!(replica.animated("DP-1", 9), Some(started));
+        let stamp = replica.shifted.get("DP-1").cloned();
+        let what = stamp.map(|shifted| (shifted.at, shifted.what));
+        assert_eq!(what, Some((started, STARTED.to_owned())));
+        tokio::time::advance(Duration::from_secs(5)).await;
         let switched = Instant::now();
         replica.apply(
             4,
@@ -743,7 +759,7 @@ mod tests {
             },
         );
         assert_eq!(replica.animated("DP-1", 9), Some(switched));
-        assert_eq!(replica.animated("HDMI-A-1", 9), None);
+        assert_eq!(replica.animated("HDMI-A-1", 9), Some(started));
         tokio::time::advance(Duration::from_secs(5)).await;
         let toggled = Instant::now();
         replica.apply(5, Event::OverviewOpenedOrClosed { is_open: true });
@@ -783,20 +799,22 @@ mod tests {
         let windows = vec![first.clone()];
         replica.apply(2, Event::WindowsChanged { windows });
         replica.apply(3, Event::OverviewOpenedOrClosed { is_open: false });
+        let started = Instant::now();
+        tokio::time::advance(Duration::from_secs(5)).await;
         let retitled = Window {
             title: Some("another".to_owned()),
             is_focused: false,
             ..first.clone()
         };
         replica.apply(4, Event::WindowOpenedOrChanged { window: retitled });
-        assert_eq!(replica.animated("DP-1", 7), None);
+        assert_eq!(replica.animated("DP-1", 7), Some(started));
         let moved = Instant::now();
         let mut layout = first.layout.clone();
         layout.tile_pos_in_workspace_view = Some((40.0, 0.0));
         let changes = vec![(7, layout)];
         replica.apply(5, Event::WindowLayoutsChanged { changes });
         assert_eq!(replica.animated("DP-1", 7), Some(moved));
-        assert_eq!(replica.animated("DP-1", 8), None);
+        assert_eq!(replica.animated("DP-1", 8), Some(started));
         tokio::time::advance(Duration::from_secs(5)).await;
         let opened = Instant::now();
         let second = window(8, None, 1, false);
@@ -804,7 +822,7 @@ mod tests {
         assert_eq!(replica.animated("DP-1", 8), Some(opened));
         assert_eq!(replica.animated("DP-1", 7), Some(moved));
         replica.apply(7, Event::WindowClosed { id: 8 });
-        assert_eq!(replica.animated("DP-1", 8), None);
+        assert_eq!(replica.animated("DP-1", 8), Some(started));
     }
 
     // A window niri moves or resizes again within the settle interval of the time before
@@ -881,10 +899,12 @@ mod tests {
         ];
         replica.apply(2, Event::WindowsChanged { windows });
         replica.apply(3, Event::OverviewOpenedOrClosed { is_open: false });
+        let started = Instant::now();
+        tokio::time::advance(Duration::from_secs(5)).await;
         replica.apply(4, moved(&tiled));
         replica.apply(5, moved(&elsewhere));
         replica.apply(6, moved(&hidden));
-        assert_eq!(replica.animated("DP-1", 7), None);
+        assert_eq!(replica.animated("DP-1", 7), Some(started));
         let covering = Instant::now();
         replica.apply(7, moved(&floating(8, 1)));
         assert_eq!(replica.animated("DP-1", 7), Some(covering));
@@ -920,12 +940,14 @@ mod tests {
         replica.apply(1, workspaces(1, false));
         replica.apply(2, Event::WindowsChanged { windows: vec![] });
         replica.apply(3, Event::OverviewOpenedOrClosed { is_open: false });
+        let started = Instant::now();
+        tokio::time::advance(Duration::from_secs(5)).await;
         replica.apply(4, workspaces(1, false));
-        assert_eq!(replica.animated("DP-1", 9), None);
+        assert_eq!(replica.animated("DP-1", 9), Some(started));
         let switched = Instant::now();
         replica.apply(5, workspaces(2, false));
         assert_eq!(replica.animated("DP-1", 9), Some(switched));
-        assert_eq!(replica.animated("HDMI-A-1", 9), None);
+        assert_eq!(replica.animated("HDMI-A-1", 9), Some(started));
         tokio::time::advance(Duration::from_secs(5)).await;
         let added = Instant::now();
         replica.apply(6, workspaces(2, true));

@@ -22,6 +22,8 @@ const ODD_ACTION: &str = "open ACTION-SENTINEL";
 pub(crate) const WINDOW: u64 = 1;
 /// The app ID the policy denies, which no window has until a test gives one it.
 const DENIED: &str = "org.ncu.Denied";
+/// How long after niri's initial state the server counts the view as possibly moving.
+const SETTLE: Duration = Duration::from_secs(1);
 
 /// A server holding the lease on a fake niri, whose focused window 1 is the mock
 /// application's, beside window 2 of another app.
@@ -82,6 +84,20 @@ impl Desk {
     /// A desk whose mock application has `frames` under its root, holding `objects`, and
     /// whose niri has `windows`.
     async fn start_with(
+        name: &str,
+        frames: &[&str],
+        objects: Vec<(&'static str, Object)>,
+        windows: &[Value],
+    ) -> Self {
+        let mut desk = Self::starting(name, frames, objects, windows).await;
+        // The server counts its first second of niri's events as the view moving.
+        desk.server.structured("desktop_state").await;
+        tokio::time::sleep(SETTLE).await;
+        desk
+    }
+
+    /// As `start_with`, without waiting out the server's first second.
+    async fn starting(
         name: &str,
         frames: &[&str],
         objects: Vec<(&'static str, Object)>,
@@ -3387,6 +3403,30 @@ async fn an_element_just_uncovered_by_another_window_moving_away_waits_a_second(
     refused_moving(&refused, "moved away");
     assert_eq!(desk.fixture.clipboard.pointed(), []);
     tokio::time::sleep(Duration::from_millis(1100)).await;
+    let clicked = desk.server.call("click", aimed).await;
+    assert_eq!(clicked["isError"], false, "{clicked}");
+    assert_eq!(desk.fixture.clipboard.pointed().len(), 3);
+}
+
+// The bug: the first connection's initial state counted as no move, so an element aim in
+// the server's first second went out while a switch or a move already under way when it
+// started reading niri's events may still have been moving the view.
+#[tokio::test]
+async fn an_element_is_not_aimed_at_in_the_servers_first_second() {
+    let windows = [floating_window()];
+    let mut desk = Desk::starting("el-started", &["/frame"], objects(), &windows).await;
+    let button = desk.element("Safe").await;
+    let shot = desk.screenshot_ref().await;
+    let aimed = json!({"screenshot_ref": shot, "element": button});
+    let refused = desk.server.call("click", aimed.clone()).await;
+    refused_moving(&refused, "just started");
+    let (_, detail) = tool_error(&refused);
+    assert!(
+        detail.contains("had only just started reading niri's events"),
+        "{detail}"
+    );
+    assert_eq!(desk.fixture.clipboard.pointed(), []);
+    tokio::time::sleep(SETTLE).await;
     let clicked = desk.server.call("click", aimed).await;
     assert_eq!(clicked["isError"], false, "{clicked}");
     assert_eq!(desk.fixture.clipboard.pointed().len(), 3);

@@ -1873,3 +1873,12 @@ v2.9.2 is the newest release; it is over 7 days old.
 - `recover` now treats PID 1 as no input child and says so; no 0.1.0 server could have one there. The protocol test names PID 4,194,304, the kernel's `PID_MAX_LIMIT`, which no process gets, so it names no real process, as the 2026-10-08 entry requires of the `recover` tests.
 - Tests: a unit test reads a fake `/proc` whose PID 1 and PID 7 have the same stat, and requires PID 1 to be refused and PID 7 to be ended by its group. It calls only the decision, so a regression fails without sending a signal. The protocol test now requires `recover` to say the child has exited.
 - No dependency was added.
+
+## 2026-10-16: the first connection's initial state counts as a move
+
+- The 2026-10-12 entry stamped the initial state only of a connection after the first, so the server wouldn't refuse element aims in its first second. The same reason holds at the start: the server, standalone or as the shared engine, starts reading niri's events when it starts, and a client's first call can follow right away, while niri may still be animating a switch or a scroll the user started. A plain screenshot taken then aimed as if nothing had moved, and so did an element aim. Sol's and Fable's third checks found it.
+- Every connection's initial state now stamps every output with a workspace, and `everywhere`, the stamp element aims read. The pixel aim's refusal names the cause: "the server had just started reading niri's events" on the first connection, "niri's event stream reconnected" on later ones. The element refusal's detail names both.
+- Cost: in the server's first second, a plain screenshot can't be aimed at by pixel, and an element aim is refused as `not_showing`. The pixel refusal's advice, a screenshot that waited for the screen to settle, passes, since its capture settled after the stamp; an element aim passes a second later.
+- Tests: a protocol test takes a plain screenshot and a settled one right after the server gets niri's initial state, and requires the plain one's click to fail with the new detail and the settled one's to go out. Another lists an element right away and requires its click to fail as moving, and to go out a second later. Both failed before the change, with the clicks sent. The unit test of the replica now requires the first connection's stamp. The act and elements test desks wait out the first second, and the pointer's unit tests take their screenshot as settled.
+- No dependency was added.
+

@@ -11,6 +11,9 @@ use crate::fixture::{DISPLAY, Fixture, jpeg, shared_mode};
 use crate::niri::{Niri, Stream, output, window_on};
 use crate::noctalia::{self, LOCKED, UNLOCKED};
 
+/// How long after niri's initial state the server counts the windows as possibly moving.
+const SETTLE: Duration = Duration::from_secs(1);
+
 /// A server holding the lease on a fake niri, with windows 1 (focused, `a`), 2 (`b`) and
 /// 3 (`c`) on workspace 1 of two, Noctalia saying the screen is unlocked, and a grim that
 /// captures the focused 2560x1440 output at the default 1280 pixels wide.
@@ -32,6 +35,15 @@ impl Desk {
 
     /// As `start`, with these variables in the server's environment.
     async fn start_with(name: &str, policy: &str, vars: &[(&'static str, &str)]) -> Self {
+        let mut desk = Self::starting(name, policy, vars).await;
+        // A screenshot taken before then can't be aimed at by pixel.
+        desk.server.structured("desktop_state").await;
+        tokio::time::sleep(SETTLE).await;
+        desk
+    }
+
+    /// As `start_with`, without waiting out the server's first second.
+    async fn starting(name: &str, policy: &str, vars: &[(&'static str, &str)]) -> Self {
         let mut fixture = Fixture::new(name);
         for (variable, value) in vars {
             fixture.set(variable, value);
@@ -1072,6 +1084,27 @@ async fn a_pixel_aim_is_refused_through_a_screenshot_taken_right_after_a_reconne
         why.starts_with(moved) && why.contains(" ms before the screenshot"),
         "{why}"
     );
+}
+
+// The bug: the first connection's stamps started empty, so a screenshot taken as the
+// server started, while a switch or a move already under way may still have been
+// animating, aimed as if nothing had moved.
+#[tokio::test]
+async fn a_pixel_aim_is_refused_through_a_screenshot_taken_as_the_server_starts() {
+    let mut desk = Desk::starting("act-started", "", &[]).await;
+    let early = screenshot_ref(&mut desk).await;
+    let settled = settled_ref(&mut desk).await;
+    desk.unplug_display();
+    let at = |id: &str| json!({"screenshot_ref": id, "x": 10, "y": 10});
+    let (_, why) = tool_error(&desk.server.call("click", at(&early)).await);
+    let moved = "layout_changed: the server had just started reading niri's events, and niri may have been moving windows then, ";
+    assert!(
+        why.starts_with(moved) && why.contains(" ms before the screenshot"),
+        "{why}"
+    );
+    // The refusal's advice, a screenshot that waited for the screen to settle, gets through.
+    let (name, unconnected) = tool_error(&desk.server.call("click", at(&settled)).await);
+    assert_eq!(name, "upstream_error", "{unconnected}");
 }
 
 #[tokio::test]
