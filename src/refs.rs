@@ -455,6 +455,17 @@ impl Refs {
         self.views.remove(&session);
     }
 
+    /// Drops the screenshot ref `id`, whichever list keeps it.
+    pub(crate) fn discard(&mut self, id: &str) {
+        let Some(wanted) = self.number(id, "shot") else {
+            return;
+        };
+        self.shots.retain(|(issued, _)| *issued != wanted);
+        for views in self.views.values_mut() {
+            views.shots.retain(|(issued, _)| *issued != wanted);
+        }
+    }
+
     /// The ref named `id` that `session` took without the lease.
     pub(crate) fn view(&self, session: SessionId, id: &str) -> Result<Shot, ToolError> {
         let wanted = self.number(id, "shot");
