@@ -1856,3 +1856,11 @@ v2.9.2 is the newest release; it is over 7 days old.
 - Cost: one more niri round trip in each `key` call and each `type_text` with `submit`. It was not measured with `make nested-latency`; the round trip after the last key, which is the same request, added about 0.5 ms there.
 - Tests: unit tests against the fake niri send focus to another window quietly before the submitting `Return`, before a one-key call's key and before the last of three keys, report a focus move on the stream while niri answers the request before the key, and fail that request. Each checks that the key isn't among those the fake received. The four that move focus failed before their changes, with the key sent.
 - No dependency was added.
+
+## 2026-10-16: a walk the wait's end cut short keeps the earlier walk's verdict
+
+- On GitHub's x86 runner, the protocol test of an `absent` wait whose match stays timed out with `the last walk was cut short: budget_exhausted` where it expects no `detail`. The walks before had read the whole tree; on the loaded runner the last one began a few milliseconds before `by`, 50 ms before `timeout_ms`, so `elements::poll` gave it almost no budget and it came back cut short. The timeout gave that walk's verdict, which tells the agent to narrow a condition whose walks had read the whole tree.
+- `wait::watch` now notes whether a walk returned at or after `by`. Such a walk cut short by its budget was cut by the wait's end, not by the tree, so it keeps the verdict of the walk before it. A wait whose only walk the wait's end cut short still says so, since that walk is all it read.
+- The other option was not starting a walk with less time left than the last one took. Walk times vary on a loaded machine, so a walk could still be cut, and the wait would read less often near its end.
+- Tests: a unit test with paused time has a whole walk, then one that runs to `by` and comes back cut short, and requires no `detail`; with only the cut walk, it requires the `budget_exhausted` detail. It failed before the change with the CI failure's detail. The protocol test is unchanged: beside 64 CPU burners on a 32-thread machine, with eight copies running at once, it failed 20 of 120 runs before the change, all with that detail, and 0 of 320 after.
+- No dependency was added.

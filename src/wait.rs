@@ -317,7 +317,9 @@ where
 /// spends at most half the wait answering. niri's event stream ends the wait the moment
 /// the window closes, mid-walk too; without the stream, the next walk finds it gone. An
 /// app that leaves the bus after a walk read it gets one more walk before the wait ends
-/// `not_accessible`, so its window closing can end it `window_gone`.
+/// `not_accessible`, so its window closing can end it `window_gone`. A timeout's `detail`
+/// says why the last walk didn't read the whole tree, unless the wait's end cut it short
+/// after an earlier walk, whose verdict it then gives.
 async fn watch<F>(
     mut waiter: Waiter,
     element: &Element,
@@ -329,7 +331,7 @@ where
 {
     let started = Instant::now();
     let id = element.window_id;
-    let (mut cut, mut read) = (None, false);
+    let (mut last, mut before, mut read) = (None, false, false);
     let by = deadline.checked_sub(RESERVE).unwrap_or(deadline);
     let walking = async {
         loop {
@@ -337,12 +339,21 @@ where
                 std::future::pending::<()>().await;
             }
             let walk = Instant::now();
-            match check(element, poll(by).await)? {
+            let polled = poll(by).await;
+            let out_of_time = Instant::now() >= by;
+            match check(element, polled)? {
                 // An app that quits leaves the bus as niri closes its window, and may leave
                 // first: after a walk that read it, look once more.
                 Checked::Ends(Ended::NotAccessible, ..) if read => read = false,
                 Checked::Ends(ended, appeared, detail) => return Ok((ended, appeared, detail)),
-                Checked::Unmet(capped) => (cut, read) = (capped, true),
+                // A walk the wait's end cut short read only what the wait left it time for,
+                // so the walk before it, which ran its course, says more.
+                Checked::Unmet(Some(Short::Cut(Capped::BudgetExhausted)))
+                    if out_of_time && before =>
+                {
+                    read = true;
+                }
+                Checked::Unmet(short) => (last, before, read) = (short, true, true),
             }
             tokio::time::sleep(walk.elapsed().max(PAUSE)).await;
         }
@@ -359,7 +370,7 @@ where
         biased;
         gone = closed => Ok(gone),
         walked = tokio::time::timeout_at(deadline, walking) => walked.unwrap_or_else(|_| {
-            Ok((Ended::Timeout, None, cut.map(Short::detail)))
+            Ok((Ended::Timeout, None, last.map(Short::detail)))
         }),
     };
     let (observed, appeared, detail) = ended?;
@@ -593,6 +604,37 @@ mod tests {
         let (met, walks, _) = watched(&save_button(true), limit, gone).await;
         assert_eq!((met.observed, met.element, walks), (Ended::Met, None, 2));
         assert_eq!(met.windows, [1]);
+    }
+
+    // The bug: a walk begun with little of the wait left, as on a slow machine, which the
+    // wait's end cut short, made a timeout say the last walk was cut short though the walk
+    // before it had read the whole tree. Walk 1 starts at 290 ms and runs to `by`, 390 ms.
+    #[tokio::test(start_paused = true)]
+    async fn a_walk_the_waits_end_cuts_short_doesnt_hide_the_whole_walk_before_it() {
+        let ran_out = |walk| match walk {
+            0 => (WALK, Ok(Some(listing(&["elem-ab-1"], None)))),
+            _ => (
+                Duration::from_millis(100),
+                Ok(Some(listing(&[], Some(Capped::BudgetExhausted)))),
+            ),
+        };
+        let limit = Duration::from_millis(440);
+        let (report, walks, _) = watched(&save_button(true), limit, ran_out).await;
+        assert_eq!((report.observed, walks), (Ended::Timeout, 2));
+        assert_eq!(report.detail, None);
+        // With no walk before it, the cut walk is all the wait read, and the timeout says so.
+        let only = |_| {
+            (
+                Duration::from_millis(390),
+                Ok(Some(listing(&[], Some(Capped::BudgetExhausted)))),
+            )
+        };
+        let (alone, walks_alone, _) = watched(&save_button(true), limit, only).await;
+        assert_eq!((alone.observed, walks_alone), (Ended::Timeout, 1));
+        assert_eq!(
+            alone.detail.as_deref(),
+            Some("the last walk was cut short: budget_exhausted")
+        );
     }
 
     // The bug: a closed window left to the timeout, or to the end of a walk of an app that
