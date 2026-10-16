@@ -4,6 +4,7 @@ pub(crate) mod events;
 pub(crate) mod keyboard;
 pub(crate) mod pointer;
 mod request;
+pub(crate) mod scene;
 pub(crate) mod selection;
 pub(crate) mod version;
 pub(crate) mod waiter;
@@ -18,7 +19,8 @@ use serde::Serialize;
 
 use crate::error::{ErrorName, ToolError, Unanswered};
 use events::{DesktopState, EventStream};
-use waiter::{View, Waiter};
+use scene::Shifted;
+use waiter::Waiter;
 
 /// The server's event stream, or why it has none: the socket's error.
 pub(crate) type Events<'a> = Result<&'a EventStream, &'a ToolError>;
@@ -204,9 +206,12 @@ pub(crate) async fn desktop(events: Events<'_>) -> Result<DesktopState, ToolErro
     events.map_err(Clone::clone)?.desktop().await
 }
 
-/// The windows, workspaces and overview in niri's replayed state now.
-pub(crate) async fn view(events: Events<'_>) -> Result<View, ToolError> {
-    events.map_err(Clone::clone)?.view().await
+/// When the windows on `output` last moved, and how (`EventStream::shifted`).
+pub(crate) async fn shifted(
+    events: Events<'_>,
+    output: &str,
+) -> Result<Option<Shifted>, ToolError> {
+    events.map_err(Clone::clone)?.shifted(output).await
 }
 
 /// Registers a waiter on niri's event stream, before an action is dispatched.

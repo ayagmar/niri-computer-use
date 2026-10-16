@@ -137,15 +137,32 @@ struct Unkept {
     stretch: u64,
 }
 
-/// The latest screenshot a settle wait took, kept as a ref only once the wait returns it. A
-/// wait of seconds takes a capture every 100 ms or so; a ref for each, even one dropped at
-/// the next capture, would push the agent's own refs out of the 64 a lease keeps.
+/// The latest screenshot a settle wait took, kept as a ref only once the wait returns it,
+/// and when the one before it started. A wait of seconds takes a capture every 100 ms or
+/// so; a ref for each, even one dropped at the next capture, would push the agent's own refs
+/// out of the 64 a lease keeps.
 #[derive(Debug, Default)]
-struct Frames(Mutex<Option<Unkept>>);
+struct Frames(Mutex<(Option<Unkept>, Option<Instant>)>);
 
 impl Frames {
-    fn latest(&self) -> Option<Unkept> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner).take()
+    /// Makes `unkept` the latest.
+    fn take(&self, unkept: Option<Unkept>) {
+        let mut frames = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let before = frames.0.as_ref().map(|earlier| earlier.shot.taken);
+        *frames = (unkept, before);
+    }
+
+    /// The latest, which the wait returns: when `settled`, it matched the one before, so
+    /// the screen didn't change from that one's start on.
+    fn latest(&self, settled: Option<bool>) -> Option<Unkept> {
+        let (unkept, before) =
+            std::mem::take(&mut *self.0.lock().unwrap_or_else(PoisonError::into_inner));
+        unkept.map(|mut unkept| {
+            if settled == Some(true) {
+                unkept.shot.steady_since = before;
+            }
+            unkept
+        })
     }
 }
 
@@ -717,7 +734,7 @@ impl Engine {
         frames: &Frames,
     ) -> Result<observe::Screenshot, CallError> {
         let (shot, unkept) = self.take(session, request).await?;
-        *frames.0.lock().unwrap_or_else(PoisonError::into_inner) = unkept;
+        frames.take(unkept);
         Ok(shot)
     }
 
@@ -729,7 +746,7 @@ impl Engine {
         mut shot: observe::Screenshot,
     ) -> observe::Screenshot {
         shot.metadata.screenshot_ref = frames
-            .latest()
+            .latest(shot.metadata.settled)
             .and_then(|unkept| self.keep(session, unkept));
         shot
     }
@@ -756,20 +773,15 @@ impl Engine {
         let lease = self.desk.ref_lease(session);
         let stretch = self.desk.stretch(session);
         let connection = self.events.as_ref().ok().and_then(EventStream::connection);
-        // Without a connection there is no ref to keep, and no initial state to wait for.
-        let view = match connection {
-            Some(_) => niri::view(self.events.as_ref()).await.ok(),
-            None => None,
-        };
         let taken = Instant::now();
         let place = session.settings().place();
         let shot =
             observe::screenshot(&self.env.niri_socket, &self.env.display, place, &request).await?;
-        let (Some(connection), Some(view)) = (connection, view) else {
+        let Some(connection) = connection else {
             return Ok((shot, None));
         };
         let unkept = Unkept {
-            shot: Shot::of(&shot, taken, connection, &view),
+            shot: Shot::of(&shot, taken, connection),
             lease,
             stretch,
         };
@@ -865,7 +877,7 @@ impl Engine {
         };
         if let Some(screenshot) = &mut evidenced.outcome.screenshot {
             screenshot.screenshot_ref = frames
-                .latest()
+                .latest(screenshot.settled)
                 .and_then(|unkept| self.keep(session, unkept));
         }
         let wait = quiet.wait(shoot, evidenced.outcome.observed);

@@ -27,6 +27,7 @@ use tokio::net::UnixStream;
 use tokio::sync::{broadcast, watch};
 use tokio::time::Instant;
 
+use super::scene::{self, Shifted};
 use super::waiter::{Numbers, Update, View, Waiter, relaid_by};
 use crate::error::{ErrorName, ToolError};
 
@@ -90,11 +91,15 @@ struct Replica {
     /// this replica got its initial state after a reconnect: a switch may have started
     /// while the stream was down.
     everywhere: Option<Instant>,
+    /// When the windows on each output last moved since the initial state, by output name
+    /// (`scene::moved`).
+    shifted: HashMap<String, Shifted>,
 }
 
 impl Replica {
     fn apply(&mut self, seq: u64, event: Event) {
         let initialized = self.initialized();
+        let before = initialized.then(|| scene::scenes(&self.state));
         if initialized {
             self.note_animation(&event);
         }
@@ -102,6 +107,12 @@ impl Replica {
         self.windows |= matches!(event, Event::WindowsChanged { .. });
         self.overview |= matches!(event, Event::OverviewOpenedOrClosed { .. });
         self.state.apply(event);
+        if let Some(before) = before {
+            let at = Instant::now();
+            for (output, what) in scene::moved(&before, &scene::scenes(&self.state)) {
+                self.shifted.insert(output, Shifted { at, what });
+            }
+        }
         self.seq = seq;
         if !initialized && self.initialized() && self.connection > 1 {
             self.everywhere = Some(Instant::now());
@@ -372,10 +383,10 @@ impl EventStream {
             .await
     }
 
-    /// The windows, workspaces and overview now, as a waiter would start from them. Waits
-    /// up to two seconds for niri's initial state.
-    pub(crate) async fn view(&self) -> Result<View, ToolError> {
-        self.current(DEADLINE, |replica| View::of(&replica.state))
+    /// When the windows on `output` last moved, and how, since the initial state of the
+    /// current connection. Waits up to two seconds for niri's initial state.
+    pub(crate) async fn shifted(&self, output: &str) -> Result<Option<Shifted>, ToolError> {
+        self.current(DEADLINE, |replica| replica.shifted.get(output).cloned())
             .await
     }
 

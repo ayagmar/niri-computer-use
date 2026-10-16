@@ -97,7 +97,7 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 ### `ref_invalid`
 
-**Cause:** a pointer tool's `screenshot_ref`, or the one a `screenshot` zooms into, can't be used. The `detail` starts with the reason: `unknown_ref` (not a screenshot of this lease, or niri's event stream reconnected since), `expired` (over 60 seconds old), `output_changed` (the output moved, resized, changed scale or transform, or is gone), `layout_changed` (niri moved, resized, opened or closed a window on that output, switched its workspace, opened or closed the overview, or the view follows another window there now, as after a focus change; a pixel aim only) or `out_of_bounds` (the pixel is outside the image).
+**Cause:** a pointer tool's `screenshot_ref`, or the one a `screenshot` zooms into, can't be used. The `detail` starts with the reason: `unknown_ref` (not a screenshot of this lease, or niri's event stream reconnected since), `expired` (over 60 seconds old), `output_changed` (the output moved, resized, changed scale or transform, or is gone), `layout_changed` (niri moved, resized, opened or closed a window on that output, switched its workspace, opened or closed the overview, or the view followed another window there, as after a focus change, after the capture began or less than a second before it, unless the screenshot settled after that; a pixel aim only) or `out_of_bounds` (the pixel is outside the image).
 
 **What to do:** take a new screenshot and aim from it; for `out_of_bounds`, use a pixel inside the image.
 

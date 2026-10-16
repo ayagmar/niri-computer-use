@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use niri_ipc::state::{
-    EventStreamState, EventStreamStatePart as _, KeyboardLayoutsState, OverviewState, WindowsState,
+    EventStreamState, EventStreamStatePart as _, KeyboardLayoutsState, WindowsState,
     WorkspacesState,
 };
 use niri_ipc::{Event, Window, Workspace};
@@ -34,13 +34,12 @@ pub(crate) struct Numbers {
     pub(crate) connection: u64,
 }
 
-/// The windows, workspaces and overview as one waiter sees them.
+/// The windows and workspaces as one waiter sees them.
 #[derive(Debug, Default)]
 pub(crate) struct View {
     windows: WindowsState,
     workspaces: WorkspacesState,
     keyboard_layouts: KeyboardLayoutsState,
-    overview: OverviewState,
 }
 
 impl View {
@@ -55,18 +54,14 @@ impl View {
             keyboard_layouts: KeyboardLayoutsState {
                 keyboard_layouts: state.keyboard_layouts.keyboard_layouts.clone(),
             },
-            overview: OverviewState {
-                is_open: state.overview.is_open,
-            },
         }
     }
 
     fn apply(&mut self, event: Event) {
         if let Some(event) = self.workspaces.apply(event)
             && let Some(event) = self.windows.apply(event)
-            && let Some(event) = self.keyboard_layouts.apply(event)
         {
-            self.overview.apply(event);
+            self.keyboard_layouts.apply(event);
         }
     }
 
@@ -83,10 +78,6 @@ impl View {
 
     pub(crate) const fn workspaces(&self) -> &HashMap<u64, Workspace> {
         &self.workspaces.workspaces
-    }
-
-    pub(crate) const fn overview_open(&self) -> bool {
-        self.overview.is_open
     }
 
     /// The window with keyboard focus, if focus is on a window.

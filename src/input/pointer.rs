@@ -333,7 +333,11 @@ pub(crate) async fn point(
         .and_then(niri::events::EventStream::connection);
     shot.check(Instant::now(), &outputs, connection)?;
     if gesture.has_pixel() {
-        shot.unmoved(waiter.view())?;
+        shot.unmoved(
+            niri::shifted(input.niri.events, &shot.output)
+                .await?
+                .as_ref(),
+        )?;
     }
     let tool = gesture.tool();
     let button = gesture.button();
@@ -879,7 +883,6 @@ async fn release(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::refs::scene::Scene;
 
     fn at(x: u32) -> Aim {
         Aim {
@@ -1095,9 +1098,7 @@ mod tests {
         let outputs = niri::outputs(socket).await.unwrap();
         let output = &outputs[crate::test_support::wayland::OUTPUT];
         let geometry = output.logical.unwrap();
-        let view = niri::view(input.niri.events).await.unwrap();
         let shot = Shot {
-            scene: Scene::of(&view, &output.name),
             output: output.name.clone(),
             geometry,
             motion_geometry: crate::coords::motion_geometry(output),
