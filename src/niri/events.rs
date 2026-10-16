@@ -44,6 +44,10 @@ const PARSE_FAILURES: u32 = 2;
 /// kind, including one niri adds later, still ends the stream when it doesn't parse, since
 /// the state or a waiter may depend on it.
 const IGNORED: [&str; 3] = ["CastsChanged", "CastStartedOrChanged", "CastStopped"];
+/// What a pixel aim's refusal says moved when the stream reconnected (`Replica::shifted`).
+const RECONNECTED: &str =
+    "niri's event stream reconnected, and niri may have moved windows meanwhile,";
+
 /// Events a waiter may fall behind by before it gives up. niri itself drops readers 64
 /// events behind.
 const UPDATES: usize = 256;
@@ -92,7 +96,7 @@ struct Replica {
     /// while the stream was down.
     everywhere: Option<Instant>,
     /// When the windows on each output last moved since the initial state, by output name
-    /// (`scene::moved`).
+    /// (`scene::moved`), or when this replica got its initial state after a reconnect.
     shifted: HashMap<String, Shifted>,
 }
 
@@ -115,7 +119,13 @@ impl Replica {
         }
         self.seq = seq;
         if !initialized && self.initialized() && self.connection > 1 {
-            self.everywhere = Some(Instant::now());
+            let at = Instant::now();
+            self.everywhere = Some(at);
+            // A switch or a move may have started while the stream was down.
+            for output in scene::scenes(&self.state).into_keys() {
+                let what = RECONNECTED.to_owned();
+                self.shifted.insert(output, Shifted { at, what });
+            }
         }
     }
 
@@ -722,6 +732,8 @@ mod tests {
         replica.apply(2, Event::WindowsChanged { windows: vec![] });
         replica.apply(3, Event::OverviewOpenedOrClosed { is_open: false });
         assert_eq!(replica.animated("DP-1", 9), None);
+        // The first connection's initial state is no change.
+        assert_eq!(replica.shifted.get("DP-1"), None);
         let switched = Instant::now();
         replica.apply(
             4,
@@ -752,6 +764,10 @@ mod tests {
         rebuilt.apply(8, Event::OverviewOpenedOrClosed { is_open: false });
         assert_eq!(rebuilt.animated("DP-1", 9), Some(Instant::now()));
         assert_eq!(rebuilt.animated("HDMI-A-1", 9), Some(Instant::now()));
+        // A pixel aim takes the same uncertainty: every output shown counts as moved then,
+        // later than any capture of the connection before.
+        let stamped = rebuilt.shifted.get("DP-1").map(|shifted| shifted.at);
+        assert_eq!(stamped, Some(Instant::now()));
     }
 
     // niri reports a floating window's new place at once and animates it there: a move,
