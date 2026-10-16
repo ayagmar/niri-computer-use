@@ -444,6 +444,24 @@ async fn absent_isnt_met_by_a_walk_that_lost_part_of_the_tree() {
     assert_eq!(outcome["observed"], "timeout", "{outcome}");
 }
 
+// The bug: an `absent` wait whose every walk skipped an object gone by the time it read it,
+// as in an app that recreates a row on every change, timed out without saying why.
+#[tokio::test]
+async fn an_absent_wait_whose_walks_keep_losing_objects_says_so() {
+    let mut app = App::start("wait-element-losing", false).await;
+    app.mock.change("/panel", |panel| {
+        panel.children.retain(|child| child != "/button");
+        panel.children.push("/recreated".to_owned());
+    });
+    let gone = json!({"name_contains": "safe", "absent": true});
+    let (outcome, _) = app.wait(gone, 1000).await;
+    assert_eq!(outcome["observed"], "timeout", "{outcome}");
+    assert_eq!(
+        outcome["detail"], "the last walk skipped objects that went away while it read",
+        "{outcome}"
+    );
+}
+
 // The bug: an `absent` wait that named the actions of the element it still saw, which it
 // throws away, so an app slow to name them made every walk look cut short, and a
 // timeout told the agent to narrow a condition whose walks had read the whole tree.

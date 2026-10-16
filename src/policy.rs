@@ -620,8 +620,8 @@ impl serde::de::Visitor<'_> for SharingVisitor {
 }
 
 /// Whether `text`'s top-level `shared` is `"required"`, whatever the rest of it holds.
-/// Text that isn't TOML requires it with a line `shared = "required"` before the first
-/// table header.
+/// Text that isn't TOML requires it with a line `shared = "required"`, or the literal
+/// string `'required'`, before the first table header.
 fn requires_shared(text: &str) -> bool {
     let Ok(table) = toml::from_str::<toml::Table>(text) else {
         return text
@@ -629,7 +629,9 @@ fn requires_shared(text: &str) -> bool {
             .map(|line| line.split('#').next().unwrap_or_default().trim())
             .take_while(|line| !line.starts_with('['))
             .filter_map(|line| line.split_once('='))
-            .any(|(key, value)| key.trim() == "shared" && value.trim() == "\"required\"");
+            .any(|(key, value)| {
+                key.trim() == "shared" && matches!(value.trim(), "\"required\"" | "'required'")
+            });
     };
     table
         .get("shared")
@@ -1308,6 +1310,7 @@ app_id = "foot"
             "deny_input_app_ids = 3\nshared = \"required\"",
             "shared = \"required\"\n[[",
             "  shared=\"required\"  # spaced\ncapture_dir =\n",
+            "shared = 'required'\n[[",
         ] {
             assert_eq!(shared_in(Some(invalid)), Sharing::Required, "{invalid}");
         }
@@ -1317,6 +1320,7 @@ app_id = "foot"
             "[preset]\nshared = \"required\"",
             "[[\nshared = \"required\"",
             "shared = \"required, please\"\n[[",
+            "shared = 'required\"\n[[",
         ] {
             assert_eq!(shared_in(Some(invalid)), Sharing::On, "{invalid}");
         }
