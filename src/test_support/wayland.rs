@@ -146,8 +146,9 @@ enum Command {
     OnPress(usize, Hook),
 }
 
-/// What runs when niri next gets a `FocusedWindow` request (`Compositor::on_focus_request`).
-type Asked = Arc<Mutex<Option<Hook>>>;
+/// What runs when niri next gets a `FocusedWindow` request (`Compositor::on_focus_request`),
+/// and how long niri then takes to answer it (`Compositor::answer_focus_late`).
+type Asked = Arc<Mutex<Option<(Hook, Duration)>>>;
 
 /// What a test runs at a virtual key press (`Compositor::on_press`).
 pub(crate) struct Hook(Box<dyn FnOnce() + Send>);
@@ -324,7 +325,15 @@ impl Compositor {
     /// Runs `hook` when niri next gets a `FocusedWindow` request, before it answers, so
     /// whatever it does happens while the request is outstanding.
     pub(crate) fn on_focus_request(&self, hook: impl FnOnce() + Send + 'static) {
-        *self.asked.lock().unwrap_or_else(PoisonError::into_inner) = Some(Hook(Box::new(hook)));
+        *self.asked.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some((Hook(Box::new(hook)), Duration::ZERO));
+    }
+
+    /// Makes niri answer its next `FocusedWindow` request only `late` after it came, as a busy
+    /// niri does.
+    pub(crate) fn answer_focus_late(&self, late: Duration) {
+        *self.asked.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some((Hook(Box::new(|| {})), late));
     }
 
     /// Makes niri answer `FocusedWindow` with `message` as its error from the `press`-th
@@ -520,8 +529,9 @@ async fn answer(
         )]))),
         Ok(Request::FocusedWindow) => {
             let hook = asked.lock().unwrap_or_else(PoisonError::into_inner).take();
-            if let Some(Hook(hook)) = hook {
+            if let Some((Hook(hook), late)) = hook {
                 hook();
+                stall(late);
             }
             focused
         }

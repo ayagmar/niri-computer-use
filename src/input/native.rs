@@ -65,19 +65,9 @@ async fn type_seen(
     let decisive = decisive(&typing, plan.keys().count());
     let mut sent = Sent::default();
     for (index, (extended, key)) in plan.strokes().enumerate() {
-        act::fresh_lock(input.niri)
+        let left = checked_before(input, &mut waiter, before, group, Some(index) == decisive)
             .await
             .map_err(|error| partly(error, &typing, sent))?;
-        // niri's events since the lock was read or the last key, right before this one.
-        let left = left_before(
-            input.niri.socket,
-            &mut waiter,
-            before,
-            group,
-            Some(index) == decisive,
-        )
-        .await
-        .map_err(|error| partly(error, &typing, sent))?;
         if let Some(outcome) = left {
             device
                 .finish(waiter.view().keyboard_group())
@@ -152,6 +142,28 @@ const fn decisive(typing: &Typing, keys: usize) -> Option<usize> {
         Typing::Text { submit: true, .. } | Typing::Keys(_) => keys.checked_sub(1),
         Typing::Text { .. } => None,
     }
+}
+
+/// The lock state, read again if its last read is older than `LAST_GATE`, then
+/// `left_before`: niri's events since the lock was read or the last key, right before this
+/// one. niri's answer before the `decisive` stroke can come late enough that the lock read
+/// is older than `LAST_GATE` by then; the lock is then read and niri asked once more, so
+/// both checks still come right before the key. A second answer as slow leaves the read
+/// stale, and `may_press` refuses the key with `lock_stale`.
+async fn checked_before(
+    input: Input<'_>,
+    waiter: &mut Waiter,
+    before: Option<u64>,
+    group: u32,
+    decisive: bool,
+) -> Result<Option<Outcome>, ToolError> {
+    act::fresh_lock(input.niri).await?;
+    let left = left_before(input.niri.socket, waiter, before, group, decisive).await?;
+    if left.is_some() || input.niri.desk.lock_fresh() {
+        return Ok(left);
+    }
+    act::fresh_lock(input.niri).await?;
+    left_before(input.niri.socket, waiter, before, group, decisive).await
 }
 
 /// `interrupted`, and before the `decisive` stroke also focus away from `before` in niri's
@@ -966,6 +978,22 @@ mod tests {
             .unwrap();
         assert_eq!(niri.seen().keys, []);
         assert_eq!(outcome.observed, Observed::Interrupted);
+        marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// niri answers the request before the decisive key slowly enough that the lock read
+    /// checked before it is older than `LAST_GATE` by the answer: the lock is read again and
+    /// niri asked again, and the key goes out rather than failing `lock_stale`.
+    #[tokio::test]
+    async fn a_slow_focus_answer_before_the_last_key_doesnt_leave_the_lock_read_stale() {
+        let dir = fresh_dir("native-slow-focus-answer");
+        let niri = Compositor::start(&dir, BASE);
+        niri.answer_focus_late(crate::control::desk::LAST_GATE + Duration::from_millis(50));
+        let typing = Typing::Keys(vec!["Return".to_owned()]);
+        let outcome = type_through(&niri, &dir, typing, None).await.unwrap();
+        assert_eq!(outcome.observed, Observed::Sent);
+        assert_eq!(niri.seen().keys, [(RETURN, true), (RETURN, false)]);
         marker_cleared(&niri, &dir).await;
         std::fs::remove_dir_all(dir).unwrap();
     }
