@@ -631,11 +631,6 @@ impl Desk {
         self.seat.refs().insert(lease, shot)
     }
 
-    /// Drops the screenshot ref `id`, kept with the lease or without it.
-    pub(crate) fn discard(&self, id: &str) {
-        self.seat.refs().discard(id);
-    }
-
     /// The stretch without the lease that a screenshot of `session` starting now would keep
     /// its ref in.
     pub(crate) fn stretch(&self, session: &Session) -> u64 {
