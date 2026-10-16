@@ -1847,6 +1847,7 @@ v2.9.2 is the newest release; it is over 7 days old.
 - A syntax error anywhere in the policy file, such as a mistyped `[[preset]]` header, dropped the requirement, since `Loaded::shared` read `shared` only from text that parses as TOML; the docs said a mistake elsewhere in the file doesn't drop it. Text that isn't TOML now requires the shared engine when a line before its first table header, a trailing comment aside, is `shared = "required"`. Such a line can only be the top-level key, and reading it fails closed: at worst a client is refused with `engine_unavailable` instead of served standalone, which is what the line asks for.
 - The other option was saying in the docs that only a mistake that still parses as TOML keeps the requirement. The scan is a few lines and keeps the promise.
 - Tests: the unit test of invalid files now requires `"required"` from text that isn't TOML, and nothing from such a line after a table header or with another value. It failed before the change.
+- The scan first matched only the basic string. TOML also spells the value as the literal string `'required'`, which a valid file already reads as `"required"`, so the scan takes it too; mismatched quotes, as in `'required"`, still don't count. The unit test gained both lines, and failed on the first before the change.
 - No dependency was added.
 
 ## 2026-10-16: the key that commits a call waits for niri to confirm focus
