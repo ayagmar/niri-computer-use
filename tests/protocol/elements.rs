@@ -4006,7 +4006,9 @@ async fn a_drag_cancelled_while_it_releases_still_clears_its_marker() {
         );
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    let pixel = json!({"screenshot_ref": shot, "x": 5, "y": 5});
+    // The overview opened since `shot`, so a pixel click needs a new screenshot.
+    let fresh = desk.screenshot_ref().await;
+    let pixel = json!({"screenshot_ref": fresh, "x": 5, "y": 5});
     let clicked = desk.server.call("click", pixel).await;
     assert_eq!(clicked["isError"], false, "{clicked}");
 }
@@ -4062,7 +4064,9 @@ async fn moved_before_it_went_out(tool: &str, tag: &str, event: &Value) {
     let response = desk.server.response(id).await;
     refused_moving(&response["result"], &format!("{tag} {tool}"));
     assert_eq!(desk.fixture.clipboard.pointed(), [], "{tag} {tool}");
-    let pixel = json!({"screenshot_ref": shot, "x": 5, "y": 5});
+    // The view moved since `shot`, so a pixel click needs a new screenshot.
+    let fresh = desk.screenshot_ref().await;
+    let pixel = json!({"screenshot_ref": fresh, "x": 5, "y": 5});
     let clicked = desk.server.call("click", pixel).await;
     assert_eq!(clicked["isError"], false, "{tag} {tool}: {clicked}");
     assert_eq!(desk.fixture.clipboard.pointed().len(), 3, "{tag} {tool}");

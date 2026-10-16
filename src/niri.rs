@@ -18,7 +18,7 @@ use serde::Serialize;
 
 use crate::error::{ErrorName, ToolError, Unanswered};
 use events::{DesktopState, EventStream};
-use waiter::Waiter;
+use waiter::{View, Waiter};
 
 /// The server's event stream, or why it has none: the socket's error.
 pub(crate) type Events<'a> = Result<&'a EventStream, &'a ToolError>;
@@ -202,6 +202,11 @@ pub(crate) async fn focused_output(socket: &Socket) -> Result<Option<Output>, To
 /// the error says why.
 pub(crate) async fn desktop(events: Events<'_>) -> Result<DesktopState, ToolError> {
     events.map_err(Clone::clone)?.desktop().await
+}
+
+/// The windows, workspaces and overview in niri's replayed state now.
+pub(crate) async fn view(events: Events<'_>) -> Result<View, ToolError> {
+    events.map_err(Clone::clone)?.view().await
 }
 
 /// Registers a waiter on niri's event stream, before an action is dispatched.

@@ -23,6 +23,7 @@ mod pacer;
 mod paste;
 mod physical;
 mod scrolling;
+mod stale;
 mod stop;
 mod text_entry;
 
@@ -81,6 +82,7 @@ pub(crate) fn run(session: &mut Session<'_>, output: &LogicalOutput, server: &st
     };
     accuracy(session, &mut client, &wev)?;
     clicks(session, &mut client, &wev)?;
+    stale::run(session, &mut client, &wev)?;
     drag(session, &mut client, &wev)?;
     scroll(session, &mut client, &wev)?;
     native::run(session, &mut client, &wev, server)?;

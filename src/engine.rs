@@ -693,14 +693,19 @@ impl Engine {
         let lease = self.desk.ref_lease(session);
         let stretch = self.desk.stretch(session);
         let connection = self.events.as_ref().ok().and_then(EventStream::connection);
+        // Without a connection there is no ref to keep, and no initial state to wait for.
+        let view = match connection {
+            Some(_) => niri::view(self.events.as_ref()).await.ok(),
+            None => None,
+        };
         let taken = Instant::now();
         let place = session.settings().place();
         let mut shot =
             observe::screenshot(&self.env.niri_socket, &self.env.display, place, &request).await?;
-        let Some(connection) = connection else {
+        let (Some(connection), Some(view)) = (connection, view) else {
             return Ok(shot);
         };
-        let kept = Shot::of(&shot, taken, connection);
+        let kept = Shot::of(&shot, taken, connection, &view);
         shot.metadata.screenshot_ref = match lease {
             Some(lease) => self.desk.remember(lease, kept),
             None => self.desk.remember_view(session, stretch, kept),

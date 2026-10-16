@@ -372,6 +372,13 @@ impl EventStream {
             .await
     }
 
+    /// The windows, workspaces and overview now, as a waiter would start from them. Waits
+    /// up to two seconds for niri's initial state.
+    pub(crate) async fn view(&self) -> Result<View, ToolError> {
+        self.current(DEADLINE, |replica| View::of(&replica.state))
+            .await
+    }
+
     /// Registers a waiter for an action: from now on it sees every event niri sends, on top
     /// of the current state. Waits up to two seconds for niri's initial state.
     pub(crate) async fn waiter(&self) -> Result<Waiter, ToolError> {
