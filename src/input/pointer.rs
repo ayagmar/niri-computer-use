@@ -332,7 +332,9 @@ pub(crate) async fn point(
         .ok()
         .and_then(niri::events::EventStream::connection);
     shot.check(Instant::now(), &outputs, connection)?;
-    if gesture.has_pixel() {
+    // Checked again right before the first input (`Gate::pass`); this refuses early.
+    let at_pixel = gesture.has_pixel();
+    if at_pixel {
         shot.unmoved(
             niri::shifted(input.niri.events, &shot.output)
                 .await?
@@ -378,6 +380,7 @@ pub(crate) async fn point(
     let gate = Gate {
         waiter: &mut waiter,
         input,
+        pixels: at_pixel.then_some(&shot),
         windows: &windows,
         end,
         reading: GESTURE_READING,
@@ -466,6 +469,8 @@ async fn locate(
 struct Gate<'a> {
     waiter: &'a mut niri::waiter::Waiter,
     input: Input<'a>,
+    /// The screenshot, when the gesture aims at its pixels.
+    pixels: Option<&'a Shot>,
     /// The windows of the elements the gesture aims at, none for pixels.
     windows: &'a [u64],
     /// The element a drag ends at, if it ends at one.
@@ -501,7 +506,10 @@ enum Stage {
 impl Gate<'_> {
     /// The checks right before the gesture's next part, with nothing awaited between them
     /// and it: before its first input, and after each wait in it. niri's events up to now
-    /// are applied first (`Waiter::moved`). An element aim is refused by any of them that
+    /// are applied first (`Waiter::moved`). Until a button is pressed, a pixel aim is refused
+    /// when the windows on the screenshot's output moved since the capture began, or just
+    /// before it (`Shot::unmoved`), as at the call's start: preparing the gesture can take
+    /// a while. An element aim is refused by any of them that
     /// can change what is shown where since the call's first look, before its elements were
     /// placed, until a button is pressed: a box may no longer be where its element is. Once
     /// something went out, any gesture is stopped by a workspace switch or the overview,
@@ -527,6 +535,12 @@ impl Gate<'_> {
             ToolError::new(ErrorName::UpstreamError, format!("{reason}; {sent}"))
         })?;
         self.still_aimed(stage, &moved, pointer)?;
+        if stage != Stage::Pressed
+            && let Some(shot) = self.pixels
+        {
+            let shifted = niri::shifted(self.input.niri.events, &shot.output).await?;
+            shot.unmoved(shifted.as_ref())?;
+        }
         let view = self.waiter.view();
         if let Some(refused) = policy::refuse_input(self.input.policy, focused_app_id(view)) {
             return Err(refused);
@@ -1091,14 +1105,12 @@ mod tests {
         }
     }
 
-    async fn click_holding_ctrl(name: &str, replies: Vec<(Duration, &'static str)>) -> HeldClick {
-        let bench = Bench::start(name, replies);
-        let (niri, socket, runtime) = (&bench.niri, &bench.socket, &bench.runtime);
-        let input = bench.input();
-        let outputs = niri::outputs(socket).await.unwrap();
+    /// A screenshot ref of the whole of the fake's output at scale 1, taken now.
+    async fn whole_output(bench: &Bench) -> Shot {
+        let outputs = niri::outputs(&bench.socket).await.unwrap();
         let output = &outputs[crate::test_support::wayland::OUTPUT];
         let geometry = output.logical.unwrap();
-        let shot = Shot {
+        Shot {
             output: output.name.clone(),
             geometry,
             motion_geometry: crate::coords::motion_geometry(output),
@@ -1112,7 +1124,14 @@ mod tests {
             width: geometry.width,
             height: geometry.height,
             ..crate::test_support::shot()
-        };
+        }
+    }
+
+    async fn click_holding_ctrl(name: &str, replies: Vec<(Duration, &'static str)>) -> HeldClick {
+        let bench = Bench::start(name, replies);
+        let (niri, runtime) = (&bench.niri, &bench.runtime);
+        let input = bench.input();
+        let shot = whole_output(&bench).await;
         niri.slow_modifiers(Duration::from_millis(300)).await;
         let click = Gesture::Click {
             at: Spot::Pixel(PX),
@@ -1130,6 +1149,62 @@ mod tests {
         };
         std::fs::remove_dir_all(&bench.dir).unwrap();
         clicked
+    }
+
+    /// Once the pointer's connection to the display is held, has niri report window 1
+    /// resized, waits until the event stream has it, and serves the connection.
+    async fn resize_once_held(bench: &Bench) {
+        let niri = &bench.niri;
+        while !niri.seen().holding {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let layout = niri_ipc::WindowLayout {
+            pos_in_scrolling_layout: Some((1, 1)),
+            tile_size: (960.0, 1080.0),
+            window_size: (960, 1080),
+            tile_pos_in_workspace_view: None,
+            window_offset_in_tile: (0.0, 0.0),
+        };
+        niri.event(niri_ipc::Event::WindowLayoutsChanged {
+            changes: vec![(1, layout)],
+        });
+        let output = crate::test_support::wayland::OUTPUT;
+        while bench.events.shifted(output).await.unwrap().is_none() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        niri.serve_held().await;
+    }
+
+    // The bug: a pixel aim was checked against niri's windows once, as the call began, and
+    // the look right before the first input let any window change through for a gesture of
+    // pixels only, so a window that moved while the call got ready, here while niri took
+    // its time with the pointer's connection, didn't stop the click.
+    #[tokio::test]
+    async fn a_pixel_click_is_refused_when_a_window_moves_while_it_gets_ready() {
+        let bench = Bench::start("pointer-moved-ready", Vec::new());
+        let niri = &bench.niri;
+        let shot = whole_output(&bench).await;
+        niri.hold_client().await;
+        let click = Gesture::Click {
+            at: Spot::Pixel(PX),
+            button: Button::Left,
+            count: 1,
+        };
+        let no_element = |id: &str| Err(a11y::not_accessible(format!("no element {id}")));
+        let clicking = point(bench.input(), Ok(shot), click, &[], no_element);
+        let both = async { tokio::join!(clicking, resize_once_held(&bench)).0 };
+        let clicked = tokio::time::timeout(Duration::from_secs(10), Box::pin(both))
+            .await
+            .unwrap();
+        let Err(CallError::Tool(error)) = clicked else {
+            panic!("the click wasn't refused: {clicked:?}");
+        };
+        assert_eq!(error.name, ErrorName::RefInvalid);
+        let moved = "layout_changed: niri moved or resized window 1 since the screenshot";
+        assert!(error.detail.starts_with(moved), "{}", error.detail);
+        assert_eq!(niri.seen().buttons, []);
+        assert!(marker::read(&bench.runtime).is_none());
+        std::fs::remove_dir_all(&bench.dir).unwrap();
     }
 
     // Held modifiers go down after the look before the first input, and niri may take long
@@ -1209,6 +1284,7 @@ mod tests {
         let mut gate = Gate {
             waiter: &mut waiter,
             input,
+            pixels: None,
             windows: &[],
             end: None,
             reading: GESTURE_READING,
@@ -1234,6 +1310,7 @@ mod tests {
         let mut gate = Gate {
             waiter: &mut waiter,
             input,
+            pixels: None,
             windows: &[],
             end: None,
             reading: GESTURE_READING,
@@ -1264,6 +1341,7 @@ mod tests {
         let mut gate = Gate {
             waiter: &mut waiter,
             input,
+            pixels: None,
             windows: &[],
             end: None,
             reading: GESTURE_READING,
@@ -1333,6 +1411,7 @@ mod tests {
             let gate = Gate {
                 waiter: &mut waiter,
                 input,
+                pixels: None,
                 windows: &[],
                 end: None,
                 reading: GESTURE_READING,
@@ -1389,6 +1468,7 @@ mod tests {
         let gate = Gate {
             waiter: &mut waiter,
             input,
+            pixels: None,
             windows: &[],
             end: None,
             reading: GESTURE_READING,

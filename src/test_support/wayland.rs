@@ -14,7 +14,8 @@
 //!   source through its `send` event and cancels a source another selection replaced.
 //!
 //! The focused client is implicit: what the focus was sent is in `Seen`. niri's event
-//! stream has one workspace with one focused window, `APP_ID`, and the keyboard layouts.
+//! stream has one workspace with one focused window, `APP_ID`, and the keyboard layouts,
+//! and then sends what a test has niri report (`Compositor::event`).
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -34,7 +35,7 @@ use rustix::fs::{MemfdFlags, memfd_create};
 use tokio::io::unix::AsyncFd;
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::net::UnixListener;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use wayland_protocols_misc::zwp_virtual_keyboard_v1::server::{
     zwp_virtual_keyboard_manager_v1::{self, ZwpVirtualKeyboardManagerV1},
     zwp_virtual_keyboard_v1::{self, ZwpVirtualKeyboardV1},
@@ -163,6 +164,8 @@ pub(crate) struct Compositor {
     /// What niri answers `FocusedWindow` with: the window, or its error.
     focused: Arc<Mutex<Reply>>,
     commands: Option<mpsc::UnboundedSender<(Command, oneshot::Sender<()>)>>,
+    /// What the event stream sends after its initial events.
+    events: broadcast::Sender<Event>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -188,12 +191,14 @@ impl Compositor {
             focused_window(1),
         )))));
         let answered = Arc::clone(&focused);
+        let (events, _) = broadcast::channel(16);
+        let reported = events.clone();
         let thread = std::thread::spawn(move || {
             tokio::runtime::Builder::new_current_thread()
                 .enable_io()
                 .build()
                 .unwrap()
-                .block_on(serve(listeners, state, answered, received));
+                .block_on(serve(listeners, state, (answered, reported), received));
         });
         Self {
             display,
@@ -201,6 +206,7 @@ impl Compositor {
             seen,
             focused,
             commands: Some(commands),
+            events,
             thread: Some(thread),
         }
     }
@@ -309,6 +315,11 @@ impl Compositor {
         .await;
     }
 
+    /// Has niri report `event` on every event stream open now.
+    pub(crate) fn event(&self, event: Event) {
+        self.events.send(event).ok();
+    }
+
     /// niri's event stream from the fake's socket.
     pub(crate) fn events(&self) -> crate::niri::events::EventStream {
         crate::niri::events::EventStream::spawn(self.socket.clone())
@@ -341,7 +352,7 @@ async fn serve(
         std::os::unix::net::UnixListener,
     ),
     mut state: State,
-    focused: Arc<Mutex<Reply>>,
+    (focused, events): (Arc<Mutex<Reply>>, broadcast::Sender<Event>),
     mut commands: mpsc::UnboundedReceiver<(Command, oneshot::Sender<()>)>,
 ) {
     let (display_listener, niri_listener) = listeners;
@@ -361,7 +372,8 @@ async fn serve(
             accepted = niri_listener.accept() => {
                 let group = state.group;
                 let focused = focused.lock().unwrap_or_else(PoisonError::into_inner).clone();
-                tokio::spawn(answer(accepted.unwrap().0, group, focused));
+                let answered = (focused, events.subscribe());
+                tokio::spawn(answer(accepted.unwrap().0, group, answered));
             }
             ready = readable.readable() => {
                 let mut ready = ready.unwrap();
@@ -461,8 +473,13 @@ fn focused_window(id: u64) -> Window {
 }
 
 /// Answers one niri request: the keyboard layouts, with `group` active, the outputs, the
-/// focused window with `focused`, or the event stream, which then stays open.
-async fn answer(stream: tokio::net::UnixStream, group: u32, focused: Reply) {
+/// focused window with `focused`, or the event stream, which then sends `events` and stays
+/// open.
+async fn answer(
+    stream: tokio::net::UnixStream,
+    group: u32,
+    (focused, mut events): (Reply, broadcast::Receiver<Event>),
+) {
     let (reader, mut writer) = stream.into_split();
     let mut line = String::new();
     if BufReader::new(reader).read_line(&mut line).await.is_err() {
@@ -493,6 +510,10 @@ async fn answer(stream: tokio::net::UnixStream, group: u32, focused: Reply) {
         writer.write_all(format!("{text}\n").as_bytes()).await.ok();
     }
     if matches!(request, Ok(Request::EventStream)) {
+        while let Ok(event) = events.recv().await {
+            let text = serde_json::to_string(&event).unwrap();
+            writer.write_all(format!("{text}\n").as_bytes()).await.ok();
+        }
         std::future::pending::<()>().await;
     }
 }
