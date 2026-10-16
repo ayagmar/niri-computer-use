@@ -1,17 +1,17 @@
-//! What niri showed on a screenshot's output when the capture started (pure), so a pointer
-//! tool can tell that the windows there moved since and the image no longer shows what a
-//! pixel lands on. niri reports no place for a tiled window, only its column, size and
-//! whether its workspace's view scrolls to it, as the active window; a change in any of
-//! them can move what is under a pixel.
+//! What niri shows on each output (pure), so the event stream can stamp the last time the
+//! windows there moved, and a pointer tool can tell that a screenshot's pixels may no
+//! longer land on what its image shows. niri reports no place for a tiled window, only its
+//! column, size and whether its workspace's view scrolls to it, as the active window; a
+//! change in any of them can move what is under a pixel.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use niri_ipc::WindowLayout;
+use niri_ipc::state::EventStreamState;
+use tokio::time::Instant;
 
-use crate::niri::waiter::View;
-
-/// One output as niri described it: whether the overview was open, the workspace it
-/// showed and that workspace's active window, and each window on that workspace.
+/// One output as niri describes it: whether the overview is open, the workspace it shows
+/// and that workspace's active window, and each window on that workspace.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct Scene {
     overview: bool,
@@ -27,16 +27,55 @@ struct Placed {
     floating: bool,
 }
 
+/// The last time the windows on an output moved, as far as niri reported, and how.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Shifted {
+    pub(crate) at: Instant,
+    pub(crate) what: String,
+}
+
+/// Each output's scene in `state`, by output name.
+pub(crate) fn scenes(state: &EventStreamState) -> BTreeMap<String, Scene> {
+    let outputs: BTreeSet<&str> = state
+        .workspaces
+        .workspaces
+        .values()
+        .filter_map(|workspace| workspace.output.as_deref())
+        .collect();
+    outputs
+        .into_iter()
+        .map(|output| (output.to_owned(), Scene::of(state, output)))
+        .collect()
+}
+
+/// How each output's scene differs from `before` to `after`, by output name.
+pub(crate) fn moved(
+    before: &BTreeMap<String, Scene>,
+    after: &BTreeMap<String, Scene>,
+) -> Vec<(String, String)> {
+    let outputs: BTreeSet<&String> = before.keys().chain(after.keys()).collect();
+    let none = Scene::default();
+    outputs
+        .into_iter()
+        .filter_map(|output| {
+            let was = before.get(output).unwrap_or(&none);
+            let is = after.get(output).unwrap_or(&none);
+            Some((output.clone(), was.moved_in(is)?))
+        })
+        .collect()
+}
+
 impl Scene {
-    /// What `view` has on `output`.
-    pub(crate) fn of(view: &View, output: &str) -> Self {
-        let shown = view
-            .workspaces()
-            .values()
-            .find(|workspace| workspace.is_active && workspace.output.as_deref() == Some(output));
+    /// What `state` has on `output`.
+    fn of(state: &EventStreamState, output: &str) -> Self {
+        let shown =
+            state.workspaces.workspaces.values().find(|workspace| {
+                workspace.is_active && workspace.output.as_deref() == Some(output)
+            });
         let workspace = shown.map(|workspace| workspace.id);
-        let windows = view
-            .windows()
+        let windows = state
+            .windows
+            .windows
             .values()
             .filter(|window| workspace.is_some() && window.workspace_id == workspace)
             .map(|window| {
@@ -48,7 +87,7 @@ impl Scene {
             })
             .collect();
         Self {
-            overview: view.overview_open(),
+            overview: state.overview.is_open,
             workspace,
             active: shown.and_then(|shown| shown.active_window_id),
             windows,
@@ -58,7 +97,7 @@ impl Scene {
     /// What differs in `now`, if anything, the first of: the overview, the workspace shown,
     /// a window that left the workspace or came onto it, one niri moved or resized, and
     /// the active window.
-    pub(crate) fn moved_in(&self, now: &Self) -> Option<String> {
+    fn moved_in(&self, now: &Self) -> Option<String> {
         if self.overview != now.overview {
             let what = if now.overview { "opened" } else { "closed" };
             return Some(format!("niri {what} the overview"));
@@ -103,10 +142,11 @@ fn window(id: Option<u64>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use niri_ipc::state::EventStreamStatePart as _;
     use niri_ipc::{Event, Window, Workspace};
 
     use super::*;
-    use crate::niri::waiter::tests::{view_of, window as window_on, workspace as on_dp1};
+    use crate::niri::waiter::tests::{window as window_on, workspace as on_dp1};
 
     fn on(output: &str, id: u64, active: Option<u64>) -> Workspace {
         let mut workspace = on_dp1(id, true);
@@ -144,11 +184,17 @@ mod tests {
         ]
     }
 
-    /// What DP-1 shows after `event`, compared with before.
+    /// How DP-1's scene differs after `event`.
     fn after(event: Event) -> Option<String> {
-        let before = Scene::of(&view_of(desk()), "DP-1");
-        let now = Scene::of(&view_of([desk(), vec![event]].concat()), "DP-1");
-        before.moved_in(&now)
+        let mut state = EventStreamState::default();
+        for initial in desk() {
+            state.apply(initial);
+        }
+        let before = scenes(&state);
+        state.apply(event);
+        let mut moved = moved(&before, &scenes(&state));
+        let index = moved.iter().position(|(output, _)| output == "DP-1")?;
+        Some(moved.swap_remove(index).1)
     }
 
     #[test]

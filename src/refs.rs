@@ -9,8 +9,6 @@
 //! tag, so neither is a ref from another process, such as a server that ran before this
 //! one.
 
-pub(crate) mod scene;
-
 use std::collections::{BTreeMap, VecDeque};
 use std::hash::BuildHasher as _;
 use std::sync::OnceLock;
@@ -22,10 +20,9 @@ use tokio::time::Instant;
 use crate::a11y::ElementRef;
 use crate::coords::{self, Capture, ImagePx, ImageRect, LayoutPt, ProtocolPt};
 use crate::error::{ErrorName, ToolError};
-use crate::niri::waiter::View;
+use crate::niri::scene::Shifted;
 use crate::observe::{Pin, Rect, Screenshot};
 use crate::session::SessionId;
-use scene::Scene;
 
 /// How many refs a lease keeps; older ones are dropped first.
 const KEPT: usize = 64;
@@ -33,6 +30,9 @@ const KEPT: usize = 64;
 const KEPT_ELEMENTS: usize = 1000;
 /// How long a ref stays usable (plan §6).
 const MAX_AGE: Duration = Duration::from_secs(60);
+/// How long niri may animate windows after it reports them moving, as for an element aim
+/// (`input::pointer`).
+const SETTLE: Duration = Duration::from_secs(1);
 
 /// One screenshot, as a pointer tool needs it.
 #[derive(Debug, Clone, PartialEq)]
@@ -51,14 +51,15 @@ pub(crate) struct Shot {
     pub(crate) taken: Instant,
     /// The event stream's connection at capture: a disconnect drops every ref.
     pub(crate) connection: u64,
-    /// What niri showed on the output when the capture started.
-    pub(crate) scene: Scene,
+    /// For a screenshot a settle wait returned as settled, when the capture it matched
+    /// started: the screen didn't change from then on.
+    pub(crate) steady_since: Option<Instant>,
 }
 
 impl Shot {
     /// What a pointer tool needs from `shot`, whose capture started at `taken` while the
-    /// event stream was on `connection` and niri's state was `view`.
-    pub(crate) fn of(shot: &Screenshot, taken: Instant, connection: u64, view: &View) -> Self {
+    /// event stream was on `connection`.
+    pub(crate) fn of(shot: &Screenshot, taken: Instant, connection: u64) -> Self {
         let metadata = &shot.metadata;
         Self {
             output: metadata.output.clone(),
@@ -70,7 +71,7 @@ impl Shot {
             height: metadata.height,
             taken,
             connection,
-            scene: Scene::of(view, &metadata.output),
+            steady_since: None,
         }
     }
 }
@@ -100,19 +101,30 @@ impl Shot {
         self.encode(point, &motion)
     }
 
-    /// The windows on the output are where they were at capture in `view`, so a pixel of
-    /// the image still lands on what it shows, as far as niri can tell.
-    pub(crate) fn unmoved(&self, view: &View) -> Result<(), ToolError> {
-        self.scene
-            .moved_in(&Scene::of(view, &self.output))
-            .map_or(Ok(()), |moved| {
-                Err(invalid(
-                    "layout_changed",
-                    &format!(
-                        "{moved} since the screenshot, so it may no longer show what a pixel lands on; take a new screenshot"
-                    ),
-                ))
-            })
+    /// Whether a pixel of the image still lands on what it shows, as far as niri can tell,
+    /// when the windows on its output last moved as `shifted` says: not if they moved after
+    /// the capture began, nor within `SETTLE` before it, while niri may still have been
+    /// animating them, unless the screen was seen not changing after they moved.
+    pub(crate) fn unmoved(&self, shifted: Option<&Shifted>) -> Result<(), ToolError> {
+        let Some(Shifted { at, what }) = shifted else {
+            return Ok(());
+        };
+        let why = if *at > self.taken {
+            format!("{what} since the screenshot, so it may no longer show what a pixel lands on")
+        } else if self.taken.duration_since(*at) < SETTLE
+            && self.steady_since.is_none_or(|steady| steady <= *at)
+        {
+            let before = self.taken.duration_since(*at).as_millis();
+            format!(
+                "{what} {before} ms before the screenshot, so it may show windows niri was still moving"
+            )
+        } else {
+            return Ok(());
+        };
+        Err(invalid(
+            "layout_changed",
+            &format!("{why}; take a new screenshot"),
+        ))
     }
 
     /// Whether `point` lies in the captured rectangle.
@@ -455,17 +467,6 @@ impl Refs {
         self.views.remove(&session);
     }
 
-    /// Drops the screenshot ref `id`, whichever list keeps it.
-    pub(crate) fn discard(&mut self, id: &str) {
-        let Some(wanted) = self.number(id, "shot") else {
-            return;
-        };
-        self.shots.retain(|(issued, _)| *issued != wanted);
-        for views in self.views.values_mut() {
-            views.shots.retain(|(issued, _)| *issued != wanted);
-        }
-    }
-
     /// The ref named `id` that `session` took without the lease.
     pub(crate) fn view(&self, session: SessionId, id: &str) -> Result<Shot, ToolError> {
         let wanted = self.number(id, "shot");
@@ -573,6 +574,39 @@ mod tests {
         let error = result.unwrap_err();
         assert_eq!(error.name, ErrorName::RefInvalid);
         error.detail.split(':').next().unwrap().to_owned()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn pixels_stand_unless_the_windows_moved_after_or_just_before_the_capture() {
+        tokio::time::advance(Duration::from_secs(5)).await;
+        let mut shot = shot();
+        let taken = shot.taken;
+        let shifted = |ms: i64| Shifted {
+            at: if ms < 0 {
+                taken - Duration::from_millis(ms.unsigned_abs())
+            } else {
+                taken + Duration::from_millis(ms.unsigned_abs())
+            },
+            what: "niri moved or resized window 7".to_owned(),
+        };
+        let refused = |aimed: &Shot, ms| {
+            aimed
+                .unmoved(Some(&shifted(ms)))
+                .err()
+                .map(|error| error.detail)
+        };
+        assert_eq!(shot.unmoved(None), Ok(()));
+        // Long enough before the capture for niri to have finished moving it.
+        assert_eq!(refused(&shot, -1500), None);
+        let moving = refused(&shot, -300).unwrap();
+        assert!(moving.contains("300 ms before the screenshot"), "{moving}");
+        let since = refused(&shot, 20).unwrap();
+        assert!(since.contains("window 7 since the screenshot"), "{since}");
+        // The screen was seen not changing from after the move on.
+        shot.steady_since = Some(taken - Duration::from_millis(100));
+        assert_eq!(refused(&shot, -300), None);
+        assert!(refused(&shot, -50).is_some());
+        assert!(refused(&shot, 20).is_some());
     }
 
     #[tokio::test(start_paused = true)]

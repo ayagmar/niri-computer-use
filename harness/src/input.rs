@@ -50,6 +50,8 @@ const READY: Duration = Duration::from_secs(20);
 const WAIT: Duration = Duration::from_secs(5);
 /// C4's pass rule, in logical pixels, including `wev`'s `wl_fixed` rounding.
 const TOLERANCE: f64 = 0.05;
+/// Longer than the second within which the server takes niri to be still moving windows.
+const MOVED: Duration = Duration::from_millis(1100);
 /// C4's points on `wev`'s 400x300 surface.
 const POINTS: [(f64, f64); 5] = [
     (10.0, 10.0),
@@ -202,7 +204,11 @@ struct Shot {
 }
 
 impl Shot {
+    /// A screenshot taken once `MOVED` has passed: the harness acts within milliseconds of
+    /// niri moving a window, where an agent takes seconds, and the server refuses a pixel
+    /// aim through a screenshot taken within a second of the windows on its output moving.
     fn take(session: &mut Session<'_>, client: &mut Client, max_width: u32) -> Result<Self> {
+        crate::session::pause(MOVED);
         let arguments = json!({"target": "focused_output", "max_width": max_width});
         let metadata = structured(&client.call(session, "screenshot", arguments)?)?;
         let number = |pointer| {

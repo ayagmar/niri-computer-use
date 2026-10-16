@@ -931,6 +931,18 @@ async fn applied(desk: &mut Desk, event: &Value, applied: impl Fn(&Value) -> boo
     }
 }
 
+/// The ref of a screenshot taken once the screen stopped changing, as an action's
+/// `screenshot: true` returns it.
+async fn settled_ref(desk: &mut Desk) -> String {
+    let arguments = json!({"until": "screen_stable", "timeout_ms": 2000, "screenshot": true});
+    let waited = report(&desk.server.call("wait_for", arguments).await);
+    assert_eq!(waited["observed"], "met", "{waited}");
+    waited["screenshot"]["screenshot_ref"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
 #[tokio::test]
 async fn a_pixel_aim_is_refused_once_the_windows_its_screenshot_shows_moved() {
     let mut desk = Desk::start("act-moved", "").await;
@@ -943,7 +955,7 @@ async fn a_pixel_aim_is_refused_once_the_windows_its_screenshot_shows_moved() {
         state["workspaces"][0]["active_window_id"] == 2
     })
     .await;
-    let since = screenshot_ref(&mut desk).await;
+    let since = settled_ref(&mut desk).await;
     // With no Wayland socket, a click that passes every check fails to connect.
     desk.unplug_display();
     let refused = desk.server.call("click", at(&before)).await;
@@ -980,6 +992,56 @@ async fn a_pixel_aim_is_refused_once_the_windows_its_screenshot_shows_moved() {
     let (_, stale) = tool_error(&desk.server.call("scroll", scroll).await);
     let moved = "layout_changed: niri moved or resized window 1 since the screenshot";
     assert!(stale.starts_with(moved), "{stale}");
+}
+
+// The bug: the check compared the windows at the capture with those at the call, so a
+// change undone in between, which scrolls niri's view and may leave it there, went unseen.
+#[tokio::test]
+async fn a_pixel_aim_is_refused_after_focus_moved_away_and_back() {
+    let mut desk = Desk::start("act-moved-back", "").await;
+    let before = screenshot_ref(&mut desk).await;
+    for active in [json!(2), Value::Null] {
+        let event = json!({"WorkspaceActiveWindowChanged": {"workspace_id": 1, "active_window_id": active}});
+        applied(&mut desk, &event, |state| {
+            state["workspaces"][0]["active_window_id"] == active
+        })
+        .await;
+    }
+    desk.unplug_display();
+    let click = json!({"screenshot_ref": before, "x": 10, "y": 10});
+    let (_, why) = tool_error(&desk.server.call("click", click).await);
+    let moved = "layout_changed: the view now follows no window instead of window 2, as after a focus change since the screenshot";
+    assert!(why.starts_with(moved), "{why}");
+}
+
+// The bug: niri reports where a window goes at once and then animates it there, so a
+// screenshot taken meanwhile shows it on the way, while the windows niri reported at the
+// capture and at the call were the same.
+#[tokio::test]
+async fn a_pixel_aim_is_refused_through_a_screenshot_taken_while_windows_may_move() {
+    let mut desk = Desk::start("act-moving", "").await;
+    let mut layout = window_on(1, Some("a"), 1, true)["layout"].clone();
+    layout["tile_size"] = json!([400.0, 600.0]);
+    let resized = json!({"WindowLayoutsChanged": {"changes": [[1, layout]]}});
+    applied(&mut desk, &resized, |state| {
+        state["windows"][0]["layout"]["tile_size"][0] == 400.0
+    })
+    .await;
+    let moving = screenshot_ref(&mut desk).await;
+    let settled = settled_ref(&mut desk).await;
+    desk.unplug_display();
+    let at = |id: &str| json!({"screenshot_ref": id, "x": 10, "y": 10});
+    let (_, why) = tool_error(&desk.server.call("click", at(&moving)).await);
+    assert!(
+        why.starts_with("layout_changed: niri moved or resized window 1 ")
+            && why.contains(
+                " ms before the screenshot, so it may show windows niri was still moving"
+            ),
+        "{why}"
+    );
+    // Once the screen was seen not changing, the image shows where the window ended.
+    let (name, unconnected) = tool_error(&desk.server.call("click", at(&settled)).await);
+    assert_eq!(name, "upstream_error", "{unconnected}");
 }
 
 #[tokio::test]

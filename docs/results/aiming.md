@@ -57,15 +57,26 @@ Refs are `shot-f5ce5272-<n>`. Clicks 1 and 14 are the server's fault, and the ot
 - `8aa7917` fix(engine): a settle wait drops the ref of each capture once a later one replaces it, so only the capture it returns keeps a ref.
 - `0bcc6f7` docs(skill): read each pixel off the latest image, not from an earlier screenshot, and zoom in for small targets such as menu rows. SKILL.md stays at 126 lines and is 12 bytes shorter.
 
-niri reports no place for a tiled window, so the check can't see the view scrolled with nothing else changed, as after `CenterWindow` or a touchpad swipe. It also can't see changes inside a window, such as a page that reflows. A stale-looking ref can be refused when nothing under the pixel moved, such as a floating window clicked after focus moved to a tiled window under it. That costs the agent one screenshot.
+The PR's review found four gaps in these fixes, which later commits closed:
+
+- `2e4be5f` fix(engine): a settle wait kept each capture's ref before it dropped the one before, so with 64 refs kept every capture still pushed one of the agent's out, and a wait asked for no screenshot kept a ref nobody got. Now a capture of a settle wait keeps no ref until the wait returns it.
+- `2fd8f17` fix(refs): comparing what niri showed at the capture with what it shows at the call missed a change undone in between, such as focus moving away and back, which can leave the view scrolled. It also missed a screenshot taken while niri was still animating a change it had already reported. The event stream now keeps, for each output, the time and kind of the last change to its scene. A pixel aim is refused when that change came after the capture began, or less than a second before it. A settle wait's settled screenshot is the exception when the capture it matched began after the change.
+- `1c37b06` fix(input): the check ran only as the call began, so a window that moved while the gesture got ready, during a lock read or the pointer's connection, let the click out. It runs again right before the first input and, for a drag, before the press.
+- `61d51bb` docs: the changelog and both error references now say what the check can't see.
+
+niri reports no place for a tiled window, no stacking order and no layer-shell surfaces in its events. So the check can't see the view scrolled with nothing else changed, as after `center-column` or a touchpad swipe, a floating window raised over another, or a notification or panel opening over the target. It also can't see changes inside a window, such as a page that reflows. A ref can be refused when nothing under the pixel moved, such as a floating window clicked after focus moved to a tiled window under it, or a plain screenshot taken within a second of any window change on its output. That costs the agent one screenshot.
 
 ## Tests
 
 - Protocol `act::a_pixel_aim_is_refused_once_the_windows_its_screenshot_shows_moved`: a click after the active window changed and a scroll after a resize fail with `layout_changed`, and a click after only a title change passes the check. On the code before `351d723`, the first click reached the Wayland connect, failing with `upstream_error` instead of `ref_invalid`.
-- Unit `refs::scene` (4 tests): what moves an output's scene, including the session's resize and focus change, and what doesn't.
+- Unit `niri::scene` (4 tests): what moves an output's scene, including the session's resize and focus change, and what doesn't.
 - Nested M4 (`make nested-input`), new step after the clicks: the supervisor moves the floating `wev` 250 px with niri's `MoveFloatingWindow`, then clicks at the pixel that showed its centre. Before the fix the call answered `{"accepted":true,"focused_window":2,"observed":"sent"}`, with no `changes`, the same shape as clicks 1 and 14. After it, the call fails with `layout_changed: niri moved or resized window 2 since the screenshot` and nothing reaches `wev`. The whole M4 run passed with the fix.
-- Protocol `wait::a_long_screen_wait_keeps_the_agents_refs`: a fake grim returns a different image each time, and after an 8 s `wait_for` both the screenshot taken before it and the one it returned can still be zoomed. Before `8aa7917` the earlier one failed with `unknown_ref`.
-- Two protocol tests in `elements` reused a ref for a pixel click after they had opened the overview or moved the window. They now take a new screenshot first, since that click is refused.
+- Two protocol tests in `elements` reused a ref for a pixel click after they had opened the overview or moved the window. They now take a new settled screenshot first, since that click is refused.
+- Protocol `act::a_pixel_aim_is_refused_after_focus_moved_away_and_back` and `act::a_pixel_aim_is_refused_through_a_screenshot_taken_while_windows_may_move`: before `2fd8f17` both clicks went out. The second also checks that a settled screenshot taken after the change still aims.
+- Unit `refs::pixels_stand_unless_the_windows_moved_after_or_just_before_the_capture`: the second's allowance and the settled exception.
+- Unit `input::pointer::a_pixel_click_is_refused_when_a_window_moves_while_it_gets_ready`: the fake niri resizes the window while it holds the pointer's connection. Before `1c37b06` the click went out.
+- Protocol `wait::a_screen_wait_keeps_the_agents_refs`: a fake grim returns a different image each time. With 64 refs kept, a settle wait without a screenshot and one with a screenshot leave every agent ref except the oldest, which the returned screenshot's ref replaced. Before `2e4be5f` the zoom of ref 2 failed with `unknown_ref`.
+- Nested M4 takes each screenshot it aims through 1.1 s after the step before it. An agent's turn takes longer than that; the harness's doesn't.
 
 `make check` passed after each commit, run with `ulimit -n 524288`.
 
@@ -84,3 +95,13 @@ flock ~/.cache/ncu-nested.lock make nested-eval SCENARIO=<scenario> SKILL=skills
 | `errand` | 1792118242-578036 | pass | 9/9 | 8 | 11 | 16.2 s | $0.092 |
 
 No call was refused with `layout_changed`. `form` still aimed its first two clicks with one screenshot, at a check box and a drop-down in a window that didn't move, which the check lets through. Its ref numbers went up by 2 for each click with `screenshot: true`, where the session's went up by 14, because the settle wait no longer keeps a ref for every capture.
+
+The same three on `61d51bb`, after the review's fixes, $0.32 in all:
+
+| Scenario | Run | Result | Expectations | Calls | Turns | Time | Cost |
+|---|---|---|---|---|---|---|---|
+| `form` | 1792121089-1085288 | pass | 8/8 | 13 | 16 | 18.0 s | $0.138 |
+| `click-elsewhere` | 1792121113-1086284 | pass | 5/5 | 6 | 9 | 15.5 s | $0.091 |
+| `errand` | 1792121133-1087016 | pass | 9/9 | 8 | 11 | 16.5 s | $0.092 |
+
+No call was refused with `layout_changed`, so neither the check right before input nor the second's allowance before a capture refused a click these agents aimed. `form`'s ref numbers went up by 1 for each screenshot, since a settle wait now keeps a ref only for the screenshot it returns.

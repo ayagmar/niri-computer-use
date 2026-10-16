@@ -122,6 +122,15 @@ impl Desk {
         id.as_str().unwrap_or_else(|| panic!("{shot}")).to_owned()
     }
 
+    /// The `screenshot_ref` of a screenshot taken once the screen stopped changing, which a
+    /// pixel aim takes right after niri moved the windows.
+    async fn settled_ref(&mut self) -> String {
+        let arguments = json!({"until": "screen_stable", "timeout_ms": 2000, "screenshot": true});
+        let waited = self.server.call("wait_for", arguments).await;
+        let id = &report(&waited)["screenshot"]["screenshot_ref"];
+        id.as_str().unwrap_or_else(|| panic!("{waited}")).to_owned()
+    }
+
     /// The `element_ref` of the listed element named `name`.
     async fn element(&mut self, name: &str) -> String {
         let listing = self
@@ -4033,8 +4042,9 @@ async fn a_drag_cancelled_while_it_releases_still_clears_its_marker() {
         );
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    // The overview opened since `shot`, so a pixel click needs a new screenshot.
-    let fresh = desk.screenshot_ref().await;
+    // The overview opened since `shot`, so a pixel click needs a new screenshot, taken
+    // once the screen stopped changing.
+    let fresh = desk.settled_ref().await;
     let pixel = json!({"screenshot_ref": fresh, "x": 5, "y": 5});
     let clicked = desk.server.call("click", pixel).await;
     assert_eq!(clicked["isError"], false, "{clicked}");
@@ -4091,8 +4101,9 @@ async fn moved_before_it_went_out(tool: &str, tag: &str, event: &Value) {
     let response = desk.server.response(id).await;
     refused_moving(&response["result"], &format!("{tag} {tool}"));
     assert_eq!(desk.fixture.clipboard.pointed(), [], "{tag} {tool}");
-    // The view moved since `shot`, so a pixel click needs a new screenshot.
-    let fresh = desk.screenshot_ref().await;
+    // The view moved since `shot`, so a pixel click needs a new screenshot, taken once
+    // the screen stopped changing.
+    let fresh = desk.settled_ref().await;
     let pixel = json!({"screenshot_ref": fresh, "x": 5, "y": 5});
     let clicked = desk.server.call("click", pixel).await;
     assert_eq!(clicked["isError"], false, "{tag} {tool}: {clicked}");
