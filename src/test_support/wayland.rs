@@ -146,6 +146,9 @@ enum Command {
     OnPress(usize, Hook),
 }
 
+/// What runs when niri next gets a `FocusedWindow` request (`Compositor::on_focus_request`).
+type Asked = Arc<Mutex<Option<Hook>>>;
+
 /// What a test runs at a virtual key press (`Compositor::on_press`).
 pub(crate) struct Hook(Box<dyn FnOnce() + Send>);
 
@@ -163,6 +166,8 @@ pub(crate) struct Compositor {
     seen: Arc<Mutex<Seen>>,
     /// What niri answers `FocusedWindow` with: the window, or its error.
     focused: Arc<Mutex<Reply>>,
+    /// What runs when niri next gets a `FocusedWindow` request, before it answers.
+    asked: Asked,
     commands: Option<mpsc::UnboundedSender<(Command, oneshot::Sender<()>)>>,
     /// What the event stream sends after its initial events.
     events: broadcast::Sender<Event>,
@@ -191,6 +196,8 @@ impl Compositor {
             focused_window(1),
         )))));
         let answered = Arc::clone(&focused);
+        let asked = Arc::new(Mutex::new(None));
+        let hooked = Arc::clone(&asked);
         let (events, _) = broadcast::channel(16);
         let reported = events.clone();
         let thread = std::thread::spawn(move || {
@@ -198,13 +205,19 @@ impl Compositor {
                 .enable_io()
                 .build()
                 .unwrap()
-                .block_on(serve(listeners, state, (answered, reported), received));
+                .block_on(serve(
+                    listeners,
+                    state,
+                    (answered, hooked, reported),
+                    received,
+                ));
         });
         Self {
             display,
             socket,
             seen,
             focused,
+            asked,
             commands: Some(commands),
             events,
             thread: Some(thread),
@@ -308,6 +321,12 @@ impl Compositor {
             Ok(Response::FocusedWindow(id.map(focused_window)));
     }
 
+    /// Runs `hook` when niri next gets a `FocusedWindow` request, before it answers, so
+    /// whatever it does happens while the request is outstanding.
+    pub(crate) fn on_focus_request(&self, hook: impl FnOnce() + Send + 'static) {
+        *self.asked.lock().unwrap_or_else(PoisonError::into_inner) = Some(Hook(Box::new(hook)));
+    }
+
     /// Makes niri answer `FocusedWindow` with `message` as its error from the `press`-th
     /// key press on.
     pub(crate) async fn fail_focus_at(&self, press: usize, message: &str) {
@@ -359,7 +378,7 @@ async fn serve(
         std::os::unix::net::UnixListener,
     ),
     mut state: State,
-    (focused, events): (Arc<Mutex<Reply>>, broadcast::Sender<Event>),
+    (focused, asked, events): (Arc<Mutex<Reply>>, Asked, broadcast::Sender<Event>),
     mut commands: mpsc::UnboundedReceiver<(Command, oneshot::Sender<()>)>,
 ) {
     let (display_listener, niri_listener) = listeners;
@@ -379,7 +398,7 @@ async fn serve(
             accepted = niri_listener.accept() => {
                 let group = state.group;
                 let focused = focused.lock().unwrap_or_else(PoisonError::into_inner).clone();
-                let answered = (focused, events.subscribe());
+                let answered = (focused, Arc::clone(&asked), events.subscribe());
                 tokio::spawn(answer(accepted.unwrap().0, group, answered));
             }
             ready = readable.readable() => {
@@ -485,7 +504,7 @@ fn focused_window(id: u64) -> Window {
 async fn answer(
     stream: tokio::net::UnixStream,
     group: u32,
-    (focused, mut events): (Reply, broadcast::Receiver<Event>),
+    (focused, asked, mut events): (Reply, Asked, broadcast::Receiver<Event>),
 ) {
     let (reader, mut writer) = stream.into_split();
     let mut line = String::new();
@@ -499,7 +518,13 @@ async fn answer(
             OUTPUT.to_owned(),
             output(),
         )]))),
-        Ok(Request::FocusedWindow) => focused,
+        Ok(Request::FocusedWindow) => {
+            let hook = asked.lock().unwrap_or_else(PoisonError::into_inner).take();
+            if let Some(Hook(hook)) = hook {
+                hook();
+            }
+            focused
+        }
         Ok(Request::EventStream) => Ok(Response::Handled),
         _ => Err(
             "the fake answers only KeyboardLayouts, Outputs, FocusedWindow and EventStream".into(),

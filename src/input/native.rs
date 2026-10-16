@@ -155,7 +155,7 @@ const fn decisive(typing: &Typing, keys: usize) -> Option<usize> {
 }
 
 /// `interrupted`, and before the `decisive` stroke also focus away from `before` in niri's
-/// own answer.
+/// own answer, then `interrupted` again for what the stream reported while niri answered.
 async fn left_before(
     socket: &Socket,
     waiter: &mut Waiter,
@@ -170,7 +170,10 @@ async fn left_before(
         return Ok(None);
     }
     let focused = niri::focused_window(socket).await?;
-    Ok((focused != before).then(|| moved(focused, waiter.view())))
+    if focused != before {
+        return Ok(Some(moved(focused, waiter.view())));
+    }
+    Ok(interrupted(waiter, before, group).await)
 }
 
 /// The outcome once niri says focus moved to `focused`.
@@ -940,6 +943,29 @@ mod tests {
             (outcome.observed, outcome.pressed),
             (Observed::Interrupted, Some(0))
         );
+        marker_cleared(&niri, &dir).await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The event stream reports focus moving while niri answers the request before the
+    /// decisive key, and niri's answer, from just before, still names the window: the key
+    /// doesn't go out.
+    #[tokio::test]
+    async fn focus_the_stream_reports_during_the_check_before_the_last_key_stops_it() {
+        let dir = fresh_dir("native-focus-asked");
+        let niri = Compositor::start(&dir, BASE);
+        let view = events::view_of(initial_events(0));
+        let (waiter, updates) = events::waiter(view, 0);
+        let moved = Event::WindowFocusChanged { id: Some(2) };
+        niri.on_focus_request(move || {
+            updates.send(Update::Event(1, Box::new(moved))).ok();
+        });
+        let typing = Typing::Keys(vec!["Return".to_owned()]);
+        let outcome = type_through(&niri, &dir, typing, Some(waiter))
+            .await
+            .unwrap();
+        assert_eq!(niri.seen().keys, []);
+        assert_eq!(outcome.observed, Observed::Interrupted);
         marker_cleared(&niri, &dir).await;
         std::fs::remove_dir_all(dir).unwrap();
     }
