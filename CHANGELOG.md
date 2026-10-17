@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- The Noctalia plugin sends failed-action notifications at normal urgency rather than critical, since agents retry most failures. Stuck input, and a Stop or Resume that failed, stay critical.
 - The Noctalia plugin's panel shows the first lines `watch` printed before it exited, up to three, rather than only the last, so a panic shows its message instead of the `RUST_BACKTRACE` note after it.
 
 ## 0.1.3 - 2026-10-17
