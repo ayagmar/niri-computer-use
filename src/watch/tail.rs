@@ -13,12 +13,13 @@ const READ_LIMIT: u64 = 1024 * 1024;
 /// How far back from the end `backlog` looks for recent lines.
 const BACKLOG_BYTES: u64 = 256 * 1024;
 
-/// A position in the log file the path names now.
+/// A position in the log file read so far, which the path named when it was opened.
 #[derive(Debug)]
 pub(crate) struct Tail {
     path: PathBuf,
-    /// The file read so far, by device and inode.
-    file: Option<(u64, u64)>,
+    /// The file read so far, kept open so what was appended to it before it was moved
+    /// aside is still read.
+    file: Option<File>,
     offset: u64,
     lines: Lines,
 }
@@ -38,12 +39,11 @@ impl Tail {
 
     fn backlog(&mut self, count: usize) -> io::Result<Vec<Vec<u8>>> {
         let mut file = File::open(&self.path)?;
-        let meta = file.metadata()?;
-        let start = meta.len().saturating_sub(BACKLOG_BYTES);
+        let start = file.metadata()?.len().saturating_sub(BACKLOG_BYTES);
         file.seek(SeekFrom::Start(start))?;
         let mut bytes = Vec::new();
-        file.take(BACKLOG_BYTES).read_to_end(&mut bytes)?;
-        self.file = Some((meta.dev(), meta.ino()));
+        (&mut file).take(BACKLOG_BYTES).read_to_end(&mut bytes)?;
+        self.file = Some(file);
         self.offset = start + bytes.len() as u64;
         let mut lines = Lines::default().feed(&bytes);
         // A start inside the file may cut its first line.
@@ -62,17 +62,33 @@ impl Tail {
         Ok(lines.split_off(skip))
     }
 
-    /// The whole lines appended since the last call. A log moved aside or replaced is
-    /// read from its start; one that is missing yields nothing until it is back.
+    /// The whole lines appended since the last call. A log moved aside is read to its end,
+    /// then the one the path names now from its start; one cut short is read from its
+    /// start. While the path names none, only the file read so far is followed.
     pub(crate) fn poll(&mut self) -> io::Result<Vec<Vec<u8>>> {
-        let mut file = match File::open(&self.path) {
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        let (mut lines, more) = self.read()?;
+        if more {
+            return Ok(lines);
+        }
+        let file = match File::open(&self.path) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(lines),
             opened => opened?,
         };
-        let meta = file.metadata()?;
-        let identity = Some((meta.dev(), meta.ino()));
-        if identity != self.file || meta.len() < self.offset {
-            self.file = identity;
+        if !self.reading(&file)? {
+            self.file = Some(file);
+            self.offset = 0;
+            self.lines = Lines::default();
+            lines.extend(self.read()?.0);
+        }
+        Ok(lines)
+    }
+
+    /// The whole lines appended to the file read so far, and whether more is left to read.
+    fn read(&mut self) -> io::Result<(Vec<Vec<u8>>, bool)> {
+        let Some(file) = &mut self.file else {
+            return Ok((Vec::new(), false));
+        };
+        if file.metadata()?.len() < self.offset {
             self.offset = 0;
             self.lines = Lines::default();
         }
@@ -80,7 +96,17 @@ impl Tail {
         let mut bytes = Vec::new();
         file.take(READ_LIMIT).read_to_end(&mut bytes)?;
         self.offset += bytes.len() as u64;
-        Ok(self.lines.feed(&bytes))
+        let more = bytes.len() as u64 == READ_LIMIT;
+        Ok((self.lines.feed(&bytes), more))
+    }
+
+    /// Whether `file` is the one read so far.
+    fn reading(&self, file: &File) -> io::Result<bool> {
+        let Some(current) = &self.file else {
+            return Ok(false);
+        };
+        let (current, other) = (current.metadata()?, file.metadata()?);
+        Ok((current.dev(), current.ino()) == (other.dev(), other.ino()))
     }
 }
 
@@ -132,6 +158,22 @@ mod tests {
         assert_eq!(tail.poll().unwrap(), NONE);
         append(&path, "new\n");
         assert_eq!(texts(tail.poll().unwrap()), ["new"]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A call appended after the last poll, right before the log is moved aside, is read
+    /// before the calls in the new log.
+    #[test]
+    fn reads_what_was_appended_before_the_log_was_moved_aside() {
+        let dir = crate::test_support::fresh_dir("watch-rotate-unread");
+        let path = dir.join("audit.jsonl");
+        append(&path, "old\n");
+        let (mut tail, _) = Tail::open(path.clone(), 0);
+        append(&path, "unread\n");
+        std::fs::rename(&path, dir.join("audit.jsonl.1")).unwrap();
+        append(&path, "new\n");
+        assert_eq!(texts(tail.poll().unwrap()), ["unread", "new"]);
+        assert_eq!(tail.poll().unwrap(), NONE);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
