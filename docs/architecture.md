@@ -1,6 +1,6 @@
 # Architecture
 
-`niri-computer-use` is one binary. `serve` runs an MCP server over stdin and stdout, one process per agent session. `status` prints the readiness report and exits. `stop` and `resume` set and clear the stop flag, and `recover` clears the input-dirty marker. `engine` serves every client of one niri instance from one process, over a Unix socket (see [The shared engine](#the-shared-engine)).
+`niri-computer-use` is one binary. `serve` runs an MCP server over stdin and stdout, one process per agent session. `status` prints the readiness report and exits. `stop` and `resume` set and clear the stop flag, and `recover` clears the input-dirty marker, and `watch` prints the lease, the stop flag and each call the audit log records as JSON lines, for a shell to show. `engine` serves every client of one niri instance from one process, over a Unix socket (see [The shared engine](#the-shared-engine)).
 
 ## Processes
 

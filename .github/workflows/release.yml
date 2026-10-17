@@ -85,6 +85,9 @@ jobs:
           strip --strip-debug "dist/$name/niri-computer-use"
           "dist/$name/niri-computer-use" --version
           cp -r skills/niri-computer-use "dist/$name/skills/"
+          mkdir -p "dist/$name/noctalia"
+          cp -r noctalia/niri-computer-use "dist/$name/noctalia/"
+          rm -rf "dist/$name/noctalia/niri-computer-use/tests"
           # cargo-about reads every platform's crates, and the build fetched only this one's.
           cargo fetch --locked
           cargo about generate --frozen --target "$target" -c .github/release/about.toml -m Cargo.toml \

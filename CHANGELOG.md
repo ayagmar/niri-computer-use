@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## Unreleased
 
+### Added
+
+- `niri-computer-use watch` prints what agents are doing on this niri instance as JSON lines: who holds the lease and since when, in which project, whether the stop flag or the input-dirty marker is set, which agents have a server on it and whether an update replaced that server's binary, and each tool call the audit log records, the last 20 marked `backlog`, for a shell such as Noctalia to show. It never connects to niri, and the lines hold only what the audit log and the lease record hold.
+- A Noctalia plugin, in `noctalia/niri-computer-use`, shows which agent drives the desktop and what it does. Its bar widget breathes in the accent colour with the agent's name while one drives, and right-click stops agents or resumes them. Its panel shows who drives, in which project and for how long, every connected agent with the ones left on an old build marked, a Stop button, a settings button and the last 50 calls in words, opening on the newest and following new ones. Its desktop glow frames the output behind the windows while an agent drives, and it notifies when an agent takes the desktop, once for an agent that takes it back within five minutes, when agents are stopped, when input may be stuck and when an agent is left on a replaced build; failed actions only when turned on. What it finds when it starts isn't announced. It reads `niri-computer-use watch`.
+- The install script installs the Noctalia plugin from the same release to `~/.local/share/niri-computer-use/noctalia/niri-computer-use` and, when `noctalia` is on `PATH`, links it into Noctalia's plugin directory and prints the command that enables it. It doesn't enable it.
+- After an update, the install script lists each `niri-computer-use serve` still running the binary it replaced, by PID and the agent that started it, so you know which agents to restart or reconnect.
+
 ### Changed
 
 - A server that requires the shared engine, and couldn't reach it or was refused when it started, now tries again on every call, starting an engine if none runs. Once the cause is gone, such as an engine of an older build that exited after its last client, the next call is served, without restarting the MCP server. Until then every call fails with `engine_unavailable` as before. A cause no call can fix, such as a socket path over 108 bytes, still needs a restart.

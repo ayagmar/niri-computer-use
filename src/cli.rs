@@ -20,6 +20,26 @@ pub(crate) fn print_error(message: &str) {
     eprintln!("niri-computer-use: {message}");
 }
 
+/// Ends the process at once, after `message` on stderr: stdout can't take what it is
+/// sent. A write to stdout already running blocks a thread that can't be stopped, which
+/// returning from `main` would wait for, maybe forever. The line on stderr waits 100 ms
+/// at most, in case stderr blocks too.
+#[expect(
+    clippy::exit,
+    reason = "returning would wait for a stdout write that may never end"
+)]
+pub(crate) fn exit_at_once(message: String) -> ! {
+    let (said, heard) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        print_error(&message);
+        said.send(()).ok();
+    });
+    heard
+        .recv_timeout(std::time::Duration::from_millis(100))
+        .ok();
+    std::process::exit(1)
+}
+
 /// One line for the human running a subcommand.
 #[expect(
     clippy::print_stdout,

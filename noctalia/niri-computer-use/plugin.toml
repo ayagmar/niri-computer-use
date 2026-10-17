@@ -1,0 +1,103 @@
+# niri-computer-use for Noctalia: which agent drives your niri desktop, what it
+# does, and a Stop within reach.
+#
+# The [[service]] is the only entry that reads: it runs `niri-computer-use
+# watch` and publishes the desk as the `desk` state. The bar [[widget]], the
+# [[panel]] and the [[desktop_widget]] glow only draw it (lib/look.luau keeps
+# them in agreement), and Stop and Resume run the server's own `stop` and
+# `resume` (lib/actions.luau).
+#
+# plugin_api 32: argv-free runStream (shell), function callbacks in ui trees,
+# palette roles with alpha, and container tooltips.
+
+id = "ayagmar/niri-computer-use"
+name = "niri-computer-use"
+version = "0.1.0"
+plugin_api = 32
+author = "ayagmar"
+license = "MIT"
+icon = "robot"
+description = "See which agent drives your niri desktop and what it does, and stop it from the bar."
+tags = ["bar", "panel", "service", "desktop", "ai", "indicator"]
+dependencies = ["niri-computer-use"]
+
+[[setting]]
+key = "binary"
+type = "file"
+label_key = "settings.binary.label"
+description_key = "settings.binary.description"
+default = ""
+
+[[setting]]
+key = "notify_take"
+type = "bool"
+label_key = "settings.notify_take.label"
+description_key = "settings.notify_take.description"
+default = true
+
+[[setting]]
+key = "notify_release"
+type = "bool"
+label_key = "settings.notify_release.label"
+description_key = "settings.notify_release.description"
+default = false
+
+[[setting]]
+key = "notify_stop"
+type = "bool"
+label_key = "settings.notify_stop.label"
+description_key = "settings.notify_stop.description"
+default = true
+
+[[setting]]
+key = "notify_errors"
+type = "bool"
+label_key = "settings.notify_errors.label"
+description_key = "settings.notify_errors.description"
+default = false
+
+[[setting]]
+key = "glow_width"
+type = "int"
+label_key = "settings.glow_width.label"
+description_key = "settings.glow_width.description"
+default = 6
+min = 2
+max = 40
+step = 1
+
+[[service]]
+id = "watcher"
+entry = "service.luau"
+
+[[widget]]
+id = "indicator"
+entry = "bar.luau"
+
+  [[widget.setting]]
+  key = "show_when_idle"
+  type = "bool"
+  label_key = "settings.show_when_idle.label"
+  description_key = "settings.show_when_idle.description"
+  default = true
+
+  [[widget.setting]]
+  key = "show_client"
+  type = "bool"
+  label_key = "settings.show_client.label"
+  description_key = "settings.show_client.description"
+  default = true
+
+[[panel]]
+id = "panel"
+entry = "panel.luau"
+width = 440
+height = 560
+placement = "attached"
+position = "auto"
+open_near_click = true
+dismiss_on_outside_click = true
+
+[[desktop_widget]]
+id = "glow"
+entry = "glow.luau"

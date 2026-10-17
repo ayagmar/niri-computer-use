@@ -1,11 +1,11 @@
-.PHONY: check check-static test test-shared stall stall-standalone stall-shared perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-latency nested-chromium nested-chromium-a11y nested-big nested-compat niri-matrix nested-upgrade nested-eval nested-demo sitting host-capture
+.PHONY: check check-static test test-shared test-plugin stall stall-standalone stall-shared perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-latency nested-chromium nested-chromium-a11y nested-big nested-compat niri-matrix nested-upgrade nested-eval nested-demo sitting host-capture
 
 SCALE ?= 1
 NESTED_FLAGS = $(if $(VISIBLE),--visible) $(if $(SHARED),--shared) $(if $(NIRI),--niri $(NIRI))
 NIRI_VERSIONS ?= v25.08 v25.11 v26.04 main
 
 # CI runs each of check's parts as a job of its own.
-check: check-static test test-shared
+check: check-static test test-shared test-plugin
 
 check-static:
 	cargo fmt --check
@@ -22,6 +22,10 @@ test:
 
 test-shared:
 	NCU_PROTOCOL_MODE=shared cargo test --test protocol --locked
+
+# The Noctalia plugin's Luau tests, with the Luau CLI the script pins.
+test-plugin:
+	scripts/test-plugin.sh
 
 # The stall explorer's full matrix; make check explores one tool of each kind.
 stall: stall-standalone stall-shared

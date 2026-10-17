@@ -34,7 +34,7 @@ Two ways to install, both giving the same server:
 | Skill | Installed and linked for Claude Code, Pi and Codex | From the skills CLI or the clone, below |
 | Update | Run the script again | Run `cargo install` again |
 
-**With the install script.** Download it, read it, then run it. It puts the binary in `~/.local/bin`, copies the skill that tells your agents how to use the server to `~/.local/share/niri-computer-use`, links it from `~/.claude/skills` and `~/.agents/skills`, and ends with the steps in the Quickstart below. [The install script](https://ayagmar.github.io/niri-computer-use/start/install-script/) lists every file it writes, what it checks, `NCU_VERSION` and `NCU_BIN_DIR`, and how to uninstall.
+**With the install script.** Download it, read it, then run it. It puts the binary in `~/.local/bin`, copies the skill that tells your agents how to use the server to `~/.local/share/niri-computer-use`, links it from `~/.claude/skills` and `~/.agents/skills`, links the Noctalia plugin when Noctalia is installed, and ends with the steps in the Quickstart below. [The install script](https://ayagmar.github.io/niri-computer-use/start/install-script/) lists every file it writes, what it checks, `NCU_VERSION` and `NCU_BIN_DIR`, and how to uninstall.
 
 ```sh
 curl -fsSLO https://github.com/ayagmar/niri-computer-use/releases/latest/download/install.sh
@@ -146,11 +146,12 @@ What isn't protected: any connected agent sees your screen and window titles, a 
 ## Documentation
 
 - [Install](https://ayagmar.github.io/niri-computer-use/start/install/), [The install script](https://ayagmar.github.io/niri-computer-use/start/install-script/) and [Client setup](https://ayagmar.github.io/niri-computer-use/start/clients/): install, check, and register the server in your agent
+- [Noctalia plugin](https://ayagmar.github.io/niri-computer-use/start/noctalia-plugin/): see which agent drives the desktop and what it does, and stop it from the bar
 - [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/): what the server enforces, what it doesn't, and how you take the desktop back
 - [Configuration](https://ayagmar.github.io/niri-computer-use/concepts/configuration/): `policy.toml`, launch presets, the deny list, `unrestricted`, `confirm_lease`, the shared engine and tool profiles
 - [Tools](https://ayagmar.github.io/niri-computer-use/tools/overview/): every tool, its arguments and results
 - [Error reference](https://ayagmar.github.io/niri-computer-use/reference/errors/) and [Troubleshooting](https://ayagmar.github.io/niri-computer-use/reference/troubleshooting/): what each error means and what to do
-- [CLI reference](https://ayagmar.github.io/niri-computer-use/reference/cli/): `serve`, `status`, `stop`, `resume`, `recover`
+- [CLI reference](https://ayagmar.github.io/niri-computer-use/reference/cli/): `serve`, `status`, `stop`, `resume`, `recover`, `watch`
 - [For agents](https://ayagmar.github.io/niri-computer-use/reference/agents/): every page as Markdown, `llms.txt`, and the skill at stable URLs
 
 ## Development

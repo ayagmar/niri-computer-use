@@ -28,7 +28,7 @@ Before it writes anywhere it keeps, the script checks three things. Any failure 
 
 1. The tarball matches its `.sha256`. This catches a download that is broken or cut off. It isn't a signature: the checksum comes from the same release as the tarball and the script, so whoever can change the release's files can change all three. If you want more than that, read the script and compare the tarball with a build of your own.
 2. The binary runs. The script runs `niri-computer-use --version` from the temporary directory. A binary this system can't run, such as one that needs a newer glibc than 2.39, fails here. If `TMPDIR` is mounted `noexec`, point `TMPDIR` at a directory programs can run from.
-3. The copies succeed. The binary and the skill are each copied beside their destination first, as `.niri-computer-use.new`, so a copy that fails, on a full disk for example, leaves what was installed before as it was.
+3. The copies succeed. The binary, the skill and the Noctalia plugin are each copied beside their destination first, as `.niri-computer-use.new`, so a copy that fails, on a full disk for example, leaves what was installed before as it was.
 
 ## What it writes
 
@@ -38,16 +38,20 @@ Before it writes anywhere it keeps, the script checks three things. Any failure 
 | `~/.local/share/niri-computer-use/skills/niri-computer-use/` | The agent skill: `SKILL.md`, `references/tools.md` and `references/errors.md` |
 | `~/.claude/skills/niri-computer-use` | A symlink to the skill, for Claude Code |
 | `~/.agents/skills/niri-computer-use` | A symlink to the skill, for Pi, Codex and other agents that read `~/.agents/skills` |
+| `~/.local/share/niri-computer-use/noctalia/niri-computer-use/` | The [Noctalia plugin](../noctalia-plugin/), without its tests. A release from before the plugin leaves an installed one as it is |
+| `~/.local/share/noctalia/plugins/niri-computer-use` | A symlink to the plugin, only when `noctalia` is on `PATH`. `XDG_DATA_HOME` replaces `~/.local/share` here, as it does for Noctalia |
 
 `~/.claude/skills` and `~/.agents/skills` are created if they are missing. The binary goes into place with a rename, so a server that is running keeps the binary it started with until its clients restart. The temporary directory and the `.niri-computer-use.new` staging copies are removed when the script ends, however it ends.
 
-If a link already exists at one of the two skill paths and points somewhere else, such as into a clone, the script replaces it and prints a line naming what it pointed to. If something that isn't a link is there, a directory for example, the script leaves it alone, prints where the skill is, and goes on.
+If a link already exists at one of the skill or plugin paths and points somewhere else, such as into a clone, the script replaces it and prints a line naming what it pointed to. If something that isn't a link is there, a directory for example, the script leaves it alone, prints where the skill or the plugin is, and goes on.
+
+When `noctalia` is on `PATH`, the next steps include enabling the plugin with `noctalia msg plugins enable ayagmar/niri-computer-use`; the script doesn't enable it. After an update, the script lists each `niri-computer-use serve` still running the binary it replaced, by PID and the name of the agent that started it, so you know which agents to restart or reconnect.
 
 ## What it never does
 
 - It doesn't run `sudo` or need root, and it writes nothing outside the paths above and `TMPDIR`.
 - It doesn't change your `PATH` or any shell startup file. If `~/.local/bin` isn't on your `PATH`, the next steps it prints use the binary's full path.
-- It doesn't edit your niri config or start the server. It registers the server in an agent only through that agent's own `mcp add` command, and only when you say yes at its prompt or set `NCU_REGISTER=1`; see [Registering in your agents](#registering-in-your-agents). The other steps it prints at the end are for you to run.
+- It doesn't edit your niri or Noctalia config, enable the plugin, start the server or stop one that runs. It registers the server in an agent only through that agent's own `mcp add` command, and only when you say yes at its prompt or set `NCU_REGISTER=1`; see [Registering in your agents](#registering-in-your-agents). The other steps it prints at the end are for you to run.
 
 ## Variables
 
@@ -77,19 +81,19 @@ These are the agents' own commands, the same ones [Client setup](../clients/) gi
 
 ## Update
 
-Run the script again. It replaces the binary and the skill the same way, and the two links keep pointing at the skill. The [Install](../install/#updating-while-agents-run) page says what happens to agents that are running while you update.
+Run the script again. It replaces the binary, the skill and the plugin the same way, and the links keep pointing at them. The [Install](../install/#updating-while-agents-run) page says what happens to agents that are running while you update.
 
 ## Uninstall
 
-The script has no uninstall mode; remove what it wrote. These two commands undo an install with the default `NCU_BIN_DIR`:
+The script has no uninstall mode; remove what it wrote. If you enabled the plugin, run `noctalia msg plugins disable ayagmar/niri-computer-use` first. These two commands then undo an install with the default `NCU_BIN_DIR`:
 
 ```sh
-rm ~/.local/bin/niri-computer-use ~/.claude/skills/niri-computer-use ~/.agents/skills/niri-computer-use
+rm -f ~/.local/bin/niri-computer-use ~/.claude/skills/niri-computer-use ~/.agents/skills/niri-computer-use "${XDG_DATA_HOME:-$HOME/.local/share}/noctalia/plugins/niri-computer-use"
 rm -r ~/.local/share/niri-computer-use
 ```
 
 To unregister the server from an agent the script registered it in, use the agent's own command: `claude mcp remove --scope user niri-computer-use`, `pi mcp remove niri-computer-use` or `codex mcp remove niri-computer-use`.
 
-If the script said it replaced or left one of the skill paths, that path wasn't its own: leave it out of the first `rm`, and point a replaced link back where the script said it pointed.
+If the script said it replaced or left one of the skill or plugin paths, that path wasn't its own: leave it out of the first `rm`, and point a replaced link back where the script said it pointed.
 
 The directories the script created around these paths, such as `~/.local/bin` and `~/.claude/skills`, stay, in case other programs use them. Things you set up afterwards aren't the script's, so they stay too: the server's entry in your agent (`claude mcp remove niri-computer-use` for Claude Code), the stop key bind in your niri config, the policy file at `~/.config/niri-computer-use/`, the audit log under `~/.local/state/niri-computer-use/`, and screenshots the agent saved under `~/Pictures/niri-computer-use`.

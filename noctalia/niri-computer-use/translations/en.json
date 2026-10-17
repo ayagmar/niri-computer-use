@@ -1,0 +1,152 @@
+{
+  "settings": {
+    "binary": {
+      "label": "niri-computer-use binary",
+      "description": "Leave empty to use niri-computer-use from PATH, ~/.local/bin or ~/.cargo/bin."
+    },
+    "notify_take": {
+      "label": "Notify when an agent takes the desktop",
+      "description": "A notification names the agent and its project."
+    },
+    "notify_release": {
+      "label": "Notify when an agent gives the desktop back",
+      "description": "Off by default: the bar already shows it."
+    },
+    "notify_stop": {
+      "label": "Notify when agents are stopped",
+      "description": "By Stop, by your stop key or by niri-computer-use stop."
+    },
+    "notify_errors": {
+      "label": "Notify when an agent's action fails",
+      "description": "Off by default: agents retry most failures themselves. Never for an agent's own mistakes, such as invalid arguments."
+    },
+    "glow_width": {
+      "label": "Glow width",
+      "description": "How wide the desktop glow's frame is, in pixels."
+    },
+    "show_when_idle": {
+      "label": "Show while no agent drives",
+      "description": "Off hides the capsule until an agent takes the desktop."
+    },
+    "show_client": {
+      "label": "Show the agent's name",
+      "description": "Next to the robot while an agent drives."
+    }
+  },
+  "status": {
+    "idle": {
+      "title": "No agent on the desktop",
+      "detail": "Agents ask for the desktop before they act."
+    },
+    "driving": {
+      "title": "{who} is driving",
+      "where": "In {project} · for {span}",
+      "when": "For {span}"
+    },
+    "asking": {
+      "title": "{who} asks for the desktop"
+    },
+    "stopped": {
+      "title": "Agents are stopped",
+      "detail": "Resume when you want them to act again.",
+      "stuck": "Input may be stuck. Run niri-computer-use recover in a terminal, then resume."
+    },
+    "offline": {
+      "title": "Not watching",
+      "detail": "niri-computer-use watch stopped answering. It starts again shortly."
+    },
+    "starting": {
+      "title": "Starting",
+      "detail": "Waiting for niri-computer-use watch."
+    },
+    "missing": {
+      "title": "niri-computer-use not found",
+      "detail": "Install it, or set its path in this plugin's settings."
+    },
+    "missing_hint": "Install it, or set its path in this plugin's settings.",
+    "error": {
+      "title": "niri-computer-use watch failed",
+      "format": "This niri-computer-use speaks a newer watch format. Update the plugin.",
+      "old": "This niri-computer-use has no watch command. Update it, or set the path of a build that has one in this plugin's settings."
+    }
+  },
+  "notify": {
+    "who_in": "{client} in {project}",
+    "took": "{client} took the desktop",
+    "took_body": "Right-click the robot in the bar, or press your stop key, to stop it.",
+    "released": "{client} gave the desktop back",
+    "stopped": "Agents stopped",
+    "stopped_body": "Resume from the panel when you want them to act again.",
+    "stuck": "Input may be stuck",
+    "stuck_body": "Run niri-computer-use recover in a terminal.",
+    "outdated": "Agents on an old build: {n}",
+    "outdated_body": "An update replaced niri-computer-use. Restart those agents, or reconnect their MCP server, to use the new build.",
+    "failed": "{client}: {error}",
+    "where": "In {project}. "
+  },
+  "error": {
+    "stream": "Noctalia couldn't start niri-computer-use watch.",
+    "timed_out": "It took more than five seconds.",
+    "stop": "Couldn't stop agents",
+    "resume": "Couldn't resume agents"
+  },
+  "bar": {
+    "last": "Last: {text}, {ago}",
+    "agents": "Connected agents: {n}",
+    "outdated": "On an old build: {n}",
+    "hint_stop": "Click for details · right-click to stop agents",
+    "hint_resume": "Click for details · right-click to resume agents"
+  },
+  "panel": {
+    "resume": "Resume",
+    "stop": "Stop",
+    "stop_hint": "Ends the running action and takes the desktop back, like your stop key.",
+    "activity": "Activity",
+    "latest": "Latest",
+    "settings": "Settings",
+    "agents": "Connected agents",
+    "agent_in": "{agent} in {project}",
+    "agent_driving": "driving",
+    "agent_old": "old build, restart it",
+    "empty": "No calls on this desktop yet."
+  },
+  "time": {
+    "now": "now",
+    "seconds": "{n} s",
+    "minutes": "{n} min",
+    "hours": "{n} h",
+    "ago": "{span} ago"
+  },
+  "action": {
+    "click": "Clicked",
+    "double_click": "Double-clicked",
+    "right_click": "Right-clicked",
+    "type": "Typed {count} characters",
+    "paste": "Pasted {count} characters",
+    "and_enter": " and pressed Enter",
+    "key": "Pressed {keys}",
+    "focus_window": "Focused a window",
+    "focus_workspace": "Switched workspace",
+    "launch": "Launched {preset}",
+    "niri_action": "Ran {action}",
+    "panel_open": "Opened {panel}",
+    "panel_close": "Closed {panel}",
+    "activate": "Pressed a {role}",
+    "zoom": "Zoomed into part of the screen",
+    "region": "Looked at part of the screen",
+    "screenshot": "Looked at the screen",
+    "acquire_desktop": "Took the desktop",
+    "release_desktop": "Gave the desktop back",
+    "desktop_state": "Read the windows",
+    "elements": "Read a window's controls",
+    "wait_for": "Waited for the screen",
+    "status": "Checked readiness",
+    "pointer_move": "Moved the pointer",
+    "drag": "Dragged",
+    "scroll": "Scrolled",
+    "close_window": "Closed a window",
+    "noctalia": "Sent a Noctalia command",
+    "set_element_text": "Filled in a field",
+    "clipboard_read": "Read the clipboard"
+  }
+}

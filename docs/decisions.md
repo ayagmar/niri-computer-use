@@ -1945,6 +1945,23 @@ Each action's commit is the one its tag names in the action's repository (`git l
 - RUSTSEC-2026-0370, -0371 and -0372 mark `zvariant`, `zbus_names` and `zvariant_derive` unmaintained: zbus 6.0.0, published 2026-10-16, merged them into zbus, and zbus 5.19.0 still depends on them. `cargo deny check` failed on `main` with no change of ours.
 - The fix is zbus 6, but the rule is a release at least seven days old, and an unmaintained notice isn't a security fix. `deny.toml` ignores the three advisories by id, each with that reason, until 2026-10-23, when the upgrade to zbus 6 removes them and the ignores together.
 
+## 2026-10-17: `watch`, the desk as JSON lines
+
+- A shell plugin needs to know who drives the desktop and what they do, without parsing the audit log or finding the runtime directory itself, which takes niri's socket with every symlink resolved. `niri-computer-use watch` gives it one versioned format (`format: 1` in `hello`), so the log's layout can change without breaking the plugin.
+- It polls every 250 ms instead of watching with inotify. A poll reads `lease.json` and stats two files and the log, and so follows a log moved aside, a holder that died without clearing its record and a directory that appears later with no extra code; an inotify watch would need a fallback for each. A change shows within a quarter second, which is fast enough to show.
+- It reads files only, so it serves standalone servers and the shared engine alike, and needs no change to the engine's protocol. The audit log already keeps typed text, titles and paths out, so `action` forwards its lines as they are.
+- `project` is the last part of the working directory of the process that started the session's server, read from `/proc` by the PID in the session's label. It names the agent's project, such as `llm-usage-metrics`, which tells two Claude Code sessions apart where the label doesn't.
+- tokio's `io-std` feature, for an async stdout whose writes take a deadline: a reader that stops reading for five seconds ends `watch`. It is a feature of tokio 1.53.2, already a dependency, and adds no crate.
+
+## 2026-10-17: the Noctalia plugin
+
+- It lives in this repository, in `noctalia/niri-computer-use`, because it reads `watch`'s format and is versioned with it. The directory has the shape of a Noctalia source's plugin directory, so it can also be offered to community-plugins.
+- One `[[service]]` runs `watch` and publishes the desk as the `desk` state; the bar widget, the panel and the desktop glow only draw it. `lib/look.luau` gives each status its glyph, palette role and words, so the three surfaces never disagree, and `lib/desk.luau`, which folds the lines in and says which changes deserve a notification, makes no Noctalia call, so the tests drive it directly.
+- Noctalia's `runStream` has no exit callback and no handle to end a stream. `watch` sends `alive` every five seconds, and the service starts a new one when it heard nothing for 15 seconds, at most every 15 seconds, dropping lines from the old one by generation. A gap of more than five seconds between the service's updates means the machine slept, and counts as having heard from the watch, so a wake-up doesn't start a second one beside the first.
+- Noctalia's environment often lacks `~/.local/bin` and `~/.cargo/bin` on `PATH`, so the command tries `PATH`, then both places the installers use, and prints a `missing` event, exiting 127, when none has the binary. A `binary` setting overrides that. A build without `watch` answers with its usage line, which the plugin reads as "update it" rather than showing the usage.
+- Noctalia has no click-through overlay for plugins. The glow is a desktop widget, on the layer behind windows, sized to the focused output in logical pixels; it shows in niri's gaps. It needs placing once in Noctalia's desktop widget editor.
+- The tests run in the Luau CLI against a fake host, as in the headroom plugin, whose loader, test framework and JSON module they reuse. `scripts/test-plugin.sh` fetches Luau 0.742, published 2026-10-10, the newest release at least seven days old, checks its SHA-256 and keeps it in `target/`; `make check` and a CI job run it. `noctalia plugins lint` needs Noctalia itself, so it isn't in the gate; it passed with no warnings.
+
 ## 2026-10-17: the tool list of a required client that starts without an engine
 
 - A server that requires the shared engine and had none at its start answers `tools/list` itself, before it knows whether the engine finds Noctalia or an accessibility bus. It leaves out what it knows without one: `noctalia` while `unrestricted` is off.

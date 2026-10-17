@@ -631,24 +631,10 @@ async fn first<T>(ends: &mut Ends, wait: impl Future<Output = T>) -> Result<T, S
 }
 
 /// Ends the process at once, with the engine session closed first: the client's stdout
-/// can't take what it is sent, or it sent more than the relay has taken. A write to its
-/// stdout already running blocks a thread that can't be stopped, which returning from
-/// `main` would wait for, maybe forever. The line on stderr waits 100 ms at most, in case
-/// stderr blocks too.
-#[expect(
-    clippy::exit,
-    reason = "returning would wait for a stdout write that may never end"
-)]
+/// can't take what it is sent, or it sent more than the relay has taken.
 fn leave(engine: Option<Link>, why: &str) -> ! {
     drop(engine);
-    let (said, heard) = std::sync::mpsc::channel();
-    let message = format!("{why}; its session ends");
-    std::thread::spawn(move || {
-        cli::print_error(&message);
-        said.send(()).ok();
-    });
-    heard.recv_timeout(Duration::from_millis(100)).ok();
-    std::process::exit(1)
+    cli::exit_at_once(format!("{why}; its session ends"))
 }
 
 /// The relay's state.

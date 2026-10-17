@@ -30,6 +30,7 @@ mod status;
 mod test_support;
 mod tools;
 mod wait;
+mod watch;
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -37,7 +38,7 @@ use std::process::ExitCode;
 
 use crate::control::runtime::RuntimeDir;
 
-const USAGE: &str = "usage: niri-computer-use serve | status | stop | resume | recover | engine | guard <server-pid> | paste-keeper | --version";
+const USAGE: &str = "usage: niri-computer-use serve | status | stop | resume | recover | watch | engine | guard <server-pid> | paste-keeper | --version";
 
 /// What the server reads from its environment, once at startup. An empty variable
 /// counts as unset.
@@ -201,6 +202,8 @@ enum Command {
     /// The clipboard keeper `paste` starts: hold the pasted text, then restore the
     /// clipboard.
     PasteKeeper,
+    /// Print what agents are doing on this niri instance as JSON lines, for a shell.
+    Watch,
     /// Print the version.
     Version,
 }
@@ -215,7 +218,7 @@ async fn main() -> ExitCode {
     }
     // The flag commands must work while niri hangs, and pick only where a flag goes.
     let probe = match command {
-        Some(Command::Stop | Command::Resume) => discover::Probe::Offline,
+        Some(Command::Stop | Command::Resume | Command::Watch) => discover::Probe::Offline,
         _ => discover::Probe::Connect,
     };
     let mut env = Env::read(probe).await;
@@ -256,6 +259,7 @@ async fn main() -> ExitCode {
         }),
         Some(Command::Resume) => RuntimeDir::of(&env).and_then(|runtime| runtime.resume()),
         Some(Command::Recover) => control::recover::run(&env).await,
+        Some(Command::Watch) => watch::run(&env).await,
         Some(Command::Engine(start)) => engine::host::run(env, start.unscoped).await,
         Some(Command::Guard(server)) => control::guard::run(&env, server).await,
         Some(Command::PasteKeeper) => input::keeper::run(&env).await,
@@ -277,6 +281,7 @@ fn command(args: &[OsString]) -> Option<Command> {
         [only] if only == "stop" => Some(Command::Stop),
         [only] if only == "resume" => Some(Command::Resume),
         [only] if only == "recover" => Some(Command::Recover),
+        [only] if only == "watch" => Some(Command::Watch),
         [only] if only == "paste-keeper" => Some(Command::PasteKeeper),
         [only] if only == "engine" => Some(Command::Engine(engine::host::Start::default())),
         [engine, flag] if engine == "engine" && flag == engine::host::RUNTIME_DIR_DISCOVERED => {
@@ -498,6 +503,7 @@ mod tests {
         assert_eq!(command(&args(&["status"])), Some(Command::Status));
         assert_eq!(command(&args(&["stop"])), Some(Command::Stop));
         assert_eq!(command(&args(&["resume"])), Some(Command::Resume));
+        assert_eq!(command(&args(&["watch"])), Some(Command::Watch));
         assert_eq!(command(&args(&["recover"])), Some(Command::Recover));
         assert_eq!(command(&args(&["guard", "42"])), Some(Command::Guard(42)));
         assert_eq!(
