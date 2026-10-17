@@ -765,7 +765,10 @@ impl Relay {
         Ok(match reached {
             Ok(engine) => {
                 self.engine = Some(engine);
-                self.before = None;
+                if self.before.take().is_some() {
+                    self.reply(before::LIST_CHANGED.to_vec())
+                        .map_err(Stop::Writer)?;
+                }
                 Ok(())
             }
             Err(unreached) => {

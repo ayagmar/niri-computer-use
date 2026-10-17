@@ -539,6 +539,11 @@ async fn a_client_refused_at_its_start_is_served_once_the_refusing_engine_is_gon
     assert_eq!(result["protocolVersion"], "2025-06-18", "{result}");
     let instructions = result["instructions"].as_str().unwrap_or_default();
     assert!(instructions.contains("Start with `status`"), "{result}");
+    assert_eq!(
+        result["capabilities"]["tools"]["listChanged"], true,
+        "{result}"
+    );
+    let unreached = server.tools().await;
     let (error, detail) = tool_error(&server.call("status", json!({})).await);
     assert_eq!(error, "engine_unavailable", "{detail}");
     refusing.abort();
@@ -546,6 +551,11 @@ async fn a_client_refused_at_its_start_is_served_once_the_refusing_engine_is_gon
     let status = server.structured("status").await;
     assert_eq!(status["engine"]["mode"], "shared", "{status}");
     assert_eq!(status["shared"]["setting"], "required", "{status}");
+    // The engine, without Noctalia or an accessibility bus here, lists fewer tools, and
+    // the client is told to list them again.
+    assert!(server.notified("notifications/tools/list_changed"));
+    let reached = server.tools().await;
+    assert!(reached.len() < unreached.len(), "{reached:?}");
 }
 
 /// A mistake elsewhere in the policy file doesn't drop its requirement: an engine that

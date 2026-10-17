@@ -1,7 +1,9 @@
 //! What a relay answers itself before it first reaches an engine, for a client that
 //! requires the shared engine and had none when it started: the handshake, the tool list
 //! and pings, as the engine would answer them, so the session goes on unchanged once a
-//! call reaches one.
+//! call reaches one. Only the engine knows whether Noctalia and an accessibility bus are
+//! there, so the handshake says the tool list may change, and the client is told to list
+//! the tools again once an engine is reached.
 
 use rmcp::model::{InitializeRequestParams, ListToolsResult, ProtocolVersion, Tool};
 use serde::Deserialize;
@@ -11,6 +13,10 @@ use crate::tools;
 
 /// JSON-RPC's code for invalid params.
 const INVALID_PARAMS: i32 = -32602;
+
+/// What the client is told once an engine is reached: the engine's tool list may differ.
+pub(crate) const LIST_CHANGED: &[u8] =
+    b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}\n";
 
 /// The tools to list until an engine is reached.
 pub(crate) struct Before {
@@ -57,7 +63,10 @@ fn initialize(line: &[u8]) -> Result<Value, String> {
     }
     let request: Request = serde_json::from_slice(line)
         .map_err(|error| format!("invalid initialize params: {error}"))?;
-    let info = tools::info().with_protocol_version(negotiated(request.params.protocol_version));
+    let mut info = tools::info().with_protocol_version(negotiated(request.params.protocol_version));
+    if let Some(tools) = info.capabilities.tools.as_mut() {
+        tools.list_changed = Some(true);
+    }
     serde_json::to_value(info).map_err(|error| error.to_string())
 }
 
