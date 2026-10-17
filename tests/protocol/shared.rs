@@ -1077,3 +1077,25 @@ async fn a_client_whose_lines_overflow_the_backlog_ends_its_bridge_at_once() {
     );
     assert!(takes_the_lease(&mut other, Duration::from_secs(2)).await);
 }
+
+/// A handshake refused before an engine was reached isn't replayed to one: a client that
+/// calls anyway gets the engine's own refusal of a call without a handshake, not an engine
+/// that ends its connection.
+#[tokio::test]
+async fn a_refused_handshake_is_not_replayed_to_the_engine_reached_later() {
+    let fixture = shared("required-bad-init");
+    policy(&fixture, "shared = \"required\"\n");
+    let _niri = Niri::start(&fixture);
+    let refusing = refusing_engine(&fixture);
+    let mut server = Server::spawn(&fixture);
+    let id = server.request("initialize", json!({})).await;
+    let refused = server.response(id).await;
+    assert_eq!(refused["error"]["code"], -32602, "{refused}");
+    refusing.abort();
+    std::fs::remove_file(fixture.runtime_dir().join("engine.sock")).unwrap();
+    for _ in 0..2 {
+        let call = server.start_call("status", json!({})).await;
+        let response = server.response(call).await;
+        assert_eq!(response["error"]["code"], -32602, "{response}");
+    }
+}

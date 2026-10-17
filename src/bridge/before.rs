@@ -29,8 +29,13 @@ impl Before {
     }
 
     /// The answer to the client's request `id`, `method`, in `line`, when the relay gives
-    /// it itself.
-    pub(crate) fn answer(&self, id: &Value, method: &str, line: &[u8]) -> Option<Vec<u8>> {
+    /// it itself: an error when it refuses the request.
+    pub(crate) fn answer(
+        &self,
+        id: &Value,
+        method: &str,
+        line: &[u8],
+    ) -> Option<Result<Vec<u8>, Vec<u8>>> {
         let outcome = match method {
             "initialize" => initialize(line),
             "tools/list" => Ok(serde_json::to_value(ListToolsResult::with_all_items(
@@ -40,17 +45,21 @@ impl Before {
             "ping" => Ok(json!({})),
             _ => return None,
         };
-        let message = match outcome {
-            Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
-            Err(message) => json!({
+        let framed = |message: Value| {
+            let mut bytes = message.to_string().into_bytes();
+            bytes.push(b'\n');
+            bytes
+        };
+        Some(match outcome {
+            Ok(result) => Ok(framed(
+                json!({"jsonrpc": "2.0", "id": id, "result": result}),
+            )),
+            Err(message) => Err(framed(json!({
                 "jsonrpc": "2.0",
                 "id": id,
                 "error": {"code": INVALID_PARAMS, "message": message}
-            }),
-        };
-        let mut answer = message.to_string().into_bytes();
-        answer.push(b'\n');
-        Some(answer)
+            }))),
+        })
     }
 }
 
@@ -88,7 +97,8 @@ mod tests {
         let request = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": params});
         let line = Before::new(Vec::new())
             .answer(&json!(1), "initialize", request.to_string().as_bytes())
-            .unwrap();
+            .unwrap()
+            .unwrap_or_else(|refusal| refusal);
         serde_json::from_slice(&line).unwrap()
     }
 

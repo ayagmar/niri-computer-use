@@ -738,11 +738,7 @@ impl Relay {
             self.initialize = Some((id.clone(), line.clone()));
         }
         if self.engine.is_none() {
-            if let Some(answer) = self
-                .before
-                .as_ref()
-                .and_then(|before| before.answer(&id, &method, &line))
-            {
+            if let Some(answer) = self.answer_before(&id, &method, &line) {
                 return self.reply(answer).map_err(Stop::Writer);
             }
             if std::mem::take(&mut self.unreported) {
@@ -755,6 +751,16 @@ impl Relay {
         }
         self.in_flight.insert(id.to_string(), (id, method));
         self.send(&line).await
+    }
+
+    /// The answer `before` gives the client's request, if it gives one.
+    fn answer_before(&mut self, id: &Value, method: &str, line: &[u8]) -> Option<Vec<u8>> {
+        let answer = self.before.as_ref()?.answer(id, method, line)?;
+        // A handshake refused here isn't replayed to an engine.
+        Some(answer.unwrap_or_else(|refusal| {
+            self.initialize = None;
+            refusal
+        }))
     }
 
     /// Reaches an engine, sending it the client's `initialize` unless `initializing`, as
