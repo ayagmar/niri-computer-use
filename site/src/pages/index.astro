@@ -343,10 +343,12 @@ const released = history.find((release) => release.version === version);
 	@media (min-width: 75rem) {
 		body {
 			background: var(--ncu-plate);
-			overflow-x: clip;
 		}
+		/* The workspace clips the strip itself: on body, the clip would pass to the viewport
+		   as hidden, and anything scrolled into view could shift the page sideways. */
 		.workspace {
 			container-type: inline-size;
+			overflow-x: clip;
 		}
 		.strip {
 			display: flex;
