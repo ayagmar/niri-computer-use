@@ -19,7 +19,16 @@ pub(crate) struct Tail {
     path: PathBuf,
     /// The file read so far, kept open so what was appended to it before it was moved
     /// aside is still read.
-    file: Option<File>,
+    file: Option<Open>,
+    /// The file moved aside, read once more on the next poll: a server that opened it
+    /// before it was moved may write its line there after it was read to its end.
+    moved: Option<Open>,
+}
+
+/// An open log file and how much of it was read.
+#[derive(Debug)]
+struct Open {
+    file: File,
     offset: u64,
     lines: Lines,
 }
@@ -30,8 +39,7 @@ impl Tail {
         let mut tail = Self {
             path,
             file: None,
-            offset: 0,
-            lines: Lines::default(),
+            moved: None,
         };
         let recent = tail.backlog(count).unwrap_or_default();
         (tail, recent)
@@ -43,8 +51,7 @@ impl Tail {
         file.seek(SeekFrom::Start(start))?;
         let mut bytes = Vec::new();
         (&mut file).take(BACKLOG_BYTES).read_to_end(&mut bytes)?;
-        self.file = Some(file);
-        self.offset = start + bytes.len() as u64;
+        let mut offset = start + bytes.len() as u64;
         let mut lines = Lines::default().feed(&bytes);
         // A start inside the file may cut its first line.
         if start > 0 && !lines.is_empty() {
@@ -52,19 +59,24 @@ impl Tail {
         }
         // A last line still being written is read whole by the next `poll`.
         if bytes.last().is_some_and(|&byte| byte != b'\n') {
-            self.offset -= bytes
+            offset -= bytes
                 .iter()
                 .rev()
                 .take_while(|&&byte| byte != b'\n')
                 .count() as u64;
         }
+        self.file = Some(Open {
+            file,
+            offset,
+            lines: Lines::default(),
+        });
         let skip = lines.len().saturating_sub(count);
         Ok(lines.split_off(skip))
     }
 
     /// The whole lines appended since the last call. A log moved aside is read to its end,
-    /// then the one the path names now from its start; one cut short is read from its
-    /// start. While the path names none, only the file read so far is followed.
+    /// then the one the path names now from its start, and the moved one once more on the
+    /// next call; one cut short is read from its start. While the path names none, only the file read so far is followed.
     pub(crate) fn poll(&mut self) -> io::Result<Vec<Vec<u8>>> {
         let named = self.named()?;
         self.poll_after(named)
@@ -87,32 +99,26 @@ impl Tail {
     /// old one is read after `named` was opened, so what was appended to it before it was
     /// moved aside is read too.
     fn poll_after(&mut self, named: Option<File>) -> io::Result<Vec<Vec<u8>>> {
-        let (mut lines, more) = self.read()?;
+        let mut lines = match self.moved.take() {
+            Some(mut moved) => moved.read()?.0,
+            None => Vec::new(),
+        };
+        let (read, more) = match &mut self.file {
+            Some(open) => open.read()?,
+            None => (Vec::new(), false),
+        };
+        lines.extend(read);
         let Some(file) = named.filter(|_| !more) else {
             return Ok(lines);
         };
-        self.file = Some(file);
-        self.offset = 0;
-        self.lines = Lines::default();
-        lines.extend(self.read()?.0);
-        Ok(lines)
-    }
-
-    /// The whole lines appended to the file read so far, and whether more is left to read.
-    fn read(&mut self) -> io::Result<(Vec<Vec<u8>>, bool)> {
-        let Some(file) = &mut self.file else {
-            return Ok((Vec::new(), false));
+        let mut open = Open {
+            file,
+            offset: 0,
+            lines: Lines::default(),
         };
-        if file.metadata()?.len() < self.offset {
-            self.offset = 0;
-            self.lines = Lines::default();
-        }
-        file.seek(SeekFrom::Start(self.offset))?;
-        let mut bytes = Vec::new();
-        file.take(READ_LIMIT).read_to_end(&mut bytes)?;
-        self.offset += bytes.len() as u64;
-        let more = bytes.len() as u64 == READ_LIMIT;
-        Ok((self.lines.feed(&bytes), more))
+        lines.extend(open.read()?.0);
+        self.moved = self.file.replace(open);
+        Ok(lines)
     }
 
     /// Whether `file` is the one read so far.
@@ -120,8 +126,24 @@ impl Tail {
         let Some(current) = &self.file else {
             return Ok(false);
         };
-        let (current, other) = (current.metadata()?, file.metadata()?);
+        let (current, other) = (current.file.metadata()?, file.metadata()?);
         Ok((current.dev(), current.ino()) == (other.dev(), other.ino()))
+    }
+}
+
+impl Open {
+    /// The whole lines appended since the last read, and whether more is left to read.
+    fn read(&mut self) -> io::Result<(Vec<Vec<u8>>, bool)> {
+        if self.file.metadata()?.len() < self.offset {
+            self.offset = 0;
+            self.lines = Lines::default();
+        }
+        self.file.seek(SeekFrom::Start(self.offset))?;
+        let mut bytes = Vec::new();
+        (&mut self.file).take(READ_LIMIT).read_to_end(&mut bytes)?;
+        self.offset += bytes.len() as u64;
+        let more = bytes.len() as u64 == READ_LIMIT;
+        Ok((self.lines.feed(&bytes), more))
     }
 }
 
@@ -205,6 +227,24 @@ mod tests {
         let named = tail.named().unwrap();
         append(&dir.join("audit.jsonl.1"), "unread\n");
         assert_eq!(texts(tail.poll_after(named).unwrap()), ["unread", "new"]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A server that opened the log before it was moved aside may write its call there
+    /// after the watch read the old log to its end and moved on.
+    #[test]
+    fn reads_what_was_appended_to_the_moved_log_after_it_was_left() {
+        let dir = crate::test_support::fresh_dir("watch-rotate-late");
+        let path = dir.join("audit.jsonl");
+        append(&path, "old\n");
+        let (mut tail, _) = Tail::open(path.clone(), 0);
+        std::fs::rename(&path, dir.join("audit.jsonl.1")).unwrap();
+        append(&path, "new\n");
+        assert_eq!(texts(tail.poll().unwrap()), ["new"]);
+        append(&dir.join("audit.jsonl.1"), "late\n");
+        assert_eq!(texts(tail.poll().unwrap()), ["late"]);
+        append(&dir.join("audit.jsonl.1"), "later\n");
+        assert_eq!(tail.poll().unwrap(), NONE);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
