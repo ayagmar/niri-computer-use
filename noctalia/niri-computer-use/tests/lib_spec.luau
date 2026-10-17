@@ -205,6 +205,7 @@ t.group("describe", function()
     t.eq(describe.say("shell_panel", { panel = "control-center", open = false }, tr), "Closed control-center")
     t.eq(describe.say("activate_element", { role = "toggle_button" }, tr), "Pressed a toggle button")
     t.eq(describe.say("niri_action", { action = { MaximizeColumn = {} } }, tr), "Ran MaximizeColumn")
+    t.eq(describe.say("niri_action", { action = { category = "invalid_action", keys = 1, bytes = 14 } }, tr), "Ran ?")
   end)
 
   t.test("every call reads as a sentence, a new tool as its name", function()

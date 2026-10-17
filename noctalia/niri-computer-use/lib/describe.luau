@@ -107,7 +107,8 @@ local function keys(args): string
 end
 
 local function actionName(args): string
-  if type(args.action) == "table" then
+  -- The log keeps an invalid action as its size only.
+  if type(args.action) == "table" and args.action.category ~= "invalid_action" then
     for name in args.action do
       return tostring(name)
     end
