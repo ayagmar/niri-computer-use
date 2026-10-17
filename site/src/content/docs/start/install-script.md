@@ -68,7 +68,7 @@ When `noctalia` is on `PATH`, the next steps include enabling the plugin with `n
 | `NCU_VERSION` | The release to install, such as `0.1.0`, instead of the latest. A leading `v` is accepted |
 | `NCU_BIN_DIR` | Where the binary goes, instead of `~/.local/bin`. The skill and its links go to the same places as always |
 | `NCU_RELEASES_URL` | Where the releases are, instead of this repository's on GitHub. The test suite points it at a local server |
-| `NCU_REGISTER` | `1` registers the server in every agent found on `PATH` without asking, `0` registers in none. Unset, the script asks per agent when its output is a terminal, and registers in none otherwise |
+| `NCU_REGISTER` | `1` registers the server in every agent found on `PATH` without asking, `0` registers in none. Unset, the script asks per agent when its output is a terminal it can open, and registers in none otherwise |
 
 ```sh
 NCU_VERSION=0.1.0 sh install.sh
@@ -77,7 +77,7 @@ NCU_BIN_DIR=~/bin sh install.sh
 
 ## Registering in your agents
 
-After the files are in place, the script looks for `claude`, `pi`, `codex`, `amp`, `copilot`, `gemini` and `qwen` on `PATH`. For each one it finds it asks, when its output is a terminal, whether to register the server now, and shows the command it would run:
+After the files are in place, the script looks for `claude`, `pi`, `codex`, `amp`, `copilot`, `gemini` and `qwen` on `PATH`. For each one it finds it asks, when its output is a terminal it can open (`/dev/tty`), whether to register the server now, and shows the command it would run:
 
 ```sh
 claude mcp add --scope user niri-computer-use -- ~/.local/bin/niri-computer-use serve

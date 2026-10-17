@@ -15,6 +15,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- The install script no longer stops, after installing, when its output is a terminal it can't open, such as a session with no controlling terminal. It registers in no agent then, and prints the commands to run by hand.
 - The Noctalia plugin sends failed-action notifications at normal urgency rather than critical, since agents retry most failures. Stuck input, and a Stop or Resume that failed, stay critical.
 - When `watch` exits with an error of several lines, before or after it started, the Noctalia plugin's panel shows its first three lines rather than only the last, so a panic shows its message instead of the `RUST_BACKTRACE` note after it.
 - `set_element_text` refuses text ending with tool-call closing tags such as `</parameter>` or `</invoke>` that no opening tag earlier in the text balances, with `leaked_tag` and the tags named in `detail`, as `type_text` has since 0.1.2. It used to set such text, so a leaked tag landed in the field. Nothing is set; send the text again without the tags.

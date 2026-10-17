@@ -115,6 +115,15 @@ mod script {
             self.run(shell(), env, Some(text)).await
         }
 
+        /// Runs `command`, a shell command line in which `SCRIPT` names the script, on a
+        /// pseudo-terminal of its own through util-linux `script`, typing `answers` into it.
+        async fn install_on_terminal(&self, command: &str, answers: &[u8]) -> Output {
+            let line = command.replace("SCRIPT", &format!("'{}'", script_path().display()));
+            let mut terminal = terminal();
+            terminal.args(["-qec", &line, "/dev/null"]);
+            self.run(terminal, &[], Some(answers.to_vec())).await
+        }
+
         async fn run(
             &self,
             mut command: tokio::process::Command,
@@ -208,6 +217,14 @@ mod script {
     )]
     fn shell() -> tokio::process::Command {
         tokio::process::Command::new("sh")
+    }
+
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test gives the install script a terminal with util-linux script"
+    )]
+    fn terminal() -> tokio::process::Command {
+        tokio::process::Command::new("script")
     }
 
     fn script_path() -> PathBuf {
@@ -421,6 +438,41 @@ mod script {
         );
         let stdout = String::from_utf8(output.stdout).unwrap();
         assert!(stdout.contains("Registered in Codex."), "{stdout}");
+        assert!(stdout.contains("Bind the stop key"), "{stdout}");
+    }
+
+    #[tokio::test]
+    async fn piped_on_a_terminal_it_asks_before_registering() {
+        let release = Release::new("asks", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        fake_agent(&release, "claude");
+
+        let output = release.install_on_terminal("cat SCRIPT | sh", b"y\n").await;
+
+        assert!(output.status.success(), "{output:?}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("Register it in Claude Code now"),
+            "{stdout}"
+        );
+        assert!(stdout.contains("Registered in Claude Code."), "{stdout}");
+    }
+
+    #[tokio::test]
+    async fn on_a_terminal_it_cannot_open_it_registers_in_none_and_finishes() {
+        let release = Release::new("detached", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        fake_agent(&release, "claude");
+
+        // Output goes to a terminal, but the script's new session has no controlling one.
+        let output = release
+            .install_on_terminal("setsid -w sh SCRIPT", b"")
+            .await;
+
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(calls(&release, "claude"), Vec::<Vec<String>>::new());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("claude mcp add --scope user"), "{stdout}");
         assert!(stdout.contains("Bind the stop key"), "{stdout}");
     }
 
