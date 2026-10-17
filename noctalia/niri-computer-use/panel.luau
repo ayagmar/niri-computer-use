@@ -54,7 +54,7 @@ local function controls()
     text = tr("panel.stop"),
     glyph = "hand-stop",
     variant = "destructive",
-    enabled = view.status == "driving" or view.status == "asking" or view.status == "idle",
+    enabled = view.status ~= "missing",
     tooltip = tr("panel.stop_hint"),
     onClick = function()
       actions.run("stop")
