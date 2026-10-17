@@ -117,7 +117,7 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 **Cause:** `type_text`'s text, typed or pasted, or `set_element_text`'s, ends with one or more tool-call closing tags, such as `</parameter>` or `</invoke>`, that no opening tag of the same name earlier in the text balances. Each opening tag balances one closing tag, so a quoted tool call followed by the agent's own leaked tags is still caught. Models sometimes leak their own tool-call markup into the end of a long argument. The `detail` names the tags. Nothing was typed, pasted or set.
 
-**What to do:** send the text again without the tags. Only if the text really should end with such a tag, send the final `>` in a call of its own.
+**What to do:** send the text again without the tags. Only if the text really should end with such a tag: with `type_text`, send the final `>` in a call of its own; with `set_element_text`, which replaces the whole field, set the text without its final `>`, then type the `>` with `type_text` into the focused field.
 
 ### `clipboard_unsaved`
 
