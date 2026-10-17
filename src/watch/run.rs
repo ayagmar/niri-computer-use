@@ -85,6 +85,8 @@ pub(crate) async fn follow(
     let mut tick = tokio::time::interval(poll);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut lines = recent;
+    // The first lines are the backlog: calls made before `watch` started.
+    let mut backlog = true;
     loop {
         let now = desk(watched, &mut projects);
         if state.as_ref() != Some(&now) {
@@ -93,9 +95,11 @@ pub(crate) async fn follow(
         }
         for line in std::mem::take(&mut lines) {
             if let Some(call) = action(&line, &watched.instance) {
-                out.send(&Event::Action(projects.annotate(call))).await?;
+                out.send(&Event::Action(projects.annotate(call, backlog)))
+                    .await?;
             }
         }
+        backlog = false;
         tokio::select! {
             _ = tick.tick() => {}
             _ = alive.tick() => out.send(&Event::Alive).await?,
@@ -176,13 +180,18 @@ impl<'a> Projects<'a> {
         clients::project(self.proc_root, parent_pid(&status)?)
     }
 
-    fn annotate(&mut self, mut call: serde_json::Value) -> serde_json::Value {
+    /// Adds the call's `project`, and `backlog: true` to a call made before `watch` began.
+    fn annotate(&mut self, mut call: serde_json::Value, backlog: bool) -> serde_json::Value {
         let session = call
             .get("session")
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned);
-        if let (Some(session), Some(object)) = (session, call.as_object_mut()) {
-            object.insert("project".into(), self.of(&session).into());
+        let project = session.and_then(|session| self.of(&session));
+        if let Some(object) = call.as_object_mut() {
+            object.insert("project".into(), project.into());
+            if backlog {
+                object.insert("backlog".into(), true.into());
+            }
         }
         call
     }
@@ -269,7 +278,11 @@ mod tests {
             idle["lease"].is_null() && idle["stopped"] == false,
             "{idle}"
         );
-        assert_eq!(event(&mut lines).await["tool"], "status");
+        let old = event(&mut lines).await;
+        assert_eq!(
+            (old["tool"].as_str(), old["backlog"].as_bool()),
+            (Some("status"), Some(true))
+        );
 
         let runtime = RuntimeDir::of(&crate::test_support::niri_env(&dir)).unwrap();
         let mut held = lease::Lease::acquire(&runtime, "claude-code/4711").unwrap();
@@ -292,6 +305,7 @@ mod tests {
             (click["tool"].as_str(), click["project"].as_str()),
             (Some("click"), Some("shop"))
         );
+        assert!(click.get("backlog").is_none(), "{click}");
 
         runtime.stop().unwrap();
         assert_eq!(event(&mut lines).await["stopped"], true);
