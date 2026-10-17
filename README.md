@@ -146,6 +146,7 @@ What isn't protected: any connected agent sees your screen and window titles, a 
 ## Documentation
 
 - [Install](https://ayagmar.github.io/niri-computer-use/start/install/), [The install script](https://ayagmar.github.io/niri-computer-use/start/install-script/) and [Client setup](https://ayagmar.github.io/niri-computer-use/start/clients/): install, check, and register the server in your agent
+- [Noctalia plugin](https://ayagmar.github.io/niri-computer-use/start/noctalia-plugin/): see which agent drives the desktop and what it does, and stop it from the bar
 - [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/): what the server enforces, what it doesn't, and how you take the desktop back
 - [Configuration](https://ayagmar.github.io/niri-computer-use/concepts/configuration/): `policy.toml`, launch presets, the deny list, `unrestricted`, `confirm_lease`, the shared engine and tool profiles
 - [Tools](https://ayagmar.github.io/niri-computer-use/tools/overview/): every tool, its arguments and results

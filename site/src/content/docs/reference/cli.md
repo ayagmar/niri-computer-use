@@ -53,7 +53,7 @@ Clears the stop flag, prints nothing and exits 0, also when no flag was set. It 
 niri-computer-use watch
 ```
 
-Prints what agents are doing on this niri instance, one JSON object per line, until its reader closes stdout; then it exits 0. It finds niri's socket the way `stop` does and never connects to niri. Each line has an `event`:
+Prints what agents are doing on this niri instance, one JSON object per line, until its reader closes stdout; then it exits 0. The [Noctalia plugin](../../start/noctalia-plugin/) runs it. It finds niri's socket the way `stop` does and never connects to niri. Each line has an `event`:
 
 - `hello`, once, first: `format` (1), the server's `version` and the `instance`, niri's socket name
 - `state`, at the start and whenever it changes: `lease`, null or the holder's `session` (such as `claude-code/4711`), `since`, `pending` (true while the user is asked to allow it) and `project`, the last part of the agent's working directory or null; then `stopped` and `input_dirty`
