@@ -16,7 +16,13 @@ The project is the last part of the agent's working directory, so two Claude Cod
 
 ## Install it
 
-From a clone of the repository, link the plugin into Noctalia's plugin directory and enable it:
+The [install script](../install-script/) installs the plugin from the same release as the binary, so the two always speak the same `watch` format, and links it into Noctalia's plugin directory when `noctalia` is on `PATH`. Then enable it:
+
+```sh
+noctalia msg plugins enable ayagmar/niri-computer-use
+```
+
+From a clone of the repository, link the plugin yourself and enable it:
 
 ```sh
 ln -s "$PWD/noctalia/niri-computer-use" ~/.local/share/noctalia/plugins/niri-computer-use

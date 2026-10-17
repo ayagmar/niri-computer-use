@@ -1,7 +1,8 @@
 #!/bin/sh
-# Installs niri-computer-use from a GitHub release: the binary to ~/.local/bin and the
-# agent skill to ~/.local/share/niri-computer-use, linked from ~/.claude/skills and
-# ~/.agents/skills.
+# Installs niri-computer-use from a GitHub release: the binary to ~/.local/bin, and the
+# agent skill and the Noctalia plugin to ~/.local/share/niri-computer-use. The skill is
+# linked from ~/.claude/skills and ~/.agents/skills, and the plugin from Noctalia's plugin
+# directory when noctalia is on PATH.
 #
 # NCU_VERSION       the release to install, such as 0.1.0; the latest one by default
 # NCU_BIN_DIR       where the binary goes; ~/.local/bin by default
@@ -64,41 +65,61 @@ installed_version=$("${tmp}/${name}/niri-computer-use" --version) || status=$?
 [ "${status}" -eq 0 ] ||
 	fail "the downloaded binary exited with status ${status} (its error, if any, is above), so nothing was installed. It needs glibc 2.39 or newer. If TMPDIR is mounted noexec, set TMPDIR to a directory programs can run from."
 
-# The binary and the skill are both copied beside where they go before either replaces
-# anything, so a failed copy leaves the previous install as it was. Each then goes into
-# place with a rename, so a running server keeps the binary it started with.
-mkdir -p "${bin_dir}" "${data_dir}/skills"
+# The binary, the skill and the plugin are all copied beside where they go before any
+# replaces anything, so a failed copy leaves the previous install as it was. Each then
+# goes into place with a rename, so a running server keeps the binary it started with.
+# A release before the plugin has none, and leaves an installed one as it is.
+mkdir -p "${bin_dir}" "${data_dir}/skills" "${data_dir}/noctalia"
 bin_dir=$(cd "${bin_dir}" && pwd)
 binary=${bin_dir}/niri-computer-use
 skill=${data_dir}/skills/niri-computer-use
+plugin=${data_dir}/noctalia/niri-computer-use
 staged_binary=${bin_dir}/.niri-computer-use.new
 staged_skill=${data_dir}/skills/.niri-computer-use.new
-trap 'rm -rf "${tmp}" "${staged_binary}" "${staged_skill}"' EXIT
-rm -rf "${staged_binary}" "${staged_skill}"
+staged_plugin=${data_dir}/noctalia/.niri-computer-use.new
+trap 'rm -rf "${tmp}" "${staged_binary}" "${staged_skill}" "${staged_plugin}"' EXIT
+rm -rf "${staged_binary}" "${staged_skill}" "${staged_plugin}"
+has_plugin=no
+[ -d "${tmp}/${name}/noctalia/niri-computer-use" ] && has_plugin=yes
 if ! {
 	cp "${tmp}/${name}/niri-computer-use" "${staged_binary}" &&
 		chmod 755 "${staged_binary}" &&
-		cp -R "${tmp}/${name}/skills/niri-computer-use" "${staged_skill}"
+		cp -R "${tmp}/${name}/skills/niri-computer-use" "${staged_skill}" &&
+		{ [ "${has_plugin}" = no ] || cp -R "${tmp}/${name}/noctalia/niri-computer-use" "${staged_plugin}"; }
 }; then
-	fail "couldn't copy the new files into ${bin_dir} and ${data_dir}/skills; what was installed before is unchanged"
+	fail "couldn't copy the new files into ${bin_dir} and ${data_dir}; what was installed before is unchanged"
 fi
 mv -f "${staged_binary}" "${binary}"
 rm -rf "${skill}"
 mv "${staged_skill}" "${skill}"
+if [ "${has_plugin}" = yes ]; then
+	rm -rf "${plugin}"
+	mv "${staged_plugin}" "${plugin}"
+fi
+
+# $1 what the link points to, $2 the link, $3 what it is, as in "The skill is in".
+link_to() {
+	mkdir -p "$(dirname "$2")"
+	if [ -L "$2" ]; then
+		target=$(readlink "$2")
+		[ "${target}" = "$1" ] || echo "Replaced $2, which pointed to ${target}."
+		rm "$2"
+	elif [ -e "$2" ]; then
+		echo "Left $2 as it is: it isn't a link. $3 is in $1."
+		return 0
+	fi
+	ln -s "$1" "$2"
+}
 
 for skills_dir in "${HOME}/.claude/skills" "${HOME}/.agents/skills"; do
-	link=${skills_dir}/niri-computer-use
-	mkdir -p "${skills_dir}"
-	if [ -L "${link}" ]; then
-		target=$(readlink "${link}")
-		[ "${target}" = "${skill}" ] || echo "Replaced ${link}, which pointed to ${target}."
-		rm "${link}"
-	elif [ -e "${link}" ]; then
-		echo "Left ${link} as it is: it isn't a link. The skill is in ${skill}."
-		continue
-	fi
-	ln -s "${skill}" "${link}"
+	link_to "${skill}" "${skills_dir}/niri-computer-use" "The skill"
 done
+noctalia_plugins=${XDG_DATA_HOME:-${HOME}/.local/share}/noctalia/plugins
+linked_plugin=no
+if [ -d "${plugin}" ] && command -v noctalia >/dev/null; then
+	link_to "${plugin}" "${noctalia_plugins}/niri-computer-use" "The Noctalia plugin"
+	linked_plugin=yes
+fi
 
 # Registration in the agents on PATH, each through its own `mcp add`, so no config file
 # is edited. Nothing here fails the install: an agent that refuses is reported with the
@@ -177,3 +198,33 @@ cat <<EOF
   3. Bind the stop key inside the binds block of your niri config:
        Mod+Shift+Escape allow-inhibiting=false allow-when-locked=true hotkey-overlay-title="Stop the AI agent (niri-computer-use)" { spawn "${binary}" "stop"; }
 EOF
+if [ "${linked_plugin}" = yes ]; then
+	cat <<EOF
+  4. See which agent drives your desktop in Noctalia's bar: enable the plugin, then add
+     its widget to a bar and its glow to the desktop in Noctalia's settings:
+       noctalia msg plugins enable ayagmar/niri-computer-use
+EOF
+fi
+
+# Servers started before this install keep running the build it replaced, and the
+# shared engine of that build serves them until the last one exits.
+old=""
+for exe in /proc/[0-9]*/exe; do
+	running=$(readlink "${exe}" 2>/dev/null) || continue
+	[ "${running}" = "${binary} (deleted)" ] || continue
+	dir=${exe%/exe}
+	subcommand=$(tr '\0' '\n' 2>/dev/null <"${dir}/cmdline" | sed -n 2p) || continue
+	[ "${subcommand}" = serve ] || continue
+	parent=$(sed -n 's/^PPid:[[:space:]]*//p' "${dir}/status" 2>/dev/null)
+	agent=$(cat "/proc/${parent}/comm" 2>/dev/null) || agent=unknown
+	old="${old}       PID ${dir#/proc/}, started by ${agent}
+"
+done
+if [ -n "${old}" ]; then
+	cat <<EOF
+
+These servers still run the build this install replaced. Restart their agents, or
+reconnect the MCP server (/mcp in Claude Code), to use ${installed_version}:
+EOF
+	printf '%s' "${old}"
+fi

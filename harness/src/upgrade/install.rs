@@ -72,18 +72,20 @@ impl Place {
         all
     }
 
-    /// Packs the build under test as the release workflow packs one, with its skill, and
-    /// its `.sha256`, where `install.sh` looks for release `CURRENT`.
+    /// Packs the build under test as the release workflow packs one, with its skill and
+    /// its Noctalia plugin, and its `.sha256`, where `install.sh` looks for release `CURRENT`.
     pub(super) fn release_current(&self, session: &Session<'_>) -> Result<()> {
         let script = format!(
             "set -eu; name=niri-computer-use-{CURRENT}-$(uname -m)-linux; dir='{}/download/v{CURRENT}'; \
              mkdir -p \"$dir/$name/skills\"; cp '{}' \"$dir/$name/niri-computer-use\"; \
-             cp -R '{}/skills/niri-computer-use' \"$dir/$name/skills/\"; \
+             cp -R '{checkout}/skills/niri-computer-use' \"$dir/$name/skills/\"; \
+             mkdir -p \"$dir/$name/noctalia\"; cp -R '{checkout}/noctalia/niri-computer-use' \"$dir/$name/noctalia/\"; \
+             rm -rf \"$dir/$name/noctalia/niri-computer-use/tests\"; \
              tar -C \"$dir\" -czf \"$dir/$name.tar.gz\" \"$name\"; rm -rf \"${{dir:?}}/$name\"; \
              cd \"$dir\" && sha256sum \"$name.tar.gz\" > \"$name.tar.gz.sha256\"",
             self.releases.display(),
             self.server.display(),
-            self.checkout.display(),
+            checkout = self.checkout.display(),
         );
         let log = session.artifact("upgrade-pack.log");
         session

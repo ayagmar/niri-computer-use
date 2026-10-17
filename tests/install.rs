@@ -16,6 +16,8 @@ mod script {
     use std::time::Duration;
 
     const LATEST: &str = "0.1.0";
+    /// A release from before the Noctalia plugin, whose tarball has none.
+    const BEFORE_PLUGIN: &str = "0.0.1";
     const DEADLINE: Duration = Duration::from_secs(60);
 
     struct Release {
@@ -70,6 +72,11 @@ mod script {
                 "tools",
             )
             .unwrap();
+            if version != BEFORE_PLUGIN {
+                let plugin = tree.join("noctalia/niri-computer-use");
+                std::fs::create_dir_all(&plugin).unwrap();
+                std::fs::write(plugin.join("plugin.toml"), version).unwrap();
+            }
             let download = self
                 .dir
                 .join("releases/download")
@@ -111,6 +118,29 @@ mod script {
                 .await
                 .unwrap()
                 .unwrap()
+        }
+
+        /// A `PATH` with the fakes and every system program but `hidden`, such as one the
+        /// host has installed and the test needs to be missing.
+        fn path_without(&self, hidden: &str) -> String {
+            let system = self.dir.join("system");
+            std::fs::create_dir_all(&system).unwrap();
+            let programs = ["/usr/local/bin", "/usr/bin", "/bin"]
+                .into_iter()
+                .filter_map(|dir| std::fs::read_dir(dir).ok())
+                .flatten()
+                .map(Result::unwrap)
+                .filter(|program| program.file_name() != hidden);
+            for program in programs {
+                // The first directory's copy of a program wins, as on `PATH`.
+                let linked =
+                    std::os::unix::fs::symlink(program.path(), system.join(program.file_name()));
+                let taken = linked
+                    .as_ref()
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::AlreadyExists);
+                assert!(linked.is_ok() || taken, "{linked:?}");
+            }
+            format!("{}:{}", self.dir.join("fakes").display(), system.display())
         }
 
         /// Whether the script left nothing in its temporary directory.
@@ -585,6 +615,95 @@ mod script {
             stdout.contains(&format!("Left {} as it is", agents.display())),
             "{stdout}"
         );
+    }
+
+    #[tokio::test]
+    async fn the_noctalia_plugin_is_linked_into_noctalia_only_when_noctalia_is_on_path() {
+        let release = Release::new("plugin", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        let home = release.home();
+        let plugin = home.join(".local/share/niri-computer-use/noctalia/niri-computer-use");
+        let link = home.join(".local/share/noctalia/plugins/niri-computer-use");
+        let enable = "noctalia msg plugins enable ayagmar/niri-computer-use";
+
+        let without = release
+            .install(&[("PATH", &release.path_without("noctalia"))])
+            .await;
+
+        assert!(without.status.success(), "{without:?}");
+        assert_eq!(
+            std::fs::read_to_string(plugin.join("plugin.toml")).unwrap(),
+            LATEST
+        );
+        assert!(!link.exists() && !link.is_symlink());
+        assert!(!String::from_utf8(without.stdout).unwrap().contains(enable));
+
+        release.fake("noctalia", "exit 0\n");
+        let with = release.install(&[]).await;
+
+        assert!(with.status.success(), "{with:?}");
+        assert_eq!(std::fs::read_link(&link).unwrap(), plugin);
+        let stdout = String::from_utf8(with.stdout).unwrap();
+        assert!(stdout.contains(enable), "{stdout}");
+    }
+
+    #[tokio::test]
+    async fn a_release_without_the_plugin_leaves_the_installed_one_in_place() {
+        let release = Release::new("noplugin", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        release.publish(BEFORE_PLUGIN, "x86_64", None);
+        let newer = release.install(&[]).await;
+        assert!(newer.status.success(), "{newer:?}");
+
+        let output = release.install(&[("NCU_VERSION", BEFORE_PLUGIN)]).await;
+
+        assert!(output.status.success(), "{output:?}");
+        let plugin = release
+            .home()
+            .join(".local/share/niri-computer-use/noctalia/niri-computer-use");
+        assert_eq!(
+            std::fs::read_to_string(plugin.join("plugin.toml")).unwrap(),
+            LATEST
+        );
+    }
+
+    /// Runs `binary serve` from the release's directory, where `serve` is a FIFO, so a
+    /// copy of `cat` as the binary waits on it like a server waits on its client.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test stands a server in for an agent's; it isn't part of the server"
+    )]
+    fn waiting_server(release: &Release, binary: &Path) -> std::process::Child {
+        run_tool("mkfifo", &[release.dir.join("serve").as_os_str()]);
+        std::process::Command::new(binary)
+            .arg("serve")
+            .current_dir(&release.dir)
+            .spawn()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_server_left_on_the_replaced_build_is_named_with_its_agent() {
+        let release = Release::new("leftover", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        let binary = release.home().join(".local/bin/niri-computer-use");
+        std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
+        std::fs::copy("/bin/cat", &binary).unwrap();
+        let mut server = waiting_server(&release, &binary);
+
+        let output = release.install(&[]).await;
+
+        server.kill().unwrap();
+        server.wait().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            stdout.contains("These servers still run the build this install replaced"),
+            "{stdout}"
+        );
+        let agent = std::fs::read_to_string("/proc/self/comm").unwrap();
+        let named = format!("PID {}, started by {}", server.id(), agent.trim_end());
+        assert!(stdout.contains(&named), "{stdout}");
     }
 
     #[tokio::test]

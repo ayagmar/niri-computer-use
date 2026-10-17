@@ -34,7 +34,7 @@ Two ways to install, both giving the same server:
 | Skill | Installed and linked for Claude Code, Pi and Codex | From the skills CLI or the clone, below |
 | Update | Run the script again | Run `cargo install` again |
 
-**With the install script.** Download it, read it, then run it. It puts the binary in `~/.local/bin`, copies the skill that tells your agents how to use the server to `~/.local/share/niri-computer-use`, links it from `~/.claude/skills` and `~/.agents/skills`, and ends with the steps in the Quickstart below. [The install script](https://ayagmar.github.io/niri-computer-use/start/install-script/) lists every file it writes, what it checks, `NCU_VERSION` and `NCU_BIN_DIR`, and how to uninstall.
+**With the install script.** Download it, read it, then run it. It puts the binary in `~/.local/bin`, copies the skill that tells your agents how to use the server to `~/.local/share/niri-computer-use`, links it from `~/.claude/skills` and `~/.agents/skills`, links the Noctalia plugin when Noctalia is installed, and ends with the steps in the Quickstart below. [The install script](https://ayagmar.github.io/niri-computer-use/start/install-script/) lists every file it writes, what it checks, `NCU_VERSION` and `NCU_BIN_DIR`, and how to uninstall.
 
 ```sh
 curl -fsSLO https://github.com/ayagmar/niri-computer-use/releases/latest/download/install.sh
