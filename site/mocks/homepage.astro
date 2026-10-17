@@ -1,0 +1,256 @@
+---
+// Mock direction B: a late-90s project home page. One narrow column on the browser's grey,
+// rules between parts, a What's New list from the changelog, 88x31 buttons for the
+// neighbours, and one small still that opens the 19-second clip.
+import { releaseLink, version } from '../../lib/version';
+
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+const doc = (path: string) => `${base}${path}`;
+const github = 'https://github.com/ayagmar/niri-computer-use';
+const news = [
+	['2026-10-17', '0.1.3', '`watch` prints what agents are doing as JSON lines, and a Noctalia plugin shows which agent drives the desktop and stops it from the bar.'],
+	['2026-10-16', '0.1.2', 'Waits on accessible elements, and element actions say whether their effect was seen. Many pointer and typing fixes.'],
+	['2026-10-14', '0.1.1', 'The install script offers to register the server in Claude Code, Pi and Codex. wtype is gone; keys go through the server’s own keyboard.'],
+	['2026-10-14', '0.1.0', 'First release: 22 tools over stdio for niri 26.04.'],
+];
+const buttons = [
+	{ href: 'https://github.com/niri-wm/niri', top: 'niri', bottom: '26.04', cls: 'b-niri' },
+	{ href: 'https://github.com/noctalia-dev/noctalia-shell', top: 'Noctalia', bottom: 'shell', cls: 'b-noct' },
+	{ href: 'https://wayland.freedesktop.org/', top: 'Wayland', bottom: 'only', cls: 'b-way' },
+	{ href: 'https://modelcontextprotocol.io/', top: 'MCP', bottom: 'stdio', cls: 'b-mcp' },
+	{ href: `${github}/blob/main/LICENSE`, top: 'MIT', bottom: 'licensed', cls: 'b-mit' },
+	{ href: 'https://crates.io/crates/niri-computer-use', top: 'crates.io', bottom: version, cls: 'b-crate' },
+];
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="robots" content="noindex" />
+		<title>niri-computer-use home page</title>
+		<link rel="icon" href={doc('favicon.svg')} type="image/svg+xml" />
+	</head>
+	<body>
+		<div class="page">
+			<header>
+				<h1>niri-computer-use</h1>
+				<p class="sub">An MCP server that lets your coding agent see and drive your niri desktop.</p>
+				<p class="nav">
+					[ <a href="#install">Install</a> | <a href="#safety">Safety</a> |
+					{" "}<a href={doc('start/install/')}>Documentation</a> | <a href={github}>Source</a> |
+					{" "}<a href={doc('llms.txt')}>llms.txt</a> ]
+				</p>
+			</header>
+
+			<hr />
+
+			<main>
+				<p>
+					Claude Code, Codex, Pi or any stdio MCP client can use it to look at your real desktop
+					(windows, workspaces, screenshots, buttons by name) and, while it holds the lease,
+					click, type and move windows. You keep a stop key it can't press.
+				</p>
+				<p class="warn">
+					{" "}<b>niri 26.04 only.</b> If you don't run niri on Linux, there is nothing here for you.
+				</p>
+
+				<figure>
+					{" "}<a href={doc('clips/errand.mp4')}>
+						<img
+							src={doc('mock/errand-thumb.jpg')}
+							width="480"
+							height="270"
+							alt="Claude Code in a terminal on the left, Files on the right with its right-click menu open."
+						/>
+					</a>
+					<figcaption>
+						A real Claude Code session moving two screenshots into a new folder in Files.
+						{" "}<a href={doc('clips/errand.mp4')}>Watch it</a> (19 s, MP4, 223 KB). Thinking time is
+						shortened; the calls play in real time.
+					</figcaption>
+				</figure>
+
+				<hr />
+
+				<h2 id="install">Install</h2>
+				<p>Download the install script, read it, then run it:</p>
+				<pre>curl -fsSLO {github}/releases/latest/download/install.sh
+less install.sh
+sh install.sh</pre>
+				<p>Or with cargo (Rust 1.99 or newer):</p>
+				<pre>cargo install --locked niri-computer-use</pre>
+				<p>
+					Then bind the stop key in your niri config. <a href={doc('start/first-session/')}>First
+					session</a> shows the line to add.
+				</p>
+
+				<table>
+					<caption>What you need</caption>
+					<tbody>
+						<tr><th scope="row">Compositor</th><td>niri 26.04</td></tr>
+						<tr><th scope="row">Machine</th><td>x86_64 or aarch64 Linux, glibc 2.39 or newer</td></tr>
+						<tr><th scope="row">At run time</th><td><code>grim</code>, <code>loginctl</code>, libxkbcommon</td></tr>
+						<tr><th scope="row">Pointer tools</th><td>one monitor at transform Normal</td></tr>
+						<tr><th scope="row">Elements by name</th><td>apps on the accessibility bus; GTK 4 works best</td></tr>
+					</tbody>
+				</table>
+
+				<hr />
+
+				<h2 id="safety">Safety</h2>
+				<p>Guardrails, not a sandbox:</p>
+				<ul>
+					<li>One agent at a time holds the lease, and only the holder acts.</li>
+					<li>The stop key cancels the running action and takes the lease back.</li>
+					<li>Nothing runs while the screen is locked.</li>
+					<li>Typing checks focus before every key; apps on your deny list get no input.</li>
+					<li>Every call goes to an audit log, without what was typed.</li>
+				</ul>
+				<p>
+					An agent holding the lease can do anything you could do with a keyboard and mouse.
+					{" "}<a href={doc('concepts/safety/')}>Read what isn’t protected</a> before you let one act.
+				</p>
+
+				<hr />
+
+				<h2 id="news">What’s new</h2>
+				<dl class="news">
+					{news.map(([date, v, text]) => (
+						<>
+							<dt><b>{date}</b> <a href={`${github}/releases/tag/v${v}`}>{v}</a></dt>
+							<dd>{text.replace(/`/g, '')}</dd>
+						</>
+					))}
+				</dl>
+
+				<hr />
+
+				<h2 id="neighbours">Neighbours</h2>
+				<ul class="buttons">
+					{buttons.map((b) => (
+						<li>
+							{" "}<a class={`btn ${b.cls}`} href={b.href}>
+								<span>{b.top}</span>
+								<span>{b.bottom}</span>
+							</a>
+						</li>
+					))}
+				</ul>
+			</main>
+
+			<hr />
+
+			<footer>
+				<address>
+					Kept by <a href="https://github.com/ayagmar">ayagmar</a>.
+					{" "}<a href={`${github}/issues`}>Report a problem</a>.
+				</address>
+				<p>
+					Last updated 2026-10-17 · <a href={releaseLink}>version {version}</a> · no JavaScript
+					on this page
+				</p>
+			</footer>
+		</div>
+	</body>
+</html>
+
+<style is:global>
+	:root {
+		--grey: #c0c0c0;
+		--ink: #000;
+		--link: #0000c8;
+		--visited: #551a8b;
+		--hi: #fff;
+		--lo: #808080;
+		--dark: #404040;
+		color-scheme: light;
+	}
+	html {
+		background: var(--grey);
+		color: var(--ink);
+		font: 17px/1.45 'Times New Roman', Times, 'Nimbus Roman', 'Liberation Serif', serif;
+		-webkit-text-size-adjust: 100%;
+	}
+	body { margin: 0; padding: 1.5rem 1rem 3rem; }
+	.page { max-width: 34rem; margin: 0 auto; }
+	::selection { background: #000080; color: #fff; }
+	header { text-align: center; }
+	h1 {
+		font-size: 2.1rem;
+		font-weight: 700;
+		margin: 0.4rem 0 0.2rem;
+		letter-spacing: 0;
+	}
+	.sub { margin: 0 0 0.6rem; font-style: italic; }
+	.nav { margin: 0; }
+	h2 { font-size: 1.35rem; margin: 1.2rem 0 0.5rem; }
+	p { margin: 0 0 0.8rem; }
+	a { color: var(--link); }
+	a:visited { color: var(--visited); }
+	a:focus-visible { outline: 2px dotted var(--ink); outline-offset: 2px; }
+	hr {
+		border: 0;
+		height: 2px;
+		margin: 1.4rem 0;
+		border-top: 1px solid var(--lo);
+		border-bottom: 1px solid var(--hi);
+	}
+	.warn { padding: 0.4rem 0.6rem; background: #ffffcc; border: 1px solid var(--dark); }
+	figure { margin: 1.2rem 0 0; text-align: center; }
+	figure > a { display: inline-block; line-height: 0; border: 2px solid var(--link); }
+	img { max-width: 100%; height: auto; }
+	figcaption { margin-top: 0.4rem; font-size: 0.9rem; }
+	pre {
+		margin: 0 0 0.8rem;
+		padding: 0.5rem 0.7rem;
+		background: #fff;
+		border: 2px inset var(--grey);
+		font: 14px/1.4 'Courier New', Courier, 'Nimbus Mono PS', 'Liberation Mono', monospace;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+	code { font-family: 'Courier New', Courier, 'Nimbus Mono PS', 'Liberation Mono', monospace; }
+	table {
+		width: 100%;
+		margin: 1rem 0 0;
+		border: 2px outset var(--grey);
+		border-spacing: 2px;
+		background: var(--grey);
+	}
+	caption { font-weight: 700; text-align: left; padding-bottom: 0.3rem; }
+	th, td { border: 1px inset var(--grey); padding: 0.2rem 0.4rem; text-align: left; vertical-align: top; }
+	th { font-weight: 700; width: 9.5rem; }
+	ul { padding-left: 1.4rem; margin: 0 0 0.8rem; }
+	li { margin-bottom: 0.2rem; }
+	.news dt { margin-top: 0.6rem; }
+	.news dd { margin: 0 0 0 1.4rem; }
+	.buttons { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+	.btn {
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+		width: 88px;
+		height: 31px;
+		box-sizing: border-box;
+		border: 1px solid #000;
+		outline: 1px solid var(--hi);
+		outline-offset: -2px;
+		font: 700 10px/1.05 Verdana, 'DejaVu Sans', sans-serif;
+		text-align: center;
+		text-decoration: none;
+		color: #fff;
+	}
+	.btn:visited { color: #fff; }
+	.btn span + span { font-weight: 400; font-size: 9px; }
+	.btn:focus-visible { outline: 2px dotted var(--ink); outline-offset: 2px; }
+	.b-niri { background: #6b3f00; }
+	.b-noct { background: #2a2650; }
+	.b-way { background: #003a5c; }
+	.b-mcp { background: #1d1d1d; }
+	.b-mit { background: #7a0000; }
+	.b-crate { background: #224400; }
+	footer { font-size: 0.9rem; text-align: center; }
+	address { font-style: italic; margin-bottom: 0.4rem; }
+</style>

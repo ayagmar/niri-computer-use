@@ -1,0 +1,278 @@
+---
+// Mock direction A: the home page as the server's manual page, as man(1) shows it in a
+// terminal. Text only, no images and no clip.
+import '@fontsource-variable/jetbrains-mono/wght.css';
+import { releaseLink, version } from '../../lib/version';
+
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+const doc = (path: string) => `${base}${path}`;
+const github = 'https://github.com/ayagmar/niri-computer-use';
+const calls = [
+	['status', '3'],
+	['desktop_state', '3'],
+	['acquire_desktop', '2'],
+	['focus {"window_id": 11, "screenshot": true}', '858'],
+	['click {"screenshot_ref": "shot-ac2ffeab-43", "x": 979, "y": 88}', '252'],
+	['key {"keys": ["shift+Right", "ctrl+alt+n"], …}', '469'],
+	['click {… "x": 1061, "y": 88, "button": "right"}', '957'],
+	['click {… "x": 1130, "y": 100}', '856'],
+	['key {"keys": ["ctrl+a"], …}', '253'],
+	['type_text {"text": "release-0.1", "submit": true, …}', '920'],
+	['release_desktop {"restore_focus": true}', '3'],
+];
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="robots" content="noindex" />
+		<meta name="color-scheme" content="dark light" />
+		<title>niri-computer-use(1)</title>
+		<link rel="icon" href={doc('favicon.svg')} type="image/svg+xml" />
+	</head>
+	<body>
+		<header class="running">
+			<span>NIRI-COMPUTER-USE(1)</span>
+			<span class="mid">User Commands</span>
+			<span>NIRI-COMPUTER-USE(1)</span>
+		</header>
+
+		<main>
+			<section aria-labelledby="name">
+				<h2 id="name">NAME</h2>
+				<h1>
+					{" "}<b>niri-computer-use</b> - let an MCP agent see and drive your niri desktop, with a stop
+					key it can't press
+				</h1>
+			</section>
+
+			<section aria-labelledby="synopsis">
+				<h2 id="synopsis">SYNOPSIS</h2>
+				<p class="syn">
+					{" "}<b>niri-computer-use</b> <b>serve</b> | <b>status</b> | <b>stop</b> | <b>resume</b> |
+					{" "}<b>recover</b> | <b>watch</b>
+				</p>
+			</section>
+
+			<section aria-labelledby="description">
+				<h2 id="description">DESCRIPTION</h2>
+				<p>
+					An MCP server for Claude Code, Codex, Pi or any stdio MCP client. It gives the agent
+					niri's own view of your real desktop, not a VM: windows, workspaces, focus, monitors,
+					screenshots that map back to the layout, and buttons and fields by accessible name.
+				</p>
+				<p>
+					While it holds the lease, the agent can focus windows, start apps you listed, run niri
+					actions, click, scroll, drag, type, paste and open Noctalia panels. Every action
+					answers <b>accepted</b> (niri took the request), <b>observed</b> (what niri saw
+					afterwards) and <b>changes</b> (what niri saw change).
+				</p>
+				<p>
+					It works with niri 26.04 only. If you don't run niri, this page is not for you.
+				</p>
+			</section>
+
+			<section aria-labelledby="install">
+				<h2 id="install">INSTALLATION</h2>
+				<p>Download the install script, read it, then run it:</p>
+				<pre><code>curl -fsSLO {github}/releases/latest/download/install.sh
+less install.sh
+sh install.sh</code></pre>
+				<p>Or build the crate with Rust 1.99 or newer:</p>
+				<pre><code>cargo install --locked niri-computer-use</code></pre>
+				<p>
+					Then bind the stop key in your niri config, with the binary's full path:
+				</p>
+				<pre><code>binds {'{'}
+    Mod+Shift+Escape allow-inhibiting=false allow-when-locked=true {'{'}
+        spawn "/home/you/.local/bin/niri-computer-use" "stop";
+    {'}'}
+{'}'}</code></pre>
+				<p>
+					Release builds exist for x86_64 and aarch64 Linux (glibc 2.39 or newer). See
+					{" "}<a href={doc('start/install/')}>Install</a> and
+					{" "}<a href={doc('start/clients/')}>Client setup</a>.
+				</p>
+			</section>
+
+			<section aria-labelledby="safety">
+				<h2 id="safety">SAFETY</h2>
+				<p>Guardrails, not a sandbox.</p>
+				<dl>
+					<dt><b>lease</b></dt>
+					<dd>One agent at a time holds it, and only the holder acts. Looking needs no lease.</dd>
+					<dt><b>stop key</b></dt>
+					<dd>
+						Cancels the running action and takes the lease back. An agent can't press it.
+						{" "}<b>niri-computer-use resume</b> lets agents act again.
+					</dd>
+					<dt><b>lock check</b></dt>
+					<dd>An action starts only after a read of the lock state at most 250 ms old says unlocked.</dd>
+					<dt><b>focus check</b></dt>
+					<dd>Text goes out one key at a time, with focus checked again before each key.</dd>
+					<dt><b>deny list</b></dt>
+					<dd>Pointer and keyboard input is refused while an app on your list has focus.</dd>
+					<dt><b>audit log</b></dt>
+					<dd>Every call is logged, without the text typed, the clipboard, titles or images.</dd>
+				</dl>
+				<p>
+					An agent with the lease can do anything you could do with a keyboard and mouse. Read
+					{" "}<a href={doc('concepts/safety/')}>what isn't a boundary</a> before you let one act.
+				</p>
+			</section>
+
+			<section aria-labelledby="example">
+				<h2 id="example">EXAMPLE</h2>
+				<p>
+					A real Claude Code session (Opus 5.5) on niri 26.04, asked: "In Files, put the two
+					screenshots into a new folder called release-0.1, then bring me back here." Each call
+					and its round trip in milliseconds:
+				</p>
+				<table>
+					<caption class="sr">The eleven calls of the session and their round trips</caption>
+					<thead><tr><th scope="col">call</th><th scope="col">ms</th></tr></thead>
+					<tbody>
+						{calls.map(([call, ms]) => <tr><td><code>{call}</code></td><td>{ms}</td></tr>)}
+					</tbody>
+				</table>
+				<p>
+					The keyboard shortcut didn't open the new-folder dialog, so the agent used the
+					right-click menu. <a href={`${base}demo/errand.mp4`}>The 19-second recording</a>
+					(MP4, 714 KB).
+				</p>
+			</section>
+
+			<section aria-labelledby="files">
+				<h2 id="files">FILES</h2>
+				<dl>
+					<dt><code>~/.config/niri-computer-use/policy.toml</code></dt>
+					<dd>
+						Launch presets, the deny list, <b>unrestricted</b> and <b>confirm_lease</b>. See
+						{" "}<a href={doc('concepts/configuration/')}>Configuration</a>.
+					</dd>
+					<dt><code>~/.local/state/niri-computer-use/audit.jsonl</code></dt>
+					<dd>The audit log, kept under about 40 MiB.</dd>
+					<dt><code>~/Pictures/niri-computer-use/</code></dt>
+					<dd>Where screenshots are saved when the agent asks.</dd>
+				</dl>
+			</section>
+
+			<section aria-labelledby="bugs">
+				<h2 id="bugs">BUGS</h2>
+				<p>
+					niri 26.04 only; with another release the server only looks. The pointer tools need
+					one monitor at transform Normal. Accessibility varies by toolkit: GTK 4 works best. It
+					is in early development.
+				</p>
+			</section>
+
+			<section aria-labelledby="see-also">
+				<h2 id="see-also">SEE ALSO</h2>
+				<p>
+					{" "}<a href="https://github.com/niri-wm/niri">niri</a>(1),
+					{" "}<a href={doc('tools/overview/')}>tools</a>(7),
+					{" "}<a href={doc('reference/errors/')}>errors</a>(7),
+					{" "}<a href={doc('reference/cli/')}>cli</a>(1),
+					{" "}<a href={doc('llms.txt')}>llms.txt</a>,
+					{" "}<a href={github}>source</a>
+				</p>
+			</section>
+		</main>
+
+		<footer class="running">
+			<span><a href={releaseLink}>niri-computer-use {version}</a></span>
+			<span class="mid">2026-10-17</span>
+			<span>NIRI-COMPUTER-USE(1)</span>
+		</footer>
+
+		<nav class="less" aria-label="Page">
+			<span class="prompt">Manual page niri-computer-use(1)</span>
+			{" "}<a href="#install">install</a>
+			{" "}<a href="#safety">safety</a>
+			{" "}<a href={doc('start/install/')}>docs</a>
+			{" "}<a href={github}>github</a>
+		</nav>
+	</body>
+</html>
+
+<style is:global>
+	:root {
+		--ground: #10110f;
+		--ink: #c9c6b9;
+		--bold: #f4f1e6;
+		--accent: #e3a83c;
+		--select: #3a3220;
+		color-scheme: dark;
+	}
+	@media (prefers-color-scheme: light) {
+		:root {
+			--ground: #f7f5ee;
+			--ink: #2b2a25;
+			--bold: #0c0c0a;
+			--accent: #8a5300;
+			--select: #f0dca8;
+			color-scheme: light;
+		}
+	}
+	* { box-sizing: border-box; }
+	html {
+		background: var(--ground);
+		color: var(--ink);
+		font: 400 16px/1.5 'JetBrains Mono Variable', ui-monospace, monospace;
+		font-variant-ligatures: none;
+		-webkit-text-size-adjust: 100%;
+	}
+	body {
+		margin: 0;
+		padding: 1.5rem 0 0;
+	}
+	body > header, main, body > footer { max-width: calc(80ch + 4ch); padding-inline: 2ch; }
+	::selection { background: var(--select); color: var(--bold); }
+	h1, h2, b, th { color: var(--bold); font-weight: 700; }
+	h1 { font-size: 1em; font-weight: 400; color: var(--ink); margin: 0 0 0 7ch; }
+	h2 { font-size: 1em; margin: 1.5em 0 0; }
+	p, dl, pre, table { margin: 0 0 0 7ch; }
+	p + p, p + pre, pre + p, p + dl, dl + p, p + table, table + p { margin-top: 1.5em; }
+	dt { margin-top: 0.75em; }
+	dd { margin: 0 0 0 7ch; }
+	pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+	code { font: inherit; color: var(--bold); }
+	a {
+		color: var(--accent);
+		text-decoration: underline;
+		text-underline-offset: 3px;
+	}
+	a:hover { text-decoration-thickness: 2px; }
+	a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+	table { border-collapse: collapse; }
+	th { text-align: left; font-weight: 700; padding: 0 3ch 0 0; }
+	td { padding: 0 3ch 0 0; vertical-align: top; }
+	td:last-child, th:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+	.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+	.running { display: flex; justify-content: space-between; gap: 2ch; }
+	footer.running { margin: 3em 0 1.5em; }
+	.less {
+		position: sticky;
+		bottom: 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0 2ch;
+		padding: 0.25rem 2ch;
+		background: var(--ink);
+		color: var(--ground);
+	}
+	.less .prompt { margin-right: auto; }
+	.less a { color: var(--ground); }
+	.less a:focus-visible { outline-color: var(--ground); }
+	@media (max-width: 40rem) {
+		html { font-size: 14px; }
+		body > header, main, body > footer { padding-inline: 1.5ch; }
+		p, dl, pre, table { margin-left: 3ch; }
+		dd { margin-left: 3ch; }
+		.running .mid { display: none; }
+		td { padding-right: 1.5ch; }
+		td code { overflow-wrap: anywhere; }
+	}
+</style>

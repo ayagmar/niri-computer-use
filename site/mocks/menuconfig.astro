@@ -1,0 +1,307 @@
+---
+// Mock direction C: the home page as `make menuconfig`. The guardrails and policy keys are
+// the menu, each with its real default; the entries open help screens further down the
+// page as anchors, so it works without JavaScript. No clip: the session is a log box.
+import '@fontsource-variable/jetbrains-mono/wght.css';
+import { releaseLink, version } from '../../lib/version';
+
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+const doc = (path: string) => `${base}${path}`;
+const github = 'https://github.com/ayagmar/niri-computer-use';
+
+// [mark, label, target]. -*- is always on, [*] on by default, [ ] off by default,
+// (value) a setting with its default.
+const menu = [
+	['', 'What it is', 'about', true],
+	['', 'Install', 'install', true],
+	['-*-', 'Lease: one agent acts at a time', 'h-lease'],
+	['-*-', 'Stop key the agent can’t press', 'h-stop'],
+	['-*-', 'Refuse actions while the screen is locked', 'h-lock'],
+	['-*-', 'Audit log of every call', 'h-audit'],
+	['[*]', 'Turn on accessibility for Chromium apps', 'h-a11y'],
+	['[ ]', 'Ask me before each lease (confirm_lease)', 'h-confirm'],
+	['[ ]', 'Let agents run any program (unrestricted)', 'h-unrestricted'],
+	['()', 'Apps that get no input (deny_input_app_ids)', 'h-deny'],
+	['(full)', 'Tool profile (tools)', 'h-tools'],
+	['', 'A recorded session', 'session', true],
+	['', 'Requirements and limits', 'limits', true],
+] as const;
+
+const help = [
+	{ id: 'h-lease', sym: 'lease', val: 'always', text: 'One agent at a time holds the lease, and only the holder acts: clicks, keys, launches, niri actions. Looking at windows and screenshots needs no lease.' },
+	{ id: 'h-stop', sym: 'stop', val: 'always', text: 'niri-computer-use stop, bound to a key in your niri config, cancels the running action and takes the lease back. An agent can’t press it. niri-computer-use resume lets agents act again.' },
+	{ id: 'h-lock', sym: 'lock check', val: 'always', text: 'An action starts only after a read of the lock state at most 250 ms old says unlocked. Locked or unknown refuses it.' },
+	{ id: 'h-audit', sym: 'audit log', val: 'always', text: 'Every call that reaches a tool is logged to ~/.local/state/niri-computer-use/audit.jsonl, without the text typed, the clipboard, window titles or images. It stays under about 40 MiB.' },
+	{ id: 'h-a11y', sym: 'turn_on_accessibility', val: 'y', text: 'Chromium, Electron and CEF apps join the accessibility bus only if accessibility was on when they started. With y, the server turns it on when it meets one, as a screen reader would.' },
+	{ id: 'h-confirm', sym: 'confirm_lease', val: 'n', text: 'With y, every lease waits for you to press Allow on a desktop notification, even when the agent’s client approves tool calls without asking you.' },
+	{ id: 'h-unrestricted', sym: 'unrestricted', val: 'n', text: 'With y, niri_action may send Spawn and the other gated actions, so an agent can run any program through the server. The lease, the stop key and the audit log still apply.' },
+	{ id: 'h-deny', sym: 'deny_input_app_ids', val: '[]', text: 'Pointer and keyboard input is refused while one of these apps has focus, such as your password manager. It follows keyboard focus, so it guards against mistakes, not against a determined agent.' },
+	{ id: 'h-tools', sym: 'tools', val: 'full', text: 'observe lists only the tools that look; act leaves out niri_action, noctalia and shell_panel; full lists all 22 that your session supports.' },
+];
+
+const calls = [
+	['1.20', 'status', '3'],
+	['1.20', 'desktop_state', '3'],
+	['2.40', 'acquire_desktop', '2'],
+	['3.56', 'focus {"window_id": 11}', '858'],
+	['5.62', 'click {"x": 979, "y": 88}', '252'],
+	['7.07', 'key ["shift+Right", "ctrl+alt+n"]', '469'],
+	['8.74', 'click {"x": 1061, "y": 88, "button": "right"}', '957'],
+	['10.89', 'click {"x": 1130, "y": 100}', '856'],
+	['12.95', 'key ["ctrl+a"]', '253'],
+	['14.40', 'type_text "release-0.1" + Enter', '920'],
+	['16.49', 'release_desktop {"restore_focus": true}', '3'],
+];
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="robots" content="noindex" />
+		<title>niri-computer-use {version} Configuration</title>
+		<link rel="icon" href={doc('favicon.svg')} type="image/svg+xml" />
+	</head>
+	<body>
+		<header class="top">
+			<span>policy.toml - <a href={releaseLink}>niri-computer-use {version}</a> Configuration</span>
+			<hr />
+		</header>
+
+		<main>
+			<section class="dlg main" aria-labelledby="title">
+				<h1 id="title" class="dtitle">niri-computer-use</h1>
+				<p class="lede">
+					An MCP server that lets Claude Code, Codex, Pi or any MCP agent see and drive your niri
+					desktop: windows, screenshots, buttons by name, keys and clicks. <b>-*-</b> is always on,
+					{" "}<b>[*]</b> on by default, <b>[ ]</b> off until you turn it on in
+					{" "}<a href={doc('concepts/configuration/')}>policy.toml</a>.
+				</p>
+				<nav class="menu" aria-label="Contents">
+					<ul>
+						{menu.map(([mark, label, id, sub], i) => (
+							<li>
+								{" "}<a href={`#${id}`} class={i === 1 ? 'sel' : undefined}>
+									<span class="mark">{mark}</span>
+									<span class="label">{label}{sub && <span class="arrow">{'  --->'}</span>}</span>
+								</a>
+							</li>
+						))}
+					</ul>
+				</nav>
+				<p class="buttons">
+					{" "}<a href="#install" class="btn sel">&lt;<span class="hk">Install</span>&gt;</a>
+					{" "}<a href={doc('start/install/')} class="btn">&lt; <span class="hk">Docs</span> &gt;</a>
+					{" "}<a href={doc('concepts/safety/')} class="btn">&lt; <span class="hk">Help</span> &gt;</a>
+					{" "}<a href={github} class="btn">&lt;<span class="hk">Source</span>&gt;</a>
+				</p>
+			</section>
+
+			<section class="dlg" id="about" aria-labelledby="about-t">
+				<h2 id="about-t" class="dtitle">What it is</h2>
+				<div class="text">
+					<p>
+						It gives the agent niri’s own view of your real desktop, not a VM: windows, workspaces,
+						focus, monitors, screenshots that map back to the layout, and buttons and fields by
+						accessible name. Under the lease it can focus windows, start apps you listed, click,
+						scroll, drag, type, paste and open Noctalia panels.
+					</p>
+					<p>
+						Every action answers <b>accepted</b> (niri took the request), <b>observed</b> (what
+						niri saw afterwards) and <b>changes</b> (what niri saw change). niri 26.04 only. If you
+						don’t run niri, there is nothing here for you.
+					</p>
+				</div>
+			</section>
+
+			<section class="dlg" id="install" aria-labelledby="install-t">
+				<h2 id="install-t" class="dtitle">Install</h2>
+				<div class="text">
+					<p>Download the install script, read it, then run it:</p>
+					<pre>curl -fsSLO {github}/releases/latest/download/install.sh
+less install.sh
+sh install.sh</pre>
+					<p>Or build it with Rust 1.99 or newer:</p>
+					<pre>cargo install --locked niri-computer-use</pre>
+					<p>Then bind the stop key in your niri config, with the binary’s full path:</p>
+					<pre>Mod+Shift+Escape allow-inhibiting=false allow-when-locked=true {'{'}
+    spawn "/home/you/.local/bin/niri-computer-use" "stop";
+{'}'}</pre>
+					<p><a href={doc('start/first-session/')}>First session</a> walks through the rest.</p>
+				</div>
+			</section>
+
+			<section class="dlg" aria-labelledby="help-t">
+				<h2 id="help-t" class="dtitle">Guardrails, not a sandbox</h2>
+				<div class="text">
+					{help.map((h) => (
+						<div class="help" id={h.id}>
+							<p class="sym">Symbol: <b>{h.sym}</b> [={h.val}]</p>
+							<p>{h.text}</p>
+						</div>
+					))}
+					<p class="note">
+						An agent holding the lease can do anything you could do with a keyboard and mouse.
+						{" "}<a href={doc('concepts/safety/')}>Read what isn’t protected</a> before you let one act.
+					</p>
+				</div>
+			</section>
+
+			<section class="dlg" id="session" aria-labelledby="session-t">
+				<h2 id="session-t" class="dtitle">A recorded session</h2>
+				<div class="text">
+					<p>
+						A real Claude Code session (Opus 5.5) on niri 26.04, asked to put two screenshots into a
+						new folder in Files and come back. Start time in seconds, call, round trip in ms:
+					</p>
+					<table class="log">
+						<caption class="sr">The session’s calls</caption>
+						<thead><tr><th scope="col">s</th><th scope="col">call</th><th scope="col">ms</th></tr></thead>
+						<tbody>
+							{calls.map(([t, c, ms]) => <tr><td>{t}</td><td>{c}</td><td>{ms}</td></tr>)}
+						</tbody>
+					</table>
+					<p><a href={doc('clips/errand.mp4')}>Watch the recording</a> (19 s, MP4, 223 KB).</p>
+				</div>
+			</section>
+
+			<section class="dlg" id="limits" aria-labelledby="limits-t">
+				<h2 id="limits-t" class="dtitle">Requirements and limits</h2>
+				<div class="text">
+					<ul>
+						<li>niri 26.04. With another release the server only looks.</li>
+						<li>x86_64 or aarch64 Linux, glibc 2.39 or newer; grim and loginctl at run time.</li>
+						<li>The pointer tools need one monitor at transform Normal.</li>
+						<li>Elements by name need apps on the accessibility bus. GTK 4 works best.</li>
+						<li>It is in early development.</li>
+					</ul>
+					<p>
+						{" "}<a href={doc('tools/overview/')}>Tools</a> ·
+						{" "}<a href={doc('reference/errors/')}>Errors</a> ·
+						{" "}<a href={doc('reference/cli/')}>CLI</a> ·
+						{" "}<a href={doc('llms.txt')}>llms.txt</a> ·
+						{" "}<a href="https://github.com/niri-wm/niri">niri</a>
+					</p>
+				</div>
+			</section>
+		</main>
+	</body>
+</html>
+
+<style is:global>
+	:root {
+		--blue: #1b3a8c;
+		--grey: #c4c4c0;
+		--ink: #101010;
+		--hi: #f4f4f0;
+		--shade: #6e6e6a;
+		--sel-bg: #1b3a8c;
+		--sel-ink: #fff;
+		--key: #960d0a;
+		--title: #f2c230;
+		color-scheme: light;
+	}
+	* { box-sizing: border-box; }
+	html {
+		background: var(--blue);
+		color: var(--ink);
+		font: 400 15px/1.5 'JetBrains Mono Variable', ui-monospace, monospace;
+		font-variant-ligatures: none;
+		-webkit-text-size-adjust: 100%;
+	}
+	body { margin: 0; padding: 0.6rem 2ch 4rem; }
+	::selection { background: var(--ink); color: var(--grey); }
+	.top { color: #e9ecf6; }
+	.top a { color: inherit; }
+	.top hr { border: 0; border-top: 1px solid #8fa3d6; margin: 0.25rem 0 0; }
+	main { max-width: 86ch; margin: 2.2rem auto 0; display: grid; gap: 3rem; }
+	.dlg {
+		position: relative;
+		background: var(--grey);
+		border: 1px solid var(--ink);
+		box-shadow: inset 1px 1px 0 var(--hi), inset -1px -1px 0 var(--shade), 2ch 1.5em 0 #000;
+		padding: 0 2ch 1.2em;
+	}
+	.dtitle {
+		font: inherit;
+		font-weight: 700;
+		text-align: center;
+		margin: 0 auto 0.8em;
+		width: max-content;
+		max-width: 100%;
+		padding: 0 1ch;
+		transform: translateY(-0.75em);
+		background: var(--grey);
+		color: var(--ink);
+	}
+	.lede { margin: 0 0 1em; }
+	b { font-weight: 700; }
+	a { color: var(--ink); text-underline-offset: 3px; }
+	a:focus-visible, .menu a:focus-visible, .btn:focus-visible {
+		outline: 2px solid var(--title);
+		outline-offset: 1px;
+		background: var(--sel-bg);
+		color: var(--sel-ink);
+	}
+	.menu {
+		border: 1px solid var(--ink);
+		box-shadow: inset 1px 1px 0 var(--shade), inset -1px -1px 0 var(--hi);
+		padding: 0.6em 1ch;
+	}
+	.menu ul { list-style: none; margin: 0; padding: 0; }
+	.menu a {
+		display: grid;
+		grid-template-columns: 8ch 1fr;
+		text-decoration: none;
+		padding: 0 1ch;
+	}
+	.menu a:hover { background: #d8d8d2; }
+	.menu .sel, .menu .sel:hover { background: var(--sel-bg); color: var(--sel-ink); }
+	.mark { white-space: pre; }
+	.label::first-letter, .hk::first-letter { color: var(--key); }
+	.hk { display: inline-block; }
+	.sel .label::first-letter, .sel .hk::first-letter,
+	a:focus-visible .label::first-letter, a:focus-visible .hk::first-letter { color: var(--title); }
+	.arrow { white-space: pre; }
+	.buttons {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: 0.4em 3ch;
+		margin: 1em 0 0;
+	}
+	.btn { text-decoration: none; padding: 0 0.3ch; }
+	.btn.sel { background: var(--sel-bg); color: var(--sel-ink); }
+	.text p { margin: 0 0 0.9em; }
+	.text p:last-child { margin-bottom: 0; }
+	pre {
+		margin: 0 0 0.9em;
+		padding: 0.5em 1ch;
+		background: #101010;
+		color: #e8e8e2;
+		font: inherit;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+	pre::selection { background: #e8e8e2; color: #101010; }
+	.help { padding: 0.6em 0 0; border-top: 1px dashed var(--shade); margin-top: 0.6em; }
+	.help:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
+	.help:target { background: #d8d8d2; outline: 1px solid var(--ink); outline-offset: 0.5ch; }
+	.sym { margin-bottom: 0.2em !important; }
+	.note { margin-top: 1.2em !important; }
+	ul { margin: 0 0 0.9em; padding-left: 2ch; }
+	.log { border-collapse: collapse; margin: 0 0 0.9em; width: 100%; background: #101010; color: #e8e8e2; }
+	.log th, .log td { text-align: left; padding: 0.05em 1ch; vertical-align: top; font-variant-numeric: tabular-nums; }
+	.log th { color: var(--title); font-weight: 700; }
+	.log td:first-child, .log td:last-child, .log th:first-child, .log th:last-child { text-align: right; white-space: nowrap; }
+	.log td:nth-child(2) { overflow-wrap: anywhere; }
+	.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+	@media (max-width: 40rem) {
+		html { font-size: 13px; }
+		body { padding-inline: 1ch; }
+		.dlg { padding-inline: 1.2ch; box-shadow: inset 1px 1px 0 var(--hi), inset -1px -1px 0 var(--shade), 1ch 1em 0 #000; }
+		.menu a { grid-template-columns: 7ch 1fr; padding: 0; }
+		.arrow { display: none; }
+	}
+</style>
