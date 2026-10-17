@@ -1,10 +1,11 @@
 //! `watch`: what agents are doing on this niri instance, as JSON lines on stdout for a
 //! shell to show. One `hello` line first, then `state` whenever the lease, the stop flag
-//! or the input-dirty marker changes, `action` for each tool call the audit log records
+//! the input-dirty marker or the agents' servers change, `action` for each tool call the audit log records
 //! for this instance, the last `BACKLOG` of them first, and `alive` every `ALIVE`, so a
 //! reader can tell a quiet desktop from a watch that ended. The lines carry only what the
 //! audit log and the lease record already hold, never typed text or window titles.
 
+mod clients;
 mod run;
 mod tail;
 
@@ -12,6 +13,8 @@ pub(crate) use run::run;
 
 use serde::Serialize;
 use serde_json::Value;
+
+pub(crate) use clients::Client;
 
 use crate::control::lease::Holder;
 
@@ -44,6 +47,8 @@ pub(crate) struct State {
     pub(crate) lease: Option<Driver>,
     pub(crate) stopped: bool,
     pub(crate) input_dirty: bool,
+    /// Every agent's server on this instance.
+    pub(crate) clients: Vec<Client>,
 }
 
 /// Who holds the lease, or is asking for it.

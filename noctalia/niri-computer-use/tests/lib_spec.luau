@@ -67,6 +67,27 @@ t.group("desk", function()
     t.eq(kinds(desk.feed(d, stateLine(nil, false, false), "", NOW, tr)), "resumed")
   end)
 
+  t.test("an agent left on a replaced build is reported once, and again only when another joins it", function()
+    local d = desk.new()
+    local function clients(...)
+      local line = stateLine(nil)
+      line.clients = { ... }
+      return line
+    end
+    local fresh = { pid = 5585, agent = "claude", project = "shop", replaced = false }
+    local old = { pid = 4205, agent = "pi", project = "site", replaced = true }
+    local older = { pid = 4300, agent = "codex", replaced = true }
+    t.eq(kinds(desk.feed(d, clients(fresh), "", NOW, tr)), "")
+    local changes = desk.feed(d, clients(fresh, old), "", NOW, tr)
+    t.eq(kinds(changes), "outdated")
+    t.eq(changes[1].count, 1)
+    t.eq(kinds(desk.feed(d, clients(old, fresh), "", NOW, tr)), "")
+    t.eq(kinds(desk.feed(d, clients(old, older), "", NOW, tr)), "outdated")
+    t.eq(d.agents[1].name, "Pi")
+    t.eq(d.agents[2].name, "Codex")
+    t.eq(kinds(desk.feed(d, clients(fresh), "", NOW, tr)), "")
+  end)
+
   t.test("a watch quiet for longer than its heartbeat allows is offline", function()
     local d = desk.new()
     t.eq(desk.status(d, NOW), "starting")

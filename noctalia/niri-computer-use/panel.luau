@@ -79,6 +79,40 @@ local function row(call, now: number, showWho: boolean)
   })
 end
 
+-- The server PID a session label such as `claude-code/4711` ends with.
+local function serverPid(session: string?): number?
+  return if session then tonumber(session:match("/(%d+)$")) else nil
+end
+
+local function agentRow(agent, driver: number?)
+  local text = if agent.project then tr("panel.agent_in", { agent = agent.name, project = agent.project }) else agent.name
+  local note, role = nil, "on_surface_variant"
+  if agent.replaced then
+    note, role = tr("panel.agent_old"), "tertiary"
+  elseif agent.pid == driver then
+    note, role = tr("panel.agent_driving"), "primary"
+  end
+  return ui.row({ key = `agent-{agent.pid}`, gap = 10, align = "center", paddingV = 3 }, {
+    ui.glyph({ name = if agent.replaced then "alert-triangle" else "robot", size = 16, color = role }),
+    ui.label({ text = text, maxLines = 1, flexGrow = 1 }),
+    ui.label({ text = note or "", fontSize = 11, color = role }),
+  })
+end
+
+-- Every agent with a server on this desktop, the driver and old builds marked.
+local function agentList()
+  local agents = view.agents or {}
+  if #agents == 0 then
+    return nil
+  end
+  local driver = serverPid(view.lease and view.lease.session)
+  local rows = { ui.label({ text = tr("panel.agents"), fontWeight = "bold" }) }
+  for _, agent in agents do
+    table.insert(rows, agentRow(agent, driver))
+  end
+  return ui.column({ gap = 2 }, rows)
+end
+
 local function feed(now: number)
   local calls = view.calls or {}
   if #calls == 0 then
@@ -104,14 +138,20 @@ local function render()
     return
   end
   local now = noctalia.nowMs()
-  panel.render(ui.column({ gap = 12, padding = 16 }, {
-    header(now),
+  local children = { header(now) }
+  local list = agentList()
+  if list then
+    table.insert(children, list)
+  end
+  table.insert(
+    children,
     ui.row({ gap = 8, align = "center" }, {
       ui.label({ text = tr("panel.activity"), fontWeight = "bold", flexGrow = 1 }),
       controls(),
-    }),
-    feed(now),
-  }))
+    })
+  )
+  table.insert(children, feed(now))
+  panel.render(ui.column({ gap = 12, padding = 16 }, children))
 end
 
 noctalia.state.watch("desk", function(value)

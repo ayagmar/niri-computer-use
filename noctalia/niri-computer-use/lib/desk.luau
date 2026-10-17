@@ -24,6 +24,15 @@ export type Lease = {
   pending: boolean,
 }
 
+-- One agent's server on this desktop.
+export type Agent = {
+  pid: number,
+  name: string,
+  project: string?,
+  -- An update replaced its binary: it runs the old build until restarted.
+  replaced: boolean,
+}
+
 export type Call = {
   key: string,
   text: string,
@@ -44,6 +53,7 @@ export type Change =
   | { kind: "stopped" }
   | { kind: "resumed" }
   | { kind: "stuck" }
+  | { kind: "outdated", count: number }
   | { kind: "failed", call: Call }
 
 export type Desk = {
@@ -51,6 +61,7 @@ export type Desk = {
   stopped: boolean,
   inputDirty: boolean,
   calls: { Call },
+  agents: { Agent },
   count: number,
   version: string?,
   -- `missing`, `old`, `format` or the text of a line that wasn't JSON, such as watch's error.
@@ -59,7 +70,17 @@ export type Desk = {
 }
 
 function M.new(): Desk
-  return { lease = nil, stopped = false, inputDirty = false, calls = {}, count = 0, version = nil, problem = nil, heardMs = nil }
+  return {
+    lease = nil,
+    stopped = false,
+    inputDirty = false,
+    calls = {},
+    agents = {},
+    count = 0,
+    version = nil,
+    problem = nil,
+    heardMs = nil,
+  }
 end
 
 local function lease(value: any): Lease?
@@ -85,6 +106,35 @@ local function leaseChanges(before: Lease?, after: Lease?, changes: { Change })
   end
 end
 
+local function agents(value: any): { Agent }
+  local out: { Agent } = {}
+  if type(value) ~= "table" then
+    return out
+  end
+  for _, client in value do
+    if type(client) == "table" and type(client.pid) == "number" then
+      table.insert(out, {
+        pid = client.pid,
+        name = describe.agent(if type(client.agent) == "string" then client.agent else nil),
+        project = if type(client.project) == "string" then client.project else nil,
+        replaced = client.replaced == true,
+      })
+    end
+  end
+  return out
+end
+
+-- How many agents run a build an update replaced.
+function M.outdated(list: { Agent }): number
+  local count = 0
+  for _, agent in list do
+    if agent.replaced then
+      count += 1
+    end
+  end
+  return count
+end
+
 local function state(desk: Desk, event: any, changes: { Change })
   local after = lease(event.lease)
   leaseChanges(desk.lease, after, changes)
@@ -99,6 +149,12 @@ local function state(desk: Desk, event: any, changes: { Change })
     table.insert(changes, { kind = "stuck" })
   end
   desk.inputDirty = dirty
+  local servers = agents(event.clients)
+  local outdated = M.outdated(servers)
+  if outdated > M.outdated(desk.agents) then
+    table.insert(changes, { kind = "outdated", count = outdated } :: Change)
+  end
+  desk.agents = servers
 end
 
 local function call(desk: Desk, event: any, tr: Tr, changes: { Change })
@@ -189,6 +245,7 @@ function M.view(desk: Desk, nowMs: number)
     stopped = desk.stopped,
     inputDirty = desk.inputDirty,
     calls = table.clone(desk.calls),
+    agents = table.clone(desk.agents),
     version = desk.version,
     problem = desk.problem,
   }

@@ -18,6 +18,21 @@ local CLIENTS = {
   opencode = "opencode",
 }
 
+-- Agents by the name of their process, which `watch` reports for each server.
+local PROCESSES = {
+  claude = "Claude Code",
+  codex = "Codex",
+  pi = "Pi",
+  gemini = "Gemini CLI",
+  cursor = "Cursor",
+  opencode = "opencode",
+}
+
+-- The agent's name for the process that started a server, such as `claude`.
+function M.agent(process: string?): string
+  return if process then PROCESSES[process] or process else "?"
+end
+
 -- The agent's name for a session label such as `claude-code/4711`.
 function M.client(session: string?): string
   local name = if session then session:match("^(.*)/%d+$") or session else "?"

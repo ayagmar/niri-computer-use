@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio::io::{AsyncWrite, AsyncWriteExt as _};
 
 use super::tail::Tail;
-use super::{BACKLOG, Driver, Event, FORMAT, State, action, label_pid, parent_pid};
+use super::{BACKLOG, Driver, Event, FORMAT, State, action, clients, label_pid, parent_pid};
 use crate::control::lease;
 use crate::control::runtime::RuntimeDir;
 
@@ -86,7 +86,7 @@ pub(crate) async fn follow(
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut lines = recent;
     loop {
-        let now = desk(&watched.runtime, &mut projects);
+        let now = desk(watched, &mut projects);
         if state.as_ref() != Some(&now) {
             out.send(&Event::State(&now)).await?;
             state = Some(now);
@@ -107,7 +107,8 @@ pub(crate) async fn follow(
     }
 }
 
-fn desk(runtime: &RuntimeDir, projects: &mut Projects<'_>) -> State {
+fn desk(watched: &Watched, projects: &mut Projects<'_>) -> State {
+    let runtime = &watched.runtime;
     State {
         lease: lease::holder(runtime).map(|holder| {
             let project = projects.of(&holder.label);
@@ -115,6 +116,7 @@ fn desk(runtime: &RuntimeDir, projects: &mut Projects<'_>) -> State {
         }),
         stopped: runtime.stopped().unwrap_or(false),
         input_dirty: runtime.input_dirty().unwrap_or(false),
+        clients: clients::scan(&watched.proc_root, &watched.instance),
     }
 }
 
@@ -171,9 +173,7 @@ impl<'a> Projects<'a> {
     fn look_up(&self, session: &str) -> Option<String> {
         let server = self.proc_root.join(label_pid(session)?.to_string());
         let status = std::fs::read_to_string(server.join("status")).ok()?;
-        let agent = self.proc_root.join(parent_pid(&status)?.to_string());
-        let cwd = std::fs::read_link(agent.join("cwd")).ok()?;
-        Some(cwd.file_name()?.to_string_lossy().into_owned())
+        clients::project(self.proc_root, parent_pid(&status)?)
     }
 
     fn annotate(&mut self, mut call: serde_json::Value) -> serde_json::Value {

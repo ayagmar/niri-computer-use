@@ -79,6 +79,8 @@
     "stopped_body": "Resume from the panel when you want them to act again.",
     "stuck": "Input may be stuck",
     "stuck_body": "Run niri-computer-use recover in a terminal.",
+    "outdated": "Agents on an old build: {n}",
+    "outdated_body": "An update replaced niri-computer-use. Restart those agents, or reconnect their MCP server, to use the new build.",
     "failed": "{client}: {error}",
     "where": "In {project}. "
   },
@@ -90,6 +92,8 @@
   },
   "bar": {
     "last": "Last: {text}, {ago}",
+    "agents": "Connected agents: {n}",
+    "outdated": "On an old build: {n}",
     "hint_stop": "Click for details · right-click to stop agents",
     "hint_resume": "Click for details · right-click to resume agents"
   },
@@ -98,6 +102,10 @@
     "stop": "Stop",
     "stop_hint": "Ends the running action and takes the desktop back, like your stop key.",
     "activity": "Activity",
+    "agents": "Connected agents",
+    "agent_in": "{agent} in {project}",
+    "agent_driving": "driving",
+    "agent_old": "old build, restart it",
     "empty": "No calls on this desktop yet."
   },
   "time": {

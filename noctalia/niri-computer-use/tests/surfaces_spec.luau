@@ -94,6 +94,34 @@ t.group("panel", function()
     t.ok(button(host, "Stop").props.enabled, "Stop is disabled while driving")
   end)
 
+  t.test("lists every connected agent, marking the driver and one left on an old build", function()
+    local host = desktop()
+    local panel = env.start(host, "panel.luau")
+    panel.call("onOpen", {})
+    host.event({ event = "hello", format = 1 })
+    host.event({
+      event = "state",
+      lease = { session = "claude-code/4711", since = "2026-10-17T15:05:55.000Z", pending = false, project = "shop" },
+      stopped = false,
+      input_dirty = false,
+      clients = {
+        { pid = 4205, agent = "pi", project = "site", replaced = true },
+        { pid = 4711, agent = "claude", project = "shop", replaced = false },
+      },
+    })
+    local texts = host.texts(host.panelTree)
+    local function after(wanted)
+      for i, text in texts do
+        if text == wanted then
+          return texts[i + 1]
+        end
+      end
+      return nil
+    end
+    t.eq(after("Pi in site"), "old build, restart it")
+    t.eq(after("Claude Code in shop"), "driving")
+  end)
+
   t.test("Resume is offered once stopped, and held back while input may be stuck", function()
     local host = desktop()
     local panel = env.start(host, "panel.luau")

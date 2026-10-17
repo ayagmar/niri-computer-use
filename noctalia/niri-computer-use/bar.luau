@@ -41,6 +41,19 @@ local function tooltip(status: string): string
     local ago = if at then time.ago(noctalia.nowMs() - at, tr) else "?"
     table.insert(lines, tr("bar.last", { text = last.text, ago = ago }))
   end
+  local agents = view.agents or {}
+  if #agents > 0 then
+    table.insert(lines, tr("bar.agents", { n = #agents }))
+  end
+  local outdated = 0
+  for _, agent in agents do
+    if agent.replaced then
+      outdated += 1
+    end
+  end
+  if outdated > 0 then
+    table.insert(lines, tr("bar.outdated", { n = outdated }))
+  end
   table.insert(lines, tr(if status == "stopped" then "bar.hint_resume" else "bar.hint_stop"))
   return table.concat(lines, "\n")
 end
