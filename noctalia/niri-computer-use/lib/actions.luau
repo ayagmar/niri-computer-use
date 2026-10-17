@@ -1,6 +1,8 @@
 --!nonstrict
 -- Stop and Resume, for every entry that offers them: runs the subcommand and
--- says in a notification when it failed.
+-- says in a notification when it failed. That one is an error, at critical
+-- urgency: it answers the user's own click, and after a failed Stop an agent
+-- may still drive.
 
 local command = require("./command.luau")
 
