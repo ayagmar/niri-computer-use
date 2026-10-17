@@ -9,11 +9,13 @@
 #[cfg(test)]
 mod script {
     use std::io::{BufRead as _, BufReader, Write as _};
+
     use std::net::{TcpListener, TcpStream};
     use std::os::unix::fs::PermissionsExt as _;
     use std::path::{Path, PathBuf};
     use std::process::{Output, Stdio};
     use std::time::Duration;
+    use tokio::io::AsyncWriteExt as _;
 
     const LATEST: &str = "0.1.0";
     /// A release from before the Noctalia plugin, whose tarball has none.
@@ -100,10 +102,28 @@ mod script {
 
         /// Runs the script with `env` on top of the test's environment.
         async fn install(&self, env: &[(&str, &str)]) -> Output {
+            self.run(script(), env, None).await
+        }
+
+        /// Runs the script as `curl … | sh` does: `sh` reads it from stdin, which is the
+        /// first `length` bytes of it when the download was cut short.
+        async fn install_piped(&self, env: &[(&str, &str)], length: Option<usize>) -> Output {
+            let mut text = std::fs::read(script_path()).unwrap();
+            if let Some(length) = length {
+                text.truncate(length);
+            }
+            self.run(shell(), env, Some(text)).await
+        }
+
+        async fn run(
+            &self,
+            mut command: tokio::process::Command,
+            env: &[(&str, &str)],
+            stdin: Option<Vec<u8>>,
+        ) -> Output {
             let releases = serve(self.dir.join("releases"));
             let fakes = self.dir.join("fakes");
             let path = format!("{}:/usr/local/bin:/usr/bin:/bin", fakes.display());
-            let mut command = script();
             command
                 .env_clear()
                 .env("PATH", path)
@@ -112,9 +132,19 @@ mod script {
                 .env("NCU_RELEASES_URL", releases)
                 .current_dir(&self.dir)
                 .envs(env.iter().copied())
-                .stdin(Stdio::null())
+                .stdin(if stdin.is_some() {
+                    Stdio::piped()
+                } else {
+                    Stdio::null()
+                })
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
                 .kill_on_drop(true);
-            tokio::time::timeout(DEADLINE, command.output())
+            let mut child = command.spawn().unwrap();
+            if let Some(bytes) = stdin {
+                feed(child.stdin.take().unwrap(), bytes);
+            }
+            tokio::time::timeout(DEADLINE, child.wait_with_output())
                 .await
                 .unwrap()
                 .unwrap()
@@ -158,12 +188,30 @@ mod script {
         }
     }
 
+    /// Writes `bytes` to a child's stdin and closes it. The shell may exit before it has read
+    /// everything, which closes the pipe early.
+    fn feed(mut pipe: tokio::process::ChildStdin, bytes: Vec<u8>) {
+        tokio::spawn(async move { pipe.write_all(&bytes).await.ok() });
+    }
+
     #[expect(
         clippy::disallowed_methods,
         reason = "the test runs the install script itself; it isn't part of the server"
     )]
     fn script() -> tokio::process::Command {
-        tokio::process::Command::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("install.sh"))
+        tokio::process::Command::new(script_path())
+    }
+
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test pipes the install script into sh, as the install page says to"
+    )]
+    fn shell() -> tokio::process::Command {
+        tokio::process::Command::new("sh")
+    }
+
+    fn script_path() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("install.sh")
     }
 
     #[expect(
@@ -321,6 +369,40 @@ mod script {
         assert!(stdout.contains("Registered in Codex."), "{stdout}");
         assert!(!stdout.contains("claude mcp add"), "{stdout}");
         assert!(!stdout.contains("pi mcp add"), "{stdout}");
+    }
+
+    #[tokio::test]
+    async fn piped_into_sh_it_installs_and_registers_even_when_an_agent_reads_stdin() {
+        let release = Release::new("piped", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        fake_agent(&release, "claude");
+        // An agent's `mcp add` that reads stdin must not get the rest of the script.
+        release.fake("pi", "cat > \"$HOME/pi-stdin\"\n");
+        fake_agent(&release, "codex");
+
+        let output = release.install_piped(&[("NCU_REGISTER", "1")], None).await;
+
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(
+            std::fs::read_to_string(release.home().join("pi-stdin")).unwrap(),
+            ""
+        );
+        assert!(calls(&release, "codex").contains("mcp add"));
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("Registered in Codex."), "{stdout}");
+        assert!(stdout.contains("Bind the stop key"), "{stdout}");
+    }
+
+    #[tokio::test]
+    async fn a_download_cut_short_and_piped_into_sh_installs_nothing() {
+        let release = Release::new("cut", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        let length = std::fs::read(script_path()).unwrap().len() * 2 / 3;
+
+        let output = release.install_piped(&[], Some(length)).await;
+
+        assert!(!output.status.success(), "{output:?}");
+        assert!(!release.home().join(".local").exists());
     }
 
     #[tokio::test]

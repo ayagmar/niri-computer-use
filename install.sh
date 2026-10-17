@@ -12,6 +12,11 @@
 #                   when the output is a terminal, and otherwise registers in none
 set -eu
 
+# The whole script is one brace group, which sh reads to its end before running any of it.
+# Piped from curl, a download cut short runs nothing, and a program that reads stdin can't
+# take the script's own lines.
+{
+
 releases=${NCU_RELEASES_URL:-https://github.com/ayagmar/niri-computer-use/releases}
 bin_dir=${NCU_BIN_DIR:-${HOME}/.local/bin}
 data_dir=${HOME}/.local/share/niri-computer-use
@@ -228,3 +233,5 @@ reconnect the MCP server (/mcp in Claude Code), to use ${installed_version}:
 EOF
 	printf '%s' "${old}"
 fi
+
+}

@@ -5,13 +5,21 @@ sidebar:
   order: 2
 ---
 
-`install.sh` is a POSIX shell script of about 110 lines, published with every release. Read it before you run it: it is written to be read, and this page is only a summary of it. It needs `curl`, `tar`, `sha256sum`, `uname` and `mktemp`, and runs on x86_64 and aarch64 Linux, the machines there are release builds for. On anything else it says so and stops.
+`install.sh` is a POSIX shell script of about 240 lines, published with every release. It is written to be read, and this page is only a summary of it. It needs `curl`, `tar`, `sha256sum`, `uname` and `mktemp`, and runs on x86_64 and aarch64 Linux, the machines there are release builds for. On anything else it says so and stops.
+
+```sh
+curl -fsSL https://github.com/ayagmar/niri-computer-use/releases/latest/download/install.sh | sh
+```
+
+To read it before it runs:
 
 ```sh
 curl -fsSLO https://github.com/ayagmar/niri-computer-use/releases/latest/download/install.sh
 less install.sh
 sh install.sh
 ```
+
+The whole script is one brace group, which `sh` reads to its end before running any of it. Piped from `curl`, a download cut short runs nothing, and an agent's `mcp add` that reads stdin can't take the script's own lines. Its questions are read from the terminal, `/dev/tty`, so piping it still asks before registering.
 
 ## What it downloads
 

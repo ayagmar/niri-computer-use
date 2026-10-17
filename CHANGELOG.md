@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## Unreleased
 
+### Changed
+
+- The install script is meant to be piped into `sh`: `curl -fsSL https://github.com/ayagmar/niri-computer-use/releases/latest/download/install.sh | sh`. The whole script is now one brace group, which `sh` reads to its end before running any of it, so a download cut short runs nothing, and an agent's `mcp add` that reads stdin can't take the script's own lines. Its questions are still read from the terminal.
+
 ### Fixed
 
 - `set_element_text` refuses text ending with tool-call closing tags such as `</parameter>` or `</invoke>` that no opening tag earlier in the text balances, with `leaked_tag` and the tags named in `detail`, as `type_text` has since 0.1.2. It used to set such text, so a leaked tag landed in the field. Nothing is set; send the text again without the tags.
