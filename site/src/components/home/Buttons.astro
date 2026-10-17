@@ -63,9 +63,13 @@ const buttons = [
 	.b88:active {
 		box-shadow: inset -1px -1px 0 rgb(255 255 255 / 0.55), inset 1px 1px 0 rgb(0 0 0 / 0.45);
 	}
+	/* niri's focus ring, as on the rest of the page. */
 	.b88:focus-visible {
-		outline: 2px dotted #000;
-		outline-offset: 2px;
+		outline: 2px solid transparent;
+		box-shadow:
+			0 0 0 2px #0f2626,
+			0 0 0 5px #ffcc33,
+			0 0 0 6px #0f2626;
 	}
 	.niri { background: #7a4a00; }
 	.noct { background: #2e2860; }

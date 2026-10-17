@@ -54,8 +54,12 @@ export function homeMarkdown(): string {
 		install
 			.map((step, index) => {
 				const note = step.note ? ` ${step.note}` : '';
-				const or = step.or ? `\n\n   Or:\n\n${code('sh', step.or)}` : '';
-				return `${index + 1}. ${step.label}.${note}\n\n${code(step.lang, step.code)}${or}`;
+				const more = step.more ? ` [${step.more.text}](${url(step.more.link)})` : '';
+				const read = step.read
+					? `\n\n   Read it:\n\n${code('sh', step.read)}\n\n   Then run it:\n\n${code('sh', step.run)}`
+					: '';
+				const or = step.or ? `\n\n   ${step.orNote}\n\n${code('sh', step.or)}` : '';
+				return `${index + 1}. ${step.label}.${note}${more}\n\n${code(step.lang, step.code)}${read}${or}`;
 			})
 			.join('\n\n'),
 		`## Safety`,

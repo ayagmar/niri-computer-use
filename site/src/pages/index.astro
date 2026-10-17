@@ -86,11 +86,13 @@ const latest = news[0];
 						<Picture
 							src={still}
 							alt={clip.alt}
-							widths={[480, 960]}
-							sizes="(min-width: 760px) 480px, calc(100vw - 48px)"
+							widths={[560, 900]}
+							sizes="(min-width: 760px) 540px, calc(100vw - 40px)"
 							formats={['avif']}
 							fallbackFormat="jpg"
 							quality={60}
+							loading="eager"
+							fetchpriority="high"
 						/>
 					</a>
 					<figcaption>
@@ -112,10 +114,19 @@ const latest = news[0];
 						install.map((step) => (
 							<li>
 								<b>{step.label}.</b> {step.note}
+								{step.more && <>{' '}<a href={link(step.more.link)}>{step.more.text}</a>.</>}
 								<pre>{step.code}</pre>
+								{step.read && (
+									<>
+										<span class="or">Read it:</span>
+										<pre>{step.read}</pre>
+										<span class="or">Then run it:</span>
+										<pre>{step.run}</pre>
+									</>
+								)}
 								{step.or && (
 									<>
-										<span class="or">or</span>
+										<span class="or">{step.orNote}</span>
 										<pre>{step.or}</pre>
 									</>
 								)}
@@ -187,6 +198,8 @@ const latest = news[0];
 		--visited: #663399;
 		--active: #cc0000;
 		--note: #ffffcc;
+		--ring: #ffcc33;
+		--ring-edge: #0f2626;
 		--serif: 'Tinos', 'Times New Roman', Times, 'Liberation Serif', serif;
 		--mono: 'DejaVu Sans Mono', 'Liberation Mono', 'Courier New', monospace;
 		color-scheme: light;
@@ -220,9 +233,13 @@ const latest = news[0];
 	a:active {
 		color: var(--active);
 	}
+	/* Keyboard focus is niri's focus ring, as the mark draws it: amber around a dark edge. */
 	a:focus-visible {
-		outline: 2px dotted var(--ink);
-		outline-offset: 2px;
+		outline: 2px solid transparent;
+		box-shadow:
+			0 0 0 2px var(--ring-edge),
+			0 0 0 5px var(--ring),
+			0 0 0 6px var(--ring-edge);
 	}
 	.skip {
 		position: absolute;
@@ -365,10 +382,9 @@ const latest = news[0];
 
 	.shot {
 		margin: 16px 0;
-		text-align: center;
 	}
 	.frame {
-		display: inline-block;
+		display: block;
 		padding: 4px;
 		background: var(--face);
 		border: 2px solid;
@@ -377,8 +393,7 @@ const latest = news[0];
 	}
 	.frame img {
 		display: block;
-		width: 480px;
-		max-width: 100%;
+		width: 100%;
 		height: auto;
 		border: 1px solid var(--ink);
 	}
@@ -386,8 +401,7 @@ const latest = news[0];
 		outline-offset: 3px;
 	}
 	figcaption {
-		max-width: 480px;
-		margin: 6px auto 0;
+		margin: 6px 0 0;
 		font-size: 15px;
 		color: var(--ink-2);
 	}
@@ -529,7 +543,7 @@ const latest = news[0];
 			padding: 8px;
 		}
 		.side ul {
-			grid-template-columns: repeat(3, 1fr);
+			grid-template-columns: repeat(3, minmax(0, 1fr));
 		}
 		.bevel {
 			text-align: center;
@@ -544,6 +558,12 @@ const latest = news[0];
 		}
 		.ledger {
 			grid-template-columns: 1fr;
+		}
+	}
+
+	@media (max-width: 380px) {
+		.side ul {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
 		}
 	}
 
