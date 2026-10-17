@@ -355,7 +355,7 @@ One server holds the lease, and 30 rounds each call `focus` on the empty workspa
 
 ## Nested upgrade checks
 
-`make nested-upgrade` checks an upgrade from each published release to this checkout's release build, in shared mode, with Noctalia as the lock source and `wev` to type into. It runs one nested session per release in `UPGRADE_FROM`, `0.1.0 0.1.1 0.1.2` by default, each with a 240-second deadline, and needs the network to download them:
+`make nested-upgrade` checks an upgrade from each published release to this checkout's release build, in shared mode, with Noctalia as the lock source and `wev` to type into. It runs one nested session per release in `UPGRADE_FROM`, `0.1.0 0.1.1 0.1.2 0.1.3` by default, each with a 240-second deadline, and needs the network to download them:
 
 ```sh
 make nested-upgrade
