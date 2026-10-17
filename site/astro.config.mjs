@@ -30,7 +30,7 @@ export default defineConfig({
 			components: {
 				Head: './src/components/Head.astro',
 			},
-			// Code on the black plate, as the home page's install steps show it: no window frame,
+			// Code on the black plate: no window frame,
 			// the same dark theme in both modes, and lines wrapped to the width.
 			expressiveCode: {
 				themes: ['github-dark'],

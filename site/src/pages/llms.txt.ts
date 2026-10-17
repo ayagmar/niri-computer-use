@@ -33,7 +33,7 @@ export const GET: APIRoute = async () => {
 		});
 	const named = new Set([...using, ...installing, ...optional]);
 	const more = [
-		`- [Home page](${homeMarkdownUrl()}): what the server does, five recorded sessions, what an action answers, the checks before an action, what it doesn't protect, requirements, and install in three steps`,
+		`- [Home page](${homeMarkdownUrl()}): what the server does, install in three steps, what it enforces and what it doesn't, and what it needs`,
 		...all.filter((page) => !named.has(page.id)).map(line),
 	];
 	const skillLines = skill.map(

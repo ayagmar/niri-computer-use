@@ -1,6 +1,6 @@
 /* The docs pages' colours and the site's type: a cool concrete ground, near-black ink, code
-   on a black plate, and one red for a stopped answer. The home page sets its own paper and
-   ink over these and shares only the fonts and the stored theme. */
+   on a black plate, and one red for a stopped answer. The home page has its own styles and
+   uses none of these. */
 
 :root {
 	--ncu-sans: 'Archivo Variable', ui-sans-serif, system-ui, sans-serif;

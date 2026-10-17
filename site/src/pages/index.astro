@@ -1,18 +1,21 @@
 ---
-// The home page, set as a datasheet: a running head, timing diagrams drawn from real
-// sessions, tables for what the server answers and refuses, then install. It sits outside
-// Starlight and loads only its own styles; `styles/tokens.css` keeps its theme and
-// crossfade in step with the docs.
-import '@fontsource-variable/archivo/wdth.css';
-import '../generated/archivo-text.css';
-import '@fontsource-variable/jetbrains-mono/wght.css';
-import '../styles/tokens.css';
-import archivo from '../generated/archivo-text.woff2?url';
-import Timing from '../components/home/Timing.astro';
-import Result from '../components/home/Result.astro';
-import Gates from '../components/home/Gates.astro';
-import Code from '../components/home/Code.astro';
+// The home page, set as a hand-made project page from around 2000: a 760-pixel page on the
+// desktop grey, a title band with the pixel mark, bevelled buttons down the side, tables for
+// facts, one framed still that opens the clip, and a status bar. Light only, no JavaScript.
+// Its words are in `lib/home.ts`, which `pages/index.md.ts` serves as Markdown too.
+import '@fontsource/tinos/400.css';
+import '@fontsource/tinos/700.css';
+import tinos from '@fontsource/tinos/files/tinos-latin-400-normal.woff2?url';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { Picture } from 'astro:assets';
+import Mark from '../components/home/Mark.astro';
+import Buttons from '../components/home/Buttons.astro';
+import still from '../assets/errand-still.jpg';
+import changelog from '../../../CHANGELOG.md?raw';
 import { home } from '../lib/home';
+import { mp4Seconds } from '../lib/clip';
+import { releases, summary } from '../lib/news';
 import { siteRoot } from '../lib/markdown';
 import { releaseLink, version } from '../lib/version';
 
@@ -21,20 +24,28 @@ const link = (path: string) => `${base}${path}`;
 const canonical = siteRoot();
 const og = new URL('demo/og.png', canonical).href;
 const github = 'https://github.com/ayagmar/niri-computer-use';
-const { sessions, result, gates, limits, requirements, install } = home;
+const { clip, glance, install, safety } = home;
+
+// The clip's real length and size, read when the site is built.
+const clipFile = readFileSync(join(process.cwd(), 'public', 'clips', `${clip.name}.mp4`));
+const clipFacts = `${Math.round(mp4Seconds(clipFile))} s, MP4, ${Math.round(clipFile.byteLength / 1000)} KB`;
+const news = releases(changelog).slice(0, 3);
+const latest = news[0];
 ---
 
 <!doctype html>
-<html lang="en" data-theme="light">
+<html lang="en">
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="color-scheme" content="light" />
 		<title>{home.title}</title>
 		<meta name="description" content={home.description} />
 		<link rel="canonical" href={canonical} />
 		<link rel="icon" href={link('favicon.svg')} type="image/svg+xml" />
 		<link rel="sitemap" href={link('sitemap-index.xml')} />
-		<link rel="preload" href={archivo} as="font" type="font/woff2" crossorigin />
+		<link rel="alternate" type="text/markdown" href={link('index.md')} />
+		<link rel="preload" href={tinos} as="font" type="font/woff2" crossorigin />
 		<meta property="og:title" content={home.title} />
 		<meta property="og:description" content={home.description} />
 		<meta property="og:type" content="website" />
@@ -43,717 +54,529 @@ const { sessions, result, gates, limits, requirements, install } = home;
 		<meta property="og:image:width" content="1280" />
 		<meta property="og:image:height" content="640" />
 		<meta name="twitter:card" content="summary_large_image" />
-		<meta name="theme-color" content="#f4f5f2" media="(prefers-color-scheme: light)" />
-		<meta name="theme-color" content="#0f1110" media="(prefers-color-scheme: dark)" />
-		{/* The theme the docs pages store, or the system's; `js` for what only works with the
-		    script, and `sweep` to hold the first diagram back until it draws itself in. */}
-		<script is:inline>
-			const root = document.documentElement;
-			root.dataset.theme =
-				localStorage.getItem('starlight-theme') ||
-				(matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
-			root.classList.add('js');
-			if (matchMedia('(prefers-reduced-motion: no-preference)').matches) root.classList.add('sweep');
-		</script>
+		<meta name="theme-color" content="#336666" />
 	</head>
 	<body>
 		<a class="skip" href="#main">Skip to content</a>
-		<div class="sheet">
-			<header class="top">
-				<span class="mast">
-					<a class="name" href={base} aria-current="page">niri-computer-use</a>
-					<a class="version" href={releaseLink} aria-label={`Release ${version}`}>{version}</a>
-				</span>
-				<span class="running">{home.running}</span>
-				<nav aria-label="Site">
-					<a href={link('start/install/')}>Docs</a>
-					<a href={github}>GitHub</a>
-					<button class="theme" type="button" data-theme-toggle aria-label="Use the dark theme">
-						<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="5.5"></circle><path d="M12 6.5a5.5 5.5 0 0 1 0 11z"></path></svg>
-					</button>
-					<a class="button small" href="#install">Install</a>
-				</nav>
+		<div class="page">
+			<header class="band">
+				<Mark />
+				<div>
+					<h1>niri-computer-use</h1>
+					<p>{home.tagline} <strong>{home.stop}</strong></p>
+				</div>
 			</header>
+
+			<nav class="side" aria-label="Site">
+				<ul>
+					<li><a class="bevel" href="#install">Install</a></li>
+					<li><a class="bevel" href="#safety">Safety</a></li>
+					<li><a class="bevel" href="#news">What’s new</a></li>
+					<li><a class="bevel" href={link('start/install/')}>Documentation</a></li>
+					<li><a class="bevel" href={github}>Source</a></li>
+					<li><a class="bevel" href={link('llms.txt')}>llms.txt</a></li>
+				</ul>
+			</nav>
+
 			<main id="main">
-				<section class="hero" aria-labelledby="hero-title">
-					<h1 id="hero-title"><span>{home.headline}</span> <em>{home.stopline}</em></h1>
-					<div class="lede">
-						<p>{home.lede}</p>
-						<div class="actions">
-							<a class="button" href="#install">Install</a>
-							<a class="more" href={link(home.safety.link)}>{home.safety.text}</a>
-						</div>
-					</div>
-				</section>
-				<Timing items={sessions.items} caption={sessions.caption} note={sessions.note} try={sessions.try} />
+				<p class="only">{home.only}</p>
 
-				<section class="part" aria-labelledby="result-title">
-					<div class="part-head">
-						<h2 id="result-title">{result.headline}</h2>
-						<p>{result.lede}</p>
-					</div>
-					<Result
-						code={result.code}
-						fields={result.fields}
-						source={result.source}
-						sourceLink={`${github}/blob/main/docs/results/readme-example.md`}
-					/>
-					<a class="more" href={link(result.more.link)}>{result.more.text}</a>
-				</section>
+				<figure class="shot">
+					<a href={link(`clips/${clip.name}.mp4`)} class="frame">
+						<Picture
+							src={still}
+							alt={clip.alt}
+							widths={[480, 960]}
+							sizes="(min-width: 760px) 480px, calc(100vw - 48px)"
+							formats={['avif']}
+							fallbackFormat="jpg"
+							quality={60}
+						/>
+					</a>
+					<figcaption>
+						{clip.caption} <a href={link(`clips/${clip.name}.mp4`)}>Play the clip</a> <span class="nw">({clipFacts})</span>.
+						<span>{clip.note}</span>
+					</figcaption>
+				</figure>
 
-				<section class="part" aria-labelledby="gates-title">
-					<div class="part-head">
-						<h2 id="gates-title">{gates.headline}</h2>
-						<p>{gates.lede}</p>
-					</div>
-					<Gates items={gates.items} pass={gates.pass} note={gates.note} />
-				</section>
+				<table class="facts">
+					<caption class="sr">At a glance</caption>
+					<tbody>
+						{glance.map(([what, value]) => <tr><th scope="row">{what}</th><td>{value}</td></tr>)}
+					</tbody>
+				</table>
 
-				<section class="part" aria-labelledby="limits-title">
-					<div class="part-head">
-						<h2 id="limits-title">{limits.headline}</h2>
+				<h2 id="install">Install</h2>
+				<ol class="steps">
+					{
+						install.map((step) => (
+							<li>
+								<b>{step.label}.</b> {step.note}
+								<pre>{step.code}</pre>
+								{step.or && (
+									<>
+										<span class="or">or</span>
+										<pre>{step.or}</pre>
+									</>
+								)}
+							</li>
+						))
+					}
+				</ol>
+
+				<h2 id="safety">Safety</h2>
+				<div class="ledger">
+					<div>
+						<h3>Enforced</h3>
+						<ul>{safety.enforced.map((item) => <li>{item}</li>)}</ul>
 					</div>
-					<div class="limits">
+					<div>
+						<h3>Not covered</h3>
+						<ul>{safety.missed.map((item) => <li>{item}</li>)}</ul>
+					</div>
+				</div>
+				<p><a href={link(safety.more.link)}>{safety.more.text}</a>.</p>
+
+				<h2 id="news">What’s new</h2>
+				<table class="news">
+					<thead><tr><th scope="col">Release</th><th scope="col">Date</th><th scope="col">Changes</th></tr></thead>
+					<tbody>
 						{
-							[limits.enforces, limits.misses].map((group) => (
-								<div>
-									<h3>{group.title}</h3>
-									<ul>
-										{group.items.map((item) => (
-											<li>{item}</li>
-										))}
-									</ul>
-								</div>
+							news.map((release) => (
+								<tr>
+									<td><a href={`${github}/releases/tag/v${release.version}`}>{release.version}</a></td>
+									<td>{release.date}</td>
+									<td>{summary(release)}</td>
+								</tr>
 							))
 						}
-					</div>
-					<a class="more" href={link(limits.more.link)}>{limits.more.text}</a>
-				</section>
-
-				<section class="part" aria-labelledby="needs-title">
-					<div class="part-head">
-						<h2 id="needs-title">{requirements.headline}</h2>
-					</div>
-					<table class="needs">
-						<tbody>
-							{
-								requirements.rows.map(([what, value]) => (
-									<tr>
-										<th scope="row">{what}</th>
-										<td>{value}</td>
-									</tr>
-								))
-							}
-						</tbody>
-					</table>
-				</section>
-
-				<section class="part" id="install" aria-labelledby="install-title">
-					<div class="part-head">
-						<h2 id="install-title">{install.headline}</h2>
-						<p>{install.lede}</p>
-					</div>
-					<ol class="steps">
-						{
-							install.steps.map((step) => (
-								<li>
-									<p>
-										{step.text}
-										{step.more && (
-											<>
-												{' '}
-												<a href={link(step.more.link)}>{step.more.text}</a>
-											</>
-										)}
-									</p>
-									<Code code={step.code} lang={step.lang} />
-									{step.or && (
-										<>
-											<p>
-												{step.or.text} <a href={link(step.or.more.link)}>{step.or.more.text}</a>
-											</p>
-											<Code code={step.or.code} lang={step.or.lang} />
-										</>
-									)}
-								</li>
-							))
-						}
-					</ol>
-					<a class="more" href={link(install.more.link)}>{install.more.text}</a>
-				</section>
+					</tbody>
+				</table>
+				<p><a href={`${github}/blob/main/CHANGELOG.md`}>Full changelog</a>.</p>
 			</main>
-			<footer class="end">
-				<span class="name">niri-computer-use <a class="version" href={releaseLink}>{version}</a></span>
-				<nav aria-label="More">
-					<a href={link('start/install/')}>Docs</a>
-					<a href={github}>GitHub</a>
-					<a href={link(home.agents.link)}>{home.agents.text}</a>
-					<a href={`${github}/blob/main/LICENSE`}>MIT license</a>
-				</nav>
+
+			<aside class="more" aria-label="More">
+				<h2>Built on</h2>
+				<Buttons />
+			</aside>
+
+			<footer class="status">
+				<span>Best viewed with any browser</span>
+				<span>No JavaScript</span>
+				<span><a href={releaseLink}>{version}</a>{latest && latest.version === version && `, ${latest.date}`}</span>
 			</footer>
 		</div>
-		<script>
-			// The theme button switches between dark and light and stores the choice where the docs
-			// pages read it.
-			const button = document.querySelector<HTMLButtonElement>('[data-theme-toggle]')!;
-			const label = () => {
-				const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-				button.setAttribute('aria-label', `Use the ${next} theme`);
-				return next;
-			};
-			label();
-			button.addEventListener('click', () => {
-				const next = label();
-				document.documentElement.dataset.theme = next;
-				localStorage.setItem('starlight-theme', next);
-				label();
-			});
-			// A stop in the diagram marks the headline's promise.
-			document.addEventListener('ncu-stop', () => document.querySelector('h1 em')?.classList.add('hit'));
-		</script>
 	</body>
 </html>
 
 <style is:global>
-	/* Paper and ink, a highlighter for what the reader is pointing at, and one red for the
-	   stop key and refused answers. */
 	:root {
-		--sans: 'Archivo Variable', ui-sans-serif, system-ui, sans-serif;
-		--mono: 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace;
-		--ease: cubic-bezier(0.22, 1, 0.36, 1);
-		--paper: #f4f5f2;
-		--ink: #121413;
-		--ink-2: #545a56;
-		--rule: #c8ccc5;
-		--grid: #e3e6e0;
-		--red: #c9281a;
-		--red-lip: #8a1a10;
-		/* Text on a red fill, and red text on the highlighter. */
-		--on-red: #fff;
-		--red-on-mark: var(--red);
-		--mark: #fdf0a6;
-		--mark-strong: #ffd60a;
-		--plate: #121413;
-		--plate-ink: #eceee9;
-		--plate-rule: #3a3f3c;
+		--desk: #c0c0c0;
+		--paper: #ffffff;
+		--face: #e4e4dc;
+		--ink: #000000;
+		--ink-2: #3c3c38;
+		--band: #336666;
+		--band-ink: #ffffff;
+		--bar: #dfe9e9;
+		--bar-ink: #133333;
+		--hi: #ffffff;
+		--lo: #808080;
+		--dk: #404040;
+		--link: #0000cc;
+		--visited: #663399;
+		--active: #cc0000;
+		--note: #ffffcc;
+		--serif: 'Tinos', 'Times New Roman', Times, 'Liberation Serif', serif;
+		--mono: 'DejaVu Sans Mono', 'Liberation Mono', 'Courier New', monospace;
+		color-scheme: light;
 	}
-
-	:root[data-theme='dark'] {
-		--paper: #0f1110;
-		--ink: #e9ebe6;
-		--ink-2: #a3aaa5;
-		--rule: #343935;
-		--grid: #1c201e;
-		--red: #ff6150;
-		--red-lip: #a3271b;
-		--on-red: #0f1110;
-		--red-on-mark: #ff7a6b;
-		--mark: #39340f;
-		--plate: #1b1e1c;
-		--plate-rule: #3d433f;
-	}
-
-	*,
-	*::before,
-	*::after {
+	* {
 		box-sizing: border-box;
 	}
-
 	html {
-		background: var(--paper);
+		background: var(--desk);
 		color: var(--ink);
-		font: 400 1rem/1.5 var(--sans);
+		font: 17px/1.45 var(--serif);
 		-webkit-text-size-adjust: 100%;
-		text-rendering: optimizeLegibility;
+		scrollbar-color: var(--lo) var(--desk);
+		caret-color: var(--active);
 	}
-
-	/* Over the docs' own, which tokens.css sets on :root. */
-	html:root {
-		caret-color: var(--red);
-		scrollbar-color: var(--ink-2) var(--paper);
-		accent-color: var(--ink);
-	}
-
-	::selection {
-		background: var(--mark-strong);
-		color: #121413;
-	}
-
-	:focus-visible {
-		outline: 2px solid var(--ink);
-		outline-offset: 3px;
-	}
-
 	body {
 		margin: 0;
-		overflow-x: clip;
+		padding: 24px 12px 40px;
 	}
-
-	@media (prefers-reduced-motion: no-preference) {
-		html {
-			scroll-behavior: smooth;
-		}
+	::selection {
+		background: var(--band);
+		color: var(--band-ink);
 	}
-
 	a {
-		color: inherit;
-		text-underline-offset: 0.2em;
-		text-decoration-thickness: 1px;
+		color: var(--link);
+		text-underline-offset: 2px;
 	}
-
-	a:hover {
-		text-decoration-thickness: 2px;
+	a:visited {
+		color: var(--visited);
 	}
-
-	h1,
-	h2,
-	h3,
-	p,
-	ul,
-	ol {
-		margin: 0;
+	a:active {
+		color: var(--active);
 	}
-
-	.vh {
+	a:focus-visible {
+		outline: 2px dotted var(--ink);
+		outline-offset: 2px;
+	}
+	.skip {
+		position: absolute;
+		left: 12px;
+		top: -40px;
+		padding: 4px 8px;
+		background: var(--paper);
+	}
+	.skip:focus {
+		top: 4px;
+	}
+	.sr {
 		position: absolute;
 		width: 1px;
 		height: 1px;
 		overflow: hidden;
 		clip-path: inset(50%);
-		white-space: nowrap;
-	}
-</style>
-
-<style>
-	.skip {
-		position: absolute;
-		left: 1rem;
-		top: -4rem;
-		z-index: 9;
-		padding: 0.75rem 1rem;
-		background: var(--ink);
-		color: var(--paper);
-		border-radius: 3px;
 	}
 
-	.skip:focus {
-		top: 0.75rem;
-	}
-
-	.sheet {
-		max-width: 86rem;
+	/* The page: a 760-pixel table of title band, side column, main column and status bar. */
+	.page {
+		max-width: 760px;
 		margin: 0 auto;
-		padding: 0 clamp(1rem, 3vw, 2.5rem);
-	}
-
-	.top {
 		display: grid;
-		grid-template-columns: 1fr auto 1fr;
-		align-items: center;
-		gap: 1rem;
-		min-height: 3.5rem;
-		border-bottom: 1px solid var(--ink);
-		font-size: 0.875rem;
+		grid-template-columns: 160px 1fr;
+		grid-template-areas:
+			'band band'
+			'side main'
+			'more main'
+			'status status';
+		grid-template-rows: auto auto 1fr auto;
+		background: var(--paper);
+		border: 2px solid;
+		border-color: var(--hi) var(--dk) var(--dk) var(--hi);
+		box-shadow: 1px 1px 0 var(--ink);
 	}
-
-	.name {
-		font-weight: 760;
-		font-stretch: 88%;
-		font-size: 1.125rem;
-		letter-spacing: -0.01em;
-		text-decoration: none;
-		white-space: nowrap;
-	}
-
-	.mast {
+	.band {
+		grid-area: band;
 		display: flex;
-		align-items: baseline;
-		gap: 0.5rem;
+		align-items: center;
+		gap: 16px;
+		padding: 14px 18px;
+		background: var(--band);
+		color: var(--band-ink);
 	}
-
-	.version {
-		padding: 0.05rem 0.35rem;
-		border: 1px solid var(--rule);
-		font: 500 0.75rem/1.4 var(--mono);
-		font-stretch: normal;
+	.mark {
+		flex: none;
+	}
+	h1 {
+		margin: 0;
+		font-size: 30px;
+		line-height: 1.1;
 		letter-spacing: 0;
-		color: var(--ink-2);
-		text-decoration: none;
-		transition: background-color 160ms var(--ease), color 160ms var(--ease);
+	}
+	.band p {
+		margin: 2px 0 0;
+		font-size: 16px;
+	}
+	.band strong {
+		color: #ffdd77;
 	}
 
-	.version:hover,
-	.version:focus-visible {
-		background: var(--mark);
+	.side,
+	.more {
+		background: var(--face);
+		border-right: 1px solid var(--lo);
+		padding: 14px 12px 0;
+	}
+	.side {
+		grid-area: side;
+	}
+	.more {
+		grid-area: more;
+		padding-bottom: 16px;
+		font-size: 15px;
+	}
+	.side ul {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: grid;
+		gap: 6px;
+	}
+	.bevel {
+		display: block;
+		padding: 3px 8px;
+		background: var(--face);
+		border: 2px solid;
+		border-color: var(--hi) var(--dk) var(--dk) var(--hi);
+		box-shadow: inset -1px -1px 0 var(--lo);
+		color: var(--ink);
+		font-weight: 700;
+		font-size: 15px;
+		text-decoration: none;
+	}
+	.bevel:visited {
 		color: var(--ink);
 	}
+	.bevel:hover {
+		background: #efefe8;
+	}
+	.bevel:active {
+		border-color: var(--dk) var(--hi) var(--hi) var(--dk);
+		box-shadow: inset 1px 1px 0 var(--lo);
+		color: var(--ink);
+	}
+	.more h2 {
+		margin: 18px 0 6px;
+		font-size: 15px;
+		border-bottom: 1px solid var(--lo);
+	}
 
-	.running {
+	main {
+		grid-area: main;
+		min-width: 0;
+		padding: 16px 22px 18px;
+	}
+	main p {
+		margin: 0 0 12px;
+	}
+	.only {
+		padding: 4px 10px;
+		background: var(--note);
+		border: 1px solid #996600;
+		font-weight: 700;
+	}
+	h2 {
+		margin: 26px 0 10px;
+		padding: 2px 8px;
+		background: var(--bar);
+		color: var(--bar-ink);
+		font-size: 19px;
+		border-top: 1px solid #9fbcbc;
+		border-bottom: 1px solid #9fbcbc;
+	}
+	h3 {
+		margin: 0 0 4px;
+		font-size: 16px;
+	}
+
+	.shot {
+		margin: 16px 0;
+		text-align: center;
+	}
+	.frame {
+		display: inline-block;
+		padding: 4px;
+		background: var(--face);
+		border: 2px solid;
+		border-color: var(--lo) var(--hi) var(--hi) var(--lo);
+		line-height: 0;
+	}
+	.frame img {
+		display: block;
+		width: 480px;
+		max-width: 100%;
+		height: auto;
+		border: 1px solid var(--ink);
+	}
+	.frame:focus-visible {
+		outline-offset: 3px;
+	}
+	figcaption {
+		max-width: 480px;
+		margin: 6px auto 0;
+		font-size: 15px;
 		color: var(--ink-2);
+	}
+	figcaption > span:last-child {
+		display: block;
+	}
+	.nw {
 		white-space: nowrap;
 	}
 
-	.top nav {
-		justify-self: end;
-		display: flex;
-		align-items: center;
-		gap: 0.25rem;
-	}
-
-	.top nav > a:not(.button) {
-		display: inline-flex;
-		align-items: center;
-		min-height: 2.75rem;
-		padding: 0 0.6rem;
-		font-weight: 550;
-		text-decoration: none;
-	}
-
-	.top nav > a:not(.button):hover {
-		text-decoration: underline;
-	}
-
-	.theme {
-		display: inline-grid;
-		place-items: center;
-		width: 2.75rem;
-		height: 2.75rem;
-		border: 0;
-		background: none;
-		color: inherit;
-		cursor: pointer;
-	}
-
-	/* Without the script the button can't switch anything. */
-	:global(html:not(.js)) .theme {
-		display: none;
-	}
-
-	.theme svg {
-		width: 1.1rem;
-		height: 1.1rem;
-		fill: none;
-		stroke: currentColor;
-		stroke-width: 1.6;
-		transition: transform 400ms var(--ease);
-	}
-
-	.theme path {
-		fill: currentColor;
-		stroke: none;
-	}
-
-	:global([data-theme='dark']) .theme svg {
-		transform: rotate(180deg);
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.theme svg,
-		h1 em {
-			transition: none;
-		}
-	}
-
-	.button {
-		display: inline-flex;
-		align-items: center;
-		min-height: 2.75rem;
-		padding: 0 1.4rem;
-		border-radius: 3px;
-		background: var(--ink);
-		color: var(--paper);
-		font-weight: 650;
-		text-decoration: none;
-		transition: transform 140ms var(--ease), background-color 160ms var(--ease);
-	}
-
-	.button.small {
-		margin-left: 0.5rem;
-		min-height: 2.5rem;
-		padding: 0 1rem;
-	}
-
-	.button:hover {
-		background: var(--ink-2);
-	}
-
-	.button:active {
-		transform: scale(0.97);
-	}
-
-	.more {
-		display: inline-flex;
-		align-items: center;
-		min-height: 2.75rem;
-		font-weight: 600;
-	}
-
-	.hero {
-		padding: clamp(2rem, 6vh, 3.5rem) 0 clamp(1.75rem, 4vh, 2.5rem);
-	}
-
-	h1 {
-		font-weight: 780;
-		font-stretch: 84%;
-		font-size: clamp(2.375rem, 1.1rem + 4vw, 4.75rem);
-		line-height: 0.95;
-		letter-spacing: -0.03em;
-		text-wrap: balance;
-	}
-
-	h1 span,
-	h1 em {
-		display: inline-block;
-	}
-
-	h1 em {
-		font-style: normal;
-		color: var(--red);
-		/* A highlighter stroke under the line, drawn when a stop lands in the diagram. */
-		background: linear-gradient(var(--mark-strong), var(--mark-strong)) no-repeat 0 88% / 0% 0.28em;
-		transition: background-size 700ms var(--ease);
-	}
-
-	h1 em:global(.hit) {
-		background-size: 100% 0.28em;
-	}
-
-	.lede {
-		display: flex;
-		flex-wrap: wrap;
-		justify-content: space-between;
-		align-items: end;
-		gap: 1.25rem 3rem;
-		margin-top: clamp(1.25rem, 3vh, 1.75rem);
-	}
-
-	.lede p {
-		max-width: 58ch;
-		font-size: clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem);
-		line-height: 1.5;
-	}
-
-	.actions {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.5rem 1.5rem;
-	}
-
-	.part {
-		position: relative;
-		margin-top: clamp(4rem, 10vh, 6.5rem);
-		border-top: 2px solid var(--ink);
-		padding-top: 1rem;
-	}
-
-	/* Each section's rule is drawn across as the section scrolls in. */
-	@supports (animation-timeline: view()) {
-		@media (prefers-reduced-motion: no-preference) {
-			.part {
-				border-top-color: transparent;
-			}
-
-			.part::before {
-				content: '';
-				position: absolute;
-				top: -2px;
-				left: 0;
-				right: 0;
-				height: 2px;
-				background: var(--ink);
-				transform-origin: left;
-				animation: rule linear both;
-				animation-timeline: view();
-				animation-range: entry 10% entry 70%;
-			}
-		}
-	}
-
-	@keyframes rule {
-		from {
-			transform: scaleX(0);
-		}
-
-		to {
-			transform: scaleX(1);
-		}
-	}
-
-	.part-head {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
-		gap: 0.75rem 3rem;
-		margin-bottom: 2rem;
-	}
-
-	h2 {
-		font-weight: 760;
-		font-stretch: 84%;
-		font-size: clamp(1.875rem, 1.2rem + 2vw, 2.875rem);
-		line-height: 1;
-		letter-spacing: -0.025em;
-		text-wrap: balance;
-	}
-
-	.part-head p {
-		max-width: 56ch;
-		font-size: 1.0625rem;
-		line-height: 1.5;
-		color: var(--ink-2);
-		padding-top: 0.35rem;
-	}
-
-	.part > .more {
-		margin-top: 0.75rem;
-	}
-
-	.limits {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 2rem 3rem;
-	}
-
-	h3 {
-		font-size: 0.75rem;
-		font-weight: 650;
-		letter-spacing: 0.07em;
-		text-transform: uppercase;
-		color: var(--ink-2);
-		padding-bottom: 0.5rem;
-		border-bottom: 1px solid var(--ink);
-	}
-
-	.limits ul {
-		list-style: none;
-		padding: 0;
-	}
-
-	.limits li {
-		padding: 0.65rem 0;
-		border-bottom: 1px solid var(--rule);
-		line-height: 1.5;
-	}
-
-	.needs {
+	table {
 		width: 100%;
-		border-collapse: collapse;
-		border-top: 1px solid var(--ink);
+		border-collapse: separate;
+		border-spacing: 2px;
+		margin: 0 0 12px;
+		border: 1px solid;
+		border-color: var(--lo) var(--hi) var(--hi) var(--lo);
+		font-size: 16px;
 	}
-
-	.needs th,
-	.needs td {
+	th,
+	td {
+		padding: 3px 8px;
 		text-align: left;
 		vertical-align: top;
-		padding: 0.7rem 0;
-		border-bottom: 1px solid var(--rule);
-		line-height: 1.5;
+		border: 1px solid;
+		border-color: var(--lo) var(--hi) var(--hi) var(--lo);
 	}
-
-	.needs th {
-		width: 12rem;
-		padding-right: 2rem;
-		font-weight: 650;
+	tbody th,
+	thead th {
+		background: var(--face);
+		font-weight: 700;
+	}
+	.facts th {
+		width: 108px;
+	}
+	.news td:first-child,
+	.news td:nth-child(2) {
+		white-space: nowrap;
+		font-variant-numeric: tabular-nums;
 	}
 
 	.steps {
-		list-style: none;
-		padding: 0;
-		counter-reset: step;
-		display: grid;
-		gap: 1.75rem;
-		max-width: 60rem;
+		margin: 0 0 12px;
+		padding-left: 24px;
 	}
-
 	.steps li {
-		counter-increment: step;
+		margin-bottom: 12px;
+	}
+	.steps li::marker {
+		font-weight: 700;
+	}
+	pre {
+		margin: 4px 0 0;
+		padding: 6px 10px;
+		background: #f4f4ee;
+		border: 1px solid;
+		border-color: var(--lo) var(--hi) var(--hi) var(--lo);
+		box-shadow: inset 1px 1px 0 var(--dk);
+		font: 13.5px/1.45 var(--mono);
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+	.or {
+		display: block;
+		margin: 4px 0 0;
+		font-style: normal;
+		font-size: 15px;
+		color: var(--ink-2);
+	}
+
+	.ledger {
 		display: grid;
-		grid-template-columns: 2.25rem minmax(0, 1fr);
-		gap: 0.6rem 0.5rem;
+		grid-template-columns: 1fr 1fr;
+		gap: 2px;
+		margin: 0 0 12px;
+		padding: 2px;
+		border: 1px solid;
+		border-color: var(--lo) var(--hi) var(--hi) var(--lo);
+	}
+	.ledger > div {
+		padding: 6px 10px 8px;
+		border: 1px solid;
+		border-color: var(--lo) var(--hi) var(--hi) var(--lo);
+	}
+	.ledger > div + div {
+		background: #fff8ee;
+	}
+	.ledger ul {
+		margin: 0;
+		padding-left: 18px;
+		font-size: 16px;
 	}
 
-	.steps li::before {
-		content: counter(step);
-		grid-row: span 4;
-		font: 700 1.25rem/1.4 var(--mono);
-	}
-
-	.steps p {
-		line-height: 1.5;
-	}
-
-	.steps a {
-		font-weight: 600;
-	}
-
-	.end {
+	.status {
+		grid-area: status;
 		display: flex;
 		flex-wrap: wrap;
-		justify-content: space-between;
-		align-items: center;
-		gap: 1rem;
-		margin-top: clamp(4rem, 10vh, 6rem);
-		padding: 1rem 0 2.5rem;
-		border-top: 1px solid var(--ink);
-		font-size: 0.875rem;
+		gap: 3px;
+		padding: 3px;
+		background: var(--face);
+		border-top: 1px solid var(--lo);
+		font-size: 14px;
+	}
+	.status span {
+		flex: 1 1 auto;
+		padding: 1px 8px;
+		border: 1px solid;
+		border-color: var(--lo) var(--hi) var(--hi) var(--lo);
+	}
+	.status span:last-child {
+		flex: 0 0 auto;
 	}
 
-	.end nav {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0 1.25rem;
+	/* Phones: one column, the side buttons in a row under the band. */
+	@media (max-width: 640px) {
+		html {
+			font-size: 16px;
+		}
+		body {
+			padding: 0;
+		}
+		.page {
+			grid-template-columns: 1fr;
+			grid-template-areas: 'band' 'side' 'main' 'more' 'status';
+			grid-template-rows: auto;
+			border: 0;
+			box-shadow: none;
+		}
+		.band {
+			padding: 12px;
+			gap: 12px;
+		}
+		h1 {
+			font-size: 24px;
+		}
+		.side {
+			border-right: 0;
+			border-bottom: 1px solid var(--lo);
+			padding: 8px;
+		}
+		.side ul {
+			grid-template-columns: repeat(3, 1fr);
+		}
+		.bevel {
+			text-align: center;
+			padding: 3px 4px;
+		}
+		.more {
+			border-right: 0;
+			border-top: 1px solid var(--lo);
+		}
+		main {
+			padding: 12px 12px 16px;
+		}
+		.ledger {
+			grid-template-columns: 1fr;
+		}
 	}
 
-	.end nav a {
-		display: inline-flex;
-		align-items: center;
-		min-height: 2.75rem;
-	}
-
-	@media (max-width: 56rem) {
-		.running {
+	/* On paper: no side column or buttons, and each outside link's address after it. */
+	@media print {
+		html,
+		body {
+			background: #fff;
+			padding: 0;
+		}
+		.page {
+			display: block;
+			border: 0;
+			box-shadow: none;
+		}
+		.side,
+		.more,
+		.status,
+		.skip {
 			display: none;
 		}
-
-		.top {
-			grid-template-columns: 1fr auto;
+		.band {
+			background: none;
+			color: #000;
+			border-bottom: 2px solid #000;
 		}
-
-		.part-head,
-		.limits {
-			grid-template-columns: minmax(0, 1fr);
+		.band strong {
+			color: #000;
 		}
-	}
-
-	@media (max-width: 30rem) {
-		.top nav > a:not(.button) {
-			padding: 0 0.4rem;
-		}
-
-		.button.small {
-			display: none;
-		}
-
-		.needs th {
-			width: 6.5rem;
-			padding-right: 1rem;
-		}
-	}
-
-	/* Too narrow for the version beside the name; the footer still gives it. */
-	@media (max-width: 24rem) {
-		.mast .version {
-			display: none;
-		}
-	}
-
-	@media (max-width: 21rem) {
-		.top {
-			gap: 0.5rem;
-		}
-
-		.top nav > a:not(.button) {
-			padding: 0 0.3rem;
+		main a[href^='http']::after {
+			content: ' <' attr(href) '>';
+			font-size: 0.85em;
+			word-break: break-all;
 		}
 	}
 </style>

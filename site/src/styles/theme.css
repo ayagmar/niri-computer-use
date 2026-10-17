@@ -1,6 +1,6 @@
-/* The docs pages in the home page's colours and type: Starlight's greys run from the ink to
-   the concrete ground, links and the current page are ink, and titles are the home page's
-   narrow, heavy Archivo. Red stays for the stop key and for warnings. */
+/* The docs pages' colours and type: Starlight's greys run from the ink to the concrete
+   ground, links and the current page are ink, and titles are narrow, heavy Archivo. Red stays
+   for the stop key and for warnings. */
 
 :root {
 	--sl-font: var(--ncu-sans);
@@ -44,7 +44,7 @@
 	--sl-color-bg-nav: var(--sl-color-black);
 }
 
-/* The wordmark as on the home page, where it holds still while pages crossfade. */
+/* The wordmark, which holds still while pages crossfade. */
 .site-title {
 	font-weight: 760;
 	font-stretch: 88%;
@@ -53,7 +53,7 @@
 	color: var(--sl-color-white);
 }
 
-/* Page titles and section headings in the home page's poster type, a size down. */
+/* Page titles and section headings in narrow, heavy poster type. */
 h1#_top {
 	font-weight: 840;
 	font-stretch: 72%;

@@ -1967,3 +1967,9 @@ Each action's commit is the one its tag names in the action's repository (`git l
 - A server that requires the shared engine and had none at its start answers `tools/list` itself, before it knows whether the engine finds Noctalia or an accessibility bus. It leaves out what it knows without one: `noctalia` while `unrestricted` is off.
 - For the rest, its handshake says `tools.listChanged`, and the first call that reaches an engine sends `notifications/tools/list_changed` before the call's answer, so the client lists the tools again and gets the engine's list. Only this server says `listChanged`: an engine's list never changes during a session.
 - Considered: documenting that such a session may list tools it never serves. A call to one would fail as an unknown tool for the rest of the session, and the notification needs no change in rmcp, which relays the line as it is.
+
+## 2026-10-17: the home page as a project page from around 2000
+
+- The datasheet home page, with five recordings and timing diagrams, was 2,650 words and 5.6 MB of recordings in `site/public`. The new one is a 760-pixel page in the style of a hand-made project page from around 2000: a title band, bevelled buttons, tables, one still that links to one 223 KB clip, and a status bar. It has no JavaScript and is light only, as pages of that time were; the docs keep their dark theme.
+- `@fontsource/tinos` 5.3.0, published 2026-07-19, the latest release. Tinos is metric-compatible with Times New Roman, the face such pages were set in, which Linux desktops mostly lack: without it the page falls back to DejaVu Serif or Liberation Serif and changes width from one machine to the next. OFL-1.1, no dependencies; the page loads its Latin regular and bold, 37 KB of WOFF2.
+- Code stays in the system's monospace (DejaVu Sans Mono on most Linux desktops), with no web font.

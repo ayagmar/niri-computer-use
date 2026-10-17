@@ -1,0 +1,31 @@
+---
+// The site's mark, drawn on a 24×16 pixel grid: niri's strip of columns running off both
+// edges, the focused one in its ring, and a pointer in it. Each grid pixel is three CSS
+// pixels, so it stays sharp at 1x and 2x.
+---
+
+<svg
+	class="mark"
+	viewBox="0 0 24 16"
+	width="72"
+	height="48"
+	shape-rendering="crispEdges"
+	aria-hidden="true"
+	focusable="false"
+>
+	<rect x="0" y="2" width="3" height="12" fill="#0f2626" />
+	<rect x="0" y="3" width="2" height="10" fill="#8fb0b0" />
+	<rect x="4" y="1" width="10" height="14" fill="#ffcc33" />
+	<rect x="5" y="2" width="8" height="12" fill="#0f2626" />
+	<rect x="6" y="3" width="6" height="10" fill="#ffffff" />
+	<rect x="7" y="5" width="1" height="5" fill="#000000" />
+	<rect x="8" y="6" width="1" height="3" fill="#000000" />
+	<rect x="9" y="7" width="1" height="2" fill="#000000" />
+	<rect x="10" y="8" width="1" height="1" fill="#000000" />
+	<rect x="9" y="9" width="1" height="2" fill="#000000" />
+	<rect x="15" y="2" width="7" height="12" fill="#0f2626" />
+	<rect x="16" y="3" width="5" height="10" fill="#8fb0b0" />
+	<rect x="17" y="5" width="3" height="1" fill="#0f2626" />
+	<rect x="17" y="7" width="2" height="1" fill="#0f2626" />
+	<rect x="23" y="2" width="1" height="12" fill="#0f2626" />
+</svg>

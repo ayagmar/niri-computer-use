@@ -41,39 +41,26 @@ export function homeMarkdownUrl(): string {
 // The home page as Markdown, from the same words the page sets.
 export function homeMarkdown(): string {
 	const url = (link: string) => new URL(link, siteRoot()).href;
-	const { sessions, result, gates, limits, requirements, install } = home;
+	const { glance, install, safety } = home;
 	const list = (items: string[]) => items.map((item) => `- ${item}`).join('\n');
+	const code = (lang: string, text: string) => `   \`\`\`${lang}\n${text.replace(/^/gm, '   ')}\n   \`\`\``;
 	return [
 		`# niri-computer-use`,
 		`> ${home.description}`,
 		`Version ${version}: [release notes](${releaseLink})`,
-		`${home.headline} ${home.stopline} ${home.lede}`,
-		`[${home.safety.text}](${url(home.safety.link)})`,
-		`## Recorded sessions`,
-		`${sessions.note}\n\n${list(sessions.items.map((item) => `${item.tab}: ${item.text}`))}`,
-		`## ${result.headline}`,
-		`${result.lede} ${result.source}\n\n\`\`\`json\n${result.code}\n\`\`\`\n\n${list(result.fields.map((field) => `\`${field.name}\`: ${field.text}`))}`,
-		`## ${gates.headline}`,
-		`${gates.lede}\n\n${gates.items
-			.map((item, index) => `${index + 1}. ${item.gate}: ${item.when} Applies to ${item.covers}. Answer: \`${item.error}\`, ${item.detail.replace(/`/g, '')}`)
-			.join('\n')}\n\n${gates.note}`,
-		`## ${limits.headline}`,
-		`${limits.enforces.title}:\n\n${list(limits.enforces.items)}\n\n${limits.misses.title}:\n\n${list(limits.misses.items)}\n\n[${limits.more.text}](${url(limits.more.link)})`,
-		`## ${requirements.headline}`,
-		list(requirements.rows.map(([what, value]) => `${what}: ${value}`)),
-		`## ${install.headline}`,
-		install.lede,
-		install.steps
+		`${home.tagline} ${home.stop} ${home.only}`,
+		list(glance.map(([what, value]) => `${what}: ${value}`)),
+		`## Install`,
+		install
 			.map((step, index) => {
-				const more = step.more ? ` [${step.more.text}](${url(step.more.link)})` : '';
-				const code = (lang: string, text: string) => `   \`\`\`${lang}\n${text.replace(/^/gm, '   ')}\n   \`\`\``;
-				const or = step.or
-					? `\n\n   ${step.or.text} [${step.or.more.text}](${url(step.or.more.link)})\n\n${code(step.or.lang, step.or.code)}`
-					: '';
-				return `${index + 1}. ${step.text}${more}\n\n${code(step.lang, step.code)}${or}`;
+				const note = step.note ? ` ${step.note}` : '';
+				const or = step.or ? `\n\n   Or:\n\n${code('sh', step.or)}` : '';
+				return `${index + 1}. ${step.label}.${note}\n\n${code(step.lang, step.code)}${or}`;
 			})
 			.join('\n\n'),
-		`[${install.more.text}](${url(install.more.link)})`,
+		`## Safety`,
+		`Enforced:\n\n${list(safety.enforced)}\n\nNot covered:\n\n${list(safety.missed)}\n\n[${safety.more.text}](${url(safety.more.link)})`,
+		`[Documentation](${url('start/install/')}) · [Tools](${url('tools/overview/')}) · [Configuration](${url('concepts/configuration/')})`,
 	].join('\n\n') + '\n';
 }
 

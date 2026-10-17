@@ -105,7 +105,7 @@ npm ci
 npm run build
 ```
 
-The pages are Markdown files in `site/src/content/docs/`, except the home page, `site/src/pages/index.astro`, which places the components in `site/src/components/home/` and takes its words from `site/src/lib/home.ts`. There is one directory per sidebar group (`site/src/lib/groups.mjs`), and pages are ordered by `sidebar.order` in their front matter. The build goes to `site/dist/`. Preview it with:
+The pages are Markdown files in `site/src/content/docs/`, except the home page, `site/src/pages/index.astro`, which sits outside Starlight, places the pixel mark and the 88×31 buttons from `site/src/components/home/`, and takes its words from `site/src/lib/home.ts`. Its What's new table is read from `CHANGELOG.md` when the site is built, and the clip's length and size from the MP4. There is one directory per sidebar group (`site/src/lib/groups.mjs`), and pages are ordered by `sidebar.order` in their front matter. The build goes to `site/dist/`. Preview it with:
 
 ```sh
 npm run preview
@@ -113,7 +113,7 @@ npm run preview
 
 `npm run build` also runs `npm test` and two checks, and fails on any of them:
 
-- `npm test`, before anything else: Node's own test runner on `src/**/*.test.ts`, with Node stripping the types itself (`--experimental-strip-types`, which Node 22.12 has), which checks the timing diagrams and the stop key's answers against the recordings in `public/demo/`, and when the page's demos run.
+- `npm test`, before anything else: Node's own test runner on `src/**/*.test.ts`, with Node stripping the types itself (`--experimental-strip-types`, which Node 22.12 has), which checks how the home page reads the changelog and the clip's length.
 
 - `scripts/check-reference.mjs`, before Astro: the error reference lists exactly the names in `ErrorName` (`src/error.rs`), and the configuration page exactly the keys of `Policy` and `Preset` (`src/policy.rs`). Change the page in the same commit as the enum or struct.
 - `scripts/check-links.mjs`, after Astro: every internal link, image and `#fragment` resolves to a built file, and `llms.txt` and `llms-full.txt` cover every page.
@@ -455,14 +455,15 @@ python3 -I scripts/demo-encode.py target/demo/errand/cut --width 1920 --name err
 
 `scripts/demo-encode.py` needs ffmpeg with libx264 and libsvtav1, `rsvg-convert` (librsvg) and `avifenc` (libavif). It scales the desktop to `--width` and draws a caption band under it: the prompt, each call as it went out, a summary of its answer when it came back with its round trip, and the lease's state. For `desktop_state` it names only the focused workspace's windows. After a user command, which prints nothing, the band shows the record's narration marked `#`. It writes an MP4 and an AV1 WebM, `<name>.json` with the calls for the page's text version, optional stills as PNG and AVIF, a GIF for the README, and `og.png`, the link-preview card. Times are seconds into the cut recording.
 
-The home page draws its own calls under each recording from `<name>.json`, so it plays the desktop without the band, from `site/public/clips/<name>.mp4`, and takes its poster from the top of `<name>.png`. Cut the band off the MP4 and keep the 16:9 desktop:
+The home page shows one recording, `errand`: a still that links to `site/public/clips/errand.mp4`, the desktop without the band. Cut the band off the MP4 and keep the 16:9 desktop, then take the still from the cut clip at the moment it should show:
 
 ```sh
 ffmpeg -i site/public/demo/errand.mp4 -vf "crop=iw:iw*9/16:0:0,scale=1280:720:flags=lanczos" -an \
     -c:v libx264 -preset slow -crf 30 -tune animation -pix_fmt yuv420p -movflags +faststart site/public/clips/errand.mp4
+ffmpeg -ss 10.2 -i site/public/clips/errand.mp4 -frames:v 1 -q:v 2 site/src/assets/errand-still.jpg
 ```
 
-The README links `errand.gif`, `errand.png` and `errand.mp4` in `site/public/demo/`, and link previews use `og.png`; the other sessions' MP4 and WebM files aren't used, so delete them once their clips are cut.
+The README links `errand.gif`, `errand.png` and `errand.mp4` in `site/public/demo/`, and link previews use `og.png`. Nothing uses `<name>.json`, the WebM or another session's files, so don't commit them.
 
 `make nested-demo SCENE=<scene>` still plays a scripted scene in a headless nested niri (`errand`, `layout`, `keyboard` and `stop`, against `harness/fixtures/chat.py`, a GTK 4 chat window) and writes the same `frames/` and `timeline.jsonl` to `target/e2e/<run>/`, which `scripts/demo-encode.py` takes at its default width of 1280. It makes the same calls each take, which helps when comparing builds; the site no longer uses it.
 
