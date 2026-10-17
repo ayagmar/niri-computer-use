@@ -140,8 +140,11 @@ enum Read {
 enum Failed {
     /// No engine listens.
     Absent(String),
-    /// An engine answered and refused this bridge, or none can ever be reached.
+    /// An engine answered and refused this bridge.
     Refused(String),
+    /// None can ever be reached, as on a socket path over the 108 bytes a Unix socket's
+    /// may have.
+    Never(String),
     /// An engine of another build refused this bridge, as it does for as long as it runs.
     OtherBuild(String),
     /// Anything else, which a retry may get past.
@@ -154,6 +157,8 @@ pub(crate) enum Unreached {
     /// An engine of another build refused this bridge, as it does for as long as it runs.
     /// Its detail says what the user does about it.
     OtherBuild(String),
+    /// None can ever be reached, whatever runs.
+    Never(String),
     /// Anything else.
     Other(String),
 }
@@ -161,7 +166,7 @@ pub(crate) enum Unreached {
 impl Unreached {
     pub(crate) fn detail(self) -> String {
         match self {
-            Self::OtherBuild(detail) | Self::Other(detail) => detail,
+            Self::OtherBuild(detail) | Self::Never(detail) | Self::Other(detail) => detail,
         }
     }
 }
@@ -176,6 +181,7 @@ pub(crate) async fn connect(target: &Target) -> Result<Link, Unreached> {
             Ok(link) => return Ok(link),
             Err(Failed::Refused(detail)) => return Err(Unreached::Other(detail)),
             Err(Failed::OtherBuild(detail)) => return Err(Unreached::OtherBuild(detail)),
+            Err(Failed::Never(detail)) => return Err(Unreached::Never(detail)),
             Err(Failed::Absent(detail)) if starts < MAX_STARTS => {
                 // Only the first start tries `systemd-run`, which may still be at work.
                 start(target, deadline, starts == 0)
@@ -270,7 +276,7 @@ fn connect_failed(socket: &Path, error: &std::io::Error) -> Failed {
     ) {
         Failed::Absent(detail)
     } else if kind == std::io::ErrorKind::InvalidInput {
-        Failed::Refused(detail)
+        Failed::Never(detail)
     } else {
         Failed::Retry(detail)
     }
@@ -763,9 +769,10 @@ impl Relay {
                 Ok(())
             }
             Err(unreached) => {
-                // An engine of another build says what to do; a retry helps only once it has ended.
+                // An engine of another build says what to do; a retry helps only once it has
+                // ended. None helps at all when no engine can ever be reached.
                 let detail = match unreached {
-                    Unreached::OtherBuild(detail) => detail,
+                    Unreached::OtherBuild(detail) | Unreached::Never(detail) => detail,
                     Unreached::Other(detail) => format!("{detail}; the next call tries again"),
                 };
                 Err(ToolError::new(ErrorName::EngineUnavailable, detail))

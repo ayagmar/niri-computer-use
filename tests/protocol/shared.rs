@@ -853,6 +853,29 @@ async fn an_engine_socket_path_too_long_falls_back_at_once() {
     );
 }
 
+/// A client that requires the engine, on a socket path no engine can ever listen on, is
+/// told to restart its server once the cause is fixed, since no call can help.
+#[tokio::test]
+async fn an_engine_socket_path_too_long_for_a_client_that_requires_it_needs_a_restart() {
+    let mut fixture = shared("required-long");
+    fixture.set("NIRI_COMPUTER_USE_SHARED", "required");
+    let niri_socket = fixture.path(&format!("run/niri.{}.sock", "x".repeat(40)));
+    let _niri = Niri::listen(&niri_socket);
+    fixture.set("NIRI_SOCKET", &niri_socket);
+    let mut server = Server::start(&fixture).await;
+    let (error, detail) = tool_error(&server.call("status", json!({})).await);
+    assert_eq!(error, "engine_unavailable", "{detail}");
+    assert!(
+        detail.contains("connect to") && detail.contains("restart this MCP server"),
+        "{detail}"
+    );
+    let (_, _, stderr) = server.stop().await;
+    assert!(
+        stderr.contains("so every tool fails with engine_unavailable: connect to"),
+        "{stderr}"
+    );
+}
+
 /// A client that has stopped reading: its pipe is full with `tools/list` answers, and more
 /// wait in the bridge for it, fewer than its queue holds.
 async fn stop_reading(client: &mut Server) {

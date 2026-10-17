@@ -341,8 +341,8 @@ async fn serve(env: Env, given: session::Given) -> Result<(), String> {
     standalone(env, settings, Some(reason)).await
 }
 
-/// The engine's target and a link to it, or why there is none, with the target when one
-/// could be made, for trying again later.
+/// The engine's target and a link to it, or why there is none, with the target when trying
+/// again later may reach one.
 async fn reach_engine(
     env: &Env,
     given: session::Given,
@@ -350,6 +350,7 @@ async fn reach_engine(
     let target = bridge::Target::new(env, given).map_err(|reason| (None, reason))?;
     match bridge::connect(&target).await {
         Ok(link) => Ok((target, link)),
+        Err(bridge::Unreached::Never(reason)) => Err((None, reason)),
         Err(unreached) => Err((Some(target), unreached.detail())),
     }
 }
