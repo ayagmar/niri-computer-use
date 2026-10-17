@@ -117,10 +117,11 @@ niri-matrix:
 	scripts/niri-build.sh $(NIRI_VERSIONS) > target/niri-matrix/builds.txt
 	cargo run --locked -p harness -- matrix target/niri-matrix/builds.txt docs/results/niri-matrix.md
 
-# An upgrade from each published release to this release build, installed with install.sh
-# into a throwaway HOME: make nested-upgrade UPGRADE_FROM=0.1.1 picks one.
-UPGRADE_FROM ?= 0.1.0 0.1.1 0.1.2 0.1.3
+# An upgrade from each published release, one per v* tag, to this release build, installed
+# with install.sh into a throwaway HOME: make nested-upgrade UPGRADE_FROM=0.1.1 picks one.
+UPGRADE_FROM ?= $(patsubst v%,%,$(shell git tag --list 'v*' --sort=v:refname))
 nested-upgrade:
+	@test -n "$(UPGRADE_FROM)" || { echo "no release to upgrade from: fetch the v* tags (git fetch --tags) or set UPGRADE_FROM" >&2; exit 1; }
 	cargo build --locked --release -p niri-computer-use
 	for from in $(UPGRADE_FROM); do \
 		cargo run --locked -p harness -- run $(NESTED_FLAGS) --upgrade $$from --server target/release/niri-computer-use || exit 1; \
