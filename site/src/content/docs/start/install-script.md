@@ -85,15 +85,15 @@ Run the script again. It replaces the binary, the skill and the plugin the same 
 
 ## Uninstall
 
-The script has no uninstall mode; remove what it wrote. These two commands undo an install with the default `NCU_BIN_DIR`:
+The script has no uninstall mode; remove what it wrote. If you enabled the plugin, run `noctalia msg plugins disable ayagmar/niri-computer-use` first. These two commands then undo an install with the default `NCU_BIN_DIR`:
 
 ```sh
-rm -f ~/.local/bin/niri-computer-use ~/.claude/skills/niri-computer-use ~/.agents/skills/niri-computer-use ~/.local/share/noctalia/plugins/niri-computer-use
+rm -f ~/.local/bin/niri-computer-use ~/.claude/skills/niri-computer-use ~/.agents/skills/niri-computer-use "${XDG_DATA_HOME:-$HOME/.local/share}/noctalia/plugins/niri-computer-use"
 rm -r ~/.local/share/niri-computer-use
 ```
 
 To unregister the server from an agent the script registered it in, use the agent's own command: `claude mcp remove --scope user niri-computer-use`, `pi mcp remove niri-computer-use` or `codex mcp remove niri-computer-use`.
 
-If you enabled the plugin, run `noctalia msg plugins disable ayagmar/niri-computer-use` first. If the script said it replaced or left one of the skill or plugin paths, that path wasn't its own: leave it out of the first `rm`, and point a replaced link back where the script said it pointed.
+If the script said it replaced or left one of the skill or plugin paths, that path wasn't its own: leave it out of the first `rm`, and point a replaced link back where the script said it pointed.
 
 The directories the script created around these paths, such as `~/.local/bin` and `~/.claude/skills`, stay, in case other programs use them. Things you set up afterwards aren't the script's, so they stay too: the server's entry in your agent (`claude mcp remove niri-computer-use` for Claude Code), the stop key bind in your niri config, the policy file at `~/.config/niri-computer-use/`, the audit log under `~/.local/state/niri-computer-use/`, and screenshots the agent saved under `~/Pictures/niri-computer-use`.
