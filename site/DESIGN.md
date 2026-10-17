@@ -1,351 +1,299 @@
 ---
 name: niri-computer-use
-description: A datasheet on paper and ink, with a highlighter for what is held or pointed at, one red for the stop key and refused answers, and numbered figures and tables drawn from real sessions.
+description: A hand-made Linux project page from around 2000 for the home page, with a separate Archivo and JetBrains Mono system for the docs.
 colors:
-  paper: "#f4f5f2"
-  ink: "#121413"
-  ink-2: "#545a56"
-  rule: "#c8ccc5"
-  grid: "#e3e6e0"
-  red: "#c9281a"
-  red-lip: "#8a1a10"
-  mark: "#fdf0a6"
-  mark-strong: "#ffd60a"
-  plate: "#121413"
-  plate-ink: "#eceee9"
-  plate-rule: "#3a3f3c"
-  paper-dark: "#0f1110"
-  ink-dark: "#e9ebe6"
-  ink-2-dark: "#a3aaa5"
-  rule-dark: "#343935"
-  grid-dark: "#1c201e"
-  red-dark: "#ff6150"
-  red-lip-dark: "#a3271b"
-  mark-dark: "#39340f"
-  plate-dark: "#1b1e1c"
-  plate-rule-dark: "#3d433f"
-  on-red: "#ffffff"
-  on-red-dark: "#0f1110"
-  red-on-mark-dark: "#ff7a6b"
-  docs-ground: "#e6e8e3"
-  docs-ink: "#0c0e0d"
-  docs-ink-2: "#464c48"
-  docs-plate: "#0b0c0b"
-  docs-stop: "#c42a1b"
-  docs-ground-dark: "#161917"
-  docs-ink-dark: "#e6e8e3"
-  docs-ink-2-dark: "#a5aca7"
-  docs-plate-dark: "#070807"
-  docs-stop-dark: "#ff6a57"
+  desk: "#c0c0c0"
+  paper: "#ffffff"
+  face: "#e4e4dc"
+  face-hover: "#efefe8"
+  ink: "#000000"
+  ink-2: "#3c3c38"
+  band: "#336666"
+  band-ink: "#ffffff"
+  band-stop: "#ffdd77"
+  bar: "#dfe9e9"
+  bar-ink: "#133333"
+  bar-rule: "#9fbcbc"
+  bevel-hi: "#ffffff"
+  bevel-lo: "#808080"
+  bevel-dk: "#404040"
+  well: "#f4f4ee"
+  link: "#0000cc"
+  link-visited: "#663399"
+  link-active: "#cc0000"
+  note: "#ffffcc"
+  note-edge: "#996600"
+  ledger-gap: "#fff8ee"
+  ring: "#ffcc33"
+  ring-edge: "#0f2626"
 typography:
-  headline:
-    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontSize: "clamp(2.375rem, 1.1rem + 4vw, 4.75rem)"
-    fontWeight: 780
-    lineHeight: 0.95
-    letterSpacing: "-0.03em"
-    fontVariation: "'wdth' 84"
-  section:
-    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontSize: "clamp(1.875rem, 1.2rem + 2vw, 2.875rem)"
-    fontWeight: 760
-    lineHeight: 1
-    letterSpacing: "-0.025em"
-    fontVariation: "'wdth' 84"
-  wordmark:
-    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontSize: "1.125rem"
-    fontWeight: 760
-    letterSpacing: "-0.01em"
-    fontVariation: "'wdth' 88"
-  lede:
-    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontSize: "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)"
-    fontWeight: 400
-    lineHeight: 1.5
+  title:
+    fontFamily: "Tinos, 'Times New Roman', Times, 'Liberation Serif', serif"
+    fontSize: "30px"
+    fontWeight: 700
+    lineHeight: 1.1
+  heading:
+    fontFamily: "Tinos, 'Times New Roman', Times, 'Liberation Serif', serif"
+    fontSize: "19px"
+    fontWeight: 700
+    lineHeight: 1.45
+  subheading:
+    fontFamily: "Tinos, 'Times New Roman', Times, 'Liberation Serif', serif"
+    fontSize: "16px"
+    fontWeight: 700
+    lineHeight: 1.45
   body:
-    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontSize: "1rem"
-    fontWeight: 400
-    lineHeight: 1.5
-  small:
-    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontSize: "0.875rem"
+    fontFamily: "Tinos, 'Times New Roman', Times, 'Liberation Serif', serif"
+    fontSize: "17px"
     fontWeight: 400
     lineHeight: 1.45
-  label:
-    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontSize: "0.6875rem"
-    fontWeight: 650
-    letterSpacing: "0.07em"
-  key-legend:
-    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontSize: "0.8125rem"
+  table:
+    fontFamily: "Tinos, 'Times New Roman', Times, 'Liberation Serif', serif"
+    fontSize: "16px"
+    fontWeight: 400
+    lineHeight: 1.45
+  caption:
+    fontFamily: "Tinos, 'Times New Roman', Times, 'Liberation Serif', serif"
+    fontSize: "15px"
+    fontWeight: 400
+    lineHeight: 1.45
+  status:
+    fontFamily: "Tinos, 'Times New Roman', Times, 'Liberation Serif', serif"
+    fontSize: "14px"
+    fontWeight: 400
+    lineHeight: 1.45
+  code:
+    fontFamily: "'DejaVu Sans Mono', 'Liberation Mono', 'Courier New', monospace"
+    fontSize: "13.5px"
+    fontWeight: 400
+    lineHeight: 1.45
+  button-88:
+    fontFamily: "Verdana, 'DejaVu Sans', sans-serif"
+    fontSize: "11px"
     fontWeight: 700
-    lineHeight: 1
-    letterSpacing: "0.04em"
-  docs-title:
-    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontSize: "clamp(2.5rem, 1.6rem + 3vw, 3.75rem)"
-    fontWeight: 840
-    lineHeight: 0.95
-    letterSpacing: "-0.025em"
-    fontVariation: "'wdth' 72"
-  docs-section:
-    fontFamily: "'Archivo Variable', ui-sans-serif, system-ui, sans-serif"
-    fontWeight: 760
-    letterSpacing: "-0.015em"
-    fontVariation: "'wdth' 84"
-  answer:
-    fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
-    fontSize: "0.875rem"
-    lineHeight: 1.65
-  readout:
-    fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
-    fontSize: "0.8125rem"
-    lineHeight: 1.55
-  command:
-    fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
-    fontSize: "0.8125rem"
-    lineHeight: 1.6
-  call-list:
-    fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
-    fontSize: "0.75rem"
-    lineHeight: 1.5
-  trace-label:
-    fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
-    fontSize: "12.5px"
-  figure:
-    fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
-    fontSize: "0.75rem"
-    fontWeight: 500
-    lineHeight: 1.4
-rounded:
-  corner: "3px"
-  chart: "2px"
-  key: "6px"
-  docs-still: "4px"
-  docs-code: "0.75rem"
+    lineHeight: 1.05
 spacing:
-  margin: "clamp(1rem, 3vw, 2.5rem)"
-  sheet: "86rem"
-  section: "clamp(4rem, 10vh, 6.5rem)"
-  head-gap: "2rem"
-  touch: "2.75rem"
-  lanes: "5.5rem"
-  docs-content: "46rem"
+  gap-tight: "2px"
+  gap-button: "6px"
+  pad-cell: "3px 8px"
+  pad-main: "16px 22px 18px"
+  side-width: "160px"
+  page-width: "760px"
 components:
-  button-primary:
-    backgroundColor: "{colors.ink}"
-    textColor: "{colors.paper}"
-    rounded: "{rounded.corner}"
-    padding: "0 1.4rem"
-    height: "2.75rem"
-  button-primary-hover:
-    backgroundColor: "{colors.ink-2}"
-    textColor: "{colors.paper}"
-  button-small:
-    backgroundColor: "{colors.ink}"
-    textColor: "{colors.paper}"
-    rounded: "{rounded.corner}"
-    padding: "0 1rem"
-    height: "2.5rem"
-  version-tag:
-    textColor: "{colors.ink-2}"
-    typography: "{typography.figure}"
-    padding: "0.05rem 0.35rem"
-  version-tag-hover:
-    backgroundColor: "{colors.mark}"
-    textColor: "{colors.ink}"
-  tab:
-    textColor: "{colors.ink}"
-    typography: "{typography.small}"
-    padding: "0 0.95rem"
-    height: "2.5rem"
-  tab-hover:
-    backgroundColor: "{colors.grid}"
-  tab-checked:
-    backgroundColor: "{colors.ink}"
-    textColor: "{colors.paper}"
-  stop-key:
-    backgroundColor: "{colors.red}"
-    textColor: "{colors.on-red}"
-    typography: "{typography.key-legend}"
-    rounded: "{rounded.key}"
-    width: "3.4rem"
-    height: "2.9rem"
-  readout:
-    backgroundColor: "{colors.mark}"
-    textColor: "{colors.ink}"
-    typography: "{typography.readout}"
-    padding: "0.55rem 0.75rem"
-    height: "3.4rem"
-  check:
+  page:
     backgroundColor: "{colors.paper}"
+    width: "760px"
+  title-band:
+    backgroundColor: "{colors.band}"
+    textColor: "{colors.band-ink}"
+    typography: "{typography.title}"
+    padding: "14px 18px"
+  side-button:
+    backgroundColor: "{colors.face}"
     textColor: "{colors.ink}"
-    rounded: "{rounded.corner}"
-    padding: "0.55rem 0.6rem"
-  check-ok:
-    backgroundColor: "{colors.ink}"
-    textColor: "{colors.paper}"
-  check-no:
-    backgroundColor: "{colors.red}"
-    textColor: "{colors.on-red}"
-  code-block:
-    backgroundColor: "{colors.plate}"
-    textColor: "{colors.plate-ink}"
-    typography: "{typography.command}"
-    rounded: "{rounded.corner}"
-    padding: "0.35rem 0.35rem 0.35rem 1rem"
-  nav-link:
+    padding: "3px 8px"
+  side-button-hover:
+    backgroundColor: "{colors.face-hover}"
+  heading-bar:
+    backgroundColor: "{colors.bar}"
+    textColor: "{colors.bar-ink}"
+    typography: "{typography.heading}"
+    padding: "2px 8px"
+  code-well:
+    backgroundColor: "{colors.well}"
     textColor: "{colors.ink}"
-    typography: "{typography.small}"
-    padding: "0 0.6rem"
-    height: "2.75rem"
+    typography: "{typography.code}"
+    padding: "6px 10px"
+  notice:
+    backgroundColor: "{colors.note}"
+    textColor: "{colors.ink}"
+    padding: "4px 10px"
+  table-head-cell:
+    backgroundColor: "{colors.face}"
+    textColor: "{colors.ink}"
+    padding: "3px 8px"
+  status-bar:
+    backgroundColor: "{colors.face}"
+    textColor: "{colors.ink}"
+    typography: "{typography.status}"
+    padding: "3px"
+  button-88:
+    textColor: "#ffffff"
+    typography: "{typography.button-88}"
+    width: "88px"
+    height: "31px"
 ---
 
 # Design System: niri-computer-use
 
+This file records two systems. The home page (`site/src/pages/index.astro`, `src/components/home/`, words in `src/lib/home.ts`) has its own styles and is described first. The Starlight docs pages have a separate system, described at the end; the home page shares none of it.
+
 ## Overview
 
-**Creative North Star: "The Datasheet"**
+**Creative North Star: "The Project Page From Around 2000"**
 
-The home page reads like a component datasheet: a running head across the top, ruled sections, one numbered figure (Figure 1, the recorded sessions as timing diagrams) and one numbered table (Table 1, when an action is refused), then the install steps. Paper and ink carry everything. Rules do the work that panels and cards would do elsewhere: a 2px ink rule opens each section, 1px ink rules head tables and lists, and 1px light rules separate rows.
+A hand-made Linux project page, done with care and not as parody. A 760-pixel white page sits on the desktop grey, with a teal title band on top, a column of bevelled buttons down the side, facts in tables, one framed still that opens a clip, and a sunken status bar at the foot. Everything is set in one serif, Tinos, with system monospace for commands. The page is drawn the way a person would have drawn it with tables and border colors: no radius, no gradients, no blur, no cards.
 
-Colour has two jobs and no decorative ones. The highlighter (mark, mark-strong) shows what is held or pointed at: the stretch where the agent holds the lease, the call under the cursor, the answer lines a field explains, the table row being run, the action travelling through the checks. Red is the stop key, the stop line of the headline, and every refused, cut or stopped answer.
+The density is that of a document. Facts go in tables and short lists, not sentences. The era shows in the bevels, the link colors, the 88x31 buttons and the status bar, and stops there. The page is light only and has no JavaScript, and it says so in its status bar.
 
-The home page (`src/pages/index.astro`) sits outside Starlight and defines its own palette in a global style block, light and dark. The docs pages are Starlight restyled by `src/styles/theme.css` and keep the older concrete palette from `src/styles/tokens.css` (the docs-* tokens). The two palettes are separate. Both kinds of page share Archivo, JetBrains Mono, the theme stored under `starlight-theme`, and the crossfade between pages.
+The direction contract holds the thesis: refuse the marketing hero, gradients, cards and autoplay video. The build matches it. Where the contract names the first-viewport order (band, side buttons, niri-only notice, still, facts table), the grid and source order produce it.
 
 **Key Characteristics:**
-- Paper, ink and rules; no panels, cards or section backgrounds.
-- A yellow highlighter for state and attention, never for decoration.
-- One red, for the stop key and refused answers.
-- Archivo for text; JetBrains Mono for calls, commands, answers and the numbers that go with them (times, version).
-- Numbered figure and table captions in the datasheet manner.
-- Motion only where it explains, all of it off under reduced motion, and every part readable without JavaScript.
+- One 760px page on desk grey, bevelled with a 2px border (white top-left, dark bottom-right).
+- Teal title band with a 24x16 pixel mark and a yellow stop line.
+- One serif (Tinos 400 and 700), 17px body, monospace only for code.
+- Raised things are bevelled buttons; sunken things are tables, code wells, the ledger and status cells.
+- Links are blue, purple when visited, red when pressed.
+- The focus ring is niri's: amber around a dark edge.
+- Light only, no JavaScript, a print stylesheet.
 
 ## Colors
 
-Pale neutral paper with near-black ink, two greys for rules and grid lines, a pale and a strong yellow, and one red with a darker lip.
+A grey, white and teal palette with one yellow and one amber. Color names follow the era: desk, paper, face, ink.
 
 ### Primary
-- **Stop Red** (red, red-dark): the Esc keycap face, the headline's stop line, the "set by your stop key" note, a refused check in the block diagram, red traces and labels in the timing diagram (your stop, a cut call, a refused call, the lease taken back), the cursor and pen after a stop, and refused answers in readouts and call lists.
-- **Key Lip** (red-lip, red-lip-dark): the keycap's lower edge, and nowhere else.
-- **On Red** (on-red, on-red-dark): text on a red fill, the Esc legend and a refused check; white in light, the dark paper in dark, where white on the lighter red is too faint.
-- **Red on the Highlighter** (red-on-mark-dark): refused and stopped lines in the readouts and the highlighted call; the light theme uses the stop red itself.
+- **Title Band Teal** (`band`): the title band background and text selection. Also the theme-color meta. White text on it.
+- **Stop Yellow** (`band-stop`): the stop line in the band only, set in bold.
 
 ### Secondary
-- **Highlighter** (mark, mark-dark): the held-lease band in the diagram, the readouts under the timing diagram and the block diagram, the answer lines and field rows in Result, the running table row, the current call in the call list, and the version tag on hover.
-- **Strong Highlighter** (mark-strong): the stroke drawn under the headline's stop line when a stop lands, the packet that travels through the checks, and text selection. It has one value for both themes.
+- **Heading Bar Teal** (`bar`): the light teal bar behind each h2, with `bar-ink` text and `bar-rule` top and bottom hairlines.
+
+### Tertiary
+- **Notice Yellow** (`note`): the one niri-only notice, with a `note-edge` brown border.
+- **Focus Ring Amber** (`ring`) around a **Ring Edge** dark teal (`ring-edge`): keyboard focus, and also the pixel mark's focused column.
 
 ### Neutral
-- **Paper** (paper, paper-dark): the page, the blocks of the block diagram, the pinned lane names, and the cover that hides the diagram until it is drawn. The meta `theme-color` uses the same two values.
-- **Ink** (ink, ink-dark): text, the rules that open sections and head tables, traces, block outlines, buttons, the checked tab and a passed check.
-- **Second Ink** (ink-2, ink-2-dark): captions, ledes beside section heads, lane and column labels, answers in call lists, times, and the Install button's hover.
-- **Rule** (rule, rule-dark): row separators, the version tag's border and the dashed path through the checks.
-- **Grid** (grid, grid-dark): the one-second lines in the timing diagram and the tab hover.
-- **Plate** (plate, plate-dark), **Plate Ink** (plate-ink) and **Plate Rule** (plate-rule, plate-rule-dark): the install command blocks and their Copy button. In the light theme the plate is the same value as ink.
-
-### Docs palette
-The docs pages keep `tokens.css`: concrete ground, ink, second ink, plate and stop red (the docs-* tokens, light and dark). `theme.css` maps Starlight's grey ramp from the ink to the ground (`#0c0e0d` to `#e6e8e3` in light, `#e6e8e3` to `#161917` in dark), makes links and the current page ink, and sets Starlight's red to docs-stop. Code blocks are Expressive Code with `github-dark` on docs-plate, 0.75rem corners, no frame, lines wrapped.
+- **Desk Grey** (`desk`): the browser background around the page, and the scrollbar track.
+- **Paper** (`paper`): the page and the skip link.
+- **Face Grey** (`face`): side column, buttons, table header cells, frame around the still, status bar. `face-hover` is the button hover.
+- **Ink** (`ink`) and **Second Ink** (`ink-2`): text, and captions and "Read it" labels.
+- **Well** (`well`): code wells, a shade off paper.
+- **Bevel highlight, low, dark** (`bevel-hi`, `bevel-lo`, `bevel-dk`): the only edge colors. Raised edges use hi on top-left and dk on bottom-right; sunken edges use lo top-left and hi bottom-right.
+- **Link** (`link`), **Visited** (`link-visited`), **Active** (`link-active`): the default link states. The active red is also the text caret color.
+- **Ledger Gap** (`ledger-gap`): a warm tint behind the "Not covered" half of the safety ledger.
 
 ### Named Rules
-**The Highlighter Rule.** Yellow marks state or attention: held, current, running, pointed at. If nothing is held or pointed at, nothing is yellow.
+**The Edge Rule.** Depth comes only from the three bevel colors. Raised is hi top-left, dk bottom-right. Sunken reverses it with lo and hi. No other shadow or edge color is added.
 
-**The One Red Rule.** Red is the stop key and the answers it causes (refused, cut, stopped, taken back). Never use red for links, emphasis or calls to action.
+**The Browser Defaults Rule.** Link colors are the era's blue, purple and red. Do not restyle them to the teal. Buttons that are links override to ink and keep it when visited.
 
 ## Typography
 
-**Display and Body Font:** Archivo Variable (with ui-sans-serif, system-ui, sans-serif)
-**Mono Font:** JetBrains Mono Variable (with ui-monospace, 'DejaVu Sans Mono', monospace)
+**Display, Body Font:** Tinos 400 and 700, self-hosted through `@fontsource/tinos` (latin 400 preloaded), with Times New Roman, Times and Liberation Serif behind it.
+**Code Font:** system monospace (DejaVu Sans Mono, Liberation Mono, Courier New). Not self-hosted.
+**88x31 Font:** Verdana with DejaVu Sans behind it, in the six era buttons only.
 
-**Character:** a narrow, heavy grotesque for heads (84% and 88% width) over the same face at full width for reading; mono wherever the text is something a machine said or a reader could type.
-
-The home page preloads a cut of Archivo made by `scripts/subset-font.mjs` (width axis 62% to 100%), with Fontsource's full face under the same name for anything the cut lacks.
+**Character:** a plain serif at a document size, with bold doing the work that size does elsewhere. No letter-spacing, no uppercase labels, no display face.
 
 ### Hierarchy
-- **Headline** (780, 84% width, clamp(2.375rem, 1.1rem + 4vw, 4.75rem), 0.95): the hero's two lines, "Your agent can use your niri desktop." and the red "One key takes it back.", each an inline block, balanced.
-- **Section** (760, 84% width, clamp(1.875rem, 1.2rem + 2vw, 2.875rem), 1): the head of each ruled section, with its lede (1.0625rem, second ink, at most 56ch) in the next column.
-- **Wordmark** (760, 88% width, 1.125rem): the name in the header and footer. On docs pages it is clamp(1.0625rem, 1rem + 0.3vw, 1.25rem).
-- **Lede** (400, clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem), 1.5, at most 58ch): the sentence under the headline.
-- **Body** (400, 1rem, 1.5): running text, list items, table cells, the prompt beside a recording.
-- **Small** (0.875rem, 1.45): captions, notes, the header, tabs, the footer, the stop hint.
-- **Label** (650, 0.6875rem to 0.75rem, 0.07em, uppercase, second ink): lane names, table column heads, the two list heads under the limits, and "Asked" before the prompt.
-- **Key legend** (700, 0.8125rem, 0.04em, uppercase): "Esc" on the keycap.
-- **Mono roles:** answer JSON (0.875rem, 1.65); readouts and command blocks (0.8125rem); call lists and table error codes (0.75rem); trace labels in the diagram (12.5px); axis ticks and wire labels (0.6875rem); the version tag (500, 0.75rem); install step numbers (700, 1.25rem).
-- **Docs title** (840, 72% width) and **Docs section** (760, 84% width): Starlight page titles and h2/h3.
+- **Title** (700, 30px, 1.1; 24px on phones): the h1 in the band.
+- **Heading** (700, 19px): h2 on a light teal bar. In the side aside the h2 is 15px with a hairline underneath.
+- **Subheading** (700, 16px): h3 over each half of the safety ledger.
+- **Body** (400, 17px, 1.45; 16px on phones): main text. The main column is about 540px wide at full size, which gives a measure near 70 characters.
+- **Table and list** (400, 16px): facts, releases and ledger lists. Release version and date cells use tabular numerals and do not wrap.
+- **Caption** (400, 15px, `ink-2`): figcaption and "Read it:" labels. The 88x31 notes and side buttons are 15px bold.
+- **Status** (400, 14px): status bar cells.
+- **Code** (400, 13.5px, 1.45): install commands, wrapping with `pre-wrap` so nothing scrolls sideways.
 
 ### Named Rules
-**The Caption Rule.** A figure or table that carries evidence is captioned with its number in bold ink ("Figure 1.", "Table 1.") followed by the caption in second ink.
-
-**The Mono for Machines Rule.** JetBrains Mono is for calls, commands, answers and the numbers attached to them. Headings, labels and prose stay in Archivo.
+**The One Serif Rule.** Everything but code and the 88x31 buttons is Tinos. Do not add a second text face.
 
 ## Layout
 
-One centred sheet, at most 86rem wide (sheet), with a fluid side margin (margin). The header is a three-column grid (wordmark and version tag, the running head, the nav) over a 1px ink rule. Sections follow at a vertical gap (section), each opened by a 2px ink rule and a two-column head (head and lede, 1fr to 1.35fr). The footer sits on a 1px ink rule.
+The page is a CSS grid in a 760px box: a 160px side column and a flexible main column, with named areas band, side, main, more and status. The `more` area ("Built on", six 88x31 buttons) sits under the side buttons in the left column. Source order is band, side nav, main, more, status, so the content comes before the extras.
 
-- **Hero:** the headline, then the lede on the left and the actions (Install, the stop key link) on the right, wrapping on narrow screens.
-- **Figure 1:** the caption and the tabs on one row; then the recording (5fr) beside a side column (at least 15rem, 2fr) with the prompt and, under it, the keycap and its hint; under both, the timing diagram across the full width with four lanes (Calls, Lease, niri saw, You) whose names (lanes) stay pinned as it scrolls; then the readout, four lines high so the page below never moves, a call's lines cut short rather than wrapped and the stop's answer wrapped, the call list and the note. The diagram is at least 44rem wide plus the lanes and scrolls sideways on smaller screens, keeping the cursor in view.
-- **Result:** the answer JSON (1.1fr) beside the field list (1fr).
-- **Gates:** Agent, the server's checks in order, niri, joined by arrowed wires; then the answer readout and Table 1.
-- **Limits:** two lists side by side. **Requirements:** a two-column table. **Install:** numbered steps, at most 60rem wide.
+Spacing is small and fixed, in pixels: 2px between table cells and ledger halves, 6px between buttons, `3px 8px` cell and button padding, `16px 22px 18px` main padding, 26px above h2 and 10px below. The body has `24px 12px 40px` of desk around the page.
 
-Breakpoints, all max-width: 60rem (the block diagram stands upright and Table 1 stacks), 56rem (the running head hides; section heads and limits go to one column), 52rem (the recording, prompt and keycap stack; Result goes to one column), 40rem (narrower lanes; tabs become separate boxes), 30rem (the header's Install button hides). Targets are at least 2.75rem (touch) tall, except the tabs and the header's Install button at 2.5rem.
+**Phones (640px and below):** one column in the order band, side, main, more, status. The page loses its border and the body padding drops to zero. The side buttons become a row of three equal columns, and two columns at 380px and below. The ledger stacks to one column. Body size drops to 16px and the title to 24px.
+
+**Print:** the page becomes a block with no border, the side column, "Built on" aside, status bar and skip link are hidden, the band loses its color and gets a 2px black rule, and every outside link in main prints its address after it.
+
+**Light only.** `color-scheme` is `light` in CSS and in a meta tag. The page imitates a period when there was no dark mode, and the bevel colors depend on a light face. Do not add a dark variant.
+
+**No JavaScript.** Navigation is anchors, the clip opens from a link, and the build reads the changelog and the clip's size and length.
 
 ## Elevation & Depth
 
-Flat. Depth is rules and fills: an ink outline around a block, an ink fill when a check passes or a tab is checked, a highlighter fill for state. Two elements cast shadows, both physical objects: the keycap (`0 4px 0 var(--red-lip), 0 6px 12px -4px rgb(0 0 0 / 0.35)`, shrinking to `0 1px 0` and `0 2px 4px -2px` when pressed) and the Play button laid over the still (`0 4px 14px -6px rgb(0 0 0 / 0.5)`).
+Flat plus bevel. The system has no blur and no spread. Depth is made of one- and two-pixel borders in the bevel colors.
+
+### Shadow Vocabulary
+- **Raised border** (`border: 2px solid; border-color: hi dk dk hi`, with `inset -1px -1px 0 lo` on buttons): the page and side buttons.
+- **Pressed** (`border-color: dk hi hi dk; box-shadow: inset 1px 1px 0 lo`): `.bevel:active`. The 88x31 buttons swap their inset highlight and shade on `:active`.
+- **Sunken** (`border-color: lo hi hi lo`): tables, cells, the ledger and its halves, the frame around the still, status cells. Code wells add `inset 1px 1px 0 dk`.
+- **Page edge** (`1px 1px 0 ink` on the page): a one-pixel dark outer edge that finishes the bevel. It is not a drop shadow and is not used on anything else.
+- **Focus ring** (`0 0 0 2px ring-edge, 0 0 0 5px ring, 0 0 0 6px ring-edge`): on `a:focus-visible` and the 88x31 buttons. A transparent 2px outline is kept for forced-colors modes. The framed still adds a 3px outline offset.
 
 ### Named Rules
-**The Rule Not Panel Rule.** Separate content with rules (2px ink to open a section, 1px ink to head a table or list, 1px rule between rows), not with background panels or shadows.
+**The Press Rule.** Raised controls press in on `:active`: side buttons and 88x31 buttons. Nothing animates; there are no transitions.
 
 ## Shapes
 
-Small corners: 3px (corner) on buttons, tabs, command blocks, diagram blocks and the skip link; 2px on the diagram's focus area; 6px on the keycap. The recording frame is square with a 1px ink border. The packet is a circle with a 2px ink ring. Wires end in solid arrowheads; the path through the checks is dashed. Traces in the diagram are square steps (miter joins, 1.75 stroke). The theme icon is an inline SVG circle, half filled, turned 180 degrees in the dark theme.
+Square. There is no border radius anywhere on the home page. Silhouettes are rectangles on whole pixels. The pixel mark is drawn with `crispEdges` rectangles on a 24x16 grid, each grid pixel three CSS pixels (72x48), and shows niri's strip of columns running off both edges, the focused column ringed in amber, and a pointer inside it. The still is shown in a face-grey frame with a 1px ink border on the image.
 
 ## Components
 
-### Buttons
-- **Install:** ink on paper, 2.75rem tall, 1.4rem side padding, 650 weight, 3px corners. Hover goes to second ink; press scales to 0.97 over 140ms. A smaller copy (2.5rem) sits in the header.
-- **Text links:** underlined 1px at 0.2em offset, 2px on hover; standalone ones are 600 weight and 2.75rem tall.
-- **Copy:** on the plate, a 1px plate-rule outline that fills on hover, press 0.96. It reads Copied, or "Select it" if the clipboard refuses, for 1.6 s, and is hidden without JavaScript.
-- **Focus:** a 2px ink outline, 3px off (4px around the diagram; plate ink on the plate).
+### Title Band
+Teal full-width bar: the mark, the h1 (white, 700, 30px) and one tagline line in 16px with the stop line in bold `band-stop` yellow. Padding `14px 18px`, 16px gap.
 
-### Navigation
-- **Header:** wordmark with the version tag (mono, 1px rule border, highlighter on hover, linking to the release), the running head "MCP server for niri 26.04 on Linux", then Docs, GitHub, the theme toggle (hidden without JavaScript) and Install. Below 24rem the version tag is left to the footer, and below 21rem the header's gaps tighten so it fits 320px. Links are 550 weight, underlined on hover.
-- **Footer:** wordmark and version; Docs, GitHub, llms.txt, MIT license.
+### Side Buttons
+Face-grey bevelled link buttons, bold 15px ink, no underline, a 6px gap, one per anchor or outside page (Install, Safety, Releases, Documentation, Source, llms.txt). Hover lightens to `face-hover`. Active presses in. Visited stays ink. On phones they are centered in a 3-then-2-column grid.
 
-### Figure 1: Sessions
-Tabs are CSS radio buttons inside a 1px ink box; the checked tab is ink, and `:has()` picks the panel shown, so switching works without JavaScript. Each panel holds the still (with a `<noscript>` video with controls), its caption, the prompt, the keycap and hint, the timing diagram drawn at build time, the readout and "All N calls, as text". Without JavaScript the diagram is complete and the keycap and Play button stay hidden.
+### Heading Bars
+h2 on a light teal bar with hairlines above and below. No rule or number elsewhere.
 
-The video element is created only when the recording starts, muted and inline. The first session starts when 60% of its frame is in view; under reduced motion the diagram is shown whole, with Save-Data on it draws itself in without the recording, and in both the recording waits for Play. Played from the start, the diagram draws in with it. Hovering or the arrow keys move the cursor over the calls, and a click plays from that time. The arrow keys step call by call, including calls that start at the same moment, and the call stepped to stays shown while the recording plays on to the next one. Leaving the view, or turning on reduced motion, pauses the recording and shows the diagram whole. The recording runs a little past the last call; the cursor waits at the diagram's end. The readout is announced to screen readers only for what the reader asked for: an arrow key or a stop.
+### Notice
+One yellow-cream line in bold, directly under the top of main: the niri-only fact. It is the only use of `note`.
 
-### Stop Key
-A red keycap with an uppercase Esc legend. Pressing it, or Esc while a session runs in view, stops the session at that moment: the action running then is cut and turns red (a look runs on to its answer), later actions are struck through and dashed red, later looks fade to 0.55 and everything else later to 0.18, the lease drops to "taken back" in red, a red "your stop key" pulse appears in the You lane, the cursor and pens turn red, the video pauses, and the readout states what the server answers from then on. Pressing again replays.
+### Framed Still
+A figure holding one still in a face-grey sunken frame, linking to one clip. The caption states what it shows and the clip's length, format and size, read from the file at build time. The image loads eagerly at high priority and is served as AVIF with a JPG fallback. No autoplay, no play-button overlay.
 
-### Block diagram and Table 1
-Each check is a paper block with an ink outline; passed checks fill ink, a refused check fills red. In Table 1 each row's check name is a button that runs that case; the running row is highlighted and the answer appears in the readout above the table, announced to screen readers only for a row the reader picked. Picking a row, even before the diagram has been seen, cancels the demo run. Without JavaScript the readout is hidden.
+### Tables
+Facts (a row header and a value, 108px header column) and releases (Release, Date, Changes). Separate borders with 2px spacing, sunken, with face-grey header cells. Release rows come from CHANGELOG.md, three at most.
 
-### Result
-The answer JSON between two ink rules, beside its fields. Pointing at a field highlights its lines; the fields aren't focus stops, since they do nothing.
+### Install Steps and Code Wells
+An ordered list with bold lead-ins. Each command is in a sunken, off-white `pre` that wraps. Alternatives are introduced with a 15px label ("Read it:", "Then run it:").
 
-### Motion
-One easing, `cubic-bezier(0.22, 1, 0.36, 1)`. Section rules draw across from the left on a view timeline (entry 10% to entry 70%). In the timing diagram a paper cover pulls back, labels fade up 5px as the cursor reaches them, and pens ride the call and lease traces, in step with the recording. While the agent works a ring pulses out from the keycap every 1.6 s; when a stop lands the diagram flashes red for 750ms, the key sinks 3px over 90ms, and the highlighter stroke draws under the headline's stop line over 700ms. In the block diagram the packet hops 260ms per block and a refused check shakes for 420ms; in view, it runs one pass and then the stop flag. In Result the fields light up in turn every 1.3 s once 60% is in view, until the reader points. Under reduced motion there is no rule draw, theme icon turn, headline stroke, cover, packet, shake, flash, ring, field sequence, smooth scroll or page crossfade; the diagram and answers appear complete.
+### Safety Ledger
+Two sunken halves in a sunken frame: Enforced, and Not covered (tinted `ledger-gap`). Each is a short bulleted list. The ledger exists so a visitor can see what is not protected.
+
+### 88x31 Buttons
+Six 88x31 links in a wrap row under "Built on" (niri, Noctalia, Wayland, MCP, crates.io, MIT). Each is a solid era color (brown, indigo, blue, charcoal, green, maroon) with a 1px black border, a two-tone inset bevel, white 11px Verdana bold top line and a 9px cream bottom line. They link to real projects the tool stands on. Hover underlines the top line; active presses in.
+
+### Status Bar
+Three sunken cells at the foot: "Best viewed with any browser", "No JavaScript", and the current version (with its date when it is the latest release). The last cell does not grow.
+
+### Skip Link
+Hidden above the page until focused, then a white tab at the top left.
 
 ## Do's and Don'ts
 
 ### Do:
-- **Do** caption evidence as numbered figures and tables, with the number in bold ink.
-- **Do** use the highlighter only for what is held, current, running or pointed at.
-- **Do** keep red for the stop key and the answers it causes, with on-red text on it.
-- **Do** separate sections and rows with rules: 2px ink to open, 1px ink to head, 1px rule between.
-- **Do** draw diagrams at build time so they read complete without JavaScript, and give every interactive part a no-JS state.
-- **Do** tie each motion to what it explains, and give it a complete reduced-motion state.
-- **Do** keep the docs pages on the `tokens.css` palette and the home page on its own; change either on purpose, not by drift.
+- **Do** put facts in tables and short lists, not paragraphs.
+- **Do** build raised things from hi/dk bevels and sunken things from lo/hi bevels, and press raised controls in on `:active`.
+- **Do** use one still that links to one clip, and state the clip's length, format and size next to the link.
+- **Do** keep the page light only, one column on phones, and working without JavaScript.
+- **Do** keep a visible focus ring on every link: amber (`ring`) outside a dark teal edge.
+- **Do** keep the print view: address after each outside link, side column and status bar dropped.
+- **Do** show only things that are true: version, date, clip size and release rows come from the build, and the "Built on" buttons point at real projects.
+- **Do** add era touches with taste: a status bar, bevels, 88x31 buttons for real dependencies. One of each, not a collection.
 
 ### Don't:
-- **Don't** add card panels, background bands or decorative shadows; the keycap and the Play button over the still are the only shadows.
-- **Don't** use yellow or red as decoration, emphasis or link colour.
-- **Don't** set headings, prose or labels in JetBrains Mono.
-- **Don't** put a small uppercase label above a heading; uppercase labels name lanes, columns and lists.
-- **Don't** show a recording without its calls as text.
+- **Don't** invent era furniture: no visitor counters, guestbooks, awards, "under construction" signs or webrings.
+- **Don't** use gradients, glow, blur, border radius, cards, or soft shadows.
+- **Don't** autoplay video or put a play overlay on the still.
+- **Don't** add a marketing hero, slogan block or testimonial row.
+- **Don't** add a dark mode, JavaScript, animation or transitions to the home page.
+- **Don't** use blinking, marquees, tiled backgrounds or the Comic Sans-style parody of the period. The page is a careful version of it, not a joke.
+- **Don't** put uppercase labels, kickers or eyebrows over headings.
+- **Don't** reuse the docs tokens or fonts on the home page, or the home page's bevels on the docs.
+
+## The docs pages: a separate system
+
+The Starlight docs pages keep `src/styles/tokens.css` and `src/styles/theme.css`. This system is real and unchanged, and is recorded here only so nobody mixes the two.
+
+- **Palette:** a cool concrete ground (`--ncu-ground` #e6e8e3), near-black ink (`--ncu-ink` #0c0e0d), second ink #464c48, a black code plate (#0b0c0b) and one red for a stopped answer (`--ncu-stop` #c42a1b). Light and dark both exist; dark swaps to ground #161917, ink #e6e8e3, second ink #a5aca7, plate #070807 and stop #ff6a57. Starlight's gray scale and accent are remapped to these in `theme.css`.
+- **Type:** Archivo Variable for text (narrow, heavy titles: h1 weight 840 at 72% width; site title weight 760 at 88% width) and JetBrains Mono Variable for calls and commands.
+- **Behaviour:** a 2px ink focus outline offset 3px, ink selection, red caret, pages crossfading by view transition when motion is allowed, and a 46rem content width.
+- **Boundary:** the home page imports none of these files, and none of the home page's tokens belong in the docs.
+
+Not canonized, by design: the page's one-off tints (`#efefe8` hover, `#f4f4ee` well, `#fff8ee` ledger, `#9fbcbc` bar rule, `#996600` notice edge) are tied to the components that use them and are not a general palette.
