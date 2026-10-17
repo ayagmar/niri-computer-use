@@ -37,7 +37,8 @@ pub(crate) fn scan(proc_root: &Path, instance: &str) -> Vec<Client> {
     clients
 }
 
-fn client(proc_root: &Path, pid: u32, instance: &str) -> Option<Client> {
+/// The server `pid`, if it is a `niri-computer-use serve` for `instance`.
+pub(crate) fn client(proc_root: &Path, pid: u32, instance: &str) -> Option<Client> {
     let dir = proc_root.join(pid.to_string());
     let exe = std::fs::read_link(dir.join("exe")).ok()?;
     let exe = exe.to_str()?;
@@ -68,7 +69,7 @@ fn serves(dir: &Path) -> Option<bool> {
 }
 
 /// The last part of the working directory of the process `pid`.
-pub(crate) fn project(proc_root: &Path, pid: u32) -> Option<String> {
+fn project(proc_root: &Path, pid: u32) -> Option<String> {
     let cwd = std::fs::read_link(proc_root.join(pid.to_string()).join("cwd")).ok()?;
     Some(cwd.file_name()?.to_string_lossy().into_owned())
 }

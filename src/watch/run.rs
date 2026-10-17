@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio::io::{AsyncWrite, AsyncWriteExt as _};
 
 use super::tail::Tail;
-use super::{BACKLOG, Driver, Event, FORMAT, State, action, clients, label_pid, parent_pid};
+use super::{BACKLOG, Driver, Event, FORMAT, State, action, clients, label_pid};
 use crate::control::lease;
 use crate::control::runtime::RuntimeDir;
 
@@ -70,7 +70,7 @@ pub(crate) async fn follow(
     poll: Duration,
 ) -> Result<std::convert::Infallible, Ended> {
     let mut out = Out { out };
-    let mut projects = Projects::new(&watched.proc_root);
+    let mut projects = Projects::new(&watched.proc_root, &watched.instance);
     out.send(&Event::Hello {
         format: FORMAT,
         version: env!("CARGO_PKG_VERSION"),
@@ -159,19 +159,21 @@ impl<W: AsyncWrite + Unpin> Out<W> {
 /// The project each session's agent runs in, looked up once per session.
 struct Projects<'a> {
     proc_root: &'a Path,
+    instance: &'a str,
     known: HashMap<String, Option<String>>,
 }
 
 impl<'a> Projects<'a> {
-    fn new(proc_root: &'a Path) -> Self {
+    fn new(proc_root: &'a Path, instance: &'a str) -> Self {
         Self {
             proc_root,
+            instance,
             known: HashMap::new(),
         }
     }
 
     /// The last part of the working directory of the process that started the session's
-    /// server, while that server runs.
+    /// server, while that server runs. A PID another program took since names none.
     fn of(&mut self, session: &str) -> Option<String> {
         if let Some(known) = self.known.get(session) {
             return known.clone();
@@ -184,9 +186,7 @@ impl<'a> Projects<'a> {
     }
 
     fn look_up(&self, session: &str) -> Option<String> {
-        let server = self.proc_root.join(label_pid(session)?.to_string());
-        let status = std::fs::read_to_string(server.join("status")).ok()?;
-        clients::project(self.proc_root, parent_pid(&status)?)
+        clients::client(self.proc_root, label_pid(session)?, self.instance)?.project
     }
 
     /// Adds the call's `project`, and `backlog: true` to a call made before `watch` began.
@@ -233,12 +233,24 @@ mod tests {
         }
     }
 
-    /// A fake `/proc` where the server `4711` was started by an agent in `~/work/shop`.
+    /// A process `pid` running `exe` as `<program> <command>`, started by `parent`.
+    fn fake_process(root: &Path, pid: u32, parent: u32, exe: &str, command: &str) {
+        let dir = root.join(pid.to_string());
+        std::fs::create_dir_all(&dir).unwrap();
+        std::os::unix::fs::symlink(exe, dir.join("exe")).unwrap();
+        std::fs::write(dir.join("cmdline"), format!("program\0{command}\0")).unwrap();
+        std::fs::write(dir.join("environ"), "NIRI_SOCKET=/run/niri.sock\0").unwrap();
+        let status = format!("Pid:\t{pid}\nPPid:\t{parent}\n");
+        std::fs::write(dir.join("status"), status).unwrap();
+    }
+
+    /// A fake `/proc` where the server `4711` was started by an agent in `~/work/shop`,
+    /// and `4800`, a server's PID once, is now a shell started by that agent.
     fn fake_proc(dir: &Path) -> PathBuf {
         let root = dir.join("proc");
-        std::fs::create_dir_all(root.join("4711")).unwrap();
+        fake_process(&root, 4711, 4100, "/bin/niri-computer-use", "serve");
+        fake_process(&root, 4800, 4100, "/bin/bash", "-c");
         std::fs::create_dir_all(root.join("4100")).unwrap();
-        std::fs::write(root.join("4711/status"), "Pid:\t4711\nPPid:\t4100\n").unwrap();
         std::os::unix::fs::symlink(dir.join("work/shop"), root.join("4100/cwd")).unwrap();
         root
     }
@@ -346,6 +358,16 @@ mod tests {
         assert_eq!(event(&mut lines).await["event"], "state");
         assert_eq!(event(&mut lines).await["tool"], "status");
         watch.abort();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_session_whose_pid_now_runs_another_program_has_no_project() {
+        let dir = crate::test_support::fresh_dir("watch-reused");
+        let watched = watched(&dir);
+        let mut projects = Projects::new(&watched.proc_root, &watched.instance);
+        assert_eq!(projects.of("claude-code/4711").as_deref(), Some("shop"));
+        assert_eq!(projects.of("pi/4800"), None);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
