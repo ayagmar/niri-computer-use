@@ -1,6 +1,8 @@
 // less's keys, status line and search, niri's columns on the home page, and the example's
 // replay. Every page reads and works without this: it only adds to what is there.
 
+import { matches } from '../lib/find';
+import { keySwitch } from '../lib/keys';
 import { callState } from '../lib/replay';
 
 const root = document.documentElement;
@@ -13,18 +15,10 @@ const strip = document.querySelector<HTMLElement>('.strip');
 const columns = strip ? ([...strip.children] as HTMLElement[]) : [];
 const wide = matchMedia('(min-width: 75rem)');
 
-// Whether the keys are on, kept across pages; a browser that refuses storage keeps them on.
-const keys = (off?: boolean): boolean => {
-	try {
-		if (off !== undefined) localStorage.ncuKeys = off ? 'off' : 'on';
-		return localStorage.ncuKeys != 'off';
-	} catch {
-		return true;
-	}
-};
+const keys = keySwitch(() => localStorage);
 const toggle = help.querySelector<HTMLButtonElement>('[data-keys]')!;
-const label = () => (toggle.textContent = keys() ? 'Turn these keys off' : 'Turn these keys on');
-toggle.onclick = () => (keys(keys()), label());
+const label = () => (toggle.textContent = keys.on() ? 'Turn these keys off' : 'Turn these keys on');
+toggle.onclick = () => (keys.set(!keys.on()), label());
 label();
 for (const button of document.querySelectorAll<HTMLButtonElement>('[data-help]'))
 	(button.hidden = false), (button.onclick = () => help.showModal());
@@ -59,19 +53,18 @@ end();
 let pattern = '';
 let hits: Range[] = [];
 let at = -1;
-const scope = document.querySelector('[data-find]');
 function search() {
 	hits = [];
-	const p = pattern.toLowerCase();
-	const walk = document.createTreeWalker(scope!, NodeFilter.SHOW_TEXT);
-	for (let n = walk.nextNode() as Text; n; n = walk.nextNode() as Text) {
-		if (n.parentElement!.closest('.sr')) continue;
-		const text = n.data.toLowerCase();
-		for (let i = text.indexOf(p); i >= 0; i = text.indexOf(p, i + 1)) {
-			const r = new Range();
-			r.setStart(n, i);
-			r.setEnd(n, i + p.length);
-			if (r.getClientRects().length) hits.push(r);
+	for (const scope of document.querySelectorAll('[data-find]')) {
+		const walk = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+		for (let n = walk.nextNode() as Text; n; n = walk.nextNode() as Text) {
+			if (n.parentElement!.closest('.sr, .copy')) continue;
+			for (const [start, end] of matches(n.data, pattern)) {
+				const r = new Range();
+				r.setStart(n, start);
+				r.setEnd(n, end);
+				if (r.getClientRects().length) hits.push(r);
+			}
 		}
 	}
 	at = -1;
@@ -88,14 +81,17 @@ function find(dir: number) {
 				: hits.findLastIndex((r) => top(r) < 0);
 	if (!hits[i]) return say('Pattern not found');
 	at = i;
-	scrollBy(0, top(hits[i]) - line());
+	// A hit in the EXAMPLE column focuses it, and the column scrolls on its own.
+	focusColumn(columnOf(hits[i].startContainer), false);
+	const box = pane();
+	(box ?? window).scrollBy(0, top(hits[i]) - (box?.getBoundingClientRect().top ?? 0) - line());
 }
 if (form && input) {
 	form.onsubmit = (e) => {
 		e.preventDefault();
-		pattern = input.value;
+		// An empty pattern repeats the last search, as in less.
+		if (input.value) (pattern = input.value), search();
 		input.blur();
-		if (pattern) search();
 		find(1);
 	};
 	input.onkeydown = (e) => {
@@ -194,6 +190,9 @@ actions.y = actions.k;
 actions['<'] = actions.g;
 actions['>'] = actions.G;
 actions['?'] = actions.h;
+// On the docs, / opens Starlight's search, which itself only listens for Ctrl+K.
+const docsSearch = document.querySelector<HTMLButtonElement>('site-search button[data-open-modal]');
+if (docsSearch) actions['/'] = () => docsSearch.click();
 if (form && input) {
 	actions['/'] = () => ((form.hidden = false), (input.value = ''), input.focus({ preventScroll: true }));
 	actions.n = () => find(1);
@@ -206,7 +205,7 @@ if (strip) {
 
 addEventListener('keydown', (e) => {
 	const act = actions[e.key];
-	if (!act || e.ctrlKey || e.altKey || e.metaKey || e.defaultPrevented || !keys()) return;
+	if (!act || e.ctrlKey || e.altKey || e.metaKey || e.defaultPrevented || !keys.on()) return;
 	if ((e.target as Element).closest?.('input, textarea, select, video, [contenteditable]')) return;
 	if (help.open && e.key != 'q') return;
 	if (e.key.startsWith('Arrow') && !wide.matches) return;

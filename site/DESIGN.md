@@ -180,7 +180,7 @@ Docs: Starlight's layout, with content width 48rem and header and sidebar on the
 
 **Print.** Home prints black on white at 11pt, without the pager line, copy buttons and skip link, with each outside link in `main` followed by its address in angle brackets.
 
-**Progressive enhancement.** Navigation is anchors; the clip opens from a link; version, date, release rows and clip size and length are read at build time. `less.ts` only adds to this. It is 2.1 KB gzipped, with Starlight's 1.1 KB prefetch script as the only other JavaScript. The home page weighs about 53 KB.
+**Progressive enhancement.** Navigation is anchors; the clip opens from a link; version, date, release rows and clip size and length are read at build time. `less.ts` only adds to this. It is 2.3 KB gzipped, with Starlight's 1.1 KB prefetch script as the only other JavaScript. The home page weighs about 53 KB.
 
 ## Elevation & Depth
 

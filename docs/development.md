@@ -113,7 +113,7 @@ npm run preview
 
 `npm run build` also runs `npm test` and two checks, and fails on any of them:
 
-- `npm test`, before anything else: Node's own test runner on `src/**/*.test.ts`, with Node stripping the types itself (`--experimental-strip-types`, which Node 22.12 has), which checks how the home page reads the changelog and the clip's length, how pages get their man names, and when the replay shows a call as in flight.
+- `npm test`, before anything else: Node's own test runner on `src/**/*.test.ts`, with Node stripping the types itself (`--experimental-strip-types`, which Node 22.12 has), which checks how the home page reads the changelog and the clip's length, how pages get their man names, when the replay shows a call as in flight, where a search matches, and that the keys turn off where the browser refuses storage.
 
 - `scripts/check-reference.mjs`, before Astro: the error reference lists exactly the names in `ErrorName` (`src/error.rs`), and the configuration page exactly the keys of `Policy` and `Preset` (`src/policy.rs`). Change the page in the same commit as the enum or struct.
 - `scripts/check-links.mjs`, after Astro: every internal link, image and `#fragment` resolves to a built file, and `llms.txt` and `llms-full.txt` cover every page.
