@@ -40,6 +40,8 @@ local function where(lease): string
   return if lease.project then tr("notify.where", { project = lease.project }) else ""
 end
 
+-- Only stuck input, which needs the user to run `recover`, is an error:
+-- notifyError sends at critical urgency, too loud for anything an agent retries.
 local function notifyChange(change)
   local kind = change.kind
   if kind == "took" and setting("notify_take", true) then
@@ -54,7 +56,7 @@ local function notifyChange(change)
     noctalia.notify(tr("notify.outdated", { n = change.count }), tr("notify.outdated_body"))
   elseif kind == "failed" and setting("notify_errors", false) then
     local call = change.call
-    noctalia.notifyError(tr("notify.failed", { client = call.client, error = call.error }), call.text)
+    noctalia.notify(tr("notify.failed", { client = call.client, error = call.error }), call.text)
   end
 end
 

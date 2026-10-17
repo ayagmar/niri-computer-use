@@ -12,6 +12,9 @@ local open = false
 local toLatest = 0
 -- Whether the feed shows its newest call; false once the user scrolls up.
 local atLatest = true
+-- Whether the agent list shows every agent rather than the first few; folded
+-- again on every open.
+local agentsOpen = false
 local render: () -> ()
 
 local function tr(key: string, vars)
@@ -112,26 +115,85 @@ local function agentRow(agent, driver: number?)
   })
 end
 
--- Every agent with a server on this desktop, the driver and old builds marked.
-local function agentList()
-  local agents = view.agents or {}
-  if #agents == 0 then
-    return nil
-  end
-  local driver = serverPid(view.lease and view.lease.session)
-  local rows = { ui.label({ text = tr("panel.agents"), fontWeight = "bold" }) }
-  -- The driver first, then the rest as `watch` lists them.
+-- How many agent rows show before the rest fold into "+N more", so the feed
+-- keeps its room with many agents connected.
+local AGENTS_SHOWN = 3
+-- The unfolded list scrolls within this height, about four rows.
+local AGENTS_HEIGHT = 112
+
+-- The driver first, then the rest as `watch` lists them.
+local function byDriver(agents, driver: number?)
+  local sorted = {}
   for _, agent in agents do
     if agent.pid == driver then
-      table.insert(rows, agentRow(agent, driver))
+      table.insert(sorted, agent)
     end
   end
   for _, agent in agents do
     if agent.pid ~= driver then
-      table.insert(rows, agentRow(agent, driver))
+      table.insert(sorted, agent)
     end
   end
-  return ui.column({ gap = 2 }, rows)
+  return sorted
+end
+
+-- Folds or unfolds the list: "+N more" with how many of those are on an old
+-- build, or "Show fewer".
+local function foldRow(hidden)
+  local old = 0
+  for _, agent in hidden do
+    if agent.replaced then
+      old += 1
+    end
+  end
+  local items = {
+    ui.button({
+      text = if agentsOpen then tr("panel.agents_fewer") else tr("panel.agents_more", { n = #hidden }),
+      variant = "ghost",
+      controlSize = "sm",
+      onClick = function()
+        agentsOpen = not agentsOpen
+        render()
+      end,
+    }),
+  }
+  if old > 0 and not agentsOpen then
+    table.insert(items, ui.label({ text = tr("panel.agents_old", { n = old }), fontSize = 11, color = "tertiary" }))
+  end
+  return ui.row({ key = "agents-fold", gap = 8, align = "center" }, items)
+end
+
+-- Every agent with a server on this desktop, the driver and old builds marked.
+local function agentList()
+  local agents = view.agents or {}
+  -- Folding a single agent into "+1 more" would save nothing, and a list that
+  -- grows past that again, even from none, starts folded.
+  if #agents <= AGENTS_SHOWN + 1 then
+    agentsOpen = false
+  end
+  if #agents == 0 then
+    return nil
+  end
+  local driver = serverPid(view.lease and view.lease.session)
+  local sorted = byDriver(agents, driver)
+  local rows = {}
+  for _, agent in sorted do
+    table.insert(rows, agentRow(agent, driver))
+  end
+  local title = ui.label({ text = tr("panel.agents"), fontWeight = "bold" })
+  if #rows <= AGENTS_SHOWN + 1 then
+    return ui.column({ gap = 2 }, { title, table.unpack(rows) })
+  end
+  local hidden = table.move(sorted, AGENTS_SHOWN + 1, #sorted, 1, {})
+  if agentsOpen then
+    return ui.column({ gap = 2 }, { title, ui.scroll({ key = "agents", height = AGENTS_HEIGHT, gap = 2 }, rows), foldRow(hidden) })
+  end
+  local shown = { title }
+  for i = 1, AGENTS_SHOWN do
+    table.insert(shown, rows[i])
+  end
+  table.insert(shown, foldRow(hidden))
+  return ui.column({ gap = 2 }, shown)
 end
 
 local function feed(now: number)
@@ -222,6 +284,7 @@ function onOpen(_context)
   open = true
   toLatest += 1
   atLatest = true
+  agentsOpen = false
   panel.setWantsSecondTicks(true)
   render()
 end

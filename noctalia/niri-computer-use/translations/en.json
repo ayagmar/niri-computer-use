@@ -108,6 +108,9 @@
     "agent_in": "{agent} in {project}",
     "agent_driving": "driving",
     "agent_old": "old build, restart it",
+    "agents_more": "+{n} more",
+    "agents_fewer": "Show fewer",
+    "agents_old": "{n} on an old build",
     "empty": "No calls on this desktop yet."
   },
   "time": {
