@@ -12,7 +12,8 @@ local open = false
 local toLatest = 0
 -- Whether the feed shows its newest call; false once the user scrolls up.
 local atLatest = true
--- Whether the agent list shows every agent rather than the first few.
+-- Whether the agent list shows every agent rather than the first few; folded
+-- again on every open.
 local agentsOpen = false
 local render: () -> ()
 
@@ -177,6 +178,8 @@ local function agentList()
   local title = ui.label({ text = tr("panel.agents"), fontWeight = "bold" })
   -- Folding a single agent into "+1 more" would save nothing.
   if #rows <= AGENTS_SHOWN + 1 then
+    -- A list that grows past it again starts folded.
+    agentsOpen = false
     return ui.column({ gap = 2 }, { title, table.unpack(rows) })
   end
   local hidden = table.move(sorted, AGENTS_SHOWN + 1, #sorted, 1, {})
@@ -279,6 +282,7 @@ function onOpen(_context)
   open = true
   toLatest += 1
   atLatest = true
+  agentsOpen = false
   panel.setWantsSecondTicks(true)
   render()
 end

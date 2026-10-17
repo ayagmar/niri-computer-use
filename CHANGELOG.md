@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
-- With more than four agents connected, the Noctalia plugin's panel shows the driver and two more, and folds the rest into `+N more`, with how many of them are on an old build, so the activity feed keeps its room. Unfolded, the list scrolls within about four rows.
+- With more than four agents connected, the Noctalia plugin's panel shows the driver and two more, and folds the rest into `+N more`, with how many of them are on an old build, so the activity feed keeps its room. Unfolded, the list scrolls within about four rows, and it folds again whenever the panel opens.
 
 ### Fixed
 
