@@ -85,6 +85,20 @@ t.group("service", function()
     t.eq(#host.streams, 2)
   end)
 
+  t.test("a watch of a format the plugin can't read isn't replaced while it still speaks", function()
+    local host, service = started()
+    host.event({ event = "hello", format = 2, version = "9.0.0" })
+    for second = 1, 45 do
+      host.nowMs += 1_000
+      if second % 5 == 0 then
+        host.event({ event = "alive" })
+      end
+      service.call("update")
+    end
+    t.eq(#host.streams, 1)
+    t.eq(host.state.desk.status, "error")
+  end)
+
   t.test("watch's error stays shown while it is started again", function()
     local host, service = started()
     host.line("niri-computer-use: no niri socket, so there is no instance to watch")

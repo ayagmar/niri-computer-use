@@ -96,9 +96,11 @@ local function supervise()
     model.heardMs = now
   end
   tickedMs = now
-  local status = desk.status(model, now)
-  local quiet = status == "offline" or status == "error" or status == "missing"
-  if (quiet or model.heardMs == nil) and now - startedMs >= RESTART_MS then
+  local silent = model.heardMs == nil or now - model.heardMs > desk.QUIET_MS
+  -- A watch that printed its error has exited; one whose format this plugin
+  -- can't read still runs, and is replaced only once it goes silent.
+  local ended = model.problem ~= nil and model.problem ~= "format"
+  if (silent or ended) and now - startedMs >= RESTART_MS then
     start()
   else
     publish()
