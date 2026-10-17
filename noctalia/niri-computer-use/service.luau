@@ -67,6 +67,8 @@ local function onLine(line: string)
 end
 
 -- Starts a watch. Lines from an earlier one, should it still run, are dropped.
+-- There is no onConfigChanged(): Noctalia restarts the service when a setting
+-- changes, which ends its watch, where runStream gives no way to end one.
 local function start()
   generation += 1
   local mine = generation
@@ -127,12 +129,6 @@ end
 
 function update()
   supervise()
-end
-
-function onConfigChanged()
-  -- A new `binary` applies to the next watch; end this one's lines now.
-  startedMs = -RESTART_MS
-  start()
 end
 
 noctalia.setUpdateInterval(1000)

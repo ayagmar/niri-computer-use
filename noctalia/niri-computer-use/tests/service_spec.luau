@@ -55,6 +55,19 @@ t.group("service", function()
     t.eq(host.state.desk.status, "driving")
   end)
 
+  t.test("a settings change leaves one watch running, on the new binary", function()
+    local host, service = started()
+    env.changeSetting(host, service, "service.luau", "binary", "/opt/ncu")
+    local running = {}
+    for _, stream in host.streams do
+      if not stream.ended then
+        table.insert(running, stream)
+      end
+    end
+    t.eq(#running, 1)
+    t.ok(running[1].command:find("for b in '/opt/ncu';", 1, true), running[1].command)
+  end)
+
   t.test("waking from sleep doesn't start a second watch", function()
     local host, service = started()
     driving(host)
