@@ -166,6 +166,11 @@ end
 -- Every agent with a server on this desktop, the driver and old builds marked.
 local function agentList()
   local agents = view.agents or {}
+  -- Folding a single agent into "+1 more" would save nothing, and a list that
+  -- grows past that again, even from none, starts folded.
+  if #agents <= AGENTS_SHOWN + 1 then
+    agentsOpen = false
+  end
   if #agents == 0 then
     return nil
   end
@@ -176,10 +181,7 @@ local function agentList()
     table.insert(rows, agentRow(agent, driver))
   end
   local title = ui.label({ text = tr("panel.agents"), fontWeight = "bold" })
-  -- Folding a single agent into "+1 more" would save nothing.
   if #rows <= AGENTS_SHOWN + 1 then
-    -- A list that grows past it again starts folded.
-    agentsOpen = false
     return ui.column({ gap = 2 }, { title, table.unpack(rows) })
   end
   local hidden = table.move(sorted, AGENTS_SHOWN + 1, #sorted, 1, {})
