@@ -166,7 +166,7 @@ h1#_top {
 }
 
 @media (prefers-reduced-motion: no-preference) {
-	.header {
+	header.header {
 		view-transition-name: ncu-header;
 	}
 
