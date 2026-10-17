@@ -16,6 +16,9 @@ M.QUIET_MS = 15000
 -- An agent that gives the desktop back and takes it again within this long, as
 -- agents do before asking the user something, took it once.
 M.RETAKE_MS = 5 * 60 * 1000
+-- How many lines of watch's last words are kept, as many as the panel shows:
+-- a panic's first lines rather than the note after them.
+M.ERROR_LINES = 3
 
 -- Errors that are an agent's own mistake, which it corrects itself: never a failure
 -- worth a notification.
@@ -88,7 +91,8 @@ export type Desk = {
   -- This watch said hello. A later line that isn't JSON is its last words as
   -- it exits, or the tail of a line Noctalia cut, which a JSON line follows.
   greeted: boolean,
-  -- That line, until a JSON line follows it: shown once the watch is silent.
+  -- Those lines, the first ERROR_LINES of them, until a JSON line follows:
+  -- shown once the watch is silent.
   lastError: string?,
 }
 
@@ -237,6 +241,17 @@ local function hello(desk: Desk, event: any)
   desk.version = if type(event.version) == "string" then event.version else nil
 end
 
+-- Adds a line to watch's last words, keeping the first ERROR_LINES.
+local function lastWords(said: string?, line: string): string
+  if said == nil then
+    return line
+  end
+  if #string.split(said, "\n") >= M.ERROR_LINES then
+    return said
+  end
+  return `{said}\n{line}`
+end
+
 -- Folds one line in: `event` is the decoded line, or nil when it wasn't JSON,
 -- and `raw` its text. Returns what changed, oldest first.
 function M.feed(desk: Desk, event: any, raw: string, nowMs: number, tr: Tr): { Change }
@@ -262,7 +277,7 @@ function M.feed(desk: Desk, event: any, raw: string, nowMs: number, tr: Tr): { C
   elseif kind == nil and raw ~= "" and not desk.greeted then
     desk.problem = raw
   elseif kind == nil and raw ~= "" then
-    desk.lastError = raw
+    desk.lastError = lastWords(desk.lastError, raw)
   end
   return changes
 end
