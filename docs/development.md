@@ -105,7 +105,7 @@ npm ci
 npm run build
 ```
 
-The pages are Markdown files in `site/src/content/docs/`, except the home page, `site/src/pages/index.astro`, which sits outside Starlight, places the pixel mark and the 88×31 buttons from `site/src/components/home/`, and takes its words from `site/src/lib/home.ts`. Its What's new table is read from `CHANGELOG.md` when the site is built, and the clip's length and size from the MP4. There is one directory per sidebar group (`site/src/lib/groups.mjs`), and pages are ordered by `sidebar.order` in their front matter. The build goes to `site/dist/`. Preview it with:
+The pages are Markdown files in `site/src/content/docs/`, except the home page, `site/src/pages/index.astro`, which sits outside Starlight, places the pixel mark and the 88×31 buttons from `site/src/components/home/`, and takes its words from `site/src/lib/home.ts`. Its Releases table is read from `CHANGELOG.md` when the site is built, and the clip's length and size from the MP4. There is one directory per sidebar group (`site/src/lib/groups.mjs`), and pages are ordered by `sidebar.order` in their front matter. The build goes to `site/dist/`. Preview it with:
 
 ```sh
 npm run preview

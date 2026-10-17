@@ -29,8 +29,8 @@ const { clip, glance, install, safety } = home;
 // The clip's real length and size, read when the site is built.
 const clipFile = readFileSync(join(process.cwd(), 'public', 'clips', `${clip.name}.mp4`));
 const clipFacts = `${Math.round(mp4Seconds(clipFile))} s, MP4, ${Math.round(clipFile.byteLength / 1000)} KB`;
-const news = releases(changelog).slice(0, 3);
-const latest = news[0];
+const shown = releases(changelog).slice(0, 3);
+const latest = shown[0];
 ---
 
 <!doctype html>
@@ -71,7 +71,7 @@ const latest = news[0];
 				<ul>
 					<li><a class="bevel" href="#install">Install</a></li>
 					<li><a class="bevel" href="#safety">Safety</a></li>
-					<li><a class="bevel" href="#news">What’s new</a></li>
+					<li><a class="bevel" href="#releases">Releases</a></li>
 					<li><a class="bevel" href={link('start/install/')}>Documentation</a></li>
 					<li><a class="bevel" href={github}>Source</a></li>
 					<li><a class="bevel" href={link('llms.txt')}>llms.txt</a></li>
@@ -148,12 +148,12 @@ const latest = news[0];
 				</div>
 				<p><a href={link(safety.more.link)}>{safety.more.text}</a>.</p>
 
-				<h2 id="news">What’s new</h2>
-				<table class="news">
+				<h2 id="releases">Releases</h2>
+				<table class="releases">
 					<thead><tr><th scope="col">Release</th><th scope="col">Date</th><th scope="col">Changes</th></tr></thead>
 					<tbody>
 						{
-							news.map((release) => (
+							shown.map((release) => (
 								<tr>
 									<td><a href={`${github}/releases/tag/v${release.version}`}>{release.version}</a></td>
 									<td>{release.date}</td>
@@ -437,8 +437,8 @@ const latest = news[0];
 	.facts th {
 		width: 108px;
 	}
-	.news td:first-child,
-	.news td:nth-child(2) {
+	.releases td:first-child,
+	.releases td:nth-child(2) {
 		white-space: nowrap;
 		font-variant-numeric: tabular-nums;
 	}

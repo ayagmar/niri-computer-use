@@ -1,4 +1,4 @@
-// What's new on the home page, read from CHANGELOG.md when the site is built: each released
+// The home page's Releases table, read from CHANGELOG.md when the site is built: each released
 // version, newest first, with its date and how many entries it lists under each heading.
 // `## Unreleased` and anything before the first release are left out.
 
