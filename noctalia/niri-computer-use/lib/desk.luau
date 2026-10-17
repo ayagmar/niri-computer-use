@@ -85,6 +85,9 @@ export type Desk = {
   -- A state was read since `hello`. The first one shows how the desk already
   -- was, not a change, so it notifies only of stuck input.
   settled: boolean,
+  -- This watch said hello. Its only later text is an error stdout couldn't
+  -- take, so a later line that isn't JSON is the tail of one Noctalia cut.
+  greeted: boolean,
 }
 
 function M.new(): Desk
@@ -100,6 +103,7 @@ function M.new(): Desk
     heardMs = nil,
     released = nil,
     settled = false,
+    greeted = false,
   }
 end
 
@@ -226,6 +230,7 @@ local function hello(desk: Desk, event: any)
   end
   desk.problem = nil
   desk.settled = false
+  desk.greeted = true
   desk.version = if type(event.version) == "string" then event.version else nil
 end
 
@@ -248,7 +253,7 @@ function M.feed(desk: Desk, event: any, raw: string, nowMs: number, tr: Tr): { C
   elseif kind == nil and raw:find("usage: niri-computer-use", 1, true) then
     -- A build before `watch` prints its usage line for the unknown subcommand.
     desk.problem = "old"
-  elseif kind == nil and raw ~= "" then
+  elseif kind == nil and raw ~= "" and not desk.greeted then
     desk.problem = raw
   end
   return changes
