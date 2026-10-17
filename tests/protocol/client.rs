@@ -186,6 +186,13 @@ impl Server {
         response["result"]["tools"].as_array().unwrap().clone()
     }
 
+    /// Whether a notification of `method` was received so far.
+    pub(crate) fn notified(&self, method: &str) -> bool {
+        self.received
+            .iter()
+            .any(|message| message.get("id").is_none() && message["method"] == method)
+    }
+
     /// The ids of the responses received so far, in order.
     pub(crate) fn answered(&self) -> Vec<u64> {
         self.received

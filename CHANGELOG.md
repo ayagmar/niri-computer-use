@@ -11,6 +11,11 @@ All notable changes to this project are documented here. The format follows [Kee
 - The install script installs the Noctalia plugin from the same release to `~/.local/share/niri-computer-use/noctalia/niri-computer-use` and, when `noctalia` is on `PATH`, links it into Noctalia's plugin directory and prints the command that enables it. It doesn't enable it.
 - After an update, the install script lists each `niri-computer-use serve` still running the binary it replaced, by PID and the agent that started it, so you know which agents to restart or reconnect.
 
+### Changed
+
+- A server that requires the shared engine, and couldn't reach it or was refused when it started, now tries again on every call, starting an engine if none runs. Once the cause is gone, such as an engine of an older build that exited after its last client, the next call is served, without restarting the MCP server. Until then every call fails with `engine_unavailable` as before. A cause no call can fix, such as a socket path over 108 bytes, still needs a restart.
+- Such a server no longer lists `noctalia` while `unrestricted` is off, and once a call reaches an engine it sends `notifications/tools/list_changed`, since the engine leaves out the tools that need Noctalia or an accessibility bus when they aren't there.
+
 ## 0.1.2 - 2026-10-16
 
 ### Added

@@ -1962,3 +1962,8 @@ Each action's commit is the one its tag names in the action's repository (`git l
 - Noctalia has no click-through overlay for plugins. The glow is a desktop widget, on the layer behind windows, sized to the focused output in logical pixels; it shows in niri's gaps. It needs placing once in Noctalia's desktop widget editor.
 - The tests run in the Luau CLI against a fake host, as in the headroom plugin, whose loader, test framework and JSON module they reuse. `scripts/test-plugin.sh` fetches Luau 0.742, published 2026-10-10, the newest release at least seven days old, checks its SHA-256 and keeps it in `target/`; `make check` and a CI job run it. `noctalia plugins lint` needs Noctalia itself, so it isn't in the gate; it passed with no warnings.
 
+## 2026-10-17: the tool list of a required client that starts without an engine
+
+- A server that requires the shared engine and had none at its start answers `tools/list` itself, before it knows whether the engine finds Noctalia or an accessibility bus. It leaves out what it knows without one: `noctalia` while `unrestricted` is off.
+- For the rest, its handshake says `tools.listChanged`, and the first call that reaches an engine sends `notifications/tools/list_changed` before the call's answer, so the client lists the tools again and gets the engine's list. Only this server says `listChanged`: an engine's list never changes during a session.
+- Considered: documenting that such a session may list tools it never serves. A call to one would fail as an unknown tool for the rest of the session, and the notification needs no change in rmcp, which relays the line as it is.

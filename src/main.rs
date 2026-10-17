@@ -304,13 +304,14 @@ fn command(args: &[OsString]) -> Option<Command> {
 
 /// Serves the client on stdin and stdout: through the shared engine in shared mode, unless
 /// it can't be reached or refuses this client, and standalone otherwise. A client that
-/// requires the shared engine is never served standalone: without it, every tool fails with
-/// `engine_unavailable`. Decided before the client's first byte is read.
+/// requires the shared engine is never served standalone: without it, every call fails with
+/// `engine_unavailable` and tries the engine again, so the client is served once the cause
+/// is gone. Decided before the client's first byte is read.
 async fn serve(env: Env, given: session::Given) -> Result<(), String> {
     let settings = session::Settings::new(given.clone());
     let sharing = settings.shared.setting();
     let reached = match (&settings.shared.env, sharing) {
-        (Err(note), _) => Err(note.clone()),
+        (Err(note), _) => Err((None, note.clone())),
         (Ok(_), policy::Sharing::Off) => return standalone(env, settings, None).await,
         (Ok(_), policy::Sharing::On | policy::Sharing::Required) => {
             // The engine reports the setting decided here, from the whole policy file, which
@@ -322,32 +323,41 @@ async fn serve(env: Env, given: session::Given) -> Result<(), String> {
             reach_engine(&env, given).await
         }
     };
-    let reason = match reached {
-        Ok((target, link)) => return bridge::run(target, link).await,
-        Err(reason) => reason,
+    let (target, reason) = match reached {
+        Ok((target, link)) => return bridge::run(target, Some(link), None).await,
+        Err(unreached) => unreached,
     };
     if sharing == policy::Sharing::Required {
+        let tools = tools::Server::listed(&settings);
+        let Some(target) = target else {
+            cli::print_error(&format!(
+                "the shared engine is required, so every tool fails with engine_unavailable: {reason}"
+            ));
+            return bridge::unavailable::Unavailable::new(tools, &reason)
+                .run()
+                .await;
+        };
         cli::print_error(&format!(
-            "the shared engine is required, so every tool fails with engine_unavailable: {reason}"
+            "the shared engine is required, so every call fails with engine_unavailable until one is reached: {reason}"
         ));
-        let tools = tools::Server::listed(settings.tools.profile());
-        return bridge::unavailable::Unavailable::new(tools, &reason)
-            .run()
-            .await;
+        return bridge::run(target, None, Some(bridge::before::Before::new(tools))).await;
     }
     cli::print_error(&format!("serving this client standalone: {reason}"));
     standalone(env, settings, Some(reason)).await
 }
 
+/// The engine's target and a link to it, or why there is none, with the target when trying
+/// again later may reach one.
 async fn reach_engine(
     env: &Env,
     given: session::Given,
-) -> Result<(bridge::Target, bridge::Link), String> {
-    let target = bridge::Target::new(env, given)?;
-    let link = bridge::connect(&target)
-        .await
-        .map_err(bridge::Unreached::detail)?;
-    Ok((target, link))
+) -> Result<(bridge::Target, bridge::Link), (Option<bridge::Target>, String)> {
+    let target = bridge::Target::new(env, given).map_err(|reason| (None, reason))?;
+    match bridge::connect(&target).await {
+        Ok(link) => Ok((target, link)),
+        Err(bridge::Unreached::Never(reason)) => Err((None, reason)),
+        Err(unreached) => Err((Some(target), unreached.detail())),
+    }
 }
 
 /// Serves the one client on stdin and stdout. `fallback` says why it isn't served by the
