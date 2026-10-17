@@ -8,6 +8,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - The install script also offers to register the server in Amp, GitHub Copilot CLI, Gemini CLI and Qwen Code when they are on `PATH`, through each one's own `mcp add` at user scope. The client setup page gives their commands, and the config entries for Cursor CLI, Factory Droid, OpenCode, Kilo Code CLI, Goose and Crush, which the script leaves to you.
 
+### Fixed
+
+- `set_element_text` refuses text ending with tool-call closing tags such as `</parameter>` or `</invoke>` that no opening tag earlier in the text balances, with `leaked_tag` and the tags named in `detail`, as `type_text` has since 0.1.2. It used to set such text, so a leaked tag landed in the field. Nothing is set; send the text again without the tags.
+
 ## 0.1.3 - 2026-10-17
 
 ### Added

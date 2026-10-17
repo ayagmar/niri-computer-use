@@ -24,6 +24,7 @@ use crate::control::desk::LAST_GATE;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::input::Input;
 use crate::input::keyboard::{self, Expect, Focus};
+use crate::input::leaked_tags;
 use crate::niri;
 use crate::niri::waiter::{View, Waited, Waiter};
 use crate::policy::{self, Loaded};
@@ -794,7 +795,8 @@ async fn editable(request: &Request, element: &ElementRef) -> Result<(), CallErr
     .into())
 }
 
-/// Refuses text over `MAX_TEXT` bytes before anything is asked.
+/// Refuses text over `MAX_TEXT` bytes, or ending with leaked tool-call closing tags,
+/// before anything is asked.
 fn check_text(text: &str) -> Result<(), CallError> {
     if text.len() > MAX_TEXT {
         return Err(ToolError::new(
@@ -805,6 +807,11 @@ fn check_text(text: &str) -> Result<(), CallError> {
             ),
         )
         .into());
+    }
+    if let Some(leak) = leaked_tags::leaked(text) {
+        return Err(
+            ToolError::new(ErrorName::LeakedTag, format!("{leak}; nothing was set")).into(),
+        );
     }
     Ok(())
 }

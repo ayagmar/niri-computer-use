@@ -7,7 +7,7 @@ mod held;
 pub(crate) mod keeper;
 pub(crate) mod keyboard;
 pub(crate) mod keymap;
-mod leaked_tags;
+pub(crate) mod leaked_tags;
 mod native;
 pub(crate) mod paste;
 pub(crate) mod pointer;
