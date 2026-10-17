@@ -155,11 +155,12 @@ function track(video: HTMLVideoElement) {
 for (const a of document.querySelectorAll<HTMLAnchorElement>('[data-play]'))
 	a.onclick = (e) => {
 		e.preventDefault();
+		// Asked before focusColumn, which moves focus to the column on a wide screen.
+		const still = document.querySelector('.still');
+		const focused = !!still?.contains(document.activeElement);
 		focusColumn(1);
 		let video = document.querySelector('video');
-		if (!video) {
-			const still = document.querySelector('.still')!;
-			const focused = still.contains(document.activeElement);
+		if (!video && still) {
 			video = Object.assign(document.createElement('video'), {
 				src: a.href,
 				poster: still.querySelector('img')!.currentSrc,
