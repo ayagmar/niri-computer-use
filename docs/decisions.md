@@ -1939,3 +1939,14 @@ Dependabot's six open updates, taken together and checked against the version ru
 | `actions/download-artifact` | v8.0.1 | v8.0.2 | 2026-10-07 | `9000827ccba6bdab643e8b6fd33ac0654aef8333`, in `release.yml`. |
 
 Each action's commit is the one its tag names in the action's repository (`git ls-remote`), the same as in Dependabot's pull requests.
+
+## 2026-10-17: zbus's merged crates, ignored for a week
+
+- RUSTSEC-2026-0370, -0371 and -0372 mark `zvariant`, `zbus_names` and `zvariant_derive` unmaintained: zbus 6.0.0, published 2026-10-16, merged them into zbus, and zbus 5.19.0 still depends on them. `cargo deny check` failed on `main` with no change of ours.
+- The fix is zbus 6, but the rule is a release at least seven days old, and an unmaintained notice isn't a security fix. `deny.toml` ignores the three advisories by id, each with that reason, until 2026-10-23, when the upgrade to zbus 6 removes them and the ignores together.
+
+## 2026-10-17: the tool list of a required client that starts without an engine
+
+- A server that requires the shared engine and had none at its start answers `tools/list` itself, before it knows whether the engine finds Noctalia or an accessibility bus. It leaves out what it knows without one: `noctalia` while `unrestricted` is off.
+- For the rest, its handshake says `tools.listChanged`, and the first call that reaches an engine sends `notifications/tools/list_changed` before the call's answer, so the client lists the tools again and gets the engine's list. Only this server says `listChanged`: an engine's list never changes during a session.
+- Considered: documenting that such a session may list tools it never serves. A call to one would fail as an unknown tool for the rest of the session, and the notification needs no change in rmcp, which relays the line as it is.

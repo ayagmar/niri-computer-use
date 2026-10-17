@@ -5,6 +5,7 @@
 //! reaches a new engine on the next request, and answers `engine_unavailable` while it
 //! can't.
 
+pub(crate) mod before;
 mod client;
 pub(crate) mod envelope;
 pub(crate) mod unavailable;
@@ -34,6 +35,7 @@ use crate::engine::host::{LOG, RUNTIME_DIR_DISCOVERED, SOCKET, UNSCOPED};
 use crate::error::{ErrorName, ToolError};
 use crate::session::{Given, LineLimit, MAX_LINE};
 use crate::{Env, cli, runner};
+use before::Before;
 use client::{Ended, Waiting, Writer};
 use envelope::Message;
 
@@ -138,8 +140,11 @@ enum Read {
 enum Failed {
     /// No engine listens.
     Absent(String),
-    /// An engine answered and refused this bridge, or none can ever be reached.
+    /// An engine answered and refused this bridge.
     Refused(String),
+    /// None can ever be reached, as on a socket path over the 108 bytes a Unix socket's
+    /// may have.
+    Never(String),
     /// An engine of another build refused this bridge, as it does for as long as it runs.
     OtherBuild(String),
     /// Anything else, which a retry may get past.
@@ -152,6 +157,8 @@ pub(crate) enum Unreached {
     /// An engine of another build refused this bridge, as it does for as long as it runs.
     /// Its detail says what the user does about it.
     OtherBuild(String),
+    /// None can ever be reached, whatever runs.
+    Never(String),
     /// Anything else.
     Other(String),
 }
@@ -159,7 +166,7 @@ pub(crate) enum Unreached {
 impl Unreached {
     pub(crate) fn detail(self) -> String {
         match self {
-            Self::OtherBuild(detail) | Self::Other(detail) => detail,
+            Self::OtherBuild(detail) | Self::Never(detail) | Self::Other(detail) => detail,
         }
     }
 }
@@ -174,6 +181,7 @@ pub(crate) async fn connect(target: &Target) -> Result<Link, Unreached> {
             Ok(link) => return Ok(link),
             Err(Failed::Refused(detail)) => return Err(Unreached::Other(detail)),
             Err(Failed::OtherBuild(detail)) => return Err(Unreached::OtherBuild(detail)),
+            Err(Failed::Never(detail)) => return Err(Unreached::Never(detail)),
             Err(Failed::Absent(detail)) if starts < MAX_STARTS => {
                 // Only the first start tries `systemd-run`, which may still be at work.
                 start(target, deadline, starts == 0)
@@ -268,7 +276,7 @@ fn connect_failed(socket: &Path, error: &std::io::Error) -> Failed {
     ) {
         Failed::Absent(detail)
     } else if kind == std::io::ErrorKind::InvalidInput {
-        Failed::Refused(detail)
+        Failed::Never(detail)
     } else {
         Failed::Retry(detail)
     }
@@ -513,8 +521,13 @@ async fn read_line(input: &mut (impl tokio::io::AsyncBufRead + Unpin), max: usiz
 }
 
 /// Relays between the client on stdin and stdout and the engine `engine` reaches, until the
-/// client's end.
-pub(crate) async fn run(target: Target, engine: Link) -> Result<(), String> {
+/// client's end. Without an engine, `before` answers the handshake, `tools/list` and pings
+/// until a call reaches one.
+pub(crate) async fn run(
+    target: Target,
+    engine: Option<Link>,
+    before: Option<Before>,
+) -> Result<(), String> {
     let (sender, mut client) = mpsc::unbounded_channel();
     let (ended, client_end) = watch::channel(None);
     tokio::spawn(client::pass_lines(
@@ -526,7 +539,8 @@ pub(crate) async fn run(target: Target, engine: Link) -> Result<(), String> {
     let (writer, writer_failed) = Writer::start(tokio::io::stdout());
     let mut relay = Relay {
         target,
-        engine: Some(engine),
+        engine,
+        before,
         in_flight: BTreeMap::new(),
         initialize: None,
         unreported: false,
@@ -641,6 +655,9 @@ fn leave(engine: Option<Link>, why: &str) -> ! {
 struct Relay {
     target: Target,
     engine: Option<Link>,
+    /// The answers given before the first engine is reached, for a client that requires
+    /// one and had none when it started.
+    before: Option<Before>,
     /// The client's requests the engine hasn't answered, by their ids as JSON, with the
     /// method.
     in_flight: BTreeMap<String, (Value, String)>,
@@ -721,26 +738,55 @@ impl Relay {
             self.initialize = Some((id.clone(), line.clone()));
         }
         if self.engine.is_none() {
+            if let Some(answer) = self.answer_before(&id, &method, &line) {
+                return self.reply(answer).map_err(Stop::Writer);
+            }
             if std::mem::take(&mut self.unreported) {
                 let error = self.lost_error("since the last call");
                 return self.answer(&id, &method, error).map_err(Stop::Writer);
             }
-            let replay = self.initialize.as_ref().filter(|_| !initializing);
-            match first(&mut self.ends, reconnect(&self.target, replay)).await? {
-                Ok(engine) => self.engine = Some(engine),
-                Err(unreached) => {
-                    // An engine of another build says what to do; a retry helps only once it has ended.
-                    let detail = match unreached {
-                        Unreached::OtherBuild(detail) => detail,
-                        Unreached::Other(detail) => format!("{detail}; the next call tries again"),
-                    };
-                    let error = ToolError::new(ErrorName::EngineUnavailable, detail);
-                    return self.answer(&id, &method, error).map_err(Stop::Writer);
-                }
+            if let Err(error) = self.reach(initializing).await? {
+                return self.answer(&id, &method, error).map_err(Stop::Writer);
             }
         }
         self.in_flight.insert(id.to_string(), (id, method));
         self.send(&line).await
+    }
+
+    /// The answer `before` gives the client's request, if it gives one.
+    fn answer_before(&mut self, id: &Value, method: &str, line: &[u8]) -> Option<Vec<u8>> {
+        let answer = self.before.as_ref()?.answer(id, method, line)?;
+        // A handshake refused here isn't replayed to an engine.
+        Some(answer.unwrap_or_else(|refusal| {
+            self.initialize = None;
+            refusal
+        }))
+    }
+
+    /// Reaches an engine, sending it the client's `initialize` unless `initializing`, as
+    /// the request being relayed is that one.
+    async fn reach(&mut self, initializing: bool) -> Result<Result<(), ToolError>, Stop> {
+        let replay = self.initialize.as_ref().filter(|_| !initializing);
+        let reached = first(&mut self.ends, reconnect(&self.target, replay)).await?;
+        Ok(match reached {
+            Ok(engine) => {
+                self.engine = Some(engine);
+                if self.before.take().is_some() {
+                    self.reply(before::LIST_CHANGED.to_vec())
+                        .map_err(Stop::Writer)?;
+                }
+                Ok(())
+            }
+            Err(unreached) => {
+                // An engine of another build says what to do; a retry helps only once it has
+                // ended. None helps at all when no engine can ever be reached.
+                let detail = match unreached {
+                    Unreached::OtherBuild(detail) | Unreached::Never(detail) => detail,
+                    Unreached::Other(detail) => format!("{detail}; the next call tries again"),
+                };
+                Err(ToolError::new(ErrorName::EngineUnavailable, detail))
+            }
+        })
     }
 
     async fn send(&mut self, line: &[u8]) -> Result<(), Stop> {
@@ -888,6 +934,7 @@ mod tests {
                 discovered_runtime_dir: None,
             },
             engine: Some(Link::new(1, BufReader::new(input), output)),
+            before: None,
             in_flight: BTreeMap::new(),
             initialize: None,
             unreported: false,
