@@ -1,0 +1,40 @@
+---
+// Starlight's footer, ending on a man page's running foot: the release, its date and the
+// page's name.
+import Default from '@astrojs/starlight/components/Footer.astro';
+import changelog from '../../../CHANGELOG.md?raw';
+import { heading, manName } from '../lib/man';
+import { releases } from '../lib/news';
+import { releaseLink, version } from '../lib/version';
+
+const { entry } = Astro.locals.starlightRoute;
+const released = releases(changelog).find((release) => release.version === version);
+---
+
+<Default />
+<p class="running">
+	<a href={releaseLink}>niri-computer-use {version}</a>
+	<span class="mid">{released?.date}</span>
+	<span>{heading(manName(entry.id))}</span>
+</p>
+
+<style>
+	.running {
+		display: flex;
+		justify-content: space-between;
+		gap: 2ch;
+		margin: 2.5rem 0 0;
+		padding-top: 0.75rem;
+		border-top: 1px solid var(--sl-color-hairline);
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-gray-3);
+	}
+	.running a {
+		color: var(--sl-color-text-accent);
+	}
+	@media (max-width: 30rem) {
+		.mid {
+			display: none;
+		}
+	}
+</style>

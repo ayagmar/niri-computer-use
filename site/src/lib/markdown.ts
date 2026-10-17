@@ -41,30 +41,20 @@ export function homeMarkdownUrl(): string {
 // The home page as Markdown, from the same words the page sets.
 export function homeMarkdown(): string {
 	const url = (link: string) => new URL(link, siteRoot()).href;
-	const { glance, install, safety } = home;
-	const list = (items: string[]) => items.map((item) => `- ${item}`).join('\n');
-	const code = (lang: string, text: string) => `   \`\`\`${lang}\n${text.replace(/^/gm, '   ')}\n   \`\`\``;
+	const { install, safety, example } = home;
+	const code = (lang: string, text: string) => `\`\`\`${lang}\n${text}\n\`\`\``;
 	return [
-		`# niri-computer-use`,
+		`# niri-computer-use(1)`,
 		`> ${home.description}`,
 		`Version ${version}: [release notes](${releaseLink})`,
-		`${home.tagline} ${home.stop} ${home.only}`,
-		list(glance.map(([what, value]) => `${what}: ${value}`)),
-		`## Install`,
-		install
-			.map((step, index) => {
-				const note = step.note ? ` ${step.note}` : '';
-				const more = step.more ? ` [${step.more.text}](${url(step.more.link)})` : '';
-				const read = step.read
-					? `\n\n   Read it:\n\n${code('sh', step.read)}\n\n   Then run it:\n\n${code('sh', step.run)}`
-					: '';
-				const or = step.or ? `\n\n   ${step.orNote}\n\n${code('sh', step.or)}` : '';
-				return `${index + 1}. ${step.label}.${note}${more}\n\n${code(step.lang, step.code)}${read}${or}`;
-			})
-			.join('\n\n'),
-		`## Safety`,
-		`Enforced:\n\n${list(safety.enforced)}\n\nNot covered:\n\n${list(safety.missed)}\n\n[${safety.more.text}](${url(safety.more.link)})`,
-		`[Documentation](${url('start/install/')}) · [Tools](${url('tools/overview/')}) · [Configuration](${url('concepts/configuration/')})`,
+		`## Name\n\nniri-computer-use - ${home.name}`,
+		`## Synopsis\n\n\`niri-computer-use ${home.commands.join(' | ')}\``,
+		`## Description\n\n${home.about.join('\n\n')}`,
+		`## Installation\n\nFetch the script, read it, run it:\n\n${code('sh', install.get)}\n\n${code('sh', install.read)}\n\n${code('sh', install.run)}\n\nOr build it, and use \`~/.cargo/bin\` below:\n\n${code('sh', install.cargo)}\n\nBind the stop key in \`config.kdl\`:\n\n${code('kdl', install.stop)}\n\nThe script offers to register the server with Claude Code, Pi and Codex. Others: [Client setup](${url('start/clients/')}).`,
+		`## Safety\n\n${safety.map(([term, text]) => `- ${term}: ${text}`).join('\n')}\n\n${home.sandbox} [Safety](${url('concepts/safety/')})`,
+		`## Example\n\n${example.caption}\n\n${example.calls.map(([call, ms]) => `- \`${call}\`: ${ms} ms`).join('\n')}`,
+		`## Bugs\n\n${home.bugs}`,
+		`## See also\n\n${home.seeAlso.map((id) => `- ${url(`${id}/`)}`).join('\n')}`,
 	].join('\n\n') + '\n';
 }
 

@@ -105,7 +105,7 @@ npm ci
 npm run build
 ```
 
-The pages are Markdown files in `site/src/content/docs/`, except the home page, `site/src/pages/index.astro`, which sits outside Starlight, places the pixel mark and the 88×31 buttons from `site/src/components/home/`, and takes its words from `site/src/lib/home.ts`. Its Releases table is read from `CHANGELOG.md` when the site is built, and the clip's length and size from the MP4. There is one directory per sidebar group (`site/src/lib/groups.mjs`), and pages are ordered by `sidebar.order` in their front matter. The build goes to `site/dist/`. Preview it with:
+The pages are Markdown files in `site/src/content/docs/`, except the home page, `site/src/pages/index.astro`, which sits outside Starlight, is set as the server's man page, and takes its words from `site/src/lib/home.ts`. Its HISTORY section is read from `CHANGELOG.md` when the site is built, and the clip's length and size from the MP4. The docs pages share its colours (`site/src/styles/tokens.css`) and get a man page's running head and foot from the `PageTitle` and `Footer` overrides in `site/src/components/`, with each page's man name from `site/src/lib/man.ts`. There is one directory per sidebar group (`site/src/lib/groups.mjs`), and pages are ordered by `sidebar.order` in their front matter. The build goes to `site/dist/`. Preview it with:
 
 ```sh
 npm run preview
@@ -113,7 +113,7 @@ npm run preview
 
 `npm run build` also runs `npm test` and two checks, and fails on any of them:
 
-- `npm test`, before anything else: Node's own test runner on `src/**/*.test.ts`, with Node stripping the types itself (`--experimental-strip-types`, which Node 22.12 has), which checks how the home page reads the changelog and the clip's length.
+- `npm test`, before anything else: Node's own test runner on `src/**/*.test.ts`, with Node stripping the types itself (`--experimental-strip-types`, which Node 22.12 has), which checks how the home page reads the changelog and the clip's length, and how pages get their man names.
 
 - `scripts/check-reference.mjs`, before Astro: the error reference lists exactly the names in `ErrorName` (`src/error.rs`), and the configuration page exactly the keys of `Policy` and `Preset` (`src/policy.rs`). Change the page in the same commit as the enum or struct.
 - `scripts/check-links.mjs`, after Astro: every internal link, image and `#fragment` resolves to a built file, and `llms.txt` and `llms-full.txt` cover every page.

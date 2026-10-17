@@ -1,46 +1,50 @@
-/* The docs pages' colours and the site's type: a cool concrete ground, near-black ink, code
-   on a black plate, and one red for a stopped answer. The home page has its own styles and
-   uses none of these. */
+/* The site's colours and type, for the home page and the docs alike: a man page in a
+   terminal. Dark is a warm black with parchment ink, light is paper with brown-black ink,
+   and one amber marks links and focus. `light-dark()` picks by `color-scheme`: the docs set
+   it from their theme switch, the home page follows the system. */
 
 :root {
-	--ncu-sans: 'Archivo Variable', ui-sans-serif, system-ui, sans-serif;
-	--ncu-mono: 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace; /* taste-skill-ignore: calls and commands only */
+	--ncu-mono: 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace;
 
-	--ncu-ground: #e6e8e3;
-	--ncu-ink: #0c0e0d;
-	--ncu-ink-2: #464c48;
-	--ncu-plate: #0b0c0b;
-	--ncu-stop: #c42a1b;
+	--ncu-ground: light-dark(#f7f5ee, #10110f);
+	--ncu-ink: light-dark(#2b2a25, #c9c6b9);
+	--ncu-bold: light-dark(#0c0c0a, #f4f1e6);
+	--ncu-dim: light-dark(#5c584e, #9a9588);
+	--ncu-rule: light-dark(#d4cfbf, #2f2d27);
+	--ncu-accent: light-dark(#8a5300, #e3a83c);
+	--ncu-select: light-dark(#f0dca8, #3a3220);
+	--ncu-plate: light-dark(#eeeadd, #0a0b09);
+	--ncu-stop: light-dark(#b3261e, #ff6a57);
+	color-scheme: light dark;
+}
+
+:root[data-theme='light'] {
 	color-scheme: light;
 }
 
 :root[data-theme='dark'] {
-	--ncu-ground: #161917;
-	--ncu-ink: #e6e8e3;
-	--ncu-ink-2: #a5aca7;
-	--ncu-plate: #070807;
-	--ncu-stop: #ff6a57;
 	color-scheme: dark;
 }
 
 /* The parts the browser draws, in the page's colours. */
 ::selection {
-	background: var(--ncu-ink);
-	color: var(--ncu-ground);
+	background: var(--ncu-select);
+	color: var(--ncu-bold);
 }
 
 :root {
-	caret-color: var(--ncu-stop);
-	scrollbar-color: var(--ncu-ink-2) var(--ncu-ground);
-	accent-color: var(--ncu-ink);
+	caret-color: var(--ncu-accent);
+	scrollbar-color: var(--ncu-rule) var(--ncu-ground);
+	accent-color: var(--ncu-accent);
 }
 
+/* Keyboard focus is an amber ring, as niri draws round the focused column. */
 :focus-visible {
-	outline: 2px solid var(--ncu-ink);
-	outline-offset: 3px;
+	outline: 2px solid var(--ncu-accent);
+	outline-offset: 2px;
 }
 
-/* Pages crossfade into each other while the wordmark holds still. */
+/* Pages crossfade into each other while the running head holds still. */
 @media (prefers-reduced-motion: no-preference) {
 	@view-transition {
 		navigation: auto;

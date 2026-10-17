@@ -1,20 +1,20 @@
 ---
-// The home page, set as a hand-made project page from around 2000: a 760-pixel page on the
-// desktop grey, a title band with the pixel mark, bevelled buttons down the side, tables for
-// facts, one framed still that opens the clip, and a status bar. Light only, no JavaScript.
-// Its words are in `lib/home.ts`, which `pages/index.md.ts` serves as Markdown too.
-import '@fontsource/tinos/400.css';
-import '@fontsource/tinos/700.css';
-import tinos from '@fontsource/tinos/files/tinos-latin-400-normal.woff2?url';
+// The home page, set as the server's manual page the way man shows it in a terminal: a
+// running head and foot, capital section names, bold for what you type, underline for what
+// man underlines, and less's reverse-video status line pinned to the bottom of the window.
+// Dark or light follows the system. No JavaScript. Its words are in `lib/home.ts`, which
+// `pages/index.md.ts` serves as Markdown too; its colours are the docs' (`styles/tokens.css`).
+import '@fontsource-variable/jetbrains-mono/wght.css';
+import '../styles/tokens.css';
+import mono from '@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2?url';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Picture } from 'astro:assets';
-import Mark from '../components/home/Mark.astro';
-import Buttons from '../components/home/Buttons.astro';
 import still from '../assets/errand-still.jpg';
 import changelog from '../../../CHANGELOG.md?raw';
 import { home } from '../lib/home';
 import { mp4Seconds } from '../lib/clip';
+import { manName, reference } from '../lib/man';
 import { releases, summary } from '../lib/news';
 import { siteRoot } from '../lib/markdown';
 import { releaseLink, version } from '../lib/version';
@@ -24,13 +24,14 @@ const link = (path: string) => `${base}${path}`;
 const canonical = siteRoot();
 const og = new URL('demo/og.png', canonical).href;
 const github = 'https://github.com/ayagmar/niri-computer-use';
-const { clip, glance, install, safety } = home;
+const { install, example } = home;
 
 // The clip's real length and size, read when the site is built.
-const clipFile = readFileSync(join(process.cwd(), 'public', 'clips', `${clip.name}.mp4`));
+const clipPath = `clips/${example.clip}.mp4`;
+const clipFile = readFileSync(join(process.cwd(), 'public', clipPath));
 const clipFacts = `${Math.round(mp4Seconds(clipFile))} s, MP4, ${Math.round(clipFile.byteLength / 1000)} KB`;
-const shown = releases(changelog).slice(0, 3);
-const latest = shown[0];
+const history = releases(changelog).slice(0, 3);
+const released = history.find((release) => release.version === version);
 ---
 
 <!doctype html>
@@ -38,14 +39,14 @@ const latest = shown[0];
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
-		<meta name="color-scheme" content="light" />
+		<meta name="color-scheme" content="dark light" />
 		<title>{home.title}</title>
 		<meta name="description" content={home.description} />
 		<link rel="canonical" href={canonical} />
 		<link rel="icon" href={link('favicon.svg')} type="image/svg+xml" />
 		<link rel="sitemap" href={link('sitemap-index.xml')} />
 		<link rel="alternate" type="text/markdown" href={link('index.md')} />
-		<link rel="preload" href={tinos} as="font" type="font/woff2" crossorigin />
+		<link rel="preload" href={mono} as="font" type="font/woff2" crossorigin />
 		<meta property="og:title" content={home.title} />
 		<meta property="og:description" content={home.description} />
 		<meta property="og:type" content="website" />
@@ -54,40 +55,78 @@ const latest = shown[0];
 		<meta property="og:image:width" content="1280" />
 		<meta property="og:image:height" content="640" />
 		<meta name="twitter:card" content="summary_large_image" />
-		<meta name="theme-color" content="#336666" />
+		<meta name="theme-color" content="#f7f5ee" media="(prefers-color-scheme: light)" />
+		<meta name="theme-color" content="#10110f" media="(prefers-color-scheme: dark)" />
 	</head>
 	<body>
 		<a class="skip" href="#main">Skip to content</a>
-		<div class="page">
-			<header class="band">
-				<Mark />
-				<div>
-					<h1>niri-computer-use</h1>
-					<p>{home.tagline} <strong>{home.stop}</strong></p>
-				</div>
-			</header>
+		<header class="running">
+			<span>NIRI-COMPUTER-USE(1)</span>
+			<span class="mid">User Commands</span>
+			<span>NIRI-COMPUTER-USE(1)</span>
+		</header>
 
-			<nav class="side" aria-label="Site">
-				<ul>
-					<li><a class="bevel" href="#install">Install</a></li>
-					<li><a class="bevel" href="#safety">Safety</a></li>
-					<li><a class="bevel" href="#releases">Releases</a></li>
-					<li><a class="bevel" href={link('start/install/')}>Documentation</a></li>
-					<li><a class="bevel" href={github}>Source</a></li>
-					<li><a class="bevel" href={link('llms.txt')}>llms.txt</a></li>
-				</ul>
-			</nav>
+		<main id="main">
+			<section aria-labelledby="name">
+				<p class="sh" aria-hidden="true">NAME</p>
+				<h1 id="name"><b>niri-computer-use</b> - {home.name}</h1>
+			</section>
 
-			<main id="main">
-				<p class="only">{home.only}</p>
+			<section aria-labelledby="synopsis">
+				<h2 id="synopsis">SYNOPSIS</h2>
+				<p>
+					<b>niri-computer-use</b>{' '}
+					{home.commands.map((command, i) => <>{i > 0 && ' | '}<b>{command}</b></>)}
+				</p>
+			</section>
 
-				<figure class="shot">
-					<a href={link(`clips/${clip.name}.mp4`)} class="frame">
+			<section aria-labelledby="description">
+				<h2 id="description">DESCRIPTION</h2>
+				{home.about.map((paragraph) => <p>{paragraph}</p>)}
+			</section>
+
+			<section aria-labelledby="install">
+				<h2 id="install">INSTALLATION</h2>
+				<p>Fetch the script, read it, run it:</p>
+				<pre>{install.get}</pre>
+				<pre>{install.read}</pre>
+				<pre>{install.run}</pre>
+				<p>Or build it, and use <u>~/.cargo/bin</u> below:</p>
+				<pre>{install.cargo}</pre>
+				<p>Bind the stop key in <u>config.kdl</u>:</p>
+				<pre>{install.stop}</pre>
+				<p>
+					The script offers to register the server with Claude Code, Pi and Codex. Others:{' '}
+					<a href={link('start/clients/')}>{reference(manName('start/clients'))}</a>.
+				</p>
+			</section>
+
+			<section aria-labelledby="safety">
+				<h2 id="safety">SAFETY</h2>
+				<dl>
+					{
+						home.safety.map(([term, text]) => (
+							<>
+								<dt><b>{term}</b></dt>
+								<dd>{text}</dd>
+							</>
+						))
+					}
+				</dl>
+				<p>
+					{home.sandbox} <a href={link('concepts/safety/')}>{reference(manName('concepts/safety'))}</a>.
+				</p>
+			</section>
+
+			<section aria-labelledby="example">
+				<h2 id="example">EXAMPLE</h2>
+				<figure>
+					<a class="still" href={link(clipPath)}>
 						<Picture
 							src={still}
-							alt={clip.alt}
+							alt={example.alt}
 							widths={[560, 900]}
-							sizes="(min-width: 760px) 540px, calc(100vw - 40px)"
+							sizes="(min-width: 50rem) 560px, calc(100vw - 6ch)"
 							formats={['avif']}
 							fallbackFormat="jpg"
 							quality={60}
@@ -96,64 +135,25 @@ const latest = shown[0];
 						/>
 					</a>
 					<figcaption>
-						{clip.caption} <a href={link(`clips/${clip.name}.mp4`)}>Play the clip</a> <span class="nw">({clipFacts})</span>.
-						<span>{clip.note}</span>
+						{example.caption} <a href={link(clipPath)}>Play the clip</a> ({clipFacts}).
 					</figcaption>
 				</figure>
-
-				<table class="facts">
-					<caption class="sr">At a glance</caption>
+				<table class="calls">
+					<caption class="sr">Six of the session's calls and their round trips</caption>
+					<thead><tr><th scope="col">call</th><th scope="col">ms</th></tr></thead>
 					<tbody>
-						{glance.map(([what, value]) => <tr><th scope="row">{what}</th><td>{value}</td></tr>)}
+						{example.calls.map(([call, ms]) => <tr><td><code>{call}</code></td><td>{ms}</td></tr>)}
 					</tbody>
 				</table>
+			</section>
 
-				<h2 id="install">Install</h2>
-				<ol class="steps">
-					{
-						install.map((step) => (
-							<li>
-								<b>{step.label}.</b> {step.note}
-								{step.more && <>{' '}<a href={link(step.more.link)}>{step.more.text}</a>.</>}
-								<pre>{step.code}</pre>
-								{step.read && (
-									<>
-										<span class="or">Read it:</span>
-										<pre>{step.read}</pre>
-										<span class="or">Then run it:</span>
-										<pre>{step.run}</pre>
-									</>
-								)}
-								{step.or && (
-									<>
-										<span class="or">{step.orNote}</span>
-										<pre>{step.or}</pre>
-									</>
-								)}
-							</li>
-						))
-					}
-				</ol>
-
-				<h2 id="safety">Safety</h2>
-				<div class="ledger">
-					<div>
-						<h3>Enforced</h3>
-						<ul>{safety.enforced.map((item) => <li>{item}</li>)}</ul>
-					</div>
-					<div>
-						<h3>Not covered</h3>
-						<ul>{safety.missed.map((item) => <li>{item}</li>)}</ul>
-					</div>
-				</div>
-				<p><a href={link(safety.more.link)}>{safety.more.text}</a>.</p>
-
-				<h2 id="releases">Releases</h2>
-				<table class="releases">
-					<thead><tr><th scope="col">Release</th><th scope="col">Date</th><th scope="col">Changes</th></tr></thead>
+			<section aria-labelledby="history">
+				<h2 id="history">HISTORY</h2>
+				<table>
+					<caption class="sr">The latest releases</caption>
 					<tbody>
 						{
-							shown.map((release) => (
+							history.map((release) => (
 								<tr>
 									<td><a href={`${github}/releases/tag/v${release.version}`}>{release.version}</a></td>
 									<td>{release.date}</td>
@@ -163,93 +163,73 @@ const latest = shown[0];
 						}
 					</tbody>
 				</table>
-				<p><a href={`${github}/blob/main/CHANGELOG.md`}>Full changelog</a>.</p>
-			</main>
+				<p><a href={`${github}/blob/main/CHANGELOG.md`}>CHANGELOG.md</a></p>
+			</section>
 
-			<aside class="more" aria-label="More">
-				<h2>Built on</h2>
-				<Buttons />
-			</aside>
+			<section aria-labelledby="bugs">
+				<h2 id="bugs">BUGS</h2>
+				<p>{home.bugs}</p>
+			</section>
 
-			<footer class="status">
-				<span>Best viewed with any browser</span>
-				<span>No JavaScript</span>
-				<span><a href={releaseLink}>{version}</a>{latest && latest.version === version && `, ${latest.date}`}</span>
-			</footer>
-		</div>
+			<section aria-labelledby="see-also">
+				<h2 id="see-also">SEE ALSO</h2>
+				<p class="refs">
+					<a href="https://github.com/niri-wm/niri">niri(1)</a>,{' '}
+					{home.seeAlso.map((id) => <><a href={link(`${id}/`)}>{reference(manName(id))}</a>, </>)}
+					<a href={link('llms.txt')}>llms.txt</a>,{' '}
+					<a href={github}>source</a>
+				</p>
+			</section>
+		</main>
+
+		<footer class="running">
+			<a href={releaseLink}>niri-computer-use {version}</a>
+			<span class="mid">{released?.date}</span>
+			<span>NIRI-COMPUTER-USE(1)</span>
+		</footer>
+
+		<nav class="less" aria-label="Page">
+			<span class="prompt"><span class="wide">Manual page niri-computer-use(1)</span><span class="pct" aria-hidden="true"></span></span>
+			<a href="#install">install</a>
+			<a href="#safety">safety</a>
+			<a href={link('start/install/')}>docs</a>
+			<a href={github}>source</a>
+		</nav>
 	</body>
 </html>
 
 <style is:global>
-	:root {
-		--desk: #c0c0c0;
-		--paper: #ffffff;
-		--face: #e4e4dc;
-		--ink: #000000;
-		--ink-2: #3c3c38;
-		--band: #336666;
-		--band-ink: #ffffff;
-		--bar: #dfe9e9;
-		--bar-ink: #133333;
-		--hi: #ffffff;
-		--lo: #808080;
-		--dk: #404040;
-		--link: #0000cc;
-		--visited: #663399;
-		--active: #cc0000;
-		--note: #ffffcc;
-		--ring: #ffcc33;
-		--ring-edge: #0f2626;
-		--serif: 'Tinos', 'Times New Roman', Times, 'Liberation Serif', serif;
-		--mono: 'DejaVu Sans Mono', 'Liberation Mono', 'Courier New', monospace;
-		color-scheme: light;
-	}
 	* {
 		box-sizing: border-box;
 	}
 	html {
-		background: var(--desk);
-		color: var(--ink);
-		font: 17px/1.45 var(--serif);
+		scroll-padding-bottom: 3.5rem;
+		background: var(--ncu-ground);
+		color: var(--ncu-ink);
+		font: 400 16px/1.55 var(--ncu-mono);
+		font-variant-ligatures: none;
 		-webkit-text-size-adjust: 100%;
-		scrollbar-color: var(--lo) var(--desk);
-		caret-color: var(--active);
 	}
 	body {
 		margin: 0;
-		padding: 24px 12px 40px;
+		padding: 1.5rem 0 0;
 	}
-	::selection {
-		background: var(--band);
-		color: var(--band-ink);
-	}
-	a {
-		color: var(--link);
-		text-underline-offset: 2px;
-	}
-	a:visited {
-		color: var(--visited);
-	}
-	a:active {
-		color: var(--active);
-	}
-	/* Keyboard focus is niri's focus ring, as the mark draws it: amber around a dark edge. */
-	a:focus-visible {
-		outline: 2px solid transparent;
-		box-shadow:
-			0 0 0 2px var(--ring-edge),
-			0 0 0 5px var(--ring),
-			0 0 0 6px var(--ring-edge);
+	body > header,
+	main,
+	body > footer {
+		max-width: calc(80ch + 4ch);
+		padding-inline: 2ch;
 	}
 	.skip {
 		position: absolute;
-		left: 12px;
-		top: -40px;
-		padding: 4px 8px;
-		background: var(--paper);
+		left: 2ch;
+		top: -3rem;
+		padding: 0.25rem 1ch;
+		background: var(--ncu-ink);
+		color: var(--ncu-ground);
 	}
 	.skip:focus {
-		top: 4px;
+		top: 0.5rem;
 	}
 	.sr {
 		position: absolute;
@@ -259,343 +239,238 @@ const latest = shown[0];
 		clip-path: inset(50%);
 	}
 
-	/* The page: a 760-pixel table of title band, side column, main column and status bar. */
-	.page {
-		max-width: 760px;
-		margin: 0 auto;
-		display: grid;
-		grid-template-columns: 160px 1fr;
-		grid-template-areas:
-			'band band'
-			'side main'
-			'more main'
-			'status status';
-		grid-template-rows: auto auto 1fr auto;
-		background: var(--paper);
-		border: 2px solid;
-		border-color: var(--hi) var(--dk) var(--dk) var(--hi);
-		box-shadow: 1px 1px 0 var(--ink);
+	/* Bold is the strongest ink, as a terminal shows groff's bold; underline is groff's
+	   italic, for paths. Links are the amber. */
+	b,
+	strong,
+	th,
+	h2,
+	pre {
+		color: var(--ncu-bold);
 	}
-	.band {
-		grid-area: band;
+	b,
+	strong,
+	th,
+	h2 {
+		font-weight: 700;
+	}
+	u {
+		text-decoration-thickness: 1px;
+		text-underline-offset: 3px;
+	}
+	a {
+		color: var(--ncu-accent);
+		text-decoration-thickness: 1px;
+		text-underline-offset: 3px;
+	}
+	a:hover {
+		text-decoration-thickness: 2px;
+	}
+
+	.running {
 		display: flex;
-		align-items: center;
-		gap: 16px;
-		padding: 14px 18px;
-		background: var(--band);
-		color: var(--band-ink);
+		justify-content: space-between;
+		gap: 2ch;
+		color: var(--ncu-dim);
 	}
-	.mark {
-		flex: none;
+	body > footer.running {
+		margin: 3em 0 1.5em;
 	}
 	h1 {
-		margin: 0;
-		font-size: 30px;
-		line-height: 1.1;
-		letter-spacing: 0;
+		margin: 0 0 0 7ch;
+		font-size: 1em;
+		font-weight: 400;
 	}
-	.band p {
-		margin: 2px 0 0;
-		font-size: 16px;
+	/* NAME is set as a section heading but the line under it is the page's h1, so screen
+	   readers meet the h1 first. */
+	h2,
+	.sh {
+		margin: 1.5em 0 0;
+		font-size: 1em;
+		font-weight: 700;
 	}
-	.band strong {
-		color: #ffdd77;
+	p,
+	pre,
+	dl,
+	table,
+	figure {
+		margin: 0 0 0 7ch;
 	}
-
-	.side,
-	.more {
-		background: var(--face);
-		border-right: 1px solid var(--lo);
-		padding: 14px 12px 0;
+	:is(p, pre, dl, table, figure) + :is(p, pre, dl, table, figure) {
+		margin-top: 1em;
 	}
-	.side {
-		grid-area: side;
+	pre + pre {
+		margin-top: 0.25em;
 	}
-	.more {
-		grid-area: more;
-		padding-bottom: 16px;
-		font-size: 15px;
+	pre,
+	code {
+		font: inherit;
 	}
-	.side ul {
-		list-style: none;
-		margin: 0;
-		padding: 0;
+	pre {
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		padding: 0.15em 1ch;
+		background: var(--ncu-plate);
+	}
+	dl {
 		display: grid;
-		gap: 6px;
+		grid-template-columns: 11ch 1fr;
+		gap: 0.25em 2ch;
 	}
-	.bevel {
-		display: block;
-		padding: 3px 8px;
-		background: var(--face);
-		border: 2px solid;
-		border-color: var(--hi) var(--dk) var(--dk) var(--hi);
-		box-shadow: inset -1px -1px 0 var(--lo);
-		color: var(--ink);
-		font-weight: 700;
-		font-size: 15px;
-		text-decoration: none;
-	}
-	.bevel:visited {
-		color: var(--ink);
-	}
-	.bevel:hover {
-		background: #efefe8;
-	}
-	.bevel:active {
-		border-color: var(--dk) var(--hi) var(--hi) var(--dk);
-		box-shadow: inset 1px 1px 0 var(--lo);
-		color: var(--ink);
-	}
-	.more h2 {
-		margin: 18px 0 6px;
-		font-size: 15px;
-		border-bottom: 1px solid var(--lo);
+	dd {
+		margin: 0;
 	}
 
-	main {
-		grid-area: main;
-		min-width: 0;
-		padding: 16px 22px 18px;
+	figure {
+		max-width: 70ch;
 	}
-	main p {
-		margin: 0 0 12px;
-	}
-	.only {
-		padding: 4px 10px;
-		background: var(--note);
-		border: 1px solid #996600;
-		font-weight: 700;
-	}
-	h2 {
-		margin: 26px 0 10px;
-		padding: 2px 8px;
-		background: var(--bar);
-		color: var(--bar-ink);
-		font-size: 19px;
-		border-top: 1px solid #9fbcbc;
-		border-bottom: 1px solid #9fbcbc;
-	}
-	h3 {
-		margin: 0 0 4px;
-		font-size: 16px;
-	}
-
-	.shot {
-		margin: 16px 0;
-	}
-	.frame {
+	.still {
 		display: block;
-		padding: 4px;
-		background: var(--face);
-		border: 2px solid;
-		border-color: var(--lo) var(--hi) var(--hi) var(--lo);
 		line-height: 0;
+		border: 1px solid var(--ncu-rule);
 	}
-	.frame img {
+	.still img {
 		display: block;
 		width: 100%;
 		height: auto;
-		border: 1px solid var(--ink);
-	}
-	.frame:focus-visible {
-		outline-offset: 3px;
 	}
 	figcaption {
-		margin: 6px 0 0;
-		font-size: 15px;
-		color: var(--ink-2);
+		margin-top: 0.5em;
+		color: var(--ncu-dim);
 	}
-	figcaption > span:last-child {
-		display: block;
-	}
-	.nw {
-		white-space: nowrap;
-	}
-
 	table {
-		width: 100%;
-		border-collapse: separate;
-		border-spacing: 2px;
-		margin: 0 0 12px;
-		border: 1px solid;
-		border-color: var(--lo) var(--hi) var(--hi) var(--lo);
-		font-size: 16px;
+		border-collapse: collapse;
 	}
-	th,
-	td {
-		padding: 3px 8px;
+	th {
 		text-align: left;
+		padding: 0 3ch 0 0;
+	}
+	td {
+		padding: 0 3ch 0 0;
 		vertical-align: top;
-		border: 1px solid;
-		border-color: var(--lo) var(--hi) var(--hi) var(--lo);
-	}
-	tbody th,
-	thead th {
-		background: var(--face);
-		font-weight: 700;
-	}
-	.facts th {
-		width: 108px;
-	}
-	.releases td:first-child,
-	.releases td:nth-child(2) {
-		white-space: nowrap;
 		font-variant-numeric: tabular-nums;
 	}
-
-	.steps {
-		margin: 0 0 12px;
-		padding-left: 24px;
+	.calls th:last-child,
+	.calls td:last-child {
+		text-align: right;
+		padding-right: 0;
 	}
-	.steps li {
-		margin-bottom: 12px;
-	}
-	.steps li::marker {
-		font-weight: 700;
-	}
-	pre {
-		margin: 4px 0 0;
-		padding: 6px 10px;
-		background: #f4f4ee;
-		border: 1px solid;
-		border-color: var(--lo) var(--hi) var(--hi) var(--lo);
-		box-shadow: inset 1px 1px 0 var(--dk);
-		font: 13.5px/1.45 var(--mono);
-		white-space: pre-wrap;
-		overflow-wrap: anywhere;
-	}
-	.or {
-		display: block;
-		margin: 4px 0 0;
-		font-style: normal;
-		font-size: 15px;
-		color: var(--ink-2);
+	.refs a {
+		white-space: nowrap;
 	}
 
-	.ledger {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 2px;
-		margin: 0 0 12px;
-		padding: 2px;
-		border: 1px solid;
-		border-color: var(--lo) var(--hi) var(--hi) var(--lo);
-	}
-	.ledger > div {
-		padding: 6px 10px 8px;
-		border: 1px solid;
-		border-color: var(--lo) var(--hi) var(--hi) var(--lo);
-	}
-	.ledger > div + div {
-		background: #fff8ee;
-	}
-	.ledger ul {
-		margin: 0;
-		padding-left: 18px;
-		font-size: 16px;
-	}
-
-	.status {
-		grid-area: status;
+	/* less's status line, in reverse video at the bottom of the window. Where the browser
+	   can tie an animation to scrolling, it shows how far down the page you are, as less does. */
+	.less {
+		position: sticky;
+		bottom: 0;
 		display: flex;
 		flex-wrap: wrap;
-		gap: 3px;
-		padding: 3px;
-		background: var(--face);
-		border-top: 1px solid var(--lo);
-		font-size: 14px;
+		gap: 0 2ch;
+		padding: 0.2rem 2ch;
+		background: var(--ncu-ink);
+		color: var(--ncu-ground);
 	}
-	.status span {
-		flex: 1 1 auto;
-		padding: 1px 8px;
-		border: 1px solid;
-		border-color: var(--lo) var(--hi) var(--hi) var(--lo);
+	.less .prompt {
+		margin-right: auto;
 	}
-	.status span:last-child {
-		flex: 0 0 auto;
+	.less a {
+		color: var(--ncu-ground);
+	}
+	.less a:focus-visible {
+		outline-color: var(--ncu-ground);
+	}
+	@property --ncu-read {
+		syntax: '<integer>';
+		inherits: true;
+		initial-value: 0;
+	}
+	@supports (animation-timeline: scroll()) {
+		.less {
+			animation: ncu-read linear both;
+			animation-timeline: scroll(root);
+		}
+		.pct::before {
+			counter-reset: read var(--ncu-read);
+			content: ' ' counter(read) '%';
+		}
+	}
+	@keyframes ncu-read {
+		to {
+			--ncu-read: 100;
+		}
 	}
 
-	/* Phones: one column, the side buttons in a row under the band. */
-	@media (max-width: 640px) {
+	@media (max-width: 40rem) {
 		html {
-			font-size: 16px;
+			font-size: 14px;
 		}
-		body {
-			padding: 0;
+		body > header,
+		main,
+		body > footer {
+			padding-inline: 1.5ch;
 		}
-		.page {
+		h1,
+		p,
+		pre,
+		dl,
+		table,
+		figure {
+			margin-left: 3ch;
+		}
+		dl {
 			grid-template-columns: 1fr;
-			grid-template-areas: 'band' 'side' 'main' 'more' 'status';
-			grid-template-rows: auto;
-			border: 0;
-			box-shadow: none;
+			gap: 0;
 		}
-		.band {
-			padding: 12px;
-			gap: 12px;
+		dd {
+			margin: 0 0 0.5em 3ch;
 		}
-		h1 {
-			font-size: 24px;
+		.running .mid {
+			display: none;
 		}
-		.side {
-			border-right: 0;
-			border-bottom: 1px solid var(--lo);
-			padding: 8px;
+		td {
+			padding-right: 1.5ch;
 		}
-		.side ul {
-			grid-template-columns: repeat(3, minmax(0, 1fr));
+		td code {
+			overflow-wrap: anywhere;
 		}
-		.bevel {
-			text-align: center;
-			padding: 3px 4px;
+		.less {
+			padding-inline: 1.5ch;
 		}
-		.more {
-			border-right: 0;
-			border-top: 1px solid var(--lo);
+		.less .wide {
+			display: none;
 		}
-		main {
-			padding: 12px 12px 16px;
-		}
-		.ledger {
-			grid-template-columns: 1fr;
+		td:nth-child(2) {
+			white-space: nowrap;
 		}
 	}
 
-	@media (max-width: 380px) {
-		.side ul {
-			grid-template-columns: repeat(2, minmax(0, 1fr));
-		}
-	}
-
-	/* On paper: no side column or buttons, and each outside link's address after it. */
+	/* On paper: black on white, without the status line, each outside link's address after it. */
 	@media print {
-		html,
-		body {
+		html {
 			background: #fff;
-			padding: 0;
+			color: #000;
+			font-size: 11pt;
 		}
-		.page {
-			display: block;
-			border: 0;
-			box-shadow: none;
+		b,
+		strong,
+		th,
+		h2,
+		pre,
+		a,
+		.running,
+		figcaption {
+			color: #000;
 		}
-		.side,
-		.more,
-		.status,
+		pre {
+			background: none;
+		}
+		.less,
 		.skip {
 			display: none;
 		}
-		.band {
-			background: none;
-			color: #000;
-			border-bottom: 2px solid #000;
-		}
-		.band strong {
-			color: #000;
-		}
 		main a[href^='http']::after {
 			content: ' <' attr(href) '>';
-			font-size: 0.85em;
 			word-break: break-all;
 		}
 	}

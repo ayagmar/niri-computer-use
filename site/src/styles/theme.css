@@ -1,81 +1,103 @@
-/* The docs pages' colours and type: Starlight's greys run from the ink to the concrete
-   ground, links and the current page are ink, and titles are narrow, heavy Archivo. Red stays
-   for the stop key and for warnings. */
+/* The docs pages as the rest of the man page: Starlight's greys run from the ground to the
+   bold ink in `tokens.css`'s colours, everything is set in the one monospace, section
+   headings are capitals as in man, and links are the amber. Starlight's own styles sit in
+   cascade layers, so these win without matching their selectors. */
 
 :root {
-	--sl-font: var(--ncu-sans);
-	--sl-font-mono: var(--ncu-mono); /* taste-skill-ignore: code only */
+	--sl-font: var(--ncu-mono);
+	--sl-font-mono: var(--ncu-mono);
 
-	--sl-color-white: #e6e8e3;
-	--sl-color-gray-1: #d3d7d1;
-	--sl-color-gray-2: #b9bfba;
-	--sl-color-gray-3: #8a918c;
-	--sl-color-gray-4: #5d645f;
-	--sl-color-gray-5: #343a36;
-	--sl-color-gray-6: #1f2320;
-	--sl-color-black: #161917;
+	/* In the light theme Starlight's "white" is the darkest ink and its "black" the ground. */
+	--sl-color-white: var(--ncu-bold);
+	--sl-color-gray-1: light-dark(#1d1c18, #e2ded1);
+	--sl-color-gray-2: var(--ncu-ink);
+	--sl-color-gray-3: var(--ncu-dim);
+	--sl-color-gray-4: light-dark(#8a8578, #6d6a60);
+	--sl-color-gray-5: var(--ncu-rule);
+	--sl-color-gray-6: light-dark(#ebe7da, #1b1a17);
+	--sl-color-gray-7: light-dark(#f1eee4, #151512);
+	--sl-color-black: var(--ncu-ground);
 
-	--sl-color-accent-low: #1f2320;
-	--sl-color-accent: #b9bfba;
-	--sl-color-accent-high: #e6e8e3;
+	--sl-color-accent-low: var(--ncu-select);
+	--sl-color-accent: var(--ncu-accent);
+	--sl-color-accent-high: light-dark(#5c3800, #f0c062);
 
-	--sl-color-bg-nav: var(--sl-color-black);
-	--sl-color-bg-sidebar: var(--sl-color-black);
+	/* Notes and tips in the amber, cautions orange, danger in the stop red. */
+	--sl-color-blue-low: var(--ncu-select);
+	--sl-color-blue: var(--ncu-accent);
+	--sl-color-blue-high: light-dark(#5c3800, #f0c062);
+	--sl-color-purple-low: var(--ncu-select);
+	--sl-color-purple: var(--ncu-accent);
+	--sl-color-purple-high: light-dark(#5c3800, #f0c062);
 	--sl-color-red: var(--ncu-stop);
+	--sl-color-red-high: light-dark(#7d1a14, #ffb3a8);
+	--sl-color-red-low: light-dark(#f6d9d4, #3a1a16);
 
-	--sl-content-width: 46rem;
+	--sl-color-bg-nav: var(--ncu-ground);
+	--sl-color-bg-sidebar: var(--ncu-ground);
+	--sl-color-hairline: var(--ncu-rule);
+	--sl-color-hairline-light: var(--ncu-rule);
+	--sl-color-hairline-shade: var(--ncu-rule);
+
+	--sl-text-h1: 1.75rem;
+	--sl-text-h2: 1.125rem;
+	--sl-text-h3: 1rem;
+	--sl-text-h4: 1rem;
+	--sl-text-code: 0.9375rem;
+	--sl-line-height: 1.65;
+	--sl-content-width: 48rem;
 }
 
-:root[data-theme='light'] {
-	--sl-color-white: #0c0e0d;
-	--sl-color-gray-1: #1d211f;
-	--sl-color-gray-2: #2d332f;
-	--sl-color-gray-3: #464c48;
-	--sl-color-gray-4: #6c736e;
-	--sl-color-gray-5: #b8bdb7;
-	--sl-color-gray-6: #dcdfd9;
-	--sl-color-gray-7: #e1e4de;
-	--sl-color-black: #e6e8e3;
-
-	--sl-color-accent-low: #dcdfd9;
-	--sl-color-accent: #0c0e0d;
-	--sl-color-accent-high: #2d332f;
-
-	--sl-color-bg-nav: var(--sl-color-black);
+/* On a phone the monospace runs wide, so its text is a step smaller. */
+@media (max-width: 50rem) {
+	:root {
+		--sl-text-body: 0.9375rem;
+	}
 }
 
-/* The wordmark, which holds still while pages crossfade. */
+/* The site title in the header, bold as man sets a command's name. */
 .site-title {
-	font-weight: 760;
-	font-stretch: 88%;
-	font-size: clamp(1.0625rem, 1rem + 0.3vw, 1.25rem);
-	letter-spacing: -0.01em;
+	font-size: 1rem;
+	font-weight: 700;
 	color: var(--sl-color-white);
 }
 
-/* Page titles and section headings in narrow, heavy poster type. */
+/* The current page in the sidebar in reverse video, as less shows its status line and the
+   home page its pager line. */
+.sidebar-content [aria-current='page'],
+.sidebar-content [aria-current='page']:hover,
+.sidebar-content [aria-current='page']:focus {
+	color: var(--ncu-ground);
+	background-color: var(--ncu-ink);
+}
+
+/* The page title under its running head, then section headings in man's capitals. */
 h1#_top {
-	font-weight: 840;
-	font-stretch: 72%;
-	font-size: clamp(2.5rem, 1.6rem + 3vw, 3.75rem);
-	line-height: 0.95;
-	letter-spacing: -0.025em;
+	font-size: var(--sl-text-h1);
+	font-weight: 700;
+	letter-spacing: 0;
 }
 
-.sl-markdown-content :is(h2, h3) {
-	font-weight: 760;
-	font-stretch: 84%;
-	letter-spacing: -0.015em;
+.sl-markdown-content h2 {
+	text-transform: uppercase;
+	font-weight: 700;
+	letter-spacing: 0.02em;
 }
 
-/* Code in headings, as on the error reference: no chip, a little smaller. */
+.sl-markdown-content :is(h3, h4) {
+	font-weight: 700;
+}
+
+/* Code in headings, as on the error reference: no chip, the heading's size. */
 .sl-markdown-content :is(h2, h3) code {
 	background: none;
 	padding: 0;
-	font-size: 0.85em;
+	font-size: 1em;
+	text-transform: none;
 }
 
 .sl-markdown-content a:not(:where(.not-content *)) {
+	color: var(--sl-color-text-accent);
 	text-underline-offset: 0.2em;
 	text-decoration-thickness: 1px;
 }
@@ -84,15 +106,46 @@ h1#_top {
 	text-decoration-thickness: 2px;
 }
 
+/* Bold as man's bold: the strongest ink. */
+.sl-markdown-content :is(strong, b) {
+	color: var(--sl-color-white);
+}
+
 /* Reference tables: keep code in the first column on one line. */
 .sl-markdown-content table td:first-child code {
 	white-space: nowrap;
 }
 
-/* Stills from nested runs sit on the recordings' black plate. */
+/* On a phone the cells' padding halves and long code in the other columns breaks, so most
+   tables fit the screen. */
+@media (max-width: 50rem) {
+	.sl-markdown-content table code {
+		overflow-wrap: anywhere;
+	}
+
+	.sl-markdown-content :is(th, td) {
+		padding-inline: 0.5rem;
+	}
+
+	/* A table still too wide to fit scrolls, and a shade at the cut edge says so: the ground
+	   covers each shade until the table scrolls that way. */
+	.sl-markdown-content table {
+		background:
+			linear-gradient(to right, var(--ncu-ground) 30%, transparent) left / 2rem 100%,
+			linear-gradient(to left, var(--ncu-ground) 30%, transparent) right / 2rem 100%,
+			linear-gradient(to right, color-mix(in srgb, var(--ncu-dim) 45%, transparent), transparent)
+				left / 0.75rem 100%,
+			linear-gradient(to left, color-mix(in srgb, var(--ncu-dim) 45%, transparent), transparent)
+				right / 0.75rem 100%;
+		background-repeat: no-repeat;
+		background-attachment: local, local, scroll, scroll;
+	}
+}
+
+/* Stills from nested runs sit on the code plate. */
 .sl-markdown-content img {
 	background: var(--ncu-plate);
-	border-radius: 4px;
+	border-radius: 2px;
 }
 
 /* On a touch screen, heading anchors and code copy buttons are at least 44px to tap. */
