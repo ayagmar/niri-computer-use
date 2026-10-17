@@ -273,14 +273,15 @@ mod script {
         assert!(release.tmp_is_empty());
     }
 
-    /// A fake agent CLI that appends each call's arguments to `<HOME>/<program>-calls`.
+    /// A fake agent CLI that appends each call's arguments to `<HOME>/<program>-calls`, one
+    /// per line and an empty line after the call, so a split or joined argument shows.
     /// `mcp get niri-computer-use` succeeds once `<HOME>/<program>-registered` exists, and
     /// `mcp add` creates it, or fails when `<HOME>/<program>-refuses` exists.
     fn fake_agent(release: &Release, program: &str) {
         release.fake(
             program,
             &format!(
-                "echo \"$*\" >> \"$HOME/{program}-calls\"\n\
+                "printf '%s\\n' \"$@\" '' >> \"$HOME/{program}-calls\"\n\
                  case \"$1 $2\" in\n\
                  'mcp get') test -e \"$HOME/{program}-registered\" ;;\n\
                  'mcp add') if [ -e \"$HOME/{program}-refuses\" ]; then echo 'error: no'; exit 1; fi; : > \"$HOME/{program}-registered\" ;;\n\
@@ -290,8 +291,30 @@ mod script {
         );
     }
 
-    fn calls(release: &Release, program: &str) -> String {
-        std::fs::read_to_string(release.home().join(format!("{program}-calls"))).unwrap_or_default()
+    /// Each call's arguments, in order.
+    fn calls(release: &Release, program: &str) -> Vec<Vec<String>> {
+        let log = std::fs::read_to_string(release.home().join(format!("{program}-calls")))
+            .unwrap_or_default();
+        let mut calls = Vec::new();
+        let mut call = Vec::new();
+        for line in log.lines() {
+            if line.is_empty() {
+                calls.push(std::mem::take(&mut call));
+            } else {
+                call.push(line.to_owned());
+            }
+        }
+        calls
+    }
+
+    /// The arguments of `mcp add`: `words` split at spaces, then the binary and `serve`.
+    fn add_call(words: &str, binary: &Path) -> Vec<String> {
+        let binary = binary.display().to_string();
+        words
+            .split(' ')
+            .map(str::to_owned)
+            .chain([binary, "serve".to_owned()])
+            .collect()
     }
 
     #[tokio::test]
@@ -305,16 +328,20 @@ mod script {
 
         assert!(output.status.success(), "{output:?}");
         let binary = release.home().join(".local/bin/niri-computer-use");
-        let b = binary.display();
         assert_eq!(
             calls(&release, "claude"),
-            format!(
-                "mcp get niri-computer-use\nmcp add --scope user niri-computer-use -- {b} serve\n"
-            )
+            [
+                vec![
+                    "mcp".to_owned(),
+                    "get".to_owned(),
+                    "niri-computer-use".to_owned()
+                ],
+                add_call("mcp add --scope user niri-computer-use --", &binary),
+            ]
         );
         assert_eq!(
             calls(&release, "codex"),
-            format!("mcp add niri-computer-use -- {b} serve\n")
+            [add_call("mcp add niri-computer-use --", &binary)]
         );
         let stdout = String::from_utf8(output.stdout).unwrap();
         assert!(stdout.contains("Registered in Claude Code."), "{stdout}");
@@ -333,7 +360,10 @@ mod script {
         let output = release.install(&[("NCU_REGISTER", "1")]).await;
 
         assert!(output.status.success(), "{output:?}");
-        assert_eq!(calls(&release, "claude"), "mcp get niri-computer-use\n");
+        assert_eq!(
+            calls(&release, "claude"),
+            [["mcp", "get", "niri-computer-use"]]
+        );
         let stdout = String::from_utf8(output.stdout).unwrap();
         assert!(
             stdout.contains("Already registered in Claude Code"),
@@ -378,8 +408,8 @@ mod script {
 
         assert!(unset.status.success(), "{unset:?}");
         assert!(off.status.success(), "{off:?}");
-        assert_eq!(calls(&release, "claude"), "");
-        assert_eq!(calls(&release, "pi"), "");
+        assert_eq!(calls(&release, "claude"), Vec::<Vec<String>>::new());
+        assert_eq!(calls(&release, "pi"), Vec::<Vec<String>>::new());
         let binary = release.home().join(".local/bin/niri-computer-use");
         for output in [unset, off] {
             let stdout = String::from_utf8(output.stdout).unwrap();
@@ -398,6 +428,79 @@ mod script {
         }
     }
 
+    /// The agents after Claude Code, Pi and Codex, each with the arguments its `mcp add`
+    /// takes for a stdio server in the user's config, whatever the working directory.
+    const MORE_AGENTS: [(&str, &str, &str); 4] = [
+        ("amp", "Amp", "mcp add niri-computer-use --"),
+        (
+            "copilot",
+            "GitHub Copilot CLI",
+            "mcp add niri-computer-use --",
+        ),
+        (
+            "gemini",
+            "Gemini CLI",
+            "mcp add --scope user niri-computer-use",
+        ),
+        (
+            "qwen",
+            "Qwen Code",
+            "mcp add --scope user niri-computer-use",
+        ),
+    ];
+
+    #[tokio::test]
+    async fn amp_copilot_gemini_and_qwen_are_registered_at_user_scope() {
+        let release = Release::new("more-agents", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        for (program, _, _) in MORE_AGENTS {
+            fake_agent(&release, program);
+        }
+
+        let output = release.install(&[("NCU_REGISTER", "1")]).await;
+
+        assert!(output.status.success(), "{output:?}");
+        let binary = release.home().join(".local/bin/niri-computer-use");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        for (program, agent, add) in MORE_AGENTS {
+            assert_eq!(
+                calls(&release, program),
+                [add_call(add, &binary)],
+                "{program}"
+            );
+            assert!(
+                stdout.contains(&format!("Registered in {agent}.")),
+                "{stdout}"
+            );
+            assert!(!stdout.contains(&format!("{program} mcp add")), "{stdout}");
+        }
+    }
+
+    #[tokio::test]
+    async fn amp_copilot_gemini_and_qwen_are_left_alone_when_declined() {
+        let release = Release::new("more-declined", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        for (program, _, _) in MORE_AGENTS {
+            fake_agent(&release, program);
+        }
+
+        let output = release.install(&[("NCU_REGISTER", "0")]).await;
+
+        assert!(output.status.success(), "{output:?}");
+        let binary = release.home().join(".local/bin/niri-computer-use");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        for (program, _, add) in MORE_AGENTS {
+            assert_eq!(
+                calls(&release, program),
+                Vec::<Vec<String>>::new(),
+                "{program}"
+            );
+            let command = format!("{program} {add} \"{}\" serve", binary.display());
+            assert!(stdout.contains(&command), "{stdout}");
+        }
+        assert!(!stdout.contains("Registered in"), "{stdout}");
+    }
+
     #[tokio::test]
     async fn an_unknown_ncu_register_value_is_refused_before_anything_is_registered() {
         let release = Release::new("bad-register", "x86_64");
@@ -409,7 +512,7 @@ mod script {
         assert!(!output.status.success());
         let stderr = String::from_utf8(output.stderr).unwrap();
         assert!(stderr.contains("NCU_REGISTER must be 1 or 0"), "{stderr}");
-        assert_eq!(calls(&release, "claude"), "");
+        assert_eq!(calls(&release, "claude"), Vec::<Vec<String>>::new());
     }
 
     #[tokio::test]

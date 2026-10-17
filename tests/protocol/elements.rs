@@ -301,6 +301,37 @@ async fn a_field_that_reformats_or_caps_its_text_differs() {
     assert_eq!(kept["effect"], "seen", "{kept}");
 }
 
+// `type_text` refused text ending with a tool-call closing tag an agent leaked, but
+// `set_element_text` set it, so the tag landed in the user's field.
+#[tokio::test]
+async fn text_ending_with_a_leaked_tool_call_tag_is_refused_and_nothing_is_set() {
+    let mut desk = Desk::start("el-leaked-tag").await;
+    let entry = desk.element("Field").await;
+    let leaked = concat!("Done.\n", "<", "/parameter>\n", "<", "/invoke>");
+    let refused = desk
+        .server
+        .call(
+            "set_element_text",
+            json!({"element": entry, "text": leaked, "expect": {"window_id": WINDOW}}),
+        )
+        .await;
+    let (name, detail) = tool_error(&refused);
+    assert_eq!(name, "leaked_tag", "{refused}");
+    assert!(detail.ends_with("nothing was set"), "{detail}");
+    assert_eq!(desk.mock.calls("SetTextContents"), 0);
+    let audit = std::fs::read_to_string(desk.fixture.audit_log()).unwrap();
+    assert!(!audit.contains("Done."), "{audit}");
+    assert!(!audit.contains("/parameter"), "{audit}");
+    let line = desk.fixture.audit_lines().pop().unwrap();
+    assert_eq!(line["args"]["text_len"], leaked.chars().count(), "{line}");
+    assert_eq!(line["error"], "leaked_tag", "{line}");
+
+    let balanced = concat!("<", "parameter>a", "<", "/parameter>");
+    let set = set_entry(&mut desk, balanced).await;
+    assert_eq!(set["observed"], "matched", "{set}");
+    assert_eq!(desk.mock.object("/entry").text.as_deref(), Some(balanced));
+}
+
 /// Text only the field holds, which must reach neither the result nor the audit log.
 const TEXT_SENTINEL: &str = "PRIVATE-FIELD-SENTINEL";
 

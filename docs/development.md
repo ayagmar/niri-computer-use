@@ -355,7 +355,7 @@ One server holds the lease, and 30 rounds each call `focus` on the empty workspa
 
 ## Nested upgrade checks
 
-`make nested-upgrade` checks an upgrade from each published release to this checkout's release build, in shared mode, with Noctalia as the lock source and `wev` to type into. It runs one nested session per release in `UPGRADE_FROM`, `0.1.0 0.1.1 0.1.2` by default, each with a 240-second deadline, and needs the network to download them:
+`make nested-upgrade` checks an upgrade from each published release to this checkout's release build, in shared mode, with Noctalia as the lock source and `wev` to type into. It runs one nested session per release in `UPGRADE_FROM`, by default every `v*` tag in the clone, oldest first, each with a 240-second deadline, and needs the network to download them:
 
 ```sh
 make nested-upgrade
@@ -552,7 +552,7 @@ cargo test --locked --test install
 
 A `v*` tag can't be moved or deleted, and a crates.io version can't be replaced, so each step checks what the next one freezes.
 
-1. On the release branch, run `make nested-upgrade` with every published release in `UPGRADE_FROM` and check that it passes; after the release, add it to `UPGRADE_FROM`'s default.
+1. On the release branch, run `make nested-upgrade` and check that it passes. It upgrades from every `v*` tag, so run `git fetch --tags` first.
 2. Merge the release branch into `main`. It dates the version's `CHANGELOG.md` section as `## <version> - <date>`, keeping the space after the version that the workflow looks for, and names the version in the Install page's download links.
 3. Wait for `main`'s CI to pass on the merge commit:
 

@@ -1,10 +1,11 @@
-//! Tool-call closing tags an agent leaked into the end of `type_text`'s text. Models
-//! sometimes carry their own tool-call markup, such as `[/parameter]` or `[/invoke]` (with
-//! angle brackets; written with square ones here), past the end of a long argument, and a
-//! tag typed into a chat box with `submit` can't be taken back. Only a trailing run counts,
-//! only of known tag names, and only the closing tags after the last one that an opening
-//! tag of the same name earlier in the text balances, each opening tag balancing one
-//! closing tag, so a document that opens and closes such tags goes out as it is.
+//! Tool-call closing tags an agent leaked into the end of `type_text`'s or
+//! `set_element_text`'s text. Models sometimes carry their own tool-call markup, such as
+//! `[/parameter]` or `[/invoke]` (with angle brackets; written with square ones here), past
+//! the end of a long argument, and a tag typed into a chat box with `submit` can't be
+//! taken back. Only a trailing run counts, only of known tag names, and only the closing
+//! tags after the last one that an opening tag of the same name earlier in the text
+//! balances, each opening tag balancing one closing tag, so a document that opens and
+//! closes such tags goes out as it is.
 
 use std::fmt;
 
@@ -24,7 +25,7 @@ const NAMES: [&str; 10] = [
 
 /// A trailing run of leaked closing tags.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Leaked {
+pub(crate) struct Leaked {
     /// How many tags the run holds.
     pub(super) tags: usize,
     /// Each tag name once, in the order the run first has it.
@@ -34,7 +35,7 @@ pub(super) struct Leaked {
 /// The closing tags with known names at the end of `text`, ignoring whitespace between and
 /// after them, after the last one an opening tag earlier in `text` balances; none when the
 /// last is balanced or `text` doesn't end with one.
-pub(super) fn leaked(text: &str) -> Option<Leaked> {
+pub(crate) fn leaked(text: &str) -> Option<Leaked> {
     let (before, run) = trailing_run(text);
     let mut open = unclosed(before);
     // Each opening tag still open before the run balances one of its closing tags, in

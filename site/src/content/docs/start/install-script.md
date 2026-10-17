@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-`install.sh` is a POSIX shell script of about 110 lines, published with every release. Read it before you run it: it is written to be read, and this page is only a summary of it. It needs `curl`, `tar`, `sha256sum`, `uname` and `mktemp`, and runs on x86_64 and aarch64 Linux, the machines there are release builds for. On anything else it says so and stops.
+`install.sh` is a POSIX shell script, published with every release. Read it before you run it: it is written to be read, and this page is only a summary of it. It needs `curl`, `tar`, `sha256sum`, `uname` and `mktemp`, and runs on x86_64 and aarch64 Linux, the machines there are release builds for. On anything else it says so and stops.
 
 ```sh
 curl -fsSLO https://github.com/ayagmar/niri-computer-use/releases/latest/download/install.sh
@@ -69,15 +69,19 @@ NCU_BIN_DIR=~/bin sh install.sh
 
 ## Registering in your agents
 
-After the files are in place, the script looks for `claude`, `pi` and `codex` on `PATH`. For each one it finds it asks, when its output is a terminal, whether to register the server now, and shows the command it would run:
+After the files are in place, the script looks for `claude`, `pi`, `codex`, `amp`, `copilot`, `gemini` and `qwen` on `PATH`. For each one it finds it asks, when its output is a terminal, whether to register the server now, and shows the command it would run:
 
 ```sh
 claude mcp add --scope user niri-computer-use -- ~/.local/bin/niri-computer-use serve
 pi mcp add niri-computer-use --exposure direct -- ~/.local/bin/niri-computer-use serve
 codex mcp add niri-computer-use -- ~/.local/bin/niri-computer-use serve
+amp mcp add niri-computer-use -- ~/.local/bin/niri-computer-use serve
+copilot mcp add niri-computer-use -- ~/.local/bin/niri-computer-use serve
+gemini mcp add --scope user niri-computer-use ~/.local/bin/niri-computer-use serve
+qwen mcp add --scope user niri-computer-use ~/.local/bin/niri-computer-use serve
 ```
 
-These are the agents' own commands, the same ones [Client setup](../clients/) gives, so no config file is edited by the script. An agent that already has `niri-computer-use` registered (checked with `claude mcp get` for Claude Code) is left as it is. An agent that refuses the command doesn't fail the install: the script prints the agent's last line of output and lists the command under the next steps for you to run. With `NCU_REGISTER=1` it registers in every agent found without asking, for unattended installs; with `NCU_REGISTER=0`, or when the output isn't a terminal and the variable is unset, it registers in none and prints the commands instead.
+These are the agents' own commands, the same ones [Client setup](../clients/) gives, so no config file is edited by the script. Each command writes the agent's user config, not a project's, whichever directory you run the script from. Claude Code is asked first with `claude mcp get`, and an existing registration is left as it is. Gemini CLI and Qwen Code replace an existing entry with the same command. Amp refuses a name it already has, so a second install reports that refusal for Amp; the registration from the first stays. An agent that refuses the command doesn't fail the install: the script prints the agent's last line of output and lists the command under the next steps for you to run. With `NCU_REGISTER=1` it registers in every agent found without asking, for unattended installs; with `NCU_REGISTER=0`, or when the output isn't a terminal and the variable is unset, it registers in none and prints the commands instead.
 
 ## Update
 
@@ -92,7 +96,7 @@ rm -f ~/.local/bin/niri-computer-use ~/.claude/skills/niri-computer-use ~/.agent
 rm -r ~/.local/share/niri-computer-use
 ```
 
-To unregister the server from an agent the script registered it in, use the agent's own command: `claude mcp remove --scope user niri-computer-use`, `pi mcp remove niri-computer-use` or `codex mcp remove niri-computer-use`.
+To unregister the server from an agent the script registered it in, use the agent's own command: `claude mcp remove --scope user niri-computer-use`, `pi mcp remove niri-computer-use`, `codex mcp remove niri-computer-use`, `amp mcp remove niri-computer-use`, `copilot mcp remove niri-computer-use`, `gemini mcp remove --scope user niri-computer-use` or `qwen mcp remove niri-computer-use`. Amp's `remove` looks in the workspace settings first and falls back to `~/.config/amp/settings.json`, so run it from outside any project with its own `niri-computer-use` entry.
 
 If the script said it replaced or left one of the skill or plugin paths, that path wasn't its own: leave it out of the first `rm`, and point a replaced link back where the script said it pointed.
 
