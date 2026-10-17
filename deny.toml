@@ -1,7 +1,11 @@
 [advisories]
 yanked = "deny"
 unmaintained = "all"
-ignore = []
+ignore = [
+    { id = "RUSTSEC-2026-0370", reason = "zvariant: zbus 6.0.0 (2026-10-16) merged it into zbus; upgrade once that release is seven days old, 2026-10-23" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names: zbus 6.0.0 (2026-10-16) merged it into zbus; upgrade once that release is seven days old, 2026-10-23" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: zbus 6.0.0 (2026-10-16) merged it into zbus; upgrade once that release is seven days old, 2026-10-23" },
+]
 
 [licenses]
 unused-allowed-license = "allow"

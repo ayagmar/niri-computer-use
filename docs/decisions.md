@@ -1939,3 +1939,9 @@ Dependabot's six open updates, taken together and checked against the version ru
 | `actions/download-artifact` | v8.0.1 | v8.0.2 | 2026-10-07 | `9000827ccba6bdab643e8b6fd33ac0654aef8333`, in `release.yml`. |
 
 Each action's commit is the one its tag names in the action's repository (`git ls-remote`), the same as in Dependabot's pull requests.
+
+## 2026-10-17: zbus's merged crates, ignored for a week
+
+- RUSTSEC-2026-0370, -0371 and -0372 mark `zvariant`, `zbus_names` and `zvariant_derive` unmaintained: zbus 6.0.0, published 2026-10-16, merged them into zbus, and zbus 5.19.0 still depends on them. `cargo deny check` failed on `main` with no change of ours.
+- The fix is zbus 6, but the rule is a release at least seven days old, and an unmaintained notice isn't a security fix. `deny.toml` ignores the three advisories by id, each with that reason, until 2026-10-23, when the upgrade to zbus 6 removes them and the ignores together.
+
