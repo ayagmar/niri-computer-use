@@ -66,20 +66,35 @@ impl Tail {
     /// then the one the path names now from its start; one cut short is read from its
     /// start. While the path names none, only the file read so far is followed.
     pub(crate) fn poll(&mut self) -> io::Result<Vec<Vec<u8>>> {
-        let (mut lines, more) = self.read()?;
-        if more {
-            return Ok(lines);
-        }
+        let named = self.named()?;
+        self.poll_after(named)
+    }
+
+    /// The file the path names now, when it isn't the one read so far.
+    fn named(&self) -> io::Result<Option<File>> {
         let file = match File::open(&self.path) {
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(lines),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             opened => opened?,
         };
-        if !self.reading(&file)? {
-            self.file = Some(file);
-            self.offset = 0;
-            self.lines = Lines::default();
-            lines.extend(self.read()?.0);
-        }
+        Ok(if self.reading(&file)? {
+            None
+        } else {
+            Some(file)
+        })
+    }
+
+    /// Reads the file read so far to its end, then `named`, the file that replaced it. The
+    /// old one is read after `named` was opened, so what was appended to it before it was
+    /// moved aside is read too.
+    fn poll_after(&mut self, named: Option<File>) -> io::Result<Vec<Vec<u8>>> {
+        let (mut lines, more) = self.read()?;
+        let Some(file) = named.filter(|_| !more) else {
+            return Ok(lines);
+        };
+        self.file = Some(file);
+        self.offset = 0;
+        self.lines = Lines::default();
+        lines.extend(self.read()?.0);
         Ok(lines)
     }
 
@@ -174,6 +189,22 @@ mod tests {
         append(&path, "new\n");
         assert_eq!(texts(tail.poll().unwrap()), ["unread", "new"]);
         assert_eq!(tail.poll().unwrap(), NONE);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A call appended and the log moved aside after the new log was opened, but before
+    /// the old one was read to its end, is still read.
+    #[test]
+    fn reads_what_was_appended_while_the_log_was_moved_aside_during_a_poll() {
+        let dir = crate::test_support::fresh_dir("watch-rotate-race");
+        let path = dir.join("audit.jsonl");
+        append(&path, "old\n");
+        let (mut tail, _) = Tail::open(path.clone(), 0);
+        std::fs::rename(&path, dir.join("audit.jsonl.1")).unwrap();
+        append(&path, "new\n");
+        let named = tail.named().unwrap();
+        append(&dir.join("audit.jsonl.1"), "unread\n");
+        assert_eq!(texts(tail.poll_after(named).unwrap()), ["unread", "new"]);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
