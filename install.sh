@@ -8,8 +8,9 @@
 # NCU_BIN_DIR       where the binary goes; ~/.local/bin by default
 # NCU_RELEASES_URL  where the releases are; the GitHub repository's by default
 # NCU_REGISTER      1 registers the server in every agent found on PATH (claude, pi,
-#                   codex) without asking, 0 registers in none; unset asks per agent
-#                   when the output is a terminal, and otherwise registers in none
+#                   codex, amp, copilot, gemini, qwen) without asking, 0 registers in
+#                   none; unset asks per agent when the output is a terminal, and
+#                   otherwise registers in none
 set -eu
 
 releases=${NCU_RELEASES_URL:-https://github.com/ayagmar/niri-computer-use/releases}
@@ -175,6 +176,14 @@ try_register Pi pi "pi mcp add niri-computer-use --exposure direct -- \"${binary
 	pi mcp add niri-computer-use --exposure direct -- "${binary}" serve
 try_register Codex codex "codex mcp add niri-computer-use -- \"${binary}\" serve" \
 	codex mcp add niri-computer-use -- "${binary}" serve
+try_register Amp amp "amp mcp add niri-computer-use -- \"${binary}\" serve" \
+	amp mcp add niri-computer-use -- "${binary}" serve
+try_register "GitHub Copilot CLI" copilot "copilot mcp add niri-computer-use -- \"${binary}\" serve" \
+	copilot mcp add niri-computer-use -- "${binary}" serve
+try_register "Gemini CLI" gemini "gemini mcp add --scope user niri-computer-use \"${binary}\" serve" \
+	gemini mcp add --scope user niri-computer-use "${binary}" serve
+try_register "Qwen Code" qwen "qwen mcp add --scope user niri-computer-use \"${binary}\" serve" \
+	qwen mcp add --scope user niri-computer-use "${binary}" serve
 if [ -z "${registered}${todo}" ]; then
 	todo="       claude mcp add --scope user niri-computer-use -- \"${binary}\" serve
 "
