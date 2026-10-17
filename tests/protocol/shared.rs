@@ -507,6 +507,24 @@ async fn an_engine_refusing_a_client_that_requires_it_leaves_every_call_unavaila
     .await;
 }
 
+/// A client that requires the engine and had none at its start isn't offered `noctalia`
+/// while `unrestricted` is off, since no engine would serve it.
+#[tokio::test]
+async fn a_client_refused_at_its_start_is_not_offered_noctalia_without_unrestricted() {
+    let fixture = shared("required-list");
+    policy(&fixture, "shared = \"required\"\n");
+    let _niri = Niri::start(&fixture);
+    let _refusing = refusing_engine(&fixture);
+    let mut server = Server::start(&fixture).await;
+    let tools = server.tools().await;
+    let names: Vec<&str> = tools
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    assert!(names.contains(&"status"), "{names:?}");
+    assert!(!names.contains(&"noctalia"), "{names:?}");
+}
+
 /// A client that requires the engine and was refused when it started is served once the
 /// refusing engine is gone, by an engine its next call starts, without a restart. Its
 /// handshake was the engine's: the version it asked for, and the server's instructions.

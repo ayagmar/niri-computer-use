@@ -323,7 +323,7 @@ async fn serve(env: Env, given: session::Given) -> Result<(), String> {
         Err(unreached) => unreached,
     };
     if sharing == policy::Sharing::Required {
-        let tools = tools::Server::listed(settings.tools.profile());
+        let tools = tools::Server::listed(&settings);
         let Some(target) = target else {
             cli::print_error(&format!(
                 "the shared engine is required, so every tool fails with engine_unavailable: {reason}"

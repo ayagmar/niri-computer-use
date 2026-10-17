@@ -25,7 +25,7 @@ use crate::input::paste;
 use crate::input::pointer::{self, Button, Gesture, Spot};
 use crate::observe::{DEFAULT_MAX_WIDTH, Format, Rect, Target};
 use crate::policy;
-use crate::session::{Label, MAX_IN_FLIGHT, Session};
+use crate::session::{Label, MAX_IN_FLIGHT, Session, Settings};
 use crate::{elements, observe, wait};
 
 /// Optional arguments are described as their own type with their real default, without
@@ -820,10 +820,14 @@ impl Server {
         tool_router
     }
 
-    /// The tools `profile` lists, as a session without an engine lists them: none is left
+    /// The tools `settings` list, as a session without an engine lists them: none is left
     /// out for what only the engine finds, Noctalia or the accessibility bus.
-    pub(crate) fn listed(profile: policy::Profile) -> Vec<rmcp::model::Tool> {
-        Self::profile_router(profile).list_all()
+    pub(crate) fn listed(settings: &Settings) -> Vec<rmcp::model::Tool> {
+        let mut tool_router = Self::profile_router(settings.tools.profile());
+        if !settings.unrestricted.enabled() {
+            tool_router.remove_route("noctalia");
+        }
+        tool_router.list_all()
     }
 
     /// Readiness: the niri instance, niri's version and whether this server supports it,
