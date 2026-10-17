@@ -1,8 +1,14 @@
 //! The human-only control subcommands and what `status` reports about them.
 
+use std::io::Write as _;
 use std::os::unix::net::UnixListener;
+use std::process::Stdio;
+use std::time::Duration;
 
-use crate::client::{Server, run};
+use rustix::fs::{OFlags, fcntl_getfl, fcntl_setfl};
+use tokio::io::AsyncReadExt as _;
+
+use crate::client::{Server, run, subcommand_to};
 use crate::fixture::{DISPLAY, Fixture};
 use crate::session::NiriProcess;
 
@@ -128,7 +134,7 @@ async fn version_prints_the_version_without_looking_for_a_session() {
         String::from_utf8(version.stdout).unwrap(),
         format!("niri-computer-use {}\n", env!("CARGO_PKG_VERSION"))
     );
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
     let accepted = listener.accept().map(|_| ()).map_err(|error| error.kind());
     assert_eq!(accepted, Err(std::io::ErrorKind::WouldBlock));
 
@@ -136,4 +142,35 @@ async fn version_prints_the_version_without_looking_for_a_session() {
     assert!(!unknown.status.success());
     let usage = String::from_utf8(unknown.stderr).unwrap();
     assert!(usage.contains("usage: niri-computer-use serve"), "{usage}");
+}
+
+/// `watch` whose reader keeps the pipe open but stops reading ends once its write deadline
+/// passes, rather than waiting forever for the write it started.
+#[tokio::test]
+async fn watch_ends_when_its_reader_stops_reading() {
+    let fixture = Fixture::new("watch-stuck");
+    let (reader, mut writer) = std::io::pipe().unwrap();
+    let flags = fcntl_getfl(&writer).unwrap();
+    fcntl_setfl(&writer, flags | OFlags::NONBLOCK).unwrap();
+    while writer.write(&[b'x'; 4096]).is_ok() {}
+    fcntl_setfl(&writer, flags).unwrap();
+    let mut watch = subcommand_to(&fixture, "watch", Stdio::from(writer));
+    let status = tokio::time::timeout(Duration::from_secs(10), watch.wait())
+        .await
+        .expect("watch still runs 10 s after its reader stopped")
+        .unwrap();
+    let mut stderr = String::new();
+    watch
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut stderr)
+        .await
+        .unwrap();
+    assert!(!status.success());
+    assert!(
+        stderr.contains("stdout's reader took more than 5 s to read a line"),
+        "{stderr}"
+    );
+    drop(reader);
 }

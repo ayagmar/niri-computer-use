@@ -30,7 +30,8 @@ pub(crate) struct Watched {
     pub(crate) proc_root: PathBuf,
 }
 
-/// Runs `watch` for the instance `env` resolved, until stdout's reader goes away.
+/// Runs `watch` for the instance `env` resolved, until stdout's reader goes away, or ends
+/// the process once it stops reading.
 pub(crate) async fn run(env: &crate::Env) -> Result<(), String> {
     let watched = Watched {
         runtime: RuntimeDir::of(env)?,
@@ -44,7 +45,7 @@ pub(crate) async fn run(env: &crate::Env) -> Result<(), String> {
     match ended {
         Ended::ReaderGone => Ok(()),
         Ended::Write(error) => Err(format!("write to stdout: {error}")),
-        Ended::Stuck => Err(format!(
+        Ended::Stuck => crate::cli::exit_at_once(format!(
             "stdout's reader took more than {} s to read a line",
             WRITE_DEADLINE.as_secs()
         )),

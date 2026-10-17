@@ -321,13 +321,19 @@ pub(crate) async fn run(fixture: &Fixture, subcommand: &str) -> std::process::Ou
 
 /// Starts a subcommand in the fixture's environment, with stdin, stdout and stderr piped.
 pub(crate) fn subcommand(fixture: &Fixture, subcommand: &str) -> Child {
+    subcommand_to(fixture, subcommand, Stdio::piped())
+}
+
+/// Starts a subcommand in the fixture's environment, with stdout to `stdout`, and stdin
+/// and stderr piped.
+pub(crate) fn subcommand_to(fixture: &Fixture, subcommand: &str, stdout: Stdio) -> Child {
     let spawning = SPAWNING.lock().unwrap_or_else(PoisonError::into_inner);
     let child = command()
         .arg(subcommand)
         .env_clear()
         .envs(fixture.env())
         .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
+        .stdout(stdout)
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
