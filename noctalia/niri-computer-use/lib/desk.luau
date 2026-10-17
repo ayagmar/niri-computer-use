@@ -94,6 +94,10 @@ export type Desk = {
   -- Those lines, the first ERROR_LINES of them, until a JSON line follows:
   -- shown once the watch is silent.
   lastError: string?,
+  -- This watch's lines that weren't JSON since its last JSON line, the first
+  -- ERROR_LINES of them: its `problem` before hello, its `lastError` after.
+  -- Unlike those two, the service never carries it over to the next watch.
+  said: string?,
 }
 
 function M.new(): Desk
@@ -111,6 +115,7 @@ function M.new(): Desk
     settled = false,
     greeted = false,
     lastError = nil,
+    said = nil,
   }
 end
 
@@ -241,7 +246,7 @@ local function hello(desk: Desk, event: any)
   desk.version = if type(event.version) == "string" then event.version else nil
 end
 
--- Adds a line to watch's last words, keeping the first ERROR_LINES.
+-- Adds a line to what watch said, keeping the first ERROR_LINES.
 local function lastWords(said: string?, line: string): string
   if said == nil then
     return line
@@ -260,6 +265,7 @@ function M.feed(desk: Desk, event: any, raw: string, nowMs: number, tr: Tr): { C
   local kind = if type(event) == "table" then event.event else nil
   if kind ~= nil then
     desk.lastError = nil
+    desk.said = nil
   end
   if kind == "hello" then
     hello(desk, event)
@@ -274,10 +280,13 @@ function M.feed(desk: Desk, event: any, raw: string, nowMs: number, tr: Tr): { C
   elseif kind == nil and raw:find("usage: niri-computer-use", 1, true) then
     -- A build before `watch` prints its usage line for the unknown subcommand.
     desk.problem = "old"
-  elseif kind == nil and raw ~= "" and not desk.greeted then
-    desk.problem = raw
   elseif kind == nil and raw ~= "" then
-    desk.lastError = lastWords(desk.lastError, raw)
+    desk.said = lastWords(desk.said, raw)
+    if desk.greeted then
+      desk.lastError = desk.said
+    else
+      desk.problem = desk.said
+    end
   end
   return changes
 end

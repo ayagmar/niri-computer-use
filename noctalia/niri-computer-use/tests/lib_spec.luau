@@ -140,6 +140,23 @@ t.group("desk", function()
     t.eq(desk.status(d, NOW), "idle")
   end)
 
+  t.test("watch's error before hello keeps its first lines, and not the last watch's", function()
+    local d = desk.new()
+    -- The service carries the last watch's error over until the new one says hello.
+    d.problem = "niri-computer-use: no niri socket, so there is no instance to watch"
+    local said = {
+      "thread 'main' panicked at src/watch.rs:12:5:",
+      "called `Result::unwrap()` on an `Err` value",
+      "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+      "more",
+    }
+    for _, line in said do
+      desk.feed(d, nil, line, NOW, tr)
+    end
+    t.eq(desk.status(d, NOW), "error")
+    t.eq(desk.view(d, NOW).problem, table.concat(said, "\n", 1, desk.ERROR_LINES))
+  end)
+
   t.test("a line that isn't JSON after hello is a cut line, not watch's error", function()
     local d = desk.new()
     desk.feed(d, { event = "hello", format = 1 }, "", NOW, tr)
