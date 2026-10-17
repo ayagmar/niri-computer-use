@@ -1,15 +1,19 @@
 ---
-// The home page, set as the server's manual page the way man shows it in a terminal: a
-// running head and foot, capital section names, bold for what you type, underline for what
-// man underlines, and less's reverse-video status line pinned to the bottom of the window.
-// Dark or light follows the system. No JavaScript. Its words are in `lib/home.ts`, which
-// `pages/index.md.ts` serves as Markdown too; its colours are the docs' (`styles/tokens.css`).
+// The home page, set as the server's manual page the way man shows it in a terminal
+// (`styles/man.css`), in a niri workspace on a wide screen: the man page is the focused
+// column, in the focus ring, and EXAMPLE is the next column, half in view. Dark or light
+// follows the system. Without JavaScript it reads in full and the clip opens from a link;
+// `scripts/less.ts` adds less's keys, the columns' focus and the clip's replay. Its words are
+// in `lib/home.ts`, which `pages/index.md.ts` serves as Markdown too.
 import '@fontsource-variable/jetbrains-mono/wght.css';
 import '../styles/tokens.css';
+import '../styles/man.css';
 import mono from '@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2?url';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Picture } from 'astro:assets';
+import Less from '../components/Less.astro';
+import Slide from '../components/Slide.astro';
 import still from '../assets/errand-still.jpg';
 import changelog from '../../../CHANGELOG.md?raw';
 import { home } from '../lib/home';
@@ -33,7 +37,6 @@ const clipFacts = `${Math.round(mp4Seconds(clipFile))} s, MP4, ${Math.round(clip
 const history = releases(changelog).slice(0, 3);
 const released = history.find((release) => release.version === version);
 ---
-
 <!doctype html>
 <html lang="en">
 	<head>
@@ -57,277 +60,182 @@ const released = history.find((release) => release.version === version);
 		<meta name="twitter:card" content="summary_large_image" />
 		<meta name="theme-color" content="#f7f5ee" media="(prefers-color-scheme: light)" />
 		<meta name="theme-color" content="#10110f" media="(prefers-color-scheme: dark)" />
+		<Slide />
 	</head>
 	<body>
 		<a class="skip" href="#main">Skip to content</a>
-		<header class="running">
-			<span>NIRI-COMPUTER-USE(1)</span>
-			<span class="mid">User Commands</span>
-			<span>NIRI-COMPUTER-USE(1)</span>
-		</header>
+		<main id="main" class="workspace">
+			<div class="strip">
+				<div class="column man" tabindex="-1" role="region" aria-label="Manual page">
+					<header class="running">
+						<span>NIRI-COMPUTER-USE(1)</span>
+						<span class="mid">User Commands</span>
+						<span>NIRI-COMPUTER-USE(1)</span>
+					</header>
 
-		<main id="main">
-			<section aria-labelledby="name">
-				<p class="sh" aria-hidden="true">NAME</p>
-				<h1 id="name"><b>niri-computer-use</b> - {home.name}</h1>
-			</section>
+					<div class="page" data-find>
+						<section aria-labelledby="name">
+							<p class="sh" aria-hidden="true">NAME</p>
+							<h1 id="name"><b>niri-computer-use</b> - {home.name}</h1>
+						</section>
 
-			<section aria-labelledby="synopsis">
-				<h2 id="synopsis">SYNOPSIS</h2>
-				<p>
-					<b>niri-computer-use</b>{' '}
-					{home.commands.map((command, i) => <>{i > 0 && ' | '}<b>{command}</b></>)}
-				</p>
-			</section>
+						<section aria-labelledby="synopsis">
+							<h2 id="synopsis"><a href="#synopsis">SYNOPSIS</a></h2>
+							<p>
+								<b>niri-computer-use</b>{' '}
+								{home.commands.map((command, i) => <>{i > 0 && ' | '}<b>{command}</b></>)}
+							</p>
+						</section>
 
-			<section aria-labelledby="description">
-				<h2 id="description">DESCRIPTION</h2>
-				{home.about.map((paragraph) => <p>{paragraph}</p>)}
-			</section>
+						<section aria-labelledby="description">
+							<h2 id="description"><a href="#description">DESCRIPTION</a></h2>
+							{home.about.map((paragraph) => <p>{paragraph}</p>)}
+						</section>
 
-			<section aria-labelledby="install">
-				<h2 id="install">INSTALLATION</h2>
-				<p>Fetch the script, read it, run it:</p>
-				<pre>{install.get}</pre>
-				<pre>{install.read}</pre>
-				<pre>{install.run}</pre>
-				<p>Or build it, and use <u>~/.cargo/bin</u> below:</p>
-				<pre>{install.cargo}</pre>
-				<p>Bind the stop key in <u>config.kdl</u>:</p>
-				<pre>{install.stop}</pre>
-				<p>
-					The script offers to register the server with Claude Code, Pi and Codex. Others:{' '}
-					<a href={link('start/clients/')}>{reference(manName('start/clients'))}</a>.
-				</p>
-			</section>
+						<section aria-labelledby="install">
+							<h2 id="install"><a href="#install">INSTALLATION</a></h2>
+							<p>Pipe the install script into sh:</p>
+							<pre>{install.piped}</pre>
+							<p>
+								To read it first, open <a href={install.script}>install.sh</a>. Or build it, and use{' '}
+								<u>~/.cargo/bin</u> below:
+							</p>
+							<pre>{install.cargo}</pre>
+							<p>Bind the stop key in <u>config.kdl</u>:</p>
+							<pre>{install.stop}</pre>
+							<p>
+								The script offers to register the server with Claude Code, Pi and Codex. Others:{' '}
+								<a href={link('start/clients/')}>{reference(manName('start/clients'))}</a>.
+							</p>
+						</section>
 
-			<section aria-labelledby="safety">
-				<h2 id="safety">SAFETY</h2>
-				<dl>
-					{
-						home.safety.map(([term, text]) => (
-							<>
-								<dt><b>{term}</b></dt>
-								<dd>{text}</dd>
-							</>
-						))
-					}
-				</dl>
-				<p>
-					{home.sandbox} <a href={link('concepts/safety/')}>{reference(manName('concepts/safety'))}</a>.
-				</p>
-			</section>
+						<section aria-labelledby="safety">
+							<h2 id="safety"><a href="#safety">SAFETY</a></h2>
+							<dl>
+								{
+									home.safety.map(([term, text]) => (
+										<>
+											<dt><b>{term}</b></dt>
+											<dd>{text}</dd>
+										</>
+									))
+								}
+							</dl>
+							<p>
+								{home.sandbox} <a href={link('concepts/safety/')}>{reference(manName('concepts/safety'))}</a>.
+							</p>
+						</section>
 
-			<section aria-labelledby="example">
-				<h2 id="example">EXAMPLE</h2>
-				<figure>
-					<a class="still" href={link(clipPath)}>
-						<Picture
-							src={still}
-							alt={example.alt}
-							widths={[560, 900]}
-							sizes="(min-width: 50rem) 560px, calc(100vw - 6ch)"
-							formats={['avif']}
-							fallbackFormat="jpg"
-							quality={60}
-							loading="eager"
-							fetchpriority="high"
-						/>
-					</a>
-					<figcaption>
-						{example.caption} <a href={link(clipPath)}>Play the clip</a> ({clipFacts}).
-					</figcaption>
-				</figure>
-				<table class="calls">
-					<caption class="sr">Six of the session's calls and their round trips</caption>
-					<thead><tr><th scope="col">call</th><th scope="col">ms</th></tr></thead>
-					<tbody>
-						{example.calls.map(([call, ms]) => <tr><td><code>{call}</code></td><td>{ms}</td></tr>)}
-					</tbody>
-				</table>
-			</section>
+						<section aria-labelledby="history">
+							<h2 id="history"><a href="#history">HISTORY</a></h2>
+							<table>
+								<caption class="sr">The latest releases</caption>
+								<tbody>
+									{
+										history.map((release) => (
+											<tr>
+												<td><a href={`${github}/releases/tag/v${release.version}`}>{release.version}</a></td>
+												<td>{release.date}</td>
+												<td>{summary(release)}</td>
+											</tr>
+										))
+									}
+								</tbody>
+							</table>
+							<p><a href={`${github}/blob/main/CHANGELOG.md`}>CHANGELOG.md</a></p>
+						</section>
 
-			<section aria-labelledby="history">
-				<h2 id="history">HISTORY</h2>
-				<table>
-					<caption class="sr">The latest releases</caption>
-					<tbody>
-						{
-							history.map((release) => (
-								<tr>
-									<td><a href={`${github}/releases/tag/v${release.version}`}>{release.version}</a></td>
-									<td>{release.date}</td>
-									<td>{summary(release)}</td>
-								</tr>
-							))
-						}
-					</tbody>
-				</table>
-				<p><a href={`${github}/blob/main/CHANGELOG.md`}>CHANGELOG.md</a></p>
-			</section>
+						<section aria-labelledby="bugs">
+							<h2 id="bugs"><a href="#bugs">BUGS</a></h2>
+							<p>{home.bugs}</p>
+						</section>
 
-			<section aria-labelledby="bugs">
-				<h2 id="bugs">BUGS</h2>
-				<p>{home.bugs}</p>
-			</section>
+						<section aria-labelledby="see-also">
+							<h2 id="see-also"><a href="#see-also">SEE ALSO</a></h2>
+							<p class="refs">
+								<a href="https://github.com/niri-wm/niri">niri(1)</a>,{' '}
+								{home.seeAlso.map((id) => <><a href={link(`${id}/`)}>{reference(manName(id))}</a>, </>)}
+								<a href={link('llms.txt')}>llms.txt</a>,{' '}
+								<a href={github}>source</a>
+							</p>
+						</section>
+					</div>
 
-			<section aria-labelledby="see-also">
-				<h2 id="see-also">SEE ALSO</h2>
-				<p class="refs">
-					<a href="https://github.com/niri-wm/niri">niri(1)</a>,{' '}
-					{home.seeAlso.map((id) => <><a href={link(`${id}/`)}>{reference(manName(id))}</a>, </>)}
-					<a href={link('llms.txt')}>llms.txt</a>,{' '}
-					<a href={github}>source</a>
-				</p>
-			</section>
+					<footer class="running foot">
+						<a href={releaseLink}>niri-computer-use {version}</a>
+						<span class="mid">{released?.date}</span>
+						<span>NIRI-COMPUTER-USE(1)</span>
+					</footer>
+
+					<nav class="less" aria-label="Pager">
+						<span class="prompt"><span class="wide">Manual page niri-computer-use(1)</span><span class="pct" aria-hidden="true"></span></span>
+						<span class="msg" role="status"></span>
+						<form class="find" hidden><label>/<input name="pattern" autocomplete="off" aria-label="Search the page" /></label></form>
+						<a href="#install">install</a>
+						<a href="#safety">safety</a>
+						<a href="#example">example</a>
+						<a href={link('start/install/')}>docs</a>
+						<button type="button" data-help hidden>help</button>
+					</nav>
+				</div>
+
+				<section class="column example" id="example" tabindex="-1" aria-labelledby="example-heading">
+					<h2 id="example-heading"><a href="#example">EXAMPLE</a></h2>
+					<figure>
+						<a class="still" href={link(clipPath)} data-play>
+							<Picture
+								src={still}
+								alt={example.alt}
+								widths={[560, 900]}
+								sizes="(min-width: 75rem) 760px, calc(100vw - 6ch)"
+								formats={['avif']}
+								fallbackFormat="jpg"
+								quality={60}
+								loading="eager"
+								fetchpriority="high"
+							/>
+						</a>
+						<figcaption>
+							{example.caption} <a href={link(clipPath)} data-play>Play the clip</a> ({clipFacts}).
+						</figcaption>
+					</figure>
+					<table class="calls">
+						<caption class="sr">The session's calls: when each went out, in seconds into the clip, and its round trip</caption>
+						<thead><tr><th scope="col">at</th><th scope="col">call</th><th scope="col">ms</th></tr></thead>
+						<tbody>
+							{
+								example.calls.map(([start, call, ms]) => (
+									<tr data-start={start} data-ms={ms}>
+										<td>{start.toFixed(1)}</td>
+										<td><code>{call}</code></td>
+										<td>{ms}</td>
+									</tr>
+								))
+							}
+						</tbody>
+					</table>
+				</section>
+			</div>
 		</main>
-
-		<footer class="running">
-			<a href={releaseLink}>niri-computer-use {version}</a>
-			<span class="mid">{released?.date}</span>
-			<span>NIRI-COMPUTER-USE(1)</span>
-		</footer>
-
-		<nav class="less" aria-label="Page">
-			<span class="prompt"><span class="wide">Manual page niri-computer-use(1)</span><span class="pct" aria-hidden="true"></span></span>
-			<a href="#install">install</a>
-			<a href="#safety">safety</a>
-			<a href={link('start/install/')}>docs</a>
-			<a href={github}>source</a>
-		</nav>
+		<Less columns find />
 	</body>
 </html>
 
 <style is:global>
-	* {
-		box-sizing: border-box;
-	}
-	html {
-		scroll-padding-bottom: 3.5rem;
-		background: var(--ncu-ground);
-		color: var(--ncu-ink);
-		font: 400 16px/1.55 var(--ncu-mono);
-		font-variant-ligatures: none;
-		-webkit-text-size-adjust: 100%;
-	}
-	body {
-		margin: 0;
-		padding: 1.5rem 0 0;
-	}
-	body > header,
-	main,
-	body > footer {
-		max-width: calc(80ch + 4ch);
-		padding-inline: 2ch;
-	}
-	.skip {
-		position: absolute;
-		left: 2ch;
-		top: -3rem;
-		padding: 0.25rem 1ch;
-		background: var(--ncu-ink);
-		color: var(--ncu-ground);
-	}
-	.skip:focus {
-		top: 0.5rem;
-	}
-	.sr {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		overflow: hidden;
-		clip-path: inset(50%);
-	}
-
-	/* Bold is the strongest ink, as a terminal shows groff's bold; underline is groff's
-	   italic, for paths. Links are the amber. */
-	b,
-	strong,
-	th,
-	h2,
-	pre {
-		color: var(--ncu-bold);
-	}
-	b,
-	strong,
-	th,
-	h2 {
-		font-weight: 700;
-	}
-	u {
-		text-decoration-thickness: 1px;
-		text-underline-offset: 3px;
-	}
-	a {
-		color: var(--ncu-accent);
-		text-decoration-thickness: 1px;
-		text-underline-offset: 3px;
-	}
-	a:hover {
-		text-decoration-thickness: 2px;
-	}
-
-	.running {
-		display: flex;
-		justify-content: space-between;
-		gap: 2ch;
-		color: var(--ncu-dim);
-	}
-	body > footer.running {
-		margin: 3em 0 1.5em;
-	}
-	h1 {
-		margin: 0 0 0 7ch;
-		font-size: 1em;
-		font-weight: 400;
-	}
-	/* NAME is set as a section heading but the line under it is the page's h1, so screen
-	   readers meet the h1 first. */
-	h2,
-	.sh {
-		margin: 1.5em 0 0;
-		font-size: 1em;
-		font-weight: 700;
-	}
-	p,
-	pre,
-	dl,
-	table,
-	figure {
-		margin: 0 0 0 7ch;
-	}
-	:is(p, pre, dl, table, figure) + :is(p, pre, dl, table, figure) {
-		margin-top: 1em;
-	}
-	pre + pre {
-		margin-top: 0.25em;
-	}
-	pre,
-	code {
-		font: inherit;
-	}
-	pre {
-		white-space: pre-wrap;
-		overflow-wrap: anywhere;
-		padding: 0.15em 1ch;
-		background: var(--ncu-plate);
-	}
-	dl {
-		display: grid;
-		grid-template-columns: 11ch 1fr;
-		gap: 0.25em 2ch;
-	}
-	dd {
-		margin: 0;
-	}
-
+	/* The EXAMPLE column, and the replay's rows: calls still to come are dim, the one in
+	   flight is in reverse video, and the ones made are in the bold ink. */
 	figure {
 		max-width: 70ch;
 	}
-	.still {
+	.still,
+	.example video {
 		display: block;
+		width: 100%;
+		height: auto;
+		aspect-ratio: 16 / 9;
 		line-height: 0;
 		border: 1px solid var(--ncu-rule);
+		background: var(--ncu-plate);
 	}
 	.still img {
 		display: block;
@@ -338,140 +246,159 @@ const released = history.find((release) => release.version === version);
 		margin-top: 0.5em;
 		color: var(--ncu-dim);
 	}
-	table {
-		border-collapse: collapse;
-	}
-	th {
-		text-align: left;
-		padding: 0 3ch 0 0;
-	}
-	td {
-		padding: 0 3ch 0 0;
-		vertical-align: top;
-		font-variant-numeric: tabular-nums;
-	}
+	.calls th:first-child,
+	.calls td:first-child,
 	.calls th:last-child,
 	.calls td:last-child {
 		text-align: right;
+	}
+	.calls th:last-child,
+	.calls td:last-child {
 		padding-right: 0;
 	}
-	.refs a {
-		white-space: nowrap;
+	.calls tr {
+		transition:
+			color 0.15s,
+			background-color 0.15s;
 	}
-
-	/* less's status line, in reverse video at the bottom of the window. Where the browser
-	   can tie an animation to scrolling, it shows how far down the page you are, as less does. */
-	.less {
-		position: sticky;
-		bottom: 0;
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0 2ch;
-		padding: 0.2rem 2ch;
+	.calls [data-state='next'] {
+		color: var(--ncu-dim);
+	}
+	.calls [data-state='done'] {
+		color: var(--ncu-bold);
+	}
+	.calls [data-state='now'] {
 		background: var(--ncu-ink);
 		color: var(--ncu-ground);
 	}
-	.less .prompt {
-		margin-right: auto;
+	.page {
+		padding-top: 0;
 	}
-	.less a {
+	.man > .running:first-child {
+		padding-top: 1.5rem;
+	}
+	.example {
+		padding: 0 2ch;
+	}
+	.example h2 {
+		margin-top: 1.5em;
+	}
+	.less button {
+		padding: 0;
+		border: 0;
+		background: none;
 		color: var(--ncu-ground);
+		text-decoration: underline;
+		text-underline-offset: 3px;
+		cursor: pointer;
 	}
-	.less a:focus-visible {
-		outline-color: var(--ncu-ground);
-	}
-	@property --ncu-read {
-		syntax: '<integer>';
-		inherits: true;
-		initial-value: 0;
-	}
-	@supports (animation-timeline: scroll()) {
-		.less {
-			animation: ncu-read linear both;
-			animation-timeline: scroll(root);
-		}
-		.pct::before {
-			counter-reset: read var(--ncu-read);
-			content: ' ' counter(read) '%';
-		}
-	}
-	@keyframes ncu-read {
-		to {
-			--ncu-read: 100;
-		}
+	.less a,
+	.less button {
+		text-decoration-thickness: 1px;
 	}
 
+	/* Narrow: one column, EXAMPLE after the sections and before the running foot. */
+	@media (max-width: 74.99rem) {
+		.strip {
+			display: flex;
+			flex-direction: column;
+		}
+		.man {
+			display: contents;
+		}
+		.example {
+			order: 1;
+			padding: 0;
+		}
+		.example > * {
+			margin-left: calc(2ch + 7ch);
+			margin-right: 2ch;
+		}
+		.example h2 {
+			margin-left: 2ch;
+		}
+		.man > .foot {
+			order: 2;
+		}
+		.man > .less {
+			order: 3;
+		}
+	}
 	@media (max-width: 40rem) {
-		html {
-			font-size: 14px;
+		.example > * {
+			margin-left: calc(1.5ch + 3ch);
+			margin-right: 1.5ch;
 		}
-		body > header,
-		main,
-		body > footer {
-			padding-inline: 1.5ch;
+		.example h2 {
+			margin-left: 1.5ch;
 		}
-		h1,
-		p,
-		pre,
-		dl,
-		table,
-		figure {
-			margin-left: 3ch;
-		}
-		dl {
-			grid-template-columns: 1fr;
-			gap: 0;
-		}
-		dd {
-			margin: 0 0 0.5em 3ch;
-		}
-		.running .mid {
-			display: none;
-		}
-		td {
-			padding-right: 1.5ch;
-		}
-		td code {
-			overflow-wrap: anywhere;
-		}
-		.less {
-			padding-inline: 1.5ch;
-		}
-		.less .wide {
-			display: none;
-		}
-		td:nth-child(2) {
-			white-space: nowrap;
+		.calls td:nth-child(2) {
+			white-space: normal;
 		}
 	}
 
-	/* On paper: black on white, without the status line, each outside link's address after it. */
-	@media print {
-		html {
-			background: #fff;
-			color: #000;
-			font-size: 11pt;
+	/* Wide: a niri workspace. Columns are windows on the backdrop with niri's 16 px gaps; the
+	   focused one wears the amber ring and the others niri's inactive one. The strip slides
+	   on niri's spring to keep the focused column in view. */
+	@media (min-width: 75rem) {
+		body {
+			background: var(--ncu-plate);
+			overflow-x: clip;
 		}
-		b,
-		strong,
-		th,
-		h2,
-		pre,
-		a,
-		.running,
-		figcaption {
-			color: #000;
+		.workspace {
+			container-type: inline-size;
 		}
-		pre {
-			background: none;
+		.strip {
+			display: flex;
+			align-items: flex-start;
+			gap: 16px;
+			width: max-content;
+			padding: 16px 16px 0;
+			transition: transform 0.4s var(--ncu-spring);
 		}
-		.less,
-		.skip {
-			display: none;
+		.column {
+			background: var(--ncu-ground);
+			outline: 4px solid var(--ncu-rule);
+			outline-offset: 0;
+			transition: outline-color 0.2s;
 		}
-		main a[href^='http']::after {
-			content: ' <' attr(href) '>';
-			word-break: break-all;
+		.man {
+			width: 88ch;
+		}
+		.example {
+			position: sticky;
+			top: 16px;
+			width: 50rem;
+			max-height: calc(100dvh - 32px);
+			overflow-y: auto;
+			padding-bottom: 1.5rem;
+		}
+		.example figure,
+		.example table {
+			max-width: none;
+			margin-left: 0;
+		}
+		.example table {
+			width: 100%;
+		}
+		.man,
+		:root[data-column='1'] .example,
+		:root:not([data-column]) .strip:has(#example:target) .example {
+			outline-color: var(--ncu-accent);
+		}
+		:root[data-column='1'] .man,
+		:root:not([data-column]) .strip:has(#example:target) .man {
+			outline-color: var(--ncu-rule);
+		}
+		:root[data-column='1'] .strip,
+		:root:not([data-column]) .strip:has(#example:target) {
+			transform: translateX(min(0px, calc(100cqw - 100%)));
+		}
+	}
+	@media (min-width: 75rem) and (prefers-reduced-motion: reduce) {
+		.strip,
+		.column {
+			transition: none;
 		}
 	}
 </style>

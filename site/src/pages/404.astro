@@ -1,0 +1,126 @@
+---
+// The 404, as man answers a page it doesn't have: "No manual entry for" the address, then
+// every page of the manual with its one-line description, as `man -k` lists them. The
+// address is filled in by `scripts/less.ts`; without it the line names no address.
+import '@fontsource-variable/jetbrains-mono/wght.css';
+import '../styles/tokens.css';
+import '../styles/man.css';
+import mono from '@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2?url';
+import Less from '../components/Less.astro';
+import Slide from '../components/Slide.astro';
+import { home } from '../lib/home';
+import { manName, reference } from '../lib/man';
+import { pages } from '../lib/markdown';
+
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+const index = await pages();
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="color-scheme" content="dark light" />
+		<meta name="robots" content="noindex" />
+		<title>No manual entry · niri-computer-use</title>
+		<link rel="icon" href={`${base}favicon.svg`} type="image/svg+xml" />
+		<link rel="preload" href={mono} as="font" type="font/woff2" crossorigin />
+		<Slide />
+	</head>
+	<body>
+		<div class="man">
+			<header class="running">
+				<span>NIRI-COMPUTER-USE(7)</span>
+				<span class="mid">niri-computer-use manual</span>
+				<span>NIRI-COMPUTER-USE(7)</span>
+			</header>
+			<main class="page" data-find>
+				<h1 class="none">No manual entry<span data-path></span></h1>
+				<section aria-labelledby="see-also">
+					<h2 id="see-also">SEE ALSO</h2>
+					<table class="apropos">
+						<caption class="sr">Every page of the manual</caption>
+						<tbody>
+							<tr>
+								<td><a href={base}>niri-computer-use(1)</a></td>
+								<td>{home.description}</td>
+							</tr>
+							{
+								index.map((page) => (
+									<tr>
+										<td>
+											<a href={`${base}${page.id}/`}>{reference(manName(page.id))}</a>
+										</td>
+										<td>{page.data.description}</td>
+									</tr>
+								))
+							}
+						</tbody>
+					</table>
+				</section>
+			</main>
+			<footer class="running foot">
+				<span></span>
+				<span>NIRI-COMPUTER-USE(7)</span>
+			</footer>
+			<nav class="less" aria-label="Pager">
+				<span class="prompt"><span class="wide">Manual page index</span><span class="pct" aria-hidden="true"></span></span>
+				<span class="msg" role="status"></span>
+				<form class="find" hidden><label>/<input name="pattern" autocomplete="off" aria-label="Search the page" /></label></form>
+				<a href={base}>home</a>
+				<a href={`${base}start/install/`}>docs</a>
+				<button type="button" data-help hidden>help</button>
+			</nav>
+		</div>
+		<Less find />
+	</body>
+</html>
+
+<style>
+	.man {
+		max-width: 88ch;
+		min-height: 100dvh;
+		display: flex;
+		flex-direction: column;
+	}
+	.man > .running:first-child {
+		padding-top: 1.5rem;
+	}
+	main {
+		flex: 1;
+	}
+	.none {
+		margin: 1.5em 0 0;
+		font-weight: 700;
+		color: var(--ncu-bold);
+	}
+	.apropos td:first-child {
+		white-space: nowrap;
+	}
+	.apropos td {
+		padding-bottom: 0.25em;
+	}
+	.less button {
+		padding: 0;
+		border: 0;
+		background: none;
+		color: var(--ncu-ground);
+		text-decoration: underline 1px;
+		text-underline-offset: 3px;
+		cursor: pointer;
+	}
+	@media (max-width: 40rem) {
+		.apropos tr {
+			display: block;
+			margin-bottom: 0.5em;
+		}
+		.apropos td {
+			display: block;
+			padding: 0;
+		}
+		.apropos td + td {
+			margin-left: 3ch;
+		}
+	}
+</style>

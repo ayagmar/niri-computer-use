@@ -1,0 +1,15 @@
+---
+// Tells the page's view transition which way to slide, before the page first shows: left
+// from the home page into the docs, right back to it. Starlight's pages and the home page
+// both put it in their head; it has to run before `pagereveal`, so it is inline.
+const home = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+---
+
+<script is:inline define:vars={{ home }}>
+	addEventListener('pagereveal', (e) => {
+		const a = window.navigation?.activation;
+		const isHome = (url) => new URL(url).pathname == home;
+		if (e.viewTransition && a?.from && isHome(a.from.url) != isHome(a.entry.url))
+			e.viewTransition.types.add(isHome(a.entry.url) ? 'right' : 'left');
+	});
+</script>

@@ -1984,3 +1984,8 @@ Each action's commit is the one its tag names in the action's repository (`git l
 ## 2026-10-17: the install script, piped into sh
 
 - The Install page now leads with `curl -fsSL …/install.sh | sh`, reversing the read-it-first steps. People install tools this way, and reading first is still one line below it. What made the pipe unsafe is fixed in the script instead: it is one brace group, which `sh` reads to its end before running any of it, so a download cut short runs nothing and a program that reads stdin can't take the script's lines. Its questions were already read from `/dev/tty`, so piping still asks before registering an agent. `tests/install.rs` pipes the script into `sh`, whole and cut short.
+
+## 2026-10-17: a script on the site
+
+- The site has one script of its own, `site/src/scripts/less.ts`, 1.9 KB gzipped, on every page. It adds less's keys, search, status line messages and help screen, niri's column focus on the home page, copy buttons, and the clip's replay in place. Without it the pages read in full and the clip opens from a link. The keys skip fields and any key held with Ctrl, Alt or Super, and the help screen turns them off, as WCAG 2.1.4 asks of one-character shortcuts. The home page also gets Astro's prefetch, 1.1 KB, which Starlight turns on for every page.
+- Between the home page and the docs, pages slide sideways on niri's default spring (damping ratio 1, stiffness 800) with cross-document view transitions; `prefers-reduced-motion` turns every motion off. The docs' header was named for view transitions through `.header`, which also matched Starlight's inner header and every code block's caption, so each transition into a docs page was aborted; it is `header.header` now.

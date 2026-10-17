@@ -105,7 +105,7 @@ npm ci
 npm run build
 ```
 
-The pages are Markdown files in `site/src/content/docs/`, except the home page, `site/src/pages/index.astro`, which sits outside Starlight, is set as the server's man page, and takes its words from `site/src/lib/home.ts`. Its HISTORY section is read from `CHANGELOG.md` when the site is built, and the clip's length and size from the MP4. The docs pages share its colours (`site/src/styles/tokens.css`) and get a man page's running head and foot from the `PageTitle` and `Footer` overrides in `site/src/components/`, with each page's man name from `site/src/lib/man.ts`. There is one directory per sidebar group (`site/src/lib/groups.mjs`), and pages are ordered by `sidebar.order` in their front matter. The build goes to `site/dist/`. Preview it with:
+The pages are Markdown files in `site/src/content/docs/`, except the home page, `site/src/pages/index.astro`, which sits outside Starlight, is set as the server's man page (`site/src/styles/man.css`), and takes its words from `site/src/lib/home.ts`. On a screen 75rem or wider it is a niri workspace: the man page is the focused column and EXAMPLE the next one. `site/src/scripts/less.ts`, the one script of our own, adds less's keys, search and status line, moves focus between the columns, adds copy buttons and replays the clip in place with its calls lighting up; without it every page reads in full. `site/src/pages/404.astro` answers a missing page as man does, with every page of the manual. `site/src/components/Slide.astro` slides between the home page and the docs. Its HISTORY section is read from `CHANGELOG.md` when the site is built, and the clip's length and size from the MP4. The docs pages share its colours (`site/src/styles/tokens.css`) and get a man page's running head and foot from the `PageTitle` and `Footer` overrides in `site/src/components/`, with each page's man name from `site/src/lib/man.ts`. There is one directory per sidebar group (`site/src/lib/groups.mjs`), and pages are ordered by `sidebar.order` in their front matter. The build goes to `site/dist/`. Preview it with:
 
 ```sh
 npm run preview
@@ -113,7 +113,7 @@ npm run preview
 
 `npm run build` also runs `npm test` and two checks, and fails on any of them:
 
-- `npm test`, before anything else: Node's own test runner on `src/**/*.test.ts`, with Node stripping the types itself (`--experimental-strip-types`, which Node 22.12 has), which checks how the home page reads the changelog and the clip's length, and how pages get their man names.
+- `npm test`, before anything else: Node's own test runner on `src/**/*.test.ts`, with Node stripping the types itself (`--experimental-strip-types`, which Node 22.12 has), which checks how the home page reads the changelog and the clip's length, how pages get their man names, and when the replay shows a call as in flight.
 
 - `scripts/check-reference.mjs`, before Astro: the error reference lists exactly the names in `ErrorName` (`src/error.rs`), and the configuration page exactly the keys of `Policy` and `Preset` (`src/policy.rs`). Change the page in the same commit as the enum or struct.
 - `scripts/check-links.mjs`, after Astro: every internal link, image and `#fragment` resolves to a built file, and `llms.txt` and `llms-full.txt` cover every page.
@@ -463,7 +463,7 @@ ffmpeg -i site/public/demo/errand.mp4 -vf "crop=iw:iw*9/16:0:0,scale=1280:720:fl
 ffmpeg -ss 10.2 -i site/public/clips/errand.mp4 -frames:v 1 -q:v 2 site/src/assets/errand-still.jpg
 ```
 
-The README links `errand.gif`, `errand.png` and `errand.mp4` in `site/public/demo/`, and link previews use `og.png`. Nothing uses `<name>.json`, the WebM or another session's files, so don't commit them.
+The README links `errand.gif`, `errand.png` and `errand.mp4` in `site/public/demo/`, and link previews use `og.png`, a screenshot of the home page at 1280×640. The home page's EXAMPLE lists each call's `start` and `ms` from `errand.json`, copied into `site/src/lib/home.ts`; nothing reads the JSON itself, the WebM or another session's files, so don't commit them.
 
 `make nested-demo SCENE=<scene>` still plays a scripted scene in a headless nested niri (`errand`, `layout`, `keyboard` and `stop`, against `harness/fixtures/chat.py`, a GTK 4 chat window) and writes the same `frames/` and `timeline.jsonl` to `target/e2e/<run>/`, which `scripts/demo-encode.py` takes at its default width of 1280. It makes the same calls each take, which helps when comparing builds; the site no longer uses it.
 

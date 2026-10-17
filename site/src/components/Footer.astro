@@ -1,7 +1,8 @@
 ---
-// Starlight's footer, ending on a man page's running foot: the release, its date and the
-// page's name.
+// Starlight's footer, ending on a man page's running foot: the release, its date, the less
+// keys' help and the page's name.
 import Default from '@astrojs/starlight/components/Footer.astro';
+import Less from './Less.astro';
 import changelog from '../../../CHANGELOG.md?raw';
 import { heading, manName } from '../lib/man';
 import { releases } from '../lib/news';
@@ -15,8 +16,10 @@ const released = releases(changelog).find((release) => release.version === versi
 <p class="running">
 	<a href={releaseLink}>niri-computer-use {version}</a>
 	<span class="mid">{released?.date}</span>
+	<button type="button" data-help hidden>keys</button>
 	<span>{heading(manName(entry.id))}</span>
 </p>
+<Less />
 
 <style>
 	.running {
@@ -31,6 +34,16 @@ const released = releases(changelog).find((release) => release.version === versi
 	}
 	.running a {
 		color: var(--sl-color-text-accent);
+	}
+	.running button {
+		padding: 0;
+		border: 0;
+		background: none;
+		color: inherit;
+		font: inherit;
+		text-decoration: underline;
+		text-underline-offset: 3px;
+		cursor: pointer;
 	}
 	@media (max-width: 30rem) {
 		.mid {

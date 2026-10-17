@@ -15,6 +15,8 @@
 	--ncu-select: light-dark(#f0dca8, #3a3220);
 	--ncu-plate: light-dark(#eeeadd, #0a0b09);
 	--ncu-stop: light-dark(#b3261e, #ff6a57);
+	/* niri's default spring (damping ratio 1, stiffness 800) over its 0.4 s. */
+	--ncu-spring: linear(0, 0.312, 0.66, 0.852, 0.94, 0.977, 0.991, 0.997, 0.999, 1);
 	color-scheme: light dark;
 }
 
@@ -44,9 +46,47 @@
 	outline-offset: 2px;
 }
 
-/* Pages crossfade into each other while the running head holds still. */
+/* Pages crossfade into each other while the running head holds still. Between the home
+   page and the docs they slide sideways instead, as niri scrolls between columns: the head
+   script (`components/Slide.astro`) names the direction. */
 @media (prefers-reduced-motion: no-preference) {
 	@view-transition {
 		navigation: auto;
+	}
+	:root:active-view-transition-type(left, right)::view-transition-group(root) {
+		animation-duration: 0.4s;
+		animation-timing-function: var(--ncu-spring);
+	}
+	:root:active-view-transition-type(left)::view-transition-old(root) {
+		animation: 0.4s var(--ncu-spring) both ncu-to-left;
+	}
+	:root:active-view-transition-type(left)::view-transition-new(root) {
+		animation: 0.4s var(--ncu-spring) both ncu-from-right;
+	}
+	:root:active-view-transition-type(right)::view-transition-old(root) {
+		animation: 0.4s var(--ncu-spring) both ncu-to-right;
+	}
+	:root:active-view-transition-type(right)::view-transition-new(root) {
+		animation: 0.4s var(--ncu-spring) both ncu-from-left;
+	}
+}
+@keyframes ncu-to-left {
+	to {
+		transform: translateX(-100%);
+	}
+}
+@keyframes ncu-from-right {
+	from {
+		transform: translateX(100%);
+	}
+}
+@keyframes ncu-to-right {
+	to {
+		transform: translateX(100%);
+	}
+}
+@keyframes ncu-from-left {
+	from {
+		transform: translateX(-100%);
 	}
 }

@@ -1,9 +1,11 @@
 ---
 // Starlight's head, plus a preload of the monospace every page is set in, so text is set in
-// it from the first paint instead of moving when it arrives.
+// it from the first paint instead of moving when it arrives, and the slide's direction.
 import Default from '@astrojs/starlight/components/Head.astro';
+import Slide from './Slide.astro';
 import mono from '@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2?url';
 ---
 
 <Default />
 <link rel="preload" href={mono} as="font" type="font/woff2" crossorigin />
+<Slide />

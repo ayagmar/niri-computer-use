@@ -1,0 +1,143 @@
+---
+// less's keys for every page, and its help screen, which h or ? opens. The keys come from
+// `scripts/less.ts`; without the script the page reads and scrolls as any other. `columns`
+// adds niri's keys for the home page's columns; `find` adds less's search where the page
+// has its own status line, and the docs keep `/` for Starlight's search instead.
+interface Props {
+	columns?: boolean;
+	find?: boolean;
+}
+const { columns = false, find = false } = Astro.props;
+
+const keys: [string, string][] = [
+	['j  e', 'Forward one line.'],
+	['k  y', 'Backward one line.'],
+	['f  SPACE', 'Forward one window.'],
+	['b', 'Backward one window.'],
+	['d  u', 'Forward or backward half a window.'],
+	['g  <', 'Go to the first line.'],
+	['G  >', 'Go to the last line.'],
+	...(find
+		? ([
+				['/pattern', 'Search forward for the pattern.'],
+				['n  N', 'Repeat the search, forward or backward.'],
+			] as [string, string][])
+		: ([['/', 'Search the docs.']] as [string, string][])),
+	...(columns ? ([['→  ←', 'Focus the column to the right or left, as niri does, on a wide screen.']] as [string, string][]) : []),
+	['h  ?', 'Show this help.'],
+	['q', 'Close this help, or go back a page.'],
+];
+---
+
+<dialog id="less-help" class="less-help" aria-labelledby="less-help-title">
+	<h2 id="less-help-title">SUMMARY OF LESS COMMANDS</h2>
+	<p>The keys this site takes from less{columns && ', and from niri for the columns'}. They do nothing while you type in a field, or with Ctrl, Alt or Super held.</p>
+	<table>
+		<caption class="less-help-sr">Keys and what they do</caption>
+		<tbody>
+			{
+				keys.map(([key, text]) => (
+					<tr>
+						<th scope="row">{key}</th>
+						<td>{text}</td>
+					</tr>
+				))
+			}
+		</tbody>
+	</table>
+	<p><button type="button" data-keys>Turn these keys off</button></p>
+	<form method="dialog" class="less-help-line">
+		<span>HELP -- Press q when done</span>
+		<button autofocus>close</button>
+	</form>
+</dialog>
+
+<script>
+	import '../scripts/less';
+</script>
+
+<style is:global>
+	.less-help {
+		width: 100%;
+		max-width: none;
+		height: 100%;
+		max-height: none;
+		margin: 0;
+		padding: 1.5rem 2ch 3rem;
+		border: 0;
+		background: var(--ncu-ground);
+		color: var(--ncu-ink);
+		font: 400 1rem/1.55 var(--ncu-mono);
+	}
+	.less-help::backdrop {
+		background: var(--ncu-ground);
+	}
+	.less-help h2 {
+		margin: 0;
+		font-size: 1em;
+		font-weight: 700;
+		color: var(--ncu-bold);
+	}
+	.less-help p,
+	.less-help table {
+		max-width: 76ch;
+		margin: 1em 0 0 7ch;
+	}
+	.less-help table {
+		border-collapse: collapse;
+	}
+	.less-help th {
+		padding: 0 3ch 0 0;
+		text-align: left;
+		white-space: pre;
+		color: var(--ncu-bold);
+	}
+	.less-help td {
+		padding: 0;
+	}
+	.less-help button {
+		padding: 0;
+		border: 0;
+		background: none;
+		color: var(--ncu-accent);
+		font: inherit;
+		text-decoration: underline;
+		text-decoration-thickness: 1px;
+		text-underline-offset: 3px;
+		cursor: pointer;
+	}
+	.less-help-line {
+		position: fixed;
+		inset: auto 0 0;
+		display: flex;
+		justify-content: space-between;
+		padding: 0.2rem 2ch;
+		background: var(--ncu-ink);
+		color: var(--ncu-ground);
+	}
+	.less-help .less-help-line button {
+		color: var(--ncu-ground);
+	}
+	.less-help-line button:focus-visible {
+		outline-color: var(--ncu-ground);
+	}
+	.less-help-sr {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+	}
+	@media (max-width: 40rem) {
+		.less-help {
+			padding-inline: 1.5ch;
+		}
+		.less-help p,
+		.less-help table {
+			margin-left: 0;
+		}
+		.less-help th {
+			padding-right: 2ch;
+		}
+	}
+</style>

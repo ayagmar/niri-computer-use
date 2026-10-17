@@ -15,6 +15,8 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'niri-computer-use',
+			// The 404 is `src/pages/404.astro`, as man answers a page it doesn't have.
+			disable404Route: true,
 			description:
 				'An MCP server that lets AI agents see and act on a niri Wayland desktop, with a lease, a stop key and an audit log.',
 			social: [

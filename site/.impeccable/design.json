@@ -8,7 +8,7 @@
         "role": "neutral",
         "displayName": "Paper Ground",
         "canonical": "#f7f5ee",
-        "purpose": "Page ground in light. Also the text on the less line.",
+        "purpose": "Page ground in light and the column fill. Also the text on the pager line.",
         "tonalRamp": [
           "#252524",
           "#61605d",
@@ -24,7 +24,7 @@
         "role": "neutral",
         "displayName": "Brown-Black Ink",
         "canonical": "#2b2a25",
-        "purpose": "Body text in light. The less line background.",
+        "purpose": "Body text in light. The pager line background, search matches and the call in flight.",
         "tonalRamp": [
           "#060606",
           "#11100f",
@@ -56,7 +56,7 @@
         "role": "neutral",
         "displayName": "Dim Ink",
         "canonical": "#5c584e",
-        "purpose": "Running head and foot, captions.",
+        "purpose": "Running head and foot, captions, copy button, calls still to come.",
         "tonalRamp": [
           "#0e0d0c",
           "#24231f",
@@ -72,7 +72,7 @@
         "role": "neutral",
         "displayName": "Rule",
         "canonical": "#d4cfbf",
-        "purpose": "Hairlines, the still frame, scrollbar track in light.",
+        "purpose": "Hairlines, the still frame, scrollbar track and the unfocused column's ring in light.",
         "tonalRamp": [
           "#201f1d",
           "#53514b",
@@ -88,7 +88,7 @@
         "role": "primary",
         "displayName": "Amber",
         "canonical": "#8a5300",
-        "purpose": "Links, focus ring, caret and accent-color in light.",
+        "purpose": "Links, focus ring, the focused column's 4px ring, caret and accent-color in light.",
         "tonalRamp": [
           "#150c00",
           "#362100",
@@ -120,7 +120,7 @@
         "role": "neutral",
         "displayName": "Plate",
         "canonical": "#eeeadd",
-        "purpose": "Code plate and the still background in light.",
+        "purpose": "Code plate, copy button, the still background and the wide-screen workspace backdrop in light.",
         "tonalRamp": [
           "#242321",
           "#5d5c57",
@@ -296,7 +296,7 @@
     "typographyMeta": {
       "body": {
         "displayName": "Body",
-        "purpose": "Home page text, 16px / 1.55 (14px under 40rem), ligatures off."
+        "purpose": "Home page, 404 and help dialog text, 16px / 1.55 (14px under 40rem), ligatures off."
       },
       "running": {
         "displayName": "Running Head",
@@ -328,14 +328,34 @@
     ],
     "motion": [
       {
+        "name": "ncu-spring",
+        "value": "linear(0, 0.312, 0.66, 0.852, 0.94, 0.977, 0.991, 0.997, 0.999, 1)",
+        "purpose": "Niri's default spring (damping ratio 1, stiffness 800) over 0.4s. All motion uses it or is off."
+      },
+      {
         "name": "page-crossfade",
         "value": "@view-transition { navigation: auto }",
-        "purpose": "Docs pages crossfade while the header holds still. Only when prefers-reduced-motion is no-preference."
+        "purpose": "Pages crossfade while the docs header holds still. Only when prefers-reduced-motion is no-preference."
+      },
+      {
+        "name": "page-slide",
+        "value": "0.4s var(--ncu-spring), view transition types left and right",
+        "purpose": "Between the home page and the docs the page slides left going in and right coming back. Slide.astro adds the type on pagereveal."
+      },
+      {
+        "name": "strip-slide",
+        "value": "transition: transform 0.4s var(--ncu-spring)",
+        "purpose": "On a wide screen the column strip slides to keep the focused column in view; the ring colour changes over 0.2s. Off under reduced motion."
+      },
+      {
+        "name": "replay-rows",
+        "value": "color and background-color 0.15s",
+        "purpose": "Call rows are next (dim), now (reverse video) or done (bold) as the clip plays."
       },
       {
         "name": "scroll-percentage",
         "value": "animation-timeline: scroll(root) on a registered integer",
-        "purpose": "The less line counts 0 to 100 as the home page scrolls. Where unsupported, the percentage is absent."
+        "purpose": "The pager line counts 0 to 100 as the page scrolls, and shows (END) at the bottom. Where unsupported, the percentage is absent."
       }
     ],
     "breakpoints": [
@@ -350,6 +370,10 @@
       {
         "name": "docs-narrow",
         "value": "30rem"
+      },
+      {
+        "name": "home-workspace",
+        "value": "75rem"
       }
     ]
   },
@@ -379,10 +403,10 @@
       "css": ".ds-pre{margin:0 0 0 7ch;padding:.15em 1ch;background:#eeeadd;color:#0c0c0a;white-space:pre-wrap;overflow-wrap:anywhere;font:400 16px/1.55 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace}"
     },
     {
-      "name": "Less Line",
+      "name": "Pager Line",
       "kind": "nav",
       "refersTo": "less-line",
-      "description": "Sticky reverse-video status line with links and a scroll percentage.",
+      "description": "Sticky reverse-video status line with links and a scroll percentage; the script adds (END), messages, the search prompt and a help button.",
       "html": "<nav class=\"ds-less\"><span class=\"p\">Manual page niri-computer-use(1) 42%</span><a href=\"#\">install</a><a href=\"#\">safety</a></nav>",
       "css": ".ds-less{display:flex;flex-wrap:wrap;gap:0 2ch;padding:.2rem 2ch;background:#2b2a25;color:#f7f5ee;font:400 16px/1.55 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace} .ds-less .p{margin-right:auto} .ds-less a{color:#f7f5ee}"
     },
@@ -405,13 +429,15 @@
   ],
   "narrative": {
     "northStar": "The Manual Page in a Terminal",
-    "overview": "The home page is the manual page niri-computer-use(1) as man shows it in a terminal: a running head and foot, capital section names, bold for what you type, underline for paths, and less's reverse-video status line pinned to the bottom. The docs wear the same colours and type through Starlight, with a running head over each page title and a running foot at the end.\n\nEverything is set in JetBrains Mono Variable. Dark is a warm black with parchment ink, light is paper with brown-black ink, and one amber marks links and focus. The home page follows the system colour scheme and has no JavaScript; the docs follow Starlight's theme switch.",
+    "overview": "The home page is the manual page niri-computer-use(1) as man shows it in a terminal: a running head and foot, capital section names, bold for what you type, underline for paths, and less's reverse-video status line pinned to the bottom. On a screen at least 75rem wide the page is a niri workspace: the man page is the focused column in a 4px amber ring, and EXAMPLE is the next column peeking in, 16px away on the plate backdrop. The 404 answers a missing page as man does, with \"No manual entry for\" the path and every page listed as man -k lists them. The docs wear the same colours and type through Starlight, with a running head over each page title and a running foot at the end.\n\nEverything is set in JetBrains Mono Variable. Dark is a warm black with parchment ink, light is paper with brown-black ink, and one amber marks links and focus. The home page follows the system colour scheme; the docs follow Starlight's theme switch. One script (1.9 KB gzipped, plus Starlight's 1.1 KB prefetch) adds less's keys, search, copy buttons, column focus and the example's replay. Every page works without it.",
     "keyCharacteristics": [
       "One face, JetBrains Mono Variable 400 and 700, ligatures off on the home page.",
       "A warm dark and a paper light from one light-dark() palette; amber is the only accent.",
       "Text indented 7ch under capital section names, in an 80ch measure.",
       "Running head and foot on the home page and on every docs page.",
-      "The less line: reverse video, sticky, scroll-driven percentage, no JavaScript.",
+      "The pager line: reverse video, sticky, scroll-driven percentage, (END), messages and search in the same line.",
+      "Wide screens: columns 16px apart on the plate, the focused one in a 4px amber ring, sliding on niri's spring.",
+      "Less's keys and help dialog, which the visitor can turn off (WCAG 2.1.4).",
       "Print is black on white with each outside link's address after it."
     ],
     "rules": [
@@ -427,12 +453,12 @@
       },
       {
         "name": "The Reverse Video Rule",
-        "body": "The current place is shown in reverse video: ground on ink. The home page's less line and the docs sidebar's current page use it.",
+        "body": "The current place is shown in reverse video: ground on ink. The pager line, search matches, the call in flight and the docs sidebar's current page use it.",
         "section": "components"
       },
       {
         "name": "The One Amber Rule",
-        "body": "Amber is links, the focus ring, the caret and accent-color. It is not used as a fill, except the pale select tint for selection.",
+        "body": "Amber is links, the focus ring, the focused column's ring, the caret and accent-color. It is not used as a fill, except the pale select tint for selection.",
         "section": "colors"
       },
       {
@@ -446,13 +472,16 @@
       "Do keep the running head and foot, and keep the foot's version and date from the build.",
       "Do name sections in capitals and indent their text by 7ch (3ch under 40rem).",
       "Do keep the focus ring amber, 2px, offset 2px; on the less line it is the ground colour.",
-      "Do keep the home page working without JavaScript and printable.",
+      "Do keep every page readable and usable without JavaScript, and printable. The script only adds.",
+      "Do put motion on --ncu-spring and turn it off under prefers-reduced-motion.",
+      "Do ignore keys in fields and with modifiers, and keep the option to turn them off.",
       "Do check colour pairs for contrast: the lowest is amber text on the select tint, 4.67 in light."
     ],
     "donts": [
       "Don't add a second typeface or a display face.",
       "Don't add cards, shadows, gradients, glow or hero blocks.",
-      "Don't add a theme switch or JavaScript to the home page.",
+      "Don't add a theme switch.",
+      "Don't let the script own content or navigation; a link or a section must work without it.",
       "Don't put amber on any fill other than the select tint.",
       "Don't put uppercase labels, kickers or eyebrows above headings; capital section names are the heading itself.",
       "Don't add decoration that is not part of a man page in a terminal."
