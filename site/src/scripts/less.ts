@@ -139,12 +139,18 @@ for (const pre of document.querySelectorAll<HTMLElement>('[data-find] pre')) {
 
 // The example plays in place, and its calls light up as the session makes them.
 const rows = [...document.querySelectorAll<HTMLElement>('[data-start]')];
+const mark = (video: HTMLVideoElement) => {
+	for (const row of rows) row.dataset.state = callState(video.currentTime, +row.dataset.start!, +row.dataset.ms!);
+};
+// One frame loop while the clip plays; a seek only marks the rows again.
+let frame = 0;
 function track(video: HTMLVideoElement) {
-	const t = video.currentTime;
-	for (const row of rows) {
-		row.dataset.state = callState(t, +row.dataset.start!, +row.dataset.ms!);
-	}
-	if (!video.paused) requestAnimationFrame(() => track(video));
+	cancelAnimationFrame(frame);
+	const step = () => {
+		mark(video);
+		if (!video.paused) frame = requestAnimationFrame(step);
+	};
+	step();
 }
 for (const a of document.querySelectorAll<HTMLAnchorElement>('[data-play]'))
 	a.onclick = (e) => {
@@ -153,6 +159,7 @@ for (const a of document.querySelectorAll<HTMLAnchorElement>('[data-play]'))
 		let video = document.querySelector('video');
 		if (!video) {
 			const still = document.querySelector('.still')!;
+			const focused = still.contains(document.activeElement);
 			video = Object.assign(document.createElement('video'), {
 				src: a.href,
 				poster: still.querySelector('img')!.currentSrc,
@@ -162,8 +169,10 @@ for (const a of document.querySelectorAll<HTMLAnchorElement>('[data-play]'))
 			});
 			video.setAttribute('aria-label', 'The session, playing');
 			const v = video;
-			v.onplay = v.onseeked = v.onended = () => track(v);
+			v.onplay = () => track(v);
+			v.onseeked = v.onended = () => mark(v);
 			still.replaceWith(video);
+			if (focused) video.focus({ preventScroll: true });
 		}
 		video.play();
 	};
