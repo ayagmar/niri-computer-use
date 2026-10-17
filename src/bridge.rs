@@ -5,6 +5,7 @@
 //! reaches a new engine on the next request, and answers `engine_unavailable` while it
 //! can't.
 
+pub(crate) mod before;
 mod client;
 pub(crate) mod envelope;
 pub(crate) mod unavailable;
@@ -34,6 +35,7 @@ use crate::engine::host::{LOG, RUNTIME_DIR_DISCOVERED, SOCKET, UNSCOPED};
 use crate::error::{ErrorName, ToolError};
 use crate::session::{Given, LineLimit, MAX_LINE};
 use crate::{Env, cli, runner};
+use before::Before;
 use client::{Ended, Waiting, Writer};
 use envelope::Message;
 
@@ -513,8 +515,13 @@ async fn read_line(input: &mut (impl tokio::io::AsyncBufRead + Unpin), max: usiz
 }
 
 /// Relays between the client on stdin and stdout and the engine `engine` reaches, until the
-/// client's end.
-pub(crate) async fn run(target: Target, engine: Link) -> Result<(), String> {
+/// client's end. Without an engine, `before` answers the handshake, `tools/list` and pings
+/// until a call reaches one.
+pub(crate) async fn run(
+    target: Target,
+    engine: Option<Link>,
+    before: Option<Before>,
+) -> Result<(), String> {
     let (sender, mut client) = mpsc::unbounded_channel();
     let (ended, client_end) = watch::channel(None);
     tokio::spawn(client::pass_lines(
@@ -526,7 +533,8 @@ pub(crate) async fn run(target: Target, engine: Link) -> Result<(), String> {
     let (writer, writer_failed) = Writer::start(tokio::io::stdout());
     let mut relay = Relay {
         target,
-        engine: Some(engine),
+        engine,
+        before,
         in_flight: BTreeMap::new(),
         initialize: None,
         unreported: false,
@@ -641,6 +649,9 @@ fn leave(engine: Option<Link>, why: &str) -> ! {
 struct Relay {
     target: Target,
     engine: Option<Link>,
+    /// The answers given before the first engine is reached, for a client that requires
+    /// one and had none when it started.
+    before: Option<Before>,
     /// The client's requests the engine hasn't answered, by their ids as JSON, with the
     /// method.
     in_flight: BTreeMap<String, (Value, String)>,
@@ -721,26 +732,45 @@ impl Relay {
             self.initialize = Some((id.clone(), line.clone()));
         }
         if self.engine.is_none() {
+            if let Some(answer) = self
+                .before
+                .as_ref()
+                .and_then(|before| before.answer(&id, &method, &line))
+            {
+                return self.reply(answer).map_err(Stop::Writer);
+            }
             if std::mem::take(&mut self.unreported) {
                 let error = self.lost_error("since the last call");
                 return self.answer(&id, &method, error).map_err(Stop::Writer);
             }
-            let replay = self.initialize.as_ref().filter(|_| !initializing);
-            match first(&mut self.ends, reconnect(&self.target, replay)).await? {
-                Ok(engine) => self.engine = Some(engine),
-                Err(unreached) => {
-                    // An engine of another build says what to do; a retry helps only once it has ended.
-                    let detail = match unreached {
-                        Unreached::OtherBuild(detail) => detail,
-                        Unreached::Other(detail) => format!("{detail}; the next call tries again"),
-                    };
-                    let error = ToolError::new(ErrorName::EngineUnavailable, detail);
-                    return self.answer(&id, &method, error).map_err(Stop::Writer);
-                }
+            if let Err(error) = self.reach(initializing).await? {
+                return self.answer(&id, &method, error).map_err(Stop::Writer);
             }
         }
         self.in_flight.insert(id.to_string(), (id, method));
         self.send(&line).await
+    }
+
+    /// Reaches an engine, sending it the client's `initialize` unless `initializing`, as
+    /// the request being relayed is that one.
+    async fn reach(&mut self, initializing: bool) -> Result<Result<(), ToolError>, Stop> {
+        let replay = self.initialize.as_ref().filter(|_| !initializing);
+        let reached = first(&mut self.ends, reconnect(&self.target, replay)).await?;
+        Ok(match reached {
+            Ok(engine) => {
+                self.engine = Some(engine);
+                self.before = None;
+                Ok(())
+            }
+            Err(unreached) => {
+                // An engine of another build says what to do; a retry helps only once it has ended.
+                let detail = match unreached {
+                    Unreached::OtherBuild(detail) => detail,
+                    Unreached::Other(detail) => format!("{detail}; the next call tries again"),
+                };
+                Err(ToolError::new(ErrorName::EngineUnavailable, detail))
+            }
+        })
     }
 
     async fn send(&mut self, line: &[u8]) -> Result<(), Stop> {
@@ -888,6 +918,7 @@ mod tests {
                 discovered_runtime_dir: None,
             },
             engine: Some(Link::new(1, BufReader::new(input), output)),
+            before: None,
             in_flight: BTreeMap::new(),
             initialize: None,
             unreported: false,

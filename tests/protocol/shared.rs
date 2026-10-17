@@ -486,7 +486,7 @@ async fn without_an_engine_in_time_a_client_that_requires_one_gets_no_standalone
     every_call_unavailable(&mut server, &reason).await;
     let (_, _, stderr) = server.stop().await;
     assert!(
-        stderr.contains("the shared engine is required, so every tool fails with engine_unavailable: no shared engine answered"),
+        stderr.contains("the shared engine is required, so every call fails with engine_unavailable until one is reached: no shared engine answered"),
         "{stderr}"
     );
 }
@@ -505,6 +505,29 @@ async fn an_engine_refusing_a_client_that_requires_it_leaves_every_call_unavaila
         "the shared engine refused this client (engine_version): another build",
     )
     .await;
+}
+
+/// A client that requires the engine and was refused when it started is served once the
+/// refusing engine is gone, by an engine its next call starts, without a restart. Its
+/// handshake was the engine's: the version it asked for, and the server's instructions.
+#[tokio::test]
+async fn a_client_refused_at_its_start_is_served_once_the_refusing_engine_is_gone() {
+    let fixture = shared("required-later");
+    policy(&fixture, "shared = \"required\"\n");
+    let _niri = Niri::start(&fixture);
+    let refusing = refusing_engine(&fixture);
+    let mut server = Server::spawn(&fixture);
+    let result = server.initialize("2025-06-18").await["result"].clone();
+    assert_eq!(result["protocolVersion"], "2025-06-18", "{result}");
+    let instructions = result["instructions"].as_str().unwrap_or_default();
+    assert!(instructions.contains("Start with `status`"), "{result}");
+    let (error, detail) = tool_error(&server.call("status", json!({})).await);
+    assert_eq!(error, "engine_unavailable", "{detail}");
+    refusing.abort();
+    std::fs::remove_file(fixture.runtime_dir().join("engine.sock")).unwrap();
+    let status = server.structured("status").await;
+    assert_eq!(status["engine"]["mode"], "shared", "{status}");
+    assert_eq!(status["shared"]["setting"], "required", "{status}");
 }
 
 /// A mistake elsewhere in the policy file doesn't drop its requirement: an engine that

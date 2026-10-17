@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Changed
+
+- A server that requires the shared engine, and couldn't reach it or was refused when it started, now tries again on every call, starting an engine if none runs. Once the cause is gone, such as an engine of an older build that exited after its last client, the next call is served, without restarting the MCP server. Until then every call fails with `engine_unavailable` as before. A cause no call can fix, such as a socket path over 108 bytes, still needs a restart.
+
 ## 0.1.2 - 2026-10-16
 
 ### Added

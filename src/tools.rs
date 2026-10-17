@@ -6,7 +6,7 @@ use base64::Engine as _;
 use niri_ipc::Action;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, ContentBlock};
+use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::{Deserialize, Serialize};
@@ -1979,16 +1979,29 @@ fn invalid(message: &str) -> CallToolResult {
     ))])
 }
 
+/// What the server tells the client at the handshake, the same from every session, so a
+/// bridge that hasn't reached an engine yet can say it too.
+pub(crate) fn info() -> ServerConfig {
+    ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+        .with_server_info(Implementation::new(
+            "niri-computer-use",
+            env!("CARGO_PKG_VERSION"),
+        ))
+        .with_instructions(INSTRUCTIONS)
+}
+
+const INSTRUCTIONS: &str = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows, workspaces and monitors; take a `screenshot` only when you need to see pixels. `elements`, when listed, gives a window's accessible elements, which `activate_element` and `set_element_text` act on without the pointer once their window has focus; when `not_accessible` says a Chromium or Electron app needs a restart, ask the user first. To act, call `acquire_desktop`, then one action at a time (pointer tools with a fresh `screenshot_ref`, `key` and `type_text` with `expect`, `niri_action` for window layout), reading `accepted` and `observed` (and an element action's `effect`) before the next call. A result's `changes` says what niri saw the action change and is absent when nothing did: read it first, and take a screenshot only when it is empty or unexpected. To see an action's result, pass it `screenshot: true` rather than sending a `screenshot` alongside it, and use `wait_for` rather than repeated screenshots to wait for a window, an element or the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter, and start apps through `launch` presets; with no preset for the app, use `niri_action` `Spawn` with the program's argv (never a shell or `SpawnSh`) when `status.unrestricted.enabled` is true, then find its window with `wait_for` or `desktop_state` (its `app_id` may differ from the program's name) and never repeat the `Spawn`; otherwise ask the user to add a preset. Actions and `clipboard_read` need the lease. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct.";
+
 #[expect(
     clippy::unused_async_trait_impl,
     reason = "rmcp's tool_handler generates an async list_tools without an await"
 )]
-#[tool_handler(
-    router = self.tool_router,
-    name = "niri-computer-use",
-    instructions = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows, workspaces and monitors; take a `screenshot` only when you need to see pixels. `elements`, when listed, gives a window's accessible elements, which `activate_element` and `set_element_text` act on without the pointer once their window has focus; when `not_accessible` says a Chromium or Electron app needs a restart, ask the user first. To act, call `acquire_desktop`, then one action at a time (pointer tools with a fresh `screenshot_ref`, `key` and `type_text` with `expect`, `niri_action` for window layout), reading `accepted` and `observed` (and an element action's `effect`) before the next call. A result's `changes` says what niri saw the action change and is absent when nothing did: read it first, and take a screenshot only when it is empty or unexpected. To see an action's result, pass it `screenshot: true` rather than sending a `screenshot` alongside it, and use `wait_for` rather than repeated screenshots to wait for a window, an element or the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter, and start apps through `launch` presets; with no preset for the app, use `niri_action` `Spawn` with the program's argv (never a shell or `SpawnSh`) when `status.unrestricted.enabled` is true, then find its window with `wait_for` or `desktop_state` (its `app_id` may differ from the program's name) and never repeat the `Spawn`; otherwise ask the user to add a preset. Actions and `clipboard_read` need the lease. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct."
-)]
-impl ServerHandler for Server {}
+#[tool_handler(router = self.tool_router)]
+impl ServerHandler for Server {
+    fn get_info(&self) -> ServerConfig {
+        info()
+    }
+}
 
 /// Runs `work` until it finishes or the client cancels the request. rmcp only cancels the
 /// request's token and keeps running the handler, so this drops `work`, and with it any
