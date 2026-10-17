@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-`install.sh` is a POSIX shell script of about 110 lines, published with every release. Read it before you run it: it is written to be read, and this page is only a summary of it. It needs `curl`, `tar`, `sha256sum`, `uname` and `mktemp`, and runs on x86_64 and aarch64 Linux, the machines there are release builds for. On anything else it says so and stops.
+`install.sh` is a POSIX shell script, published with every release. Read it before you run it: it is written to be read, and this page is only a summary of it. It needs `curl`, `tar`, `sha256sum`, `uname` and `mktemp`, and runs on x86_64 and aarch64 Linux, the machines there are release builds for. On anything else it says so and stops.
 
 ```sh
 curl -fsSLO https://github.com/ayagmar/niri-computer-use/releases/latest/download/install.sh
@@ -96,7 +96,7 @@ rm -f ~/.local/bin/niri-computer-use ~/.claude/skills/niri-computer-use ~/.agent
 rm -r ~/.local/share/niri-computer-use
 ```
 
-To unregister the server from an agent the script registered it in, use the agent's own command: `claude mcp remove --scope user niri-computer-use`, `pi mcp remove niri-computer-use`, `codex mcp remove niri-computer-use`, `amp mcp remove niri-computer-use`, `copilot mcp remove niri-computer-use`, `gemini mcp remove --scope user niri-computer-use` or `qwen mcp remove niri-computer-use`.
+To unregister the server from an agent the script registered it in, use the agent's own command: `claude mcp remove --scope user niri-computer-use`, `pi mcp remove niri-computer-use`, `codex mcp remove niri-computer-use`, `amp mcp remove niri-computer-use`, `copilot mcp remove niri-computer-use`, `gemini mcp remove --scope user niri-computer-use` or `qwen mcp remove niri-computer-use`. Amp's `remove` looks in the workspace settings first and falls back to `~/.config/amp/settings.json`, so run it from outside any project with its own `niri-computer-use` entry.
 
 If the script said it replaced or left one of the skill or plugin paths, that path wasn't its own: leave it out of the first `rm`, and point a replaced link back where the script said it pointed.
 

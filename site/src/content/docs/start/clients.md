@@ -41,7 +41,7 @@ Codex starts MCP servers with a short list of variables that leaves out niri's, 
 amp mcp add niri-computer-use -- ~/.local/bin/niri-computer-use serve
 ```
 
-Amp writes it to `amp.mcpServers` in its user settings, `~/.config/amp/settings.json`. It refuses a name it already has; `amp mcp remove niri-computer-use` first to change the command.
+Amp writes it to `amp.mcpServers` in its user settings, `~/.config/amp/settings.json`. It refuses a name it already has, so to change the command, run `amp mcp remove niri-computer-use` first, from outside any project with its own `niri-computer-use` entry: `remove` looks in the workspace settings before the user's.
 
 ## GitHub Copilot CLI
 
