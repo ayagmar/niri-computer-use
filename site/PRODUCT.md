@@ -39,7 +39,7 @@ The user's own niri session on Arch-style Linux, often with Noctalia as the shel
 - Accent colour of its own: not niri's default focus-ring blue, not Catppuccin.
 - Dark and light themes.
 - Voice: short declarative sentences, measured numbers, no claims of magic, no hype words.
-- No Show HN or launch framing on the site; no release tag yet.
+- No Show HN or launch framing on the site.
 
 ## Evidence on Hand
 

@@ -1,299 +1,229 @@
 ---
 name: niri-computer-use
-description: A hand-made Linux project page from around 2000 for the home page, with a separate Archivo and JetBrains Mono system for the docs.
+description: The manual page niri-computer-use(1) as man shows it in a terminal, set in JetBrains Mono, for the home page and the docs.
 colors:
-  desk: "#c0c0c0"
-  paper: "#ffffff"
-  face: "#e4e4dc"
-  face-hover: "#efefe8"
-  ink: "#000000"
-  ink-2: "#3c3c38"
-  band: "#336666"
-  band-ink: "#ffffff"
-  band-stop: "#ffdd77"
-  bar: "#dfe9e9"
-  bar-ink: "#133333"
-  bar-rule: "#9fbcbc"
-  bevel-hi: "#ffffff"
-  bevel-lo: "#808080"
-  bevel-dk: "#404040"
-  well: "#f4f4ee"
-  link: "#0000cc"
-  link-visited: "#663399"
-  link-active: "#cc0000"
-  note: "#ffffcc"
-  note-edge: "#996600"
-  ledger-gap: "#fff8ee"
-  ring: "#ffcc33"
-  ring-edge: "#0f2626"
+  ground: "#f7f5ee"
+  ink: "#2b2a25"
+  bold: "#0c0c0a"
+  dim: "#5c584e"
+  rule: "#d4cfbf"
+  accent: "#8a5300"
+  select: "#f0dca8"
+  plate: "#eeeadd"
+  stop: "#b3261e"
+  ground-dark: "#10110f"
+  ink-dark: "#c9c6b9"
+  bold-dark: "#f4f1e6"
+  dim-dark: "#9a9588"
+  rule-dark: "#2f2d27"
+  accent-dark: "#e3a83c"
+  select-dark: "#3a3220"
+  plate-dark: "#0a0b09"
+  stop-dark: "#ff6a57"
 typography:
-  title:
-    fontFamily: "Tinos, 'Times New Roman', Times, 'Liberation Serif', serif"
-    fontSize: "30px"
-    fontWeight: 700
-    lineHeight: 1.1
-  heading:
-    fontFamily: "Tinos, 'Times New Roman', Times, 'Liberation Serif', serif"
-    fontSize: "19px"
-    fontWeight: 700
-    lineHeight: 1.45
-  subheading:
-    fontFamily: "Tinos, 'Times New Roman', Times, 'Liberation Serif', serif"
-    fontSize: "16px"
-    fontWeight: 700
-    lineHeight: 1.45
   body:
-    fontFamily: "Tinos, 'Times New Roman', Times, 'Liberation Serif', serif"
-    fontSize: "17px"
-    fontWeight: 400
-    lineHeight: 1.45
-  table:
-    fontFamily: "Tinos, 'Times New Roman', Times, 'Liberation Serif', serif"
+    fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
     fontSize: "16px"
     fontWeight: 400
-    lineHeight: 1.45
-  caption:
-    fontFamily: "Tinos, 'Times New Roman', Times, 'Liberation Serif', serif"
-    fontSize: "15px"
+    lineHeight: 1.55
+  running:
+    fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
+    fontSize: "16px"
     fontWeight: 400
-    lineHeight: 1.45
-  status:
-    fontFamily: "Tinos, 'Times New Roman', Times, 'Liberation Serif', serif"
-    fontSize: "14px"
-    fontWeight: 400
-    lineHeight: 1.45
-  code:
-    fontFamily: "'DejaVu Sans Mono', 'Liberation Mono', 'Courier New', monospace"
-    fontSize: "13.5px"
-    fontWeight: 400
-    lineHeight: 1.45
-  button-88:
-    fontFamily: "Verdana, 'DejaVu Sans', sans-serif"
-    fontSize: "11px"
+    lineHeight: 1.55
+  section:
+    fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
+    fontSize: "16px"
     fontWeight: 700
-    lineHeight: 1.05
+    lineHeight: 1.55
+  doc-title:
+    fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
+    fontSize: "1.75rem"
+    fontWeight: 700
+    lineHeight: 1.2
+  doc-body:
+    fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
+    fontSize: "1rem"
+    fontWeight: 400
+    lineHeight: 1.65
+  code:
+    fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
+    fontSize: "0.9375rem"
+    fontWeight: 400
+    lineHeight: 1.65
 spacing:
-  gap-tight: "2px"
-  gap-button: "6px"
-  pad-cell: "3px 8px"
-  pad-main: "16px 22px 18px"
-  side-width: "160px"
-  page-width: "760px"
+  indent: "7ch"
+  indent-phone: "3ch"
+  measure: "84ch"
+  gap-running: "2ch"
+  pad-pre: "0.15em 1ch"
+  pad-less: "0.2rem 2ch"
+  docs-content-width: "48rem"
 components:
   page:
-    backgroundColor: "{colors.paper}"
-    width: "760px"
-  title-band:
-    backgroundColor: "{colors.band}"
-    textColor: "{colors.band-ink}"
-    typography: "{typography.title}"
-    padding: "14px 18px"
-  side-button:
-    backgroundColor: "{colors.face}"
+    backgroundColor: "{colors.ground}"
     textColor: "{colors.ink}"
-    padding: "3px 8px"
-  side-button-hover:
-    backgroundColor: "{colors.face-hover}"
-  heading-bar:
-    backgroundColor: "{colors.bar}"
-    textColor: "{colors.bar-ink}"
-    typography: "{typography.heading}"
-    padding: "2px 8px"
-  code-well:
-    backgroundColor: "{colors.well}"
-    textColor: "{colors.ink}"
+    typography: "{typography.body}"
+  running-line:
+    textColor: "{colors.dim}"
+    typography: "{typography.running}"
+  section-name:
+    textColor: "{colors.bold}"
+    typography: "{typography.section}"
+  code-plate:
+    backgroundColor: "{colors.plate}"
+    textColor: "{colors.bold}"
     typography: "{typography.code}"
-    padding: "6px 10px"
-  notice:
-    backgroundColor: "{colors.note}"
-    textColor: "{colors.ink}"
-    padding: "4px 10px"
-  table-head-cell:
-    backgroundColor: "{colors.face}"
-    textColor: "{colors.ink}"
-    padding: "3px 8px"
-  status-bar:
-    backgroundColor: "{colors.face}"
-    textColor: "{colors.ink}"
-    typography: "{typography.status}"
-    padding: "3px"
-  button-88:
-    textColor: "#ffffff"
-    typography: "{typography.button-88}"
-    width: "88px"
-    height: "31px"
+    padding: "0.15em 1ch"
+  less-line:
+    backgroundColor: "{colors.ink}"
+    textColor: "{colors.ground}"
+    typography: "{typography.body}"
+    padding: "0.2rem 2ch"
+  link:
+    textColor: "{colors.accent}"
+  selection:
+    backgroundColor: "{colors.select}"
+    textColor: "{colors.bold}"
 ---
 
 # Design System: niri-computer-use
 
-This file records two systems. The home page (`site/src/pages/index.astro`, `src/components/home/`, words in `src/lib/home.ts`) has its own styles and is described first. The Starlight docs pages have a separate system, described at the end; the home page shares none of it.
+One system covers the home page (`site/src/pages/index.astro`, words in `src/lib/home.ts`) and the Starlight docs. Both take their colours from `src/styles/tokens.css`. The docs map them onto Starlight in `src/styles/theme.css`, and the docs running head and foot are `src/components/PageTitle.astro` and `Footer.astro`. Running-head names come from `src/lib/man.ts`.
 
 ## Overview
 
-**Creative North Star: "The Project Page From Around 2000"**
+**Creative North Star: "The Manual Page in a Terminal"**
 
-A hand-made Linux project page, done with care and not as parody. A 760-pixel white page sits on the desktop grey, with a teal title band on top, a column of bevelled buttons down the side, facts in tables, one framed still that opens a clip, and a sunken status bar at the foot. Everything is set in one serif, Tinos, with system monospace for commands. The page is drawn the way a person would have drawn it with tables and border colors: no radius, no gradients, no blur, no cards.
+The home page is the manual page `niri-computer-use(1)` as man shows it in a terminal. It has a running head and foot, capital section names (NAME, SYNOPSIS, DESCRIPTION, INSTALLATION, SAFETY, EXAMPLE, HISTORY, BUGS, SEE ALSO), bold for what you type, underline for paths, and less's reverse-video status line pinned to the bottom of the window. The docs are the rest of the manual: each page opens on a running head and ends on a running foot, and its section headings are capitals.
 
-The density is that of a document. Facts go in tables and short lists, not sentences. The era shows in the bevels, the link colors, the 88x31 buttons and the status bar, and stops there. The page is light only and has no JavaScript, and it says so in its status bar.
-
-The direction contract holds the thesis: refuse the marketing hero, gradients, cards and autoplay video. The build matches it. Where the contract names the first-viewport order (band, side buttons, niri-only notice, still, facts table), the grid and source order produce it.
+Everything is set in JetBrains Mono Variable. Dark is a warm black with parchment ink, light is paper with brown-black ink, and one amber marks links and focus. The home page follows the system colour scheme (`prefers-color-scheme`, `color-scheme: light dark`). The docs follow Starlight's theme switch, which sets `data-theme` on the root. The home page has no JavaScript.
 
 **Key Characteristics:**
-- One 760px page on desk grey, bevelled with a 2px border (white top-left, dark bottom-right).
-- Teal title band with a 24x16 pixel mark and a yellow stop line.
-- One serif (Tinos 400 and 700), 17px body, monospace only for code.
-- Raised things are bevelled buttons; sunken things are tables, code wells, the ledger and status cells.
-- Links are blue, purple when visited, red when pressed.
-- The focus ring is niri's: amber around a dark edge.
-- Light only, no JavaScript, a print stylesheet.
+- One face, JetBrains Mono Variable 400 and 700; ligatures are off on the home page.
+- One `light-dark()` palette for both themes; amber is the only accent.
+- Text is indented 7ch under its section name, in a column at most 84ch wide (80ch plus 2ch padding each side).
+- Running head and foot on the home page and on every docs page.
+- The less line: reverse video, sticky, with a percentage that follows scrolling.
+- Print is black on white, with each outside link's address after it.
 
 ## Colors
 
-A grey, white and teal palette with one yellow and one amber. Color names follow the era: desk, paper, face, ink.
+A warm, low-saturation palette. Each token has a light and a dark value, picked by `light-dark()`.
 
-### Primary
-- **Title Band Teal** (`band`): the title band background and text selection. Also the theme-color meta. White text on it.
-- **Stop Yellow** (`band-stop`): the stop line in the band only, set in bold.
+| Token | Light | Dark | Use |
+|---|---|---|---|
+| `ground` | #f7f5ee | #10110f | page ground; text on the less line |
+| `ink` | #2b2a25 | #c9c6b9 | body text; less line background |
+| `bold` | #0c0c0a | #f4f1e6 | groff bold, section names, code, table heads, selection text |
+| `dim` | #5c584e | #9a9588 | running head and foot, captions |
+| `rule` | #d4cfbf | #2f2d27 | hairlines, still frame, scrollbar track |
+| `accent` | #8a5300 | #e3a83c | links, focus ring, caret, `accent-color` |
+| `select` | #f0dca8 | #3a3220 | text selection; Starlight accent-low |
+| `plate` | #eeeadd | #0a0b09 | code plate, image background in docs |
+| `stop` | #b3261e | #ff6a57 | the one red, for danger asides in the docs |
 
-### Secondary
-- **Heading Bar Teal** (`bar`): the light teal bar behind each h2, with `bar-ink` text and `bar-rule` top and bottom hairlines.
+Measured contrast (WCAG):
 
-### Tertiary
-- **Notice Yellow** (`note`): the one niri-only notice, with a `note-edge` brown border.
-- **Focus Ring Amber** (`ring`) around a **Ring Edge** dark teal (`ring-edge`): keyboard focus, and also the pixel mark's focused column.
+| Pair | Light | Dark |
+|---|---|---|
+| ink on ground | 13.18 | 11.06 |
+| dim on ground | 6.50 | 6.34 |
+| accent on ground | 5.80 | 8.96 |
+| accent on select | 4.67 (lowest) | 5.99 |
 
-### Neutral
-- **Desk Grey** (`desk`): the browser background around the page, and the scrollbar track.
-- **Paper** (`paper`): the page and the skip link.
-- **Face Grey** (`face`): side column, buttons, table header cells, frame around the still, status bar. `face-hover` is the button hover.
-- **Ink** (`ink`) and **Second Ink** (`ink-2`): text, and captions and "Read it" labels.
-- **Well** (`well`): code wells, a shade off paper.
-- **Bevel highlight, low, dark** (`bevel-hi`, `bevel-lo`, `bevel-dk`): the only edge colors. Raised edges use hi on top-left and dk on bottom-right; sunken edges use lo top-left and hi bottom-right.
-- **Link** (`link`), **Visited** (`link-visited`), **Active** (`link-active`): the default link states. The active red is also the text caret color.
-- **Ledger Gap** (`ledger-gap`): a warm tint behind the "Not covered" half of the safety ledger.
+The docs also use a few Starlight-only tints in `theme.css` (`accent-high` #5c3800 / #f0c062, `red-high`, `red-low`, and a gray scale from `ground` to `bold`). They stay tied to Starlight's variables and are not general tokens. The home page's `theme-color` meta tags carry the two ground values.
 
 ### Named Rules
-**The Edge Rule.** Depth comes only from the three bevel colors. Raised is hi top-left, dk bottom-right. Sunken reverses it with lo and hi. No other shadow or edge color is added.
+**The Bold Rule.** Bold is the strongest ink, as a terminal shows groff's bold: bold weight and the `bold` colour together. In the docs, `strong` and `b` take Starlight's white, which is mapped to `bold`. Underline is groff's italic, for paths.
 
-**The Browser Defaults Rule.** Link colors are the era's blue, purple and red. Do not restyle them to the teal. Buttons that are links override to ink and keep it when visited.
+**The One Amber Rule.** Amber is links, the focus ring, the caret and `accent-color`. The only amber-family fill is the pale `select` tint for selection and Starlight's low-accent backgrounds.
 
 ## Typography
 
-**Display, Body Font:** Tinos 400 and 700, self-hosted through `@fontsource/tinos` (latin 400 preloaded), with Times New Roman, Times and Liberation Serif behind it.
-**Code Font:** system monospace (DejaVu Sans Mono, Liberation Mono, Courier New). Not self-hosted.
-**88x31 Font:** Verdana with DejaVu Sans behind it, in the six era buttons only.
+**Font:** JetBrains Mono Variable (weights 400 to 700), self-hosted through `@fontsource-variable/jetbrains-mono`, with `ui-monospace`, DejaVu Sans Mono and `monospace` behind it. The home page preloads the latin woff2. Starlight's `--sl-font` and `--sl-font-mono` both point at it.
 
-**Character:** a plain serif at a document size, with bold doing the work that size does elsewhere. No letter-spacing, no uppercase labels, no display face.
+**Character:** one monospace for words and commands alike, with bold doing the work size does elsewhere.
 
 ### Hierarchy
-- **Title** (700, 30px, 1.1; 24px on phones): the h1 in the band.
-- **Heading** (700, 19px): h2 on a light teal bar. In the side aside the h2 is 15px with a hairline underneath.
-- **Subheading** (700, 16px): h3 over each half of the safety ledger.
-- **Body** (400, 17px, 1.45; 16px on phones): main text. The main column is about 540px wide at full size, which gives a measure near 70 characters.
-- **Table and list** (400, 16px): facts, releases and ledger lists. Release version and date cells use tabular numerals and do not wrap.
-- **Caption** (400, 15px, `ink-2`): figcaption and "Read it:" labels. The 88x31 notes and side buttons are 15px bold.
-- **Status** (400, 14px): status bar cells.
-- **Code** (400, 13.5px, 1.45): install commands, wrapping with `pre-wrap` so nothing scrolls sideways.
+- **Home body** (400, 16px, 1.55; 14px under 40rem): all home text. Section names, NAME and the h1 are also 1em; section names are 700.
+- **Running head and foot** (400, same size, `dim`): three parts, space-between with a 2ch gap. The middle part is hidden under 40rem on the home page.
+- **Docs title** (700, 1.75rem, letter-spacing 0): the h1 under the running head, which is 0.875-size Starlight small text in gray-3.
+- **Docs body** (line height 1.65): `--sl-text-body` drops to 0.9375rem under 50rem. h2 is 1.125rem, bold, uppercase, 0.02em tracking; h3 and h4 are 1rem bold.
+- **Code** (inherits the page font): home `pre` wraps with `pre-wrap` and `overflow-wrap: anywhere`; docs code is 0.9375rem. Code inside docs headings loses its chip and uppercase.
 
 ### Named Rules
-**The One Serif Rule.** Everything but code and the 88x31 buttons is Tinos. Do not add a second text face.
+**The One Face Rule.** JetBrains Mono is the only face. Do not add a second text face or a display face.
 
 ## Layout
 
-The page is a CSS grid in a 760px box: a 160px side column and a flexible main column, with named areas band, side, main, more and status. The `more` area ("Built on", six 88x31 buttons) sits under the side buttons in the left column. Source order is band, side nav, main, more, status, so the content comes before the extras.
+Home: body padding `1.5rem 0 0`, header, main and footer at most 84ch wide with 2ch side padding. Section names sit at the left edge; paragraphs, `pre`, definition lists, tables, figures and the h1 are indented 7ch. A block following a block gets 1em above, and consecutive `pre` 0.25em. The definition list in SAFETY is an 11ch term column and a flexible description column. The still is at most 70ch wide. Tables have collapsed borders and 3ch column gaps; the call table right-aligns its last column.
 
-Spacing is small and fixed, in pixels: 2px between table cells and ledger halves, 6px between buttons, `3px 8px` cell and button padding, `16px 22px 18px` main padding, 26px above h2 and 10px below. The body has `24px 12px 40px` of desk around the page.
+Docs: Starlight's layout, with content width 48rem and header and sidebar on the ground colour.
 
-**Phones (640px and below):** one column in the order band, side, main, more, status. The page loses its border and the body padding drops to zero. The side buttons become a row of three equal columns, and two columns at 380px and below. The ledger stacks to one column. Body size drops to 16px and the title to 24px.
+**Phones.** Home at 40rem and below: base size 14px, indent 3ch, the definition list becomes one column, the running head's middle part and the less line's long title are hidden. Docs at 50rem and below: smaller body, halved cell padding, reference code names may break. At 30rem the docs running head and foot hide their middle part. On touch screens (`pointer: coarse`) docs heading anchors and code copy buttons are 44px.
 
-**Print:** the page becomes a block with no border, the side column, "Built on" aside, status bar and skip link are hidden, the band loses its color and gets a 2px black rule, and every outside link in main prints its address after it.
+**Print.** Home prints black on white at 11pt, without the less line and skip link, with each outside link in `main` followed by its address in angle brackets.
 
-**Light only.** `color-scheme` is `light` in CSS and in a meta tag. The page imitates a period when there was no dark mode, and the bevel colors depend on a light face. Do not add a dark variant.
-
-**No JavaScript.** Navigation is anchors, the clip opens from a link, and the build reads the changelog and the clip's size and length.
+**No JavaScript on the home page.** Navigation is anchors; the clip opens from a link; version, date, release rows and clip size and length are read at build time.
 
 ## Elevation & Depth
 
-Flat plus bevel. The system has no blur and no spread. Depth is made of one- and two-pixel borders in the bevel colors.
-
-### Shadow Vocabulary
-- **Raised border** (`border: 2px solid; border-color: hi dk dk hi`, with `inset -1px -1px 0 lo` on buttons): the page and side buttons.
-- **Pressed** (`border-color: dk hi hi dk; box-shadow: inset 1px 1px 0 lo`): `.bevel:active`. The 88x31 buttons swap their inset highlight and shade on `:active`.
-- **Sunken** (`border-color: lo hi hi lo`): tables, cells, the ledger and its halves, the frame around the still, status cells. Code wells add `inset 1px 1px 0 dk`.
-- **Page edge** (`1px 1px 0 ink` on the page): a one-pixel dark outer edge that finishes the bevel. It is not a drop shadow and is not used on anything else.
-- **Focus ring** (`0 0 0 2px ring-edge, 0 0 0 5px ring, 0 0 0 6px ring-edge`): on `a:focus-visible` and the 88x31 buttons. A transparent 2px outline is kept for forced-colors modes. The framed still adds a 3px outline offset.
+Flat. There are no shadows, gradients or blur. Separation is the code plate (a `plate` fill with 1ch side padding), a 1px `rule` line (the still's frame, the docs foot's top border, Starlight hairlines) and reverse video.
 
 ### Named Rules
-**The Press Rule.** Raised controls press in on `:active`: side buttons and 88x31 buttons. Nothing animates; there are no transitions.
+**The Reverse Video Rule.** The current place is shown as ground text on an ink fill. The home page's less line does this, and so does the docs sidebar's current page.
 
 ## Shapes
 
-Square. There is no border radius anywhere on the home page. Silhouettes are rectangles on whole pixels. The pixel mark is drawn with `crispEdges` rectangles on a 24x16 grid, each grid pixel three CSS pixels (72x48), and shows niri's strip of columns running off both edges, the focused column ringed in amber, and a pointer inside it. The still is shown in a face-grey frame with a 1px ink border on the image.
+Square. The home page has no radius. The docs set 2px on code blocks (the expressiveCode `borderRadius`) and on images, so a still sits on the plate with a barely rounded corner.
 
 ## Components
 
-### Title Band
-Teal full-width bar: the mark, the h1 (white, 700, 30px) and one tagline line in 16px with the stop line in bold `band-stop` yellow. Padding `14px 18px`, 16px gap.
+### Running Head and Foot
+Home: the header repeats `NIRI-COMPUTER-USE(1)` on both sides around "User Commands". The footer has a link to the release (`niri-computer-use <version>`), the release date from the changelog and the name. Docs: `PageTitle.astro` prints the page name and section on both sides (`SAFETY(7)`) around "niri-computer-use manual", hidden from assistive technology, then the real h1. `Footer.astro` adds the default Starlight footer, then a rule and the same release link, date and page name. Names come from `manName`: the last path part in capitals, a group's name for its overview page, section 1 for `reference/cli`, 5 for `concepts/configuration`, and 7 for the rest. The footer's link is amber, the rest `dim`.
 
-### Side Buttons
-Face-grey bevelled link buttons, bold 15px ink, no underline, a 6px gap, one per anchor or outside page (Install, Safety, Releases, Documentation, Source, llms.txt). Hover lightens to `face-hover`. Active presses in. Visited stays ink. On phones they are centered in a 3-then-2-column grid.
+### Section
+A bold capital name at the left edge with 1.5em above, then text indented 7ch. NAME is a styled paragraph (`.sh`, hidden from assistive technology) over the page's h1, so the h1 is the line `niri-computer-use - <summary>`, indented 7ch. SYNOPSIS lists the bold commands separated by ` | `.
 
-### Heading Bars
-h2 on a light teal bar with hairlines above and below. No rule or number elsewhere.
+### Less Line
+A sticky `nav` at the bottom: `ink` fill, `ground` text, links in `ground`. It holds "Manual page niri-computer-use(1)", a percentage, and four links (install, safety, docs, source). Where `animation-timeline: scroll()` is supported, a registered integer `--ncu-read` runs from 0 to 100 as the page scrolls and the percentage is printed from it; elsewhere the percentage is absent. Focus rings on its links use the ground colour. `scroll-padding-bottom` of 3.5rem keeps anchors clear of it.
 
-### Notice
-One yellow-cream line in bold, directly under the top of main: the niri-only fact. It is the only use of `note`.
+### Links
+Amber with a 1px underline offset 3px, 2px on hover. In docs, links in the article use Starlight's accent text colour with the same offsets. `.refs a` stays on one line. See-also entries read like `safety(7)`.
 
-### Framed Still
-A figure holding one still in a face-grey sunken frame, linking to one clip. The caption states what it shows and the clip's length, format and size, read from the file at build time. The image loads eagerly at high priority and is served as AVIF with a JPG fallback. No autoplay, no play-button overlay.
+### Code Plate
+A `pre` on `plate`, text in `bold`, indented 7ch with 0.15em 1ch padding. Docs code blocks use expressiveCode with themes `github-dark` and `github-light`, no frame, wrapped lines, no border, `codeBackground` set to `plate` and no frame shadow.
 
-### Tables
-Facts (a row header and a value, 108px header column) and releases (Release, Date, Changes). Separate borders with 2px spacing, sunken, with face-grey header cells. Release rows come from CHANGELOG.md, three at most.
+### Definition List and Tables
+SAFETY is a definition list of bold terms and descriptions. The example call table (`call`, `ms`) and the history table (version link, date, summary) are plain, with tabular numerals. Docs reference tables keep the first column's code on one line above 50rem.
 
-### Install Steps and Code Wells
-An ordered list with bold lead-ins. Each command is in a sunken, off-white `pre` that wraps. Alternatives are introduced with a 15px label ("Read it:", "Then run it:").
+### Still
+One figure: the still links to the clip, in a 1px `rule` frame, loaded eagerly at high priority as AVIF with a JPG fallback. The caption states the clip's length, format and size, read at build time. No autoplay and no overlay.
 
-### Safety Ledger
-Two sunken halves in a sunken frame: Enforced, and Not covered (tinted `ledger-gap`). Each is a short bulleted list. The ledger exists so a visitor can see what is not protected.
+### Selection, Focus, Caret
+Selection is `select` with `bold` text. Focus is a 2px amber outline offset 2px on `:focus-visible`, as niri rings the focused column. The caret and `accent-color` are amber. The scrollbar uses `rule` on `ground`.
 
-### 88x31 Buttons
-Six 88x31 links in a wrap row under "Built on" (niri, Noctalia, Wayland, MCP, crates.io, MIT). Each is a solid era color (brown, indigo, blue, charcoal, green, maroon) with a 1px black border, a two-tone inset bevel, white 11px Verdana bold top line and a 9px cream bottom line. They link to real projects the tool stands on. Hover underlines the top line; active presses in.
-
-### Status Bar
-Three sunken cells at the foot: "Best viewed with any browser", "No JavaScript", and the current version (with its date when it is the latest release). The last cell does not grow.
-
-### Skip Link
-Hidden above the page until focused, then a white tab at the top left.
+### Motion
+Docs pages crossfade by view transition when `prefers-reduced-motion` is no-preference, with the header and site title named so they hold still. The less percentage is the only other motion, and it is tied to scrolling.
 
 ## Do's and Don'ts
 
 ### Do:
-- **Do** put facts in tables and short lists, not paragraphs.
-- **Do** build raised things from hi/dk bevels and sunken things from lo/hi bevels, and press raised controls in on `:active`.
-- **Do** use one still that links to one clip, and state the clip's length, format and size next to the link.
-- **Do** keep the page light only, one column on phones, and working without JavaScript.
-- **Do** keep a visible focus ring on every link: amber (`ring`) outside a dark teal edge.
-- **Do** keep the print view: address after each outside link, side column and status bar dropped.
-- **Do** show only things that are true: version, date, clip size and release rows come from the build, and the "Built on" buttons point at real projects.
-- **Do** add era touches with taste: a status bar, bevels, 88x31 buttons for real dependencies. One of each, not a collection.
+- **Do** take every colour from `tokens.css`; the home page and docs share it.
+- **Do** keep the running head and foot, with version and date taken from the build.
+- **Do** write section names in capitals and indent their text by 7ch (3ch under 40rem).
+- **Do** keep the focus ring amber, 2px, offset 2px; on the less line it is the ground colour.
+- **Do** keep the home page working without JavaScript and printable, with link addresses after outside links.
+- **Do** check any new colour pair for contrast. The lowest recorded pair is accent on select, 4.67 in light.
+- **Do** say only what is true: the version, dates, release rows and clip facts come from the build.
 
 ### Don't:
-- **Don't** invent era furniture: no visitor counters, guestbooks, awards, "under construction" signs or webrings.
-- **Don't** use gradients, glow, blur, border radius, cards, or soft shadows.
+- **Don't** add a second typeface or a display face.
+- **Don't** add cards, shadows, gradients, glow, blur or hero blocks.
+- **Don't** add a theme switch or JavaScript to the home page.
+- **Don't** use amber as a fill beyond the select tint.
+- **Don't** put kickers, eyebrows or small uppercase labels above headings. Capital section names are the heading itself.
 - **Don't** autoplay video or put a play overlay on the still.
-- **Don't** add a marketing hero, slogan block or testimonial row.
-- **Don't** add a dark mode, JavaScript, animation or transitions to the home page.
-- **Don't** use blinking, marquees, tiled backgrounds or the Comic Sans-style parody of the period. The page is a careful version of it, not a joke.
-- **Don't** put uppercase labels, kickers or eyebrows over headings.
-- **Don't** reuse the docs tokens or fonts on the home page, or the home page's bevels on the docs.
 
-## The docs pages: a separate system
-
-The Starlight docs pages keep `src/styles/tokens.css` and `src/styles/theme.css`. This system is real and unchanged, and is recorded here only so nobody mixes the two.
-
-- **Palette:** a cool concrete ground (`--ncu-ground` #e6e8e3), near-black ink (`--ncu-ink` #0c0e0d), second ink #464c48, a black code plate (#0b0c0b) and one red for a stopped answer (`--ncu-stop` #c42a1b). Light and dark both exist; dark swaps to ground #161917, ink #e6e8e3, second ink #a5aca7, plate #070807 and stop #ff6a57. Starlight's gray scale and accent are remapped to these in `theme.css`.
-- **Type:** Archivo Variable for text (narrow, heavy titles: h1 weight 840 at 72% width; site title weight 760 at 88% width) and JetBrains Mono Variable for calls and commands.
-- **Behaviour:** a 2px ink focus outline offset 3px, ink selection, red caret, pages crossfading by view transition when motion is allowed, and a 46rem content width.
-- **Boundary:** the home page imports none of these files, and none of the home page's tokens belong in the docs.
-
-Not canonized, by design: the page's one-off tints (`#efefe8` hover, `#f4f4ee` well, `#fff8ee` ledger, `#9fbcbc` bar rule, `#996600` notice edge) are tied to the components that use them and are not a general palette.
+Not canonized, as defects or drift the build carries: the 2px radius on docs code and images (the home page is square; a future surface should be square); the Starlight-only tints in `theme.css`, tied to Starlight's variables; the stop red's contrast, which is not in the measured set.

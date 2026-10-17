@@ -4,434 +4,458 @@
   "title": "Design System: niri-computer-use",
   "extensions": {
     "colorMeta": {
-      "desk": {
+      "ground": {
         "role": "neutral",
-        "displayName": "Desk Grey",
-        "canonical": "#c0c0c0",
-        "purpose": "Browser background around the page.",
+        "displayName": "Paper Ground",
+        "canonical": "#f7f5ee",
+        "purpose": "Page ground in light. Also the text on the less line.",
         "tonalRamp": [
-          "#262626",
-          "#434343",
-          "#616161",
-          "#7e7e7e",
-          "#9b9b9b",
-          "#b8b8b8",
-          "#d5d5d5",
-          "#f2f2f2"
-        ]
-      },
-      "paper": {
-        "role": "neutral",
-        "displayName": "Paper",
-        "canonical": "#ffffff",
-        "purpose": "The page itself.",
-        "tonalRamp": [
-          "#262626",
-          "#434343",
-          "#616161",
-          "#7e7e7e",
-          "#9b9b9b",
-          "#b8b8b8",
-          "#d5d5d5",
-          "#f2f2f2"
-        ]
-      },
-      "face": {
-        "role": "neutral",
-        "displayName": "Face Grey",
-        "canonical": "#e4e4dc",
-        "purpose": "Side column, buttons, table headers, still frame, status bar.",
-        "tonalRamp": [
-          "#2b2b21",
-          "#4c4c3b",
-          "#6d6d54",
-          "#8e8e6d",
-          "#a8a88e",
-          "#c1c1af",
-          "#dbdbd0",
-          "#f4f4f1"
+          "#252524",
+          "#61605d",
+          "#9d9c97",
+          "#d9d7d1",
+          "#f8f6f0",
+          "#faf9f5",
+          "#fcfcf9",
+          "#fefefe"
         ]
       },
       "ink": {
         "role": "neutral",
-        "displayName": "Ink",
-        "canonical": "#000000",
-        "purpose": "Text.",
+        "displayName": "Brown-Black Ink",
+        "canonical": "#2b2a25",
+        "purpose": "Body text in light. The less line background.",
         "tonalRamp": [
-          "#262626",
-          "#434343",
-          "#616161",
-          "#7e7e7e",
-          "#9b9b9b",
-          "#b8b8b8",
-          "#d5d5d5",
-          "#f2f2f2"
+          "#060606",
+          "#11100f",
+          "#1b1b18",
+          "#262521",
+          "#474642",
+          "#7f7e7b",
+          "#b6b6b4",
+          "#eeeeee"
         ]
       },
-      "ink-2": {
+      "bold": {
         "role": "neutral",
-        "displayName": "Second Ink",
-        "canonical": "#3c3c38",
-        "purpose": "Captions and labels.",
+        "displayName": "Bold Ink",
+        "canonical": "#0c0c0a",
+        "purpose": "Groff bold, headings, code, table heads in light.",
         "tonalRamp": [
-          "#282825",
-          "#464641",
-          "#64645d",
-          "#828279",
-          "#9e9e97",
-          "#babab6",
-          "#d7d7d4",
-          "#f3f3f2"
+          "#020202",
+          "#050504",
+          "#080806",
+          "#0b0b09",
+          "#2c2c2a",
+          "#6c6c6b",
+          "#acacab",
+          "#ececeb"
         ]
       },
-      "band": {
+      "dim": {
+        "role": "neutral",
+        "displayName": "Dim Ink",
+        "canonical": "#5c584e",
+        "purpose": "Running head and foot, captions.",
+        "tonalRamp": [
+          "#0e0d0c",
+          "#24231f",
+          "#3a3832",
+          "#514d45",
+          "#716e65",
+          "#9c9a94",
+          "#c7c6c2",
+          "#f2f2f1"
+        ]
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Rule",
+        "canonical": "#d4cfbf",
+        "purpose": "Hairlines, the still frame, scrollbar track in light.",
+        "tonalRamp": [
+          "#201f1d",
+          "#53514b",
+          "#878479",
+          "#bab6a8",
+          "#dad5c7",
+          "#e5e2d8",
+          "#f0efe9",
+          "#fcfbfa"
+        ]
+      },
+      "accent": {
         "role": "primary",
-        "displayName": "Title Band Teal",
-        "canonical": "#336666",
-        "purpose": "Title band and text selection.",
+        "displayName": "Amber",
+        "canonical": "#8a5300",
+        "purpose": "Links, focus ring, caret and accent-color in light.",
         "tonalRamp": [
-          "#1a3333",
-          "#2d5a5a",
-          "#408181",
-          "#54a8a8",
-          "#79bcbc",
-          "#a0d0d0",
-          "#c7e3e3",
-          "#eef6f6"
+          "#150c00",
+          "#362100",
+          "#583500",
+          "#794900",
+          "#996a22",
+          "#b89765",
+          "#d7c4a8",
+          "#f6f1eb"
         ]
       },
-      "bar": {
+      "select": {
         "role": "secondary",
-        "displayName": "Heading Bar Teal",
-        "canonical": "#dfe9e9",
-        "purpose": "Behind each h2.",
+        "displayName": "Select",
+        "canonical": "#f0dca8",
+        "purpose": "Text selection and Starlight accent-low in light.",
         "tonalRamp": [
-          "#1f2d2d",
-          "#375050",
-          "#4f7272",
-          "#669595",
-          "#88adad",
-          "#abc5c5",
-          "#cddddd",
-          "#f0f5f5"
+          "#242119",
+          "#5e5642",
+          "#998c6b",
+          "#d3c194",
+          "#f2e1b3",
+          "#f6eaca",
+          "#faf3e1",
+          "#fefcf8"
         ]
       },
-      "bevel-lo": {
+      "plate": {
         "role": "neutral",
-        "displayName": "Bevel Low",
-        "canonical": "#808080",
-        "purpose": "Sunken top-left edge.",
+        "displayName": "Plate",
+        "canonical": "#eeeadd",
+        "purpose": "Code plate and the still background in light.",
         "tonalRamp": [
-          "#262626",
-          "#434343",
-          "#616161",
-          "#7e7e7e",
-          "#9b9b9b",
-          "#b8b8b8",
-          "#d5d5d5",
-          "#f2f2f2"
+          "#242321",
+          "#5d5c57",
+          "#97958c",
+          "#d1cec2",
+          "#f0ede1",
+          "#f5f2ea",
+          "#f9f8f3",
+          "#fefdfc"
         ]
       },
-      "bevel-dk": {
-        "role": "neutral",
-        "displayName": "Bevel Dark",
-        "canonical": "#404040",
-        "purpose": "Raised bottom-right edge.",
-        "tonalRamp": [
-          "#262626",
-          "#434343",
-          "#616161",
-          "#7e7e7e",
-          "#9b9b9b",
-          "#b8b8b8",
-          "#d5d5d5",
-          "#f2f2f2"
-        ]
-      },
-      "link": {
-        "role": "neutral",
-        "displayName": "Link Blue",
-        "canonical": "#0000cc",
-        "purpose": "Links.",
-        "tonalRamp": [
-          "#00004c",
-          "#000087",
-          "#0000c1",
-          "#0000fb",
-          "#3737ff",
-          "#7171ff",
-          "#ababff",
-          "#e5e5ff"
-        ]
-      },
-      "link-visited": {
-        "role": "neutral",
-        "displayName": "Visited Purple",
-        "canonical": "#663399",
-        "purpose": "Visited links.",
-        "tonalRamp": [
-          "#261339",
-          "#432265",
-          "#613091",
-          "#7e3fbd",
-          "#9b69cd",
-          "#b894db",
-          "#d5c0ea",
-          "#f2ecf9"
-        ]
-      },
-      "link-active": {
-        "role": "neutral",
-        "displayName": "Active Red",
-        "canonical": "#cc0000",
-        "purpose": "Pressed links and caret.",
-        "tonalRamp": [
-          "#4c0000",
-          "#870000",
-          "#c10000",
-          "#fb0000",
-          "#ff3737",
-          "#ff7171",
-          "#ffabab",
-          "#ffe5e5"
-        ]
-      },
-      "note": {
+      "stop": {
         "role": "tertiary",
-        "displayName": "Notice Yellow",
-        "canonical": "#ffffcc",
-        "purpose": "The niri-only notice.",
+        "displayName": "Stop Red",
+        "canonical": "#b3261e",
+        "purpose": "The one red, for stopped answers and danger asides in light.",
         "tonalRamp": [
-          "#4c4c00",
-          "#878700",
-          "#c1c100",
-          "#fbfb00",
-          "#ffff37",
-          "#ffff71",
-          "#ffffab",
-          "#ffffe5"
+          "#1b0604",
+          "#460f0c",
+          "#721813",
+          "#9d211a",
+          "#bd433c",
+          "#d17c77",
+          "#e5b5b2",
+          "#f9eeed"
         ]
       },
-      "ring": {
-        "role": "tertiary",
-        "displayName": "Focus Ring Amber",
-        "canonical": "#ffcc33",
-        "purpose": "Keyboard focus ring and the mark.",
+      "ground-dark": {
+        "role": "neutral",
+        "displayName": "Warm Black Ground",
+        "canonical": "#10110f",
+        "purpose": "Page ground in dark.",
         "tonalRamp": [
-          "#4c3900",
-          "#876500",
-          "#c19100",
-          "#fbbd00",
-          "#ffcd37",
-          "#ffdb71",
-          "#ffeaab",
-          "#fff9e5"
+          "#020302",
+          "#060706",
+          "#0a0b0a",
+          "#0e0f0d",
+          "#2f302f",
+          "#6e6f6e",
+          "#adadad",
+          "#ececec"
         ]
       },
-      "ring-edge": {
-        "role": "tertiary",
-        "displayName": "Ring Edge",
-        "canonical": "#0f2626",
-        "purpose": "Dark edge of the focus ring and the mark.",
+      "ink-dark": {
+        "role": "neutral",
+        "displayName": "Parchment Ink",
+        "canonical": "#c9c6b9",
+        "purpose": "Body text in dark.",
         "tonalRamp": [
-          "#163737",
-          "#266161",
-          "#378a8a",
-          "#47b4b4",
-          "#6fc6c6",
-          "#99d7d7",
-          "#c3e7e7",
-          "#edf8f8"
+          "#1e1e1c",
+          "#4f4e49",
+          "#807e76",
+          "#b1aea3",
+          "#d0cdc2",
+          "#dedcd5",
+          "#ecebe7",
+          "#fbfaf9"
+        ]
+      },
+      "bold-dark": {
+        "role": "neutral",
+        "displayName": "Bold Ink (dark)",
+        "canonical": "#f4f1e6",
+        "purpose": "Groff bold in dark.",
+        "tonalRamp": [
+          "#252422",
+          "#605f5a",
+          "#9b9992",
+          "#d6d4ca",
+          "#f5f3e9",
+          "#f8f7f0",
+          "#fbfaf6",
+          "#fefefd"
+        ]
+      },
+      "dim-dark": {
+        "role": "neutral",
+        "displayName": "Dim Ink (dark)",
+        "canonical": "#9a9588",
+        "purpose": "Running head and foot in dark.",
+        "tonalRamp": [
+          "#171614",
+          "#3c3b35",
+          "#625f56",
+          "#878377",
+          "#a7a398",
+          "#c2bfb7",
+          "#dcdbd6",
+          "#f7f7f5"
+        ]
+      },
+      "rule-dark": {
+        "role": "neutral",
+        "displayName": "Rule (dark)",
+        "canonical": "#2f2d27",
+        "purpose": "Hairlines in dark.",
+        "tonalRamp": [
+          "#070706",
+          "#12120f",
+          "#1e1d19",
+          "#292822",
+          "#4a4943",
+          "#81807c",
+          "#b8b7b5",
+          "#eeeeee"
+        ]
+      },
+      "accent-dark": {
+        "role": "primary",
+        "displayName": "Amber (dark)",
+        "canonical": "#e3a83c",
+        "purpose": "Links and focus ring in dark.",
+        "tonalRamp": [
+          "#221909",
+          "#594218",
+          "#906b26",
+          "#c79435",
+          "#e7b356",
+          "#eeca89",
+          "#f5e1bc",
+          "#fdf8ef"
+        ]
+      },
+      "select-dark": {
+        "role": "secondary",
+        "displayName": "Select (dark)",
+        "canonical": "#3a3220",
+        "purpose": "Text selection in dark.",
+        "tonalRamp": [
+          "#090805",
+          "#17140d",
+          "#252014",
+          "#332c1c",
+          "#544d3d",
+          "#888378",
+          "#bbb9b3",
+          "#efefed"
+        ]
+      },
+      "plate-dark": {
+        "role": "neutral",
+        "displayName": "Plate (dark)",
+        "canonical": "#0a0b09",
+        "purpose": "Code plate in dark.",
+        "tonalRamp": [
+          "#020201",
+          "#040404",
+          "#060706",
+          "#090a08",
+          "#2a2b29",
+          "#6b6b6a",
+          "#ababab",
+          "#ebebeb"
+        ]
+      },
+      "stop-dark": {
+        "role": "tertiary",
+        "displayName": "Stop Red (dark)",
+        "canonical": "#ff6a57",
+        "purpose": "The one red in dark.",
+        "tonalRamp": [
+          "#26100d",
+          "#642a22",
+          "#a24337",
+          "#e05d4c",
+          "#ff7e6d",
+          "#ffa599",
+          "#ffccc5",
+          "#fff3f2"
         ]
       }
     },
     "typographyMeta": {
-      "title": {
-        "displayName": "Title",
-        "purpose": "The h1 in the title band."
-      },
-      "heading": {
-        "displayName": "Heading",
-        "purpose": "h2 on light teal bars."
-      },
       "body": {
         "displayName": "Body",
-        "purpose": "Main text at 17px."
+        "purpose": "Home page text, 16px / 1.55 (14px under 40rem), ligatures off."
+      },
+      "running": {
+        "displayName": "Running Head",
+        "purpose": "Running head and foot lines in dim ink."
+      },
+      "section": {
+        "displayName": "Section Name",
+        "purpose": "Capital section names in bold, same size as body."
+      },
+      "doc-title": {
+        "displayName": "Doc Title",
+        "purpose": "Starlight page title, 1.75rem bold."
+      },
+      "doc-body": {
+        "displayName": "Doc Body",
+        "purpose": "Docs text, line height 1.65 (0.9375rem under 50rem)."
       },
       "code": {
         "displayName": "Code",
-        "purpose": "Install commands in system monospace."
-      },
-      "button-88": {
-        "displayName": "88x31 Button",
-        "purpose": "Verdana on the six era buttons only."
+        "purpose": "Pre and inline code inherit the page font; docs code is 0.9375rem."
       }
     },
     "shadows": [
       {
-        "name": "raised",
-        "value": "border: 2px solid; border-color: #fff #404040 #404040 #fff; box-shadow: inset -1px -1px 0 #808080",
-        "purpose": "Page and side buttons."
-      },
-      {
-        "name": "pressed",
-        "value": "border-color: #404040 #fff #fff #404040; box-shadow: inset 1px 1px 0 #808080",
-        "purpose": "Side buttons on :active."
-      },
-      {
-        "name": "sunken",
-        "value": "border: 1px solid; border-color: #808080 #fff #fff #808080",
-        "purpose": "Tables, ledger, still frame, status cells. Code wells add inset 1px 1px 0 #404040."
-      },
-      {
-        "name": "page-edge",
-        "value": "1px 1px 0 #000",
-        "purpose": "One-pixel dark outer edge that finishes the page bevel. Not a drop shadow."
-      },
-      {
-        "name": "focus-ring",
-        "value": "0 0 0 2px #0f2626, 0 0 0 5px #ffcc33, 0 0 0 6px #0f2626",
-        "purpose": "Keyboard focus on links and 88x31 buttons."
+        "name": "none",
+        "value": "none",
+        "purpose": "The system has no shadows. Depth is the plate, the rule and reverse video."
       }
     ],
-    "motion": [],
-    "breakpoints": [
+    "motion": [
       {
-        "name": "phone",
-        "value": "640px"
+        "name": "page-crossfade",
+        "value": "@view-transition { navigation: auto }",
+        "purpose": "Docs pages crossfade while the header holds still. Only when prefers-reduced-motion is no-preference."
       },
       {
-        "name": "narrow-phone",
-        "value": "380px"
+        "name": "scroll-percentage",
+        "value": "animation-timeline: scroll(root) on a registered integer",
+        "purpose": "The less line counts 0 to 100 as the home page scrolls. Where unsupported, the percentage is absent."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "home-phone",
+        "value": "40rem"
+      },
+      {
+        "name": "docs-phone",
+        "value": "50rem"
+      },
+      {
+        "name": "docs-narrow",
+        "value": "30rem"
       }
     ]
   },
   "components": [
     {
-      "name": "Title Band",
+      "name": "Running Head",
       "kind": "custom",
-      "refersTo": "title-band",
-      "description": "Teal bar with the name, tagline and yellow stop line.",
-      "html": "<div class=\"ds-band\"><div><h1>niri-computer-use</h1><p>Let an agent use your niri desktop. <strong>You hold the stop key.</strong></p></div></div>",
-      "css": ".ds-band{background:#336666;color:#fff;padding:14px 18px;font-family:Tinos, 'Times New Roman', Times, 'Liberation Serif', serif} .ds-band h1{margin:0;font-size:30px;line-height:1.1} .ds-band p{margin:2px 0 0;font-size:16px} .ds-band strong{color:#ffdd77}"
+      "refersTo": "running-head",
+      "description": "Name and section on both sides, the manual title between.",
+      "html": "<header class=\"ds-run\"><span>NIRI-COMPUTER-USE(1)</span><span>User Commands</span><span>NIRI-COMPUTER-USE(1)</span></header>",
+      "css": ".ds-run{display:flex;justify-content:space-between;gap:2ch;color:#5c584e;font:400 16px/1.55 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace;background:#f7f5ee}"
     },
     {
-      "name": "Side Button",
-      "kind": "nav",
-      "refersTo": "side-button",
-      "description": "Bevelled link button that presses in on :active.",
-      "html": "<a class=\"ds-bevel\" href=\"#\">Install</a>",
-      "css": ".ds-bevel{display:block;padding:3px 8px;background:#e4e4dc;border:2px solid;border-color:#fff #404040 #404040 #fff;box-shadow:inset -1px -1px 0 #808080;color:#000;font:700 15px/1.45 Tinos, 'Times New Roman', Times, 'Liberation Serif', serif;text-decoration:none;width:140px} .ds-bevel:hover{background:#efefe8} .ds-bevel:active{border-color:#404040 #fff #fff #404040;box-shadow:inset 1px 1px 0 #808080} .ds-bevel:focus-visible{box-shadow:0 0 0 2px #0f2626,0 0 0 5px #ffcc33,0 0 0 6px #0f2626;outline:2px solid transparent;}"
+      "name": "Section",
+      "kind": "custom",
+      "refersTo": "section",
+      "description": "A capital bold section name over text indented 7ch.",
+      "html": "<section class=\"ds-sec\"><h2>SAFETY</h2><p>Text under the name.</p></section>",
+      "css": ".ds-sec{background:#f7f5ee;color:#2b2a25;font:400 16px/1.55 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace} .ds-sec h2{margin:1.5em 0 0;font-size:1em;font-weight:700;color:#0c0c0a} .ds-sec p{margin:0 0 0 7ch}"
     },
     {
-      "name": "Heading Bar",
+      "name": "Code Plate",
       "kind": "custom",
-      "refersTo": "heading-bar",
-      "description": "Light teal bar behind each h2.",
-      "html": "<h2 class=\"ds-bar\">Install</h2>",
-      "css": ".ds-bar{margin:0;padding:2px 8px;background:#dfe9e9;color:#133333;font:700 19px/1.45 Tinos, 'Times New Roman', Times, 'Liberation Serif', serif;border-top:1px solid #9fbcbc;border-bottom:1px solid #9fbcbc}"
-    },
-    {
-      "name": "Facts Table",
-      "kind": "custom",
-      "refersTo": "table-head-cell",
-      "description": "Sunken table with face-grey row headers.",
-      "html": "<table class=\"ds-table\"><tbody><tr><th>Works on</th><td>niri 26.04, Linux only</td></tr><tr><th>Protocol</th><td>MCP over stdio</td></tr></tbody></table>",
-      "css": ".ds-table{width:100%;border-collapse:separate;border-spacing:2px;border:1px solid;border-color:#808080 #fff #fff #808080;font:16px/1.45 Tinos, 'Times New Roman', Times, 'Liberation Serif', serif} .ds-table th,.ds-table td{padding:3px 8px;text-align:left;vertical-align:top;border:1px solid;border-color:#808080 #fff #fff #808080;} .ds-table th{background:#e4e4dc;font-weight:700;width:108px}"
-    },
-    {
-      "name": "Code Well",
-      "kind": "custom",
-      "refersTo": "code-well",
-      "description": "Sunken off-white well for commands.",
+      "refersTo": "code-plate",
+      "description": "Wrapped command on the plate, in bold ink.",
       "html": "<pre class=\"ds-pre\">cargo install niri-computer-use</pre>",
-      "css": ".ds-pre{margin:0;padding:6px 10px;background:#f4f4ee;border:1px solid;border-color:#808080 #fff #fff #808080;box-shadow:inset 1px 1px 0 #404040;font:13.5px/1.45 'DejaVu Sans Mono','Liberation Mono','Courier New',monospace;white-space:pre-wrap}"
+      "css": ".ds-pre{margin:0 0 0 7ch;padding:.15em 1ch;background:#eeeadd;color:#0c0c0a;white-space:pre-wrap;overflow-wrap:anywhere;font:400 16px/1.55 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace}"
     },
     {
-      "name": "Notice",
+      "name": "Less Line",
+      "kind": "nav",
+      "refersTo": "less-line",
+      "description": "Sticky reverse-video status line with links and a scroll percentage.",
+      "html": "<nav class=\"ds-less\"><span class=\"p\">Manual page niri-computer-use(1) 42%</span><a href=\"#\">install</a><a href=\"#\">safety</a></nav>",
+      "css": ".ds-less{display:flex;flex-wrap:wrap;gap:0 2ch;padding:.2rem 2ch;background:#2b2a25;color:#f7f5ee;font:400 16px/1.55 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace} .ds-less .p{margin-right:auto} .ds-less a{color:#f7f5ee}"
+    },
+    {
+      "name": "Link",
       "kind": "custom",
-      "refersTo": "notice",
-      "description": "Yellow one-line notice.",
-      "html": "<p class=\"ds-note\">niri 26.04 on Linux only.</p>",
-      "css": ".ds-note{margin:0;padding:4px 10px;background:#ffffcc;border:1px solid #996600;font:700 17px/1.45 Tinos, 'Times New Roman', Times, 'Liberation Serif', serif}"
+      "refersTo": "link",
+      "description": "Amber, underlined 1px, 2px on hover.",
+      "html": "<a class=\"ds-a\" href=\"#\">safety(7)</a>",
+      "css": ".ds-a{color:#8a5300;text-decoration-thickness:1px;text-underline-offset:3px;font:400 16px/1.55 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace} .ds-a:hover{text-decoration-thickness:2px} .ds-a:focus-visible{outline:2px solid #8a5300;outline-offset:2px}"
     },
     {
-      "name": "Safety Ledger",
+      "name": "Definition List",
       "kind": "custom",
-      "description": "Two sunken halves: Enforced and Not covered.",
-      "html": "<div class=\"ds-ledger\"><div><h3>Enforced</h3><ul><li>Stop key</li></ul></div><div><h3>Not covered</h3><ul><li>Other apps</li></ul></div></div>",
-      "css": ".ds-ledger{display:grid;grid-template-columns:1fr 1fr;gap:2px;padding:2px;border:1px solid;border-color:#808080 #fff #fff #808080;font-family:Tinos, 'Times New Roman', Times, 'Liberation Serif', serif} .ds-ledger>div{padding:6px 10px 8px;border:1px solid;border-color:#808080 #fff #fff #808080;} .ds-ledger>div+div{background:#fff8ee} .ds-ledger h3{margin:0 0 4px;font-size:16px} .ds-ledger ul{margin:0;padding-left:18px;font-size:16px}"
-    },
-    {
-      "name": "88x31 Button",
-      "kind": "chip",
-      "refersTo": "button-88",
-      "description": "Era button in a solid color, presses in on :active.",
-      "html": "<a class=\"ds-b88\" href=\"#\"><span class=\"t\">niri</span><span class=\"s\">26.04</span></a>",
-      "css": ".ds-b88{display:flex;flex-direction:column;justify-content:center;width:88px;height:31px;box-sizing:border-box;background:#7a4a00;border:1px solid #000;box-shadow:inset 1px 1px 0 rgb(255 255 255/.55),inset -1px -1px 0 rgb(0 0 0/.45);color:#fff;font:700 11px/1.05 Verdana,'DejaVu Sans',sans-serif;text-align:center;text-decoration:none} .ds-b88 .s{font-weight:400;font-size:9px;color:#ffe9a8} .ds-b88:hover .t{text-decoration:underline} .ds-b88:active{box-shadow:inset -1px -1px 0 rgb(255 255 255/.55),inset 1px 1px 0 rgb(0 0 0/.45)} .ds-b88:focus-visible{box-shadow:0 0 0 2px #0f2626,0 0 0 5px #ffcc33,0 0 0 6px #0f2626;outline:2px solid transparent;}"
-    },
-    {
-      "name": "Status Bar",
-      "kind": "custom",
-      "refersTo": "status-bar",
-      "description": "Sunken cells at the foot of the page.",
-      "html": "<div class=\"ds-status\"><span>Best viewed with any browser</span><span>No JavaScript</span></div>",
-      "css": ".ds-status{display:flex;gap:3px;padding:3px;background:#e4e4dc;border-top:1px solid #808080;font:14px/1.45 Tinos, 'Times New Roman', Times, 'Liberation Serif', serif} .ds-status span{flex:1 1 auto;padding:1px 8px;border:1px solid;border-color:#808080 #fff #fff #808080;}"
+      "refersTo": "definition-list",
+      "description": "Bold term column of 11ch and a description column.",
+      "html": "<dl class=\"ds-dl\"><dt><b>Lease</b></dt><dd>One agent at a time.</dd></dl>",
+      "css": ".ds-dl{display:grid;grid-template-columns:11ch 1fr;gap:.25em 2ch;margin:0 0 0 7ch;color:#2b2a25;font:400 16px/1.55 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace} .ds-dl dd{margin:0} .ds-dl b{color:#0c0c0a}"
     }
   ],
   "narrative": {
-    "northStar": "The Project Page From Around 2000",
-    "overview": "A hand-made Linux project page, done with care and not as parody. A 760-pixel white page sits on the desktop grey, with a teal title band on top, a column of bevelled buttons down the side, facts in tables, one framed still that opens a clip, and a sunken status bar at the foot. Everything is set in one serif, Tinos, with system monospace for commands.\n\nThe density is that of a document. Facts go in tables and short lists, not sentences. The era shows in the bevels, the link colors, the 88x31 buttons and the status bar, and stops there. The page is light only and has no JavaScript. The Starlight docs pages are a separate system (Archivo, JetBrains Mono, light and dark) and the home page shares none of it.",
+    "northStar": "The Manual Page in a Terminal",
+    "overview": "The home page is the manual page niri-computer-use(1) as man shows it in a terminal: a running head and foot, capital section names, bold for what you type, underline for paths, and less's reverse-video status line pinned to the bottom. The docs wear the same colours and type through Starlight, with a running head over each page title and a running foot at the end.\n\nEverything is set in JetBrains Mono Variable. Dark is a warm black with parchment ink, light is paper with brown-black ink, and one amber marks links and focus. The home page follows the system colour scheme and has no JavaScript; the docs follow Starlight's theme switch.",
     "keyCharacteristics": [
-      "One 760px page on desk grey, bevelled with a 2px border.",
-      "Teal title band with a 24x16 pixel mark and a yellow stop line.",
-      "One serif (Tinos 400 and 700), 17px body, monospace only for code.",
-      "Raised things are bevelled buttons; sunken things are tables, code wells, the ledger and status cells.",
-      "Links are blue, purple when visited, red when pressed.",
-      "The focus ring is niri's: amber around a dark edge.",
-      "Light only, no JavaScript, a print stylesheet."
+      "One face, JetBrains Mono Variable 400 and 700, ligatures off on the home page.",
+      "A warm dark and a paper light from one light-dark() palette; amber is the only accent.",
+      "Text indented 7ch under capital section names, in an 80ch measure.",
+      "Running head and foot on the home page and on every docs page.",
+      "The less line: reverse video, sticky, scroll-driven percentage, no JavaScript.",
+      "Print is black on white with each outside link's address after it."
     ],
     "rules": [
       {
-        "name": "The Edge Rule",
-        "body": "Depth comes only from the three bevel colors. Raised is hi top-left, dk bottom-right. Sunken reverses it with lo and hi. No other shadow or edge color is added.",
-        "section": "elevation"
-      },
-      {
-        "name": "The Browser Defaults Rule",
-        "body": "Link colors are the era's blue, purple and red. Do not restyle them to the teal. Buttons that are links override to ink and keep it when visited.",
-        "section": "colors"
-      },
-      {
-        "name": "The One Serif Rule",
-        "body": "Everything but code and the 88x31 buttons is Tinos. Do not add a second text face.",
+        "name": "The One Face Rule",
+        "body": "JetBrains Mono Variable is the only face, for text and code, on the home page and the docs.",
         "section": "typography"
       },
       {
-        "name": "The Press Rule",
-        "body": "Raised controls press in on :active: side buttons and 88x31 buttons. Nothing animates; there are no transitions.",
+        "name": "The Bold Rule",
+        "body": "Bold is the strongest ink, as groff bold in a terminal: bold weight and the bold colour together. Underline is for paths.",
+        "section": "colors"
+      },
+      {
+        "name": "The Reverse Video Rule",
+        "body": "The current place is shown in reverse video: ground on ink. The home page's less line and the docs sidebar's current page use it.",
+        "section": "components"
+      },
+      {
+        "name": "The One Amber Rule",
+        "body": "Amber is links, the focus ring, the caret and accent-color. It is not used as a fill, except the pale select tint for selection.",
+        "section": "colors"
+      },
+      {
+        "name": "The Flat Rule",
+        "body": "No shadows, gradients or blur. Separation is the plate, a one-pixel rule or reverse video.",
         "section": "elevation"
       }
     ],
     "dos": [
-      "Do put facts in tables and short lists, not paragraphs.",
-      "Do build raised things from hi/dk bevels and sunken things from lo/hi bevels, and press raised controls in on :active.",
-      "Do use one still that links to one clip, and state the clip's length, format and size next to the link.",
-      "Do keep the page light only, one column on phones, and working without JavaScript.",
-      "Do keep a visible focus ring on every link: amber (ring) outside a dark teal edge.",
-      "Do keep the print view: address after each outside link, side column and status bar dropped.",
-      "Do show only things that are true: version, date, clip size and release rows come from the build, and the \"Built on\" buttons point at real projects.",
-      "Do add era touches with taste: a status bar, bevels, 88x31 buttons for real dependencies. One of each, not a collection."
+      "Do take colours from tokens.css; the home page and docs share it.",
+      "Do keep the running head and foot, and keep the foot's version and date from the build.",
+      "Do name sections in capitals and indent their text by 7ch (3ch under 40rem).",
+      "Do keep the focus ring amber, 2px, offset 2px; on the less line it is the ground colour.",
+      "Do keep the home page working without JavaScript and printable.",
+      "Do check colour pairs for contrast: the lowest is amber text on the select tint, 4.67 in light."
     ],
     "donts": [
-      "Don't invent era furniture: no visitor counters, guestbooks, awards, \"under construction\" signs or webrings.",
-      "Don't use gradients, glow, blur, border radius, cards, or soft shadows.",
-      "Don't autoplay video or put a play overlay on the still.",
-      "Don't add a marketing hero, slogan block or testimonial row.",
-      "Don't add a dark mode, JavaScript, animation or transitions to the home page.",
-      "Don't use blinking, marquees, tiled backgrounds or the Comic Sans-style parody of the period.",
-      "Don't put uppercase labels, kickers or eyebrows over headings.",
-      "Don't reuse the docs tokens or fonts on the home page, or the home page's bevels on the docs."
+      "Don't add a second typeface or a display face.",
+      "Don't add cards, shadows, gradients, glow or hero blocks.",
+      "Don't add a theme switch or JavaScript to the home page.",
+      "Don't put amber on any fill other than the select tint.",
+      "Don't put uppercase labels, kickers or eyebrows above headings; capital section names are the heading itself.",
+      "Don't add decoration that is not part of a man page in a terminal."
     ]
   }
 }
