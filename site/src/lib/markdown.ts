@@ -50,7 +50,7 @@ export function homeMarkdown(): string {
 		`## Name\n\nniri-computer-use - ${home.name}`,
 		`## Synopsis\n\n\`niri-computer-use ${home.commands.join(' | ')}\``,
 		`## Description\n\n${home.about.join('\n\n')}`,
-		`## Installation\n\nPipe the install script into sh:\n\n${code('sh', install.piped)}\n\nTo read it first: [install.sh](${install.script}). Or build it, and use \`~/.cargo/bin\` below:\n\n${code('sh', install.cargo)}\n\nBind the stop key in \`config.kdl\`:\n\n${code('kdl', install.stop)}\n\nThe script offers to register the server with Claude Code, Pi and Codex. Others: [Client setup](${url('start/clients/')}).`,
+		`## Installation\n\nPipe the install script into sh:\n\n${code('sh', install.piped)}\n\nTo read it first: [install.sh](${install.script}). Or build it, and use \`~/.cargo/bin\` below:\n\n${code('sh', install.cargo)}\n\nBind the stop key in \`config.kdl\`:\n\n${code('kdl', install.stop)}\n\nThe script offers to register the server in each agent it supports that is on your PATH. The list, and the others: [Client setup](${url('start/clients/')}).`,
 		`## Safety\n\n${safety.map(([term, text]) => `- ${term}: ${text}`).join('\n')}\n\n${home.sandbox} [Safety](${url('concepts/safety/')})`,
 		`## Example\n\n${example.caption}\n\n${example.calls.map(([start, call, ms]) => `- ${start} s: \`${call}\`, ${ms} ms`).join('\n')}`,
 		`## Bugs\n\n${home.bugs}`,

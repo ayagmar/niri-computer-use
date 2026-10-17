@@ -62,7 +62,7 @@ From a shell inside your niri session, with the binary where you put it:
 ~/.local/bin/niri-computer-use status
 ```
 
-`status` prints a readiness report as JSON; `niri.compat` should be `ok`. The install script offers to register the server in each of Claude Code, Pi and Codex it finds, through the agent's own command. To do it yourself, here for Claude Code:
+`status` prints a readiness report as JSON; `niri.compat` should be `ok`. The install script offers to register the server in each agent it supports that it finds on `PATH` (Claude Code, Pi, Codex, Amp, GitHub Copilot CLI, Gemini CLI and Qwen Code), through the agent's own command. To do it yourself, here for Claude Code:
 
 ```sh
 claude mcp add --scope user niri-computer-use -- ~/.local/bin/niri-computer-use serve

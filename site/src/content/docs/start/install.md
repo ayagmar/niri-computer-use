@@ -36,7 +36,7 @@ curl -fsSL https://github.com/ayagmar/niri-computer-use/releases/latest/download
 
 To read it first, download it with `curl -fsSLO` and run `sh install.sh` once you have. The script is one brace group that `sh` reads to its end before running any of it, so a download cut short runs nothing.
 
-It downloads the release tarball for your machine, checks it, puts the binary in `~/.local/bin`, copies the skill to `~/.local/share/niri-computer-use` and links it from `~/.claude/skills` and `~/.agents/skills`, and links the [Noctalia plugin](../noctalia-plugin/) into Noctalia's plugin directory when `noctalia` is on `PATH`. Then it offers to register the server in each of Claude Code, Pi and Codex it finds on `PATH`, through that agent's own `mcp add` command, and ends by printing the [next steps](#check-it). [The install script](../install-script/) lists every file it writes, what it checks, `NCU_VERSION` and `NCU_BIN_DIR`, and how to uninstall.
+It downloads the release tarball for your machine, checks it, puts the binary in `~/.local/bin`, copies the skill to `~/.local/share/niri-computer-use` and links it from `~/.claude/skills` and `~/.agents/skills`, and links the [Noctalia plugin](../noctalia-plugin/) into Noctalia's plugin directory when `noctalia` is on `PATH`. Then it offers to register the server in each agent it supports that it finds on `PATH` ([Client setup](../clients/) lists them), through that agent's own `mcp add` command, and ends by printing the [next steps](#check-it). [The install script](../install-script/) lists every file it writes, what it checks, `NCU_VERSION` and `NCU_BIN_DIR`, and how to uninstall.
 
 ### With cargo
 
