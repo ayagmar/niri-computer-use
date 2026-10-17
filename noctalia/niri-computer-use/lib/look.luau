@@ -70,6 +70,8 @@ function M.detail(view: any, nowMs: number, tr: Tr): string
       return tr("status.error." .. view.problem)
     end
     return tostring(view.problem)
+  elseif (view.status == "starting" or view.status == "offline") and view.lastError then
+    return view.lastError
   end
   return tr("status." .. view.status .. ".detail")
 end

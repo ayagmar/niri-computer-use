@@ -47,6 +47,7 @@ noctalia msg panel-toggle ayagmar/niri-computer-use:panel
 | This niri-computer-use has no watch command | The binary is older than `watch` | Update it, or set the path of a build that has it |
 | niri-computer-use watch failed, with an error | `watch` exited, such as without a niri socket | The error says why; the plugin tries again every 15 seconds |
 | Not watching | `watch` printed nothing for 15 seconds | It is started again within 15 seconds |
+| Starting, with an error | `watch` exited after it started, such as when it couldn't write a line | The error says why; it is started again within 15 seconds |
 
 ## How it works
 

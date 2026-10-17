@@ -85,9 +85,11 @@ export type Desk = {
   -- A state was read since `hello`. The first one shows how the desk already
   -- was, not a change, so it notifies only of stuck input.
   settled: boolean,
-  -- This watch said hello. Its only later text is an error stdout couldn't
-  -- take, so a later line that isn't JSON is the tail of one Noctalia cut.
+  -- This watch said hello. A later line that isn't JSON is its last words as
+  -- it exits, or the tail of a line Noctalia cut, which a JSON line follows.
   greeted: boolean,
+  -- That line, until a JSON line follows it: shown once the watch is silent.
+  lastError: string?,
 }
 
 function M.new(): Desk
@@ -104,6 +106,7 @@ function M.new(): Desk
     released = nil,
     settled = false,
     greeted = false,
+    lastError = nil,
   }
 end
 
@@ -240,6 +243,9 @@ function M.feed(desk: Desk, event: any, raw: string, nowMs: number, tr: Tr): { C
   desk.heardMs = nowMs
   local changes: { Change } = {}
   local kind = if type(event) == "table" then event.event else nil
+  if kind ~= nil then
+    desk.lastError = nil
+  end
   if kind == "hello" then
     hello(desk, event)
   elseif kind == "missing" then
@@ -255,6 +261,8 @@ function M.feed(desk: Desk, event: any, raw: string, nowMs: number, tr: Tr): { C
     desk.problem = "old"
   elseif kind == nil and raw ~= "" and not desk.greeted then
     desk.problem = raw
+  elseif kind == nil and raw ~= "" then
+    desk.lastError = raw
   end
   return changes
 end
@@ -291,6 +299,7 @@ function M.view(desk: Desk, nowMs: number)
     agents = table.clone(desk.agents),
     version = desk.version,
     problem = desk.problem,
+    lastError = desk.lastError,
   }
 end
 

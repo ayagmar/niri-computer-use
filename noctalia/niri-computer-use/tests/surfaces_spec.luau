@@ -175,6 +175,34 @@ t.group("panel", function()
     t.ok(host.commands[1].command:find('exec "$b" resume', 1, true), host.commands[1].command)
   end)
 
+  t.test("watch's last words after hello show once it went silent, without a second watch", function()
+    local host = env.host()
+    local service = env.start(host, "service.luau")
+    local panel = env.start(host, "panel.luau")
+    panel.call("onOpen", {})
+    drive(host)
+    local function tick(seconds)
+      for _ = 1, seconds do
+        host.nowMs += 1_000
+        service.call("update")
+      end
+    end
+    tick(10)
+    host.event({ event = "alive" })
+    local said = "niri-computer-use: write to stdout: Input/output error (os error 5)"
+    host.line(said)
+    t.eq(host.state.desk.status, "driving")
+    -- Past the restart delay, but not yet silent: the line didn't end the watch.
+    tick(10)
+    t.eq(#host.streams, 1)
+    tick(6)
+    t.eq(#host.streams, 2)
+    t.eq(host.state.desk.status, "starting")
+    t.ok(has(host.texts(host.panelTree), said), table.concat(host.texts(host.panelTree), " | "))
+    host.event({ event = "hello", format = 1 })
+    t.ok(not has(host.texts(host.panelTree), said), "the error outlived the next hello")
+  end)
+
   t.test("Stop stays enabled while the plugin can't see the desk, but not without a binary", function()
     local host = env.host()
     local service = env.start(host, "service.luau")

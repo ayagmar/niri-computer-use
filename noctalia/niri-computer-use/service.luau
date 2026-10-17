@@ -74,9 +74,10 @@ local function start()
   local mine = generation
   startedMs = noctalia.nowMs()
   -- Keep showing why the last watch failed until the new one says hello.
-  local problem = model.problem
+  local problem, lastError = model.problem, model.lastError
   model = desk.new()
   model.problem = problem
+  model.lastError = lastError
   local ok = noctalia.runStream(command.run("watch", setting("binary", "")), function(line)
     if mine == generation then
       onLine(line)

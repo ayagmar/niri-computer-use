@@ -146,6 +146,8 @@ t.group("desk", function()
     desk.feed(d, nil, 'xxxx","tool":"type_text"}', NOW, tr)
     t.eq(d.problem, nil)
     t.eq(desk.status(d, NOW), "idle")
+    desk.feed(d, { event = "alive" }, "", NOW, tr)
+    t.eq(desk.view(d, NOW).lastError, nil, "a cut line's tail outlived the next line")
   end)
 
   t.test("a build without watch says to update rather than show its usage line", function()
