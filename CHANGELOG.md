@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Added
+
+- `niri-computer-use watch` prints what agents are doing on this niri instance as JSON lines: who holds the lease and since when, in which project, whether the stop flag or the input-dirty marker is set, and each tool call the audit log records, for a shell such as Noctalia to show. It never connects to niri, and the lines hold only what the audit log and the lease record hold.
+
 ## 0.1.2 - 2026-10-16
 
 ### Added

@@ -1945,3 +1945,11 @@ Each action's commit is the one its tag names in the action's repository (`git l
 - RUSTSEC-2026-0370, -0371 and -0372 mark `zvariant`, `zbus_names` and `zvariant_derive` unmaintained: zbus 6.0.0, published 2026-10-16, merged them into zbus, and zbus 5.19.0 still depends on them. `cargo deny check` failed on `main` with no change of ours.
 - The fix is zbus 6, but the rule is a release at least seven days old, and an unmaintained notice isn't a security fix. `deny.toml` ignores the three advisories by id, each with that reason, until 2026-10-23, when the upgrade to zbus 6 removes them and the ignores together.
 
+## 2026-10-17: `watch`, the desk as JSON lines
+
+- A shell plugin needs to know who drives the desktop and what they do, without parsing the audit log or finding the runtime directory itself, which takes niri's socket with every symlink resolved. `niri-computer-use watch` gives it one versioned format (`format: 1` in `hello`), so the log's layout can change without breaking the plugin.
+- It polls every 250 ms instead of watching with inotify. A poll reads `lease.json` and stats two files and the log, and so follows a log moved aside, a holder that died without clearing its record and a directory that appears later with no extra code; an inotify watch would need a fallback for each. A change shows within a quarter second, which is fast enough to show.
+- It reads files only, so it serves standalone servers and the shared engine alike, and needs no change to the engine's protocol. The audit log already keeps typed text, titles and paths out, so `action` forwards its lines as they are.
+- `project` is the last part of the working directory of the process that started the session's server, read from `/proc` by the PID in the session's label. It names the agent's project, such as `llm-usage-metrics`, which tells two Claude Code sessions apart where the label doesn't.
+- tokio's `io-std` feature, for an async stdout whose writes take a deadline: a reader that stops reading for five seconds ends `watch`. It is a feature of tokio 1.53.2, already a dependency, and adds no crate.
+

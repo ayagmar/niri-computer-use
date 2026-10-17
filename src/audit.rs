@@ -125,6 +125,11 @@ impl Audit {
         }
     }
 
+    /// The log's file, if there is a state directory to keep it in.
+    pub(crate) fn path(&self) -> Option<PathBuf> {
+        self.path.clone()
+    }
+
     pub(crate) fn status(&self) -> AuditStatus {
         AuditStatus {
             path: self.path.clone(),

@@ -6,7 +6,7 @@ sidebar:
 ---
 
 ```text
-niri-computer-use serve | status | stop | resume | recover | engine | guard <server-pid> | paste-keeper | --version
+niri-computer-use serve | status | stop | resume | recover | watch | engine | guard <server-pid> | paste-keeper | --version
 ```
 
 It takes exactly one subcommand, or `--version`, and no other options. Anything else prints that usage line to stderr and exits 1. Every subcommand works on the niri instance in `NIRI_SOCKET`, or, without it, the one running niri of yours the server [finds](../../start/clients/#session-variables). A niri bind passes `NIRI_SOCKET` on.
@@ -46,6 +46,26 @@ niri-computer-use resume
 ```
 
 Clears the stop flag, prints nothing and exits 0, also when no flag was set. It finds niri's socket the way `stop` does. It refuses while the input-dirty marker exists, and doesn't clear it; `recover` does.
+
+## `watch`
+
+```sh
+niri-computer-use watch
+```
+
+Prints what agents are doing on this niri instance, one JSON object per line, until its reader closes stdout; then it exits 0. It finds niri's socket the way `stop` does and never connects to niri. Each line has an `event`:
+
+- `hello`, once, first: `format` (1), the server's `version` and the `instance`, niri's socket name
+- `state`, at the start and whenever it changes: `lease`, null or the holder's `session` (such as `claude-code/4711`), `since`, `pending` (true while the user is asked to allow it) and `project`, the last part of the agent's working directory or null; then `stopped` and `input_dirty`
+- `action`, for each tool call the [audit log](../../concepts/safety/#the-audit-log) records on this instance, the last 20 first: the audit line without `instance`, plus `project` as in `lease`
+- `alive`, every five seconds
+
+```text
+{"event":"hello","format":1,"version":"0.1.2","instance":"niri.wayland-1.1819.sock"}
+{"event":"state","lease":null,"stopped":false,"input_dirty":false}
+```
+
+It looks at the runtime directory and the audit log every 250 ms, so a change shows within about that. The lines hold only what the audit log and the lease record already hold, never typed text or window titles. It fails, exiting 1, when there is no niri socket, or when a line can't be written within five seconds.
 
 ## `recover`
 

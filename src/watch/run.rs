@@ -1,0 +1,314 @@
+//! The `watch` loop: polls the runtime directory and follows the audit log, writing a
+//! line whenever something changed.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use tokio::io::{AsyncWrite, AsyncWriteExt as _};
+
+use super::tail::Tail;
+use super::{BACKLOG, Driver, Event, FORMAT, State, action, label_pid, parent_pid};
+use crate::control::lease;
+use crate::control::runtime::RuntimeDir;
+
+/// How often the desk is looked at.
+const POLL: Duration = Duration::from_millis(250);
+
+/// How often `alive` is sent.
+const ALIVE: Duration = Duration::from_secs(5);
+
+/// How long a line may take to write before the reader counts as stuck.
+const WRITE_DEADLINE: Duration = Duration::from_secs(5);
+
+/// What one `watch` follows.
+pub(crate) struct Watched {
+    pub(crate) runtime: RuntimeDir,
+    /// The niri socket's file name, as the audit log names the instance.
+    pub(crate) instance: String,
+    pub(crate) audit: Option<PathBuf>,
+    pub(crate) proc_root: PathBuf,
+}
+
+/// Runs `watch` for the instance `env` resolved, until stdout's reader goes away.
+pub(crate) async fn run(env: &crate::Env) -> Result<(), String> {
+    let watched = Watched {
+        runtime: RuntimeDir::of(env)?,
+        instance: env
+            .instance()
+            .ok_or("no niri socket, so there is no instance to watch")?,
+        audit: crate::audit::Audit::new(env.state_dir.clone()).path(),
+        proc_root: PathBuf::from("/proc"),
+    };
+    let Err(ended) = follow(&watched, tokio::io::stdout(), POLL).await;
+    match ended {
+        Ended::ReaderGone => Ok(()),
+        Ended::Write(error) => Err(format!("write to stdout: {error}")),
+        Ended::Stuck => Err(format!(
+            "stdout's reader took more than {} s to read a line",
+            WRITE_DEADLINE.as_secs()
+        )),
+    }
+}
+
+/// Why the loop ended; it runs until its output can't be written.
+#[derive(Debug)]
+pub(crate) enum Ended {
+    ReaderGone,
+    Write(std::io::Error),
+    Stuck,
+}
+
+pub(crate) async fn follow(
+    watched: &Watched,
+    out: impl AsyncWrite + Unpin,
+    poll: Duration,
+) -> Result<std::convert::Infallible, Ended> {
+    let mut out = Out { out };
+    let mut projects = Projects::new(&watched.proc_root);
+    out.send(&Event::Hello {
+        format: FORMAT,
+        version: env!("CARGO_PKG_VERSION"),
+        instance: &watched.instance,
+    })
+    .await?;
+    let (mut tail, recent) = watched.audit.as_ref().map_or_else(
+        || (None, Vec::new()),
+        |path| {
+            let (tail, recent) = Tail::open(path.clone(), BACKLOG);
+            (Some(tail), recent)
+        },
+    );
+    let mut state = None;
+    let mut alive = tokio::time::interval(ALIVE);
+    alive.tick().await;
+    let mut tick = tokio::time::interval(poll);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut lines = recent;
+    loop {
+        let now = desk(&watched.runtime, &mut projects);
+        if state.as_ref() != Some(&now) {
+            out.send(&Event::State(&now)).await?;
+            state = Some(now);
+        }
+        for line in std::mem::take(&mut lines) {
+            if let Some(call) = action(&line, &watched.instance) {
+                out.send(&Event::Action(projects.annotate(call))).await?;
+            }
+        }
+        tokio::select! {
+            _ = tick.tick() => {}
+            _ = alive.tick() => out.send(&Event::Alive).await?,
+        }
+        lines = tail
+            .as_mut()
+            .and_then(|tail| tail.poll().ok())
+            .unwrap_or_default();
+    }
+}
+
+fn desk(runtime: &RuntimeDir, projects: &mut Projects<'_>) -> State {
+    State {
+        lease: lease::holder(runtime).map(|holder| {
+            let project = projects.of(&holder.label);
+            Driver::new(holder, project)
+        }),
+        stopped: runtime.stopped().unwrap_or(false),
+        input_dirty: runtime.input_dirty().unwrap_or(false),
+    }
+}
+
+struct Out<W> {
+    out: W,
+}
+
+impl<W: AsyncWrite + Unpin> Out<W> {
+    async fn send(&mut self, event: &Event<'_>) -> Result<(), Ended> {
+        let mut line = serde_json::to_vec(event).map_err(|error| Ended::Write(error.into()))?;
+        line.push(b'\n');
+        let written = async {
+            self.out.write_all(&line).await?;
+            self.out.flush().await
+        };
+        match tokio::time::timeout(WRITE_DEADLINE, written).await {
+            Err(_) => Err(Ended::Stuck),
+            Ok(Err(error)) if error.kind() == std::io::ErrorKind::BrokenPipe => {
+                Err(Ended::ReaderGone)
+            }
+            Ok(Err(error)) => Err(Ended::Write(error)),
+            Ok(Ok(())) => Ok(()),
+        }
+    }
+}
+
+/// The project each session's agent runs in, looked up once per session.
+struct Projects<'a> {
+    proc_root: &'a Path,
+    known: HashMap<String, Option<String>>,
+}
+
+impl<'a> Projects<'a> {
+    fn new(proc_root: &'a Path) -> Self {
+        Self {
+            proc_root,
+            known: HashMap::new(),
+        }
+    }
+
+    /// The last part of the working directory of the process that started the session's
+    /// server, while that server runs.
+    fn of(&mut self, session: &str) -> Option<String> {
+        if let Some(known) = self.known.get(session) {
+            return known.clone();
+        }
+        let project = self.look_up(session);
+        if project.is_some() {
+            self.known.insert(session.to_owned(), project.clone());
+        }
+        project
+    }
+
+    fn look_up(&self, session: &str) -> Option<String> {
+        let server = self.proc_root.join(label_pid(session)?.to_string());
+        let status = std::fs::read_to_string(server.join("status")).ok()?;
+        let agent = self.proc_root.join(parent_pid(&status)?.to_string());
+        let cwd = std::fs::read_link(agent.join("cwd")).ok()?;
+        Some(cwd.file_name()?.to_string_lossy().into_owned())
+    }
+
+    fn annotate(&mut self, mut call: serde_json::Value) -> serde_json::Value {
+        let session = call
+            .get("session")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
+        if let (Some(session), Some(object)) = (session, call.as_object_mut()) {
+            object.insert("project".into(), self.of(&session).into());
+        }
+        call
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::AsyncBufReadExt as _;
+
+    use super::*;
+
+    type Reader = tokio::io::Lines<tokio::io::BufReader<tokio::io::DuplexStream>>;
+
+    async fn next(lines: &mut Reader) -> serde_json::Value {
+        let line = tokio::time::timeout(Duration::from_secs(5), lines.next_line())
+            .await
+            .expect("a line within 5 s")
+            .unwrap()
+            .expect("the watch still runs");
+        serde_json::from_str(&line).unwrap()
+    }
+
+    /// The next line that isn't `alive`.
+    async fn event(lines: &mut Reader) -> serde_json::Value {
+        loop {
+            let line = next(lines).await;
+            if line["event"] != "alive" {
+                return line;
+            }
+        }
+    }
+
+    /// A fake `/proc` where the server `4711` was started by an agent in `~/work/shop`.
+    fn fake_proc(dir: &Path) -> PathBuf {
+        let root = dir.join("proc");
+        std::fs::create_dir_all(root.join("4711")).unwrap();
+        std::fs::create_dir_all(root.join("4100")).unwrap();
+        std::fs::write(root.join("4711/status"), "Pid:\t4711\nPPid:\t4100\n").unwrap();
+        std::os::unix::fs::symlink(dir.join("work/shop"), root.join("4100/cwd")).unwrap();
+        root
+    }
+
+    fn watched(dir: &Path) -> Watched {
+        Watched {
+            runtime: RuntimeDir::of(&crate::test_support::niri_env(dir)).unwrap(),
+            instance: "niri.sock".into(),
+            audit: Some(dir.join("audit.jsonl")),
+            proc_root: fake_proc(dir),
+        }
+    }
+
+    fn record(dir: &Path, line: &str) {
+        use std::io::Write as _;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("audit.jsonl"))
+            .unwrap();
+        writeln!(file, "{line}").unwrap();
+    }
+
+    #[tokio::test]
+    async fn reports_the_desk_and_this_instances_calls_as_they_change() {
+        let dir = crate::test_support::fresh_dir("watch-follow");
+        let watched = watched(&dir);
+        watched.runtime.create().unwrap();
+        record(
+            &dir,
+            r#"{"session":"pi/9","instance":"niri.sock","tool":"status"}"#,
+        );
+        let (writer, reader) = tokio::io::duplex(64 * 1024);
+        let watch = tokio::spawn(async move {
+            let Err(_) = follow(&watched, writer, Duration::from_millis(10)).await;
+        });
+        let mut lines = tokio::io::BufReader::new(reader).lines();
+        let hello = event(&mut lines).await;
+        assert_eq!(
+            (hello["event"].as_str(), hello["format"].as_u64()),
+            (Some("hello"), Some(1))
+        );
+        let idle = event(&mut lines).await;
+        assert_eq!(idle["event"], "state");
+        assert!(
+            idle["lease"].is_null() && idle["stopped"] == false,
+            "{idle}"
+        );
+        assert_eq!(event(&mut lines).await["tool"], "status");
+
+        let runtime = RuntimeDir::of(&crate::test_support::niri_env(&dir)).unwrap();
+        let mut held = lease::Lease::acquire(&runtime, "claude-code/4711").unwrap();
+        held.publish().unwrap();
+        let driving = event(&mut lines).await;
+        assert_eq!(driving["lease"]["session"], "claude-code/4711", "{driving}");
+        assert_eq!(driving["lease"]["project"], "shop", "{driving}");
+        assert_eq!(driving["lease"]["pending"], false, "{driving}");
+
+        record(
+            &dir,
+            r#"{"session":"claude-code/4711","instance":"other.sock","tool":"key"}"#,
+        );
+        record(
+            &dir,
+            r#"{"session":"claude-code/4711","instance":"niri.sock","tool":"click"}"#,
+        );
+        let click = event(&mut lines).await;
+        assert_eq!(
+            (click["tool"].as_str(), click["project"].as_str()),
+            (Some("click"), Some("shop"))
+        );
+
+        runtime.stop().unwrap();
+        assert_eq!(event(&mut lines).await["stopped"], true);
+        drop(held);
+        assert!(event(&mut lines).await["lease"].is_null());
+        watch.abort();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn ends_when_the_reader_goes_away() {
+        let dir = crate::test_support::fresh_dir("watch-gone");
+        let watched = watched(&dir);
+        let (writer, reader) = tokio::io::duplex(64);
+        drop(reader);
+        let ended = follow(&watched, writer, Duration::from_millis(10)).await;
+        assert!(matches!(ended, Err(Ended::ReaderGone)), "{ended:?}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
