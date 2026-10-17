@@ -57,7 +57,7 @@ Prints what agents are doing on this niri instance, one JSON object per line, un
 
 - `hello`, once, first: `format` (1), the server's `version` and the `instance`, niri's socket name
 - `state`, at the start and whenever it changes: `lease`, null or the holder's `session` (such as `claude-code/4711`), `since`, `pending` (true while the user is asked to allow it) and `project`, the last part of the agent's working directory or null; then `stopped`, `input_dirty` and `clients`, every agent's `serve` on this instance by `pid`, with `agent`, the name of the process that started it (such as `claude`), `project` as in `lease`, and `replaced`, true when an update replaced its binary since it started, so it runs the old build until its agent restarts it
-- `action`, for each tool call the [audit log](../../concepts/safety/#the-audit-log) records on this instance, the last 20 first: the audit line without `instance`, plus `project` as in `lease`, and `backlog: true` on those 20, made before `watch` started
+- `action`, for each tool call the [audit log](../../concepts/safety/#the-audit-log) records on this instance, the last 20 first: the audit line without `instance`, plus `project` as in `lease`, and `backlog: true` on those 20, made before `watch` started. A call whose line would be longer than 64 KiB is skipped, as Noctalia cuts longer lines
 - `alive`, every five seconds
 
 ```text

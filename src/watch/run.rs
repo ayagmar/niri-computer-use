@@ -21,6 +21,10 @@ const ALIVE: Duration = Duration::from_secs(5);
 /// How long a line may take to write before the reader counts as stuck.
 const WRITE_DEADLINE: Duration = Duration::from_secs(5);
 
+/// The longest line Noctalia's stream reader passes on whole, without its newline. It
+/// cuts a longer one, and its tail would reach the plugin as a line of its own.
+const READER_LIMIT: usize = 64 * 1024;
+
 /// What one `watch` follows.
 pub(crate) struct Watched {
     pub(crate) runtime: RuntimeDir,
@@ -132,6 +136,10 @@ struct Out<W> {
 impl<W: AsyncWrite + Unpin> Out<W> {
     async fn send(&mut self, event: &Event<'_>) -> Result<(), Ended> {
         let mut line = serde_json::to_vec(event).map_err(|error| Ended::Write(error.into()))?;
+        // `project` and `backlog` can take a call the audit log fits past the limit.
+        if line.len() > READER_LIMIT && matches!(event, Event::Action(_)) {
+            return Ok(());
+        }
         line.push(b'\n');
         let written = async {
             self.out.write_all(&line).await?;
@@ -312,6 +320,31 @@ mod tests {
         assert_eq!(event(&mut lines).await["stopped"], true);
         drop(held);
         assert!(event(&mut lines).await["lease"].is_null());
+        watch.abort();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn skips_a_call_whose_line_is_longer_than_noctalia_reads() {
+        let dir = crate::test_support::fresh_dir("watch-long");
+        let watched = watched(&dir);
+        watched.runtime.create().unwrap();
+        let head =
+            r#"{"session":"claude-code/4711","instance":"niri.sock","tool":"type_text","error":""#;
+        let pad = super::super::LINE_LIMIT - head.len() - 2;
+        record(&dir, &format!(r#"{head}{}"}}"#, "x".repeat(pad)));
+        record(
+            &dir,
+            r#"{"session":"pi/9","instance":"niri.sock","tool":"status"}"#,
+        );
+        let (writer, reader) = tokio::io::duplex(256 * 1024);
+        let watch = tokio::spawn(async move {
+            let Err(_) = follow(&watched, writer, Duration::from_millis(10)).await;
+        });
+        let mut lines = tokio::io::BufReader::new(reader).lines();
+        assert_eq!(event(&mut lines).await["event"], "hello");
+        assert_eq!(event(&mut lines).await["event"], "state");
+        assert_eq!(event(&mut lines).await["tool"], "status");
         watch.abort();
         std::fs::remove_dir_all(dir).unwrap();
     }
