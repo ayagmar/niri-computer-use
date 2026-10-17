@@ -1,13 +1,13 @@
 ---
 title: Client setup
-description: Register niri-computer-use in Claude Code, Pi, Codex or another MCP client, and install the skill.
+description: Register niri-computer-use in Claude Code, Pi, Codex, Amp, Copilot CLI, Gemini CLI, Qwen Code or another MCP client, and install the skill.
 sidebar:
   order: 3
 ---
 
 niri-computer-use is a stdio MCP server: the client starts `niri-computer-use serve` and talks to it over stdin and stdout. No client needs more than the command. The server finds your niri session itself when its environment lacks `XDG_RUNTIME_DIR`, `NIRI_SOCKET` or `WAYLAND_DISPLAY`, as it does under Codex; see [Session variables](#session-variables).
 
-The commands below use `~/.local/bin/niri-computer-use`, where the [install script](../install/) puts it. That script offers to run the Claude Code, Pi and Codex commands for you, for each agent it finds on `PATH`; see [Registering in your agents](../install-script/#registering-in-your-agents). After `cargo install`, the binary is `~/.cargo/bin/niri-computer-use`.
+The commands below use `~/.local/bin/niri-computer-use`, where the [install script](../install/) puts it. That script offers to run the commands for Claude Code, Pi, Codex, Amp, Copilot CLI, Gemini CLI and Qwen Code for you, for each agent it finds on `PATH`; see [Registering in your agents](../install-script/#registering-in-your-agents). After `cargo install`, the binary is `~/.cargo/bin/niri-computer-use`.
 
 ## Claude Code
 
@@ -35,6 +35,41 @@ codex mcp add niri-computer-use -- ~/.local/bin/niri-computer-use serve
 
 Codex starts MCP servers with a short list of variables that leaves out niri's, so the server finds the session itself; `env_vars` isn't needed. `codex mcp list` doesn't start the server, so ask the agent to call `status`: `discovery` shows `discovered` for the three session variables, and `niri.error` is null.
 
+## Amp
+
+```sh
+amp mcp add niri-computer-use -- ~/.local/bin/niri-computer-use serve
+```
+
+Amp writes it to `amp.mcpServers` in its user settings, `~/.config/amp/settings.json`. It refuses a name it already has; `amp mcp remove niri-computer-use` first to change the command.
+
+## GitHub Copilot CLI
+
+```sh
+copilot mcp add niri-computer-use -- ~/.local/bin/niri-computer-use serve
+copilot mcp get niri-computer-use
+```
+
+Copilot CLI writes it to `~/.copilot/mcp-config.json`. `copilot mcp get` shows the server's status and tools.
+
+## Gemini CLI
+
+```sh
+gemini mcp add --scope user niri-computer-use ~/.local/bin/niri-computer-use serve
+gemini mcp list
+```
+
+Without `--scope user`, Gemini CLI writes the project's `.gemini/settings.json` in the current directory; with it, `~/.gemini/settings.json`. Adding it again replaces the entry.
+
+## Qwen Code
+
+```sh
+qwen mcp add --scope user niri-computer-use ~/.local/bin/niri-computer-use serve
+qwen mcp list
+```
+
+Qwen Code writes `~/.qwen/settings.json`, its default scope, which `--scope user` only makes explicit. Adding it again replaces the entry.
+
 ## Other MCP clients
 
 Any client that starts stdio servers can run it. A client that reads the common `mcpServers` format takes:
@@ -51,6 +86,36 @@ Any client that starts stdio servers can run it. A client that reads the common 
 ```
 
 Use the full path to the binary. A client that starts servers with a reduced environment, as Codex and the MCP Inspector do, needs nothing more.
+
+These agents take the server in their user config file, which the install script never edits, so add it yourself:
+
+| Agent | File | Entry |
+|---|---|---|
+| Cursor CLI | `~/.cursor/mcp.json` | the `mcpServers` entry above |
+| Factory Droid | `~/.factory/mcp.json` | the `mcpServers` entry above, with `"type": "stdio"` |
+| OpenCode | `~/.config/opencode/opencode.json` | `"mcp": {"niri-computer-use": {"type": "local", "command": ["/home/you/.local/bin/niri-computer-use", "serve"], "enabled": true}}` |
+| Kilo Code CLI | `~/.config/kilo/kilo.json` | the same `mcp` entry as OpenCode |
+
+Goose reads `~/.config/goose/config.yaml`:
+
+```yaml
+extensions:
+  niri-computer-use:
+    type: stdio
+    name: niri-computer-use
+    enabled: true
+    cmd: /home/you/.local/bin/niri-computer-use
+    args: ["serve"]
+    env_keys: []
+    envs: {}
+    timeout: 300
+```
+
+Crush reads `~/.config/crush/crushrc`, a Bash script with Crush's own commands:
+
+```bash
+mcp add niri-computer-use --command /home/you/.local/bin/niri-computer-use --args serve
+```
 
 To check a config file without an agent, list the tools through the [MCP Inspector](https://github.com/modelcontextprotocol/inspector) (needs Node.js):
 

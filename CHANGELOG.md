@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Added
+
+- The install script also offers to register the server in Amp, GitHub Copilot CLI, Gemini CLI and Qwen Code when they are on `PATH`, through each one's own `mcp add` at user scope. The client setup page gives their commands, and the config entries for Cursor CLI, Factory Droid, OpenCode, Kilo Code CLI, Goose and Crush, which the script leaves to you.
+
 ## 0.1.3 - 2026-10-17
 
 ### Added

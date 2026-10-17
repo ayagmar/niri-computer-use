@@ -398,6 +398,75 @@ mod script {
         }
     }
 
+    /// The agents after Claude Code, Pi and Codex, each with the arguments its `mcp add`
+    /// takes for a stdio server in the user's config, whatever the working directory.
+    const MORE_AGENTS: [(&str, &str, &str); 4] = [
+        ("amp", "Amp", "mcp add niri-computer-use --"),
+        (
+            "copilot",
+            "GitHub Copilot CLI",
+            "mcp add niri-computer-use --",
+        ),
+        (
+            "gemini",
+            "Gemini CLI",
+            "mcp add --scope user niri-computer-use",
+        ),
+        (
+            "qwen",
+            "Qwen Code",
+            "mcp add --scope user niri-computer-use",
+        ),
+    ];
+
+    #[tokio::test]
+    async fn amp_copilot_gemini_and_qwen_are_registered_at_user_scope() {
+        let release = Release::new("more-agents", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        for (program, _, _) in MORE_AGENTS {
+            fake_agent(&release, program);
+        }
+
+        let output = release.install(&[("NCU_REGISTER", "1")]).await;
+
+        assert!(output.status.success(), "{output:?}");
+        let binary = release.home().join(".local/bin/niri-computer-use");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        for (program, agent, add) in MORE_AGENTS {
+            assert_eq!(
+                calls(&release, program),
+                format!("{add} {} serve\n", binary.display()),
+                "{program}"
+            );
+            assert!(
+                stdout.contains(&format!("Registered in {agent}.")),
+                "{stdout}"
+            );
+            assert!(!stdout.contains(&format!("{program} mcp add")), "{stdout}");
+        }
+    }
+
+    #[tokio::test]
+    async fn amp_copilot_gemini_and_qwen_are_left_alone_when_declined() {
+        let release = Release::new("more-declined", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        for (program, _, _) in MORE_AGENTS {
+            fake_agent(&release, program);
+        }
+
+        let output = release.install(&[("NCU_REGISTER", "0")]).await;
+
+        assert!(output.status.success(), "{output:?}");
+        let binary = release.home().join(".local/bin/niri-computer-use");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        for (program, _, add) in MORE_AGENTS {
+            assert_eq!(calls(&release, program), "", "{program}");
+            let command = format!("{program} {add} \"{}\" serve", binary.display());
+            assert!(stdout.contains(&command), "{stdout}");
+        }
+        assert!(!stdout.contains("Registered in"), "{stdout}");
+    }
+
     #[tokio::test]
     async fn an_unknown_ncu_register_value_is_refused_before_anything_is_registered() {
         let release = Release::new("bad-register", "x86_64");
