@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Fixed
+
+- `set_element_text` refuses text ending with tool-call closing tags such as `</parameter>` or `</invoke>` that no opening tag earlier in the text balances, with `leaked_tag` and the tags named in `detail`, as `type_text` has since 0.1.2. It used to set such text, so a leaked tag landed in the field. Nothing is set; send the text again without the tags.
+
 ## 0.1.3 - 2026-10-17
 
 ### Added
