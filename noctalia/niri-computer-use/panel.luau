@@ -8,6 +8,11 @@ local time = require("./lib/time.luau")
 
 local view = noctalia.state.get("desk")
 local open = false
+-- Bumped to jump the feed to its newest call: on every open, and from Latest.
+local toLatest = 0
+-- Whether the feed shows its newest call; false once the user scrolls up.
+local atLatest = true
+local render: () -> ()
 
 local function tr(key: string, vars)
   return noctalia.tr(key, vars)
@@ -20,6 +25,14 @@ local function header(now: number)
     ui.column({ gap = 2, flexGrow = 1 }, {
       ui.label({ text = look.title(view, tr), fontSize = 15, fontWeight = "bold", maxLines = 2 }),
       ui.label({ text = look.detail(view, now, tr), color = "on_surface_variant", maxLines = 3 }),
+    }),
+    ui.button({
+      glyph = "settings",
+      variant = "ghost",
+      tooltip = tr("panel.settings"),
+      onClick = function()
+        noctalia.openSettings()
+      end,
     }),
   })
 end
@@ -107,8 +120,16 @@ local function agentList()
   end
   local driver = serverPid(view.lease and view.lease.session)
   local rows = { ui.label({ text = tr("panel.agents"), fontWeight = "bold" }) }
+  -- The driver first, then the rest as `watch` lists them.
   for _, agent in agents do
-    table.insert(rows, agentRow(agent, driver))
+    if agent.pid == driver then
+      table.insert(rows, agentRow(agent, driver))
+    end
+  end
+  for _, agent in agents do
+    if agent.pid ~= driver then
+      table.insert(rows, agentRow(agent, driver))
+    end
   end
   return ui.column({ gap = 2 }, rows)
 end
@@ -126,10 +147,43 @@ local function feed(now: number)
     table.insert(rows, row(call, now, call.session ~= previous))
     previous = call.session
   end
-  return ui.scroll({ flexGrow = 1, gap = 0, stickToBottom = true }, rows)
+  return ui.scroll({
+    key = "feed",
+    flexGrow = 1,
+    gap = 0,
+    stickToBottom = true,
+    scrollToBottomRev = toLatest,
+    onScroll = "onFeedScroll",
+  }, rows)
 end
 
-local function render()
+-- Jumps the feed back to its newest call.
+local function latestButton()
+  return ui.button({
+    text = tr("panel.latest"),
+    glyph = "arrow-down",
+    variant = "secondary",
+    controlSize = "sm",
+    onClick = function()
+      toLatest += 1
+      atLatest = true
+      render()
+    end,
+  })
+end
+
+-- The feed's heading, with a button back to the newest call while the user
+-- reads older ones.
+local function heading()
+  local row = { ui.label({ text = tr("panel.activity"), fontWeight = "bold", flexGrow = 1 }) }
+  if not atLatest then
+    table.insert(row, latestButton())
+  end
+  table.insert(row, controls())
+  return ui.row({ gap = 8, align = "center" }, row)
+end
+
+function render()
   if not open then
     return
   end
@@ -143,15 +197,11 @@ local function render()
   if list then
     table.insert(children, list)
   end
-  table.insert(
-    children,
-    ui.row({ gap = 8, align = "center" }, {
-      ui.label({ text = tr("panel.activity"), fontWeight = "bold", flexGrow = 1 }),
-      controls(),
-    })
-  )
+  table.insert(children, heading())
   table.insert(children, feed(now))
-  panel.render(ui.column({ gap = 12, padding = 16 }, children))
+  -- flexGrow makes the column the panel's height, so the feed scrolls inside it
+  -- rather than running past the panel's bottom edge.
+  panel.render(ui.column({ flexGrow = 1, gap = 12, padding = 16 }, children))
 end
 
 noctalia.state.watch("desk", function(value)
@@ -159,8 +209,19 @@ noctalia.state.watch("desk", function(value)
   render()
 end)
 
+-- The feed scrolled: `offset` and `maxOffset` arrive as strings.
+function onFeedScroll(offset: string, maxOffset: string)
+  local was = atLatest
+  atLatest = (tonumber(maxOffset) or 0) - (tonumber(offset) or 0) < 4
+  if atLatest ~= was then
+    render()
+  end
+end
+
 function onOpen(_context)
   open = true
+  toLatest += 1
+  atLatest = true
   panel.setWantsSecondTicks(true)
   render()
 end

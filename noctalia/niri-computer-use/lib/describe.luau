@@ -157,7 +157,10 @@ local SAY: { [string]: (args: any, tr: Tr) -> string } = {
     return tr("action.activate", { role = named(args.role, "element") })
   end,
   screenshot = function(args, tr)
-    return tr(if args.target == "region" then "action.zoom" else "action.screenshot")
+    if args.target ~= "region" then
+      return tr("action.screenshot")
+    end
+    return tr(if type(args.screenshot_ref) == "string" then "action.zoom" else "action.region")
   end,
 }
 

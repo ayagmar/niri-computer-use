@@ -18,7 +18,7 @@
     },
     "notify_errors": {
       "label": "Notify when an agent's action fails",
-      "description": "With the agent, the error's name and what it tried."
+      "description": "Off by default: agents retry most failures themselves. Never for an agent's own mistakes, such as invalid arguments."
     },
     "glow_width": {
       "label": "Glow width",
@@ -102,6 +102,8 @@
     "stop": "Stop",
     "stop_hint": "Ends the running action and takes the desktop back, like your stop key.",
     "activity": "Activity",
+    "latest": "Latest",
+    "settings": "Settings",
     "agents": "Connected agents",
     "agent_in": "{agent} in {project}",
     "agent_driving": "driving",
@@ -131,6 +133,7 @@
     "panel_close": "Closed {panel}",
     "activate": "Pressed a {role}",
     "zoom": "Zoomed into part of the screen",
+    "region": "Looked at part of the screen",
     "screenshot": "Looked at the screen",
     "acquire_desktop": "Took the desktop",
     "release_desktop": "Gave the desktop back",

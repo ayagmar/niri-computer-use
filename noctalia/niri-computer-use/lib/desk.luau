@@ -13,6 +13,18 @@ M.FORMAT = 1
 M.KEEP = 50
 -- `watch` sends `alive` every five seconds; this long without a line means it ended.
 M.QUIET_MS = 15000
+-- An agent that gives the desktop back and takes it again within this long, as
+-- agents do before asking the user something, took it once.
+M.RETAKE_MS = 5 * 60 * 1000
+
+-- Errors that are an agent's own mistake, which it corrects itself: never a failure
+-- worth a notification.
+local MISTAKES = {
+  cancelled = true,
+  invalid_arguments = true,
+  ref_invalid = true,
+  element_stale = true,
+}
 
 type Tr = (key: string, vars: { [string]: any }?) -> string
 
@@ -48,6 +60,7 @@ export type Call = {
 
 export type Change =
   { kind: "took", lease: Lease }
+  | { kind: "retook", lease: Lease }
   | { kind: "asking", lease: Lease }
   | { kind: "released", lease: Lease }
   | { kind: "stopped" }
@@ -67,6 +80,11 @@ export type Desk = {
   -- `missing`, `old`, `format` or the text of a line that wasn't JSON, such as watch's error.
   problem: string?,
   heardMs: number?,
+  -- The last agent to give the desktop back, and when.
+  released: { session: string, atMs: number }?,
+  -- A state was read since `hello`. The first one shows how the desk already
+  -- was, not a change, so it notifies only of stuck input.
+  settled: boolean,
 }
 
 function M.new(): Desk
@@ -80,6 +98,8 @@ function M.new(): Desk
     version = nil,
     problem = nil,
     heardMs = nil,
+    released = nil,
+    settled = false,
   }
 end
 
@@ -96,13 +116,22 @@ local function lease(value: any): Lease?
   }
 end
 
-local function leaseChanges(before: Lease?, after: Lease?, changes: { Change })
+-- Whether `lease` is its agent taking the desktop back soon after giving it up.
+local function retaking(desk: Desk, lease: Lease, nowMs: number): boolean
+  local released = desk.released
+  return released ~= nil and released.session == lease.session and nowMs - released.atMs <= M.RETAKE_MS
+end
+
+local function leaseChanges(desk: Desk, after: Lease?, nowMs: number, changes: { Change })
+  local before = desk.lease
   local same = before and after and before.session == after.session
   if before and not same then
     table.insert(changes, { kind = "released", lease = before })
+    desk.released = { session = before.session, atMs = nowMs }
   end
   if after and (not same or (before :: Lease).pending ~= after.pending) then
-    table.insert(changes, { kind = if after.pending then "asking" else "took", lease = after } :: Change)
+    local kind = if after.pending then "asking" elseif retaking(desk, after, nowMs) then "retook" else "took"
+    table.insert(changes, { kind = kind, lease = after } :: Change)
   end
 end
 
@@ -135,9 +164,10 @@ function M.outdated(list: { Agent }): number
   return count
 end
 
-local function state(desk: Desk, event: any, changes: { Change })
+local function state(desk: Desk, event: any, nowMs: number, found: { Change })
+  local changes: { Change } = {}
   local after = lease(event.lease)
-  leaseChanges(desk.lease, after, changes)
+  leaseChanges(desk, after, nowMs, changes)
   desk.lease = after
   local stopped = event.stopped == true
   if stopped ~= desk.stopped then
@@ -155,6 +185,12 @@ local function state(desk: Desk, event: any, changes: { Change })
     table.insert(changes, { kind = "outdated", count = outdated } :: Change)
   end
   desk.agents = servers
+  for _, change in changes do
+    if desk.settled or change.kind == "stuck" then
+      table.insert(found, change)
+    end
+  end
+  desk.settled = true
 end
 
 local function call(desk: Desk, event: any, tr: Tr, changes: { Change })
@@ -177,7 +213,8 @@ local function call(desk: Desk, event: any, tr: Tr, changes: { Change })
   if #desk.calls > M.KEEP then
     table.remove(desk.calls, 1)
   end
-  if entry.outcome == "error" and entry.error ~= "cancelled" then
+  -- Calls `watch` sends from before it started are history, not news.
+  if entry.outcome == "error" and not MISTAKES[entry.error or ""] and event.backlog ~= true then
     table.insert(changes, { kind = "failed", call = entry })
   end
 end
@@ -188,6 +225,7 @@ local function hello(desk: Desk, event: any)
     return
   end
   desk.problem = nil
+  desk.settled = false
   desk.version = if type(event.version) == "string" then event.version else nil
 end
 
@@ -204,7 +242,7 @@ function M.feed(desk: Desk, event: any, raw: string, nowMs: number, tr: Tr): { C
   elseif desk.problem == "format" then
     return changes
   elseif kind == "state" then
-    state(desk, event, changes)
+    state(desk, event, nowMs, changes)
   elseif kind == "action" then
     call(desk, event, tr, changes)
   elseif kind == nil and raw:find("usage: niri-computer-use", 1, true) then

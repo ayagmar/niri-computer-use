@@ -37,6 +37,7 @@ function M.new(sources)
     streams = {}, -- { command, onLine } per runStream
     commands = {}, -- { command, callback, timeout } per runAsync
     toggled = {},
+    settingsOpened = 0,
     outputs = { { name = "DP-1", width = 2560, height = 1440, scale = 1.25, focused = true } },
     bar = { visible = true, tree = nil, tooltip = nil, vertical = false },
     panelTree = nil,
@@ -91,6 +92,9 @@ function M.new(sources)
     end,
     togglePanel = function(id)
       table.insert(host.toggled, id)
+    end,
+    openSettings = function()
+      host.settingsOpened += 1
     end,
     outputs = function()
       return host.outputs

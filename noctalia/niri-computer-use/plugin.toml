@@ -54,7 +54,7 @@ key = "notify_errors"
 type = "bool"
 label_key = "settings.notify_errors.label"
 description_key = "settings.notify_errors.description"
-default = true
+default = false
 
 [[setting]]
 key = "glow_width"

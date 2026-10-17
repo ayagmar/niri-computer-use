@@ -10,6 +10,7 @@ end
 
 local function driving(host, session)
   host.event({ event = "hello", format = 1, version = "0.1.3" })
+  host.event({ event = "state", stopped = false, input_dirty = false })
   host.event({
     event = "state",
     lease = { session = session or "claude-code/4711", since = "2026-10-17T15:05:55.000Z", pending = false, project = "shop" },
