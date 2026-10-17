@@ -178,18 +178,21 @@ pub(crate) fn holder(runtime: &RuntimeDir) -> Option<Holder> {
         .then_some(holder)
 }
 
-/// Writes the holder, or empties the file for `None`.
+/// Writes the holder, or empties the file for `None`. It writes a file beside it and
+/// renames that over it, so `watch`, which reads the record often, never reads it half
+/// written.
 fn write_record(path: &Path, holder: Option<&Holder>) -> io::Result<()> {
+    let written = path.with_extension(format!("json.{}", std::process::id()));
     let mut file = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .mode(0o600)
-        .open(path)?;
+        .open(&written)?;
     if let Some(holder) = holder {
         file.write_all(&serde_json::to_vec(holder)?)?;
     }
-    Ok(())
+    std::fs::rename(written, path)
 }
 
 #[cfg(test)]
@@ -230,6 +233,25 @@ mod tests {
         drop(second);
         assert_eq!(holder(&runtime).as_ref(), Some(third.holder()));
         drop(third);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_reader_of_the_record_never_sees_it_half_written() {
+        let dir = crate::test_support::fresh_dir("lease-rewrite");
+        let runtime = runtime(&dir);
+        let mut held = Lease::acquire(&runtime, "first/1").unwrap();
+        let path = runtime.path().join(HOLDER);
+        let opened = File::open(&path).unwrap();
+        held.publish().unwrap();
+        drop(held);
+        // A rewrite replaces the file, so one read before it still reads the whole record.
+        let text = io::read_to_string(opened).unwrap();
+        let before: Holder = serde_json::from_str(&text).unwrap();
+        assert!(before.pending, "{text}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+        let leftovers = std::fs::read_dir(runtime.path()).unwrap().count();
+        assert_eq!(leftovers, 2, "only lease and lease.json");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
