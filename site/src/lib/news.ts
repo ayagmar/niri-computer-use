@@ -38,3 +38,8 @@ export function summary(release: Release): string {
 		.map(([heading, entries]) => `${heading[0].toUpperCase()}${heading.slice(1)} ${entries}`)
 		.join(' · ');
 }
+
+// The releases the home page's HISTORY lists, and `index.md` with it: the latest three.
+export function history(changelog: string): Release[] {
+	return releases(changelog).slice(0, 3);
+}

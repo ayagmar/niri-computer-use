@@ -2,7 +2,9 @@
 // llms-full.txt.
 import { getCollection, type CollectionEntry } from 'astro:content';
 import { groups } from './groups.mjs';
+import changelog from '../../../CHANGELOG.md?raw';
 import { home } from './home';
+import { history, summary } from './news';
 import { releaseLink, version } from './version';
 
 type Page = CollectionEntry<'docs'>;
@@ -42,6 +44,7 @@ export function homeMarkdownUrl(): string {
 export function homeMarkdown(): string {
 	const url = (link: string) => new URL(link, siteRoot()).href;
 	const { install, safety, example } = home;
+	const github = 'https://github.com/ayagmar/niri-computer-use';
 	const code = (lang: string, text: string) => `\`\`\`${lang}\n${text}\n\`\`\``;
 	return [
 		`# niri-computer-use(1)`,
@@ -53,6 +56,7 @@ export function homeMarkdown(): string {
 		`## Installation\n\nPipe the install script into sh:\n\n${code('sh', install.piped)}\n\nTo read it first: [install.sh](${install.script}). Or build it, and use \`~/.cargo/bin\` below:\n\n${code('sh', install.cargo)}\n\nBind the stop key in \`config.kdl\`:\n\n${code('kdl', install.stop)}\n\nThe script offers to register the server in each agent it supports that is on your PATH. The list, and the others: [Client setup](${url('start/clients/')}).`,
 		`## Safety\n\n${safety.map(([term, text]) => `- ${term}: ${text}`).join('\n')}\n\n${home.sandbox} [Safety](${url('concepts/safety/')})`,
 		`## Example\n\n${example.caption}\n\n${example.calls.map(([start, call, ms]) => `- ${start} s: \`${call}\`, ${ms} ms`).join('\n')}`,
+		`## History\n\n${history(changelog).map((r) => `- [${r.version}](${github}/releases/tag/v${r.version}), ${r.date}: ${summary(r)}`).join('\n')}\n\n[CHANGELOG.md](${github}/blob/main/CHANGELOG.md)`,
 		`## Bugs\n\n${home.bugs}`,
 		`## See also\n\n${home.seeAlso.map((id) => `- ${url(`${id}/`)}`).join('\n')}`,
 	].join('\n\n') + '\n';

@@ -19,7 +19,7 @@ import changelog from '../../../CHANGELOG.md?raw';
 import { home } from '../lib/home';
 import { mp4Seconds } from '../lib/clip';
 import { manName, reference } from '../lib/man';
-import { releases, summary } from '../lib/news';
+import { history as latest, summary } from '../lib/news';
 import { siteRoot } from '../lib/markdown';
 import { releaseLink, version } from '../lib/version';
 
@@ -34,7 +34,7 @@ const { install, example } = home;
 const clipPath = `clips/${example.clip}.mp4`;
 const clipFile = readFileSync(join(process.cwd(), 'public', clipPath));
 const clipFacts = `${Math.round(mp4Seconds(clipFile))} s, MP4, ${Math.round(clipFile.byteLength / 1000)} KB`;
-const history = releases(changelog).slice(0, 3);
+const history = latest(changelog);
 const released = history.find((release) => release.version === version);
 ---
 <!doctype html>
