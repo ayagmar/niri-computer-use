@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## Unreleased
 
+### Changed
+
+- With more than four agents connected, the Noctalia plugin's panel shows the driver and two more, and folds the rest into `+N more`, with how many of them are on an old build, so the activity feed keeps its room. Unfolded, the list scrolls within about four rows.
+
 ### Fixed
 
 - The Noctalia plugin sends failed-action notifications at normal urgency rather than critical, since agents retry most failures. Stuck input, and a Stop or Resume that failed, stay critical.

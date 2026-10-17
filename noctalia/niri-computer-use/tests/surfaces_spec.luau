@@ -122,6 +122,47 @@ t.group("panel", function()
     t.eq(after("Claude Code in shop"), "driving")
   end)
 
+  t.test("with many agents, shows the driver and two more, and folds the rest so the feed keeps its room", function()
+    local host = desktop()
+    local panel = env.start(host, "panel.luau")
+    panel.call("onOpen", {})
+    local clients = {}
+    for i = 1, 7 do
+      table.insert(clients, { pid = 100 + i, agent = "pi", project = `p{i}`, replaced = i >= 6 })
+    end
+    table.insert(clients, { pid = 4711, agent = "claude", project = "shop", replaced = false })
+    host.event({ event = "hello", format = 1 })
+    host.event({
+      event = "state",
+      lease = { session = "claude-code/4711", since = "2026-10-17T15:05:55.000Z", pending = false, project = "shop" },
+      stopped = false,
+      input_dirty = false,
+      clients = clients,
+    })
+    host.event({ event = "action", ts = "2026-10-17T15:06:00.000Z", session = "claude-code/4711", tool = "status", args = {} })
+    local function feed()
+      return host.find(host.panelTree, function(n)
+        return n.type == "scroll" and n.props.key == "feed"
+      end)
+    end
+    local texts = host.texts(host.panelTree)
+    t.ok(has(texts, "Claude Code in shop") and has(texts, "Pi in p1") and has(texts, "Pi in p2"), table.concat(texts, " | "))
+    t.ok(not has(texts, "Pi in p3"), "a folded agent shows")
+    t.ok(has(texts, "2 on an old build"), "the folded old builds aren't counted")
+    t.eq(feed().props.flexGrow, 1, "the feed doesn't take the room left")
+    button(host, "+5 more").props.onClick()
+    local list = host.find(host.panelTree, function(n)
+      return n.type == "scroll" and n.props.key == "agents"
+    end)
+    t.ok(list and list.props.height ~= nil, "the unfolded list doesn't scroll within a fixed height")
+    for _, name in { "Claude Code in shop", "Pi in p3", "Pi in p7" } do
+      t.ok(has(host.texts(list), name), `{name} is missing once unfolded`)
+    end
+    t.ok(has(host.texts(list), "old build, restart it"), "an old build isn't marked once unfolded")
+    button(host, "Show fewer").props.onClick()
+    t.ok(not has(host.texts(host.panelTree), "Pi in p3"), "Show fewer didn't fold the list")
+  end)
+
   t.test("opens on the newest call, and offers Latest only while the user reads older ones", function()
     local host = desktop()
     local panel = env.start(host, "panel.luau")
