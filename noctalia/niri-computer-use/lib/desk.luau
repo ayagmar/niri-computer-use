@@ -340,6 +340,8 @@ function M.view(desk: Desk, nowMs: number)
     version = desk.version,
     problem = desk.problem,
     lastError = desk.lastError,
+    -- An agent gave the desktop back within RETAKE_MS, so it may take it again.
+    justReleased = desk.released ~= nil and nowMs - desk.released.atMs <= M.RETAKE_MS,
   }
 end
 

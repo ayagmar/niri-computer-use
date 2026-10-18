@@ -386,7 +386,7 @@ t.group("panel", function()
     t.eq(button(host, "Stop"), nil, "Stop shows without a binary to run it")
   end)
 
-  t.test("Stop sits in the status card, and only while an agent holds the desktop", function()
+  t.test("Stop sits in the status card while an agent asks or drives, and not while idle", function()
     local host = desktop()
     local panel = env.start(host, "panel.luau")
     panel.call("onOpen", {})
@@ -400,8 +400,22 @@ t.group("panel", function()
     card = host.panelTree.children[1]
     t.ok(button(host, "Stop", card) ~= nil, "no Stop in the status card while an agent drives")
     t.eq(button(host, "Stop"), button(host, "Stop", card), "Stop isn't the card's alone")
+  end)
+
+  t.test("Stop stays for five minutes after an agent gives the desktop back, in case it takes it again", function()
+    local host = desktop()
+    local panel = env.start(host, "panel.luau")
+    panel.call("onOpen", {})
+    drive(host)
     host.event({ event = "state", stopped = false, input_dirty = false })
-    t.eq(button(host, "Stop"), nil, "Stop stays once the agent gave the desktop back")
+    t.eq(host.state.desk.status, "idle")
+    t.ok(button(host, "Stop", host.panelTree.children[1]) ~= nil, "Stop left the card as the agent gave the desktop back")
+    host.nowMs += 5 * 60 * 1000
+    host.event({ event = "alive" })
+    t.ok(button(host, "Stop") ~= nil, "Stop left before five minutes were up")
+    host.nowMs += 1
+    host.event({ event = "alive" })
+    t.eq(button(host, "Stop"), nil, "Stop stays once the agent can no longer be taking the desktop back")
   end)
 end)
 

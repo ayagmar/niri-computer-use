@@ -29,6 +29,12 @@ end
 -- binary Stop couldn't run.
 local STOPPABLE = { driving = true, asking = true, starting = true, offline = true, error = true }
 
+-- Whether Stop can do something now: also while idle just after an agent gave
+-- the desktop back, as agents do before taking it again.
+local function stoppable(): boolean
+  return STOPPABLE[view.status] or (view.status == "idle" and view.justReleased)
+end
+
 -- Resume once stopped, Stop where it can do something, otherwise nothing.
 local function controls()
   if view.stopped then
@@ -43,7 +49,7 @@ local function controls()
         actions.run("resume")
       end,
     })
-  elseif not STOPPABLE[view.status] then
+  elseif not stoppable() then
     return nil
   end
   return ui.button({
