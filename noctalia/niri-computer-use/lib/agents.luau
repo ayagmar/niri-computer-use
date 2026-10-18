@@ -28,7 +28,11 @@ local function group(agent: any, driving: boolean): Group
 end
 
 -- The row an agent other than the driver joins, if one is already listed.
+-- One `watch` didn't name (`?`) joins none: it may be another agent.
 local function sharing(groups: { Group }, agent: any): Group?
+  if agent.name == "?" then
+    return nil
+  end
   for _, g in groups do
     if not g.driving and g.name == agent.name and g.project == agent.project and g.replaced == agent.replaced then
       return g

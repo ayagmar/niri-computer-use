@@ -332,6 +332,14 @@ t.group("agents", function()
     local pi = { pid = 2, name = "Pi", project = "orange", replaced = false }
     t.eq(#agentGroups.groups({ agent(1, "orange"), pi }, nil), 2)
   end)
+
+  t.test("agents watch couldn't name never share a row, as they may be different agents", function()
+    local d = desk.new()
+    desk.feed(d, { event = "hello", format = 1 }, "", NOW, tr)
+    local clients = { { pid = 1, project = "orange" }, { pid = 2, project = "orange" } }
+    desk.feed(d, { event = "state", stopped = false, input_dirty = false, clients = clients }, "", NOW, tr)
+    t.eq(#agentGroups.groups(d.agents, nil), 2)
+  end)
 end)
 
 t.group("describe", function()
