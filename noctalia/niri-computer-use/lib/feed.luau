@@ -3,7 +3,12 @@
 -- presses by one agent fold into one row, so a run of shortcuts reads as one
 -- step rather than filling the feed.
 
+local time = require("./time.luau")
+
 local M = {}
+
+-- Key presses further apart than this are separate steps, each with its time.
+M.FOLD_GAP_MS = 30 * 1000
 
 type Tr = (key: string, vars: { [string]: any }?) -> string
 
@@ -58,6 +63,17 @@ local function folded(run: { any }, tr: Tr): Row
   return out
 end
 
+-- Whether `call` continues `run`: the same agent, soon after its last press.
+-- A time that doesn't parse counts as far apart.
+local function continues(run: { any }, call: any): boolean
+  local last = run[#run]
+  if last == nil then
+    return true
+  end
+  local before, at = time.parse(last.ts), time.parse(call.ts)
+  return last.session == call.session and before ~= nil and at ~= nil and at - before <= M.FOLD_GAP_MS
+end
+
 function M.rows(calls: { any }, tr: Tr): { Row }
   local rows: { Row } = {}
   local run: { any } = {}
@@ -70,7 +86,7 @@ function M.rows(calls: { any }, tr: Tr): { Row }
     run = {}
   end
   for _, call in calls do
-    if not foldable(call) or (#run > 0 and run[1].session ~= call.session) then
+    if not foldable(call) or not continues(run, call) then
       flush()
     end
     if foldable(call) then

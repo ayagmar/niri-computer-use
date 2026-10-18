@@ -239,7 +239,7 @@ t.group("feed", function()
     local d = desk.new()
     desk.feed(d, { event = "hello", format = 1 }, "", NOW, tr)
     for i, c in calls do
-      local ts = `2026-10-17T15:06:{string.format("%02d", i)}.000Z`
+      local ts = c.ts or `2026-10-17T15:06:{string.format("%02d", i)}.000Z`
       desk.feed(d, { event = "action", ts = ts, session = c[1], tool = c[2], args = c[3], error = c[4] }, "", NOW, tr)
     end
     return feed.rows(d.calls, tr)
@@ -283,6 +283,16 @@ t.group("feed", function()
     })
     t.eq(texts(list), "Pressed Escape | Pressed a | Pressed b | Pressed c | Checked readiness | Pressed d")
     t.eq(list[3].error, "focus_mismatch")
+  end)
+
+  t.test("key presses more than 30 seconds apart are separate steps, each with its own time", function()
+    local list = rows({
+      { "pi/7", "key", { keys = { "a" } }, ts = "2026-10-17T15:06:00.000Z" },
+      { "pi/7", "key", { keys = { "b" } }, ts = "2026-10-17T15:06:30.000Z" },
+      { "pi/7", "key", { keys = { "c" } }, ts = "2026-10-17T15:07:00.001Z" },
+    })
+    t.eq(texts(list), "Pressed 2 keys | Pressed c")
+    t.eq(list[1].ts, "2026-10-17T15:06:30.000Z")
   end)
 
   t.test("key presses the log kept only a count of never fold, so no key is made up", function()
