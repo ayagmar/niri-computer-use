@@ -108,82 +108,87 @@ for (const pre of document.querySelectorAll<HTMLElement>('[data-find] pre')) {
 	pre.append(button);
 }
 
-// The example plays in place, and its calls light up as the session makes them.
+// The example's calls replay at the times they went out, each in reverse video for its
+// round trip, once the window is in view and unless motion is reduced. The recording opens
+// under them as a second window when asked for, and then the rows follow it instead.
 const rows = [...document.querySelectorAll<HTMLElement>('[data-start]')];
-const mark = (video: HTMLVideoElement) => {
-	for (const row of rows) row.dataset.state = callState(video.currentTime, +row.dataset.start!, +row.dataset.ms!);
+const win = document.querySelector<HTMLElement>('[data-replay]');
+const motion = matchMedia('(prefers-reduced-motion: no-preference)');
+const clock = win?.querySelector<HTMLElement>('.clock');
+const again = win?.querySelector<HTMLButtonElement>('[data-again]');
+const last = Math.max(...rows.map((row) => +row.dataset.start! + Math.max(+row.dataset.ms! / 1000, 0.5)));
+const mark = (t: number) => {
+	for (const row of rows) row.dataset.state = callState(t, +row.dataset.start!, +row.dataset.ms!);
+	if (clock) clock.textContent = t < last ? `${t.toFixed(1)} s` : '(END)';
+	if (again) again.hidden = t < last;
 };
-// One frame loop while the clip plays; a seek only marks the rows again.
+// One frame loop at a time, for the replay or the recording.
 let frame = 0;
-function track(video: HTMLVideoElement) {
+function run(time: () => number, going: () => boolean) {
 	cancelAnimationFrame(frame);
 	const step = () => {
-		mark(video);
-		if (!video.paused) frame = requestAnimationFrame(step);
+		mark(time());
+		if (going()) frame = requestAnimationFrame(step);
 	};
 	step();
 }
-// The clip, made from the still on first use: muted, with controls, and followed by the
-// call table.
-function clip() {
-	const existing = document.querySelector<HTMLVideoElement>('.win video');
-	const still = document.querySelector<HTMLAnchorElement>('.still');
-	if (existing || !still) return existing;
-	const video = Object.assign(document.createElement('video'), {
-		src: still.href,
-		poster: still.querySelector('img')!.currentSrc,
-		controls: true,
-		muted: true,
-		playsInline: true,
-	});
-	video.setAttribute('aria-label', 'The session, playing');
-	video.onplay = () => track(video);
-	video.onseeked = video.onended = () => mark(video);
-	const focused = still.contains(document.activeElement);
-	still.replaceWith(video);
-	if (focused) video.focus({ preventScroll: true });
+function replay() {
+	const t0 = performance.now();
+	const t = () => (performance.now() - t0) / 1000;
+	run(t, () => t() < last);
+}
+function recording() {
+	let video = document.querySelector<HTMLVideoElement>('.win video');
+	const a = win?.querySelector<HTMLAnchorElement>('[data-play]');
+	if (video || !win || !a) return video;
+	video = Object.assign(document.createElement('video'), { src: a.href, controls: true, muted: true, playsInline: true });
+	video.setAttribute('aria-label', 'The recording of the session');
+	const v = video;
+	v.onplay = () => run(() => v.currentTime, () => !v.paused);
+	v.onseeked = () => mark(v.currentTime);
+	const box = Object.assign(document.createElement('div'), { className: 'win focused' });
+	box.append(v);
+	win.after(box);
 	return video;
+}
+function play(at: number) {
+	const video = recording();
+	if (!video) return;
+	video.currentTime = at;
+	video.play();
+	video.focus({ preventScroll: true });
+	video.parentElement!.scrollIntoView({ block: 'nearest', behavior: motion.matches ? 'smooth' : 'auto' });
 }
 for (const a of document.querySelectorAll<HTMLAnchorElement>('[data-play]'))
 	a.onclick = (e) => {
 		e.preventDefault();
-		clip()?.play();
+		play(0);
 	};
-// Each call's time seeks the clip to it.
+// Each call's time plays the recording from that call.
 for (const row of rows) {
 	const cell = row.firstElementChild as HTMLElement;
 	const seek = Object.assign(document.createElement('button'), { type: 'button', textContent: cell.textContent });
-	seek.setAttribute('aria-label', `Play from ${cell.textContent} s`);
-	seek.onclick = () => {
-		const video = clip();
-		if (!video) return;
-		video.currentTime = +row.dataset.start!;
-		video.play();
-	};
+	seek.setAttribute('aria-label', `Play the recording from ${cell.textContent} s`);
+	seek.onclick = () => play(+row.dataset.start!);
 	cell.replaceChildren(seek);
 }
-// Unless motion is reduced, the clip plays on a loop while the example is in view, and
-// pauses when it leaves. A pause while it is in view is the visitor's, and holds until
-// they play it again.
-const windows = document.querySelector('.windows');
-if (windows && matchMedia('(prefers-reduced-motion: no-preference)').matches) {
-	let inView = false;
-	let held = false;
-	new IntersectionObserver(
+if (again)
+	again.onclick = () => {
+		const video = document.querySelector<HTMLVideoElement>('.win video');
+		if (video) play(0);
+		else replay();
+	};
+if (win && rows.length && motion.matches) {
+	mark(0);
+	const seen = new IntersectionObserver(
 		([entry]) => {
-			inView = entry.isIntersecting;
-			const video = inView ? clip() : document.querySelector('video');
-			if (!video) return;
-			if (!video.loop) {
-				video.loop = true;
-				video.addEventListener('pause', () => (held = inView && !document.hidden));
-				video.addEventListener('play', () => (held = false));
-			}
-			if (inView && !held) video.play().catch(() => {});
-			else if (!inView) video.pause();
+			if (!entry.isIntersecting) return;
+			seen.disconnect();
+			if (!document.querySelector('.win video')) replay();
 		},
-		{ threshold: 0.5 },
-	).observe(windows);
+		{ threshold: 0.4 },
+	);
+	seen.observe(win);
 }
 
 const actions: Record<string, () => unknown> = {

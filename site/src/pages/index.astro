@@ -1,21 +1,20 @@
 ---
 // The home page, set as the server's manual page the way man shows it in a terminal
 // (`styles/man.css`), in one flow: NAME and SYNOPSIS as a large opening with the install
-// line, EXAMPLE as a band across the window where the clip and its calls sit as two niri
-// windows, then the other sections with their names hanging in a left gutter. Dark or light
-// follows the system. Without JavaScript it reads in full and the clip opens from a link;
-// `scripts/less.ts` adds less's keys, the clip's replay and seeking from the call table. Its words are
-// in `lib/home.ts`, which `pages/index.md.ts` serves as Markdown too.
+// line, EXAMPLE as a band across the window where a recorded session's calls sit in one niri
+// window, then the other sections with their names hanging in a left gutter. Dark or light
+// follows the system. Without JavaScript it reads in full and the recording opens from a
+// link; `scripts/less.ts` adds less's keys, replays the calls at their real times, and plays
+// the recording in place. Its words are in `lib/home.ts`, which `pages/index.md.ts` serves
+// as Markdown too.
 import '@fontsource-variable/jetbrains-mono/wght.css';
 import '../styles/tokens.css';
 import '../styles/man.css';
 import mono from '@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2?url';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Picture } from 'astro:assets';
 import Less from '../components/Less.astro';
 import Slide from '../components/Slide.astro';
-import still from '../assets/errand-still.jpg';
 import changelog from '../../../CHANGELOG.md?raw';
 import { home } from '../lib/home';
 import { mp4Seconds } from '../lib/clip';
@@ -99,31 +98,9 @@ const released = history.find((release) => release.version === version);
 						<p>{example.caption}</p>
 					</div>
 					<div class="windows">
-						<figure class="win focused">
-							<a class="still" href={link(clipPath)} data-play>
-								<Picture
-									src={still}
-									alt={example.alt}
-									widths={[560, 900, 1280]}
-									sizes="(min-width: 75rem) 860px, calc(100vw - 3rem)"
-									formats={['avif']}
-									fallbackFormat="jpg"
-									quality={60}
-									loading="eager"
-									fetchpriority="high"
-								/>
-								<span class="play" aria-hidden="true">
-									<svg viewBox="0 0 10 12" width="10" height="12"><path d="M0 0v12l10-6z" fill="currentColor" /></svg>
-									play
-								</span>
-							</a>
-							<figcaption>
-								<a href={link(clipPath)} data-play>Play the clip</a> ({clipFacts})
-							</figcaption>
-						</figure>
-						<div class="win calls-win">
+						<div class="win focused calls-win" data-replay>
 							<table class="calls">
-								<caption class="sr">The session's calls: when each went out, in seconds into the clip, and its round trip</caption>
+								<caption class="sr">The session's calls: when each went out, in seconds into the session, and its round trip</caption>
 								<thead><tr><th scope="col">at</th><th scope="col">call</th><th scope="col">ms</th></tr></thead>
 								<tbody>
 									{
@@ -137,6 +114,11 @@ const released = history.find((release) => release.version === version);
 									}
 								</tbody>
 							</table>
+							<p class="win-line">
+								<span class="clock" aria-hidden="true"></span>
+								<a href={link(clipPath)} data-play>Watch the recording</a> ({clipFacts})
+								<button type="button" data-again hidden>replay</button>
+							</p>
 						</div>
 					</div>
 				</div>
@@ -331,9 +313,9 @@ const released = history.find((release) => release.version === version);
 		margin-top: 0.75rem;
 	}
 
-	/* EXAMPLE: a band across the window on the workspace's backdrop, where the clip and its
-	   calls are two niri windows 16 px apart: the clip is focused, in the amber ring, and
-	   the calls are in the inactive one. */
+	/* EXAMPLE: a band across the window on the workspace's backdrop, where the session's
+	   calls are a niri window in the amber focus ring. The recording, once asked for, opens
+	   as a second window under it, 16 px away, and takes the ring. */
 	.band {
 		margin-top: 5.5rem;
 		padding: 3rem 0 3.5rem;
@@ -360,9 +342,9 @@ const released = history.find((release) => release.version === version);
 	}
 	.windows {
 		display: grid;
-		grid-template-columns: minmax(0, 1.75fr) minmax(0, 1fr);
 		gap: 16px;
-		align-items: stretch;
+		width: min(100%, var(--gutter) + var(--measure));
+		margin-inline: auto;
 	}
 	.win {
 		margin: 0;
@@ -370,55 +352,47 @@ const released = history.find((release) => release.version === version);
 		outline: 4px solid var(--ncu-rule);
 		transition: outline-color 0.2s;
 	}
-	.win.focused,
-	.windows:has(.calls-win:hover, .calls-win:focus-within) .calls-win {
+	.win.focused {
 		outline-color: var(--ncu-accent);
 	}
-	.windows:has(.calls-win:hover, .calls-win:focus-within) .win.focused {
+	/* Once the recording plays it takes the ring, and the calls follow it. */
+	.windows:has(video) .calls-win {
 		outline-color: var(--ncu-rule);
 	}
-	.still,
 	.win video {
-		position: relative;
 		display: block;
 		width: 100%;
 		height: auto;
 		aspect-ratio: 16 / 9;
-		line-height: 0;
 		background: var(--ncu-plate);
 	}
-	.still img {
-		display: block;
-		width: 100%;
-		height: auto;
-	}
-	.play {
-		position: absolute;
-		left: 1.5ch;
-		bottom: 1.5ch;
-		display: inline-flex;
-		align-items: center;
-		gap: 1ch;
-		padding: 0.35em 1.25ch;
-		background: var(--ncu-ink);
-		color: var(--ncu-ground);
-		line-height: 1.55;
-		transition:
-			background-color 0.15s,
-			color 0.15s;
-	}
-	.still:hover .play,
-	.still:focus-visible .play {
-		background: var(--ncu-bold);
-		color: var(--ncu-ground);
-	}
-	figcaption {
+	.win-line {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0 2ch;
+		margin: 0;
 		padding: 0.5em 1.5ch;
 		border-top: 1px solid var(--ncu-rule);
 		color: var(--ncu-dim);
+		font-size: 0.875rem;
 	}
-	.calls-win {
-		overflow: auto;
+	.clock:empty {
+		display: none;
+	}
+	.clock {
+		color: var(--ncu-bold);
+		font-variant-numeric: tabular-nums;
+	}
+	.win-line button {
+		margin-left: auto;
+		padding: 0;
+		border: 0;
+		background: none;
+		color: var(--ncu-accent);
+		cursor: pointer;
+		text-decoration: underline;
+		text-decoration-thickness: 1px;
+		text-underline-offset: 3px;
 	}
 	.calls {
 		width: 100%;
@@ -458,13 +432,13 @@ const released = history.find((release) => release.version === version);
 			background-color 0.15s;
 	}
 	.calls [data-state='next'] {
-		color: var(--ncu-dim);
+		visibility: hidden;
 	}
 	.calls [data-state='done'] {
 		color: var(--ncu-bold);
 	}
 	.calls [data-state='now'],
-	.calls [data-state='now'] button {
+	.calls [data-state='now'] td button {
 		background: var(--ncu-ink);
 		color: var(--ncu-ground);
 	}
@@ -512,40 +486,24 @@ const released = history.find((release) => release.version === version);
 		cursor: pointer;
 	}
 
-	/* niri opens the windows: as the band comes into view, the calls slide in beside the
-	   clip on niri's spring. */
-	@media (prefers-reduced-motion: no-preference) and (width > 64rem) {
+	/* niri opens the window: as the band comes into view, it grows in on niri's spring. */
+	@media (prefers-reduced-motion: no-preference) {
 		@supports (animation-timeline: view()) {
 			.calls-win {
 				animation: ncu-open linear both;
 				animation-timeline: view();
-				animation-range: entry 10% cover 35%;
-			}
-			.win.focused {
-				animation: ncu-shift linear both;
-				animation-timeline: view();
-				animation-range: entry 10% cover 35%;
+				animation-range: entry 10% cover 30%;
 			}
 		}
 	}
 	@keyframes ncu-open {
 		from {
-			opacity: 0.25;
-			transform: translateX(12%) scale(0.96);
-		}
-	}
-	@keyframes ncu-shift {
-		from {
-			transform: translateX(8%);
+			opacity: 0.4;
+			transform: scale(0.94);
 		}
 	}
 
 	/* Narrow: section names above their text, the windows stacked. */
-	@media (max-width: 64rem) {
-		.windows {
-			grid-template-columns: minmax(0, 1fr);
-		}
-	}
 	@media (max-width: 48rem) {
 		:root {
 			--gutter: 0ch;
@@ -585,12 +543,6 @@ const released = history.find((release) => release.version === version);
 		}
 	}
 	@media (max-width: 40rem) {
-		.play {
-			left: 1ch;
-			bottom: 1ch;
-			padding: 0.1em 1ch;
-			font-size: 0.8rem;
-		}
 		.band-in {
 			width: calc(100% - 1.5rem);
 		}
@@ -610,8 +562,8 @@ const released = history.find((release) => release.version === version);
 		.win {
 			outline: 0;
 		}
-		.play {
-			display: none;
+		.calls [data-state] {
+			visibility: visible;
 		}
 	}
 </style>

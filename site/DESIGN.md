@@ -1,6 +1,6 @@
 ---
 name: niri-computer-use
-description: The manual page niri-computer-use(1) as man shows it in a terminal, set in JetBrains Mono, for the home page and the docs. The home page is one flow, with its example as two niri windows in a band across the window.
+description: The manual page niri-computer-use(1) as man shows it in a terminal, set in JetBrains Mono, for the home page and the docs. The home page is one flow, with its example as a niri window replaying a session's calls in a band across the window.
 colors:
   ground: "#f7f5ee"
   ink: "#2b2a25"
@@ -116,7 +116,7 @@ One system covers the home page (`site/src/pages/index.astro`, words in `src/lib
 
 **Creative North Star: "The Manual Page in a Terminal"**
 
-The home page is the manual page `niri-computer-use(1)` as man shows it in a terminal. It has a running head and foot, capital section names (NAME, SYNOPSIS, DESCRIPTION, INSTALLATION, SAFETY, EXAMPLE, HISTORY, BUGS, SEE ALSO), bold for what you type, underline for paths, and less's reverse-video status line, the pager line, pinned to the bottom of the window. It reads as one flow: NAME and SYNOPSIS open it with the name at display size and the install line, then EXAMPLE is a band across the window where the clip and its calls sit as two niri windows, the clip focused in a 4px amber ring. The other sections follow with their names hanging in a left gutter. The docs are the rest of the manual: each page opens on a running head and ends on a running foot, and its section headings are capitals.
+The home page is the manual page `niri-computer-use(1)` as man shows it in a terminal. It has a running head and foot, capital section names (NAME, SYNOPSIS, DESCRIPTION, INSTALLATION, SAFETY, EXAMPLE, HISTORY, BUGS, SEE ALSO), bold for what you type, underline for paths, and less's reverse-video status line, the pager line, pinned to the bottom of the window. It reads as one flow: NAME and SYNOPSIS open it with the name at display size and the install line, then EXAMPLE is a band across the window where a recorded session's calls replay in one niri window, in a 4px amber ring. The other sections follow with their names hanging in a left gutter. The docs are the rest of the manual: each page opens on a running head and ends on a running foot, and its section headings are capitals.
 
 Everything is set in JetBrains Mono Variable. Dark is a warm black with parchment ink, light is paper with brown-black ink, and one amber marks links and focus. The home page follows the system colour scheme (`prefers-color-scheme`, `color-scheme: light dark`). The docs follow Starlight's theme switch, which sets `data-theme` on the root. One script, `src/scripts/less.ts`, adds less's keys, search, copy buttons and the example's replay. The home page, the 404 and the docs read and work without it.
 
@@ -126,7 +126,7 @@ Everything is set in JetBrains Mono Variable. Dark is a warm black with parchmen
 - Docs and the 404 indent text 7ch under its section name. The home page hangs section names in a 16ch gutter beside a 76ch measure, and stacks them above the text under 48rem.
 - Running head and foot on the home page and on every docs page.
 - The pager line: reverse video, sticky, with a percentage that follows scrolling, `(END)` at the bottom, and messages and the search prompt in the same line.
-- EXAMPLE is a `plate` band across the window: the clip and the call table are two `ground` windows 16px apart, the clip in a 4px amber ring and the calls in a 4px `rule` ring. The ring moves to the calls while the pointer or focus is in them. Under 64rem the windows stack.
+- EXAMPLE is a `plate` band across the window: the call table is a `ground` window in a 4px amber ring. The recording, when asked for, opens as a second window 16px under it and takes the ring; the calls' ring turns `rule`.
 - Print is black on white, with each outside link's address after it.
 
 ## Colors
@@ -180,9 +180,9 @@ The docs also use a few Starlight-only tints in `theme.css` (`accent-high` #5c38
 
 ## Layout
 
-Home: one centred column, `min(100% - 4ch, 16ch + 76ch)` wide, holding the running head, every section and the running foot. Each section is a grid of a 16ch gutter, where its name sits, and its text; sections are 4.5rem apart. The opening (NAME, SYNOPSIS) starts `clamp(3rem, 12vh, 8rem)` below the running head: the wordmark, the tagline 1rem under it, SYNOPSIS 2.5rem below, then the install line in a plate with a 1px `rule` frame and the facts line in `dim` with links to INSTALLATION and EXAMPLE. The install line breaks only after a slash. EXAMPLE is a full-width `plate` band with `rule` hairlines above and below, 5.5rem below the opening; inside, at most 92rem wide, its name and caption sit on the same gutter grid, and the two windows are a 1.75fr and 1fr grid, 16px apart. The clip window carries a `play` label (`ink` fill, `ground` text, `bold` fill on hover) on the still and a caption line with the clip's facts under a hairline. SAFETY is a two-column grid of term and description, then the sandbox line under a hairline. Tables have collapsed borders; the call table right-aligns its first and last columns. The pager line's inline padding lines its text up with the column.
+Home: one centred column, `min(100% - 4ch, 16ch + 76ch)` wide, holding the running head, every section and the running foot. Each section is a grid of a 16ch gutter, where its name sits, and its text; sections are 4.5rem apart. The opening (NAME, SYNOPSIS) starts `clamp(3rem, 12vh, 8rem)` below the running head: the wordmark, the tagline 1rem under it, SYNOPSIS 2.5rem below, then the install line in a plate with a 1px `rule` frame and the facts line in `dim` with links to INSTALLATION and EXAMPLE. The install line breaks only after a slash. EXAMPLE is a full-width `plate` band with `rule` hairlines above and below, 5.5rem below the opening; inside, at most 92rem wide, its name and caption sit on the same gutter grid, and the window is as wide as the text column. Under the call table, after a hairline, the window's line (0.875rem, `dim`) holds the replay's clock in `bold`, the "Watch the recording" link with the clip's facts, and a replay button at the end. SAFETY is a two-column grid of term and description, then the sandbox line under a hairline. Tables have collapsed borders; the call table right-aligns its first and last columns. The pager line's inline padding lines its text up with the column.
 
-Narrow: under 64rem the windows stack, clip first. Under 48rem the gutter goes: section names sit above their text, text is indented 3ch, the opening loses its NAME and SYNOPSIS labels, and SAFETY is one column.
+Narrow: under 48rem the gutter goes: section names sit above their text, text is indented 3ch, the opening loses its NAME and SYNOPSIS labels, and SAFETY is one column.
 
 **Phones.** Home at 40rem and below: base size 14px, indent 3ch, the definition list becomes one column, the running head's middle part and the pager line's long title are hidden. Docs at 50rem and below: smaller body, halved cell padding, reference code names may break. At 30rem the docs running head and foot hide their middle part. On touch screens (`pointer: coarse`) docs heading anchors and code copy buttons are 44px.
 
@@ -219,7 +219,7 @@ A sticky `nav` at the bottom, labelled "Pager": `ink` fill, `ground` text, links
 The script adds a `copy` button to each command, in the plate's top right corner: `plate` fill, `dim` text, `bold` on hover. It copies the command and reports it in the pager line. Hidden in print.
 
 ### Example Replay
-The still links to the clip. The script replaces the still with the clip, muted and with controls, and plays it in place; the call table's rows follow the clip, and each row's time becomes a button that seeks the clip to that call and plays it. Unless motion is reduced, the clip plays on a loop while half the windows are in view and pauses when they leave; a pause the visitor makes while it is in view holds until they play it again. Under reduced motion it plays only on a click. A row is `next` (calls to come, `dim`), `now` (the call in flight, reverse video) or `done` (made, `bold`), which fade over 0.15s. The call table has three columns: at (seconds), call and ms, with the first and last right-aligned.
+Unless motion is reduced, the calls replay once at the times they went out when 40% of the window is in view: the clock counts in seconds, then says `(END)`, and a replay button starts it again. "Watch the recording" opens the clip as a second window under the calls, muted and with controls, and plays it; the rows then follow the clip. Each row's time becomes a button that plays the recording from that call. Without the script, or under reduced motion, every row shows and the link opens the MP4. A row is `next` (calls to come, hidden), `now` (the call in flight, reverse video) or `done` (made, `bold`), which fade over 0.15s. The call table has three columns: at (seconds), call and ms, with the first and last right-aligned.
 
 ### Links
 Amber with a 1px underline offset 3px, 2px on hover. In docs, links in the article use Starlight's accent text colour with the same offsets. `.refs a` stays on one line. See-also entries read like `safety(7)`.
@@ -231,7 +231,7 @@ A `pre` on `plate`, text in `bold`, indented 7ch with 0.15em 1ch padding. Docs c
 SAFETY is a definition list of bold terms and descriptions. The example call table (`call`, `ms`) and the history table (version link, date, summary) are plain, with tabular numerals. Docs reference tables keep the first column's code on one line above 50rem.
 
 ### Still
-One figure, the clip window in the EXAMPLE band: the still links to the clip, loaded eagerly at high priority as AVIF (560, 900 and 1280 wide) with a JPG fallback, with a `play` label in its lower left corner. The caption line states the clip's length, format and size, read at build time, with a "Play the clip" link.
+None on the home page: the recording is a link, and its facts (length, format and size) are read at build time.
 
 ### Selection, Focus, Caret
 Selection is `select` with `bold` text. Focus is a 2px amber outline offset 2px on `:focus-visible`, as niri rings the focused column. The caret and `accent-color` are amber. The scrollbar uses `rule` on `ground`.
@@ -240,7 +240,7 @@ Selection is `select` with `bold` text. Focus is a 2px amber outline offset 2px 
 `--ncu-spring` is niri's default spring (damping ratio 1, stiffness 800) over its 0.4s, written as a `linear()` easing in `tokens.css`. All motion is off under `prefers-reduced-motion: reduce`.
 - Pages crossfade by view transition (cross-document, `@view-transition { navigation: auto }`), with the docs header named so it holds still.
 - Between the home page and the docs they slide instead: the page goes left when entering the docs and right coming back, on the spring over 0.4s. `Slide.astro` is an inline head script on the `pagereveal` event that adds the `left` or `right` transition type; the home page, the 404 and the docs all include it.
-- Above 64rem, where the browser ties animation to a view timeline, the windows open as the band scrolls in: the calls slide in from 12% right at 0.25 opacity and 0.96 scale, and the clip from 8% right, over the band's entry. The window rings change colour over 0.2s.
+- Where the browser ties animation to a view timeline, the calls window opens as the band scrolls in, from 0.94 scale and 0.4 opacity. The window rings change colour over 0.2s.
 - The replay's row states fade over 0.15s.
 - The less percentage counts with scrolling.
 
@@ -264,6 +264,6 @@ Selection is `select` with `bold` text. Focus is a 2px amber outline offset 2px 
 - **Don't** let the script own content or navigation: a link or a section must work without it.
 - **Don't** use amber as a fill beyond the select tint.
 - **Don't** put kickers, eyebrows or small uppercase labels above headings. Capital section names are the heading itself.
-- **Don't** autoplay under reduced motion, or play the clip with sound.
+- **Don't** animate the replay under reduced motion, or play the clip with sound or unasked.
 
 Not canonized, as defects or drift the build carries: the 2px radius on docs code and images (the home page is square; a future surface should be square); the Starlight-only tints in `theme.css`, tied to Starlight's variables; the stop red's contrast, which is not in the measured set.
