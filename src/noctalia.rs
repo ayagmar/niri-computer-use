@@ -219,8 +219,8 @@ fn name(help: &str, plugins: Option<&str>, args: &[String]) -> Named {
 }
 
 /// The commands a `--help` reply lists, each with its description: the lines after
-/// `Commands:` up to a blank one, each `  <name> <usage…>` and, past two spaces or more,
-/// the description.
+/// `Commands:` up to a blank one, each `  <name> <usage…>` and, past the first two spaces
+/// or more, the description. The longest signature is padded with exactly two.
 fn commands(help: &str) -> impl Iterator<Item = (&str, &str)> {
     help.lines()
         .skip_while(|line| *line != "Commands:")
@@ -228,9 +228,9 @@ fn commands(help: &str) -> impl Iterator<Item = (&str, &str)> {
         .take_while(|line| !line.is_empty())
         .filter_map(|line| {
             let entry = line.strip_prefix("  ")?;
-            let (name, rest) = entry.split_once(' ').unwrap_or((entry, ""));
-            let description = rest.split_once("  ").map_or("", |(_, text)| text).trim();
-            (!name.is_empty()).then_some((name, description))
+            let (signature, description) = entry.split_once("  ").unwrap_or((entry, ""));
+            let name = signature.split(' ').next().unwrap_or_default();
+            (!name.is_empty()).then_some((name, description.trim()))
         })
 }
 
@@ -533,6 +533,16 @@ noctalia/timer [official] 1.5.0 disabled
         // Two spaces part the longest usage from its description.
         assert_eq!(listed[3], ("plugin", "Dispatch an event to a plugin entry"));
         assert_eq!(commands("Usage: noctalia msg\n").count(), 0);
+        // A longest signature without arguments, and a description with two spaces in it.
+        let bare =
+            "Commands:\n  bluetooth-status  Print  Bluetooth state\n  bar-show [bar]    Show\n";
+        assert_eq!(
+            commands(bare).collect::<Vec<_>>(),
+            [
+                ("bluetooth-status", "Print  Bluetooth state"),
+                ("bar-show", "Show")
+            ]
+        );
         assert_eq!(
             plugin_ids(PLUGINS).collect::<Vec<_>>(),
             [
