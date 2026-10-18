@@ -274,6 +274,10 @@ pre:has(.copy) {
 
 /* On paper: black on white, without the status line, each outside link's address after it. */
 @media print {
+	:root,
+	:root[data-theme] {
+		color-scheme: light;
+	}
 	html {
 		background: #fff;
 		color: #000;
@@ -293,7 +297,8 @@ pre:has(.copy) {
 	}
 	.less,
 	.skip,
-	.copy {
+	.copy,
+	.top-links button {
 		display: none;
 	}
 	main a[href^='http']::after {

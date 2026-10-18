@@ -1,8 +1,8 @@
-// less's keys, status line and search, and the home page example's replay. Every page reads and works without this: it only adds to what is there.
+// less's keys, status line, search and copy buttons. Every page reads and works without
+// this: it only adds to what is there.
 
 import { matches } from '../lib/find';
 import { keySwitch } from '../lib/keys';
-import { callState } from '../lib/replay';
 
 const root = document.documentElement;
 const help = document.getElementById('less-help') as HTMLDialogElement;
@@ -106,93 +106,6 @@ for (const pre of document.querySelectorAll<HTMLElement>('[data-find] pre')) {
 			() => say('Copy failed: the browser refused the clipboard'),
 		);
 	pre.append(button);
-}
-
-// The example's calls replay at the times they went out, each in reverse video for its
-// round trip, once the window is in view and unless motion is reduced. The recording opens
-// under them as a second window when asked for, and then the rows follow it instead.
-const rows = [...document.querySelectorAll<HTMLElement>('[data-start]')];
-const win = document.querySelector<HTMLElement>('[data-replay]');
-const motion = matchMedia('(prefers-reduced-motion: no-preference)');
-const clock = win?.querySelector<HTMLElement>('.clock');
-const again = win?.querySelector<HTMLButtonElement>('[data-again]');
-const last = Math.max(...rows.map((row) => +row.dataset.start! + Math.max(+row.dataset.ms! / 1000, 0.5)));
-const mark = (t: number) => {
-	for (const row of rows) row.dataset.state = callState(t, +row.dataset.start!, +row.dataset.ms!);
-	if (clock) clock.textContent = t < last ? `${t.toFixed(1)} s` : '(END)';
-};
-// One frame loop at a time, for the replay or the recording.
-let frame = 0;
-function run(time: () => number, going: () => boolean) {
-	cancelAnimationFrame(frame);
-	const step = () => {
-		mark(time());
-		if (going()) frame = requestAnimationFrame(step);
-	};
-	step();
-}
-function replay() {
-	const t0 = performance.now();
-	const t = () => (performance.now() - t0) / 1000;
-	run(t, () => t() < last);
-}
-function recording() {
-	let video = document.querySelector<HTMLVideoElement>('.win video');
-	const a = win?.querySelector<HTMLAnchorElement>('[data-play]');
-	if (video || !win || !a) return video;
-	video = Object.assign(document.createElement('video'), { src: a.href, controls: true, muted: true, playsInline: true });
-	video.setAttribute('aria-label', 'The recording of the session');
-	const v = video;
-	v.onplay = () => run(() => v.currentTime, () => !v.paused);
-	v.onseeked = () => mark(v.currentTime);
-	const box = Object.assign(document.createElement('div'), { className: 'win focused' });
-	box.append(v);
-	win.after(box);
-	return video;
-}
-function play(at: number) {
-	const video = recording();
-	if (!video) return;
-	video.currentTime = at;
-	video.play();
-	video.focus({ preventScroll: true });
-	video.parentElement!.scrollIntoView({ block: 'nearest', behavior: motion.matches ? 'smooth' : 'auto' });
-}
-for (const a of document.querySelectorAll<HTMLAnchorElement>('[data-play]'))
-	a.onclick = (e) => {
-		e.preventDefault();
-		play(0);
-	};
-// Each call's time plays the recording from that call.
-for (const row of rows) {
-	const cell = row.firstElementChild as HTMLElement;
-	const seek = Object.assign(document.createElement('button'), { type: 'button', textContent: cell.textContent });
-	seek.setAttribute('aria-label', `Play the recording from ${cell.textContent} s`);
-	seek.onclick = () => play(+row.dataset.start!);
-	cell.replaceChildren(seek);
-}
-// The replay button shows wherever the replay runs, and stays while it does, so focus
-// isn't lost from it.
-if (again && motion.matches) {
-	again.hidden = false;
-	again.onclick = () => {
-		const video = document.querySelector<HTMLVideoElement>('.win video');
-		if (video) play(0);
-		else replay();
-	};
-}
-if (win && rows.length && motion.matches) {
-	mark(0);
-	const seen = new IntersectionObserver(
-		([entry]) => {
-			if (!entry.isIntersecting) return;
-			seen.disconnect();
-			// Not over a replay or recording the visitor already started.
-			if (!frame && !document.querySelector('.win video')) replay();
-		},
-		{ threshold: 0.4 },
-	);
-	seen.observe(win);
 }
 
 const actions: Record<string, () => unknown> = {

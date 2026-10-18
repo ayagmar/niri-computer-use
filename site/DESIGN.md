@@ -1,6 +1,6 @@
 ---
 name: niri-computer-use
-description: The manual page niri-computer-use(1) as man shows it in a terminal, set in JetBrains Mono, for the home page and the docs. The home page is one flow, with its example as a niri window replaying a session's calls in a band across the window.
+description: The manual page niri-computer-use(1) as man shows it in a terminal, set in JetBrains Mono, for the home page and the docs. The home page opens on a drawing of a real session's errand, in the agent's own screenshot pixels, that plays its calls at their real times.
 colors:
   ground: "#f7f5ee"
   ink: "#2b2a25"
@@ -72,7 +72,7 @@ spacing:
   docs-content-width: "48rem"
   home-gutter: "16ch"
   home-measure: "76ch"
-  band-width: "92rem"
+  stage-width: "92rem"
   window-gap: "16px"
   window-ring: "4px"
 components:
@@ -99,7 +99,7 @@ components:
   window:
     backgroundColor: "{colors.ground}"
     textColor: "{colors.ink}"
-  example-band:
+  stage:
     backgroundColor: "{colors.plate}"
   link:
     textColor: "{colors.accent}"
@@ -116,9 +116,9 @@ One system covers the home page (`site/src/pages/index.astro`, words in `src/lib
 
 **Creative North Star: "The Manual Page in a Terminal"**
 
-The home page is the manual page `niri-computer-use(1)` as man shows it in a terminal. It has a running head and foot, capital section names (NAME, SYNOPSIS, DESCRIPTION, INSTALLATION, SAFETY, EXAMPLE, HISTORY, BUGS, SEE ALSO), bold for what you type, underline for paths, and less's reverse-video status line, the pager line, pinned to the bottom of the window. It reads as one flow: NAME and SYNOPSIS open it with the name at display size and the install line, then EXAMPLE is a band across the window where a recorded session's calls replay in one niri window, in a 4px amber ring. The other sections follow with their names hanging in a left gutter. The docs are the rest of the manual: each page opens on a running head and ends on a running foot, and its section headings are capitals.
+The home page is the manual page `niri-computer-use(1)` as man shows it in a terminal. It has a running head and foot, capital section names (NAME, SYNOPSIS, DESCRIPTION, INSTALLATION, SAFETY, EXAMPLE, HISTORY, BUGS, SEE ALSO), bold for what you type, underline for paths, and less's reverse-video status line, the pager line, pinned to the bottom of the window. It opens on the name at display size, the commands and the install line, then EXAMPLE: the errand drawn in the agent's own 1280 by 720 screenshot pixels, with rulers, a terminal where the real calls appear and Files where they land. The other sections follow with their names hanging in a left gutter. The docs are the rest of the manual: each page opens on a running head and ends on a running foot, and its section headings are capitals.
 
-Everything is set in JetBrains Mono Variable. Dark is a warm black with parchment ink, light is paper with brown-black ink, and one amber marks links and focus. The home page follows the system colour scheme (`prefers-color-scheme`, `color-scheme: light dark`). The docs follow Starlight's theme switch, which sets `data-theme` on the root. One script, `src/scripts/less.ts`, adds less's keys, search, copy buttons and the example's replay. The home page, the 404 and the docs read and work without it.
+Everything is set in JetBrains Mono Variable. Dark is a warm black with parchment ink, light is paper with brown-black ink, and one amber marks links and focus. The home page follows the system colour scheme (`prefers-color-scheme`, `color-scheme: light dark`) until the visitor picks one with the switch in its running head or Starlight's in the docs; both keep the choice in `localStorage` under `starlight-theme` and set `data-theme` on the root, and an inline head script applies it before the page paints. `src/scripts/less.ts` adds less's keys, search and copy buttons, `src/scripts/stage.ts` plays the drawn errand, and `src/scripts/top.ts` adds the theme switch and the star count. The home page, the 404 and the docs read and work without them.
 
 **Key Characteristics:**
 - One face, JetBrains Mono Variable 400 to 800; ligatures are off on the home page. Only the home page's name is set at display size.
@@ -126,7 +126,7 @@ Everything is set in JetBrains Mono Variable. Dark is a warm black with parchmen
 - Docs and the 404 indent text 7ch under its section name. The home page hangs section names in a 16ch gutter beside a 76ch measure, and stacks them above the text under 48rem.
 - Running head and foot on the home page and on every docs page.
 - The pager line: reverse video, sticky, with a percentage that follows scrolling, `(END)` at the bottom, and messages and the search prompt in the same line.
-- EXAMPLE is a `plate` band across the window: the call table is a `ground` window in a 4px amber ring. The recording, when asked for, opens as a second window 16px under it and takes the ring; the calls' ring turns `rule`.
+- EXAMPLE is a line drawing in SVG, viewBox 1280 by 720, the space the agent's screenshots and clicks use: a `ground` bar, two `ground` windows in 4px rings (amber on the focused one, `rule` on the other), icons as 1.5px `ink` strokes, and the pointer as an amber dot with dashed guides across the focused window and its coordinates beside it. Rulers in those pixels run along the top and left.
 - Print is black on white, with each outside link's address after it.
 
 ## Colors
@@ -139,10 +139,10 @@ A warm, low-saturation palette. Each token has a light and a dark value, picked 
 | `ink` | #2b2a25 | #c9c6b9 | body text; pager line background; search matches and the call in flight |
 | `bold` | #0c0c0a | #f4f1e6 | groff bold, section names, code, table heads, selection text |
 | `dim` | #5c584e | #9a9588 | running head and foot, captions, copy button, calls still to come |
-| `rule` | #d4cfbf | #2f2d27 | hairlines, band edges, scrollbar track, the unfocused window's ring |
+| `rule` | #d4cfbf | #2f2d27 | hairlines, rulers, scrollbar track, the unfocused window's ring |
 | `accent` | #8a5300 | #e3a83c | links, focus ring, the focused window's ring, caret, `accent-color` |
 | `select` | #f0dca8 | #3a3220 | text selection; Starlight accent-low |
-| `plate` | #eeeadd | #0a0b09 | code plate, copy button, image background in docs, the EXAMPLE band |
+| `plate` | #eeeadd | #0a0b09 | code plate, copy button, image background in docs, the drawing's wallpaper and Files sidebar |
 | `stop` | #b3261e | #ff6a57 | the one red, for danger asides in the docs |
 
 Measured contrast (WCAG):
@@ -180,9 +180,9 @@ The docs also use a few Starlight-only tints in `theme.css` (`accent-high` #5c38
 
 ## Layout
 
-Home: one centred column, `min(100% - 4ch, 16ch + 76ch)` wide, holding the running head, every section and the running foot. Each section is a grid of a 16ch gutter, where its name sits, and its text; sections are 4.5rem apart. The opening (NAME, SYNOPSIS) starts `clamp(3rem, 12vh, 8rem)` below the running head: the wordmark, the tagline 1rem under it, SYNOPSIS 2.5rem below, then the install line in a plate with a 1px `rule` frame and the facts line in `dim` with links to INSTALLATION and EXAMPLE. The install line breaks only after a slash. EXAMPLE is a full-width `plate` band with `rule` hairlines above and below, 5.5rem below the opening; inside, at most 92rem wide, its name and caption sit on the same gutter grid, and the window is as wide as the text column. Under the call table, after a hairline, the window's line (0.875rem, `dim`) holds the replay's clock in `bold`, the "Watch the recording" link with the clip's facts, and a replay button at the end, which the script shows. SAFETY is a two-column grid of term and description, then the sandbox line under a hairline. Tables have collapsed borders; the call table right-aligns its first and last columns. The pager line's inline padding lines its text up with the column.
+Home: the running head, the opening and the drawing are `min(100% - 4ch, 92rem)` wide; the drawing is also at most as wide as lets it fit the window height less 6rem. The opening starts `clamp(2rem, 7vh, 5rem)` below the running head: the wordmark and the tagline 1rem under it across the top, then a grid of the commands on the left and, in a column at most 60ch wide, the install line in a plate with a 1px `rule` frame and the facts line in `dim` with links to INSTALLATION and SAFETY. The install line breaks only after a slash. The drawing follows 2.5rem below, then its line: EXAMPLE in `bold`, the caption in `dim`, and "Watch the recording" with the clip's facts and the pause button, on the caption's last line or under it. The other sections, and the running foot, sit in a centred column `min(100% - 4ch, 16ch + 76ch)` wide: each section is a grid of a 16ch gutter, where its name sits, and its text, 4.5rem apart. SAFETY is a two-column grid of term and description, then the sandbox line under a hairline. Tables have collapsed borders. The pager line's inline padding lines its text up with that column.
 
-Narrow: under 48rem the gutter goes: section names sit above their text, text is indented 3ch, the opening loses its NAME and SYNOPSIS labels, and SAFETY is one column.
+Narrow: when the drawing is under 62rem wide, so the calls over it would be under 11px, they leave the drawn terminal and follow the drawing as a list, with calls still to come in `dim`, and the rulers hide. Under 48rem the gutter goes: section names sit above their text, text is indented 3ch, the install line drops under the commands, and SAFETY is one column.
 
 404: the same page as the home man page, at most 88ch wide and at least the window high, with the pager line at the bottom. The h1 reads "No manual entry for <path>" in bold, with the path filled in by the script (without it, "No manual entry"). SEE ALSO lists every page, as `man -k` does: the page name and its one-line description, one row each, stacked per page under 40rem.
 
@@ -208,7 +208,7 @@ Square. The home page has no radius. The docs set 2px on code blocks (the expres
 ## Components
 
 ### Running Head and Foot
-Home: the header repeats `NIRI-COMPUTER-USE(1)` on both sides around "User Commands". The footer has a link to the release (`niri-computer-use <version>`), the release date from the changelog and the name. Docs: `PageTitle.astro` prints the page name and section on both sides (`SAFETY(7)`) around "niri-computer-use manual", hidden from assistive technology, then the real h1. `Footer.astro` adds the default Starlight footer, then a rule and the same release link, date and page name. Names come from `manName`: the last path part in capitals, a group's name for its overview page, section 1 for `reference/cli`, 5 for `concepts/configuration`, and 7 for the rest. The footer's link is amber, the rest `dim`.
+Home: the header has `NIRI-COMPUTER-USE(1)` and "User Commands", then on the right a GitHub link, with GitHub's star count in `dim` after it when GitHub answers within 4s, and the theme switch, an underlined amber button naming the other theme. The footer has a link to the release (`niri-computer-use <version>`), the release date from the changelog and the name. Docs: `PageTitle.astro` prints the page name and section on both sides (`SAFETY(7)`) around "niri-computer-use manual", hidden from assistive technology, then the real h1. `Footer.astro` adds the default Starlight footer, then a rule and the same release link, date and page name. Names come from `manName`: the last path part in capitals, a group's name for its overview page, section 1 for `reference/cli`, 5 for `concepts/configuration`, and 7 for the rest. The footer's link is amber, the rest `dim`.
 
 ### Section
 A bold capital name at the left edge with 1.5em above, then text indented 7ch. NAME is a styled paragraph (`.sh`, hidden from assistive technology) over the page's h1, so the h1 is the line `niri-computer-use - <summary>`, indented 7ch. SYNOPSIS lists the bold commands separated by ` | `.
@@ -222,9 +222,8 @@ A sticky `nav` at the bottom, labelled "Pager": `ink` fill, `ground` text, links
 ### Copy Button
 The script adds a `copy` button to each command, in the plate's top right corner: `plate` fill, `dim` text, `bold` on hover. It copies the command and reports it in the pager line. Hidden in print.
 
-### Example Replay
-Unless motion is reduced, the calls replay once at the times they went out when 40% of the window is in view: the clock counts in seconds, then says `(END)`; the replay button, shown only where the replay runs, starts it again at any time. "Watch the recording" opens the clip as a second window under the calls, muted and with controls, and plays it; the rows then follow the clip. Each row's time becomes a button that plays the recording from that call. Without the script, or under reduced motion, every row shows and the link opens the MP4. A row is `next` (calls to come, `dim`), `now` (the call in flight, reverse video) or `done` (made, `bold`), which fade over 0.15s. The call table has three columns: at (seconds), call and ms, with the first and last right-aligned.
-
+### The Drawn Errand
+`components/Stage.astro` draws the errand and lists the session's calls over the drawn terminal, each with its time, its call and its round trip; `scripts/stage.ts` plays it. What the drawing shows at each moment comes from `lib/stage.ts`, a pure function of the time read from the calls in `lib/home.ts`: focus moves to Files with `focus` and back with `release_desktop`, the bar shows "agent holds the lease" between `acquire_desktop` and `release_desktop`, the pointer travels to each click over 0.5s and lands on the call's own coordinates with a growing ring, the two screenshots are selected, the right-click opens the menu, its first item opens the New Folder dialog with the name Files offers, `screenshot-`, `ctrl+a` selects it, the name types out, and `release-0.1` replaces the two screenshots when `type_text` returns. Keys show as `bold` keycaps under Files. A call's line appears when it goes out and is in reverse video while in flight. The bar's clock counts in seconds, then says `(END)`; the loop rests 3s and starts again. It plays while 30% of the drawing is in view and pauses out of view; the button after the clip's facts pauses and plays it, and a pause holds until the visitor plays it again. Printing shows the finished errand. "Watch the recording" plays the clip in the drawing's frame, muted and with controls, and the call lines follow it; "back to the drawing" returns. Without the script, or under reduced motion, it shows the finished errand with every call listed, and the link opens the MP4.
 ### Links
 Amber with a 1px underline offset 3px, 2px on hover. In docs, links in the article use Starlight's accent text colour with the same offsets. `.refs a` stays on one line. See-also entries read like `safety(7)`.
 
@@ -244,8 +243,7 @@ Selection is `select` with `bold` text. Focus is a 2px amber outline offset 2px 
 `--ncu-spring` is niri's default spring (damping ratio 1, stiffness 800) over its 0.4s, written as a `linear()` easing in `tokens.css`. All motion is off under `prefers-reduced-motion: reduce`.
 - Pages crossfade by view transition (cross-document, `@view-transition { navigation: auto }`), with the docs header named so it holds still.
 - Between the home page and the docs they slide instead: the page goes left when entering the docs and right coming back, on the spring over 0.4s. `Slide.astro` is an inline head script on the `pagereveal` event that adds the `left` or `right` transition type; the home page, the 404 and the docs all include it.
-- Where the browser ties animation to a view timeline, the calls window opens as the band scrolls in, from 0.94 scale and 0.4 opacity. The window rings change colour over 0.2s.
-- The replay's row states fade over 0.15s.
+- The drawn errand: window rings change colour over 0.25s, the pointer eases to each click over 0.5s, icons, the menu and the dialog fade over 0.15 to 0.35s, and call lines fade in over 0.2s.
 - The less percentage counts with scrolling.
 
 ## Do's and Don'ts
@@ -264,10 +262,11 @@ Selection is `select` with `bold` text. Focus is a 2px amber outline offset 2px 
 ### Don't:
 - **Don't** add a second typeface or a display face; the wordmark is the same mono at 800.
 - **Don't** add cards, shadows, gradients, glow or blur. The opening is the man page's NAME set large, not a marketing hero.
-- **Don't** add a theme switch.
+- **Don't** add a second theme switch: the home page's and Starlight's share one stored choice.
 - **Don't** let the script own content or navigation: a link or a section must work without it.
 - **Don't** use amber as a fill beyond the select tint.
 - **Don't** put kickers, eyebrows or small uppercase labels above headings. Capital section names are the heading itself.
-- **Don't** animate the replay under reduced motion, or play the clip with sound or unasked.
+- **Don't** animate the drawn errand under reduced motion, or play the clip with sound or unasked.
+- **Don't** draw the desktop as a fake screenshot: it stays a line drawing, and every change in it comes from a real call.
 
 Not canonized, as defects or drift the build carries: the 2px radius on docs code and images (the home page is square; a future surface should be square); the Starlight-only tints in `theme.css`, tied to Starlight's variables; the stop red's contrast, which is not in the measured set.

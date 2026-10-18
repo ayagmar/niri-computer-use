@@ -1,12 +1,11 @@
 ---
 // The home page, set as the server's manual page the way man shows it in a terminal
-// (`styles/man.css`), in one flow: NAME and SYNOPSIS as a large opening with the install
-// line, EXAMPLE as a band across the window where a recorded session's calls sit in one niri
-// window, then the other sections with their names hanging in a left gutter. Dark or light
-// follows the system. Without JavaScript it reads in full and the recording opens from a
-// link; `scripts/less.ts` adds less's keys, replays the calls at their real times, and plays
-// the recording in place. Its words are in `lib/home.ts`, which `pages/index.md.ts` serves
-// as Markdown too.
+// (`styles/man.css`). It opens on the name, what it does and the line to install it, then
+// the errand drawn in the agent's own screenshot pixels, which plays its real calls
+// (`components/Stage.astro`), then the other sections with their names hanging in a left
+// gutter. Dark or light follows the system until the visitor picks one. Without JavaScript it reads in full and shows
+// the finished errand; `scripts/less.ts` adds less's keys and `scripts/stage.ts` plays the
+// errand. Its words are in `lib/home.ts`, which `pages/index.md.ts` serves as Markdown too.
 import '@fontsource-variable/jetbrains-mono/wght.css';
 import '../styles/tokens.css';
 import '../styles/man.css';
@@ -15,6 +14,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import Less from '../components/Less.astro';
 import Slide from '../components/Slide.astro';
+import Stage from '../components/Stage.astro';
 import changelog from '../../../CHANGELOG.md?raw';
 import { home } from '../lib/home';
 import { mp4Seconds } from '../lib/clip';
@@ -60,69 +60,53 @@ const released = history.find((release) => release.version === version);
 		<meta property="og:image:width" content="1280" />
 		<meta property="og:image:height" content="640" />
 		<meta name="twitter:card" content="summary_large_image" />
-		<meta name="theme-color" content="#f7f5ee" media="(prefers-color-scheme: light)" />
-		<meta name="theme-color" content="#10110f" media="(prefers-color-scheme: dark)" />
+		<meta name="theme-color" content="#f7f5ee" media="(prefers-color-scheme: light)" data-for="light" />
+		<meta name="theme-color" content="#10110f" media="(prefers-color-scheme: dark)" data-for="dark" />
 		<Slide />
+		<script is:inline>
+			// The theme the visitor chose here or in the docs (Starlight keeps it under this key),
+			// set before the page paints, with the browser's colour to match; otherwise the system's.
+			try {
+				const theme = localStorage.getItem('starlight-theme');
+				if (theme == 'light' || theme == 'dark') {
+					document.documentElement.dataset.theme = theme;
+					for (const meta of document.querySelectorAll('meta[name=theme-color]'))
+						meta.media = meta.dataset.for == theme ? 'all' : 'not all';
+				}
+			} catch {}
+		</script>
 	</head>
 	<body>
 		<a class="skip" href="#main">Skip to content</a>
-		<header class="running wrap">
+		<header class="running wide">
 			<span>NIRI-COMPUTER-USE(1)</span>
 			<span class="mid">User Commands</span>
-			<span>NIRI-COMPUTER-USE(1)</span>
+			<span class="top-links">
+				<a href={github}>GitHub<span data-stars></span></a>
+				<button type="button" data-theme-toggle hidden></button>
+			</span>
 		</header>
 
 		<main id="main" data-find>
-			<section class="sec hero" aria-labelledby="name">
-				<p class="sh" aria-hidden="true">NAME</p>
+			<section class="hero wide" aria-labelledby="name">
 				<h1 id="name">
 					<b class="mark">niri-computer-use</b>
 					<span class="sr"> - </span>
 					<span class="tag">{home.name}</span>
 				</h1>
-				<p class="sh" aria-hidden="true">SYNOPSIS</p>
 				<p class="synopsis">
 					<b>niri-computer-use</b>{' '}
 					{home.commands.map((command, i) => <>{i > 0 && <span class="bar"> | </span>}<b>{command}</b></>)}
 				</p>
-				<pre class="oneliner piped">{pipedParts.map((part, i) => <>{i > 0 && <>/<wbr /></>}{part}</>)}</pre>
-				<p class="facts">
-					{home.about[1]} <a href="#install">Other ways to install</a> · <a href="#example">Watch it work</a>
-				</p>
-			</section>
-
-			<section class="band" id="example" aria-labelledby="example-heading">
-				<div class="band-in">
-					<div class="band-head">
-						<h2 id="example-heading"><a href="#example">EXAMPLE</a></h2>
-						<p>{example.caption}</p>
-					</div>
-					<div class="windows">
-						<div class="win focused calls-win" data-replay>
-							<table class="calls">
-								<caption class="sr">The session's calls: when each went out, in seconds into the session, and its round trip</caption>
-								<thead><tr><th scope="col">at</th><th scope="col">call</th><th scope="col">ms</th></tr></thead>
-								<tbody>
-									{
-										example.calls.map(([start, call, ms]) => (
-											<tr data-start={start} data-ms={ms}>
-												<td>{start.toFixed(1)}</td>
-												<td><code>{call}</code></td>
-												<td>{ms}</td>
-											</tr>
-										))
-									}
-								</tbody>
-							</table>
-							<p class="win-line">
-								<span class="clock" aria-hidden="true"></span>
-								<a href={link(clipPath)} data-play>Watch the recording</a> ({clipFacts})
-								<button type="button" data-again hidden>replay</button>
-							</p>
-						</div>
-					</div>
+				<div class="get">
+					<pre class="oneliner piped">{pipedParts.map((part, i) => <>{i > 0 && <>/<wbr /></>}{part}</>)}</pre>
+					<p class="facts">
+						{home.about[1]} <a href="#install">Other ways to install</a> · <a href="#safety">Safety</a>
+					</p>
 				</div>
 			</section>
+
+			<Stage clip={link(clipPath)} clipFacts={clipFacts} />
 
 			<section class="sec" aria-labelledby="description">
 				<h2 id="description"><a href="#description">DESCRIPTION</a></h2>
@@ -217,6 +201,9 @@ const released = history.find((release) => release.version === version);
 			<button type="button" data-help hidden>help</button>
 		</nav>
 		<Less find />
+		<script>
+			import '../scripts/top';
+		</script>
 	</body>
 </html>
 
@@ -238,7 +225,25 @@ const released = history.find((release) => release.version === version);
 		margin-inline: auto;
 		padding-inline: 0;
 	}
-	.running.wrap {
+	/* The source and the theme switch, where the running head names the page again. */
+	.top-links {
+		display: flex;
+		gap: 2ch;
+	}
+	.top-links [data-stars]:not(:empty) {
+		color: var(--ncu-dim);
+	}
+	.top-links button {
+		padding: 0;
+		border: 0;
+		background: none;
+		color: var(--ncu-accent);
+		cursor: pointer;
+		text-decoration: underline;
+		text-decoration-thickness: 1px;
+		text-underline-offset: 3px;
+	}
+	.running.wide {
 		padding-top: 1.5rem;
 	}
 	.sec {
@@ -259,23 +264,29 @@ const released = history.find((release) => release.version === version);
 		margin-top: 1em;
 	}
 
-	/* The opening: the name at display size, then what it does, the commands and the line
-	   to install it. */
-	.hero {
-		margin-top: clamp(3rem, 12vh, 8rem);
-		row-gap: 0;
+	/* The opening, as wide as the drawing under it: the name at display size and what it
+	   does across the top, then the commands on the left and the line to install it on the
+	   right. */
+	.wide {
+		width: min(100% - 4ch, 92rem);
+		margin-inline: auto;
 	}
-	.hero .sh {
-		color: var(--ncu-dim);
+	.hero {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 60ch);
+		align-items: start;
+		gap: 2rem 4rem;
+		margin-top: clamp(2rem, 7vh, 5rem);
 	}
 	.hero h1 {
+		grid-column: 1 / -1;
 		margin: 0;
 	}
 	.mark {
 		display: block;
-		font-size: clamp(2.1rem, 6.4vw, 4.6rem);
-		line-height: 1;
-		letter-spacing: -0.03em;
+		font-size: clamp(2.1rem, 6.2vw, 5.6rem);
+		line-height: 0.95;
+		letter-spacing: -0.035em;
 		font-weight: 800;
 		color: var(--ncu-bold);
 	}
@@ -286,15 +297,13 @@ const released = history.find((release) => release.version === version);
 		line-height: 1.4;
 		text-wrap: balance;
 	}
-	.hero .sh:nth-of-type(2),
-	.synopsis {
-		margin-top: 2.5rem;
+	.hero p {
+		margin: 0;
 	}
 	.synopsis .bar {
 		color: var(--ncu-dim);
 	}
 	.hero .oneliner {
-		margin-top: 1.5rem;
 		padding: 0.9em 1.5ch;
 		outline: 1px solid var(--ncu-rule);
 		outline-offset: -1px;
@@ -306,141 +315,9 @@ const released = history.find((release) => release.version === version);
 	pre.oneliner:has(.copy) {
 		padding-right: 8ch;
 	}
-	.facts {
-		color: var(--ncu-dim);
-	}
 	.hero .facts {
 		margin-top: 0.75rem;
-	}
-
-	/* EXAMPLE: a band across the window on the workspace's backdrop, where the session's
-	   calls are a niri window in the amber focus ring. The recording, once asked for, opens
-	   as a second window under it, 16 px away, and takes the ring. */
-	.band {
-		margin-top: 5.5rem;
-		padding: 3rem 0 3.5rem;
-		background: var(--ncu-plate);
-		border-block: 1px solid var(--ncu-rule);
-	}
-	.band-in {
-		width: min(100% - 3rem, 92rem);
-		margin-inline: auto;
-	}
-	.band-head {
-		display: grid;
-		grid-template-columns: var(--gutter) minmax(0, var(--measure));
-		align-items: baseline;
-		width: min(100%, var(--gutter) + var(--measure));
-		margin: 0 auto 2rem;
-	}
-	.band-head h2,
-	.band-head p {
-		margin: 0;
-	}
-	.band-head p {
 		color: var(--ncu-dim);
-	}
-	.windows {
-		display: grid;
-		gap: 16px;
-		width: min(100%, var(--gutter) + var(--measure));
-		margin-inline: auto;
-	}
-	.win {
-		margin: 0;
-		background: var(--ncu-ground);
-		outline: 4px solid var(--ncu-rule);
-		transition: outline-color 0.2s;
-	}
-	.win.focused {
-		outline-color: var(--ncu-accent);
-	}
-	/* Once the recording plays it takes the ring, and the calls follow it. */
-	.windows:has(video) .calls-win {
-		outline-color: var(--ncu-rule);
-	}
-	.win video {
-		display: block;
-		width: 100%;
-		height: auto;
-		aspect-ratio: 16 / 9;
-		background: var(--ncu-plate);
-	}
-	.win-line {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0 2ch;
-		margin: 0;
-		padding: 0.5em 1.5ch;
-		border-top: 1px solid var(--ncu-rule);
-		color: var(--ncu-dim);
-		font-size: 0.875rem;
-	}
-	.clock:empty {
-		display: none;
-	}
-	.clock {
-		color: var(--ncu-bold);
-		font-variant-numeric: tabular-nums;
-	}
-	.win-line button {
-		margin-left: auto;
-		padding: 0;
-		border: 0;
-		background: none;
-		color: var(--ncu-accent);
-		cursor: pointer;
-		text-decoration: underline;
-		text-decoration-thickness: 1px;
-		text-underline-offset: 3px;
-	}
-	.calls {
-		width: 100%;
-		margin: 0;
-		font-size: 0.875rem;
-	}
-	.calls th,
-	.calls td {
-		padding: 0.3em 1.5ch;
-	}
-	.calls thead th {
-		padding-block: 0.6em;
-		border-bottom: 1px solid var(--ncu-rule);
-	}
-	.calls th:first-child,
-	.calls td:first-child,
-	.calls th:last-child,
-	.calls td:last-child {
-		text-align: right;
-		white-space: nowrap;
-	}
-	.calls td:nth-child(2) code {
-		overflow-wrap: anywhere;
-	}
-	.calls td:first-child button {
-		padding: 0;
-		border: 0;
-		background: none;
-		color: var(--ncu-accent);
-		cursor: pointer;
-		text-decoration: underline dotted;
-		text-underline-offset: 3px;
-	}
-	.calls tbody tr {
-		transition:
-			color 0.15s,
-			background-color 0.15s;
-	}
-	.calls [data-state='next'] {
-		color: var(--ncu-dim);
-	}
-	.calls [data-state='done'] {
-		color: var(--ncu-bold);
-	}
-	.calls [data-state='now'],
-	.calls [data-state='now'] td button {
-		background: var(--ncu-ink);
-		color: var(--ncu-ground);
 	}
 
 	/* The rest of the manual. */
@@ -486,30 +363,13 @@ const released = history.find((release) => release.version === version);
 		cursor: pointer;
 	}
 
-	/* niri opens the window: as the band comes into view, it grows in on niri's spring. */
-	@media (prefers-reduced-motion: no-preference) {
-		@supports (animation-timeline: view()) {
-			.calls-win {
-				animation: ncu-open linear both;
-				animation-timeline: view();
-				animation-range: entry 10% cover 30%;
-			}
-		}
-	}
-	@keyframes ncu-open {
-		from {
-			opacity: 0.4;
-			transform: scale(0.94);
-		}
-	}
-
-	/* Narrow: section names above their text, the windows stacked. */
+	/* Narrow: section names above their text, the install line under the name. */
 	@media (max-width: 48rem) {
 		:root {
 			--gutter: 0ch;
 		}
 		.sec,
-		.band-head {
+		.hero {
 			grid-template-columns: minmax(0, 1fr);
 		}
 		.sec > :is(h2, .sh),
@@ -522,18 +382,6 @@ const released = history.find((release) => release.version === version);
 		.sec > :is(h2, .sh) + * {
 			margin-top: 0.5em;
 		}
-		.hero.sec > * {
-			margin-left: 0;
-		}
-		.hero .sh {
-			display: none;
-		}
-		.hero .synopsis {
-			margin-top: 1.25rem;
-		}
-		.band-head p {
-			margin-top: 0.5em;
-		}
 		.guards {
 			grid-template-columns: minmax(0, 1fr);
 			gap: 0.75rem;
@@ -543,24 +391,10 @@ const released = history.find((release) => release.version === version);
 		}
 	}
 	@media (max-width: 40rem) {
-		.band-in {
-			width: calc(100% - 1.5rem);
-		}
-		.calls th,
-		.calls td {
-			padding-inline: 1ch;
-		}
 		.wrap,
+		.wide,
 		.sec {
 			width: calc(100% - 3ch);
-		}
-	}
-	@media print {
-		.band {
-			background: none;
-		}
-		.win {
-			outline: 0;
 		}
 	}
 </style>
