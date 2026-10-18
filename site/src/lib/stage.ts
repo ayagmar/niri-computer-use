@@ -41,7 +41,7 @@ const t = {
 	extend: at('shift+Right'),
 	menu: at('"button": "right"'),
 	item: at('"x": 1130'),
-	all: at('ctrl+a'),
+	all: at('"ctrl+a"'),
 	type: at('type_text'),
 	typed: back('type_text'),
 	release: at('release_desktop'),
@@ -58,6 +58,8 @@ export const end = Math.max(...calls.map(([s, , ms]) => s + Math.max(ms / 1000, 
 export const loop = end + 3;
 
 export const folderName = 'release-0.1';
+/** The name Files offers in its New Folder dialog, which the agent selects and types over. */
+export const offeredName = 'screenshot-';
 
 export interface Scene {
 	focus: 'terminal' | 'files';
@@ -116,7 +118,7 @@ export function sceneAt(now: number): Scene {
 		menu: now < t.menu + 0.15 || now >= t.item + 0.3 ? 'shut' : now >= t.item ? 'chosen' : 'open',
 		dialog: now >= t.item + 0.3 && !folder,
 		nameSelected: now >= t.all && now < t.type,
-		typed: folderName.slice(0, Math.round(typing * folderName.length)),
+		typed: now < t.type ? offeredName : folderName.slice(0, Math.round(typing * folderName.length)),
 		folder,
 		keys: keysAt(now),
 	};

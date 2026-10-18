@@ -1,6 +1,7 @@
 // Plays the drawn errand: one frame loop sets the drawing and the call lines from
-// `sceneAt` while the stage is in view, unless motion is reduced. "Watch the recording"
-// plays the real recording in the same frame, and the lines follow it.
+// `sceneAt` while the stage is in view, unless motion is reduced or the visitor paused it.
+// "Watch the recording" plays the real recording in the same frame, and the lines follow
+// it. Printing shows the finished errand.
 
 import { callState } from '../lib/replay';
 import { end, loop, sceneAt, type Scene } from '../lib/stage';
@@ -106,6 +107,12 @@ function play(stage: HTMLElement, screen: HTMLElement) {
 		cancelAnimationFrame(frame);
 	}
 
+	let held = false;
+	const finished = () => show(sceneAt(end), end);
+	function label() {
+		again.textContent = screen.querySelector('video') ? 'back to the drawing' : running ? 'pause' : 'play';
+	}
+
 	recording.onclick = (e) => {
 		e.preventDefault();
 		stop();
@@ -123,27 +130,56 @@ function play(stage: HTMLElement, screen: HTMLElement) {
 		video.focus({ preventScroll: true });
 		recording.hidden = true;
 		again.hidden = false;
-		again.textContent = 'back to the drawing';
+		label();
 	};
+	let paused = 0;
+	function pause() {
+		paused = ((performance.now() - t0) / 1000) % loop;
+		stop();
+	}
 	again.onclick = () => {
-		screen.querySelector('video')?.remove();
-		recording.hidden = false;
-		again.textContent = 'replay';
-		start();
+		const video = screen.querySelector('video');
+		if (video) {
+			video.pause();
+			video.remove();
+			stop();
+			recording.hidden = false;
+			held = false;
+			if (motion.matches) start();
+			else {
+				again.hidden = true;
+				finished();
+			}
+		} else if (running) {
+			held = true;
+			pause();
+		} else {
+			held = false;
+			start(paused);
+		}
+		label();
 	};
+
+	let printing = false;
+	addEventListener('beforeprint', () => {
+		printing = running;
+		if (running) pause();
+		finished();
+	});
+	addEventListener('afterprint', () => {
+		if (printing) start(paused);
+	});
 
 	if (!motion.matches) return;
 	again.hidden = false;
-	// Plays while the stage is in view, from where it was.
-	let paused = 0;
+	label();
+	// Plays while the stage is in view, from where it was, unless the visitor paused it.
 	new IntersectionObserver(
 		([entry]) => {
-			if (screen.querySelector('video')) return;
+			if (held || screen.querySelector('video')) return;
 			if (entry.isIntersecting && !running) start(paused);
-			else if (!entry.isIntersecting && running) {
-				paused = ((performance.now() - t0) / 1000) % loop;
-				stop();
-			}
+			else if (!entry.isIntersecting && running) pause();
+			label();
 		},
 		{ threshold: 0.3 },
 	).observe(screen);

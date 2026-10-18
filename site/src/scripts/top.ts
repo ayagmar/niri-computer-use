@@ -19,6 +19,8 @@ if (toggle) {
 	toggle.onclick = () => {
 		const next = current() == 'light' ? 'dark' : 'light';
 		root.dataset.theme = next;
+		for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name=theme-color]'))
+			meta.media = meta.dataset.for == next ? 'all' : 'not all';
 		try {
 			localStorage.setItem(key, next);
 		} catch {

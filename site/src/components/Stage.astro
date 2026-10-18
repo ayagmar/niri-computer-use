@@ -91,12 +91,12 @@ const menu = ['New Folder with Selection…', 'Open With…', 'Cut', 'Copy', 'Mo
 					{menu.map((item, i) => <text x="1078" y={110 + i * 22}>{item}</text>)}
 				</g>
 				<g class="dialog">
-					<rect x="830" y="250" width="260" height="110" rx="6" />
-					<text class="title" x="846" y="276">Folder Name</text>
-					<rect class="field" x="846" y="290" width="228" height="26" rx="3" />
-					<rect class="name-sel" x="850" y="294" width="120" height="18" rx="2" />
-					<text class="typed" x="854" y="308" data-typed></text>
-					<text class="button" x="1074" y="342" text-anchor="end">Create</text>
+					<rect x="846" y="316" width="226" height="110" rx="6" />
+					<text class="title" x="959" y="332" text-anchor="middle">New Folder</text>
+					<rect class="field" x="854" y="350" width="210" height="28" rx="3" />
+					<rect class="name-sel" x="858" y="359" width="88" height="16" rx="2" />
+					<text class="typed" x="860" y="371" data-typed>{last.typed}</text>
+					<text class="button" x="959" y="408" text-anchor="middle">Create</text>
 				</g>
 				<g class="keys" data-keys></g>
 				<g class="pointer" data-pointer style="display: none">
@@ -126,7 +126,7 @@ const menu = ['New Folder with Selection…', 'Open With…', 'Cut', 'Copy', 'Mo
 	<p class="stage-line">
 		<b id="example-heading">EXAMPLE</b>
 		<span>{example.caption}</span>
-		<span class="acts"><a href={clip} data-recording>Watch the recording</a> ({clipFacts}) <button type="button" data-replay hidden>replay</button></span>
+		<span class="acts"><a href={clip} data-recording>Watch the recording</a> ({clipFacts}) <button type="button" data-replay hidden>pause</button></span>
 	</p>
 </section>
 
@@ -139,6 +139,7 @@ const menu = ['New Folder with Selection…', 'Open With…', 'Cut', 'Copy', 'Mo
 	.stage {
 		width: min(100% - 4ch, 92rem, (100dvh - 6rem) * 16 / 9 + 18px);
 		margin: 2.5rem auto 0;
+		container: stage / inline-size;
 	}
 	.rig {
 		display: grid;
@@ -157,9 +158,11 @@ const menu = ['New Folder with Selection…', 'Open With…', 'Cut', 'Copy', 'Mo
 	.ruler.top {
 		grid-column: 2;
 	}
+	/* Sized by the drawing beside it, not by its own 720-unit height. */
 	.ruler.left {
 		grid-column: 1;
 		grid-row: 2;
+		contain: size;
 	}
 	.ruler text {
 		stroke: none;
@@ -397,7 +400,7 @@ const menu = ['New Folder with Selection…', 'Open With…', 'Cut', 'Copy', 'Mo
 
 	.stage-line {
 		display: grid;
-		grid-template-columns: 18px auto minmax(0, 1fr) auto;
+		grid-template-columns: 18px auto minmax(0, 1fr);
 		gap: 0 2ch;
 		margin: 1rem 0 0;
 		color: var(--ncu-dim);
@@ -407,7 +410,7 @@ const menu = ['New Folder with Selection…', 'Open With…', 'Cut', 'Copy', 'Mo
 		color: var(--ncu-bold);
 	}
 	.stage-line .acts {
-		white-space: nowrap;
+		grid-column: 3;
 	}
 	.stage-line button {
 		margin-left: 1ch;
@@ -431,8 +434,16 @@ const menu = ['New Folder with Selection…', 'Open With…', 'Cut', 'Copy', 'Mo
 		visibility: hidden;
 	}
 
-	/* Narrow: the calls leave the terminal and follow the drawing as a list. */
-	@media (max-width: 60rem) {
+	/* Narrow, by the stage's own width so the overlay's text stays at 11px or more: the
+	   calls leave the terminal and follow the drawing as a list, and the rulers go. */
+	@container stage (max-width: 62rem) {
+		.rig {
+			grid-template-columns: 0 minmax(0, 1fr);
+			grid-template-rows: 0 auto;
+		}
+		.ruler {
+			display: none;
+		}
 		.term {
 			position: static;
 			width: auto;
@@ -463,17 +474,10 @@ const menu = ['New Folder with Selection…', 'Open With…', 'Cut', 'Copy', 'Mo
 			grid-column: 1;
 		}
 		.stage-line .acts {
-			white-space: normal;
+			grid-column: 1;
 		}
 	}
 	@media (max-width: 40rem) {
-		.rig {
-			grid-template-columns: 0 minmax(0, 1fr);
-			grid-template-rows: 0 auto;
-		}
-		.ruler {
-			display: none;
-		}
 		.lines li {
 			gap: 1ch;
 		}
@@ -485,6 +489,9 @@ const menu = ['New Folder with Selection…', 'Open With…', 'Cut', 'Copy', 'Mo
 	@media print {
 		.lines [data-state] {
 			opacity: 1;
+		}
+		[data-replay] {
+			display: none;
 		}
 	}
 </style>

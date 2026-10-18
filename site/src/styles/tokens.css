@@ -1,7 +1,8 @@
 /* The site's colours and type, for the home page and the docs alike: a man page in a
    terminal. Dark is a warm black with parchment ink, light is paper with brown-black ink,
    and one amber marks links and focus. `light-dark()` picks by `color-scheme`: the docs set
-   it from their theme switch, the home page follows the system. */
+   it from their theme switch, and the home page from its own,
+   which shares the docs' choice. */
 
 :root {
 	--ncu-mono: 'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace;

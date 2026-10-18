@@ -3,7 +3,7 @@
 // (`styles/man.css`). It opens on the name, what it does and the line to install it, then
 // the errand drawn in the agent's own screenshot pixels, which plays its real calls
 // (`components/Stage.astro`), then the other sections with their names hanging in a left
-// gutter. Dark or light follows the system. Without JavaScript it reads in full and shows
+// gutter. Dark or light follows the system until the visitor picks one. Without JavaScript it reads in full and shows
 // the finished errand; `scripts/less.ts` adds less's keys and `scripts/stage.ts` plays the
 // errand. Its words are in `lib/home.ts`, which `pages/index.md.ts` serves as Markdown too.
 import '@fontsource-variable/jetbrains-mono/wght.css';
@@ -60,15 +60,19 @@ const released = history.find((release) => release.version === version);
 		<meta property="og:image:width" content="1280" />
 		<meta property="og:image:height" content="640" />
 		<meta name="twitter:card" content="summary_large_image" />
-		<meta name="theme-color" content="#f7f5ee" media="(prefers-color-scheme: light)" />
-		<meta name="theme-color" content="#10110f" media="(prefers-color-scheme: dark)" />
+		<meta name="theme-color" content="#f7f5ee" media="(prefers-color-scheme: light)" data-for="light" />
+		<meta name="theme-color" content="#10110f" media="(prefers-color-scheme: dark)" data-for="dark" />
 		<Slide />
 		<script is:inline>
 			// The theme the visitor chose here or in the docs (Starlight keeps it under this key),
-			// set before the page paints; otherwise the system's.
+			// set before the page paints, with the browser's colour to match; otherwise the system's.
 			try {
 				const theme = localStorage.getItem('starlight-theme');
-				if (theme == 'light' || theme == 'dark') document.documentElement.dataset.theme = theme;
+				if (theme == 'light' || theme == 'dark') {
+					document.documentElement.dataset.theme = theme;
+					for (const meta of document.querySelectorAll('meta[name=theme-color]'))
+						meta.media = meta.dataset.for == theme ? 'all' : 'not all';
+				}
 			} catch {}
 		</script>
 	</head>

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { clicks, end, folderName, loop, sceneAt } from './stage.ts';
+import { clicks, end, folderName, loop, offeredName, sceneAt } from './stage.ts';
 
 test('each click lands on the coordinates its call sent', () => {
 	assert.deepEqual(
@@ -37,6 +37,15 @@ test('the right-click opens the menu, and choosing its item opens the name dialo
 	assert.equal(sceneAt(11).menu, 'chosen');
 	assert.equal(sceneAt(12).menu, 'shut');
 	assert.equal(sceneAt(12).dialog, true);
+});
+
+test('the dialog offers Files\' own name, which ctrl+a selects and the typing replaces', () => {
+	assert.equal(sceneAt(12).typed, offeredName);
+	assert.equal(sceneAt(12).nameSelected, false);
+	assert.deepEqual(sceneAt(13).keys, ['ctrl', 'a']);
+	assert.equal(sceneAt(13.6).typed, offeredName);
+	assert.equal(sceneAt(13.6).nameSelected, true);
+	assert.ok(folderName.startsWith(sceneAt(14.8).typed));
 });
 
 test('the folder replaces the two screenshots once the typed name is submitted', () => {
