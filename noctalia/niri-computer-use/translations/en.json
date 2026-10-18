@@ -154,6 +154,8 @@
     "scroll": "Scrolled",
     "close_window": "Closed a window",
     "noctalia": "Sent a Noctalia command",
+    "noctalia_command": "Ran Noctalia's {command}",
+    "noctalia_plugin": "Sent an event to {plugin}",
     "set_element_text": "Filled in a field",
     "clipboard_read": "Read the clipboard"
   }

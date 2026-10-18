@@ -360,6 +360,21 @@ t.group("describe", function()
     t.eq(describe.say("niri_action", { action = { category = "invalid_action", keys = 1, bytes = 14 } }, tr), "Ran ?")
   end)
 
+  t.test("a Noctalia command reads as Noctalia names it, or as sent", function()
+    local caffeine = { count = 1, bytes = { 15 }, command = "caffeine-toggle", description = "Toggle caffeine (idle inhibitor)" }
+    t.eq(describe.say("noctalia", caffeine, tr), "Toggle caffeine (idle inhibitor)")
+    t.eq(describe.say("noctalia", { count = 1, bytes = { 15 }, command = "caffeine-toggle" }, tr), "Ran Noctalia's caffeine-toggle")
+    local plugin = {
+      count = 4,
+      bytes = { 6, 30, 3, 13 },
+      command = "plugin",
+      description = "Dispatch an event to a plugin entry",
+      plugin = "ayagmar/obs-control",
+    }
+    t.eq(describe.say("noctalia", plugin, tr), "Sent an event to ayagmar/obs-control")
+    t.eq(describe.say("noctalia", { count = 2, bytes = { 14, 6 } }, tr), "Sent a Noctalia command")
+  end)
+
   t.test("every call reads as a sentence, a new tool as its name", function()
     t.eq(describe.say("click", { count = 2 }, tr), "Double-clicked")
     t.eq(describe.say("focus", { workspace_id = 3 }, tr), "Switched workspace")
