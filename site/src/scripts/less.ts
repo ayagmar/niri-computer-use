@@ -187,7 +187,8 @@ if (win && rows.length && motion.matches) {
 		([entry]) => {
 			if (!entry.isIntersecting) return;
 			seen.disconnect();
-			if (!document.querySelector('.win video')) replay();
+			// Not over a replay or recording the visitor already started.
+			if (!frame && !document.querySelector('.win video')) replay();
 		},
 		{ threshold: 0.4 },
 	);
