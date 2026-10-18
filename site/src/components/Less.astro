@@ -1,5 +1,5 @@
 ---
-// less's keys for every page, and its help screen, which h or ? opens. The keys come from
+// less's keys for every page, and its help screen, which ? opens. The keys come from
 // `scripts/less.ts`; without the script the page reads and scrolls as any other. `find` adds less's search where the page
 // has its own status line, and the docs keep `/` for Starlight's search instead.
 interface Props {
@@ -21,7 +21,7 @@ const keys: [string, string][] = [
 				['n  N', 'Repeat the search, forward or backward.'],
 			] as [string, string][])
 		: ([['/', 'Search the docs.']] as [string, string][])),
-	['h  ?', 'Show this help.'],
+	['?', 'Show this help.'],
 	['q', 'Close this help, or go back a page.'],
 ];
 ---

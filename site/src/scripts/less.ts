@@ -200,7 +200,7 @@ const actions: Record<string, () => unknown> = {
 	u: down(() => -screen_() / 2),
 	g: () => scrollTo(0, 0),
 	G: () => scrollTo(0, root.scrollHeight),
-	h: () => help.showModal(),
+	'?': () => help.showModal(),
 	q: () =>
 		help.open
 			? help.close()
@@ -212,7 +212,6 @@ actions.e = actions.j;
 actions.y = actions.k;
 actions['<'] = actions.g;
 actions['>'] = actions.G;
-actions['?'] = actions.h;
 // On the docs, / opens Starlight's search, which itself only listens for Ctrl+K.
 const docsSearch = document.querySelector<HTMLButtonElement>('site-search button[data-open-modal]');
 if (docsSearch) actions['/'] = () => docsSearch.click();

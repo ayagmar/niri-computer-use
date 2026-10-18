@@ -23,6 +23,6 @@ FIRST VIEWPORT: The running head, the name large with its tagline, SYNOPSIS, the
 
 FORM: seed: none. Built from mock A (`git show 9c6fba6:site/mocks/manpage.astro`), cut to about half its words; HISTORY from CHANGELOG.md and the clip's length and size from the MP4 at build time.
 
-Signature interaction: less's keys (j, k, f, b, d, u, g, G, / with n and N, h for help, q), with (END) and messages in the pager line; the calls replay at their real times when in view unless motion is reduced, the recording plays in place on request, and each call's time plays it from that call; pages slide sideways between the home page and the docs. Print drops the pager line and prints outside links' addresses.
+Signature interaction: less's keys (j, k, f, b, d, u, g, G, / with n and N, ? for help, q), with (END) and messages in the pager line; the calls replay at their real times when in view unless motion is reduced, the recording plays in place on request, and each call's time plays it from that call; pages slide sideways between the home page and the docs. Print drops the pager line and prints outside links' addresses.
 
 FINISH: finish review, fixes, DESIGN.md and design.json from the built page.
