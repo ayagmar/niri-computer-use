@@ -1,0 +1,490 @@
+---
+// The errand, drawn: the 1280 by 720 screenshot the agent works in, with rulers in its
+// pixels, the terminal where Claude Code makes its calls and Files where they land. The
+// calls are a real list over the terminal; `scripts/stage.ts` plays them at their times
+// and moves the drawing with them, from `lib/stage.ts`. Without the script, or under
+// reduced motion, it shows the finished errand with every call listed.
+import { home } from '../lib/home';
+import { height, sceneAt, end, folderName, width } from '../lib/stage';
+
+interface Props {
+	clip: string;
+	clipFacts: string;
+}
+const { clip, clipFacts } = Astro.props;
+const { example } = home;
+const last = sceneAt(end);
+const ticksX = Array.from({ length: width / 80 + 1 }, (_, i) => i * 80);
+const ticksY = Array.from({ length: height / 80 + 1 }, (_, i) => i * 80);
+const files = [
+	{ x: 815, name: 'checklist.md', kind: 'doc' },
+	{ x: 897, name: 'NOTES.txt', kind: 'doc' },
+	{ x: 979, name: 'screenshot-', name2: 'layout.png', kind: 'png', shot: 1 },
+	{ x: 1061, name: 'screenshot-', name2: 'stop.png', kind: 'png', shot: 2 },
+];
+const menu = ['New Folder with Selection…', 'Open With…', 'Cut', 'Copy', 'Move to…', 'Rename…', 'Move to Trash'];
+---
+
+<section class="stage" id="example" aria-labelledby="example-heading" data-stage>
+	<div class="rig">
+		<svg class="ruler top" viewBox={`0 0 ${width} 18`} preserveAspectRatio="none" aria-hidden="true">
+			{ticksX.map((x) => <><line x1={x} x2={x} y1="10" y2="18" />{x < width && <text x={x + 4} y="9">{x}</text>}</>)}
+		</svg>
+		<svg class="ruler left" viewBox={`0 0 18 ${height}`} preserveAspectRatio="none" aria-hidden="true">
+			{ticksY.map((y) => <line x1="10" x2="18" y1={y} y2={y} />)}
+		</svg>
+		<div
+			class="screen"
+			data-focus={last.focus}
+			data-lease={String(last.lease)}
+			data-selected={last.selected}
+			data-menu={last.menu}
+			data-dialog={String(last.dialog)}
+			data-folder={String(last.folder)}
+		>
+			<svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="A drawing of the desktop: the terminal on the left, Files on the right, and the new release-0.1 folder in Files.">
+				<rect class="wall" width={width} height={height} />
+				<g class="bar">
+					<rect width={width} height="18" />
+					<rect class="ws on" x="10" y="6" width="18" height="6" rx="3" />
+					<circle class="ws" cx="37" cy="9" r="3" />
+					<circle class="ws" cx="47" cy="9" r="3" />
+					<g class="lease"><rect x="1036" y="2" width="168" height="14" rx="2" /><text x="1120" y="12.5" text-anchor="middle" data-lease-text>{last.lease ? 'agent holds the lease' : 'no agent'}</text></g>
+					<text class="clock" x="1268" y="12.5" text-anchor="end" data-clock></text>
+				</g>
+				<g class="win terminal">
+					<rect x="8" y="26" width="624" height="686" />
+					<text class="title" x="24" y="50">Claude Code · Opus 5.5</text>
+				</g>
+				<g class="win files">
+					<rect x="648" y="26" width="624" height="686" />
+					<rect class="side" x="650" y="28" width="126" height="682" />
+					{['Files', 'Home', 'Recent', 'Starred', 'Network', 'Trash'].map((label, i) => <text class={i ? 'nav' : 'title'} x="664" y={52 + i * 24}>{label}</text>)}
+					<line class="hair" x1="776" x2="1270" y1="44" y2="44" />
+					<text class="nav" x="792" y="38">Home / projects / ncu-demo</text>
+					{
+						files.map((f) => (
+							<g class:list={['icon', f.kind, f.shot && `shot shot-${f.shot}`]}>
+								<rect class="hit" x={f.x - 34} y="56" width="68" height="84" rx="6" />
+								{f.kind == 'doc' ? (
+									<path d={`M${f.x - 13} 66 h18 l8 8 v32 h-26 z M${f.x + 5} 66 v8 h8`} />
+								) : (
+									<>
+										<rect x={f.x - 18} y="70" width="36" height="34" rx="2" />
+										<path d={`M${f.x - 14} 98 l9 -10 l7 6 l6 -8 l8 12`} />
+										<circle cx={f.x + 9} cy="78" r="3" />
+									</>
+								)}
+								<text x={f.x} y="124" text-anchor="middle">{f.name}</text>
+								{f.name2 && <text x={f.x} y="136" text-anchor="middle">{f.name2}</text>}
+							</g>
+						))
+					}
+					<g class="icon dir">
+						<path d="M961 70 h12 l4 5 h20 v31 h-36 z" />
+						<text x="979" y="124" text-anchor="middle">{folderName}</text>
+					</g>
+				</g>
+				<g class="menu">
+					<rect x="1064" y="91" width="200" height={menu.length * 22 + 8} rx="4" />
+					<rect class="hot" x="1068" y="95" width="192" height="22" rx="3" />
+					{menu.map((item, i) => <text x="1078" y={110 + i * 22}>{item}</text>)}
+				</g>
+				<g class="dialog">
+					<rect x="830" y="250" width="260" height="110" rx="6" />
+					<text class="title" x="846" y="276">Folder Name</text>
+					<rect class="field" x="846" y="290" width="228" height="26" rx="3" />
+					<rect class="name-sel" x="850" y="294" width="120" height="18" rx="2" />
+					<text class="typed" x="854" y="308" data-typed></text>
+					<text class="button" x="1074" y="342" text-anchor="end">Create</text>
+				</g>
+				<g class="keys" data-keys></g>
+				<g class="pointer" data-pointer style="display: none">
+					<line class="guide" data-guide-x y1="28" y2="710" />
+					<line class="guide" data-guide-y x1="650" x2="1270" />
+					<circle class="ring" data-ring r="0" />
+					<circle class="dot" data-dot r="6" />
+					<text class="coords" data-coords></text>
+				</g>
+			</svg>
+			<div class="term">
+				<p class="prompt">› In Files, put the two screenshots into a new folder called release-0.1, then bring me back here.</p>
+				<ol class="lines" aria-label="The session's calls, with when each went out and its round trip">
+					{
+						example.calls.map(([start, call, ms]) => (
+							<li data-start={start} data-ms={ms}>
+								<span class="at">{start.toFixed(1)}</span>
+								<code>{call}</code>
+								<span class="ms">{ms} ms</span>
+							</li>
+						))
+					}
+				</ol>
+			</div>
+		</div>
+	</div>
+	<p class="stage-line">
+		<b id="example-heading">EXAMPLE</b>
+		<span>{example.caption}</span>
+		<span class="acts"><a href={clip} data-recording>Watch the recording</a> ({clipFacts}) <button type="button" data-replay hidden>replay</button></span>
+	</p>
+</section>
+
+<script>
+	import '../scripts/stage';
+</script>
+
+<style is:global>
+	/* At most as wide as lets the whole drawing fit in the window under the pager line. */
+	.stage {
+		width: min(100% - 4ch, 92rem, (100dvh - 6rem) * 16 / 9 + 18px);
+		margin: 2.5rem auto 0;
+	}
+	.rig {
+		display: grid;
+		grid-template-columns: 18px minmax(0, 1fr);
+		grid-template-rows: 18px auto;
+	}
+	.ruler {
+		display: block;
+		width: 100%;
+		height: 100%;
+		fill: var(--ncu-dim);
+		stroke: var(--ncu-rule);
+		font: 9px var(--ncu-mono);
+		overflow: visible;
+	}
+	.ruler.top {
+		grid-column: 2;
+	}
+	.ruler.left {
+		grid-column: 1;
+		grid-row: 2;
+	}
+	.ruler text {
+		stroke: none;
+	}
+	.screen {
+		position: relative;
+		grid-column: 2;
+		grid-row: 2;
+		container-type: inline-size;
+		outline: 1px solid var(--ncu-rule);
+	}
+	.screen svg {
+		display: block;
+		width: 100%;
+		height: auto;
+		font-family: var(--ncu-mono);
+	}
+	.screen .wall {
+		fill: var(--ncu-plate);
+	}
+	.bar > rect:first-child {
+		fill: var(--ncu-ground);
+	}
+	.bar .ws {
+		fill: var(--ncu-rule);
+	}
+	.bar .ws.on {
+		fill: var(--ncu-ink);
+	}
+	.bar text {
+		font-size: 10px;
+		fill: var(--ncu-dim);
+	}
+	.bar .lease rect {
+		fill: none;
+		stroke: var(--ncu-rule);
+		transition: fill 0.3s;
+	}
+	.screen[data-lease='true'] .lease rect {
+		fill: var(--ncu-accent);
+		stroke: var(--ncu-accent);
+	}
+	.screen[data-lease='true'] .lease text {
+		fill: var(--ncu-ground);
+		font-weight: 700;
+	}
+	.win > rect:first-of-type {
+		fill: var(--ncu-ground);
+		stroke: var(--ncu-rule);
+		stroke-width: 4;
+		transition: stroke 0.25s;
+	}
+	.screen[data-focus='terminal'] .terminal > rect:first-of-type,
+	.screen[data-focus='files'] .files > rect:first-of-type {
+		stroke: var(--ncu-accent);
+	}
+	.win .title {
+		font-size: 13px;
+		font-weight: 700;
+		fill: var(--ncu-bold);
+	}
+	.files .side {
+		fill: var(--ncu-plate);
+	}
+	.files .nav {
+		font-size: 11px;
+		fill: var(--ncu-dim);
+	}
+	.files .hair {
+		stroke: var(--ncu-rule);
+	}
+	.icon {
+		transition: opacity 0.35s;
+	}
+	.icon path,
+	.icon rect:not(.hit),
+	.icon circle {
+		fill: none;
+		stroke: var(--ncu-ink);
+		stroke-width: 1.5;
+		stroke-linejoin: round;
+	}
+	.icon text {
+		font-size: 10px;
+		fill: var(--ncu-ink);
+	}
+	.icon .hit {
+		fill: transparent;
+		stroke: none;
+		transition: fill 0.15s;
+	}
+	.screen[data-selected='1'] .shot-1 .hit,
+	.screen[data-selected='2'] .shot .hit {
+		fill: var(--ncu-select);
+	}
+	.screen[data-selected='1'] .shot-1 :is(path, rect:not(.hit), circle),
+	.screen[data-selected='2'] .shot :is(path, rect:not(.hit), circle) {
+		stroke: var(--ncu-accent);
+	}
+	.icon.dir path {
+		stroke: var(--ncu-accent);
+		stroke-width: 2;
+	}
+	.icon.dir text {
+		fill: var(--ncu-bold);
+	}
+	.screen:not([data-folder='true']) .icon.dir,
+	.screen[data-folder='true'] .icon.shot {
+		opacity: 0;
+	}
+	.menu,
+	.dialog {
+		transition: opacity 0.15s;
+	}
+	.screen[data-menu='shut'] .menu,
+	.screen:not([data-dialog='true']) .dialog {
+		opacity: 0;
+	}
+	.menu > rect:first-child,
+	.dialog > rect:first-child {
+		fill: var(--ncu-ground);
+		stroke: var(--ncu-dim);
+	}
+	.menu text,
+	.dialog text {
+		font-size: 11px;
+		fill: var(--ncu-ink);
+	}
+	.menu .hot {
+		fill: transparent;
+	}
+	.screen[data-menu='chosen'] .menu .hot {
+		fill: var(--ncu-select);
+	}
+	.dialog .field {
+		fill: var(--ncu-plate);
+		stroke: var(--ncu-accent);
+	}
+	.dialog .name-sel {
+		fill: var(--ncu-select);
+		opacity: 0;
+	}
+	.screen[data-name-selected='true'] .dialog .name-sel {
+		opacity: 1;
+	}
+	.dialog .typed {
+		fill: var(--ncu-bold);
+		font-size: 12px;
+	}
+	.dialog .button {
+		fill: var(--ncu-accent);
+		font-weight: 700;
+	}
+	.keys rect {
+		fill: var(--ncu-bold);
+	}
+	.keys text {
+		font-size: 13px;
+		font-weight: 700;
+		fill: var(--ncu-ground);
+	}
+	.pointer .guide {
+		stroke: var(--ncu-accent);
+		stroke-dasharray: 3 5;
+		opacity: 0.45;
+	}
+	.pointer .dot {
+		fill: var(--ncu-accent);
+		stroke: var(--ncu-ground);
+		stroke-width: 2;
+	}
+	.pointer .ring {
+		fill: none;
+		stroke: var(--ncu-accent);
+		stroke-width: 2;
+	}
+	.pointer .coords {
+		font-size: 11px;
+		font-weight: 700;
+		fill: var(--ncu-accent);
+		paint-order: stroke;
+		stroke: var(--ncu-plate);
+		stroke-width: 4;
+	}
+
+	/* The calls, as the terminal shows them: each line once its call goes out, in reverse
+	   video while it is in flight. */
+	.term {
+		position: absolute;
+		left: calc(24 / 1280 * 100%);
+		top: calc(62 / 720 * 100%);
+		width: calc(592 / 1280 * 100%);
+		font-size: 1.12cqw;
+		line-height: 1.6;
+	}
+	.term .prompt {
+		margin: 0 0 1em;
+		color: var(--ncu-bold);
+	}
+	.lines {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.lines li {
+		display: grid;
+		grid-template-columns: 5ch minmax(0, 1fr) auto;
+		gap: 1.5ch;
+		padding: 0 0.5ch;
+		color: var(--ncu-bold);
+		transition:
+			opacity 0.2s,
+			background-color 0.15s,
+			color 0.15s;
+	}
+	.lines .at,
+	.lines .ms {
+		color: var(--ncu-dim);
+		text-align: right;
+		font-variant-numeric: tabular-nums;
+	}
+	.lines code {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.lines [data-state='next'] {
+		opacity: 0;
+	}
+	.lines [data-state='now'],
+	.lines [data-state='now'] span {
+		background: var(--ncu-ink);
+		color: var(--ncu-ground);
+	}
+
+	.stage-line {
+		display: grid;
+		grid-template-columns: 18px auto minmax(0, 1fr) auto;
+		gap: 0 2ch;
+		margin: 1rem 0 0;
+		color: var(--ncu-dim);
+	}
+	.stage-line b {
+		grid-column: 2;
+		color: var(--ncu-bold);
+	}
+	.stage-line .acts {
+		white-space: nowrap;
+	}
+	.stage-line button {
+		margin-left: 1ch;
+		padding: 0;
+		border: 0;
+		background: none;
+		color: var(--ncu-accent);
+		cursor: pointer;
+		text-decoration: underline;
+		text-decoration-thickness: 1px;
+		text-underline-offset: 3px;
+	}
+	.screen video {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		background: var(--ncu-plate);
+	}
+	.screen:has(video) .term {
+		visibility: hidden;
+	}
+
+	/* Narrow: the calls leave the terminal and follow the drawing as a list. */
+	@media (max-width: 60rem) {
+		.term {
+			position: static;
+			width: auto;
+			margin-top: 1rem;
+			font-size: 0.875rem;
+		}
+		.screen {
+			outline: 0;
+		}
+		.screen svg {
+			outline: 1px solid var(--ncu-rule);
+		}
+		.screen:has(video) .term {
+			visibility: visible;
+		}
+		.screen video {
+			height: auto;
+			aspect-ratio: 16 / 9;
+		}
+		.lines [data-state='next'] {
+			opacity: 1;
+			color: var(--ncu-dim);
+		}
+		.stage-line {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.stage-line b {
+			grid-column: 1;
+		}
+		.stage-line .acts {
+			white-space: normal;
+		}
+	}
+	@media (max-width: 40rem) {
+		.rig {
+			grid-template-columns: 0 minmax(0, 1fr);
+			grid-template-rows: 0 auto;
+		}
+		.ruler {
+			display: none;
+		}
+		.lines li {
+			gap: 1ch;
+		}
+		.lines code {
+			white-space: normal;
+			overflow-wrap: anywhere;
+		}
+	}
+	@media print {
+		.lines [data-state] {
+			opacity: 1;
+		}
+	}
+</style>
