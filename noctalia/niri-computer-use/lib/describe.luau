@@ -116,6 +116,19 @@ local function actionName(args): string
   return "?"
 end
 
+-- A Noctalia command as the log names it from Noctalia's own lists: the
+-- plugin an event went to, Noctalia's description of the command, or its name.
+local function noctalia(args, tr: Tr): string
+  if type(args.plugin) == "string" then
+    return tr("action.noctalia_plugin", { plugin = args.plugin })
+  elseif type(args.description) == "string" then
+    return args.description
+  elseif type(args.command) == "string" then
+    return tr("action.noctalia_command", { command = args.command })
+  end
+  return tr("action.noctalia")
+end
+
 local function focusKey(args): string
   if args.workspace_id then
     return "action.focus_workspace"
@@ -150,6 +163,7 @@ local SAY: { [string]: (args: any, tr: Tr) -> string } = {
   niri_action = function(args, tr)
     return tr("action.niri_action", { action = actionName(args) })
   end,
+  noctalia = noctalia,
   shell_panel = function(args, tr)
     local key = if args.open == false then "action.panel_close" else "action.panel_open"
     return tr(key, { panel = named(args.panel, "?") })

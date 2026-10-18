@@ -5,6 +5,7 @@
 //! when a command goes out and when Noctalia replied, as for a niri action, so a stop or a
 //! moved lease after that reports it as `uncertain` rather than refused.
 
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use serde::Serialize;
@@ -88,13 +89,18 @@ async fn change(
 }
 
 /// Sends `args` to Noctalia as `noctalia msg` would: `sent`, with Noctalia's reply. Args
-/// that `noctalia::check_args` refuses are an argument mistake, with nothing sent.
+/// that `noctalia::check_args` refuses are an argument mistake, with nothing sent. Args it
+/// takes are named into `named` from Noctalia's lists first, for the audit log, before the
+/// lock state is read, which must be fresh when the command goes out.
 pub(crate) async fn message(
     env: &Env,
     niri: Niri<'_>,
     args: &[String],
+    named: &OnceLock<noctalia::Named>,
 ) -> Result<Outcome, CallError> {
     noctalia::check_args(args).map_err(CallError::InvalidArguments)?;
+    let found = noctalia::named(env, args).await;
+    named.get_or_init(|| found);
     super::fresh_lock(niri).await?;
     match noctalia::message(env, args, || niri.desk.sending()).await {
         Ok(reply) => {
