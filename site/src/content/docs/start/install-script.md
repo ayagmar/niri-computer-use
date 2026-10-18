@@ -5,13 +5,21 @@ sidebar:
   order: 2
 ---
 
-`install.sh` is a POSIX shell script, published with every release. Read it before you run it: it is written to be read, and this page is only a summary of it. It needs `curl`, `tar`, `sha256sum`, `uname` and `mktemp`, and runs on x86_64 and aarch64 Linux, the machines there are release builds for. On anything else it says so and stops.
+`install.sh` is a POSIX shell script, published with every release. It is written to be read, and this page is only a summary of it. It needs `curl`, `tar`, `sha256sum`, `uname` and `mktemp`, and runs on x86_64 and aarch64 Linux, the machines there are release builds for. On anything else it says so and stops.
+
+```sh
+curl -fsSL https://github.com/ayagmar/niri-computer-use/releases/latest/download/install.sh | sh
+```
+
+To read it before it runs:
 
 ```sh
 curl -fsSLO https://github.com/ayagmar/niri-computer-use/releases/latest/download/install.sh
 less install.sh
 sh install.sh
 ```
+
+The whole script is one brace group, which `sh` reads to its end before running any of it. Piped from `curl`, a download cut short runs nothing, and an agent's `mcp add` that reads stdin can't take the script's own lines. Its questions are read from the terminal, `/dev/tty`, so piping it still asks before registering.
 
 ## What it downloads
 
@@ -60,7 +68,7 @@ When `noctalia` is on `PATH`, the next steps include enabling the plugin with `n
 | `NCU_VERSION` | The release to install, such as `0.1.0`, instead of the latest. A leading `v` is accepted |
 | `NCU_BIN_DIR` | Where the binary goes, instead of `~/.local/bin`. The skill and its links go to the same places as always |
 | `NCU_RELEASES_URL` | Where the releases are, instead of this repository's on GitHub. The test suite points it at a local server |
-| `NCU_REGISTER` | `1` registers the server in every agent found on `PATH` without asking, `0` registers in none. Unset, the script asks per agent when its output is a terminal, and registers in none otherwise |
+| `NCU_REGISTER` | `1` registers the server in every agent found on `PATH` without asking, `0` registers in none. Unset, the script asks per agent when its output is a terminal it can open, and registers in none otherwise |
 
 ```sh
 NCU_VERSION=0.1.0 sh install.sh
@@ -69,7 +77,7 @@ NCU_BIN_DIR=~/bin sh install.sh
 
 ## Registering in your agents
 
-After the files are in place, the script looks for `claude`, `pi`, `codex`, `amp`, `copilot`, `gemini` and `qwen` on `PATH`. For each one it finds it asks, when its output is a terminal, whether to register the server now, and shows the command it would run:
+After the files are in place, the script looks for `claude`, `pi`, `codex`, `amp`, `copilot`, `gemini` and `qwen` on `PATH`. For each one it finds it asks, when its output is a terminal it can open (`/dev/tty`), whether to register the server now, and shows the command it would run:
 
 ```sh
 claude mcp add --scope user niri-computer-use -- ~/.local/bin/niri-computer-use serve

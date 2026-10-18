@@ -1,0 +1,38 @@
+---
+// Starlight's page title under a man page's running head: the page's name and section on
+// both sides, the manual's name between.
+import { heading, manName } from '../lib/man';
+
+const { entry } = Astro.locals.starlightRoute;
+const name = heading(manName(entry.id));
+---
+
+<p class="running" aria-hidden="true">
+	<span>{name}</span>
+	<span class="mid">niri-computer-use manual</span>
+	<span>{name}</span>
+</p>
+{/* `_top` is the id Starlight's own title has, which its table of contents links to. */}
+<h1 id="_top">{entry.data.title}</h1>
+
+<style>
+	.running {
+		display: flex;
+		justify-content: space-between;
+		gap: 2ch;
+		margin: 1rem 0 0;
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-gray-3);
+	}
+	h1 {
+		margin-top: 1.25rem;
+		font-size: var(--sl-text-h1);
+		line-height: var(--sl-line-height-headings);
+		color: var(--sl-color-white);
+	}
+	@media (max-width: 30rem) {
+		.mid {
+			display: none;
+		}
+	}
+</style>

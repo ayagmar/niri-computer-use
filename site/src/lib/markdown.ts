@@ -2,7 +2,9 @@
 // llms-full.txt.
 import { getCollection, type CollectionEntry } from 'astro:content';
 import { groups } from './groups.mjs';
+import changelog from '../../../CHANGELOG.md?raw';
 import { home } from './home';
+import { history, summary } from './news';
 import { releaseLink, version } from './version';
 
 type Page = CollectionEntry<'docs'>;
@@ -41,39 +43,22 @@ export function homeMarkdownUrl(): string {
 // The home page as Markdown, from the same words the page sets.
 export function homeMarkdown(): string {
 	const url = (link: string) => new URL(link, siteRoot()).href;
-	const { sessions, result, gates, limits, requirements, install } = home;
-	const list = (items: string[]) => items.map((item) => `- ${item}`).join('\n');
+	const { install, safety, example } = home;
+	const github = 'https://github.com/ayagmar/niri-computer-use';
+	const code = (lang: string, text: string) => `\`\`\`${lang}\n${text}\n\`\`\``;
 	return [
-		`# niri-computer-use`,
+		`# niri-computer-use(1)`,
 		`> ${home.description}`,
 		`Version ${version}: [release notes](${releaseLink})`,
-		`${home.headline} ${home.stopline} ${home.lede}`,
-		`[${home.safety.text}](${url(home.safety.link)})`,
-		`## Recorded sessions`,
-		`${sessions.note}\n\n${list(sessions.items.map((item) => `${item.tab}: ${item.text}`))}`,
-		`## ${result.headline}`,
-		`${result.lede} ${result.source}\n\n\`\`\`json\n${result.code}\n\`\`\`\n\n${list(result.fields.map((field) => `\`${field.name}\`: ${field.text}`))}`,
-		`## ${gates.headline}`,
-		`${gates.lede}\n\n${gates.items
-			.map((item, index) => `${index + 1}. ${item.gate}: ${item.when} Applies to ${item.covers}. Answer: \`${item.error}\`, ${item.detail.replace(/`/g, '')}`)
-			.join('\n')}\n\n${gates.note}`,
-		`## ${limits.headline}`,
-		`${limits.enforces.title}:\n\n${list(limits.enforces.items)}\n\n${limits.misses.title}:\n\n${list(limits.misses.items)}\n\n[${limits.more.text}](${url(limits.more.link)})`,
-		`## ${requirements.headline}`,
-		list(requirements.rows.map(([what, value]) => `${what}: ${value}`)),
-		`## ${install.headline}`,
-		install.lede,
-		install.steps
-			.map((step, index) => {
-				const more = step.more ? ` [${step.more.text}](${url(step.more.link)})` : '';
-				const code = (lang: string, text: string) => `   \`\`\`${lang}\n${text.replace(/^/gm, '   ')}\n   \`\`\``;
-				const or = step.or
-					? `\n\n   ${step.or.text} [${step.or.more.text}](${url(step.or.more.link)})\n\n${code(step.or.lang, step.or.code)}`
-					: '';
-				return `${index + 1}. ${step.text}${more}\n\n${code(step.lang, step.code)}${or}`;
-			})
-			.join('\n\n'),
-		`[${install.more.text}](${url(install.more.link)})`,
+		`## Name\n\nniri-computer-use - ${home.name}`,
+		`## Synopsis\n\n\`niri-computer-use ${home.commands.join(' | ')}\``,
+		`## Description\n\n${home.about.join('\n\n')}`,
+		`## Installation\n\nPipe the install script into sh:\n\n${code('sh', install.piped)}\n\nTo read it first: [install.sh](${install.script}). Or build it, and use \`~/.cargo/bin\` below:\n\n${code('sh', install.cargo)}\n\nBind the stop key in \`config.kdl\`:\n\n${code('kdl', install.stop)}\n\nThe script offers to register the server in each agent it supports that is on your PATH. The list, and the others: [Client setup](${url('start/clients/')}).`,
+		`## Safety\n\n${safety.map(([term, text]) => `- ${term}: ${text}`).join('\n')}\n\n${home.sandbox} [Safety](${url('concepts/safety/')})`,
+		`## Example\n\n${example.caption}\n\n${example.calls.map(([start, call, ms]) => `- ${start} s: \`${call}\`, ${ms} ms`).join('\n')}`,
+		`## History\n\n${history(changelog).map((r) => `- [${r.version}](${github}/releases/tag/v${r.version}), ${r.date}: ${summary(r)}`).join('\n')}\n\n[CHANGELOG.md](${github}/blob/main/CHANGELOG.md)`,
+		`## Bugs\n\n${home.bugs}`,
+		`## See also\n\n${home.seeAlso.map((id) => `- ${url(`${id}/`)}`).join('\n')}`,
 	].join('\n\n') + '\n';
 }
 

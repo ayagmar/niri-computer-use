@@ -1968,6 +1968,28 @@ Each action's commit is the one its tag names in the action's repository (`git l
 - For the rest, its handshake says `tools.listChanged`, and the first call that reaches an engine sends `notifications/tools/list_changed` before the call's answer, so the client lists the tools again and gets the engine's list. Only this server says `listChanged`: an engine's list never changes during a session.
 - Considered: documenting that such a session may list tools it never serves. A call to one would fail as an unknown tool for the rest of the session, and the notification needs no change in rmcp, which relays the line as it is.
 
+## 2026-10-17: the home page as a project page from around 2000
+
+- The datasheet home page, with five recordings and timing diagrams, was 2,650 words and 5.6 MB of recordings in `site/public`. The new one is a 760-pixel page in the style of a hand-made project page from around 2000: a title band, bevelled buttons, tables, one still that links to one 223 KB clip, and a status bar. It has no JavaScript and is light only, as pages of that time were; the docs keep their dark theme.
+- `@fontsource/tinos` 5.3.0, published 2026-07-19, the latest release. Tinos is metric-compatible with Times New Roman, the face such pages were set in, which Linux desktops mostly lack: without it the page falls back to DejaVu Serif or Liberation Serif and changes width from one machine to the next. OFL-1.1, no dependencies; the page loads its Latin regular and bold, 37 KB of WOFF2.
+- Code stays in the system's monospace (DejaVu Sans Mono on most Linux desktops), with no web font.
+
+## 2026-10-17: the site as a man page
+
+- The project page from around 2000 was a labelling mix-up: the pick was the man page. The home page is now `niri-computer-use(1)`, about 280 words in man's sections (NAME, SYNOPSIS, DESCRIPTION, INSTALLATION, SAFETY, EXAMPLE, HISTORY, BUGS, SEE ALSO), with a running head and foot and less's reverse-video line along the bottom. It still has no JavaScript, one still and one clip.
+- The docs are the rest of the manual: the same colours and monospace through Starlight's custom properties, a running head over each page title and a running foot under each page (component overrides for `PageTitle` and `Footer`, not a forked layout), and section headings in capitals. `src/lib/man.ts` gives each page its man name and section, such as `CLI(1)` or `SAFETY(7)`.
+- Dark and light follow the system on the home page and the theme switch in the docs, from one set of `light-dark()` colours in `src/styles/tokens.css`. All text passes WCAG AA in both: the lowest pair is the light amber on the selection colour, 4.67:1.
+- All text is set in JetBrains Mono (`@fontsource-variable/jetbrains-mono` 5.3.0, already a dependency), the Latin weight-axis file, 40 KB of WOFF2. Removed: `@fontsource/tinos`, `@fontsource-variable/archivo`, `subset-font` and `scripts/subset-font.mjs`, the pixel mark and the 88×31 buttons. A man page is set in one monospace, so a second face would only add weight.
+
+## 2026-10-17: the install script, piped into sh
+
+- The Install page now leads with `curl -fsSL …/install.sh | sh`, reversing the read-it-first steps. People install tools this way, and reading first is still one line below it. What made the pipe unsafe is fixed in the script instead: it is one brace group, which `sh` reads to its end before running any of it, so a download cut short runs nothing and a program that reads stdin can't take the script's lines. Its questions were already read from `/dev/tty`, so piping still asks before registering an agent. `tests/install.rs` pipes the script into `sh`, whole and cut short.
+
+## 2026-10-17: a script on the site
+
+- The site has one script of its own, `site/src/scripts/less.ts`, 2.3 KB gzipped, on every page. It adds less's keys, search, status line messages and help screen, niri's column focus on the home page, copy buttons, and the clip's replay in place. Without it the pages read in full and the clip opens from a link. The keys skip fields and any key held with Ctrl, Alt or Super, and the help screen turns them off, as WCAG 2.1.4 asks of one-character shortcuts. The home page also gets Astro's prefetch, 1.1 KB, which Starlight turns on for every page.
+- Between the home page and the docs, pages slide sideways on niri's default spring (damping ratio 1, stiffness 800) with cross-document view transitions; `prefers-reduced-motion` turns every motion off. The docs' header was named for view transitions through `.header`, which also matched Starlight's inner header and every code block's caption, so each transition into a docs page was aborted; it is `header.header` now.
+
 ## 2026-10-17: more agents the install script registers in
 
 - The script runs an agent's own command that adds a stdio server to the user's config, never one that writes a project's config, since it runs from any directory, and never edits a config file itself. Checked against each agent's docs and, where public, its source; no agent binary was run.

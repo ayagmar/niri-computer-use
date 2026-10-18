@@ -9,9 +9,14 @@
 # NCU_RELEASES_URL  where the releases are; the GitHub repository's by default
 # NCU_REGISTER      1 registers the server in every agent found on PATH (claude, pi,
 #                   codex, amp, copilot, gemini, qwen) without asking, 0 registers in
-#                   none; unset asks per agent when the output is a terminal, and
-#                   otherwise registers in none
+#                   none; unset asks per agent when the output is a terminal the script
+#                   can open, and otherwise registers in none
 set -eu
+
+# The whole script is one brace group, which sh reads to its end before running any of it.
+# Piped from curl, a download cut short runs nothing, and a program that reads stdin can't
+# take the script's own lines.
+{
 
 releases=${NCU_RELEASES_URL:-https://github.com/ayagmar/niri-computer-use/releases}
 bin_dir=${NCU_BIN_DIR:-${HOME}/.local/bin}
@@ -128,7 +133,7 @@ fi
 case ${NCU_REGISTER:-} in
 1) register=yes ;;
 0) register=no ;;
-'') if [ -t 1 ] && [ -r /dev/tty ]; then register=ask; else register=no; fi ;;
+'') if [ -t 1 ] && (: </dev/tty) 2>/dev/null; then register=ask; else register=no; fi ;;
 *) fail "NCU_REGISTER must be 1 or 0, not ${NCU_REGISTER}" ;;
 esac
 registered=""
@@ -237,3 +242,5 @@ reconnect the MCP server (/mcp in Claude Code), to use ${installed_version}:
 EOF
 	printf '%s' "${old}"
 fi
+
+}

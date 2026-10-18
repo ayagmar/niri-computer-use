@@ -1,0 +1,306 @@
+/* A manual page as man shows it in a terminal, for the pages outside Starlight: the home
+   page and the 404. A running head and foot, capital section names, bold for what you type,
+   underline for what man underlines, and less's reverse-video status line at the bottom. */
+
+* {
+	box-sizing: border-box;
+}
+html {
+	scroll-padding-bottom: 3.5rem;
+	background: var(--ncu-ground);
+	color: var(--ncu-ink);
+	font: 400 16px/1.55 var(--ncu-mono);
+	font-variant-ligatures: none;
+	-webkit-text-size-adjust: 100%;
+}
+body {
+	margin: 0;
+}
+.skip {
+	position: absolute;
+	z-index: 2;
+	left: 2ch;
+	top: -3rem;
+	padding: 0.25rem 1ch;
+	background: var(--ncu-ink);
+	color: var(--ncu-ground);
+}
+.skip:focus {
+	top: 0.5rem;
+}
+.sr {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+}
+
+/* Bold is the strongest ink, as a terminal shows groff's bold; underline is groff's
+   italic, for paths. Links are the amber. */
+b,
+strong,
+th,
+h2,
+pre {
+	color: var(--ncu-bold);
+}
+b,
+strong,
+th,
+h2 {
+	font-weight: 700;
+}
+u {
+	text-decoration-thickness: 1px;
+	text-underline-offset: 3px;
+}
+a {
+	color: var(--ncu-accent);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 3px;
+}
+a:hover {
+	text-decoration-thickness: 2px;
+}
+
+.running {
+	display: flex;
+	justify-content: space-between;
+	gap: 2ch;
+	color: var(--ncu-dim);
+}
+.page,
+.running {
+	padding-inline: 2ch;
+}
+.running.foot {
+	margin: 3em 0 0;
+	padding-bottom: 1.5em;
+}
+h1 {
+	margin: 0 0 0 7ch;
+	font-size: 1em;
+	font-weight: 400;
+}
+/* NAME is set as a section heading but the line under it is the page's h1, so screen
+   readers meet the h1 first. */
+h2,
+.sh {
+	margin: 1.5em 0 0;
+	font-size: 1em;
+	font-weight: 700;
+}
+/* Each section heading links to itself, for passing a section on. */
+h2 a {
+	color: inherit;
+	text-decoration: none;
+}
+h2 a:hover {
+	text-decoration: underline;
+}
+p,
+pre,
+dl,
+table,
+figure {
+	margin: 0 0 0 7ch;
+}
+:is(p, pre, dl, table, figure) + :is(p, pre, dl, table, figure) {
+	margin-top: 1em;
+}
+pre,
+code,
+input,
+button {
+	font: inherit;
+}
+pre {
+	position: relative;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	padding: 0.15em 1ch;
+	background: var(--ncu-plate);
+}
+dl {
+	display: grid;
+	grid-template-columns: 11ch 1fr;
+	gap: 0.25em 2ch;
+}
+dd {
+	margin: 0;
+}
+table {
+	border-collapse: collapse;
+}
+th {
+	text-align: left;
+	padding: 0 3ch 0 0;
+}
+td {
+	padding: 0 3ch 0 0;
+	vertical-align: top;
+	font-variant-numeric: tabular-nums;
+}
+.refs a {
+	white-space: nowrap;
+}
+
+/* The copy button the script adds to each command, in the plate's corner. */
+.copy {
+	position: absolute;
+	top: 0.15em;
+	right: 0;
+	padding: 0 1ch;
+	border: 0;
+	background: var(--ncu-plate);
+	color: var(--ncu-dim);
+	cursor: pointer;
+}
+.copy:hover {
+	color: var(--ncu-bold);
+}
+pre:has(.copy) {
+	padding-right: 7ch;
+}
+
+/* less's status line, in reverse video at the bottom of the window. Where the browser can
+   tie an animation to scrolling, it shows how far down the page you are, as less does; at
+   the bottom the script swaps it for (END), and it carries the messages and the search
+   prompt as less's does. */
+.less {
+	position: sticky;
+	z-index: 1;
+	bottom: 0;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0 2ch;
+	padding: 0.2rem 2ch;
+	background: var(--ncu-ink);
+	color: var(--ncu-ground);
+}
+.less .prompt,
+.less .msg:not(:empty),
+.less .find {
+	margin-right: auto;
+}
+.less:is([data-end], :has(.msg:not(:empty)), :has(.find:not([hidden]))) .prompt > *,
+.less .msg:empty {
+	display: none;
+}
+.less[data-end] .prompt::before {
+	content: '(END)';
+}
+.less a {
+	color: var(--ncu-ground);
+}
+.less :focus-visible {
+	outline-color: var(--ncu-ground);
+}
+.find:not([hidden]) {
+	display: flex;
+	flex: 1;
+}
+.find input {
+	flex: 1;
+	min-width: 0;
+	padding: 0;
+	border: 0;
+	outline: 0;
+	background: none;
+	color: inherit;
+	caret-color: currentColor;
+}
+@property --ncu-read {
+	syntax: '<integer>';
+	inherits: true;
+	initial-value: 0;
+}
+@supports (animation-timeline: scroll()) {
+	.less {
+		animation: ncu-read linear both;
+		animation-timeline: scroll(root);
+	}
+	.pct::before {
+		counter-reset: read var(--ncu-read);
+		content: ' ' counter(read) '%';
+	}
+}
+@keyframes ncu-read {
+	to {
+		--ncu-read: 100;
+	}
+}
+
+/* A search's matches in reverse video, as less shows them. */
+::highlight(find) {
+	background-color: var(--ncu-ink);
+	color: var(--ncu-ground);
+}
+
+@media (max-width: 40rem) {
+	html {
+		font-size: 14px;
+	}
+	.page,
+	.running,
+	.less {
+		padding-inline: 1.5ch;
+	}
+	h1,
+	p,
+	pre,
+	dl,
+	table,
+	figure {
+		margin-left: 3ch;
+	}
+	dl {
+		grid-template-columns: 1fr;
+		gap: 0;
+	}
+	dd {
+		margin: 0 0 0.5em 3ch;
+	}
+	.running .mid,
+	.less .wide {
+		display: none;
+	}
+	td {
+		padding-right: 1.5ch;
+	}
+	td code {
+		overflow-wrap: anywhere;
+	}
+}
+
+/* On paper: black on white, without the status line, each outside link's address after it. */
+@media print {
+	html {
+		background: #fff;
+		color: #000;
+		font-size: 11pt;
+	}
+	b,
+	strong,
+	th,
+	h2,
+	pre,
+	a,
+	.running,
+	figcaption {
+		color: #000;
+	}
+	pre {
+		background: none;
+	}
+	.less,
+	.skip,
+	.copy {
+		display: none;
+	}
+	.page a[href^='http']::after {
+		content: ' <' attr(href) '>';
+		word-break: break-all;
+	}
+}

@@ -15,29 +15,31 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'niri-computer-use',
+			// The 404 is `src/pages/404.astro`, as man answers a page it doesn't have.
+			disable404Route: true,
 			description:
 				'An MCP server that lets AI agents see and act on a niri Wayland desktop, with a lease, a stop key and an audit log.',
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/ayagmar/niri-computer-use' },
 			],
 			customCss: [
-				'@fontsource-variable/archivo/wdth.css',
-				'./src/generated/archivo-text.css',
 				'@fontsource-variable/jetbrains-mono/wght.css',
 				'./src/styles/tokens.css',
 				'./src/styles/theme.css',
 			],
 			components: {
 				Head: './src/components/Head.astro',
+				PageTitle: './src/components/PageTitle.astro',
+				Footer: './src/components/Footer.astro',
 			},
-			// Code on the black plate, as the home page's install steps show it: no window frame,
-			// the same dark theme in both modes, and lines wrapped to the width.
+			// Code on the plate, in the page's theme: no window frame, and lines wrapped to the
+			// width.
 			expressiveCode: {
-				themes: ['github-dark'],
+				themes: ['github-dark', 'github-light'],
 				defaultProps: { frame: 'none', wrap: true },
 				styleOverrides: {
 					borderWidth: '0px',
-					borderRadius: '0.75rem',
+					borderRadius: '2px',
 					codeBackground: 'var(--ncu-plate)',
 					frames: { frameBoxShadowCssValue: 'none' },
 				},
