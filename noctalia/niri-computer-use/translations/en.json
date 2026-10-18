@@ -128,6 +128,7 @@
     "paste": "Pasted {count} characters",
     "and_enter": " and pressed Enter",
     "key": "Pressed {keys}",
+    "keys": "Pressed {n} keys",
     "focus_window": "Focused a window",
     "focus_workspace": "Switched workspace",
     "launch": "Launched {preset}",

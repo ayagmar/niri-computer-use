@@ -5,6 +5,7 @@
 local look = require("./lib/look.luau")
 local actions = require("./lib/actions.luau")
 local time = require("./lib/time.luau")
+local feedRows = require("./lib/feed.luau")
 
 local view = noctalia.state.get("desk")
 local open = false
@@ -72,19 +73,26 @@ local function who(call): string
   return call.client
 end
 
--- A call's row. Who made it shows only where the agent changes from the row
--- above, and an error always shows.
+-- A feed row. Who made it shows only where the agent changes from the row
+-- above; an error, and the keys a folded row pressed, always show.
 local function row(call, now: number, showWho: boolean)
   local at = time.parse(call.ts)
-  local meta = if showWho then who(call) else nil
+  local meta = {}
+  if showWho then
+    table.insert(meta, who(call))
+  end
+  if call.detail then
+    table.insert(meta, call.detail)
+  end
   if call.error then
-    meta = if meta then `{meta} · {call.error}` else call.error
+    table.insert(meta, call.error)
   end
   local lines = { ui.label({ text = call.text, maxLines = 1 }) }
-  if meta then
-    table.insert(lines, ui.label({ text = meta, fontSize = 11, color = "on_surface_variant", maxLines = 1 }))
+  if #meta > 0 then
+    local text = table.concat(meta, " · ")
+    table.insert(lines, ui.label({ text = text, fontSize = 11, color = "on_surface_variant", maxLines = 1 }))
   end
-  return ui.row({ key = call.key, gap = 10, align = "center", paddingV = 5 }, {
+  return ui.row({ key = call.key, gap = 10, align = "center", paddingV = 5, tooltip = call.detail }, {
     ui.glyph({ name = call.glyph, size = 16, color = look.outcomeRole(call.outcome) }),
     ui.column({ gap = 1, flexGrow = 1 }, lines),
     ui.label({
@@ -197,7 +205,7 @@ local function agentList()
 end
 
 local function feed(now: number)
-  local calls = view.calls or {}
+  local calls = feedRows.rows(view.calls or {}, tr)
   if #calls == 0 then
     return ui.column({ flexGrow = 1, align = "center", justify = "center" }, {
       ui.label({ text = tr("panel.empty"), color = "on_surface_variant" }),

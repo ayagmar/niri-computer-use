@@ -94,6 +94,20 @@ t.group("panel", function()
     t.ok(button(host, "Stop").props.enabled, "Stop is disabled while driving")
   end)
 
+  t.test("folds an agent's run of key presses into one row that names the keys", function()
+    local host = desktop()
+    local panel = env.start(host, "panel.luau")
+    panel.call("onOpen", {})
+    drive(host)
+    for i, keys in { { "Escape", "comma" }, { "Escape", "c" } } do
+      host.event({ event = "action", ts = `2026-10-17T15:06:0{i}.000Z`, session = "claude-code/4711", project = "shop", tool = "key", args = { keys = keys }, accepted = true })
+    end
+    local texts = host.texts(host.panelTree)
+    t.ok(has(texts, "Pressed 4 keys"), table.concat(texts, " | "))
+    t.ok(has(texts, "Claude Code in shop · Escape, comma · Escape, c"), table.concat(texts, " | "))
+    t.ok(not has(texts, "Pressed Escape, comma"), "a folded press still has its own row")
+  end)
+
   t.test("lists every connected agent, marking the driver and one left on an old build", function()
     local host = desktop()
     local panel = env.start(host, "panel.luau")

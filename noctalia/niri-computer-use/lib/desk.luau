@@ -59,6 +59,9 @@ export type Call = {
   project: string?,
   ts: string,
   durationMs: number?,
+  -- A key call's combinations, such as `{ "Escape", "comma" }`, when the log
+  -- kept them rather than only their count.
+  keys: { string }?,
 }
 
 export type Change =
@@ -209,6 +212,18 @@ local function state(desk: Desk, event: any, nowMs: number, found: { Change })
   desk.settled = true
 end
 
+local function keyList(tool: string, args: any): { string }?
+  if tool ~= "key" or type(args) ~= "table" or type(args.keys) ~= "table" or #args.keys == 0 then
+    return nil
+  end
+  for _, combo in args.keys do
+    if type(combo) ~= "string" then
+      return nil
+    end
+  end
+  return table.clone(args.keys)
+end
+
 local function call(desk: Desk, event: any, tr: Tr, changes: { Change })
   local tool = tostring(event.tool or "?")
   local session = tostring(event.session or "?")
@@ -224,6 +239,7 @@ local function call(desk: Desk, event: any, tr: Tr, changes: { Change })
     project = if type(event.project) == "string" then event.project else nil,
     ts = tostring(event.ts or ""),
     durationMs = if type(event.duration_ms) == "number" then event.duration_ms else nil,
+    keys = keyList(tool, event.args),
   }
   table.insert(desk.calls, entry)
   if #desk.calls > M.KEEP then

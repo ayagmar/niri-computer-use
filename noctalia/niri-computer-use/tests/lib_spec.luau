@@ -6,6 +6,7 @@ local desk, host = env.module("lib/desk.luau")
 local describe = env.module("lib/describe.luau")
 local time = env.module("lib/time.luau")
 local command = env.module("lib/command.luau")
+local feed = env.module("lib/feed.luau")
 local tr = host.globals.noctalia.tr
 
 local NOW = 1_790_000_000_000
@@ -228,6 +229,68 @@ t.group("desk", function()
     t.eq(kinds(desk.feed(d, { event = "action", tool = "key", session = "pi/7", error = "cancelled" }, "", NOW, tr)), "")
     t.eq(kinds(desk.feed(d, { event = "action", tool = "key", session = "pi/7", accepted = false }, "", NOW, tr)), "")
     t.eq(d.calls[3].outcome, "refused")
+  end)
+end)
+
+t.group("feed", function()
+  -- The feed's rows after these calls, as watch sends them: `{ session, tool, args, error? }`.
+  local function rows(calls)
+    local d = desk.new()
+    desk.feed(d, { event = "hello", format = 1 }, "", NOW, tr)
+    for i, c in calls do
+      local ts = `2026-10-17T15:06:{string.format("%02d", i)}.000Z`
+      desk.feed(d, { event = "action", ts = ts, session = c[1], tool = c[2], args = c[3], error = c[4] }, "", NOW, tr)
+    end
+    return feed.rows(d.calls, tr)
+  end
+
+  local function texts(list)
+    local out = {}
+    for _, r in list do
+      table.insert(out, r.text)
+    end
+    return table.concat(out, " | ")
+  end
+
+  t.test("one agent's consecutive key presses fold into one row with each call's keys", function()
+    local list = rows({
+      { "pi/7", "click", {} },
+      { "pi/7", "key", { keys = { "Escape", "comma" } } },
+      { "pi/7", "key", { keys = { "Escape", "question" } } },
+      { "pi/7", "key", { keys = { "Return" } } },
+    })
+    t.eq(texts(list), "Clicked | Pressed 5 keys")
+    t.eq(list[2].detail, "Escape, comma · Escape, question · Return")
+    t.eq(list[2].ts, "2026-10-17T15:06:04.000Z", "a folded row's time is its newest call's")
+    -- The row keeps its first call's key, so it stays put as presses join it.
+    local grown = rows({
+      { "pi/7", "click", {} },
+      { "pi/7", "key", { keys = { "Escape", "comma" } } },
+      { "pi/7", "key", { keys = { "Escape", "question" } } },
+    })
+    t.eq(grown[2].key, list[2].key)
+  end)
+
+  t.test("a lone key press keeps its sentence, and another agent, a failure or another call ends a run", function()
+    local list = rows({
+      { "pi/7", "key", { keys = { "Escape" } } },
+      { "claude-code/9", "key", { keys = { "a" } } },
+      { "claude-code/9", "key", { keys = { "b" } }, "focus_mismatch" },
+      { "claude-code/9", "key", { keys = { "c" } } },
+      { "claude-code/9", "status", {} },
+      { "claude-code/9", "key", { keys = { "d" } } },
+    })
+    t.eq(texts(list), "Pressed Escape | Pressed a | Pressed b | Pressed c | Checked readiness | Pressed d")
+    t.eq(list[3].error, "focus_mismatch")
+  end)
+
+  t.test("key presses the log kept only a count of never fold, so no key is made up", function()
+    local list = rows({
+      { "pi/7", "key", { keys = { "a" } } },
+      { "pi/7", "key", { keys = { category = "invalid_keys", count = 2 } } },
+      { "pi/7", "key", { keys = { "b" } } },
+    })
+    t.eq(texts(list), "Pressed a | Pressed ? | Pressed b")
   end)
 end)
 
