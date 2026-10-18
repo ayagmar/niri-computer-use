@@ -247,10 +247,12 @@ t.group("panel", function()
     t.eq(rows, 1, "agent rows drawn while folded")
     t.ok(not scrolls, "a folded list scrolls")
     fold(host).props.onClick()
-    local list = host.find(host.panelTree, function(n)
-      return n.type == "scroll" and n.props.key == "agents"
+    -- Noctalia lets a scroll grow to its rows, so a column of fixed height holds it.
+    local holder = host.find(host.panelTree, function(n)
+      return n.type == "column" and n.props.height ~= nil and n.children[1] and n.children[1].props.key == "agents"
     end)
-    t.ok(list and list.props.height ~= nil, "the unfolded list doesn't scroll within a fixed height")
+    t.ok(holder ~= nil and holder.children[1].type == "scroll", "the unfolded list doesn't scroll within a fixed height")
+    local list = holder.children[1]
     for _, name in { "Claude Code in shop", "Pi in p3", "Pi in p7" } do
       t.ok(has(host.texts(list), name), `{name} is missing once unfolded`)
     end

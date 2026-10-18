@@ -164,7 +164,7 @@ end
 -- A list of up to this many rows shows whole; a longer one folds to its first
 -- row, the driver while one drives, so the feed keeps its room.
 local FOLD_PAST = 3
--- The unfolded list scrolls within this height, about four rows.
+-- The unfolded list scrolls within this height, three rows and part of a fourth.
 local AGENTS_HEIGHT = 112
 
 -- "Connected agents", how many, and once how many of them run an old build.
@@ -218,7 +218,10 @@ local function agentList()
   end
   local hidden = #agents - #groups[1].pids
   if agentsOpen then
-    return ui.column({ gap = 2 }, { title, ui.scroll({ key = "agents", height = AGENTS_HEIGHT, gap = 2 }, rows), foldRow(hidden) })
+    -- Noctalia sizes a scroll to its rows whatever its own height, so a column
+    -- of that height holds it.
+    local list = ui.column({ height = AGENTS_HEIGHT }, { ui.scroll({ key = "agents", flexGrow = 1, gap = 2 }, rows) })
+    return ui.column({ gap = 2 }, { title, list, foldRow(hidden) })
   end
   return ui.column({ gap = 2 }, { title, rows[1], foldRow(hidden) })
 end
