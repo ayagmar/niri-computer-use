@@ -84,11 +84,11 @@ Without the script, download your machine's tarball, check it, and put the binar
 
 ```sh
 arch=$(uname -m)
-curl -LO "https://github.com/ayagmar/niri-computer-use/releases/download/v0.1.4/niri-computer-use-0.1.4-$arch-linux.tar.gz"
-curl -LO "https://github.com/ayagmar/niri-computer-use/releases/download/v0.1.4/niri-computer-use-0.1.4-$arch-linux.tar.gz.sha256"
-sha256sum -c "niri-computer-use-0.1.4-$arch-linux.tar.gz.sha256"
-tar -xzf "niri-computer-use-0.1.4-$arch-linux.tar.gz"
-install -Dm755 -t ~/.local/bin "niri-computer-use-0.1.4-$arch-linux/niri-computer-use"
+curl -LO "https://github.com/ayagmar/niri-computer-use/releases/download/v0.1.5/niri-computer-use-0.1.5-$arch-linux.tar.gz"
+curl -LO "https://github.com/ayagmar/niri-computer-use/releases/download/v0.1.5/niri-computer-use-0.1.5-$arch-linux.tar.gz.sha256"
+sha256sum -c "niri-computer-use-0.1.5-$arch-linux.tar.gz.sha256"
+tar -xzf "niri-computer-use-0.1.5-$arch-linux.tar.gz"
+install -Dm755 -t ~/.local/bin "niri-computer-use-0.1.5-$arch-linux/niri-computer-use"
 ~/.local/bin/niri-computer-use --version
 ```
 
@@ -98,7 +98,7 @@ The tarball also holds the skill, with the README, the changelog and the license
 
 ```sh
 mkdir -p ~/.local/share/niri-computer-use ~/.claude/skills ~/.agents/skills
-cp -r "niri-computer-use-0.1.4-$arch-linux/skills" ~/.local/share/niri-computer-use/
+cp -r "niri-computer-use-0.1.5-$arch-linux/skills" ~/.local/share/niri-computer-use/
 ln -s ~/.local/share/niri-computer-use/skills/niri-computer-use ~/.claude/skills/niri-computer-use
 ln -s ~/.local/share/niri-computer-use/skills/niri-computer-use ~/.agents/skills/niri-computer-use
 ```
@@ -107,7 +107,7 @@ To update, install the new release's binary the same way. Remove the old skill b
 
 ```sh
 rm -rf ~/.local/share/niri-computer-use/skills
-cp -r "niri-computer-use-0.1.4-$arch-linux/skills" ~/.local/share/niri-computer-use/
+cp -r "niri-computer-use-0.1.5-$arch-linux/skills" ~/.local/share/niri-computer-use/
 ```
 
 ## Updating while agents run
