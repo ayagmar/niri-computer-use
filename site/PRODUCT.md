@@ -45,7 +45,7 @@ The user's own niri session on Arch-style Linux, often with Noctalia as the shel
 
 - Measured results in `docs/results/`: GTK 4 element clicks 100/100 (`m9.md`), a stop mid-drag ends the call `stopped` and releases the button (`m4.md`), Noctalia panels open and observed in 50–51 ms (`m5.md`), a killed server's held button released by the next server in 3–4 ms (`input-robustness.md`).
 - Demo recordings from the user's own niri 26.04 desktop (one 2560×1440 output, Noctalia): real Claude Code sessions (Opus 5.5) with the installed server, nothing scripted. Thinking time between calls is shortened to 1.2 s and calls play in real time; every place a recording is shown must say so. The home page shows one, `errand`: `site/public/clips/errand.mp4`, the desktop without the caption band, with its calls and their times in `site/src/lib/home.ts`.
-- No testimonials, users, stars or adoption numbers exist; don't invent any.
+- No testimonials, users or adoption numbers exist; don't invent any. The home page shows the repository's star count only as GitHub reports it, live.
 
 ## Product Principles
 

@@ -118,7 +118,7 @@ One system covers the home page (`site/src/pages/index.astro`, words in `src/lib
 
 The home page is the manual page `niri-computer-use(1)` as man shows it in a terminal. It has a running head and foot, capital section names (NAME, SYNOPSIS, DESCRIPTION, INSTALLATION, SAFETY, EXAMPLE, HISTORY, BUGS, SEE ALSO), bold for what you type, underline for paths, and less's reverse-video status line, the pager line, pinned to the bottom of the window. It opens on the name at display size, the commands and the install line, then EXAMPLE: the errand drawn in the agent's own 1280 by 720 screenshot pixels, with rulers, a terminal where the real calls appear and Files where they land. The other sections follow with their names hanging in a left gutter. The docs are the rest of the manual: each page opens on a running head and ends on a running foot, and its section headings are capitals.
 
-Everything is set in JetBrains Mono Variable. Dark is a warm black with parchment ink, light is paper with brown-black ink, and one amber marks links and focus. The home page follows the system colour scheme (`prefers-color-scheme`, `color-scheme: light dark`). The docs follow Starlight's theme switch, which sets `data-theme` on the root. One script, `src/scripts/less.ts`, adds less's keys, search, copy buttons and the example's replay. The home page, the 404 and the docs read and work without it.
+Everything is set in JetBrains Mono Variable. Dark is a warm black with parchment ink, light is paper with brown-black ink, and one amber marks links and focus. The home page follows the system colour scheme (`prefers-color-scheme`, `color-scheme: light dark`) until the visitor picks one with the switch in its running head or Starlight's in the docs; both keep the choice in `localStorage` under `starlight-theme` and set `data-theme` on the root, and an inline head script applies it before the page paints. `src/scripts/less.ts` adds less's keys, search and copy buttons, `src/scripts/stage.ts` plays the drawn errand, and `src/scripts/top.ts` adds the theme switch and the star count. The home page, the 404 and the docs read and work without them.
 
 **Key Characteristics:**
 - One face, JetBrains Mono Variable 400 to 800; ligatures are off on the home page. Only the home page's name is set at display size.
@@ -208,7 +208,7 @@ Square. The home page has no radius. The docs set 2px on code blocks (the expres
 ## Components
 
 ### Running Head and Foot
-Home: the header repeats `NIRI-COMPUTER-USE(1)` on both sides around "User Commands". The footer has a link to the release (`niri-computer-use <version>`), the release date from the changelog and the name. Docs: `PageTitle.astro` prints the page name and section on both sides (`SAFETY(7)`) around "niri-computer-use manual", hidden from assistive technology, then the real h1. `Footer.astro` adds the default Starlight footer, then a rule and the same release link, date and page name. Names come from `manName`: the last path part in capitals, a group's name for its overview page, section 1 for `reference/cli`, 5 for `concepts/configuration`, and 7 for the rest. The footer's link is amber, the rest `dim`.
+Home: the header has `NIRI-COMPUTER-USE(1)` and "User Commands", then on the right a GitHub link, with GitHub's star count in `dim` after it when GitHub answers within 4s, and the theme switch, an underlined amber button naming the other theme. The footer has a link to the release (`niri-computer-use <version>`), the release date from the changelog and the name. Docs: `PageTitle.astro` prints the page name and section on both sides (`SAFETY(7)`) around "niri-computer-use manual", hidden from assistive technology, then the real h1. `Footer.astro` adds the default Starlight footer, then a rule and the same release link, date and page name. Names come from `manName`: the last path part in capitals, a group's name for its overview page, section 1 for `reference/cli`, 5 for `concepts/configuration`, and 7 for the rest. The footer's link is amber, the rest `dim`.
 
 ### Section
 A bold capital name at the left edge with 1.5em above, then text indented 7ch. NAME is a styled paragraph (`.sh`, hidden from assistive technology) over the page's h1, so the h1 is the line `niri-computer-use - <summary>`, indented 7ch. SYNOPSIS lists the bold commands separated by ` | `.
@@ -262,7 +262,7 @@ Selection is `select` with `bold` text. Focus is a 2px amber outline offset 2px 
 ### Don't:
 - **Don't** add a second typeface or a display face; the wordmark is the same mono at 800.
 - **Don't** add cards, shadows, gradients, glow or blur. The opening is the man page's NAME set large, not a marketing hero.
-- **Don't** add a theme switch.
+- **Don't** add a second theme switch: the home page's and Starlight's share one stored choice.
 - **Don't** let the script own content or navigation: a link or a section must work without it.
 - **Don't** use amber as a fill beyond the select tint.
 - **Don't** put kickers, eyebrows or small uppercase labels above headings. Capital section names are the heading itself.

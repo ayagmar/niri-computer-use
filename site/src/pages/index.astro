@@ -63,13 +63,24 @@ const released = history.find((release) => release.version === version);
 		<meta name="theme-color" content="#f7f5ee" media="(prefers-color-scheme: light)" />
 		<meta name="theme-color" content="#10110f" media="(prefers-color-scheme: dark)" />
 		<Slide />
+		<script is:inline>
+			// The theme the visitor chose here or in the docs (Starlight keeps it under this key),
+			// set before the page paints; otherwise the system's.
+			try {
+				const theme = localStorage.getItem('starlight-theme');
+				if (theme == 'light' || theme == 'dark') document.documentElement.dataset.theme = theme;
+			} catch {}
+		</script>
 	</head>
 	<body>
 		<a class="skip" href="#main">Skip to content</a>
 		<header class="running wide">
 			<span>NIRI-COMPUTER-USE(1)</span>
 			<span class="mid">User Commands</span>
-			<span>NIRI-COMPUTER-USE(1)</span>
+			<span class="top-links">
+				<a href={github}>GitHub<span data-stars></span></a>
+				<button type="button" data-theme-toggle hidden></button>
+			</span>
 		</header>
 
 		<main id="main" data-find>
@@ -186,6 +197,9 @@ const released = history.find((release) => release.version === version);
 			<button type="button" data-help hidden>help</button>
 		</nav>
 		<Less find />
+		<script>
+			import '../scripts/top';
+		</script>
 	</body>
 </html>
 
@@ -206,6 +220,24 @@ const released = history.find((release) => release.version === version);
 		width: min(100% - 4ch, var(--gutter) + var(--measure));
 		margin-inline: auto;
 		padding-inline: 0;
+	}
+	/* The source and the theme switch, where the running head names the page again. */
+	.top-links {
+		display: flex;
+		gap: 2ch;
+	}
+	.top-links [data-stars]:not(:empty) {
+		color: var(--ncu-dim);
+	}
+	.top-links button {
+		padding: 0;
+		border: 0;
+		background: none;
+		color: var(--ncu-accent);
+		cursor: pointer;
+		text-decoration: underline;
+		text-decoration-thickness: 1px;
+		text-underline-offset: 3px;
 	}
 	.running.wide {
 		padding-top: 1.5rem;
