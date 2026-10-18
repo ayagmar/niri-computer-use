@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Changed
+
+- The Noctalia plugin's panel puts Stop in its status card, beside the settings button. It shows only while an agent holds the desktop, for five minutes after one gives it back, since agents often take it again before asking you something, and while `watch` is down. It used to sit in the Activity heading, where it read as stopping the feed, and showed while no agent was there.
+- An agent's consecutive key presses, each within 30 seconds of the last, share one row in the panel's feed, such as `Pressed 4 keys`, with each call's keys under it and in its tooltip. A failed press, another agent or any other call starts a new row.
+- With more than three rows, the panel's agent list shows only the driver, or the first agent while none drives, then `and N more`, where it showed three. Its heading counts the connected agents and says once how many are on an old build; each of their rows says `old build`, where it said `old build, restart it`.
+
+### Fixed
+
+- The panel's unfolded agent list scrolls within its height. It grew to fit every row and pushed the activity feed down to two rows with eight agents connected.
+- Two sessions of one agent in one project showed as two identical rows in the panel's agent list. They now share a row that counts them, such as `2 sessions`, with their PIDs in its tooltip. The driver keeps a row of its own, and servers whose agent `watch` couldn't name never share one.
+- The bar tooltip separates the last call from its time with `·` instead of a comma, so `Pressed Escape, c` no longer reads as one more key. Connected agents and old builds share one line.
+
 ## 0.1.4 - 2026-10-18
 
 ### Added
