@@ -91,9 +91,9 @@
     "resume": "Couldn't resume agents"
   },
   "bar": {
-    "last": "Last: {text}, {ago}",
+    "last": "Last: {text} · {ago}",
     "agents": "Connected agents: {n}",
-    "outdated": "On an old build: {n}",
+    "agents_outdated": "Connected agents: {n} · {old} on an old build",
     "hint_stop": "Click for details · right-click to stop agents",
     "hint_resume": "Click for details · right-click to resume agents"
   },

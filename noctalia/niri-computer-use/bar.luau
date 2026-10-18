@@ -6,6 +6,7 @@
 local look = require("./lib/look.luau")
 local actions = require("./lib/actions.luau")
 local time = require("./lib/time.luau")
+local desk = require("./lib/desk.luau")
 
 local PANEL = "ayagmar/niri-computer-use:panel"
 -- One breath, and how often the bar redraws while it breathes.
@@ -42,17 +43,11 @@ local function tooltip(status: string): string
     table.insert(lines, tr("bar.last", { text = last.text, ago = ago }))
   end
   local agents = view.agents or {}
-  if #agents > 0 then
-    table.insert(lines, tr("bar.agents", { n = #agents }))
-  end
-  local outdated = 0
-  for _, agent in agents do
-    if agent.replaced then
-      outdated += 1
-    end
-  end
+  local outdated = desk.outdated(agents)
   if outdated > 0 then
-    table.insert(lines, tr("bar.outdated", { n = outdated }))
+    table.insert(lines, tr("bar.agents_outdated", { n = #agents, old = outdated }))
+  elseif #agents > 0 then
+    table.insert(lines, tr("bar.agents", { n = #agents }))
   end
   table.insert(lines, tr(if status == "stopped" then "bar.hint_resume" else "bar.hint_stop"))
   return table.concat(lines, "\n")

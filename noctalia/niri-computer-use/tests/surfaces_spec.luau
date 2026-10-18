@@ -40,6 +40,22 @@ t.group("bar", function()
     t.ok(host.bar.tooltip:find("Claude Code is driving", 1, true), host.bar.tooltip)
   end)
 
+  t.test("its tooltip names the last call apart from its keys, and agents with their old builds in one line", function()
+    local host = desktop()
+    env.start(host, "bar.luau")
+    host.event({ event = "hello", format = 1 })
+    host.event({
+      event = "state",
+      stopped = false,
+      input_dirty = false,
+      clients = { { pid = 1, agent = "pi", replaced = true }, { pid = 2, agent = "claude", replaced = false } },
+    })
+    host.event({ event = "action", ts = "2026-10-17T15:06:00.000Z", session = "pi/1", tool = "key", args = { keys = { "Escape", "c" } }, accepted = true })
+    local lines = string.split(host.bar.tooltip, "\n")
+    t.ok(has(lines, "Connected agents: 2 · 1 on an old build"), host.bar.tooltip)
+    t.ok(lines[3]:find("^Last: Pressed Escape, c · "), host.bar.tooltip)
+  end)
+
   t.test("breathes while an agent drives and rests otherwise", function()
     local host = desktop()
     env.start(host, "bar.luau")
