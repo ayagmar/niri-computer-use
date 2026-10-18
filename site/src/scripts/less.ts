@@ -1,5 +1,4 @@
-// less's keys, status line and search, niri's columns on the home page, and the example's
-// replay. Every page reads and works without this: it only adds to what is there.
+// less's keys, status line and search, and the home page example's replay. Every page reads and works without this: it only adds to what is there.
 
 import { matches } from '../lib/find';
 import { keySwitch } from '../lib/keys';
@@ -11,9 +10,6 @@ const pager = document.querySelector<HTMLElement>('.less');
 const msg = pager?.querySelector<HTMLElement>('.msg');
 const form = pager?.querySelector<HTMLFormElement>('.find');
 const input = form?.querySelector('input');
-const strip = document.querySelector<HTMLElement>('.strip');
-const columns = strip ? ([...strip.children] as HTMLElement[]) : [];
-const wide = matchMedia('(min-width: 75rem)');
 
 const keys = keySwitch(() => localStorage);
 const toggle = help.querySelector<HTMLButtonElement>('[data-keys]')!;
@@ -37,11 +33,9 @@ if (path) {
 	path.textContent = ` for ${address.replace(import.meta.env.BASE_URL.replace(/\/?$/, '/'), '')}`;
 }
 const line = () => parseFloat(getComputedStyle(document.body).lineHeight) || 24;
-// The keys scroll the focused EXAMPLE column when it scrolls on its own, else the page.
-const pane = () => (root.dataset.column == '1' && wide.matches ? columns[1] : null);
 // less's window is the screen less one line; ours keeps one more for the pager line.
-const screen_ = () => (pane()?.clientHeight ?? innerHeight) - 2 * line();
-const down = (y: () => number) => () => (pane() ?? window).scrollBy(0, y());
+const screen_ = () => innerHeight - 2 * line();
+const down = (y: () => number) => () => scrollBy(0, y());
 
 // The pager line says (END) at the bottom, as less does.
 const end = () => pager?.toggleAttribute('data-end', innerHeight + scrollY >= root.scrollHeight - 2);
@@ -81,10 +75,7 @@ function find(dir: number) {
 				: hits.findLastIndex((r) => top(r) < 0);
 	if (!hits[i]) return say('Pattern not found');
 	at = i;
-	// A hit in the EXAMPLE column focuses it, and the column scrolls on its own.
-	focusColumn(columnOf(hits[i].startContainer), false);
-	const box = pane();
-	(box ?? window).scrollBy(0, top(hits[i]) - (box?.getBoundingClientRect().top ?? 0) - line());
+	scrollBy(0, top(hits[i]) - line());
 }
 if (form && input) {
 	form.onsubmit = (e) => {
@@ -102,26 +93,6 @@ if (form && input) {
 	};
 }
 
-// niri's columns: the focused one wears the ring, and the workspace scrolls to keep it in
-// view, whether a key, a click or Tab moved focus into it. `data-column` overrides an
-// #example in the address, which CSS also follows.
-function focusColumn(i: number, move = true) {
-	if (!wide.matches || !columns[i]) return;
-	root.dataset.column = String(i);
-	if (move) columns[i].focus({ preventScroll: true });
-}
-const columnOf = (node: EventTarget | null) => columns.findIndex((c) => c.contains(node as Node));
-strip?.addEventListener('focusin', (e) => focusColumn(columnOf(e.target), false));
-strip?.addEventListener(
-	'wheel',
-	(e) => Math.abs(e.deltaX) > Math.abs(e.deltaY) + 4 && focusColumn(e.deltaX > 0 ? 1 : 0),
-	{ passive: true },
-);
-for (const a of document.querySelectorAll<HTMLAnchorElement>('a[href="#example"]'))
-	a.onclick = (e) => {
-		if (wide.matches) e.preventDefault(), focusColumn(1);
-	};
-
 // Each command gets a copy button, and the pager line says what was copied.
 for (const pre of document.querySelectorAll<HTMLElement>('[data-find] pre')) {
 	const text = pre.textContent!;
@@ -137,46 +108,92 @@ for (const pre of document.querySelectorAll<HTMLElement>('[data-find] pre')) {
 	pre.append(button);
 }
 
-// The example plays in place, and its calls light up as the session makes them.
+// The example's calls replay at the times they went out, each in reverse video for its
+// round trip, once the window is in view and unless motion is reduced. The recording opens
+// under them as a second window when asked for, and then the rows follow it instead.
 const rows = [...document.querySelectorAll<HTMLElement>('[data-start]')];
-const mark = (video: HTMLVideoElement) => {
-	for (const row of rows) row.dataset.state = callState(video.currentTime, +row.dataset.start!, +row.dataset.ms!);
+const win = document.querySelector<HTMLElement>('[data-replay]');
+const motion = matchMedia('(prefers-reduced-motion: no-preference)');
+const clock = win?.querySelector<HTMLElement>('.clock');
+const again = win?.querySelector<HTMLButtonElement>('[data-again]');
+const last = Math.max(...rows.map((row) => +row.dataset.start! + Math.max(+row.dataset.ms! / 1000, 0.5)));
+const mark = (t: number) => {
+	for (const row of rows) row.dataset.state = callState(t, +row.dataset.start!, +row.dataset.ms!);
+	if (clock) clock.textContent = t < last ? `${t.toFixed(1)} s` : '(END)';
 };
-// One frame loop while the clip plays; a seek only marks the rows again.
+// One frame loop at a time, for the replay or the recording.
 let frame = 0;
-function track(video: HTMLVideoElement) {
+function run(time: () => number, going: () => boolean) {
 	cancelAnimationFrame(frame);
 	const step = () => {
-		mark(video);
-		if (!video.paused) frame = requestAnimationFrame(step);
+		mark(time());
+		if (going()) frame = requestAnimationFrame(step);
 	};
 	step();
+}
+function replay() {
+	const t0 = performance.now();
+	const t = () => (performance.now() - t0) / 1000;
+	run(t, () => t() < last);
+}
+function recording() {
+	let video = document.querySelector<HTMLVideoElement>('.win video');
+	const a = win?.querySelector<HTMLAnchorElement>('[data-play]');
+	if (video || !win || !a) return video;
+	video = Object.assign(document.createElement('video'), { src: a.href, controls: true, muted: true, playsInline: true });
+	video.setAttribute('aria-label', 'The recording of the session');
+	const v = video;
+	v.onplay = () => run(() => v.currentTime, () => !v.paused);
+	v.onseeked = () => mark(v.currentTime);
+	const box = Object.assign(document.createElement('div'), { className: 'win focused' });
+	box.append(v);
+	win.after(box);
+	return video;
+}
+function play(at: number) {
+	const video = recording();
+	if (!video) return;
+	video.currentTime = at;
+	video.play();
+	video.focus({ preventScroll: true });
+	video.parentElement!.scrollIntoView({ block: 'nearest', behavior: motion.matches ? 'smooth' : 'auto' });
 }
 for (const a of document.querySelectorAll<HTMLAnchorElement>('[data-play]'))
 	a.onclick = (e) => {
 		e.preventDefault();
-		// Asked before focusColumn, which moves focus to the column on a wide screen.
-		const still = document.querySelector('.still');
-		const focused = !!still?.contains(document.activeElement);
-		focusColumn(1);
-		let video = document.querySelector('video');
-		if (!video && still) {
-			video = Object.assign(document.createElement('video'), {
-				src: a.href,
-				poster: still.querySelector('img')!.currentSrc,
-				controls: true,
-				muted: true,
-				playsInline: true,
-			});
-			video.setAttribute('aria-label', 'The session, playing');
-			const v = video;
-			v.onplay = () => track(v);
-			v.onseeked = v.onended = () => mark(v);
-			still.replaceWith(video);
-			if (focused) video.focus({ preventScroll: true });
-		}
-		video.play();
+		play(0);
 	};
+// Each call's time plays the recording from that call.
+for (const row of rows) {
+	const cell = row.firstElementChild as HTMLElement;
+	const seek = Object.assign(document.createElement('button'), { type: 'button', textContent: cell.textContent });
+	seek.setAttribute('aria-label', `Play the recording from ${cell.textContent} s`);
+	seek.onclick = () => play(+row.dataset.start!);
+	cell.replaceChildren(seek);
+}
+// The replay button shows wherever the replay runs, and stays while it does, so focus
+// isn't lost from it.
+if (again && motion.matches) {
+	again.hidden = false;
+	again.onclick = () => {
+		const video = document.querySelector<HTMLVideoElement>('.win video');
+		if (video) play(0);
+		else replay();
+	};
+}
+if (win && rows.length && motion.matches) {
+	mark(0);
+	const seen = new IntersectionObserver(
+		([entry]) => {
+			if (!entry.isIntersecting) return;
+			seen.disconnect();
+			// Not over a replay or recording the visitor already started.
+			if (!frame && !document.querySelector('.win video')) replay();
+		},
+		{ threshold: 0.4 },
+	);
+	seen.observe(win);
+}
 
 const actions: Record<string, () => unknown> = {
 	j: down(line),
@@ -185,9 +202,9 @@ const actions: Record<string, () => unknown> = {
 	b: down(() => -screen_()),
 	d: down(() => screen_() / 2),
 	u: down(() => -screen_() / 2),
-	g: () => (pane() ?? window).scrollTo(0, 0),
-	G: () => (pane() ?? window).scrollTo(0, (pane() ?? root).scrollHeight),
-	h: () => help.showModal(),
+	g: () => scrollTo(0, 0),
+	G: () => scrollTo(0, root.scrollHeight),
+	'?': () => help.showModal(),
 	q: () =>
 		help.open
 			? help.close()
@@ -199,7 +216,6 @@ actions.e = actions.j;
 actions.y = actions.k;
 actions['<'] = actions.g;
 actions['>'] = actions.G;
-actions['?'] = actions.h;
 // On the docs, / opens Starlight's search, which itself only listens for Ctrl+K.
 const docsSearch = document.querySelector<HTMLButtonElement>('site-search button[data-open-modal]');
 if (docsSearch) actions['/'] = () => docsSearch.click();
@@ -208,17 +224,12 @@ if (form && input) {
 	actions.n = () => find(1);
 	actions.N = () => find(-1);
 }
-if (strip) {
-	actions.ArrowRight = () => focusColumn(1);
-	actions.ArrowLeft = () => focusColumn(0);
-}
 
 addEventListener('keydown', (e) => {
 	const act = actions[e.key];
 	if (!act || e.ctrlKey || e.altKey || e.metaKey || e.defaultPrevented || !keys.on()) return;
 	if ((e.target as Element).closest?.('input, textarea, select, video, [contenteditable]')) return;
 	if (help.open && e.key != 'q') return;
-	if (e.key.startsWith('Arrow') && !wide.matches) return;
 	e.preventDefault();
 	say('');
 	act();

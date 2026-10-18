@@ -1,6 +1,6 @@
 ---
 name: niri-computer-use
-description: The manual page niri-computer-use(1) as man shows it in a terminal, set in JetBrains Mono, for the home page and the docs. On a wide screen the home page sits in a niri workspace.
+description: The manual page niri-computer-use(1) as man shows it in a terminal, set in JetBrains Mono, for the home page and the docs. The home page is one flow, with its example as a niri window replaying a session's calls in a band across the window.
 colors:
   ground: "#f7f5ee"
   ink: "#2b2a25"
@@ -46,6 +46,17 @@ typography:
     fontSize: "1rem"
     fontWeight: 400
     lineHeight: 1.65
+  wordmark:
+    fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
+    fontSize: "clamp(2.1rem, 6.4vw, 4.6rem)"
+    fontWeight: 800
+    lineHeight: 1
+    letterSpacing: "-0.03em"
+  tagline:
+    fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
+    fontSize: "clamp(1.05rem, 1.8vw, 1.35rem)"
+    fontWeight: 400
+    lineHeight: 1.4
   code:
     fontFamily: "'JetBrains Mono Variable', ui-monospace, 'DejaVu Sans Mono', monospace"
     fontSize: "0.9375rem"
@@ -59,10 +70,11 @@ spacing:
   pad-pre: "0.15em 1ch"
   pad-less: "0.2rem 2ch"
   docs-content-width: "48rem"
-  column-man: "88ch"
-  column-example: "50rem"
-  column-gap: "16px"
-  column-ring: "4px"
+  home-gutter: "16ch"
+  home-measure: "76ch"
+  band-width: "92rem"
+  window-gap: "16px"
+  window-ring: "4px"
 components:
   page:
     backgroundColor: "{colors.ground}"
@@ -84,10 +96,10 @@ components:
     textColor: "{colors.ground}"
     typography: "{typography.body}"
     padding: "0.2rem 2ch"
-  column:
+  window:
     backgroundColor: "{colors.ground}"
     textColor: "{colors.ink}"
-  workspace-backdrop:
+  example-band:
     backgroundColor: "{colors.plate}"
   link:
     textColor: "{colors.accent}"
@@ -104,18 +116,17 @@ One system covers the home page (`site/src/pages/index.astro`, words in `src/lib
 
 **Creative North Star: "The Manual Page in a Terminal"**
 
-The home page is the manual page `niri-computer-use(1)` as man shows it in a terminal. It has a running head and foot, capital section names (NAME, SYNOPSIS, DESCRIPTION, INSTALLATION, SAFETY, EXAMPLE, HISTORY, BUGS, SEE ALSO), bold for what you type, underline for paths, and less's reverse-video status line, the pager line, pinned to the bottom of the window. On a screen at least 75rem wide the page is also a niri workspace: the man page is the focused column in a 4px amber ring, and EXAMPLE is the next column, peeking in at the right. The docs are the rest of the manual: each page opens on a running head and ends on a running foot, and its section headings are capitals.
+The home page is the manual page `niri-computer-use(1)` as man shows it in a terminal. It has a running head and foot, capital section names (NAME, SYNOPSIS, DESCRIPTION, INSTALLATION, SAFETY, EXAMPLE, HISTORY, BUGS, SEE ALSO), bold for what you type, underline for paths, and less's reverse-video status line, the pager line, pinned to the bottom of the window. It reads as one flow: NAME and SYNOPSIS open it with the name at display size and the install line, then EXAMPLE is a band across the window where a recorded session's calls replay in one niri window, in a 4px amber ring. The other sections follow with their names hanging in a left gutter. The docs are the rest of the manual: each page opens on a running head and ends on a running foot, and its section headings are capitals.
 
-Everything is set in JetBrains Mono Variable. Dark is a warm black with parchment ink, light is paper with brown-black ink, and one amber marks links and focus. The home page follows the system colour scheme (`prefers-color-scheme`, `color-scheme: light dark`). The docs follow Starlight's theme switch, which sets `data-theme` on the root. One script, `src/scripts/less.ts`, adds less's keys, search, copy buttons, column focus and the example's replay. The home page, the 404 and the docs read and work without it.
+Everything is set in JetBrains Mono Variable. Dark is a warm black with parchment ink, light is paper with brown-black ink, and one amber marks links and focus. The home page follows the system colour scheme (`prefers-color-scheme`, `color-scheme: light dark`). The docs follow Starlight's theme switch, which sets `data-theme` on the root. One script, `src/scripts/less.ts`, adds less's keys, search, copy buttons and the example's replay. The home page, the 404 and the docs read and work without it.
 
 **Key Characteristics:**
-- One face, JetBrains Mono Variable 400 and 700; ligatures are off on the home page.
+- One face, JetBrains Mono Variable 400 to 800; ligatures are off on the home page. Only the home page's name is set at display size.
 - One `light-dark()` palette for both themes; amber is the only accent.
-- Text is indented 7ch under its section name, in a column at most 84ch wide (80ch plus 2ch padding each side).
+- Docs and the 404 indent text 7ch under its section name. The home page hangs section names in a 16ch gutter beside a 76ch measure, and stacks them above the text under 48rem.
 - Running head and foot on the home page and on every docs page.
 - The pager line: reverse video, sticky, with a percentage that follows scrolling, `(END)` at the bottom, and messages and the search prompt in the same line.
-- Wide screens: two columns on the plate backdrop, 16px apart, the focused one in a 4px amber ring and the other in a 4px `rule` ring; the strip slides on niri's spring.
-- Narrow screens: one column, with EXAMPLE after the sections.
+- EXAMPLE is a `plate` band across the window: the call table is a `ground` window in a 4px amber ring. The recording, when asked for, opens as a second window 16px under it and takes the ring; the calls' ring turns `rule`.
 - Print is black on white, with each outside link's address after it.
 
 ## Colors
@@ -128,10 +139,10 @@ A warm, low-saturation palette. Each token has a light and a dark value, picked 
 | `ink` | #2b2a25 | #c9c6b9 | body text; pager line background; search matches and the call in flight |
 | `bold` | #0c0c0a | #f4f1e6 | groff bold, section names, code, table heads, selection text |
 | `dim` | #5c584e | #9a9588 | running head and foot, captions, copy button, calls still to come |
-| `rule` | #d4cfbf | #2f2d27 | hairlines, still frame, scrollbar track, the unfocused column's ring |
-| `accent` | #8a5300 | #e3a83c | links, focus ring, the focused column's ring, caret, `accent-color` |
+| `rule` | #d4cfbf | #2f2d27 | hairlines, band edges, scrollbar track, the unfocused window's ring |
+| `accent` | #8a5300 | #e3a83c | links, focus ring, the focused window's ring, caret, `accent-color` |
 | `select` | #f0dca8 | #3a3220 | text selection; Starlight accent-low |
-| `plate` | #eeeadd | #0a0b09 | code plate, copy button, image background in docs, the workspace backdrop on wide screens |
+| `plate` | #eeeadd | #0a0b09 | code plate, copy button, image background in docs, the EXAMPLE band |
 | `stop` | #b3261e | #ff6a57 | the one red, for danger asides in the docs |
 
 Measured contrast (WCAG):
@@ -148,7 +159,7 @@ The docs also use a few Starlight-only tints in `theme.css` (`accent-high` #5c38
 ### Named Rules
 **The Bold Rule.** Bold is the strongest ink, as a terminal shows groff's bold: bold weight and the `bold` colour together. In the docs, `strong` and `b` take Starlight's white, which is mapped to `bold`. Underline is groff's italic, for paths.
 
-**The One Amber Rule.** Amber is links, the focus ring, the focused column's ring, the caret and `accent-color`. The only amber-family fill is the pale `select` tint for selection and Starlight's low-accent backgrounds.
+**The One Amber Rule.** Amber is links, the focus ring, the focused window's ring, the caret and `accent-color`. The only amber-family fill is the pale `select` tint for selection and Starlight's low-accent backgrounds.
 
 ## Typography
 
@@ -157,7 +168,8 @@ The docs also use a few Starlight-only tints in `theme.css` (`accent-high` #5c38
 **Character:** one monospace for words and commands alike, with bold doing the work size does elsewhere.
 
 ### Hierarchy
-- **Home body** (400, 16px, 1.55; 14px under 40rem): all home and 404 text, and the less help dialog. Section names, NAME and the h1 are also 1em; section names are 700.
+- **Home body** (400, 16px, 1.55; 17px from 64rem, 14px under 40rem): all home and 404 text, and the less help dialog. Section names are 1em and 700.
+- **Wordmark** (800, `clamp(2.1rem, 6.4vw, 4.6rem)`, line height 1, -0.03em): the name in the home page's h1, in `bold`. The tagline under it is 400, `clamp(1.05rem, 1.8vw, 1.35rem)`, 1.4, balanced. DESCRIPTION's paragraph is 1.1rem and the call table 0.875rem.
 - **Running head and foot** (400, same size, `dim`): three parts, space-between with a 2ch gap. The middle part is hidden under 40rem on the home page.
 - **Docs title** (700, 1.75rem, letter-spacing 0): the h1 under the running head, which is 0.875-size Starlight small text in gray-3.
 - **Docs body** (line height 1.65): `--sl-text-body` drops to 0.9375rem under 50rem. h2 is 1.125rem, bold, uppercase, 0.02em tracking; h3 and h4 are 1rem bold.
@@ -168,9 +180,9 @@ The docs also use a few Starlight-only tints in `theme.css` (`accent-high` #5c38
 
 ## Layout
 
-Home, narrow (under 75rem): one column; the running head, sections, EXAMPLE, foot and pager line stack, with EXAMPLE after the sections and before the foot. Body padding `1.5rem 0 0`, header, main and footer at most 84ch wide with 2ch side padding. Section names sit at the left edge; paragraphs, `pre`, definition lists, tables, figures and the h1 are indented 7ch. A block following a block gets 1em above, and consecutive `pre` 0.25em. The definition list in SAFETY is an 11ch term column and a flexible description column. The still is at most 70ch wide. Tables have collapsed borders and 3ch column gaps; the call table right-aligns its last column.
+Home: one centred column, `min(100% - 4ch, 16ch + 76ch)` wide, holding the running head, every section and the running foot. Each section is a grid of a 16ch gutter, where its name sits, and its text; sections are 4.5rem apart. The opening (NAME, SYNOPSIS) starts `clamp(3rem, 12vh, 8rem)` below the running head: the wordmark, the tagline 1rem under it, SYNOPSIS 2.5rem below, then the install line in a plate with a 1px `rule` frame and the facts line in `dim` with links to INSTALLATION and EXAMPLE. The install line breaks only after a slash. EXAMPLE is a full-width `plate` band with `rule` hairlines above and below, 5.5rem below the opening; inside, at most 92rem wide, its name and caption sit on the same gutter grid, and the window is as wide as the text column. Under the call table, after a hairline, the window's line (0.875rem, `dim`) holds the replay's clock in `bold`, the "Watch the recording" link with the clip's facts, and a replay button at the end, which the script shows. SAFETY is a two-column grid of term and description, then the sandbox line under a hairline. Tables have collapsed borders; the call table right-aligns its first and last columns. The pager line's inline padding lines its text up with the column.
 
-Home, wide (75rem and up): a niri workspace. The body is the `plate` backdrop. A strip of columns sits 16px from the top and left, with 16px gaps. The man page column is 88ch wide; the EXAMPLE column is 50rem wide, sticky 16px from the top, at most the window height less 32px, and scrolls on its own. Columns are `ground` with a 4px outline: amber on the focused column, `rule` on the other. The man page is focused first; EXAMPLE is focused by `#example` in the address, or by `data-column` set by the script. Focusing EXAMPLE translates the strip left until its right edge meets the window's, on niri's spring over 0.4s. Under `prefers-reduced-motion: reduce` the strip and ring do not transition.
+Narrow: under 48rem the gutter goes: section names sit above their text, text is indented 3ch, the opening loses its NAME and SYNOPSIS labels, and SAFETY is one column.
 
 404: the same page as the home man page, at most 88ch wide and at least the window high, with the pager line at the bottom. The h1 reads "No manual entry for <path>" in bold, with the path filled in by the script (without it, "No manual entry"). SEE ALSO lists every page, as `man -k` does: the page name and its one-line description, one row each, stacked per page under 40rem.
 
@@ -205,16 +217,13 @@ A bold capital name at the left edge with 1.5em above, then text indented 7ch. N
 A sticky `nav` at the bottom, labelled "Pager": `ink` fill, `ground` text, links in `ground`. On the home page it holds "Manual page niri-computer-use(1)", a percentage, and links to install, safety, example and docs, then a help button the script reveals. On the 404 it reads "Manual page index" with links home and docs. The percentage is replaced by `(END)` at the bottom of the page. A status message from the script (`copied: <command>`, `Pattern not found`, `No previous search pattern`, `Nothing to go back to`, `Copy failed: the browser refused the clipboard`) replaces the prompt in the same line. `/` opens the search prompt in the line, with a `/` label and an input; Enter searches, Escape leaves it. Matches are marked by the `find` highlight in reverse video (`ink` fill, `ground` text); `n` and `N` step through them and scroll the match to the top line. Search is on the home page and the 404; the docs keep `/` for Starlight's search. Where `animation-timeline: scroll()` is supported, a registered integer `--ncu-read` runs from 0 to 100 as the page scrolls and the percentage is printed from it; elsewhere the percentage is absent. Focus rings on its links use the ground colour. `scroll-padding-bottom` of 3.5rem keeps anchors clear of it.
 
 ### Less Help
-`Less.astro` adds a full-window `dialog` (ground fill, ink text) that `h`, `?` or the help button opens. Its title is SUMMARY OF LESS COMMANDS, then a table of keys in bold with what each does, then a button to turn the keys off or on, and a reverse-video line at the bottom, "HELP -- Press q when done", with a close button. The keys: `j e`, `k y`, `f`, `b`, `d u`, `g <`, `G >`, `/pattern`, `n N`, `h ?`, `q`, and `→ ←` for the columns on the home page. They are ignored while typing in a field or video, and with Ctrl, Alt or Super held. The button "Turn these keys off" stores the choice in `localStorage` and applies on every page, which satisfies WCAG 2.1.4. `q` closes the help, or else goes back a page when the visitor came from this site.
-
-### Columns
-Focus moves between the man page and EXAMPLE by `→` and `←`, by clicking or tabbing into a column, by a horizontal wheel or trackpad swipe, and by the example links (`#example`). The keys scroll the focused column. Under 75rem the arrows do nothing and the page is one column.
+`Less.astro` adds a full-window `dialog` (ground fill, ink text) that `?` or the help button opens. Its title is SUMMARY OF LESS COMMANDS, then a table of keys in bold with what each does, then a button to turn the keys off or on, and a reverse-video line at the bottom, "HELP -- Press q when done", with a close button. The keys: `j e`, `k y`, `f`, `b`, `d u`, `g <`, `G >`, `/pattern`, `n N`, `?` and `q`. `h` is left free, as vim's left. They are ignored while typing in a field or video, and with Ctrl, Alt or Super held. The button "Turn these keys off" stores the choice in `localStorage` and applies on every page, which satisfies WCAG 2.1.4. `q` closes the help, or else goes back a page when the visitor came from this site.
 
 ### Copy Button
 The script adds a `copy` button to each command, in the plate's top right corner: `plate` fill, `dim` text, `bold` on hover. It copies the command and reports it in the pager line. Hidden in print.
 
 ### Example Replay
-The still links to the clip. The script replaces the still with the clip, muted and with controls, and plays it in place; the call table's rows follow the clip. A row is `next` (calls to come, `dim`), `now` (the call in flight, reverse video) or `done` (made, `bold`), which fade over 0.15s. The call table has three columns: at (seconds), call and ms, with the first and last right-aligned.
+Unless motion is reduced, the calls replay once at the times they went out when 40% of the window is in view: the clock counts in seconds, then says `(END)`; the replay button, shown only where the replay runs, starts it again at any time. "Watch the recording" opens the clip as a second window under the calls, muted and with controls, and plays it; the rows then follow the clip. Each row's time becomes a button that plays the recording from that call. Without the script, or under reduced motion, every row shows and the link opens the MP4. A row is `next` (calls to come, `dim`), `now` (the call in flight, reverse video) or `done` (made, `bold`), which fade over 0.15s. The call table has three columns: at (seconds), call and ms, with the first and last right-aligned.
 
 ### Links
 Amber with a 1px underline offset 3px, 2px on hover. In docs, links in the article use Starlight's accent text colour with the same offsets. `.refs a` stays on one line. See-also entries read like `safety(7)`.
@@ -226,7 +235,7 @@ A `pre` on `plate`, text in `bold`, indented 7ch with 0.15em 1ch padding. Docs c
 SAFETY is a definition list of bold terms and descriptions. The example call table (`call`, `ms`) and the history table (version link, date, summary) are plain, with tabular numerals. Docs reference tables keep the first column's code on one line above 50rem.
 
 ### Still
-One figure in the EXAMPLE column, at most 70ch wide on the narrow layout and the column's width on the wide one: the still links to the clip, in a 1px `rule` frame, loaded eagerly at high priority as AVIF with a JPG fallback. The caption states the clip's length, format and size, read at build time, with a "Play the clip" link. No autoplay and no overlay; the clip plays only after a click.
+None on the home page: the recording is a link, and its facts (length, format and size) are read at build time.
 
 ### Selection, Focus, Caret
 Selection is `select` with `bold` text. Focus is a 2px amber outline offset 2px on `:focus-visible`, as niri rings the focused column. The caret and `accent-color` are amber. The scrollbar uses `rule` on `ground`.
@@ -235,7 +244,7 @@ Selection is `select` with `bold` text. Focus is a 2px amber outline offset 2px 
 `--ncu-spring` is niri's default spring (damping ratio 1, stiffness 800) over its 0.4s, written as a `linear()` easing in `tokens.css`. All motion is off under `prefers-reduced-motion: reduce`.
 - Pages crossfade by view transition (cross-document, `@view-transition { navigation: auto }`), with the docs header named so it holds still.
 - Between the home page and the docs they slide instead: the page goes left when entering the docs and right coming back, on the spring over 0.4s. `Slide.astro` is an inline head script on the `pagereveal` event that adds the `left` or `right` transition type; the home page, the 404 and the docs all include it.
-- On a wide screen the strip slides on the spring over 0.4s, and the column ring changes colour over 0.2s.
+- Where the browser ties animation to a view timeline, the calls window opens as the band scrolls in, from 0.94 scale and 0.4 opacity. The window rings change colour over 0.2s.
 - The replay's row states fade over 0.15s.
 - The less percentage counts with scrolling.
 
@@ -244,7 +253,7 @@ Selection is `select` with `bold` text. Focus is a 2px amber outline offset 2px 
 ### Do:
 - **Do** take every colour from `tokens.css`; the home page and docs share it.
 - **Do** keep the running head and foot, with version and date taken from the build.
-- **Do** write section names in capitals and indent their text by 7ch (3ch under 40rem).
+- **Do** write section names in capitals: hung in the gutter on the home page, with text indented 7ch in the docs and the 404 (3ch on phones).
 - **Do** keep the focus ring amber, 2px, offset 2px; on the pager line it is the ground colour.
 - **Do** keep the home page, 404 and docs readable and usable without JavaScript, and printable, with link addresses after outside links. Scripts only add to them.
 - **Do** keep every key off when the visitor turns it off, and ignore keys in fields and with modifiers.
@@ -253,12 +262,12 @@ Selection is `select` with `bold` text. Focus is a 2px amber outline offset 2px 
 - **Do** say only what is true: the version, dates, release rows and clip facts come from the build.
 
 ### Don't:
-- **Don't** add a second typeface or a display face.
-- **Don't** add cards, shadows, gradients, glow, blur or hero blocks.
+- **Don't** add a second typeface or a display face; the wordmark is the same mono at 800.
+- **Don't** add cards, shadows, gradients, glow or blur. The opening is the man page's NAME set large, not a marketing hero.
 - **Don't** add a theme switch.
 - **Don't** let the script own content or navigation: a link or a section must work without it.
 - **Don't** use amber as a fill beyond the select tint.
 - **Don't** put kickers, eyebrows or small uppercase labels above headings. Capital section names are the heading itself.
-- **Don't** autoplay video or put a play overlay on the still.
+- **Don't** animate the replay under reduced motion, or play the clip with sound or unasked.
 
 Not canonized, as defects or drift the build carries: the 2px radius on docs code and images (the home page is square; a future surface should be square); the Starlight-only tints in `theme.css`, tied to Starlight's variables; the stop red's contrast, which is not in the measured set.

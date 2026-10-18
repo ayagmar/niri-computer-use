@@ -31,9 +31,8 @@ export const home = {
 	// in ms. From the recording's timeline, which `scripts/demo-timeline.py` wrote.
 	example: {
 		clip: 'errand',
-		alt: 'Play the clip: Files with two screenshots selected and its right-click menu open.',
 		caption:
-			'Claude Code (Opus 5.5) puts two screenshots into a new folder in Files. Its eleven calls, with when each went out and its round trip. The clip cuts thinking time.',
+			'Claude Code (Opus 5.5) puts two screenshots into a new folder in Files. Its eleven calls, with when each went out and its round trip, from the recording, which cuts thinking time.',
 		calls: [
 			[1.2, 'status', 3],
 			[1.2, 'desktop_state', 3],

@@ -1,20 +1,20 @@
 ---
 // The home page, set as the server's manual page the way man shows it in a terminal
-// (`styles/man.css`), in a niri workspace on a wide screen: the man page is the focused
-// column, in the focus ring, and EXAMPLE is the next column, half in view. Dark or light
-// follows the system. Without JavaScript it reads in full and the clip opens from a link;
-// `scripts/less.ts` adds less's keys, the columns' focus and the clip's replay. Its words are
-// in `lib/home.ts`, which `pages/index.md.ts` serves as Markdown too.
+// (`styles/man.css`), in one flow: NAME and SYNOPSIS as a large opening with the install
+// line, EXAMPLE as a band across the window where a recorded session's calls sit in one niri
+// window, then the other sections with their names hanging in a left gutter. Dark or light
+// follows the system. Without JavaScript it reads in full and the recording opens from a
+// link; `scripts/less.ts` adds less's keys, replays the calls at their real times, and plays
+// the recording in place. Its words are in `lib/home.ts`, which `pages/index.md.ts` serves
+// as Markdown too.
 import '@fontsource-variable/jetbrains-mono/wght.css';
 import '../styles/tokens.css';
 import '../styles/man.css';
 import mono from '@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2?url';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Picture } from 'astro:assets';
 import Less from '../components/Less.astro';
 import Slide from '../components/Slide.astro';
-import still from '../assets/errand-still.jpg';
 import changelog from '../../../CHANGELOG.md?raw';
 import { home } from '../lib/home';
 import { mp4Seconds } from '../lib/clip';
@@ -35,6 +35,8 @@ const clipPath = `clips/${example.clip}.mp4`;
 const clipFile = readFileSync(join(process.cwd(), 'public', clipPath));
 const clipFacts = `${Math.round(mp4Seconds(clipFile))} s, MP4, ${Math.round(clipFile.byteLength / 1000)} KB`;
 const history = latest(changelog);
+// The install line may break only after a slash, so the address never splits mid-word.
+const pipedParts = install.piped.split('/');
 const released = history.find((release) => release.version === version);
 ---
 <!doctype html>
@@ -64,199 +66,367 @@ const released = history.find((release) => release.version === version);
 	</head>
 	<body>
 		<a class="skip" href="#main">Skip to content</a>
-		<main id="main" class="workspace">
-			<div class="strip">
-				<div class="column man" tabindex="-1" role="region" aria-label="Manual page">
-					<header class="running">
-						<span>NIRI-COMPUTER-USE(1)</span>
-						<span class="mid">User Commands</span>
-						<span>NIRI-COMPUTER-USE(1)</span>
-					</header>
+		<header class="running wrap">
+			<span>NIRI-COMPUTER-USE(1)</span>
+			<span class="mid">User Commands</span>
+			<span>NIRI-COMPUTER-USE(1)</span>
+		</header>
 
-					<div class="page" data-find>
-						<section aria-labelledby="name">
-							<p class="sh" aria-hidden="true">NAME</p>
-							<h1 id="name"><b>niri-computer-use</b> - {home.name}</h1>
-						</section>
+		<main id="main" data-find>
+			<section class="sec hero" aria-labelledby="name">
+				<p class="sh" aria-hidden="true">NAME</p>
+				<h1 id="name">
+					<b class="mark">niri-computer-use</b>
+					<span class="sr"> - </span>
+					<span class="tag">{home.name}</span>
+				</h1>
+				<p class="sh" aria-hidden="true">SYNOPSIS</p>
+				<p class="synopsis">
+					<b>niri-computer-use</b>{' '}
+					{home.commands.map((command, i) => <>{i > 0 && <span class="bar"> | </span>}<b>{command}</b></>)}
+				</p>
+				<pre class="oneliner piped">{pipedParts.map((part, i) => <>{i > 0 && <>/<wbr /></>}{part}</>)}</pre>
+				<p class="facts">
+					{home.about[1]} <a href="#install">Other ways to install</a> · <a href="#example">Watch it work</a>
+				</p>
+			</section>
 
-						<section aria-labelledby="synopsis">
-							<h2 id="synopsis"><a href="#synopsis">SYNOPSIS</a></h2>
-							<p>
-								<b>niri-computer-use</b>{' '}
-								{home.commands.map((command, i) => <>{i > 0 && ' | '}<b>{command}</b></>)}
-							</p>
-						</section>
-
-						<section aria-labelledby="description">
-							<h2 id="description"><a href="#description">DESCRIPTION</a></h2>
-							{home.about.map((paragraph) => <p>{paragraph}</p>)}
-						</section>
-
-						<section aria-labelledby="install">
-							<h2 id="install"><a href="#install">INSTALLATION</a></h2>
-							<p>Pipe the install script into sh:</p>
-							<pre>{install.piped}</pre>
-							<p>
-								To read it first, open <a href={install.script}>install.sh</a>. Or build it, and use{' '}
-								<u>~/.cargo/bin</u> below:
-							</p>
-							<pre>{install.cargo}</pre>
-							<p>Bind the stop key in <u>config.kdl</u>:</p>
-							<pre>{install.stop}</pre>
-							<p>
-								The script offers to register the server in each agent it supports that is on your PATH.
-								The list, and the others: <a href={link('start/clients/')}>{reference(manName('start/clients'))}</a>.
-							</p>
-						</section>
-
-						<section aria-labelledby="safety">
-							<h2 id="safety"><a href="#safety">SAFETY</a></h2>
-							<dl>
-								{
-									home.safety.map(([term, text]) => (
-										<>
-											<dt><b>{term}</b></dt>
-											<dd>{text}</dd>
-										</>
-									))
-								}
-							</dl>
-							<p>
-								{home.sandbox} <a href={link('concepts/safety/')}>{reference(manName('concepts/safety'))}</a>.
-							</p>
-						</section>
-
-						<section aria-labelledby="history">
-							<h2 id="history"><a href="#history">HISTORY</a></h2>
-							<table>
-								<caption class="sr">The latest releases</caption>
+			<section class="band" id="example" aria-labelledby="example-heading">
+				<div class="band-in">
+					<div class="band-head">
+						<h2 id="example-heading"><a href="#example">EXAMPLE</a></h2>
+						<p>{example.caption}</p>
+					</div>
+					<div class="windows">
+						<div class="win focused calls-win" data-replay>
+							<table class="calls">
+								<caption class="sr">The session's calls: when each went out, in seconds into the session, and its round trip</caption>
+								<thead><tr><th scope="col">at</th><th scope="col">call</th><th scope="col">ms</th></tr></thead>
 								<tbody>
 									{
-										history.map((release) => (
-											<tr>
-												<td><a href={`${github}/releases/tag/v${release.version}`}>{release.version}</a></td>
-												<td>{release.date}</td>
-												<td>{summary(release)}</td>
+										example.calls.map(([start, call, ms]) => (
+											<tr data-start={start} data-ms={ms}>
+												<td>{start.toFixed(1)}</td>
+												<td><code>{call}</code></td>
+												<td>{ms}</td>
 											</tr>
 										))
 									}
 								</tbody>
 							</table>
-							<p><a href={`${github}/blob/main/CHANGELOG.md`}>CHANGELOG.md</a></p>
-						</section>
-
-						<section aria-labelledby="bugs">
-							<h2 id="bugs"><a href="#bugs">BUGS</a></h2>
-							<p>{home.bugs}</p>
-						</section>
-
-						<section aria-labelledby="see-also">
-							<h2 id="see-also"><a href="#see-also">SEE ALSO</a></h2>
-							<p class="refs">
-								<a href="https://github.com/niri-wm/niri">niri(1)</a>,{' '}
-								{home.seeAlso.map((id) => <><a href={link(`${id}/`)}>{reference(manName(id))}</a>, </>)}
-								<a href={link('llms.txt')}>llms.txt</a>,{' '}
-								<a href={github}>source</a>
+							<p class="win-line">
+								<span class="clock" aria-hidden="true"></span>
+								<a href={link(clipPath)} data-play>Watch the recording</a> ({clipFacts})
+								<button type="button" data-again hidden>replay</button>
 							</p>
-						</section>
+						</div>
 					</div>
-
-					<footer class="running foot">
-						<a href={releaseLink}>niri-computer-use {version}</a>
-						<span class="mid">{released?.date}</span>
-						<span>NIRI-COMPUTER-USE(1)</span>
-					</footer>
-
-					<nav class="less" aria-label="Pager">
-						<span class="prompt"><span class="wide">Manual page niri-computer-use(1)</span><span class="pct" aria-hidden="true"></span></span>
-						<span class="msg" role="status"></span>
-						<form class="find" hidden><label>/<input name="pattern" autocomplete="off" aria-label="Search the page" /></label></form>
-						<a href="#install">install</a>
-						<a href="#safety">safety</a>
-						<a href="#example">example</a>
-						<a href={link('start/install/')}>docs</a>
-						<button type="button" data-help hidden>help</button>
-					</nav>
 				</div>
+			</section>
 
-				<section class="column example" id="example" tabindex="-1" aria-labelledby="example-heading" data-find>
-					<h2 id="example-heading"><a href="#example">EXAMPLE</a></h2>
-					<figure>
-						<a class="still" href={link(clipPath)} data-play>
-							<Picture
-								src={still}
-								alt={example.alt}
-								widths={[560, 900]}
-								sizes="(min-width: 75rem) 760px, calc(100vw - 6ch)"
-								formats={['avif']}
-								fallbackFormat="jpg"
-								quality={60}
-								loading="eager"
-								fetchpriority="high"
-							/>
-						</a>
-						<figcaption>
-							{example.caption} <a href={link(clipPath)} data-play>Play the clip</a> ({clipFacts}).
-						</figcaption>
-					</figure>
-					<table class="calls">
-						<caption class="sr">The session's calls: when each went out, in seconds into the clip, and its round trip</caption>
-						<thead><tr><th scope="col">at</th><th scope="col">call</th><th scope="col">ms</th></tr></thead>
-						<tbody>
-							{
-								example.calls.map(([start, call, ms]) => (
-									<tr data-start={start} data-ms={ms}>
-										<td>{start.toFixed(1)}</td>
-										<td><code>{call}</code></td>
-										<td>{ms}</td>
-									</tr>
-								))
-							}
-						</tbody>
-					</table>
-				</section>
-			</div>
+			<section class="sec" aria-labelledby="description">
+				<h2 id="description"><a href="#description">DESCRIPTION</a></h2>
+				<p class="lead">
+					{home.about[0].split(/(accepted|observed|changes)/).map((part, i) => (i % 2 ? <b>{part}</b> : part))}
+				</p>
+			</section>
+
+			<section class="sec" aria-labelledby="safety">
+				<h2 id="safety"><a href="#safety">SAFETY</a></h2>
+				<dl class="guards">
+					{
+						home.safety.map(([term, text]) => (
+							<div>
+								<dt><b>{term}</b></dt>
+								<dd>{text}</dd>
+							</div>
+						))
+					}
+				</dl>
+				<p class="warn">
+					{home.sandbox} <a href={link('concepts/safety/')}>{reference(manName('concepts/safety'))}</a>.
+				</p>
+			</section>
+
+			<section class="sec" aria-labelledby="install">
+				<h2 id="install"><a href="#install">INSTALLATION</a></h2>
+				<p>Pipe the install script into sh:</p>
+				<pre class="piped">{pipedParts.map((part, i) => <>{i > 0 && <>/<wbr /></>}{part}</>)}</pre>
+				<p>
+					To read it first, open <a href={install.script}>install.sh</a>. Or build it, and use{' '}
+					<u>~/.cargo/bin</u> below:
+				</p>
+				<pre>{install.cargo}</pre>
+				<p>Bind the stop key in <u>config.kdl</u>:</p>
+				<pre>{install.stop}</pre>
+				<p>
+					The script offers to register the server in each agent it supports that is on your PATH.
+					The list, and the others: <a href={link('start/clients/')}>{reference(manName('start/clients'))}</a>.
+				</p>
+			</section>
+
+			<section class="sec" aria-labelledby="history">
+				<h2 id="history"><a href="#history">HISTORY</a></h2>
+				<table class="releases">
+					<caption class="sr">The latest releases</caption>
+					<tbody>
+						{
+							history.map((release) => (
+								<tr>
+									<td><a href={`${github}/releases/tag/v${release.version}`}>{release.version}</a></td>
+									<td>{release.date}</td>
+									<td>{summary(release)}</td>
+								</tr>
+							))
+						}
+					</tbody>
+				</table>
+				<p><a href={`${github}/blob/main/CHANGELOG.md`}>CHANGELOG.md</a></p>
+			</section>
+
+			<section class="sec" aria-labelledby="bugs">
+				<h2 id="bugs"><a href="#bugs">BUGS</a></h2>
+				<p>{home.bugs}</p>
+			</section>
+
+			<section class="sec" aria-labelledby="see-also">
+				<h2 id="see-also"><a href="#see-also">SEE ALSO</a></h2>
+				<p class="refs">
+					<a href="https://github.com/niri-wm/niri">niri(1)</a>,{' '}
+					{home.seeAlso.map((id) => <><a href={link(`${id}/`)}>{reference(manName(id))}</a>, </>)}
+					<a href={link('llms.txt')}>llms.txt</a>,{' '}
+					<a href={github}>source</a>
+				</p>
+			</section>
 		</main>
-		<Less columns find />
+
+		<footer class="running foot wrap">
+			<a href={releaseLink}>niri-computer-use {version}</a>
+			<span class="mid">{released?.date}</span>
+			<span>NIRI-COMPUTER-USE(1)</span>
+		</footer>
+
+		<nav class="less" aria-label="Pager">
+			<span class="prompt"><span class="wide">Manual page niri-computer-use(1)</span><span class="pct" aria-hidden="true"></span></span>
+			<span class="msg" role="status"></span>
+			<form class="find" hidden><label>/<input name="pattern" autocomplete="off" aria-label="Search the page" /></label></form>
+			<a href="#example">example</a>
+			<a href="#safety">safety</a>
+			<a href="#install">install</a>
+			<a href={link('start/install/')}>docs</a>
+			<button type="button" data-help hidden>help</button>
+		</nav>
+		<Less find />
 	</body>
 </html>
 
 <style is:global>
-	/* The EXAMPLE column, and the replay's rows: calls still to come are dim, the one in
-	   flight is in reverse video, and the ones made are in the bold ink. */
-	figure {
-		max-width: 70ch;
+	/* One centred column. Section names hang in a gutter to the left of their text on wide
+	   screens, and sit above it on narrow ones. */
+	:root {
+		--gutter: 16ch;
+		--measure: 76ch;
 	}
-	.still,
-	.example video {
+	@media (min-width: 64rem) {
+		html {
+			font-size: 17px;
+		}
+	}
+	.wrap,
+	.sec {
+		width: min(100% - 4ch, var(--gutter) + var(--measure));
+		margin-inline: auto;
+		padding-inline: 0;
+	}
+	.running.wrap {
+		padding-top: 1.5rem;
+	}
+	.sec {
+		display: grid;
+		grid-template-columns: var(--gutter) minmax(0, 1fr);
+		align-items: baseline;
+		margin-top: 4.5rem;
+	}
+	.sec > * {
+		grid-column: 2;
+		margin-left: 0;
+	}
+	.sec > :is(h2, .sh) {
+		grid-column: 1;
+		margin: 0;
+	}
+	.sec > :is(p, pre, dl, table) + :is(p, pre, dl, table) {
+		margin-top: 1em;
+	}
+
+	/* The opening: the name at display size, then what it does, the commands and the line
+	   to install it. */
+	.hero {
+		margin-top: clamp(3rem, 12vh, 8rem);
+		row-gap: 0;
+	}
+	.hero .sh {
+		color: var(--ncu-dim);
+	}
+	.hero h1 {
+		margin: 0;
+	}
+	.mark {
+		display: block;
+		font-size: clamp(2.1rem, 6.4vw, 4.6rem);
+		line-height: 1;
+		letter-spacing: -0.03em;
+		font-weight: 800;
+		color: var(--ncu-bold);
+	}
+	.tag {
+		display: block;
+		margin-top: 1rem;
+		font-size: clamp(1.05rem, 1.8vw, 1.35rem);
+		line-height: 1.4;
+		text-wrap: balance;
+	}
+	.hero .sh:nth-of-type(2),
+	.synopsis {
+		margin-top: 2.5rem;
+	}
+	.synopsis .bar {
+		color: var(--ncu-dim);
+	}
+	.hero .oneliner {
+		margin-top: 1.5rem;
+		padding: 0.9em 1.5ch;
+		outline: 1px solid var(--ncu-rule);
+		outline-offset: -1px;
+	}
+	.hero .oneliner .copy {
+		top: 0.9em;
+		right: 0.5ch;
+	}
+	pre.oneliner:has(.copy) {
+		padding-right: 8ch;
+	}
+	.facts {
+		color: var(--ncu-dim);
+	}
+	.hero .facts {
+		margin-top: 0.75rem;
+	}
+
+	/* EXAMPLE: a band across the window on the workspace's backdrop, where the session's
+	   calls are a niri window in the amber focus ring. The recording, once asked for, opens
+	   as a second window under it, 16 px away, and takes the ring. */
+	.band {
+		margin-top: 5.5rem;
+		padding: 3rem 0 3.5rem;
+		background: var(--ncu-plate);
+		border-block: 1px solid var(--ncu-rule);
+	}
+	.band-in {
+		width: min(100% - 3rem, 92rem);
+		margin-inline: auto;
+	}
+	.band-head {
+		display: grid;
+		grid-template-columns: var(--gutter) minmax(0, var(--measure));
+		align-items: baseline;
+		width: min(100%, var(--gutter) + var(--measure));
+		margin: 0 auto 2rem;
+	}
+	.band-head h2,
+	.band-head p {
+		margin: 0;
+	}
+	.band-head p {
+		color: var(--ncu-dim);
+	}
+	.windows {
+		display: grid;
+		gap: 16px;
+		width: min(100%, var(--gutter) + var(--measure));
+		margin-inline: auto;
+	}
+	.win {
+		margin: 0;
+		background: var(--ncu-ground);
+		outline: 4px solid var(--ncu-rule);
+		transition: outline-color 0.2s;
+	}
+	.win.focused {
+		outline-color: var(--ncu-accent);
+	}
+	/* Once the recording plays it takes the ring, and the calls follow it. */
+	.windows:has(video) .calls-win {
+		outline-color: var(--ncu-rule);
+	}
+	.win video {
 		display: block;
 		width: 100%;
 		height: auto;
 		aspect-ratio: 16 / 9;
-		line-height: 0;
-		border: 1px solid var(--ncu-rule);
 		background: var(--ncu-plate);
 	}
-	.still img {
-		display: block;
-		width: 100%;
-		height: auto;
-	}
-	figcaption {
-		margin-top: 0.5em;
+	.win-line {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0 2ch;
+		margin: 0;
+		padding: 0.5em 1.5ch;
+		border-top: 1px solid var(--ncu-rule);
 		color: var(--ncu-dim);
+		font-size: 0.875rem;
+	}
+	.clock:empty {
+		display: none;
+	}
+	.clock {
+		color: var(--ncu-bold);
+		font-variant-numeric: tabular-nums;
+	}
+	.win-line button {
+		margin-left: auto;
+		padding: 0;
+		border: 0;
+		background: none;
+		color: var(--ncu-accent);
+		cursor: pointer;
+		text-decoration: underline;
+		text-decoration-thickness: 1px;
+		text-underline-offset: 3px;
+	}
+	.calls {
+		width: 100%;
+		margin: 0;
+		font-size: 0.875rem;
+	}
+	.calls th,
+	.calls td {
+		padding: 0.3em 1.5ch;
+	}
+	.calls thead th {
+		padding-block: 0.6em;
+		border-bottom: 1px solid var(--ncu-rule);
 	}
 	.calls th:first-child,
 	.calls td:first-child,
 	.calls th:last-child,
 	.calls td:last-child {
 		text-align: right;
+		white-space: nowrap;
 	}
-	.calls th:last-child,
-	.calls td:last-child {
-		padding-right: 0;
+	.calls td:nth-child(2) code {
+		overflow-wrap: anywhere;
 	}
-	.calls tr {
+	.calls td:first-child button {
+		padding: 0;
+		border: 0;
+		background: none;
+		color: var(--ncu-accent);
+		cursor: pointer;
+		text-decoration: underline dotted;
+		text-underline-offset: 3px;
+	}
+	.calls tbody tr {
 		transition:
 			color 0.15s,
 			background-color 0.15s;
@@ -267,21 +437,43 @@ const released = history.find((release) => release.version === version);
 	.calls [data-state='done'] {
 		color: var(--ncu-bold);
 	}
-	.calls [data-state='now'] {
+	.calls [data-state='now'],
+	.calls [data-state='now'] td button {
 		background: var(--ncu-ink);
 		color: var(--ncu-ground);
 	}
-	.page {
-		padding-top: 0;
+
+	/* The rest of the manual. */
+	.lead {
+		font-size: 1.1rem;
+		line-height: 1.6;
 	}
-	.man > .running:first-child {
-		padding-top: 1.5rem;
+	.guards {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 1.25rem 3ch;
 	}
-	.example {
-		padding: 0 2ch;
+	.guards dd {
+		margin: 0.15em 0 0;
 	}
-	.example h2 {
-		margin-top: 1.5em;
+	.warn {
+		padding-top: 1em;
+		border-top: 1px solid var(--ncu-rule);
+	}
+	.sec > .warn {
+		margin-top: 1.5rem;
+	}
+	.releases td:first-child {
+		white-space: nowrap;
+	}
+	.running.foot.wrap {
+		margin: 6rem auto 0;
+	}
+	pre.piped {
+		overflow-wrap: normal;
+	}
+	.less {
+		padding-inline: max(2ch, (100% - var(--gutter) - var(--measure)) / 2);
 	}
 	.less button {
 		padding: 0;
@@ -289,118 +481,86 @@ const released = history.find((release) => release.version === version);
 		background: none;
 		color: var(--ncu-ground);
 		text-decoration: underline;
+		text-decoration-thickness: 1px;
 		text-underline-offset: 3px;
 		cursor: pointer;
 	}
-	.less a,
-	.less button {
-		text-decoration-thickness: 1px;
+
+	/* niri opens the window: as the band comes into view, it grows in on niri's spring. */
+	@media (prefers-reduced-motion: no-preference) {
+		@supports (animation-timeline: view()) {
+			.calls-win {
+				animation: ncu-open linear both;
+				animation-timeline: view();
+				animation-range: entry 10% cover 30%;
+			}
+		}
+	}
+	@keyframes ncu-open {
+		from {
+			opacity: 0.4;
+			transform: scale(0.94);
+		}
 	}
 
-	/* Narrow: one column, EXAMPLE after the sections and before the running foot. */
-	@media (max-width: 74.99rem) {
-		.strip {
-			display: flex;
-			flex-direction: column;
+	/* Narrow: section names above their text, the windows stacked. */
+	@media (max-width: 48rem) {
+		:root {
+			--gutter: 0ch;
 		}
-		.man {
-			display: contents;
+		.sec,
+		.band-head {
+			grid-template-columns: minmax(0, 1fr);
 		}
-		.example {
-			order: 1;
-			padding: 0;
+		.sec > :is(h2, .sh),
+		.sec > * {
+			grid-column: 1;
 		}
-		.example > * {
-			margin-left: calc(2ch + 7ch);
-			margin-right: 2ch;
+		.sec > :not(h2, .sh) {
+			margin-left: 3ch;
 		}
-		.example h2 {
-			margin-left: 2ch;
+		.sec > :is(h2, .sh) + * {
+			margin-top: 0.5em;
 		}
-		.man > .foot {
-			order: 2;
+		.hero.sec > * {
+			margin-left: 0;
 		}
-		.man > .less {
-			order: 3;
+		.hero .sh {
+			display: none;
+		}
+		.hero .synopsis {
+			margin-top: 1.25rem;
+		}
+		.band-head p {
+			margin-top: 0.5em;
+		}
+		.guards {
+			grid-template-columns: minmax(0, 1fr);
+			gap: 0.75rem;
+		}
+		.sec {
+			margin-top: 3rem;
 		}
 	}
 	@media (max-width: 40rem) {
-		.example > * {
-			margin-left: calc(1.5ch + 3ch);
-			margin-right: 1.5ch;
+		.band-in {
+			width: calc(100% - 1.5rem);
 		}
-		.example h2 {
-			margin-left: 1.5ch;
+		.calls th,
+		.calls td {
+			padding-inline: 1ch;
 		}
-		.calls td:nth-child(2) {
-			white-space: normal;
-		}
-	}
-
-	/* Wide: a niri workspace. Columns are windows on the backdrop with niri's 16 px gaps; the
-	   focused one wears the amber ring and the others niri's inactive one. The strip slides
-	   on niri's spring to keep the focused column in view. */
-	@media (min-width: 75rem) {
-		body {
-			background: var(--ncu-plate);
-		}
-		/* The workspace clips the strip itself: on body, the clip would pass to the viewport
-		   as hidden, and anything scrolled into view could shift the page sideways. */
-		.workspace {
-			container-type: inline-size;
-			overflow-x: clip;
-		}
-		.strip {
-			display: flex;
-			align-items: flex-start;
-			gap: 16px;
-			width: max-content;
-			padding: 16px 16px 0;
-			transition: transform 0.4s var(--ncu-spring);
-		}
-		.column {
-			background: var(--ncu-ground);
-			outline: 4px solid var(--ncu-rule);
-			outline-offset: 0;
-			transition: outline-color 0.2s;
-		}
-		.man {
-			width: 88ch;
-		}
-		.example {
-			position: sticky;
-			top: 16px;
-			width: 50rem;
-			max-height: calc(100dvh - 32px);
-			overflow-y: auto;
-			padding-bottom: 1.5rem;
-		}
-		.example figure,
-		.example table {
-			max-width: none;
-			margin-left: 0;
-		}
-		.example table {
-			width: 100%;
-		}
-		.man,
-		:root[data-column='1'] .example,
-		:root:not([data-column]) .strip:has(#example:target) .example {
-			outline-color: var(--ncu-accent);
-		}
-		:root[data-column='1'] .man,
-		:root:not([data-column]) .strip:has(#example:target) .man {
-			outline-color: var(--ncu-rule);
-		}
-		:root[data-column='1'] .strip,
-		:root:not([data-column]) .strip:has(#example:target) {
-			transform: translateX(min(0px, calc(100cqw - 100%)));
+		.wrap,
+		.sec {
+			width: calc(100% - 3ch);
 		}
 	}
-	@media (min-width: 75rem) and (prefers-reduced-motion: reduce) {
-		.strip,
-		.column {
-			transition: none;
+	@media print {
+		.band {
+			background: none;
+		}
+		.win {
+			outline: 0;
 		}
 	}
 </style>
