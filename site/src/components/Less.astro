@@ -1,13 +1,11 @@
 ---
 // less's keys for every page, and its help screen, which h or ? opens. The keys come from
-// `scripts/less.ts`; without the script the page reads and scrolls as any other. `columns`
-// adds niri's keys for the home page's columns; `find` adds less's search where the page
+// `scripts/less.ts`; without the script the page reads and scrolls as any other. `find` adds less's search where the page
 // has its own status line, and the docs keep `/` for Starlight's search instead.
 interface Props {
-	columns?: boolean;
 	find?: boolean;
 }
-const { columns = false, find = false } = Astro.props;
+const { find = false } = Astro.props;
 
 const keys: [string, string][] = [
 	['j  e', 'Forward one line.'],
@@ -23,7 +21,6 @@ const keys: [string, string][] = [
 				['n  N', 'Repeat the search, forward or backward.'],
 			] as [string, string][])
 		: ([['/', 'Search the docs.']] as [string, string][])),
-	...(columns ? ([['→  ←', 'Focus the column to the right or left, as niri does, on a wide screen.']] as [string, string][]) : []),
 	['h  ?', 'Show this help.'],
 	['q', 'Close this help, or go back a page.'],
 ];
@@ -31,7 +28,7 @@ const keys: [string, string][] = [
 
 <dialog id="less-help" class="less-help" aria-labelledby="less-help-title">
 	<h2 id="less-help-title">SUMMARY OF LESS COMMANDS</h2>
-	<p>The keys this site takes from less{columns && ', and from niri for the columns'}. They do nothing while you type in a field, or with Ctrl, Alt or Super held.</p>
+	<p>The keys this site takes from less. They do nothing while you type in a field, or with Ctrl, Alt or Super held.</p>
 	<table>
 		<caption class="less-help-sr">Keys and what they do</caption>
 		<tbody>

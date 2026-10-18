@@ -1,5 +1,4 @@
-// less's keys, status line and search, niri's columns on the home page, and the example's
-// replay. Every page reads and works without this: it only adds to what is there.
+// less's keys, status line and search, and the home page example's replay. Every page reads and works without this: it only adds to what is there.
 
 import { matches } from '../lib/find';
 import { keySwitch } from '../lib/keys';
@@ -11,9 +10,6 @@ const pager = document.querySelector<HTMLElement>('.less');
 const msg = pager?.querySelector<HTMLElement>('.msg');
 const form = pager?.querySelector<HTMLFormElement>('.find');
 const input = form?.querySelector('input');
-const strip = document.querySelector<HTMLElement>('.strip');
-const columns = strip ? ([...strip.children] as HTMLElement[]) : [];
-const wide = matchMedia('(min-width: 75rem)');
 
 const keys = keySwitch(() => localStorage);
 const toggle = help.querySelector<HTMLButtonElement>('[data-keys]')!;
@@ -37,11 +33,9 @@ if (path) {
 	path.textContent = ` for ${address.replace(import.meta.env.BASE_URL.replace(/\/?$/, '/'), '')}`;
 }
 const line = () => parseFloat(getComputedStyle(document.body).lineHeight) || 24;
-// The keys scroll the focused EXAMPLE column when it scrolls on its own, else the page.
-const pane = () => (root.dataset.column == '1' && wide.matches ? columns[1] : null);
 // less's window is the screen less one line; ours keeps one more for the pager line.
-const screen_ = () => (pane()?.clientHeight ?? innerHeight) - 2 * line();
-const down = (y: () => number) => () => (pane() ?? window).scrollBy(0, y());
+const screen_ = () => innerHeight - 2 * line();
+const down = (y: () => number) => () => scrollBy(0, y());
 
 // The pager line says (END) at the bottom, as less does.
 const end = () => pager?.toggleAttribute('data-end', innerHeight + scrollY >= root.scrollHeight - 2);
@@ -81,10 +75,7 @@ function find(dir: number) {
 				: hits.findLastIndex((r) => top(r) < 0);
 	if (!hits[i]) return say('Pattern not found');
 	at = i;
-	// A hit in the EXAMPLE column focuses it, and the column scrolls on its own.
-	focusColumn(columnOf(hits[i].startContainer), false);
-	const box = pane();
-	(box ?? window).scrollBy(0, top(hits[i]) - (box?.getBoundingClientRect().top ?? 0) - line());
+	scrollBy(0, top(hits[i]) - line());
 }
 if (form && input) {
 	form.onsubmit = (e) => {
@@ -101,26 +92,6 @@ if (form && input) {
 		form.hidden = true;
 	};
 }
-
-// niri's columns: the focused one wears the ring, and the workspace scrolls to keep it in
-// view, whether a key, a click or Tab moved focus into it. `data-column` overrides an
-// #example in the address, which CSS also follows.
-function focusColumn(i: number, move = true) {
-	if (!wide.matches || !columns[i]) return;
-	root.dataset.column = String(i);
-	if (move) columns[i].focus({ preventScroll: true });
-}
-const columnOf = (node: EventTarget | null) => columns.findIndex((c) => c.contains(node as Node));
-strip?.addEventListener('focusin', (e) => focusColumn(columnOf(e.target), false));
-strip?.addEventListener(
-	'wheel',
-	(e) => Math.abs(e.deltaX) > Math.abs(e.deltaY) + 4 && focusColumn(e.deltaX > 0 ? 1 : 0),
-	{ passive: true },
-);
-for (const a of document.querySelectorAll<HTMLAnchorElement>('a[href="#example"]'))
-	a.onclick = (e) => {
-		if (wide.matches) e.preventDefault(), focusColumn(1);
-	};
 
 // Each command gets a copy button, and the pager line says what was copied.
 for (const pre of document.querySelectorAll<HTMLElement>('[data-find] pre')) {
@@ -152,31 +123,68 @@ function track(video: HTMLVideoElement) {
 	};
 	step();
 }
+// The clip, made from the still on first use: muted, with controls, and followed by the
+// call table.
+function clip() {
+	const existing = document.querySelector<HTMLVideoElement>('.win video');
+	const still = document.querySelector<HTMLAnchorElement>('.still');
+	if (existing || !still) return existing;
+	const video = Object.assign(document.createElement('video'), {
+		src: still.href,
+		poster: still.querySelector('img')!.currentSrc,
+		controls: true,
+		muted: true,
+		playsInline: true,
+	});
+	video.setAttribute('aria-label', 'The session, playing');
+	video.onplay = () => track(video);
+	video.onseeked = video.onended = () => mark(video);
+	const focused = still.contains(document.activeElement);
+	still.replaceWith(video);
+	if (focused) video.focus({ preventScroll: true });
+	return video;
+}
 for (const a of document.querySelectorAll<HTMLAnchorElement>('[data-play]'))
 	a.onclick = (e) => {
 		e.preventDefault();
-		// Asked before focusColumn, which moves focus to the column on a wide screen.
-		const still = document.querySelector('.still');
-		const focused = !!still?.contains(document.activeElement);
-		focusColumn(1);
-		let video = document.querySelector('video');
-		if (!video && still) {
-			video = Object.assign(document.createElement('video'), {
-				src: a.href,
-				poster: still.querySelector('img')!.currentSrc,
-				controls: true,
-				muted: true,
-				playsInline: true,
-			});
-			video.setAttribute('aria-label', 'The session, playing');
-			const v = video;
-			v.onplay = () => track(v);
-			v.onseeked = v.onended = () => mark(v);
-			still.replaceWith(video);
-			if (focused) video.focus({ preventScroll: true });
-		}
+		clip()?.play();
+	};
+// Each call's time seeks the clip to it.
+for (const row of rows) {
+	const cell = row.firstElementChild as HTMLElement;
+	const seek = Object.assign(document.createElement('button'), { type: 'button', textContent: cell.textContent });
+	seek.setAttribute('aria-label', `Play from ${cell.textContent} s`);
+	seek.onclick = () => {
+		const video = clip();
+		if (!video) return;
+		video.currentTime = +row.dataset.start!;
 		video.play();
 	};
+	cell.replaceChildren(seek);
+}
+// Unless motion is reduced, the clip plays on a loop while the example is in view, and
+// pauses when it leaves. A pause while it is in view is the visitor's, and holds until
+// they play it again.
+const windows = document.querySelector('.windows');
+if (windows && matchMedia('(prefers-reduced-motion: no-preference)').matches) {
+	let inView = false;
+	let held = false;
+	new IntersectionObserver(
+		([entry]) => {
+			inView = entry.isIntersecting;
+			const video = inView ? clip() : document.querySelector('video');
+			if (!video) return;
+			if (!video.loop) {
+				video.loop = true;
+				video.addEventListener('pause', () => (held = inView && !document.hidden));
+				video.addEventListener('play', () => (held = false));
+			}
+			if (inView && !held) video.play().catch(() => {});
+			else if (!inView) video.pause();
+		},
+		{ threshold: 0.5 },
+	).observe(windows);
+}
 
 const actions: Record<string, () => unknown> = {
 	j: down(line),
@@ -185,8 +193,8 @@ const actions: Record<string, () => unknown> = {
 	b: down(() => -screen_()),
 	d: down(() => screen_() / 2),
 	u: down(() => -screen_() / 2),
-	g: () => (pane() ?? window).scrollTo(0, 0),
-	G: () => (pane() ?? window).scrollTo(0, (pane() ?? root).scrollHeight),
+	g: () => scrollTo(0, 0),
+	G: () => scrollTo(0, root.scrollHeight),
 	h: () => help.showModal(),
 	q: () =>
 		help.open
@@ -208,17 +216,12 @@ if (form && input) {
 	actions.n = () => find(1);
 	actions.N = () => find(-1);
 }
-if (strip) {
-	actions.ArrowRight = () => focusColumn(1);
-	actions.ArrowLeft = () => focusColumn(0);
-}
 
 addEventListener('keydown', (e) => {
 	const act = actions[e.key];
 	if (!act || e.ctrlKey || e.altKey || e.metaKey || e.defaultPrevented || !keys.on()) return;
 	if ((e.target as Element).closest?.('input, textarea, select, video, [contenteditable]')) return;
 	if (help.open && e.key != 'q') return;
-	if (e.key.startsWith('Arrow') && !wide.matches) return;
 	e.preventDefault();
 	say('');
 	act();
