@@ -9,7 +9,7 @@ related_targets: ["src/lib/home.ts","src/styles/tokens.css","src/styles/man.css"
 
 Scope: the standalone home page `src/pages/index.astro`, its words in `src/lib/home.ts` (which `pages/index.md.ts` also serves as Markdown), and the colours in `src/styles/tokens.css` that it shares with the Starlight docs. The docs carry the same manual through `src/styles/theme.css` and the `PageTitle` and `Footer` overrides. Visitor mode: Persuade.
 
-Audience and job: a niri user with an MCP coding agent deciding whether to let it act on their desktop. Action: install (commands on the page). Proof: one real session's calls replayed at their real times, with its 223 KB recording a link that plays in place, with its eleven calls, when each went out and its round trip; the SAFETY list; the last three releases from CHANGELOG.md. Constraints: reads in full without JavaScript; one script of about 2 KB gzipped adds the keys, the columns and the replay. Dark and light from the system, AA in both, about 280 words, nothing invented, every motion off under reduced motion.
+Audience and job: a niri user with an MCP coding agent deciding whether to let it act on their desktop. Action: install (commands on the page). Proof: one real session's eleven calls, when each went out and its round trip, replayed at their real times, and its 223 KB recording, which plays in place; the SAFETY list; the last three releases from CHANGELOG.md. Constraints: reads in full without JavaScript; one script of about 2 KB gzipped adds the keys, search and the replay. Dark and light from the system, AA in both, about 280 words, nothing invented, every motion off under reduced motion.
 
 ## Direction contract
 

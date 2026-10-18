@@ -432,7 +432,7 @@ const released = history.find((release) => release.version === version);
 			background-color 0.15s;
 	}
 	.calls [data-state='next'] {
-		visibility: hidden;
+		color: var(--ncu-dim);
 	}
 	.calls [data-state='done'] {
 		color: var(--ncu-bold);
@@ -561,9 +561,6 @@ const released = history.find((release) => release.version === version);
 		}
 		.win {
 			outline: 0;
-		}
-		.calls [data-state] {
-			visibility: visible;
 		}
 	}
 </style>

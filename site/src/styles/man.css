@@ -102,11 +102,10 @@ h2 a:hover {
 p,
 pre,
 dl,
-table,
-figure {
+table {
 	margin: 0 0 0 7ch;
 }
-:is(p, pre, dl, table, figure) + :is(p, pre, dl, table, figure) {
+:is(p, pre, dl, table) + :is(p, pre, dl, table) {
 	margin-top: 1em;
 }
 pre,
@@ -251,8 +250,7 @@ pre:has(.copy) {
 	p,
 	pre,
 	dl,
-	table,
-	figure {
+	table {
 		margin-left: 3ch;
 	}
 	dl {
@@ -287,8 +285,7 @@ pre:has(.copy) {
 	h2,
 	pre,
 	a,
-	.running,
-	figcaption {
+	.running {
 		color: #000;
 	}
 	pre {
@@ -299,7 +296,7 @@ pre:has(.copy) {
 	.copy {
 		display: none;
 	}
-	.page a[href^='http']::after {
+	main a[href^='http']::after {
 		content: ' <' attr(href) '>';
 		word-break: break-all;
 	}

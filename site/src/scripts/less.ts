@@ -120,7 +120,6 @@ const last = Math.max(...rows.map((row) => +row.dataset.start! + Math.max(+row.d
 const mark = (t: number) => {
 	for (const row of rows) row.dataset.state = callState(t, +row.dataset.start!, +row.dataset.ms!);
 	if (clock) clock.textContent = t < last ? `${t.toFixed(1)} s` : '(END)';
-	if (again) again.hidden = t < last;
 };
 // One frame loop at a time, for the replay or the recording.
 let frame = 0;
@@ -172,12 +171,16 @@ for (const row of rows) {
 	seek.onclick = () => play(+row.dataset.start!);
 	cell.replaceChildren(seek);
 }
-if (again)
+// The replay button shows wherever the replay runs, and stays while it does, so focus
+// isn't lost from it.
+if (again && motion.matches) {
+	again.hidden = false;
 	again.onclick = () => {
 		const video = document.querySelector<HTMLVideoElement>('.win video');
 		if (video) play(0);
 		else replay();
 	};
+}
 if (win && rows.length && motion.matches) {
 	mark(0);
 	const seen = new IntersectionObserver(
