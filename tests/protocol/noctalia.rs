@@ -1,6 +1,7 @@
 //! A fake Noctalia on the fixture's socket. It answers `status` with a reply the test
-//! sets, and `panel-open` and `panel-close` the way Noctalia 5.2.1 does, keeping the open
-//! panel in its `activePanelId`. Each reply passes the fixture's hold point
+//! sets, `panel-open` and `panel-close` the way Noctalia 5.2.1 does, keeping the open
+//! panel in its `activePanelId`, and `--help` and `plugins list` with a few of Noctalia
+//! 5.3.0's lines. Each reply passes the fixture's hold point
 //! `noctalia:<command>`, named by the command's first word.
 
 use std::sync::{Arc, Mutex};
@@ -28,6 +29,8 @@ impl State {
     fn reply(&mut self, command: &str) -> String {
         match command.split_once(' ') {
             None if command == "status" => status(self.status, self.active_panel.as_deref()),
+            None if command == "--help" => HELP.to_owned(),
+            Some(("plugins", "list")) => PLUGINS.to_owned(),
             Some(("panel-open", panel)) => {
                 if self.panels_follow {
                     self.active_panel = Some(panel.to_owned());
@@ -71,13 +74,13 @@ impl Reply {
         self.0.lock().unwrap().panel_reply = reply;
     }
 
-    /// The panel commands received so far.
+    /// The commands received so far other than `status` and the lists.
     pub(crate) fn panel_commands(&self) -> Vec<String> {
         let state = self.0.lock().unwrap();
         state
             .commands
             .iter()
-            .filter(|command| *command != "status")
+            .filter(|command| !["status", "--help", "plugins list"].contains(&command.as_str()))
             .cloned()
             .collect()
     }
@@ -137,6 +140,19 @@ async fn serve(mut connection: UnixStream, state: Reply, points: Points) {
     // The server may have given up on a held reply.
     connection.write_all(answer.as_bytes()).await.ok();
 }
+
+const HELP: &str = "Usage: noctalia msg <command> [args]
+
+Commands:
+  caffeine-toggle                                                     Toggle caffeine (idle inhibitor)
+  clipboard-copy <text>                                               Copy text to the clipboard
+  panel-open <id> [context]                                           Open a panel by id, optionally with context (e.g. launcher /emo, control-center audio)
+  plugin <author/plugin:entry> <target[:bar-name]> <event> [payload]  Dispatch an event to a plugin entry
+";
+
+const PLUGINS: &str = "ayagmar/obs-control [community] 1.0.0 enabled
+noctalia/timer [official] 1.5.0 disabled
+";
 
 /// `reply` with `activePanelId` and `panelOpen` set from the open panel.
 fn status(reply: &str, active_panel: Option<&str>) -> String {

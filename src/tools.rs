@@ -23,6 +23,7 @@ use crate::error::{CANCELLED, CallError, ToolError};
 use crate::input::keyboard::{self, Expect, Typing};
 use crate::input::paste;
 use crate::input::pointer::{self, Button, Gesture, Spot};
+use crate::noctalia;
 use crate::observe::{DEFAULT_MAX_WIDTH, Format, Rect, Target};
 use crate::policy;
 use crate::session::{Label, MAX_IN_FLIGHT, Session, Settings};
@@ -1637,9 +1638,10 @@ impl Server {
         Parameters(args): Parameters<NoctaliaArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let mut logged = audit::noctalia(&args.args);
-        flag(&mut logged, "screenshot", args.screenshot);
         let (env, niri) = (self.engine.env(), self.engine.niri());
+        let named = noctalia::named(env, &args.args).await;
+        let mut logged = audit::noctalia(&args.args, named);
+        flag(&mut logged, "screenshot", args.screenshot);
         let shoot = args.screenshot;
         let work = async move { act::shell::message(env, niri, &args.args).await };
         self.act(

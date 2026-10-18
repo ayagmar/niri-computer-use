@@ -2353,13 +2353,19 @@ async fn passthrough_arguments_reach_the_audit_log_only_as_metadata() {
         .collect();
     let garbled =
         |bytes: usize| json!({"action": {"category": "invalid_action", "keys": 1, "bytes": bytes}});
+    let panel_open = |bytes: usize| {
+        json!({
+            "count": 2, "bytes": [10, bytes], "command": "panel-open",
+            "description": "Open a panel by id, optionally with context (e.g. launcher /emo, control-center audio)"
+        })
+    };
     assert_eq!(
         logged,
         [
             json!(["niri_action", {"action": {"Spawn": {"command": {"count": 2, "bytes": [4, 25]}}}}, null]),
             json!(["noctalia", {"count": 2, "bytes": [25, 25]}, "upstream_error"]),
-            json!(["noctalia", {"count": 2, "bytes": [10, 25]}, null]),
-            json!(["noctalia", {"count": 2, "bytes": [10, 47]}, "invalid_arguments"]),
+            json!(["noctalia", panel_open(25), null]),
+            json!(["noctalia", panel_open(47), "invalid_arguments"]),
             json!(["niri_action", {"action": {"MoveWindowToWorkspace": {
                 "window_id": 2, "reference": {"Name": {"bytes": 25}}, "focus": false
             }}}, "cancelled"]),
@@ -2367,6 +2373,47 @@ async fn passthrough_arguments_reach_the_audit_log_only_as_metadata() {
             json!(["niri_action", garbled(49), "invalid_arguments"]),
             json!(["niri_action", {"action": {"SetWorkspaceName": {"name": {"bytes": 25}, "workspace": null}}}, "lease_required"]),
             json!(["noctalia", {"count": 1, "bytes": [25]}, "lease_required"]),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn noctalia_calls_are_named_only_as_noctalias_own_lists_name_them() {
+    let on = [("NIRI_COMPUTER_USE_UNRESTRICTED", "1")];
+    let mut desk = Desk::start_with("act-noctalia-named", "", &on).await;
+    for args in [
+        json!(["clipboard-copy", PRIVATE]),
+        json!(["plugin", format!("{PRIVATE}:entry"), "all", PRIVATE]),
+        json!(["plugin", "ayagmar/obs-control:controller", "all", PRIVATE]),
+    ] {
+        desk.server.call("noctalia", json!({ "args": args })).await;
+    }
+
+    let text = std::fs::read_to_string(desk.fixture.audit_log()).unwrap();
+    assert!(!text.contains(PRIVATE), "{text}");
+    let logged: Vec<Value> = desk
+        .audited()
+        .into_iter()
+        .filter(|line| line[0] == "noctalia")
+        .map(|line| line[1].clone())
+        .collect();
+    let plugin = |target: usize| {
+        json!({
+            "count": 4, "bytes": [6, target, 3, 25],
+            "command": "plugin", "description": "Dispatch an event to a plugin entry"
+        })
+    };
+    let mut listed = plugin(30);
+    listed["plugin"] = json!("ayagmar/obs-control");
+    assert_eq!(
+        logged,
+        [
+            json!({
+                "count": 2, "bytes": [14, 25],
+                "command": "clipboard-copy", "description": "Copy text to the clipboard"
+            }),
+            plugin(31),
+            listed,
         ]
     );
 }
@@ -2420,7 +2467,10 @@ async fn noctalia_sends_any_command_only_when_unrestricted() {
         open.audited()[0],
         json!([
             "noctalia",
-            {"count": 2, "bytes": [10, 9]},
+            {
+                "count": 2, "bytes": [10, 9], "command": "panel-open",
+                "description": "Open a panel by id, optionally with context (e.g. launcher /emo, control-center audio)"
+            },
             true,
             "sent",
             null

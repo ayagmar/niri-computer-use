@@ -6,8 +6,9 @@
 //! are issued in, or key combinations XKB knows. Anything else is a category and its
 //! length, and text, paths, app ids and output names only ever their length or kind. The
 //! passthroughs log metadata too: `niri_action` its action's name, field names, numbers and
-//! booleans with every string as its length in bytes, and `noctalia` only its argument
-//! count and byte lengths.
+//! booleans with every string as its length in bytes, and `noctalia` its argument count
+//! and byte lengths, plus its command, that command's description and a plugin id only as
+//! Noctalia's own lists name them (`noctalia::Named`).
 //!
 //! Once the log reaches `ROTATE_AT`, the next write first moves it aside to
 //! `audit.jsonl.1`, shifting older ones up to `audit.jsonl.3` and dropping the oldest
@@ -30,6 +31,7 @@ use serde_json::{Map, Value, json};
 use crate::error::CANCELLED;
 use crate::input::keyboard::Expect;
 use crate::input::keymap;
+use crate::noctalia::Named;
 
 /// The log's size from which the next write moves it aside first.
 const ROTATE_AT: u64 = 10 * 1024 * 1024;
@@ -372,12 +374,28 @@ fn matched(args: &mut Value, result: &Result<CallToolResult, ErrorData>) {
     expect.insert("matched".to_owned(), matched);
 }
 
-/// `noctalia`'s arguments for the log: how many, and each one's length in bytes.
-pub(crate) fn noctalia(args: &[String]) -> Value {
-    json!({
-        "count": args.len(),
-        "bytes": args.iter().map(String::len).collect::<Vec<_>>(),
-    })
+/// `noctalia`'s arguments for the log: how many, each one's length in bytes, and what
+/// Noctalia's lists name of them, never the arguments themselves.
+pub(crate) fn noctalia(args: &[String], named: Named) -> Value {
+    let mut logged = Map::new();
+    logged.insert("count".to_owned(), Value::from(args.len()));
+    let bytes = args.iter().map(String::len).collect::<Vec<_>>();
+    logged.insert("bytes".to_owned(), Value::from(bytes));
+    let Named {
+        command,
+        description,
+        plugin,
+    } = named;
+    for (key, value) in [
+        ("command", command),
+        ("description", description),
+        ("plugin", plugin),
+    ] {
+        if let Some(value) = value {
+            logged.insert(key.to_owned(), Value::String(value));
+        }
+    }
+    Value::Object(logged)
 }
 
 /// The outcome's error name, read from the tool's result and never from its content: a
@@ -849,9 +867,26 @@ mod tests {
     }
 
     #[test]
-    fn noctalia_logs_only_counts_and_byte_lengths() {
-        let args = ["panel-open".to_owned(), "hunter-two".to_owned()];
-        assert_eq!(noctalia(&args), json!({"count": 2, "bytes": [10, 10]}));
+    fn noctalia_logs_counts_byte_lengths_and_only_what_noctalia_named() {
+        let args = ["clipboard-copy".to_owned(), "secret".to_owned()];
+        assert_eq!(
+            noctalia(&args, Named::default()),
+            json!({"count": 2, "bytes": [14, 6]})
+        );
+        let named = Named {
+            command: Some("clipboard-copy".to_owned()),
+            description: Some("Copy text to the clipboard".to_owned()),
+            plugin: None,
+        };
+        let logged = noctalia(&args, named);
+        assert_eq!(
+            logged,
+            json!({
+                "count": 2, "bytes": [14, 6],
+                "command": "clipboard-copy", "description": "Copy text to the clipboard"
+            })
+        );
+        assert!(!logged.to_string().contains("secret"), "{logged}");
     }
 
     #[test]

@@ -5,7 +5,8 @@
 //! to the first `\x1e` before parsing (`src/ipc/ipc_service.cpp`). The server sends fixed
 //! payloads, `status`, and `panel-open` or `panel-close` with an allowlisted panel, except
 //! for the `noctalia` tool under `unrestricted`, which sends its arguments joined with
-//! spaces as `noctalia msg` does (`src/ipc/cli.cpp`).
+//! spaces as `noctalia msg` does (`src/ipc/cli.cpp`). Before each such call it reads
+//! `--help` and, for `plugin`, `plugins list`, only to name the call in the audit log.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -20,6 +21,9 @@ use crate::error::{ErrorName, ToolError, Unanswered};
 use crate::policy::Panel;
 
 const DEADLINE: Duration = Duration::from_secs(2);
+/// How long a `noctalia` call waits for Noctalia's lists, which only name it in the audit
+/// log, before it goes ahead without them.
+const NAMING_DEADLINE: Duration = Duration::from_millis(300);
 /// `/` as the caller's directory and the separator, before the command.
 const CWD_PREFIX: &[u8] = b"/\x1e";
 /// A `status` reply is a few hundred bytes; the `noctalia` tool's replies are cut here.
@@ -32,6 +36,10 @@ pub(crate) enum Command {
     Status,
     PanelOpen(Panel),
     PanelClose(Panel),
+    /// Noctalia's usage, with one line per command.
+    Help,
+    /// One line per plugin Noctalia knows, enabled or not.
+    Plugins,
 }
 
 impl Command {
@@ -40,6 +48,8 @@ impl Command {
             Self::Status => "status".to_owned(),
             Self::PanelOpen(panel) => format!("panel-open {}", panel.id()),
             Self::PanelClose(panel) => format!("panel-close {}", panel.id()),
+            Self::Help => "--help".to_owned(),
+            Self::Plugins => "plugins list".to_owned(),
         };
         [CWD_PREFIX, command.as_bytes()].concat()
     }
@@ -51,6 +61,17 @@ pub(crate) struct Reply {
     pub(crate) reply: String,
     /// Whether the reply was longer than 64 KiB and cut there.
     pub(crate) truncated: bool,
+}
+
+/// What the audit log may say of a `noctalia` call beyond its argument sizes, all of it
+/// from Noctalia's own lists: `args[0]` when Noctalia lists it as a command, with the
+/// list's description of it, and for `plugin`, the plugin id `args[1]` names when
+/// `plugins list` has it.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Named {
+    pub(crate) command: Option<String>,
+    pub(crate) description: Option<String>,
+    pub(crate) plugin: Option<String>,
 }
 
 /// Whether Noctalia is installed and answering, for `status`.
@@ -144,6 +165,81 @@ pub(crate) async fn message(
         reply: String::from_utf8_lossy(&reply).into_owned(),
         truncated,
     })
+}
+
+/// Names `args` from Noctalia's command list and, for `plugin`, its plugin list, both read
+/// within `NAMING_DEADLINE`. Nothing is named from a list that isn't read in time.
+pub(crate) async fn named(env: &Env, args: &[String]) -> Named {
+    let Some(socket) = socket(env) else {
+        return Named::default();
+    };
+    let plugin = args.first().is_some_and(|first| first == "plugin");
+    let (help, plugins) = tokio::join!(listing(&socket, Command::Help), async {
+        if plugin {
+            listing(&socket, Command::Plugins).await
+        } else {
+            None
+        }
+    });
+    help.map_or_else(Named::default, |help| name(&help, plugins.as_deref(), args))
+}
+
+/// One of Noctalia's lists, or `None` when it doesn't answer within `NAMING_DEADLINE` or
+/// answers with an error, a reply cut at `MAX_REPLY` or text that isn't UTF-8.
+async fn listing(socket: &Path, command: Command) -> Option<String> {
+    let reply = tokio::time::timeout(NAMING_DEADLINE, request(socket, command))
+        .await
+        .ok()?
+        .ok()?;
+    if u64::try_from(reply.len()).unwrap_or(u64::MAX) > MAX_REPLY || reply.starts_with(b"error:") {
+        return None;
+    }
+    String::from_utf8(reply).ok()
+}
+
+/// Names `args` from a `--help` reply and, for `plugin`, a `plugins list` reply. Only
+/// exact matches with the lists' entries are named, so nothing else from `args` is.
+fn name(help: &str, plugins: Option<&str>, args: &[String]) -> Named {
+    let Some((command, description)) = args
+        .first()
+        .and_then(|first| commands(help).find(|(name, _)| name == first))
+    else {
+        return Named::default();
+    };
+    let plugin = args
+        .get(1)
+        .filter(|_| command == "plugin")
+        .map(|target| target.split_once(':').map_or(target.as_str(), |(id, _)| id))
+        .filter(|id| plugins.is_some_and(|list| plugin_ids(list).any(|listed| listed == *id)));
+    Named {
+        command: Some(command.to_owned()),
+        description: (!description.is_empty()).then(|| description.to_owned()),
+        plugin: plugin.map(str::to_owned),
+    }
+}
+
+/// The commands a `--help` reply lists, each with its description: the lines after
+/// `Commands:` up to a blank one, each `  <name> <usage…>` and, past two spaces or more,
+/// the description.
+fn commands(help: &str) -> impl Iterator<Item = (&str, &str)> {
+    help.lines()
+        .skip_while(|line| *line != "Commands:")
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .filter_map(|line| {
+            let entry = line.strip_prefix("  ")?;
+            let (name, rest) = entry.split_once(' ').unwrap_or((entry, ""));
+            let description = rest.split_once("  ").map_or("", |(_, text)| text).trim();
+            (!name.is_empty()).then_some((name, description))
+        })
+}
+
+/// The plugin ids a `plugins list` reply lists, each line's first word, such as
+/// `ayagmar/obs-control`.
+fn plugin_ids(list: &str) -> impl Iterator<Item = &str> {
+    list.lines()
+        .filter_map(|line| line.split(' ').next())
+        .filter(|id| id.contains('/'))
 }
 
 /// Refuses the `noctalia` tool's `args` unless there are 1 to 64 of them and none holds
@@ -325,7 +421,7 @@ mod tests {
         let commands = panels
             .into_iter()
             .flat_map(|panel| [Command::PanelOpen(panel), Command::PanelClose(panel)])
-            .chain([Command::Status]);
+            .chain([Command::Status, Command::Help, Command::Plugins]);
         for command in commands {
             let payload = command.payload();
             let rest = payload.strip_prefix(b"/\x1e").unwrap();
@@ -401,6 +497,168 @@ mod tests {
         };
         let path = socket(&env).unwrap();
         (env, tokio::net::UnixListener::bind(path).unwrap())
+    }
+
+    /// The start, some lines and the end of Noctalia 5.3.0's `--help` reply.
+    const HELP: &str = "Usage: noctalia msg <command> [args]
+
+Commands:
+  annotate [path]                                                     Draw on the screen over running apps, or annotate an image file; press F or the Freeze button to capture the background
+  caffeine-toggle                                                     Toggle caffeine (idle inhibitor)
+  clipboard-copy <text>                                               Copy text to the clipboard
+  plugin <author/plugin:entry> <target[:bar-name]> <event> [payload]  Dispatch an event to a plugin entry
+  workspace-alert-status                                              Print workspace alerts
+";
+
+    /// Lines of Noctalia 5.3.0's `plugins list` reply.
+    const PLUGINS: &str =
+        "ayagmar/niri-computer-use [local] 0.1.0 enabled requires niri-computer-use
+ayagmar/obs-control [community] 1.0.0 enabled
+noctalia/timer [official] 1.5.0 disabled
+";
+
+    fn args(args: &[&str]) -> Vec<String> {
+        args.iter().map(|arg| (*arg).to_owned()).collect()
+    }
+
+    #[test]
+    fn reads_each_command_and_its_description_from_noctalias_help() {
+        let listed: Vec<_> = commands(HELP).collect();
+        assert_eq!(listed.len(), 5);
+        assert_eq!(
+            listed[1],
+            ("caffeine-toggle", "Toggle caffeine (idle inhibitor)")
+        );
+        assert_eq!(listed[2], ("clipboard-copy", "Copy text to the clipboard"));
+        // Two spaces part the longest usage from its description.
+        assert_eq!(listed[3], ("plugin", "Dispatch an event to a plugin entry"));
+        assert_eq!(commands("Usage: noctalia msg\n").count(), 0);
+        assert_eq!(
+            plugin_ids(PLUGINS).collect::<Vec<_>>(),
+            [
+                "ayagmar/niri-computer-use",
+                "ayagmar/obs-control",
+                "noctalia/timer"
+            ]
+        );
+    }
+
+    #[test]
+    fn names_only_a_listed_command_and_a_listed_plugin() {
+        assert_eq!(
+            name(HELP, None, &args(&["caffeine-toggle"])),
+            Named {
+                command: Some("caffeine-toggle".to_owned()),
+                description: Some("Toggle caffeine (idle inhibitor)".to_owned()),
+                plugin: None,
+            }
+        );
+        let plugin = args(&[
+            "plugin",
+            "ayagmar/obs-control:controller",
+            "all",
+            "toggle-record",
+        ]);
+        let named = name(HELP, Some(PLUGINS), &plugin);
+        assert_eq!(named.command.as_deref(), Some("plugin"));
+        assert_eq!(named.plugin.as_deref(), Some("ayagmar/obs-control"));
+        // An unlisted plugin, or no plugin list, names the command alone.
+        for (list, target) in [
+            (Some(PLUGINS), "someone/secret:entry"),
+            (Some(PLUGINS), "ayagmar/obs:entry"),
+            (None, "ayagmar/obs-control:controller"),
+        ] {
+            let unlisted = name(HELP, list, &args(&["plugin", target, "all", "go"]));
+            assert_eq!(
+                (unlisted.command.as_deref(), unlisted.plugin),
+                (Some("plugin"), None)
+            );
+        }
+        // Not a command, a word of one, a command in another case, or a plugin id
+        // outside `plugin`.
+        for unknown in [
+            args(&["secret"]),
+            args(&["caffeine"]),
+            args(&["Caffeine-Toggle"]),
+            args(&["clipboard-copy secret"]),
+            args(&["Commands:"]),
+            args(&[]),
+        ] {
+            assert_eq!(
+                name(HELP, Some(PLUGINS), &unknown),
+                Named::default(),
+                "{unknown:?}"
+            );
+        }
+        let elsewhere = name(
+            HELP,
+            Some(PLUGINS),
+            &args(&["clipboard-copy", "ayagmar/obs-control"]),
+        );
+        assert_eq!(elsewhere.plugin, None);
+    }
+
+    #[tokio::test]
+    async fn names_a_call_from_the_lists_noctalia_sends_and_nothing_without_them() {
+        let (env, listener) = fake_socket("named");
+        let fake = tokio::spawn(answer_lists(listener));
+        assert_eq!(
+            named(&env, &args(&["caffeine-toggle"]))
+                .await
+                .command
+                .as_deref(),
+            Some("caffeine-toggle")
+        );
+        let plugin = args(&["plugin", "noctalia/timer:main", "all", "go"]);
+        assert_eq!(
+            named(&env, &plugin).await.plugin.as_deref(),
+            Some("noctalia/timer")
+        );
+        assert_eq!(
+            named(&env, &args(&["caffeine-toggle"])).await,
+            Named::default()
+        );
+        fake.await.unwrap();
+        // Nothing listens now.
+        assert_eq!(
+            named(&env, &args(&["caffeine-toggle"])).await,
+            Named::default()
+        );
+        std::fs::remove_dir_all(env.runtime_dir.unwrap()).unwrap();
+    }
+
+    /// Answers `--help` and `plugins list` for two calls, then an error for the third.
+    async fn answer_lists(listener: tokio::net::UnixListener) {
+        for answered in 0..4 {
+            let (mut connection, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            connection.read_to_end(&mut request).await.unwrap();
+            let answer = match (answered, &request[..]) {
+                (3, _) => "error: unknown command\n",
+                (_, b"/\x1e--help") => HELP,
+                (_, b"/\x1eplugins list") => PLUGINS,
+                (_, other) => panic!("{other:?}"),
+            };
+            connection.write_all(answer.as_bytes()).await.unwrap();
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_noctalia_that_doesnt_answer_names_nothing_within_the_deadline() {
+        let (env, listener) = fake_socket("named-silent");
+        let silent = tokio::spawn(async move {
+            let (connection, _) = listener.accept().await.unwrap();
+            std::future::pending::<()>().await;
+            drop(connection);
+        });
+        let started = tokio::time::Instant::now();
+        assert_eq!(
+            named(&env, &args(&["caffeine-toggle"])).await,
+            Named::default()
+        );
+        assert_eq!(started.elapsed(), NAMING_DEADLINE);
+        silent.abort();
+        std::fs::remove_dir_all(env.runtime_dir.unwrap()).unwrap();
     }
 
     #[test]
