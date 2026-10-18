@@ -40,6 +40,22 @@ t.group("bar", function()
     t.ok(host.bar.tooltip:find("Claude Code is driving", 1, true), host.bar.tooltip)
   end)
 
+  t.test("its tooltip names the last call apart from its keys, and agents with their old builds in one line", function()
+    local host = desktop()
+    env.start(host, "bar.luau")
+    host.event({ event = "hello", format = 1 })
+    host.event({
+      event = "state",
+      stopped = false,
+      input_dirty = false,
+      clients = { { pid = 1, agent = "pi", replaced = true }, { pid = 2, agent = "claude", replaced = false } },
+    })
+    host.event({ event = "action", ts = "2026-10-17T15:06:00.000Z", session = "pi/1", tool = "key", args = { keys = { "Escape", "c" } }, accepted = true })
+    local lines = string.split(host.bar.tooltip, "\n")
+    t.ok(has(lines, "Connected agents: 2 · 1 on an old build"), host.bar.tooltip)
+    t.ok(lines[3]:find("^Last: Pressed Escape, c · "), host.bar.tooltip)
+  end)
+
   t.test("breathes while an agent drives and rests otherwise", function()
     local host = desktop()
     env.start(host, "bar.luau")
@@ -64,8 +80,9 @@ t.group("bar", function()
 end)
 
 t.group("panel", function()
-  local function button(host, label)
-    return host.find(host.panelTree, function(n)
+  -- The button labelled `label` in the panel, or in `tree`, a part of it.
+  local function button(host, label, tree)
+    return host.find(tree or host.panelTree, function(n)
       return n.type == "button" and n.props.text == label
     end)
   end
@@ -94,6 +111,20 @@ t.group("panel", function()
     t.ok(button(host, "Stop").props.enabled, "Stop is disabled while driving")
   end)
 
+  t.test("folds an agent's run of key presses into one row that names the keys", function()
+    local host = desktop()
+    local panel = env.start(host, "panel.luau")
+    panel.call("onOpen", {})
+    drive(host)
+    for i, keys in { { "Escape", "comma" }, { "Escape", "c" } } do
+      host.event({ event = "action", ts = `2026-10-17T15:06:0{i}.000Z`, session = "claude-code/4711", project = "shop", tool = "key", args = { keys = keys }, accepted = true })
+    end
+    local texts = host.texts(host.panelTree)
+    t.ok(has(texts, "Pressed 4 keys"), table.concat(texts, " | "))
+    t.ok(has(texts, "Claude Code in shop · Escape, comma · Escape, c"), table.concat(texts, " | "))
+    t.ok(not has(texts, "Pressed Escape, comma"), "a folded press still has its own row")
+  end)
+
   t.test("lists every connected agent, marking the driver and one left on an old build", function()
     local host = desktop()
     local panel = env.start(host, "panel.luau")
@@ -118,8 +149,38 @@ t.group("panel", function()
       end
       return nil
     end
-    t.eq(after("Pi in site"), "old build, restart it")
+    t.eq(after("Pi in site"), "old build")
     t.eq(after("Claude Code in shop"), "driving")
+    t.ok(has(texts, "1 on an old build, restart it"), "no summary of the old build")
+  end)
+
+  t.test("two sessions of one agent in one project share a row that counts them", function()
+    local host = desktop()
+    local panel = env.start(host, "panel.luau")
+    panel.call("onOpen", {})
+    host.event({ event = "hello", format = 1 })
+    host.event({
+      event = "state",
+      stopped = false,
+      input_dirty = false,
+      clients = {
+        { pid = 31, agent = "claude", project = "orange", replaced = false },
+        { pid = 32, agent = "claude", project = "orange", replaced = false },
+      },
+    })
+    local texts = host.texts(host.panelTree)
+    local named = 0
+    for _, text in texts do
+      if text == "Claude Code in orange" then
+        named += 1
+      end
+    end
+    t.eq(named, 1, "rows for one agent in one project")
+    t.ok(has(texts, "2 sessions"), table.concat(texts, " | "))
+    local row = host.find(host.panelTree, function(n)
+      return n.props and n.props.key == "agent-31"
+    end)
+    t.eq(row.props.tooltip, "PIDs 31, 32")
   end)
 
   -- `count` agents, the driver listed last, and the sixth and seventh on an old build.
@@ -169,51 +230,62 @@ t.group("panel", function()
     return rows, scrolls
   end
 
-  t.test("with many agents, shows the driver and two more, and folds the rest so the feed keeps its room", function()
+  local function fold(host)
+    return host.find(host.panelTree, function(n)
+      return n.props and n.props.key == "agents-fold"
+    end)
+  end
+
+  t.test("with many agents, shows only the driver and folds the rest, naming old builds once", function()
     local host = crowded()
     local texts = host.texts(host.panelTree)
-    t.ok(has(texts, "Claude Code in shop") and has(texts, "Pi in p1") and has(texts, "Pi in p2"), table.concat(texts, " | "))
-    t.ok(not has(texts, "Pi in p3"), "a folded agent shows")
-    t.ok(has(texts, "2 on an old build"), "the folded old builds aren't counted")
+    t.ok(has(texts, "Claude Code in shop") and has(texts, "and 7 more"), table.concat(texts, " | "))
+    t.ok(not has(texts, "Pi in p1"), "a folded agent shows")
+    t.ok(has(texts, "2 on an old build, restart them"), "the old builds aren't summed up")
+    t.ok(has(texts, "8"), "no count of connected agents")
     local rows, scrolls = agentRows(host)
-    t.eq(rows, 3, "agent rows drawn while folded")
+    t.eq(rows, 1, "agent rows drawn while folded")
     t.ok(not scrolls, "a folded list scrolls")
-    button(host, "+5 more").props.onClick()
-    local list = host.find(host.panelTree, function(n)
-      return n.type == "scroll" and n.props.key == "agents"
+    fold(host).props.onClick()
+    -- Noctalia lets a scroll grow to its rows, so a column of fixed height holds it.
+    local holder = host.find(host.panelTree, function(n)
+      return n.type == "column" and n.props.height ~= nil and n.children[1] and n.children[1].props.key == "agents"
     end)
-    t.ok(list and list.props.height ~= nil, "the unfolded list doesn't scroll within a fixed height")
+    t.ok(holder ~= nil and holder.children[1].type == "scroll", "the unfolded list doesn't scroll within a fixed height")
+    local list = holder.children[1]
     for _, name in { "Claude Code in shop", "Pi in p3", "Pi in p7" } do
       t.ok(has(host.texts(list), name), `{name} is missing once unfolded`)
     end
-    t.ok(has(host.texts(list), "old build, restart it"), "an old build isn't marked once unfolded")
-    button(host, "Show fewer").props.onClick()
+    t.ok(has(host.texts(list), "old build"), "an old build isn't marked once unfolded")
+    t.ok(has(host.texts(fold(host)), "Show fewer"), "no way to fold the list again")
+    fold(host).props.onClick()
     t.ok(not has(host.texts(host.panelTree), "Pi in p3"), "Show fewer didn't fold the list")
   end)
 
   t.test("an unfolded agent list is folded again when the panel reopens", function()
     local host, panel = crowded()
-    button(host, "+5 more").props.onClick()
+    fold(host).props.onClick()
     panel.call("onClose")
     panel.call("onOpen", {})
-    t.ok(button(host, "+5 more") ~= nil, "the panel reopened unfolded")
-    t.eq(agentRows(host), 3)
+    t.ok(has(host.texts(host.panelTree), "and 7 more"), "the panel reopened unfolded")
+    t.eq(agentRows(host), 1)
   end)
 
-  t.test("an unfolded agent list starts folded again once it shrank to four or none and grows back", function()
+  t.test("an unfolded agent list starts folded again once it shrank to three or none and grows back", function()
     local host = crowded()
-    button(host, "+5 more").props.onClick()
-    crowd(host, 2)
-    t.eq(agentRows(host), 2)
-    crowd(host, 8)
-    t.ok(button(host, "+5 more") ~= nil, "the list came back unfolded")
+    fold(host).props.onClick()
+    crowd(host, 3)
     t.eq(agentRows(host), 3)
-    button(host, "+5 more").props.onClick()
+    t.eq(fold(host), nil, "a short list folds")
+    crowd(host, 8)
+    t.ok(has(host.texts(host.panelTree), "and 7 more"), "the list came back unfolded")
+    t.eq(agentRows(host), 1)
+    fold(host).props.onClick()
     host.event({ event = "state", stopped = false, input_dirty = false, clients = {} })
     t.eq(agentRows(host), 0)
     crowd(host, 8)
-    t.ok(button(host, "+5 more") ~= nil, "the list came back unfolded after emptying")
-    t.eq(agentRows(host), 3)
+    t.ok(has(host.texts(host.panelTree), "and 7 more"), "the list came back unfolded after emptying")
+    t.eq(agentRows(host), 1)
   end)
 
   t.test("opens on the newest call, and offers Latest only while the user reads older ones", function()
@@ -311,7 +383,39 @@ t.group("panel", function()
     t.eq(host.state.desk.status, "error")
     t.ok(button(host, "Stop").props.enabled, "Stop is disabled after watch's error")
     host.event({ event = "missing" })
-    t.eq(button(host, "Stop").props.enabled, false)
+    t.eq(button(host, "Stop"), nil, "Stop shows without a binary to run it")
+  end)
+
+  t.test("Stop sits in the status card while an agent asks or drives, and not while idle", function()
+    local host = desktop()
+    local panel = env.start(host, "panel.luau")
+    panel.call("onOpen", {})
+    host.event({ event = "hello", format = 1 })
+    host.event({ event = "state", stopped = false, input_dirty = false })
+    t.eq(button(host, "Stop"), nil, "Stop shows while no agent holds the desktop")
+    drive(host, { pending = true })
+    local card = host.panelTree.children[1]
+    t.ok(button(host, "Stop", card) ~= nil, "no Stop in the status card while an agent asks")
+    drive(host)
+    card = host.panelTree.children[1]
+    t.ok(button(host, "Stop", card) ~= nil, "no Stop in the status card while an agent drives")
+    t.eq(button(host, "Stop"), button(host, "Stop", card), "Stop isn't the card's alone")
+  end)
+
+  t.test("Stop stays for five minutes after an agent gives the desktop back, in case it takes it again", function()
+    local host = desktop()
+    local panel = env.start(host, "panel.luau")
+    panel.call("onOpen", {})
+    drive(host)
+    host.event({ event = "state", stopped = false, input_dirty = false })
+    t.eq(host.state.desk.status, "idle")
+    t.ok(button(host, "Stop", host.panelTree.children[1]) ~= nil, "Stop left the card as the agent gave the desktop back")
+    host.nowMs += 5 * 60 * 1000
+    host.event({ event = "alive" })
+    t.ok(button(host, "Stop") ~= nil, "Stop left before five minutes were up")
+    host.nowMs += 1
+    host.event({ event = "alive" })
+    t.eq(button(host, "Stop"), nil, "Stop stays once the agent can no longer be taking the desktop back")
   end)
 end)
 
