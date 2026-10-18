@@ -7,6 +7,7 @@ local describe = env.module("lib/describe.luau")
 local time = env.module("lib/time.luau")
 local command = env.module("lib/command.luau")
 local feed = env.module("lib/feed.luau")
+local agentGroups = env.module("lib/agents.luau")
 local tr = host.globals.noctalia.tr
 
 local NOW = 1_790_000_000_000
@@ -291,6 +292,35 @@ t.group("feed", function()
       { "pi/7", "key", { keys = { "b" } } },
     })
     t.eq(texts(list), "Pressed a | Pressed ? | Pressed b")
+  end)
+end)
+
+t.group("agents", function()
+  local function agent(pid, project, replaced)
+    return { pid = pid, name = "Claude Code", project = project, replaced = replaced or false }
+  end
+
+  local function summary(groups)
+    local out = {}
+    for _, g in groups do
+      table.insert(out, `{g.project}:{table.concat(g.pids, ",")}{if g.driving then "*" else ""}{if g.replaced then "!" else ""}`)
+    end
+    return table.concat(out, " ")
+  end
+
+  t.test("one agent's sessions in one project share a row, kept in watch's order", function()
+    local groups = agentGroups.groups({ agent(1, "kipple"), agent(2, "orange"), agent(3, "kipple"), agent(4, "orange") }, nil)
+    t.eq(summary(groups), "kipple:1,3 orange:2,4")
+  end)
+
+  t.test("the driver has a row of its own, first, and an old build never shares a row with a new one", function()
+    local groups = agentGroups.groups({ agent(1, "orange"), agent(2, "orange", true), agent(3, "orange") }, 3)
+    t.eq(summary(groups), "orange:3* orange:1 orange:2!")
+  end)
+
+  t.test("another agent in the same project has its own row", function()
+    local pi = { pid = 2, name = "Pi", project = "orange", replaced = false }
+    t.eq(#agentGroups.groups({ agent(1, "orange"), pi }, nil), 2)
   end)
 end)
 

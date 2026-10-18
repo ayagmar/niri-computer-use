@@ -107,10 +107,14 @@
     "agents": "Connected agents",
     "agent_in": "{agent} in {project}",
     "agent_driving": "driving",
-    "agent_old": "old build, restart it",
-    "agents_more": "+{n} more",
+    "agent_old": "old build",
+    "agent_sessions": "{n} sessions",
+    "agent_pid": "PID {pids}",
+    "agent_pids": "PIDs {pids}",
+    "agents_more": "and {n} more",
     "agents_fewer": "Show fewer",
-    "agents_old": "{n} on an old build",
+    "agents_old_one": "1 on an old build, restart it",
+    "agents_old": "{n} on an old build, restart them",
     "empty": "No calls on this desktop yet."
   },
   "time": {

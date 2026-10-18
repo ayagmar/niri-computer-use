@@ -6,6 +6,8 @@ local look = require("./lib/look.luau")
 local actions = require("./lib/actions.luau")
 local time = require("./lib/time.luau")
 local feedRows = require("./lib/feed.luau")
+local agentGroups = require("./lib/agents.luau")
+local desk = require("./lib/desk.luau")
 
 local view = noctalia.state.get("desk")
 local open = false
@@ -13,7 +15,7 @@ local open = false
 local toLatest = 0
 -- Whether the feed shows its newest call; false once the user scrolls up.
 local atLatest = true
--- Whether the agent list shows every agent rather than the first few; folded
+-- Whether the agent list shows every agent rather than only its first; folded
 -- again on every open.
 local agentsOpen = false
 local render: () -> ()
@@ -108,100 +110,94 @@ local function serverPid(session: string?): number?
   return if session then tonumber(session:match("/(%d+)$")) else nil
 end
 
-local function agentRow(agent, driver: number?)
-  local text = if agent.project then tr("panel.agent_in", { agent = agent.name, project = agent.project }) else agent.name
-  local note, role = nil, "on_surface_variant"
-  if agent.replaced then
-    note, role = tr("panel.agent_old"), "tertiary"
-  elseif agent.pid == driver then
-    note, role = tr("panel.agent_driving"), "primary"
+local function agentRow(group)
+  local text = if group.project then tr("panel.agent_in", { agent = group.name, project = group.project }) else group.name
+  local notes, role = {}, "on_surface_variant"
+  if #group.pids > 1 then
+    table.insert(notes, tr("panel.agent_sessions", { n = #group.pids }))
   end
-  return ui.row({ key = `agent-{agent.pid}`, gap = 10, align = "center", paddingV = 3 }, {
-    ui.glyph({ name = if agent.replaced then "alert-triangle" else "robot", size = 16, color = role }),
+  if group.driving then
+    table.insert(notes, tr("panel.agent_driving"))
+    role = "primary"
+  end
+  if group.replaced then
+    table.insert(notes, tr("panel.agent_old"))
+    role = "tertiary"
+  end
+  local pids = table.concat(group.pids, ", ")
+  return ui.row({
+    key = group.key,
+    gap = 10,
+    align = "center",
+    paddingV = 3,
+    tooltip = tr(if #group.pids > 1 then "panel.agent_pids" else "panel.agent_pid", { pids = pids }),
+  }, {
+    ui.glyph({ name = if group.replaced then "alert-triangle" else "robot", size = 16, color = role }),
     ui.label({ text = text, maxLines = 1, flexGrow = 1 }),
-    ui.label({ text = note or "", fontSize = 11, color = role }),
+    ui.label({ text = table.concat(notes, " · "), fontSize = 11, color = role }),
   })
 end
 
--- How many agent rows show before the rest fold into "+N more", so the feed
--- keeps its room with many agents connected.
-local AGENTS_SHOWN = 3
+-- A list of up to this many rows shows whole; a longer one folds to its first
+-- row, the driver while one drives, so the feed keeps its room.
+local FOLD_PAST = 3
 -- The unfolded list scrolls within this height, about four rows.
 local AGENTS_HEIGHT = 112
 
--- The driver first, then the rest as `watch` lists them.
-local function byDriver(agents, driver: number?)
-  local sorted = {}
-  for _, agent in agents do
-    if agent.pid == driver then
-      table.insert(sorted, agent)
-    end
-  end
-  for _, agent in agents do
-    if agent.pid ~= driver then
-      table.insert(sorted, agent)
-    end
-  end
-  return sorted
-end
-
--- Folds or unfolds the list: "+N more" with how many of those are on an old
--- build, or "Show fewer".
-local function foldRow(hidden)
-  local old = 0
-  for _, agent in hidden do
-    if agent.replaced then
-      old += 1
-    end
-  end
+-- "Connected agents", how many, and once how many of them run an old build.
+local function agentsTitle(count: number, old: number)
   local items = {
-    ui.button({
-      text = if agentsOpen then tr("panel.agents_fewer") else tr("panel.agents_more", { n = #hidden }),
-      variant = "ghost",
-      controlSize = "sm",
-      onClick = function()
-        agentsOpen = not agentsOpen
-        render()
-      end,
-    }),
+    ui.label({ text = tr("panel.agents"), fontWeight = "bold" }),
+    ui.label({ text = tostring(count), color = "on_surface_variant", flexGrow = 1 }),
   }
-  if old > 0 and not agentsOpen then
-    table.insert(items, ui.label({ text = tr("panel.agents_old", { n = old }), fontSize = 11, color = "tertiary" }))
+  if old > 0 then
+    local key = if old == 1 then "panel.agents_old_one" else "panel.agents_old"
+    table.insert(items, ui.label({ text = tr(key, { n = old }), fontSize = 11, color = "tertiary" }))
   end
-  return ui.row({ key = "agents-fold", gap = 8, align = "center" }, items)
+  return ui.row({ gap = 6, align = "center" }, items)
 end
 
--- Every agent with a server on this desktop, the driver and old builds marked.
+-- Folds or unfolds the list: "and N more" agents, or "Show fewer".
+local function foldRow(hidden: number)
+  return ui.row({
+    key = "agents-fold",
+    gap = 10,
+    align = "center",
+    paddingV = 3,
+    onClick = function()
+      agentsOpen = not agentsOpen
+      render()
+    end,
+  }, {
+    ui.glyph({ name = if agentsOpen then "chevron-up" else "chevron-down", size = 16, color = "primary" }),
+    ui.label({ text = if agentsOpen then tr("panel.agents_fewer") else tr("panel.agents_more", { n = hidden }), color = "primary" }),
+  })
+end
+
+-- Every agent with a server on this desktop, the driver first.
 local function agentList()
   local agents = view.agents or {}
-  -- Folding a single agent into "+1 more" would save nothing, and a list that
-  -- grows past that again, even from none, starts folded.
-  if #agents <= AGENTS_SHOWN + 1 then
+  local groups = agentGroups.groups(agents, serverPid(view.lease and view.lease.session))
+  -- A list that grows long again, even from none, starts folded.
+  if #groups <= FOLD_PAST then
     agentsOpen = false
   end
-  if #agents == 0 then
+  if #groups == 0 then
     return nil
   end
-  local driver = serverPid(view.lease and view.lease.session)
-  local sorted = byDriver(agents, driver)
   local rows = {}
-  for _, agent in sorted do
-    table.insert(rows, agentRow(agent, driver))
+  for _, group in groups do
+    table.insert(rows, agentRow(group))
   end
-  local title = ui.label({ text = tr("panel.agents"), fontWeight = "bold" })
-  if #rows <= AGENTS_SHOWN + 1 then
+  local title = agentsTitle(#agents, desk.outdated(agents))
+  if #groups <= FOLD_PAST then
     return ui.column({ gap = 2 }, { title, table.unpack(rows) })
   end
-  local hidden = table.move(sorted, AGENTS_SHOWN + 1, #sorted, 1, {})
+  local hidden = #agents - #groups[1].pids
   if agentsOpen then
     return ui.column({ gap = 2 }, { title, ui.scroll({ key = "agents", height = AGENTS_HEIGHT, gap = 2 }, rows), foldRow(hidden) })
   end
-  local shown = { title }
-  for i = 1, AGENTS_SHOWN do
-    table.insert(shown, rows[i])
-  end
-  table.insert(shown, foldRow(hidden))
-  return ui.column({ gap = 2 }, shown)
+  return ui.column({ gap = 2 }, { title, rows[1], foldRow(hidden) })
 end
 
 local function feed(now: number)
