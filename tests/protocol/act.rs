@@ -2365,7 +2365,7 @@ async fn passthrough_arguments_reach_the_audit_log_only_as_metadata() {
             json!(["niri_action", {"action": {"Spawn": {"command": {"count": 2, "bytes": [4, 25]}}}}, null]),
             json!(["noctalia", {"count": 2, "bytes": [25, 25]}, "upstream_error"]),
             json!(["noctalia", panel_open(25), null]),
-            json!(["noctalia", panel_open(47), "invalid_arguments"]),
+            json!(["noctalia", {"count": 2, "bytes": [10, 47]}, "invalid_arguments"]),
             json!(["niri_action", {"action": {"MoveWindowToWorkspace": {
                 "window_id": 2, "reference": {"Name": {"bytes": 25}}, "focus": false
             }}}, "cancelled"]),
@@ -2414,6 +2414,33 @@ async fn noctalia_calls_are_named_only_as_noctalias_own_lists_name_them() {
             }),
             plugin(31),
             listed,
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_refused_noctalia_call_asks_noctalia_for_no_list() {
+    let on = [("NIRI_COMPUTER_USE_UNRESTRICTED", "1")];
+    let mut desk = Desk::start_with("act-noctalia-unnamed", "", &on).await;
+    let framed = json!({"args": ["caffeine-toggle", "a\nb"]});
+    desk.server.call("noctalia", framed).await;
+    let released = json!({"restore_focus": false});
+    desk.server.call("release_desktop", released).await;
+    let plugin = json!({"args": ["plugin", "ayagmar/obs-control:controller", "all", "go"]});
+    desk.server.call("noctalia", plugin).await;
+
+    assert_eq!(desk.noctalia.list_requests(), 0);
+    let logged: Vec<Value> = desk
+        .audited()
+        .into_iter()
+        .filter(|line| line[0] == "noctalia")
+        .map(|line| json!([line[1], line[4]]))
+        .collect();
+    assert_eq!(
+        logged,
+        [
+            json!([{"count": 2, "bytes": [15, 3]}, "invalid_arguments"]),
+            json!([{"count": 4, "bytes": [6, 30, 3, 2]}, "lease_required"]),
         ]
     );
 }

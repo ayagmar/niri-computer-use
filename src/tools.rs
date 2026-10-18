@@ -1,6 +1,6 @@
 //! MCP tool definitions. Each tool only translates the call into a module call.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use base64::Engine as _;
 use niri_ipc::Action;
@@ -940,7 +940,7 @@ impl Server {
             Asked {
                 tool: "focus",
                 logged,
-                gate: None,
+                later: None,
                 report: Report::quiet(args.screenshot, act::FOCUS_QUIET),
             },
             work,
@@ -980,7 +980,7 @@ impl Server {
             Asked {
                 tool: "launch",
                 logged,
-                gate: None,
+                later: None,
                 report: Report::shot(shoot),
             },
             work,
@@ -1013,7 +1013,7 @@ impl Server {
             Asked {
                 tool: "close_window",
                 logged,
-                gate: None,
+                later: None,
                 report: Report::shot(args.screenshot),
             },
             work,
@@ -1071,7 +1071,7 @@ impl Server {
             Asked {
                 tool: "niri_action",
                 logged,
-                gate: None,
+                later: None,
                 report,
             },
             work,
@@ -1301,7 +1301,7 @@ impl Server {
         let asked = Asked {
             tool: "type_text",
             logged,
-            gate: None,
+            later: None,
             report: Report {
                 shoot: args.screenshot,
                 elements: args.element_changes.then_some(Watch::Focused),
@@ -1359,7 +1359,7 @@ impl Server {
         let asked = Asked {
             tool: "activate_element",
             logged,
-            gate: Some(&times),
+            later: Some(Later::Gate(&times)),
             report: Report {
                 shoot: args.screenshot,
                 elements: args
@@ -1414,7 +1414,7 @@ impl Server {
         let asked = Asked {
             tool: "set_element_text",
             logged,
-            gate: Some(&times),
+            later: Some(Later::Gate(&times)),
             report: Report {
                 shoot: args.screenshot,
                 elements: args
@@ -1611,7 +1611,7 @@ impl Server {
             Asked {
                 tool: "shell_panel",
                 logged,
-                gate: None,
+                later: None,
                 report: Report::shot(shoot),
             },
             work,
@@ -1638,18 +1638,19 @@ impl Server {
         Parameters(args): Parameters<NoctaliaArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let (env, niri) = (self.engine.env(), self.engine.niri());
-        let named = noctalia::named(env, &args.args).await;
-        let mut logged = audit::noctalia(&args.args, named);
+        let mut logged = audit::noctalia(&args.args);
         flag(&mut logged, "screenshot", args.screenshot);
+        let (env, niri) = (self.engine.env(), self.engine.niri());
         let shoot = args.screenshot;
-        let work = async move { act::shell::message(env, niri, &args.args).await };
+        let named = OnceLock::new();
+        let naming = &named;
+        let work = async move { act::shell::message(env, niri, &args.args, naming).await };
         self.act(
             &context,
             Asked {
                 tool: "noctalia",
                 logged,
-                gate: None,
+                later: Some(Later::Noctalia(&named)),
                 report: Report::shot(shoot),
             },
             work,
@@ -1698,7 +1699,7 @@ impl Server {
             Asked {
                 tool,
                 logged,
-                gate: None,
+                later: None,
                 report: Report {
                     shoot: aim.shoot,
                     elements: aim.watch.as_deref().map(Watch::Element),
@@ -1733,7 +1734,7 @@ impl Server {
             Asked {
                 tool,
                 logged,
-                gate: None,
+                later: None,
                 report: Report {
                     shoot,
                     elements: element_changes.then_some(Watch::Focused),
@@ -1757,11 +1758,12 @@ impl Server {
         let Asked {
             tool,
             logged,
-            gate,
+            later,
             report,
         } = asked;
-        let logged = move || match gate {
-            Some(gate) => gate.logged(logged),
+        let logged = move || match later {
+            Some(Later::Gate(gate)) => gate.logged(logged),
+            Some(Later::Noctalia(named)) => audit::noctalia_named(logged, named.get()),
             None => logged,
         };
         // Boxed, because the readiness report, the action's work and its wait make large
@@ -1922,9 +1924,17 @@ fn waited_result(
 struct Asked<'a> {
     tool: &'a str,
     logged: Value,
-    /// An element action's last gate times, which the audit log adds to `logged`.
-    gate: Option<&'a actions::GateTimes>,
+    /// What the audit log adds to `logged` once the call is done.
+    later: Option<Later<'a>>,
     report: Report<'a>,
+}
+
+/// What a call learns while it runs that the audit log adds to its arguments.
+enum Later<'a> {
+    /// An element action's last gate times.
+    Gate(&'a actions::GateTimes),
+    /// What Noctalia's lists name of a `noctalia` call, once it passed the gate.
+    Noctalia(&'a OnceLock<noctalia::Named>),
 }
 
 /// A pointer tool's screenshot ref, whether it asked for a screenshot after, the

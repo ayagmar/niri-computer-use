@@ -85,6 +85,16 @@ impl Reply {
             .collect()
     }
 
+    /// How many `--help` and `plugins list` requests were answered so far.
+    pub(crate) fn list_requests(&self) -> usize {
+        let state = self.0.lock().unwrap();
+        state
+            .commands
+            .iter()
+            .filter(|command| ["--help", "plugins list"].contains(&command.as_str()))
+            .count()
+    }
+
     /// How many `status` requests were answered so far.
     pub(crate) fn status_requests(&self) -> usize {
         let state = self.0.lock().unwrap();

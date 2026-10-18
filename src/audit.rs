@@ -374,28 +374,30 @@ fn matched(args: &mut Value, result: &Result<CallToolResult, ErrorData>) {
     expect.insert("matched".to_owned(), matched);
 }
 
-/// `noctalia`'s arguments for the log: how many, each one's length in bytes, and what
-/// Noctalia's lists name of them, never the arguments themselves.
-pub(crate) fn noctalia(args: &[String], named: Named) -> Value {
-    let mut logged = Map::new();
-    logged.insert("count".to_owned(), Value::from(args.len()));
-    let bytes = args.iter().map(String::len).collect::<Vec<_>>();
-    logged.insert("bytes".to_owned(), Value::from(bytes));
-    let Named {
-        command,
-        description,
-        plugin,
-    } = named;
+/// `noctalia`'s arguments for the log: how many, and each one's length in bytes.
+pub(crate) fn noctalia(args: &[String]) -> Value {
+    json!({
+        "count": args.len(),
+        "bytes": args.iter().map(String::len).collect::<Vec<_>>(),
+    })
+}
+
+/// `noctalia`'s logged arguments with what Noctalia's lists named of them, when the call
+/// got far enough to ask, never the arguments themselves.
+pub(crate) fn noctalia_named(mut logged: Value, named: Option<&Named>) -> Value {
+    let (Some(named), Some(fields)) = (named, logged.as_object_mut()) else {
+        return logged;
+    };
     for (key, value) in [
-        ("command", command),
-        ("description", description),
-        ("plugin", plugin),
+        ("command", &named.command),
+        ("description", &named.description),
+        ("plugin", &named.plugin),
     ] {
         if let Some(value) = value {
-            logged.insert(key.to_owned(), Value::String(value));
+            fields.insert(key.to_owned(), Value::String(value.clone()));
         }
     }
-    Value::Object(logged)
+    logged
 }
 
 /// The outcome's error name, read from the tool's result and never from its content: a
@@ -869,8 +871,9 @@ mod tests {
     #[test]
     fn noctalia_logs_counts_byte_lengths_and_only_what_noctalia_named() {
         let args = ["clipboard-copy".to_owned(), "secret".to_owned()];
+        assert_eq!(noctalia(&args), json!({"count": 2, "bytes": [14, 6]}));
         assert_eq!(
-            noctalia(&args, Named::default()),
+            noctalia_named(noctalia(&args), None),
             json!({"count": 2, "bytes": [14, 6]})
         );
         let named = Named {
@@ -878,7 +881,7 @@ mod tests {
             description: Some("Copy text to the clipboard".to_owned()),
             plugin: None,
         };
-        let logged = noctalia(&args, named);
+        let logged = noctalia_named(noctalia(&args), Some(&named));
         assert_eq!(
             logged,
             json!({
