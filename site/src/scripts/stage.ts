@@ -149,6 +149,7 @@ function play(stage: HTMLElement, screen: HTMLElement) {
 			else {
 				again.hidden = true;
 				finished();
+				recording.focus();
 			}
 		} else if (running) {
 			held = true;
@@ -168,6 +169,7 @@ function play(stage: HTMLElement, screen: HTMLElement) {
 	});
 	addEventListener('afterprint', () => {
 		if (printing) start(paused);
+		else if (held) show(sceneAt(Math.min(paused, end)), paused);
 	});
 
 	if (!motion.matches) return;
