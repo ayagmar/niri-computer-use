@@ -24,48 +24,71 @@ local function tr(key: string, vars)
   return noctalia.tr(key, vars)
 end
 
-local function header(now: number)
-  local status = view.status
-  return ui.row({ gap = 12, align = "center", padding = 14, radius = 12, fill = "surface_variant/0.6" }, {
-    ui.glyph({ name = look.glyph(status), size = 28, color = look.role(status) }),
-    ui.column({ gap = 2, flexGrow = 1 }, {
-      ui.label({ text = look.title(view, tr), fontSize = 15, fontWeight = "bold", maxLines = 2 }),
-      ui.label({ text = look.detail(view, now, tr), color = "on_surface_variant", maxLines = 3 }),
-    }),
-    ui.button({
-      glyph = "settings",
-      variant = "ghost",
-      tooltip = tr("panel.settings"),
-      onClick = function()
-        noctalia.openSettings()
-      end,
-    }),
-  })
-end
+-- Where Stop shows: while an agent holds the desktop, and while the plugin
+-- can't see whether one does. Idle, there is nothing to stop, and without a
+-- binary Stop couldn't run.
+local STOPPABLE = { driving = true, asking = true, starting = true, offline = true, error = true }
 
+-- Resume once stopped, Stop where it can do something, otherwise nothing.
 local function controls()
   if view.stopped then
     return ui.button({
       text = tr("panel.resume"),
       glyph = "player-play",
       variant = "primary",
+      controlSize = "sm",
       enabled = not view.inputDirty,
       tooltip = if view.inputDirty then tr("status.stopped.stuck") else nil,
       onClick = function()
         actions.run("resume")
       end,
     })
+  elseif not STOPPABLE[view.status] then
+    return nil
   end
   return ui.button({
     text = tr("panel.stop"),
     glyph = "hand-stop",
     variant = "destructive",
-    enabled = view.status ~= "missing",
+    controlSize = "sm",
+    -- Set although it is the default: the host may reuse a held-back Resume for it.
+    enabled = true,
     tooltip = tr("panel.stop_hint"),
     onClick = function()
       actions.run("stop")
     end,
   })
+end
+
+local function settingsButton()
+  return ui.button({
+    glyph = "settings",
+    variant = "ghost",
+    controlSize = "sm",
+    tooltip = tr("panel.settings"),
+    onClick = function()
+      noctalia.openSettings()
+    end,
+  })
+end
+
+-- The status card: who drives where and for how long, Stop or Resume, and the
+-- plugin's settings.
+local function header(now: number)
+  local status = view.status
+  local children = {
+    ui.glyph({ name = look.glyph(status), size = 28, color = look.role(status) }),
+    ui.column({ gap = 2, flexGrow = 1 }, {
+      ui.label({ text = look.title(view, tr), fontSize = 15, fontWeight = "bold", maxLines = 2 }),
+      ui.label({ text = look.detail(view, now, tr), color = "on_surface_variant", maxLines = 3 }),
+    }),
+  }
+  local control = controls()
+  if control then
+    table.insert(children, control)
+  end
+  table.insert(children, settingsButton())
+  return ui.row({ gap = 12, align = "center", padding = 14, radius = 12, fill = "surface_variant/0.6" }, children)
 end
 
 local function who(call): string
@@ -239,14 +262,14 @@ local function latestButton()
 end
 
 -- The feed's heading, with a button back to the newest call while the user
--- reads older ones.
+-- reads older ones. It keeps the button's height, so the feed doesn't jump
+-- when it shows.
 local function heading()
   local row = { ui.label({ text = tr("panel.activity"), fontWeight = "bold", flexGrow = 1 }) }
   if not atLatest then
     table.insert(row, latestButton())
   end
-  table.insert(row, controls())
-  return ui.row({ gap = 8, align = "center" }, row)
+  return ui.row({ gap = 8, align = "center", minHeight = 32 }, row)
 end
 
 function render()

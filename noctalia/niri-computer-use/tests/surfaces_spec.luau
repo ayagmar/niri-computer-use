@@ -64,8 +64,9 @@ t.group("bar", function()
 end)
 
 t.group("panel", function()
-  local function button(host, label)
-    return host.find(host.panelTree, function(n)
+  -- The button labelled `label` in the panel, or in `tree`, a part of it.
+  local function button(host, label, tree)
+    return host.find(tree or host.panelTree, function(n)
       return n.type == "button" and n.props.text == label
     end)
   end
@@ -364,7 +365,25 @@ t.group("panel", function()
     t.eq(host.state.desk.status, "error")
     t.ok(button(host, "Stop").props.enabled, "Stop is disabled after watch's error")
     host.event({ event = "missing" })
-    t.eq(button(host, "Stop").props.enabled, false)
+    t.eq(button(host, "Stop"), nil, "Stop shows without a binary to run it")
+  end)
+
+  t.test("Stop sits in the status card, and only while an agent holds the desktop", function()
+    local host = desktop()
+    local panel = env.start(host, "panel.luau")
+    panel.call("onOpen", {})
+    host.event({ event = "hello", format = 1 })
+    host.event({ event = "state", stopped = false, input_dirty = false })
+    t.eq(button(host, "Stop"), nil, "Stop shows while no agent holds the desktop")
+    drive(host, { pending = true })
+    local card = host.panelTree.children[1]
+    t.ok(button(host, "Stop", card) ~= nil, "no Stop in the status card while an agent asks")
+    drive(host)
+    card = host.panelTree.children[1]
+    t.ok(button(host, "Stop", card) ~= nil, "no Stop in the status card while an agent drives")
+    t.eq(button(host, "Stop"), button(host, "Stop", card), "Stop isn't the card's alone")
+    host.event({ event = "state", stopped = false, input_dirty = false })
+    t.eq(button(host, "Stop"), nil, "Stop stays once the agent gave the desktop back")
   end)
 end)
 
