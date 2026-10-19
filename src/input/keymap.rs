@@ -87,6 +87,12 @@ const CHROMIUM_CODES: [RangeInclusive<u32>; 22] = [
 /// out.
 const BORROWABLE: RangeInclusive<u32> = 183..=194;
 
+/// Whether Chromium receives `code`. A symbol the layout has only on other keys, such as a
+/// US map's `EuroSign` on `<I443>` (evdev 435), counts as missing and goes on a spare key.
+fn chromium_receives(code: Evdev) -> bool {
+    CHROMIUM_CODES.iter().any(|range| range.contains(&code.0))
+}
+
 fn evdev_in(code: xkb::Keycode, ranges: &[RangeInclusive<u32>]) -> bool {
     code.raw()
         .checked_sub(8)
@@ -180,7 +186,8 @@ fn split<'t>(
     let mut missing = Vec::new();
     for (at, c) in text.char_indices() {
         let sym = text_sym(c);
-        if find(keymap, group, sym).is_ok() || missing.contains(&sym) {
+        let present = find(keymap, group, sym).is_ok_and(|key| chromium_receives(key.code));
+        if present || missing.contains(&sym) {
             continue;
         }
         if sym.raw() == 0 || c.is_control() {
@@ -464,7 +471,13 @@ fn find(map: &xkb::Keymap, group: u32, sym: xkb::Keysym) -> Result<Key, CallErro
     }
     candidates
         .into_iter()
-        .min_by_key(|key| (key.modifiers.count_ones(), key.code.0))
+        .min_by_key(|key| {
+            (
+                !chromium_receives(key.code),
+                key.modifiers.count_ones(),
+                key.code.0,
+            )
+        })
         .ok_or_else(|| {
             refused(
                 "a requested symbol is absent from the active compositor keymap; nothing was typed",
@@ -585,6 +598,27 @@ mod tests {
     }
 
     /// As many symbols as spare keys Chromium knows leave the borrowable keys as they were.
+    /// US has `EuroSign` only on `<I443>`, past Xwayland's last keycode and without a code
+    /// in Chromium, which dropped the €; it goes on a spare key instead.
+    #[test]
+    fn a_symbol_only_on_a_key_chromium_drops_goes_on_a_spare_key() {
+        let map = us_like()
+            .replace("maximum = 192;", "maximum = 451;")
+            .replace("<FK14> = 192;", "<FK14> = 192; <I443> = 451;")
+            .replace(
+                "    modifier_map Shift",
+                "    key <I443> { [EuroSign] };\n    modifier_map Shift",
+            );
+        let [part] = <[Part; 1]>::try_from(plan(&map, 0, &text("a€")).unwrap().parts).unwrap();
+        assert!(part.extended.is_some());
+        assert_eq!(codes(&part)[1], SPARE[0]);
+        let euro = keys(1, &text("€"));
+        assert_eq!(
+            (euro[0].code, euro[0].modifiers != 0),
+            (Evdev(48 - 8), true)
+        );
+    }
+
     #[test]
     fn the_borrowable_keys_stay_until_the_spare_keys_run_out() {
         let original = compile(&us_like()).unwrap();
