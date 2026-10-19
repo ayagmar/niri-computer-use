@@ -2,6 +2,9 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+- Typed text puts a symbol on a spare key when the layout has it only on a key Chromium drops. US maps have `€` only on `<I443>` (evdev 435), so `€` typed into Chromium and Electron apps arrived as nothing.
+
 ## 0.1.5 - 2026-10-18
 
 ### Changed
