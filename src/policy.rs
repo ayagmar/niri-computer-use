@@ -1200,15 +1200,15 @@ pub(crate) fn panel(name: &str) -> Result<Panel, ToolError> {
         })
 }
 
+/// The outputs `pointer_output` accepts.
+pub(crate) const POINTER_OUTPUTS: &str = "the pointer runs only on a monitor at transform Normal, or on nested niri's winit window when it is the only output";
+
 /// Whether the pointer tools may aim at output `name` (plan §8): an enabled monitor at
 /// transform `Normal`, or nested niri's `winit` window, which niri always shows
 /// `Flipped180`, when it is the only enabled output. niri maps a virtual pointer's motion
 /// through the output it is bound to alone, so the other outputs don't matter. Those are
 /// the setups live tests cover; anything else, including a monitor really rotated to
 /// `Flipped180`, is `untested_output_config`.
-/// The outputs `pointer_output` accepts.
-pub(crate) const POINTER_OUTPUTS: &str = "the pointer runs only on a monitor at transform Normal, or on nested niri's winit window when it is the only output";
-
 pub(crate) fn pointer_output(
     outputs: &BTreeMap<String, Output>,
     name: &str,
