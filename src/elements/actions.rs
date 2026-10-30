@@ -843,7 +843,7 @@ fn owner_focused(
     }
     if view.focused_window() != Some(window.id) {
         let focused = view.focused_window().map_or_else(
-            || "no window has keyboard focus".to_owned(),
+            || keyboard::NO_FOCUS.to_owned(),
             |id| format!("window {id} has it"),
         );
         return Err(ToolError::new(

@@ -10,10 +10,12 @@ use tokio::time::Instant;
 
 use crate::a11y::model::{Filter, Unbound, Unmappable};
 use crate::a11y::{self, Capped};
+use crate::changes::{self, Opened, Scene};
 use crate::elements::{self, Coverage, Listing, Withheld};
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::waiter::{View, Waited, Waiter};
-use crate::observe::{Metadata, Screenshot};
+use crate::observe::Metadata;
+use crate::settle::{Sample, Settled};
 use crate::{niri, settle};
 
 /// The shortest pause between two walks of an element condition. `elements` on the nested
@@ -76,6 +78,10 @@ pub(crate) struct Report {
     /// The element that appeared, for an element condition.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) element: Option<Appeared>,
+    /// For a `window` condition that timed out: the windows that opened during the wait,
+    /// none of which matched, as the change report lists them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) opened: Vec<Opened>,
     /// The window with keyboard focus when the wait ended; absent for `screen_stable`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) focused_window: Option<u64>,
@@ -158,10 +164,19 @@ pub(crate) async fn window(
             "no window with id {window_id}; desktop_state lists them"
         )));
     }
+    let before = Scene::of(waiter.view());
     let (observed, windows, detail) = match waiter.until(limit, |view| met(until, view)).await {
         Waited::Done(windows) => (Ended::Met, windows, None),
         Waited::Timeout => (Ended::Timeout, Vec::new(), None),
         Waited::Lost(reason) => (Ended::Uncertain, Vec::new(), Some(reason)),
+    };
+    let (opened, detail) = match (observed, until) {
+        (Ended::Timeout, Until::Window { .. }) => {
+            let opened = changes::opened(&before, &Scene::of(waiter.view()));
+            let unmatched = unmatched(&opened);
+            (opened, Some(unmatched))
+        }
+        _ => (Vec::new(), detail),
     };
     Ok(Report {
         observed,
@@ -170,9 +185,20 @@ pub(crate) async fn window(
         waited_ms: started.elapsed().as_millis(),
         detail,
         element: None,
+        opened,
         screenshot: None,
         screenshot_error: None,
     })
+}
+
+/// What a `window` condition's timeout says of the windows that opened during the wait.
+fn unmatched(opened: &[Opened]) -> String {
+    if opened.is_empty() {
+        "no window opened during the wait".to_owned()
+    } else {
+        "windows opened during the wait, but none matched; `opened` lists them with their app_id"
+            .to_owned()
+    }
 }
 
 /// The element that met an appearing condition: its ref in the form `elements` issues,
@@ -390,24 +416,25 @@ where
         waited_ms: started.elapsed().as_millis(),
         detail,
         element: appeared,
+        opened: Vec::new(),
         screenshot: None,
         screenshot_error: None,
     })
 }
 
-/// Captures the focused output until two captures in a row are the same, up to `limit`;
-/// the report and the last capture.
+/// Samples the focused output until it stops changing (`settle::settle`), up to `limit`;
+/// the report and how the samples ended, for the screenshot `settle::finish` takes.
 pub(crate) async fn screen<F>(
-    capture: impl FnMut() -> F,
+    sample: impl FnMut() -> F,
     limit: Duration,
-) -> Result<(Report, Screenshot), CallError>
+) -> Result<(Report, Settled<Sample>), CallError>
 where
-    F: Future<Output = Result<Screenshot, CallError>>,
+    F: Future<Output = Result<Sample, CallError>>,
 {
     let started = Instant::now();
-    let shot = settle::screenshot(capture, limit).await?;
+    let settled = settle::settle(sample, settle::compare, limit).await?;
     let report = Report {
-        observed: if shot.metadata.settled == Some(true) {
+        observed: if settled.stable {
             Ended::Met
         } else {
             Ended::Timeout
@@ -417,10 +444,11 @@ where
         waited_ms: started.elapsed().as_millis(),
         detail: None,
         element: None,
+        opened: Vec::new(),
         screenshot: None,
         screenshot_error: None,
     };
-    Ok((report, shot))
+    Ok((report, settled))
 }
 
 #[cfg(test)]

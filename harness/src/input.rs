@@ -20,7 +20,7 @@ mod native;
 mod native_gestures;
 mod native_unicode;
 mod other_layout;
-mod pacer;
+pub(crate) mod pacer;
 mod paste;
 mod physical;
 mod scrolling;

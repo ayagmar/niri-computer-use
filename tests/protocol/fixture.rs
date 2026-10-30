@@ -406,9 +406,16 @@ impl Fixture {
     /// A grim that records its arguments and writes `image`.
     pub(crate) fn grim(&self, image: &[u8]) {
         std::fs::write(self.path("grim.out"), image).unwrap();
+        if let Some(pixels) = pixels_like(image) {
+            std::fs::write(self.path("grim.ppm"), pixels).unwrap();
+        }
         self.program(
             "grim",
-            r#"printf '%s\n' "$@" > "$DIR/grim.args"; cat "$DIR/grim.out""#,
+            r#"printf '%s\n' "$@" > "$DIR/grim.args"
+case " $* " in
+  *" -t ppm "*) cat "$DIR/grim.ppm" ;;
+  *) cat "$DIR/grim.out" ;;
+esac"#,
         );
     }
 }
@@ -422,6 +429,17 @@ pub(crate) fn jpeg(width: u16, height: u16, tail: &[u8]) -> Vec<u8> {
     bytes.extend([3, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1]);
     bytes.extend(tail);
     bytes
+}
+
+/// A black P6 image of a `jpeg`'s size, which the fake grim gives for `-t ppm`.
+fn pixels_like(image: &[u8]) -> Option<Vec<u8>> {
+    let [0xFF, 0xD8, 0xFF, 0xC0, _, _, _, h0, h1, w0, w1, ..] = *image else {
+        return None;
+    };
+    let (width, height) = (u16::from_be_bytes([w0, w1]), u16::from_be_bytes([h0, h1]));
+    let header = format!("P6\n{width} {height}\n255\n");
+    let pixels = usize::from(width) * usize::from(height) * 3;
+    Some([header.as_bytes(), &vec![0; pixels]].concat())
 }
 
 /// A PNG's signature and `IHDR` chunk for `width` x `height`.
