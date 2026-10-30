@@ -64,3 +64,41 @@ Chromium type_text, emoji: known loss (Chromium cuts characters outside the Basi
 - With `NCU_CHROMIUM=/nonexistent` it failed with `NCU_CHROMIUM=/nonexistent is not an executable file`.
 - With `NCU_CHROMIUM` set to a script that answers `--version` and otherwise exits 3, the run failed after 6 s rather than at the 30 s window wait, with `the browser ended before its window opened: env failed with exit status: 3; output in …/target/e2e/1792005020-4176850/chromium.log`, and no leftover processes.
 - With the emoji case marked as promised to arrive exactly, a Helium run failed with `Chromium fixture: promised text arrived otherwise: emoji typed as "ok 烙 \u{f319} done" (U+F916 U+F319)`, after logging every case.
+
+## Form fields
+
+Measured on 2026-10-30 with `make nested-chromium-headless` on branch `fix/chromium-key-pacing`, after a field report: `type_text` of `100`, `25` and `10` into the amount fields of a React back-office form in Helium left `1`, `2` and `1`, while each call returned `observed: sent` and `focus: matched`. The agent pasted the rest with `ctrl+a` and `via: "paste"`, which worked.
+
+Environment: Rust 1.99.0; niri v26.04 (8ed0da4) built with `harness/niri-test/headless-outputs.patch`, on its headless backend with one 1280x800 output; Helium 0.20.2.1 (Chromium 156.0.8078.73), `helium-browser` on `PATH`; AMD Ryzen 9 9950X3D, 32 threads; debug build of the server; standalone mode. This machine has no cage, so `make nested-chromium` can't run here. Every run below reported C1's host snapshot unchanged, no entries from its processes in the host's journal, and no leftover processes.
+
+Run `1793372682-222460` passed: the text area's twelve cases arrived as in the table above, and the form fields as here:
+
+| Field | `100`, `25`, `10`, `1234567890` typed | The same pasted |
+|---|---|---|
+| `number`, a plain `<input type=number>` | exact | exact |
+| `controlled`, a reducer and an 8 ms render on each input | exact | exact |
+| `masked`, `@react-input/core`'s check | `1`, `2`, `1`, `1`; the mask undid 2, 1, 1 and 9 inputs | exact |
+
+The `masked` field loses what the real field lost, and the other two lose nothing, so neither a number input nor a slow synchronous render drops keys.
+
+### Why the masked field keeps only the first key
+
+The real field is `NumericInput` from the form's code: a text input with `@react-input/number-format` 2.0.3, whose `@react-input/core` 2.0.2 (`packages/core/src/Input.ts`) tracks the selection with a `setTimeout(0)` chain started on focus. Its `input` handler throws `The input selection has not been updated.` when the chain hasn't run since the previous input, and then puts the old value back and stops the event. The library's issue [#59](https://github.com/GoncharukOrg/react-input/issues/59), open since 2026-07-31, describes the same race for a person typing fast or holding Backspace.
+
+Native typing sends each key as soon as niri acknowledges the one before. In a text area, the ten keydowns of `1234567890` reached the page within 1.7 ms (run `1793371720-3759549`, which had a text area on this page). Idle, the chain ran every 4.25 ms, 439 runs in 1.87 s, the clamp browsers put on nested zero-delay timers (run `1793372010-3917463`). Once a key had changed the field, it didn't run again until the page drew its next frame, so the keys that came before that frame were undone. The page's `requestAnimationFrame` callbacks show the frames: they ran up to 1.2 s after the keys (run `1793372151-3968761`), from niri's fallback timer, since the headless backend sends frame callbacks no other way. On a monitor, a frame comes within one refresh.
+
+### Pausing between keys
+
+A one-off patch, not committed, made the server wait between keys for a time a file gave, and the harness typed `1234567890` into the `masked` field at each wait, with its 8 ms render and with none. The runs were `1793371949-3863352`, `1793372010-3917463`, `1793372056-3942754` and `1793372151-3968761`; each cell lists what arrived, once per call:
+
+| Wait between keys | With the 8 ms render | Without it |
+|---|---|---|
+| 0 ms | `1` five times | `1` twice |
+| 1, 2, 3, 4, 5, 6 and 8 ms | `1` fourteen times | |
+| 10 ms | `16`, `13` | |
+| 12 ms | `1` twice | |
+| 16 ms | `1` four times, `12` twice | `1` twice, `12` |
+| 33 ms | `1`, `17` | `1`, `18` |
+| 50 ms | `135790` twice, `13579` | exact three times |
+
+How long a wait is enough depends on how soon the page draws a frame after each key, and this backend's frames come up to a second late, so these numbers set no wait for a monitor. They show that a fixed wait of a few milliseconds does nothing, and that a page doing 8 ms of work per key still lost every other key with 50 ms between keys.

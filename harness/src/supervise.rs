@@ -52,12 +52,13 @@ pub(crate) fn supervise(
     probes: &Probes<'_>,
 ) -> Result<()> {
     let mut log = Log::create(&artifacts.join(LOG_FILE), false)?;
-    let multi = matches!(probes.server, Some((ServerChecks::Multi, _)));
+    // `harness run` sets it exactly when niri runs its own headless backend.
+    let headless = std::env::var_os(crate::environment::HEADLESS_OUTPUTS).is_some();
     // Until `identify` passes, this may not be the nested niri, so nothing more is sent to
     // it. The deadline in `harness run` kills the process group instead.
     let identified = Nested::from_env(test_dir).and_then(|nested| {
         let mut niri = Connection::open(&nested.niri)?;
-        let output = identify(&nested, &mut niri, &mut log, multi)?;
+        let output = identify(&nested, &mut niri, &mut log, headless)?;
         Ok((niri, output))
     });
     let (niri, output) = match identified {
@@ -67,8 +68,8 @@ pub(crate) fn supervise(
             return Err(failure);
         }
     };
-    let c2 = if multi {
-        log.line("C2: skipped; --multi checks its own outputs")
+    let c2 = if headless {
+        log.line("C2: skipped on niri's headless backend")
     } else {
         check_output(&output, scale, &mut log)
     };
@@ -171,14 +172,14 @@ fn write_status(artifacts: &Path, outcome: std::result::Result<&(), &Failure>) -
 }
 
 /// Stage 2: logs the endpoints and the niri version, and requires that niri's only output
-/// is `winit`, or with `multi` that every output is one of the headless backend's. That is
-/// what makes it safe to send `Quit` on this connection: the host niri drives real
+/// is `winit`, or with `headless` that every output is one of the headless backend's.
+/// That is what makes it safe to send `Quit` on this connection: the host niri drives real
 /// outputs.
 fn identify(
     nested: &Nested,
     niri: &mut Connection,
     log: &mut Log,
-    multi: bool,
+    headless: bool,
 ) -> Result<LogicalOutput> {
     log.line(&format!("NIRI_SOCKET={}", nested.niri.display()))?;
     log.line(&format!("WAYLAND_DISPLAY={}", nested.wayland.display()))?;
@@ -199,7 +200,7 @@ fn identify(
     let Response::Outputs(outputs) = niri.request(&Request::Outputs)? else {
         return Err(Failure::new("niri answered Outputs with another response"));
     };
-    if multi {
+    if headless {
         only_headless(&outputs)
     } else {
         only_winit(outputs)

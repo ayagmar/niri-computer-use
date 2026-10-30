@@ -53,7 +53,7 @@ use scale::Scale;
 use supervise::Probes;
 use test_dir::TestDir;
 
-const USAGE: &str = "usage: harness run [--visible] [--shared] [--server <path>] [--niri <path>] [--scale <scale>] [--ssd] [--noctalia | --sitting | --control | --actions | --input | --shell | --a11y | --engine | --measure | --latency | --chromium | --chromium-a11y | --big | --compat | --multi | --upgrade <version> | --eval <scenario> --skill <dir|none> --model <model> | --demo <scene>]
+const USAGE: &str = "usage: harness run [--visible | --headless-niri] [--shared] [--server <path>] [--niri <path>] [--scale <scale>] [--ssd] [--noctalia | --sitting | --control | --actions | --input | --shell | --a11y | --engine | --measure | --latency | --chromium | --chromium-a11y | --big | --compat | --multi | --upgrade <version> | --eval <scenario> --skill <dir|none> --model <model> | --demo <scene>]
        harness matrix <builds> <output>
        harness host-capture <output>
        harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--started <file>]
@@ -166,6 +166,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
         mode: run::ServerMode::Standalone,
         binary: None,
         niri: None,
+        headless_outputs: None,
         browser: None,
         from: None,
     };
@@ -177,6 +178,7 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
                 options.scale = args.next().ok_or_else(|| Failure::new(USAGE))?.parse()?;
             }
             "--visible" => options.visible = true,
+            "--headless-niri" => options.headless_outputs = Some(chromium::HEADLESS_OUTPUTS),
             "--shared" => options.mode = run::ServerMode::Shared,
             "--ssd" => options.decorations = config::Decorations::Server,
             "--noctalia" => options.noctalia = true,
@@ -223,8 +225,27 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
         _ => return Err(Failure::new("--eval needs --skill and --model")),
     };
     one_mode(&options)?;
+    headless_outputs(&mut options)?;
     options.visible |= options.sitting;
     Ok(options)
+}
+
+/// `--multi` always runs on niri's headless backend, and `--headless-niri` asks for it
+/// with `--chromium`, the one other suite run on it.
+fn headless_outputs(options: &mut run::Options) -> Result<()> {
+    if options.server == Some(run::ServerChecks::Multi) {
+        if options.headless_outputs.is_some() {
+            return Err(Failure::new(
+                "--multi already runs niri's headless backend; drop --headless-niri",
+            ));
+        }
+        options.headless_outputs = Some(input::multi::HEADLESS_OUTPUTS);
+    } else if options.headless_outputs.is_some()
+        && options.server != Some(run::ServerChecks::Chromium)
+    {
+        return Err(Failure::new("--headless-niri runs only with --chromium"));
+    }
+    Ok(())
 }
 
 /// At most one of the run's modes: a sitting, Noctalia's checks, the server's, an eval or
@@ -309,6 +330,22 @@ mod tests {
         }
         assert!(run_options(&["--visible", "--input"]).unwrap().visible);
         assert!(run_options(&["--sitting"]).unwrap().visible);
+    }
+
+    #[test]
+    fn only_multi_and_chromium_run_on_niris_headless_backend() {
+        let multi = run_options(&["--multi"]).unwrap();
+        assert_eq!(multi.headless_outputs, Some(input::multi::HEADLESS_OUTPUTS));
+        let chromium = run_options(&["--headless-niri", "--chromium"]).unwrap();
+        assert_eq!(chromium.headless_outputs, Some(chromium::HEADLESS_OUTPUTS));
+        assert_eq!(run_options(&["--chromium"]).unwrap().headless_outputs, None);
+        for refused in [
+            &["--headless-niri"][..],
+            &["--headless-niri", "--input"],
+            &["--headless-niri", "--multi"],
+        ] {
+            assert!(run_options(refused).is_err(), "{refused:?}");
+        }
     }
 
     #[test]
