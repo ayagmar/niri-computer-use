@@ -376,7 +376,12 @@ fn preflight(
     let niri_config = if options.demo.is_some() {
         config::demo_niri(options.scale)
     } else {
-        config::niri(options.scale, &test_dir.bind_marker(), options.decorations)
+        config::niri(
+            options.scale,
+            &test_dir.bind_marker(),
+            options.decorations,
+            &server(options)?,
+        )
     };
     write(&test_dir.niri_config(), &niri_config)?;
     write(&artifacts.join("niri.kdl"), &niri_config)?;

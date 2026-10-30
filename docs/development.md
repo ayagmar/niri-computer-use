@@ -198,7 +198,7 @@ Each run keeps its files in `target/e2e/<unix time>-<pid>/`:
 
 `make nested-control` runs M2's acceptance in a nested niri. It builds the server, starts the nested niri as `make nested` does, and starts Noctalia inside it, because a nested niri sets no logind lock hint and the lease needs a lock source that says unlocked. The supervisor then drives `target/debug/niri-computer-use` against the nested niri:
 
-1. Waits until a server's `status` shows Noctalia running and the screen unlocked. That `status` and the `status` subcommand must both show `stop_key: bound`: the nested niri's config, which it was started with through `-c`, binds `Ctrl+Shift+F11` to `spawn-sh "niri-computer-use stop"`, and nothing presses it.
+1. Waits until a server's `status` shows Noctalia running and the screen unlocked. That `status` and the `status` subcommand must both show `stop_key: bound`: the nested niri's config, which it was started with through `-c`, binds `Ctrl+Shift+F11` to `spawn` the server under test with `stop`, and nothing presses it.
 2. Starts server A, which takes the lease and keeps its stdin open for 25 seconds, and waits for its record in `lease.json`.
 3. Starts server B, whose `acquire_desktop` must fail with `lease_held` naming server A.
 4. Runs `recover`, which must refuse because a server holds the lease.

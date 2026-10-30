@@ -41,7 +41,7 @@ Prints the same report as one line per prerequisite, `✓` or `✗`, with a `fix
 ✓ pointer: supported on these outputs
 ✓ grim: found
 ✓ accessibility bus: found
-✓ stop key: /home/you/.config/niri/config.kdl binds a key to `niri-computer-use stop`
+✓ stop key: /home/you/.config/niri/config.kdl: Mod+Shift+Escape runs `/home/you/.local/bin/niri-computer-use stop`
 ✓ policy file: loaded, 0 presets
 
 Ready.

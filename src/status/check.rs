@@ -426,7 +426,7 @@ mod tests {
             },
             "stop": false,
             "stop_key": "bound",
-            "stop_key_detail": "/home/u/.config/niri/config.kdl binds a key to `niri-computer-use stop`",
+            "stop_key_detail": "/home/u/.config/niri/config.kdl: Mod+Shift+Escape runs `/home/u/.local/bin/niri-computer-use stop`",
             "input_dirty": null,
             "lock": {"state": "unlocked", "source": "logind", "session": "2", "logind_error": null},
             "outputs": {"pointer_supported": true, "reason": null},
@@ -462,7 +462,7 @@ mod tests {
 ✓ pointer: supported on these outputs
 ✓ grim: found
 ✓ accessibility bus: found
-✓ stop key: /home/u/.config/niri/config.kdl binds a key to `niri-computer-use stop`
+✓ stop key: /home/u/.config/niri/config.kdl: Mod+Shift+Escape runs `/home/u/.local/bin/niri-computer-use stop`
 ✓ policy file: loaded, 2 presets
 
 Ready."

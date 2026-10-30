@@ -21,9 +21,16 @@ impl Decorations {
 
 /// The nested niri config. No startup commands, animations, borders or Xwayland, a solid
 /// magenta background, a fixed 400x300 floating `wev`, a fixed 560x360 floating `kitty`
-/// for the scroll check, the accessibility fixtures floating at 400x300, and one test bind.
-pub(crate) fn niri(scale: Scale, bind_marker: &Path, decorations: Decorations) -> String {
+/// for the scroll check, the accessibility fixtures floating at 400x300, one test bind, and
+/// a stop key running `server`.
+pub(crate) fn niri(
+    scale: Scale,
+    bind_marker: &Path,
+    decorations: Decorations,
+    server: &Path,
+) -> String {
     let marker = bind_marker.display();
+    let server = server.display();
     let prefer_no_csd = match decorations {
         Decorations::Client => "",
         Decorations::Server => "prefer-no-csd\n\n",
@@ -102,7 +109,7 @@ window-rule {{
 binds {{
     Ctrl+Shift+F12 {{ spawn "touch" "{marker}"; }}
     // For `status.stop_key`; nothing presses it.
-    Ctrl+Shift+F11 {{ spawn-sh "niri-computer-use stop"; }}
+    Ctrl+Shift+F11 {{ spawn "{server}" "stop"; }}
 }}
 "##
     )
@@ -248,6 +255,7 @@ mod tests {
             "1.5".parse().unwrap(),
             Path::new("/t/bind-fired"),
             Decorations::Client,
+            Path::new("/t/niri-computer-use"),
         );
         assert!(config.contains("    scale 1.5\n"));
         assert!(!config.contains("prefer-no-csd"));
@@ -257,7 +265,12 @@ mod tests {
 
     #[test]
     fn server_decorations_prefer_no_csd() {
-        let config = niri(Scale::ONE, Path::new("/t/m"), Decorations::Server);
+        let config = niri(
+            Scale::ONE,
+            Path::new("/t/m"),
+            Decorations::Server,
+            Path::new("/t/niri-computer-use"),
+        );
         assert!(config.starts_with("prefer-no-csd\n\n"));
     }
 

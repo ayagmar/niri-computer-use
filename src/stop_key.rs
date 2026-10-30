@@ -7,6 +7,7 @@
 //! of reach, a file that can't be read or that niri would refuse, and niri reporting that
 //! its last config load failed, after which it runs an earlier config or its default.
 
+mod binds;
 mod kdl;
 
 use std::io;
@@ -15,6 +16,8 @@ use std::time::Duration;
 
 use serde::Serialize;
 
+use binds::{Executable, Runs, Spawner};
+
 use crate::control::procs;
 use crate::niri::{self, Socket};
 
@@ -22,7 +25,8 @@ use crate::niri::{self, Socket};
 const DEADLINE: Duration = Duration::from_secs(2);
 /// Far above any config file; a larger one isn't read.
 const MAX_FILE: u64 = 1 << 20;
-/// niri's own limit on nested includes (`RECURSION_LIMIT` in `niri-config/src/lib.rs`).
+/// niri's own limit on nested includes (`RECURSION_LIMIT` in `niri-config/src/lib.rs`):
+/// a file this many includes below the main one is refused.
 const INCLUDE_DEPTH: usize = 10;
 const PROGRAM: &str = "niri-computer-use";
 /// niri's config when the user has none of their own.
@@ -132,8 +136,12 @@ fn inspect(proc_root: &Path, pid: u32, system: &Path) -> Checked {
         Ok(main) => main,
         Err(error) => return Checked::unknown(error),
     };
-    let home = started.home.as_deref().map(Path::new);
-    match scan(&main, home, &mut read_limited) {
+    let spawner = Spawner {
+        home: started.home.as_deref().map(Path::new),
+        path: started.path.as_deref(),
+        cwd: started.cwd.as_deref(),
+    };
+    match scan(&main, spawner, &mut Host) {
         Ok(scan) => scan.checked(&main),
         Err(error) => Checked::unknown(format!("{error}, so niri wouldn't load it as it is")),
     }
@@ -147,6 +155,8 @@ struct Started {
     niri_config: Option<String>,
     xdg_config_home: Option<String>,
     home: Option<String>,
+    /// Where `spawn` looks for a bare program name.
+    path: Option<String>,
     cwd: Option<PathBuf>,
 }
 
@@ -161,6 +171,7 @@ impl Started {
             niri_config: var("NIRI_CONFIG")?,
             xdg_config_home: var("XDG_CONFIG_HOME")?,
             home: var("HOME")?,
+            path: var("PATH")?,
             cwd: std::fs::read_link(proc_root.join(pid.to_string()).join("cwd")).ok(),
         })
     }
@@ -222,50 +233,143 @@ fn locate(started: &Started, system: &Path) -> Result<PathBuf, String> {
     ))
 }
 
-/// What the files hold: the first that binds the stop key, and how many were read.
+/// The config files, read through `read`, and the programs they name, looked at through
+/// `executable`.
+trait Disk: Executable {
+    fn read(&mut self, path: &Path) -> io::Result<String>;
+}
+
+/// This machine's files.
+struct Host;
+
+impl Executable for Host {
+    fn executable(&self, path: &Path) -> io::Result<bool> {
+        use std::os::unix::fs::PermissionsExt as _;
+        match std::fs::metadata(path) {
+            Ok(meta) => Ok(meta.is_file() && meta.permissions().mode() & 0o111 != 0),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+impl Disk for Host {
+    fn read(&mut self, path: &Path) -> io::Result<String> {
+        read_limited(path)
+    }
+}
+
+/// A bind in effect, or one a later bind for its key replaced.
+#[derive(Debug, PartialEq, Eq)]
+struct Bind {
+    /// The key as niri compares keys (`binds::key`).
+    key: String,
+    /// The key as the config writes it.
+    shown: String,
+    file: PathBuf,
+    runs: Runs,
+}
+
+impl Bind {
+    fn place(&self) -> String {
+        format!("{}: {}", self.file.display(), self.shown)
+    }
+
+    /// What this bind alone says of the stop key, with its rank: the lowest wins.
+    fn verdict(&self) -> Option<(u8, Checked)> {
+        let place = self.place();
+        let (rank, state, detail) = match &self.runs {
+            Runs::Stop(program) => (
+                0,
+                StopKey::Bound,
+                format!("{place} runs `{} stop`", program.display()),
+            ),
+            Runs::Unsure(why) => (
+                1,
+                StopKey::Unknown,
+                format!("{place} runs `{PROGRAM} stop`, but {why}"),
+            ),
+            Runs::Unread => (
+                2,
+                StopKey::Unknown,
+                format!("{place} runs {PROGRAM} in a form this can't read"),
+            ),
+            Runs::Missing(program) => (
+                3,
+                StopKey::NotFound,
+                format!(
+                    "{place} runs `{} stop`, which isn't an executable file",
+                    program.display()
+                ),
+            ),
+            Runs::Other => return None,
+        };
+        Some((rank, Checked { state, detail }))
+    }
+}
+
+/// What the files hold: the binds niri ends up with, as it merges `binds` sections in
+/// document order with a later bind for a key replacing an earlier one; the first stop
+/// bind replaced that way and the file that replaced it; and how many files were read.
 #[derive(Debug, PartialEq, Eq)]
 struct Scan {
-    bound_in: Option<PathBuf>,
+    binds: Vec<Bind>,
+    replaced: Option<(Bind, PathBuf)>,
     files: usize,
 }
 
 impl Scan {
+    /// The answer: a bind in effect that starts the stop with a program that is there
+    /// makes it `bound`; else one that can't be told for sure makes it `unknown`.
     fn checked(self, main: &Path) -> Checked {
-        if let Some(file) = self.bound_in {
-            return Checked {
-                state: StopKey::Bound,
-                detail: format!("{} binds a key to `{PROGRAM} stop`", file.display()),
-            };
+        let said = self
+            .binds
+            .iter()
+            .filter_map(Bind::verdict)
+            .min_by_key(|(rank, _)| *rank);
+        if let Some((_, checked)) = said {
+            return checked;
+        }
+        Checked {
+            state: StopKey::NotFound,
+            detail: self.not_found(main),
+        }
+    }
+
+    /// Why no bind in effect runs the stop.
+    fn not_found(&self, main: &Path) -> String {
+        if let Some((bind, by)) = &self.replaced {
+            return format!(
+                "{} runs `{PROGRAM} stop`, but {} binds the same key later, which replaces it",
+                bind.place(),
+                by.display()
+            );
         }
         let included = match self.files - 1 {
             0 => String::new(),
             1 => " or the file it includes".to_owned(),
             more => format!(" or the {more} files it includes"),
         };
-        Checked {
-            state: StopKey::NotFound,
-            detail: format!(
-                "no bind runs `{PROGRAM} stop` in {}{included}",
-                main.display()
-            ),
-        }
+        format!(
+            "no bind runs `{PROGRAM} stop` in {}{included}",
+            main.display()
+        )
     }
 }
 
-/// Reads `main` and what it includes, through `read`, with `~/` in an include meaning
-/// `home`. An error is anything niri would refuse the config for, or a file not read.
-fn scan(
-    main: &Path,
-    home: Option<&Path>,
-    read: &mut impl FnMut(&Path) -> io::Result<String>,
-) -> Result<Scan, String> {
-    let text = read(main).map_err(|error| format!("read {}: {error}", main.display()))?;
+/// Reads `main` and what it includes from `disk`, with `spawner` saying how niri finds a
+/// program. An error is anything niri would refuse the config for, or a file not read.
+fn scan(main: &Path, spawner: Spawner<'_>, disk: &mut impl Disk) -> Result<Scan, String> {
+    let text = disk
+        .read(main)
+        .map_err(|error| format!("read {}: {error}", main.display()))?;
     let mut walk = Walk {
-        home,
-        read,
+        spawner,
+        disk,
         stack: vec![main.to_path_buf()],
         scan: Scan {
-            bound_in: None,
+            binds: Vec::new(),
+            replaced: None,
             files: 1,
         },
     };
@@ -273,26 +377,59 @@ fn scan(
     Ok(walk.scan)
 }
 
-struct Walk<'a, R> {
-    home: Option<&'a Path>,
-    read: &'a mut R,
+struct Walk<'a, D> {
+    spawner: Spawner<'a>,
+    disk: &'a mut D,
     /// The file being read and those that include it, outermost first.
     stack: Vec<PathBuf>,
     scan: Scan,
 }
 
-impl<R: FnMut(&Path) -> io::Result<String>> Walk<'_, R> {
+impl<D: Disk> Walk<'_, D> {
     fn file(&mut self, path: &Path, text: &str) -> Result<(), String> {
         let nodes = kdl::parse(text).map_err(|error| format!("{}: {error}", path.display()))?;
         for node in &nodes {
             match node.name.as_str() {
                 "include" => self.include(path, node)?,
-                "binds" if node.children.iter().any(runs_stop) => {
-                    self.scan.bound_in.get_or_insert_with(|| path.to_path_buf());
-                }
+                "binds" => self.binds(path, node)?,
                 _ => {}
             }
         }
+        Ok(())
+    }
+
+    /// Merges a `binds` section as niri does (`Config::parse` in `niri-config`): a key
+    /// bound twice in one section is refused, and the section's binds replace earlier ones
+    /// for the same keys.
+    fn binds(&mut self, path: &Path, section: &kdl::Node) -> Result<(), String> {
+        let mut binds: Vec<Bind> = Vec::new();
+        for bind in &section.children {
+            let key =
+                binds::key(&bind.name).map_err(|error| format!("{}: {error}", path.display()))?;
+            if binds.iter().any(|earlier| earlier.key == key) {
+                return Err(format!("{}: {} is bound twice", path.display(), bind.name));
+            }
+            let runs = bind.children.first().map_or(Runs::Other, |action| {
+                binds::runs(action, self.spawner, &*self.disk)
+            });
+            binds.push(Bind {
+                key,
+                shown: bind.name.clone(),
+                file: path.to_path_buf(),
+                runs,
+            });
+        }
+        let (replaced, kept): (Vec<Bind>, Vec<Bind>) = std::mem::take(&mut self.scan.binds)
+            .into_iter()
+            .partition(|earlier| binds.iter().any(|bind| bind.key == earlier.key));
+        if self.scan.replaced.is_none() {
+            self.scan.replaced = replaced
+                .into_iter()
+                .find(|bind| matches!(bind.runs, Runs::Stop(_)))
+                .map(|bind| (bind, path.to_path_buf()));
+        }
+        self.scan.binds = kept;
+        self.scan.binds.extend(binds);
         Ok(())
     }
 
@@ -303,17 +440,17 @@ impl<R: FnMut(&Path) -> io::Result<String>> Walk<'_, R> {
                 from.display()
             ));
         };
+        if self.stack.len() >= INCLUDE_DEPTH {
+            return Err(format!(
+                "{}: includes can't be {INCLUDE_DEPTH} levels deep in niri",
+                from.display()
+            ));
+        }
         let path = self.resolve(from, target)?;
         if self.stack.contains(&path) {
             return Err(format!("{} includes itself", path.display()));
         }
-        if self.stack.len() > INCLUDE_DEPTH {
-            return Err(format!(
-                "{}: includes nest deeper than niri's {INCLUDE_DEPTH} levels",
-                from.display()
-            ));
-        }
-        let text = match (self.read)(&path) {
+        let text = match self.disk.read(&path) {
             Ok(text) => text,
             Err(error)
                 if error.kind() == io::ErrorKind::NotFound
@@ -335,6 +472,7 @@ impl<R: FnMut(&Path) -> io::Result<String>> Walk<'_, R> {
     fn resolve(&self, from: &Path, target: &str) -> Result<PathBuf, String> {
         if let Some(rest) = target.strip_prefix("~/") {
             let home = self
+                .spawner
                 .home
                 .ok_or_else(|| format!("{}: niri has no HOME for {target}", from.display()))?;
             return Ok(home.join(rest));
@@ -342,37 +480,6 @@ impl<R: FnMut(&Path) -> io::Result<String>> Walk<'_, R> {
         let dir = from.parent().unwrap_or_else(|| Path::new("/"));
         Ok(dir.join(target))
     }
-}
-
-/// Whether a bind's action runs `niri-computer-use stop`: `spawn` with the program, by
-/// path or by name, and `stop`, or `spawn-sh` with a command line that has them as two
-/// words in a row.
-fn runs_stop(bind: &kdl::Node) -> bool {
-    bind.children.iter().any(|action| match action.name.as_str() {
-        "spawn" => matches!(action.args.as_slice(), [program, stop] if is_program(program) && stop == "stop"),
-        "spawn-sh" => matches!(action.args.as_slice(), [line] if shell_runs_stop(line)),
-        _ => false,
-    })
-}
-
-fn is_program(program: &str) -> bool {
-    Path::new(program)
-        .file_name()
-        .is_some_and(|name| name == PROGRAM)
-}
-
-/// Whether one of the shell commands in `line` starts the program with `stop`, the words
-/// taken apart at spaces and their quotes dropped.
-fn shell_runs_stop(line: &str) -> bool {
-    line.split(|c: char| ";&|()\n".contains(c)).any(|command| {
-        let words: Vec<&str> = command
-            .split_whitespace()
-            .map(|word| word.trim_matches(|c| c == '"' || c == '\''))
-            .collect();
-        words
-            .windows(2)
-            .any(|pair| matches!(pair, [program, "stop"] if is_program(program)))
-    })
 }
 
 /// A file's text, unless it is larger than `MAX_FILE` or isn't UTF-8.
@@ -395,14 +502,18 @@ mod tests {
 
     const STOP: &str = r#"Mod+Shift+Escape allow-when-locked=true { spawn "/home/u/.local/bin/niri-computer-use" "stop"; }"#;
 
-    /// Files by path, for `scan`.
-    fn files(files: &[(&str, &str)]) -> impl FnMut(&Path) -> io::Result<String> {
-        let files: BTreeMap<PathBuf, String> = files
-            .iter()
-            .map(|(path, text)| (PathBuf::from(path), (*text).to_owned()))
-            .collect();
-        move |path| {
-            files
+    /// Config files by path, and one installed program.
+    struct Files(BTreeMap<PathBuf, String>);
+
+    impl Executable for Files {
+        fn executable(&self, path: &Path) -> io::Result<bool> {
+            Ok(path == Path::new("/home/u/.local/bin/niri-computer-use"))
+        }
+    }
+
+    impl Disk for Files {
+        fn read(&mut self, path: &Path) -> io::Result<String> {
+            self.0
                 .get(path)
                 .cloned()
                 .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))
@@ -411,7 +522,17 @@ mod tests {
 
     fn scanned(main: &str, all: &[(&str, &str)]) -> Checked {
         let main = Path::new(main);
-        match scan(main, Some(Path::new("/home/u")), &mut files(all)) {
+        let mut files = Files(
+            all.iter()
+                .map(|(path, text)| (PathBuf::from(path), (*text).to_owned()))
+                .collect(),
+        );
+        let spawner = Spawner {
+            home: Some(Path::new("/home/u")),
+            path: Some("/usr/bin:/home/u/.local/bin"),
+            cwd: None,
+        };
+        match scan(main, spawner, &mut files) {
             Ok(scan) => scan.checked(main),
             Err(error) => Checked::unknown(error),
         }
@@ -427,8 +548,8 @@ mod tests {
             STOP.to_owned(),
             r#"Mod+Shift+Escape { spawn "niri-computer-use" "stop"; }"#.to_owned(),
             r#"Mod+Shift+Escape { spawn-sh "niri-computer-use stop"; }"#.to_owned(),
-            r#"Mod+Shift+Escape { spawn-sh "~/.cargo/bin/niri-computer-use stop && notify-send stopped"; }"#.to_owned(),
-            r#"Mod+Shift+Escape { spawn-sh "\"$HOME/bin/niri-computer-use\" stop"; }"#.to_owned(),
+            r#"Mod+Shift+Escape { spawn-sh "~/.local/bin/niri-computer-use stop && notify-send stopped"; }"#.to_owned(),
+            r#"Mod+Shift+Escape { spawn-sh "\"$HOME/.local/bin/niri-computer-use\" stop"; }"#.to_owned(),
         ] {
             assert_eq!(state(&format!("binds {{\n    {bind}\n}}")), StopKey::Bound, "{bind}");
         }
@@ -443,7 +564,6 @@ mod tests {
             format!("/-binds {{\n    {STOP}\n}}"),
             r#"binds { Mod+Shift+Escape { spawn "niri-computer-use" "resume"; } }"#.to_owned(),
             r#"binds { Mod+Shift+Escape { spawn "niri-computer-use-helper" "stop"; } }"#.to_owned(),
-            r#"binds { Mod+Shift+Escape { spawn-sh "echo niri-computer-use; stop"; } }"#.to_owned(),
             // A spawn outside `binds` is a startup command, not a key.
             r#"spawn-at-startup "niri-computer-use" "stop""#.to_owned(),
             String::new(),
@@ -473,7 +593,8 @@ include "~/extra/more.kdl"
             found,
             Checked {
                 state: StopKey::Bound,
-                detail: "/abs/stop.kdl binds a key to `niri-computer-use stop`".to_owned()
+                detail: "/abs/stop.kdl: Mod+Shift+Escape runs `/home/u/.local/bin/niri-computer-use stop`"
+                    .to_owned()
             }
         );
         let none = scanned(
@@ -532,15 +653,104 @@ include "~/extra/more.kdl"
             let checked = scanned("/c/config.kdl", &all);
             assert_eq!(checked.state, StopKey::Unknown, "{name}: {checked:?}");
         }
-        // Includes nested deeper than niri allows.
-        let chain: Vec<(String, String)> = (0..12)
-            .map(|n| (format!("/c/{n}.kdl"), format!("include \"{}.kdl\"", n + 1)))
-            .collect();
-        let chain: Vec<(&str, &str)> = chain
-            .iter()
-            .map(|(path, text)| (path.as_str(), text.as_str()))
-            .collect();
-        assert_eq!(scanned("/c/0.kdl", &chain).state, StopKey::Unknown);
+    }
+
+    // niri reads a file nine includes below the main one and refuses one ten below.
+    #[test]
+    fn includes_nest_as_deep_as_niri_allows_and_no_deeper() {
+        let chain = |files: usize| -> Checked {
+            let mut all: Vec<(String, String)> = (1..files)
+                .map(|n| (format!("/c/{}.kdl", n - 1), format!("include \"{n}.kdl\"")))
+                .collect();
+            all.push((
+                format!("/c/{}.kdl", files - 1),
+                format!("binds {{ {STOP} }}"),
+            ));
+            let all: Vec<(&str, &str)> = all
+                .iter()
+                .map(|(path, text)| (path.as_str(), text.as_str()))
+                .collect();
+            scanned("/c/0.kdl", &all)
+        };
+        assert_eq!(chain(INCLUDE_DEPTH).state, StopKey::Bound);
+        let deeper = chain(INCLUDE_DEPTH + 1);
+        assert_eq!(deeper.state, StopKey::Unknown);
+        assert!(deeper.detail.contains("levels deep"), "{deeper:?}");
+    }
+
+    // niri merges `binds` sections in document order, includes where they stand, and a
+    // later bind for a key replaces the earlier one.
+    #[test]
+    fn the_last_bind_for_a_key_is_the_one_that_counts() {
+        let rebound = scanned(
+            "/c/config.kdl",
+            &[
+                (
+                    "/c/config.kdl",
+                    &format!("binds {{ {STOP} }}\ninclude \"dms.kdl\""),
+                ),
+                ("/c/dms.kdl", "binds { shift+MOD+escape { close-window; } }"),
+            ],
+        );
+        assert_eq!(rebound.state, StopKey::NotFound);
+        assert!(
+            rebound
+                .detail
+                .ends_with("but /c/dms.kdl binds the same key later, which replaces it"),
+            "{rebound:?}"
+        );
+        let restored = scanned(
+            "/c/config.kdl",
+            &[
+                (
+                    "/c/config.kdl",
+                    &format!("include \"dms.kdl\"\nbinds {{ {STOP} }}"),
+                ),
+                ("/c/dms.kdl", "binds { Mod+Shift+Escape { close-window; } }"),
+            ],
+        );
+        assert_eq!(restored.state, StopKey::Bound);
+        // Another key with the same action leaves the stop key alone.
+        let other_key = scanned(
+            "/c/config.kdl",
+            &[(
+                "/c/config.kdl",
+                &format!("binds {{ {STOP} }}\nbinds {{ Mod+Escape {{ close-window; }} }}"),
+            )],
+        );
+        assert_eq!(other_key.state, StopKey::Bound);
+        // niri refuses a key bound twice in one section.
+        let twice = format!("binds {{\n{STOP}\nMod+Shift+Escape {{ close-window; }}\n}}");
+        assert_eq!(state(&twice), StopKey::Unknown);
+    }
+
+    #[test]
+    fn a_stop_bind_whose_program_isnt_there_is_said_so() {
+        let stale = state_of(
+            r#"Mod+Shift+Escape { spawn "/home/u/.cargo/bin/niri-computer-use" "stop"; }"#,
+        );
+        assert_eq!(stale.state, StopKey::NotFound);
+        assert!(
+            stale.detail.contains(
+                "/home/u/.cargo/bin/niri-computer-use stop`, which isn't an executable file"
+            ),
+            "{stale:?}"
+        );
+        let wrapped = state_of(
+            r#"Mod+Shift+Escape { spawn "systemd-run" "--user" "niri-computer-use" "stop"; }"#,
+        );
+        assert_eq!(wrapped.state, StopKey::Unknown);
+        assert!(
+            wrapped.detail.contains("in a form this can't read"),
+            "{wrapped:?}"
+        );
+    }
+
+    fn state_of(bind: &str) -> Checked {
+        scanned(
+            "/c/config.kdl",
+            &[("/c/config.kdl", &format!("binds {{\n    {bind}\n}}"))],
+        )
     }
 
     #[test]
@@ -553,6 +763,7 @@ include "~/extra/more.kdl"
             niri_config: niri_config.map(str::to_owned),
             xdg_config_home: xdg.map(|xdg| xdg.display().to_string()),
             home: Some(home.display().to_string()),
+            path: None,
             cwd: Some(dir.clone()),
         };
         let at = |process: &Started| locate(process, &system);
@@ -596,15 +807,28 @@ include "~/extra/more.kdl"
         let process = proc_root.join("40");
         std::fs::create_dir_all(&process).unwrap();
         let config = dir.join("niri.kdl");
-        std::fs::write(&config, format!("binds {{ {STOP} }}")).unwrap();
+        std::fs::write(
+            &config,
+            r#"binds { Mod+Shift+Escape { spawn "niri-computer-use" "stop"; } }"#,
+        )
+        .unwrap();
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        crate::test_support::script(&bin.join("niri-computer-use"), "true");
         std::fs::write(
             process.join("cmdline"),
             format!("niri\0-c\0{}\0", config.display()),
         )
         .unwrap();
-        std::fs::write(process.join("environ"), format!("HOME={}\0", dir.display())).unwrap();
+        let environ = format!("HOME={}\0PATH=/nowhere:{}\0", dir.display(), bin.display());
+        std::fs::write(process.join("environ"), &environ).unwrap();
         let system = dir.join("none.kdl");
         assert_eq!(inspect(&proc_root, 40, &system).state, StopKey::Bound);
+        // The bare name is looked up on niri's PATH, not this process's.
+        std::fs::write(process.join("environ"), format!("HOME={}\0", dir.display())).unwrap();
+        let no_path = inspect(&proc_root, 40, &system);
+        assert_eq!(no_path.state, StopKey::Unknown);
+        assert!(no_path.detail.contains("niri has no PATH"), "{no_path:?}");
         let unreadable = inspect(&proc_root, 41, &system);
         assert_eq!(unreadable.state, StopKey::Unknown);
         assert!(unreadable.detail.contains("PID 41"), "{unreadable:?}");
