@@ -38,7 +38,9 @@ function M.new(sources)
     commands = {}, -- { command, callback, timeout } per runAsync
     toggled = {},
     settingsOpened = 0,
-    outputs = { { name = "DP-1", width = 2560, height = 1440, scale = 1.25, focused = true } },
+    -- As Noctalia gives a 2560x1440 output at niri's scale 1.25: its logical size, and
+    -- wl_output's whole-number scale.
+    outputs = { { name = "DP-1", width = 2048, height = 1152, scale = 2, focused = true } },
     bar = { visible = true, tree = nil, tooltip = nil, vertical = false },
     panelTree = nil,
     desktopTree = nil,

@@ -440,6 +440,8 @@ t.group("glow", function()
     t.ok(border(host) ~= first, "the glow didn't breathe")
   end)
 
+  -- The bug: the logical size Noctalia gives was divided by the output's scale again, so
+  -- the glow covered a quarter of a HiDPI output.
   t.test("holds the tertiary colour while an agent asks, and covers the focused output in logical pixels", function()
     local host = desktop()
     env.start(host, "glow.luau")
