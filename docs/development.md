@@ -382,7 +382,7 @@ The supervisor log has what each side read and what `recover` said. The run does
 With `UPGRADE_FROM=current`, the supervisor packs the build as in step 1 and installs it, then reinstalls it over itself, as a reinstall of the same release writes a new file:
 
 1. Starts clients A and B, which must share one engine, then installs `current` again. A's `status` must report `replaced: true`.
-2. Starts client N, which must be served by a new shared engine, with no fallback, no `unscoped` reason, so in a scope of its own, and `replaced: false`; the old engine must exit within two seconds.
+2. Starts client N, which must be served by a new shared engine, with no fallback, scoped as the first engine was (a nested session has no user systemd, so both give an `unscoped` reason), and `replaced: false`; the old engine must exit within two seconds.
 3. A's and B's next calls must fail with `engine_lost`, and the calls after with `engine_unavailable`, saying to restart this MCP client. The audit log must have both `engine_lost` lines, which their bridges wrote.
 4. Ends A, B and N, and waits for the new engine to exit.
 
