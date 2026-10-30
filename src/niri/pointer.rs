@@ -20,7 +20,7 @@ use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, delegate_noo
 use wayland_protocols_wlr::virtual_pointer::v1::client::zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1;
 use wayland_protocols_wlr::virtual_pointer::v1::client::zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1;
 
-use super::wayland::{Synced, connect, roundtrip};
+use super::wayland::{Synced, connect, read_pending, roundtrip};
 use crate::coords::ProtocolPt;
 use crate::error::{ErrorName, ToolError};
 
@@ -79,8 +79,34 @@ fn wire(step: Step) -> Vec<Wire> {
 struct State {
     /// The registry's globals: name, interface and version.
     globals: Vec<(u32, String, u32)>,
-    outputs: Vec<(WlOutput, String)>,
+    /// Each output bound, with its name and its global.
+    outputs: Vec<(WlOutput, String, u32)>,
+    /// The globals niri removed: it does so when it unplugs or disables an output.
+    removed: Vec<u32>,
+    /// The global of the output the pointer is bound to, once it is.
+    bound: Option<u32>,
+    /// Whether niri sent the bound output's state again after it was bound: it does so
+    /// for any change of its mode, scale, transform or place in the layout.
+    reconfigured: bool,
     synced: bool,
+}
+
+/// What niri did to the output a pointer is bound to after binding it: from then on, a
+/// motion may land elsewhere, mapped through niri's new geometry or, for an output that
+/// is gone, through the box around all the others.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OutputChange {
+    Removed,
+    Reconfigured,
+}
+
+impl OutputChange {
+    pub(crate) const fn what(self) -> &'static str {
+        match self {
+            Self::Removed => "unplugged or disabled",
+            Self::Reconfigured => "reconfigured",
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -124,14 +150,15 @@ impl Pointer {
         roundtrip(&connection, &mut queue, &mut state, &readable, deadline).await?;
         let (seat, manager) = bind_globals(&registry, &state, &handle)?;
         roundtrip(&connection, &mut queue, &mut state, &readable, deadline).await?;
-        let found = state
+        let (found, global) = state
             .outputs
             .iter()
-            .find(|(_, name)| name == output)
-            .map(|(found, _)| found)
+            .find(|(_, name, global)| name == output && !state.removed.contains(global))
+            .map(|(found, _, global)| (found.clone(), *global))
             .ok_or_else(|| upstream(&format!("niri's Wayland display has no output {output:?}")))?;
+        state.bound = Some(global);
         let device =
-            manager.create_virtual_pointer_with_output(Some(&seat), Some(found), &handle, ());
+            manager.create_virtual_pointer_with_output(Some(&seat), Some(&found), &handle, ());
         Ok(Self {
             connection,
             queue,
@@ -175,6 +202,25 @@ impl Pointer {
             Step::Release(_) | Step::Motion(_) | Step::Wheel(..) => {}
         }
         flushed
+    }
+
+    /// What niri did to the bound output since binding, as far as it has said so far; what
+    /// it already sent is read without waiting for more. niri sends that on this
+    /// connection, in order with how it handles the steps, so after `sync` without a
+    /// change, niri handled every step on the output as it was bound.
+    pub(crate) fn output_change(&mut self) -> Result<Option<OutputChange>, ToolError> {
+        read_pending(&mut self.queue, &mut self.state)?;
+        let removed = self
+            .state
+            .bound
+            .is_some_and(|bound| self.state.removed.contains(&bound));
+        Ok(if removed {
+            Some(OutputChange::Removed)
+        } else {
+            self.state
+                .reconfigured
+                .then_some(OutputChange::Reconfigured)
+        })
     }
 
     /// Whether any step has reached niri's socket, so that niri may have acted on it.
@@ -244,7 +290,7 @@ fn bind_globals(
     );
     for (id, interface, version) in &state.globals {
         if interface == "wl_output" && *version >= 4 {
-            registry.bind::<WlOutput, _, _>(*id, 4, handle, ());
+            registry.bind::<WlOutput, _, _>(*id, 4, handle, *id);
         }
     }
     Ok((seat, manager))
@@ -295,28 +341,37 @@ impl Dispatch<WlRegistry, ()> for State {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global {
-            name,
-            interface,
-            version,
-        } = event
-        {
-            state.globals.push((name, interface, version));
+        match event {
+            wl_registry::Event::Global {
+                name,
+                interface,
+                version,
+            } => state.globals.push((name, interface, version)),
+            wl_registry::Event::GlobalRemove { name } => state.removed.push(name),
+            _ => {}
         }
     }
 }
 
-impl Dispatch<WlOutput, ()> for State {
+/// The data of a bound output is its global.
+impl Dispatch<WlOutput, u32> for State {
     fn event(
         state: &mut Self,
         output: &WlOutput,
         event: wl_output::Event,
-        (): &(),
+        global: &u32,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let wl_output::Event::Name { name } = event {
-            state.outputs.push((output.clone(), name));
+        match event {
+            wl_output::Event::Name { name } => state.outputs.push((output.clone(), name, *global)),
+            // The first `done` ends the state sent on binding, before `bound` is set.
+            wl_output::Event::Done => state.reconfigured |= state.bound == Some(*global),
+            wl_output::Event::Geometry { .. }
+            | wl_output::Event::Mode { .. }
+            | wl_output::Event::Scale { .. }
+            | wl_output::Event::Description { .. }
+            | _ => {}
         }
     }
 }

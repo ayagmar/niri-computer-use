@@ -171,7 +171,27 @@ impl Shot {
         outputs: &BTreeMap<String, Output>,
         connection: Option<u64>,
     ) -> Result<LogicalOutput, ToolError> {
-        self.unchanged(now, outputs, connection)?;
+        self.fresh(now, connection)?;
+        self.same_output(outputs)
+    }
+
+    /// The output is still enabled in `outputs` with the layout and pointer space it had
+    /// at capture: the pointer space to encode in. A gesture checks this again before each
+    /// part, when the ref may have aged past `MAX_AGE` without anything changing.
+    pub(crate) fn same_output(
+        &self,
+        outputs: &BTreeMap<String, Output>,
+    ) -> Result<LogicalOutput, ToolError> {
+        let now_geometry = outputs.get(&self.output).and_then(|output| output.logical);
+        if now_geometry != Some(self.geometry) {
+            return Err(invalid(
+                "output_changed",
+                &format!(
+                    "output {} was {:?} at the screenshot and is {now_geometry:?} now; take a new one",
+                    self.output, self.geometry
+                ),
+            ));
+        }
         let motion = self.motion_geometry.ok_or_else(|| {
             invalid(
                 "unknown_geometry",
@@ -229,28 +249,6 @@ impl Shot {
             geometry: self.geometry,
         };
         Ok((region, pin))
-    }
-
-    /// The ref is fresh, the event stream is still on the capture's connection, and the
-    /// output's layout is unchanged.
-    fn unchanged(
-        &self,
-        now: Instant,
-        outputs: &BTreeMap<String, Output>,
-        connection: Option<u64>,
-    ) -> Result<(), ToolError> {
-        self.fresh(now, connection)?;
-        let now_geometry = outputs.get(&self.output).and_then(|output| output.logical);
-        if now_geometry != Some(self.geometry) {
-            return Err(invalid(
-                "output_changed",
-                &format!(
-                    "output {} was {:?} at the screenshot and is {now_geometry:?} now; take a new one",
-                    self.output, self.geometry
-                ),
-            ));
-        }
-        Ok(())
     }
 
     /// The ref is fresh and the event stream is still on the capture's connection.

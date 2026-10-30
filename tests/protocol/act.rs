@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use niri_ipc::{Action, WorkspaceReferenceArg};
+use niri_ipc::{Action, Transform, WorkspaceReferenceArg};
 use serde_json::{Value, json};
 
 use crate::client::{Server, mistake, report, run, tool_error};
@@ -1298,6 +1298,15 @@ async fn pointer_tools_check_the_ref_the_outputs_and_their_arguments_first() {
     let unknown = desk.server.call("pointer_move", at("shot-9", 10)).await;
     assert_eq!(reason(&unknown), ("ref_invalid", "unknown_ref".to_owned()));
 
+    let mut rotated = output("DP-1", Some((0, 0, 1440, 2560, 1.0)));
+    rotated.logical.as_mut().unwrap().transform = Transform::_90;
+    desk.niri.set_outputs(vec![rotated.clone()], Some("DP-1"));
+    desk.fixture.grim(&jpeg(1280, 2275, b"evidence"));
+    let portrait = screenshot_ref(&mut desk).await;
+    let landscape = output("DP-1", Some((0, 0, 2560, 1440, 1.0)));
+    desk.niri.set_outputs(vec![landscape], Some("DP-1"));
+    desk.fixture.grim(&jpeg(1280, 720, b"evidence"));
+
     let id = screenshot_ref(&mut desk).await;
     let outside = desk.server.call("pointer_move", at(&id, 1280)).await;
     assert_eq!(
@@ -1335,10 +1344,25 @@ async fn pointer_tools_check_the_ref_the_outputs_and_their_arguments_first() {
         args["count"] = json!(count);
         args
     };
+    // A second monitor doesn't matter to a ref on the first, whose output is as captured
+    // again: everything checked, nothing sent.
+    let captured = output("DP-1", Some((0, 0, 2560, 1440, 1.0)));
     let second = output("HDMI-A-1", Some((2560, 0, 1920, 1080, 1.0)));
-    desk.niri.set_outputs(vec![scaled, second], Some("DP-1"));
-    let two = desk.server.call("pointer_move", at(&id, 10)).await;
-    assert_eq!(tool_error(&two).0, "untested_output_config");
+    desk.niri
+        .set_outputs(vec![captured, second.clone()], Some("DP-1"));
+    let two = tool_error(&desk.server.call("pointer_move", at(&id, 10)).await);
+    assert_eq!(two.0, "upstream_error");
+    assert!(two.1.starts_with("connect to"), "{}", two.1);
+
+    // A monitor turned to portrait doesn't take the pointer, even through its own ref.
+    desk.niri.set_outputs(vec![rotated, second], Some("DP-1"));
+    let turned = tool_error(&desk.server.call("pointer_move", at(&portrait, 10)).await);
+    assert_eq!(turned.0, "untested_output_config");
+    assert!(
+        turned.1.contains(r#"aimed at output "DP-1""#),
+        "{}",
+        turned.1
+    );
     assert_eq!(
         desk.audited(),
         [
@@ -1347,9 +1371,10 @@ async fn pointer_tools_check_the_ref_the_outputs_and_their_arguments_first() {
             json!(["click", clicked(4), null, null, "invalid_arguments"]),
             json!(["click", clicked(1), null, null, "upstream_error"]),
             json!(["pointer_move", at(&id, 10), null, null, "ref_invalid"]),
+            json!(["pointer_move", at(&id, 10), null, null, "upstream_error"]),
             json!([
                 "pointer_move",
-                at(&id, 10),
+                at(&portrait, 10),
                 null,
                 null,
                 "untested_output_config"
