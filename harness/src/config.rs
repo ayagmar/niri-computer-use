@@ -187,6 +187,19 @@ window-rule {{
 /// The rest stays at the defaults. Its system-bus services, among them logind
 /// inhibitors and the Bluetooth and network agents, find no bus in NESTED.
 pub(crate) fn noctalia(wallpapers: &Path) -> String {
+    noctalia_with(wallpapers, "")
+}
+
+/// `noctalia`'s config with this checkout's plugin enabled, running `server`'s `watch`.
+pub(crate) fn noctalia_plugin(wallpapers: &Path, server: &Path) -> String {
+    let id = crate::input::overlay::PLUGIN_ID;
+    let server = serde_json::Value::from(server.to_string_lossy());
+    let config = noctalia_with(wallpapers, &format!("enabled = [\"{id}\"]\n"));
+    format!("{config}\n[plugin_settings.\"{id}\"]\nbinary = {server}\n")
+}
+
+/// `plugins` goes into the `[plugins]` table, which lists no plugin sources.
+fn noctalia_with(wallpapers: &Path, plugins: &str) -> String {
     // A JSON string is a valid TOML basic string.
     let wallpapers = serde_json::Value::from(wallpapers.to_string_lossy());
     format!(
@@ -198,7 +211,7 @@ enabled = false
 
 [plugins]
 source = []
-
+{plugins}
 [wallpaper]
 directory = {wallpapers}
 "

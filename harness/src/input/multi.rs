@@ -155,7 +155,7 @@ fn gtk_on_each(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
 }
 
 /// Waits until the GTK button has counted `expected` clicks, and no more.
-fn counted(session: &mut Session<'_>, expected: u32) -> Result<()> {
+pub(super) fn counted(session: &mut Session<'_>, expected: u32) -> Result<()> {
     session.wait_until(
         "multi-gtk-click",
         "GTK activation",
@@ -175,7 +175,11 @@ fn counted(session: &mut Session<'_>, expected: u32) -> Result<()> {
 }
 
 /// Moves the floating window of `app_id` to `output`, and waits until niri shows it there.
-fn move_to(session: &mut Session<'_>, app_id: &str, output: &str) -> Result<WindowLayout> {
+pub(super) fn move_to(
+    session: &mut Session<'_>,
+    app_id: &str,
+    output: &str,
+) -> Result<WindowLayout> {
     let id = session.wait_until("multi-window", app_id, WAIT, |session| {
         Ok(windows(session)?
             .into_iter()

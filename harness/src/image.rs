@@ -49,6 +49,12 @@ pub(crate) fn bounding_box(image: &Rgb<'_>, background: [u8; 3]) -> Option<Rect>
     bounds(image.width, marked)
 }
 
+/// The smallest rectangle holding every pixel of `colour`.
+pub(crate) fn find(image: &Rgb<'_>, colour: [u8; 3]) -> Option<Rect> {
+    let marked = pixels(image).map(|&pixel| is_colour(pixel, colour));
+    bounds(image.width, marked)
+}
+
 /// How many pixels are the background colour.
 pub(crate) fn count(image: &Rgb<'_>, background: [u8; 3]) -> usize {
     pixels(image)
