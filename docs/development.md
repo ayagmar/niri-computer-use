@@ -474,7 +474,7 @@ The README links `errand.gif`, `errand.png` and `errand.mp4` in `site/public/dem
 python3 -I scripts/real-pointer-check.py target/debug/niri-computer-use /tmp/ncu-m4-real-1
 ```
 
-It opens `wev` on the focused workspace, floats it at 400x300 at (200, 200) through niri IPC, and with the server's `pointer_move` moves the pointer to five points on `wev`'s surface, from a screenshot of DP-1 at its own scale and one 1280 pixels wide. It sends no click, key or scroll. Each motion must land within ±0.05 px of the pixel's centre; `run.log` in the directory you name says where each one did. It expects one monitor named DP-1 at transform `Normal`.
+It opens `wev` on the focused workspace and floats it at 400x300 through niri IPC. Then, for each output named with `--output` (DP-1 if none is), it moves `wev` to that output at (200, 200) and with the server's `pointer_move` moves the pointer to five points on `wev`'s surface, from a screenshot of that output at its own scale and one 1280 pixels wide. It sends no click, key or scroll. Each motion must land within ±0.05 px of the pixel's centre; `run.log` in the directory you name says where each one did. Each output must be at transform `Normal`; with a laptop and an external monitor, add `--output` once for each.
 
 ## Supervised sitting
 
