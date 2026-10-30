@@ -8,21 +8,65 @@ use crate::clipboard::Leased;
 use crate::fixture::{Fixture, jpeg};
 use crate::niri::{Niri, output};
 
+// The bug: an unknown field was dropped, so `scroll` with `direction` was blamed on
+// `notches_y`.
 #[tokio::test]
-async fn arguments_that_dont_fit_the_schema_are_text_and_never_reach_the_tool() {
+async fn arguments_that_dont_fit_the_schema_name_the_field_and_never_reach_the_tool() {
     let fixture = Fixture::new("schema");
     let _niri = Niri::start(&fixture);
     let mut server = Server::start(&fixture).await;
-    for arguments in [
-        json!({}),
-        json!({"target": 7}),
-        json!({"target": "focused_output", "format": "gif"}),
-        json!({"target": "focused_output", "max_width": -1}),
-        json!({"target": "region", "region": {"x": 0, "y": 0}}),
-    ] {
-        let result = server.call("screenshot", arguments.clone()).await;
-        let text = mistake(&result);
-        assert!(!text.is_empty(), "{arguments}");
+    let cases = [
+        ("screenshot", json!({}), "missing field `target`"),
+        ("screenshot", json!({"target": 7}), "invalid type"),
+        (
+            "screenshot",
+            json!({"target": "focused_output", "format": "gif"}),
+            "unknown variant `gif`",
+        ),
+        (
+            "screenshot",
+            json!({"target": "focused_output", "max_width": -1}),
+            "invalid value",
+        ),
+        (
+            "screenshot",
+            json!({"target": "region", "region": {"x": 0, "y": 0}}),
+            "missing field `width`",
+        ),
+        (
+            "scroll",
+            json!({"screenshot_ref": "SECRET", "x": 1, "y": 2, "direction": "down", "amount": 15}),
+            "unknown field `amount`, expected one of `keys`, `screenshot_ref`, `x`, `y`, `notches_x`, `notches_y`, `screenshot`",
+        ),
+        // An unknown field is named before a missing one, with the field that is missing.
+        (
+            "wait_for",
+            json!({"app_id": "SECRET"}),
+            "unknown field `app_id`, expected one of `until`, `timeout_ms`, `screenshot`",
+        ),
+        (
+            "wait_for",
+            json!({"until": {"window": {"title_contains": "SECRET"}}}),
+            "unknown field `title_contains`, expected `app_id` or `title`",
+        ),
+        (
+            "click",
+            json!({"screenshot_ref": "SECRET", "x": 1, "y": 2, "SECRET": true}),
+            "unknown field `SECRET`",
+        ),
+        (
+            "drag",
+            json!({"screenshot_ref": "SECRET", "from": {"x": 1, "y": 2, "button": "left"}, "to": {"x": 3, "y": 4}}),
+            "unknown field `button`, expected one of `x`, `y`, `element`",
+        ),
+    ];
+    for (tool, arguments, says) in &cases {
+        let text = mistake(&server.call(tool, arguments.clone()).await);
+        assert!(
+            text.starts_with("failed to deserialize parameters: "),
+            "{text}"
+        );
+        assert!(text.contains(says), "{tool} {arguments}: {text}");
     }
     assert_eq!(fixture.audit_lines(), Vec::<Value>::new());
 }

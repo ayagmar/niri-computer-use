@@ -2026,3 +2026,10 @@ Dependabot's open updates, taken together and checked against the version rule o
 | `taiki-e/install-action` | v2.87.26 | v2.87.31 | 2026-10-23 | `1e29709c0ec63babbe8f266397a465f29a825f91`, in `ci.yml` and `release.yml`. Dependabot proposed v2.87.29; v2.87.32 (2026-10-26) is too new. |
 
 Each action's commit is the one its tag names in the action's repository (`git ls-remote`, the annotated tag peeled). zbus 6 stays out: it is a migration of its own.
+
+## 2026-10-30: argument mistakes that say what to send
+
+In two weeks of use, 57 calls failed on their arguments, mostly from Claude Code guessing names before it loaded a tool's schema, and 46 of them never reached the audit log.
+
+- Every argument type in `tools.rs` denies unknown fields, so `scroll` with `direction` fails naming `direction` (or whichever unknown field serde meets first; serde_json's maps are sorted) and the fields `scroll` takes, where it used to drop it and blame `notches_y`. schemars then adds `additionalProperties: false` to each of those objects, which lets clients that check a call against its schema refuse it themselves. That added 28 bytes to each such object, so the tool list's byte ceilings went up with it. A tool without arguments still ignores what it is given: rmcp never parses them.
+- serde can't name the expected fields of an unknown one through `#[serde(flatten)]`, so `pointer_move` and `click` take `x`, `y` and `element` in their own arguments rather than a flattened `SpotArgs`. Their schemas are the same.

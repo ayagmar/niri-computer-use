@@ -5,6 +5,10 @@ All notable changes to this project are documented here. The format follows [Kee
 ## Unreleased
 - Typed text puts a symbol on a spare key when the layout has it only on a key Chromium drops. US maps have `€` only on `<I443>` (evdev 435), so `€` typed into Chromium and Electron apps arrived as nothing. A symbol also on a normal key types there, so US `$` uses Shift+4 instead of `<I442>`, which Chromium dropped too.
 
+### Changed
+
+- A tool given a field it doesn't take now fails naming that field and the ones it expects, such as ``unknown field `direction`, expected one of `keys`, `screenshot_ref`, …`` for `scroll`. It used to drop the field and fail on another one, or act without it. Every tool's schema says so with `additionalProperties: false`.
+
 ## 0.1.5 - 2026-10-18
 
 ### Changed

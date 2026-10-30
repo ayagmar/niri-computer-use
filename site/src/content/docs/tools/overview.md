@@ -59,7 +59,7 @@ A failure sets `isError` and returns:
 
 `error` is a stable name from the [error reference](../../reference/errors/), and `detail` keeps the upstream message: niri's or Noctalia's reply, a program's exit status and stderr.
 
-A mistake in the arguments, such as an unknown output, a window id that doesn't exist or a value of the wrong type, comes back with `isError` and one plain-text block, without `structuredContent`. A value that doesn't fit the tool's schema starts `failed to deserialize parameters:`; one the server checks against the desktop, such as an unknown output, starts `invalid arguments:`. Nothing was done; the agent corrects the call.
+A mistake in the arguments, such as an unknown output, a window id that doesn't exist or a value of the wrong type, comes back with `isError` and one plain-text block, without `structuredContent`. A value that doesn't fit the tool's schema starts `failed to deserialize parameters:`, and a field the tool doesn't take is one too: the text names it and the fields the tool expects, such as ``unknown field `direction`, expected one of `keys`, `screenshot_ref`, …``. One the server checks against the desktop, such as an unknown output, starts `invalid arguments:`. Nothing was done; the agent corrects the call.
 
 ## The audit log
 

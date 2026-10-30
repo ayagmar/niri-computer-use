@@ -35,6 +35,7 @@ use crate::{elements, observe, wait};
 /// takes an absent field or `null` as `None`.
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct ScreenshotArgs {
     /// `focused_output`, `output:<name>` with a name from `desktop_state`'s `outputs`, or
     /// `region`.
@@ -64,6 +65,7 @@ struct ScreenshotArgs {
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars", inline)]
+#[serde(deny_unknown_fields)]
 struct RegionArgs {
     x: i32,
     y: i32,
@@ -160,6 +162,7 @@ impl ScreenshotArgs {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct ElementsArgs {
     /// A window id from `desktop_state`.
     window_id: u64,
@@ -232,6 +235,7 @@ fn known_role(role: Option<&str>) -> Result<(), String> {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct WindowArgs {
     /// A window id from `desktop_state`.
     id: u64,
@@ -258,6 +262,7 @@ enum UntilArg {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct WindowMatchArg {
     #[schemars(with = "String", default)]
     app_id: Option<String>,
@@ -268,6 +273,7 @@ struct WindowMatchArg {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct TitleArg {
     window_id: u64,
     contains: String,
@@ -275,6 +281,7 @@ struct TitleArg {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct ElementMatchArg {
     window_id: u64,
     #[schemars(with = "String", default)]
@@ -341,6 +348,7 @@ const MAX_WAIT_MS: u32 = 30_000;
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct WaitForArgs {
     until: UntilArg,
     /// How long to wait, in milliseconds.
@@ -354,6 +362,7 @@ struct WaitForArgs {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct ReleaseArgs {
     /// true to give keyboard focus back to `users_window`, the window that had it when you
     /// took the lease, before releasing; false only when the user asked for another window
@@ -364,6 +373,7 @@ struct ReleaseArgs {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct FocusArgs {
     /// A window id from `desktop_state`.
     #[schemars(with = "u64", default, skip_serializing_if = "Option::is_none")]
@@ -400,6 +410,7 @@ impl FocusArgs {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct LaunchArgs {
     /// A preset name from the policy file; `status` lists them as `policy.preset_names`.
     preset: String,
@@ -414,6 +425,7 @@ struct LaunchArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct NiriActionArgs {
     /// One niri-ipc 26.4 `Action`, its name the only key, such as `{"FullscreenWindow":
     /// {"id": 12}}`, `{"SetWindowWidth": {"id": 12, "change": {"SetFixed": 1600}}}` or
@@ -426,6 +438,7 @@ struct NiriActionArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct NoctaliaArgs {
     /// The command and its arguments, as after `noctalia msg`, such as `["plugin",
     /// "ayagmar/obs-control:controller", "all", "toggle-record"]`; joined with spaces. None
@@ -439,6 +452,7 @@ struct NoctaliaArgs {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct PanelArgs {
     /// A Noctalia panel: `control-center`, `wallpaper` or `tray-drawer`.
     panel: String,
@@ -452,6 +466,7 @@ struct PanelArgs {
 /// A point: a pixel of a screenshot, counted from its top-left corner, or an element.
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct SpotArgs {
     /// Image pixel column.
     #[schemars(with = "u32", default, skip_serializing_if = "Option::is_none")]
@@ -468,33 +483,42 @@ struct SpotArgs {
 }
 
 impl SpotArgs {
-    /// Exactly one of the two forms.
     fn spot(self) -> Result<Spot, CallError> {
-        match self {
-            Self {
-                x: Some(x),
-                y: Some(y),
-                element: None,
-            } => Ok(Spot::Pixel(ImagePx { x, y })),
-            Self {
-                x: None,
-                y: None,
-                element: Some(element),
-            } => Ok(Spot::Element(element)),
-            _ => Err(CallError::InvalidArguments(
-                "give either `x` and `y`, or `element`".to_owned(),
-            )),
-        }
+        aimed(self.x, self.y, self.element)
+    }
+}
+
+/// Exactly one of a spot's two forms. `pointer_move` and `click` take the fields in their
+/// own arguments rather than a flattened `SpotArgs`, since serde lists the expected fields
+/// along with an unknown one only without `flatten`.
+fn aimed(x: Option<u32>, y: Option<u32>, element: Option<String>) -> Result<Spot, CallError> {
+    match (x, y, element) {
+        (Some(x), Some(y), None) => Ok(Spot::Pixel(ImagePx { x, y })),
+        (None, None, Some(element)) => Ok(Spot::Element(element)),
+        _ => Err(CallError::InvalidArguments(
+            "give either `x` and `y`, or `element`".to_owned(),
+        )),
     }
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct PointArgs {
     /// From a screenshot under this lease, under a minute old.
     screenshot_ref: String,
-    #[serde(flatten)]
-    at: SpotArgs,
+    /// Image pixel column.
+    #[schemars(with = "u32", default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    x: Option<u32>,
+    /// Image pixel row.
+    #[schemars(with = "u32", default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    y: Option<u32>,
+    /// Instead of `x` and `y`: an `element_ref`, aimed at its centre.
+    #[schemars(with = "String", default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    element: Option<String>,
     /// Also return a screenshot once the screen settles.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     screenshot: bool,
@@ -526,6 +550,7 @@ const fn one() -> u8 {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct ClickArgs {
     /// Modifiers to hold: shift, ctrl, alt, altgr, super.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -533,8 +558,18 @@ struct ClickArgs {
     keys: Vec<String>,
     /// From a screenshot under this lease, under a minute old.
     screenshot_ref: String,
-    #[serde(flatten)]
-    at: SpotArgs,
+    /// Image pixel column.
+    #[schemars(with = "u32", default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    x: Option<u32>,
+    /// Image pixel row.
+    #[schemars(with = "u32", default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    y: Option<u32>,
+    /// Instead of `x` and `y`: an `element_ref`, aimed at its centre.
+    #[schemars(with = "String", default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    element: Option<String>,
     #[serde(default)]
     button: ButtonArg,
     /// 2 is a double click.
@@ -552,6 +587,7 @@ struct ClickArgs {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct DragArgs {
     /// Modifiers to hold: shift, ctrl, alt, altgr, super.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -572,6 +608,7 @@ struct DragArgs {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct ScrollArgs {
     /// Modifiers to hold: shift, ctrl, alt, altgr, super.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -619,6 +656,7 @@ impl From<ExpectArg> for Expect {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct KeyArgs {
     /// Combinations such as `ctrl+shift+t`, `Return` or `alt+F4`: modifiers (`shift`,
     /// `ctrl`, `alt`, `altgr`, `super`) and one XKB keysym name (`a`, `Escape`, `F5`,
@@ -638,6 +676,7 @@ struct KeyArgs {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct TypeTextArgs {
     /// Up to 1000 characters to type, or 1 MiB to paste. Typed text can't hold line breaks,
     /// tabs or other control characters: use `submit`, `key`, or `via: "paste"` for several
@@ -740,6 +779,7 @@ impl PasteKeys {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct ActivateElementArgs {
     /// An `element_ref` from `elements`, listed under this lease.
     element: String,
@@ -760,6 +800,7 @@ struct ActivateElementArgs {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct SetElementTextArgs {
     /// An `element_ref` from `elements`, listed under this lease: an editable text field.
     element: String,
@@ -1096,7 +1137,7 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let logged = pointed(&args);
-        let gesture = args.at.spot().map(Gesture::Move);
+        let gesture = aimed(args.x, args.y, args.element.clone()).map(Gesture::Move);
         let aim = Aim {
             id: args.screenshot_ref,
             shoot: args.screenshot,
@@ -1126,14 +1167,14 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let logged = pointed(&args);
-        let watch = args.at.element.clone().filter(|_| args.element_changes);
+        let watch = args.element.clone().filter(|_| args.element_changes);
         let gesture = if args.element_changes && watch.is_none() {
             Err(CallError::InvalidArguments(
                 "`element_changes` needs `element`: the window under a pixel isn't known"
                     .to_owned(),
             ))
         } else {
-            args.at.spot().map(|at| Gesture::Click {
+            aimed(args.x, args.y, args.element.clone()).map(|at| Gesture::Click {
                 at,
                 button: args.button.into(),
                 count: args.count,
@@ -2465,6 +2506,43 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// Every object a tool takes, nested ones too, refuses fields it doesn't name, so an
+    /// agent's guessed name is an error naming it rather than dropped. `niri_action`'s
+    /// `action` is niri's to check, and a tool without arguments ignores any it is given.
+    #[test]
+    fn every_argument_object_refuses_unknown_fields() {
+        for profile in ["observe", "act", "full"] {
+            let (server, dir) = listing_everything(&format!("closed-{profile}"), profile);
+            for tool in server.tool_router.list_all() {
+                closed(&tool.name, &Value::Object((*tool.input_schema).clone()));
+            }
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    /// Asserts that `schema` and every schema in it that names fields refuses others.
+    fn closed(tool: &str, schema: &Value) {
+        let names_fields = schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .is_some_and(|properties| !properties.is_empty());
+        if names_fields {
+            assert_eq!(
+                schema.get("additionalProperties"),
+                Some(&Value::Bool(false)),
+                "{tool}: {schema}"
+            );
+        }
+        let inner: Vec<&Value> = match schema {
+            Value::Object(fields) => fields.values().collect(),
+            Value::Array(items) => items.iter().collect(),
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => Vec::new(),
+        };
+        for part in inner {
+            closed(tool, part);
+        }
+    }
+
     /// Clients that load every tool up front pay for the whole list in each conversation.
     /// Run with `--nocapture` to see the sizes; raise a ceiling only with a reason.
     #[test]
@@ -2473,7 +2551,7 @@ mod tests {
         reason = "the test reports the list's size, which the ceilings and the results are set from"
     )]
     fn the_tool_list_stays_within_its_budget() {
-        for (profile, ceiling) in [("observe", 6_975), ("act", 24_000), ("full", 27_225)] {
+        for (profile, ceiling) in [("observe", 7_125), ("act", 24_600), ("full", 28_000)] {
             let (server, dir) = listing_everything(&format!("budget-{profile}"), profile);
             let tools = server.tool_router.list_all();
             let size = serde_json::to_string(&serde_json::json!({ "tools": tools }))
