@@ -160,17 +160,26 @@ impl OutputSupport {
         };
         let (taken, refused): (Vec<_>, Vec<_>) = outputs
             .values()
-            .filter(|output| output.logical.is_some())
-            .map(|output| (&output.name, policy::pointer_output(&outputs, &output.name)))
-            .partition(|(_, checked)| checked.is_ok());
-        let reason = match (taken.is_empty(), refused.first()) {
-            (_, Some((_, Err(error)))) => Some(error.detail.clone()),
-            (true, _) => Some("niri has no enabled output".to_owned()),
-            _ => None,
+            .filter_map(|output| Some((output.name.as_str(), output.logical?.transform)))
+            .partition(|(name, _)| policy::pointer_output(&outputs, name).is_ok());
+        let reason = if !refused.is_empty() {
+            let refused: Vec<String> = refused
+                .iter()
+                .map(|(name, transform)| format!("{name} at {transform:?}"))
+                .collect();
+            Some(format!(
+                "{}; it doesn't take {}",
+                policy::POINTER_OUTPUTS,
+                refused.join(", ")
+            ))
+        } else if taken.is_empty() {
+            Some("niri has no enabled output".to_owned())
+        } else {
+            None
         };
         Self {
             pointer_supported: !taken.is_empty(),
-            pointer_outputs: taken.into_iter().map(|(name, _)| name.clone()).collect(),
+            pointer_outputs: taken.into_iter().map(|(name, _)| name.to_owned()).collect(),
             reason,
         }
     }
@@ -303,6 +312,7 @@ mod tests {
             output("eDP-1", Some("Normal")),
             output("HDMI-A-1", Some("90")),
             output("HDMI-A-2", None),
+            output("HDMI-A-3", Some("180")),
         ]);
         let support = serde_json::to_value(OutputSupport::of(Ok(desk))).unwrap();
         assert_eq!(support["pointer_supported"], true);
@@ -310,8 +320,10 @@ mod tests {
             support["pointer_outputs"],
             serde_json::json!(["DP-1", "eDP-1"])
         );
-        let reason = support["reason"].as_str().unwrap();
-        assert!(reason.contains(r#"aimed at output "HDMI-A-1""#), "{reason}");
+        assert_eq!(
+            support["reason"],
+            "the pointer runs only on a monitor at transform Normal, or on nested niri's winit window when it is the only output; it doesn't take HDMI-A-1 at _90, HDMI-A-3 at _180"
+        );
         let all = BTreeMap::from([output("DP-1", Some("Normal"))]);
         let every = serde_json::to_value(OutputSupport::of(Ok(all))).unwrap();
         assert_eq!(every["reason"], serde_json::Value::Null);

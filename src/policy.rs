@@ -1206,6 +1206,9 @@ pub(crate) fn panel(name: &str) -> Result<Panel, ToolError> {
 /// through the output it is bound to alone, so the other outputs don't matter. Those are
 /// the setups live tests cover; anything else, including a monitor really rotated to
 /// `Flipped180`, is `untested_output_config`.
+/// The outputs `pointer_output` accepts.
+pub(crate) const POINTER_OUTPUTS: &str = "the pointer runs only on a monitor at transform Normal, or on nested niri's winit window when it is the only output";
+
 pub(crate) fn pointer_output(
     outputs: &BTreeMap<String, Output>,
     name: &str,
@@ -1222,7 +1225,7 @@ pub(crate) fn pointer_output(
         _ => Err(ToolError::new(
             ErrorName::UntestedOutputConfig,
             format!(
-                "the pointer runs only on a monitor at transform Normal, or on nested niri's winit window when it is the only output; it was aimed at output {name:?}, and the enabled outputs and transforms are {:?}",
+                "{POINTER_OUTPUTS}; it was aimed at output {name:?}, and the enabled outputs and transforms are {:?}",
                 enabled().collect::<Vec<_>>(),
             ),
         )),
