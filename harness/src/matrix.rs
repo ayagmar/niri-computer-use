@@ -144,6 +144,7 @@ fn nested(
         mode: ServerMode::Standalone,
         binary: None,
         niri: Some(niri.to_path_buf()),
+        headless_outputs: None,
         browser: None,
         from: None,
     };

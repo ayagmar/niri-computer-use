@@ -404,7 +404,10 @@ It shows that niri maps the pointer through the bound output at mixed scales and
 make nested-chromium
 NCU_CHROMIUM=/path/to/chrome make nested-chromium
 make nested-chromium SHARED=1
+make nested-chromium-headless
 ```
+
+`make nested-chromium-headless` runs the same suite without cage, on niri's own headless backend: it builds and caches the patched niri v26.04 as `make nested-multi` does, and runs `harness run --niri <that niri> --headless-niri --chromium`. `--headless-niri` gives niri one 1280x800 output, `headless-1`, and refuses `--visible` and every suite but `--chromium`. That backend sends a window frame callbacks only from niri's fallback timer, about once a second, since it draws nothing, so a page there draws its next frame up to a second late.
 
 The browser opens `harness/fixtures/chromium.html` in app mode (`--app`) with `--ozone-platform=wayland`, inside the nested niri. Its profile (`--user-data-dir`), its `HOME`, its `TMPDIR` and every XDG directory are under `TEST_DIR`, so it never reads or writes your profile or leaves its singleton socket's directory in `/tmp`, and first-run UI, sync, background networking, component updates, extensions and the crash reporter are off. After every input the page sets its title to `ncu-chromium:` and the field's value as UTF-16 code units, four hex digits each, and the supervisor reads it from niri's window list. A browser that exits before its window opens fails the run at once, with its exit status and the path of `chromium.log`. A title is the one channel that needs nothing beside the browser: the page can't write files, and accessibility would test AT-SPI as well. The code units are needed because Chromium collapses and trims whitespace in titles. The page also logs each keydown's DOM `code` and `key` to the console, which `--enable-logging=stderr` copies into `chromium.log`. The run lists the ones whose `key` isn't one ASCII character, which shows the keycode each symbol the layout lacks went out on.
 

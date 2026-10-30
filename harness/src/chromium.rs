@@ -23,6 +23,9 @@ use crate::mcp::{self, Client, field, structured};
 use crate::runner::Process;
 use crate::session::Session;
 
+/// The one output `--headless-niri` gives niri's headless backend, the nested `winit`
+/// window's size.
+pub(crate) const HEADLESS_OUTPUTS: &str = "1280x800";
 /// A browser to use instead of the first one on `PATH`.
 pub(crate) const OVERRIDE: &str = "NCU_CHROMIUM";
 /// Looked up on `PATH` in this order.
