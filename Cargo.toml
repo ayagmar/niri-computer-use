@@ -90,7 +90,7 @@ rustix = { version = "1.1.5", features = ["fs", "process", "time"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 toml = { version = "1.1.6", default-features = false, features = ["std", "serde", "parse"] }
-tokio = { version = "1.53.2", default-features = false, features = ["rt", "macros", "net", "time", "io-util", "io-std", "sync", "process"] }
+tokio = { version = "1.53.3", default-features = false, features = ["rt", "macros", "net", "time", "io-util", "io-std", "sync", "process"] }
 wayland-client = "0.31.15"
 wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
 wayland-protocols-misc = { version = "0.3.12", features = ["client"] }
@@ -100,7 +100,7 @@ zbus = { version = "5.19.0", default-features = false, features = ["tokio"] }
 [dev-dependencies]
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
 rustix = { version = "1.1.5", features = ["net"] }
-tokio = { version = "1.53.2", default-features = false, features = ["test-util"] }
+tokio = { version = "1.53.3", default-features = false, features = ["test-util"] }
 wayland-protocols-misc = { version = "0.3.12", features = ["server"] }
 wayland-protocols-wlr = { version = "0.3.12", features = ["server"] }
 wayland-server = "0.31.14"
