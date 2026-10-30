@@ -16,6 +16,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Changed
 
 - `watch` shows a stop, a lease change and the input-dirty marker at once instead of at its next 250 ms poll: it wakes on changes in the runtime directory.
+- The skill tells agents that a small robot with a caption in their screenshots is the Noctalia plugin's overlay, not part of the app, and that clicks pass through it.
 
 ### Fixed
 
