@@ -14,6 +14,7 @@
 //! `audit.jsonl.1`, shifting older ones up to `audit.jsonl.3` and dropping the oldest
 //! (`rotate`).
 
+use std::borrow::Cow;
 use std::fs::{DirBuilder, OpenOptions, TryLockError};
 use std::io::Write as _;
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
@@ -75,16 +76,16 @@ struct Record<'a> {
 /// started.
 #[derive(Debug)]
 pub(crate) struct Call<'a> {
-    tool: &'a str,
+    tool: Cow<'a, str>,
     action: bool,
     ts: String,
     started: Instant,
 }
 
 impl<'a> Call<'a> {
-    pub(crate) fn start(tool: &'a str) -> Self {
+    pub(crate) fn start(tool: impl Into<Cow<'a, str>>) -> Self {
         Self {
-            tool,
+            tool: tool.into(),
             action: false,
             ts: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
             started: Instant::now(),
@@ -157,7 +158,7 @@ impl Audit {
             ts: &call.ts,
             session: caller.session,
             instance: caller.instance,
-            tool: call.tool,
+            tool: &call.tool,
             args: &args,
             accepted: reported.accepted,
             observed: reported.observed,

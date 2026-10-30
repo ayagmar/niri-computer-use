@@ -9,6 +9,7 @@ use rmcp::model::{
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler, ServiceExt as _};
 
+use super::log::Log;
 use crate::error::{ErrorName, ToolError};
 use crate::session::Incoming;
 
@@ -16,14 +17,16 @@ use crate::session::Incoming;
 pub(crate) struct Unavailable {
     tools: Vec<Tool>,
     detail: String,
+    log: Log,
 }
 
 impl Unavailable {
     /// A session listing `tools`, whose calls fail with `reason`, why the shared engine
-    /// couldn't be used.
-    pub(crate) fn new(tools: Vec<Tool>, reason: &str) -> Self {
+    /// couldn't be used, each logged to `log`.
+    pub(crate) fn new(tools: Vec<Tool>, reason: &str, log: Log) -> Self {
         Self {
             tools,
+            log,
             detail: format!(
                 "this client requires the shared engine (shared = \"required\" or NIRI_COMPUTER_USE_SHARED=required), which couldn't be used: {reason}. Fix the cause, then restart this MCP server"
             ),
@@ -77,10 +80,14 @@ impl ServerHandler for Unavailable {
     )]
     async fn call_tool(
         &self,
-        _request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
         let error = ToolError::new(ErrorName::EngineUnavailable, self.detail.clone());
+        let client = context.client_info().map(|info| info.name);
+        if let Some(asked) = self.log.asked(&request.name, client.as_deref()) {
+            self.log.answered(&asked, &error);
+        }
         Ok(error.into_result().into())
     }
 }

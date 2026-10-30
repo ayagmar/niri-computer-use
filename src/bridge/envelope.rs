@@ -55,6 +55,54 @@ pub(crate) fn read(line: &[u8]) -> Message {
     }
 }
 
+/// What the bridge reads of a `tools/call` line, skipping its arguments unread.
+#[derive(Deserialize)]
+struct Called {
+    params: CalledParams,
+}
+
+#[derive(Deserialize)]
+struct CalledParams {
+    name: String,
+    #[serde(rename = "_meta")]
+    meta: Option<Meta>,
+}
+
+/// Where a client of MCP 2026-07-28, which may skip `initialize`, names itself in each
+/// request, as rmcp reads it.
+#[derive(Deserialize)]
+struct Meta {
+    #[serde(rename = "io.modelcontextprotocol/clientInfo")]
+    client_info: Option<Named>,
+}
+
+#[derive(Deserialize)]
+struct Named {
+    name: String,
+}
+
+/// The tool a `tools/call` line calls, and the name its client gives itself in the
+/// request's `_meta`, if it does.
+pub(crate) fn called(line: &[u8]) -> Option<(String, Option<String>)> {
+    let params = serde_json::from_slice::<Called>(line).ok()?.params;
+    let client = params
+        .meta
+        .and_then(|meta| meta.client_info)
+        .map(|info| info.name);
+    Some((params.name, client))
+}
+
+/// The name the client gives itself in its `initialize` line.
+pub(crate) fn client(initialize: &[u8]) -> Option<String> {
+    let line = serde_json::from_slice::<Value>(initialize).ok()?;
+    let name = line
+        .get("params")?
+        .get("clientInfo")?
+        .get("name")?
+        .as_str()?;
+    Some(name.to_owned())
+}
+
 /// The bridge's own answer to the request `id`, a `method` call, failing with `error`: a
 /// tool result with `isError` for `tools/call`, as a tool's failure would be, and a
 /// JSON-RPC error otherwise. One line, newline included.
@@ -78,6 +126,24 @@ pub(crate) fn answer(id: &Value, method: &str, error: ToolError) -> Vec<u8> {
 mod tests {
     use super::*;
     use crate::error::ErrorName;
+
+    #[test]
+    fn a_call_names_its_tool_and_its_client_from_meta_or_initialize() {
+        let meta = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"click","arguments":{"x":1},"_meta":{"io.modelcontextprotocol/clientInfo":{"name":"claude-code","version":"3"}}}}"#;
+        assert_eq!(
+            called(meta),
+            Some(("click".to_owned(), Some("claude-code".to_owned())))
+        );
+        let bare = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"status"}}"#;
+        assert_eq!(called(bare), Some(("status".to_owned(), None)));
+        assert_eq!(
+            called(br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#),
+            None
+        );
+        let initialize = br#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-11-25","clientInfo":{"name":"pi","version":"1"}}}"#;
+        assert_eq!(client(initialize), Some("pi".to_owned()));
+        assert_eq!(client(b"not json"), None);
+    }
 
     #[test]
     fn requests_notifications_and_responses_are_told_apart() {
