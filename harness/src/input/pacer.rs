@@ -18,7 +18,7 @@ const APP_ID: &str = "org.ncu.Pacer";
 const DEADLINE: Duration = Duration::from_secs(120);
 
 /// Opens the animating window and gives focus back to the window that had it.
-pub(super) fn start(session: &mut Session<'_>) -> Result<Process> {
+pub(crate) fn start(session: &mut Session<'_>) -> Result<Process> {
     let focused = focused(session)?.ok_or_else(|| Failure::new("pacer: nothing focused"))?;
     let harness = std::env::current_exe().context("find the harness binary")?;
     let program = harness
