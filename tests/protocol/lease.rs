@@ -239,10 +239,12 @@ async fn a_restarted_niri_shares_nothing_with_the_old_instance() {
 
 /// A `notify-send` that records its arguments and the call, then answers with what
 /// `$DIR/answer` holds: an action key, or nothing for a dismissed prompt.
+/// A `notify-send` that answers prompts from `$DIR/answer` and counts them. The
+/// notification a granted lease sends has no Allow action, so it isn't counted.
 fn prompt(fixture: &Fixture) {
     fixture.program(
         "notify-send",
-        r#"printf '%s\n' "$@" > "$DIR/notify-send.args"; echo >> "$DIR/notify-send.calls"; cat "$DIR/answer""#,
+        r#"case "$*" in *--action=allow=Allow*) ;; *) exit 0 ;; esac; printf '%s\n' "$@" > "$DIR/notify-send.args"; echo >> "$DIR/notify-send.calls"; cat "$DIR/answer""#,
     );
 }
 
@@ -308,6 +310,39 @@ async fn with_confirm_lease_only_the_users_allow_grants_the_lease() {
             Value::Null
         ]
     );
+}
+
+/// A granted lease puts one notification on the desktop that names the client. Taking it
+/// again while holding it, or again after giving it back, within five minutes sends none.
+/// `acquire_desktop` doesn't wait for it: the notification here goes out only once the
+/// first result has come back.
+#[tokio::test]
+async fn a_granted_lease_notifies_the_user_once() {
+    let fixture = Fixture::new("lease-notice");
+    let _niri = NiriProcess::unlocked(&fixture).await;
+    fixture.program(
+        "notify-send",
+        r#"await_file go && printf '%s\n' "$4" >> "$DIR/notices""#,
+    );
+    let mut server = Server::start(&fixture).await;
+    server.structured("acquire_desktop").await;
+    std::fs::write(fixture.path("go"), "").unwrap();
+    server.structured("acquire_desktop").await;
+    let released = json!({"restore_focus": false});
+    server.call("release_desktop", released).await;
+    server.structured("acquire_desktop").await;
+
+    let notices = || std::fs::read_to_string(fixture.path("notices")).unwrap_or_default();
+    assert!(eventually(Duration::from_secs(5), || !notices().is_empty()).await);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let notices = notices();
+    assert_eq!(notices.lines().count(), 1, "{notices}");
+    assert!(
+        notices.contains("took the niri-computer-use lease"),
+        "{notices}"
+    );
+    let status = server.structured("status").await;
+    assert_eq!(status["lease_notice_error"], Value::Null);
 }
 
 /// In shared mode both clients share one engine, which must ask for the client whose own

@@ -27,7 +27,7 @@ An agent should stop and tell you when it gets one of these. Calling the action 
 
 ### `screen_locked`
 
-**Cause:** the screen is locked, or neither logind nor Noctalia can say that it isn't. `status` shows `lock.state` and, under `lock.logind_error`, why logind couldn't answer.
+**Cause:** the screen is locked, or neither logind nor Noctalia can say that it isn't. `status` shows `lock.state` and, under `lock.logind_error`, why logind couldn't answer. `screenshot`, `elements` and `wait_for` give it only while the screen is known to be locked, or when it locked during the call.
 
 **What to do:** unlock the screen. If it is unlocked and `lock.state` is `unknown`, run niri as `niri --session` or run Noctalia; see [Troubleshooting](../troubleshooting/#the-lease-is-refused-with-screen_locked-while-the-screen-is-unlocked).
 

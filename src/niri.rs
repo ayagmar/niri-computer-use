@@ -94,6 +94,12 @@ pub(crate) async fn version(socket: &Socket) -> Result<String, ToolError> {
     Ok(version)
 }
 
+/// Whether niri's last config load failed, from an event stream of its own, within two
+/// seconds.
+pub(crate) async fn config_failed(socket: &Socket) -> Result<bool, ToolError> {
+    events::config_failed(known(socket)?).await
+}
+
 /// The longest `pid` takes.
 pub(crate) const PID_LIMIT: Duration = request::DEADLINE;
 

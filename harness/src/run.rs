@@ -399,7 +399,12 @@ fn preflight(
     let mut niri_config = if options.demo.is_some() {
         config::demo_niri(options.scale)
     } else {
-        config::niri(options.scale, &test_dir.bind_marker(), options.decorations)
+        config::niri(
+            options.scale,
+            &test_dir.bind_marker(),
+            options.decorations,
+            &server(options)?,
+        )
     };
     if multi {
         niri_config.push_str(crate::input::multi::OUTPUT_CONFIG);

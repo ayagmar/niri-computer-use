@@ -16,7 +16,7 @@
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::panic::{self, AssertUnwindSafe};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use niri_ipc::state::{EventStreamState, EventStreamStatePart as _};
@@ -78,6 +78,9 @@ struct Replica {
     workspaces: bool,
     windows: bool,
     overview: bool,
+    /// Whether niri's last config load failed, once niri has said, which it does right
+    /// after the overview state.
+    config_failed: Option<bool>,
     /// The number of the last event applied, counted across connections.
     seq: u64,
     /// Which connection, counted from 1, this replica comes from.
@@ -113,6 +116,9 @@ impl Replica {
         self.workspaces |= matches!(event, Event::WorkspacesChanged { .. });
         self.windows |= matches!(event, Event::WindowsChanged { .. });
         self.overview |= matches!(event, Event::OverviewOpenedOrClosed { .. });
+        if let Event::ConfigLoaded { failed } = event {
+            self.config_failed = Some(failed);
+        }
         self.state.apply(event);
         if let Some(before) = before {
             let at = Instant::now();
@@ -376,6 +382,15 @@ impl EventStream {
         }
     }
 
+    /// Whether niri's last config load failed, as the stream last said; none until it has
+    /// said it on the current connection. Doesn't wait.
+    pub(crate) fn config_failed(&self) -> Option<bool> {
+        match &*self.connection.borrow() {
+            Connection::Connected(replica) => replica.config_failed,
+            Connection::Connecting { .. } | Connection::SchemaIncompatible { .. } => None,
+        }
+    }
+
     /// Whether niri activated a workspace on `output`, opened or closed the overview, or
     /// moved, resized, floated or opened `window` or a floating window on the workspace
     /// `output` shows within `settle`, so that the view there may still be moving, and
@@ -471,6 +486,15 @@ impl EventStream {
                 ErrorName::UpstreamError,
                 format!("{reason}; the event stream stays stopped until the server restarts"),
             )),
+        }
+    }
+}
+
+impl DesktopState {
+    /// Drops every window's title, which the lock screen hides.
+    pub(crate) fn hide_titles(&mut self) {
+        for window in &mut self.windows {
+            window.title = None;
         }
     }
 }
@@ -676,6 +700,52 @@ async fn start(
                 format!("no event stream reply within {DEADLINE:?}"),
             ))
         })
+}
+
+/// Whether niri's last config load failed, from an event stream of its own that ends once
+/// niri has said so, as it does on every new stream, all within the deadline.
+pub(crate) async fn config_failed(socket: &Path) -> Result<bool, ToolError> {
+    let read = async {
+        let stream = UnixStream::connect(socket)
+            .await
+            .map_err(|error| unavailable(format!("connect: {error}")))?;
+        config_loaded(BufReader::new(stream)).await
+    };
+    tokio::time::timeout(DEADLINE, read)
+        .await
+        .unwrap_or_else(|_| {
+            Err(ToolError::new(
+                ErrorName::DeadlineExceeded,
+                format!("niri said nothing of its config within {DEADLINE:?}"),
+            ))
+        })
+}
+
+async fn config_loaded(
+    mut stream: BufReader<impl AsyncRead + AsyncWrite + Unpin>,
+) -> Result<bool, ToolError> {
+    start(&mut stream).await?;
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if stream
+            .read_line(&mut line)
+            .await
+            .map_err(|error| unavailable(format!("read event: {error}")))?
+            == 0
+        {
+            return Err(unavailable(
+                "niri closed the event stream before it said how its config loaded",
+            ));
+        }
+        // Only this kind is parsed: the others may be large, or of kinds this build
+        // doesn't know.
+        if line.starts_with("{\"ConfigLoaded\"")
+            && let Ok(Event::ConfigLoaded { failed }) = serde_json::from_str(&line)
+        {
+            return Ok(failed);
+        }
+    }
 }
 
 fn unavailable(detail: impl Into<String>) -> ToolError {
@@ -965,6 +1035,7 @@ mod tests {
     const LAYOUTS: &str = "{\"KeyboardLayoutsChanged\":{\"keyboard_layouts\":{\"names\":[\"English (US)\"],\"current_idx\":0}}}\n";
     const OVERVIEW: &str = "{\"OverviewOpenedOrClosed\":{\"is_open\":false}}\n";
     const UNKNOWN: &str = "{\"NotARealEvent\":{}}\n";
+    const CONFIG_FAILED: &str = "{\"ConfigLoaded\":{\"failed\":true}}\n";
     /// A cast as niri `main` after 26.04 reports grim's capture, of a kind niri-ipc 26.4.0
     /// doesn't have.
     const CAST_OF_UNKNOWN_KIND: &str = "{\"CastsChanged\":{\"casts\":[{\"stream_id\":3,\"session_id\":1,\"kind\":\"ExtImageCopyCapture\",\"target\":{\"Output\":{\"name\":\"winit\"}},\"is_dynamic_target\":false,\"is_active\":true,\"pid\":40,\"pw_node_id\":null}]}}\n";
@@ -1371,5 +1442,39 @@ mod tests {
         assert!(copy.desktop().await.is_ok());
         drop(copy);
         assert!(niri.closed().await);
+    }
+
+    // niri says how its last config load went right after the overview state. Until it
+    // has, nothing is known: the replica's default of "loaded fine" mustn't be read as
+    // niri's answer.
+    #[tokio::test]
+    async fn says_whether_niris_config_failed_only_once_niri_has_said_it() {
+        let lines = vec![
+            HANDLED,
+            WORKSPACES,
+            WINDOWS,
+            LAYOUTS,
+            OVERVIEW,
+            UNKNOWN,
+            CONFIG_FAILED,
+        ];
+        let failed = config_loaded(BufReader::new(niri(lines, false))).await;
+        assert_eq!(failed, Ok(true));
+        let silent = config_loaded(BufReader::new(niri(vec![HANDLED, OVERVIEW], true))).await;
+        assert_eq!(silent.unwrap_err().name, ErrorName::NiriUnavailable);
+
+        let (client, mut niri) = Niri::pair();
+        let events = stream(vec![client]);
+        niri.expect_request().await;
+        niri.send(&[HANDLED, WORKSPACES, WINDOWS, OVERVIEW]).await;
+        assert!(events.desktop().await.is_ok());
+        assert_eq!(events.config_failed(), None);
+        niri.send(&[CONFIG_FAILED]).await;
+        let mut connection = events.connection.clone();
+        let said = connection.wait_for(
+            |current| matches!(current, Connection::Connected(replica) if replica.config_failed.is_some()),
+        );
+        tokio::time::timeout(WAIT, said).await.unwrap().unwrap();
+        assert_eq!(events.config_failed(), Some(true));
     }
 }

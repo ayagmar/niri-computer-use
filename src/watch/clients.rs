@@ -61,6 +61,13 @@ pub(crate) fn client(proc_root: &Path, pid: u32, instance: &str) -> Option<Clien
     })
 }
 
+/// The project of the agent that started the server `pid`: the last part of its parent's
+/// working directory.
+pub(crate) fn project_of(proc_root: &Path, pid: u32) -> Option<String> {
+    let status = std::fs::read_to_string(proc_root.join(pid.to_string()).join("status")).ok()?;
+    project(proc_root, parent_pid(&status)?)
+}
+
 /// Whether the process was started as `<program> serve`.
 fn serves(dir: &Path) -> Option<bool> {
     let cmdline = std::fs::read(dir.join("cmdline")).ok()?;

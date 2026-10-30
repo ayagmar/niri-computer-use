@@ -198,7 +198,7 @@ Each run keeps its files in `target/e2e/<unix time>-<pid>/`:
 
 `make nested-control` runs M2's acceptance in a nested niri. It builds the server, starts the nested niri as `make nested` does, and starts Noctalia inside it, because a nested niri sets no logind lock hint and the lease needs a lock source that says unlocked. The supervisor then drives `target/debug/niri-computer-use` against the nested niri:
 
-1. Waits until a server's `status` shows Noctalia running and the screen unlocked.
+1. Waits until a server's `status` shows Noctalia running and the screen unlocked. That `status` and the `status` subcommand must both show `stop_key: bound`: the nested niri's config, which it was started with through `-c`, binds `Ctrl+Shift+F11` to `spawn` the server under test with `stop`, and nothing presses it.
 2. Starts server A, which takes the lease and keeps its stdin open for 25 seconds, and waits for its record in `lease.json`.
 3. Starts server B, whose `acquire_desktop` must fail with `lease_held` naming server A.
 4. Runs `recover`, which must refuse because a server holds the lease.
@@ -209,7 +209,7 @@ Every server talks MCP over a shell pipeline (`printf` of the requests, then `sl
 
 ## Nested action checks
 
-`make nested-actions` runs M3's acceptance in a nested niri, set up as `make nested-control` is, with the nested Noctalia as the lock source. Before the server starts, the supervisor writes a policy file to `TEST_DIR/config/niri-computer-use/policy.toml` whose presets all start `harness window`, a fixture app in the harness, with a different `app_id` each:
+`make nested-actions` runs M3's acceptance in a nested niri, set up as `make nested-control` is, with the nested Noctalia as the lock source. Before the server starts, the supervisor writes a policy file to `TEST_DIR/config/niri-computer-use/policy.toml`, with `notify_on_lease = false` so the nested Noctalia shows no lease toast (M3 checks that `status` reads it), whose presets all start `harness window`, a fixture app in the harness, with a different `app_id` each:
 
 | Preset | Fixture |
 |---|---|
@@ -367,7 +367,7 @@ Every command it runs gets `HOME=TEST_DIR/home` and `TMPDIR=TEST_DIR/tmp`, so ne
 
 1. Packs the release build as the release workflow packs one, with `skills/niri-computer-use`, the Noctalia plugin from `noctalia/niri-computer-use` without its tests, and a `.sha256`, under `TEST_DIR/releases` as release `current`.
 2. Installs the old release with `install.sh`, `NCU_VERSION=<release>`, `NCU_BIN_DIR=TEST_DIR/home/.local/bin` and `NCU_REGISTER=0`, from GitHub, which checks the tarball against its `.sha256`. The binary must be in place and the skill linked from `.claude/skills` and `.agents/skills`.
-3. Writes a policy file every release reads. An old binary from before `turn_on_accessibility`, 0.1.0 or 0.1.1, must report a policy file with `turn_on_accessibility = false` `invalid` in its `status`; a release that already reads that key skips this check. Then it starts two clients of the old binary, A and B. Both must be on one shared engine whose `status.engine.version` is the release's, and A takes the lease. The audit log's lines so far are kept.
+3. Writes a policy file every release reads. For each key added since 0.1.0 (`NEWER_POLICY` in `harness/src/upgrade.rs`), an old binary from before it must report a policy file with only that key `invalid` in its `status`: 0.1.0 and 0.1.1 for `turn_on_accessibility = false`, 0.1.0 to 0.1.5 for `notify_on_lease = false`. A release that already reads a key skips its check. Add a key there in the same commit as the key itself. Then it starts two clients of the old binary, A and B. Both must be on one shared engine whose `status.engine.version` is the release's, and A takes the lease. The audit log's lines so far are kept.
 4. A types 1000 characters into `wev`. Once the marker names a key, or the `wtype` child of a 0.1.0 marker, the old engine is stopped with `SIGSTOP`, and `current` is installed the same way, from `file://TEST_DIR/releases`; the engine then continues, and A's `type_text` must finish without an error and the marker go. The binary and the skill's `SKILL.md` must then be the build's, byte for byte, and the old engine must still run its deleted file and report `replaced: true`.
 5. Starts client N of the new binary. Refused by the old engine with `engine_version`, it must be served standalone, saying so in `status.engine.fallback`, which must name the old engine's PID and say to restart the clients that engine serves, and its `acquire_desktop` must fail with `lease_held` naming A.
 6. A gives the lease up and N takes it. N types 1000 characters into `wev`; once the marker names a key, N's server is stopped with `SIGSTOP` while B's `status` reads the marker, which must read as a marker, not as unreadable. Typing takes less than a tenth of a second, so the marker is looked for every millisecond. N then finishes, the marker goes, and A takes the lease again.

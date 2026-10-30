@@ -22,6 +22,8 @@ The capture uses the output's own scale, lowered when the captured width times t
 
 While one of this server's actions is running, `screenshot` waits for it to end before capturing, so a screenshot sent alongside an action shows the screen after it.
 
+While the screen is locked, `screenshot` is refused with [`screen_locked`](../../reference/errors/#screen_locked). niri draws only the lock screen into captures then anyway, so a screen that locks during the call gives a picture of the lock screen; the refusal says why. A lock state that is `unknown` doesn't refuse it (see [Safety](../../concepts/safety/#the-lock-gate)).
+
 The result is an image block, then the metadata as JSON text, with no `structuredContent` (see [results](../overview/#results)):
 
 | Field | Value |

@@ -14,7 +14,7 @@ pub(crate) use run::run;
 use serde::Serialize;
 use serde_json::Value;
 
-pub(crate) use clients::Client;
+pub(crate) use clients::{Client, project_of};
 
 use crate::control::lease::Holder;
 

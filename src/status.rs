@@ -1,5 +1,7 @@
 //! The readiness report shared by the `status` tool and the `status` subcommand.
 
+pub(crate) mod check;
+
 use std::collections::BTreeMap;
 
 use niri_ipc::Output;
@@ -20,6 +22,7 @@ use crate::policy::{
     ToolsStatus,
 };
 use crate::runner::{self, Place};
+use crate::stop_key::{self, StopKey};
 use crate::{Env, a11y, discover};
 
 /// Programs the server runs for the session asking, found on its `PATH` or not.
@@ -42,6 +45,11 @@ pub(crate) struct Status {
     lease: LeaseStatus,
     /// Whether the stop flag is set for this niri instance.
     stop: bool,
+    /// Whether niri's config binds a key to `niri-computer-use stop`: `bound`,
+    /// `not_found`, or `unknown` when that can't be told for sure.
+    stop_key: StopKey,
+    /// The file with the bind, the file read, or why the answer is unknown.
+    stop_key_detail: String,
     /// The input-dirty marker, if there is one.
     input_dirty: Option<Found>,
     lock: Lock,
@@ -62,6 +70,9 @@ pub(crate) struct Status {
     /// Whether `acquire_desktop` waits for the user to allow it on the desktop, and whether
     /// the policy file or the environment asked for that.
     confirm_lease: SwitchStatus,
+    /// Why the last notification `notify_on_lease` sends couldn't be sent, since the
+    /// engine started; null in the `status` subcommand.
+    lease_notice_error: Option<String>,
     /// Which tools this session lists, and what narrowed them.
     tools: ToolsStatus,
     /// Whether this client is served by the shared engine, standalone, or only by the
@@ -80,6 +91,15 @@ pub(crate) struct Sources<'a> {
     /// The engine serving the session; none for the `status` subcommand.
     pub(crate) engine: Option<EngineStatus>,
     pub(crate) event_stream: Option<StreamState>,
+    /// Whether niri's last config load failed, when niri has said.
+    pub(crate) config_failed: Option<bool>,
+    /// What reads niri's config for `stop_key`; none to leave it unread. An action's
+    /// checks don't need it, and a config file on a stuck filesystem would hold each of
+    /// them up.
+    pub(crate) stop_key: Option<&'a stop_key::Reader>,
+    /// Why the last `notify_on_lease` notification couldn't be sent; none for the
+    /// `status` subcommand.
+    pub(crate) lease_notice_error: Option<String>,
     pub(crate) audit: &'a Audit,
     pub(crate) lease: LeaseStatus,
     pub(crate) policy: &'a Loaded,
@@ -199,6 +219,9 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
     let Sources {
         engine,
         event_stream,
+        config_failed,
+        stop_key: reader,
+        lease_notice_error,
         audit,
         lease,
         policy,
@@ -218,11 +241,12 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
             None
         }
     };
-    let (version, outputs, noctalia, logind) = tokio::join!(
+    let (version, outputs, noctalia, logind, stop_key) = tokio::join!(
         niri::version(socket),
         niri::outputs(socket),
         noctalia,
-        control::logind(socket, &env.desktop)
+        control::logind(socket, &env.desktop),
+        stop_key_of(reader, socket, config_failed)
     );
     let noctalia_status = noctalia.as_ref().and_then(|reply| reply.as_ref().ok());
     let lock = control::lock(logind, noctalia_status);
@@ -231,11 +255,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         Ok(version) => (Some(version), None),
         Err(error) => (None, Some(error)),
     };
-    let (presence, noctalia_error) = match noctalia {
-        None => (Presence::NotInstalled, None),
-        Some(Ok(_)) => (Presence::Running, None),
-        Some(Err(failure)) => (Presence::NotRunning, Some(failure)),
-    };
+    let (presence, noctalia_error) = presence(noctalia);
     Status {
         instance: env.instance(),
         discovery: env.discovery.clone(),
@@ -253,6 +273,8 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
             .ok()
             .and_then(|runtime| marker::read(&runtime)),
         stop: RuntimeDir::of(env).is_ok_and(|runtime| runtime.stopped().unwrap_or(true)),
+        stop_key: stop_key.state,
+        stop_key_detail: stop_key.detail,
         lock,
         outputs: OutputSupport::of(outputs),
         noctalia: presence,
@@ -263,6 +285,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         policy: policy.status(),
         unrestricted: unrestricted.status(),
         confirm_lease: confirm_lease.status(),
+        lease_notice_error,
         tools: tools.status(),
         shared: shared.status(),
         binaries: SESSION_BINARIES
@@ -270,6 +293,30 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
             .into_iter()
             .collect(),
         desktop_programs: env.desktop.clone(),
+    }
+}
+
+/// Whether Noctalia is there from its status reply, none when it isn't installed, and why
+/// it counts as not running.
+/// What `stop_key` says, niri's config read only with a `reader`.
+async fn stop_key_of(
+    reader: Option<&stop_key::Reader>,
+    socket: &niri::Socket,
+    config_failed: Option<bool>,
+) -> stop_key::Checked {
+    match reader {
+        Some(reader) => reader.check(socket, config_failed).await,
+        None => stop_key::Checked::unread(),
+    }
+}
+
+fn presence(
+    noctalia: Option<Result<serde_json::Map<String, serde_json::Value>, ToolError>>,
+) -> (Presence, Option<ToolError>) {
+    match noctalia {
+        None => (Presence::NotInstalled, None),
+        Some(Ok(_)) => (Presence::Running, None),
+        Some(Err(failure)) => (Presence::NotRunning, Some(failure)),
     }
 }
 
@@ -340,6 +387,9 @@ mod tests {
         let sources = Sources {
             engine: None,
             event_stream: None,
+            config_failed: None,
+            stop_key: Some(&stop_key::Reader::default()),
+            lease_notice_error: None,
             audit: &audit,
             lease: status_without_desk(&Env::default()),
             policy: &settings.policy,
@@ -376,6 +426,8 @@ mod tests {
                 },
                 "lease": {"held_by_me": false, "holder": null, "error": "NIRI_SOCKET is not set"},
                 "stop": false,
+                "stop_key": "unknown",
+                "stop_key_detail": "find niri's process: NIRI_SOCKET is not set",
                 "input_dirty": null,
                 "lock": {
                     "state": "unknown",
@@ -394,18 +446,51 @@ mod tests {
                 "accessibility_switch": null,
                 "audit": {"path": null, "last_error": "neither XDG_STATE_HOME nor HOME is set"},
                 "policy": {
-                    "state": "missing", "presets": 0, "preset_names": [], "denied_app_ids": 0, "turn_on_accessibility": true,
+                    "state": "missing", "presets": 0, "preset_names": [], "denied_app_ids": 0, "turn_on_accessibility": true, "notify_on_lease": true,
                     "capture_dir": "~/Pictures/niri-computer-use",
                     "capture_dir_source": "default",
                     "error": null
                 },
                 "unrestricted": {"enabled": false, "source": null, "error": null},
                 "confirm_lease": {"enabled": false, "source": null, "error": null},
+                "lease_notice_error": null,
                 "tools": {"profile": "full", "source": null, "error": null},
                 "shared": {"setting": "on", "error": null},
                 "binaries": {"grim": false, "notify-send": false},
                 "desktop_programs": {"search": "", "loginctl": null, "noctalia": null}
             })
+        );
+    }
+
+    /// An action's checks don't wait on niri's config, and don't call a key unbound because
+    /// they skipped it.
+    #[tokio::test]
+    async fn a_report_for_an_action_leaves_the_stop_key_unread() {
+        let audit = Audit::new(None);
+        let session = crate::test_support::session(1);
+        let settings = session.settings();
+        let sources = Sources {
+            engine: None,
+            event_stream: None,
+            config_failed: Some(false),
+            stop_key: None,
+            lease_notice_error: None,
+            audit: &audit,
+            lease: status_without_desk(&Env::default()),
+            policy: &settings.policy,
+            unrestricted: &settings.unrestricted,
+            confirm_lease: &settings.confirm_lease,
+            tools: &settings.tools,
+            shared: &settings.shared,
+            place: crate::test_support::no_programs(),
+            accessibility: &a11y::detect(None).await,
+            accessibility_switch: None,
+        };
+        let status = collect(&Env::default(), sources).await;
+        assert_eq!(status.stop_key, StopKey::Unknown);
+        assert_eq!(
+            status.stop_key_detail,
+            "niri's config wasn't read for this report"
         );
     }
 }

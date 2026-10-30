@@ -126,6 +126,10 @@ pub(crate) struct Policy {
     /// window's app isn't on the accessibility bus; unset, it may.
     #[serde(default)]
     pub(crate) turn_on_accessibility: Option<bool>,
+    /// `false` keeps the server from putting a notification on the desktop when an agent
+    /// takes the lease; unset, it does.
+    #[serde(default)]
+    pub(crate) notify_on_lease: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -182,6 +186,8 @@ pub(crate) struct PolicyStatus {
     denied_app_ids: usize,
     /// Whether the server may turn the session's accessibility on.
     turn_on_accessibility: bool,
+    /// Whether a granted lease puts a notification on the desktop.
+    notify_on_lease: bool,
     /// Where `screenshot`'s `save_path` writes, as written; null when saving is off.
     capture_dir: Option<String>,
     /// Whether the file chose `capture_dir`, an empty one included, or the default
@@ -284,6 +290,18 @@ impl Loaded {
         }
     }
 
+    /// Whether a granted lease puts a notification on the desktop: unless the file says
+    /// `notify_on_lease = false`. A missing or invalid file leaves it on.
+    pub(crate) const fn notify_on_lease(&self) -> bool {
+        match self {
+            Self::Valid(Policy {
+                notify_on_lease: Some(false),
+                ..
+            }) => false,
+            Self::Valid(_) | Self::Missing | Self::Invalid(_) => true,
+        }
+    }
+
     /// Whether the file turns `confirm_lease` on. A missing or invalid file doesn't.
     pub(crate) const fn confirm_lease(&self) -> bool {
         match self {
@@ -331,6 +349,7 @@ impl Loaded {
             }),
             denied_app_ids: policy.map_or(0, |policy| policy.deny_input_app_ids.len()),
             turn_on_accessibility: off_bus(self, false, false) == OffBus::Listen,
+            notify_on_lease: self.notify_on_lease(),
             capture_dir: self.capture_dir().ok().map(|(dir, _)| dir.to_owned()),
             capture_dir_source: match (self, self.capture_dir()) {
                 (_, Ok((_, source))) => Some(source),
@@ -910,6 +929,21 @@ pub(crate) fn refuse_lock(lock: LockState) -> Option<ToolError> {
             ErrorName::ScreenLocked,
             "the lock state is unknown: neither logind nor Noctalia answered (see status.lock)",
         )),
+    }
+}
+
+/// `screen_locked` while the screen is known to be locked, for a tool that returns what
+/// the screen shows: an image, accessible names or window titles, which the lock screen
+/// hides. An unknown lock state doesn't refuse it: actions already refuse then, and
+/// refusing looks too would leave a session without logind's hint or Noctalia nothing at
+/// all (see `docs/decisions.md`).
+pub(crate) fn refuse_observe(lock: LockState) -> Option<ToolError> {
+    match lock {
+        LockState::Locked => Some(ToolError::new(
+            ErrorName::ScreenLocked,
+            "the screen is locked, and the lock screen hides what this would return",
+        )),
+        LockState::Unlocked | LockState::Unknown => None,
     }
 }
 

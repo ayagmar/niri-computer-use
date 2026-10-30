@@ -29,11 +29,15 @@ use crate::error::{CallError, ErrorName, ToolError};
 use crate::input::{Input, keyboard};
 use crate::niri::OutputSummary;
 use crate::niri::events::{DesktopState, EventStream, StreamState};
+use crate::notice::Notices;
 use crate::observe;
 use crate::policy::{self, SaveTarget};
 use crate::refs::Shot;
 use crate::session::{Label, Session, SessionId, Settings};
-use crate::{Env, clipboard, confirm, elements, niri, noctalia, runner, settle, status, wait};
+use crate::stop_key::{self, StopKey};
+use crate::{
+    Env, clipboard, confirm, elements, niri, noctalia, runner, settle, status, wait, watch,
+};
 
 #[derive(Debug)]
 pub(crate) struct Engine {
@@ -50,6 +54,10 @@ pub(crate) struct Engine {
     sessions: Mutex<BTreeMap<SessionId, Session>>,
     /// The clipboard as the current lease sees it, from its `acquire` on.
     clipboard: Mutex<Option<clipboard::Watch>>,
+    /// The notifications `notify_on_lease` sent.
+    notices: Notices,
+    /// What reads niri's config for `status.stop_key` and `acquire_desktop`'s warning.
+    stop_key: stop_key::Reader,
     /// The last session id given out.
     last_session: AtomicU64,
     mode: status::Mode,
@@ -62,6 +70,21 @@ pub(crate) struct Engine {
     cut_off: AtomicBool,
     /// Lives as long as the engine; see `control::guard`.
     _guardian: Option<runner::Watcher>,
+}
+
+/// What a grant gives: the holder, the window that had keyboard focus, and whether the
+/// lease is new rather than one the session held already.
+type Taken = (Holder, Option<u64>, bool);
+
+/// What `acquire_desktop` returns.
+#[derive(Debug, Serialize)]
+pub(crate) struct Granted {
+    pub(crate) holder: Holder,
+    /// The window that had keyboard focus, which `release` can give focus back to.
+    pub(crate) users_window: Option<u64>,
+    /// Says the stop key isn't bound, while niri's config binds none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) warning: Option<String>,
 }
 
 /// The action gate's checks for one session, which an element action asks again while
@@ -103,6 +126,10 @@ pub(crate) struct Desktop {
     /// Only when Noctalia is installed.
     #[serde(skip_serializing_if = "Option::is_none")]
     shell: Option<Shell>,
+    /// Why every window's `title` is null: the screen is locked, and the lock screen hides
+    /// them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    titles_hidden: Option<String>,
 }
 
 /// Noctalia's status as it gave it, or why it gave none.
@@ -216,6 +243,8 @@ impl Engine {
             a11y,
             sessions: Mutex::new(BTreeMap::new()),
             clipboard: Mutex::new(None),
+            notices: Notices::default(),
+            stop_key: stop_key::Reader::default(),
             last_session: AtomicU64::new(0),
             mode: status::Mode::Standalone,
             fallback: None,
@@ -345,6 +374,12 @@ impl Engine {
 
     /// The readiness report, as `status` returns it to `session`.
     pub(crate) async fn status(&self, session: &Session) -> status::Status {
+        self.report(session, true).await
+    }
+
+    /// The readiness report for `session`, with niri's config read for the stop key when
+    /// `read_stop_key` says.
+    async fn report(&self, session: &Session, read_stop_key: bool) -> status::Status {
         let settings = session.settings();
         let event_stream = self
             .events
@@ -363,6 +398,9 @@ impl Engine {
         let sources = status::Sources {
             engine: Some(engine),
             event_stream: Some(event_stream),
+            config_failed: self.config_failed(),
+            stop_key: read_stop_key.then_some(&self.stop_key),
+            lease_notice_error: self.notices.last_error(),
             audit: &self.audit,
             lease: self.desk.status(session),
             policy: &settings.policy,
@@ -378,16 +416,61 @@ impl Engine {
     }
 
     /// Takes the lease for `session`, labelled `label`, and watches the clipboard from
-    /// then on. Returns the holder and the window that had keyboard focus, which `release`
-    /// can give focus back to.
+    /// then on. Returns the holder, the window that had keyboard focus, which `release`
+    /// can give focus back to, and a warning while niri's config binds no stop key.
     pub(crate) async fn acquire(
         self: &Arc<Self>,
         session: &Session,
         label: &Label,
-    ) -> Result<(Holder, Option<u64>), ToolError> {
+    ) -> Result<Granted, ToolError> {
         // Boxed, because the readiness report and the prompt make a large future.
         let refusal = Box::pin(self.acquire_refusal(session, label));
-        self.grant(session, &label.to_string(), refusal).await
+        let (holder, users_window, fresh) =
+            self.grant(session, &label.to_string(), refusal).await?;
+        if fresh {
+            // The lease is granted, and the agent has no use for the notification, so a
+            // slow notification server doesn't hold up the result.
+            let (engine, session, label) = (Arc::clone(self), session.clone(), label.clone());
+            tokio::spawn(async move { engine.announce(&session, &label).await });
+        }
+        let stop_key = self
+            .stop_key
+            .check(&self.env.niri_socket, self.config_failed())
+            .await;
+        Ok(Granted {
+            holder,
+            users_window,
+            warning: (stop_key.state == StopKey::NotFound)
+                .then(|| stop_key::unbound_warning(&stop_key::own_program())),
+        })
+    }
+
+    /// Puts the notification `notify_on_lease` asks for on the desktop, unless the user
+    /// has just allowed the lease (`confirm_lease`), this agent was notified about within
+    /// `notice::INTERVAL`, or the Noctalia plugin, which sends its own, is enabled.
+    async fn announce(&self, session: &Session, label: &Label) {
+        let settings = session.settings();
+        if !settings.policy.notify_on_lease() || settings.confirm_lease.enabled() {
+            return;
+        }
+        if !self.notices.due(label, Instant::now()) {
+            return;
+        }
+        if self.env.desktop.noctalia.is_some() && noctalia::plugin_enabled(&self.env).await {
+            return;
+        }
+        let project = watch::project_of(std::path::Path::new("/proc"), label.pid());
+        self.notices
+            .send(settings.place(), label, project.as_deref())
+            .await;
+    }
+
+    /// Whether niri's last config load failed, as the event stream last said.
+    fn config_failed(&self) -> Option<bool> {
+        self.events
+            .as_ref()
+            .ok()
+            .and_then(EventStream::config_failed)
     }
 
     /// Why `session`'s client `label` may not take the lease: the readiness report's
@@ -415,7 +498,7 @@ impl Engine {
         session: &Session,
         label: &str,
         refusal: impl Future<Output = Option<ToolError>>,
-    ) -> Result<(Holder, Option<u64>), ToolError> {
+    ) -> Result<Taken, ToolError> {
         let prepare = |lease| async move {
             let users_window = niri::waiter(self.events.as_ref())
                 .await
@@ -430,10 +513,11 @@ impl Engine {
             .desk
             .acquire_with(session, label, refusal, prepare)
             .await?;
+        let fresh = watch.is_some();
         if let Some(watch) = watch {
             self.keep_watch(session, watch)?;
         }
-        Ok((holder, self.desk.users_window(session)))
+        Ok((holder, self.desk.users_window(session), fresh))
     }
 
     /// Gives the lease up, with `restore_focus` first giving focus back to the user's
@@ -528,6 +612,9 @@ impl Engine {
             // Boxed, because a saved capture makes a large future.
             Box::pin(self.capture_saving(session, request, save)).await
         };
+        // niri draws only the lock screen into a capture made once the screen locked, so
+        // the lock is read before the capture only.
+        self.refuse_locked().await?;
         self.desk.observe(session, capture).await
     }
 
@@ -559,14 +646,14 @@ impl Engine {
         let lease = self.desk.ref_lease(session);
         let remember = |element| lease.and_then(|lease| self.desk.remember_element(lease, element));
         // Boxed, because the walk's calls make a large future.
-        Box::pin(elements::list(
+        let listed = Box::pin(elements::list(
             &self.env.niri_socket,
             a11y,
             &session.settings().policy,
             ask,
             remember,
-        ))
-        .await
+        ));
+        self.unlocked(listed).await
     }
 
     /// What `elements` lists for `element` now, for one check of `wait_for`'s element
@@ -623,18 +710,27 @@ impl Engine {
                 None
             }
         };
-        let (state, outputs, shell) = tokio::join!(
+        let (state, outputs, shell, logind) = tokio::join!(
             niri::desktop(self.events.as_ref()),
             niri::outputs(&self.env.niri_socket),
-            shell
+            shell,
+            control::logind(&self.env.niri_socket, &self.env.desktop)
         );
+        let noctalia = shell.as_ref().and_then(|status| status.as_ref().ok());
+        let lock = control::lock(logind, noctalia);
+        let mut state = state?;
+        let titles_hidden = policy::refuse_observe(lock.state()).map(|refused| refused.detail);
+        if titles_hidden.is_some() {
+            state.hide_titles();
+        }
         Ok(Desktop {
-            state: state?,
+            state,
             outputs: outputs?.into_values().map(Into::into).collect(),
             shell: shell.map(|status| match status {
                 Ok(status) => Shell::Status(status),
                 Err(error) => Shell::Unavailable(error),
             }),
+            titles_hidden,
         })
     }
 
@@ -702,8 +798,21 @@ impl Engine {
 
     /// Waits for `until`, then with `screenshot` adds one taken once the screen stopped
     /// changing. Each capture serializes with actions, without holding the mutex between
-    /// samples or while waiting for a window condition.
+    /// samples or while waiting for a window condition. Every condition reads what the
+    /// screen shows, so the wait is refused while the screen is locked.
     pub(crate) async fn wait(
+        &self,
+        session: &Session,
+        until: &wait::Until,
+        limit: std::time::Duration,
+        screenshot: bool,
+    ) -> Result<(wait::Report, Option<observe::Screenshot>), CallError> {
+        // Boxed, because the wait's checks and captures make a large future.
+        let waited = Box::pin(self.waited(session, until, limit, screenshot));
+        self.unlocked(waited).await
+    }
+
+    async fn waited(
         &self,
         session: &Session,
         until: &wait::Until,
@@ -899,9 +1008,26 @@ impl Engine {
         }
     }
 
+    /// Runs `work`, which returns what the screen shows, unless the screen is locked when
+    /// it starts or once it is done: then `screen_locked`, and what it read is dropped.
+    async fn unlocked<T>(
+        &self,
+        work: impl Future<Output = Result<T, CallError>>,
+    ) -> Result<T, CallError> {
+        self.refuse_locked().await?;
+        let done = work.await;
+        self.refuse_locked().await?;
+        done
+    }
+
+    async fn refuse_locked(&self) -> Result<(), ToolError> {
+        let lock = self.lock_sources().read().await;
+        policy::refuse_observe(lock.state()).map_or(Ok(()), Err)
+    }
+
     /// Why `session` may not take the lease or act now, from the readiness report.
     async fn refusal(&self, session: &Session) -> Option<ToolError> {
-        let report = self.status(session).await;
+        let report = self.report(session, false).await;
         if let Some(refused) = policy::refuse_control(report.facts(&session.settings().policy)) {
             return Some(refused);
         }
@@ -1272,7 +1398,7 @@ mod tests {
     fn grant_apart(
         engine: &Arc<Engine>,
         session: &Session,
-    ) -> tokio::task::JoinHandle<Result<(Holder, Option<u64>), ToolError>> {
+    ) -> tokio::task::JoinHandle<Result<Taken, ToolError>> {
         let (engine, session) = (Arc::clone(engine), session.clone());
         tokio::spawn(async move { engine.grant(&session, "test/1", ready(None)).await })
     }
@@ -1521,5 +1647,48 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("still waiting after five seconds");
+    }
+
+    /// A session of this process whose `PATH` is `bin`, with `confirm_lease` as
+    /// `confirm` says and the policy file `policy`.
+    fn notified(id: u64, bin: &std::path::Path, confirm: bool, policy: &str) -> Session {
+        let given = crate::session::Given {
+            unrestricted: None,
+            confirm_lease: confirm.then(|| "1".into()),
+            tools: None,
+            shared: None,
+            home: None,
+            path: Some(bin.as_os_str().to_owned()),
+            policy: policy::Source::Text {
+                path: "/c/policy.toml".into(),
+                text: policy.to_owned(),
+            },
+        };
+        Session::new(SessionId(id), std::process::id(), Settings::new(given))
+    }
+
+    // One notification per agent, however often it takes the lease; none for a lease the
+    // user just allowed on the desktop, or with `notify_on_lease = false`.
+    #[tokio::test]
+    async fn a_granted_lease_notifies_once_unless_the_user_just_allowed_it() {
+        let bin = crate::test_support::fresh_dir("engine-notice");
+        crate::test_support::script(
+            &bin.join("notify-send"),
+            "printf '%s\\n' \"$4\" >> \"${0%/*}/sent\"",
+        );
+        let engine = without_niri(Env::default());
+        let agent = notified(1, &bin, false, "");
+        for _ in 0..3 {
+            engine.announce(&agent, &agent.label("claude-code")).await;
+        }
+        let asked = notified(2, &bin, true, "");
+        engine.announce(&asked, &asked.label("pi")).await;
+        let off = notified(3, &bin, false, "notify_on_lease = false");
+        engine.announce(&off, &off.label("amp")).await;
+        let sent = std::fs::read_to_string(bin.join("sent")).unwrap();
+        assert_eq!(sent.lines().count(), 1, "{sent}");
+        assert!(sent.starts_with("claude-code"), "{sent}");
+        assert_eq!(engine.notices.last_error(), None);
+        std::fs::remove_dir_all(bin).unwrap();
     }
 }

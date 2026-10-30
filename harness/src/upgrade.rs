@@ -38,10 +38,15 @@ const MARKER_POLL: Duration = Duration::from_millis(1);
 const GUARDIAN_WAIT: Duration = Duration::from_secs(12);
 /// Valid in every release: a key each one reads.
 const POLICY: &str = "deny_input_app_ids = [\"org.keepassxc.KeePassXC\"]\n";
-/// A key added after 0.1.1.
-const NEWER_POLICY: &str = "turn_on_accessibility = false\n";
-/// The releases from before `NEWER_POLICY`'s key, which read a file with it as invalid.
-const BEFORE_NEWER_POLICY: [&str; 2] = ["0.1.0", "0.1.1"];
+/// Keys added after 0.1.0, each with the releases from before it, which read a file with
+/// it as invalid.
+const NEWER_POLICY: [(&str, &[&str]); 2] = [
+    ("turn_on_accessibility = false\n", &["0.1.0", "0.1.1"]),
+    (
+        "notify_on_lease = false\n",
+        &["0.1.0", "0.1.1", "0.1.2", "0.1.3", "0.1.4", "0.1.5"],
+    ),
+];
 
 pub(crate) fn run(session: &mut Session<'_>, server: &str, from: &str) -> Result<()> {
     let noctalia = session.start(
@@ -62,13 +67,15 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str, from: &str) -> Result
         first_line(&printed)
     ))?;
     write_policy(session)?;
-    if BEFORE_NEWER_POLICY.contains(&from) {
-        newer_key_refused(session, &place)?;
-    } else {
-        session.log(&format!(
-            "upgrade: {from} already reads {}, so no newer key is checked",
-            NEWER_POLICY.trim_end()
-        ))?;
+    for (key, before) in NEWER_POLICY {
+        if before.contains(&from) {
+            newer_key_refused(session, &place, key)?;
+        } else {
+            session.log(&format!(
+                "upgrade: {from} already reads {}, so that key isn't checked",
+                key.trim_end()
+            ))?;
+        }
     }
     let wev = start_wev(session)?;
     let mut old = Old::start(session, &place, from)?;
@@ -110,12 +117,12 @@ fn write_policy(session: &Session<'_>) -> Result<()> {
 
 /// The old build's `status` reads a policy file with a key added since as invalid, which
 /// leaves its servers read-only.
-fn newer_key_refused(session: &mut Session<'_>, place: &Place) -> Result<()> {
+fn newer_key_refused(session: &mut Session<'_>, place: &Place, key: &str) -> Result<()> {
     let config = session.test_dir().root().join("newer-config");
     let dir = config.join("niri-computer-use");
     fs::create_dir_all(&dir).context(format!("create {}", dir.display()))?;
     let path = dir.join("policy.toml");
-    fs::write(&path, NEWER_POLICY).context(format!("write {}", path.display()))?;
+    fs::write(&path, key).context(format!("write {}", path.display()))?;
     let mut xdg = OsString::from("XDG_CONFIG_HOME=");
     xdg.push(&config);
     let args = place.env(&[xdg, place.binary().into(), "status".into()]);
@@ -129,7 +136,7 @@ fn newer_key_refused(session: &mut Session<'_>, place: &Place) -> Result<()> {
     )?;
     session.log(&format!(
         "upgrade: the old build reads a policy file with {} as {policy}",
-        NEWER_POLICY.trim_end()
+        key.trim_end()
     ))
 }
 
