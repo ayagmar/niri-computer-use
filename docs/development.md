@@ -355,11 +355,12 @@ One server holds the lease, and 30 rounds each call `focus` on the empty workspa
 
 ## Nested upgrade checks
 
-`make nested-upgrade` checks an upgrade from each published release to this checkout's release build, in shared mode, with Noctalia as the lock source and `wev` to type into. It runs one nested session per release in `UPGRADE_FROM`, by default every `v*` tag in the clone, oldest first, each with a 240-second deadline, and needs the network to download them:
+`make nested-upgrade` checks an upgrade from each published release to this checkout's release build, in shared mode, with Noctalia as the lock source and `wev` to type into, and then the release build reinstalled over itself. It runs one nested session per entry in `UPGRADE_FROM`, by default every `v*` tag in the clone, oldest first, then `current`, each with a 240-second deadline, and needs the network to download the releases:
 
 ```sh
 make nested-upgrade
 make nested-upgrade UPGRADE_FROM=0.1.1
+make nested-upgrade UPGRADE_FROM=current
 ```
 
 Every command it runs gets `HOME=TEST_DIR/home` and `TMPDIR=TEST_DIR/tmp`, so neither install touches your HOME, `~/.local/bin` or runtime directory. The supervisor:
@@ -376,6 +377,15 @@ Every command it runs gets `HOME=TEST_DIR/home` and `TMPDIR=TEST_DIR/tmp`, so ne
 10. Ends B, N and S, and waits for the new engine to exit.
 
 The supervisor log has what each side read and what `recover` said. The run doesn't check that every server bridged to the engine, as other shared runs do: N is served standalone on purpose.
+
+With `UPGRADE_FROM=current`, the supervisor packs the build as in step 1 and installs it, then reinstalls it over itself, as a reinstall of the same release writes a new file:
+
+1. Starts clients A and B, which must share one engine, then installs `current` again. A's `status` must report `replaced: true`.
+2. Starts client N, which must be served by a new shared engine, with no fallback, no `unscoped` reason, so in a scope of its own, and `replaced: false`; the old engine must exit within two seconds.
+3. A's and B's next calls must fail with `engine_lost`, and the calls after with `engine_unavailable`, saying to restart this MCP client. The audit log must have both `engine_lost` lines, which their bridges wrote.
+4. Ends A, B and N, and waits for the new engine to exit.
+
+Releases up to 0.1.5 don't hand over, so the runs from their tags keep checking that N is served standalone beside the old engine.
 
 ## Nested multi-output checks
 
@@ -404,11 +414,16 @@ It shows that niri maps the pointer through the bound output at mixed scales and
 make nested-chromium
 NCU_CHROMIUM=/path/to/chrome make nested-chromium
 make nested-chromium SHARED=1
+make nested-chromium-headless
 ```
+
+`make nested-chromium-headless` runs the same suite without cage, on niri's own headless backend: it builds and caches the patched niri v26.04 as `make nested-multi` does, and runs `harness run --niri <that niri> --headless-niri --chromium`. `--headless-niri` gives niri one 1280x800 output, `headless-1`, and refuses `--visible` and every suite but `--chromium`. That backend sends a window frame callbacks only from niri's fallback timer, about once a second, since it draws nothing, so a page there draws its next frame up to a second late. Only the masked field below depends on frames, and it lost keys the same way on a real display, in the use `docs/results/chromium.md` describes.
 
 The browser opens `harness/fixtures/chromium.html` in app mode (`--app`) with `--ozone-platform=wayland`, inside the nested niri. Its profile (`--user-data-dir`), its `HOME`, its `TMPDIR` and every XDG directory are under `TEST_DIR`, so it never reads or writes your profile or leaves its singleton socket's directory in `/tmp`, and first-run UI, sync, background networking, component updates, extensions and the crash reporter are off. After every input the page sets its title to `ncu-chromium:` and the field's value as UTF-16 code units, four hex digits each, and the supervisor reads it from niri's window list. A browser that exits before its window opens fails the run at once, with its exit status and the path of `chromium.log`. A title is the one channel that needs nothing beside the browser: the page can't write files, and accessibility would test AT-SPI as well. The code units are needed because Chromium collapses and trims whitespace in titles. The page also logs each keydown's DOM `code` and `key` to the console, which `--enable-logging=stderr` copies into `chromium.log`. The run lists the ones whose `key` isn't one ASCII character, which shows the keycode each symbol the layout lacks went out on.
 
-Each case is typed with `type_text`, then pasted with `via: "paste"`, and the field is emptied with `ctrl+a` and `BackSpace` between them. A result counts once the field has stopped changing for a second, even when it shows the text sent, so a key repeated or delivered late after the text is caught. The cases are ASCII, the C10 corpus, a space or period first and fourteenth (the places wtype's Escape and Backspace codes used to drop or delete them), three, fourteen and thirty symbols a US layout lacks, accented Latin, Cyrillic and two emoji. Typed text the project says arrives exactly, and every paste, must arrive exactly, or the run fails after logging every case. Typed emoji are known to arrive cut to 16 bits in Chromium, so the emoji case passes when its text arrives either exactly, which the log calls a fix, or with each emoji cut to its lower 16 bits and the rest intact. Anything else fails, since the text around the emoji is still promised. The results are in `docs/results/chromium.md`.
+Each case is typed with `type_text`, then pasted with `via: "paste"`, and the field is emptied with `ctrl+a` and `BackSpace` between them. A result counts once the field has stopped changing for a second, even when it shows the text sent, so a key repeated or delivered late after the text is caught. The cases are ASCII, the C10 corpus, a space or period first and fourteenth (the places wtype's Escape and Backspace codes used to drop or delete them), three, fourteen and thirty symbols a US layout lacks, accented Latin, Cyrillic and two emoji. Typed text the project says arrives exactly, and every paste, must arrive exactly, or the run fails after logging every case. Typed emoji are known to arrive cut to 16 bits in Chromium, so the emoji case passes when its text arrives either exactly, which the log calls a fix, or with each emoji cut to its lower 16 bits and the rest intact. Anything else fails, since the text around the emoji is still promised.
+
+Then three form fields, each in a browser of its own opening `harness/fixtures/chromium-forms.html?field=<name>`, which publishes the field's value in its title as the text area's page does: `number`, a plain `<input type=number>`; `controlled`, a number input driven as React drives a controlled one, each input going through a reducer and a synchronous render that spends 8 ms busy; and `masked`, a text input as `controlled` behind the check `@react-input/core` 2.0.2 puts in front of masked fields such as `@react-input/number-format`'s. That check undoes an input that comes before a `setTimeout(0)` chain has run since the previous one, and the page logs each one it undoes. `100`, `25`, `10` and `1234567890` are typed into each and pasted into each. The `number` and `controlled` fields must get every key, every paste must arrive exactly, and the `masked` field's typed text passes when it is the text's first character and then some of the others in order, with the page logging an undo for each key missing, which the log calls a known loss, or the whole text, which it calls a fix. The results are in `docs/results/chromium.md`.
 
 `make nested-chromium-a11y` checks what Chromium needs before `elements` can read its pages. It finds the browser as `make nested-chromium` does, skips the same way without one, and has the same 240-second deadline:
 

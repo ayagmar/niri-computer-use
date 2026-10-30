@@ -7,6 +7,7 @@
 //! client meeting the new engine, the audit log and the policy file.
 
 mod install;
+mod reinstall;
 
 use std::ffi::OsString;
 use std::fs;
@@ -56,6 +57,10 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str, from: &str) -> Result
     )?;
     let place = Place::create(session, server)?;
     place.release_current(session)?;
+    if from == CURRENT {
+        reinstall::run(session, &place)?;
+        return noctalia.stop().map(drop);
+    }
     let printed = place.install(session, from)?;
     session.log(&format!(
         "upgrade: installed {from}: {}",

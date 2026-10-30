@@ -8,6 +8,7 @@
 pub(crate) mod before;
 mod client;
 pub(crate) mod envelope;
+pub(crate) mod log;
 pub(crate) mod unavailable;
 
 use std::collections::BTreeMap;
@@ -31,13 +32,14 @@ use tokio::time::Instant;
 
 use crate::control::runtime::RuntimeDir;
 use crate::engine::hello::{self, Exe, Hello, Refusal, Reply};
-use crate::engine::host::{LOG, RUNTIME_DIR_DISCOVERED, SOCKET, UNSCOPED};
+use crate::engine::host::{LOCK, LOG, RUNTIME_DIR_DISCOVERED, SOCKET, UNSCOPED};
 use crate::error::{ErrorName, ToolError};
 use crate::session::{Given, LineLimit, MAX_LINE};
 use crate::{Env, cli, runner};
 use before::Before;
 use client::{Ended, Waiting, Writer};
 use envelope::Message;
+use log::{Asked, Log};
 
 /// Held by the one bridge starting an engine, so bridges that start at once start one.
 const START_LOCK: &str = "engine.start.lock";
@@ -147,6 +149,9 @@ enum Failed {
     Never(String),
     /// An engine of another build refused this bridge, as it does for as long as it runs.
     OtherBuild(String),
+    /// An engine an install replaced refused this bridge, of the installed build, and
+    /// exits so that the bridge starts one of its own build.
+    Exiting(String),
     /// Anything else, which a retry may get past.
     Retry(String),
 }
@@ -182,6 +187,14 @@ pub(crate) async fn connect(target: &Target) -> Result<Link, Unreached> {
             Err(Failed::Refused(detail)) => return Err(Unreached::Other(detail)),
             Err(Failed::OtherBuild(detail)) => return Err(Unreached::OtherBuild(detail)),
             Err(Failed::Never(detail)) => return Err(Unreached::Never(detail)),
+            Err(Failed::Exiting(detail)) => {
+                cli::print_error(&detail);
+                let_go(&target.runtime, deadline).await?;
+                detail
+            }
+            Err(Failed::Absent(_)) if let Some(stale) = hello::stale_bridge() => {
+                return Err(Unreached::OtherBuild(stale));
+            }
             Err(Failed::Absent(detail)) if starts < MAX_STARTS => {
                 // Only the first start tries `systemd-run`, which may still be at work.
                 start(target, deadline, starts == 0)
@@ -245,6 +258,7 @@ async fn say_hello(target: &Target) -> Result<Link, Failed> {
             error,
             detail,
             release,
+            exiting,
         }) => {
             let detail = format!(
                 "the shared engine refused this client ({}): {detail}",
@@ -254,6 +268,7 @@ async fn say_hello(target: &Target) -> Result<Link, Failed> {
                     .unwrap_or_default()
             );
             Err(match (error, release) {
+                _ if exiting => Failed::Exiting(detail),
                 (Refusal::EngineVersion, None) => {
                     Failed::OtherBuild(format!("{detail}; {}", hello::older_engine(engine)))
                 }
@@ -469,6 +484,43 @@ async fn stuck(child: &mut runner::Launcher) -> Option<String> {
     }
 }
 
+/// Waits until no engine holds `engine.lock`, an engine listens on `engine.sock`, or
+/// `deadline` has passed: an engine that said it exits lets the lock go once its sessions
+/// have ended, and an engine started before then would find it held and exit without
+/// serving. One listening may be the exiting engine, which refuses again, or one another
+/// bridge started meanwhile, which serves this one.
+async fn let_go(runtime: &RuntimeDir, deadline: Instant) -> Result<(), Unreached> {
+    let path = runtime.path().join(LOCK);
+    let socket = runtime.path().join(SOCKET);
+    let file = match OpenOptions::new().read(true).write(true).open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(Unreached::Other(format!(
+                "open {}: {error}",
+                path.display()
+            )));
+        }
+    };
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(()),
+            Err(TryLockError::WouldBlock) => {}
+            Err(TryLockError::Error(error)) => {
+                return Err(Unreached::Other(format!(
+                    "lock {}: {error}",
+                    path.display()
+                )));
+            }
+        }
+        let listening = tokio::time::timeout(CONNECT, UnixStream::connect(&socket)).await;
+        if matches!(listening, Ok(Ok(_))) || Instant::now() >= deadline {
+            return Ok(());
+        }
+        tokio::time::sleep(RETRY_FIRST).await;
+    }
+}
+
 /// Takes `engine.start.lock`, or `None` once `deadline` has passed.
 async fn start_lock(runtime: &RuntimeDir, deadline: Instant) -> Result<Option<File>, String> {
     let path = runtime.path().join(START_LOCK);
@@ -523,10 +575,12 @@ async fn read_line(input: &mut (impl tokio::io::AsyncBufRead + Unpin), max: usiz
 /// Relays between the client on stdin and stdout and the engine `engine` reaches, until the
 /// client's end. Without an engine, `before` answers the handshake, `tools/list` and pings
 /// until a call reaches one.
+/// The calls it answers itself go to `log`.
 pub(crate) async fn run(
     target: Target,
     engine: Option<Link>,
     before: Option<Before>,
+    log: Log,
 ) -> Result<(), String> {
     let (sender, mut client) = mpsc::unbounded_channel();
     let (ended, client_end) = watch::channel(None);
@@ -544,6 +598,7 @@ pub(crate) async fn run(
         in_flight: BTreeMap::new(),
         initialize: None,
         unreported: false,
+        log,
         writer,
         ends: Ends {
             client: client_end,
@@ -645,12 +700,14 @@ struct Relay {
     /// one and had none when it started.
     before: Option<Before>,
     /// The client's requests the engine hasn't answered, by their ids as JSON, with the
-    /// method.
-    in_flight: BTreeMap<String, (Value, String)>,
+    /// method and, for a call, what the audit log names.
+    in_flight: BTreeMap<String, (Value, String, Option<Asked>)>,
     /// The client's `initialize`: its id and line, replayed to a new engine.
     initialize: Option<(Value, Vec<u8>)>,
     /// The engine was lost while nothing was in flight, and the client hasn't heard.
     unreported: bool,
+    /// Where the calls the bridge answers itself are logged.
+    log: Log,
     writer: Writer,
     ends: Ends,
 }
@@ -723,19 +780,27 @@ impl Relay {
         if initializing {
             self.initialize = Some((id.clone(), line.clone()));
         }
+        let initialize = self.initialize.as_ref().map(|(_, sent)| sent.as_slice());
+        let asked = (method == "tools/call")
+            .then(|| self.log.line(&line, initialize))
+            .flatten();
         if self.engine.is_none() {
             if let Some(answer) = self.answer_before(&id, &method, &line) {
                 return self.reply(answer).map_err(Stop::Writer);
             }
             if std::mem::take(&mut self.unreported) {
                 let error = self.lost_error("since the last call");
-                return self.answer(&id, &method, error).map_err(Stop::Writer);
+                return self
+                    .answer(&id, &method, asked.as_ref(), error)
+                    .map_err(Stop::Writer);
             }
             if let Err(error) = self.reach(initializing).await? {
-                return self.answer(&id, &method, error).map_err(Stop::Writer);
+                return self
+                    .answer(&id, &method, asked.as_ref(), error)
+                    .map_err(Stop::Writer);
             }
         }
-        self.in_flight.insert(id.to_string(), (id, method));
+        self.in_flight.insert(id.to_string(), (id, method, asked));
         self.send(&line).await
     }
 
@@ -804,7 +869,10 @@ impl Relay {
         let error = self.lost_error(how);
         self.engine = None;
         self.unreported = self.in_flight.is_empty();
-        for (id, method) in std::mem::take(&mut self.in_flight).into_values() {
+        for (id, method, asked) in std::mem::take(&mut self.in_flight).into_values() {
+            if let Some(asked) = &asked {
+                self.log.answered(asked, &error);
+            }
             let line = envelope::answer(&id, &method, error.clone());
             tokio::select! {
                 biased;
@@ -828,7 +896,17 @@ impl Relay {
         )
     }
 
-    fn answer(&mut self, id: &Value, method: &str, error: ToolError) -> Result<(), String> {
+    /// Answers the request `id` with `error`, logging it when it is the call `asked`.
+    fn answer(
+        &mut self,
+        id: &Value,
+        method: &str,
+        asked: Option<&Asked>,
+        error: ToolError,
+    ) -> Result<(), String> {
+        if let Some(asked) = asked {
+            self.log.answered(asked, &error);
+        }
         self.reply(envelope::answer(id, method, error))
     }
 
@@ -924,6 +1002,7 @@ mod tests {
             in_flight: BTreeMap::new(),
             initialize: None,
             unreported: false,
+            log: Log::new(&crate::test_support::niri_env(dir), &[]),
             writer,
             ends: Ends {
                 client,
@@ -988,7 +1067,7 @@ mod tests {
         let (stdout, client_end) = duplex(1024);
         let mut relay = relay(dir, ours, client, stdout);
         for id in 0..count {
-            let request = (json!(id), "tools/list".to_owned());
+            let request = (json!(id), "tools/list".to_owned(), None);
             relay.in_flight.insert(id.to_string(), request);
         }
         (relay, client_end)

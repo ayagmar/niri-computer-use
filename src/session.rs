@@ -218,10 +218,7 @@ impl Session {
     /// The label for the audit log, the lease and the lease prompt, from the name the MCP
     /// client gives itself.
     pub(crate) fn label(&self, client: &str) -> Label {
-        Label {
-            client: shown_name(client),
-            pid: self.pid,
-        }
+        Label::new(client, self.pid)
     }
 }
 
@@ -238,6 +235,14 @@ pub(crate) struct Label {
 }
 
 impl Label {
+    /// The label of the client that names itself `client` and started process `pid`.
+    pub(crate) fn new(client: &str, pid: u32) -> Self {
+        Self {
+            client: shown_name(client),
+            pid,
+        }
+    }
+
     /// The name the client gives itself, as shown.
     pub(crate) fn client(&self) -> &str {
         &self.client

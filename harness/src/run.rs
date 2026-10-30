@@ -69,6 +69,10 @@ pub(crate) struct Options {
     /// it validates the nested config, runs as the nested niri, and is first on the nested
     /// session's `PATH`. The host checks keep the host's niri.
     pub(crate) niri: Option<PathBuf>,
+    /// The outputs, `WxH` sizes separated by commas, of niri's own headless backend, in a
+    /// niri built with `harness/niri-test/headless-outputs.patch`, which then runs without
+    /// cage. `None` nests niri's `winit` backend in cage or, visible, in your session.
+    pub(crate) headless_outputs: Option<&'static str>,
     /// The Chromium-based browser `--chromium` found.
     pub(crate) browser: Option<PathBuf>,
     /// The release `--upgrade` upgrades from.
@@ -326,10 +330,10 @@ fn run_nested(
     options: &Options,
     log: &mut Log,
 ) -> Result<()> {
-    let multi = options.server == Some(ServerChecks::Multi);
-    if multi && options.visible {
+    let headless = options.headless_outputs.is_some();
+    if headless && options.visible {
         return Err(Failure::new(
-            "--multi runs niri's headless backend, which draws nowhere; drop --visible",
+            "--multi and --headless-niri run niri's headless backend, which draws nowhere; drop --visible",
         ));
     }
     let display = if options.visible {
@@ -339,7 +343,7 @@ fn run_nested(
     };
     let env = preflight(host, test_dir, artifacts, options, &display)?;
     log.line("stage 0, preflight: pass")?;
-    if multi {
+    if headless {
         log.line("no parent display: niri's headless backend; C1 host snapshots enabled")?;
     } else if !options.visible {
         log.line("headless cage: isolated; C1 host snapshots enabled")?;
@@ -363,11 +367,11 @@ fn run_nested(
 }
 
 /// The headless parent is part of the lifecycle C1 observes, including cleanup.
-/// `--multi`'s niri runs its own headless backend and needs no parent display, so no cage
-/// starts: `WAYLAND_DISPLAY` stays cage's socket path with nothing at it, and a niri built
-/// without the patch fails to connect there rather than drawing anywhere or taking a TTY.
+/// A niri on its own headless backend needs no parent display, so no cage starts:
+/// `WAYLAND_DISPLAY` stays cage's socket path with nothing at it, and a niri built without
+/// the patch fails to connect there rather than drawing anywhere or taking a TTY.
 fn run_session(env: &Env, test_dir: &TestDir, artifacts: &Path, options: &Options) -> Result<()> {
-    let cage = if options.visible || options.server == Some(ServerChecks::Multi) {
+    let cage = if options.visible || options.headless_outputs.is_some() {
         None
     } else {
         Some(crate::headless::Headless::start(
@@ -413,11 +417,8 @@ fn preflight(
     if let Some(dir) = options.niri.as_deref().and_then(Path::parent) {
         env.insert("PATH", environment::first_on_path(dir, host)?);
     }
-    if multi {
-        env.insert(
-            environment::HEADLESS_OUTPUTS,
-            crate::input::multi::HEADLESS_OUTPUTS.into(),
-        );
+    if let Some(outputs) = options.headless_outputs {
+        env.insert(environment::HEADLESS_OUTPUTS, outputs.into());
     }
     environment::check_containment(&env, test_dir)?;
     runner::run(&Invocation {

@@ -30,6 +30,9 @@ use crate::session::{Session, SessionId};
 const CHECK: Duration = Duration::from_secs(1);
 /// How often a running action checks the same.
 const MOVED_CHECK: Duration = Duration::from_millis(100);
+/// How long `Desk::close` waits for the action mutex, which the lease's periodic check
+/// and a session's end hold only briefly.
+const CLOSE_WAIT: Duration = Duration::from_millis(100);
 /// The oldest an answer the action gate relies on may be when the call that acts goes out:
 /// the lock state for every action, and for an element action every answer its last gate
 /// read. The gate takes 8 to 15 ms in the protocol tests; niri, Noctalia, logind or an app
@@ -86,6 +89,21 @@ struct Seat {
     /// The session taking the lease under the action mutex, with no grant yet, while it
     /// waits for the policy's answer and the user's.
     taking: std::sync::Mutex<Option<SessionId>>,
+    /// Set under the action mutex by `Desk::close`, for good: no lease is granted again.
+    closed: AtomicBool,
+    /// Whether the engine exits, set once a `Closing` is dropped.
+    exit: watch::Sender<bool>,
+}
+
+/// Says the engine exits once dropped, however the code holding it ends: `Desk::close`
+/// gives it to the connection that closed the desk, which answers its bridge first.
+#[derive(Debug)]
+pub(crate) struct Closing(Arc<Seat>);
+
+impl Drop for Closing {
+    fn drop(&mut self) {
+        self.0.exit.send_replace(true);
+    }
 }
 
 /// Marks a session as taking the lease until dropped.
@@ -230,6 +248,8 @@ impl Desk {
             answered: std::sync::Mutex::new(None),
             lock_read: std::sync::Mutex::new(None),
             taking: std::sync::Mutex::new(None),
+            closed: AtomicBool::new(false),
+            exit: watch::Sender::new(false),
         });
         let runtime = RuntimeDir::of(env).map_err(|detail| {
             let name = if env.instance.socket().is_err() {
@@ -308,6 +328,12 @@ impl Desk {
         // Checked under the mutex, so `end_session` either sees this grant or refuses it.
         if session.has_ended() {
             return Err(session_ended());
+        }
+        if self.seat.closed.load(Ordering::Relaxed) {
+            drop(held);
+            // The engine exits once its `Closing` is dropped, which ends the connection:
+            // the bridge answers this call `engine_lost` then, as every call in flight.
+            return std::future::pending().await;
         }
         if let Some(grant) = held.as_ref().filter(|grant| grant.owner == session.id()) {
             return Ok((grant.lease.holder().clone(), None));
@@ -698,6 +724,32 @@ impl Desk {
         self.seat.owner.borrow().is_some()
     }
 
+    /// Closes the desk for good, for an engine that exits, when no session holds or is
+    /// taking the lease and `settled`, asked under the action mutex, says no input cleanup
+    /// is pending: checked first without the mutex, so a lease holder's action is never
+    /// waited for, then under it, waiting at most `CLOSE_WAIT`. A closed desk grants no
+    /// lease again. Returns what says the engine exits once dropped, or `None` with
+    /// nothing changed. Closing a closed desk gives another.
+    pub(crate) async fn close(&self, settled: impl FnOnce() -> bool) -> Option<Closing> {
+        if self.held() || self.seat.taking().is_some() {
+            return None;
+        }
+        let held = tokio::time::timeout(CLOSE_WAIT, self.seat.lease.lock())
+            .await
+            .ok()?;
+        if held.is_some() || !settled() {
+            return None;
+        }
+        self.seat.closed.store(true, Ordering::Relaxed);
+        drop(held);
+        Some(Closing(Arc::clone(&self.seat)))
+    }
+
+    /// Returns once a `Closing` has been dropped: at once if one was.
+    pub(crate) async fn exiting(&self) {
+        self.seat.exit.subscribe().wait_for(|exit| *exit).await.ok();
+    }
+
     /// Returns once the stop watcher has ended, for good: never, without a watcher.
     pub(crate) async fn watcher_ended(&self) {
         let Ok(stopped) = &self.stopped else {
@@ -999,6 +1051,75 @@ mod tests {
                 .label,
             "other/2"
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// An engine closes its desk only with no lease held or being taken, and once closed
+    /// grants none, so no lease is cut by its exit; the exit is said once the guard goes,
+    /// whatever its holder did meanwhile.
+    #[tokio::test]
+    async fn a_desk_closes_only_with_the_lease_free_and_then_grants_none() {
+        let me = session(1);
+        let dir = crate::test_support::fresh_dir("desk-close");
+        let desk = Desk::start(&env(&dir));
+        desk.acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
+        assert!(
+            desk.close(|| true).await.is_none(),
+            "closed with the lease held"
+        );
+        assert!(desk.release(&me).await);
+        *desk.seat.taking() = Some(me.id());
+        assert!(
+            desk.close(|| true).await.is_none(),
+            "closed while the lease was taken"
+        );
+        desk.seat.taking().take();
+        // A mutex held past `CLOSE_WAIT`, as by an observation, keeps the desk open.
+        let observing = desk.seat.lease.lock().await;
+        assert!(
+            desk.close(|| true).await.is_none(),
+            "closed with the mutex held"
+        );
+        drop(observing);
+        assert!(
+            desk.close(|| false).await.is_none(),
+            "closed with cleanup pending"
+        );
+        let closing = desk.close(|| true).await.expect("a free desk closes");
+        let again = desk.close(|| true).await.expect("closing again");
+        let other = session(2);
+        let acquire = desk.acquire(&other, "other/2", ready(None), ready(None));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), acquire)
+                .await
+                .is_err(),
+            "a closed desk answered an acquire"
+        );
+        assert!(!desk.held());
+        let exiting = tokio::time::timeout(Duration::from_millis(50), desk.exiting());
+        assert!(exiting.await.is_err(), "exiting before the guard went");
+        drop((closing, again));
+        tokio::time::timeout(Duration::from_secs(1), desk.exiting())
+            .await
+            .expect("exiting once the guard went");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The lease's periodic check and a session's end take the action mutex for a moment;
+    /// a hand-over asked meanwhile still closes the desk.
+    #[tokio::test]
+    async fn a_brief_hold_of_the_mutex_doesnt_keep_the_desk_open() {
+        let dir = crate::test_support::fresh_dir("desk-close-brief");
+        let desk = Desk::start(&env(&dir));
+        let brief = desk.seat.lease.lock().await;
+        let holder = desk.clone();
+        let (closed, ()) = tokio::join!(holder.close(|| true), async {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            drop(brief);
+        });
+        assert!(closed.is_some());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
