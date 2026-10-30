@@ -105,7 +105,27 @@ async fn closes_and_titles_end_the_wait_and_nothing_else_does() {
     let never = json!({"until": {"window": {"app_id": "nope"}}, "timeout_ms": 200});
     assert_eq!(
         waited(&mut server, &stream, never, &[]).await,
-        json!({"observed": "timeout", "focused_window": 1})
+        json!({
+            "observed": "timeout",
+            "focused_window": 1,
+            "detail": "no window opened during the wait",
+        })
+    );
+}
+
+#[tokio::test]
+async fn a_window_wait_that_times_out_lists_the_windows_that_opened() {
+    let (_fixture, _niri, stream, mut server) = start("wait-opened").await;
+    let until = json!({"until": {"window": {"app_id": "helium-browser"}}, "timeout_ms": 300});
+    let events = [opened(3, "helium", "New Tab", true)];
+    assert_eq!(
+        waited(&mut server, &stream, until, &events).await,
+        json!({
+            "observed": "timeout",
+            "focused_window": 3,
+            "opened": [{"id": 3, "app_id": "helium", "workspace_id": 1, "title": "New Tab"}],
+            "detail": "windows opened during the wait, but none matched; `opened` lists them with their app_id",
+        })
     );
 }
 
