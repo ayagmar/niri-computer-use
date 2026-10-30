@@ -90,7 +90,7 @@ Waits for a window, an element or the screen instead of taking screenshots or li
 
 | Argument | Value |
 |---|---|
-| `until` (required) | `{"window": {"app_id", "title"}}`: a window with that `app_id` and a title containing that text, either one optional but not both; `{"closed": <id>}`: that window is gone; `{"title": {"window_id", "contains"}}`: that window's title contains the text; `{"element": {"window_id", "role", "name_contains", "state", "absent"}}`: an element of that window matches, or with `absent: true` none does; or `"screen_stable"`: the focused output stopped changing |
+| `until` (required) | `{"window": {"app_id", "title"}}`: a window with that `app_id` and a title containing that text, either one optional but not both; `{"closed": <id>}`: that window is gone; `{"title": {"window_id", "contains"}}`: that window's title contains the text; `{"element": {"window_id", "role", "name_contains", "state", "absent"}}`: an element of that window matches, or with `absent: true` none does; or `"screen_stable"` or `{"screen_stable": {}}`: the focused output stopped changing |
 | `timeout_ms` | 100 to 30000; default 10000 |
 | `screenshot` | with true, the result comes with a screenshot of the focused output: for `screen_stable` its last capture, otherwise one taken as for an action's `screenshot: true` once the wait ended |
 

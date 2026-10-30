@@ -87,6 +87,12 @@ const CHROMIUM_CODES: [RangeInclusive<u32>; 22] = [
 /// out.
 const BORROWABLE: RangeInclusive<u32> = 183..=194;
 
+/// Whether Chromium receives `code`. A symbol the layout has only on other keys, such as a
+/// US map's `EuroSign` on `<I443>` (evdev 435), counts as missing and goes on a spare key.
+fn chromium_receives(code: Evdev) -> bool {
+    CHROMIUM_CODES.iter().any(|range| range.contains(&code.0))
+}
+
 fn evdev_in(code: xkb::Keycode, ranges: &[RangeInclusive<u32>]) -> bool {
     code.raw()
         .checked_sub(8)
@@ -180,7 +186,10 @@ fn split<'t>(
     let mut missing = Vec::new();
     for (at, c) in text.char_indices() {
         let sym = text_sym(c);
-        if find(keymap, group, sym).is_ok() || missing.contains(&sym) {
+        // Without a spare key, a symbol on a key Chromium drops still reaches other apps.
+        let present =
+            find(keymap, group, sym).is_ok_and(|key| spare == 0 || chromium_receives(key.code));
+        if present || missing.contains(&sym) {
             continue;
         }
         if sym.raw() == 0 || c.is_control() {
@@ -464,7 +473,13 @@ fn find(map: &xkb::Keymap, group: u32, sym: xkb::Keysym) -> Result<Key, CallErro
     }
     candidates
         .into_iter()
-        .min_by_key(|key| (key.modifiers.count_ones(), key.code.0))
+        .min_by_key(|key| {
+            (
+                !chromium_receives(key.code),
+                key.modifiers.count_ones(),
+                key.code.0,
+            )
+        })
         .ok_or_else(|| {
             refused(
                 "a requested symbol is absent from the active compositor keymap; nothing was typed",
@@ -582,6 +597,62 @@ mod tests {
         assert_eq!(parts.len(), 2);
         assert_eq!(codes(&parts[0]), [52, 53, 124, 183, 184]);
         assert_eq!(codes(&parts[1]), [52]);
+    }
+
+    /// `us_like` with what a US map has past Xwayland's last keycode and without a code in
+    /// Chromium: `EuroSign` alone on `<I443>` (evdev 435) and `dollar` on `<I442>` (evdev
+    /// 434), which also has `<Y>` with Shift here, as `<AE04>` in a real map.
+    fn us_with_high_keys() -> String {
+        us_like()
+            .replace("maximum = 192;", "maximum = 451;")
+            .replace("<FK14> = 192;", "<FK14> = 192; <I442> = 450; <I443> = 451;")
+            .replace("symbols[Group1]=[y,Y]", "symbols[Group1]=[y,dollar]")
+            .replace(
+                "    modifier_map Shift",
+                "    key <I442> { [dollar] };\n    key <I443> { [EuroSign] };\n    modifier_map Shift",
+            )
+    }
+
+    /// US has `€` only on `<I443>`, which Chromium dropped; it goes on a spare key instead.
+    #[test]
+    fn a_symbol_only_on_a_key_chromium_drops_goes_on_a_spare_key() {
+        let map = us_with_high_keys();
+        let [part] = <[Part; 1]>::try_from(plan(&map, 0, &text("a€")).unwrap().parts).unwrap();
+        assert!(part.extended.is_some());
+        assert_eq!(codes(&part)[1], SPARE[0]);
+    }
+
+    /// A symbol on both a key Chromium drops and a normal key takes the normal one, even
+    /// when it needs a modifier: `$` with Shift on `<Y>`, and the second layout's `€` with
+    /// Shift on `<U>`, not `<I442>` or `<I443>` without one.
+    #[test]
+    fn a_symbol_also_on_a_normal_key_types_there_without_a_spare_key() {
+        let map = us_with_high_keys();
+        for (group, typed, code) in [(0, "$", 29 - 8), (1, "€", 48 - 8)] {
+            let [part] =
+                <[Part; 1]>::try_from(plan(&map, group, &text(typed)).unwrap().parts).unwrap();
+            assert!(part.extended.is_none());
+            assert_eq!(
+                (part.keys[0].code, part.keys[0].modifiers != 0),
+                (Evdev(code), true)
+            );
+        }
+    }
+
+    /// A map with no spare key still types a symbol that only a key Chromium drops has, so
+    /// other apps receive it as before.
+    #[test]
+    fn without_a_spare_key_a_symbol_on_a_key_chromium_drops_is_still_typed() {
+        let map = map()
+            .replace("maximum = 64;", "maximum = 451;")
+            .replace("<I61> = 61;", "<I61> = 61; <I443> = 451;")
+            .replace(
+                "    modifier_map Shift",
+                "    key <I60> { [F1] };\n    key <I61> { [F2] };\n    key <I443> { [EuroSign] };\n    modifier_map Shift",
+            );
+        let [part] = <[Part; 1]>::try_from(plan(&map, 0, &text("€")).unwrap().parts).unwrap();
+        assert!(part.extended.is_none());
+        assert_eq!(codes(&part), [451 - 8]);
     }
 
     /// As many symbols as spare keys Chromium knows leave the borrowable keys as they were.

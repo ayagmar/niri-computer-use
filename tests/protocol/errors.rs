@@ -8,23 +8,88 @@ use crate::clipboard::Leased;
 use crate::fixture::{Fixture, jpeg};
 use crate::niri::{Niri, output};
 
+// The bug: an unknown field was dropped, so `scroll` with `direction` was blamed on
+// `notches_y`, and calls refused this way never reached the audit log.
 #[tokio::test]
-async fn arguments_that_dont_fit_the_schema_are_text_and_never_reach_the_tool() {
+async fn arguments_that_dont_fit_the_schema_name_the_field_and_are_logged_without_values() {
     let fixture = Fixture::new("schema");
     let _niri = Niri::start(&fixture);
     let mut server = Server::start(&fixture).await;
-    for arguments in [
-        json!({}),
-        json!({"target": 7}),
-        json!({"target": "focused_output", "format": "gif"}),
-        json!({"target": "focused_output", "max_width": -1}),
-        json!({"target": "region", "region": {"x": 0, "y": 0}}),
-    ] {
-        let result = server.call("screenshot", arguments.clone()).await;
-        let text = mistake(&result);
-        assert!(!text.is_empty(), "{arguments}");
+    let unknown = |bytes: usize| json!({"category": "unknown_field", "bytes": bytes});
+    let cases = [
+        ("screenshot", json!({}), "missing field `target`", json!([])),
+        (
+            "screenshot",
+            json!({"target": 7}),
+            "invalid type",
+            json!(["target"]),
+        ),
+        (
+            "screenshot",
+            json!({"target": "focused_output", "format": "gif"}),
+            "unknown variant `gif`",
+            json!(["format", "target"]),
+        ),
+        (
+            "screenshot",
+            json!({"target": "focused_output", "max_width": -1}),
+            "invalid value",
+            json!(["max_width", "target"]),
+        ),
+        (
+            "screenshot",
+            json!({"target": "region", "region": {"x": 0, "y": 0}}),
+            "missing field `width`",
+            json!(["region", "target"]),
+        ),
+        (
+            "scroll",
+            json!({"screenshot_ref": "SECRET", "x": 1, "y": 2, "direction": "down", "amount": 15}),
+            "unknown field `amount`, expected one of `keys`, `screenshot_ref`, `x`, `y`, `notches_x`, `notches_y`, `screenshot`",
+            json!([unknown(6), unknown(9), "screenshot_ref", "x", "y"]),
+        ),
+        // An unknown field is named before a missing one, with the field that is missing.
+        (
+            "wait_for",
+            json!({"app_id": "SECRET"}),
+            "unknown field `app_id`, expected one of `until`, `timeout_ms`, `screenshot`",
+            json!([unknown(6)]),
+        ),
+        (
+            "wait_for",
+            json!({"until": {"window": {"title_contains": "SECRET"}}}),
+            "unknown field `title_contains`, expected `app_id` or `title`",
+            json!(["until"]),
+        ),
+        (
+            "click",
+            json!({"screenshot_ref": "SECRET", "x": 1, "y": 2, "SECRET": true}),
+            "unknown field `SECRET`",
+            json!([unknown(6), "screenshot_ref", "x", "y"]),
+        ),
+        (
+            "drag",
+            json!({"screenshot_ref": "SECRET", "from": {"x": 1, "y": 2, "button": "left"}, "to": {"x": 3, "y": 4}}),
+            "unknown field `button`, expected one of `x`, `y`, `element`",
+            json!(["from", "screenshot_ref", "to"]),
+        ),
+    ];
+    for (tool, arguments, says, _) in &cases {
+        let text = mistake(&server.call(tool, arguments.clone()).await);
+        assert!(
+            text.starts_with("failed to deserialize parameters: "),
+            "{text}"
+        );
+        assert!(text.contains(says), "{tool} {arguments}: {text}");
     }
-    assert_eq!(fixture.audit_lines(), Vec::<Value>::new());
+    let lines = fixture.audit_lines();
+    assert_eq!(lines.len(), cases.len(), "{lines:?}");
+    for (line, (tool, _, _, fields)) in lines.iter().zip(&cases) {
+        assert_eq!(line["tool"], *tool, "{line}");
+        assert_eq!(line["args"], json!({ "fields": fields }), "{line}");
+        assert_eq!(line["error"], "invalid_arguments", "{line}");
+        assert!(!line.to_string().contains("SECRET"), "{line}");
+    }
 }
 
 #[tokio::test]

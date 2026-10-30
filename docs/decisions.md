@@ -2045,3 +2045,12 @@ Each action's commit is the one its tag names in the action's repository (`git l
   - an error sent nothing;
   - `sent` means niri saw no change;
   - a change to another output never stops the gesture.
+## 2026-10-30: argument mistakes that say what to send
+
+In two weeks of use, 57 calls failed on their arguments, mostly from Claude Code guessing names before it loaded a tool's schema, and 46 of them never reached the audit log.
+
+- Every argument type in `tools.rs` denies unknown fields, so `scroll` with `direction` fails naming `direction` (or whichever unknown field serde meets first; serde_json's maps are sorted) and the fields `scroll` takes, where it used to drop it and blame `notches_y`. schemars then adds `additionalProperties: false` to each of those objects, which lets clients that check a call against its schema refuse it themselves. That added 28 bytes to each such object, so the tool list's byte ceilings went up with it. A tool without arguments still ignores what it is given: rmcp never parses them.
+- serde can't name the expected fields of an unknown one through `#[serde(flatten)]`, so `pointer_move` and `click` take `x`, `y` and `element` in their own arguments rather than a flattened `SpotArgs`. Their schemas are the same.
+- `close_window` takes `window_id`, as every other tool names a window, and `id` as an alias, so clients of 0.1.5 and older keep working. The audit log names it `window_id` either way.
+- `wait_for`'s `until` also takes `{"screen_stable": {}}`. A string holding JSON, such as `"\"screen_stable\""`, is refused with the forms that work rather than read: reading JSON out of a string would make `until` two encodings, the same mistake happens with objects, and the error now says what to send in one step.
+- A call rmcp refuses before its tool runs is logged by `Server::call_tool`, found by rmcp's `failed to deserialize parameters:` prefix, which rmcp keeps private; `tests/protocol/errors.rs` fails if that changes. Its arguments are logged as field names only, an unknown one as `unknown_field` and its length, since serde's message can hold the value. Only the first 32 are named and the rest counted, so a call with thousands of keys, the one line whose size the client controls, can't push earlier calls out of the kept logs. In shared mode the engine runs `call_tool`, and the bridge only relays lines, so the engine logs these too; a bridge and an engine of different builds never pass a call to each other, so an old client never meets the new parsing through an old bridge.

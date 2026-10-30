@@ -24,7 +24,7 @@ export const home = {
 		['lock', 'Nothing acts while the screen is locked.'],
 		['focus', 'Typing checks focus, unless told not to.'],
 		['deny list', 'No input while a denied app has focus.'],
-		['audit log', 'Every call, without typed text.'],
+		['audit log', 'Every call that reaches a tool, without typed text.'],
 	],
 	sandbox: 'Not a sandbox: agents see your screen, and with the lease they can do anything you can.',
 	// Every call in the clip: when it went out, in seconds into the clip, and its round trip
