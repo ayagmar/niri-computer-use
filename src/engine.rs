@@ -26,7 +26,7 @@ use crate::control::desk::{Desk, Prepared, Worked};
 use crate::control::lease::Holder;
 use crate::coords::ImageRect;
 use crate::error::{CallError, ErrorName, ToolError};
-use crate::input::Input;
+use crate::input::{Input, keyboard};
 use crate::niri::OutputSummary;
 use crate::niri::events::{DesktopState, EventStream, StreamState};
 use crate::observe;
@@ -475,10 +475,10 @@ impl Engine {
         }
     }
 
-    /// A focus refusal, saying what may hold the keyboard when niri reports no window
-    /// focused.
+    /// A focus refusal, saying what may hold the keyboard when it was refused because no
+    /// window had focus.
     async fn unfocused(&self, mut error: ToolError) -> ToolError {
-        if niri::focused_window(&self.env.niri_socket).await == Ok(None)
+        if error.detail.ends_with(keyboard::NO_FOCUS)
             && let Some(holder) = act::holder::keyboard_holder(self.niri()).await
         {
             error.detail = format!("{}; {holder}", error.detail);

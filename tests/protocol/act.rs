@@ -337,42 +337,85 @@ async fn a_focus_that_times_out_under_an_open_shell_panel_says_so() {
     );
 }
 
-#[tokio::test]
-async fn a_key_refused_with_no_window_focused_names_the_layer_surface_holding_it() {
-    let mut desk = Desk::start("act-held-keyboard", "").await;
+/// A `key` expecting window `expected`, refused, once its `detail` holds `seen`: an event
+/// sent to the server just before may not have reached it yet.
+async fn refused_seeing(desk: &mut Desk, expected: u64, seen: &str) -> String {
+    let key = json!({"keys": ["a"], "expect": {"window_id": expected}});
+    let mut refused = String::new();
+    for _ in 0..50 {
+        refused = tool_error(&desk.server.call("key", key.clone()).await).1;
+        if refused.contains(seen) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    refused
+}
+
+/// Starts a desk with no window focused and a launcher holding the keyboard.
+async fn held_keyboard(name: &str) -> Desk {
+    let desk = Desk::start(name, "").await;
     desk.stream
         .send(&json!({"WindowFocusChanged": {"id": null}}));
     desk.niri.set_layers(&[
         json!({"namespace": "bar", "output": "DP-1", "layer": "Top", "keyboard_interactivity": "None"}),
         json!({"namespace": "launcher", "output": "DP-1", "layer": "Overlay", "keyboard_interactivity": "Exclusive"}),
     ]);
-    let mut refused = String::new();
-    // The focus change may not have reached the server yet: ask until it has.
-    for _ in 0..50 {
-        let result = desk
-            .server
-            .call("key", json!({"keys": ["a"], "expect": {"window_id": 1}}))
-            .await;
-        refused = tool_error(&result).1;
-        if refused.contains("no window has keyboard focus") {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    desk
+}
+
+const NO_FOCUS: &str = "expected window_id 1; no window has keyboard focus";
+
+#[tokio::test]
+async fn a_key_refused_with_no_window_focused_names_the_layer_surface_holding_it() {
+    let mut desk = held_keyboard("act-held-keyboard").await;
     assert_eq!(
-        refused,
-        "expected window_id 1; no window has keyboard focus; a layer-shell surface may hold keyboard focus: niri lists \"launcher\" (overlay layer, exclusive keyboard, on DP-1); press `Escape` with `key` and `expect: \"none\"` to close it, or `shell_panel` for a Noctalia panel"
+        refused_seeing(&mut desk, 1, "no window has keyboard focus").await,
+        format!(
+            "{NO_FOCUS}; a layer-shell surface with exclusive keyboard focus holds it: niri lists \"launcher\" (overlay layer, exclusive keyboard, on DP-1); press `Escape` with `key` and `expect: \"none\"` to close it, or `shell_panel` for a Noctalia panel"
+        )
     );
-    // With every surface gone, and Noctalia showing no panel, nothing is claimed.
+    // The overview is named first.
+    desk.niri.set_overview(true);
+    let overview = refused_seeing(&mut desk, 1, "overview").await;
+    assert!(
+        overview.starts_with(&format!("{NO_FOCUS}; niri's overview is open and holds keyboard focus; close it with `niri_action` `CloseOverview`; a layer-shell surface")),
+        "{overview}"
+    );
+    // With the overview closed, every surface gone, and Noctalia showing no panel,
+    // nothing is claimed.
+    desk.niri.set_overview(false);
     desk.niri.set_layers(&[]);
-    let result = desk
-        .server
-        .call("key", json!({"keys": ["a"], "expect": {"window_id": 1}}))
-        .await;
-    assert_eq!(
-        tool_error(&result).1,
-        "expected window_id 1; no window has keyboard focus"
+    assert_eq!(refused_seeing(&mut desk, 1, "no window").await, NO_FOCUS);
+}
+
+#[tokio::test]
+async fn the_keyboard_hint_never_holds_a_refusal_up_or_contradicts_it() {
+    let mut desk = held_keyboard("act-held-hint").await;
+    refused_seeing(&mut desk, 1, "no window has keyboard focus").await;
+    // A read that doesn't answer leaves the hint out instead of holding the refusal up
+    // for its own 2-second deadline.
+    let held = desk.fixture.points().hold_next("niri:Layers");
+    let started = Instant::now();
+    let key = json!({"keys": ["a"], "expect": {"window_id": 1}});
+    let refused = tool_error(&desk.server.call("key", key).await).1;
+    let took = started.elapsed();
+    assert!(took < Duration::from_millis(1500), "{took:?}");
+    assert_eq!(refused, NO_FOCUS);
+    assert!(
+        held.arrived_within(Duration::from_secs(1)).await,
+        "no layers read"
     );
+    held.release();
+    // A refusal that names a focused window says nothing more, though niri's own
+    // `FocusedWindow` here answers none, as when a panel opens right after the refusal.
+    focus_changed(&desk.stream, 1);
+    let named = refused_seeing(&mut desk, 2, "window 1").await;
+    assert!(
+        named.starts_with("expected window_id 2; window 1 with app_id"),
+        "{named}"
+    );
+    assert!(!named.contains("layer-shell"), "{named}");
 }
 
 /// A grim whose raw captures alternate between two 1280x720 images that differ in their
