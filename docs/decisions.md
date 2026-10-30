@@ -2012,3 +2012,17 @@ Each action's commit is the one its tag names in the action's repository (`git l
 - RUSTSEC-2026-0386 (2026-10-27) marks `AsyncFd`'s safe constructors unsound: they accept any `AsRawFd`, so safe code can close or replace a registered descriptor and leave tokio's driver with a freed registration. `cargo deny check` failed on `main` with no change of ours.
 - tokio 1.53.3 (2026-10-13) is the fix. It is newer than the seven-day rule allowed before the advisory, and a security fix is the rule's exception. No new crate entered `Cargo.lock`.
 - 1.53.3 deprecates `AsyncFd::new` and `with_interest` in favour of `unsafe` `register` constructors. The crate forbids unsafe code, and each of its five `AsyncFd`s owns its `OwnedFd`, so nothing else can close or replace the descriptor; the five calls keep the safe constructors under `#[expect(deprecated)]` with that reason.
+
+## 2026-10-30: dependency updates
+
+Dependabot's open updates, taken together and checked against the version rule on 2026-10-30, so the newest stable release published on or before 2026-10-23 is used.
+
+| Package or action | From | To | Published | Note |
+|---|---|---|---|---|
+| `rmcp` | 3.5.1 | 3.7.0 | 2026-10-22 | Dependabot proposed 3.6.0; 3.8.0 (2026-10-26) is too new. `rmcp-macros` moves with it. No new crate entered `Cargo.lock`. |
+| `astro` (site) | 7.3.8 | 7.4.2 | 2026-10-21 | Dependabot proposed 7.4.1; 7.4.3 (2026-10-28) is too new. Installed with `npm install --before 2026-10-24`. |
+| `postcss-selector-parser` (site, through Starlight) | 6.1.4 | 6.1.5 | 2026-10-19 | Fixes GHSA-rj75-hqrm-r3gf, quadratic selector parsing; `npm audit` now reports nothing. |
+| `Swatinem/rust-cache` | v2.9.2 | v2.9.3 | 2026-10-20 | `d1527c8f67ef9af357290475d4af4b0fab8f12e0`, in `ci.yml`. |
+| `taiki-e/install-action` | v2.87.26 | v2.87.31 | 2026-10-23 | `1e29709c0ec63babbe8f266397a465f29a825f91`, in `ci.yml` and `release.yml`. Dependabot proposed v2.87.29; v2.87.32 (2026-10-26) is too new. |
+
+Each action's commit is the one its tag names in the action's repository (`git ls-remote`, the annotated tag peeled). zbus 6 stays out: it is a migration of its own.
