@@ -38,7 +38,7 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `lock.source` | `logind`, `noctalia` or `none`: the screen counts as locked when logind's `LockedHint` or Noctalia's `locked` says so |
 | `lock.session` | the logind session asked: the one in niri's own `XDG_SESSION_ID`, which is where niri sets the hint |
 | `lock.logind_error` | why logind couldn't answer, or null |
-| `outputs.pointer_supported`, `outputs.reason` | whether niri's outputs are a setup the virtual pointer is tested on (one enabled output: a monitor at transform `Normal`, or nested niri's `winit` window), and why not |
+| `outputs.pointer_supported`, `outputs.pointer_outputs`, `outputs.reason` | whether any of niri's outputs is a setup the virtual pointer is tested on (a monitor at transform `Normal`, or nested niri's `winit` window as its only output), which ones are, and why the others aren't |
 | `noctalia` | `running`, `not_running` or `not_installed` |
 | `noctalia_error` | why Noctalia counts as not running, or null |
 | `accessibility.available`, `accessibility.address`, `accessibility.reason` | whether the session has an accessibility bus, its address, and why not; `elements`, `activate_element` and `set_element_text` are listed only when it has one |

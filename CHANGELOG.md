@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Changed
+
+- The pointer tools work with more than one monitor. `pointer_move`, `click`, `drag` and `scroll` act on the monitor of the screenshot they aim through when it is at transform `Normal`, whatever the other monitors are; a rotated monitor still refuses them with `untested_output_config`. A gesture stays on one monitor. `status` lists the monitors they run on in `outputs.pointer_outputs`.
+
+### Fixed
+
+- A pointer gesture whose monitor niri unplugs, turns off or reconfigures while it goes out stops, or is refused before anything is sent, and is never reported `sent`: niri may have placed what went out elsewhere, so it ends `uncertain`. A change of scale or mode during a drag on a single monitor used to let the rest of the drag through, aimed for the old geometry.
+
 ## 0.1.5 - 2026-10-18
 
 ### Changed

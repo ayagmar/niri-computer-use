@@ -47,6 +47,6 @@ export const home = {
 			[16.49, 'release_desktop {"restore_focus": true}', 3],
 		] as [number, string, number][],
 	},
-	bugs: 'With a niri release other than 26.04 it only looks. The pointer tools need one monitor at transform Normal.',
+	bugs: 'With a niri release other than 26.04 it only looks. The pointer tools need a monitor at transform Normal.',
 	seeAlso: ['start/install', 'start/clients', 'concepts/safety', 'concepts/configuration', 'tools/overview', 'reference/cli'],
 };

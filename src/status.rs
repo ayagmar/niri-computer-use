@@ -136,20 +136,42 @@ pub(crate) enum Mode {
     Shared,
 }
 
-/// Whether the pointer tools may run on niri's outputs right now.
+/// Which of niri's outputs the pointer tools may run on right now.
 #[derive(Debug, Serialize)]
 struct OutputSupport {
+    /// Whether any output takes them.
     pointer_supported: bool,
-    /// Why not, when they may not.
+    pointer_outputs: Vec<String>,
+    /// Why the enabled outputs that don't take them don't, or why none could be read.
     reason: Option<String>,
 }
 
 impl OutputSupport {
     fn of(outputs: Result<BTreeMap<String, Output>, ToolError>) -> Self {
-        let checked = outputs.and_then(|outputs| policy::pointer_support(outputs.values()));
+        let outputs = match outputs {
+            Ok(outputs) => outputs,
+            Err(error) => {
+                return Self {
+                    pointer_supported: false,
+                    pointer_outputs: Vec::new(),
+                    reason: Some(error.detail),
+                };
+            }
+        };
+        let (taken, refused): (Vec<_>, Vec<_>) = outputs
+            .values()
+            .filter(|output| output.logical.is_some())
+            .map(|output| (&output.name, policy::pointer_output(&outputs, &output.name)))
+            .partition(|(_, checked)| checked.is_ok());
+        let reason = match (taken.is_empty(), refused.first()) {
+            (_, Some((_, Err(error)))) => Some(error.detail.clone()),
+            (true, _) => Some("niri has no enabled output".to_owned()),
+            _ => None,
+        };
         Self {
-            pointer_supported: checked.is_ok(),
-            reason: checked.err().map(|error| error.detail),
+            pointer_supported: !taken.is_empty(),
+            pointer_outputs: taken.into_iter().map(|(name, _)| name.clone()).collect(),
+            reason,
         }
     }
 }
@@ -260,6 +282,44 @@ mod tests {
     use super::*;
     use crate::control::desk::status_without_desk;
 
+    #[test]
+    fn lists_the_outputs_the_pointer_runs_on_and_why_not_the_others() {
+        let output = |name: &str, transform: Option<&str>| {
+            let logical = transform.map(|transform| {
+                serde_json::json!({
+                    "x": 0, "y": 0, "width": 960, "height": 720, "scale": 1.0, "transform": transform
+                })
+            });
+            let output: Output = serde_json::from_value(serde_json::json!({
+                "name": name, "make": "", "model": "", "serial": null, "physical_size": null,
+                "modes": [], "current_mode": null, "is_custom_mode": false,
+                "vrr_supported": false, "vrr_enabled": false, "logical": logical
+            }))
+            .unwrap();
+            (name.to_owned(), output)
+        };
+        let desk = BTreeMap::from([
+            output("DP-1", Some("Normal")),
+            output("eDP-1", Some("Normal")),
+            output("HDMI-A-1", Some("90")),
+            output("HDMI-A-2", None),
+        ]);
+        let support = serde_json::to_value(OutputSupport::of(Ok(desk))).unwrap();
+        assert_eq!(support["pointer_supported"], true);
+        assert_eq!(
+            support["pointer_outputs"],
+            serde_json::json!(["DP-1", "eDP-1"])
+        );
+        let reason = support["reason"].as_str().unwrap();
+        assert!(reason.contains(r#"aimed at output "HDMI-A-1""#), "{reason}");
+        let all = BTreeMap::from([output("DP-1", Some("Normal"))]);
+        let every = serde_json::to_value(OutputSupport::of(Ok(all))).unwrap();
+        assert_eq!(every["reason"], serde_json::Value::Null);
+        let none = serde_json::to_value(OutputSupport::of(Ok(BTreeMap::new()))).unwrap();
+        assert_eq!(none["pointer_supported"], false);
+        assert_eq!(none["reason"], "niri has no enabled output");
+    }
+
     #[tokio::test]
     async fn reports_what_it_can_without_failing() {
         let audit = Audit::new(None);
@@ -311,7 +371,7 @@ mod tests {
                     "session": null,
                     "logind_error": "find niri's process: NIRI_SOCKET is not set"
                 },
-                "outputs": {"pointer_supported": false, "reason": "NIRI_SOCKET is not set"},
+                "outputs": {"pointer_supported": false, "pointer_outputs": [], "reason": "NIRI_SOCKET is not set"},
                 "noctalia": "not_installed",
                 "noctalia_error": null,
                 "accessibility": {

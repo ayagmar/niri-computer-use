@@ -35,7 +35,7 @@ use crate::niri::events::Motion;
 use crate::niri::pointer::{Axis, Pointer, Step};
 use crate::niri::waiter::{Moved, Shift, View, Waited};
 use crate::policy;
-use crate::refs::Shot;
+use crate::refs::{self, Shot};
 use crate::{elements, niri};
 
 /// How long the pointer rests on a drag's start before and after pressing, so the app
@@ -325,13 +325,13 @@ pub(crate) async fn point(
     }
     let socket = input.niri.socket;
     let outputs = niri::outputs(socket).await?;
-    policy::pointer_support(outputs.values())?;
     let connection = input
         .niri
         .events
         .ok()
         .and_then(niri::events::EventStream::connection);
     shot.check(Instant::now(), &outputs, connection)?;
+    policy::pointer_output(&outputs, &shot.output)?;
     // Checked again right before the first input (`Gate::pass`); this refuses early.
     let at_pixel = gesture.has_pixel();
     if at_pixel {
@@ -376,7 +376,8 @@ pub(crate) async fn point(
     let gate = Gate {
         waiter: &mut waiter,
         input,
-        pixels: at_pixel.then_some(&shot),
+        shot: &shot,
+        pixels: at_pixel,
         windows: &windows,
         end,
         reading: GESTURE_READING,
@@ -465,8 +466,10 @@ async fn locate(
 struct Gate<'a> {
     waiter: &'a mut niri::waiter::Waiter,
     input: Input<'a>,
-    /// The screenshot, when the gesture aims at its pixels.
-    pixels: Option<&'a Shot>,
+    /// The screenshot the gesture aims through, on whose output the pointer is bound.
+    shot: &'a Shot,
+    /// Whether the gesture aims at the screenshot's pixels.
+    pixels: bool,
     /// The windows of the elements the gesture aims at, none for pixels.
     windows: &'a [u64],
     /// The element a drag ends at, if it ends at one.
@@ -544,11 +547,14 @@ impl Gate<'_> {
             ToolError::new(ErrorName::UpstreamError, format!("{reason}; {sent}"))
         })?;
         self.still_aimed(stage, &moved, pointer)?;
-        if stage != Stage::Pressed
-            && let Some(shot) = self.pixels
-        {
+        let shot = self.shot;
+        if stage != Stage::Pressed && self.pixels {
             shot.unmoved(&niri::shifted(self.input.niri.events, &shot.output).await?)?;
         }
+        // The last look at niri, so what follows judges its newest answer.
+        let outputs = niri::outputs(self.input.niri.socket).await?;
+        shot.same_output(&outputs)?;
+        policy::pointer_output(&outputs, &shot.output)?;
         let view = self.waiter.view();
         if let Some(refused) = policy::refuse_input(self.input.policy, focused_app_id(view)) {
             return Err(refused);
@@ -710,6 +716,8 @@ struct Device {
     keys_sent: bool,
     /// Where the last motion put the pointer, if one went out.
     at: Option<LayoutPt>,
+    /// The output the pointer is bound to.
+    output: String,
 }
 
 impl Device {
@@ -740,6 +748,7 @@ impl Device {
             held,
             keys_sent: false,
             at: None,
+            output: output.to_owned(),
         })
     }
 
@@ -747,6 +756,32 @@ impl Device {
         self.pointer
             .as_mut()
             .ok_or_else(|| ToolError::new(ErrorName::UpstreamError, "the pointer is gone"))
+    }
+
+    /// Sends `step`, unless niri changed the bound output since binding, as far as it has
+    /// said so far. A release goes out whatever happened: it lands nowhere in particular.
+    fn send(&mut self, step: Step) -> Result<(), ToolError> {
+        if !matches!(step, Step::Release(_)) {
+            self.unchanged()?;
+        }
+        self.pointer()?.send(step)
+    }
+
+    /// Whether niri left the bound output as it was when the pointer was bound to it.
+    /// Checked after each `sync`, it tells whether niri handled everything sent so far on
+    /// that output.
+    fn unchanged(&mut self) -> Result<(), ToolError> {
+        let Some(change) = self.pointer()?.output_change()? else {
+            return Ok(());
+        };
+        Err(refs::invalid(
+            "output_changed",
+            &format!(
+                "niri {} output {} after the pointer was bound to it; take a new screenshot",
+                change.what(),
+                self.output
+            ),
+        ))
     }
 
     /// Whether any of the gesture's input may have gone out.
@@ -767,14 +802,15 @@ impl Device {
         for planned in steps {
             match planned {
                 Planned::Move(aim) => {
-                    self.pointer()?.send(Step::Motion(aim.motion))?;
+                    self.send(Step::Motion(aim.motion))?;
                     self.at = Some(aim.at);
                 }
-                Planned::Send(step) => self.pointer()?.send(step)?,
+                Planned::Send(step) => self.send(step)?,
                 Planned::Pause(pause) => self.rest(pause, gate).await?,
             }
         }
         self.pointer()?.sync().await?;
+        self.unchanged()?;
         if let Some(held) = &mut self.held {
             held.released().await?;
         }
@@ -785,9 +821,9 @@ impl Device {
     /// part that follows.
     async fn rest(&mut self, pause: Duration, gate: &mut Gate<'_>) -> Result<(), ToolError> {
         tokio::time::sleep(pause).await;
-        let pointer = self.pointer()?;
-        pointer.sync().await?;
-        let stage = if pointer.pressing() {
+        self.pointer()?.sync().await?;
+        self.unchanged()?;
+        let stage = if self.pointer()?.pressing() {
             Stage::Pressed
         } else {
             Stage::Unpressed
@@ -904,7 +940,11 @@ async fn release(
 
 #[cfg(test)]
 mod tests {
+    use niri_ipc::{LogicalOutput, Transform};
+    use proptest::prelude::*;
+
     use super::*;
+    use crate::test_support::wayland::{self, Aimed, OutputEvent, Pointed};
 
     fn at(x: u32) -> Aim {
         Aim {
@@ -1051,7 +1091,7 @@ mod tests {
     /// 250 ms a read of the lock state holds for, while Noctalia gives `replies`.
     struct HeldClick {
         outcome: Outcome,
-        seen: crate::test_support::wayland::Seen,
+        seen: wayland::Seen,
         marker_left: bool,
     }
 
@@ -1059,7 +1099,7 @@ mod tests {
     /// `replies` (`noctalia_answers`).
     struct Bench {
         dir: std::path::PathBuf,
-        niri: crate::test_support::wayland::Compositor,
+        niri: wayland::Compositor,
         env: crate::Env,
         runtime: RuntimeDir,
         socket: niri::Socket,
@@ -1069,10 +1109,20 @@ mod tests {
 
     impl Bench {
         fn start(name: &str, replies: Vec<(Duration, &'static str)>) -> Self {
+            Self::start_with(name, replies, vec![wayland::output()])
+        }
+
+        /// As `start`, with `outputs` as niri's outputs.
+        fn start_with(
+            name: &str,
+            replies: Vec<(Duration, &'static str)>,
+            outputs: Vec<niri_ipc::Output>,
+        ) -> Self {
             use crate::test_support::{fresh_dir, wayland::Compositor};
 
             let dir = fresh_dir(name);
-            let niri = Compositor::start(&dir, include_str!("../../tests/fixtures/us-de.xkb"));
+            let keymap = include_str!("../../tests/fixtures/us-de.xkb");
+            let niri = Compositor::start_with(&dir, keymap, outputs);
             let env = crate::Env {
                 wayland_display: Some("fake-noctalia".into()),
                 ..niri.env(&dir)
@@ -1116,23 +1166,28 @@ mod tests {
     /// A screenshot ref of the whole of the fake's output at scale 1, taken now and settled
     /// then, since the event stream counts its initial state as a move.
     async fn whole_output(bench: &Bench) -> Shot {
+        shot_of(bench, wayland::OUTPUT, 1).await
+    }
+
+    /// As `whole_output`, of output `name`, with `scale` image pixels per logical pixel.
+    async fn shot_of(bench: &Bench, name: &str, scale: u32) -> Shot {
         bench.events.desktop().await.unwrap();
         let outputs = niri::outputs(&bench.socket).await.unwrap();
-        let output = &outputs[crate::test_support::wayland::OUTPUT];
+        let output = &outputs[name];
         let geometry = output.logical.unwrap();
         Shot {
             output: output.name.clone(),
             geometry,
             motion_geometry: crate::coords::motion_geometry(output),
             captured: crate::observe::Rect {
-                x: 0,
-                y: 0,
+                x: geometry.x,
+                y: geometry.y,
                 width: geometry.width,
                 height: geometry.height,
             },
-            scale: 1.0,
-            width: geometry.width,
-            height: geometry.height,
+            scale: f64::from(scale),
+            width: geometry.width * scale,
+            height: geometry.height * scale,
             steady_since: Some(Instant::now()),
             ..crate::test_support::shot()
         }
@@ -1180,7 +1235,7 @@ mod tests {
         niri.event(niri_ipc::Event::WindowLayoutsChanged {
             changes: vec![(1, layout)],
         });
-        let output = crate::test_support::wayland::OUTPUT;
+        let output = wayland::OUTPUT;
         let shifted = async || bench.events.shifted(output).await.unwrap().shifted;
         while shifted().await.is_none_or(|shifted| shifted.at < resized) {
             tokio::time::sleep(Duration::from_millis(5)).await;
@@ -1294,10 +1349,12 @@ mod tests {
         let slow = Duration::from_millis(150);
         let bench = Bench::start("pointer-gate-fresh", vec![(slow, UNLOCKED)]);
         let (mut waiter, input) = gate_on(&bench).await;
+        let shot = whole_output(&bench).await;
         let mut gate = Gate {
             waiter: &mut waiter,
             input,
-            pixels: None,
+            shot: &shot,
+            pixels: false,
             windows: &[],
             end: None,
             reading: GESTURE_READING,
@@ -1320,10 +1377,12 @@ mod tests {
     async fn every_part_of_a_gesture_checks_the_stop_flag_itself() {
         let bench = Bench::start("pointer-gate-stop", vec![(Duration::ZERO, UNLOCKED)]);
         let (mut waiter, input) = gate_on(&bench).await;
+        let shot = whole_output(&bench).await;
         let mut gate = Gate {
             waiter: &mut waiter,
             input,
-            pixels: None,
+            shot: &shot,
+            pixels: false,
             windows: &[],
             end: None,
             reading: GESTURE_READING,
@@ -1350,10 +1409,12 @@ mod tests {
     async fn a_lock_read_that_ages_out_during_a_look_is_made_again() {
         let bench = Bench::start("pointer-gate-aged", vec![(Duration::ZERO, UNLOCKED)]);
         let (mut waiter, input) = gate_on(&bench).await;
+        let shot = whole_output(&bench).await;
         let mut gate = Gate {
             waiter: &mut waiter,
             input,
-            pixels: None,
+            shot: &shot,
+            pixels: false,
             windows: &[],
             end: None,
             reading: GESTURE_READING,
@@ -1388,10 +1449,12 @@ mod tests {
         let slow = Duration::from_millis(1500);
         let bench = Bench::start("pointer-gate-slow", vec![(slow, UNLOCKED)]);
         let (mut waiter, input) = gate_on(&bench).await;
+        let shot = whole_output(&bench).await;
         let mut gate = Gate {
             waiter: &mut waiter,
             input,
-            pixels: None,
+            shot: &shot,
+            pixels: false,
             windows: &[],
             end: None,
             reading: GESTURE_READING,
@@ -1412,7 +1475,7 @@ mod tests {
 
     /// A device for a left click on `bench`'s output, its marker written.
     async fn click_device(bench: &Bench) -> Result<Device, ToolError> {
-        let output = crate::test_support::wayland::OUTPUT;
+        let output = wayland::OUTPUT;
         let pointer = Pointer::bind(bench.niri.display(), std::process::id(), output)
             .await
             .unwrap();
@@ -1458,10 +1521,12 @@ mod tests {
         let work = async {
             let device = click_device(&bench).await?;
             bench.desk.lock_read(Instant::now());
+            let shot = whole_output(&bench).await;
             let gate = Gate {
                 waiter: &mut waiter,
                 input,
-                pixels: None,
+                shot: &shot,
+                pixels: false,
                 windows: &[],
                 end: None,
                 reading: GESTURE_READING,
@@ -1515,10 +1580,12 @@ mod tests {
         let (mut waiter, updates) = niri::waiter::tests::waiter(View::default(), 0);
         updates.send(niri::waiter::Update::Reset(2)).unwrap();
         bench.desk.lock_read(Instant::now());
+        let shot = whole_output(&bench).await;
         let gate = Gate {
             waiter: &mut waiter,
             input,
-            pixels: None,
+            shot: &shot,
+            pixels: false,
             windows: &[],
             end: None,
             reading: GESTURE_READING,
@@ -1550,5 +1617,321 @@ mod tests {
             button: Button::Middle,
         };
         assert_eq!(drag.button().map(Button::code), Some(274));
+    }
+
+    /// An output named `name`, enabled at `logical` or turned off, whose mode is its
+    /// untransformed logical size times its scale.
+    fn monitor(name: &str, logical: Option<LogicalOutput>) -> niri_ipc::Output {
+        let mode = logical.map(|logical| {
+            let (width, height) = match logical.transform {
+                Transform::_90 | Transform::_270 | Transform::Flipped90 | Transform::Flipped270 => {
+                    (logical.height, logical.width)
+                }
+                Transform::Normal
+                | Transform::_180
+                | Transform::Flipped
+                | Transform::Flipped180 => (logical.width, logical.height),
+            };
+            crate::test_support::output_mode::from_logical(width, height, logical.scale)
+        });
+        niri_ipc::Output {
+            name: name.to_owned(),
+            current_mode: mode.map(|_| 0),
+            modes: mode.into_iter().collect(),
+            logical,
+            ..wayland::output()
+        }
+    }
+
+    /// `width`×`height` logical pixels at `(x, y)`, at scale 1 and transform `Normal`.
+    const fn area(x: i32, y: i32, width: u32, height: u32) -> LogicalOutput {
+        LogicalOutput {
+            x,
+            y,
+            width,
+            height,
+            scale: 1.0,
+            transform: Transform::Normal,
+        }
+    }
+
+    fn no_element(id: &str) -> Result<ElementRef, ToolError> {
+        Err(a11y::not_accessible(format!("no element {id}")))
+    }
+
+    // The bug: a pointer bound to the first output, or a motion encoded for another
+    // output's geometry, lands a click on a second monitor somewhere else. The expected
+    // request is worked out by hand: pixel (639, 101) of an image at 2 pixels per logical
+    // pixel is (319.75, 50.75) on the output, in thousandths of its 1280×720.
+    #[tokio::test]
+    async fn a_click_on_a_second_output_lands_where_its_screenshot_shows() {
+        let left = LogicalOutput {
+            scale: 2.0,
+            ..area(-1280, 100, 1280, 720)
+        };
+        let outputs = vec![
+            monitor("DP-1", Some(area(0, 0, 1920, 1080))),
+            monitor("HDMI-A-1", Some(left)),
+        ];
+        let bench = Bench::start_with("pointer-second-output", Vec::new(), outputs);
+        let shot = shot_of(&bench, "HDMI-A-1", 2).await;
+        let click = Gesture::Click {
+            at: Spot::Pixel(ImagePx { x: 639, y: 101 }),
+            button: Button::Left,
+            count: 1,
+        };
+        let outcome = point(bench.input(), Ok(shot), click, &[], no_element)
+            .await
+            .unwrap();
+        assert_eq!(outcome.observed, Observed::Sent, "{:?}", outcome.detail);
+        let on = |input| Aimed {
+            output: Some("HDMI-A-1".to_owned()),
+            generation: Some(0),
+            input,
+        };
+        assert_eq!(
+            bench.niri.seen().aimed,
+            [
+                on(Pointed::Motion(319_750, 50_750, 1_280_000, 720_000)),
+                on(Pointed::Press(272))
+            ]
+        );
+        std::fs::remove_dir_all(&bench.dir).unwrap();
+    }
+
+    /// The output a gesture aims at, and the one beside it.
+    const BOUND: &str = "DP-1";
+    const OTHER: &str = "HDMI-A-1";
+
+    fn desk_outputs() -> Vec<niri_ipc::Output> {
+        vec![
+            monitor(BOUND, Some(area(0, 0, 1920, 1080))),
+            monitor(OTHER, Some(area(1920, 0, 1280, 720))),
+        ]
+    }
+
+    /// What niri does to an output: it reports each change over IPC and to the `wl_output`s
+    /// bound to it at once.
+    #[derive(Debug, Clone, Copy)]
+    enum Change {
+        /// Gone from IPC, as a disconnected monitor is.
+        Unplug,
+        /// Listed without `logical`, as `niri msg output … off` leaves it.
+        Off,
+        /// Unplugged and plugged back as it was, which only Wayland shows.
+        Replug,
+        Rescale,
+        Move,
+        Rotate,
+        /// Another output appears.
+        Add,
+    }
+
+    /// niri's outputs after `change` to output `name`.
+    fn changed(name: &str, change: Change) -> OutputEvent {
+        let mut outputs = desk_outputs();
+        let changing = outputs
+            .iter_mut()
+            .find(|output| output.name == name)
+            .unwrap();
+        let logical = changing.logical.unwrap();
+        match change {
+            Change::Unplug => outputs.retain(|output| output.name != name),
+            Change::Off => *changing = monitor(name, None),
+            Change::Replug => return OutputEvent::Replug(name.to_owned()),
+            Change::Rescale => {
+                let half = LogicalOutput {
+                    width: logical.width / 2,
+                    height: logical.height / 2,
+                    scale: 2.0,
+                    ..logical
+                };
+                *changing = monitor(name, Some(half));
+            }
+            Change::Move => *changing = monitor(name, Some(LogicalOutput { y: 50, ..logical })),
+            Change::Rotate => {
+                let turned = LogicalOutput {
+                    width: logical.height,
+                    height: logical.width,
+                    transform: Transform::_90,
+                    ..logical
+                };
+                *changing = monitor(name, Some(turned));
+            }
+            Change::Add => outputs.push(monitor("DP-2", Some(area(0, 1080, 800, 600)))),
+        }
+        OutputEvent::Set(outputs)
+    }
+
+    fn any_gesture() -> impl Strategy<Value = Gesture<Spot>> {
+        let pixel = (0..1920_u32, 0..1080_u32).prop_map(|(x, y)| Spot::Pixel(ImagePx { x, y }));
+        prop_oneof![
+            pixel.clone().prop_map(Gesture::Move),
+            (pixel.clone(), 1..=2_u8).prop_map(|(at, count)| Gesture::Click {
+                at,
+                button: Button::Left,
+                count
+            }),
+            (pixel.clone(), pixel.clone()).prop_map(|(from, to)| Gesture::Drag {
+                from,
+                to,
+                button: Button::Left
+            }),
+            (pixel, 1..=2_i32).prop_map(|(at, notches_y)| Gesture::Scroll {
+                at,
+                notches_x: 0,
+                notches_y
+            }),
+        ]
+    }
+
+    fn any_change() -> impl Strategy<Value = (&'static str, Change)> {
+        let bound = prop::sample::select(vec![
+            Change::Unplug,
+            Change::Off,
+            Change::Replug,
+            Change::Rescale,
+            Change::Move,
+            Change::Rotate,
+        ]);
+        let other = prop::sample::select(vec![
+            Change::Unplug,
+            Change::Off,
+            Change::Replug,
+            Change::Rescale,
+            Change::Add,
+        ]);
+        prop_oneof![
+            bound.prop_map(|change| (BOUND, change)),
+            other.prop_map(|change| (OTHER, change)),
+        ]
+    }
+
+    /// When niri changes an output, as a gesture goes.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum When {
+        BeforeTheCall,
+        /// After the call read niri's outputs, while the display holds its first
+        /// connection, the held modifiers' or else the pointer's.
+        WhileConnecting,
+        /// Right before niri handles the virtual pointer's request with this number,
+        /// counted from 1 with the one creating it.
+        AtPointerRequest(usize),
+    }
+
+    fn any_when() -> impl Strategy<Value = When> {
+        prop_oneof![
+            Just(When::BeforeTheCall),
+            Just(When::WhileConnecting),
+            (1..=30_usize).prop_map(When::AtPointerRequest),
+        ]
+    }
+
+    /// One gesture on a desk of two outputs, while niri makes `change` to output `name`
+    /// `when` says.
+    async fn gesture_while_an_output_changes(
+        gesture: Gesture<Spot>,
+        keys: &[String],
+        (name, change): (&str, Change),
+        when: When,
+    ) {
+        let bench = Bench::start_with("pointer-output-change", Vec::new(), desk_outputs());
+        let niri = &bench.niri;
+        let shot = shot_of(&bench, BOUND, 1).await;
+        let event = changed(name, change);
+        match when {
+            When::BeforeTheCall => niri.outputs(event.clone()).await,
+            When::WhileConnecting => niri.hold_client().await,
+            When::AtPointerRequest(request) => {
+                niri.outputs_at_pointer_request(request, event.clone())
+                    .await;
+            }
+        }
+        let changing = async {
+            if when == When::WhileConnecting {
+                change_once_held(niri, event).await;
+            }
+        };
+        let pointing = point(bench.input(), Ok(shot), gesture, keys, no_element);
+        let both = async { tokio::join!(pointing, changing).0 };
+        let result = tokio::time::timeout(Duration::from_secs(10), Box::pin(both))
+            .await
+            .unwrap();
+        // A gesture stopped midway releases and removes the marker in a task of its own.
+        let released = Instant::now() + Duration::from_secs(2);
+        while marker::read(&bench.runtime).is_some() && Instant::now() < released {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(marker::read(&bench.runtime).is_none(), "{result:?}");
+        let expected = Expected {
+            other: name == OTHER,
+            caught_by_the_screenshot: name == BOUND
+                && when == When::BeforeTheCall
+                && !matches!(change, Change::Replug),
+        };
+        expected.hold(&result, &niri.seen());
+        std::fs::remove_dir_all(&bench.dir).unwrap();
+    }
+
+    /// Once the display holds a connection, makes `event`'s change and serves it.
+    async fn change_once_held(niri: &wayland::Compositor, event: OutputEvent) {
+        while !niri.seen().holding {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        niri.outputs(event).await;
+        niri.serve_held().await;
+    }
+
+    /// What a gesture during an output change must have done, besides what any must.
+    struct Expected {
+        /// The change was to the other output, which the pointer isn't bound to.
+        other: bool,
+        /// The change came before the call to an output as niri reports it.
+        caught_by_the_screenshot: bool,
+    }
+
+    impl Expected {
+        /// Asserts what any gesture must have done, held modifiers and all: it may be
+        /// refused, stopped or sent, but it leaves nothing pressed, refuses only with
+        /// nothing sent, and is never reported sent after niri handled any of it on an
+        /// output no longer as captured. Then what `self` adds.
+        fn hold(&self, result: &Result<Outcome, CallError>, seen: &wayland::Seen) {
+            let observed = result.as_ref().map(|outcome| outcome.observed);
+            assert_eq!(seen.held_buttons(), Vec::<u32>::new(), "{result:?}");
+            assert_eq!(seen.held_keys(), Vec::<u32>::new(), "{result:?}");
+            let bound = |aimed: &Aimed| aimed.output.as_deref() == Some(BOUND);
+            assert!(seen.aimed.iter().all(bound), "{:?}", seen.aimed);
+            let as_captured = seen.aimed.iter().all(|aimed| aimed.generation == Some(0));
+            match observed {
+                Err(_) => assert!(seen.aimed.is_empty() && seen.keys.is_empty(), "{result:?}"),
+                Ok(Observed::Sent) => assert!(as_captured, "{:?}: {result:?}", seen.aimed),
+                Ok(observed) => assert_eq!(observed, Observed::Uncertain, "{result:?}"),
+            }
+            if self.other {
+                assert_eq!(observed.ok(), Some(Observed::Sent), "{result:?}");
+            }
+            if self.caught_by_the_screenshot {
+                assert!(result.is_err(), "{result:?}");
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(crate::test_support::properties(40))]
+
+        #[test]
+        fn an_output_change_never_leaves_input_reported_sent_or_held(
+            gesture in any_gesture(),
+            held in any::<bool>(),
+            change in any_change(),
+            when in any_when(),
+        ) {
+            let keys = if held { vec!["ctrl".to_owned()] } else { Vec::new() };
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(gesture_while_an_output_changes(gesture, &keys, change, when));
+        }
     }
 }
