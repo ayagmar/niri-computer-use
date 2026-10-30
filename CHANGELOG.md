@@ -3,10 +3,30 @@
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
+
+### Added
+
+- The Chromium and Electron section of the elements page, and the troubleshooting page, say how to start those apps with accessibility on, so `elements` works on them.
+- A bug report template that asks for the niri version, `status` output, the agent and model, and the error name and `detail`.
+
+### Changed
+
+- The skill and the server's instructions tell agents to load the tool schemas before the first call in Claude Code, that `submitted: true` means Enter went out and a late-drawn message is not a reason to send it again, to take a screenshot before typing after `ctrl+t` or a closed file picker, to hand the desktop back on a `focus_mismatch` that names their own terminal, and to tell you once that restarting a Chromium or Electron app enables element tools.
+- The README opens its Safety section with a six-row table and no longer shows a harness run as its example. The home page says the audit log records every call that reaches a tool.
+- crates.io links the project site as `homepage` and `documentation`.
+- A tool given a field it doesn't take now fails naming that field and the ones it expects, such as ``unknown field `direction`, expected one of `keys`, `screenshot_ref`, …`` for `scroll`. It used to drop the field and fail on another one, or act without it. Every tool's schema says so with `additionalProperties: false`.
+- `close_window` takes the window as `window_id`, like every other tool. `id` still works.
+- `wait_for` also takes `until: {"screen_stable": {}}`. JSON sent inside a string, such as `"\"screen_stable\""`, fails with the forms that work.
+- Calls refused for their arguments before the tool runs are written to the audit log as `invalid_arguments`, with the names of the fields they were given and never their values.
+- The `noctalia` tool's description says that every call needs the lease, even `["--help"]` and `["plugins", "list"]`.
+
+### Fixed
+
+- Typed text puts a symbol on a spare key when the layout has it only on a key Chromium drops. US maps have `€` only on `<I443>` (evdev 435), so `€` typed into Chromium and Electron apps arrived as nothing. A symbol also on a normal key types there, so US `$` uses Shift+4 instead of `<I442>`, which Chromium dropped too.
+- The Safety page said the pointer tools don't check whether windows moved since the screenshot. They have refused such a screenshot with `layout_changed` since 0.1.2.
 - A screenshot that waits for the screen to settle, an action's `screenshot: true` or `wait_for` `screen_stable`, compares raw pixels and counts the screen as still when two comparisons in a row changed at most 0.5 % of it. A clock, a CPU graph, a spinner or a caret no longer keeps the wait going until the 1.5-second limit. The screenshot's metadata says in `changing` how much changed last.
 - `focus` and `release_desktop`'s `restore_focus` that time out with no window focused, and keyboard and element tools refused with `focus_mismatch` because no window has keyboard focus, say in `detail` what may hold it: Noctalia's open panel, or the layer-shell surfaces niri lists that take keyboard focus, and that `shell_panel` or `key` `Escape` with `expect: "none"` closes it.
 - A `wait_for` `window` condition that times out lists the windows that opened during the wait in `opened`, with their `app_id`, so a wrong `app_id` such as `helium-browser` for `helium` shows.
-- Typed text puts a symbol on a spare key when the layout has it only on a key Chromium drops. US maps have `€` only on `<I443>` (evdev 435), so `€` typed into Chromium and Electron apps arrived as nothing. A symbol also on a normal key types there, so US `$` uses Shift+4 instead of `<I442>`, which Chromium dropped too.
 
 ## 0.1.5 - 2026-10-18
 

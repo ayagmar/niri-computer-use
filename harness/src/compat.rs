@@ -163,9 +163,8 @@ fn arguments(tool: &str, window: &Window, shot: &str) -> Option<Value> {
     let at = |x: u32| json!({"x": x, "y": x});
     Some(match tool {
         "release_desktop" => json!({"restore_focus": false}),
-        "focus" => json!({"window_id": window.id}),
+        "focus" | "close_window" => json!({"window_id": window.id}),
         "launch" => json!({"preset": "compat"}),
-        "close_window" => json!({"id": window.id}),
         "niri_action" => json!({"action": {"FocusWorkspaceDown": {}}}),
         "pointer_move" | "click" => json!({"screenshot_ref": shot, "x": 10, "y": 10}),
         "drag" => json!({"screenshot_ref": shot, "from": at(10), "to": at(20)}),

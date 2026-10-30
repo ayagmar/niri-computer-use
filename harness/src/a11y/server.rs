@@ -532,7 +532,7 @@ impl Checks<'_, '_> {
     /// `close_window`, then a click on an element of that window: `element_stale`, within
     /// 50 ms by the audit log's duration.
     fn closed(&mut self, window: u64, primary: &Listed) -> Result<()> {
-        let closed = self.call("close_window", json!({"id": window}))?;
+        let closed = self.call("close_window", json!({"window_id": window}))?;
         expect(
             field(&closed, "/observed") == "closed",
             "the GTK 4 window closed",

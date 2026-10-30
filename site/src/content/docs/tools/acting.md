@@ -96,7 +96,7 @@ With no preset for the app and [`unrestricted`](../../concepts/configuration/#un
 
 | Argument | Value |
 |---|---|
-| `id` (required) | a window id from `desktop_state` |
+| `window_id` (required) | a window id from `desktop_state`; `id`, its name before, still works |
 
 Asks the window to close, as its close button would. `observed` is `closed` once niri reports it gone, or `pending` if it is still open after five seconds, for example behind an unsaved-changes dialog. Nothing forces it closed. `windows` holds the id.
 

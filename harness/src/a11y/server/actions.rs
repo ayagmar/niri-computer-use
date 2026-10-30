@@ -478,7 +478,7 @@ impl Checks<'_, '_> {
                     && field(changes, "/focus/to") == &dialog
             },
         )?;
-        let closed = self.call("close_window", json!({"id": dialog}))?;
+        let closed = self.call("close_window", json!({"window_id": dialog}))?;
         told(
             self.session,
             "close_window: the dialog closed",

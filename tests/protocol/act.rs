@@ -594,7 +594,7 @@ async fn focusing_a_workspace_waits_for_the_workspace() {
 async fn close_window_is_closed_or_pending() {
     let mut desk = Desk::start("act-close", "").await;
     let result = desk
-        .act("close_window", json!({"id": 2}), |stream, action| {
+        .act("close_window", json!({"window_id": 2}), |stream, action| {
             assert!(
                 matches!(action, Action::CloseWindow { id: Some(2) }),
                 "{action:?}"
@@ -609,7 +609,8 @@ async fn close_window_is_closed_or_pending() {
             "changes": {"closed": [{"id": 2, "app_id": "b"}]}
         })
     );
-    // An app asking about unsaved changes keeps its window open.
+    // An app asking about unsaved changes keeps its window open. `id` is the name clients
+    // of 0.1.5 and older send.
     let pending = desk.act("close_window", json!({"id": 3}), |_, _| {}).await;
     assert_eq!(
         outcome(&pending),
@@ -618,8 +619,8 @@ async fn close_window_is_closed_or_pending() {
     assert_eq!(
         desk.audited(),
         [
-            json!(["close_window", {"id": 2}, true, "closed", null]),
-            json!(["close_window", {"id": 3}, true, "pending", null]),
+            json!(["close_window", {"window_id": 2}, true, "closed", null]),
+            json!(["close_window", {"window_id": 3}, true, "pending", null]),
         ]
     );
 }
