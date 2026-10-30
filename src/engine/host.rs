@@ -151,12 +151,12 @@ async fn accept(
     let watcher_ended = engine.watcher_ended();
     let exiting = engine.exiting();
     tokio::pin!(watcher_ended, exiting);
-    loop {
+    let served = loop {
         tokio::select! {
-            () = &mut watcher_ended => return Err(
+            () = &mut watcher_ended => break Err(
                 "the stop watcher ended, because the runtime directory was removed or replaced; the engine exits".to_owned(),
             ),
-            () = &mut exiting => return Ok(()),
+            () = &mut exiting => break Ok(()),
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => {
                     let busy = connections.len() >= MAX_CONNECTIONS;
@@ -172,11 +172,13 @@ async fn accept(
                 if !connections.is_empty() || !engine.settled() {
                     idle_since = None;
                 } else if idle_since.get_or_insert_with(Instant::now).elapsed() >= IDLE_GRACE {
-                    return Ok(());
+                    break Ok(());
                 }
             }
         }
-    }
+    };
+    engine.cut_off();
+    served
 }
 
 /// One client's connection: the hello, then its session.

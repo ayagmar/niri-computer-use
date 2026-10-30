@@ -19,7 +19,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - `wait_for` also takes `until: {"screen_stable": {}}`. JSON sent inside a string, such as `"\"screen_stable\""`, fails with the forms that work.
 - Calls refused for their arguments before the tool runs are written to the audit log as `invalid_arguments`, with the names of the fields they were given and never their values.
 - The `noctalia` tool's description says that every call needs the lease, even `["--help"]` and `["plugins", "list"]`.
-- Calls the server answers itself with `engine_lost` or `engine_unavailable` are written to the audit log, so `watch` and the Noctalia plugin show them. They were never logged, since the shared engine never saw them.
+- Calls the server answers itself with `engine_lost` or `engine_unavailable` are written to the audit log, so `watch` and the Noctalia plugin show them. They were never logged, since the shared engine never saw them. A call the engine cut short as it exited has that one line, not also `cancelled`.
 - The Noctalia plugin notifies once per agent session when the agent's calls fail with `engine_lost` or `engine_unavailable`, naming the agent and saying to restart it. Later such failures of that session don't notify, and they never count as failed actions.
 
 ### Fixed

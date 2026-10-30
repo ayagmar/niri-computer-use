@@ -8,7 +8,7 @@ pub(crate) mod hello;
 pub(crate) mod host;
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::Serialize;
@@ -58,6 +58,8 @@ pub(crate) struct Engine {
     /// Why a shared engine runs without a scope of its own, as the bridge that started it
     /// said.
     unscoped: Option<String>,
+    /// Whether the engine has stopped serving and cut its connections.
+    cut_off: AtomicBool,
     /// Lives as long as the engine; see `control::guard`.
     _guardian: Option<runner::Watcher>,
 }
@@ -224,6 +226,7 @@ impl Engine {
             mode: status::Mode::Standalone,
             fallback: None,
             unscoped: None,
+            cut_off: AtomicBool::new(false),
             _guardian: None,
         }
     }
@@ -269,6 +272,16 @@ impl Engine {
     /// Returns once the stop watcher has ended, for good: never, without a watcher.
     pub(crate) async fn watcher_ended(&self) {
         self.desk.watcher_ended().await;
+    }
+
+    /// Marks the connections cut, before the engine drops them as it stops serving. The
+    /// calls it cuts never answer their clients: their bridges answer and log them.
+    pub(crate) fn cut_off(&self) {
+        self.cut_off.store(true, Ordering::Relaxed);
+    }
+
+    pub(crate) fn has_cut_off(&self) -> bool {
+        self.cut_off.load(Ordering::Relaxed)
     }
 
     /// No code panics while holding the lock, so a poisoned one still holds sound entries.
