@@ -21,10 +21,10 @@ use crate::failure::{Context as _, Failure, Result};
 use crate::mcp::{self, Client, field, structured};
 use crate::session::Session;
 
-/// Within what is left of the run's deadline.
 /// Every policy file the harness writes for this build turns the lease notification
 /// off, so the nested Noctalia shows no toast over what the checks look at.
 pub(crate) const QUIET: &str = "notify_on_lease = false\n";
+/// Within what is left of the run's deadline.
 const NOCTALIA_DEADLINE: Duration = Duration::from_secs(110);
 const SERVER_DEADLINE: Duration = Duration::from_secs(100);
 const READY: Duration = Duration::from_secs(20);
