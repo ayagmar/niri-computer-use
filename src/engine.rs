@@ -410,15 +410,16 @@ impl Engine {
         let refusal = Box::pin(self.acquire_refusal(session, label));
         let (holder, users_window, fresh) =
             self.grant(session, &label.to_string(), refusal).await?;
-        let announced = async {
-            if fresh {
-                self.announce(session, label).await;
-            }
-        };
+        if fresh {
+            // The lease is granted, and the agent has no use for the notification, so a
+            // slow notification server doesn't hold up the result.
+            let (engine, session, label) = (Arc::clone(self), session.clone(), label.clone());
+            tokio::spawn(async move { engine.announce(&session, &label).await });
+        }
         let stop_key = self
             .stop_key
-            .check(&self.env.niri_socket, self.config_failed());
-        let ((), stop_key) = tokio::join!(announced, stop_key);
+            .check(&self.env.niri_socket, self.config_failed())
+            .await;
         Ok(Granted {
             holder,
             users_window,
