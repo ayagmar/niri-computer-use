@@ -114,7 +114,10 @@ fn typed_report(
         };
         return (outcome.to_owned(), None);
     }
-    if typed == Typed::FirstKeys && first_keys(&sent, received) {
+    if typed == Typed::FirstKeys
+        && first_keys(&sent, received)
+        && undone == sent.len() - received.len()
+    {
         let outcome = format!(
             "known loss (inputs the mask undid, as they came before its timer ran: {undone}), received {}",
             shown(received)
@@ -151,9 +154,16 @@ mod tests {
     #[test]
     fn a_masked_field_may_drop_any_key_but_the_first() {
         for kept in ["1", "13", "1357", "1234567890"] {
-            let (_, failed) = typed_report(Typed::FirstKeys, "1234567890", &units(kept), 3);
+            let undone = 10 - kept.len();
+            let (_, failed) = typed_report(Typed::FirstKeys, "1234567890", &units(kept), undone);
             assert_eq!(failed, None, "{kept}");
         }
+        // Keys lost without the mask undoing them are not its known loss.
+        assert!(
+            typed_report(Typed::FirstKeys, "1234567890", &units("13"), 0)
+                .1
+                .is_some()
+        );
         // Nothing, a lost first key, a reordering or a key never sent breaks the promise.
         for other in ["", "2", "31", "1x", "11234567890"] {
             let (_, failed) = typed_report(Typed::FirstKeys, "1234567890", &units(other), 0);
