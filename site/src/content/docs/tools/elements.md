@@ -154,6 +154,18 @@ The walk after the action runs once the stop race is over, like the screenshot t
 
 ## Chromium and Electron apps
 
+Element tools need Chromium and Electron apps (browsers, VS Code, Discord clients) to have been **started while the session's accessibility was on**. They check once, at startup. An app that was already running stays off the bus, and `elements` on it fails with `not_accessible` until you restart it.
+
+To have accessibility on whenever you start those apps, set it once for your session, then restart the app:
+
+```sh
+gsettings set org.gnome.desktop.interface toolkit-accessibility true
+```
+
+For one app, start it with Chromium's `--force-renderer-accessibility` flag instead, in its launcher or flags file. Either way, restart the app afterward.
+
+With the default [`turn_on_accessibility`](../../concepts/configuration/#turn_on_accessibility), the server turns accessibility on itself for as long as it runs, the first time `elements` meets a Chromium-family window that is off the bus. That helps apps you start afterward. It doesn't bring a running app onto the bus, and the server's switch goes off again when the server ends, so a browser you leave open between sessions is usually missed. The details are below.
+
 Chromium, Electron and CEF apps, such as VS Code, Discord clients or a Chromium-based browser, join the accessibility bus only when the session's accessibility was on when they started, and they check only then. When `elements`, an element wait or an action's `element_changes` finds such an app's window off the bus while it is off, the server turns it on: it registers an event listener with the accessibility registry, as a screen reader does, and at-spi2-core 2.61 or later keeps accessibility on while any listener is registered. The server never writes the setting itself, and its listener goes away when the server ends, however it ends, so accessibility goes back off unless a screen reader or another server still holds it. at-spi2-core also sets GSettings' `org.gnome.desktop.interface toolkit-accessibility` to true when accessibility turns on, as it does when a screen reader starts, and leaves it so.
 
 Apps started after that are listed. One that was already running stays off the bus until it restarts. `not_accessible`'s `detail` names the window's `app_id` and says so, and the agent should ask you before restarting the app. The server tells a Chromium-family app from its process, by the `icudtl.dat` or `v8_context_snapshot.bin` that Chromium maps, as `/proc/<pid>/maps` shows, not from its `app_id`. For any other app off the bus, such as a terminal or a GTK or Qt app, and for a process it can't read, such as another user's, it touches nothing and gives the plain `not_accessible`. When something else turned accessibility on, such as a screen reader, the server leaves it alone and only adds its listener to keep it on. With an at-spi2-core before 2.61, the listener doesn't turn it on: the server lets go, writes nothing, and `detail` names the reason. `status.accessibility_switch` says what the server did: `off`, `on`, `turning_on`, `unsupported` or `let_go`. When something turns accessibility off while the server holds it on, the server lets its listener go and leaves it off until the server restarts (`let_go`). [`turn_on_accessibility = false`](../../concepts/configuration/#turn_on_accessibility) in the policy file keeps it from doing any of this.

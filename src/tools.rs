@@ -5,8 +5,12 @@ use std::sync::{Arc, OnceLock};
 use base64::Engine as _;
 use niri_ipc::Action;
 use rmcp::handler::server::router::tool::ToolRouter;
+use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
+use rmcp::model::{
+    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
+    ServerCapabilities, ServerConfig,
+};
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::{Deserialize, Serialize};
@@ -35,6 +39,7 @@ use crate::{elements, observe, wait};
 /// takes an absent field or `null` as `None`.
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct ScreenshotArgs {
     /// `focused_output`, `output:<name>` with a name from `desktop_state`'s `outputs`, or
     /// `region`.
@@ -64,6 +69,7 @@ struct ScreenshotArgs {
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars", inline)]
+#[serde(deny_unknown_fields)]
 struct RegionArgs {
     x: i32,
     y: i32,
@@ -160,6 +166,7 @@ impl ScreenshotArgs {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct ElementsArgs {
     /// A window id from `desktop_state`.
     window_id: u64,
@@ -232,9 +239,11 @@ fn known_role(role: Option<&str>) -> Result<(), String> {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct WindowArgs {
     /// A window id from `desktop_state`.
-    id: u64,
+    #[serde(alias = "id")]
+    window_id: u64,
     /// Also return a screenshot once the screen settles.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     screenshot: bool,
@@ -258,6 +267,7 @@ enum UntilArg {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct WindowMatchArg {
     #[schemars(with = "String", default)]
     app_id: Option<String>,
@@ -268,6 +278,7 @@ struct WindowMatchArg {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct TitleArg {
     window_id: u64,
     contains: String,
@@ -275,6 +286,7 @@ struct TitleArg {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct ElementMatchArg {
     window_id: u64,
     #[schemars(with = "String", default)]
@@ -332,6 +344,26 @@ impl UntilArg {
     }
 }
 
+/// `until` as `UntilArg` reads it, and `{"screen_stable": {}}` too, the object form agents
+/// reach for. A string holding JSON, which agents send for this one string-or-object field,
+/// is refused with the forms that work rather than read, so `until` stays one JSON value.
+fn until<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<UntilArg, D::Error> {
+    use serde::de::Error as _;
+    let value = Value::deserialize(deserializer)?;
+    if value == serde_json::json!({"screen_stable": {}}) {
+        return Ok(UntilArg::ScreenStable);
+    }
+    if value
+        .as_str()
+        .is_some_and(|text| text.starts_with(['"', '{']))
+    {
+        return Err(D::Error::custom(
+            "`until` is JSON text inside a string; send the JSON itself: an object such as `{\"window\": {\"app_id\": \"foot\"}}`, or `\"screen_stable\"` or `{\"screen_stable\": {}}`",
+        ));
+    }
+    UntilArg::deserialize(value).map_err(D::Error::custom)
+}
+
 const fn default_timeout_ms() -> u32 {
     10_000
 }
@@ -341,7 +373,10 @@ const MAX_WAIT_MS: u32 = 30_000;
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct WaitForArgs {
+    #[serde(deserialize_with = "until")]
+    #[schemars(with = "UntilArg")]
     until: UntilArg,
     /// How long to wait, in milliseconds.
     #[serde(default = "default_timeout_ms")]
@@ -354,6 +389,7 @@ struct WaitForArgs {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct ReleaseArgs {
     /// true to give keyboard focus back to `users_window`, the window that had it when you
     /// took the lease, before releasing; false only when the user asked for another window
@@ -364,6 +400,7 @@ struct ReleaseArgs {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct FocusArgs {
     /// A window id from `desktop_state`.
     #[schemars(with = "u64", default, skip_serializing_if = "Option::is_none")]
@@ -400,6 +437,7 @@ impl FocusArgs {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct LaunchArgs {
     /// A preset name from the policy file; `status` lists them as `policy.preset_names`.
     preset: String,
@@ -414,6 +452,7 @@ struct LaunchArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct NiriActionArgs {
     /// One niri-ipc 26.4 `Action`, its name the only key, such as `{"FullscreenWindow":
     /// {"id": 12}}`, `{"SetWindowWidth": {"id": 12, "change": {"SetFixed": 1600}}}` or
@@ -426,6 +465,7 @@ struct NiriActionArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct NoctaliaArgs {
     /// The command and its arguments, as after `noctalia msg`, such as `["plugin",
     /// "ayagmar/obs-control:controller", "all", "toggle-record"]`; joined with spaces. None
@@ -439,6 +479,7 @@ struct NoctaliaArgs {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct PanelArgs {
     /// A Noctalia panel: `control-center`, `wallpaper` or `tray-drawer`.
     panel: String,
@@ -452,6 +493,7 @@ struct PanelArgs {
 /// A point: a pixel of a screenshot, counted from its top-left corner, or an element.
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct SpotArgs {
     /// Image pixel column.
     #[schemars(with = "u32", default, skip_serializing_if = "Option::is_none")]
@@ -468,33 +510,42 @@ struct SpotArgs {
 }
 
 impl SpotArgs {
-    /// Exactly one of the two forms.
     fn spot(self) -> Result<Spot, CallError> {
-        match self {
-            Self {
-                x: Some(x),
-                y: Some(y),
-                element: None,
-            } => Ok(Spot::Pixel(ImagePx { x, y })),
-            Self {
-                x: None,
-                y: None,
-                element: Some(element),
-            } => Ok(Spot::Element(element)),
-            _ => Err(CallError::InvalidArguments(
-                "give either `x` and `y`, or `element`".to_owned(),
-            )),
-        }
+        aimed(self.x, self.y, self.element)
+    }
+}
+
+/// Exactly one of a spot's two forms. `pointer_move` and `click` take the fields in their
+/// own arguments rather than a flattened `SpotArgs`, since serde lists the expected fields
+/// along with an unknown one only without `flatten`.
+fn aimed(x: Option<u32>, y: Option<u32>, element: Option<String>) -> Result<Spot, CallError> {
+    match (x, y, element) {
+        (Some(x), Some(y), None) => Ok(Spot::Pixel(ImagePx { x, y })),
+        (None, None, Some(element)) => Ok(Spot::Element(element)),
+        _ => Err(CallError::InvalidArguments(
+            "give either `x` and `y`, or `element`".to_owned(),
+        )),
     }
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct PointArgs {
     /// From a screenshot under this lease, under a minute old.
     screenshot_ref: String,
-    #[serde(flatten)]
-    at: SpotArgs,
+    /// Image pixel column.
+    #[schemars(with = "u32", default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    x: Option<u32>,
+    /// Image pixel row.
+    #[schemars(with = "u32", default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    y: Option<u32>,
+    /// Instead of `x` and `y`: an `element_ref`, aimed at its centre.
+    #[schemars(with = "String", default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    element: Option<String>,
     /// Also return a screenshot once the screen settles.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     screenshot: bool,
@@ -526,6 +577,7 @@ const fn one() -> u8 {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct ClickArgs {
     /// Modifiers to hold: shift, ctrl, alt, altgr, super.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -533,8 +585,18 @@ struct ClickArgs {
     keys: Vec<String>,
     /// From a screenshot under this lease, under a minute old.
     screenshot_ref: String,
-    #[serde(flatten)]
-    at: SpotArgs,
+    /// Image pixel column.
+    #[schemars(with = "u32", default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    x: Option<u32>,
+    /// Image pixel row.
+    #[schemars(with = "u32", default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    y: Option<u32>,
+    /// Instead of `x` and `y`: an `element_ref`, aimed at its centre.
+    #[schemars(with = "String", default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    element: Option<String>,
     #[serde(default)]
     button: ButtonArg,
     /// 2 is a double click.
@@ -552,6 +614,7 @@ struct ClickArgs {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct DragArgs {
     /// Modifiers to hold: shift, ctrl, alt, altgr, super.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -572,6 +635,7 @@ struct DragArgs {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct ScrollArgs {
     /// Modifiers to hold: shift, ctrl, alt, altgr, super.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -619,6 +683,7 @@ impl From<ExpectArg> for Expect {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct KeyArgs {
     /// Combinations such as `ctrl+shift+t`, `Return` or `alt+F4`: modifiers (`shift`,
     /// `ctrl`, `alt`, `altgr`, `super`) and one XKB keysym name (`a`, `Escape`, `F5`,
@@ -638,6 +703,7 @@ struct KeyArgs {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct TypeTextArgs {
     /// Up to 1000 characters to type, or 1 MiB to paste. Typed text can't hold line breaks,
     /// tabs or other control characters: use `submit`, `key`, or `via: "paste"` for several
@@ -740,6 +806,7 @@ impl PasteKeys {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct ActivateElementArgs {
     /// An `element_ref` from `elements`, listed under this lease.
     element: String,
@@ -760,6 +827,7 @@ struct ActivateElementArgs {
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+#[serde(deny_unknown_fields)]
 struct SetElementTextArgs {
     /// An `element_ref` from `elements`, listed under this lease: an editable text field.
     element: String,
@@ -849,11 +917,11 @@ impl Server {
         .await
     }
 
-    /// Takes the exclusive lease on this desktop, which actions need. Returns the
-    /// holder and `users_window`, the window that had keyboard focus, for `release_desktop`
-    /// to refocus; calling it again while holding it returns the same. Tell the user a
-    /// `warning`. With `status.confirm_lease` on, the user has a minute to allow it
-    /// on the desktop. Wait for its result before your next call.
+    /// Takes the exclusive lease on this niri desktop, which actions need. Returns the
+    /// holder and `users_window`, the window that had keyboard focus, for
+    /// `release_desktop` to refocus; calling it again while holding it returns the same.
+    /// Tell the user a `warning`. With `status.confirm_lease` on, the user has a minute to
+    /// allow it on the desktop. Wait for its result before your next call.
     #[tool(
         title = "Take the desktop lease",
         annotations(
@@ -1001,7 +1069,7 @@ impl Server {
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
         let policy = &self.session.settings().policy;
-        let work = act::close_window(self.engine.niri(), policy, args.id);
+        let work = act::close_window(self.engine.niri(), policy, args.window_id);
         self.act(
             &context,
             Asked {
@@ -1090,7 +1158,7 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let logged = pointed(&args);
-        let gesture = args.at.spot().map(Gesture::Move);
+        let gesture = aimed(args.x, args.y, args.element.clone()).map(Gesture::Move);
         let aim = Aim {
             id: args.screenshot_ref,
             shoot: args.screenshot,
@@ -1120,14 +1188,14 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let logged = pointed(&args);
-        let watch = args.at.element.clone().filter(|_| args.element_changes);
+        let watch = args.element.clone().filter(|_| args.element_changes);
         let gesture = if args.element_changes && watch.is_none() {
             Err(CallError::InvalidArguments(
                 "`element_changes` needs `element`: the window under a pixel isn't known"
                     .to_owned(),
             ))
         } else {
-            args.at.spot().map(|at| Gesture::Click {
+            aimed(args.x, args.y, args.element.clone()).map(|at| Gesture::Click {
                 at,
                 button: args.button.into(),
                 count: args.count,
@@ -1614,7 +1682,8 @@ impl Server {
     }
 
     /// Sends a command to Noctalia, as `noctalia msg <args…>` would, for shell and plugin
-    /// commands; `["--help"]` lists them. `observed` is `sent`, and `noctalia.reply` is
+    /// commands; `["--help"]` lists them. Every call needs the lease, even `["--help"]` and
+    /// `["plugins", "list"]`. `observed` is `sent`, and `noctalia.reply` is
     /// Noctalia's answer (cut at 64 KiB, with `noctalia.truncated`); a reply starting
     /// `error:` is `upstream_error`. Noctalia acts before it replies, so `uncertain` means
     /// the command may have run.
@@ -1805,14 +1874,25 @@ impl Server {
         let result = unless_cancelled(context.ct.cancelled(), work)
             .await
             .and_then(|result| result);
+        self.log(context, &call, args(), &result);
+        result.map(shown)
+    }
+
+    /// Writes a finished call to the audit log.
+    fn log(
+        &self,
+        context: &RequestContext<RoleServer>,
+        call: &Call<'_>,
+        args: Value,
+        result: &Result<CallToolResult, ErrorData>,
+    ) {
         let session = self.label(context).to_string();
         let instance = self.engine.env().instance();
         let caller = Caller {
             session: &session,
             instance: instance.as_deref(),
         };
-        self.engine.audit().finish(&call, caller, args(), &result);
-        result.map(shown)
+        self.engine.audit().finish(call, caller, args, result);
     }
 
     /// The session label: the MCP client's name and the process it started. A client of MCP
@@ -2000,7 +2080,7 @@ pub(crate) fn info() -> ServerConfig {
         .with_instructions(INSTRUCTIONS)
 }
 
-const INSTRUCTIONS: &str = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows, workspaces and monitors; take a `screenshot` only when you need to see pixels. `elements`, when listed, gives a window's accessible elements, which `activate_element` and `set_element_text` act on without the pointer once their window has focus; when `not_accessible` says a Chromium or Electron app needs a restart, ask the user first. To act, call `acquire_desktop`, then one action at a time (pointer tools with a fresh `screenshot_ref`, `key` and `type_text` with `expect`, `niri_action` for window layout), reading `accepted` and `observed` (and an element action's `effect`) before the next call. A result's `changes` says what niri saw the action change and is absent when nothing did: read it first, and take a screenshot only when it is empty or unexpected. To see an action's result, pass it `screenshot: true` rather than sending a `screenshot` alongside it, and use `wait_for` rather than repeated screenshots to wait for a window, an element or the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter, and start apps through `launch` presets; with no preset for the app, use `niri_action` `Spawn` with the program's argv (never a shell or `SpawnSh`) when `status.unrestricted.enabled` is true, then find its window with `wait_for` or `desktop_state` (its `app_id` may differ from the program's name) and never repeat the `Spawn`; otherwise ask the user to add a preset. Actions and `clipboard_read` need the lease. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. Failures carry a stable `error` name and the upstream `detail`; a mistake in the arguments comes back as a plain-text error to correct.";
+const INSTRUCTIONS: &str = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows, workspaces and monitors; take a `screenshot` for pixels. `elements`, when listed, gives a window's accessible elements, which `activate_element` and `set_element_text` act on without the pointer once their window has focus; when `not_accessible` says a Chromium or Electron app needs a restart, tell the user once and don't restart it. To act, call `acquire_desktop`, then one action at a time (pointer tools with a fresh `screenshot_ref`, keyboard tools with `expect`), reading `accepted`, `observed` and `effect` before the next call. Read `changes` (what niri saw change; absent when nothing did) first, and take a screenshot only when it is empty or unexpected. Pass an action `screenshot: true` rather than sending a `screenshot` beside it, and use `wait_for` instead of repeated screenshots to wait for a window, an element or the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter (`submitted: true` means Enter went out; if the app draws it late, `wait_for` `screen_stable`, never resend), and start apps through `launch` presets; with no preset, use `niri_action` `Spawn` with the program's argv (never a shell or `SpawnSh`) when `status.unrestricted.enabled` is true, find its window with `wait_for` (its `app_id` may differ from the program's name) and never repeat the `Spawn`; otherwise ask the user to add a preset. Actions and `clipboard_read` need the lease. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. In Claude Code, load these tools' schemas with `ToolSearch` before guessing arguments. A `focus_mismatch` naming your own terminal means the user is typing to you: release, answer, take the desktop again.";
 
 #[expect(
     clippy::unused_async_trait_impl,
@@ -2011,6 +2091,55 @@ impl ServerHandler for Server {
     fn get_info(&self) -> ServerConfig {
         info()
     }
+
+    /// Routes the call to its tool, and logs one whose arguments rmcp refused before the
+    /// tool ran, which the tool's own logging never sees, with the names of the fields it
+    /// was given.
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, ErrorData> {
+        let tool = request.name.to_string();
+        let call = Call::start(&tool);
+        // Only the names: the values can be a megabyte of text to paste.
+        let given: Vec<String> = request
+            .arguments
+            .iter()
+            .flat_map(|arguments| arguments.keys().cloned())
+            .collect();
+        let routed = self
+            .tool_router
+            .call(ToolCallContext::new(self, request, context.clone()))
+            .await;
+        if let Ok(CallToolResponse::Complete(result)) = &routed
+            && refused_by_rmcp(result)
+            && let Some(route) = self.tool_router.get(&tool)
+        {
+            let known = route
+                .input_schema
+                .get("properties")
+                .and_then(Value::as_object);
+            let logged = audit::refused(&given, |field| {
+                known.is_some_and(|known| known.contains_key(field))
+            });
+            self.log(&context, &call, logged, &Ok(result.clone()));
+        }
+        routed
+    }
+}
+
+/// rmcp's own answer to arguments that don't fit the tool's types, which it gives before
+/// the tool runs. rmcp keeps the prefix private; `tests/protocol/errors.rs` checks that
+/// such calls are still logged.
+fn refused_by_rmcp(result: &CallToolResult) -> bool {
+    result.is_error == Some(true)
+        && result.structured_content.is_none()
+        && result
+            .content
+            .first()
+            .and_then(|block| block.as_text())
+            .is_some_and(|text| text.text.starts_with("failed to deserialize parameters:"))
 }
 
 /// Runs `work` until it finishes or the client cancels the request. rmcp only cancels the
@@ -2459,6 +2588,43 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// Every object a tool takes, nested ones too, refuses fields it doesn't name, so an
+    /// agent's guessed name is an error naming it rather than dropped. `niri_action`'s
+    /// `action` is niri's to check, and a tool without arguments ignores any it is given.
+    #[test]
+    fn every_argument_object_refuses_unknown_fields() {
+        for profile in ["observe", "act", "full"] {
+            let (server, dir) = listing_everything(&format!("closed-{profile}"), profile);
+            for tool in server.tool_router.list_all() {
+                closed(&tool.name, &Value::Object((*tool.input_schema).clone()));
+            }
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    /// Asserts that `schema` and every schema in it that names fields refuses others.
+    fn closed(tool: &str, schema: &Value) {
+        let names_fields = schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .is_some_and(|properties| !properties.is_empty());
+        if names_fields {
+            assert_eq!(
+                schema.get("additionalProperties"),
+                Some(&Value::Bool(false)),
+                "{tool}: {schema}"
+            );
+        }
+        let inner: Vec<&Value> = match schema {
+            Value::Object(fields) => fields.values().collect(),
+            Value::Array(items) => items.iter().collect(),
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => Vec::new(),
+        };
+        for part in inner {
+            closed(tool, part);
+        }
+    }
+
     /// Clients that load every tool up front pay for the whole list in each conversation.
     /// Run with `--nocapture` to see the sizes; raise a ceiling only with a reason.
     #[test]
@@ -2467,7 +2633,7 @@ mod tests {
         reason = "the test reports the list's size, which the ceilings and the results are set from"
     )]
     fn the_tool_list_stays_within_its_budget() {
-        for (profile, ceiling) in [("observe", 6_975), ("act", 24_000), ("full", 27_225)] {
+        for (profile, ceiling) in [("observe", 7_125), ("act", 24_600), ("full", 28_000)] {
             let (server, dir) = listing_everything(&format!("budget-{profile}"), profile);
             let tools = server.tool_router.list_all();
             let size = serde_json::to_string(&serde_json::json!({ "tools": tools }))

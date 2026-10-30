@@ -335,7 +335,7 @@ fn closes(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
     let plain = act(session, client, "launch", json!({"preset": "plain"}))?;
     expect_outcome(&plain, "one", "launch plain")?;
     let id = only_window(&plain)?;
-    let closed = act(session, client, "close_window", json!({"id": id}))?;
+    let closed = act(session, client, "close_window", json!({"window_id": id}))?;
     expect_outcome(&closed, "closed", "close_window")?;
     session.log(&format!("M3: close_window: {closed}"))?;
     told(
@@ -346,7 +346,11 @@ fn closes(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
     )?;
     let keep = act(session, client, "launch", json!({"preset": "keep"}))?;
     expect_outcome(&keep, "one", "launch keep")?;
-    let result = client.call(session, "close_window", json!({"id": only_window(&keep)?}))?;
+    let result = client.call(
+        session,
+        "close_window",
+        json!({"window_id": only_window(&keep)?}),
+    )?;
     let pending = with_screenshot(&result)?;
     expect_outcome(
         &pending,
@@ -453,7 +457,7 @@ fn layout(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
         "Spawn refused without unrestricted",
         &refused.to_string(),
     )?;
-    let closed = act(session, client, "close_window", json!({"id": id}))?;
+    let closed = act(session, client, "close_window", json!({"window_id": id}))?;
     expect_outcome(&closed, "closed", "close the sized window")?;
     told(
         session,
@@ -488,7 +492,12 @@ fn unrestricted(session: &mut Session<'_>, server: &str) -> Result<()> {
         Some([id]) if field(&seen, "/observed") == "met" => id.clone(),
         _ => return Err(Failure::new(format!("M3: no spawned window: {seen}"))),
     };
-    let closed = act(session, &mut client, "close_window", json!({"id": id}))?;
+    let closed = act(
+        session,
+        &mut client,
+        "close_window",
+        json!({"window_id": id}),
+    )?;
     expect_outcome(&closed, "closed", "close the spawned window")?;
     session.log(&format!(
         "M3: niri_action Spawn with unrestricted: {spawned}, {seen}"

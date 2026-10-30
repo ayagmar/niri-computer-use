@@ -1164,7 +1164,10 @@ async fn a_bus_lost_after_the_call_went_out_is_uncertain() {
             "/entry"
         };
         let held = desk.mock.hold_on(member, path);
-        let arguments = json!({"element": element, "text": "abc", "expect": {"window_id": WINDOW}});
+        let mut arguments = json!({"element": element, "expect": {"window_id": WINDOW}});
+        if tool == "set_element_text" {
+            arguments["text"] = json!("abc");
+        }
         let id = desk.server.start_call(tool, arguments).await;
         held.arrived().await;
         desk.bus.kill().await;

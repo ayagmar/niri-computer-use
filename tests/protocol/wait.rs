@@ -123,6 +123,13 @@ async fn conditions_that_cant_be_met_are_argument_mistakes() {
             "must not be empty",
         ),
         (json!({"element": {"window_id": 1}}), "`element` needs"),
+        // JSON inside a string, as agents send for this string-or-object field.
+        (json!("\"screen_stable\""), "send the JSON itself"),
+        (
+            json!("{\"window\": {\"app_id\": \"a\"}}"),
+            "send the JSON itself",
+        ),
+        (json!({"screen_stable": {"x": 1}}), "expected unit"),
         (
             json!({"element": {"window_id": 1, "name_contains": ""}}),
             "must not be empty",
@@ -190,6 +197,10 @@ async fn a_slow_capture_respects_the_screen_wait_budget() {
 #[tokio::test]
 async fn a_still_screen_is_met_with_its_screenshot() {
     let (_fixture, _niri, _stream, mut server) = start("wait-screen").await;
+    // The object form agents reach for is taken as the string.
+    let object = json!({"until": {"screen_stable": {}}, "timeout_ms": 2000});
+    let met = server.call("wait_for", object).await;
+    assert_eq!(report(&met)["observed"], "met", "{met}");
     let result = server
         .call(
             "wait_for",

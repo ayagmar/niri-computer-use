@@ -3,11 +3,31 @@
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
-- While the screen is locked, `screenshot`, `elements` and `wait_for` are refused with `screen_locked`, `elements` and `wait_for` also when the screen locked during the call, and `desktop_state` gives every window's `title` as null with `titles_hidden` saying why. Before, any connected agent could read accessible names and window titles while the screen was locked. A lock state that is `unknown` still lets them through, since actions already refuse then.
-- A granted lease puts a notification on the desktop naming the agent and its project, so you can see an agent drive without the Noctalia plugin. Each agent gets at most one every five minutes. It is skipped with `confirm_lease` on and while the Noctalia plugin, which sends its own, is enabled. The new policy key `notify_on_lease = false` turns it off. A missing or failing `notify-send` never refuses the lease; `status.lease_notice_error` and `status --check` report it.
-- `niri-computer-use status --check` prints the readiness report as one line per prerequisite, `✓` or `✗` with the fix for each `✗`, and exits 1 while something blocks the server: niri and its version, the display, the lock state, the pointer, `grim`, the accessibility bus, the stop key, the stop flag and input-dirty marker, the policy file and refused variables. The install script now ends with it, after registering and binding the stop key.
+
+### Added
+
+- The Chromium and Electron section of the elements page, and the troubleshooting page, say how to start those apps with accessibility on, so `elements` works on them.
+- A bug report template that asks for the niri version, `status` output, the agent and model, and the error name and `detail`.
 - `status` reports `stop_key`: `bound` when niri's config binds a key to `niri-computer-use stop`, `not_found`, or `unknown` with the reason in `stop_key_detail`. It reads the config file the running niri was started with and the files that file includes. While it is `not_found`, `acquire_desktop` returns a `warning` with the bind line to add, which the agent is asked to pass on.
+- `niri-computer-use status --check` prints the readiness report as one line per prerequisite, `✓` or `✗` with the fix for each `✗`, and exits 1 while something blocks the server: niri and its version, the display, the lock state, the pointer, `grim`, the accessibility bus, the stop key, the stop flag and input-dirty marker, the policy file and refused variables. The install script now ends with it, after registering and binding the stop key.
+- A granted lease puts a notification on the desktop naming the agent and its project, so you can see an agent drive without the Noctalia plugin. Each agent gets at most one every five minutes. It is skipped with `confirm_lease` on and while the Noctalia plugin, which sends its own, is enabled. The new policy key `notify_on_lease = false` turns it off. A missing or failing `notify-send` never refuses the lease; `status.lease_notice_error` and `status --check` report it.
+
+### Changed
+
+- The skill and the server's instructions tell agents to load the tool schemas before the first call in Claude Code, that `submitted: true` means Enter went out and a late-drawn message is not a reason to send it again, to take a screenshot before typing after `ctrl+t` or a closed file picker, to hand the desktop back on a `focus_mismatch` that names their own terminal, and to tell you once that restarting a Chromium or Electron app enables element tools.
+- The README opens its Safety section with a six-row table and no longer shows a harness run as its example. The home page says the audit log records every call that reaches a tool.
+- crates.io links the project site as `homepage` and `documentation`.
+- A tool given a field it doesn't take now fails naming that field and the ones it expects, such as ``unknown field `direction`, expected one of `keys`, `screenshot_ref`, …`` for `scroll`. It used to drop the field and fail on another one, or act without it. Every tool's schema says so with `additionalProperties: false`.
+- `close_window` takes the window as `window_id`, like every other tool. `id` still works.
+- `wait_for` also takes `until: {"screen_stable": {}}`. JSON sent inside a string, such as `"\"screen_stable\""`, fails with the forms that work.
+- Calls refused for their arguments before the tool runs are written to the audit log as `invalid_arguments`, with the names of the fields they were given and never their values.
+- The `noctalia` tool's description says that every call needs the lease, even `["--help"]` and `["plugins", "list"]`.
+
+### Fixed
+
 - Typed text puts a symbol on a spare key when the layout has it only on a key Chromium drops. US maps have `€` only on `<I443>` (evdev 435), so `€` typed into Chromium and Electron apps arrived as nothing. A symbol also on a normal key types there, so US `$` uses Shift+4 instead of `<I442>`, which Chromium dropped too.
+- The Safety page said the pointer tools don't check whether windows moved since the screenshot. They have refused such a screenshot with `layout_changed` since 0.1.2.
+- While the screen is locked, `screenshot`, `elements` and `wait_for` are refused with `screen_locked`, `elements` and `wait_for` also when the screen locked during the call, and `desktop_state` gives every window's `title` as null with `titles_hidden` saying why. Before, any connected agent could read accessible names and window titles while the screen was locked. A lock state that is `unknown` still lets them through, since actions already refuse then.
 
 ## 0.1.5 - 2026-10-18
 
