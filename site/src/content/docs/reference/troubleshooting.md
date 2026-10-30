@@ -75,7 +75,7 @@ The app didn't answer one call over the accessibility bus within a second, or th
 
 ## The pointer tools fail with `untested_output_config`
 
-They run on a monitor at transform `Normal`, or in a nested niri's window, and the screenshot they aim through was of a rotated monitor. Aim through a screenshot of another monitor, or turn that one back to `Normal`. `status` lists the monitors they run on in `outputs.pointer_outputs`. Focus, launch, close, the keyboard tools and screenshots still work on any monitor.
+They run on monitors at transform `Normal`, and in nested niri's window when it is the only output. The screenshot they aimed through was of a rotated monitor, or of nested niri's window next to another output. Aim through a screenshot of another monitor, or turn that one back to `Normal`. `status` lists the monitors they run on in `outputs.pointer_outputs`. Focus, launch, close, the keyboard tools and screenshots still work on any monitor.
 
 ## A click fails with `ref_invalid` `out_of_bounds`
 
