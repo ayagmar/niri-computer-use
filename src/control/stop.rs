@@ -36,6 +36,10 @@ pub(crate) fn watch(runtime: RuntimeDir) -> io::Result<watch::Receiver<bool>> {
             | inotify::WatchFlags::MOVE_SELF
             | inotify::WatchFlags::ONLYDIR,
     )?;
+    #[expect(
+        deprecated,
+        reason = "the AsyncFd owns its OwnedFd, so nothing can close or replace the descriptor while it is registered (RUSTSEC-2026-0386)"
+    )]
     let fd = AsyncFd::new(fd)?;
     let watched = identity(runtime.path())?;
     // Checked after the watch exists, so a flag created in between isn't missed.

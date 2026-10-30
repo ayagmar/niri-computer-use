@@ -111,6 +111,10 @@ impl Pointer {
             .poll_fd()
             .try_clone_to_owned()
             .map_err(|error| upstream(&format!("copy the Wayland socket: {error}")))?;
+        #[expect(
+            deprecated,
+            reason = "the AsyncFd owns its OwnedFd, so nothing can close or replace the descriptor while it is registered (RUSTSEC-2026-0386)"
+        )]
         let readable = AsyncFd::with_interest(fd, Interest::READABLE)
             .map_err(|error| upstream(&format!("watch the Wayland socket: {error}")))?;
         let mut queue = connection.new_event_queue();

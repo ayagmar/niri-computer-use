@@ -2006,3 +2006,9 @@ Each action's commit is the one its tag names in the action's repository (`git l
   - Goose (`goose`): no add command at block/goose bfcc6ee (2026-10-17); `goose configure` is interactive and `--with-extension` lasts one session. Entry from `documentation/docs/guides/config-files.md`.
   - Crush (`crush`): no `mcp` subcommand at charmbracelet/crush 12f96b4 (2026-10-17); `mcp add` is a builtin of its `crushrc` config script (README, "MCPs").
 - Tested in `tests/install.rs` with the same fake agents: each new agent gets exactly its arguments with `NCU_REGISTER=1`, and none is called, with its command printed, with `NCU_REGISTER=0`.
+
+## 2026-10-30: tokio 1.53.3 for RUSTSEC-2026-0386
+
+- RUSTSEC-2026-0386 (2026-10-27) marks `AsyncFd`'s safe constructors unsound: they accept any `AsRawFd`, so safe code can close or replace a registered descriptor and leave tokio's driver with a freed registration. `cargo deny check` failed on `main` with no change of ours.
+- tokio 1.53.3 (2026-10-13) is the fix. It is newer than the seven-day rule allowed before the advisory, and a security fix is the rule's exception. No new crate entered `Cargo.lock`.
+- 1.53.3 deprecates `AsyncFd::new` and `with_interest` in favour of `unsafe` `register` constructors. The crate forbids unsafe code, and each of its five `AsyncFd`s owns its `OwnedFd`, so nothing else can close or replace the descriptor; the five calls keep the safe constructors under `#[expect(deprecated)]` with that reason.
