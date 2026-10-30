@@ -238,7 +238,8 @@ fn known_role(role: Option<&str>) -> Result<(), String> {
 #[serde(deny_unknown_fields)]
 struct WindowArgs {
     /// A window id from `desktop_state`.
-    id: u64,
+    #[serde(alias = "id")]
+    window_id: u64,
     /// Also return a screenshot once the screen settles.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     screenshot: bool,
@@ -1048,7 +1049,7 @@ impl Server {
     ) -> Result<CallToolResult, ErrorData> {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
         let policy = &self.session.settings().policy;
-        let work = act::close_window(self.engine.niri(), policy, args.id);
+        let work = act::close_window(self.engine.niri(), policy, args.window_id);
         self.act(
             &context,
             Asked {

@@ -51,7 +51,7 @@ fn expected(name: &str) -> (Value, Value) {
         "acquire_desktop" | "focus" => (json!([false, false, true]), json!(null)),
         "release_desktop" => (json!([false, false, true]), json!(["restore_focus"])),
         "wait_for" => (json!([true, null, null]), json!(["until"])),
-        "close_window" => (json!([false, true, false]), json!(["id"])),
+        "close_window" => (json!([false, true, false]), json!(["window_id"])),
         "launch" => (json!([false, false, false]), json!(["preset"])),
         "niri_action" => (json!([false, true, false]), json!(["action"])),
         "screenshot" => (json!([true, null, null]), json!(["target"])),
