@@ -5,8 +5,12 @@ use std::sync::{Arc, OnceLock};
 use base64::Engine as _;
 use niri_ipc::Action;
 use rmcp::handler::server::router::tool::ToolRouter;
+use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
+use rmcp::model::{
+    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
+    ServerCapabilities, ServerConfig,
+};
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::{Deserialize, Serialize};
@@ -1875,14 +1879,25 @@ impl Server {
         let result = unless_cancelled(context.ct.cancelled(), work)
             .await
             .and_then(|result| result);
+        self.log(context, &call, args(), &result);
+        result.map(shown)
+    }
+
+    /// Writes a finished call to the audit log.
+    fn log(
+        &self,
+        context: &RequestContext<RoleServer>,
+        call: &Call<'_>,
+        args: Value,
+        result: &Result<CallToolResult, ErrorData>,
+    ) {
         let session = self.label(context).to_string();
         let instance = self.engine.env().instance();
         let caller = Caller {
             session: &session,
             instance: instance.as_deref(),
         };
-        self.engine.audit().finish(&call, caller, args(), &result);
-        result.map(shown)
+        self.engine.audit().finish(call, caller, args, result);
     }
 
     /// The session label: the MCP client's name and the process it started. A client of MCP
@@ -2081,6 +2096,55 @@ impl ServerHandler for Server {
     fn get_info(&self) -> ServerConfig {
         info()
     }
+
+    /// Routes the call to its tool, and logs one whose arguments rmcp refused before the
+    /// tool ran, which the tool's own logging never sees, with the names of the fields it
+    /// was given.
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, ErrorData> {
+        let tool = request.name.to_string();
+        let call = Call::start(&tool);
+        // Only the names: the values can be a megabyte of text to paste.
+        let given: Vec<String> = request
+            .arguments
+            .iter()
+            .flat_map(|arguments| arguments.keys().cloned())
+            .collect();
+        let routed = self
+            .tool_router
+            .call(ToolCallContext::new(self, request, context.clone()))
+            .await;
+        if let Ok(CallToolResponse::Complete(result)) = &routed
+            && refused_by_rmcp(result)
+            && let Some(route) = self.tool_router.get(&tool)
+        {
+            let known = route
+                .input_schema
+                .get("properties")
+                .and_then(Value::as_object);
+            let logged = audit::refused(&given, |field| {
+                known.is_some_and(|known| known.contains_key(field))
+            });
+            self.log(&context, &call, logged, &Ok(result.clone()));
+        }
+        routed
+    }
+}
+
+/// rmcp's own answer to arguments that don't fit the tool's types, which it gives before
+/// the tool runs. rmcp keeps the prefix private; `tests/protocol/errors.rs` checks that
+/// such calls are still logged.
+fn refused_by_rmcp(result: &CallToolResult) -> bool {
+    result.is_error == Some(true)
+        && result.structured_content.is_none()
+        && result
+            .content
+            .first()
+            .and_then(|block| block.as_text())
+            .is_some_and(|text| text.text.starts_with("failed to deserialize parameters:"))
 }
 
 /// Runs `work` until it finishes or the client cancels the request. rmcp only cancels the

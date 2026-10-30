@@ -282,6 +282,17 @@ pub(crate) fn invalid_action(action: &Map<String, Value>) -> Value {
     })
 }
 
+/// A call rmcp refused before its tool ran, for the log: the names of the fields it was
+/// given, each as it is when the tool takes a field of that name and otherwise as
+/// `unknown_field` and its length, since it is the agent's text; never their values.
+pub(crate) fn refused(given: &[String], takes: impl Fn(&str) -> bool) -> Value {
+    let fields: Vec<Value> = given
+        .iter()
+        .map(|field| known(field, takes(field), "unknown_field"))
+        .collect();
+    json!({ "fields": fields })
+}
+
 /// A string becomes `{"bytes": n}` and a list of strings `{"count": n, "bytes": [...]}`.
 fn lengths(value: &Value) -> Value {
     match value {
