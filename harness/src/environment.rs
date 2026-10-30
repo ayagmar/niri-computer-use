@@ -195,8 +195,6 @@ fn check_variable(name: &str, value: &Path, test_dir: &TestDir) -> Result<()> {
     }
 }
 
-/// Lexical containment. Sound because `TEST_DIR` is fresh, private and has no symlinks in
-/// its own path, so nothing below it can redirect out of it.
 /// Whether `value` is `WxH` sizes in pixels, separated by commas.
 fn sizes(value: &std::ffi::OsStr) -> bool {
     let number = |text: &str| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());
@@ -208,6 +206,8 @@ fn sizes(value: &std::ffi::OsStr) -> bool {
     })
 }
 
+/// Lexical containment. Sound because `TEST_DIR` is fresh, private and has no symlinks in
+/// its own path, so nothing below it can redirect out of it.
 pub(crate) fn is_under(path: &Path, root: &Path) -> bool {
     path.starts_with(root)
         && path
