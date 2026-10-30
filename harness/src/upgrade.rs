@@ -246,7 +246,9 @@ fn held_typing(typed: &Value) -> Result<&'static str> {
 }
 
 /// A new client beside the old engine: served standalone, told why and what to do, and
-/// refused the lease A holds. Each side reads the other's marker while it types.
+/// refused the lease A holds. An engine of 0.1.5 or older says to restart its clients; a
+/// newer one says it hands over once nothing holds the desktop, or when they restart. Each
+/// side reads the other's marker while it types.
 fn beside(session: &mut Session<'_>, old: &mut Old, new: &mut Client) -> Result<()> {
     let status = structured(&new.call(session, "status", json!({}))?)?;
     let fallback = field(&status, "/engine/fallback");
@@ -259,7 +261,8 @@ fn beside(session: &mut Session<'_>, old: &mut Old, new: &mut Client) -> Result<
             && fallback.as_str().is_some_and(|text| {
                 text.contains("engine_version")
                     && text.contains(&format!("PID {},", old.engine))
-                    && text.contains("restart the MCP clients the engine serves")
+                    && (text.contains("restart the MCP clients the engine serves")
+                        || text.contains("until the clients it serves restart"))
             }),
         "the new client served standalone, refused by the old engine, told its PID and what to do",
         &status.to_string(),
