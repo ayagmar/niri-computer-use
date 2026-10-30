@@ -222,6 +222,24 @@ t.group("desk", function()
     t.eq(d.calls[desk.KEEP].ts, `t{desk.KEEP + 5}`)
   end)
 
+  t.test("an agent that lost the engine is told to restart once per session, not per call", function()
+    local d = desk.new()
+    local function call(session, error, backlog)
+      return { event = "action", tool = "status", session = session, args = {}, error = error, backlog = backlog }
+    end
+    t.eq(kinds(desk.feed(d, call("pi/8", "engine_lost", true), "", NOW, tr)), "")
+    local first = desk.feed(d, call("pi/7", "engine_lost"), "", NOW, tr)
+    t.eq(kinds(first), "restart")
+    t.eq(first[1].call.client, "Pi")
+    t.eq(kinds(desk.feed(d, call("pi/7", "engine_unavailable"), "", NOW, tr)), "")
+    t.eq(kinds(desk.feed(d, call("pi/7", "engine_lost"), "", NOW, tr)), "")
+    t.eq(kinds(desk.feed(d, call("pi/8", "engine_unavailable"), "", NOW, tr)), "restart")
+    t.eq(kinds(desk.feed(d, call("claude-code/4711", "engine_unavailable"), "", NOW, tr)), "restart")
+    -- Another failure of a session already told still notifies as a failure.
+    t.eq(kinds(desk.feed(d, call("pi/7", "app_denied"), "", NOW, tr)), "failed")
+    t.eq(d.calls[#d.calls - 1].outcome, "error")
+  end)
+
   t.test("a failed call is worth a notification, a cancelled one isn't", function()
     local d = desk.new()
     local failed = desk.feed(d, { event = "action", tool = "click", session = "pi/7", error = "element_unmappable" }, "", NOW, tr)

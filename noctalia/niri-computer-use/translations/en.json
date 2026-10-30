@@ -82,6 +82,8 @@
     "outdated": "Agents on an old build: {n}",
     "outdated_body": "An update replaced niri-computer-use. Restart those agents, or reconnect their MCP server, to use the new build.",
     "failed": "{client}: {error}",
+    "restart": "Restart {client}",
+    "restart_body": "Its calls fail with {error}: its server lost the shared engine, as after an update. Restart the agent, or reconnect its MCP server.",
     "where": "In {project}. "
   },
   "error": {

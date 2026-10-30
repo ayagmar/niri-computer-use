@@ -29,6 +29,14 @@ local MISTAKES = {
   element_stale = true,
 }
 
+-- Errors an agent's server answers when it lost the shared engine or can't reach
+-- one, as after an update: until the agent restarts, every call fails the same way,
+-- so the first one per session is worth one notification saying to restart it.
+local ENGINE = {
+  engine_lost = true,
+  engine_unavailable = true,
+}
+
 type Tr = (key: string, vars: { [string]: any }?) -> string
 
 export type Lease = {
@@ -74,6 +82,7 @@ export type Change =
   | { kind: "stuck" }
   | { kind: "outdated", count: number }
   | { kind: "failed", call: Call }
+  | { kind: "restart", call: Call }
 
 export type Desk = {
   lease: Lease?,
@@ -101,6 +110,8 @@ export type Desk = {
   -- ERROR_LINES of them: its `problem` before hello, its `lastError` after.
   -- Unlike those two, the service never carries it over to the next watch.
   said: string?,
+  -- The sessions already told to restart for an engine error.
+  restartSaid: { [string]: boolean },
 }
 
 function M.new(): Desk
@@ -119,6 +130,7 @@ function M.new(): Desk
     greeted = false,
     lastError = nil,
     said = nil,
+    restartSaid = {},
   }
 end
 
@@ -224,6 +236,20 @@ local function keyList(tool: string, args: any): { string }?
   return table.clone(args.keys)
 end
 
+-- What a new call's failure is worth: nothing for an agent's own mistake, one
+-- `restart` per session for an engine error, and `failed` for any other.
+local function failure(desk: Desk, entry: Call, changes: { Change })
+  local error = entry.error or ""
+  if entry.outcome ~= "error" or MISTAKES[error] then
+    return
+  elseif not ENGINE[error] then
+    table.insert(changes, { kind = "failed", call = entry })
+  elseif not desk.restartSaid[entry.session] then
+    desk.restartSaid[entry.session] = true
+    table.insert(changes, { kind = "restart", call = entry } :: Change)
+  end
+end
+
 local function call(desk: Desk, event: any, tr: Tr, changes: { Change })
   local tool = tostring(event.tool or "?")
   local session = tostring(event.session or "?")
@@ -246,8 +272,8 @@ local function call(desk: Desk, event: any, tr: Tr, changes: { Change })
     table.remove(desk.calls, 1)
   end
   -- Calls `watch` sends from before it started are history, not news.
-  if entry.outcome == "error" and not MISTAKES[entry.error or ""] and event.backlog ~= true then
-    table.insert(changes, { kind = "failed", call = entry })
+  if event.backlog ~= true then
+    failure(desk, entry, changes)
   end
 end
 
