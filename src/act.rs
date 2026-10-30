@@ -19,6 +19,7 @@ use crate::elements::actions::Acted;
 use crate::error::{CallError, ErrorName, ToolError, Unanswered};
 use crate::input::keyboard::Focus;
 use crate::input::paste::Pasted;
+use crate::live;
 use crate::niri;
 use crate::niri::Socket;
 use crate::niri::waiter::{View, Waited, Waiter};
@@ -342,6 +343,8 @@ pub(crate) struct Niri<'a> {
     pub(crate) desk: &'a Desk,
     /// Read again right before a call that acts when the last read is too old.
     pub(crate) locks: control::LockSources<'a>,
+    /// Told where the action acts, for the overlay.
+    pub(crate) live: &'a live::Live,
 }
 
 /// Makes sure the lock state was read at most `LAST_GATE` before a call that acts: reads it
@@ -363,11 +366,43 @@ pub(crate) async fn fresh_lock(niri: Niri<'_>) -> Result<(), ToolError> {
 pub(crate) const FOCUS_QUIET: record::Quiet = record::Quiet::UnlessSeen;
 
 pub(crate) async fn focus_window(niri: Niri<'_>, id: u64) -> Result<Outcome, CallError> {
+    aim_at(niri, About::Window(id)).await;
     let mut waiter = niri::waiter(niri.events).await?;
     if !waiter.view().windows().contains_key(&id) {
         return Err(no_window(id));
     }
     focus(niri, &mut waiter, id, Vec::new()).await
+}
+
+/// The window an action is about, for the overlay.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum About {
+    /// The window with keyboard focus, as for keys.
+    Focused,
+    Window(u64),
+}
+
+/// Tells the overlay which window the action is about, and where niri shows it when niri
+/// can say. It reads niri's windows and outputs for itself, before the action reads them:
+/// a slow reply here delays the action but never leaves its own checks stale. A failed
+/// read leaves out what it would have said.
+pub(crate) async fn aim_at(niri: Niri<'_>, about: About) {
+    let Ok(waiter) = niri::waiter(niri.events).await else {
+        return;
+    };
+    let view = waiter.view();
+    let id = match about {
+        About::Focused => view.focused_window(),
+        About::Window(id) => Some(id),
+    };
+    let Some(window) = id.and_then(|id| view.windows().get(&id)) else {
+        return;
+    };
+    let aim = niri::outputs(niri.socket)
+        .await
+        .ok()
+        .and_then(|outputs| live::window_aim(window, view.workspaces(), &outputs));
+    niri.live.aim(aim, Some(live::WindowRef::of(window)));
 }
 
 /// Gives focus back to the user's window `id` before the lease is released: `closed`, with
@@ -419,6 +454,7 @@ pub(crate) async fn close_window(
     policy: &Loaded,
     id: u64,
 ) -> Result<Outcome, CallError> {
+    aim_at(niri, About::Window(id)).await;
     let mut waiter = niri::waiter(niri.events).await?;
     if !waiter.view().windows().contains_key(&id) {
         return Err(no_window(id));

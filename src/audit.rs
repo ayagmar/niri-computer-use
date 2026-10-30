@@ -92,6 +92,11 @@ impl<'a> Call<'a> {
         }
     }
 
+    /// When the call started, as its line says.
+    pub(crate) fn ts(&self) -> &str {
+        &self.ts
+    }
+
     /// An action tool's call, whose result says what was accepted and observed.
     pub(crate) fn action(tool: &'a str) -> Self {
         Self {
@@ -154,17 +159,18 @@ impl Audit {
         } else {
             Reported::default()
         };
+        let summary = summarize(&reported, result);
         self.write(&Record {
             ts: &call.ts,
             session: caller.session,
             instance: caller.instance,
             tool: &call.tool,
             args: &args,
-            accepted: reported.accepted,
-            observed: reported.observed,
+            accepted: summary.accepted,
+            observed: summary.observed.as_deref(),
             effect: reported.effect,
             changes: reported.changes,
-            error: outcome(result),
+            error: summary.error,
             may_have_sent: may_have_sent(result),
             duration_ms: call.started.elapsed().as_millis(),
         });
@@ -462,6 +468,29 @@ fn may_have_sent(result: &Result<CallToolResult, ErrorData>) -> bool {
         .and_then(|content| content.get("may_have_sent"))
         .and_then(Value::as_bool)
         .unwrap_or(false)
+}
+
+/// An action's outcome as the audit log keeps it: `accepted` and `observed` from its
+/// result, and the error's name. The overlay's record of the action (`live`) keeps the
+/// same, so the two never disagree.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub(crate) struct Summary {
+    pub(crate) accepted: Option<bool>,
+    pub(crate) observed: Option<String>,
+    pub(crate) error: Option<String>,
+}
+
+/// An action's outcome, from its result.
+pub(crate) fn summary(result: &Result<CallToolResult, ErrorData>) -> Summary {
+    summarize(&reported(result), result)
+}
+
+fn summarize(reported: &Reported<'_>, result: &Result<CallToolResult, ErrorData>) -> Summary {
+    Summary {
+        accepted: reported.accepted,
+        observed: reported.observed.map(str::to_owned),
+        error: outcome(result),
+    }
 }
 
 /// What an action's result says it did, as the log keeps it.

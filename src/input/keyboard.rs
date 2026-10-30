@@ -4,7 +4,7 @@
 
 use serde::Serialize;
 
-use crate::act::{Observed, Outcome};
+use crate::act::{self, Observed, Outcome};
 use crate::control::desk::partway;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::waiter::View;
@@ -242,6 +242,7 @@ pub(crate) async fn type_input(
     typing: Typing,
     expect: Expect,
 ) -> Result<Outcome, CallError> {
+    act::aim_at(input.niri, act::About::Focused).await;
     type_input_then(input, typing, expect, &mut None).await
 }
 

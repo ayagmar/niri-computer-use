@@ -19,7 +19,7 @@ use tokio::time::{Instant, timeout, timeout_at};
 
 use crate::a11y::model::{self, NameHash, State, States};
 use crate::a11y::{self, A11y, Dispatched, ElementRef, Failed, Request};
-use crate::act::{Effect, Observed, Outcome};
+use crate::act::{About, Effect, Observed, Outcome};
 use crate::control::desk::LAST_GATE;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::input::Input;
@@ -401,6 +401,7 @@ pub(crate) async fn activate(
             .map_or(ActionKind::Other, |name| ActionKind::of(name)),
         index,
     };
+    crate::act::aim_at(input.niri, About::Window(element.kept.window)).await;
     let mut waiter = niri::waiter(input.niri.events).await?;
     owner_focused(gate.policy, waiter.view(), element, &gate.expect)?;
     let request = a11y.request(a11y::BUDGET).await?.names_only();
@@ -685,6 +686,7 @@ pub(crate) async fn set_text(
 ) -> Result<Outcome, CallError> {
     check_text(text)?;
     let a11y = accessible(input)?;
+    crate::act::aim_at(input.niri, About::Window(element.kept.window)).await;
     let mut waiter = niri::waiter(input.niri.events).await?;
     owner_focused(gate.policy, waiter.view(), element, &gate.expect)?;
     let request = a11y.request(a11y::BUDGET).await?.names_only();

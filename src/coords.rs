@@ -69,10 +69,19 @@ pub(crate) struct LayoutPt {
 }
 
 /// A point relative to the output's top-left corner as displayed, in logical pixels.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub(crate) struct OutputLocalPt {
     pub(crate) x: f64,
     pub(crate) y: f64,
+}
+
+/// A rectangle relative to the output's top-left corner as displayed, in logical pixels.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+pub(crate) struct OutputLocalRect {
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+    pub(crate) width: f64,
+    pub(crate) height: f64,
 }
 
 /// A point in the output's untransformed logical space, which `motion_absolute` addresses.
@@ -107,7 +116,7 @@ pub(crate) fn image_to_layout(pixel: ImagePx, capture: Capture) -> LayoutPt {
     }
 }
 
-fn layout_to_output(point: LayoutPt, output: &LogicalOutput) -> OutputLocalPt {
+pub(crate) fn layout_to_output(point: LayoutPt, output: &LogicalOutput) -> OutputLocalPt {
     OutputLocalPt {
         x: point.x - f64::from(output.x),
         y: point.y - f64::from(output.y),

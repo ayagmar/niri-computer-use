@@ -27,6 +27,7 @@ use crate::control::lease::Holder;
 use crate::coords::ImageRect;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::input::{Input, keyboard};
+use crate::live::{self, Cue, Live};
 use crate::niri::OutputSummary;
 use crate::niri::events::{DesktopState, EventStream, StreamState};
 use crate::notice::Notices;
@@ -46,6 +47,8 @@ pub(crate) struct Engine {
     events: Result<EventStream, ToolError>,
     audit: Audit,
     desk: Desk,
+    /// The record of the action in progress, for the overlay.
+    live: Live,
     /// Whether there is an accessibility bus, decided once at startup for the same reason.
     accessibility: Presence,
     /// The accessibility bus, when there is one.
@@ -234,8 +237,15 @@ impl Engine {
             .address
             .clone()
             .map(|address| A11y::new(address, session_bus));
+        let desk = Desk::start(&env);
+        let live = Live::new(
+            desk.runtime()
+                .ok()
+                .map(|runtime| runtime.path().join(live::FILE)),
+        );
         Self {
-            desk: Desk::start(&env),
+            desk,
+            live,
             env,
             events,
             audit,
@@ -335,7 +345,13 @@ impl Engine {
             events: self.events.as_ref(),
             desk: &self.desk,
             locks: self.lock_sources(),
+            live: &self.live,
         }
+    }
+
+    /// The writer of the overlay's record of the action in progress.
+    pub(crate) const fn live(&self) -> &Live {
+        &self.live
     }
 
     /// What the input tools work with, for `session`.
@@ -547,6 +563,7 @@ impl Engine {
     pub(crate) async fn act(
         &self,
         session: &Session,
+        cue: &Cue,
         report: Report<'_>,
         work: impl Future<Output = Result<Outcome, CallError>>,
     ) -> Result<act::Evidenced, CallError> {
@@ -554,6 +571,7 @@ impl Engine {
         // futures.
         let refusal = Box::pin(self.refusal(session));
         let watched = async {
+            self.live.start(cue);
             let before = match report.elements {
                 Some(target) => Some(Box::pin(self.survey_before(session, target)).await),
                 None => None,
@@ -1067,8 +1085,12 @@ impl Engine {
             before,
         } = watched;
         let (frames, encoded) = (Frames::default(), AtomicBool::new(false));
-        let at_once = || self.frame(session, observe::Request::focused(), &frames);
+        let at_once = || {
+            self.live.look();
+            self.frame(session, observe::Request::focused(), &frames)
+        };
         let settled = || {
+            self.live.look();
             let sample = || self.sample(session, &frames, &encoded);
             settle::screenshot(sample, at_once, settle::LIMIT)
         };

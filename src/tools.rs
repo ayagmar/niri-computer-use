@@ -1830,6 +1830,12 @@ impl Server {
             later,
             report,
         } = asked;
+        let call = Call::action(tool);
+        let label = self.label(context).to_string();
+        let cue = self
+            .engine
+            .live()
+            .cue(label, tool, call.ts(), logged.clone());
         let logged = move || match later {
             Some(Later::Gate(gate)) => gate.logged(logged),
             Some(Later::Noctalia(named)) => audit::noctalia_named(logged, named.get()),
@@ -1838,14 +1844,16 @@ impl Server {
         };
         // Boxed, because the readiness report, the action's work and its wait make large
         // futures.
-        Box::pin(self.record(context, Call::action(tool), logged, async {
-            match self.engine.act(&self.session, report, work).await {
+        let result = Box::pin(self.record(context, call, logged, async {
+            match self.engine.act(&self.session, &cue, report, work).await {
                 Ok(evidenced) => outcome(&evidenced),
                 Err(CallError::InvalidArguments(message)) => Ok(invalid(&message)),
                 Err(CallError::Tool(error)) => Ok(error.into_result()),
             }
         }))
-        .await
+        .await;
+        self.engine.live().end(&cue, audit::summary(&result));
+        result.map(shown)
     }
 
     /// Runs one tool's work until it finishes or the client cancels the request, then
@@ -1859,10 +1867,13 @@ impl Server {
         args: Value,
         work: impl Future<Output = Result<CallToolResult, ErrorData>>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.record(context, Call::start(tool), || args, work).await
+        self.record(context, Call::start(tool), || args, work)
+            .await
+            .map(shown)
     }
 
-    /// Runs `work`, then logs the call with the arguments `args` gives once it is done.
+    /// Runs `work`, then logs the call with the arguments `args` gives once it is done. The
+    /// result is as the call made it, before `shown`.
     async fn record(
         &self,
         context: &RequestContext<RoleServer>,
@@ -1882,7 +1893,7 @@ impl Server {
             .await
             .and_then(|result| result);
         self.log(context, &call, args(), &result);
-        result.map(shown)
+        result
     }
 
     /// Writes a finished call to the audit log, unless the engine cut its connection: its

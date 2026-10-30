@@ -33,7 +33,7 @@ flowchart TB
     end
 
     subgraph files["files"]
-        runtime["runtime dir beside niri's socket:<br/>engine.sock · lease · lease.json<br/>stop · input-dirty"]
+        runtime["runtime dir beside niri's socket:<br/>engine.sock · lease · lease.json<br/>stop · input-dirty · live.json"]
         audit[("audit.jsonl")]
     end
 
@@ -112,6 +112,7 @@ flowchart TB
 | `control/desk.rs` | Whether this server holds the lease: takes it, gives it up, and lets the stop flag take it back. Gates every action and cancels it on a stop or when its session ends. |
 | `control/cleanup.rs` | Runs the input cleanups that outlive their call, each within ten seconds of its start, and counts them for the server's wait before it exits. |
 | `audit.rs` | The audit log. |
+| `live.rs` | The action in progress, for the Noctalia plugin's overlay: `live.json` in the runtime directory, replaced whole at each phase of an action (`start`, `aim`, `look`, `end`), and where an action acts in output-local logical pixels (pure, apart from the write). |
 | `runner.rs` | The only code that starts processes. |
 | `image_header.rs` | Reads a PNG's or JPEG's size from its header. The harness includes the same file. |
 | `error.rs` | Tool failures with their stable names. |

@@ -31,6 +31,7 @@ use crate::control::marker::{self, Marker, Written};
 use crate::control::runtime::RuntimeDir;
 use crate::coords::{ImagePx, LayoutPt, ProtocolPt};
 use crate::error::{CallError, ErrorName, ToolError};
+use crate::live;
 use crate::niri::events::Motion;
 use crate::niri::pointer::{Axis, Pointer, Step};
 use crate::niri::waiter::{Moved, Shift, View, Waited};
@@ -367,6 +368,11 @@ pub(crate) async fn point(
             Ok(Aim { at, motion })
         })
         .collect::<Result<Vec<_>, ToolError>>()?;
+    if let Some(area) = outputs.get(&shot.output).and_then(|output| output.logical) {
+        let points: Vec<LayoutPt> = aimed.iter().map(|aim| aim.at).collect();
+        let aim = live::Aim::points(&shot.output, &area, &points);
+        input.niri.live.aim(Some(aim), None);
+    }
     let display = input.display.path().map_err(Clone::clone)?;
     let held = Held::prepare(input, waiter.view(), keys).await?;
     act::fresh_lock(input.niri).await?;
@@ -1105,6 +1111,7 @@ mod tests {
         socket: niri::Socket,
         events: niri::events::EventStream,
         desk: crate::control::desk::Desk,
+        live: live::Live,
     }
 
     impl Bench {
@@ -1133,6 +1140,7 @@ mod tests {
             let socket = niri.niri_socket();
             let events = niri.events();
             let desk = crate::control::desk::Desk::start(&env);
+            let live = live::Live::new(Some(runtime.path().join(live::FILE)));
             Self {
                 dir,
                 niri,
@@ -1141,6 +1149,7 @@ mod tests {
                 socket,
                 events,
                 desk,
+                live,
             }
         }
 
@@ -1154,6 +1163,7 @@ mod tests {
                         env: &self.env,
                         noctalia: true,
                     },
+                    live: &self.live,
                 },
                 display: &self.env.display,
                 runtime: &self.runtime,
@@ -1696,6 +1706,49 @@ mod tests {
                 on(Pointed::Motion(319_750, 50_750, 1_280_000, 720_000)),
                 on(Pointed::Press(272))
             ]
+        );
+        std::fs::remove_dir_all(&bench.dir).unwrap();
+    }
+
+    // The bug: the overlay's robot placed by the screenshot's pixel instead of the point on
+    // the output, or on the wrong monitor. Pixel (639, 101) at 2 image pixels per logical
+    // pixel is (319.75, 50.75) on HDMI-A-1.
+    #[tokio::test]
+    async fn a_click_tells_the_overlay_its_point_on_the_output() {
+        let left = LogicalOutput {
+            scale: 2.0,
+            ..area(-1280, 100, 1280, 720)
+        };
+        let outputs = vec![
+            monitor("DP-1", Some(area(0, 0, 1920, 1080))),
+            monitor("HDMI-A-1", Some(left)),
+        ];
+        let bench = Bench::start_with("pointer-live", Vec::new(), outputs);
+        let shot = shot_of(&bench, "HDMI-A-1", 2).await;
+        let cue = bench
+            .live
+            .cue("pi/9".into(), "click", "t", serde_json::json!({}));
+        bench.live.start(&cue);
+        let click = Gesture::Click {
+            at: Spot::Pixel(ImagePx { x: 639, y: 101 }),
+            button: Button::Left,
+            count: 1,
+        };
+        point(bench.input(), Ok(shot), click, &[], no_element)
+            .await
+            .unwrap();
+        let record: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(bench.runtime.path().join(live::FILE)).unwrap())
+                .unwrap();
+        assert_eq!(record["phase"], "aim");
+        assert_eq!(
+            record["aim"],
+            serde_json::json!({
+                "output": "HDMI-A-1",
+                "area": {"width": 1280, "height": 720},
+                "points": [{"x": 319.75, "y": 50.75}],
+                "box": null,
+            })
         );
         std::fs::remove_dir_all(&bench.dir).unwrap();
     }

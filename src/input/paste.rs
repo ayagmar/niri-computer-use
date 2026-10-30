@@ -33,7 +33,7 @@ use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader, Lines};
 use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::oneshot;
 
-use crate::act::Outcome;
+use crate::act::{self, About, Outcome};
 use crate::control::desk::Desk;
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri;
@@ -115,6 +115,7 @@ pub(crate) async fn paste(
     expect: Expect,
 ) -> Result<Outcome, CallError> {
     check_text(text)?;
+    act::aim_at(input.niri, About::Focused).await;
     // The clipboard isn't touched for a paste the key's own checks would refuse.
     let waiter = niri::waiter(input.niri.events).await?;
     keyboard::check_expect(&expect, waiter.view())?;
