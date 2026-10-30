@@ -186,7 +186,9 @@ fn split<'t>(
     let mut missing = Vec::new();
     for (at, c) in text.char_indices() {
         let sym = text_sym(c);
-        let present = find(keymap, group, sym).is_ok_and(|key| chromium_receives(key.code));
+        // Without a spare key, a symbol on a key Chromium drops still reaches other apps.
+        let present =
+            find(keymap, group, sym).is_ok_and(|key| spare == 0 || chromium_receives(key.code));
         if present || missing.contains(&sym) {
             continue;
         }
@@ -597,28 +599,63 @@ mod tests {
         assert_eq!(codes(&parts[1]), [52]);
     }
 
-    /// As many symbols as spare keys Chromium knows leave the borrowable keys as they were.
-    /// US has `EuroSign` only on `<I443>`, past Xwayland's last keycode and without a code
-    /// in Chromium, which dropped the €; it goes on a spare key instead.
-    #[test]
-    fn a_symbol_only_on_a_key_chromium_drops_goes_on_a_spare_key() {
-        let map = us_like()
+    /// `us_like` with what a US map has past Xwayland's last keycode and without a code in
+    /// Chromium: `EuroSign` alone on `<I443>` (evdev 435) and `dollar` on `<I442>` (evdev
+    /// 434), which also has `<Y>` with Shift here, as `<AE04>` in a real map.
+    fn us_with_high_keys() -> String {
+        us_like()
             .replace("maximum = 192;", "maximum = 451;")
-            .replace("<FK14> = 192;", "<FK14> = 192; <I443> = 451;")
+            .replace("<FK14> = 192;", "<FK14> = 192; <I442> = 450; <I443> = 451;")
+            .replace("symbols[Group1]=[y,Y]", "symbols[Group1]=[y,dollar]")
             .replace(
                 "    modifier_map Shift",
-                "    key <I443> { [EuroSign] };\n    modifier_map Shift",
-            );
+                "    key <I442> { [dollar] };\n    key <I443> { [EuroSign] };\n    modifier_map Shift",
+            )
+    }
+
+    /// US has `€` only on `<I443>`, which Chromium dropped; it goes on a spare key instead.
+    #[test]
+    fn a_symbol_only_on_a_key_chromium_drops_goes_on_a_spare_key() {
+        let map = us_with_high_keys();
         let [part] = <[Part; 1]>::try_from(plan(&map, 0, &text("a€")).unwrap().parts).unwrap();
         assert!(part.extended.is_some());
         assert_eq!(codes(&part)[1], SPARE[0]);
-        let euro = keys(1, &text("€"));
-        assert_eq!(
-            (euro[0].code, euro[0].modifiers != 0),
-            (Evdev(48 - 8), true)
-        );
     }
 
+    /// A symbol on both a key Chromium drops and a normal key takes the normal one, even
+    /// when it needs a modifier: `$` with Shift on `<Y>`, and the second layout's `€` with
+    /// Shift on `<U>`, not `<I442>` or `<I443>` without one.
+    #[test]
+    fn a_symbol_also_on_a_normal_key_types_there_without_a_spare_key() {
+        let map = us_with_high_keys();
+        for (group, typed, code) in [(0, "$", 29 - 8), (1, "€", 48 - 8)] {
+            let [part] =
+                <[Part; 1]>::try_from(plan(&map, group, &text(typed)).unwrap().parts).unwrap();
+            assert!(part.extended.is_none());
+            assert_eq!(
+                (part.keys[0].code, part.keys[0].modifiers != 0),
+                (Evdev(code), true)
+            );
+        }
+    }
+
+    /// A map with no spare key still types a symbol that only a key Chromium drops has, so
+    /// other apps receive it as before.
+    #[test]
+    fn without_a_spare_key_a_symbol_on_a_key_chromium_drops_is_still_typed() {
+        let map = map()
+            .replace("maximum = 64;", "maximum = 451;")
+            .replace("<I61> = 61;", "<I61> = 61; <I443> = 451;")
+            .replace(
+                "    modifier_map Shift",
+                "    key <I60> { [F1] };\n    key <I61> { [F2] };\n    key <I443> { [EuroSign] };\n    modifier_map Shift",
+            );
+        let [part] = <[Part; 1]>::try_from(plan(&map, 0, &text("€")).unwrap().parts).unwrap();
+        assert!(part.extended.is_none());
+        assert_eq!(codes(&part), [451 - 8]);
+    }
+
+    /// As many symbols as spare keys Chromium knows leave the borrowable keys as they were.
     #[test]
     fn the_borrowable_keys_stay_until_the_spare_keys_run_out() {
         let original = compile(&us_like()).unwrap();
