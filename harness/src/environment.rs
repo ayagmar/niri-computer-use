@@ -14,6 +14,10 @@ use crate::test_dir::TestDir;
 pub(crate) type Env = BTreeMap<&'static str, OsString>;
 
 /// Kept from the user's session as they are.
+/// The distribution's Python, which has the `PyGObject` the fixtures import. A `python3`
+/// found on `PATH` may be a version manager's shim, which can refuse to run or lack `gi`.
+pub(crate) const PYTHON: &str = "/usr/bin/python3";
+
 const KEPT: [&str; 4] = ["HOME", "PATH", "LANG", SHARED];
 
 /// Set to `0` without `--shared`, so that every server runs standalone; `--shared` leaves

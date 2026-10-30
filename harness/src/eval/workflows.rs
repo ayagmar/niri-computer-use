@@ -54,7 +54,7 @@ pub(super) fn start_gtk(session: &mut Session<'_>, setup: &mut Setup, mode: &str
         seconds.into(),
     ];
     let log = session.artifact(&format!("{mode}.log"));
-    let process = session.start("python3", &args, log, FIXTURE_DEADLINE)?;
+    let process = session.start(crate::environment::PYTHON, &args, log, FIXTURE_DEADLINE)?;
     let pid = process.pid();
     setup.processes.push(process);
     app_window(session, setup, pid)

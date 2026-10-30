@@ -1,6 +1,6 @@
 //! `--upgrade current`: the build under test installed over itself, as a reinstall of the
 //! same release writes a new file. Its engine, idle, hands over to the first client of the
-//! new file, in a scope of its own, and its old clients get `engine_lost` once, logged,
+//! new file, scoped as the first engine was, and its old clients get `engine_lost` once, logged,
 //! then the advice to restart them.
 
 use std::time::Duration;
@@ -35,7 +35,6 @@ pub(super) fn run(session: &mut Session<'_>, place: &Place) -> Result<()> {
         "both clients on one engine",
         &format!("{engine} {second}"),
     )?;
-    let pid = field(&engine, "/pid").as_u64().unwrap_or_default();
     place.install(session, CURRENT)?;
     let replaced = structured(&a.call(session, "status", json!({}))?)?;
     expect(
@@ -44,7 +43,7 @@ pub(super) fn run(session: &mut Session<'_>, place: &Place) -> Result<()> {
         &replaced.to_string(),
     )?;
     let mut new = client(session, place, "reinstall-new")?;
-    handed_over(session, &mut new, pid)?;
+    handed_over(session, &mut new, &engine)?;
     for client in &mut old {
         told_to_restart(session, client)?;
     }
@@ -67,22 +66,26 @@ fn shared_engine(session: &mut Session<'_>, client: &mut Client) -> Result<Value
     Ok(engine)
 }
 
-/// The new client is on a new shared engine, in a scope of its own as the first engine
-/// was, and the old engine, `old`, has exited.
-fn handed_over(session: &mut Session<'_>, new: &mut Client, old: u64) -> Result<()> {
+/// The new client is on a new shared engine, scoped as the first engine, `old`, was, and
+/// `old` has exited. A nested session has no user systemd, so neither engine gets a scope
+/// of its own there, and both say why in `unscoped`.
+fn handed_over(session: &mut Session<'_>, new: &mut Client, old: &Value) -> Result<()> {
     let engine = shared_engine(session, new)?;
     session.log(&format!(
         "upgrade: after the reinstall, the new client is on {engine}"
     ))?;
     expect(
-        field(&engine, "/pid") != old
+        field(&engine, "/pid") != field(old, "/pid")
             && field(&engine, "/fallback").is_null()
-            && field(&engine, "/unscoped").is_null()
+            && field(&engine, "/unscoped").is_null() == field(old, "/unscoped").is_null()
             && field(&engine, "/replaced") == false,
-        "the new client on a new engine, in a scope of its own",
-        &engine.to_string(),
+        "the new client on a new engine, scoped as the first one was",
+        &format!("{engine}, first {old}"),
     )?;
-    let old = u32::try_from(old).map_err(|_| Failure::new("an engine PID over u32"))?;
+    let old = field(old, "/pid")
+        .as_u64()
+        .and_then(|pid| u32::try_from(pid).ok())
+        .ok_or_else(|| Failure::new(format!("the first engine's PID: {old}")))?;
     session.wait_until(
         "reinstall-old-engine-exit",
         "the old engine's exit",

@@ -92,7 +92,7 @@ pub(super) fn start_fixture(
     ];
     session
         .start(
-            "python3",
+            crate::environment::PYTHON,
             &args,
             session.artifact(&format!("{mode}.log")),
             Duration::from_secs(45),
@@ -108,7 +108,7 @@ pub(super) fn gtk4(session: &mut Session<'_>, check: &str) -> Result<bool> {
         "import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk",
     ]
     .map(OsString::from);
-    if let Err(error) = session.run("python3", &probe) {
+    if let Err(error) = session.run(crate::environment::PYTHON, &probe) {
         session.log(&format!(
             "{check}: skipped (Python GTK 4 unavailable: {error})"
         ))?;

@@ -202,13 +202,11 @@ impl Old {
         signal(serving, Signal::CONT)?;
         installed?;
         let typed = self.a.result(session, id)?;
-        expect(
-            field(&typed, "/isError") == false,
-            "the typing held over the install finished",
-            &typed.to_string(),
-        )?;
+        let outcome = held_typing(&typed)?;
         marker_gone(session)?;
-        session.log("upgrade: installed the build under test while A's type_text was held mid-input; it finished")
+        session.log(&format!(
+            "upgrade: installed the build under test while A's type_text was held mid-input; it {outcome}"
+        ))
     }
 
     /// After the install, the old engine runs the build it started with, whose file is
@@ -229,6 +227,22 @@ impl Old {
             exe.display()
         ))
     }
+}
+
+/// How the typing held over the install ended: finished, or stopped by the lock gate. The
+/// engine was stopped for the whole install, so its lock reading may be too old by the time
+/// the next keys go out, and every release then stops with `lock_stale` rather than type
+/// on. Which comes first, a fresh reading or the next keys, is up to the scheduler.
+fn held_typing(typed: &Value) -> Result<&'static str> {
+    if field(typed, "/isError") == false {
+        return Ok("finished");
+    }
+    if field(typed, "/structuredContent/error") == "lock_stale" {
+        return Ok("stopped with lock_stale, as a lock reading from before the stop was too old");
+    }
+    Err(Failure::new(format!(
+        "upgrade: the typing held over the install finished failed; saw {typed}"
+    )))
 }
 
 /// A new client beside the old engine: served standalone, told why and what to do, and
@@ -529,5 +543,26 @@ fn expect(holds: bool, what: &str, seen: &str) -> Result<()> {
         Ok(())
     } else {
         Err(Failure::new(format!("upgrade: {what} failed; saw {seen}")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn failed(error: &str) -> Value {
+        json!({"isError": true, "structuredContent": {"error": error, "may_have_sent": true}})
+    }
+
+    #[test]
+    fn held_typing_may_finish_or_stop_only_at_the_lock_gate() {
+        assert_eq!(
+            held_typing(&json!({"isError": false})).ok(),
+            Some("finished")
+        );
+        assert!(held_typing(&failed("lock_stale")).is_ok());
+        for other in ["input_stuck", "lease_lost", "focus_mismatch"] {
+            assert!(held_typing(&failed(other)).is_err(), "{other}");
+        }
     }
 }
