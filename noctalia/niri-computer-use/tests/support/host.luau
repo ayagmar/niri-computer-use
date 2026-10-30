@@ -1,6 +1,6 @@
 --!nonstrict
--- A fake Noctalia host: the noctalia.*, ui.*, barWidget.*, panel.* and
--- desktopWidget.* globals the plugin uses, with a controllable clock, scripted
+-- A fake Noctalia host: the noctalia.*, ui.*, barWidget.*, panel.*,
+-- desktopWidget.* and layer.* globals the plugin uses, with a controllable clock, scripted
 -- streams and commands, and synchronous state watchers.
 
 local json = require("./json")
@@ -44,6 +44,13 @@ function M.new(sources)
     desktopTree = nil,
     frameTicks = false,
     updateInterval = nil,
+    -- Noctalia's own settings, as getSetting() reads them.
+    settings = { ["accessibility.ui_scale"] = 1 },
+    focusedOutput = "DP-1",
+    -- noctalia.layer calls, in order: { command, id, patch }.
+    layerCalls = {},
+    -- The layer instance a layer entry runs as.
+    layer = { output = "DP-1", tree = nil, renders = 0 },
   }
 
   local function tr(key: string, vars)
@@ -79,6 +86,23 @@ function M.new(sources)
     getConfig = function(key)
       return host.config[key]
     end,
+    getSetting = function(path)
+      return host.settings[path]
+    end,
+    focusedOutputName = function()
+      return host.focusedOutput
+    end,
+    layer = {
+      show = function(id)
+        table.insert(host.layerCalls, { command = "show", id = id })
+      end,
+      hide = function(id)
+        table.insert(host.layerCalls, { command = "hide", id = id })
+      end,
+      configure = function(id, patch)
+        table.insert(host.layerCalls, { command = "configure", id = id, patch = copy(patch) })
+      end,
+    },
     tr = tr,
     json = { decode = json.decode, encode = json.encode },
     notify = function(title, body)
@@ -111,9 +135,11 @@ function M.new(sources)
       -- Copies, as Noctalia's state does, so no entry shares another's tables.
       set = function(key, value)
         host.state[key] = copy(value)
+        host.watching = true
         for _, watcher in host.watchers[key] or {} do
           watcher(copy(value))
         end
+        host.watching = false
       end,
       get = function(key)
         return copy(host.state[key])
@@ -163,7 +189,25 @@ function M.new(sources)
     setWantsSecondTicks = function() end,
   }
 
-  host.globals = { noctalia = noctalia, ui = ui, barWidget = barWidget, panel = panel, desktopWidget = desktopWidget }
+  local layer = {
+    render = function(tree)
+      host.layer.tree = tree
+      host.layer.renders += 1
+    end,
+    -- Nil in a state watcher, as in Noctalia.
+    outputName = function()
+      return if host.watching then nil else host.layer.output
+    end,
+  }
+
+  host.globals = {
+    noctalia = noctalia,
+    ui = ui,
+    barWidget = barWidget,
+    panel = panel,
+    desktopWidget = desktopWidget,
+    layer = layer,
+  }
 
   -- Sends a line to the newest stream, as the watch would print it.
   function host.line(text: string)

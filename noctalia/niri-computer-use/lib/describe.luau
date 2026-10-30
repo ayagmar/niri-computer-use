@@ -190,6 +190,158 @@ function M.say(tool: string, args: any, tr: Tr): string
   return if text == key then words(tool) else text
 end
 
+-- Keys a caption names: ones that type no character, so naming them shows nothing typed.
+local NAMED_KEYS = {
+  Return = true,
+  Tab = true,
+  Escape = true,
+  BackSpace = true,
+  Delete = true,
+  Insert = true,
+  Home = true,
+  End = true,
+  Page_Up = true,
+  Page_Down = true,
+  Left = true,
+  Right = true,
+  Up = true,
+  Down = true,
+  space = true,
+}
+
+-- Modifiers that still type a character with a letter: `shift+h` is a capital H.
+local TYPING_MODIFIERS = { shift = true, altgr = true }
+
+-- Whether `combo` types no character: its key is one of NAMED_KEYS or an F-key, or it
+-- holds a modifier that makes it a shortcut.
+local function namedKey(combo: string): boolean
+  local parts = string.split(combo, "+")
+  local key = parts[#parts]
+  if NAMED_KEYS[key] or key:match("^F%d%d?$") then
+    return true
+  end
+  for i = 1, #parts - 1 do
+    if not TYPING_MODIFIERS[parts[i]:lower()] then
+      return true
+    end
+  end
+  return false
+end
+
+-- `keys ctrl+s, Return` when every combination holds a modifier or is a key that types
+-- nothing, otherwise only how many, so a caption never spells out typed letters.
+local function keysDoing(args, tr: Tr): string
+  local list = args.keys
+  local function counted(n: number): string
+    return if n == 1 then tr("overlay.one_key") else tr("overlay.keys", { n = n })
+  end
+  if type(list) ~= "table" then
+    return counted(1)
+  end
+  local count = if type(list.count) == "number" then list.count else #list
+  for _, combo in list do
+    if type(combo) ~= "string" or not namedKey(combo) then
+      return counted(count)
+    end
+  end
+  if #list == 0 or #list > 2 then
+    return counted(count)
+  end
+  return tr("overlay.key", { keys = table.concat(list, ", ") })
+end
+
+local function inApp(text: string, app: string?, tr: Tr): string
+  return if app then tr("overlay.in", { doing = text, app = app }) else text
+end
+
+local function clickDoing(args, tr: Tr): string
+  if args.count == 2 then
+    return tr("overlay.double_click")
+  elseif args.button == "right" then
+    return tr("overlay.right_click")
+  end
+  return tr("overlay.click")
+end
+
+-- Each acting tool's caption, from its logged arguments and the app of the window it acts on.
+local DOING: { [string]: (args: any, app: string?, tr: Tr) -> string } = {
+  click = function(args, _, tr)
+    return clickDoing(args, tr)
+  end,
+  pointer_move = function(_, _, tr)
+    return tr("overlay.move")
+  end,
+  drag = function(_, _, tr)
+    return tr("overlay.drag")
+  end,
+  scroll = function(_, _, tr)
+    return tr("overlay.scroll")
+  end,
+  type_text = function(args, app, tr)
+    local key = if args.via == "paste" then "overlay.paste" else "overlay.type"
+    return inApp(tr(key, { count = args.text_len or 0 }), app, tr)
+  end,
+  paste = function(args, app, tr)
+    return inApp(tr("overlay.paste", { count = args.text_len or 0 }), app, tr)
+  end,
+  key = function(args, app, tr)
+    return inApp(keysDoing(args, tr), app, tr)
+  end,
+  focus = function(args, app, tr)
+    if args.workspace_id then
+      return tr("overlay.workspace")
+    end
+    return if app then tr("overlay.focus_app", { app = app }) else tr("overlay.focus")
+  end,
+  focus_window = function(_, app, tr)
+    return if app then tr("overlay.focus_app", { app = app }) else tr("overlay.focus")
+  end,
+  focus_workspace = function(_, _, tr)
+    return tr("overlay.workspace")
+  end,
+  launch = function(args, _, tr)
+    return tr("overlay.launch", { preset = named(args.preset, "?") })
+  end,
+  close_window = function(_, app, tr)
+    return if app then tr("overlay.close_app", { app = app }) else tr("overlay.close")
+  end,
+  niri_action = function(args, _, tr)
+    return tr("overlay.niri_action", { action = actionName(args) })
+  end,
+  shell_panel = function(args, _, tr)
+    return tr("overlay.panel", { panel = named(args.panel, "?") })
+  end,
+  noctalia = function(_, _, tr)
+    return tr("overlay.noctalia")
+  end,
+  activate_element = function(args, app, tr)
+    return inApp(tr("overlay.activate", { role = named(args.role, "control") }), app, tr)
+  end,
+  set_element_text = function(_, app, tr)
+    return inApp(tr("overlay.set_text"), app, tr)
+  end,
+}
+
+-- Whether `tool` acts on the desktop, so the overlay shows it; reading tools never do.
+function M.acts(tool: string): boolean
+  return DOING[tool] ~= nil
+end
+
+-- The overlay's short caption for a call in progress, such as `typing 24 chars in kitty`,
+-- from the same metadata as `say` and niri's app id for the window acted on.
+function M.doing(tool: string, args: any, app: string?, tr: Tr): string?
+  local doing = DOING[tool]
+  if doing == nil then
+    return nil
+  end
+  return doing(if type(args) == "table" then args else {}, if type(app) == "string" then app else nil, tr)
+end
+
+-- An error name in words, such as `focus mismatch`, for the overlay's caption.
+function M.failure(name: string): string
+  return words(name)
+end
+
 -- `ok`, `refused` or `error`, from the call's audit fields.
 function M.outcome(call: any): string
   if type(call.error) == "string" then

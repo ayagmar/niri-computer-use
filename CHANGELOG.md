@@ -4,8 +4,13 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## Unreleased
 
+### Breaking
+
+- The Noctalia plugin needs Noctalia 5.4 or newer: it uses plugin API 36 for its overlay. Noctalia 5.3 lists it as incompatible and doesn't load it, bar widget, panel and glow included. The install script says so when Noctalia lists it that way.
+
 ### Added
 
+- The Noctalia plugin's overlay: while an agent holds the desktop, a small robot stands beside where it acts, with a caption such as `click` or `typing 12 chars in kitty`. It sets off as a click goes out and stands beside it a moment later, holds still while the agent's screenshot is taken, and lets clicks pass through. The `Show a robot where the agent acts` setting turns it off.
 - `watch` sends a `live` line for each phase of the action in progress: when the server admits it, where it acts (the output and the point, or the window and its `app_id`), right before its screenshot is taken, and how it ended. The server keeps that record in `live.json` in the instance's runtime directory. The audit log is unchanged.
 
 ### Changed

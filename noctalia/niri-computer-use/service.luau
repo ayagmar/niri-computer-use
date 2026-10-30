@@ -1,13 +1,20 @@
 --!nonstrict
 -- The plugin's only reader: runs `niri-computer-use watch`, folds its lines
 -- into the desk and publishes it as the `desk` state the bar, the panel and
--- the glow draw. It also sends the notifications and runs Stop and Resume.
+-- the glow draw, and the action in progress as the `live` state the robot
+-- overlay draws. It also sends the notifications, shows and hides the overlay's
+-- layer, and runs Stop and Resume.
 
 local desk = require("./lib/desk.luau")
 local command = require("./lib/command.luau")
 local actions = require("./lib/actions.luau")
+local live = require("./lib/live.luau")
 
 local STATE = "desk"
+local LIVE = "live"
+local LAYER = "robot"
+-- How long the overlay's layer stays after the lease is gone, for the goodbye.
+local HIDE_MS = 3000
 -- How long a quiet or failed watch waits before it is started again.
 local RESTART_MS = 15000
 
@@ -15,6 +22,10 @@ local RESTART_MS = 15000
 local SLEPT_MS = 5000
 
 local model = desk.new()
+local overlay = live.new()
+-- Whether this service showed the layer, and when it hides it.
+local shown = false
+local hideAtMs = nil
 local generation = 0
 local startedMs = -RESTART_MS
 local tickedMs = nil
@@ -33,6 +44,31 @@ end
 
 local function publish()
   noctalia.state.set(STATE, desk.view(model, noctalia.nowMs()))
+end
+
+local function publishLive()
+  noctalia.state.set(LIVE, live.view(overlay))
+end
+
+-- Shows the layer while an agent holds or asks for the desktop and the overlay is on,
+-- and hides it HIDE_MS after, so no surface or runtime exists while no agent drives.
+local function showOverlay(nowMs: number)
+  if setting("overlay", true) and model.lease ~= nil then
+    hideAtMs = nil
+    if not shown then
+      shown = true
+      -- The last lease may have left the layer on an output that is gone since.
+      noctalia.layer.configure(LAYER, { output = "focused" })
+      noctalia.layer.show(LAYER)
+    end
+  elseif shown then
+    hideAtMs = hideAtMs or nowMs + HIDE_MS
+    if nowMs >= hideAtMs then
+      shown = false
+      hideAtMs = nil
+      noctalia.layer.hide(LAYER)
+    end
+  end
 end
 
 -- Where the agent works, as the start of a notification's body.
@@ -65,10 +101,18 @@ end
 
 local function onLine(line: string)
   local event = noctalia.json.decode(line)
-  for _, change in desk.feed(model, event, line, noctalia.nowMs(), tr) do
+  local nowMs = noctalia.nowMs()
+  for _, change in desk.feed(model, event, line, nowMs, tr) do
     notifyChange(change)
   end
-  publish()
+  if live.feed(overlay, event, nowMs) then
+    publishLive()
+  end
+  showOverlay(nowMs)
+  -- A `live` line changes nothing the bar, the panel or the glow draw.
+  if type(event) ~= "table" or event.event ~= "live" then
+    publish()
+  end
 end
 
 -- Starts a watch. Lines from an earlier one, should it still run, are dropped.
@@ -137,7 +181,11 @@ end
 
 function update()
   supervise()
+  showOverlay(noctalia.nowMs())
 end
 
 noctalia.setUpdateInterval(1000)
+-- A service that runs again, as after the overlay setting changed, starts hidden.
+noctalia.layer.hide(LAYER)
+publishLive()
 start()

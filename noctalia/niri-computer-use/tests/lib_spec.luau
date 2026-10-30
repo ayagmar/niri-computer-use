@@ -11,6 +11,7 @@ local agentGroups = env.module("lib/agents.luau")
 local tr = host.globals.noctalia.tr
 
 local NOW = 1_790_000_000_000
+local fx = require("./support/fixtures")
 
 local function lease(session, extra)
   local value = { session = session, since = "2026-10-17T15:05:55.000Z", pending = false, project = "shop" }
@@ -261,6 +262,36 @@ t.group("desk", function()
     t.eq(kinds(desk.feed(d, { event = "action", tool = "key", session = "pi/7", accepted = false }, "", NOW, tr)), "")
     t.eq(d.calls[3].outcome, "refused")
   end)
+
+  -- The bug: a plugin from before the overlay misreading `watch`'s new `live` lines.
+  t.test("live lines leave the desk as it would be without them", function()
+    local plain, mixed = desk.new(), desk.new()
+    local records = fx.live()
+    local lines = {
+      { event = "hello", format = 1 },
+      stateLine(lease("claude-code/4711")),
+      { event = "action", tool = "click", session = "claude-code/4711", ts = "2026-10-30T12:00:00.123Z", args = {} },
+      { event = "action", tool = "key", session = "claude-code/4711", ts = "2026-10-30T12:00:03.000Z", error = "focus_mismatch" },
+    }
+    local changes = { plain = {}, mixed = {} }
+    for i, line in lines do
+      for _, change in desk.feed(plain, line, "", NOW, tr) do
+        table.insert(changes.plain, change.kind)
+      end
+      for _, record in { records.click_aim, records.drag_end_cancelled, records.launch_start } do
+        desk.feed(mixed, fx.with(record, { backlog = i == 1 }), "", NOW, tr)
+      end
+      for _, change in desk.feed(mixed, line, "", NOW, tr) do
+        table.insert(changes.mixed, change.kind)
+      end
+    end
+    t.eq(table.concat(changes.mixed, ","), table.concat(changes.plain, ","))
+    local a, b = desk.view(plain, NOW), desk.view(mixed, NOW)
+    t.eq(b.status, a.status)
+    t.eq(#b.calls, #a.calls)
+    t.eq(b.calls[2].text, a.calls[2].text)
+    t.eq(b.problem, nil)
+  end)
 end)
 
 t.group("feed", function()
@@ -418,6 +449,32 @@ t.group("describe", function()
     t.eq(describe.client("claude-code/4711"), "Claude Code")
     t.eq(describe.client("codex-mcp-client/12"), "Codex")
     t.eq(describe.client("my agent/3"), "my agent")
+  end)
+
+  -- The bug: a caption spelling out the letters an agent typed with `key`, or showing a
+  -- translation key for a tool the captions forgot.
+  t.test("the overlay's captions name acting tools and keys that type nothing, never typed letters", function()
+    for _, tool in { "click", "pointer_move", "drag", "scroll", "type_text", "paste", "key", "focus", "focus_window",
+      "focus_workspace", "launch", "close_window", "niri_action", "shell_panel", "noctalia", "activate_element",
+      "set_element_text" } do
+      local caption = describe.doing(tool, {}, nil, tr)
+      t.ok(caption and not caption:find("overlay.", 1, true), `{tool}: {caption}`)
+    end
+    for _, tool in { "screenshot", "elements", "wait_for", "desktop_state", "status", "acquire_desktop", "clipboard_read", "later" } do
+      t.eq(describe.doing(tool, {}, nil, tr), nil, tool)
+    end
+    t.eq(describe.doing("key", { keys = { "ctrl+s" } }, "kitty", tr), "keys ctrl+s in kitty")
+    t.eq(describe.doing("key", { keys = { "Return", "F5" } }, nil, tr), "keys Return, F5")
+    t.eq(describe.doing("key", { keys = { "h", "i" } }, nil, tr), "2 keys")
+    t.eq(describe.doing("key", { keys = { "ctrl+a", "x" } }, nil, tr), "2 keys")
+    -- Shifted letters are typed capitals, so they aren't named either.
+    t.eq(describe.doing("key", { keys = { "shift+h", "shift+i" } }, nil, tr), "2 keys")
+    t.eq(describe.doing("key", { keys = { "AltGr+e" } }, nil, tr), "a key")
+    t.eq(describe.doing("key", { keys = { "shift+Tab", "ctrl+shift+t" } }, nil, tr), "keys shift+Tab, ctrl+shift+t")
+    t.eq(describe.doing("key", { keys = { category = "invalid_keys", count = 3 } }, nil, tr), "3 keys")
+    t.eq(describe.doing("type_text", { text_len = 24 }, "kitty", tr), "typing 24 chars in kitty")
+    t.eq(describe.doing("focus", { window_id = 3 }, "helium", tr), "focus → helium")
+    t.eq(describe.doing("click", { count = 2 }, nil, tr), "double-click")
   end)
 end)
 

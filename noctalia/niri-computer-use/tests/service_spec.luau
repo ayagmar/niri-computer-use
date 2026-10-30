@@ -1,6 +1,7 @@
 --!nonstrict
 local t = require("./support/t")
 local env = require("./support/env")
+local fx = require("./support/fixtures")
 
 local function started()
   local host = env.host()
@@ -170,6 +171,52 @@ t.group("service", function()
     host.config.binary = "/opt/ncu/niri-computer-use"
     env.start(host, "service.luau")
     t.ok(host.streams[1].command:find("for b in '/opt/ncu/niri-computer-use'; do", 1, true), host.streams[1].command)
+  end)
+
+  local function commands(host)
+    local out = {}
+    for _, call in host.layerCalls do
+      table.insert(out, if call.command == "configure" then `configure {call.patch.output}` else call.command)
+    end
+    return table.concat(out, ", ")
+  end
+
+  t.test("shows the robot's layer on the focused output while an agent drives, and hides it 3 s after", function()
+    local host = started()
+    t.eq(commands(host), "hide")
+    driving(host)
+    t.eq(commands(host), "hide, configure focused, show")
+    host.event({ event = "state", stopped = false, input_dirty = false })
+    host.nowMs += 2000
+    t.eq(commands(host), "hide, configure focused, show", "kept for the goodbye")
+    host.nowMs += 1000
+    host.event({ event = "alive" })
+    t.eq(commands(host), "hide, configure focused, show, hide")
+  end)
+
+  t.test("with the overlay off, the layer is never shown", function()
+    local host = env.host()
+    host.config.overlay = false
+    env.start(host, "service.luau")
+    driving(host)
+    t.eq(commands(host), "hide")
+  end)
+
+  -- The bug: the bar and the panel drawing again for every record of every action.
+  t.test("publishes the action in progress only when it changes, and not the desk for it", function()
+    local host = started()
+    host.nowMs = env.module("lib/time.luau").parse("2026-10-30T12:00:00.500Z")
+    host.event({ event = "hello", format = 1 })
+    host.event(fx.state())
+    local desk, before = host.state.desk, host.state.live
+    local F = fx.live()
+    host.event(F.click_aim)
+    t.eq(host.state.desk, desk, "the desk wasn't published again")
+    t.eq(host.state.live.call.phase, "aim")
+    local published = host.state.live
+    host.event(F.click_aim)
+    t.eq(host.state.live, published, "the same record twice")
+    t.ok(published ~= before)
   end)
 end)
 
