@@ -13,6 +13,8 @@ Looking needs nothing: any connected agent can call `status`, `desktop_state`, `
 
 With [`confirm_lease`](../configuration/#confirm_lease) on, `acquire_desktop` also waits for you to choose Allow on a notification before the lease is granted, whatever the agent's client approves on its own. The notification gives the name the client calls itself and the process it started. Nothing checks that name, so the server shows at most 64 characters of it, with anything but ASCII letters, digits, spaces and `._-+@` replaced by `_`; the same name is in the audit log and the lease holder's `label`. It holds against an agent that acts through this server, not one that can run commands in a shell of its own: that agent could put a `notify-send` that answers Allow on the client's `PATH`, or press Allow through the notification server's D-Bus interface.
 
+Unless you turn [`notify_on_lease`](../configuration/#notify_on_lease) off, an agent taking the lease also puts a notification on the desktop that names it, at most once per agent every five minutes, so you see that an agent drives even without the Noctalia plugin. The plugin sends its own, so the server skips it while the plugin is enabled.
+
 `acquire_desktop` notes the window you were on. `release_desktop` with `restore_focus: true` puts keyboard focus back there. The lease is also given up when the agent's session ends, because its client closed the connection or its server exited, and when you press the stop key.
 
 ## Stop and resume

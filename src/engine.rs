@@ -29,12 +29,15 @@ use crate::error::{CallError, ErrorName, ToolError};
 use crate::input::Input;
 use crate::niri::OutputSummary;
 use crate::niri::events::{DesktopState, EventStream, StreamState};
+use crate::notice::Notices;
 use crate::observe;
 use crate::policy::{self, SaveTarget};
 use crate::refs::Shot;
 use crate::session::{Label, Session, SessionId, Settings};
 use crate::stop_key::{self, StopKey};
-use crate::{Env, clipboard, confirm, elements, niri, noctalia, runner, settle, status, wait};
+use crate::{
+    Env, clipboard, confirm, elements, niri, noctalia, runner, settle, status, wait, watch,
+};
 
 #[derive(Debug)]
 pub(crate) struct Engine {
@@ -51,6 +54,8 @@ pub(crate) struct Engine {
     sessions: Mutex<BTreeMap<SessionId, Session>>,
     /// The clipboard as the current lease sees it, from its `acquire` on.
     clipboard: Mutex<Option<clipboard::Watch>>,
+    /// The notifications `notify_on_lease` sent.
+    notices: Notices,
     /// The last session id given out.
     last_session: AtomicU64,
     mode: status::Mode,
@@ -62,6 +67,10 @@ pub(crate) struct Engine {
     /// Lives as long as the engine; see `control::guard`.
     _guardian: Option<runner::Watcher>,
 }
+
+/// What a grant gives: the holder, the window that had keyboard focus, and whether the
+/// lease is new rather than one the session held already.
+type Taken = (Holder, Option<u64>, bool);
 
 /// What `acquire_desktop` returns.
 #[derive(Debug, Serialize)]
@@ -232,6 +241,7 @@ impl Engine {
             a11y,
             sessions: Mutex::new(BTreeMap::new()),
             clipboard: Mutex::new(None),
+            notices: Notices::default(),
             last_session: AtomicU64::new(0),
             mode: status::Mode::Standalone,
             fallback: None,
@@ -359,6 +369,7 @@ impl Engine {
             engine: Some(engine),
             event_stream: Some(event_stream),
             config_failed: self.config_failed(),
+            lease_notice_error: self.notices.last_error(),
             audit: &self.audit,
             lease: self.desk.status(session),
             policy: &settings.policy,
@@ -383,14 +394,41 @@ impl Engine {
     ) -> Result<Granted, ToolError> {
         // Boxed, because the readiness report and the prompt make a large future.
         let refusal = Box::pin(self.acquire_refusal(session, label));
-        let (holder, users_window) = self.grant(session, &label.to_string(), refusal).await?;
-        let stop_key = stop_key::check(&self.env.niri_socket, self.config_failed()).await;
+        let (holder, users_window, fresh) =
+            self.grant(session, &label.to_string(), refusal).await?;
+        let announced = async {
+            if fresh {
+                self.announce(session, label).await;
+            }
+        };
+        let stop_key = stop_key::check(&self.env.niri_socket, self.config_failed());
+        let ((), stop_key) = tokio::join!(announced, stop_key);
         Ok(Granted {
             holder,
             users_window,
             warning: (stop_key.state == StopKey::NotFound)
                 .then(|| stop_key::unbound_warning(&stop_key::own_program())),
         })
+    }
+
+    /// Puts the notification `notify_on_lease` asks for on the desktop, unless the user
+    /// has just allowed the lease (`confirm_lease`), this agent was notified about within
+    /// `notice::INTERVAL`, or the Noctalia plugin, which sends its own, is enabled.
+    async fn announce(&self, session: &Session, label: &Label) {
+        let settings = session.settings();
+        if !settings.policy.notify_on_lease() || settings.confirm_lease.enabled() {
+            return;
+        }
+        if !self.notices.due(label, Instant::now()) {
+            return;
+        }
+        if self.env.desktop.noctalia.is_some() && noctalia::plugin_enabled(&self.env).await {
+            return;
+        }
+        let project = watch::project_of(std::path::Path::new("/proc"), label.pid());
+        self.notices
+            .send(settings.place(), label, project.as_deref())
+            .await;
     }
 
     /// Whether niri's last config load failed, as the event stream last said.
@@ -426,7 +464,7 @@ impl Engine {
         session: &Session,
         label: &str,
         refusal: impl Future<Output = Option<ToolError>>,
-    ) -> Result<(Holder, Option<u64>), ToolError> {
+    ) -> Result<Taken, ToolError> {
         let prepare = |lease| async move {
             let users_window = niri::waiter(self.events.as_ref())
                 .await
@@ -441,10 +479,11 @@ impl Engine {
             .desk
             .acquire_with(session, label, refusal, prepare)
             .await?;
+        let fresh = watch.is_some();
         if let Some(watch) = watch {
             self.keep_watch(session, watch)?;
         }
-        Ok((holder, self.desk.users_window(session)))
+        Ok((holder, self.desk.users_window(session), fresh))
     }
 
     /// Gives the lease up, with `restore_focus` first giving focus back to the user's
@@ -1225,7 +1264,7 @@ mod tests {
     fn grant_apart(
         engine: &Arc<Engine>,
         session: &Session,
-    ) -> tokio::task::JoinHandle<Result<(Holder, Option<u64>), ToolError>> {
+    ) -> tokio::task::JoinHandle<Result<Taken, ToolError>> {
         let (engine, session) = (Arc::clone(engine), session.clone());
         tokio::spawn(async move { engine.grant(&session, "test/1", ready(None)).await })
     }
@@ -1474,5 +1513,48 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("still waiting after five seconds");
+    }
+
+    /// A session of this process whose `PATH` is `bin`, with `confirm_lease` as
+    /// `confirm` says and the policy file `policy`.
+    fn notified(id: u64, bin: &std::path::Path, confirm: bool, policy: &str) -> Session {
+        let given = crate::session::Given {
+            unrestricted: None,
+            confirm_lease: confirm.then(|| "1".into()),
+            tools: None,
+            shared: None,
+            home: None,
+            path: Some(bin.as_os_str().to_owned()),
+            policy: policy::Source::Text {
+                path: "/c/policy.toml".into(),
+                text: policy.to_owned(),
+            },
+        };
+        Session::new(SessionId(id), std::process::id(), Settings::new(given))
+    }
+
+    // One notification per agent, however often it takes the lease; none for a lease the
+    // user just allowed on the desktop, or with `notify_on_lease = false`.
+    #[tokio::test]
+    async fn a_granted_lease_notifies_once_unless_the_user_just_allowed_it() {
+        let bin = crate::test_support::fresh_dir("engine-notice");
+        crate::test_support::script(
+            &bin.join("notify-send"),
+            "printf '%s\\n' \"$4\" >> \"${0%/*}/sent\"",
+        );
+        let engine = without_niri(Env::default());
+        let agent = notified(1, &bin, false, "");
+        for _ in 0..3 {
+            engine.announce(&agent, &agent.label("claude-code")).await;
+        }
+        let asked = notified(2, &bin, true, "");
+        engine.announce(&asked, &asked.label("pi")).await;
+        let off = notified(3, &bin, false, "notify_on_lease = false");
+        engine.announce(&off, &off.label("amp")).await;
+        let sent = std::fs::read_to_string(bin.join("sent")).unwrap();
+        assert_eq!(sent.lines().count(), 1, "{sent}");
+        assert!(sent.starts_with("claude-code"), "{sent}");
+        assert_eq!(engine.notices.last_error(), None);
+        std::fs::remove_dir_all(bin).unwrap();
     }
 }

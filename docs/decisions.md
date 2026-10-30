@@ -2034,3 +2034,10 @@ Each action's commit is the one its tag names in the action's repository (`git l
 - `unknown` is never turned into `not_found`: niri out of reach, a file that can't be read, a config niri would refuse (an unbalanced brace, a missing include, a cycle), and niri's `ConfigLoaded { failed: true }` all give `unknown`, since niri then runs an earlier config or its default. The server's event stream keeps that event; the `status` subcommand opens a stream of its own and reads up to it.
 - The scan runs on a thread of its own with a two-second deadline, since a config file on a stuck filesystem would block its reader.
 - A bind later in the config, or in a later include, that takes the same key for another action isn't noticed, so `bound` means "a bind runs `stop`", not "this key runs it".
+
+## 2026-10-30: a notification when a lease is granted
+
+- `notify_on_lease`, on by default, sends one `notify-send` when `acquire_desktop` grants a new lease. It runs through the runner from the session's `PATH`, as `confirm_lease`'s prompt does, with a two-second deadline, inline after the grant and beside the stop key check. A failure is kept for `status.lease_notice_error` and never refuses the lease, which is already granted by then.
+- At most one per agent every five minutes, by the session's label (client name and process): an agent that takes the lease every few seconds gets one, two agents taking turns get one each. Five minutes matches the Noctalia panel's "recently gave it back" window; a sliding window keyed on the last grant would hide an agent that never stops taking the lease.
+- Skipped when `confirm_lease` is on (the user just chose Allow on a notification) and while Noctalia lists the plugin `ayagmar/niri-computer-use` as enabled in `plugins list`. The plugin's service notifies on "took" by default, so both would show. That is one IPC call with the 300 ms deadline the `noctalia` tool's naming uses, made only for a grant that is due a notification; a Noctalia that doesn't answer in time counts as no plugin, so the user still gets told.
+- An invalid policy file leaves it on, as with other safeguards.

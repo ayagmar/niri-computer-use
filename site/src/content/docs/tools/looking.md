@@ -47,6 +47,8 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `policy.state` | `loaded`, `missing` (valid: no presets, no denied apps) or `invalid` |
 | `policy.presets`, `policy.denied_app_ids`, `policy.error` | how many presets and denied apps the policy file has, and why it is invalid |
 | `policy.preset_names` | the preset names `launch` takes |
+| `policy.notify_on_lease` | whether a granted lease puts a notification on the desktop ([`notify_on_lease`](../../concepts/configuration/#notify_on_lease)) |
+| `lease_notice_error` | why the last of those notifications couldn't be sent, such as `notify-send` missing, or null; null from the `status` subcommand |
 | `policy.turn_on_accessibility` | whether the server may turn the session's accessibility on ([`turn_on_accessibility`](../../concepts/configuration/#turn_on_accessibility)) |
 | `policy.capture_dir`, `policy.capture_dir_source` | where `screenshot` saves, as written (`~/Pictures/niri-computer-use` by default), or null when saving is off; and `policy` or `default` for where that came from |
 | `unrestricted.enabled`, `unrestricted.source`, `unrestricted.error` | whether gated `niri_action`s and unrestricted presets are allowed, whether the policy file, `NIRI_COMPUTER_USE_UNRESTRICTED` or both allowed them, and why the variable was ignored |

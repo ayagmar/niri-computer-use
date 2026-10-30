@@ -145,7 +145,7 @@ It prints one line per prerequisite, `✓` or `✗`, with how to fix each `✗`,
 | `niri.error` | `null`; a `detail` of `NIRI_SOCKET is not set` means the server found no running niri of yours |
 | `lock.state` | `unlocked`; `unknown` refuses the lease, see [Troubleshooting](../../reference/troubleshooting/#the-lease-is-refused-with-screen_locked-while-the-screen-is-unlocked) |
 | `outputs.pointer_supported` | `true` for the pointer tools |
-| `binaries` | `grim` `true`; `notify-send` matters only with [`confirm_lease`](../../concepts/configuration/#confirm_lease) |
+| `binaries` | `grim` `true`; `notify-send` for [`notify_on_lease`](../../concepts/configuration/#notify_on_lease) and [`confirm_lease`](../../concepts/configuration/#confirm_lease) |
 | `desktop_programs.loginctl` | a path such as `/usr/bin/loginctl` |
 | `desktop_programs.noctalia` | with Noctalia installed, a path such as `/usr/bin/noctalia`; `null` when it is installed elsewhere, such as a Nix user profile or `~/.local/bin`: set [`NIRI_COMPUTER_USE_DESKTOP_PATH`](../../concepts/configuration/#environment) to its directories, the same for every client |
 

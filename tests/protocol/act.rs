@@ -2422,6 +2422,9 @@ async fn noctalia_calls_are_named_only_as_noctalias_own_lists_name_them() {
 async fn a_refused_noctalia_call_asks_noctalia_for_no_list() {
     let on = [("NIRI_COMPUTER_USE_UNRESTRICTED", "1")];
     let mut desk = Desk::start_with("act-noctalia-unnamed", "", &on).await;
+    // Taking the lease asks for the plugin list, to skip the lease notification while the
+    // Noctalia plugin sends its own.
+    let before = desk.noctalia.list_requests();
     let framed = json!({"args": ["caffeine-toggle", "a\nb"]});
     desk.server.call("noctalia", framed).await;
     let released = json!({"restore_focus": false});
@@ -2429,7 +2432,7 @@ async fn a_refused_noctalia_call_asks_noctalia_for_no_list() {
     let plugin = json!({"args": ["plugin", "ayagmar/obs-control:controller", "all", "go"]});
     desk.server.call("noctalia", plugin).await;
 
-    assert_eq!(desk.noctalia.list_requests(), 0);
+    assert_eq!(desk.noctalia.list_requests(), before);
     let logged: Vec<Value> = desk
         .audited()
         .into_iter()

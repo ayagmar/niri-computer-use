@@ -197,6 +197,28 @@ async fn listing(socket: &Path, command: Command) -> Option<String> {
     String::from_utf8(reply).ok()
 }
 
+/// Whether Noctalia lists this project's plugin as enabled, read within
+/// `NAMING_DEADLINE`; not when Noctalia doesn't answer in time.
+pub(crate) async fn plugin_enabled(env: &Env) -> bool {
+    let Some(socket) = socket(env) else {
+        return false;
+    };
+    listing(&socket, Command::Plugins)
+        .await
+        .is_some_and(|list| lists_enabled(&list, PLUGIN))
+}
+
+/// The Noctalia plugin this project ships.
+const PLUGIN: &str = "ayagmar/niri-computer-use";
+
+/// Whether a `plugins list` reply lists `plugin` as enabled.
+fn lists_enabled(list: &str, plugin: &str) -> bool {
+    list.lines().any(|line| {
+        let mut words = line.split(' ');
+        words.next() == Some(plugin) && words.any(|word| word == "enabled")
+    })
+}
+
 /// Names `args` from a `--help` reply and, for `plugin`, a `plugins list` reply. Only
 /// exact matches with the lists' entries are named, so nothing else from `args` is.
 fn name(help: &str, plugins: Option<&str>, args: &[String]) -> Named {
@@ -543,6 +565,9 @@ noctalia/timer [official] 1.5.0 disabled
                 ("bar-show", "Show")
             ]
         );
+        assert!(lists_enabled(PLUGINS, PLUGIN));
+        assert!(!lists_enabled(PLUGINS, "noctalia/timer"));
+        assert!(!lists_enabled(PLUGINS, "ayagmar/niri"));
         assert_eq!(
             plugin_ids(PLUGINS).collect::<Vec<_>>(),
             [

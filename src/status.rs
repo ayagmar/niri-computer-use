@@ -70,6 +70,9 @@ pub(crate) struct Status {
     /// Whether `acquire_desktop` waits for the user to allow it on the desktop, and whether
     /// the policy file or the environment asked for that.
     confirm_lease: SwitchStatus,
+    /// Why the last notification `notify_on_lease` sends couldn't be sent, since the
+    /// engine started; null in the `status` subcommand.
+    lease_notice_error: Option<String>,
     /// Which tools this session lists, and what narrowed them.
     tools: ToolsStatus,
     /// Whether this client is served by the shared engine, standalone, or only by the
@@ -90,6 +93,9 @@ pub(crate) struct Sources<'a> {
     pub(crate) event_stream: Option<StreamState>,
     /// Whether niri's last config load failed, when niri has said.
     pub(crate) config_failed: Option<bool>,
+    /// Why the last `notify_on_lease` notification couldn't be sent; none for the
+    /// `status` subcommand.
+    pub(crate) lease_notice_error: Option<String>,
     pub(crate) audit: &'a Audit,
     pub(crate) lease: LeaseStatus,
     pub(crate) policy: &'a Loaded,
@@ -179,6 +185,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         engine,
         event_stream,
         config_failed,
+        lease_notice_error,
         audit,
         lease,
         policy,
@@ -242,6 +249,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         policy: policy.status(),
         unrestricted: unrestricted.status(),
         confirm_lease: confirm_lease.status(),
+        lease_notice_error,
         tools: tools.status(),
         shared: shared.status(),
         binaries: SESSION_BINARIES
@@ -291,6 +299,7 @@ mod tests {
             engine: None,
             event_stream: None,
             config_failed: None,
+            lease_notice_error: None,
             audit: &audit,
             lease: status_without_desk(&Env::default()),
             policy: &settings.policy,
@@ -347,13 +356,14 @@ mod tests {
                 "accessibility_switch": null,
                 "audit": {"path": null, "last_error": "neither XDG_STATE_HOME nor HOME is set"},
                 "policy": {
-                    "state": "missing", "presets": 0, "preset_names": [], "denied_app_ids": 0, "turn_on_accessibility": true,
+                    "state": "missing", "presets": 0, "preset_names": [], "denied_app_ids": 0, "turn_on_accessibility": true, "notify_on_lease": true,
                     "capture_dir": "~/Pictures/niri-computer-use",
                     "capture_dir_source": "default",
                     "error": null
                 },
                 "unrestricted": {"enabled": false, "source": null, "error": null},
                 "confirm_lease": {"enabled": false, "source": null, "error": null},
+                "lease_notice_error": null,
                 "tools": {"profile": "full", "source": null, "error": null},
                 "shared": {"setting": "on", "error": null},
                 "binaries": {"grim": false, "notify-send": false},

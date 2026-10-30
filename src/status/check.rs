@@ -43,6 +43,7 @@ struct View {
     policy: PolicyView,
     unrestricted: SettingView,
     confirm_lease: SettingView,
+    lease_notice_error: Option<String>,
     tools: SettingView,
     shared: SettingView,
     engine: Option<EngineView>,
@@ -87,6 +88,7 @@ struct AccessibilityView {
 struct PolicyView {
     state: String,
     presets: usize,
+    notify_on_lease: bool,
     error: Option<String>,
 }
 
@@ -153,6 +155,7 @@ fn lines(view: &View, program: &Path) -> Vec<Line> {
     }
     lines.extend(flags(view));
     lines.push(policy(&view.policy));
+    lines.extend(notice(view));
     lines.extend(settings(view));
     if !reachable {
         lines.push(Line::limit(
@@ -318,6 +321,26 @@ fn policy(policy: &PolicyView) -> Line {
     }
 }
 
+/// Why the notification a granted lease puts on the desktop isn't shown, while
+/// `notify_on_lease` is on.
+fn notice(view: &View) -> Option<Line> {
+    if !view.policy.notify_on_lease {
+        return None;
+    }
+    let fix = "install notify-send (libnotify) and run a notification server, or set notify_on_lease = false in the policy file";
+    if !view.binaries.get("notify-send").copied().unwrap_or(false) {
+        return Some(Line::limit(
+            "lease notification: notify-send not found on PATH, so nothing on the desktop says an agent took the lease",
+            fix,
+        ));
+    }
+    let error = view.lease_notice_error.as_ref()?;
+    Some(Line::limit(
+        format!("lease notification: the last one failed ({error})"),
+        fix,
+    ))
+}
+
 /// The variables refused, and why a client in shared mode is served standalone.
 fn settings(view: &View) -> Vec<Line> {
     let refused = [
@@ -408,9 +431,10 @@ mod tests {
             "lock": {"state": "unlocked", "source": "logind", "session": "2", "logind_error": null},
             "outputs": {"pointer_supported": true, "reason": null},
             "accessibility": {"available": true, "address": "unix:path=/run/user/1000/at-spi/bus", "reason": null},
-            "policy": {"state": "loaded", "presets": 2, "error": null},
+            "policy": {"state": "loaded", "presets": 2, "notify_on_lease": true, "error": null},
             "unrestricted": {"enabled": false, "source": null, "error": null},
             "confirm_lease": {"enabled": false, "source": null, "error": null},
+            "lease_notice_error": null,
             "tools": {"profile": "full", "source": null, "error": null},
             "shared": {"setting": "on", "error": null},
             "binaries": {"grim": true, "notify-send": true}
@@ -550,7 +574,7 @@ Not ready: 1 blocker."
 
     #[test]
     fn a_missing_feature_is_marked_optional_and_blocks_nothing() {
-        let cases: [(Changes<'_>, &str); 5] = [
+        let cases: [(Changes<'_>, &str); 7] = [
             (
                 &[
                     ("/outputs/pointer_supported", json!(false)),
@@ -586,6 +610,17 @@ Not ready: 1 blocker."
                 )],
                 "✗ shared engine: not used (the engine refused this build) (optional)",
             ),
+            (
+                &[("/binaries/notify-send", json!(false))],
+                "✗ lease notification: notify-send not found on PATH, so nothing on the desktop says an agent took the lease (optional)",
+            ),
+            (
+                &[(
+                    "/lease_notice_error",
+                    json!("notify-send exited with exit status: 1: no server"),
+                )],
+                "✗ lease notification: the last one failed (notify-send exited with exit status: 1: no server) (optional)",
+            ),
         ];
         for (changes, line) in cases {
             let verdict = with(changes);
@@ -599,6 +634,15 @@ Not ready: 1 blocker."
         }
     }
 
+    #[test]
+    fn says_nothing_of_the_notification_when_it_is_off() {
+        let verdict = with(&[
+            ("/policy/notify_on_lease", json!(false)),
+            ("/binaries/notify-send", json!(false)),
+        ]);
+        assert!(!verdict.text.contains("notification"), "{}", verdict.text);
+    }
+
     // The check reads the report through its JSON, so a renamed field would fail here
     // rather than read as missing.
     #[tokio::test]
@@ -610,6 +654,7 @@ Not ready: 1 blocker."
             engine: None,
             event_stream: None,
             config_failed: None,
+            lease_notice_error: None,
             audit: &audit,
             lease: crate::control::desk::status_without_desk(&crate::Env::default()),
             policy: &settings.policy,
