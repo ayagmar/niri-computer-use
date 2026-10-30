@@ -20,6 +20,7 @@ use crate::policy::{
     ToolsStatus,
 };
 use crate::runner::{self, Place};
+use crate::stop_key::{self, StopKey};
 use crate::{Env, a11y, discover};
 
 /// Programs the server runs for the session asking, found on its `PATH` or not.
@@ -42,6 +43,11 @@ pub(crate) struct Status {
     lease: LeaseStatus,
     /// Whether the stop flag is set for this niri instance.
     stop: bool,
+    /// Whether niri's config binds a key to `niri-computer-use stop`: `bound`,
+    /// `not_found`, or `unknown` when that can't be told for sure.
+    stop_key: StopKey,
+    /// The file with the bind, the file read, or why the answer is unknown.
+    stop_key_detail: String,
     /// The input-dirty marker, if there is one.
     input_dirty: Option<Found>,
     lock: Lock,
@@ -80,6 +86,8 @@ pub(crate) struct Sources<'a> {
     /// The engine serving the session; none for the `status` subcommand.
     pub(crate) engine: Option<EngineStatus>,
     pub(crate) event_stream: Option<StreamState>,
+    /// Whether niri's last config load failed, when niri has said.
+    pub(crate) config_failed: Option<bool>,
     pub(crate) audit: &'a Audit,
     pub(crate) lease: LeaseStatus,
     pub(crate) policy: &'a Loaded,
@@ -168,6 +176,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
     let Sources {
         engine,
         event_stream,
+        config_failed,
         audit,
         lease,
         policy,
@@ -187,11 +196,12 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
             None
         }
     };
-    let (version, outputs, noctalia, logind) = tokio::join!(
+    let (version, outputs, noctalia, logind, stop_key) = tokio::join!(
         niri::version(socket),
         niri::outputs(socket),
         noctalia,
-        control::logind(socket, &env.desktop)
+        control::logind(socket, &env.desktop),
+        stop_key::check(socket, config_failed)
     );
     let noctalia_status = noctalia.as_ref().and_then(|reply| reply.as_ref().ok());
     let lock = control::lock(logind, noctalia_status);
@@ -200,11 +210,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         Ok(version) => (Some(version), None),
         Err(error) => (None, Some(error)),
     };
-    let (presence, noctalia_error) = match noctalia {
-        None => (Presence::NotInstalled, None),
-        Some(Ok(_)) => (Presence::Running, None),
-        Some(Err(failure)) => (Presence::NotRunning, Some(failure)),
-    };
+    let (presence, noctalia_error) = presence(noctalia);
     Status {
         instance: env.instance(),
         discovery: env.discovery.clone(),
@@ -222,6 +228,8 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
             .ok()
             .and_then(|runtime| marker::read(&runtime)),
         stop: RuntimeDir::of(env).is_ok_and(|runtime| runtime.stopped().unwrap_or(true)),
+        stop_key: stop_key.state,
+        stop_key_detail: stop_key.detail,
         lock,
         outputs: OutputSupport::of(outputs),
         noctalia: presence,
@@ -239,6 +247,18 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
             .into_iter()
             .collect(),
         desktop_programs: env.desktop.clone(),
+    }
+}
+
+/// Whether Noctalia is there from its status reply, none when it isn't installed, and why
+/// it counts as not running.
+fn presence(
+    noctalia: Option<Result<serde_json::Map<String, serde_json::Value>, ToolError>>,
+) -> (Presence, Option<ToolError>) {
+    match noctalia {
+        None => (Presence::NotInstalled, None),
+        Some(Ok(_)) => (Presence::Running, None),
+        Some(Err(failure)) => (Presence::NotRunning, Some(failure)),
     }
 }
 
@@ -268,6 +288,7 @@ mod tests {
         let sources = Sources {
             engine: None,
             event_stream: None,
+            config_failed: None,
             audit: &audit,
             lease: status_without_desk(&Env::default()),
             policy: &settings.policy,
@@ -304,6 +325,8 @@ mod tests {
                 },
                 "lease": {"held_by_me": false, "holder": null, "error": "NIRI_SOCKET is not set"},
                 "stop": false,
+                "stop_key": "unknown",
+                "stop_key_detail": "find niri's process: NIRI_SOCKET is not set",
                 "input_dirty": null,
                 "lock": {
                     "state": "unknown",

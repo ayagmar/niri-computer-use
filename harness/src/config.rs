@@ -101,6 +101,8 @@ window-rule {{
 
 binds {{
     Ctrl+Shift+F12 {{ spawn "touch" "{marker}"; }}
+    // For `status.stop_key`; nothing presses it.
+    Ctrl+Shift+F11 {{ spawn-sh "niri-computer-use stop"; }}
 }}
 "##
     )

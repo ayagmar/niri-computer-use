@@ -3,6 +3,7 @@
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
+- `status` reports `stop_key`: `bound` when niri's config binds a key to `niri-computer-use stop`, `not_found`, or `unknown` with the reason in `stop_key_detail`. It reads the config file the running niri was started with and the files that file includes. While it is `not_found`, `acquire_desktop` returns a `warning` with the bind line to add, which the agent is asked to pass on.
 - Typed text puts a symbol on a spare key when the layout has it only on a key Chromium drops. US maps have `€` only on `<I443>` (evdev 435), so `€` typed into Chromium and Electron apps arrived as nothing. A symbol also on a normal key types there, so US `$` uses Shift+4 instead of `<I442>`, which Chromium dropped too.
 
 ## 0.1.5 - 2026-10-18

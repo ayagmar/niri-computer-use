@@ -78,7 +78,19 @@ fn ready(session: &mut Session<'_>, server: &str) -> Result<()> {
         field(&status, "/niri/compat"),
         field(&status, "/lock"),
         field(&status, "/policy/state")
-    ))
+    ))?;
+    // The nested niri's config, given with `-c`, binds the stop key; the server reads it
+    // from niri's command line, and the subcommand too.
+    let printed = shell(session, &format!("'{server}' status"))?;
+    let subcommand: Value = serde_json::from_str(&printed).unwrap_or_default();
+    for (from, report) in [("server", &status), ("subcommand", &subcommand)] {
+        expect(
+            field(report, "/stop_key") == "bound",
+            &format!("the {from}'s status.stop_key bound"),
+            &field(report, "/stop_key_detail").to_string(),
+        )?;
+    }
+    session.log("M2: status.stop_key is bound from the server and the subcommand")
 }
 
 /// Starts server A, which takes the lease and keeps it while its stdin stays open.

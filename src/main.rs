@@ -26,6 +26,7 @@ mod save;
 mod session;
 mod settle;
 mod status;
+mod stop_key;
 #[cfg(test)]
 mod test_support;
 mod tools;
@@ -238,6 +239,7 @@ async fn main() -> ExitCode {
             let sources = status::Sources {
                 engine: None,
                 event_stream: None,
+                config_failed: niri::config_failed(&env.niri_socket).await.ok(),
                 audit: &audit,
                 lease: control::desk::status_without_desk(&env),
                 policy: &settings.policy,

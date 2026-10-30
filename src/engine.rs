@@ -33,6 +33,7 @@ use crate::observe;
 use crate::policy::{self, SaveTarget};
 use crate::refs::Shot;
 use crate::session::{Label, Session, SessionId, Settings};
+use crate::stop_key::{self, StopKey};
 use crate::{Env, clipboard, confirm, elements, niri, noctalia, runner, settle, status, wait};
 
 #[derive(Debug)]
@@ -60,6 +61,17 @@ pub(crate) struct Engine {
     unscoped: Option<String>,
     /// Lives as long as the engine; see `control::guard`.
     _guardian: Option<runner::Watcher>,
+}
+
+/// What `acquire_desktop` returns.
+#[derive(Debug, Serialize)]
+pub(crate) struct Granted {
+    pub(crate) holder: Holder,
+    /// The window that had keyboard focus, which `release` can give focus back to.
+    pub(crate) users_window: Option<u64>,
+    /// Says the stop key isn't bound, while niri's config binds none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) warning: Option<String>,
 }
 
 /// The action gate's checks for one session, which an element action asks again while
@@ -346,6 +358,7 @@ impl Engine {
         let sources = status::Sources {
             engine: Some(engine),
             event_stream: Some(event_stream),
+            config_failed: self.config_failed(),
             audit: &self.audit,
             lease: self.desk.status(session),
             policy: &settings.policy,
@@ -361,16 +374,31 @@ impl Engine {
     }
 
     /// Takes the lease for `session`, labelled `label`, and watches the clipboard from
-    /// then on. Returns the holder and the window that had keyboard focus, which `release`
-    /// can give focus back to.
+    /// then on. Returns the holder, the window that had keyboard focus, which `release`
+    /// can give focus back to, and a warning while niri's config binds no stop key.
     pub(crate) async fn acquire(
         self: &Arc<Self>,
         session: &Session,
         label: &Label,
-    ) -> Result<(Holder, Option<u64>), ToolError> {
+    ) -> Result<Granted, ToolError> {
         // Boxed, because the readiness report and the prompt make a large future.
         let refusal = Box::pin(self.acquire_refusal(session, label));
-        self.grant(session, &label.to_string(), refusal).await
+        let (holder, users_window) = self.grant(session, &label.to_string(), refusal).await?;
+        let stop_key = stop_key::check(&self.env.niri_socket, self.config_failed()).await;
+        Ok(Granted {
+            holder,
+            users_window,
+            warning: (stop_key.state == StopKey::NotFound)
+                .then(|| stop_key::unbound_warning(&stop_key::own_program())),
+        })
+    }
+
+    /// Whether niri's last config load failed, as the event stream last said.
+    fn config_failed(&self) -> Option<bool> {
+        self.events
+            .as_ref()
+            .ok()
+            .and_then(EventStream::config_failed)
     }
 
     /// Why `session`'s client `label` may not take the lease: the readiness report's

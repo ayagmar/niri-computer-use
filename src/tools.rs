@@ -849,10 +849,10 @@ impl Server {
         .await
     }
 
-    /// Takes the exclusive lease on this niri desktop, which actions need. Returns the
-    /// holder and `users_window`, the window that had keyboard focus, which
-    /// `release_desktop` can give focus back to; calling it again while holding the lease
-    /// returns the same. With `status.confirm_lease` on, the user has a minute to allow it
+    /// Takes the exclusive lease on this desktop, which actions need. Returns the
+    /// holder and `users_window`, the window that had keyboard focus, for `release_desktop`
+    /// to refocus; calling it again while holding it returns the same. Tell the user a
+    /// `warning`. With `status.confirm_lease` on, the user has a minute to allow it
     /// on the desktop. Wait for its result before your next call.
     #[tool(
         title = "Take the desktop lease",
@@ -869,13 +869,7 @@ impl Server {
     ) -> Result<CallToolResult, ErrorData> {
         let label = self.label(&context);
         self.audited(&context, "acquire_desktop", Value::Null, async {
-            let acquired = self.engine.acquire(&self.session, &label).await;
-            answer(acquired.map(|(holder, users_window)| {
-                serde_json::json!({
-                    "holder": holder,
-                    "users_window": users_window,
-                })
-            }))
+            answer(self.engine.acquire(&self.session, &label).await)
         })
         .await
     }

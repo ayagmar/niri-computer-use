@@ -2026,3 +2026,11 @@ Dependabot's open updates, taken together and checked against the version rule o
 | `taiki-e/install-action` | v2.87.26 | v2.87.31 | 2026-10-23 | `1e29709c0ec63babbe8f266397a465f29a825f91`, in `ci.yml` and `release.yml`. Dependabot proposed v2.87.29; v2.87.32 (2026-10-26) is too new. |
 
 Each action's commit is the one its tag names in the action's repository (`git ls-remote`, the annotated tag peeled). zbus 6 stays out: it is a migration of its own.
+
+## 2026-10-30: whether the stop key is bound
+
+- niri 26.04's IPC lists no binds, so `status.stop_key` comes from niri's config files. The server finds the file the running niri loaded the way niri does (`config_path` in niri's `src/main.rs`): `-c`/`--config` on niri's command line, then `NIRI_CONFIG`, then `$XDG_CONFIG_HOME/niri/config.kdl` or `~/.config/niri/config.kdl`, then `/etc/niri/config.kdl`, all read from niri's `/proc/<pid>`. That finds the nested harness's `-c` config too. It follows `include` as niri 26.04 does: relative to the including file, `~/` under niri's `HOME`, `optional=true`, a cycle and more than ten levels refused.
+- A small reader of KDL 1 (`src/stop_key/kdl.rs`) takes nodes, arguments, properties, children, comments, `/-`, raw strings and type annotations. A KDL crate isn't worth a dependency for finding one node shape, and the reader only has to say yes, no or "can't tell".
+- `unknown` is never turned into `not_found`: niri out of reach, a file that can't be read, a config niri would refuse (an unbalanced brace, a missing include, a cycle), and niri's `ConfigLoaded { failed: true }` all give `unknown`, since niri then runs an earlier config or its default. The server's event stream keeps that event; the `status` subcommand opens a stream of its own and reads up to it.
+- The scan runs on a thread of its own with a two-second deadline, since a config file on a stuck filesystem would block its reader.
+- A bind later in the config, or in a later include, that takes the same key for another action isn't noticed, so `bound` means "a bind runs `stop`", not "this key runs it".
