@@ -289,7 +289,7 @@ struct Ran {
     indexes: Vec<i32>,
     /// When the change began.
     changed: Instant,
-    /// The points passed after the change.
+    /// The points the server passed after the change.
     after: Vec<String>,
 }
 
@@ -645,9 +645,11 @@ impl World {
             acts: acts(case.tool, &trace),
             indexes: self.mock.done()[done_before..].to_vec(),
             changed,
+            // `niri:effect` is the fake niri sending events for an action it answered,
+            // which follows the held reply's release on its own clock: nothing asked it.
             after: trace
                 .iter()
-                .filter(|passed| passed.at > changed)
+                .filter(|passed| passed.at > changed && passed.point != "niri:effect")
                 .map(|passed| passed.point.clone())
                 .collect(),
         })
