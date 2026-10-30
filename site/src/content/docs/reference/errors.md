@@ -71,9 +71,9 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 ### `untested_output_config`
 
-**Cause:** a pointer tool was called while niri's outputs are a setup no live test covers: more than one enabled output, or a monitor with a transform other than `Normal`. The `detail` lists the enabled outputs and their transforms.
+**Cause:** a pointer tool was aimed through a screenshot of an output no live test covers: a monitor with a transform other than `Normal`, or nested niri's window next to other outputs. The `detail` names the output and lists the enabled outputs and their transforms.
 
-**What to do:** the pointer tools work with one monitor at transform `Normal`. Structured actions and the keyboard work with any setup.
+**What to do:** the pointer tools work on any monitor at transform `Normal`, whatever the other monitors are. Structured actions and the keyboard work with any setup.
 
 ### `refused`
 
@@ -103,7 +103,7 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 ### `focus_mismatch`
 
-**Cause:** a keyboard tool's `expect` doesn't match the window with keyboard focus, or for `activate_element` and `set_element_text`, the element's window doesn't have keyboard focus or `expect` doesn't name it. The `detail` says what has focus. Often a dialog or notification took focus; an open Noctalia panel leaves no window focused. Nothing was typed or sent.
+**Cause:** a keyboard tool's `expect` doesn't match the window with keyboard focus, or for `activate_element` and `set_element_text`, the element's window doesn't have keyboard focus or `expect` doesn't name it. The `detail` says what has focus. Often a dialog or notification took focus; an open Noctalia panel leaves no window focused. When no window has focus and niri's overview is open, Noctalia has a panel open, or niri lists a layer-shell surface that takes keyboard focus, the `detail` names it and says how to close it: `niri_action` `CloseOverview`, `shell_panel`, or `key` `Escape` with `expect: "none"`. A surface that takes the keyboard only when clicked is named as a maybe. Nothing was typed or sent.
 
 **What to do:** look at `desktop_state` and a screenshot, focus the intended window with `focus` if that is what was meant, then type again.
 

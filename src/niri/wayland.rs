@@ -108,6 +108,27 @@ pub(super) async fn dispatch_until<S: 'static>(
     }
 }
 
+/// Dispatches what niri has already sent, without waiting for more: a read that would
+/// block reads nothing.
+pub(super) fn read_pending<S: 'static>(
+    queue: &mut EventQueue<S>,
+    state: &mut S,
+) -> Result<(), ToolError> {
+    let broken =
+        |error: &dyn std::fmt::Display| upstream(&format!("niri's Wayland display: {error}"));
+    if let Some(guard) = queue.prepare_read() {
+        match guard.read() {
+            Ok(_) => {}
+            Err(WaylandError::Io(error)) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) => return Err(broken(&error)),
+        }
+    }
+    queue
+        .dispatch_pending(state)
+        .map(drop)
+        .map_err(|error| broken(&error))
+}
+
 async fn until<T>(
     deadline: Option<Instant>,
     work: impl Future<Output = T>,

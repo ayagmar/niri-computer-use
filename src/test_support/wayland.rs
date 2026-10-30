@@ -50,7 +50,7 @@ use wayland_protocols_wlr::virtual_pointer::v1::server::{
     zwlr_virtual_pointer_manager_v1::{self, ZwlrVirtualPointerManagerV1},
     zwlr_virtual_pointer_v1::{self, ZwlrVirtualPointerV1},
 };
-use wayland_server::backend::{ClientData, ClientId, DisconnectReason};
+use wayland_server::backend::{ClientData, ClientId, DisconnectReason, GlobalId};
 use wayland_server::protocol::wl_keyboard::{self, WlKeyboard};
 use wayland_server::protocol::wl_output::{self, WlOutput};
 use wayland_server::protocol::wl_pointer::{self, WlPointer};
@@ -83,6 +83,12 @@ pub(crate) struct Seen {
     pub(crate) modifiers: Vec<(u32, u32)>,
     /// Buttons of virtual pointers: evdev code and whether pressed.
     pub(crate) buttons: Vec<(u32, bool)>,
+    /// Every motion, press and wheel turn of virtual pointers, with the output each landed
+    /// through.
+    pub(crate) aimed: Vec<Aimed>,
+    /// The virtual pointer requests niri handled, counted as `outputs_at_pointer_request`
+    /// counts them.
+    pub(crate) pointer_requests: usize,
     /// The keymap clients hold, serialized: the compositor's until another is sent.
     pub(crate) active: String,
     /// The compositor's keymap, serialized.
@@ -108,6 +114,49 @@ impl Seen {
     pub(crate) fn last_modifiers(&self) -> Option<(u32, u32)> {
         self.modifiers.last().copied()
     }
+}
+
+/// A virtual pointer's input whose effect depends on where the pointer is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Aimed {
+    /// The output the pointer is bound to, by name.
+    pub(crate) output: Option<String>,
+    /// How many times niri had changed what IPC reports of that output when it handled the
+    /// input (`Compositor::outputs`), or none if the global the pointer was bound through
+    /// was gone by then, so niri mapped the input through the box around the other outputs.
+    pub(crate) generation: Option<u32>,
+    /// Whether the pointer's client had made a round trip since niri's last output change,
+    /// and so could have seen it, before it sent this. wayland-server answers
+    /// `wl_display.sync` itself, out of the fake's sight, so the fake counts what the gate
+    /// does right after one: once the pointer has sent a request since the change, the
+    /// next niri IPC connection comes from a gate that looks only after a `sync`.
+    pub(crate) synced_since_change: bool,
+    pub(crate) input: Pointed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Pointed {
+    /// `motion_absolute`: x, y and their extents.
+    Motion(u32, u32, u32, u32),
+    Press(u32),
+    Wheel,
+}
+
+/// A change niri makes to its outputs.
+#[derive(Debug, Clone)]
+pub(crate) enum OutputEvent {
+    /// niri's outputs become these. One gone or with no `logical` was unplugged or turned
+    /// off, which removes its global; one whose state changed gets it sent again.
+    Set(Vec<Output>),
+    /// The output is unplugged and plugged back unchanged: a new global, the same IPC.
+    Replug(String),
+}
+
+/// A `wl_output` global: its output's name, and its own number, as globals come and go.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OutputId {
+    name: String,
+    serial: u64,
 }
 
 fn held(events: &[(u32, bool)]) -> Vec<u32> {
@@ -144,6 +193,11 @@ enum Command {
     /// Runs the hook at the virtual keyboards' press with this number, counted from 1,
     /// before handling anything after it.
     OnPress(usize, Hook),
+    /// niri changes its outputs.
+    Outputs(OutputEvent),
+    /// niri changes its outputs right before it handles the virtual pointer request with
+    /// this number, counted from 1 and creating the pointer included.
+    AtPointerRequest(usize, OutputEvent),
 }
 
 /// What runs when niri next gets a `FocusedWindow` request (`Compositor::on_focus_request`),
@@ -179,6 +233,11 @@ impl Compositor {
     /// Serves a display and a niri socket in `dir`, with `keymap` as the compositor's
     /// keymap and nothing copied.
     pub(crate) fn start(dir: &Path, keymap: &str) -> Self {
+        Self::start_with(dir, keymap, vec![output()])
+    }
+
+    /// As `start`, with `outputs` as niri's outputs.
+    pub(crate) fn start_with(dir: &Path, keymap: &str, outputs: Vec<Output>) -> Self {
         let display = dir.join("wayland-fake");
         let socket = dir.join("niri.test.sock");
         let compositor = serialize(keymap).expect("the fake's keymap compiles");
@@ -192,7 +251,8 @@ impl Compositor {
             std::os::unix::net::UnixListener::bind(&display).unwrap(),
             std::os::unix::net::UnixListener::bind(&socket).unwrap(),
         );
-        let state = State::new(Arc::clone(&seen));
+        let outputs = Arc::new(Mutex::new(outputs));
+        let state = State::new(Arc::clone(&seen), Arc::clone(&outputs));
         let focused = Arc::new(Mutex::new(Ok(Response::FocusedWindow(Some(
             focused_window(1),
         )))));
@@ -209,7 +269,7 @@ impl Compositor {
                 .block_on(serve(
                     listeners,
                     state,
-                    (answered, hooked, reported),
+                    (answered, hooked, reported, outputs),
                     received,
                 ));
         });
@@ -350,6 +410,17 @@ impl Compositor {
         .await;
     }
 
+    /// Has niri change its outputs now.
+    pub(crate) async fn outputs(&self, event: OutputEvent) {
+        self.send(Command::Outputs(event)).await;
+    }
+
+    /// Has niri change its outputs right before it handles the `request`-th virtual
+    /// pointer request, counted from 1 with the one creating the pointer.
+    pub(crate) async fn outputs_at_pointer_request(&self, request: usize, event: OutputEvent) {
+        self.send(Command::AtPointerRequest(request, event)).await;
+    }
+
     /// Has niri report `event` on every event stream open now.
     pub(crate) fn event(&self, event: Event) {
         self.events.send(event).ok();
@@ -387,7 +458,12 @@ async fn serve(
         std::os::unix::net::UnixListener,
     ),
     mut state: State,
-    (focused, asked, events): (Arc<Mutex<Reply>>, Asked, broadcast::Sender<Event>),
+    (focused, asked, events, outputs): (
+        Arc<Mutex<Reply>>,
+        Asked,
+        broadcast::Sender<Event>,
+        Outputs,
+    ),
     mut commands: mpsc::UnboundedReceiver<(Command, oneshot::Sender<()>)>,
 ) {
     let (display_listener, niri_listener) = listeners;
@@ -396,7 +472,7 @@ async fn serve(
     let display_listener = UnixListener::from_std(display_listener).unwrap();
     let niri_listener = UnixListener::from_std(niri_listener).unwrap();
     let mut display = Display::<State>::new().unwrap();
-    State::globals(&display.handle());
+    state.globals(&display.handle());
     #[expect(
         deprecated,
         reason = "the AsyncFd owns its OwnedFd, so nothing can close or replace the descriptor while it is registered (RUSTSEC-2026-0386)"
@@ -409,9 +485,11 @@ async fn serve(
                 state.admit(&display.handle(), stream);
             }
             accepted = niri_listener.accept() => {
+                state.synced_since_change |= state.pointed_since_change;
                 let group = state.group;
                 let focused = focused.lock().unwrap_or_else(PoisonError::into_inner).clone();
-                let answered = (focused, Arc::clone(&asked), events.subscribe());
+                let outputs = outputs.lock().unwrap_or_else(PoisonError::into_inner).clone();
+                let answered = (focused, Arc::clone(&asked), events.subscribe(), outputs);
                 tokio::spawn(answer(accepted.unwrap().0, group, answered));
             }
             ready = readable.readable() => {
@@ -430,8 +508,11 @@ async fn serve(
     }
 }
 
-/// The output the fake's display offers, 1920×1080 at scale 1.
-fn output() -> Output {
+/// niri's outputs as its IPC reports them.
+type Outputs = Arc<Mutex<Vec<Output>>>;
+
+/// The output the fake's display offers by default, 1920×1080 at scale 1.
+pub(crate) fn output() -> Output {
     Output {
         name: OUTPUT.to_owned(),
         make: "Fake".to_owned(),
@@ -511,13 +592,13 @@ fn focused_window(id: u64) -> Window {
     }
 }
 
-/// Answers one niri request: the keyboard layouts, with `group` active, the outputs, the
+/// Answers one niri request: the keyboard layouts, with `group` active, `outputs`, the
 /// focused window with `focused`, or the event stream, which then sends `events` and stays
 /// open.
 async fn answer(
     stream: tokio::net::UnixStream,
     group: u32,
-    (focused, asked, mut events): (Reply, Asked, broadcast::Receiver<Event>),
+    (focused, asked, mut events, outputs): (Reply, Asked, broadcast::Receiver<Event>, Vec<Output>),
 ) {
     let (reader, mut writer) = stream.into_split();
     let mut line = String::new();
@@ -527,10 +608,12 @@ async fn answer(
     let request = serde_json::from_str(&line);
     let reply: Reply = match request {
         Ok(Request::KeyboardLayouts) => Ok(Response::KeyboardLayouts(layouts(group))),
-        Ok(Request::Outputs) => Ok(Response::Outputs(HashMap::from([(
-            OUTPUT.to_owned(),
-            output(),
-        )]))),
+        Ok(Request::Outputs) => Ok(Response::Outputs(
+            outputs
+                .into_iter()
+                .map(|output| (output.name.clone(), output))
+                .collect(),
+        )),
         Ok(Request::FocusedWindow) => {
             let hook = asked.lock().unwrap_or_else(PoisonError::into_inner).take();
             if let Some((Hook(hook), late)) = hook {
@@ -628,10 +711,27 @@ struct State {
     held: Option<std::os::unix::net::UnixStream>,
     /// What to run at which press (`Command::OnPress`).
     on_press: Option<(usize, Hook)>,
+    /// niri's outputs, shared with the socket's answers.
+    outputs: Outputs,
+    /// The global of each enabled output, and its number.
+    output_globals: HashMap<String, (GlobalId, u64)>,
+    /// The number the next output global gets.
+    next_serial: u64,
+    /// How many times niri changed what IPC reports of each output.
+    generations: HashMap<String, u32>,
+    /// Every `wl_output` bound, to send a changed output's state again.
+    bound_outputs: Vec<WlOutput>,
+    /// The virtual pointer requests handled so far, and what changes before which.
+    pointer_requests: usize,
+    at_pointer_request: Option<(usize, OutputEvent)>,
+    /// Whether a virtual pointer sent a request since the last output change, and whether
+    /// a niri IPC connection came after that (`Aimed::synced_since_change`).
+    pointed_since_change: bool,
+    synced_since_change: bool,
 }
 
 impl State {
-    fn new(seen: Arc<Mutex<Seen>>) -> Self {
+    fn new(seen: Arc<Mutex<Seen>>, outputs: Outputs) -> Self {
         Self {
             seen,
             keyboards: Vec::new(),
@@ -644,6 +744,15 @@ impl State {
             hold_next: false,
             held: None,
             on_press: None,
+            outputs,
+            output_globals: HashMap::new(),
+            next_serial: 0,
+            generations: HashMap::new(),
+            bound_outputs: Vec::new(),
+            pointer_requests: 0,
+            at_pointer_request: None,
+            pointed_since_change: false,
+            synced_since_change: false,
         }
     }
 
@@ -660,9 +769,16 @@ impl State {
             .unwrap();
     }
 
-    fn globals(handle: &DisplayHandle) {
+    fn globals(&mut self, handle: &DisplayHandle) {
         handle.create_global::<Self, WlSeat, ()>(7, ());
-        handle.create_global::<Self, WlOutput, ()>(4, ());
+        let outputs = self
+            .outputs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        for output in outputs.iter().filter(|output| output.logical.is_some()) {
+            self.plug(handle, &output.name);
+        }
         handle.create_global::<Self, ZwpVirtualKeyboardManagerV1, ()>(1, ());
         handle.create_global::<Self, ZwlrVirtualPointerManagerV1, ()>(2, ());
         handle.create_global::<Self, ZwlrDataControlManagerV1, ()>(2, ());
@@ -696,6 +812,10 @@ impl State {
             Command::SlowModifiers(delay) => self.modifier_delay = delay,
             Command::HoldClient => self.hold_next = true,
             Command::OnPress(press, hook) => self.on_press = Some((press, hook)),
+            Command::Outputs(event) => self.change_outputs(handle, event),
+            Command::AtPointerRequest(request, event) => {
+                self.at_pointer_request = Some((request, event));
+            }
             Command::ServeHeld => {
                 self.hold_next = false;
                 if let Some(stream) = self.held.take() {
@@ -704,6 +824,104 @@ impl State {
                 }
             }
         }
+    }
+
+    /// Creates a global for output `name`.
+    fn plug(&mut self, handle: &DisplayHandle, name: &str) {
+        let serial = self.next_serial;
+        self.next_serial += 1;
+        let id = OutputId {
+            name: name.to_owned(),
+            serial,
+        };
+        let global = handle.create_global::<Self, WlOutput, OutputId>(4, id);
+        self.output_globals
+            .insert(name.to_owned(), (global, serial));
+    }
+
+    /// Removes output `name`'s global, as niri does when it unplugs or turns one off.
+    fn unplug(&mut self, handle: &DisplayHandle, name: &str) {
+        if let Some((global, _)) = self.output_globals.remove(name) {
+            handle.disable_global::<Self>(global);
+        }
+    }
+
+    /// Makes `event`'s change to niri's outputs, as niri does: IPC and globals at once,
+    /// and each changed output's state sent again to its `wl_output`s.
+    fn change_outputs(&mut self, handle: &DisplayHandle, event: OutputEvent) {
+        self.pointed_since_change = false;
+        self.synced_since_change = false;
+        let outputs = match event {
+            // What IPC reports stays as it was; only pointers bound before see a change.
+            OutputEvent::Replug(name) => {
+                self.unplug(handle, &name);
+                self.plug(handle, &name);
+                return;
+            }
+            OutputEvent::Set(outputs) => outputs,
+        };
+        let old = std::mem::replace(
+            &mut *self.outputs.lock().unwrap_or_else(PoisonError::into_inner),
+            outputs.clone(),
+        );
+        let find = |list: &[Output], name: &str| list.iter().find(|o| o.name == name).cloned();
+        let names: std::collections::BTreeSet<String> =
+            old.iter().chain(&outputs).map(|o| o.name.clone()).collect();
+        for name in names {
+            let (was, is) = (find(&old, &name), find(&outputs, &name));
+            // `Output` has no `PartialEq`; its JSON says everything IPC does.
+            if serde_json::to_value(&was).ok() == serde_json::to_value(&is).ok() {
+                continue;
+            }
+            *self.generations.entry(name.clone()).or_default() += 1;
+            let enabled =
+                |output: &Option<Output>| output.as_ref().is_some_and(|o| o.logical.is_some());
+            match (enabled(&was), enabled(&is)) {
+                (true, false) => self.unplug(handle, &name),
+                (false, true) => self.plug(handle, &name),
+                (true, true) => self.resend(&name),
+                (false, false) => {}
+            }
+        }
+    }
+
+    /// Sends output `name`'s state again to every `wl_output` bound through its global.
+    fn resend(&self, name: &str) {
+        let Some((_, serial)) = self.output_globals.get(name) else {
+            return;
+        };
+        for output in &self.bound_outputs {
+            if output
+                .data::<OutputId>()
+                .is_some_and(|id| id.serial == *serial)
+            {
+                output.done();
+            }
+        }
+    }
+
+    /// Counts a virtual pointer request, and first makes the outputs change set for it.
+    fn pointer_request(&mut self, handle: &DisplayHandle) {
+        self.pointer_requests += 1;
+        let now = self.pointer_requests;
+        self.seen().pointer_requests = now;
+        if let Some((_, event)) = self.at_pointer_request.take_if(|(at, _)| *at == now) {
+            self.change_outputs(handle, event);
+        }
+    }
+
+    /// Records `input` of a pointer bound through `id`.
+    fn aimed(&self, id: Option<&OutputId>, input: Pointed) {
+        let generation = id.and_then(|id| {
+            let (_, serial) = self.output_globals.get(&id.name)?;
+            (*serial == id.serial).then(|| self.generations.get(&id.name).copied().unwrap_or(0))
+        });
+        self.seen().aimed.push(Aimed {
+            output: id.map(|id| id.name.clone()),
+            generation,
+            synced_since_change: self.synced_since_change,
+            input,
+        });
     }
 
     /// Runs the hook `Command::OnPress` set for the press just seen, if it is that press.
@@ -881,28 +1099,29 @@ impl Dispatch<WlPointer, ()> for State {
     }
 }
 
-impl GlobalDispatch<WlOutput, ()> for State {
+impl GlobalDispatch<WlOutput, OutputId> for State {
     fn bind(
-        _: &mut Self,
+        state: &mut Self,
         _: &DisplayHandle,
         _: &Client,
         resource: New<WlOutput>,
-        (): &(),
+        id: &OutputId,
         init: &mut DataInit<'_, Self>,
     ) {
-        let output = init.init(resource, ());
-        output.name(OUTPUT.to_owned());
+        let output = init.init(resource, id.clone());
+        output.name(id.name.clone());
         output.done();
+        state.bound_outputs.push(output);
     }
 }
 
-impl Dispatch<WlOutput, ()> for State {
+impl Dispatch<WlOutput, OutputId> for State {
     fn request(
         _: &mut Self,
         _: &Client,
         _: &WlOutput,
         _: wl_output::Request,
-        (): &(),
+        _: &OutputId,
         _: &DisplayHandle,
         _: &mut DataInit<'_, Self>,
     ) {
@@ -1011,42 +1230,75 @@ impl GlobalDispatch<ZwlrVirtualPointerManagerV1, ()> for State {
 
 impl Dispatch<ZwlrVirtualPointerManagerV1, ()> for State {
     fn request(
-        _: &mut Self,
+        state: &mut Self,
         _: &Client,
         _: &ZwlrVirtualPointerManagerV1,
         request: zwlr_virtual_pointer_manager_v1::Request,
         (): &(),
-        _: &DisplayHandle,
+        handle: &DisplayHandle,
         init: &mut DataInit<'_, Self>,
     ) {
-        if let zwlr_virtual_pointer_manager_v1::Request::CreateVirtualPointer { id, .. }
-        | zwlr_virtual_pointer_manager_v1::Request::CreateVirtualPointerWithOutput {
-            id, ..
-        } = request
-        {
-            init.init(id, ());
-        }
+        state.pointer_request(handle);
+        let (id, output) = match request {
+            zwlr_virtual_pointer_manager_v1::Request::CreateVirtualPointer { id, .. } => (id, None),
+            zwlr_virtual_pointer_manager_v1::Request::CreateVirtualPointerWithOutput {
+                id,
+                output,
+                ..
+            } => (
+                id,
+                output.and_then(|output| output.data::<OutputId>().cloned()),
+            ),
+            zwlr_virtual_pointer_manager_v1::Request::Destroy | _ => return,
+        };
+        init.init(id, output);
     }
 }
 
-impl Dispatch<ZwlrVirtualPointerV1, ()> for State {
+/// A virtual pointer's data is the output it is bound to.
+impl Dispatch<ZwlrVirtualPointerV1, Option<OutputId>> for State {
     fn request(
         state: &mut Self,
         _: &Client,
         _: &ZwlrVirtualPointerV1,
         request: zwlr_virtual_pointer_v1::Request,
-        (): &(),
-        _: &DisplayHandle,
+        output: &Option<OutputId>,
+        handle: &DisplayHandle,
         _: &mut DataInit<'_, Self>,
     ) {
-        if let zwlr_virtual_pointer_v1::Request::Button {
-            button,
-            state: pressed,
-            ..
-        } = request
-        {
-            let pressed = pressed == wayland_server::WEnum::Value(wl_pointer::ButtonState::Pressed);
-            state.seen().buttons.push((button, pressed));
+        state.pointer_request(handle);
+        let output = output.as_ref();
+        state.pointed_since_change = true;
+        match request {
+            zwlr_virtual_pointer_v1::Request::Button {
+                button,
+                state: pressed,
+                ..
+            } => {
+                let pressed =
+                    pressed == wayland_server::WEnum::Value(wl_pointer::ButtonState::Pressed);
+                state.seen().buttons.push((button, pressed));
+                if pressed {
+                    state.aimed(output, Pointed::Press(button));
+                }
+            }
+            zwlr_virtual_pointer_v1::Request::MotionAbsolute {
+                x,
+                y,
+                x_extent,
+                y_extent,
+                ..
+            } => state.aimed(output, Pointed::Motion(x, y, x_extent, y_extent)),
+            zwlr_virtual_pointer_v1::Request::AxisDiscrete { .. } => {
+                state.aimed(output, Pointed::Wheel);
+            }
+            zwlr_virtual_pointer_v1::Request::Motion { .. }
+            | zwlr_virtual_pointer_v1::Request::Axis { .. }
+            | zwlr_virtual_pointer_v1::Request::Frame
+            | zwlr_virtual_pointer_v1::Request::AxisSource { .. }
+            | zwlr_virtual_pointer_v1::Request::AxisStop { .. }
+            | zwlr_virtual_pointer_v1::Request::Destroy
+            | _ => {}
         }
     }
 }

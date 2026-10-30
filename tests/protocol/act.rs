@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use niri_ipc::{Action, WorkspaceReferenceArg};
+use niri_ipc::{Action, Transform, WorkspaceReferenceArg};
 use serde_json::{Value, json};
 
 use crate::client::{Server, mistake, report, run, tool_error};
@@ -317,6 +317,189 @@ async fn focus_without_its_event_times_out() {
     assert_eq!(
         outcome(&result),
         json!({"accepted": true, "observed": "timeout", "focused_window": 1})
+    );
+}
+
+#[tokio::test]
+async fn a_focus_that_times_out_under_an_open_shell_panel_says_so() {
+    let mut desk = Desk::start("act-timeout-panel", "").await;
+    desk.stream
+        .send(&json!({"WindowFocusChanged": {"id": null}}));
+    desk.noctalia.open_panel(Some("control-center"));
+    let result = desk.act("focus", json!({"window_id": 2}), |_, _| {}).await;
+    let outcome = outcome(&result);
+    assert_eq!(outcome["observed"], "timeout", "{outcome}");
+    assert_eq!(outcome["focused_window"], Value::Null, "{outcome}");
+    let detail = outcome["detail"].as_str().unwrap();
+    assert!(
+        detail.starts_with("Noctalia's \"control-center\" panel is open and may hold keyboard focus; close it with `shell_panel`"),
+        "{detail}"
+    );
+}
+
+/// A `key` expecting window `expected`, refused, once its `detail` holds `seen`: an event
+/// sent to the server just before may not have reached it yet.
+async fn refused_seeing(desk: &mut Desk, expected: u64, seen: &str) -> String {
+    let key = json!({"keys": ["a"], "expect": {"window_id": expected}});
+    let mut refused = String::new();
+    for _ in 0..50 {
+        refused = tool_error(&desk.server.call("key", key.clone()).await).1;
+        if refused.contains(seen) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    refused
+}
+
+/// Starts a desk with no window focused and a launcher holding the keyboard.
+async fn held_keyboard(name: &str) -> Desk {
+    let desk = Desk::start(name, "").await;
+    desk.stream
+        .send(&json!({"WindowFocusChanged": {"id": null}}));
+    desk.niri.set_layers(&[
+        json!({"namespace": "bar", "output": "DP-1", "layer": "Top", "keyboard_interactivity": "None"}),
+        json!({"namespace": "launcher", "output": "DP-1", "layer": "Overlay", "keyboard_interactivity": "Exclusive"}),
+    ]);
+    desk
+}
+
+const NO_FOCUS: &str = "expected window_id 1; no window has keyboard focus";
+
+#[tokio::test]
+async fn a_key_refused_with_no_window_focused_names_the_layer_surface_holding_it() {
+    let mut desk = held_keyboard("act-held-keyboard").await;
+    assert_eq!(
+        refused_seeing(&mut desk, 1, "no window has keyboard focus").await,
+        format!(
+            "{NO_FOCUS}; a layer-shell surface with exclusive keyboard focus holds it: niri lists \"launcher\" (overlay layer, exclusive keyboard, on DP-1); press `Escape` with `key` and `expect: \"none\"` to close it, or `shell_panel` for a Noctalia panel"
+        )
+    );
+    // The overview is named first.
+    desk.niri.set_overview(true);
+    let overview = refused_seeing(&mut desk, 1, "overview").await;
+    assert!(
+        overview.starts_with(&format!("{NO_FOCUS}; niri's overview is open and holds keyboard focus; close it with `niri_action` `CloseOverview`; a layer-shell surface")),
+        "{overview}"
+    );
+    // With the overview closed, every surface gone, and Noctalia showing no panel,
+    // nothing is claimed.
+    desk.niri.set_overview(false);
+    desk.niri.set_layers(&[]);
+    assert_eq!(refused_seeing(&mut desk, 1, "no window").await, NO_FOCUS);
+}
+
+#[tokio::test]
+async fn the_keyboard_hint_never_holds_a_refusal_up_or_contradicts_it() {
+    let mut desk = held_keyboard("act-held-hint").await;
+    refused_seeing(&mut desk, 1, "no window has keyboard focus").await;
+    // A read that doesn't answer leaves the hint out instead of holding the refusal up
+    // for its own 2-second deadline.
+    let held = desk.fixture.points().hold_next("niri:Layers");
+    let started = Instant::now();
+    let key = json!({"keys": ["a"], "expect": {"window_id": 1}});
+    let refused = tool_error(&desk.server.call("key", key).await).1;
+    let took = started.elapsed();
+    assert!(took < Duration::from_millis(1500), "{took:?}");
+    assert_eq!(refused, NO_FOCUS);
+    assert!(
+        held.arrived_within(Duration::from_secs(1)).await,
+        "no layers read"
+    );
+    held.release();
+    // A refusal that names a focused window says nothing more, though niri's own
+    // `FocusedWindow` here answers none, as when a panel opens right after the refusal.
+    focus_changed(&desk.stream, 1);
+    let named = refused_seeing(&mut desk, 2, "window 1").await;
+    assert!(
+        named.starts_with("expected window_id 2; window 1 with app_id"),
+        "{named}"
+    );
+    assert!(!named.contains("layer-shell"), "{named}");
+}
+
+/// A grim whose raw captures cycle through three 1280x720 images, each differing from the
+/// other two in their first `changed` pixels, as a clock or a dialog animating in would,
+/// and whose JPEG is the fixture's. Each call's arguments are a line of `grim.calls`.
+fn flickering(fixture: &Fixture, changed: usize) {
+    let header = b"P6\n1280 720\n255\n".as_slice();
+    for (turn, shade) in [0, 128, 255].into_iter().enumerate() {
+        let mut pixels = vec![0; 1280 * 720 * 3];
+        pixels[..changed * 3].fill(shade);
+        let image = fixture.path(&format!("grim.{turn}"));
+        std::fs::write(image, [header, &pixels].concat()).unwrap();
+    }
+    fixture.program(
+        "grim",
+        r#"echo "$*" >> "$DIR/grim.calls"
+case " $* " in *" -t ppm "*) ;; *) exec cat "$DIR/grim.out" ;; esac
+turn=$(cat "$DIR/grim.turn" 2>/dev/null || echo 0); turn=$(( (turn + 1) % 3 ))
+echo "$turn" > "$DIR/grim.turn"; cat "$DIR/grim.$turn""#,
+    );
+}
+
+/// A screenshot `niri_action` asked for, how long the call took, and grim's calls.
+async fn settled_shot(desk: &mut Desk) -> (Value, Duration, Vec<String>) {
+    std::fs::remove_file(desk.fixture.path("grim.calls")).ok();
+    let column = json!({"action": {"FocusColumnLeft": {}}, "screenshot": true});
+    let started = Instant::now();
+    let result = desk.act("niri_action", column, |_, _| {}).await;
+    let took = started.elapsed();
+    assert_eq!(result["content"][1]["mimeType"], "image/jpeg", "{result}");
+    let calls = std::fs::read_to_string(desk.fixture.path("grim.calls")).unwrap();
+    let calls = calls.lines().map(str::to_owned).collect();
+    (report(&result)["screenshot"].clone(), took, calls)
+}
+
+#[tokio::test]
+async fn a_screenshot_settles_while_a_small_part_of_the_output_keeps_changing() {
+    let mut desk = Desk::start("act-settle-pixels", "").await;
+    // 100 pixels, about 0.01 % of a 1280x720 sample: a clock.
+    flickering(&desk.fixture, 100);
+    let (clock, quick, calls) = settled_shot(&mut desk).await;
+    assert_eq!(clock["settled"], true, "{clock}");
+    let small = clock["changing"].as_f64().unwrap();
+    assert!((small - 100.0 / 921_600.0).abs() < 1e-9, "{clock}");
+    assert!(quick < Duration::from_millis(1200), "{quick:?}");
+    let (last, samples) = calls.split_last().unwrap();
+    assert!(last.starts_with("-t jpeg"), "{calls:?}");
+    assert!(samples.len() >= 3, "two comparisons: {calls:?}");
+    assert!(
+        samples.iter().all(|call| call.starts_with("-t ppm")),
+        "{calls:?}"
+    );
+    // 100,000 pixels, about 11 %: a dialog animating in, until the limit.
+    flickering(&desk.fixture, 100_000);
+    let (dialog, took, _) = settled_shot(&mut desk).await;
+    assert_eq!(dialog["settled"], false, "{dialog}");
+    let large = dialog["changing"].as_f64().unwrap();
+    assert!((large - 100_000.0 / 921_600.0).abs() < 1e-9, "{dialog}");
+    assert!(took >= Duration::from_millis(1500), "{took:?}");
+}
+
+#[tokio::test]
+async fn a_grim_without_raw_pixels_settles_on_the_jpegs_bytes() {
+    let mut desk = Desk::start("act-settle-bytes", "").await;
+    desk.fixture.program(
+        "grim",
+        r#"echo "$*" >> "$DIR/grim.calls"
+case " $* " in *" -t ppm "*) echo "grim: invalid filetype" >&2; exit 1 ;; esac
+cat "$DIR/grim.out""#,
+    );
+    let (shot, took, calls) = settled_shot(&mut desk).await;
+    assert_eq!(shot["settled"], true, "{shot}");
+    assert_eq!(shot["changing"], 0.0, "the same bytes: {shot}");
+    assert!(took < Duration::from_millis(1200), "{took:?}");
+    let (first, jpegs) = calls.split_first().unwrap();
+    assert!(first.starts_with("-t ppm"), "{calls:?}");
+    assert_eq!(
+        jpegs.len(),
+        2,
+        "two JPEG samples, the last returned: {calls:?}"
+    );
+    assert!(
+        jpegs.iter().all(|call| call.starts_with("-t jpeg")),
+        "{calls:?}"
     );
 }
 
@@ -1115,6 +1298,15 @@ async fn pointer_tools_check_the_ref_the_outputs_and_their_arguments_first() {
     let unknown = desk.server.call("pointer_move", at("shot-9", 10)).await;
     assert_eq!(reason(&unknown), ("ref_invalid", "unknown_ref".to_owned()));
 
+    let mut rotated = output("DP-1", Some((0, 0, 1440, 2560, 1.0)));
+    rotated.logical.as_mut().unwrap().transform = Transform::_90;
+    desk.niri.set_outputs(vec![rotated.clone()], Some("DP-1"));
+    desk.fixture.grim(&jpeg(1280, 2275, b"evidence"));
+    let portrait = screenshot_ref(&mut desk).await;
+    let landscape = output("DP-1", Some((0, 0, 2560, 1440, 1.0)));
+    desk.niri.set_outputs(vec![landscape], Some("DP-1"));
+    desk.fixture.grim(&jpeg(1280, 720, b"evidence"));
+
     let id = screenshot_ref(&mut desk).await;
     let outside = desk.server.call("pointer_move", at(&id, 1280)).await;
     assert_eq!(
@@ -1152,10 +1344,25 @@ async fn pointer_tools_check_the_ref_the_outputs_and_their_arguments_first() {
         args["count"] = json!(count);
         args
     };
+    // A second monitor doesn't matter to a ref on the first, whose output is as captured
+    // again: everything checked, nothing sent.
+    let captured = output("DP-1", Some((0, 0, 2560, 1440, 1.0)));
     let second = output("HDMI-A-1", Some((2560, 0, 1920, 1080, 1.0)));
-    desk.niri.set_outputs(vec![scaled, second], Some("DP-1"));
-    let two = desk.server.call("pointer_move", at(&id, 10)).await;
-    assert_eq!(tool_error(&two).0, "untested_output_config");
+    desk.niri
+        .set_outputs(vec![captured, second.clone()], Some("DP-1"));
+    let two = tool_error(&desk.server.call("pointer_move", at(&id, 10)).await);
+    assert_eq!(two.0, "upstream_error");
+    assert!(two.1.starts_with("connect to"), "{}", two.1);
+
+    // A monitor turned to portrait doesn't take the pointer, even through its own ref.
+    desk.niri.set_outputs(vec![rotated, second], Some("DP-1"));
+    let turned = tool_error(&desk.server.call("pointer_move", at(&portrait, 10)).await);
+    assert_eq!(turned.0, "untested_output_config");
+    assert!(
+        turned.1.contains(r#"aimed at output "DP-1""#),
+        "{}",
+        turned.1
+    );
     assert_eq!(
         desk.audited(),
         [
@@ -1164,9 +1371,10 @@ async fn pointer_tools_check_the_ref_the_outputs_and_their_arguments_first() {
             json!(["click", clicked(4), null, null, "invalid_arguments"]),
             json!(["click", clicked(1), null, null, "upstream_error"]),
             json!(["pointer_move", at(&id, 10), null, null, "ref_invalid"]),
+            json!(["pointer_move", at(&id, 10), null, null, "upstream_error"]),
             json!([
                 "pointer_move",
-                at(&id, 10),
+                at(&portrait, 10),
                 null,
                 null,
                 "untested_output_config"

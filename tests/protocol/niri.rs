@@ -11,7 +11,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use niri_ipc::{
-    Action, LogicalOutput, Output, Overview, Reply, Request, Response, Transform, Window, Workspace,
+    Action, LayerSurface, LogicalOutput, Output, Overview, Reply, Request, Response, Transform,
+    Window, Workspace,
 };
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
@@ -42,6 +43,8 @@ struct Config {
     /// The answers to `Windows` and `Workspaces`.
     windows: Vec<Window>,
     workspaces: Vec<Workspace>,
+    /// The answer to `Layers`.
+    layers: Vec<LayerSurface>,
     /// Read requests but never answer them.
     silent: bool,
     /// Requests answered with niri's error, by name, with the error's text.
@@ -120,6 +123,7 @@ impl Niri {
             focused: Some("DP-1".to_owned()),
             windows: Vec::new(),
             workspaces: Vec::new(),
+            layers: Vec::new(),
             silent: false,
             failing: HashMap::new(),
             overview_open: false,
@@ -220,6 +224,11 @@ impl Niri {
         let mut config = self.config.lock().unwrap();
         config.windows = parsed(windows);
         config.workspaces = parsed(workspaces);
+    }
+
+    /// The layer-shell surfaces `Layers` is answered with, as niri describes them.
+    pub(crate) fn set_layers(&self, layers: &[Value]) {
+        self.config.lock().unwrap().layers = parsed(layers);
     }
 
     /// Opens or closes the overview, as `OverviewState` answers it.
@@ -486,13 +495,21 @@ async fn effect(channels: &Channels, action: &Action) {
 
 #[expect(
     clippy::wildcard_enum_match_arm,
-    reason = "the server only sends these six; any other request is an error, as from niri"
+    reason = "the server only sends these eight; any other request is an error, as from niri"
 )]
 fn answer(config: &Config, request: &Request) -> Reply {
     match request {
         Request::Version => Ok(Response::Version("26.04 (protocol-test)".to_owned())),
         Request::Windows => Ok(Response::Windows(config.windows.clone())),
         Request::Workspaces => Ok(Response::Workspaces(config.workspaces.clone())),
+        Request::Layers => Ok(Response::Layers(config.layers.clone())),
+        Request::FocusedWindow => Ok(Response::FocusedWindow(
+            config
+                .windows
+                .iter()
+                .find(|window| window.is_focused)
+                .cloned(),
+        )),
         Request::OverviewState => Ok(Response::OverviewState(Overview {
             is_open: config.overview_open,
         })),

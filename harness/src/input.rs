@@ -15,11 +15,12 @@ mod exposure;
 pub(crate) mod guardian;
 mod keeper;
 mod modal;
+pub(crate) mod multi;
 mod native;
 mod native_gestures;
 mod native_unicode;
 mod other_layout;
-mod pacer;
+pub(crate) mod pacer;
 mod paste;
 mod physical;
 mod scrolling;
@@ -208,8 +209,18 @@ impl Shot {
     /// niri moving a window, where an agent takes seconds, and the server refuses a pixel
     /// aim through a screenshot taken within a second of the windows on its output moving.
     fn take(session: &mut Session<'_>, client: &mut Client, max_width: u32) -> Result<Self> {
+        Self::through(session, client, "focused_output", max_width)
+    }
+
+    /// As `take`, of `target`, such as `output:headless-2`.
+    fn through(
+        session: &mut Session<'_>,
+        client: &mut Client,
+        target: &str,
+        max_width: u32,
+    ) -> Result<Self> {
         crate::session::pause(MOVED);
-        let arguments = json!({"target": "focused_output", "max_width": max_width});
+        let arguments = json!({"target": target, "max_width": max_width});
         let metadata = structured(&client.call(session, "screenshot", arguments)?)?;
         let number = |pointer| {
             field(&metadata, pointer)
@@ -270,9 +281,19 @@ fn send(
 /// C4's points through `pointer_move`, from a screenshot at the output's own scale and
 /// from one at a lowered scale, must each land within ±0.05 px of the pixel's centre.
 fn accuracy(session: &mut Session<'_>, client: &mut Client, wev: &Wev<'_>) -> Result<()> {
+    accuracy_through(session, client, wev, "focused_output")
+}
+
+/// As `accuracy`, through screenshots of `target`.
+fn accuracy_through(
+    session: &mut Session<'_>,
+    client: &mut Client,
+    wev: &Wev<'_>,
+    target: &str,
+) -> Result<()> {
     let mut failed = 0;
     for max_width in [4000, 700] {
-        let shot = Shot::take(session, client, max_width)?;
+        let shot = Shot::through(session, client, target, max_width)?;
         session.log(&format!(
             "M4 accuracy: {} at capture scale {}",
             shot.id, shot.scale

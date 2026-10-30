@@ -21,6 +21,7 @@ mod noctalia;
 mod notice;
 mod observe;
 mod policy;
+mod ppm;
 mod refs;
 mod runner;
 mod save;

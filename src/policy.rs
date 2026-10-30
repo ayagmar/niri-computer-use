@@ -1234,24 +1234,33 @@ pub(crate) fn panel(name: &str) -> Result<Panel, ToolError> {
         })
 }
 
-/// Whether the pointer tools may run on these outputs (plan §8): exactly one enabled
-/// output, either a monitor with transform `Normal` or nested niri's `winit` window, which
-/// niri always shows `Flipped180`. Those are the setups live tests cover; anything else,
-/// including a monitor really rotated to `Flipped180`, is `untested_output_config`.
-pub(crate) fn pointer_support<'a>(
-    outputs: impl IntoIterator<Item = &'a Output>,
+/// The outputs `pointer_output` accepts.
+pub(crate) const POINTER_OUTPUTS: &str = "the pointer runs only on a monitor at transform Normal, or on nested niri's winit window when it is the only output";
+
+/// Whether the pointer tools may aim at output `name` (plan §8): an enabled monitor at
+/// transform `Normal`, or nested niri's `winit` window, which niri always shows
+/// `Flipped180`, when it is the only enabled output. niri maps a virtual pointer's motion
+/// through the output it is bound to alone, so the other outputs don't matter. Those are
+/// the setups live tests cover; anything else, including a monitor really rotated to
+/// `Flipped180`, is `untested_output_config`.
+pub(crate) fn pointer_output(
+    outputs: &BTreeMap<String, Output>,
+    name: &str,
 ) -> Result<(), ToolError> {
-    let enabled: Vec<(&str, Transform)> = outputs
-        .into_iter()
-        .filter_map(|output| Some((output.name.as_str(), output.logical?.transform)))
-        .collect();
-    match enabled.as_slice() {
-        [("winit", Transform::Flipped180)] => Ok(()),
-        [(name, Transform::Normal)] if *name != "winit" => Ok(()),
+    let enabled = || {
+        outputs
+            .values()
+            .filter_map(|output| Some((output.name.as_str(), output.logical?.transform)))
+    };
+    let target = enabled().find(|(enabled, _)| *enabled == name);
+    match target {
+        Some(("winit", Transform::Flipped180)) if enabled().count() == 1 => Ok(()),
+        Some((target, Transform::Normal)) if target != "winit" => Ok(()),
         _ => Err(ToolError::new(
             ErrorName::UntestedOutputConfig,
             format!(
-                "the pointer runs only with one enabled output, a monitor at transform Normal or nested niri's winit window; enabled outputs and transforms: {enabled:?}"
+                "{POINTER_OUTPUTS}; it was aimed at output {name:?}, and the enabled outputs and transforms are {:?}",
+                enabled().collect::<Vec<_>>(),
             ),
         )),
     }
@@ -1746,30 +1755,46 @@ app_id = "foot"
     }
 
     #[test]
-    fn the_pointer_runs_on_one_tested_output() {
-        let supported = |outputs: &[Output]| pointer_support(outputs).map_err(|error| error.name);
+    fn the_pointer_runs_on_a_tested_output_whatever_the_others_are() {
+        let supported = |outputs: &[Output], name: &str| {
+            let outputs = outputs
+                .iter()
+                .map(|output| (output.name.clone(), output.clone()))
+                .collect();
+            pointer_output(&outputs, name).map_err(|error| error.name)
+        };
         let monitor = output("DP-1", Some(Transform::Normal));
+        let laptop = output("eDP-1", Some(Transform::Normal));
+        let portrait = output("HDMI-A-1", Some(Transform::_90));
         let nested = output("winit", Some(Transform::Flipped180));
-        let off = output("HDMI-A-1", None);
-        assert_eq!(supported(std::slice::from_ref(&monitor)), Ok(()));
-        assert_eq!(supported(std::slice::from_ref(&nested)), Ok(()));
-        // A disabled output doesn't count.
-        assert_eq!(supported(&[monitor.clone(), off]), Ok(()));
+        let off = output("HDMI-A-2", None);
         let untested = Err(ErrorName::UntestedOutputConfig);
-        assert_eq!(supported(&[]), untested);
-        assert_eq!(supported(&[monitor, nested]), untested);
+        assert_eq!(supported(std::slice::from_ref(&monitor), "DP-1"), Ok(()));
+        assert_eq!(supported(std::slice::from_ref(&nested), "winit"), Ok(()));
+        let desk = [monitor.clone(), laptop, portrait, off];
+        assert_eq!(supported(&desk, "DP-1"), Ok(()));
+        assert_eq!(supported(&desk, "eDP-1"), Ok(()));
+        assert_eq!(supported(&desk, "HDMI-A-1"), untested);
+        assert_eq!(supported(&desk, "HDMI-A-2"), untested);
+        assert_eq!(supported(&desk, "DP-2"), untested);
+        assert_eq!(supported(&[], "DP-1"), untested);
+        // nested niri's window is tested only alone; the monitor next to it still runs.
         assert_eq!(
-            supported(&[output("DP-1", Some(Transform::Flipped180))]),
+            supported(&[monitor.clone(), nested.clone()], "winit"),
             untested
         );
-        assert_eq!(supported(&[output("DP-1", Some(Transform::_90))]), untested);
-        assert_eq!(
-            supported(&[output("winit", Some(Transform::Normal))]),
-            untested
-        );
-        let error = pointer_support(&[output("eDP-1", Some(Transform::_270))]).unwrap_err();
+        assert_eq!(supported(&[monitor, nested], "DP-1"), Ok(()));
+        let flipped = output("DP-1", Some(Transform::Flipped180));
+        assert_eq!(supported(&[flipped], "DP-1"), untested);
+        let upright = output("winit", Some(Transform::Normal));
+        assert_eq!(supported(&[upright], "winit"), untested);
+        let rotated = output("eDP-1", Some(Transform::_270));
+        let outputs = BTreeMap::from([("eDP-1".to_owned(), rotated)]);
+        let error = pointer_output(&outputs, "eDP-1").unwrap_err();
         assert!(
-            error.detail.ends_with(r#"[("eDP-1", _270)]"#),
+            error.detail.ends_with(
+                r#""eDP-1", and the enabled outputs and transforms are [("eDP-1", _270)]"#
+            ),
             "{}",
             error.detail
         );

@@ -34,6 +34,7 @@ const MEASURE_DEADLINE: Duration = Duration::from_secs(300);
 const LATENCY_DEADLINE: Duration = Duration::from_secs(240);
 const CHROMIUM_DEADLINE: Duration = Duration::from_secs(240);
 const COMPAT_DEADLINE: Duration = Duration::from_secs(130);
+const MULTI_DEADLINE: Duration = Duration::from_secs(150);
 /// Two installs, one of them downloaded, and the checks between them.
 const UPGRADE_DEADLINE: Duration = Duration::from_secs(240);
 /// The agent's twelve minutes, with the fixtures and Noctalia around it.
@@ -112,6 +113,9 @@ pub(crate) enum ServerChecks {
     Compat,
     /// An upgrade from a published release to this build; always in shared mode.
     Upgrade,
+    /// The pointer tools on two outputs, in a niri built with
+    /// `harness/niri-test/headless-outputs.patch`.
+    Multi,
 }
 
 impl ServerChecks {
@@ -130,6 +134,7 @@ impl ServerChecks {
             Self::Big => "--big",
             Self::Compat => "--compat",
             Self::Upgrade => "--upgrade",
+            Self::Multi => "--multi",
         }
     }
 
@@ -148,6 +153,7 @@ impl ServerChecks {
             Self::Big,
             Self::Compat,
             Self::Upgrade,
+            Self::Multi,
         ]
         .into_iter()
         .find(|checks| checks.flag() == flag)
@@ -166,6 +172,7 @@ impl ServerChecks {
             Self::Chromium | Self::ChromiumA11y => CHROMIUM_DEADLINE,
             Self::Compat => COMPAT_DEADLINE,
             Self::Upgrade => UPGRADE_DEADLINE,
+            Self::Multi => MULTI_DEADLINE,
         }
     }
 }
@@ -319,6 +326,12 @@ fn run_nested(
     options: &Options,
     log: &mut Log,
 ) -> Result<()> {
+    let multi = options.server == Some(ServerChecks::Multi);
+    if multi && options.visible {
+        return Err(Failure::new(
+            "--multi runs niri's headless backend, which draws nowhere; drop --visible",
+        ));
+    }
     let display = if options.visible {
         host.visible_socket()?
     } else {
@@ -326,7 +339,9 @@ fn run_nested(
     };
     let env = preflight(host, test_dir, artifacts, options, &display)?;
     log.line("stage 0, preflight: pass")?;
-    if !options.visible {
+    if multi {
+        log.line("no parent display: niri's headless backend; C1 host snapshots enabled")?;
+    } else if !options.visible {
         log.line("headless cage: isolated; C1 host snapshots enabled")?;
     }
     let journal = journal::mark()?;
@@ -348,8 +363,11 @@ fn run_nested(
 }
 
 /// The headless parent is part of the lifecycle C1 observes, including cleanup.
+/// `--multi`'s niri runs its own headless backend and needs no parent display, so no cage
+/// starts: `WAYLAND_DISPLAY` stays cage's socket path with nothing at it, and a niri built
+/// without the patch fails to connect there rather than drawing anywhere or taking a TTY.
 fn run_session(env: &Env, test_dir: &TestDir, artifacts: &Path, options: &Options) -> Result<()> {
-    let cage = if options.visible {
+    let cage = if options.visible || options.server == Some(ServerChecks::Multi) {
         None
     } else {
         Some(crate::headless::Headless::start(
@@ -373,7 +391,8 @@ fn preflight(
     options: &Options,
     display: &Path,
 ) -> Result<Env> {
-    let niri_config = if options.demo.is_some() {
+    let multi = options.server == Some(ServerChecks::Multi);
+    let mut niri_config = if options.demo.is_some() {
         config::demo_niri(options.scale)
     } else {
         config::niri(
@@ -383,6 +402,9 @@ fn preflight(
             &server(options)?,
         )
     };
+    if multi {
+        niri_config.push_str(crate::input::multi::OUTPUT_CONFIG);
+    }
     write(&test_dir.niri_config(), &niri_config)?;
     write(&artifacts.join("niri.kdl"), &niri_config)?;
     write(&test_dir.dbus_config(), &config::dbus(&test_dir.run()))?;
@@ -390,6 +412,12 @@ fn preflight(
     let mut env = environment::parent(test_dir, host, display, options.mode == ServerMode::Shared);
     if let Some(dir) = options.niri.as_deref().and_then(Path::parent) {
         env.insert("PATH", environment::first_on_path(dir, host)?);
+    }
+    if multi {
+        env.insert(
+            environment::HEADLESS_OUTPUTS,
+            crate::input::multi::HEADLESS_OUTPUTS.into(),
+        );
     }
     environment::check_containment(&env, test_dir)?;
     runner::run(&Invocation {

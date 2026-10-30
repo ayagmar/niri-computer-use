@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use niri_ipc::{Action, LogicalOutput, Output, Request, Response, Window, Workspace};
+use niri_ipc::{Action, LayerSurface, LogicalOutput, Output, Request, Response, Window, Workspace};
 use serde::Serialize;
 
 use crate::error::{ErrorName, ToolError, Unanswered};
@@ -184,6 +184,14 @@ pub(crate) async fn focused_window(socket: &Socket) -> Result<Option<u64>, ToolE
         return Err(unexpected("FocusedWindow"));
     };
     Ok(window.map(|window| window.id))
+}
+
+/// niri's layer-shell surfaces, such as bars and shell panels, as it reports them right now.
+pub(crate) async fn layers(socket: &Socket) -> Result<Vec<LayerSurface>, ToolError> {
+    let Response::Layers(layers) = request::send(known(socket)?, &Request::Layers).await? else {
+        return Err(unexpected("Layers"));
+    };
+    Ok(layers)
 }
 
 /// Whether niri's overview is open, as niri reports it right now.
