@@ -654,7 +654,7 @@ Not ready: 1 blocker."
             engine: None,
             event_stream: None,
             config_failed: None,
-            read_stop_key: true,
+            stop_key: Some(&stop_key::Reader::default()),
             lease_notice_error: None,
             audit: &audit,
             lease: crate::control::desk::status_without_desk(&crate::Env::default()),

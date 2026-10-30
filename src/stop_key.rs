@@ -12,6 +12,8 @@ mod kdl;
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -63,37 +65,69 @@ impl Checked {
     }
 }
 
-/// Reads the config of the niri on `socket`. `config_failed` is what niri last said of its
-/// config load, when that is known.
-pub(crate) async fn check(socket: &Socket, config_failed: Option<bool>) -> Checked {
-    if config_failed == Some(true) {
-        return Checked::unknown(
-            "niri reports that its last config load failed, so it runs an earlier config or its default; `niri validate` says why",
-        );
+/// Reads niri's config for the stop key, one read at a time. A read blocked on a stuck
+/// filesystem is left to end on its thread; until it has, later checks answer `unknown` at
+/// once instead of leaving one more thread behind and waiting out the deadline again.
+#[derive(Debug, Default)]
+pub(crate) struct Reader {
+    busy: Arc<AtomicBool>,
+}
+
+impl Reader {
+    /// Reads the config of the niri on `socket`. `config_failed` is what niri last said of
+    /// its config load, when that is known.
+    pub(crate) async fn check(&self, socket: &Socket, config_failed: Option<bool>) -> Checked {
+        if config_failed == Some(true) {
+            return Checked::unknown(
+                "niri reports that its last config load failed, so it runs an earlier config or its default; `niri validate` says why",
+            );
+        }
+        let pid = match niri::pid(socket).await {
+            Ok(pid) => pid,
+            Err(error) => {
+                return Checked::unknown(format!("find niri's process: {}", error.detail));
+            }
+        };
+        self.off_thread(DEADLINE, move || {
+            inspect(Path::new("/proc"), pid, Path::new(SYSTEM_CONFIG))
+        })
+        .await
     }
-    let pid = match niri::pid(socket).await {
-        Ok(pid) => pid,
-        Err(error) => return Checked::unknown(format!("find niri's process: {}", error.detail)),
-    };
-    // A file on a stuck filesystem blocks its reader, so the reads run on a thread of
-    // their own, abandoned at the deadline.
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-    let spawned = std::thread::Builder::new()
-        .name("stop key".to_owned())
-        .spawn(move || {
-            sender
-                .send(inspect(Path::new("/proc"), pid, Path::new(SYSTEM_CONFIG)))
-                .ok();
-        });
-    if let Err(error) = spawned {
-        return Checked::unknown(format!("start a thread to read niri's config: {error}"));
-    }
-    match tokio::time::timeout(DEADLINE, receiver).await {
-        Ok(Ok(checked)) => checked,
-        Ok(Err(_)) => Checked::unknown("the thread reading niri's config ended without an answer"),
-        Err(_) => Checked::unknown(format!(
-            "reading niri's config took longer than {DEADLINE:?}"
-        )),
+
+    /// `read`'s answer, run on a thread of its own and abandoned after `deadline`, unless
+    /// an earlier read hasn't ended.
+    async fn off_thread(
+        &self,
+        deadline: Duration,
+        read: impl FnOnce() -> Checked + Send + 'static,
+    ) -> Checked {
+        if self.busy.swap(true, Ordering::AcqRel) {
+            return Checked::unknown(
+                "an earlier read of niri's config hasn't ended, so a file it reads may be on a stuck filesystem",
+            );
+        }
+        let busy = Arc::clone(&self.busy);
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let spawned = std::thread::Builder::new()
+            .name("stop key".to_owned())
+            .spawn(move || {
+                let checked = read();
+                busy.store(false, Ordering::Release);
+                sender.send(checked).ok();
+            });
+        if let Err(error) = spawned {
+            self.busy.store(false, Ordering::Release);
+            return Checked::unknown(format!("start a thread to read niri's config: {error}"));
+        }
+        match tokio::time::timeout(deadline, receiver).await {
+            Ok(Ok(checked)) => checked,
+            Ok(Err(_)) => {
+                Checked::unknown("the thread reading niri's config ended without an answer")
+            }
+            Err(_) => Checked::unknown(format!(
+                "reading niri's config took longer than {deadline:?}"
+            )),
+        }
     }
 }
 
@@ -840,12 +874,55 @@ include "~/extra/more.kdl"
 
     #[tokio::test]
     async fn a_failed_config_load_or_no_niri_is_unknown() {
-        let failed = check(&Socket::default(), Some(true)).await;
+        let reader = Reader::default();
+        let failed = reader.check(&Socket::default(), Some(true)).await;
         assert_eq!(failed.state, StopKey::Unknown);
         assert!(failed.detail.contains("niri validate"), "{failed:?}");
-        let gone = check(&Socket::default(), None).await;
+        let gone = reader.check(&Socket::default(), None).await;
         assert_eq!(gone.state, StopKey::Unknown);
         assert!(gone.detail.contains("NIRI_SOCKET is not set"), "{gone:?}");
+    }
+
+    /// Waits up to five seconds for `reader`'s read to end.
+    async fn ended(reader: &Reader) {
+        let mut waited = 0;
+        while reader.busy.load(Ordering::Acquire) && waited < 500 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            waited += 1;
+        }
+        assert!(!reader.busy.load(Ordering::Acquire), "the read never ended");
+    }
+
+    // A read stuck on a hung filesystem is abandoned at the deadline; until it ends, later
+    // checks answer at once and start no other thread.
+    #[tokio::test]
+    async fn a_stuck_read_holds_off_later_ones_until_it_ends() {
+        let reader = Reader::default();
+        let (release, stuck) = std::sync::mpsc::channel::<()>();
+        let deadline = Duration::from_millis(50);
+        let first = reader
+            .off_thread(deadline, move || {
+                stuck.recv().ok();
+                Checked::unread()
+            })
+            .await;
+        assert!(first.detail.contains("took longer"), "{first:?}");
+        let started = Arc::new(AtomicBool::new(false));
+        let ran = Arc::clone(&started);
+        let second = reader
+            .off_thread(Duration::from_secs(5), move || {
+                ran.store(true, Ordering::SeqCst);
+                Checked::unread()
+            })
+            .await;
+        assert!(second.detail.contains("hasn't ended"), "{second:?}");
+        assert!(!started.load(Ordering::SeqCst));
+        release.send(()).unwrap();
+        ended(&reader).await;
+        let third = reader
+            .off_thread(Duration::from_secs(5), Checked::unread)
+            .await;
+        assert_eq!(third, Checked::unread());
     }
 
     // The install script can't call this, so it prints the line itself.

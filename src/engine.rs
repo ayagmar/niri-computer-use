@@ -56,6 +56,8 @@ pub(crate) struct Engine {
     clipboard: Mutex<Option<clipboard::Watch>>,
     /// The notifications `notify_on_lease` sent.
     notices: Notices,
+    /// What reads niri's config for `status.stop_key` and `acquire_desktop`'s warning.
+    stop_key: stop_key::Reader,
     /// The last session id given out.
     last_session: AtomicU64,
     mode: status::Mode,
@@ -246,6 +248,7 @@ impl Engine {
             sessions: Mutex::new(BTreeMap::new()),
             clipboard: Mutex::new(None),
             notices: Notices::default(),
+            stop_key: stop_key::Reader::default(),
             last_session: AtomicU64::new(0),
             mode: status::Mode::Standalone,
             fallback: None,
@@ -379,7 +382,7 @@ impl Engine {
             engine: Some(engine),
             event_stream: Some(event_stream),
             config_failed: self.config_failed(),
-            read_stop_key,
+            stop_key: read_stop_key.then_some(&self.stop_key),
             lease_notice_error: self.notices.last_error(),
             audit: &self.audit,
             lease: self.desk.status(session),
@@ -412,7 +415,9 @@ impl Engine {
                 self.announce(session, label).await;
             }
         };
-        let stop_key = stop_key::check(&self.env.niri_socket, self.config_failed());
+        let stop_key = self
+            .stop_key
+            .check(&self.env.niri_socket, self.config_failed());
         let ((), stop_key) = tokio::join!(announced, stop_key);
         Ok(Granted {
             holder,

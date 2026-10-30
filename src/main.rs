@@ -269,7 +269,7 @@ async fn status(env: &Env, given: session::Given, check: bool) -> ExitCode {
         engine: None,
         event_stream: None,
         config_failed: niri::config_failed(&env.niri_socket).await.ok(),
-        read_stop_key: true,
+        stop_key: Some(&stop_key::Reader::default()),
         lease_notice_error: None,
         audit: &audit,
         lease: control::desk::status_without_desk(env),

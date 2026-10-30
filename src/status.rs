@@ -93,9 +93,10 @@ pub(crate) struct Sources<'a> {
     pub(crate) event_stream: Option<StreamState>,
     /// Whether niri's last config load failed, when niri has said.
     pub(crate) config_failed: Option<bool>,
-    /// Whether to read niri's config for `stop_key`. An action's checks don't need it, and
-    /// a config file on a stuck filesystem would hold each of them up.
-    pub(crate) read_stop_key: bool,
+    /// What reads niri's config for `stop_key`; none to leave it unread. An action's
+    /// checks don't need it, and a config file on a stuck filesystem would hold each of
+    /// them up.
+    pub(crate) stop_key: Option<&'a stop_key::Reader>,
     /// Why the last `notify_on_lease` notification couldn't be sent; none for the
     /// `status` subcommand.
     pub(crate) lease_notice_error: Option<String>,
@@ -188,7 +189,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         engine,
         event_stream,
         config_failed,
-        read_stop_key,
+        stop_key: reader,
         lease_notice_error,
         audit,
         lease,
@@ -214,7 +215,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         niri::outputs(socket),
         noctalia,
         control::logind(socket, &env.desktop),
-        stop_key_of(socket, config_failed, read_stop_key)
+        stop_key_of(reader, socket, config_failed)
     );
     let noctalia_status = noctalia.as_ref().and_then(|reply| reply.as_ref().ok());
     let lock = control::lock(logind, noctalia_status);
@@ -266,16 +267,15 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
 
 /// Whether Noctalia is there from its status reply, none when it isn't installed, and why
 /// it counts as not running.
-/// What `stop_key` says, reading niri's config only when `read` says.
+/// What `stop_key` says, niri's config read only with a `reader`.
 async fn stop_key_of(
+    reader: Option<&stop_key::Reader>,
     socket: &niri::Socket,
     config_failed: Option<bool>,
-    read: bool,
 ) -> stop_key::Checked {
-    if read {
-        stop_key::check(socket, config_failed).await
-    } else {
-        stop_key::Checked::unread()
+    match reader {
+        Some(reader) => reader.check(socket, config_failed).await,
+        None => stop_key::Checked::unread(),
     }
 }
 
@@ -316,7 +316,7 @@ mod tests {
             engine: None,
             event_stream: None,
             config_failed: None,
-            read_stop_key: true,
+            stop_key: Some(&stop_key::Reader::default()),
             lease_notice_error: None,
             audit: &audit,
             lease: status_without_desk(&Env::default()),
@@ -401,7 +401,7 @@ mod tests {
             engine: None,
             event_stream: None,
             config_failed: Some(false),
-            read_stop_key: false,
+            stop_key: None,
             lease_notice_error: None,
             audit: &audit,
             lease: status_without_desk(&Env::default()),
