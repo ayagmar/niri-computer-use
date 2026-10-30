@@ -17,6 +17,7 @@ mod engine;
 mod error;
 mod image_header;
 mod input;
+mod live;
 mod niri;
 mod noctalia;
 mod notice;

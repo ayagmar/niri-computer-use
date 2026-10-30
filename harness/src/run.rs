@@ -35,6 +35,7 @@ const LATENCY_DEADLINE: Duration = Duration::from_secs(240);
 const CHROMIUM_DEADLINE: Duration = Duration::from_secs(240);
 const COMPAT_DEADLINE: Duration = Duration::from_secs(130);
 const MULTI_DEADLINE: Duration = Duration::from_secs(150);
+const OVERLAY_DEADLINE: Duration = Duration::from_secs(200);
 /// Two installs, one of them downloaded, and the checks between them.
 const UPGRADE_DEADLINE: Duration = Duration::from_secs(240);
 /// The agent's twelve minutes, with the fixtures and Noctalia around it.
@@ -120,6 +121,8 @@ pub(crate) enum ServerChecks {
     /// The pointer tools on two outputs, in a niri built with
     /// `harness/niri-test/headless-outputs.patch`.
     Multi,
+    /// The Noctalia plugin's robot overlay, on the same two outputs as `Multi`.
+    Overlay,
 }
 
 impl ServerChecks {
@@ -139,6 +142,7 @@ impl ServerChecks {
             Self::Compat => "--compat",
             Self::Upgrade => "--upgrade",
             Self::Multi => "--multi",
+            Self::Overlay => "--overlay",
         }
     }
 
@@ -158,6 +162,7 @@ impl ServerChecks {
             Self::Compat,
             Self::Upgrade,
             Self::Multi,
+            Self::Overlay,
         ]
         .into_iter()
         .find(|checks| checks.flag() == flag)
@@ -177,6 +182,7 @@ impl ServerChecks {
             Self::Compat => COMPAT_DEADLINE,
             Self::Upgrade => UPGRADE_DEADLINE,
             Self::Multi => MULTI_DEADLINE,
+            Self::Overlay => OVERLAY_DEADLINE,
         }
     }
 }
@@ -396,6 +402,7 @@ fn preflight(
     display: &Path,
 ) -> Result<Env> {
     let multi = options.server == Some(ServerChecks::Multi);
+    let overlay = options.server == Some(ServerChecks::Overlay);
     let mut niri_config = if options.demo.is_some() {
         config::demo_niri(options.scale)
     } else {
@@ -408,6 +415,9 @@ fn preflight(
     };
     if multi {
         niri_config.push_str(crate::input::multi::OUTPUT_CONFIG);
+    }
+    if overlay {
+        niri_config.push_str(&crate::input::overlay::output_config(options.scale));
     }
     write(&test_dir.niri_config(), &niri_config)?;
     write(&artifacts.join("niri.kdl"), &niri_config)?;
@@ -438,16 +448,30 @@ fn preflight(
         || options.eval.is_some()
         || options.demo.is_some()
     {
-        write_noctalia_config(&env, test_dir, artifacts, options.demo.is_some())?;
+        let plugin = if overlay {
+            Some(server(options)?)
+        } else {
+            None
+        };
+        write_noctalia_config(
+            &env,
+            test_dir,
+            artifacts,
+            options.demo.is_some(),
+            plugin.as_deref(),
+        )?;
     }
     Ok(env)
 }
 
+/// With `plugin`, the server the plugin runs, this checkout's Noctalia plugin is linked
+/// into the nested Noctalia's plugin directory and enabled.
 fn write_noctalia_config(
     env: &Env,
     test_dir: &TestDir,
     artifacts: &Path,
     demo: bool,
+    plugin: Option<&Path>,
 ) -> Result<()> {
     let path = test_dir.noctalia_config();
     if let Some(dir) = path.parent() {
@@ -457,6 +481,9 @@ fn write_noctalia_config(
     fs::create_dir_all(&wallpapers).context(format!("create {}", wallpapers.display()))?;
     let config = if demo {
         config::noctalia_demo(&wallpapers)
+    } else if let Some(server) = plugin {
+        link_plugin(test_dir)?;
+        config::noctalia_plugin(&wallpapers, server)
     } else {
         config::noctalia(&wallpapers)
     };
@@ -471,6 +498,20 @@ fn write_noctalia_config(
         deadline: VALIDATE_DEADLINE,
     })?;
     noctalia_valid(&output.stdout, &output.stderr)
+}
+
+/// Links `noctalia/niri-computer-use` into `NOCTALIA_DATA_HOME/noctalia/plugins`.
+fn link_plugin(test_dir: &TestDir) -> Result<()> {
+    let source = env::current_dir()
+        .context("read the working directory")?
+        .join("noctalia/niri-computer-use");
+    let plugins = test_dir.data().join("noctalia/noctalia/plugins");
+    fs::create_dir_all(&plugins).context(format!("create {}", plugins.display()))?;
+    std::os::unix::fs::symlink(&source, plugins.join("niri-computer-use")).context(format!(
+        "link {} into {}",
+        source.display(),
+        plugins.display()
+    ))
 }
 
 fn noctalia_valid(stdout: &[u8], stderr: &[u8]) -> Result<()> {

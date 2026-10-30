@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Breaking
+
+- The Noctalia plugin needs Noctalia 5.4 or newer: it uses plugin API 36 for its overlay. Noctalia 5.3 lists it as incompatible and doesn't load it, bar widget, panel and glow included. The install script says so when Noctalia lists it that way.
+
+### Added
+
+- The Noctalia plugin's overlay: while an agent holds the desktop, a small robot stands beside where it acts, with a caption such as `click` or `typing 12 chars in kitty`. It sets off as a click goes out and stands beside it a moment later, holds still while the agent's screenshot is taken, and lets clicks pass through. The `Show a robot where the agent acts` setting turns it off.
+- `watch` sends a `live` line for each phase of the action in progress: when the server admits it, where it acts (the output and the point, or the window and its `app_id`), right before its screenshot is taken, and how it ended. The server keeps that record in `live.json` in the instance's runtime directory. The audit log is unchanged.
+
+### Changed
+
+- `watch` shows a stop, a lease change and the input-dirty marker at once instead of at its next 250 ms poll: it wakes on changes in the runtime directory.
+- The skill tells agents that a small robot with a caption in their screenshots is the Noctalia plugin's overlay, not part of the app, and that clicks pass through it.
+
+### Fixed
+
+- The Noctalia plugin's glow covered only the top-left quarter of an output at a scale of 1.25 or more: it divided the logical size Noctalia gives by the output's scale again.
+- The Noctalia plugin could say input may be stuck while an agent's click or key was still going out: `watch` reported the input-dirty marker that every input writes while it goes out. `watch` now sets `input_dirty` only once the marker's server is gone, was released or gave up on its input, which it notes in `input-dirty.note` beside the marker. A marker from a 0.1.6 server counts once it is a minute old, and any marker once it is five minutes old.
+
 ## 0.1.6 - 2026-10-30
 
 ### Added

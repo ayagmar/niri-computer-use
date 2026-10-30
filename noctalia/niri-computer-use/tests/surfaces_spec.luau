@@ -1,6 +1,7 @@
 --!nonstrict
 local t = require("./support/t")
 local env = require("./support/env")
+local fx = require("./support/fixtures")
 
 local function desktop()
   local host = env.host()
@@ -439,6 +440,8 @@ t.group("glow", function()
     t.ok(border(host) ~= first, "the glow didn't breathe")
   end)
 
+  -- The bug: the logical size Noctalia gives was divided by the output's scale again, so
+  -- the glow covered a quarter of a HiDPI output.
   t.test("holds the tertiary colour while an agent asks, and covers the focused output in logical pixels", function()
     local host = desktop()
     env.start(host, "glow.luau")
@@ -446,6 +449,191 @@ t.group("glow", function()
     t.eq(border(host), "tertiary/0.80")
     t.eq(host.desktopTree.props.width, 2048)
     t.eq(host.desktopTree.props.height, 1152)
+  end)
+end)
+
+t.group("robot", function()
+  local F = fx.live()
+  local stage = env.module("lib/stage.luau")
+
+  -- The service and the robot's layer on HDMI-A-1, with the fixtures' agent driving.
+  local function overlay()
+    local host = env.host()
+    host.outputs = {
+      { name = "HDMI-A-1", width = 2048, height = 1152, scale = 1, focused = true },
+      { name = "DP-2", width = 1280, height = 720, scale = 1, focused = false },
+    }
+    host.focusedOutput = "HDMI-A-1"
+    host.layer.output = "HDMI-A-1"
+    host.nowMs = env.module("lib/time.luau").parse("2026-10-30T12:00:00.500Z")
+    env.start(host, "service.luau")
+    local robot = env.start(host, "robot.luau")
+    host.event({ event = "hello", format = 1 })
+    host.event(fx.state())
+    return host, robot
+  end
+
+  local function images(tree)
+    local out = {}
+    local function walk(n)
+      if n.type == "image" then
+        table.insert(out, n)
+      end
+      for _, child in n.children or {} do
+        walk(child)
+      end
+    end
+    walk(tree)
+    return out
+  end
+
+  local function lastConfigure(host)
+    for i = #host.layerCalls, 1, -1 do
+      if host.layerCalls[i].command == "configure" then
+        return host.layerCalls[i].patch
+      end
+    end
+    return nil
+  end
+
+  -- Where the drawn tree puts the robot and its caption, from its two spacers.
+  local function corner(tree)
+    local at = {}
+    local function walk(n)
+      if n.props and (n.props.key == "left" or n.props.key == "top") then
+        at[n.props.key] = n.props
+      end
+      for _, child in n.children or {} do
+        walk(child)
+      end
+    end
+    walk(tree)
+    return at.left.width, at.top.height
+  end
+
+  t.test("draws one frame of the robot beside the click, placed in the layer", function()
+    local host, robot = overlay()
+    local renders, calls = host.layer.renders, #host.layerCalls
+    host.event(F.click_aim)
+    -- The bug: drawing from the state watcher, where Noctalia gives no output name, moved
+    -- the layer to the output it was on and drew nothing.
+    t.eq(host.layer.renders, renders + 1, "drawn as the call arrives")
+    for i = calls + 1, #host.layerCalls do
+      local patch = host.layerCalls[i].patch
+      t.ok(not (patch and patch.output and patch.output ~= "focused"), "kept on its output")
+    end
+    host.nowMs += 500
+    robot.call("update")
+    local frames = images(host.layer.tree)
+    t.eq(#frames, #stage.POSES)
+    local shown = {}
+    for _, image in frames do
+      t.ok(env.sources[image.props.path] ~= nil, `{image.props.path} is in the plugin`)
+      if image.props.visible then
+        table.insert(shown, image.props.path)
+      end
+    end
+    t.eq(#shown, 1, "one frame shows")
+    t.contains(host.texts(host.layer.tree), "click")
+    local left, top = corner(host.layer.tree)
+    -- Above-left of the point, with the caption to the robot's left.
+    t.eq(left + (stage.INNER + stage.captionWidth("click")) + stage.SPRITE, 650 - stage.GAP)
+    t.eq(top, math.floor(320.4 - stage.GAP - stage.SPRITE + 0.5))
+  end)
+
+  t.test("a target on another output moves the layer there instead of drawing here", function()
+    local host = overlay()
+    local other = fx.with(F.click_aim, {})
+    other.aim = { output = "DP-2", area = { width = 1280, height = 720 }, points = { { x = 300, y = 300 } } }
+    local renders = host.layer.renders
+    host.event(other)
+    local patch = lastConfigure(host)
+    t.eq(patch.output, "DP-2")
+    t.eq(host.layer.renders, renders, "nothing drawn on HDMI-A-1")
+    local gone = fx.with(other, { call = 2 })
+    gone.aim = { output = "HDMI-A-9", area = { width = 1280, height = 720 }, points = { { x = 300, y = 300 } } }
+    local calls = #host.layerCalls
+    host.event(gone)
+    t.eq(#host.layerCalls, calls, "no move to an output Noctalia doesn't list")
+  end)
+
+  -- The bug: moving to another output while the agent looked, so the layer Noctalia built
+  -- there drew its first frame in the middle of the agent's screenshot.
+  t.test("waits for the call's end to move to the output the agent looks at", function()
+    local host, robot = overlay()
+    host.event(F.click_aim)
+    host.nowMs += 500
+    robot.call("update")
+    local renders, calls = host.layer.renders, #host.layerCalls
+    local other = fx.with(F.click_aim, { call = 2, phase = "look" })
+    other.aim = { output = "DP-2", area = { width = 1280, height = 720 }, points = { { x = 300, y = 300 } } }
+    host.event(other)
+    host.nowMs += 100
+    robot.call("update")
+    t.eq(#host.layerCalls, calls, "the layer stays where it is")
+    t.eq(host.layer.renders, renders, "and draws nothing new")
+    host.event(fx.with(other, { phase = "end" }))
+    t.eq(lastConfigure(host).output, "DP-2", "it moves once the call has ended")
+  end)
+
+  -- The bug: frame ticks drove the glide, and Noctalia stopped sending them after a
+  -- frame that drew nothing new, so the robot jumped to the end of the glide.
+  t.test("draws every frame while it glides, by its update interval", function()
+    local host, robot = overlay()
+    -- It popped in at home with the lease, and glides from there to the click.
+    host.event(F.click_aim)
+    t.eq(host.updateInterval, stage.FRAME_MS)
+    local steps = {}
+    for _ = 1, 4 do
+      host.nowMs += stage.FRAME_MS
+      robot.call("update")
+      table.insert(steps, (corner(host.layer.tree)))
+    end
+    host.nowMs += stage.GLIDE_MS
+    robot.call("update")
+    t.ok(host.updateInterval > stage.FRAME_MS, "slower once there")
+    -- The caption shows on arrival, left of the robot.
+    local there = corner(host.layer.tree) + stage.INNER + stage.captionWidth("click")
+    for i = 2, #steps do
+      t.ok(math.abs(there - steps[i]) < math.abs(there - steps[i - 1]), "a step toward the click each frame")
+    end
+  end)
+
+  -- The bug: the sizes Noctalia gives, already logical, were divided by the output's
+  -- scale again, so on a scale-2 laptop the robot asked to drive mid-screen.
+  t.test("asks from 48 px inside the corner of a scaled output no action has named", function()
+    local host = env.host()
+    host.outputs = { { name = "eDP-1", width = 1280, height = 800, scale = 2, focused = true } }
+    host.focusedOutput = "eDP-1"
+    host.layer.output = "eDP-1"
+    host.nowMs = env.module("lib/time.luau").parse("2026-10-30T12:00:00.500Z")
+    env.start(host, "service.luau")
+    env.start(host, "robot.luau")
+    host.event({ event = "hello", format = 1 })
+    host.event(fx.state(nil, { pending = true }))
+    local left, top = corner(host.layer.tree)
+    t.eq(left + stage.INNER + stage.captionWidth("asking to drive") + stage.SPRITE, 1280 - stage.HOME)
+    t.eq(top + stage.SPRITE, 800 - stage.HOME)
+  end)
+
+  t.test("places the robot in UI-scaled units, as Noctalia scales the tree", function()
+    local host, robot = overlay()
+    host.settings["accessibility.ui_scale"] = 1.25
+    host.event(F.click_aim)
+    host.nowMs += 500
+    robot.call("update")
+    local left, top = corner(host.layer.tree)
+    t.near(left * 1.25 + (stage.INNER + stage.captionWidth("click") + stage.SPRITE) * 1.25, 650 - stage.GAP, 0.5)
+    t.near(top * 1.25 + stage.SPRITE * 1.25, 320.4 - stage.GAP, 0.5)
+  end)
+
+  t.test("draws nothing once the agent has gone", function()
+    local host, robot = overlay()
+    host.event(F.click_aim)
+    host.event(fx.state(false))
+    host.nowMs += stage.GOODBYE_MS
+    robot.call("update")
+    t.eq(#images(host.layer.tree), 0)
   end)
 end)
 

@@ -24,6 +24,10 @@
       "label": "Glow width",
       "description": "How wide the desktop glow's frame is, in pixels."
     },
+    "overlay": {
+      "label": "Show a robot where the agent acts",
+      "description": "While an agent holds the desktop, a small robot and a caption sit beside each action's target. Clicks pass through them."
+    },
     "show_when_idle": {
       "label": "Show while no agent drives",
       "description": "Off hides the capsule until an agent takes the desktop."
@@ -160,5 +164,32 @@
     "noctalia_plugin": "Sent an event to {plugin}",
     "set_element_text": "Filled in a field",
     "clipboard_read": "Read the clipboard"
+  },
+  "overlay": {
+    "click": "click",
+    "double_click": "double-click",
+    "right_click": "right-click",
+    "move": "move",
+    "drag": "drag",
+    "scroll": "scroll",
+    "type": "typing {count} chars",
+    "paste": "pasting {count} chars",
+    "key": "keys {keys}",
+    "one_key": "a key",
+    "keys": "{n} keys",
+    "in": "{doing} in {app}",
+    "focus": "focus",
+    "focus_app": "focus → {app}",
+    "workspace": "workspace",
+    "launch": "launching {preset}",
+    "close": "closing a window",
+    "close_app": "closing {app}",
+    "niri_action": "{action}",
+    "panel": "panel {panel}",
+    "noctalia": "noctalia",
+    "activate": "pressing a {role}",
+    "set_text": "filling in a field",
+    "asking": "asking to drive",
+    "stopped": "stopped"
   }
 }

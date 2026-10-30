@@ -53,7 +53,7 @@ Before it writes anywhere it keeps, the script checks three things. Any failure 
 
 If a link already exists at one of the skill or plugin paths and points somewhere else, such as into a clone, the script replaces it and prints a line naming what it pointed to. If something that isn't a link is there, a directory for example, the script leaves it alone, prints where the skill or the plugin is, and goes on.
 
-When `noctalia` is on `PATH`, the next steps include enabling the plugin with `noctalia msg plugins enable ayagmar/niri-computer-use`; the script doesn't enable it. After an update, the script lists each `niri-computer-use serve` still running the binary it replaced, by PID and the name of the agent that started it, so you know which agents to restart or reconnect.
+When `noctalia` is on `PATH`, the next steps include enabling the plugin with `noctalia msg plugins enable ayagmar/niri-computer-use`; the script doesn't enable it. Once it has linked the plugin, it runs `noctalia msg plugins list`, for at most five seconds, and when Noctalia lists the plugin as incompatible it says the plugin needs Noctalia 5.4 or newer. After an update, the script lists each `niri-computer-use serve` still running the binary it replaced, by PID and the name of the agent that started it, so you know which agents to restart or reconnect.
 
 ## What it never does
 

@@ -20,6 +20,7 @@ mod native;
 mod native_gestures;
 mod native_unicode;
 mod other_layout;
+pub(crate) mod overlay;
 pub(crate) mod pacer;
 mod paste;
 mod physical;

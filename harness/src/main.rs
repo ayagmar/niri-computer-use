@@ -53,14 +53,14 @@ use scale::Scale;
 use supervise::Probes;
 use test_dir::TestDir;
 
-const USAGE: &str = "usage: harness run [--visible | --headless-niri] [--shared] [--server <path>] [--niri <path>] [--scale <scale>] [--ssd] [--noctalia | --sitting | --control | --actions | --input | --shell | --a11y | --engine | --measure | --latency | --chromium | --chromium-a11y | --big | --compat | --multi | --upgrade <version> | --eval <scenario> --skill <dir|none> --model <model> | --demo <scene>]
+const USAGE: &str = "usage: harness run [--visible | --headless-niri] [--shared] [--server <path>] [--niri <path>] [--scale <scale>] [--ssd] [--noctalia | --sitting | --control | --actions | --input | --shell | --a11y | --engine | --measure | --latency | --chromium | --chromium-a11y | --big | --compat | --multi | --overlay | --upgrade <version> | --eval <scenario> --skill <dir|none> --model <model> | --demo <scene>]
        harness matrix <builds> <output>
        harness host-capture <output>
        harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--started <file>]
        harness keymaps <TEST_DIR> <directory> <deadline-ms>
        harness clipboard <TEST_DIR> <deadline-ms> [--secret]
        harness slow-reader <TEST_DIR> <delay-ms> <deadline-ms>
-       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--ssd] [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --a11y <server> | --engine <server> | --measure <server> | --latency <server> | --chromium <server> <browser> | --chromium-a11y <server> <browser> | --big <server> | --compat <server> | --multi <server> | --upgrade <server> <version> | --eval <server> <scenario> <skill|none> <model> | --demo <server> <scene>]";
+       harness supervise <TEST_DIR> <ARTIFACTS> <scale> [--ssd] [--noctalia <server> | --sitting | --control <server> | --actions <server> | --input <server> | --shell <server> | --a11y <server> | --engine <server> | --measure <server> | --latency <server> | --chromium <server> <browser> | --chromium-a11y <server> <browser> | --big <server> | --compat <server> | --multi <server> | --overlay <server> | --upgrade <server> <version> | --eval <server> <scenario> <skill|none> <model> | --demo <server> <scene>]";
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -195,7 +195,8 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
                 )?);
             }
             "--control" | "--actions" | "--input" | "--shell" | "--a11y" | "--measure"
-            | "--latency" | "--chromium" | "--chromium-a11y" | "--big" | "--compat" | "--multi" => {
+            | "--latency" | "--chromium" | "--chromium-a11y" | "--big" | "--compat" | "--multi"
+            | "--overlay" => {
                 options.server = run::ServerChecks::from_flag(arg);
             }
             "--engine" => {
@@ -230,13 +231,16 @@ fn run_options(args: &[&str]) -> Result<run::Options> {
     Ok(options)
 }
 
-/// `--multi` always runs on niri's headless backend, and `--headless-niri` asks for it
+/// `--multi` and `--overlay` always run on niri's headless backend, and `--headless-niri` asks for it
 /// with `--chromium`, the one other suite run on it.
 fn headless_outputs(options: &mut run::Options) -> Result<()> {
-    if options.server == Some(run::ServerChecks::Multi) {
+    if matches!(
+        options.server,
+        Some(run::ServerChecks::Multi | run::ServerChecks::Overlay)
+    ) {
         if options.headless_outputs.is_some() {
             return Err(Failure::new(
-                "--multi already runs niri's headless backend; drop --headless-niri",
+                "--multi and --overlay already run niri's headless backend; drop --headless-niri",
             ));
         }
         options.headless_outputs = Some(input::multi::HEADLESS_OUTPUTS);
@@ -259,7 +263,7 @@ fn one_mode(options: &run::Options) -> Result<()> {
         > 1
     {
         return Err(Failure::new(
-            "--sitting, --noctalia, --control, --actions, --input, --shell, --a11y, --engine, --measure, --latency, --chromium, --chromium-a11y, --big, --compat, --multi, --upgrade, --eval and --demo cannot be combined",
+            "--sitting, --noctalia, --control, --actions, --input, --shell, --a11y, --engine, --measure, --latency, --chromium, --chromium-a11y, --big, --compat, --multi, --overlay, --upgrade, --eval and --demo cannot be combined",
         ));
     }
     Ok(())

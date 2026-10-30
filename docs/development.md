@@ -133,7 +133,7 @@ make nested NOCTALIA=1            # also start Noctalia in the nested session (C
 make nested NOCTALIA=1 SCALE=1.5
 ```
 
-You'll need cage 0.3.1 for headless runs, niri 26.04, `dbus-run-session` (from `dbus`), `grim`, `wev` and `stdbuf` (from coreutils), and Noctalia 5.2.1 for `NOCTALIA=1`. `make nested` builds the server first, which `NOCTALIA=1` drives. With `tesseract` on `PATH`, `NOCTALIA=1` also reads the open control center's text (see below); without it, that check is skipped with a notice. Headless runs start cage through the runner with a deadline ten seconds longer than the nested suite. Its private runtime is `TEST_DIR/cage`, and its socket path must fit 108 bytes. Cage uses the headless backend without libinput devices and disables client decorations. Startup waits at most ten seconds, with no visible fallback. Cage's process group is stopped and reaped on completion or failure; `cage.log` stays with the artifacts.
+You'll need cage 0.3.1 for headless runs, niri 26.04, `dbus-run-session` (from `dbus`), `grim`, `wev` and `stdbuf` (from coreutils), and Noctalia 5.4 for `NOCTALIA=1` (the runs here use 5.4.0). `make nested` builds the server first, which `NOCTALIA=1` drives. With `tesseract` on `PATH`, `NOCTALIA=1` also reads the open control center's text (see below); without it, that check is skipped with a notice. Headless runs start cage through the runner with a deadline ten seconds longer than the nested suite. Its private runtime is `TEST_DIR/cage`, and its socket path must fit 108 bytes. Cage uses the headless backend without libinput devices and disables client decorations. Startup waits at most ten seconds, with no visible fallback. Cage's process group is stopped and reaped on completion or failure; `cage.log` stays with the artifacts.
 
 In visible mode, the nested niri's window has the app-id `niri`. To keep it from moving your tiled layout or taking focus, add this rule to your own niri config:
 
@@ -406,6 +406,26 @@ The nested niri draws nowhere, so no cage starts and `--visible` is refused. `WA
 4. moves the GTK 4 fixture to each output and clicks its button 20 times there from a screenshot of that output; each click must count once.
 
 It shows that niri maps the pointer through the bound output at mixed scales and a negative origin. It doesn't plug or unplug an output mid-gesture: the unit tests against the fake niri cover that. The results are in `docs/results/multi-output.md`.
+
+## Nested overlay checks
+
+`make nested-overlay` runs the Noctalia plugin's robot overlay on `make nested-multi`'s patched niri and two outputs: `headless-1`, 1280x720 at `SCALE` (1 by default) at (0, 0), and `headless-2`, 1920x1080 at scale 1.5 at (-1280, 100). It needs what `make nested-multi` needs, and Noctalia 5.4 or newer: the supervisor runs `noctalia --version` in the nested session and fails on an older one, which would list the plugin as incompatible.
+
+```sh
+make nested-overlay
+make nested-overlay SCALE=1.25
+```
+
+The harness links this checkout's `noctalia/niri-computer-use` into the nested Noctalia's plugin directory, enables it in the generated Noctalia config, and sets its `binary` setting to the server under test, so the plugin's service runs that build's `watch`. One server takes the lease, and the supervisor:
+
+1. waits until niri lists the layer `noctalia-plugin:ayagmar/niri-computer-use:robot` on `headless-1`;
+2. clicks each output at 60% of its width and height, and `headless-1` again at 5% of its width, and requires the robot's antenna within 2.5 logical pixels of where it should be: 12 pixels above-left of the click, and above-right at the left edge, where a caption on the left doesn't fit;
+3. moves the GTK 4 fixture's window to `headless-1`, clicks low and right on its button, then clicks the middle of the robot standing above-left of that click, on the button: the button must count both clicks;
+4. times eight `click` calls with `screenshot: true`, each of which must report `settled`, then disables the plugin with `noctalia msg plugins disable`, waits until the layer is gone, and times eight more; the median with the overlay may be at most 150 ms longer than without. That shows the overlay doesn't keep a settle from ending. It can't show that the robot holds still while the agent looks: the layer draws about once a second here (below), so it rarely draws within a settle either way. The Luau tests' generated sequences check that, and the timing on a real display is a desk check.
+
+It finds the robot by its antenna's colour, `#4c8dff`, which nothing else on the nested desktop has, in `grim` captures of the output at its own scale, and saves the last capture of each output as `overlay-<output>.ppm`. The robot may take three seconds to arrive: niri's headless backend sends frame callbacks only from its fallback timer, about once a second, so the layer draws about once a second there, and a glide's frames in between never show. How smoothly the robot glides is therefore not checked here; on a real display the layer draws every frame. The run is local and opt-in; CI doesn't run it.
+
+On 2026-10-30, with Noctalia 5.4.0, both runs passed. The robot was within 0.5 logical pixels of its place on both outputs and at the left edge, 0.6 s after the click's reply on the same output and 1.5–1.7 s after one on the other output. The median click with a screenshot took 176.4 ms with the overlay and 176.3 ms without at scale 1, and 176.3 ms and 171.1 ms at scale 1.25; for the reason above, those numbers say nothing about the robot holding still.
 
 ## Nested Chromium checks
 

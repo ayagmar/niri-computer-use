@@ -22,12 +22,12 @@ local function setting(key: string, fallback)
   return value
 end
 
--- The focused output in logical pixels, or a common size before outputs are known.
+-- The focused output in logical pixels, as Noctalia gives it, or a common size before
+-- outputs are known. Its `scale` is wl_output's whole number, 2 for 1.25 on niri.
 local function size(): (number, number)
   for _, output in noctalia.outputs() or {} do
     if output.focused then
-      local scale = if output.scale and output.scale > 0 then output.scale else 1
-      return output.width / scale, output.height / scale
+      return output.width, output.height
     end
   end
   return 1920, 1080

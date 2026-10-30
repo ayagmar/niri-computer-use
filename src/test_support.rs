@@ -17,6 +17,9 @@ pub(crate) fn properties(cases: u32) -> proptest::test_runner::Config {
 
 /// A directory the calling test creates itself, so the test reads and removes nothing
 /// else. Creation fails if the name already exists.
+/// A writer of the overlay's record that writes nothing, for inputs built in tests.
+pub(crate) static NO_LIVE: crate::live::Live = crate::live::Live::new(None);
+
 pub(crate) fn fresh_dir(name: &str) -> PathBuf {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

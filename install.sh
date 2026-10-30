@@ -126,6 +126,11 @@ linked_plugin=no
 if [ -d "${plugin}" ] && command -v noctalia >/dev/null; then
 	link_to "${plugin}" "${noctalia_plugins}/niri-computer-use" "The Noctalia plugin"
 	linked_plugin=yes
+	# The plugin needs plugin API 36, which Noctalia before 5.4 refuses. A Noctalia that
+	# isn't running, or hasn't seen the plugin yet, lists nothing to warn about.
+	if timeout 5 noctalia msg plugins list 2>/dev/null | grep -q '^ayagmar/niri-computer-use .*incompatible'; then
+		echo "Noctalia lists the plugin as incompatible: it needs Noctalia 5.4 or newer."
+	fi
 fi
 
 # Registration in the agents on PATH, each through its own `mcp add`, so no config file

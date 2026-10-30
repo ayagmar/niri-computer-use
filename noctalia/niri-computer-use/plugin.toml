@@ -2,18 +2,18 @@
 # does, and a Stop within reach.
 #
 # The [[service]] is the only entry that reads: it runs `niri-computer-use
-# watch` and publishes the desk as the `desk` state. The bar [[widget]], the
-# [[panel]] and the [[desktop_widget]] glow only draw it (lib/look.luau keeps
-# them in agreement), and Stop and Resume run the server's own `stop` and
-# `resume` (lib/actions.luau).
+# watch` and publishes the desk as the `desk` state and the action in progress
+# as the `live` state. The bar [[widget]], the [[panel]] and the
+# [[desktop_widget]] glow only draw the desk (lib/look.luau keeps them in
+# agreement), the robot [[layer]] only draws `live` (lib/stage.luau), and Stop
+# and Resume run the server's own `stop` and `resume` (lib/actions.luau).
 #
-# plugin_api 32: argv-free runStream (shell), function callbacks in ui trees,
-# palette roles with alpha, and container tooltips.
+# plugin_api 36: [[layer]] entries and noctalia.layer, so Noctalia 5.4 or newer.
 
 id = "ayagmar/niri-computer-use"
 name = "niri-computer-use"
 version = "0.1.0"
-plugin_api = 32
+plugin_api = 36
 author = "ayagmar"
 license = "MIT"
 icon = "robot"
@@ -66,6 +66,13 @@ min = 2
 max = 40
 step = 1
 
+[[setting]]
+key = "overlay"
+type = "bool"
+label_key = "settings.overlay.label"
+description_key = "settings.overlay.description"
+default = true
+
 [[service]]
 id = "watcher"
 entry = "service.luau"
@@ -101,3 +108,17 @@ dismiss_on_outside_click = true
 [[desktop_widget]]
 id = "glow"
 entry = "glow.luau"
+
+# The whole output, under the bar too (exclusive_zone = -1), with the robot placed
+# inside it: see docs/decisions.md for why not a robot-sized layer moved by margins.
+# The service shows it while an agent holds or asks for the desktop.
+[[layer]]
+id = "robot"
+entry = "robot.luau"
+layer = "overlay"
+anchors = ["top", "bottom", "left", "right"]
+exclusive_zone = -1
+keyboard = "none"
+click_through = true
+output = "focused"
+visible = false

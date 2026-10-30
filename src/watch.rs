@@ -1,13 +1,16 @@
 //! `watch`: what agents are doing on this niri instance, as JSON lines on stdout for a
 //! shell to show. One `hello` line first, then `state` whenever the lease, the stop flag
 //! the input-dirty marker or the agents' servers change, `action` for each tool call the audit log records
-//! for this instance, the last `BACKLOG` of them first, and `alive` every `ALIVE`, so a
+//! for this instance, the last `BACKLOG` of them first, `live` for each record of the
+//! action in progress (`crate::live`), and `alive` every `ALIVE`, so a
 //! reader can tell a quiet desktop from a watch that ended. The lines carry only what the
-//! audit log and the lease record already hold, never typed text or window titles.
+//! audit log and the lease record already hold, and for `live` the `app_id` niri reports
+//! for the window an action is about, never typed text or window titles.
 
 mod clients;
 mod run;
 mod tail;
+mod wake;
 
 pub(crate) use run::run;
 
@@ -38,6 +41,7 @@ pub(crate) enum Event<'a> {
     },
     State(&'a State),
     Action(Value),
+    Live(Value),
     Alive,
 }
 
@@ -97,6 +101,24 @@ pub(crate) fn action(line: &[u8], instance: &str) -> Option<Value> {
         return None;
     }
     Some(value)
+}
+
+/// Which record of which call a `live.json` holds: its `pid`, `call` and `phase`.
+pub(crate) type LiveKey = (u64, u64, String);
+
+/// The overlay's record in `bytes`, if it is one: a JSON object of at most `live::LIMIT`
+/// bytes with a numeric `pid` and `call` and a string `phase`.
+pub(crate) fn live(bytes: &[u8]) -> Option<(LiveKey, Value)> {
+    if bytes.len() > crate::live::LIMIT {
+        return None;
+    }
+    let record: Value = serde_json::from_slice(bytes).ok()?;
+    let key = (
+        record.get("pid")?.as_u64()?,
+        record.get("call")?.as_u64()?,
+        record.get("phase")?.as_str()?.to_owned(),
+    );
+    record.is_object().then_some((key, record))
 }
 
 /// Splits bytes read in pieces into whole lines, dropping a line longer than
@@ -166,6 +188,21 @@ mod tests {
         assert_eq!(super::action(line, "niri.2.sock"), None);
         assert_eq!(super::action(br#"{"tool":"key"}"#, "niri.1.sock"), None);
         assert_eq!(super::action(b"not json", "niri.1.sock"), None);
+    }
+
+    #[test]
+    fn a_live_record_needs_its_key_and_fits_the_limit() {
+        let record = br#"{"pid":7,"call":2,"phase":"aim","tool":"click"}"#;
+        let (key, value) = live(record).unwrap();
+        assert_eq!(key, (7, 2, "aim".to_owned()));
+        assert_eq!(value["tool"], "click");
+        assert_eq!(live(br#"{"pid":7,"phase":"aim"}"#), None);
+        assert_eq!(live(b"{\"pid\":7,"), None);
+        let long = format!(
+            r#"{{"pid":7,"call":2,"phase":"aim","pad":"{}"}}"#,
+            "x".repeat(5000)
+        );
+        assert_eq!(live(long.as_bytes()), None);
     }
 
     #[test]

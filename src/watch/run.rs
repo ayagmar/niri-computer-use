@@ -1,5 +1,6 @@
 //! The `watch` loop: polls the runtime directory and follows the audit log, writing a
-//! line whenever something changed.
+//! line whenever something changed. A change in the runtime directory wakes it between
+//! polls (`wake`), to read the lease, the flags and the action in progress at once.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -8,7 +9,10 @@ use std::time::Duration;
 use tokio::io::{AsyncWrite, AsyncWriteExt as _};
 
 use super::tail::Tail;
-use super::{BACKLOG, Driver, Event, FORMAT, State, action, clients, label_pid};
+use super::wake::{Wake, Woken};
+use super::{
+    BACKLOG, Client, Driver, Event, FORMAT, LiveKey, State, action, clients, label_pid, live,
+};
 use crate::control::lease;
 use crate::control::runtime::RuntimeDir;
 
@@ -70,7 +74,6 @@ pub(crate) async fn follow(
     poll: Duration,
 ) -> Result<std::convert::Infallible, Ended> {
     let mut out = Out { out };
-    let mut projects = Projects::new(&watched.proc_root, &watched.instance);
     out.send(&Event::Hello {
         format: FORMAT,
         version: env!("CARGO_PKG_VERSION"),
@@ -84,39 +87,122 @@ pub(crate) async fn follow(
             (Some(tail), recent)
         },
     );
-    let mut state = None;
+    let mut seen = Seen {
+        watched,
+        projects: Projects::new(&watched.proc_root, &watched.instance),
+        state: None,
+        recorded: Recorded::default(),
+    };
     let mut alive = tokio::time::interval(ALIVE);
     alive.tick().await;
     let mut tick = tokio::time::interval(poll);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut wake = Wake::new(watched.runtime.path().to_path_buf());
     let mut lines = recent;
     // The first lines are the backlog: calls made before `watch` started.
     let mut backlog = true;
+    let mut woken = None;
     loop {
-        let now = desk(watched, &mut projects);
-        if state.as_ref() != Some(&now) {
-            out.send(&Event::State(&now)).await?;
-            state = Some(now);
-        }
-        for line in std::mem::take(&mut lines) {
-            if let Some(call) = action(&line, &watched.instance) {
-                out.send(&Event::Action(projects.annotate(call, backlog)))
-                    .await?;
-            }
-        }
+        seen.send(&mut out, woken, std::mem::take(&mut lines), backlog)
+            .await?;
         backlog = false;
-        tokio::select! {
-            _ = tick.tick() => {}
-            _ = alive.tick() => out.send(&Event::Alive).await?,
+        woken = tokio::select! {
+            _ = tick.tick() => None,
+            _ = alive.tick() => {
+                out.send(&Event::Alive).await?;
+                None
+            }
+            changed = wake.changed() => Some(changed),
+        };
+        if woken.is_none() {
+            wake.rearm();
+            lines = tail
+                .as_mut()
+                .and_then(|tail| tail.poll().ok())
+                .unwrap_or_default();
         }
-        lines = tail
-            .as_mut()
-            .and_then(|tail| tail.poll().ok())
-            .unwrap_or_default();
     }
 }
 
-fn desk(watched: &Watched, projects: &mut Projects<'_>) -> State {
+/// What `watch` has sent of the desk and of the action in progress.
+struct Seen<'a> {
+    watched: &'a Watched,
+    projects: Projects<'a>,
+    state: Option<State>,
+    recorded: Recorded,
+}
+
+impl Seen<'_> {
+    /// Sends what changed: the desk, then the audit log's new `lines`, then the action in
+    /// progress. Woken between polls, the agents' servers are as the last poll found them,
+    /// and `live.json` is read only when the wake says it was replaced.
+    async fn send<W: AsyncWrite + Unpin>(
+        &mut self,
+        out: &mut Out<W>,
+        woken: Option<Woken>,
+        lines: Vec<Vec<u8>>,
+        backlog: bool,
+    ) -> Result<(), Ended> {
+        let known = woken
+            .and(self.state.as_ref())
+            .map(|state| state.clients.clone());
+        let now = desk(self.watched, &mut self.projects, known);
+        if self.state.as_ref() != Some(&now) {
+            out.send(&Event::State(&now)).await?;
+            self.state = Some(now);
+        }
+        for line in lines {
+            if let Some(call) = action(&line, &self.watched.instance) {
+                out.send(&Event::Action(self.projects.annotate(call, backlog)))
+                    .await?;
+            }
+        }
+        if woken.is_none_or(|woken| woken.live)
+            && let Some(record) = self.recorded.read(self.watched, backlog)
+        {
+            out.send(&Event::Live(record)).await?;
+        }
+        Ok(())
+    }
+}
+
+/// The last record of the action in progress that was sent.
+#[derive(Debug, Default)]
+struct Recorded {
+    sent: Option<LiveKey>,
+}
+
+impl Recorded {
+    /// The record in `live.json`, unless it is the one sent last; with `backlog: true` when
+    /// it was there before `watch` started.
+    fn read(&mut self, watched: &Watched, backlog: bool) -> Option<serde_json::Value> {
+        let bytes = read_at_most(&watched.runtime.path().join(crate::live::FILE))?;
+        let (key, mut record) = live(&bytes)?;
+        if self.sent.as_ref() == Some(&key) {
+            return None;
+        }
+        self.sent = Some(key);
+        if let (true, Some(fields)) = (backlog, record.as_object_mut()) {
+            fields.insert("backlog".into(), true.into());
+        }
+        Some(record)
+    }
+}
+
+/// The file's bytes, up to one more than `live::LIMIT`, so a longer one is seen as such.
+fn read_at_most(path: &Path) -> Option<Vec<u8>> {
+    use std::io::Read as _;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(crate::live::LIMIT as u64 + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    Some(bytes)
+}
+
+/// The desk now, with the agents' servers `known`, or scanned again.
+fn desk(watched: &Watched, projects: &mut Projects<'_>, known: Option<Vec<Client>>) -> State {
     let runtime = &watched.runtime;
     State {
         lease: lease::holder(runtime).map(|holder| {
@@ -124,8 +210,8 @@ fn desk(watched: &Watched, projects: &mut Projects<'_>) -> State {
             Driver::new(holder, project)
         }),
         stopped: runtime.stopped().unwrap_or(false),
-        input_dirty: runtime.input_dirty().unwrap_or(false),
-        clients: clients::scan(&watched.proc_root, &watched.instance),
+        input_dirty: crate::control::marker::stuck(runtime, &watched.proc_root),
+        clients: known.unwrap_or_else(|| clients::scan(&watched.proc_root, &watched.instance)),
     }
 }
 
@@ -332,6 +418,76 @@ mod tests {
         assert_eq!(event(&mut lines).await["stopped"], true);
         drop(held);
         assert!(event(&mut lines).await["lease"].is_null());
+        watch.abort();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn replace_live(runtime: &RuntimeDir, record: &str) {
+        let written = runtime.path().join("live.json.9.tmp");
+        std::fs::write(&written, record).unwrap();
+        std::fs::rename(written, runtime.path().join(crate::live::FILE)).unwrap();
+    }
+
+    /// The next line that isn't `alive`, within a second: well before a 10 s poll.
+    async fn soon(lines: &mut Reader) -> serde_json::Value {
+        tokio::time::timeout(Duration::from_secs(1), event(lines))
+            .await
+            .expect("a line within a second, long before the next poll")
+    }
+
+    // The bug: the robot moved a poll late, or twice for one record, or not at all for a
+    // record there before `watch` started; a stop showed a poll late.
+    #[tokio::test]
+    async fn sends_the_action_in_progress_and_the_stop_as_they_change() {
+        let dir = crate::test_support::fresh_dir("watch-live");
+        let watched = watched(&dir);
+        watched.runtime.create().unwrap();
+        let runtime = watched.runtime.clone();
+        replace_live(&runtime, r#"{"pid":5,"call":1,"phase":"end","tool":"key"}"#);
+        let (writer, reader) = tokio::io::duplex(64 * 1024);
+        let watch = tokio::spawn(async move {
+            let Err(_) = follow(&watched, writer, Duration::from_secs(10)).await;
+        });
+        let mut lines = tokio::io::BufReader::new(reader).lines();
+        assert_eq!(event(&mut lines).await["event"], "hello");
+        assert_eq!(event(&mut lines).await["event"], "state");
+        let before = event(&mut lines).await;
+        assert_eq!(
+            (before["event"].as_str(), before["backlog"].as_bool()),
+            (Some("live"), Some(true)),
+            "{before}"
+        );
+        for phase in ["start", "aim"] {
+            let record = format!(r#"{{"pid":5,"call":2,"phase":"{phase}","tool":"click"}}"#);
+            replace_live(&runtime, &record);
+            let line = soon(&mut lines).await;
+            assert_eq!(
+                (line["event"].as_str(), line["phase"].as_str()),
+                (Some("live"), Some(phase))
+            );
+            assert!(line.get("backlog").is_none(), "{line}");
+        }
+        // The same record again, then one too long for the plugin: neither is sent.
+        replace_live(
+            &runtime,
+            r#"{"pid":5,"call":2,"phase":"aim","tool":"click"}"#,
+        );
+        let pad = "x".repeat(crate::live::LIMIT);
+        replace_live(
+            &runtime,
+            &format!(r#"{{"pid":5,"call":2,"phase":"look","pad":"{pad}"}}"#),
+        );
+        runtime.stop().unwrap();
+        let stopped = soon(&mut lines).await;
+        assert_eq!(
+            (stopped["event"].as_str(), stopped["stopped"].as_bool()),
+            (Some("state"), Some(true))
+        );
+        replace_live(
+            &runtime,
+            r#"{"pid":5,"call":2,"phase":"end","tool":"click"}"#,
+        );
+        assert_eq!(soon(&mut lines).await["phase"], "end");
         watch.abort();
         std::fs::remove_dir_all(dir).unwrap();
     }

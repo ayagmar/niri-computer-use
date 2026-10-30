@@ -1,4 +1,4 @@
-.PHONY: check check-static test test-shared test-plugin stall stall-standalone stall-shared perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-latency nested-chromium nested-chromium-headless nested-chromium-a11y nested-big nested-compat nested-multi niri-matrix nested-upgrade nested-eval nested-demo sitting host-capture
+.PHONY: check check-static test test-shared test-plugin stall stall-standalone stall-shared perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-latency nested-chromium nested-chromium-headless nested-chromium-a11y nested-big nested-compat nested-multi nested-overlay niri-matrix nested-upgrade nested-eval nested-demo sitting host-capture
 
 SCALE ?= 1
 NESTED_FLAGS = $(if $(VISIBLE),--visible) $(if $(SHARED),--shared) $(if $(NIRI),--niri $(NIRI))
@@ -129,6 +129,16 @@ nested-multi:
 	niri=$$(awk '$$3 ~ /\/niri$$/ { print $$3 }' target/niri-multi/builds.txt); \
 	test -n "$$niri" || { cat target/niri-multi/builds.txt >&2; exit 1; }; \
 	cargo run --locked -p harness -- run $(if $(VISIBLE),--visible) $(if $(SHARED),--shared) --niri "$$niri" --multi
+
+# The Noctalia plugin's robot overlay in the nested Noctalia (5.4 or newer), on the same
+# two outputs, the first at SCALE. Local and opt-in, like nested-multi.
+nested-overlay:
+	cargo build --locked -p niri-computer-use
+	mkdir -p target/niri-multi
+	NIRI_PATCH=harness/niri-test/headless-outputs.patch scripts/niri-build.sh v26.04 > target/niri-multi/builds.txt
+	niri=$$(awk '$$3 ~ /\/niri$$/ { print $$3 }' target/niri-multi/builds.txt); \
+	test -n "$$niri" || { cat target/niri-multi/builds.txt >&2; exit 1; }; \
+	cargo run --locked -p harness -- run $(if $(SHARED),--shared) --niri "$$niri" --scale $(SCALE) --overlay
 
 # Each niri in NIRI_VERSIONS built from source, then checked against this checkout's server.
 niri-matrix:

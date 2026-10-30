@@ -9,6 +9,8 @@ local t = require("./support/t")
 local broken = 0
 local specs = {
   lib_spec = require("./lib_spec"),
+  live_spec = require("./live_spec"),
+  stage_spec = require("./stage_spec"),
   service_spec = require("./service_spec"),
   surfaces_spec = require("./surfaces_spec"),
 }

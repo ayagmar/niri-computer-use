@@ -211,6 +211,45 @@ async fn focusing_a_window_is_accepted_then_observed() {
     );
 }
 
+// The bug: the overlay never told what an action is about or how it ended, or told of a
+// call the desk refused, or of a look.
+#[tokio::test]
+async fn the_overlay_reads_an_admitted_action_and_nothing_else() {
+    let mut desk = Desk::start("act-live", "").await;
+    let live = desk.fixture.runtime_dir().join("live.json");
+    desk.act("focus", json!({"window_id": 2}), |stream, _| {
+        focus_changed(stream, 2);
+    })
+    .await;
+    let record: Value = serde_json::from_slice(&std::fs::read(&live).unwrap()).unwrap();
+    let audited = desk.fixture.audit_lines().pop().unwrap();
+    assert_eq!(
+        (&record["session"], &record["ts"], &record["args"]),
+        (&audited["session"], &audited["ts"], &audited["args"]),
+        "{record}"
+    );
+    assert_eq!(record["phase"], "end", "{record}");
+    assert_eq!(record["window"], json!({"id": 2, "app_id": "b"}));
+    assert_eq!(
+        record["aim"],
+        json!({"output": "DP-1", "area": {"width": 2560, "height": 1440}, "points": [], "box": null})
+    );
+    assert_eq!(
+        record["outcome"],
+        json!({"accepted": true, "observed": "focused", "error": null})
+    );
+    let written = std::fs::read(&live).unwrap();
+    desk.server
+        .structured_with("screenshot", json!({"target": "focused_output"}))
+        .await;
+    desk.server
+        .structured_with("release_desktop", json!({"restore_focus": false}))
+        .await;
+    let (refused, _) = tool_error(&desk.server.call("focus", json!({"window_id": 3})).await);
+    assert_eq!(refused, "lease_required");
+    assert_eq!(std::fs::read(&live).unwrap(), written);
+}
+
 #[tokio::test]
 async fn a_target_that_already_has_focus_sends_nothing() {
     let mut desk = Desk::start("act-focused", "").await;

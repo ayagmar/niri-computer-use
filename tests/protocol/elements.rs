@@ -2968,7 +2968,12 @@ async fn agent_strings_reach_the_audit_log_only_as_known_names_or_lengths() {
         let line = lines.last().unwrap();
         assert_eq!(line["tool"], tool, "{line}");
         assert!(!line.to_string().contains(MARKER), "{tool} {args}: {line}");
+        // The overlay's record of the action holds niri's names, never the agent's.
+        if let Ok(record) = std::fs::read_to_string(desk.fixture.runtime_dir().join("live.json")) {
+            assert!(!record.contains(MARKER), "{tool} {args}: {record}");
+        }
     }
+    assert!(desk.fixture.runtime_dir().join("live.json").exists());
 }
 
 #[tokio::test]

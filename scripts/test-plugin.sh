@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Runs the Noctalia plugin's Luau tests against its sources, unmodified.
 #
-# The Luau CLI has no file I/O, so the plugin's .luau sources, plugin.toml and
-# translations/en.json are embedded into tests/_generated/sources.luau first;
+# The Luau CLI has no file I/O, so the plugin's .luau sources, plugin.toml,
+# translations/en.json, the robot's frames and the test fixtures are embedded into tests/_generated/sources.luau first;
 # tests/support/loader.luau then loads them with a fake `noctalia` host and
 # Noctalia's require("./x.luau") semantics. The CLI is fetched once, checked
 # against its SHA-256, into target/.
@@ -28,6 +28,7 @@ import pathlib, sys
 root = pathlib.Path(sys.argv[1])
 files = [p for p in root.rglob("*.luau") if p.relative_to(root).parts[0] != "tests"]
 files += [root / "translations/en.json", root / "plugin.toml"]
+files += sorted(root.glob("robot/*.svg")) + sorted(root.glob("tests/fixtures/*.jsonl"))
 
 def quote(text):
     level = 0

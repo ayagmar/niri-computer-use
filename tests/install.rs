@@ -896,6 +896,29 @@ mod script {
         assert_eq!(std::fs::read_link(&link).unwrap(), plugin);
         let stdout = String::from_utf8(with.stdout).unwrap();
         assert!(stdout.contains(enable), "{stdout}");
+        assert!(!stdout.contains(INCOMPATIBLE), "{stdout}");
+    }
+
+    const INCOMPATIBLE: &str = "it needs Noctalia 5.4 or newer";
+
+    // The bug: an install on Noctalia 5.3, which refuses the plugin's API, that said to
+    // enable a plugin Noctalia won't load.
+    #[tokio::test]
+    async fn an_install_says_when_noctalia_lists_the_plugin_as_incompatible() {
+        let release = Release::new("incompatible", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        release.fake(
+            "noctalia",
+            "[ \"$*\" = 'msg plugins list' ] || exit 0\n\
+             echo 'other/plugin [local] 1.0 enabled'\n\
+             echo 'ayagmar/niri-computer-use [local] 0.1.0 disabled incompatible'\n",
+        );
+
+        let output = release.install(&[]).await;
+
+        assert!(output.status.success(), "{output:?}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains(INCOMPATIBLE), "{stdout}");
     }
 
     #[tokio::test]
