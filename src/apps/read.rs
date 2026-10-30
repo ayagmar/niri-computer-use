@@ -12,7 +12,7 @@ use std::os::fd::{AsFd as _, OwnedFd};
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Component, Path, PathBuf};
 
-use rustix::fs::{FileType, Mode, OFlags};
+use rustix::fs::{FileType, FsWord, Mode, OFlags};
 
 /// The longest entry file read; real ones are a few KiB.
 const MAX_BYTES: u64 = 64 * 1024;
@@ -23,6 +23,11 @@ const MAX_LINKS: usize = 40;
 /// The kernel's own files, whose contents other programs choose: a process's `cmdline` is
 /// root's when the process is a setuid program, whoever started it.
 const KERNEL: [&str; 3] = ["/proc", "/sys", "/dev"];
+
+/// `statfs`'s `f_type` for FUSE. A FUSE filesystem's owners and modes are whatever its
+/// daemon says, and `fusermount3` lets a user mount one on any directory they own, `$HOME`
+/// included.
+const FUSE_SUPER_MAGIC: FsWord = 0x6573_5546;
 
 /// The sticky bit: in a directory, only a name's owner, the directory's or root may
 /// rename or remove the name.
@@ -74,6 +79,26 @@ const fn keeps_names(dir: Stat, owner: u32) -> bool {
 /// root or `owner`: `dir` is `trusted`, or it `keeps_names` and they own `name`.
 pub(super) const fn trusted_in(dir: Stat, name: Stat, owner: u32) -> bool {
     trusted(dir, owner) || (keeps_names(dir, owner) && name.owned(owner))
+}
+
+/// `Writable` if `fd`, at `path`, is on a filesystem whose owners and modes the user may
+/// choose.
+fn real_owners(path: &Path, fd: &OwnedFd) -> Result<(), Unread> {
+    let kind = rustix::fs::fstatfs(fd)
+        .map_err(|error| failed(&error))?
+        .f_type;
+    if user_mountable(kind) {
+        return Err(Unread::Writable(format!(
+            "{} is on a FUSE filesystem the user may have mounted",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+/// Whether a filesystem of `statfs` type `kind` reports owners its user's daemon picks.
+const fn user_mountable(kind: FsWord) -> bool {
+    kind == FUSE_SUPER_MAGIC
 }
 
 /// The text of the entry file at `path`, an absolute path, if only root or `owner` could
@@ -217,6 +242,7 @@ impl Walk {
             .map_err(|error| failed(&error))?;
         let named = Stat::of(&rustix::fs::fstat(&found).map_err(|error| failed(&error))?);
         let path = self.path.join(name);
+        real_owners(&path, &found)?;
         if !trusted_in(self.here.stat, named, self.owner) {
             return Err(refused(&path, named));
         }
@@ -268,6 +294,7 @@ impl Walk {
             Mode::empty(),
         )
         .map_err(|error| failed(&error))?;
+        real_owners(&self.path.join(name), &file)?;
         let stat = Stat::of(&rustix::fs::fstat(&file).map_err(|error| failed(&error))?);
         if FileType::from_raw_mode(stat.mode) != FileType::RegularFile {
             return Err(Unread::Failed("isn't a regular file".to_owned()));
@@ -462,6 +489,13 @@ mod tests {
         link("../../real/x.desktop", &sub.join("x.desktop"));
         assert_refused(&read(&sub.join("x.desktop"), me), "sub");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_fuse_filesystem_is_never_trusted() {
+        assert!(user_mountable(0x6573_5546));
+        let root = rustix::fs::open("/", OFlags::PATH, Mode::empty()).unwrap();
+        assert!(!user_mountable(rustix::fs::fstatfs(&root).unwrap().f_type));
     }
 
     #[test]
