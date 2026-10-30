@@ -22,7 +22,7 @@ pub(crate) fn parse(bytes: &[u8]) -> Option<Pixmap<'_>> {
     let (height, rest) = number(rest)?;
     let (max, rest) = number(rest)?;
     let (&separator, pixels) = rest.split_first()?;
-    let length = u64::from(width) * u64::from(height) * 3;
+    let length = (u64::from(width) * u64::from(height)).checked_mul(3)?;
     let fits = usize::try_from(length).is_ok_and(|length| length == pixels.len());
     (max == 255 && separator.is_ascii_whitespace() && fits && length > 0).then_some(Pixmap {
         width,
@@ -99,6 +99,7 @@ mod tests {
             [b"P3\n2 1\n255\n".as_slice(), &pixels].concat(),
             b"P6\n2 1\n255".to_vec(),
             b"P6\n99999999999 1\n255\n".to_vec(),
+            b"P6\n4294967295 4294967295\n255\n".to_vec(),
             b"\xff\xd8\xff".to_vec(),
         ] {
             assert_eq!(parse(&bad), None, "{bad:?}");
