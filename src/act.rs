@@ -22,11 +22,11 @@ use crate::input::paste::Pasted;
 use crate::niri;
 use crate::niri::Socket;
 use crate::niri::waiter::{View, Waited, Waiter};
-use crate::observe::{self, Metadata, Screenshot};
+use crate::observe::{Metadata, Screenshot};
 use crate::policy::{self, Launchable, Loaded};
-use crate::settle;
 
 pub(crate) mod compositor;
+pub(crate) mod holder;
 pub(crate) mod record;
 pub(crate) mod shell;
 
@@ -158,7 +158,8 @@ pub(crate) struct Outcome {
     pub(crate) changes: Option<Changes>,
     /// Why the outcome is uncertain or `unknown`, or why an element action's effect is
     /// `unverified`; for `key` and `type_text` ending `interrupted` once keys went out, what
-    /// went out and where some of it may have gone.
+    /// went out and where some of it may have gone; for a focus that timed out with no
+    /// window focused, what may hold the keyboard.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) detail: Option<String>,
     /// The metadata of the focused output's screenshot that comes with the result: one asked
@@ -290,16 +291,18 @@ impl Outcome {
 }
 
 /// Attaches a fresh screenshot of the focused output to an outcome when the agent `asked`
-/// for one, taken once the screen stopped changing, or to an outcome in doubt (plan §6), at
-/// once, so the agent sees the desktop without another call. `capture` takes it the way
-/// the `screenshot` tool does. A failed capture leaves the outcome as it is and says why.
-pub(crate) async fn with_evidence<F>(
+/// for one, taken once the screen stopped changing (`settled`), or to an outcome in doubt
+/// (plan §6), at once (`at_once`), so the agent sees the desktop without another call. A
+/// failed capture leaves the outcome as it is and says why.
+pub(crate) async fn with_evidence<F, G>(
     mut outcome: Outcome,
     asked: bool,
-    capture: impl Fn(observe::Request) -> F + Sync,
+    settled: impl FnOnce() -> G,
+    at_once: impl FnOnce() -> F,
 ) -> Evidenced
 where
-    F: Future<Output = Result<Screenshot, CallError>> + Send,
+    F: Future<Output = Result<Screenshot, CallError>>,
+    G: Future<Output = Result<Screenshot, CallError>>,
 {
     if !asked && !outcome.in_doubt() {
         return Evidenced {
@@ -308,9 +311,9 @@ where
         };
     }
     let taken = if asked {
-        settle::screenshot(|| capture(observe::Request::focused()), settle::LIMIT).await
+        settled().await
     } else {
-        capture(observe::Request::focused()).await
+        at_once().await
     };
     let image = match taken {
         Ok(shot) => {
@@ -405,12 +408,8 @@ pub(crate) async fn focus_workspace(niri: Niri<'_>, id: u64) -> Result<Outcome, 
     let ended = waiter
         .until(WAIT, |view| workspace_focused(view, id, before))
         .await;
-    Ok(conclude(
-        ended,
-        waiter.view(),
-        Observed::Timeout,
-        Vec::new(),
-    ))
+    let outcome = conclude(ended, waiter.view(), Observed::Timeout, Vec::new());
+    Ok(explained(niri, outcome).await)
 }
 
 /// Asks the window to close, as its close button would. An app may ask first, so a window
@@ -518,7 +517,16 @@ async fn focus(
     let ended = waiter
         .until(WAIT, |view| window_focused(view, id, before))
         .await;
-    Ok(conclude(ended, waiter.view(), Observed::Timeout, windows))
+    let outcome = conclude(ended, waiter.view(), Observed::Timeout, windows);
+    Ok(explained(niri, outcome).await)
+}
+
+/// A focus that timed out with no window focused says what may hold the keyboard.
+async fn explained(niri: Niri<'_>, mut outcome: Outcome) -> Outcome {
+    if outcome.observed == Observed::Timeout && outcome.focused_window.is_none() {
+        outcome.detail = holder::keyboard_holder(niri).await;
+    }
+    outcome
 }
 
 /// An outcome reached without sending anything.

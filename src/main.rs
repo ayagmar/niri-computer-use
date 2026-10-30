@@ -21,6 +21,7 @@ mod niri;
 mod noctalia;
 mod observe;
 mod policy;
+mod ppm;
 mod refs;
 mod runner;
 mod save;
