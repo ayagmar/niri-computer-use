@@ -355,11 +355,12 @@ One server holds the lease, and 30 rounds each call `focus` on the empty workspa
 
 ## Nested upgrade checks
 
-`make nested-upgrade` checks an upgrade from each published release to this checkout's release build, in shared mode, with Noctalia as the lock source and `wev` to type into. It runs one nested session per release in `UPGRADE_FROM`, by default every `v*` tag in the clone, oldest first, each with a 240-second deadline, and needs the network to download them:
+`make nested-upgrade` checks an upgrade from each published release to this checkout's release build, in shared mode, with Noctalia as the lock source and `wev` to type into, and then the release build reinstalled over itself. It runs one nested session per entry in `UPGRADE_FROM`, by default every `v*` tag in the clone, oldest first, then `current`, each with a 240-second deadline, and needs the network to download the releases:
 
 ```sh
 make nested-upgrade
 make nested-upgrade UPGRADE_FROM=0.1.1
+make nested-upgrade UPGRADE_FROM=current
 ```
 
 Every command it runs gets `HOME=TEST_DIR/home` and `TMPDIR=TEST_DIR/tmp`, so neither install touches your HOME, `~/.local/bin` or runtime directory. The supervisor:
@@ -376,6 +377,15 @@ Every command it runs gets `HOME=TEST_DIR/home` and `TMPDIR=TEST_DIR/tmp`, so ne
 10. Ends B, N and S, and waits for the new engine to exit.
 
 The supervisor log has what each side read and what `recover` said. The run doesn't check that every server bridged to the engine, as other shared runs do: N is served standalone on purpose.
+
+With `UPGRADE_FROM=current`, the supervisor packs the build as in step 1 and installs it, then reinstalls it over itself, as a reinstall of the same release writes a new file:
+
+1. Starts clients A and B, which must share one engine, then installs `current` again. A's `status` must report `replaced: true`.
+2. Starts client N, which must be served by a new shared engine, with no fallback, no `unscoped` reason, so in a scope of its own, and `replaced: false`; the old engine must exit within two seconds.
+3. A's and B's next calls must fail with `engine_lost`, and the calls after with `engine_unavailable`, saying to restart this MCP client. The audit log must have both `engine_lost` lines, which their bridges wrote.
+4. Ends A, B and N, and waits for the new engine to exit.
+
+Releases up to 0.1.5 don't hand over, so the runs from their tags keep checking that N is served standalone beside the old engine.
 
 ## Nested multi-output checks
 

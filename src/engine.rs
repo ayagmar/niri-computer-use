@@ -58,6 +58,8 @@ pub(crate) struct Engine {
     /// Why a shared engine runs without a scope of its own, as the bridge that started it
     /// said.
     unscoped: Option<String>,
+    /// Whether the engine has stopped serving and cut its connections.
+    cut_off: AtomicBool,
     /// Lives as long as the engine; see `control::guard`.
     _guardian: Option<runner::Watcher>,
 }
@@ -218,6 +220,7 @@ impl Engine {
             mode: status::Mode::Standalone,
             fallback: None,
             unscoped: None,
+            cut_off: AtomicBool::new(false),
             _guardian: None,
         }
     }
@@ -250,9 +253,29 @@ impl Engine {
         !self.desk.held() && control::cleanup::pending() == 0
     }
 
+    /// Closes the desk for an engine that hands over: see `Desk::close`.
+    pub(crate) async fn close(&self) -> Option<control::desk::Closing> {
+        self.desk.close(|| control::cleanup::pending() == 0).await
+    }
+
+    /// Returns once the engine exits to hand over: see `Desk::exiting`.
+    pub(crate) async fn exiting(&self) {
+        self.desk.exiting().await;
+    }
+
     /// Returns once the stop watcher has ended, for good: never, without a watcher.
     pub(crate) async fn watcher_ended(&self) {
         self.desk.watcher_ended().await;
+    }
+
+    /// Marks the connections cut, before the engine drops them as it stops serving. The
+    /// calls it cuts never answer their clients: their bridges answer and log them.
+    pub(crate) fn cut_off(&self) {
+        self.cut_off.store(true, Ordering::Relaxed);
+    }
+
+    pub(crate) fn has_cut_off(&self) -> bool {
+        self.cut_off.load(Ordering::Relaxed)
     }
 
     /// No code panics while holding the lock, so a poisoned one still holds sound entries.
