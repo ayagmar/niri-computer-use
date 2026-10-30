@@ -186,12 +186,15 @@ async fn a_slow_capture_respects_the_screen_wait_budget() {
     assert_eq!(crate::client::tool_error(&failed).0, "deadline_exceeded");
     assert!(first_start.elapsed() < Duration::from_secs(1));
 
+    // The first sample comes back, the next one never does. The screenshot the result
+    // returns is captured once more after the wait, as a JPEG, which comes back.
     fixture.program(
         "grim",
         r#"
+        case " $* " in *" -t ppm "*) ;; *) exec cat "$DIR/grim.out" ;; esac
         if [ -e "$DIR/frame.taken" ]; then exec sleep 30; fi
         : > "$DIR/frame.taken"
-        cat "$DIR/grim.out"
+        cat "$DIR/grim.ppm"
     "#,
     );
     let start = Instant::now();

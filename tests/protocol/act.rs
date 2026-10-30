@@ -375,6 +375,89 @@ async fn a_key_refused_with_no_window_focused_names_the_layer_surface_holding_it
     );
 }
 
+/// A grim whose raw captures alternate between two 1280x720 images that differ in their
+/// first `changed` pixels, as a clock or a dialog animating in would, and whose JPEG is the
+/// fixture's. Each call's arguments are a line of `grim.calls`.
+fn flickering(fixture: &Fixture, changed: usize) {
+    let header = b"P6\n1280 720\n255\n".as_slice();
+    let still = vec![0; 1280 * 720 * 3];
+    let mut moved = still.clone();
+    moved[..changed * 3].fill(255);
+    std::fs::write(fixture.path("grim.a"), [header, &still].concat()).unwrap();
+    std::fs::write(fixture.path("grim.b"), [header, &moved].concat()).unwrap();
+    fixture.program(
+        "grim",
+        r#"echo "$*" >> "$DIR/grim.calls"
+case " $* " in *" -t ppm "*) ;; *) exec cat "$DIR/grim.out" ;; esac
+if [ -s "$DIR/odd" ]; then : > "$DIR/odd"; cat "$DIR/grim.a"; else echo 1 > "$DIR/odd"; cat "$DIR/grim.b"; fi"#,
+    );
+}
+
+/// A screenshot `niri_action` asked for, how long the call took, and grim's calls.
+async fn settled_shot(desk: &mut Desk) -> (Value, Duration, Vec<String>) {
+    std::fs::remove_file(desk.fixture.path("grim.calls")).ok();
+    let column = json!({"action": {"FocusColumnLeft": {}}, "screenshot": true});
+    let started = Instant::now();
+    let result = desk.act("niri_action", column, |_, _| {}).await;
+    let took = started.elapsed();
+    assert_eq!(result["content"][1]["mimeType"], "image/jpeg", "{result}");
+    let calls = std::fs::read_to_string(desk.fixture.path("grim.calls")).unwrap();
+    let calls = calls.lines().map(str::to_owned).collect();
+    (report(&result)["screenshot"].clone(), took, calls)
+}
+
+#[tokio::test]
+async fn a_screenshot_settles_while_a_small_part_of_the_output_keeps_changing() {
+    let mut desk = Desk::start("act-settle-pixels", "").await;
+    // 100 pixels, about 0.01 % of a 1280x720 sample: a clock.
+    flickering(&desk.fixture, 100);
+    let (clock, quick, calls) = settled_shot(&mut desk).await;
+    assert_eq!(clock["settled"], true, "{clock}");
+    let small = clock["changing"].as_f64().unwrap();
+    assert!((small - 100.0 / 921_600.0).abs() < 1e-9, "{clock}");
+    assert!(quick < Duration::from_millis(1200), "{quick:?}");
+    let (last, samples) = calls.split_last().unwrap();
+    assert!(last.starts_with("-t jpeg"), "{calls:?}");
+    assert!(samples.len() >= 3, "two comparisons: {calls:?}");
+    assert!(
+        samples.iter().all(|call| call.starts_with("-t ppm")),
+        "{calls:?}"
+    );
+    // 100,000 pixels, about 11 %: a dialog animating in, until the limit.
+    flickering(&desk.fixture, 100_000);
+    let (dialog, took, _) = settled_shot(&mut desk).await;
+    assert_eq!(dialog["settled"], false, "{dialog}");
+    let large = dialog["changing"].as_f64().unwrap();
+    assert!((large - 100_000.0 / 921_600.0).abs() < 1e-9, "{dialog}");
+    assert!(took >= Duration::from_millis(1500), "{took:?}");
+}
+
+#[tokio::test]
+async fn a_grim_without_raw_pixels_settles_on_the_jpegs_bytes() {
+    let mut desk = Desk::start("act-settle-bytes", "").await;
+    desk.fixture.program(
+        "grim",
+        r#"echo "$*" >> "$DIR/grim.calls"
+case " $* " in *" -t ppm "*) echo "grim: invalid filetype" >&2; exit 1 ;; esac
+cat "$DIR/grim.out""#,
+    );
+    let (shot, took, calls) = settled_shot(&mut desk).await;
+    assert_eq!(shot["settled"], true, "{shot}");
+    assert_eq!(shot["changing"], 0.0, "the same bytes: {shot}");
+    assert!(took < Duration::from_millis(1200), "{took:?}");
+    let (first, jpegs) = calls.split_first().unwrap();
+    assert!(first.starts_with("-t ppm"), "{calls:?}");
+    assert_eq!(
+        jpegs.len(),
+        2,
+        "two JPEG samples, the last returned: {calls:?}"
+    );
+    assert!(
+        jpegs.iter().all(|call| call.starts_with("-t jpeg")),
+        "{calls:?}"
+    );
+}
+
 #[tokio::test]
 async fn screenshots_under_the_lease_are_refs_of_that_lease() {
     let mut desk = Desk::start("act-refs", "").await;

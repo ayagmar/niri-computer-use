@@ -29,6 +29,8 @@ pub(crate) enum Format {
     Png,
     #[default]
     Jpeg,
+    /// Raw RGB, for the samples of a settle wait, which compare pixels; never returned.
+    Ppm,
 }
 
 impl Format {
@@ -36,6 +38,7 @@ impl Format {
         match self {
             Self::Png => "image/png",
             Self::Jpeg => "image/jpeg",
+            Self::Ppm => "image/x-portable-pixmap",
         }
     }
 }
@@ -132,6 +135,16 @@ impl Request {
             pin: None,
         }
     }
+
+    /// The focused output as raw pixels at the default width, for a settle wait's samples.
+    pub(crate) const fn focused_pixels() -> Self {
+        Self {
+            target: Target::FocusedOutput,
+            max_width: Some(DEFAULT_MAX_WIDTH),
+            format: Format::Ppm,
+            pin: None,
+        }
+    }
 }
 
 /// What a capture shows and how its pixels map back to the layout.
@@ -157,6 +170,14 @@ pub(crate) struct Metadata {
     /// the wait.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) settled: Option<bool>,
+    /// For such a screenshot, the part of the output's pixels that changed between the
+    /// wait's last two samples, from 0 to 1, when they were compared pixel by pixel.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) changing: Option<f64>,
+    /// For such a screenshot that settled, when the sample that began the still run
+    /// started: the screen changed little from then on (`refs::Shot::steady_since`).
+    #[serde(skip)]
+    pub(crate) steady_since: Option<tokio::time::Instant>,
     /// With `save_path`: the PNG written at the output's own scale.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) saved: Option<Saved>,
@@ -221,6 +242,7 @@ pub(crate) async fn screenshot(
     let size = match request.format {
         Format::Png => image_header::png_size(&done.stdout),
         Format::Jpeg => image_header::jpeg_size(&done.stdout),
+        Format::Ppm => crate::ppm::size(&done.stdout),
     };
     if size != Some(plan.size) {
         return Err(ToolError::new(
@@ -365,6 +387,7 @@ fn plan(
     let mut args: Vec<String> = match format {
         Format::Png => vec!["-t".into(), "png".into()],
         Format::Jpeg => vec!["-t".into(), "jpeg".into(), "-q".into(), JPEG_QUALITY.into()],
+        Format::Ppm => vec!["-t".into(), "ppm".into()],
     };
     args.extend(["-s".to_owned(), scale.to_string()]);
     match target {
@@ -393,6 +416,8 @@ fn plan(
             capture_ms: 0,
             screenshot_ref: None,
             settled: None,
+            changing: None,
+            steady_since: None,
             saved: None,
         },
     })

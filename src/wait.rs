@@ -14,7 +14,8 @@ use crate::changes::{self, Opened, Scene};
 use crate::elements::{self, Coverage, Listing, Withheld};
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::niri::waiter::{View, Waited, Waiter};
-use crate::observe::{Metadata, Screenshot};
+use crate::observe::Metadata;
+use crate::settle::{Sample, Settled};
 use crate::{niri, settle};
 
 /// The shortest pause between two walks of an element condition. `elements` on the nested
@@ -421,19 +422,19 @@ where
     })
 }
 
-/// Captures the focused output until two captures in a row are the same, up to `limit`;
-/// the report and the last capture.
+/// Samples the focused output until it stops changing (`settle::settle`), up to `limit`;
+/// the report and how the samples ended, for the screenshot `settle::finish` takes.
 pub(crate) async fn screen<F>(
-    capture: impl FnMut() -> F,
+    sample: impl FnMut() -> F,
     limit: Duration,
-) -> Result<(Report, Screenshot), CallError>
+) -> Result<(Report, Settled<Sample>), CallError>
 where
-    F: Future<Output = Result<Screenshot, CallError>>,
+    F: Future<Output = Result<Sample, CallError>>,
 {
     let started = Instant::now();
-    let shot = settle::screenshot(capture, limit).await?;
+    let settled = settle::settle(sample, settle::compare, limit).await?;
     let report = Report {
-        observed: if shot.metadata.settled == Some(true) {
+        observed: if settled.stable {
             Ended::Met
         } else {
             Ended::Timeout
@@ -447,7 +448,7 @@ where
         screenshot: None,
         screenshot_error: None,
     };
-    Ok((report, shot))
+    Ok((report, settled))
 }
 
 #[cfg(test)]
