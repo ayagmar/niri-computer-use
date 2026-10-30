@@ -71,9 +71,9 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 ### `untested_output_config`
 
-**Cause:** a pointer tool was called while niri's outputs are a setup no live test covers: more than one enabled output, or a monitor with a transform other than `Normal`. The `detail` lists the enabled outputs and their transforms.
+**Cause:** a pointer tool was aimed through a screenshot of an output no live test covers: a monitor with a transform other than `Normal`, or nested niri's window next to other outputs. The `detail` names the output and lists the enabled outputs and their transforms.
 
-**What to do:** the pointer tools work with one monitor at transform `Normal`. Structured actions and the keyboard work with any setup.
+**What to do:** the pointer tools work on any monitor at transform `Normal`, whatever the other monitors are. Structured actions and the keyboard work with any setup.
 
 ### `refused`
 

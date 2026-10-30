@@ -116,7 +116,7 @@ This is not a sandbox: agents see your screen, and with the lease they can do an
 ## Limits
 
 - niri 26.04 only. With another major or minor release the server is read-only. niri built from `main` still reports 26.04, so the server acts on it, but it isn't a supported release: against `main` at `fc9e8c4`, typing around a keyboard layout switch went wrong in the nested checks.
-- The pointer tools need one monitor at transform `Normal`. The keyboard, screenshots and the other tools work with any monitors.
+- The pointer tools work on any monitor at transform `Normal`, one screenshot's monitor at a time, so a drag can't cross from one monitor to another. A rotated monitor refuses them. The keyboard, screenshots and the other tools work with any monitors.
 - Release builds exist for x86_64 and aarch64 only.
 - Accessibility varies by toolkit. GTK 4 works; GTK 3 and Qt apps that draw their own title bar give no element boxes, and niri 26.04 gives tiled windows none until they float. Activating an element and setting its text work in both cases.
 

@@ -15,6 +15,9 @@
 #                    src/ a niri clone, work/COMMIT/ its worktrees, target/ the shared
 #                    Cargo target directory, bin/COMMIT/niri the builds, logs/ their output
 #   NIRI_REPO        where to clone niri from (default https://github.com/YaLTeR/niri.git)
+#   NIRI_PATCH       a patch to apply to each REF before building it, such as
+#                    harness/niri-test/headless-outputs.patch; such builds are cached apart,
+#                    under COMMIT-SUM, SUM being the start of the patch's SHA-256
 #
 # Missing build prerequisites are listed, not installed.
 set -euo pipefail
@@ -32,6 +35,7 @@ fi
 
 dir=${NIRI_MATRIX_DIR:-${XDG_CACHE_HOME:-${HOME}/.cache}/niri-computer-use/niri-matrix}
 repo=${NIRI_REPO:-https://github.com/YaLTeR/niri.git}
+patch=${NIRI_PATCH:-}
 
 missing=()
 for program in git cargo clang pkg-config timeout; do
@@ -42,9 +46,20 @@ if command -v pkg-config >/dev/null; then
 		pkg-config --exists "${module}" || missing+=("pkg-config module ${module}")
 	done
 fi
+if [[ -n "${patch}" ]]; then
+	command -v sha256sum >/dev/null || missing+=(sha256sum)
+	[[ -r "${patch}" ]] || missing+=("readable NIRI_PATCH ${patch}")
+fi
 if ((${#missing[@]} > 0)); then
 	printf 'niri-build: missing build prerequisite: %s\n' "${missing[@]}" >&2
 	exit 1
+fi
+
+suffix=""
+if [[ -n "${patch}" ]]; then
+	patch=$(realpath "${patch}")
+	sum=$(sha256sum "${patch}")
+	suffix="-${sum:0:12}"
 fi
 
 mkdir -p "${dir}"
@@ -65,16 +80,21 @@ resolve() {
 	return 1
 }
 
-# Builds COMMIT unless it is built, and copies the binary in only once it is whole.
+# Builds COMMIT, with the patch if there is one, unless it is built, and copies the binary
+# in only once it is whole.
 build() {
-	local commit=$1 work="${dir}/work/$1" bin="${dir}/bin/$1"
+	local commit=$1 work="${dir}/work/$1${suffix}" bin="${dir}/bin/$1${suffix}"
 	if [[ -x "${bin}/niri" ]]; then
 		return
 	fi
 	if [[ ! -d "${work}" ]]; then
 		git -C "${dir}/src" worktree add --quiet --detach "${work}" "${commit}"
 	fi
-	echo "niri-build: building ${commit}" >&2
+	# A worktree whose patch failed to apply last time is still clean.
+	if [[ -n "${patch}" ]] && git -C "${work}" diff --quiet; then
+		git -C "${work}" apply "${patch}"
+	fi
+	echo "niri-build: building ${commit}${suffix}" >&2
 	(cd "${work}" && CARGO_TARGET_DIR="${dir}/target" timeout "${BUILD_SECONDS}" \
 		cargo build --release --locked)
 	mkdir -p "${bin}"
@@ -92,7 +112,7 @@ for ref in "$@"; do
 	status=$?
 	set -e
 	if ((status == 0)); then
-		echo "${ref} ${commit} ${dir}/bin/${commit}/niri"
+		echo "${ref} ${commit} ${dir}/bin/${commit}${suffix}/niri"
 	else
 		reason=$(grep -m 1 'was not found' "${log}" || grep -m 1 '^error' "${log}" || echo "exit ${status}")
 		echo "niri-build: ${ref} (${commit}) failed; see ${log}" >&2
