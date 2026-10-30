@@ -571,8 +571,10 @@ impl Engine {
             // Boxed, because a saved capture makes a large future.
             Box::pin(self.capture_saving(session, request, save)).await
         };
-        // Boxed, because the capture and the lock reads around it make a large future.
-        Box::pin(self.unlocked(self.desk.observe(session, capture))).await
+        // niri draws only the lock screen into a capture made once the screen locked, so
+        // the lock is read before the capture only.
+        self.refuse_locked().await?;
+        self.desk.observe(session, capture).await
     }
 
     /// The layout rectangle `zoom` names and the output to capture it from: the ref must be

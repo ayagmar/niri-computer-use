@@ -49,7 +49,7 @@ The server acts only on a screen it knows is unlocked. It asks logind for niri's
 
 logind only knows the lock state when niri runs as `niri --session`. Without that and without Noctalia, the state is `unknown` and the server won't act.
 
-Looking stops too while the screen is locked. `screenshot`, `elements` and `wait_for` are refused with `screen_locked`, also when the screen locked while they ran, and `desktop_state` leaves window titles out. niri already draws only the lock screen into screenshots then; accessible names and window titles come from the apps and niri's IPC, which the lock screen doesn't stop. Here an `unknown` state doesn't refuse: actions already refuse then, and refusing looks as well would leave nothing working for a session without `niri --session` or Noctalia.
+Looking stops too while the screen is locked. `screenshot`, `elements` and `wait_for` are refused with `screen_locked`, `elements` and `wait_for` also when the screen locked while they ran, and `desktop_state` leaves window titles out. niri already draws only the lock screen into screenshots then; accessible names and window titles come from the apps and niri's IPC, which the lock screen doesn't stop. Here an `unknown` state doesn't refuse: actions already refuse then, and refusing looks as well would leave nothing working for a session without `niri --session` or Noctalia.
 
 ## Refusals
 
