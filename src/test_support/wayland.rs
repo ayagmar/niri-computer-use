@@ -397,6 +397,10 @@ async fn serve(
     let niri_listener = UnixListener::from_std(niri_listener).unwrap();
     let mut display = Display::<State>::new().unwrap();
     State::globals(&display.handle());
+    #[expect(
+        deprecated,
+        reason = "the AsyncFd owns its OwnedFd, so nothing can close or replace the descriptor while it is registered (RUSTSEC-2026-0386)"
+    )]
     let readable = AsyncFd::new(display.backend().poll_fd().try_clone_to_owned().unwrap()).unwrap();
     loop {
         tokio::select! {
