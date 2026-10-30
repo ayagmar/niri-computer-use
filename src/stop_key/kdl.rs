@@ -5,6 +5,11 @@
 //! their text, since only strings matter here. Anything it can't read, such as an
 //! unterminated string or an unbalanced brace, is an error, as niri would refuse the file.
 
+/// The most blocks read inside one another. Each is a nested call, so without a limit a
+/// file of nothing but `a{` would overflow the reading thread's stack and abort the
+/// process; niri's own configs nest a few levels.
+const MAX_DEPTH: usize = 64;
+
 /// One node: `name arg… key=value… { children }`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct Node {
@@ -44,6 +49,7 @@ pub(super) fn parse(text: &str) -> Result<Vec<Node>, String> {
     let mut parser = Parser {
         tokens: &tokens,
         at: 0,
+        depth: 0,
     };
     let nodes = parser.nodes()?;
     match parser.next() {
@@ -55,6 +61,8 @@ pub(super) fn parse(text: &str) -> Result<Vec<Node>, String> {
 struct Parser<'a> {
     tokens: &'a [Token],
     at: usize,
+    /// How many blocks the reader is inside.
+    depth: usize,
 }
 
 impl Parser<'_> {
@@ -127,8 +135,13 @@ impl Parser<'_> {
 
     /// A `{ … }` block, braces included.
     fn children(&mut self) -> Result<Vec<Node>, String> {
+        if self.depth == MAX_DEPTH {
+            return Err(format!("blocks nest deeper than {MAX_DEPTH} levels"));
+        }
         self.at += 1;
+        self.depth += 1;
         let children = self.nodes()?;
+        self.depth -= 1;
         match self.next() {
             Some(Token::Close) => Ok(children),
             _ => Err("a { is never closed".to_owned()),
@@ -398,5 +411,15 @@ binds {
         ] {
             assert!(parse(text).is_err(), "{text:?}");
         }
+    }
+
+    // A test thread's stack is as small as the one the scan runs on, so without the limit
+    // this aborts the test binary.
+    #[test]
+    fn blocks_nested_past_the_limit_are_refused_not_overflowed() {
+        let nested = |depth| format!("{}{}", "a{".repeat(depth), "}".repeat(depth));
+        assert!(parse(&nested(MAX_DEPTH)).is_ok());
+        let error = parse(&nested(10_000)).unwrap_err();
+        assert!(error.contains("nest deeper"), "{error}");
     }
 }
