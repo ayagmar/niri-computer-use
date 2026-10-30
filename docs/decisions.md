@@ -2049,3 +2049,14 @@ Each action's commit is the one its tag names in the action's repository (`git l
   - Unit tests: the hand-over table (capability, the engine's file, the peer's build); the capability read from hello lines of any version; `exiting` optional both ways; `Desk::close` refusing with the lease held, with it being taken, and with the mutex held past its wait, and granting no lease once closed; a brief hold of the mutex not keeping the desk open.
   - Protocol tests in `tests/protocol/clients.rs`: idle old clients hand over to a new client of the replaced file and then get `engine_lost` and the restart advice; a held lease keeps the old engine while a client that requires the engine gets `engine_unavailable`, and its first call after the release is served; two new clients starting at once share one new engine; a hello without `hands_over` ends nothing and one with it ends the engine even when unread; a stale client finding no engine starts none. The first four failed before.
 - No dependency was added.
+
+## 2026-10-30: bridges log the calls they answer themselves
+
+- `engine_lost` and `engine_unavailable` are answered by the bridge for calls the engine never saw or ended before answering, so they never reached the audit log: thirteen in the friction report of 2026-10-18, none logged, and the Noctalia plugin never showed them. A bridge now logs each `tools/call` it answers with either (`bridge/log.rs`), in the relay, before an engine is reached with `shared = "required"`, and in the session `bridge/unavailable.rs` serves. This reverses "it writes no audit line" in "`shared = "required"` makes the shared engine mandatory" (2026-10-15).
+- The line is the engine's form with what the bridge knows:
+  - The session label is the client's name, from the request's `_meta` or its `initialize`, and the bridge's PID, as the engine writes it.
+  - The tool is logged only when the client's profile lists it. A call of any other tool isn't logged, as an engine never logs one.
+  - `args` is `{}`, since the bridge doesn't read a call's arguments. That keeps it clear of the logged-form rules, and readers that take `args` as an object, such as the Noctalia plugin, read it as they read a call without arguments.
+- The bridge writes to the log its own `XDG_STATE_HOME` names, and the engine to the one of the bridge that started it. They differ only for clients started with different state directories, and then each client's failures land in its own.
+- Tests: protocol tests in `tests/protocol/shared.rs` require a line for a call in flight when the engine was killed, for a call after the engine ended with nothing in flight, and for each call of a required client served without an engine, through the relay and through the unavailable session, each with its tool, session and `{}`. All of them fail without the logging. A call of an unlisted tool, also answered `engine_lost`, isn't logged.
+- No dependency was added.

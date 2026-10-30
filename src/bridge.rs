@@ -8,6 +8,7 @@
 pub(crate) mod before;
 mod client;
 pub(crate) mod envelope;
+pub(crate) mod log;
 pub(crate) mod unavailable;
 
 use std::collections::BTreeMap;
@@ -38,6 +39,7 @@ use crate::{Env, cli, runner};
 use before::Before;
 use client::{Ended, Waiting, Writer};
 use envelope::Message;
+use log::{Asked, Log};
 
 /// Held by the one bridge starting an engine, so bridges that start at once start one.
 const START_LOCK: &str = "engine.start.lock";
@@ -573,10 +575,12 @@ async fn read_line(input: &mut (impl tokio::io::AsyncBufRead + Unpin), max: usiz
 /// Relays between the client on stdin and stdout and the engine `engine` reaches, until the
 /// client's end. Without an engine, `before` answers the handshake, `tools/list` and pings
 /// until a call reaches one.
+/// The calls it answers itself go to `log`.
 pub(crate) async fn run(
     target: Target,
     engine: Option<Link>,
     before: Option<Before>,
+    log: Log,
 ) -> Result<(), String> {
     let (sender, mut client) = mpsc::unbounded_channel();
     let (ended, client_end) = watch::channel(None);
@@ -594,6 +598,7 @@ pub(crate) async fn run(
         in_flight: BTreeMap::new(),
         initialize: None,
         unreported: false,
+        log,
         writer,
         ends: Ends {
             client: client_end,
@@ -695,12 +700,14 @@ struct Relay {
     /// one and had none when it started.
     before: Option<Before>,
     /// The client's requests the engine hasn't answered, by their ids as JSON, with the
-    /// method.
-    in_flight: BTreeMap<String, (Value, String)>,
+    /// method and, for a call, what the audit log names.
+    in_flight: BTreeMap<String, (Value, String, Option<Asked>)>,
     /// The client's `initialize`: its id and line, replayed to a new engine.
     initialize: Option<(Value, Vec<u8>)>,
     /// The engine was lost while nothing was in flight, and the client hasn't heard.
     unreported: bool,
+    /// Where the calls the bridge answers itself are logged.
+    log: Log,
     writer: Writer,
     ends: Ends,
 }
@@ -773,19 +780,27 @@ impl Relay {
         if initializing {
             self.initialize = Some((id.clone(), line.clone()));
         }
+        let initialize = self.initialize.as_ref().map(|(_, sent)| sent.as_slice());
+        let asked = (method == "tools/call")
+            .then(|| self.log.line(&line, initialize))
+            .flatten();
         if self.engine.is_none() {
             if let Some(answer) = self.answer_before(&id, &method, &line) {
                 return self.reply(answer).map_err(Stop::Writer);
             }
             if std::mem::take(&mut self.unreported) {
                 let error = self.lost_error("since the last call");
-                return self.answer(&id, &method, error).map_err(Stop::Writer);
+                return self
+                    .answer(&id, &method, asked.as_ref(), error)
+                    .map_err(Stop::Writer);
             }
             if let Err(error) = self.reach(initializing).await? {
-                return self.answer(&id, &method, error).map_err(Stop::Writer);
+                return self
+                    .answer(&id, &method, asked.as_ref(), error)
+                    .map_err(Stop::Writer);
             }
         }
-        self.in_flight.insert(id.to_string(), (id, method));
+        self.in_flight.insert(id.to_string(), (id, method, asked));
         self.send(&line).await
     }
 
@@ -854,7 +869,10 @@ impl Relay {
         let error = self.lost_error(how);
         self.engine = None;
         self.unreported = self.in_flight.is_empty();
-        for (id, method) in std::mem::take(&mut self.in_flight).into_values() {
+        for (id, method, asked) in std::mem::take(&mut self.in_flight).into_values() {
+            if let Some(asked) = &asked {
+                self.log.answered(asked, &error);
+            }
             let line = envelope::answer(&id, &method, error.clone());
             tokio::select! {
                 biased;
@@ -878,7 +896,17 @@ impl Relay {
         )
     }
 
-    fn answer(&mut self, id: &Value, method: &str, error: ToolError) -> Result<(), String> {
+    /// Answers the request `id` with `error`, logging it when it is the call `asked`.
+    fn answer(
+        &mut self,
+        id: &Value,
+        method: &str,
+        asked: Option<&Asked>,
+        error: ToolError,
+    ) -> Result<(), String> {
+        if let Some(asked) = asked {
+            self.log.answered(asked, &error);
+        }
         self.reply(envelope::answer(id, method, error))
     }
 
@@ -974,6 +1002,7 @@ mod tests {
             in_flight: BTreeMap::new(),
             initialize: None,
             unreported: false,
+            log: Log::new(&crate::test_support::niri_env(dir), &[]),
             writer,
             ends: Ends {
                 client,
@@ -1038,7 +1067,7 @@ mod tests {
         let (stdout, client_end) = duplex(1024);
         let mut relay = relay(dir, ours, client, stdout);
         for id in 0..count {
-            let request = (json!(id), "tools/list".to_owned());
+            let request = (json!(id), "tools/list".to_owned(), None);
             relay.in_flight.insert(id.to_string(), request);
         }
         (relay, client_end)

@@ -323,24 +323,26 @@ async fn serve(env: Env, given: session::Given) -> Result<(), String> {
             reach_engine(&env, given).await
         }
     };
+    let tools = tools::Server::listed(&settings);
+    let log = bridge::log::Log::new(&env, &tools);
     let (target, reason) = match reached {
-        Ok((target, link)) => return bridge::run(target, Some(link), None).await,
+        Ok((target, link)) => return bridge::run(target, Some(link), None, log).await,
         Err(unreached) => unreached,
     };
     if sharing == policy::Sharing::Required {
-        let tools = tools::Server::listed(&settings);
         let Some(target) = target else {
             cli::print_error(&format!(
                 "the shared engine is required, so every tool fails with engine_unavailable: {reason}"
             ));
-            return bridge::unavailable::Unavailable::new(tools, &reason)
+            return bridge::unavailable::Unavailable::new(tools, &reason, log)
                 .run()
                 .await;
         };
         cli::print_error(&format!(
             "the shared engine is required, so every call fails with engine_unavailable until one is reached: {reason}"
         ));
-        return bridge::run(target, None, Some(bridge::before::Before::new(tools))).await;
+        let before = bridge::before::Before::new(tools);
+        return bridge::run(target, None, Some(before), log).await;
     }
     cli::print_error(&format!("serving this client standalone: {reason}"));
     standalone(env, settings, Some(reason)).await
