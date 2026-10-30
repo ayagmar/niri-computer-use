@@ -74,7 +74,11 @@ pub(super) fn run(
 fn policy(session: &Session<'_>) -> Result<()> {
     let dir = session.test_dir().config().join("niri-computer-use");
     fs::create_dir_all(&dir).context(format!("create {}", dir.display()))?;
-    let policy = format!("deny_input_app_ids = [\"{}\"]\n", actions::DENIED);
+    let policy = format!(
+        "{}deny_input_app_ids = [\"{}\"]\n",
+        crate::actions::QUIET,
+        actions::DENIED
+    );
     let path = dir.join("policy.toml");
     fs::write(&path, &policy).context(format!("write {}", path.display()))?;
     fs::write(session.artifact("policy.toml"), policy).context("copy the policy file")

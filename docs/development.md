@@ -209,7 +209,7 @@ Every server talks MCP over a shell pipeline (`printf` of the requests, then `sl
 
 ## Nested action checks
 
-`make nested-actions` runs M3's acceptance in a nested niri, set up as `make nested-control` is, with the nested Noctalia as the lock source. Before the server starts, the supervisor writes a policy file to `TEST_DIR/config/niri-computer-use/policy.toml` whose presets all start `harness window`, a fixture app in the harness, with a different `app_id` each:
+`make nested-actions` runs M3's acceptance in a nested niri, set up as `make nested-control` is, with the nested Noctalia as the lock source. Before the server starts, the supervisor writes a policy file to `TEST_DIR/config/niri-computer-use/policy.toml`, with `notify_on_lease = false` so the nested Noctalia shows no lease toast (M3 checks that `status` reads it), whose presets all start `harness window`, a fixture app in the harness, with a different `app_id` each:
 
 | Preset | Fixture |
 |---|---|

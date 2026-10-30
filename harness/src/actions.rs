@@ -22,6 +22,9 @@ use crate::mcp::{self, Client, field, structured};
 use crate::session::Session;
 
 /// Within what is left of the run's deadline.
+/// Every policy file the harness writes for this build turns the lease notification
+/// off, so the nested Noctalia shows no toast over what the checks look at.
+pub(crate) const QUIET: &str = "notify_on_lease = false\n";
 const NOCTALIA_DEADLINE: Duration = Duration::from_secs(110);
 const SERVER_DEADLINE: Duration = Duration::from_secs(100);
 const READY: Duration = Duration::from_secs(20);
@@ -120,13 +123,20 @@ fn write_file(session: &Session<'_>, policy: &str) -> Result<()> {
     let dir = session.test_dir().config().join("niri-computer-use");
     fs::create_dir_all(&dir).context(format!("create {}", dir.display()))?;
     let path = dir.join("policy.toml");
-    fs::write(&path, policy).context(format!("write {}", path.display()))?;
+    let policy = format!("{QUIET}{policy}");
+    fs::write(&path, &policy).context(format!("write {}", path.display()))?;
     fs::write(session.artifact("policy.toml"), policy).context("copy the policy file")
 }
 
-/// Waits until the server sees niri, the nested Noctalia and an unlocked screen.
+/// Waits until the server sees niri, the nested Noctalia and an unlocked screen, with the
+/// lease notification off.
 fn ready(session: &mut Session<'_>, client: &mut Client) -> Result<()> {
     let status = mcp::ready(session, client, "m3-ready", READY)?;
+    expect(
+        field(&status, "/policy/notify_on_lease") == false,
+        "status.policy.notify_on_lease false",
+        &field(&status, "/policy").to_string(),
+    )?;
     session.log(&format!(
         "M3 status: niri {}, lock {}, presets {}",
         field(&status, "/niri/compat"),
