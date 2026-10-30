@@ -469,9 +469,27 @@ impl Engine {
         };
         let evidence =
             |worked| Box::pin(self.evidence(session, worked, report.shoot, report.quiet));
-        self.desk
+        let acted = self
+            .desk
             .act(session, refusal, Box::pin(watched), evidence)
-            .await
+            .await;
+        match acted {
+            Err(CallError::Tool(error)) if error.name == ErrorName::FocusMismatch => {
+                Err(self.unfocused(error).await.into())
+            }
+            acted => acted,
+        }
+    }
+
+    /// A focus refusal, saying what may hold the keyboard when niri reports no window
+    /// focused.
+    async fn unfocused(&self, mut error: ToolError) -> ToolError {
+        if niri::focused_window(&self.env.niri_socket).await == Ok(None)
+            && let Some(holder) = act::holder::keyboard_holder(self.niri()).await
+        {
+            error.detail = format!("{}; {holder}", error.detail);
+        }
+        error
     }
 
     /// A screenshot, serialized with this engine's actions. With `save`, a full-resolution

@@ -321,6 +321,61 @@ async fn focus_without_its_event_times_out() {
 }
 
 #[tokio::test]
+async fn a_focus_that_times_out_under_an_open_shell_panel_says_so() {
+    let mut desk = Desk::start("act-timeout-panel", "").await;
+    desk.stream
+        .send(&json!({"WindowFocusChanged": {"id": null}}));
+    desk.noctalia.open_panel(Some("control-center"));
+    let result = desk.act("focus", json!({"window_id": 2}), |_, _| {}).await;
+    let outcome = outcome(&result);
+    assert_eq!(outcome["observed"], "timeout", "{outcome}");
+    assert_eq!(outcome["focused_window"], Value::Null, "{outcome}");
+    let detail = outcome["detail"].as_str().unwrap();
+    assert!(
+        detail.starts_with("Noctalia's \"control-center\" panel is open and may hold keyboard focus; close it with `shell_panel`"),
+        "{detail}"
+    );
+}
+
+#[tokio::test]
+async fn a_key_refused_with_no_window_focused_names_the_layer_surface_holding_it() {
+    let mut desk = Desk::start("act-held-keyboard", "").await;
+    desk.stream
+        .send(&json!({"WindowFocusChanged": {"id": null}}));
+    desk.niri.set_layers(&[
+        json!({"namespace": "bar", "output": "DP-1", "layer": "Top", "keyboard_interactivity": "None"}),
+        json!({"namespace": "launcher", "output": "DP-1", "layer": "Overlay", "keyboard_interactivity": "Exclusive"}),
+    ]);
+    let mut refused = String::new();
+    // The focus change may not have reached the server yet: ask until it has.
+    for _ in 0..50 {
+        let result = desk
+            .server
+            .call("key", json!({"keys": ["a"], "expect": {"window_id": 1}}))
+            .await;
+        refused = tool_error(&result).1;
+        if refused.contains("no window has keyboard focus") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        refused,
+        "expected window_id 1; no window has keyboard focus; a layer-shell surface may hold keyboard focus: niri lists \"launcher\" (overlay layer, exclusive keyboard, on DP-1); press `Escape` with `key` and `expect: \"none\"` to close it, or `shell_panel` for a Noctalia panel"
+    );
+    // With every surface gone, and Noctalia showing no panel, nothing is claimed.
+    desk.niri.set_layers(&[]);
+    let result = desk
+        .server
+        .call("key", json!({"keys": ["a"], "expect": {"window_id": 1}}))
+        .await;
+    assert_eq!(
+        tool_error(&result).1,
+        "expected window_id 1; no window has keyboard focus"
+    );
+}
+
+#[tokio::test]
 async fn screenshots_under_the_lease_are_refs_of_that_lease() {
     let mut desk = Desk::start("act-refs", "").await;
     let shot = json!({"target": "focused_output"});

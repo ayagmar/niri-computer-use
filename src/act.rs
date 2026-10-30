@@ -27,6 +27,7 @@ use crate::policy::{self, Loaded, Preset};
 use crate::settle;
 
 pub(crate) mod compositor;
+pub(crate) mod holder;
 pub(crate) mod record;
 pub(crate) mod shell;
 
@@ -158,7 +159,8 @@ pub(crate) struct Outcome {
     pub(crate) changes: Option<Changes>,
     /// Why the outcome is uncertain or `unknown`, or why an element action's effect is
     /// `unverified`; for `key` and `type_text` ending `interrupted` once keys went out, what
-    /// went out and where some of it may have gone.
+    /// went out and where some of it may have gone; for a focus that timed out with no
+    /// window focused, what may hold the keyboard.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) detail: Option<String>,
     /// The metadata of the focused output's screenshot that comes with the result: one asked
@@ -405,12 +407,8 @@ pub(crate) async fn focus_workspace(niri: Niri<'_>, id: u64) -> Result<Outcome, 
     let ended = waiter
         .until(WAIT, |view| workspace_focused(view, id, before))
         .await;
-    Ok(conclude(
-        ended,
-        waiter.view(),
-        Observed::Timeout,
-        Vec::new(),
-    ))
+    let outcome = conclude(ended, waiter.view(), Observed::Timeout, Vec::new());
+    Ok(explained(niri, outcome).await)
 }
 
 /// Asks the window to close, as its close button would. An app may ask first, so a window
@@ -518,7 +516,16 @@ async fn focus(
     let ended = waiter
         .until(WAIT, |view| window_focused(view, id, before))
         .await;
-    Ok(conclude(ended, waiter.view(), Observed::Timeout, windows))
+    let outcome = conclude(ended, waiter.view(), Observed::Timeout, windows);
+    Ok(explained(niri, outcome).await)
+}
+
+/// A focus that timed out with no window focused says what may hold the keyboard.
+async fn explained(niri: Niri<'_>, mut outcome: Outcome) -> Outcome {
+    if outcome.observed == Observed::Timeout && outcome.focused_window.is_none() {
+        outcome.detail = holder::keyboard_holder(niri).await;
+    }
+    outcome
 }
 
 /// An outcome reached without sending anything.

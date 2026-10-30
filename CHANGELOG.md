@@ -3,6 +3,7 @@
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
+- `focus` and `release_desktop`'s `restore_focus` that time out with no window focused, and keyboard and element tools refused with `focus_mismatch` because no window has keyboard focus, say in `detail` what may hold it: Noctalia's open panel, or the layer-shell surfaces niri lists that take keyboard focus, and that `shell_panel` or `key` `Escape` with `expect: "none"` closes it.
 - A `wait_for` `window` condition that times out lists the windows that opened during the wait in `opened`, with their `app_id`, so a wrong `app_id` such as `helium-browser` for `helium` shows.
 - Typed text puts a symbol on a spare key when the layout has it only on a key Chromium drops. US maps have `€` only on `<I443>` (evdev 435), so `€` typed into Chromium and Electron apps arrived as nothing. A symbol also on a normal key types there, so US `$` uses Shift+4 instead of `<I442>`, which Chromium dropped too.
 

@@ -103,7 +103,7 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 ### `focus_mismatch`
 
-**Cause:** a keyboard tool's `expect` doesn't match the window with keyboard focus, or for `activate_element` and `set_element_text`, the element's window doesn't have keyboard focus or `expect` doesn't name it. The `detail` says what has focus. Often a dialog or notification took focus; an open Noctalia panel leaves no window focused. Nothing was typed or sent.
+**Cause:** a keyboard tool's `expect` doesn't match the window with keyboard focus, or for `activate_element` and `set_element_text`, the element's window doesn't have keyboard focus or `expect` doesn't name it. The `detail` says what has focus. Often a dialog or notification took focus; an open Noctalia panel leaves no window focused. When no window has focus and Noctalia has a panel open, or niri lists a layer-shell surface that takes keyboard focus, the `detail` names it and says how to close it: `shell_panel`, or `key` `Escape` with `expect: "none"`. Nothing was typed or sent.
 
 **What to do:** look at `desktop_state` and a screenshot, focus the intended window with `focus` if that is what was meant, then type again.
 
