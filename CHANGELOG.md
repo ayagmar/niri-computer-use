@@ -3,7 +3,22 @@
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
+
+### Changed
+
+- The skill and the server's instructions tell agents to load the tool schemas before the first call in Claude Code, that `submitted: true` means Enter went out and a late-drawn message is not a reason to send it again, to take a screenshot before typing after `ctrl+t` or a closed file picker, to hand the desktop back on a `focus_mismatch` that names their own terminal, and to tell you once that restarting a Chromium or Electron app enables element tools.
+- The README opens its Safety section with a six-row table and no longer shows a harness run as its example. The home page says the audit log records every call that reaches a tool.
+- crates.io links the project site as `homepage` and `documentation`.
+
+### Fixed
+
 - Typed text puts a symbol on a spare key when the layout has it only on a key Chromium drops. US maps have `€` only on `<I443>` (evdev 435), so `€` typed into Chromium and Electron apps arrived as nothing. A symbol also on a normal key types there, so US `$` uses Shift+4 instead of `<I442>`, which Chromium dropped too.
+- The Safety page said the pointer tools don't check whether windows moved since the screenshot. They have refused such a screenshot with `layout_changed` since 0.1.2.
+
+### Added
+
+- The Chromium and Electron section of the elements page, and the troubleshooting page, say how to start those apps with accessibility on, so `elements` works on them.
+- A bug report template that asks for the niri version, `status` output, the agent and model, and the error name and `detail`.
 
 ## 0.1.5 - 2026-10-18
 
