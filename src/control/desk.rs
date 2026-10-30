@@ -16,9 +16,9 @@ use tokio::sync::{Mutex, watch};
 use tokio::time::Instant;
 
 use super::lease::{self, Holder, Lease, Refused, Unpublished};
+use super::marker;
 use super::runtime::RuntimeDir;
 use super::stop;
-use super::{marker, procs};
 use crate::Env;
 use crate::a11y::ElementRef;
 use crate::act::Outcome;
@@ -941,14 +941,9 @@ fn input_dirty(found: Option<&marker::Found>, proc_root: &Path) -> ToolError {
     ToolError::new(ErrorName::RecoveryRequired, detail)
 }
 
-/// Whether another server wrote `marker` and may still clear it: it runs, as far as
-/// `proc_root` tells, and its crash guardian hasn't sent the releases, which it does once
-/// the server has died. The marker records no start time, so a PID reused since the
-/// server died reads as running.
+/// Whether another server wrote `marker` and may still clear it.
 fn another_server_may_finish(marker: &marker::Marker, proc_root: &Path) -> bool {
-    marker.server_pid != std::process::id()
-        && marker.released.is_none()
-        && procs::stat(proc_root, marker.server_pid).is_some_and(|stat| !stat.exited())
+    marker.server_pid != std::process::id() && marker::writer_runs(marker, proc_root)
 }
 
 /// A stop can't reach this server any more.

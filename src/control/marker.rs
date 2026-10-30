@@ -25,11 +25,26 @@ use tokio::time::Instant;
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 
+use super::procs;
 use super::runtime::{INPUT_DIRTY, RuntimeDir};
 use crate::error::{ErrorName, ToolError};
 
+/// How old a marker from a server without the note must be before `stuck` says so while
+/// that server runs. Such a server never says it gave up on its input.
+const IN_FLIGHT: Duration = Duration::from_secs(60);
+
+/// How old a marker whose note names it must be before `stuck` says so though its writer
+/// never noted that it gave up, as when that note couldn't be written. The longest input
+/// goes out for about 63 s: `MAX_TEXT` keys at `PER_KEY`, `MIN_TIME`, then a cleanup's
+/// `LIMIT`.
+const NOTED_IN_FLIGHT: Duration = Duration::from_secs(300);
+
 /// Taken around every change to the marker.
 const LOCK: &str = "input-dirty.lock";
+/// The writer's word on its marker, beside it: its `owner`, and whether it gave up on the
+/// input. Not in the marker itself, whose fields released servers read with
+/// `deny_unknown_fields`, so a new field would make the marker unreadable to them.
+const NOTE: &str = "input-dirty.note";
 /// How long a change waits for another one's lock, which is held only for file operations.
 const LOCK_WAIT: Duration = Duration::from_millis(500);
 const LOCK_RETRY: Duration = Duration::from_millis(5);
@@ -147,6 +162,9 @@ pub(crate) fn now() -> String {
 pub(crate) struct Written {
     dir: PathBuf,
     marker: Marker,
+    /// Whether the file holds this marker for this input to clear: set once written,
+    /// unset once cleared. Dropped while set, the input gave up on it.
+    owed: bool,
 }
 
 /// A failed `Written::write`: `recovery_required` when another input's marker is set, as
@@ -164,9 +182,10 @@ impl Written {
     /// Writes `marker` if no marker is set, replacing the file whole, so a reader never
     /// sees half of it.
     pub(crate) async fn write(runtime: &RuntimeDir, marker: Marker) -> std::io::Result<Self> {
-        let written = Self {
+        let mut written = Self {
             dir: runtime.path().to_owned(),
             marker,
+            owed: false,
         };
         let _locked = lock(&written.dir).await?;
         if let Some(found) = current(&written.dir)? {
@@ -179,20 +198,26 @@ impl Written {
             ));
         }
         save(&written.dir, &written.marker)?;
+        written.owed = true;
         if let Some(owner) = &written.marker.owner {
             HELD.lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .insert(owner.clone());
+            // Without the note, `stuck` reads the marker as an older server's.
+            if let Err(error) = save_note(&written.dir, &Note::new(owner)) {
+                crate::cli::print_error(&format!("write the input-dirty note: {error}"));
+            }
         }
         Ok(written)
     }
 
     /// Removes the marker, if the file is still this marker. Another input's stays.
-    pub(crate) async fn clear(self) -> std::io::Result<()> {
+    pub(crate) async fn clear(mut self) -> std::io::Result<()> {
         let _locked = lock(&self.dir).await?;
         if self.is_current()? {
             std::fs::remove_file(self.dir.join(INPUT_DIRTY))?;
         }
+        self.owed = false;
         Ok(())
     }
 
@@ -207,12 +232,74 @@ impl Written {
 
 impl Drop for Written {
     fn drop(&mut self) {
-        if let Some(owner) = &self.marker.owner {
-            HELD.lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .remove(owner);
+        let Some(owner) = &self.marker.owner else {
+            return;
+        };
+        HELD.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(owner);
+        if self.owed {
+            note_given_up_later(self.dir.clone(), owner.clone());
         }
     }
+}
+
+/// Notes that the input `owner` names gave up on its marker, in a task of its own, as the
+/// lock is waited for. Without a runtime, the process is ending, and its marker reads as
+/// stuck once it has.
+fn note_given_up_later(dir: PathBuf, owner: String) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    runtime.spawn(async move {
+        if let Err(error) = note_given_up(&dir, &owner).await {
+            crate::cli::print_error(&format!(
+                "note that the input gave up on its input-dirty marker: {error}"
+            ));
+        }
+    });
+}
+
+/// What `NOTE` holds.
+#[derive(Debug, Serialize, Deserialize)]
+struct Note {
+    owner: String,
+    /// When the input gave up on the marker, leaving it for `recover`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    given_up: Option<String>,
+}
+
+impl Note {
+    fn new(owner: &str) -> Self {
+        Self {
+            owner: owner.to_owned(),
+            given_up: None,
+        }
+    }
+}
+
+/// Notes that the input `owner` names gave up on its marker, if the file still holds it.
+async fn note_given_up(dir: &Path, owner: &str) -> std::io::Result<()> {
+    let _locked = lock(dir).await?;
+    let Some(bytes) = current(dir)? else {
+        return Ok(());
+    };
+    let found: Option<Marker> = serde_json::from_slice(&bytes).ok();
+    if found.and_then(|found| found.owner).as_deref() != Some(owner) {
+        return Ok(());
+    }
+    let mut note = Note::new(owner);
+    note.given_up = Some(now());
+    save_note(dir, &note)
+}
+
+/// The note for the marker `owner` names, `None` when the note is another marker's, is
+/// missing or can't be read.
+fn note_for(dir: &Path, owner: &str) -> Option<Note> {
+    let bytes = std::fs::read(dir.join(NOTE)).ok()?;
+    serde_json::from_slice::<Note>(&bytes)
+        .ok()
+        .filter(|note| note.owner == owner)
 }
 
 /// The marker as the guardian or `recover` read it, which they change or remove only if
@@ -323,7 +410,15 @@ fn current(dir: &Path) -> std::io::Result<Option<Vec<u8>>> {
 /// Writes `marker` whole: to `input-dirty.new`, then renamed into place. Only called with
 /// the lock held, so no two writers share the staging file.
 fn save(dir: &Path, marker: &Marker) -> std::io::Result<()> {
-    let path = dir.join(INPUT_DIRTY);
+    replace(&dir.join(INPUT_DIRTY), marker)
+}
+
+/// Writes `note` whole, as `save` writes the marker, under the lock too.
+fn save_note(dir: &Path, note: &Note) -> std::io::Result<()> {
+    replace(&dir.join(NOTE), note)
+}
+
+fn replace(path: &Path, value: &impl Serialize) -> std::io::Result<()> {
     let staged = path.with_extension("new");
     let mut file = OpenOptions::new()
         .write(true)
@@ -331,7 +426,7 @@ fn save(dir: &Path, marker: &Marker) -> std::io::Result<()> {
         .truncate(true)
         .mode(0o600)
         .open(&staged)?;
-    file.write_all(&serde_json::to_vec(marker).map_err(std::io::Error::other)?)?;
+    file.write_all(&serde_json::to_vec(value).map_err(std::io::Error::other)?)?;
     std::fs::rename(&staged, path)
 }
 
@@ -370,6 +465,49 @@ pub(crate) fn read(runtime: &RuntimeDir) -> Option<Found> {
     snapshot(runtime).map(|snapshot| snapshot.found)
 }
 
+/// Whether the server that wrote `marker` may still clear it: it runs, as far as
+/// `proc_root` tells, and its crash guardian hasn't sent the releases, which it does once
+/// the server has died. The marker records no start time, so a PID reused since the
+/// server died reads as running.
+pub(crate) fn writer_runs(marker: &Marker, proc_root: &Path) -> bool {
+    marker.released.is_none()
+        && procs::stat(proc_root, marker.server_pid).is_some_and(|stat| !stat.exited())
+}
+
+/// Whether the marker says input may be stuck, as `watch` reports it: there is one, and
+/// its input can't still be going out, because its writer is gone or was released, its
+/// writer noted that it gave up on it, or it can't be read. A marker exists while every
+/// input goes out, so its presence alone isn't stuck input. A server without the note
+/// never says it gave up, so its marker counts as stuck once it is `IN_FLIGHT` old; any
+/// other once it is `NOTED_IN_FLIGHT` old, in case its writer couldn't say so.
+pub(crate) fn stuck(runtime: &RuntimeDir, proc_root: &Path) -> bool {
+    match read(runtime) {
+        None => false,
+        Some(Found::Marker(marker)) if !writer_runs(&marker, proc_root) => true,
+        Some(Found::Marker(marker)) => {
+            let note = marker
+                .owner
+                .as_deref()
+                .and_then(|owner| note_for(runtime.path(), owner));
+            note.map_or_else(
+                || !recent(&marker.since, IN_FLIGHT),
+                |note| note.given_up.is_some() || !recent(&marker.since, NOTED_IN_FLIGHT),
+            )
+        }
+        Some(Found::Unreadable { .. }) => true,
+    }
+}
+
+/// Whether `since` is within `limit`; a time ahead of the clock counts as recent.
+fn recent(since: &str, limit: Duration) -> bool {
+    chrono::DateTime::parse_from_rfc3339(since).is_ok_and(|since| {
+        Utc::now()
+            .signed_duration_since(since)
+            .to_std()
+            .map_or(true, |age| age < limit)
+    })
+}
+
 impl Found {
     /// One line for an error detail: the operation and phase, or why it can't be read.
     pub(crate) fn summary(&self) -> String {
@@ -403,6 +541,140 @@ mod tests {
 
     fn runtime(dir: &Path) -> RuntimeDir {
         RuntimeDir::of(&crate::test_support::niri_env(dir)).unwrap()
+    }
+
+    // The bug: `watch` reporting input as stuck while a click was still going out, so the
+    // Noctalia plugin told the user to run `recover` after every action.
+    #[test]
+    fn input_is_stuck_only_once_it_cant_still_be_going_out() {
+        let dir = crate::test_support::fresh_dir("marker-stuck");
+        let runtime = runtime(&dir);
+        runtime.create().unwrap();
+        let proc_root = dir.join("proc");
+        let running = |pid: u32, state: &str| {
+            std::fs::create_dir_all(proc_root.join(pid.to_string())).unwrap();
+            let stat = format!(
+                "{pid} (niri-computer-u) {state} 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20"
+            );
+            std::fs::write(proc_root.join(pid.to_string()).join("stat"), stat).unwrap();
+        };
+        running(7, "S");
+        running(8, "Z");
+        let path = runtime.path().join(INPUT_DIRTY);
+        let write = |pid: u32, since: &str, extra: &str| {
+            let marker = format!(
+                r#"{{"operation":"click","phase":"pending","server_pid":{pid},"since":"{since}"{extra}}}"#
+            );
+            std::fs::write(&path, marker).unwrap();
+        };
+        let note = |owner: &str, given_up: &str| {
+            let note = format!(r#"{{"owner":"{owner}"{given_up}}}"#);
+            std::fs::write(runtime.path().join(NOTE), note).unwrap();
+        };
+        let stuck = || stuck(&runtime, &proc_root);
+        let old = (Utc::now() - IN_FLIGHT * 2).to_rfc3339_opts(SecondsFormat::Millis, true);
+        assert!(!stuck(), "no marker");
+        // A long `type_text` is still going out a minute on.
+        write(7, &old, r#","owner":"a""#);
+        note("a", "");
+        assert!(!stuck(), "a running writer's input");
+        let older = (Utc::now() - NOTED_IN_FLIGHT * 2).to_rfc3339_opts(SecondsFormat::Millis, true);
+        write(7, &older, r#","owner":"a""#);
+        assert!(
+            stuck(),
+            "a running writer's input, too long ago to be going out"
+        );
+        write(7, &old, r#","owner":"a""#);
+        note("a", r#","given_up":"t""#);
+        assert!(stuck(), "a running writer that gave up on its input");
+        note("b", r#","given_up":"t""#);
+        assert!(stuck(), "another marker's note, so the age decides");
+        write(7, &now(), r#","owner":"a""#);
+        assert!(
+            !stuck(),
+            "another marker's note, with a marker just written"
+        );
+        std::fs::remove_file(runtime.path().join(NOTE)).unwrap();
+        write(7, &now(), "");
+        assert!(!stuck(), "an older server's input going out");
+        write(7, &old, "");
+        assert!(stuck(), "an older server's marker from long ago");
+        write(8, &now(), "");
+        assert!(stuck(), "an exited writer");
+        write(9, &now(), "");
+        assert!(stuck(), "a writer that's gone");
+        write(7, &now(), r#","released":"t""#);
+        assert!(stuck(), "released by the crash guardian");
+        std::fs::write(&path, "not json").unwrap();
+        assert!(stuck(), "unreadable");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    // The bug: a running server that gave up on its input, such as a cleanup past its
+    // deadline, left a marker `watch` didn't call stuck for a minute.
+    #[tokio::test]
+    async fn an_input_that_gives_up_on_its_marker_reads_as_stuck_at_once() {
+        let dir = crate::test_support::fresh_dir("marker-given-up");
+        let runtime = runtime(&dir);
+        runtime.create().unwrap();
+        let proc_root = Path::new("/proc");
+        let written = Written::write(&runtime, Marker::pending("key", Vec::new()))
+            .await
+            .unwrap();
+        assert!(!stuck(&runtime, proc_root), "going out");
+        drop(written);
+        let until = Instant::now() + Duration::from_secs(2);
+        while !stuck(&runtime, proc_root) {
+            assert!(Instant::now() < until, "not stuck after the input gave up");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let cleared = Written::write(&runtime, Marker::pending("key", Vec::new())).await;
+        assert!(cleared.is_err(), "the marker stays for recover");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The marker as 0.1.6, the last release, reads it.
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    #[expect(dead_code, reason = "only parsed, to show a released server can")]
+    struct LastRelease {
+        operation: String,
+        phase: Phase,
+        server_pid: u32,
+        since: String,
+        #[serde(default)]
+        child: Option<Child>,
+        #[serde(default)]
+        buttons: Vec<u32>,
+        #[serde(default)]
+        output: Option<String>,
+        #[serde(default)]
+        keyboard: Option<Native>,
+        #[serde(default)]
+        released: Option<String>,
+        #[serde(default)]
+        owner: Option<String>,
+    }
+
+    // A field added to the marker makes it unreadable to a running server of the last
+    // release, which then can't tell it from a corrupt one.
+    #[tokio::test]
+    async fn the_last_release_reads_the_markers_this_build_writes() {
+        let dir = crate::test_support::fresh_dir("marker-released");
+        let runtime = runtime(&dir);
+        runtime.create().unwrap();
+        let mut marker = Marker::pending("key", vec![272]);
+        marker.output = Some("DP-1".to_owned());
+        marker.keyboard = Some(Native {
+            codes: vec![29],
+            group: 0,
+        });
+        drop(Written::write(&runtime, marker).await.unwrap());
+        let snapshot = snapshot(&runtime).unwrap();
+        snapshot.note_released(&runtime).await.unwrap();
+        let bytes = std::fs::read(runtime.path().join(INPUT_DIRTY)).unwrap();
+        serde_json::from_slice::<LastRelease>(&bytes).unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -505,7 +777,10 @@ mod tests {
             .map(|entry| entry.unwrap().file_name())
             .collect();
         left.sort();
-        assert_eq!(left, ["input-dirty", "input-dirty.lock"]);
+        assert_eq!(
+            left,
+            ["input-dirty", "input-dirty.lock", "input-dirty.note"]
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -566,6 +841,7 @@ mod tests {
         let b = Written {
             dir: runtime.path().to_owned(),
             marker: theirs.clone(),
+            owed: true,
         };
         let held = lock(runtime.path()).await.unwrap();
         let error = b.clear().await.unwrap_err();

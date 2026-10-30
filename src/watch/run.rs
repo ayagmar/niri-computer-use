@@ -210,7 +210,7 @@ fn desk(watched: &Watched, projects: &mut Projects<'_>, known: Option<Vec<Client
             Driver::new(holder, project)
         }),
         stopped: runtime.stopped().unwrap_or(false),
-        input_dirty: runtime.input_dirty().unwrap_or(false),
+        input_dirty: crate::control::marker::stuck(runtime, &watched.proc_root),
         clients: known.unwrap_or_else(|| clients::scan(&watched.proc_root, &watched.instance)),
     }
 }

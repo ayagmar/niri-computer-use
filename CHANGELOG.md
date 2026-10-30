@@ -12,6 +12,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - `watch` shows a stop, a lease change and the input-dirty marker at once instead of at its next 250 ms poll: it wakes on changes in the runtime directory.
 
+### Fixed
+
+- The Noctalia plugin could say input may be stuck while an agent's click or key was still going out: `watch` reported the input-dirty marker that every input writes while it goes out. `watch` now sets `input_dirty` only once the marker's server is gone, was released or gave up on its input, which it notes in `input-dirty.note` beside the marker. A marker from a 0.1.6 server counts once it is a minute old, and any marker once it is five minutes old.
+
 ## 0.1.6 - 2026-10-30
 
 ### Added
