@@ -409,6 +409,7 @@ impl Engine {
             tools: &settings.tools,
             shared: &settings.shared,
             place: settings.place(),
+            apps: &settings.apps,
             accessibility: &self.accessibility,
             accessibility_switch: self.a11y.as_ref().map(|a11y| a11y.switch().report()),
         };
@@ -1659,6 +1660,7 @@ mod tests {
             shared: None,
             home: None,
             path: Some(bin.as_os_str().to_owned()),
+            apps: crate::apps::Search::default(),
             policy: policy::Source::Text {
                 path: "/c/policy.toml".into(),
                 text: policy.to_owned(),

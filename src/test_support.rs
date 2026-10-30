@@ -95,6 +95,7 @@ pub(crate) fn session(id: u64) -> crate::session::Session {
         home: None,
         path: Some(NO_PROGRAMS.into()),
         policy: crate::policy::Source::Missing,
+        apps: crate::apps::Search::default(),
     };
     crate::session::Session::new(
         crate::session::SessionId(id),

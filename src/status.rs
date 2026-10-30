@@ -23,7 +23,7 @@ use crate::policy::{
 };
 use crate::runner::{self, Place};
 use crate::stop_key::{self, StopKey};
-use crate::{Env, a11y, discover};
+use crate::{Env, a11y, apps, discover};
 
 /// Programs the server runs for the session asking, found on its `PATH` or not.
 const SESSION_BINARIES: [&str; 2] = ["grim", "notify-send"];
@@ -64,6 +64,9 @@ pub(crate) struct Status {
     accessibility_switch: Option<a11y::SwitchReport>,
     audit: AuditStatus,
     policy: PolicyStatus,
+    /// The installed desktop entries `launch` would start; null while
+    /// `policy.launch_desktop_entries` is off.
+    desktop_entries: Option<apps::Listing>,
     /// Whether gated actions are allowed, and whether the policy file or the environment
     /// allowed them.
     unrestricted: SwitchStatus,
@@ -109,6 +112,8 @@ pub(crate) struct Sources<'a> {
     pub(crate) shared: &'a Shared,
     /// Where the session's own programs are found.
     pub(crate) place: Place<'a>,
+    /// Where the session's desktop entries are.
+    pub(crate) apps: &'a apps::Search,
     /// Decided once at startup for the server, whose tool list depends on it.
     pub(crate) accessibility: &'a a11y::Presence,
     /// The engine's switch; none for the `status` subcommand.
@@ -230,6 +235,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         tools,
         shared,
         place,
+        apps,
         accessibility,
         accessibility_switch,
     } = sources;
@@ -241,33 +247,24 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
             None
         }
     };
-    let (version, outputs, noctalia, logind, stop_key) = tokio::join!(
+    let (version, outputs, noctalia, logind, stop_key, desktop_entries) = tokio::join!(
         niri::version(socket),
         niri::outputs(socket),
         noctalia,
         control::logind(socket, &env.desktop),
-        stop_key_of(reader, socket, config_failed)
+        stop_key_of(reader, socket, config_failed),
+        apps::listing(policy, apps, place)
     );
     let noctalia_status = noctalia.as_ref().and_then(|reply| reply.as_ref().ok());
     let lock = control::lock(logind, noctalia_status);
     let display_error = env.display.checked(socket).await.err();
-    let (version, error) = match version {
-        Ok(version) => (Some(version), None),
-        Err(error) => (None, Some(error)),
-    };
     let (presence, noctalia_error) = presence(noctalia);
     Status {
         instance: env.instance(),
         discovery: env.discovery.clone(),
         engine,
         display_error,
-        niri: Niri {
-            compat: version.as_deref().map(niri::version::compat),
-            version,
-            ipc_crate: niri::version::IPC_CRATE,
-            event_stream,
-            error,
-        },
+        niri: Niri::of(version, event_stream),
         lease,
         input_dirty: RuntimeDir::of(env)
             .ok()
@@ -283,6 +280,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         accessibility_switch,
         audit: audit.status(),
         policy: policy.status(),
+        desktop_entries,
         unrestricted: unrestricted.status(),
         confirm_lease: confirm_lease.status(),
         lease_notice_error,
@@ -296,8 +294,23 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
     }
 }
 
-/// Whether Noctalia is there from its status reply, none when it isn't installed, and why
-/// it counts as not running.
+impl Niri {
+    /// niri's part of the report from its `version` answer.
+    fn of(version: Result<String, ToolError>, event_stream: Option<StreamState>) -> Self {
+        let (version, error) = match version {
+            Ok(version) => (Some(version), None),
+            Err(error) => (None, Some(error)),
+        };
+        Self {
+            compat: version.as_deref().map(niri::version::compat),
+            version,
+            ipc_crate: niri::version::IPC_CRATE,
+            event_stream,
+            error,
+        }
+    }
+}
+
 /// What `stop_key` says, niri's config read only with a `reader`.
 async fn stop_key_of(
     reader: Option<&stop_key::Reader>,
@@ -310,6 +323,8 @@ async fn stop_key_of(
     }
 }
 
+/// Whether Noctalia is there from its status reply, none when it isn't installed, and why
+/// it counts as not running.
 fn presence(
     noctalia: Option<Result<serde_json::Map<String, serde_json::Value>, ToolError>>,
 ) -> (Presence, Option<ToolError>) {
@@ -398,6 +413,7 @@ mod tests {
             tools: &settings.tools,
             shared: &settings.shared,
             place: crate::test_support::no_programs(),
+            apps: &settings.apps,
             accessibility: &a11y::detect(None).await,
             accessibility_switch: None,
         };
@@ -446,11 +462,11 @@ mod tests {
                 "accessibility_switch": null,
                 "audit": {"path": null, "last_error": "neither XDG_STATE_HOME nor HOME is set"},
                 "policy": {
-                    "state": "missing", "presets": 0, "preset_names": [], "denied_app_ids": 0, "turn_on_accessibility": true, "notify_on_lease": true,
-                    "capture_dir": "~/Pictures/niri-computer-use",
-                    "capture_dir_source": "default",
+                    "state": "missing", "presets": 0, "preset_names": [], "denied_app_ids": 0, "turn_on_accessibility": true, "launch_desktop_entries": false, "notify_on_lease": true,
+                    "capture_dir": "~/Pictures/niri-computer-use", "capture_dir_source": "default",
                     "error": null
                 },
+                "desktop_entries": null,
                 "unrestricted": {"enabled": false, "source": null, "error": null},
                 "confirm_lease": {"enabled": false, "source": null, "error": null},
                 "lease_notice_error": null,
@@ -483,6 +499,7 @@ mod tests {
             tools: &settings.tools,
             shared: &settings.shared,
             place: crate::test_support::no_programs(),
+            apps: &settings.apps,
             accessibility: &a11y::detect(None).await,
             accessibility_switch: None,
         };

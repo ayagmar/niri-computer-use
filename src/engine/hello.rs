@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::apps;
 use crate::policy;
 use crate::session::Given;
 
@@ -195,6 +196,9 @@ pub(crate) struct Hello {
     home: Option<PathBuf>,
     path: Option<String>,
     policy: policy::Source,
+    /// Bridges of 0.1.5 and older send none; an engine refuses them as another build.
+    #[serde(default)]
+    apps: apps::Search,
 }
 
 impl Hello {
@@ -245,6 +249,7 @@ impl Hello {
             home: given.home,
             path: utf8("PATH", given.path)?,
             policy,
+            apps: given.apps,
         })
     }
 
@@ -258,6 +263,7 @@ impl Hello {
             home: self.home,
             path: self.path.map(Into::into),
             policy: self.policy,
+            apps: self.apps,
         }
     }
 }
@@ -497,6 +503,10 @@ mod tests {
                 path: PathBuf::from("/home/me/.config/niri-computer-use/policy.toml"),
                 text: "unrestricted = true\n".to_owned(),
             },
+            apps: apps::Search::read(
+                |name| (name == "XDG_DATA_DIRS").then(|| "/opt/share".into()),
+                Some(Path::new("/home/me")),
+            ),
         }
     }
 
@@ -531,6 +541,7 @@ mod tests {
                 home: Some(PathBuf::from("/home/me")),
                 path: Some("bin::/usr/bin".into()),
                 policy: sent.policy,
+                apps: sent.apps,
             }
         );
     }
@@ -583,12 +594,18 @@ mod tests {
         );
     }
 
-    /// The hello lines of 0.1.0's and 0.1.1's bridges, as they send them, with `exe` for
-    /// their file.
+    /// The hello lines of the bridges of 0.1.0, 0.1.1 and 0.1.5, as they send them, with
+    /// `exe` for their file. None of them sends `apps`, and those of 0.1.1 and older no
+    /// `release`.
     fn released_hello(release: &str, exe: Exe) -> Vec<u8> {
         let mut hello = serde_json::to_value(hello(exe, NIRI, DISPLAY)).unwrap();
         let hello = hello.as_object_mut().unwrap();
-        hello.remove("release");
+        hello.remove("apps");
+        if release == "0.1.5" {
+            hello.insert("release".to_owned(), release.into());
+        } else {
+            hello.remove("release");
+        }
         if release == "0.1.0" {
             hello.insert("hello".to_owned(), 2.into());
             hello.insert("keyboard".to_owned(), serde_json::Value::Null);
@@ -629,7 +646,7 @@ mod tests {
         let file = own.file.clone().unwrap();
         let old = Exe { size: 9, ..own.exe };
         let peer = bridge_from(&file.to_string_lossy(), true);
-        for release in ["0.1.0", "0.1.1"] {
+        for release in ["0.1.0", "0.1.1", "0.1.5"] {
             let (error, detail) = own.take(&released_hello(release, old), &peer).unwrap_err();
             assert_eq!(error, Refusal::EngineVersion);
             assert!(
@@ -784,6 +801,7 @@ mod tests {
                 path: PathBuf::from("/p.toml"),
                 text,
             },
+            apps: apps::Search::default(),
         };
         let sent = |text| {
             Hello::new(

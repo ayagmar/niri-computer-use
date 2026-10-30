@@ -641,6 +641,7 @@ Not ready: 1 blocker."
             tools: &settings.tools,
             shared: &settings.shared,
             place: crate::test_support::no_programs(),
+            apps: &settings.apps,
             accessibility: &crate::a11y::detect(None).await,
             accessibility_switch: None,
         };

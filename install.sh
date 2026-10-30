@@ -21,6 +21,7 @@ set -eu
 releases=${NCU_RELEASES_URL:-https://github.com/ayagmar/niri-computer-use/releases}
 bin_dir=${NCU_BIN_DIR:-${HOME}/.local/bin}
 data_dir=${HOME}/.local/share/niri-computer-use
+policy=${XDG_CONFIG_HOME:-${HOME}/.config}/niri-computer-use/policy.toml
 
 fail() {
 	echo "install.sh: $*" >&2
@@ -209,6 +210,9 @@ cat <<EOF
      Other clients: https://ayagmar.github.io/niri-computer-use/start/clients/
   2. Bind the stop key inside the binds block of your niri config:
        Mod+Shift+Escape allow-inhibiting=false allow-when-locked=true hotkey-overlay-title="Stop the AI agent (niri-computer-use)" { spawn "${binary}" "stop"; }
+  4. To let the agent start apps installed for the whole system by their desktop entry
+     id, such as org.gnome.Nautilus, add this line to ${policy}:
+       launch_desktop_entries = true
 EOF
 check=3
 if [ "${linked_plugin}" = yes ]; then

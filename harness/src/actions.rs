@@ -5,9 +5,10 @@
 //! windows, `focus` on a window and a workspace, `close_window` giving `closed` and
 //! `pending` with its screenshot, and `interrupted` when the harness moves focus during a
 //! launch's wait. `niri_action` fullscreens and restores a window, floats it and sets its
-//! width, refuses `Spawn`, and a second server whose policy turns on `unrestricted` spawns
-//! a fixture with it. Each action's `changes` is checked to tell what it did, or logged
-//! where only a look can. Everything the run creates lives under `TEST_DIR`.
+//! width, refuses `Spawn`, a second server whose policy turns on `unrestricted` spawns a
+//! fixture with it, and a third whose policy turns on `launch_desktop_entries` refuses a
+//! desktop entry the user can write. Each action's `changes` is checked to tell what it did, or
+//! logged where only a look can. Everything the run creates lives under `TEST_DIR`.
 
 use std::fs;
 use std::path::Path;
@@ -57,6 +58,7 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
     structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     client.stop()?;
     unrestricted(session, server)?;
+    desktop_entries(session, server)?;
     noctalia.stop().map(drop)
 }
 
@@ -513,6 +515,63 @@ fn unrestricted(session: &mut Session<'_>, server: &str) -> Result<()> {
         "M3: niri_action Spawn with unrestricted: {spawned}, {seen}"
     ))?;
     noctalia(session, &mut client)?;
+    structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
+    client.stop()
+}
+
+/// An entry in the nested data home that starts the harness's fixture window. The user
+/// owns it, as root owns none of the files a nested run can write.
+fn write_entry(session: &Session<'_>) -> Result<()> {
+    let harness = std::env::current_exe().context("find the harness binary")?;
+    let apps = session.test_dir().data().join("applications");
+    fs::create_dir_all(&apps).context(format!("create {}", apps.display()))?;
+    let exec = format!(
+        "\"{}\" window \"{}\" entry-window %U",
+        harness.display(),
+        session.test_dir().root().display(),
+    );
+    let path = apps.join("org.example.Entry.desktop");
+    let text = format!("[Desktop Entry]\nType=Application\nName=Entry\nExec={exec}\n");
+    fs::write(&path, &text).context(format!("write {}", path.display()))?;
+    fs::write(session.artifact("org.example.Entry.desktop"), text).context("copy the entry")
+}
+
+/// A server whose policy turns on `launch_desktop_entries`, with `XDG_DATA_DIRS` naming an
+/// empty directory so it never reads the host's entries: the entry in the data home is one
+/// the user can write, so `status` counts it as `user_writable` and lists none, and
+/// `launch` refuses it with `entry_refused`.
+fn desktop_entries(session: &mut Session<'_>, server: &str) -> Result<()> {
+    write_file(session, "launch_desktop_entries = true\n")?;
+    write_entry(session)?;
+    let system = session.test_dir().root().join("system-data");
+    fs::create_dir_all(&system).context(format!("create {}", system.display()))?;
+    let mut dirs = std::ffi::OsString::from("XDG_DATA_DIRS=");
+    dirs.push(&system);
+    let args = [dirs, server.into(), "serve".into()];
+    let mut client =
+        Client::start_command(session, "env", &args, "harness-m3-entries", SERVER_DEADLINE)?;
+    ready(session, &mut client)?;
+    let status = structured(&client.call(session, "status", json!({}))?)?;
+    let listed = field(&status, "/desktop_entries");
+    expect(
+        *listed == json!({"count": 0, "ids": [], "user_writable": 1, "error": null}),
+        "status lists no entry and counts the user-writable one",
+        &listed.to_string(),
+    )?;
+    structured(&client.call(session, "acquire_desktop", json!({}))?)?;
+    let refused = client.call(session, "launch", json!({"preset": "org.example.Entry"}))?;
+    let detail = field(&refused, "/structuredContent/detail")
+        .as_str()
+        .unwrap_or_default();
+    expect(
+        field(&refused, "/structuredContent/error") == "entry_refused"
+            && detail.contains("a user-writable entry needs a preset"),
+        "an entry the user can write is refused",
+        &refused.to_string(),
+    )?;
+    session.log(&format!(
+        "M3: launch of a user-writable desktop entry: {refused}"
+    ))?;
     structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     client.stop()
 }

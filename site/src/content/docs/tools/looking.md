@@ -47,6 +47,8 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `policy.state` | `loaded`, `missing` (valid: no presets, no denied apps) or `invalid` |
 | `policy.presets`, `policy.denied_app_ids`, `policy.error` | how many presets and denied apps the policy file has, and why it is invalid |
 | `policy.preset_names` | the preset names `launch` takes |
+| `policy.launch_desktop_entries` | whether `launch` also takes an installed app's desktop entry id |
+| `desktop_entries.count`, `desktop_entries.ids`, `desktop_entries.user_writable`, `desktop_entries.error` | with `launch_desktop_entries`, how many desktop entries `launch` would start, the first 64 ids in order, how many it refuses because the user can write them, and why they couldn't be read; the whole field is null while the key is off |
 | `policy.notify_on_lease` | whether a granted lease puts a notification on the desktop ([`notify_on_lease`](../../concepts/configuration/#notify_on_lease)) |
 | `lease_notice_error` | why the last of those notifications couldn't be sent, such as `notify-send` missing, or null; null from the `status` subcommand |
 | `policy.turn_on_accessibility` | whether the server may turn the session's accessibility on ([`turn_on_accessibility`](../../concepts/configuration/#turn_on_accessibility)) |

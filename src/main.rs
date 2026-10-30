@@ -2,6 +2,7 @@
 
 mod a11y;
 mod act;
+mod apps;
 mod audit;
 mod bridge;
 mod changes;
@@ -280,6 +281,7 @@ async fn status(env: &Env, given: session::Given, check: bool) -> ExitCode {
         tools: &settings.tools,
         shared: &settings.shared,
         place: settings.place(),
+        apps: &settings.apps,
         accessibility: &accessibility,
         accessibility_switch: None,
     };

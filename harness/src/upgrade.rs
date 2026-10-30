@@ -40,10 +40,14 @@ const GUARDIAN_WAIT: Duration = Duration::from_secs(12);
 const POLICY: &str = "deny_input_app_ids = [\"org.keepassxc.KeePassXC\"]\n";
 /// Keys added after 0.1.0, each with the releases from before it, which read a file with
 /// it as invalid.
-const NEWER_POLICY: [(&str, &[&str]); 2] = [
+const NEWER_POLICY: [(&str, &[&str]); 3] = [
     ("turn_on_accessibility = false\n", &["0.1.0", "0.1.1"]),
     (
         "notify_on_lease = false\n",
+        &["0.1.0", "0.1.1", "0.1.2", "0.1.3", "0.1.4", "0.1.5"],
+    ),
+    (
+        "launch_desktop_entries = true\n",
         &["0.1.0", "0.1.1", "0.1.2", "0.1.3", "0.1.4", "0.1.5"],
     ),
 ];
