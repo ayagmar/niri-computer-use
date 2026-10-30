@@ -28,6 +28,10 @@ const HOST_SOCKET: &str = "WAYLAND_DISPLAY";
 /// clients can't reach the host's system bus.
 const SYSTEM_BUS: &str = "DBUS_SYSTEM_BUS_ADDRESS";
 
+/// For `--multi`: the outputs a niri built with `harness/niri-test/headless-outputs.patch`
+/// gives itself, `WxH` sizes separated by commas.
+pub(crate) const HEADLESS_OUTPUTS: &str = "NIRI_TEST_HEADLESS_OUTPUTS";
+
 /// Every other path variable, all of which must resolve under `TEST_DIR`.
 const CONTAINED: [&str; 8] = [
     "XDG_RUNTIME_DIR",
@@ -155,6 +159,15 @@ fn check_variable(name: &str, value: &Path, test_dir: &TestDir) -> Result<()> {
             Err(Failure::new(format!("{name} must be an absolute path")))
         };
     }
+    if name == HEADLESS_OUTPUTS {
+        return if sizes(value.as_os_str()) {
+            Ok(())
+        } else {
+            Err(Failure::new(format!(
+                "{name} must be WxH sizes separated by commas"
+            )))
+        };
+    }
     if name == SYSTEM_BUS {
         let expected = test_dir.system_bus_address();
         return if value.as_os_str() == expected {
@@ -184,6 +197,17 @@ fn check_variable(name: &str, value: &Path, test_dir: &TestDir) -> Result<()> {
 
 /// Lexical containment. Sound because `TEST_DIR` is fresh, private and has no symlinks in
 /// its own path, so nothing below it can redirect out of it.
+/// Whether `value` is `WxH` sizes in pixels, separated by commas.
+fn sizes(value: &std::ffi::OsStr) -> bool {
+    let number = |text: &str| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());
+    value.to_str().is_some_and(|value| {
+        value.split(',').all(|size| {
+            size.split_once('x')
+                .is_some_and(|(width, height)| number(width) && number(height))
+        })
+    })
+}
+
 pub(crate) fn is_under(path: &Path, root: &Path) -> bool {
     path.starts_with(root)
         && path
@@ -272,6 +296,14 @@ mod tests {
         let mut relative = parent(&test_dir, &host(), Path::new("/fake/wayland-1"), false);
         relative.insert(HOST_SOCKET, OsString::from("wayland-1"));
         assert!(check_containment(&relative, &test_dir).is_err());
+
+        let mut outputs = parent(&test_dir, &host(), Path::new("/fake/wayland-1"), false);
+        outputs.insert(HEADLESS_OUTPUTS, OsString::from("1280x720,1920x1080"));
+        assert!(check_containment(&outputs, &test_dir).is_ok());
+        for spec in ["", "1280x720,", "1280x", "/home/u/x", "1280x720;1x1"] {
+            outputs.insert(HEADLESS_OUTPUTS, OsString::from(spec));
+            assert!(check_containment(&outputs, &test_dir).is_err(), "{spec}");
+        }
         fs::remove_dir_all(base).unwrap();
     }
 

@@ -1,4 +1,4 @@
-.PHONY: check check-static test test-shared test-plugin stall stall-standalone stall-shared perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-latency nested-chromium nested-chromium-a11y nested-big nested-compat niri-matrix nested-upgrade nested-eval nested-demo sitting host-capture
+.PHONY: check check-static test test-shared test-plugin stall stall-standalone stall-shared perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-latency nested-chromium nested-chromium-a11y nested-big nested-compat nested-multi niri-matrix nested-upgrade nested-eval nested-demo sitting host-capture
 
 SCALE ?= 1
 NESTED_FLAGS = $(if $(VISIBLE),--visible) $(if $(SHARED),--shared) $(if $(NIRI),--niri $(NIRI))
@@ -109,6 +109,16 @@ nested-big:
 nested-compat:
 	cargo build --locked -p niri-computer-use
 	cargo run --locked -p harness -- run $(NESTED_FLAGS) --compat
+
+# The pointer tools on two outputs, in niri v26.04 built from source with a test patch that
+# gives it niri's headless backend with two outputs. Local and opt-in: the build is cached.
+nested-multi:
+	cargo build --locked -p niri-computer-use
+	mkdir -p target/niri-multi
+	NIRI_PATCH=harness/niri-test/headless-outputs.patch scripts/niri-build.sh v26.04 > target/niri-multi/builds.txt
+	niri=$$(awk '$$3 ~ /\/niri$$/ { print $$3 }' target/niri-multi/builds.txt); \
+	test -n "$$niri" || { cat target/niri-multi/builds.txt >&2; exit 1; }; \
+	cargo run --locked -p harness -- run $(if $(VISIBLE),--visible) $(if $(SHARED),--shared) --niri "$$niri" --multi
 
 # Each niri in NIRI_VERSIONS built from source, then checked against this checkout's server.
 niri-matrix:
