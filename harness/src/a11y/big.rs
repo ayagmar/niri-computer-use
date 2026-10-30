@@ -129,7 +129,7 @@ fn start(session: &Session<'_>, case: &Case) -> Result<Process> {
         case.count.into(),
     ];
     let log = session.artifact(&format!("fixture-big-{}-{}.log", case.toolkit, case.kind));
-    session.start("python3", &args, log, FIXTURE_DEADLINE)
+    session.start(crate::environment::PYTHON, &args, log, FIXTURE_DEADLINE)
 }
 
 /// The fixture's window, once its app is on the bus.

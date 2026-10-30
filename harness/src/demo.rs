@@ -132,7 +132,7 @@ impl Desktop {
             .context(format!("write {}", chat_source.display()))?;
         let args = ["-I".into(), chat_source.into(), root.clone().into()];
         processes.push(session.start(
-            "python3",
+            crate::environment::PYTHON,
             &args,
             session.artifact("chat.log"),
             FIXTURE_DEADLINE,

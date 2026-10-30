@@ -315,10 +315,13 @@ impl Fixture {
         fs::write(&file, source).context(format!("write {}", file.display()))?;
         let (program, args): (&str, Vec<OsString>) = match toolkit {
             Toolkit::Gtk4 => (
-                "python3",
+                crate::environment::PYTHON,
                 vec!["-I".into(), file.into(), root.into(), "a11y".into()],
             ),
-            Toolkit::Gtk3 => ("python3", vec!["-I".into(), file.into(), root.into()]),
+            Toolkit::Gtk3 => (
+                crate::environment::PYTHON,
+                vec!["-I".into(), file.into(), root.into()],
+            ),
             Toolkit::Qt => {
                 let mut args: Vec<OsString> = QT_ENVIRONMENT.map(OsString::from).to_vec();
                 args.extend(["qml6".into(), file.into(), "--".into(), root.into()]);
@@ -372,7 +375,7 @@ impl Fixture {
             .context(format!("write {}", file.display()))?;
         let mut args: Vec<OsString> = variables.iter().map(OsString::from).collect();
         args.extend([
-            "python3".into(),
+            crate::environment::PYTHON.into(),
             "-I".into(),
             file.into(),
             root.into(),

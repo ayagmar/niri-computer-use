@@ -111,7 +111,7 @@ fn start(session: &Session<'_>, round: usize) -> Result<Process> {
     ];
     let log = session.artifact(&format!("draft-{round}.log"));
     session.start(
-        "python3",
+        crate::environment::PYTHON,
         &args,
         log,
         Duration::from_secs(FIXTURE_SECONDS + 15),
