@@ -12,11 +12,12 @@ mod kdl;
 
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use serde::Serialize;
+use tokio::sync::watch;
+use tokio::time::Instant;
 
 use binds::{Executable, Runs, Spawner};
 
@@ -65,12 +66,49 @@ impl Checked {
     }
 }
 
-/// Reads niri's config for the stop key, one read at a time. A read blocked on a stuck
-/// filesystem is left to end on its thread; until it has, later checks answer `unknown` at
-/// once instead of leaving one more thread behind and waiting out the deadline again.
+/// Reads niri's config for the stop key, one read at a time. A check made while a read is
+/// under way waits for that read's answer, within its own deadline. A read blocked on a
+/// stuck filesystem is left to end on its thread; once it has outlived its deadline, later
+/// checks answer `unknown` at once instead of leaving one more thread behind.
 #[derive(Debug, Default)]
 pub(crate) struct Reader {
-    busy: Arc<AtomicBool>,
+    flight: Mutex<Option<Flight>>,
+}
+
+/// A read on its thread.
+#[derive(Debug)]
+struct Flight {
+    thread: std::thread::JoinHandle<()>,
+    awaited: Awaited,
+}
+
+/// What a check waits on: the read's answer, once there is one, and when it is due.
+#[derive(Debug, Clone)]
+struct Awaited {
+    answer: watch::Receiver<Option<Checked>>,
+    due: Instant,
+    deadline: Duration,
+}
+
+/// Where a read stands at some instant.
+#[derive(Debug, PartialEq, Eq)]
+enum Phase {
+    Ended,
+    Running,
+    /// Not ended, and past its deadline.
+    Stuck,
+}
+
+impl Flight {
+    fn phase(&self, now: Instant) -> Phase {
+        if self.thread.is_finished() || self.awaited.answer.borrow().is_some() {
+            Phase::Ended
+        } else if now >= self.awaited.due {
+            Phase::Stuck
+        } else {
+            Phase::Running
+        }
+    }
 }
 
 impl Reader {
@@ -94,41 +132,73 @@ impl Reader {
         .await
     }
 
-    /// `read`'s answer, run on a thread of its own and abandoned after `deadline`, unless
-    /// an earlier read hasn't ended.
+    /// `read`'s answer, run on a thread of its own and abandoned after `deadline`, or the
+    /// answer of a read already under way, waited for no longer than `deadline`.
     async fn off_thread(
         &self,
         deadline: Duration,
         read: impl FnOnce() -> Checked + Send + 'static,
     ) -> Checked {
-        if self.busy.swap(true, Ordering::AcqRel) {
-            return Checked::unknown(
-                "an earlier read of niri's config hasn't ended, so a file it reads may be on a stuck filesystem",
-            );
-        }
-        let busy = Arc::clone(&self.busy);
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-        let spawned = std::thread::Builder::new()
-            .name("stop key".to_owned())
-            .spawn(move || {
-                let checked = read();
-                busy.store(false, Ordering::Release);
-                sender.send(checked).ok();
-            });
-        if let Err(error) = spawned {
-            self.busy.store(false, Ordering::Release);
-            return Checked::unknown(format!("start a thread to read niri's config: {error}"));
-        }
-        match tokio::time::timeout(deadline, receiver).await {
-            Ok(Ok(checked)) => checked,
-            Ok(Err(_)) => {
-                Checked::unknown("the thread reading niri's config ended without an answer")
-            }
+        let now = Instant::now();
+        let mut awaited = match self.join_or_start(now, deadline, read) {
+            Ok(awaited) => awaited,
+            Err(checked) => return checked,
+        };
+        let until = awaited.due.min(now + deadline);
+        match tokio::time::timeout_at(until, awaited.answer.wait_for(Option::is_some)).await {
+            Ok(Ok(answer)) => answer.clone().unwrap_or_else(no_answer),
+            Ok(Err(_)) => no_answer(),
             Err(_) => Checked::unknown(format!(
-                "reading niri's config took longer than {deadline:?}"
+                "reading niri's config took longer than {:?}",
+                awaited.deadline
             )),
         }
     }
+
+    /// The read to wait on: the one under way, else `read` started on a thread of its own.
+    fn join_or_start(
+        &self,
+        now: Instant,
+        deadline: Duration,
+        read: impl FnOnce() -> Checked + Send + 'static,
+    ) -> Result<Awaited, Checked> {
+        let mut flight = self.flight.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(earlier) = flight.as_ref() {
+            match earlier.phase(now) {
+                Phase::Ended => {}
+                Phase::Running => return Ok(earlier.awaited.clone()),
+                Phase::Stuck => {
+                    return Err(Checked::unknown(
+                        "an earlier read of niri's config hasn't ended, so a file it reads may be on a stuck filesystem",
+                    ));
+                }
+            }
+        }
+        let (sender, answer) = watch::channel(None);
+        let thread = std::thread::Builder::new()
+            .name("stop key".to_owned())
+            .spawn(move || {
+                sender.send_replace(Some(read()));
+            })
+            .map_err(|error| {
+                Checked::unknown(format!("start a thread to read niri's config: {error}"))
+            })?;
+        let awaited = Awaited {
+            answer,
+            due: now + deadline,
+            deadline,
+        };
+        *flight = Some(Flight {
+            thread,
+            awaited: awaited.clone(),
+        });
+        drop(flight);
+        Ok(awaited)
+    }
+}
+
+fn no_answer() -> Checked {
+    Checked::unknown("the thread reading niri's config ended without an answer")
 }
 
 /// The bind to add inside `binds`, for the binary at `program`.
@@ -531,6 +601,8 @@ fn read_limited(path: &Path) -> io::Result<String> {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
 
@@ -885,12 +957,55 @@ include "~/extra/more.kdl"
 
     /// Waits up to five seconds for `reader`'s read to end.
     async fn ended(reader: &Reader) {
+        let phase = || {
+            reader
+                .flight
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|flight| flight.phase(Instant::now()))
+        };
         let mut waited = 0;
-        while reader.busy.load(Ordering::Acquire) && waited < 500 {
+        while phase() != Some(Phase::Ended) && waited < 500 {
             tokio::time::sleep(Duration::from_millis(10)).await;
             waited += 1;
         }
-        assert!(!reader.busy.load(Ordering::Acquire), "the read never ended");
+        assert_eq!(phase(), Some(Phase::Ended), "the read never ended");
+    }
+
+    /// A read that counts its runs in `runs` and answers `detail` once `gate` opens.
+    fn counted(
+        runs: &Arc<AtomicUsize>,
+        gate: std::sync::mpsc::Receiver<()>,
+        detail: &str,
+    ) -> impl FnOnce() -> Checked + Send + 'static {
+        let runs = Arc::clone(runs);
+        let detail = detail.to_owned();
+        move || {
+            runs.fetch_add(1, Ordering::SeqCst);
+            gate.recv().ok();
+            Checked::unknown(detail)
+        }
+    }
+
+    // `status` and `acquire_desktop` at once share one read and its answer.
+    #[tokio::test]
+    async fn checks_made_while_a_read_is_under_way_share_its_answer() {
+        let reader = Reader::default();
+        let runs = Arc::new(AtomicUsize::new(0));
+        let (open, gate) = std::sync::mpsc::channel();
+        let (_, never) = std::sync::mpsc::channel();
+        let deadline = Duration::from_secs(5);
+        let first = reader.off_thread(deadline, counted(&runs, gate, "first"));
+        let second = reader.off_thread(deadline, counted(&runs, never, "second"));
+        let opened = async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            open.send(()).unwrap();
+        };
+        let (first, second, ()) = tokio::join!(first, second, opened);
+        assert_eq!(first, Checked::unknown("first"));
+        assert_eq!(second, first);
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
     }
 
     // A read stuck on a hung filesystem is abandoned at the deadline; until it ends, later
@@ -898,31 +1013,53 @@ include "~/extra/more.kdl"
     #[tokio::test]
     async fn a_stuck_read_holds_off_later_ones_until_it_ends() {
         let reader = Reader::default();
-        let (release, stuck) = std::sync::mpsc::channel::<()>();
+        let runs = Arc::new(AtomicUsize::new(0));
+        let (release, stuck) = std::sync::mpsc::channel();
         let deadline = Duration::from_millis(50);
         let first = reader
-            .off_thread(deadline, move || {
-                stuck.recv().ok();
-                Checked::unread()
-            })
+            .off_thread(deadline, counted(&runs, stuck, "stuck"))
             .await;
-        assert!(first.detail.contains("took longer"), "{first:?}");
-        let started = Arc::new(AtomicBool::new(false));
-        let ran = Arc::clone(&started);
-        let second = reader
-            .off_thread(Duration::from_secs(5), move || {
-                ran.store(true, Ordering::SeqCst);
-                Checked::unread()
-            })
-            .await;
-        assert!(second.detail.contains("hasn't ended"), "{second:?}");
-        assert!(!started.load(Ordering::SeqCst));
+        assert!(first.detail.contains("took longer than 50ms"), "{first:?}");
+        for _ in 0..20 {
+            let (_, never) = std::sync::mpsc::channel();
+            let later = reader
+                .off_thread(Duration::from_secs(5), counted(&runs, never, "later"))
+                .await;
+            assert!(later.detail.contains("hasn't ended"), "{later:?}");
+        }
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
         release.send(()).unwrap();
         ended(&reader).await;
-        let third = reader
+        let after = reader
             .off_thread(Duration::from_secs(5), Checked::unread)
             .await;
-        assert_eq!(third, Checked::unread());
+        assert_eq!(after, Checked::unread());
+    }
+
+    // A read not ended by its deadline counts as stuck from that instant on, the instant
+    // the check that started it gives up on it.
+    #[tokio::test]
+    async fn a_read_is_stuck_from_its_deadline_on() {
+        let (release, stuck) = std::sync::mpsc::channel::<()>();
+        let (_, answer) = watch::channel(None);
+        let due = Instant::now() + Duration::from_secs(60);
+        let flight = Flight {
+            thread: std::thread::spawn(move || {
+                stuck.recv().ok();
+            }),
+            awaited: Awaited {
+                answer,
+                due,
+                deadline: Duration::from_secs(60),
+            },
+        };
+        assert_eq!(flight.phase(due - Duration::from_nanos(1)), Phase::Running);
+        assert_eq!(flight.phase(due), Phase::Stuck);
+        release.send(()).unwrap();
+        while !flight.thread.is_finished() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(flight.phase(due), Phase::Ended);
     }
 
     // The install script can't call this, so it prints the line itself.
