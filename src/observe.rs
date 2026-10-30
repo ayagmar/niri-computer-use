@@ -170,8 +170,8 @@ pub(crate) struct Metadata {
     /// the wait.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) settled: Option<bool>,
-    /// For such a screenshot, the part of the output's pixels that changed between the
-    /// wait's last two samples, from 0 to 1, when they were compared pixel by pixel.
+    /// For such a screenshot, the part of the output's pixels, from 0 to 1, that the wait's
+    /// last sample changed from the first of its still run, when compared pixel by pixel.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) changing: Option<f64>,
     /// For such a screenshot that settled, when the sample that began the still run

@@ -5,9 +5,10 @@
 //! the result returns.
 //!
 //! Samples are raw pixels (`ppm`), compared pixel by pixel. The screen counts as still once
-//! two samples in a row are the same, or two comparisons in a row changed at most `QUIET`
-//! of the output's pixels: a clock, a CPU graph, a spinner or a caret is that small, and a
-//! popup, a page load or a dialog animating in is larger. Where grim gives no raw pixels,
+//! a sample is the same as the one before, or the two samples after one each changed at
+//! most `QUIET` of the output's pixels from it: a clock, a CPU graph, a spinner or a caret
+//! is that small, and a popup, a page load or a dialog animating in is larger. Measuring
+//! from one sample lets a slow drift add up where steps between samples would each pass. Where grim gives no raw pixels,
 //! the samples are the JPEGs the result returns, compared by their bytes, as before.
 
 use std::time::Duration;
@@ -29,9 +30,9 @@ pub(crate) const LIMIT: Duration = Duration::from_millis(1500);
 /// still: 0.5 %, about 68x68 pixels of a 1280x720 sample.
 pub(crate) const QUIET: f64 = 0.005;
 
-/// The last sample; whether the samples stopped changing; what part of the pixels changed
-/// between the last two, when that is known; and, once they stopped, when the sample that
-/// began the still run started: the screen changed no more than `QUIET` from then on.
+/// The last sample; whether the samples stopped changing; what part of the pixels the last
+/// one changed from the first of its still run, when that is known; and, once they stopped,
+/// when that first sample started: the screen changed no more than `QUIET` from then on.
 #[derive(Debug, PartialEq)]
 pub(crate) struct Settled<T> {
     pub(crate) last: T,
@@ -40,37 +41,55 @@ pub(crate) struct Settled<T> {
     pub(crate) since: Option<Instant>,
 }
 
-/// The comparisons in a row that changed at most `QUIET`, and when the sample that began
-/// them started.
-#[derive(Debug, Default)]
-struct Run {
+/// A still run: the sample it is measured from and when that sample started, the newest
+/// sample, and how many samples after the first changed at most `QUIET` from it. Each is
+/// compared with the first, not with the one before, so a slow drift, such as a window
+/// easing into place, adds up and starts the run over, while a clock that keeps changing
+/// the same few pixels doesn't.
+#[derive(Debug)]
+struct Run<T> {
+    first: T,
+    since: Instant,
+    last: Option<T>,
     quiet: u32,
-    since: Option<Instant>,
 }
 
-impl Run {
-    /// Counts the comparison of the sample started at `previous` with the next one, which
-    /// changed `change` of the pixels, `None` when that isn't known, and says whether the
-    /// samples have stopped changing: two the same, or two quiet comparisons in a row.
-    fn add(&mut self, change: Option<f64>, previous: Instant) -> bool {
+impl<T> Run<T> {
+    const fn new(first: T, since: Instant) -> Self {
+        Self {
+            first,
+            since,
+            last: None,
+            quiet: 0,
+        }
+    }
+
+    /// Adds `next`, started at `started`, which changed `change` of the pixels from the
+    /// run's first sample, `None` when that isn't known, and says whether the samples have
+    /// stopped changing: one the same as the first, or two quiet ones. A larger or unknown
+    /// change starts a new run from `next`.
+    fn add(&mut self, next: T, started: Instant, change: Option<f64>) -> bool {
         match change {
             Some(change) if change <= QUIET => {
-                if self.quiet == 0 {
-                    self.since = Some(previous);
-                }
                 self.quiet += 1;
+                self.last = Some(next);
                 change == 0.0 || self.quiet >= 2
             }
             Some(_) | None => {
-                *self = Self::default();
+                *self = Self::new(next, started);
                 false
             }
         }
     }
+
+    /// The newest sample.
+    fn last(self) -> T {
+        self.last.unwrap_or(self.first)
+    }
 }
 
-/// Captures until the samples stop changing (`Run::add`), as `compare` measures two in a
-/// row, within a wall-clock budget including the initial delay and capture work. On
+/// Captures until the samples stop changing (`Run::add`), as `compare` measures each from
+/// the first of its run, within a wall-clock budget including the initial delay and capture work. On
 /// timeout, returns the last completed sample unsettled, or a deadline error if none
 /// completed. Dropping a capture cancels its runner.
 pub(crate) async fn settle<T, E, F>(
@@ -85,19 +104,20 @@ where
     let deadline = Instant::now() + limit;
     tokio::time::sleep_until((Instant::now() + FIRST).min(deadline)).await;
     let mut started = Instant::now();
-    let mut last = tokio::time::timeout_at(deadline, Box::pin(capture()))
+    let first = tokio::time::timeout_at(deadline, Box::pin(capture()))
         .await
         .map_err(|_| E::from(no_sample()))??;
-    let (mut run, mut stable, mut change) = (Run::default(), false, None);
+    let (mut run, mut stable, mut change) = (Run::new(first, started), false, None);
     loop {
         let expired = Instant::now() >= deadline;
         if stable || expired {
             let stable = stable && !expired;
+            let since = stable.then_some(run.since);
             return Ok(Settled {
-                last,
+                last: run.last(),
                 stable,
                 change,
-                since: run.since.filter(|_| stable),
+                since,
             });
         }
         tokio::select! {
@@ -105,12 +125,11 @@ where
             () = tokio::time::sleep_until(deadline) => continue,
             () = tokio::time::sleep_until(started + GAP) => {},
         }
-        let previous = std::mem::replace(&mut started, Instant::now());
+        started = Instant::now();
         if let Ok(next) = tokio::time::timeout_at(deadline, Box::pin(capture())).await {
             let next = next?;
-            change = compare(&last, &next);
-            stable = run.add(change, previous);
-            last = next;
+            change = compare(&run.first, &next);
+            stable = run.add(next, started, change);
         }
     }
 }
@@ -354,8 +373,8 @@ mod tests {
         assert_eq!(failed, Err(error));
     }
 
-    /// `settle` over samples that each changed `changes[i]` of the pixels from the one
-    /// before, `None` for not comparable: whether it settled, with what change, and since
+    /// `settle` over samples that each changed `changes[i]` of the pixels from the first of
+    /// their still run, `None` for not comparable: whether it settled, with what change, and since
     /// how long after the start.
     async fn changing(
         changes: &[Option<f64>],
@@ -400,6 +419,25 @@ mod tests {
         assert_eq!(start.elapsed(), LIMIT);
         let just_over = [Some(QUIET + 0.0001); 20];
         assert!(!changing(&just_over, LIMIT).await.0);
+    }
+
+    /// `settle` over `samples`, compared as raw pixels.
+    async fn sampled(samples: Vec<Sample>) -> Settled<Sample> {
+        let mut samples = samples.into_iter();
+        let next = || std::future::ready(Ok::<_, ToolError>(samples.next().unwrap()));
+        settle(next, compare, LIMIT).await.unwrap()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_slow_drift_adds_up_and_a_clock_changing_in_place_does_not() {
+        // A 20-pixel window moving 2 pixels a sample changes 4 pixels of 1000 from the
+        // sample before, under `QUIET`, but 8 from the one before that.
+        let window = |step: usize| pixels(1000, &(step * 2..step * 2 + 20).collect::<Vec<_>>());
+        let drift = sampled((0..20).map(window).collect()).await;
+        assert!(!drift.stable);
+        let clock = |tick: usize| pixels(1000, &[tick % 4]);
+        let ticking = sampled((0..20).map(clock).collect()).await;
+        assert_eq!((ticking.stable, ticking.change), (true, Some(0.002)));
     }
 
     fn pixels(width: u32, changed: &[usize]) -> Sample {
