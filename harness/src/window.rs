@@ -5,10 +5,11 @@
 //! unsaved changes does. With `--animate` it commits a damaged frame on every frame
 //! callback, so niri renders every frame, as for a video. With `--resize` it takes the size
 //! niri configures, as a real app does, so niri reports fullscreen and widths as window
-//! sizes. It exits when its windows are
+//! sizes. With `--flicker <rows>` it also paints its top rows a new shade of grey on every
+//! frame, so their pixels change as a clock's or a video's do. It exits when its windows are
 //! closed, when niri goes away, or at its own deadline.
 
-use std::os::fd::AsFd as _;
+use std::os::fd::{AsFd as _, OwnedFd};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -36,7 +37,7 @@ const DEADLINE: Duration = Duration::from_secs(90);
 const WIDTH: i32 = 320;
 const HEIGHT: i32 = 240;
 
-pub(crate) const USAGE: &str = "usage: harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--animate] [--resize] [--started <file>] [--deadline <ms>]";
+pub(crate) const USAGE: &str = "usage: harness window <TEST_DIR> <app_id> [--count <n>] [--delay <ms>] [--late <ms>] [--keep-open] [--animate] [--flicker <rows>] [--resize] [--started <file>] [--deadline <ms>]";
 
 /// What the fixture does.
 #[derive(Debug, PartialEq, Eq)]
@@ -53,6 +54,8 @@ pub(crate) struct Options {
     pub(crate) keep_open: bool,
     /// Commit a damaged frame on every frame callback.
     pub(crate) animate: bool,
+    /// Animate, painting this many rows at the top a new shade on every frame.
+    pub(crate) flicker: Option<i32>,
     /// Draw at the size niri configures instead of 320×240.
     pub(crate) resize: bool,
     /// A file to create as soon as the fixture starts, before its delay.
@@ -74,6 +77,7 @@ impl Options {
             late: None,
             keep_open: false,
             animate: false,
+            flicker: None,
             resize: false,
             started: None,
             deadline: DEADLINE,
@@ -93,6 +97,11 @@ impl Options {
                 "--late" => options.late = Some(millis(rest.next())?),
                 "--keep-open" => options.keep_open = true,
                 "--animate" => options.animate = true,
+                "--flicker" => {
+                    let value = rest.next().ok_or_else(|| Failure::new(USAGE))?;
+                    options.flicker = Some(value.parse().context(USAGE)?);
+                    options.animate = true;
+                }
                 "--resize" => options.resize = true,
                 "--deadline" => options.deadline = millis(rest.next())?,
                 "--started" => {
@@ -102,7 +111,8 @@ impl Options {
                 _ => return Err(Failure::new(USAGE)),
             }
         }
-        if options.count == 0 || options.app_id.is_empty() {
+        let rows = options.flicker.unwrap_or(0);
+        if options.count == 0 || options.app_id.is_empty() || !(0..=HEIGHT).contains(&rows) {
             return Err(Failure::new(USAGE));
         }
         Ok(options)
@@ -114,12 +124,17 @@ impl Options {
 struct State {
     keep_open: bool,
     animate: bool,
+    flicker: Option<i32>,
+    /// The shade the flickering rows were painted last.
+    shade: u8,
     resize: bool,
     shm: WlShm,
     /// Toplevels the compositor has configured and that got a buffer.
     mapped: u32,
     closed: u32,
     buffer: WlBuffer,
+    /// The buffer's memory.
+    memory: OwnedFd,
     /// The buffer's size.
     size: (i32, i32),
     /// The size niri's last toplevel configure asked for; zero lets the window choose.
@@ -145,11 +160,15 @@ pub(crate) fn run(options: &Options) -> Result<()> {
     let shell: XdgWmBase = globals
         .bind(&handle, 1..=6, ())
         .context("bind xdg_wm_base")?;
+    let (buffer, memory) = buffer(&shm, &handle, (WIDTH, HEIGHT))?;
     let mut state = State {
         keep_open: options.keep_open,
         animate: options.animate,
+        flicker: options.flicker,
+        shade: 0,
         resize: options.resize,
-        buffer: buffer(&shm, &handle, (WIDTH, HEIGHT))?,
+        buffer,
+        memory,
         shm,
         mapped: 0,
         closed: 0,
@@ -218,13 +237,13 @@ pub(crate) fn dispatch_until<S>(
     }
 }
 
-/// One black buffer, shared by every window. Its memory is never written, so it stays
-/// zero: black in `XRGB8888`.
+/// One black buffer, shared by every window, and its memory. Only `--flicker` writes the
+/// memory, so otherwise it stays zero: black in `XRGB8888`.
 fn buffer(
     shm: &WlShm,
     handle: &QueueHandle<State>,
     (width, height): (i32, i32),
-) -> Result<WlBuffer> {
+) -> Result<(WlBuffer, OwnedFd)> {
     let stride = width * 4;
     let size = stride * height;
     let fd = memfd_create("harness-window", MemfdFlags::CLOEXEC).context("memfd_create")?;
@@ -240,7 +259,16 @@ fn buffer(
         (),
     );
     pool.destroy();
-    Ok(buffer)
+    Ok((buffer, fd))
+}
+
+/// Paints the top `rows` rows of the buffer one shade further along. A frame the
+/// compositor reads mid-write shows two shades, which is a change all the same.
+fn flicker(state: &mut State, rows: i32) {
+    state.shade = state.shade.wrapping_add(1);
+    let bytes = usize::try_from(rows.min(state.size.1) * state.size.0 * 4).unwrap_or(0);
+    // A failed write leaves the rows as they were, which the settle counts show.
+    rustix::io::pwrite(&state.memory, &vec![state.shade; bytes], 0).ok();
 }
 
 #[expect(
@@ -298,10 +326,11 @@ impl Dispatch<XdgSurface, WlSurface> for State {
             };
             // A buffer that can't be made leaves the old size, which the test then reports.
             if wanted != state.size
-                && let Ok(buffer) = buffer(&state.shm, handle, wanted)
+                && let Ok((buffer, memory)) = buffer(&state.shm, handle, wanted)
             {
                 state.buffer.destroy();
                 state.buffer = buffer;
+                state.memory = memory;
                 state.size = wanted;
             }
             surface.attach(Some(&state.buffer), 0, 0);
@@ -326,6 +355,9 @@ impl Dispatch<WlCallback, WlSurface> for State {
         handle: &QueueHandle<Self>,
     ) {
         if let wl_callback::Event::Done { .. } = event {
+            if let Some(rows) = state.flicker {
+                flicker(state, rows);
+            }
             surface.frame(handle, surface.clone());
             surface.attach(Some(&state.buffer), 0, 0);
             surface.damage_buffer(0, 0, state.size.0, state.size.1);
@@ -382,6 +414,7 @@ mod tests {
                 late: None,
                 keep_open: false,
                 animate: false,
+                flicker: None,
                 resize: false,
                 started: None,
                 deadline: DEADLINE,
@@ -413,11 +446,14 @@ mod tests {
         assert!(all.resize);
         assert_eq!(all.started, Some(PathBuf::from("/t/s")));
         assert_eq!(all.deadline, Duration::from_mins(10));
+        let flicker = Options::parse(&["/t", "x", "--flicker", "4"]).unwrap();
+        assert_eq!((flicker.flicker, flicker.animate), (Some(4), true));
         for bad in [
             &["/t"][..],
             &["/t", ""],
             &["/t", "x", "--count", "0"],
             &["/t", "x", "--late"],
+            &["/t", "x", "--flicker", "241"],
             &["/t", "x", "--wat"],
         ] {
             assert!(Options::parse(bad).is_err(), "{bad:?}");

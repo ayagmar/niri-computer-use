@@ -19,19 +19,29 @@ const DEADLINE: Duration = Duration::from_secs(120);
 
 /// Opens the animating window and gives focus back to the window that had it.
 pub(crate) fn start(session: &mut Session<'_>) -> Result<Process> {
+    open(session, &["--animate".to_owned()])
+}
+
+/// Opens the animating window with its top `rows` rows changing shade on every frame, and
+/// gives focus back.
+pub(crate) fn flickering(session: &mut Session<'_>, rows: u32) -> Result<Process> {
+    open(session, &["--flicker".to_owned(), rows.to_string()])
+}
+
+fn open(session: &mut Session<'_>, mode: &[String]) -> Result<Process> {
     let focused = focused(session)?.ok_or_else(|| Failure::new("pacer: nothing focused"))?;
     let harness = std::env::current_exe().context("find the harness binary")?;
     let program = harness
         .to_str()
         .ok_or_else(|| Failure::new("the harness path isn't UTF-8"))?;
-    let args: Vec<OsString> = vec![
+    let mut args: Vec<OsString> = vec![
         "window".into(),
         session.test_dir().root().into(),
         APP_ID.into(),
-        "--animate".into(),
         "--deadline".into(),
         DEADLINE.as_millis().to_string().into(),
     ];
+    args.extend(mode.iter().map(OsString::from));
     let process = session.start(
         program,
         &args,
@@ -50,6 +60,23 @@ pub(crate) fn start(session: &mut Session<'_>) -> Result<Process> {
     })?;
     session.log("M7 pacer: a window redrawing every frame is open")?;
     Ok(process)
+}
+
+/// Stops the animating window and waits until niri no longer lists it, so a window opened
+/// next isn't taken for it.
+pub(crate) fn close(session: &mut Session<'_>, process: Process) -> Result<()> {
+    process.stop()?;
+    session.wait_until(
+        "m7-pacer-closed",
+        "the pacing window gone",
+        WAIT,
+        |session| {
+            Ok((!windows(session)?
+                .iter()
+                .any(|window| window.app_id.as_deref() == Some(APP_ID)))
+            .then_some(()))
+        },
+    )
 }
 
 fn windows(session: &mut Session<'_>) -> Result<Vec<niri_ipc::Window>> {
