@@ -505,23 +505,16 @@ fn check(preset: &Preset, unrestricted: bool) -> Result<(), String> {
 }
 
 /// Why the preset rules refuse to start `argv`, as the rest of a sentence about it: a
-/// program that runs any command it is given, `flatpak` with a `--command` that is one or
-/// a terminal, or a terminal with arguments. They hold for presets without `unrestricted`
-/// and for desktop entries always.
+/// program that runs any command it is given, `flatpak` other than a plain `flatpak run`
+/// (see `flatpak_run`), or a terminal with arguments. They hold for presets without
+/// `unrestricted` and for desktop entries always.
 pub(crate) fn refuse_command(argv: &[String]) -> Option<String> {
     let base = base_name(argv.first()?);
     if runs_anything(&base) {
         return Some(format!("starts {base}, which runs any command it is given"));
     }
-    if base == "flatpak"
-        && let Some(command) = flatpak_command(argv)
-    {
-        let inner = base_name(command);
-        if inner.is_empty() || runs_anything(&inner) || TERMINALS.contains(&inner.as_str()) {
-            return Some(format!(
-                "starts flatpak with --command={command}, which runs any command it is given"
-            ));
-        }
+    if base == "flatpak" {
+        return flatpak_run(argv).err();
     }
     if TERMINALS.contains(&base.as_str()) && argv.len() > 1 {
         return Some(format!(
@@ -544,19 +537,69 @@ fn runs_anything(base: &str) -> bool {
     COMMAND_RUNNERS.contains(&base) || COMMAND_RUNNERS.contains(&unversioned)
 }
 
-/// The program a `flatpak` argv names with `--command=<program>` or `--command <program>`,
-/// anywhere in it; empty when `--command` ends it.
-fn flatpak_command(argv: &[String]) -> Option<&str> {
-    let mut rest = argv.iter().skip(1);
-    while let Some(arg) = rest.next() {
-        if let Some(command) = arg.strip_prefix("--command=") {
-            return Some(command);
+/// The options a `flatpak` argv may give before `run`, and after it before the app: where
+/// to find the app, how much to log, and passing files. The others change the sandbox
+/// (`--filesystem`, `--talk-name`, `--socket`, `--env`, …), what runs (`--runtime`,
+/// `--devel`, `--app-path`, …) or how (`--parent-pid`, …), as flatpak 1.16's
+/// `flatpak-builtins-run.c` and `flatpak-context.c` list them.
+const FLATPAK_FLAGS: [&str; 7] = [
+    "--user",
+    "--system",
+    "-v",
+    "--verbose",
+    "--ostree-verbose",
+    "--file-forwarding",
+    "--no-desktop",
+];
+const FLATPAK_VALUES: [&str; 4] = ["--installation=", "--arch=", "--branch=", "--command="];
+
+/// The app a `flatpak` argv runs: `flatpak [OPTION…] run [OPTION…] APP [ARG…]`, with only the
+/// options `FLATPAK_FLAGS` and `FLATPAK_VALUES` allow, at most one `--command`, which
+/// mustn't name a program on `COMMAND_RUNNERS` or a terminal, and `APP` the first argument
+/// that doesn't start with `-`, as flatpak reads it; the arguments after it are the app's.
+/// Any other subcommand, such as `build` or `enter`, runs commands. Its error says why.
+fn flatpak_run(argv: &[String]) -> Result<&str, String> {
+    let mut chosen = None;
+    let mut run = false;
+    for arg in argv.iter().skip(1).map(String::as_str) {
+        if !arg.starts_with('-') {
+            if run {
+                return Ok(arg);
+            }
+            if arg != "run" {
+                return Err(format!(
+                    "starts flatpak {arg}, and only flatpak run may start"
+                ));
+            }
+            run = true;
+            continue;
         }
-        if arg == "--command" {
-            return Some(rest.next().map_or("", String::as_str));
+        if let Some(value) = arg.strip_prefix("--command=") {
+            if chosen.replace(value).is_some() {
+                return Err(
+                    "starts flatpak with --command twice, where the last one counts".to_owned(),
+                );
+            }
+            refuse_flatpak_command(value)?;
+        } else if !FLATPAK_FLAGS.contains(&arg)
+            && !FLATPAK_VALUES.iter().any(|option| arg.starts_with(option))
+        {
+            return Err(format!(
+                "starts flatpak with {arg}, which changes the app's sandbox or what runs in it"
+            ));
         }
     }
-    None
+    Err("starts flatpak without running an app".to_owned())
+}
+
+fn refuse_flatpak_command(command: &str) -> Result<(), String> {
+    let inner = base_name(command);
+    if inner.is_empty() || runs_anything(&inner) || TERMINALS.contains(&inner.as_str()) {
+        return Err(format!(
+            "starts flatpak with --command={command}, which runs any command it is given"
+        ));
+    }
+    Ok(())
 }
 
 /// With `env`, the program goes after the assignments `env` reads, so it can't look like
@@ -1440,15 +1483,100 @@ app_id = "foot"
 
     #[test]
     fn refuses_flatpak_with_a_command_that_runs_others() {
-        for argv in [
-            ["flatpak", "run", "--command=sh", "org.x.Y"].as_slice(),
-            &["flatpak", "run", "--command", "sh", "org.x.Y"],
-            &["flatpak", "run", "--command=/usr/bin/foot", "org.x.Y"],
-            &["flatpak", "run", "org.x.Y", "--command"],
+        let argv =
+            |args: &[&str]| -> Vec<String> { args.iter().map(|&arg| arg.to_owned()).collect() };
+        for (args, why) in [
+            (
+                ["flatpak", "run", "--command=sh", "org.x.Y"].as_slice(),
+                "--command=sh",
+            ),
+            (
+                &["flatpak", "run", "--command=/usr/bin/foot", "org.x.Y"],
+                "--command=/usr/bin/foot",
+            ),
+            // flatpak's option parser keeps the last --command.
+            (
+                &[
+                    "flatpak",
+                    "run",
+                    "--command=firefox",
+                    "--command=sh",
+                    "org.x.Y",
+                ],
+                "twice",
+            ),
+            // A value after a space would be the app, so --command alone isn't allowed.
+            (
+                &["flatpak", "run", "--command", "sh", "org.x.Y"],
+                "with --command,",
+            ),
+            (&["flatpak", "build", "/tmp/dir", "sh"], "only flatpak run"),
+            (&["flatpak", "enter", "1234", "sh"], "only flatpak run"),
+            (&["flatpak", "run"], "without running an app"),
         ] {
-            let argv: Vec<String> = argv.iter().map(|&arg| arg.to_owned()).collect();
-            let refused = refuse_command(&argv).unwrap_or_default();
-            assert!(refused.contains("flatpak with --command"), "{argv:?}");
+            let refused = refuse_command(&argv(args)).unwrap_or_default();
+            assert!(refused.contains(why), "{args:?}: {refused}");
+        }
+    }
+
+    #[test]
+    fn refuses_flatpak_options_that_change_the_sandbox() {
+        let argv =
+            |args: &[&str]| -> Vec<String> { args.iter().map(|&arg| arg.to_owned()).collect() };
+        for option in [
+            "--filesystem=host",
+            "--talk-name=org.freedesktop.Flatpak",
+            "--own-name=org.x",
+            "--socket=session-bus",
+            "--system-talk-name=org.freedesktop.systemd1",
+            "--env=LD_PRELOAD=/tmp/x.so",
+            "--runtime=org.x.Sdk",
+            "--devel",
+            "-d",
+            "--app-path=/tmp/app",
+            "--share=network",
+            "--device=all",
+            "--allow=devel",
+            "--add-policy=x.y=z",
+            "--persist=.",
+            "--cwd=/",
+            "--parent-pid=1",
+        ] {
+            for args in [
+                ["flatpak", "run", option, "org.x.Y"],
+                ["flatpak", option, "run", "org.x.Y"],
+            ] {
+                let refused = refuse_command(&argv(&args)).unwrap_or_default();
+                assert!(
+                    refused.contains("changes the app's sandbox"),
+                    "{args:?}: {refused}"
+                );
+            }
+        }
+        // flatpak's own exports, and arguments after the app, which flatpak passes to it.
+        for args in [
+            [
+                "flatpak",
+                "run",
+                "--branch=stable",
+                "--arch=x86_64",
+                "--command=firefox",
+                "--file-forwarding",
+                "org.mozilla.firefox",
+                "@@u",
+                "@@",
+            ]
+            .as_slice(),
+            &[
+                "flatpak",
+                "--user",
+                "run",
+                "org.x.Y",
+                "--command=sh",
+                "--filesystem=host",
+            ],
+        ] {
+            assert_eq!(refuse_command(&argv(args)), None, "{args:?}");
         }
     }
 

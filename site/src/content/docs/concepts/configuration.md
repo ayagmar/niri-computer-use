@@ -181,7 +181,7 @@ One table per app `launch` may start. `name`, `argv` and `app_id` are required:
 `launch` takes only the `name`; the agent can't add arguments or variables. Unless `unrestricted` is on, a preset may not start:
 
 - a shell, an interpreter, `env`, `sudo`, `doas`, `pkexec`, `systemd-run`, `nohup`, `setsid`, `xargs`, `timeout`, `nice`, `busybox`, `uwsm`, `distrobox`, `toolbox`, `tmux`, `screen`, `bwrap`, `firejail`, `unshare`, `chroot`, `ssh`, `flatpak-spawn`, `nix`, `nix-shell`, `strace`, `gdb`, `script`, `docker`, `podman`, or another program that runs any command it is given; versioned names such as `python3.13` count too
-- `flatpak` with a `--command` that names one of those programs or a terminal. Flatpak's own exported entries name the app's own command, as in `--command=firefox`, which is fine
+- `flatpak` other than `flatpak run` of an app. Before the app only `--user`, `--system`, `--installation=`, `--arch=`, `--branch=`, `-v`, `--verbose`, `--ostree-verbose`, `--file-forwarding`, `--no-desktop` and one `--command=` may come, and that `--command` may not name one of the programs above or a terminal. Flatpak's own exported entries name the app's own command, as in `--command=firefox`, which is fine. Any other option, such as `--filesystem`, `--talk-name`, `--socket`, `--env`, `--runtime` or `--devel`, changes the app's sandbox or what runs in it and is refused. Arguments after the app are passed to the app
 - a terminal with arguments, not even `--app-id`, because terminals run trailing arguments as a command. A terminal without arguments is fine. To give a terminal its own `app_id`, start a desktop file with `gtk-launch`.
 
 A file that breaks a rule is invalid, and `status` names the preset:
