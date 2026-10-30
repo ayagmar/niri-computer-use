@@ -161,6 +161,7 @@ An entry in a subdirectory has its path as its id, with `/` as `-`: `kde4/okular
 - has `DBusActivatable=true` and no `Exec` line. With an `Exec` line, that line is started, as other launchers do
 - is malformed, or has an `Exec` line written for a shell: an unquoted `|`, `;`, `>`, `$`, `~`, `'` or another character only a shell reads, an unescaped `$` or `` ` `` in quotes, or a field code the spec doesn't define
 - starts a program the [preset rules](#preset) refuse. They apply even with `unrestricted` on, and `env` is one of those programs, so `Exec=env NAME=value app` doesn't start. A preset with `env` does, under `unrestricted`
+- runs `flatpak` other than as `flatpak run` of an app. Flatpak's own exported entries name the app's own command, as in `--command=firefox`, so an entry may give one `--command=`, which the preset rules refuse, as long as it doesn't name a program those rules refuse or a terminal. Before the app only `--user`, `--system`, `--installation=`, `--arch=`, `--branch=`, `-v`, `--verbose`, `--ostree-verbose`, `--file-forwarding` and `--no-desktop` may come too. Any other option, such as `--filesystem`, `--talk-name`, `--socket`, `--env`, `--runtime` or `--devel`, changes the app's sandbox or what runs in it and is refused, as is a second `--command`. Arguments after the app are passed to the app
 
 In the `Exec` line, `%f`, `%F`, `%u` and `%U` are dropped, `%i` becomes `--icon` and the entry's `Icon`, `%c` its `Name`, `%k` the file's path and `%%` a `%`; the deprecated codes are dropped too.
 
@@ -184,7 +185,7 @@ One table per app `launch` may start. `name`, `argv` and `app_id` are required:
 `launch` takes only the `name`; the agent can't add arguments or variables. Unless `unrestricted` is on, a preset may not start:
 
 - a shell, an interpreter, `env`, `sudo`, `doas`, `pkexec`, `systemd-run`, `nohup`, `setsid`, `xargs`, `timeout`, `nice`, `busybox`, `uwsm`, `distrobox`, `toolbox`, `tmux`, `screen`, `bwrap`, `firejail`, `unshare`, `chroot`, `ssh`, `flatpak-spawn`, `nix`, `nix-shell`, `strace`, `gdb`, `script`, `docker`, `podman`, or another program that runs any command it is given; versioned names such as `python3.13` count too
-- `flatpak` other than `flatpak run` of an app. Before the app only `--user`, `--system`, `--installation=`, `--arch=`, `--branch=`, `-v`, `--verbose`, `--ostree-verbose`, `--file-forwarding`, `--no-desktop` and one `--command=` may come, and that `--command` may not name one of the programs above or a terminal. Flatpak's own exported entries name the app's own command, as in `--command=firefox`, which is fine. Any other option, such as `--filesystem`, `--talk-name`, `--socket`, `--env`, `--runtime` or `--devel`, changes the app's sandbox or what runs in it and is refused. Arguments after the app are passed to the app
+- `flatpak` with `--command`
 - a terminal with arguments, not even `--app-id`, because terminals run trailing arguments as a command. A terminal without arguments is fine. To give a terminal its own `app_id`, start a desktop file with `gtk-launch`.
 
 A file that breaks a rule is invalid, and `status` names the preset:

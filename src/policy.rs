@@ -505,16 +505,15 @@ fn check(preset: &Preset, unrestricted: bool) -> Result<(), String> {
 }
 
 /// Why the preset rules refuse to start `argv`, as the rest of a sentence about it: a
-/// program that runs any command it is given, `flatpak` other than a plain `flatpak run`
-/// (see `flatpak_run`), or a terminal with arguments. They hold for presets without
-/// `unrestricted` and for desktop entries always.
+/// program that runs any command it is given, `flatpak` with `--command`, or a terminal
+/// with arguments. They hold for presets without `unrestricted`.
 pub(crate) fn refuse_command(argv: &[String]) -> Option<String> {
     let base = base_name(argv.first()?);
     if runs_anything(&base) {
         return Some(format!("starts {base}, which runs any command it is given"));
     }
-    if base == "flatpak" {
-        return flatpak_run(argv).err();
+    if base == "flatpak" && argv.iter().any(|arg| arg.starts_with("--command")) {
+        return Some("starts flatpak with --command, which runs any command".to_owned());
     }
     if TERMINALS.contains(&base.as_str()) && argv.len() > 1 {
         return Some(format!(
@@ -522,6 +521,17 @@ pub(crate) fn refuse_command(argv: &[String]) -> Option<String> {
         ));
     }
     None
+}
+
+/// Why a desktop entry's command is refused: the preset rules, except that `flatpak` must
+/// be a plain `flatpak run` (see `flatpak_run`). An entry's argv comes from a file rather
+/// than from the user, and flatpak's exported entries all name the app's `--command`. They
+/// hold even with `unrestricted` on.
+pub(crate) fn refuse_entry_command(argv: &[String]) -> Option<String> {
+    if base_name(argv.first()?) == "flatpak" {
+        return flatpak_run(argv).err();
+    }
+    refuse_command(argv)
 }
 
 /// The file name of `program`, as the rules compare it.
@@ -1465,9 +1475,9 @@ app_id = "foot"
         // An app that only looks versioned, and a flatpak app, are fine.
         let fine = "[[preset]]\nname = \"a\"\nargv = [\"gimp-2.10\"]\napp_id = \"gimp\"\n\n[[preset]]\nname = \"b\"\nargv = [\"flatpak\", \"run\", \"org.mozilla.firefox\"]\napp_id = \"firefox\"\n";
         assert_eq!(parse(fine, false).unwrap().presets.len(), 2);
-        // flatpak's own exports name the app's command, which is fine unless it runs others.
-        let exported = "[[preset]]\nname = \"c\"\nargv = [\"flatpak\", \"run\", \"--command=firefox\", \"org.mozilla.firefox\"]\napp_id = \"firefox\"\n";
-        assert!(parse(exported, false).is_ok());
+        // The user writes a preset, so flatpak's other options stay theirs to choose.
+        let options = "[[preset]]\nname = \"c\"\nargv = [\"flatpak\", \"--user\", \"run\", \"--filesystem=home\", \"--env=GDK_SCALE=2\", \"org.x.Y\"]\napp_id = \"org.x.Y\"\n";
+        assert!(parse(options, false).is_ok());
     }
 
     #[test]
@@ -1488,12 +1498,24 @@ app_id = "foot"
         assert!(preset(r#"["/usr/bin/perl5.40"]"#).contains("perl5.40"));
         assert!(preset(r#"["busybox", "sh"]"#).contains("busybox"));
         assert!(preset(r#"["uwsm", "app", "--", "firefox"]"#).contains("uwsm"));
+        // Any --command, even the one flatpak's exported entries name.
+        for argv in [
+            r#"["flatpak", "run", "--command=sh", "org.x.Y"]"#,
+            r#"["flatpak", "run", "--command=firefox", "org.mozilla.firefox"]"#,
+            r#"["flatpak", "run", "--command", "sh", "org.x.Y"]"#,
+            r#"["flatpak", "run", "org.x.Y", "--command"]"#,
+        ] {
+            assert!(
+                preset(argv).contains("starts flatpak with --command, which runs any command"),
+                "{argv}"
+            );
+        }
         assert!(preset("[]").contains("empty argv"));
         assert!(preset(r#"[""]"#).contains("empty argv"));
     }
 
     #[test]
-    fn refuses_flatpak_with_a_command_that_runs_others() {
+    fn refuses_entries_running_flatpak_with_a_command_that_runs_others() {
         let argv =
             |args: &[&str]| -> Vec<String> { args.iter().map(|&arg| arg.to_owned()).collect() };
         for (args, why) in [
@@ -1525,13 +1547,13 @@ app_id = "foot"
             (&["flatpak", "enter", "1234", "sh"], "only flatpak run"),
             (&["flatpak", "run"], "without running an app"),
         ] {
-            let refused = refuse_command(&argv(args)).unwrap_or_default();
+            let refused = refuse_entry_command(&argv(args)).unwrap_or_default();
             assert!(refused.contains(why), "{args:?}: {refused}");
         }
     }
 
     #[test]
-    fn refuses_flatpak_options_that_change_the_sandbox() {
+    fn refuses_entries_with_flatpak_options_that_change_the_sandbox() {
         let argv =
             |args: &[&str]| -> Vec<String> { args.iter().map(|&arg| arg.to_owned()).collect() };
         for option in [
@@ -1557,7 +1579,7 @@ app_id = "foot"
                 ["flatpak", "run", option, "org.x.Y"],
                 ["flatpak", option, "run", "org.x.Y"],
             ] {
-                let refused = refuse_command(&argv(&args)).unwrap_or_default();
+                let refused = refuse_entry_command(&argv(&args)).unwrap_or_default();
                 assert!(
                     refused.contains("changes the app's sandbox"),
                     "{args:?}: {refused}"
@@ -1587,7 +1609,7 @@ app_id = "foot"
                 "--filesystem=host",
             ],
         ] {
-            assert_eq!(refuse_command(&argv(args)), None, "{args:?}");
+            assert_eq!(refuse_entry_command(&argv(args)), None, "{args:?}");
         }
     }
 

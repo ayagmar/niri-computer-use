@@ -223,13 +223,13 @@ fn startable<'a>(
     })
 }
 
-/// The entry `id` as `launch` starts it, unless the preset rules refuse its command
+/// The entry `id` as `launch` starts it, unless the rules for an entry refuse its command
 /// (`entry_refused`) or the deny list has a name of the app it starts (`app_denied`): the
 /// entry's id, its `StartupWMClass`, the flatpak app it runs, or its program's base name.
 /// Its windows are looked for by all but the last, which other apps can share, as Electron
 /// apps share `electron`.
 fn launchable(policy: &Loaded, id: &str, start: entry::Startable) -> Result<Launchable, ToolError> {
-    if let Some(why) = policy::refuse_command(&start.argv) {
+    if let Some(why) = policy::refuse_entry_command(&start.argv) {
         return Err(ToolError::new(
             ErrorName::EntryRefused,
             format!("desktop entry {id:?} {why}"),
@@ -630,6 +630,14 @@ mod tests {
                 "flatpak-shell",
                 "flatpak run --command=bash org.example.App",
             ),
+            (
+                "flatpak-twice",
+                "flatpak run --command=firefox --command=sh org.mozilla.firefox",
+            ),
+            (
+                "flatpak-sandbox",
+                "flatpak run --filesystem=host org.mozilla.firefox",
+            ),
             ("terminal-command", "foot -e htop"),
             ("terminal", "foot"),
             (
@@ -641,7 +649,15 @@ mod tests {
         }
         tree.write("one", "htop.desktop", &app("htop", "Terminal=true\n"));
         let settings = tree.settings(ON);
-        for id in ["shell", "env", "flatpak-shell", "terminal-command", "htop"] {
+        for id in [
+            "shell",
+            "env",
+            "flatpak-shell",
+            "flatpak-twice",
+            "flatpak-sandbox",
+            "terminal-command",
+            "htop",
+        ] {
             let (resolved, _) = launch(&settings, id).await;
             assert_eq!(
                 refused(&resolved).0,
