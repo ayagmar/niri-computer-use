@@ -31,7 +31,7 @@ use tokio::time::Instant;
 
 use crate::control::runtime::RuntimeDir;
 use crate::engine::hello::{self, Exe, Hello, Refusal, Reply};
-use crate::engine::host::{LOG, RUNTIME_DIR_DISCOVERED, SOCKET, UNSCOPED};
+use crate::engine::host::{LOCK, LOG, RUNTIME_DIR_DISCOVERED, SOCKET, UNSCOPED};
 use crate::error::{ErrorName, ToolError};
 use crate::session::{Given, LineLimit, MAX_LINE};
 use crate::{Env, cli, runner};
@@ -147,6 +147,9 @@ enum Failed {
     Never(String),
     /// An engine of another build refused this bridge, as it does for as long as it runs.
     OtherBuild(String),
+    /// An engine an install replaced refused this bridge, of the installed build, and
+    /// exits so that the bridge starts one of its own build.
+    Exiting(String),
     /// Anything else, which a retry may get past.
     Retry(String),
 }
@@ -182,6 +185,14 @@ pub(crate) async fn connect(target: &Target) -> Result<Link, Unreached> {
             Err(Failed::Refused(detail)) => return Err(Unreached::Other(detail)),
             Err(Failed::OtherBuild(detail)) => return Err(Unreached::OtherBuild(detail)),
             Err(Failed::Never(detail)) => return Err(Unreached::Never(detail)),
+            Err(Failed::Exiting(detail)) => {
+                cli::print_error(&detail);
+                let_go(&target.runtime, deadline).await?;
+                detail
+            }
+            Err(Failed::Absent(_)) if let Some(stale) = hello::stale_bridge() => {
+                return Err(Unreached::OtherBuild(stale));
+            }
             Err(Failed::Absent(detail)) if starts < MAX_STARTS => {
                 // Only the first start tries `systemd-run`, which may still be at work.
                 start(target, deadline, starts == 0)
@@ -245,6 +256,7 @@ async fn say_hello(target: &Target) -> Result<Link, Failed> {
             error,
             detail,
             release,
+            exiting,
         }) => {
             let detail = format!(
                 "the shared engine refused this client ({}): {detail}",
@@ -254,6 +266,7 @@ async fn say_hello(target: &Target) -> Result<Link, Failed> {
                     .unwrap_or_default()
             );
             Err(match (error, release) {
+                _ if exiting => Failed::Exiting(detail),
                 (Refusal::EngineVersion, None) => {
                     Failed::OtherBuild(format!("{detail}; {}", hello::older_engine(engine)))
                 }
@@ -466,6 +479,43 @@ async fn stuck(child: &mut runner::Launcher) -> Option<String> {
         Ok(false) => None,
         Ok(true) => Some(format!("{late}, so it was killed")),
         Err(error) => Some(format!("{late}, and killing it failed: {error}")),
+    }
+}
+
+/// Waits until no engine holds `engine.lock`, an engine listens on `engine.sock`, or
+/// `deadline` has passed: an engine that said it exits lets the lock go once its sessions
+/// have ended, and an engine started before then would find it held and exit without
+/// serving. One listening may be the exiting engine, which refuses again, or one another
+/// bridge started meanwhile, which serves this one.
+async fn let_go(runtime: &RuntimeDir, deadline: Instant) -> Result<(), Unreached> {
+    let path = runtime.path().join(LOCK);
+    let socket = runtime.path().join(SOCKET);
+    let file = match OpenOptions::new().read(true).write(true).open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(Unreached::Other(format!(
+                "open {}: {error}",
+                path.display()
+            )));
+        }
+    };
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(()),
+            Err(TryLockError::WouldBlock) => {}
+            Err(TryLockError::Error(error)) => {
+                return Err(Unreached::Other(format!(
+                    "lock {}: {error}",
+                    path.display()
+                )));
+            }
+        }
+        let listening = tokio::time::timeout(CONNECT, UnixStream::connect(&socket)).await;
+        if matches!(listening, Ok(Ok(_))) || Instant::now() >= deadline {
+            return Ok(());
+        }
+        tokio::time::sleep(RETRY_FIRST).await;
     }
 }
 
