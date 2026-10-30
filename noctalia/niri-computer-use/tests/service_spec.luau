@@ -53,13 +53,23 @@ t.group("service", function()
     t.eq(host.errors[1].title, "Input may be stuck")
   end)
 
-  t.test("an agent that lost the engine gets one plain notification saying to restart it", function()
+  t.test("an agent an update replaced gets one plain notification saying to restart it", function()
     local host = started()
     driving(host)
-    local before = #host.notifications
-    for _, error in { "engine_lost", "engine_unavailable", "engine_unavailable" } do
-      host.event({ event = "action", ts = "2026-10-17T15:06:00.000Z", session = "claude-code/4711", tool = "status", args = {}, error = error })
+    local function failing(session)
+      for _, error in { "engine_lost", "engine_unavailable", "engine_unavailable" } do
+        host.event({ event = "action", ts = "2026-10-17T15:06:00.000Z", session = session, tool = "status", args = {}, error = error })
+      end
     end
+    host.event({ event = "state", stopped = false, input_dirty = false, clients = {
+      { pid = 4711, agent = "claude", replaced = true },
+      { pid = 5585, agent = "pi", replaced = false },
+    } })
+    local before = #host.notifications
+    -- Not replaced: the failures notify only when failed actions are turned on.
+    failing("pi/5585")
+    t.eq(#host.notifications, before)
+    failing("claude-code/4711")
     t.eq(#host.notifications, before + 1)
     t.eq(#host.errors, 0, "sent at critical urgency")
     local told = host.notifications[#host.notifications]

@@ -222,8 +222,15 @@ t.group("desk", function()
     t.eq(d.calls[desk.KEEP].ts, `t{desk.KEEP + 5}`)
   end)
 
-  t.test("an agent that lost the engine is told to restart once per session, not per call", function()
+  t.test("an agent an update replaced is told to restart once per session, not per call", function()
     local d = desk.new()
+    local line = stateLine(nil)
+    line.clients = {
+      { pid = 7, agent = "pi", replaced = true },
+      { pid = 8, agent = "pi", replaced = true },
+      { pid = 4711, agent = "claude", replaced = false },
+    }
+    desk.feed(d, line, "", NOW, tr)
     local function call(session, error, backlog)
       return { event = "action", tool = "status", session = session, args = {}, error = error, backlog = backlog }
     end
@@ -234,10 +241,15 @@ t.group("desk", function()
     t.eq(kinds(desk.feed(d, call("pi/7", "engine_unavailable"), "", NOW, tr)), "")
     t.eq(kinds(desk.feed(d, call("pi/7", "engine_lost"), "", NOW, tr)), "")
     t.eq(kinds(desk.feed(d, call("pi/8", "engine_unavailable"), "", NOW, tr)), "restart")
-    t.eq(kinds(desk.feed(d, call("claude-code/4711", "engine_unavailable"), "", NOW, tr)), "restart")
     -- Another failure of a session already told still notifies as a failure.
     t.eq(kinds(desk.feed(d, call("pi/7", "app_denied"), "", NOW, tr)), "failed")
     t.eq(d.calls[#d.calls - 1].outcome, "error")
+    -- An engine error of a server of the installed build, or of one not listed, has
+    -- another cause, such as a crash or another agent holding the desktop: restarting
+    -- the agent wouldn't help.
+    t.eq(kinds(desk.feed(d, call("claude-code/4711", "engine_unavailable"), "", NOW, tr)), "failed")
+    t.eq(kinds(desk.feed(d, call("claude-code/4711", "engine_lost"), "", NOW, tr)), "failed")
+    t.eq(kinds(desk.feed(d, call("codex/9", "engine_lost"), "", NOW, tr)), "failed")
   end)
 
   t.test("a failed call is worth a notification, a cancelled one isn't", function()
