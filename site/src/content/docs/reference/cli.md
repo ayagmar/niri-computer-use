@@ -6,10 +6,10 @@ sidebar:
 ---
 
 ```text
-niri-computer-use serve | status | stop | resume | recover | watch | engine | guard <server-pid> | paste-keeper | --version
+niri-computer-use serve | status [--check] | stop | resume | recover | watch | engine | guard <server-pid> | paste-keeper | --version
 ```
 
-It takes exactly one subcommand, or `--version`, and no other options. Anything else prints that usage line to stderr and exits 1. Every subcommand works on the niri instance in `NIRI_SOCKET`, or, without it, the one running niri of yours the server [finds](../../start/clients/#session-variables). A niri bind passes `NIRI_SOCKET` on.
+It takes exactly one subcommand, or `--version`, and no other options except `status --check`. Anything else prints that usage line to stderr and exits 1. Every subcommand works on the niri instance in `NIRI_SOCKET`, or, without it, the one running niri of yours the server [finds](../../start/clients/#session-variables). A niri bind passes `NIRI_SOCKET` on.
 
 ## `serve`
 
@@ -27,7 +27,25 @@ niri-computer-use status
 
 Prints the readiness report as JSON and exits 0, whatever the report says. It is the same report as the `status` tool, except that `niri.event_stream` is null, because the subcommand opens no event stream, and `lease.held_by_me` is false. The fields are described under [`status`](../../tools/looking/#status).
 
-It asks niri for its version and outputs, logind for the lock state and, when it finds `noctalia`, Noctalia for its status. It changes nothing.
+It asks niri for its version, its outputs and whether its last config load failed, logind for the lock state and, when it finds `noctalia`, Noctalia for its status. It reads niri's config files for the [stop key](../../tools/looking/#status). It changes nothing.
+
+```sh
+niri-computer-use status --check
+```
+
+Prints the same report as one line per prerequisite, `✓` or `✗`, with a `fix:` line under each `✗`, then `Ready.` or `Not ready: N blockers.`, and exits 1 while there is a blocker. The lines are niri and its version, the Wayland display, the lock state, the pointer on niri's outputs, `grim`, the accessibility bus, the stop key, the stop flag and the input-dirty marker while set, the policy file, and any server setting a variable got wrong. A `✗` marked `(optional)` turns one feature off and isn't a blocker: the pointer, the accessibility bus, a stop key it can't tell about, a refused variable. Without niri, the lines that need niri are left out. On a desktop with everything in place:
+
+```text
+✓ niri 26.04 (8ed0da4): supported
+✓ lock state: unlocked, read from logind
+✓ pointer: supported on these outputs
+✓ grim: found
+✓ accessibility bus: found
+✓ stop key: /home/you/.config/niri/config.kdl binds a key to `niri-computer-use stop`
+✓ policy file: loaded, 0 presets
+
+Ready.
+```
 
 ## `stop`
 

@@ -1,5 +1,7 @@
 //! The readiness report shared by the `status` tool and the `status` subcommand.
 
+pub(crate) mod check;
+
 use std::collections::BTreeMap;
 
 use niri_ipc::Output;

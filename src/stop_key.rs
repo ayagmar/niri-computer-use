@@ -619,6 +619,13 @@ include "~/extra/more.kdl"
         assert!(gone.detail.contains("NIRI_SOCKET is not set"), "{gone:?}");
     }
 
+    // The install script can't call this, so it prints the line itself.
+    #[test]
+    fn the_install_script_prints_the_same_bind_line() {
+        let script = include_str!("../install.sh");
+        assert!(script.contains(&bind_line(Path::new("${binary}"))));
+    }
+
     #[test]
     fn the_bind_line_is_one_niri_reads_as_the_stop_key() {
         let line = bind_line(Path::new("/home/u/.local/bin/niri-computer-use"));

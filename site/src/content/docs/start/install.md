@@ -134,10 +134,10 @@ Older development builds keep the lease, the stop flag and the input-dirty marke
 From a shell inside your niri session, with the binary where you put it:
 
 ```sh
-~/.local/bin/niri-computer-use status
+~/.local/bin/niri-computer-use status --check
 ```
 
-It prints the readiness report as JSON. Look at these fields:
+It prints one line per prerequisite, `✓` or `✗`, with how to fix each `✗`, and exits 1 while something blocks the server (see the [CLI reference](../../reference/cli/#status)). Without `--check`, `status` prints the full readiness report as JSON. Look at these fields:
 
 | Field | Healthy value |
 |---|---|

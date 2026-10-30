@@ -25,7 +25,13 @@ The key cancels the running action, takes the lease back and refuses further act
 
 After `cargo install` it's `~/.cargo/bin/niri-computer-use resume`.
 
-`niri-computer-use status` shows `"stop_key": "bound"` once niri has loaded the bind. `not_found` means it found no such bind in niri's config, and `unknown` comes with the reason in `stop_key_detail`, such as a config niri refused.
+Then check everything at once, with the same full path:
+
+```sh
+~/.local/bin/niri-computer-use status --check
+```
+
+Each line is a prerequisite with `✓` or `✗` and, under each `✗`, how to fix it. The stop key line turns `✓` once niri has loaded your bind; it says `can't tell` when niri refused the config or the server couldn't read it. The command exits 1 while something blocks the server.
 
 See [Safety](../../concepts/safety/#stop-and-resume) for what a stop does and doesn't undo.
 
