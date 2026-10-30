@@ -11,11 +11,12 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use niri_ipc::Window;
 use serde::Serialize;
 use serde_json::Value;
 use tokio::time::Instant;
 
-use crate::a11y::{self, A11y, Presence};
+use crate::a11y::{self, A11y, Presence, model};
 use crate::act::record::{Quiet, Recorder};
 use crate::act::{self, Outcome};
 use crate::audit::Audit;
@@ -467,8 +468,7 @@ impl Engine {
                 before,
             })
         };
-        let evidence =
-            |worked| Box::pin(self.evidence(session, worked, report.shoot, report.quiet));
+        let evidence = |worked| Box::pin(self.evidence(session, worked, report));
         let acted = self
             .desk
             .act(session, refusal, Box::pin(watched), evidence)
@@ -861,17 +861,23 @@ impl Engine {
         policy::refuse_lock(lock.state())
     }
 
-    /// The outcome with the screenshot `shoot` asks for, or the one an outcome in doubt
-    /// gets, then what the action changed, waiting for quiet as `quiet` says. For work cut
-    /// short after its call went out, the outcome alone: after a stop or with the lease
-    /// gone, nothing more is asked.
+    /// The outcome with the screenshot `report.shoot` asks for, taken once what
+    /// `report.settle` covers stopped changing, or the one an outcome in doubt gets, then
+    /// what the action changed, waiting for quiet as `report.quiet` says. For work cut short
+    /// after its call went out, the outcome alone: after a stop or with the lease gone,
+    /// nothing more is asked.
     async fn evidence(
         &self,
         session: &Session,
         worked: Worked<Watched>,
-        shoot: bool,
-        quiet: Quiet,
+        report: Report<'_>,
     ) -> act::Evidenced {
+        let Report {
+            shoot,
+            quiet,
+            settle: scope,
+            ..
+        } = report;
         let watched = match worked {
             Worked::Done(watched) => watched,
             Worked::CutAfterSending(cut, answered) => {
@@ -887,8 +893,9 @@ impl Engine {
             before,
         } = watched;
         let frames = Frames::default();
-        let capture = |request| self.frame(session, request, &frames);
-        let evidence = act::with_evidence(outcome, shoot, capture);
+        let at_once = || self.frame(session, observe::Request::focused(), &frames);
+        let settled = || self.settled_shot(session, &frames, scope);
+        let evidence = act::with_evidence(outcome, shoot, settled, at_once);
         let mut evidenced = match &mut recorder {
             Ok(recorder) => recorder.follow(evidence).await,
             Err(_) => evidence.await,
@@ -912,6 +919,72 @@ impl Engine {
         }
         evidenced.outcome.report(changes);
         evidenced
+    }
+
+    /// A screenshot of the focused output, taken once what `scope` covers stopped changing.
+    async fn settled_shot(
+        &self,
+        session: &Session,
+        frames: &Frames,
+        scope: settle::Scope,
+    ) -> Result<observe::Screenshot, CallError> {
+        let whole = || self.frame(session, observe::Request::focused(), frames);
+        match scope {
+            settle::Scope::Output => settle::screenshot(whole, settle::LIMIT).await,
+            settle::Scope::Focused => {
+                let sample = || self.sample(session, frames);
+                settle::on(sample, whole, settle::LIMIT).await
+            }
+        }
+    }
+
+    /// One sample of a `Scope::Focused` wait: the focused window's rectangle where niri
+    /// places it, or else the whole output, as the latest of `frames`. A rectangle is never
+    /// kept as a ref, and it clears `frames`, so the whole output captured after a wait that
+    /// compared rectangles doesn't count as steady since an earlier whole one.
+    async fn sample(
+        &self,
+        session: &Session,
+        frames: &Frames,
+    ) -> Result<settle::Sample, CallError> {
+        let Some(rect) = self.focused_region().await else {
+            let shot = self.frame(session, observe::Request::focused(), frames);
+            return Ok(settle::Sample::Output(Box::new(shot.await?)));
+        };
+        let request = observe::Request {
+            target: observe::Target::Region(rect),
+            ..observe::Request::focused()
+        };
+        let (shot, _) = self.take(session, request).await?;
+        frames.take(None);
+        Ok(settle::Sample::Window {
+            rect,
+            image: shot.image,
+        })
+    }
+
+    /// `settle::focused_region` from fresh reads of niri: `None`, for the whole output, when
+    /// any of them fails or no window has keyboard focus.
+    async fn focused_region(&self) -> Option<observe::Rect> {
+        let socket = &self.env.niri_socket;
+        let (windows, workspaces, outputs, overview, output) = tokio::join!(
+            niri::windows(socket),
+            niri::workspaces(socket),
+            niri::outputs(socket),
+            niri::overview_open(socket),
+            niri::focused_output(socket),
+        );
+        let (focused, others): (Vec<Window>, Vec<Window>) = windows
+            .ok()?
+            .into_iter()
+            .partition(|window| window.is_focused);
+        let scene = model::Scene {
+            workspaces: &workspaces.ok()?,
+            outputs: &outputs.ok()?,
+            windows: &others,
+            overview_open: overview.ok()?,
+        };
+        settle::focused_region(focused.first()?, &scene, &output.ok()??.name)
     }
 
     /// The elements of the window `target` names, before an action, for its report.
@@ -975,13 +1048,16 @@ impl Engine {
     }
 }
 
-/// What an action's report covers: whether a screenshot was asked for, the window whose
-/// elements to compare before and after, if any, and whether it waits for quiet.
+/// What an action's report covers: whether a screenshot was asked for and what it waits on,
+/// the window whose elements to compare before and after, if any, and whether it waits for
+/// quiet.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Report<'a> {
     pub(crate) shoot: bool,
     pub(crate) elements: Option<Watch<'a>>,
     pub(crate) quiet: Quiet,
+    /// What the screenshot waits on to stop changing.
+    pub(crate) settle: settle::Scope,
 }
 
 impl Report<'_> {
@@ -991,6 +1067,7 @@ impl Report<'_> {
             shoot,
             elements: None,
             quiet: Quiet::Always,
+            settle: settle::Scope::Output,
         }
     }
 
@@ -1000,6 +1077,7 @@ impl Report<'_> {
             shoot,
             elements: None,
             quiet,
+            settle: settle::Scope::Output,
         }
     }
 }

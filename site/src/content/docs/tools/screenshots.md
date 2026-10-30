@@ -33,7 +33,7 @@ The result is an image block, then the metadata as JSON text, with no `structure
 | `width`, `height`, `mime_type` | the image, checked against its own header |
 | `captured_at_unix_ms`, `capture_ms` | when the capture started and how long it took |
 | `screenshot_ref` | an id such as `shot-5e1a90c2-4` for this capture, or null while niri's event stream is down. Taken under the lease, it is for the pointer tools and zooming; the server keeps the last 64 of the current lease and drops them all when the lease is taken or given up. Taken without the lease, it is only for zooming, by the same session; the server keeps that session's last 64 and drops them when it takes the lease or ends |
-| `settled` | only on a screenshot that waited for the screen to stop changing (an action's `screenshot: true`, or `wait_for`'s `screen_stable`): true when the last two captures were the same image, false when the screen still changed at the limit |
+| `settled` | only on a screenshot that waited for the screen to stop changing (an action's `screenshot: true`, or `wait_for`'s `screen_stable`): true when the last two captures were the same image, false when the screen still changed at the limit; for an action aimed at a floating focused window, the captures compared are of that window alone |
 | `saved` | with `save_path`: the saved file's `path`, `width` and `height` |
 
 `grim` gets five seconds and at most 64 MiB of output.
@@ -56,7 +56,7 @@ It works without the lease and in the [`observe` profile](../../concepts/configu
 
 ## Settled screenshots
 
-Every action, and `wait_for`, takes `screenshot: true`. The result then comes with a screenshot of the focused output taken once the screen stopped changing: the server looks 50 ms after the action, then captures every 100 ms until two captures in a row are the same image, for at most 1.5 seconds. `settled` says whether they were. Two matching images mean the screen was still for 100 ms, not that the app is ready.
+Every action, and `wait_for`, takes `screenshot: true`. The result then comes with a screenshot of the focused output taken once the screen stopped changing: the server looks 50 ms after the action, then captures every 100 ms until two captures in a row are the same image, for at most 1.5 seconds. `settled` says whether they were. An action aimed at the focused window, such as `type_text` with `expect`, compares only that window's rectangle when it floats on the focused output, and then takes the whole output once more; [acting](../acting/) lists which actions. Two matching images mean the screen was still for 100 ms, not that the app is ready.
 
 This is faster and more reliable than a `screenshot` call sent after the action, and the screenshot is taken before the next action can start.
 

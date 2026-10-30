@@ -375,6 +375,71 @@ async fn a_key_refused_with_no_window_focused_names_the_layer_surface_holding_it
     );
 }
 
+/// A grim whose captures of the whole output differ every time, as a bar's clock or a
+/// spinner elsewhere on it would make them, and whose captures of a region, 400x300 at the
+/// output's scale of 1, are all the same. Each call's arguments are a line of `grim.calls`.
+fn busy_output(fixture: &Fixture) {
+    std::fs::write(fixture.path("grim.out"), jpeg(1280, 720, b"output")).unwrap();
+    std::fs::write(fixture.path("grim.region"), jpeg(400, 300, b"window")).unwrap();
+    fixture.program(
+        "grim",
+        r#"echo "$*" >> "$DIR/grim.calls"
+case " $* " in
+  *" -g "*) cat "$DIR/grim.region" ;;
+  *) cat "$DIR/grim.out"; cat "$DIR/grim.calls" ;;
+esac"#,
+    );
+}
+
+#[tokio::test]
+async fn a_focus_screenshot_settles_on_its_floating_window_while_the_rest_of_the_output_changes() {
+    let mut desk = Desk::start("act-settle-window", "").await;
+    busy_output(&desk.fixture);
+    let mut floating = window_on(2, Some("b"), 1, true);
+    floating["is_floating"] = json!(true);
+    floating["layout"]["pos_in_scrolling_layout"] = Value::Null;
+    floating["layout"]["tile_size"] = json!([400.0, 300.0]);
+    floating["layout"]["tile_pos_in_workspace_view"] = json!([20.0, 30.0]);
+    let shown = json!({
+        "id": 1, "idx": 1, "name": null, "output": "DP-1", "is_urgent": false,
+        "is_active": true, "is_focused": true, "active_window_id": null
+    });
+    desk.niri
+        .set_windows(&[window_on(1, Some("a"), 1, false), floating], &[shown]);
+    let started = Instant::now();
+    let result = desk
+        .act(
+            "focus",
+            json!({"window_id": 2, "screenshot": true}),
+            |stream, _| focus_changed(stream, 2),
+        )
+        .await;
+    let took = started.elapsed();
+    let outcome = report(&result);
+    assert_eq!(outcome["observed"], "focused", "{outcome}");
+    assert_eq!(outcome["screenshot"]["settled"], true, "{outcome}");
+    assert_eq!(outcome["screenshot"]["width"], 1280, "{outcome}");
+    assert!(took < Duration::from_millis(1200), "{took:?}");
+    let calls = std::fs::read_to_string(desk.fixture.path("grim.calls")).unwrap();
+    let calls: Vec<&str> = calls.lines().collect();
+    let (whole, samples) = calls.split_last().unwrap();
+    assert!(whole.ends_with("-o DP-1 -"), "{calls:?}");
+    assert!(samples.len() >= 2, "{calls:?}");
+    for sample in samples {
+        assert!(sample.ends_with("-g 20,30 400x300 -"), "{calls:?}");
+    }
+    // No window aimed at: the whole output, which never stops changing here.
+    std::fs::remove_file(desk.fixture.path("grim.calls")).unwrap();
+    let column = json!({"action": {"FocusColumnLeft": {}}, "screenshot": true});
+    let unaimed = report(&desk.act("niri_action", column, |_, _| {}).await);
+    assert_eq!(unaimed["screenshot"]["settled"], false, "{unaimed}");
+    let wholes = std::fs::read_to_string(desk.fixture.path("grim.calls")).unwrap();
+    assert!(
+        wholes.lines().all(|call| call.ends_with("-o DP-1 -")),
+        "{wholes}"
+    );
+}
+
 #[tokio::test]
 async fn screenshots_under_the_lease_are_refs_of_that_lease() {
     let mut desk = Desk::start("act-refs", "").await;

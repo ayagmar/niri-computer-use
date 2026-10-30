@@ -22,9 +22,8 @@ use crate::input::paste::Pasted;
 use crate::niri;
 use crate::niri::Socket;
 use crate::niri::waiter::{View, Waited, Waiter};
-use crate::observe::{self, Metadata, Screenshot};
+use crate::observe::{Metadata, Screenshot};
 use crate::policy::{self, Loaded, Preset};
-use crate::settle;
 
 pub(crate) mod compositor;
 pub(crate) mod holder;
@@ -292,16 +291,18 @@ impl Outcome {
 }
 
 /// Attaches a fresh screenshot of the focused output to an outcome when the agent `asked`
-/// for one, taken once the screen stopped changing, or to an outcome in doubt (plan §6), at
-/// once, so the agent sees the desktop without another call. `capture` takes it the way
-/// the `screenshot` tool does. A failed capture leaves the outcome as it is and says why.
-pub(crate) async fn with_evidence<F>(
+/// for one, taken once the screen stopped changing (`settled`), or to an outcome in doubt
+/// (plan §6), at once (`at_once`), so the agent sees the desktop without another call. A
+/// failed capture leaves the outcome as it is and says why.
+pub(crate) async fn with_evidence<F, G>(
     mut outcome: Outcome,
     asked: bool,
-    capture: impl Fn(observe::Request) -> F + Sync,
+    settled: impl FnOnce() -> G,
+    at_once: impl FnOnce() -> F,
 ) -> Evidenced
 where
-    F: Future<Output = Result<Screenshot, CallError>> + Send,
+    F: Future<Output = Result<Screenshot, CallError>>,
+    G: Future<Output = Result<Screenshot, CallError>>,
 {
     if !asked && !outcome.in_doubt() {
         return Evidenced {
@@ -310,9 +311,9 @@ where
         };
     }
     let taken = if asked {
-        settle::screenshot(|| capture(observe::Request::focused()), settle::LIMIT).await
+        settled().await
     } else {
-        capture(observe::Request::focused()).await
+        at_once().await
     };
     let image = match taken {
         Ok(shot) => {

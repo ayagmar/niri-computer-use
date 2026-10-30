@@ -27,7 +27,7 @@ use crate::noctalia;
 use crate::observe::{DEFAULT_MAX_WIDTH, Format, Rect, Target};
 use crate::policy;
 use crate::session::{Label, MAX_IN_FLIGHT, Session, Settings};
-use crate::{elements, observe, wait};
+use crate::{elements, observe, settle, wait};
 
 /// Optional arguments are described as their own type with their real default, without
 /// `null`, because clients that map tool schemas onto a single-type dialect reject
@@ -929,6 +929,13 @@ impl Server {
         let logged = serde_json::to_value(&args).unwrap_or(Value::Null);
         let niri = self.engine.niri();
         let target = args.target();
+        let report = Report {
+            settle: match target {
+                Ok(Focus::Window(_)) => settle::Scope::Focused,
+                Ok(Focus::Workspace(_)) | Err(_) => settle::Scope::Output,
+            },
+            ..Report::quiet(args.screenshot, act::FOCUS_QUIET)
+        };
         let work = async move {
             match target? {
                 Focus::Window(id) => act::focus_window(niri, id).await,
@@ -941,7 +948,7 @@ impl Server {
                 tool: "focus",
                 logged,
                 later: None,
-                report: Report::quiet(args.screenshot, act::FOCUS_QUIET),
+                report,
             },
             work,
         )
@@ -1292,7 +1299,8 @@ impl Server {
                 return self.type_input(&context, logged, keying).await;
             }
         };
-        let expect = args.expect.into();
+        let expect: Expect = args.expect.into();
+        let settle = settle::Scope::typed_into(&expect);
         let work = async {
             let keys = paste_keys?;
             let input = self.engine.input(&self.session)?;
@@ -1306,6 +1314,7 @@ impl Server {
                 shoot: args.screenshot,
                 elements: args.element_changes.then_some(Watch::Focused),
                 quiet: Quiet::Always,
+                settle,
             },
         };
         self.act(&context, asked, work).await
@@ -1366,6 +1375,7 @@ impl Server {
                     .element_changes
                     .then_some(Watch::Element(&args.element)),
                 quiet: Quiet::Always,
+                settle: settle::Scope::Focused,
             },
         };
         self.act(&context, asked, work).await
@@ -1421,6 +1431,7 @@ impl Server {
                     .element_changes
                     .then_some(Watch::Element(&args.element)),
                 quiet: Quiet::Always,
+                settle: settle::Scope::Focused,
             },
         };
         self.act(&context, asked, work).await
@@ -1704,6 +1715,7 @@ impl Server {
                     shoot: aim.shoot,
                     elements: aim.watch.as_deref().map(Watch::Element),
                     quiet: Quiet::Always,
+                    settle: settle::Scope::Output,
                 },
             },
             work,
@@ -1725,6 +1737,7 @@ impl Server {
             element_changes,
         } = keying;
         let tool = typing.tool();
+        let settle = settle::Scope::typed_into(&expect);
         let work = async {
             let input = self.engine.input(&self.session)?;
             keyboard::type_input(input, typing, expect).await
@@ -1739,6 +1752,7 @@ impl Server {
                     shoot,
                     elements: element_changes.then_some(Watch::Focused),
                     quiet: Quiet::Always,
+                    settle,
                 },
             },
             work,
