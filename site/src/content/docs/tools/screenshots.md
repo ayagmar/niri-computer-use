@@ -33,7 +33,8 @@ The result is an image block, then the metadata as JSON text, with no `structure
 | `width`, `height`, `mime_type` | the image, checked against its own header |
 | `captured_at_unix_ms`, `capture_ms` | when the capture started and how long it took |
 | `screenshot_ref` | an id such as `shot-5e1a90c2-4` for this capture, or null while niri's event stream is down. Taken under the lease, it is for the pointer tools and zooming; the server keeps the last 64 of the current lease and drops them all when the lease is taken or given up. Taken without the lease, it is only for zooming, by the same session; the server keeps that session's last 64 and drops them when it takes the lease or ends |
-| `settled` | only on a screenshot that waited for the screen to stop changing (an action's `screenshot: true`, or `wait_for`'s `screen_stable`): true when the last two captures were the same image, false when the screen still changed at the limit |
+| `settled` | only on a screenshot that waited for the screen to stop changing (an action's `screenshot: true`, or `wait_for`'s `screen_stable`): true when the screen stopped changing (two captures in a row each differed from the capture before them both by at most 0.5 % of the pixels, or two captures were the same), false when it still changed at the limit |
+| `changing` | with `settled`, when known: the part of the pixels, from 0 to 1, that the last capture changed from the one the still run is measured from |
 | `saved` | with `save_path`: the saved file's `path`, `width` and `height` |
 
 `grim` gets five seconds and at most 64 MiB of output.
@@ -56,7 +57,11 @@ It works without the lease and in the [`observe` profile](../../concepts/configu
 
 ## Settled screenshots
 
-Every action, and `wait_for`, takes `screenshot: true`. The result then comes with a screenshot of the focused output taken once the screen stopped changing: the server looks 50 ms after the action, then captures every 100 ms until two captures in a row are the same image, for at most 1.5 seconds. `settled` says whether they were. Two matching images mean the screen was still for 100 ms, not that the app is ready.
+Every action, and `wait_for`, takes `screenshot: true`. The result then comes with a screenshot of the focused output taken once the screen stopped changing: the server looks 50 ms after the action, then captures every 100 ms and compares the captures pixel by pixel, until two in a row each differ from the capture before them both by at most 0.5 % of the pixels, for at most 1.5 seconds. A change that adds up, such as a window sliding into place a few pixels at a time, passes that and keeps the wait going. `settled` says whether they did, and `changing` how much of the screen changed last. The returned image is one more capture, taken after that.
+
+A small part of the screen that never stops, such as the bar's clock, a CPU graph, a terminal spinner or a caret, stays under 0.5 % and doesn't hold the wait up. A video does if it is larger than that, about 135x135 pixels of a 2560x1440 output: the wait then ends at 1.5 seconds with `settled: false` and `changing` above 0.005. A settled screenshot means the screen changed little over the last captures, not that the app is ready.
+
+Where grim can't write PPM, the server compares the captured JPEGs instead, and only two identical ones count as settled.
 
 This is faster and more reliable than a `screenshot` call sent after the action, and the screenshot is taken before the next action can start.
 

@@ -4,8 +4,14 @@
 //! empty workspace and back to the fixture, `click` on the fixture's entry, `type_text` and
 //! `key` into it, `activate_element` on its `Primary` button, `niri_action` resizing the
 //! fixture, and `shell_panel` opening and closing the control center, none of them with a
-//! screenshot. The click waits for the view to settle first, untimed. It writes each call's round trips and which `observed` and `changes` keys
-//! came back to `latency.json` in the artifacts, and a summary to the log.
+//! screenshot. The click waits for the view to settle first, untimed. Then it times
+//! screenshots that wait for the screen to settle (`settle_round`): `type_text` and `key`
+//! into the floating fixture with `screenshot: true`, first with nothing else moving, then
+//! with the pacer open beside the fixture changing a few rows of pixels on every frame, as
+//! a bar's clock or a terminal's spinner would, and then changing all of its 320x240, as a
+//! video would. It writes each call's
+//! round trips, which `observed` and `changes` keys came back, how often a screenshot
+//! settled and the most `changing` it reported to `latency.json` in the artifacts, and a summary to the log.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -31,6 +37,16 @@ const SHOT_AGE: Duration = Duration::from_secs(30);
 /// output or moved or resized its window, as the focus calls and the resize do. The click
 /// waits this long first, outside its round trip, rather than being refused or retried.
 const SETTLE: Duration = Duration::from_millis(1200);
+/// Rounds of settled screenshots with nothing else moving, with a clock's worth of pixels
+/// changing, and with a video's.
+const QUIET_ROUNDS: usize = 5;
+const CLOCK_ROUNDS: usize = 10;
+const VIDEO_ROUNDS: usize = 3;
+/// The pacer's rows that change for the clock: 960 pixels of the 960x720 output at scale
+/// 1, 2160 at scale 1.5, both under the server's 0.5 %.
+const CLOCK_ROWS: u32 = 3;
+/// All of the pacer's 240 rows, about 11 % of the output.
+const VIDEO_ROWS: u32 = 240;
 
 pub(crate) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
     let bus = Bus::start(session)?;
@@ -68,15 +84,79 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
             timings.add(label, took, &outcome);
         }
     }
+    let mut settled = Timings::default();
+    settle_rounds(session, &mut client, window, &mut settled)?;
     structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     client.stop()?;
     fixture.stop()?;
-    let report = json!({"rounds": ROUNDS, "calls": timings.summary()?});
+    let report = json!({
+        "rounds": ROUNDS,
+        "calls": timings.summary()?,
+        "settle": {
+            "quiet_rounds": QUIET_ROUNDS,
+            "clock_rounds": CLOCK_ROUNDS,
+            "video_rounds": VIDEO_ROUNDS,
+            "calls": settled.summary()?,
+        },
+    });
     let path = session.artifact("latency.json");
     fs::write(&path, format!("{report:#}\n")).context(format!("write {}", path.display()))?;
     session.log(&format!("latency: {report}"))?;
     noctalia.stop()?;
     bus.stop()
+}
+
+/// The settled screenshots' rounds: `QUIET_ROUNDS` with nothing else moving, then
+/// `CLOCK_ROUNDS` and `VIDEO_ROUNDS` with the pacer changing that many of its rows.
+fn settle_rounds(
+    session: &mut Session<'_>,
+    client: &mut Client,
+    window: u64,
+    timings: &mut Timings,
+) -> Result<()> {
+    structured(&client.call(session, "focus", json!({"window_id": window}))?)?;
+    for _ in 0..QUIET_ROUNDS {
+        settle_round(client, window, ["quiet_type_text", "quiet_key"], timings)?;
+    }
+    let rounds = [
+        (CLOCK_ROWS, CLOCK_ROUNDS, ["clock_type_text", "clock_key"]),
+        (VIDEO_ROWS, VIDEO_ROUNDS, ["video_type_text", "video_key"]),
+    ];
+    for (rows, count, labels) in rounds {
+        let pacer = crate::input::pacer::flickering(session, rows)?;
+        for _ in 0..count {
+            settle_round(client, window, labels, timings)?;
+        }
+        crate::input::pacer::close(session, pacer)?;
+    }
+    Ok(())
+}
+
+/// `type_text` of one character into the fixture's entry, then `key` `BackSpace`, each
+/// with `screenshot: true`, timed under `labels`.
+fn settle_round(
+    client: &mut Client,
+    window: u64,
+    labels: [&'static str; 2],
+    timings: &mut Timings,
+) -> Result<()> {
+    let expect = json!({"window_id": window});
+    let calls = [
+        (
+            "type_text",
+            json!({"text": "a", "expect": expect, "screenshot": true}),
+        ),
+        (
+            "key",
+            json!({"keys": ["BackSpace"], "expect": expect, "screenshot": true}),
+        ),
+    ];
+    for (label, (tool, arguments)) in labels.into_iter().zip(calls) {
+        let (result, took) = client.timed_call(tool, arguments)?;
+        let outcome = structured(&result).context(format!("latency: {label}"))?;
+        timings.add(label, took, &outcome);
+    }
+    Ok(())
 }
 
 /// What the rounds act on.
@@ -131,13 +211,16 @@ impl Targets {
 #[derive(Default)]
 struct Timings(BTreeMap<&'static str, Calls>);
 
-/// One label's round trips, and how often each `observed` and each set of `changes` keys
-/// came back.
+/// One label's round trips, and how often each `observed`, each set of `changes` keys and,
+/// for a screenshot that waited for the screen, each `settled` came back, with the most
+/// `changing` it reported.
 #[derive(Default)]
 struct Calls {
     times: Vec<Duration>,
     observed: BTreeMap<String, usize>,
     changes: BTreeMap<String, usize>,
+    settled: BTreeMap<String, usize>,
+    changing: Option<f64>,
 }
 
 impl Timings {
@@ -147,6 +230,15 @@ impl Timings {
         let seen = field(outcome, "/observed").as_str().unwrap_or("none");
         *calls.observed.entry(seen.to_owned()).or_default() += 1;
         *calls.changes.entry(changed(outcome)).or_default() += 1;
+        if let Some(settled) = outcome.pointer("/screenshot/settled") {
+            *calls.settled.entry(settled.to_string()).or_default() += 1;
+        }
+        if let Some(changing) = outcome
+            .pointer("/screenshot/changing")
+            .and_then(Value::as_f64)
+        {
+            calls.changing = Some(calls.changing.map_or(changing, |most| most.max(changing)));
+        }
     }
 
     /// Each label's median and 95th percentile in milliseconds, its `observed` counts and
@@ -163,6 +255,8 @@ impl Timings {
                     "p95": as_millis(p95),
                     "observed": calls.observed,
                     "changes": calls.changes,
+                    "settled": calls.settled,
+                    "changing": calls.changing,
                 }),
             );
         }

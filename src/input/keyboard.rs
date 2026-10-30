@@ -17,6 +17,8 @@ use super::paste::Aftercare;
 pub(crate) const MAX_KEYS: usize = 16;
 /// `type_text`'s characters per call, counted in Unicode scalar values.
 pub(crate) const MAX_TEXT: usize = 1000;
+/// How a `focus_mismatch` refusal ends when niri reports no window focused.
+pub(crate) const NO_FOCUS: &str = "no window has keyboard focus";
 
 /// What focus must be before typing.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -218,7 +220,7 @@ pub(crate) fn check_expect(expect: &Expect, view: &View) -> Result<Focus, ToolEr
         return Ok(Focus::Matched);
     }
     let actual = focused.map_or_else(
-        || "no window has keyboard focus".to_owned(),
+        || NO_FOCUS.to_owned(),
         |window| format!("window {} with app_id {:?}", window.id, window.app_id),
     );
     let expected = match expect {
