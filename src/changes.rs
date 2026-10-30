@@ -202,6 +202,18 @@ pub(crate) fn desktop(before: &Scene, after: &Scene, passing: &BTreeMap<u64, Win
     }
 }
 
+/// The windows open in `after` but not in `before`, by id, as `desktop` lists them and
+/// under the same cap.
+pub(crate) fn opened(before: &Scene, after: &Scene) -> Vec<Opened> {
+    after
+        .windows
+        .values()
+        .filter(|window| !before.has(window.id))
+        .take(WINDOWS)
+        .map(opened_entry)
+        .collect()
+}
+
 /// The window entries kept so far under the cap, and how many were dropped.
 #[derive(Default)]
 struct Entries {

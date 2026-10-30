@@ -8,7 +8,7 @@ pub(crate) mod hello;
 pub(crate) mod host;
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::Serialize;
@@ -26,7 +26,7 @@ use crate::control::desk::{Desk, Prepared, Worked};
 use crate::control::lease::Holder;
 use crate::coords::ImageRect;
 use crate::error::{CallError, ErrorName, ToolError};
-use crate::input::Input;
+use crate::input::{Input, keyboard};
 use crate::niri::OutputSummary;
 use crate::niri::events::{DesktopState, EventStream, StreamState};
 use crate::observe;
@@ -137,30 +137,24 @@ struct Unkept {
     stretch: u64,
 }
 
-/// The latest screenshot a settle wait took, kept as a ref only once the wait returns it,
-/// and when the one before it started. A wait of seconds takes a capture every 100 ms or
-/// so; a ref for each, even one dropped at the next capture, would push the agent's own refs
-/// out of the 64 a lease keeps.
+/// The latest JPEG a settle wait took, kept as a ref only once the wait returns it. A wait
+/// of seconds may take a capture every 100 ms or so; a ref for each, even one dropped at
+/// the next capture, would push the agent's own refs out of the 64 a lease keeps.
 #[derive(Debug, Default)]
-struct Frames(Mutex<(Option<Unkept>, Option<Instant>)>);
+struct Frames(Mutex<Option<Unkept>>);
 
 impl Frames {
     /// Makes `unkept` the latest.
     fn take(&self, unkept: Option<Unkept>) {
-        let mut frames = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        let before = frames.0.as_ref().map(|earlier| earlier.shot.taken);
-        *frames = (unkept, before);
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = unkept;
     }
 
-    /// The latest, which the wait returns: when `settled`, it matched the one before, so
-    /// the screen didn't change from that one's start on.
-    fn latest(&self, settled: Option<bool>) -> Option<Unkept> {
-        let (unkept, before) =
-            std::mem::take(&mut *self.0.lock().unwrap_or_else(PoisonError::into_inner));
+    /// The latest, which the wait returns, with the time the screen was still from, when
+    /// the wait settled (`observe::Metadata::steady_since`).
+    fn latest(&self, steady_since: Option<Instant>) -> Option<Unkept> {
+        let unkept = self.0.lock().unwrap_or_else(PoisonError::into_inner).take();
         unkept.map(|mut unkept| {
-            if settled == Some(true) {
-                unkept.shot.steady_since = before;
-            }
+            unkept.shot.steady_since = steady_since;
             unkept
         })
     }
@@ -469,9 +463,27 @@ impl Engine {
         };
         let evidence =
             |worked| Box::pin(self.evidence(session, worked, report.shoot, report.quiet));
-        self.desk
+        let acted = self
+            .desk
             .act(session, refusal, Box::pin(watched), evidence)
-            .await
+            .await;
+        match acted {
+            Err(CallError::Tool(error)) if error.name == ErrorName::FocusMismatch => {
+                Err(self.unfocused(error).await.into())
+            }
+            acted => acted,
+        }
+    }
+
+    /// A focus refusal, saying what may hold the keyboard when it was refused because no
+    /// window had focus.
+    async fn unfocused(&self, mut error: ToolError) -> ToolError {
+        if error.detail.ends_with(keyboard::NO_FOCUS)
+            && let Some(holder) = act::holder::keyboard_holder(self.niri()).await
+        {
+            error.detail = format!("{}; {holder}", error.detail);
+        }
+        error
     }
 
     /// A screenshot, serialized with this engine's actions. With `save`, a full-resolution
@@ -675,17 +687,31 @@ impl Engine {
         limit: std::time::Duration,
         screenshot: bool,
     ) -> Result<(wait::Report, Option<observe::Screenshot>), CallError> {
-        let frames = Frames::default();
-        let capture = || {
+        let (frames, encoded) = (Frames::default(), AtomicBool::new(false));
+        let sample = || {
+            self.desk
+                .observe(session, self.sample(session, &frames, &encoded))
+        };
+        let whole = || {
             let capture = self.frame(session, observe::Request::focused(), &frames);
             self.desk.observe(session, capture)
         };
         if *until == wait::Until::ScreenStable {
-            let (report, last) = wait::screen(capture, limit).await?;
-            return Ok((
-                report,
-                screenshot.then(|| self.kept(session, &frames, last)),
-            ));
+            let (report, settled) = Box::pin(wait::screen(sample, limit)).await?;
+            if !screenshot {
+                return Ok((report, None));
+            }
+            return match Box::pin(settle::finish(settled, whole)).await {
+                Ok(shot) => Ok((report, Some(self.kept(session, &frames, shot)))),
+                Err(CallError::Tool(error)) => Ok((
+                    wait::Report {
+                        screenshot_error: Some(error),
+                        ..report
+                    },
+                    None,
+                )),
+                Err(mistake @ CallError::InvalidArguments(_)) => Err(mistake),
+            };
         }
         let report = if let wait::Until::Element(element) = until {
             let poll = |by| self.poll(session, element, by);
@@ -696,7 +722,7 @@ impl Engine {
         if !screenshot {
             return Ok((report, None));
         }
-        match settle::screenshot(capture, settle::LIMIT).await {
+        match Box::pin(settle::screenshot(sample, whole, settle::LIMIT)).await {
             Ok(shot) => Ok((report, Some(self.kept(session, &frames, shot)))),
             Err(CallError::Tool(error)) => Ok((
                 wait::Report {
@@ -746,9 +772,31 @@ impl Engine {
         mut shot: observe::Screenshot,
     ) -> observe::Screenshot {
         shot.metadata.screenshot_ref = frames
-            .latest(shot.metadata.settled)
+            .latest(shot.metadata.steady_since)
             .and_then(|unkept| self.keep(session, unkept));
         shot
+    }
+
+    /// One sample of a settle wait: the focused output's raw pixels, never kept as a ref,
+    /// or, once a raw capture failed in this wait (`encoded`), as with a grim that can't
+    /// write PPM or an output too large for it, the JPEG, as the latest of `frames`. A
+    /// capture that fails for another reason fails the JPEG's too, with its own error.
+    async fn sample(
+        &self,
+        session: &Session,
+        frames: &Frames,
+        encoded: &AtomicBool,
+    ) -> Result<settle::Sample, CallError> {
+        if !encoded.load(Ordering::Relaxed) {
+            match self.take(session, observe::Request::focused_pixels()).await {
+                Ok((shot, _)) => return Ok(settle::Sample::Pixels(shot.image)),
+                Err(_) => encoded.store(true, Ordering::Relaxed),
+            }
+        }
+        let shot = self
+            .frame(session, observe::Request::focused(), frames)
+            .await?;
+        Ok(settle::Sample::Image(Box::new(shot)))
     }
 
     /// Takes a screenshot and keeps it as a ref that the result names: one of the lease
@@ -868,16 +916,20 @@ impl Engine {
             mut recorder,
             before,
         } = watched;
-        let frames = Frames::default();
-        let capture = |request| self.frame(session, request, &frames);
-        let evidence = act::with_evidence(outcome, shoot, capture);
+        let (frames, encoded) = (Frames::default(), AtomicBool::new(false));
+        let at_once = || self.frame(session, observe::Request::focused(), &frames);
+        let settled = || {
+            let sample = || self.sample(session, &frames, &encoded);
+            settle::screenshot(sample, at_once, settle::LIMIT)
+        };
+        let evidence = act::with_evidence(outcome, shoot, settled, at_once);
         let mut evidenced = match &mut recorder {
             Ok(recorder) => recorder.follow(evidence).await,
             Err(_) => evidence.await,
         };
         if let Some(screenshot) = &mut evidenced.outcome.screenshot {
             screenshot.screenshot_ref = frames
-                .latest(screenshot.settled)
+                .latest(screenshot.steady_since)
                 .and_then(|unkept| self.keep(session, unkept));
         }
         let wait = quiet.wait(shoot, evidenced.outcome.observed);
