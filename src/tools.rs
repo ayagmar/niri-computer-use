@@ -1688,7 +1688,8 @@ impl Server {
     }
 
     /// Sends a command to Noctalia, as `noctalia msg <args…>` would, for shell and plugin
-    /// commands; `["--help"]` lists them. `observed` is `sent`, and `noctalia.reply` is
+    /// commands; `["--help"]` lists them. Every call needs the lease, even `["--help"]` and
+    /// `["plugins", "list"]`. `observed` is `sent`, and `noctalia.reply` is
     /// Noctalia's answer (cut at 64 KiB, with `noctalia.truncated`); a reply starting
     /// `error:` is `upstream_error`. Noctalia acts before it replies, so `uncertain` means
     /// the command may have run.

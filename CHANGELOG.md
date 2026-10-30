@@ -11,6 +11,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - `close_window` takes the window as `window_id`, like every other tool. `id` still works.
 - `wait_for` also takes `until: {"screen_stable": {}}`. JSON sent inside a string, such as `"\"screen_stable\""`, fails with the forms that work.
 - Calls refused for their arguments before the tool runs are written to the audit log as `invalid_arguments`, with the names of the fields they were given and never their values.
+- The `noctalia` tool's description says that every call needs the lease, even `["--help"]` and `["plugins", "list"]`.
 
 ## 0.1.5 - 2026-10-18
 
