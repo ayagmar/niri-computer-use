@@ -340,6 +340,26 @@ impl UntilArg {
     }
 }
 
+/// `until` as `UntilArg` reads it, and `{"screen_stable": {}}` too, the object form agents
+/// reach for. A string holding JSON, which agents send for this one string-or-object field,
+/// is refused with the forms that work rather than read, so `until` stays one JSON value.
+fn until<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<UntilArg, D::Error> {
+    use serde::de::Error as _;
+    let value = Value::deserialize(deserializer)?;
+    if value == serde_json::json!({"screen_stable": {}}) {
+        return Ok(UntilArg::ScreenStable);
+    }
+    if value
+        .as_str()
+        .is_some_and(|text| text.starts_with(['"', '{']))
+    {
+        return Err(D::Error::custom(
+            "`until` is JSON text inside a string; send the JSON itself: an object such as `{\"window\": {\"app_id\": \"foot\"}}`, or `\"screen_stable\"` or `{\"screen_stable\": {}}`",
+        ));
+    }
+    UntilArg::deserialize(value).map_err(D::Error::custom)
+}
+
 const fn default_timeout_ms() -> u32 {
     10_000
 }
@@ -351,6 +371,8 @@ const MAX_WAIT_MS: u32 = 30_000;
 #[schemars(crate = "rmcp::schemars")]
 #[serde(deny_unknown_fields)]
 struct WaitForArgs {
+    #[serde(deserialize_with = "until")]
+    #[schemars(with = "UntilArg")]
     until: UntilArg,
     /// How long to wait, in milliseconds.
     #[serde(default = "default_timeout_ms")]

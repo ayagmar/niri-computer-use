@@ -9,6 +9,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - A tool given a field it doesn't take now fails naming that field and the ones it expects, such as ``unknown field `direction`, expected one of `keys`, `screenshot_ref`, …`` for `scroll`. It used to drop the field and fail on another one, or act without it. Every tool's schema says so with `additionalProperties: false`.
 - `close_window` takes the window as `window_id`, like every other tool. `id` still works.
+- `wait_for` also takes `until: {"screen_stable": {}}`. JSON sent inside a string, such as `"\"screen_stable\""`, fails with the forms that work.
 
 ## 0.1.5 - 2026-10-18
 
