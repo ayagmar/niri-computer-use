@@ -27,6 +27,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - The pointer tools work with more than one monitor. `pointer_move`, `click`, `drag` and `scroll` act on the monitor of the screenshot they aim through when it is at transform `Normal`, whatever the other monitors are; a rotated monitor still refuses them with `untested_output_config`. A gesture stays on one monitor. `status` lists the monitors they run on in `outputs.pointer_outputs`.
 - Calls the server answers itself with `engine_lost` or `engine_unavailable` are written to the audit log, so `watch` and the Noctalia plugin show them. They were never logged, since the shared engine never saw them. A call the engine cut short as it exited has that one line, not also `cancelled`.
 - The Noctalia plugin notifies once per agent session when an update replaced the agent's server and its calls fail with `engine_lost` or `engine_unavailable`, naming the agent and saying to restart it. Later such failures of that session don't notify. The same errors from a server of the installed build count as failed actions.
+- tokio 1.53.3, which fixes RUSTSEC-2026-0386, and rmcp 3.7.0.
 
 ### Fixed
 
