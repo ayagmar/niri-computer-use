@@ -1,0 +1,38 @@
+name: Bug report
+description: Something failed, or the server did something you didn't expect.
+labels: [bug]
+body:
+  - type: input
+    id: niri
+    attributes:
+      label: niri version
+      description: Output of `niri --version`.
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Agent and model
+      description: For example, Claude Code 2.1 with Opus 5.5, or Codex with GPT-5.
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: "`niri-computer-use status` output"
+      description: Run it from a shell inside your niri session. Read it before you paste.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: Error name and detail
+      description: The `error` name and `detail` from the failed call, if it failed. The audit log at `~/.local/state/niri-computer-use/audit.jsonl` has the call's outcome, never typed text.
+  - type: textarea
+    id: what
+    attributes:
+      label: What you asked, and what happened
+      description: The request you gave the agent, the calls it made, and what you expected instead.
+    validations:
+      required: true
