@@ -418,21 +418,23 @@ async fn the_keyboard_hint_never_holds_a_refusal_up_or_contradicts_it() {
     assert!(!named.contains("layer-shell"), "{named}");
 }
 
-/// A grim whose raw captures alternate between two 1280x720 images that differ in their
-/// first `changed` pixels, as a clock or a dialog animating in would, and whose JPEG is the
-/// fixture's. Each call's arguments are a line of `grim.calls`.
+/// A grim whose raw captures cycle through three 1280x720 images, each differing from the
+/// other two in their first `changed` pixels, as a clock or a dialog animating in would,
+/// and whose JPEG is the fixture's. Each call's arguments are a line of `grim.calls`.
 fn flickering(fixture: &Fixture, changed: usize) {
     let header = b"P6\n1280 720\n255\n".as_slice();
-    let still = vec![0; 1280 * 720 * 3];
-    let mut moved = still.clone();
-    moved[..changed * 3].fill(255);
-    std::fs::write(fixture.path("grim.a"), [header, &still].concat()).unwrap();
-    std::fs::write(fixture.path("grim.b"), [header, &moved].concat()).unwrap();
+    for (turn, shade) in [0, 128, 255].into_iter().enumerate() {
+        let mut pixels = vec![0; 1280 * 720 * 3];
+        pixels[..changed * 3].fill(shade);
+        let image = fixture.path(&format!("grim.{turn}"));
+        std::fs::write(image, [header, &pixels].concat()).unwrap();
+    }
     fixture.program(
         "grim",
         r#"echo "$*" >> "$DIR/grim.calls"
 case " $* " in *" -t ppm "*) ;; *) exec cat "$DIR/grim.out" ;; esac
-if [ -s "$DIR/odd" ]; then : > "$DIR/odd"; cat "$DIR/grim.a"; else echo 1 > "$DIR/odd"; cat "$DIR/grim.b"; fi"#,
+turn=$(cat "$DIR/grim.turn" 2>/dev/null || echo 0); turn=$(( (turn + 1) % 3 ))
+echo "$turn" > "$DIR/grim.turn"; cat "$DIR/grim.$turn""#,
     );
 }
 
