@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Added
+
+- `watch` sends a `live` line for each phase of the action in progress: when the server admits it, where it acts (the output and the point, or the window and its `app_id`), right before its screenshot is taken, and how it ended. The server keeps that record in `live.json` in the instance's runtime directory. The audit log is unchanged.
+
+### Changed
+
+- `watch` shows a stop, a lease change and the input-dirty marker at once instead of at its next 250 ms poll: it wakes on changes in the runtime directory.
+
 ## 0.1.6 - 2026-10-30
 
 ### Added

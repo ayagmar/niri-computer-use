@@ -76,14 +76,17 @@ Prints what agents are doing on this niri instance, one JSON object per line, un
 - `hello`, once, first: `format` (1), the server's `version` and the `instance`, niri's socket name
 - `state`, at the start and whenever it changes: `lease`, null or the holder's `session` (such as `claude-code/4711`), `since`, `pending` (true while the user is asked to allow it) and `project`, the last part of the agent's working directory or null; then `stopped`, `input_dirty` and `clients`, every agent's `serve` on this instance by `pid`, with `agent`, the name of the process that started it (such as `claude`), `project` as in `lease`, and `replaced`, true when an update replaced its binary since it started, so it runs the old build until its agent restarts it
 - `action`, for each tool call the [audit log](../../concepts/safety/#the-audit-log) records on this instance, the last 20 first: the audit line without `instance`, plus `project` as in `lease`, and `backlog: true` on those 20, made before `watch` started. A call whose line would be longer than 64 KiB is skipped, as Noctalia cuts longer lines
+- `live`, for the action in progress, as the [Noctalia plugin's overlay](../../start/noctalia-plugin/) draws it: one line for each phase the server records, `start` once the desk admits an action, `aim` once it knows where it acts and before its input goes out, `look` right before its evidence is captured, and `end` with its outcome. Each line has the whole record so far: `pid` and `call`, which name the call together, `session`, `tool`, `ts` and `args` as in its audit line, `phase`, `aim` (the `output`, its logical `area`, and the `points` or the `box` it acts on, in that output's logical pixels), `window` (the `id` of the window it is about and the `app_id` niri reports for it) and `outcome` (`accepted`, `observed` and `error`, as in its audit line). The first one has `backlog: true` when the record was there before `watch` started. Read-only tools, refused calls, `acquire_desktop` and `release_desktop` have none
 - `alive`, every five seconds
+
+A reader should skip an `event` it doesn't know: new kinds are added without a new `format`.
 
 ```text
 {"event":"hello","format":1,"version":"0.1.2","instance":"niri.wayland-1.1819.sock"}
 {"event":"state","lease":null,"stopped":false,"input_dirty":false,"clients":[{"pid":395505,"agent":"claude","project":"niri-computer-use","replaced":false}]}
 ```
 
-It looks at the runtime directory and the audit log every 250 ms, so a change shows within about that. The lines hold only what the audit log and the lease record already hold, never typed text or window titles. It fails, exiting 1, when there is no niri socket, or when a line can't be written within five seconds.
+It wakes as soon as something is added to, removed from or renamed in the runtime directory, so the lease, the stop flag, the input-dirty marker and the action in progress show at once. It looks at the audit log and the agents' servers every 250 ms, and at the runtime directory too, which covers a directory made or replaced after `watch` started. The lines hold only what the audit log and the lease record already hold, plus, in `live`, the `app_id` niri reports for the window an action is about; never typed text or window titles. It fails, exiting 1, when there is no niri socket, or when a line can't be written within five seconds.
 
 ## `recover`
 
