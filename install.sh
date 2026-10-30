@@ -21,6 +21,7 @@ set -eu
 releases=${NCU_RELEASES_URL:-https://github.com/ayagmar/niri-computer-use/releases}
 bin_dir=${NCU_BIN_DIR:-${HOME}/.local/bin}
 data_dir=${HOME}/.local/share/niri-computer-use
+policy=${XDG_CONFIG_HOME:-${HOME}/.config}/niri-computer-use/policy.toml
 
 fail() {
 	echo "install.sh: $*" >&2
@@ -211,10 +212,13 @@ cat <<EOF
      Other clients: https://ayagmar.github.io/niri-computer-use/start/clients/
   3. Bind the stop key inside the binds block of your niri config:
        Mod+Shift+Escape allow-inhibiting=false allow-when-locked=true hotkey-overlay-title="Stop the AI agent (niri-computer-use)" { spawn "${binary}" "stop"; }
+  4. To let the agent start your installed apps by their desktop entry id, such as
+     org.gnome.Nautilus, add this line to ${policy}:
+       launch_desktop_entries = true
 EOF
 if [ "${linked_plugin}" = yes ]; then
 	cat <<EOF
-  4. See which agent drives your desktop in Noctalia's bar: enable the plugin, then add
+  5. See which agent drives your desktop in Noctalia's bar: enable the plugin, then add
      its widget to a bar and its glow to the desktop in Noctalia's settings:
        noctalia msg plugins enable ayagmar/niri-computer-use
 EOF

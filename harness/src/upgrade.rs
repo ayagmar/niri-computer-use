@@ -37,10 +37,10 @@ const MARKER_POLL: Duration = Duration::from_millis(1);
 const GUARDIAN_WAIT: Duration = Duration::from_secs(12);
 /// Valid in every release: a key each one reads.
 const POLICY: &str = "deny_input_app_ids = [\"org.keepassxc.KeePassXC\"]\n";
-/// A key added after 0.1.1.
-const NEWER_POLICY: &str = "turn_on_accessibility = false\n";
+/// A key added after 0.1.5.
+const NEWER_POLICY: &str = "launch_desktop_entries = true\n";
 /// The releases from before `NEWER_POLICY`'s key, which read a file with it as invalid.
-const BEFORE_NEWER_POLICY: [&str; 2] = ["0.1.0", "0.1.1"];
+const BEFORE_NEWER_POLICY: [&str; 6] = ["0.1.0", "0.1.1", "0.1.2", "0.1.3", "0.1.4", "0.1.5"];
 
 pub(crate) fn run(session: &mut Session<'_>, server: &str, from: &str) -> Result<()> {
     let noctalia = session.start(

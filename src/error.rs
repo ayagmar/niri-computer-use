@@ -42,8 +42,12 @@ pub(crate) enum ErrorName {
     /// The lock state was read too long before an action's call could go out, so nothing
     /// was sent; another call reads it again.
     LockStale,
-    /// `launch` named a preset the policy file doesn't have.
+    /// `launch` named a preset the policy file doesn't have, nor, with
+    /// `launch_desktop_entries`, an installed desktop entry.
     UnknownPreset,
+    /// `launch` named an installed desktop entry it won't start: hidden, for another
+    /// desktop, run in a terminal, invalid, or with a command the preset rules refuse.
+    EntryRefused,
     /// A pointer tool on an output setup no live test covers.
     UntestedOutputConfig,
     /// Input to, reading the elements of, or closing a window whose `app_id` the policy

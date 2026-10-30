@@ -11,11 +11,13 @@ use rustix::fs::{Mode, OFlags};
 use tokio::io::{AsyncRead, ReadBuf};
 use tokio::sync::{Semaphore, SemaphorePermit, oneshot, watch};
 
+use crate::apps;
 use crate::policy::{self, Loaded, Shared, Switch, Tools};
 use crate::runner::Place;
 
 /// What a client's own environment gives its session, and no other: its four variables,
-/// its home, and the policy file as read from its config directory.
+/// its home, the policy file as read from its config directory, and where its desktop
+/// entries are.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Given {
     /// `NIRI_COMPUTER_USE_UNRESTRICTED`, as given: `1` turns `unrestricted` on.
@@ -33,6 +35,8 @@ pub(crate) struct Given {
     /// isn't unset: it means the working directory.
     pub(crate) path: Option<OsString>,
     pub(crate) policy: policy::Source,
+    /// Where its desktop entries are, for `launch_desktop_entries`.
+    pub(crate) apps: apps::Search,
 }
 
 impl Given {
@@ -40,7 +44,7 @@ impl Given {
     /// read now. An empty variable counts as unset, except `PATH`.
     pub(crate) fn read(var: impl Fn(&str) -> Option<OsString>) -> Self {
         let path = var("PATH");
-        let var = |name| var(name).filter(|value| !value.is_empty());
+        let var = |name: &str| var(name).filter(|value| !value.is_empty());
         let home = var("HOME").map(PathBuf::from);
         let config_dir = var("XDG_CONFIG_HOME")
             .map(PathBuf::from)
@@ -50,6 +54,7 @@ impl Given {
             confirm_lease: var("NIRI_COMPUTER_USE_CONFIRM_LEASE"),
             tools: var("NIRI_COMPUTER_USE_TOOLS"),
             shared: var("NIRI_COMPUTER_USE_SHARED"),
+            apps: apps::Search::read(var, home.as_deref()),
             home,
             path,
             policy: policy::Source::read(config_dir.as_deref()),
@@ -76,6 +81,8 @@ pub(crate) struct Settings {
     pub(crate) home: Option<PathBuf>,
     /// The session's `PATH`, where `grim` is found for its calls.
     pub(crate) path: Option<OsString>,
+    /// Where the session's desktop entries are.
+    pub(crate) apps: apps::Search,
     /// A shared engine's client's working directory, where those calls start and
     /// `PATH`'s relative entries are. `None` in a standalone server, whose calls start in
     /// its own.
@@ -119,6 +126,7 @@ impl Settings {
             policy,
             home: given.home,
             path: given.path,
+            apps: given.apps,
             dir: None,
         }
     }
@@ -484,6 +492,7 @@ mod tests {
             home: None,
             path: None,
             policy: policy::Source::Missing,
+            apps: apps::Search::default(),
         });
         assert!(settings.confirm_lease.enabled());
         assert!(!settings.unrestricted.enabled());

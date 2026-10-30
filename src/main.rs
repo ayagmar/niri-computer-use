@@ -2,6 +2,7 @@
 
 mod a11y;
 mod act;
+mod apps;
 mod audit;
 mod bridge;
 mod changes;
@@ -246,6 +247,7 @@ async fn main() -> ExitCode {
                 tools: &settings.tools,
                 shared: &settings.shared,
                 place: settings.place(),
+                apps: &settings.apps,
                 accessibility: &accessibility,
                 accessibility_switch: None,
             };

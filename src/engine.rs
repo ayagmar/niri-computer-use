@@ -354,6 +354,7 @@ impl Engine {
             tools: &settings.tools,
             shared: &settings.shared,
             place: settings.place(),
+            apps: &settings.apps,
             accessibility: &self.accessibility,
             accessibility_switch: self.a11y.as_ref().map(|a11y| a11y.switch().report()),
         };

@@ -13,7 +13,7 @@ This skill uses short tool names, but your client adds its MCP prefix: call the 
 
 ## Looking
 
-Start with `status`: it says whether the screen is locked, whether Noctalia runs, which launch presets exist and who holds the lease. Then prefer structured data, exact and cheap, to screenshots:
+Start with `status`: it says whether the screen is locked, whether Noctalia runs, which apps `launch` can start and who holds the lease. Then prefer structured data, exact and cheap, to screenshots:
 
 - `desktop_state` for windows (ids, `app_id`, title), workspaces, the focused window, monitors (`outputs`) and Noctalia's panels (`shell`)
 - `elements` for what is in one window, when the app exposes accessibility: buttons, fields and menu items with their names, states and places on the screen
@@ -32,7 +32,7 @@ When `acquire_desktop` isn't listed, `status.tools.profile` is `observe`: the us
 
 **One action per turn, with no other desktop call beside it.** That holds when actions look independent, such as two form fields, two windows' widths, or a last `key` and `release_desktop`: each action changes the screen, focus or layout the next one depends on, and calls sent together run in no order you control. A screenshot sent with an action can show the old screen; pass `screenshot: true` instead. Reads such as `desktop_state`, `elements` and `screenshot` may go together without an action.
 
-Prefer structured actions to input, because they can't land on the wrong thing: `focus` with a window or workspace id from `desktop_state`, `launch` with a preset name, `close_window` and `shell_panel`. Use the pointer and keyboard for what happens inside an app.
+Prefer structured actions to input, because they can't land on the wrong thing: `focus` with a window or workspace id from `desktop_state`, `launch` with a preset name or desktop entry id, `close_window` and `shell_panel`. Use the pointer and keyboard for what happens inside an app.
 
 For window layout and other compositor actions, such as fullscreen, floating, a window's width or moving it to another workspace, use `niri_action` with niri's action JSON, such as `{"FullscreenWindow": {"id": 12}}`. When `noctalia` is listed, use it for Noctalia shell and plugin commands, such as the user's screen-recording toggle.
 
@@ -79,10 +79,12 @@ Stop and tell the user, quoting the error's `detail`, when a tool returns `stopp
 
 `unrestricted_required` means the action, such as niri's `Spawn`, needs `unrestricted = true` in the user's policy file. Tell the user that, and don't reach the same result another way: no keys, presets or shell commands in its place.
 
-If no launch preset fits the app the user wants (`status` lists `policy.preset_names`), look at `status.unrestricted.enabled`:
+`launch` takes a preset name from `status.policy.preset_names` and, when `status.policy.launch_desktop_entries` is true, an installed app's desktop entry id from `status.desktop_entries.ids`, such as `org.gnome.Nautilus`. A name it doesn't find fails with `unknown_preset`, whose `detail` names entries whose id or name contains it; pick one from there rather than guess again. `entry_refused` means the user's rules keep that entry from starting: tell the user.
+
+If neither a preset nor a desktop entry fits the app the user wants, look at `status.unrestricted.enabled`:
 
 - `true`: start it with `niri_action {"Spawn": {"command": ["<program>", ...]}}`, the program's name as the desktop runs it, such as `["gnome-calculator"]`. Never a shell and never `SpawnSh`. `Spawn` returns only `sent`: no process and no window, and its `changes` won't have the window either, since that comes later. Then `wait_for` its window by an `app_id` you know, or take a fresh `desktop_state` to find the new window. The `app_id` is often not the program's name, so don't assume it. Never call `Spawn` again after an `uncertain` result or a window that didn't appear in time; look, and tell the user. Prefer a preset when one exists: `launch` watches for the window and handles `reuse`.
-- `false`: say so and ask the user to add a preset to their policy file. Don't look for another way to start it: keys and typing would land in whatever window has focus, and Noctalia's launcher is no way around it either.
+- `false`: say so and ask the user to add a preset to their policy file, or to set `launch_desktop_entries = true` there if it is off. Don't look for another way to start it: keys and typing would land in whatever window has focus, and Noctalia's launcher is no way around it either.
 
 ## Giving the desktop back
 

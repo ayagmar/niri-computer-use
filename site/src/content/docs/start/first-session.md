@@ -47,4 +47,12 @@ If `acquire_desktop` fails, its error says why; the [error reference](../../refe
 
 ## Let it start apps
 
-`launch` starts only apps you list as presets in the [policy file](../../concepts/configuration/). Without one, and with [`unrestricted`](../../concepts/configuration/#unrestricted) off, as it is by default, the agent can focus, close and type into windows you open, but not start new ones. `NIRI_COMPUTER_USE_UNRESTRICTED=1` in a client's server settings turns it on without a policy file, and that client's agent can then start any program through `niri_action`'s `Spawn`.
+By default the agent can focus, close and type into windows you open, but not start new ones. The easy start is to let `launch` take your installed apps by their desktop entry id, such as `org.gnome.Nautilus` or `firefox`. Put this line in `~/.config/niri-computer-use/policy.toml`, creating the file if needed, and restart the agent's session:
+
+```toml
+launch_desktop_entries = true
+```
+
+The server then starts an app's own `Exec` line, the command its menu entry runs, without a shell, under the same rules as presets. See [`launch_desktop_entries`](../../concepts/configuration/#launch_desktop_entries) for what it refuses.
+
+To allow only a few apps, list them as [presets](../../concepts/configuration/#preset) instead. [`unrestricted`](../../concepts/configuration/#unrestricted), or `NIRI_COMPUTER_USE_UNRESTRICTED=1` in a client's server settings, goes further: that client's agent can then start any program through `niri_action`'s `Spawn`.

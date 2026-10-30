@@ -31,7 +31,7 @@ use crate::noctalia;
 use crate::observe::{DEFAULT_MAX_WIDTH, Format, Rect, Target};
 use crate::policy;
 use crate::session::{Label, MAX_IN_FLIGHT, Session, Settings};
-use crate::{elements, observe, wait};
+use crate::{apps, elements, observe, wait};
 
 /// Optional arguments are described as their own type with their real default, without
 /// `null`, because clients that map tool schemas onto a single-type dialect reject
@@ -439,7 +439,8 @@ impl FocusArgs {
 #[schemars(crate = "rmcp::schemars")]
 #[serde(deny_unknown_fields)]
 struct LaunchArgs {
-    /// A preset name from the policy file; `status` lists them as `policy.preset_names`.
+    /// A name from `status.policy.preset_names`, or a desktop entry id from
+    /// `status.desktop_entries.ids`.
     preset: String,
     /// Focus the preset's one existing window instead of starting another; start nothing
     /// if several exist.
@@ -1016,12 +1017,12 @@ impl Server {
         .await
     }
 
-    /// Starts an app from a policy preset, whose command the user fixed. `observed` counts
-    /// new windows with the preset's `app_id`: `one` (its id in `windows`), `ambiguous`, or
-    /// `none` within five seconds. With `reuse`, its one existing window is focused instead
-    /// (`focused`); several give `ambiguous` and start nothing.
+    /// Starts an app the user allowed: a policy preset or a desktop entry.
+    /// `observed` counts new windows with its `app_id`: `one` (its id in `windows`),
+    /// `ambiguous`, or `none` within five seconds. With `reuse`, its one existing window is
+    /// focused instead (`focused`); several give `ambiguous` and start nothing.
     #[tool(
-        title = "Launch a preset app",
+        title = "Launch an app",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -1034,21 +1035,26 @@ impl Server {
         Parameters(args): Parameters<LaunchArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let preset = self.session.settings().policy.preset(&args.preset);
+        let settings = self.session.settings();
+        let preset = settings.policy.preset(&args.preset).is_ok();
         let mut logged = serde_json::json!({
-            "preset": audit::known(&args.preset, preset.is_ok(), "unknown_preset"),
+            "preset": audit::known(&args.preset, preset, "unknown_preset"),
             "reuse": args.reuse,
         });
         flag(&mut logged, "screenshot", args.screenshot);
         let niri = self.engine.niri();
         let (reuse, shoot) = (args.reuse, args.screenshot);
-        let work = async move { act::launch(niri, preset?, reuse).await };
+        let entry = OnceLock::new();
+        let work = async {
+            let target = apps::resolve(settings, &args.preset, &entry).await?;
+            act::launch(niri, &target, reuse).await
+        };
         self.act(
             &context,
             Asked {
                 tool: "launch",
                 logged,
-                later: None,
+                later: Some(Later::Entry(&entry)),
                 report: Report::shot(shoot),
             },
             work,
@@ -1833,6 +1839,7 @@ impl Server {
         let logged = move || match later {
             Some(Later::Gate(gate)) => gate.logged(logged),
             Some(Later::Noctalia(named)) => audit::noctalia_named(logged, named.get()),
+            Some(Later::Entry(entry)) => audit::desktop_entry(logged, entry.get()),
             None => logged,
         };
         // Boxed, because the readiness report, the action's work and its wait make large
@@ -2015,6 +2022,8 @@ enum Later<'a> {
     Gate(&'a actions::GateTimes),
     /// What Noctalia's lists name of a `noctalia` call, once it passed the gate.
     Noctalia(&'a OnceLock<noctalia::Named>),
+    /// The desktop entry `launch` found for its name.
+    Entry(&'a OnceLock<String>),
 }
 
 /// A pointer tool's screenshot ref, whether it asked for a screenshot after, the
@@ -2086,7 +2095,7 @@ pub(crate) fn info() -> ServerConfig {
         .with_instructions(INSTRUCTIONS)
 }
 
-const INSTRUCTIONS: &str = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows, workspaces and monitors; take a `screenshot` for pixels. `elements`, when listed, gives a window's accessible elements, which `activate_element` and `set_element_text` act on without the pointer once their window has focus; when `not_accessible` says a Chromium or Electron app needs a restart, tell the user once and don't restart it. To act, call `acquire_desktop`, then one action at a time (pointer tools with a fresh `screenshot_ref`, keyboard tools with `expect`), reading `accepted`, `observed` and `effect` before the next call. Read `changes` (what niri saw change; absent when nothing did) first, and take a screenshot only when it is empty or unexpected. Pass an action `screenshot: true` rather than sending a `screenshot` beside it, and use `wait_for` instead of repeated screenshots to wait for a window, an element or the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter (`submitted: true` means Enter went out; if the app draws it late, `wait_for` `screen_stable`, never resend), and start apps through `launch` presets; with no preset, use `niri_action` `Spawn` with the program's argv (never a shell or `SpawnSh`) when `status.unrestricted.enabled` is true, find its window with `wait_for` (its `app_id` may differ from the program's name) and never repeat the `Spawn`; otherwise ask the user to add a preset. Actions and `clipboard_read` need the lease. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. In Claude Code, load these tools' schemas with `ToolSearch` before guessing arguments. A `focus_mismatch` naming your own terminal means the user is typing to you: release, answer, take the desktop again.";
+const INSTRUCTIONS: &str = "View and act on the user's niri desktop; load the `niri-computer-use` skill first. Start with `status`. Use `desktop_state` for windows, workspaces and monitors; take a `screenshot` for pixels. `elements`, when listed, gives a window's accessible elements, which `activate_element` and `set_element_text` act on without the pointer once their window has focus; when `not_accessible` says a Chromium or Electron app needs a restart, tell the user once and don't restart it. To act, call `acquire_desktop`, then one action at a time (pointer tools with a fresh `screenshot_ref`, keyboard tools with `expect`), reading `accepted`, `observed` and `effect` before the next call. Read `changes` (what niri saw change; absent when nothing did) first, and take a screenshot only when it is empty or unexpected. Pass an action `screenshot: true` rather than sending a `screenshot` beside it, and use `wait_for` instead of repeated screenshots to wait for a window, an element or the screen to settle. Never retry an action on your own, send messages with `type_text`'s `submit: true` rather than a separate Enter (`submitted: true` means Enter went out; if the app draws it late, `wait_for` `screen_stable`, never resend), and start apps through `launch`; with no preset or entry, use `niri_action` `Spawn` with the program's argv (never a shell or `SpawnSh`) when `status.unrestricted.enabled` is true, find its window with `wait_for` (its `app_id` may differ from the program's name) and never repeat the `Spawn`; otherwise ask the user to add a preset. Actions and `clipboard_read` need the lease. When done, call `release_desktop` with `restore_focus: true` to put focus back on the user's window. In Claude Code, load these tools' schemas with `ToolSearch` before guessing arguments. A `focus_mismatch` naming your own terminal means the user is typing to you: release, answer, take the desktop again.";
 
 #[expect(
     clippy::unused_async_trait_impl,
@@ -2455,6 +2464,7 @@ mod tests {
             home: None,
             path: Some(crate::test_support::NO_PROGRAMS.into()),
             policy: Source::Missing,
+            apps: apps::Search::default(),
         };
         Server::new(
             Arc::clone(engine),

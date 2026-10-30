@@ -420,6 +420,16 @@ pub(crate) fn noctalia_named(mut logged: Value, named: Option<&Named>) -> Value 
     logged
 }
 
+/// `launch`'s arguments with the desktop entry its name found, which the server knows, in
+/// place of the unknown preset.
+pub(crate) fn desktop_entry(mut logged: Value, entry: Option<&String>) -> Value {
+    if let (Some(entry), Some(fields)) = (entry, logged.as_object_mut()) {
+        fields.remove("preset");
+        fields.insert("desktop_entry".to_owned(), Value::String(entry.clone()));
+    }
+    logged
+}
+
 /// The outcome's error name, read from the tool's result and never from its content: a
 /// stable name for a failure, `invalid_arguments` for an argument mistake, and `cancelled`
 /// or `internal` when the call didn't produce a result.
@@ -924,6 +934,25 @@ mod tests {
             })
         );
         assert!(!logged.to_string().contains("secret"), "{logged}");
+    }
+
+    /// A desktop entry's id is the server's, read from a file it found, so it is logged
+    /// by name; a name that found nothing stays a length.
+    #[test]
+    fn launch_logs_the_desktop_entry_it_found_by_id() {
+        let asked =
+            |name: &str| json!({"preset": known(name, false, "unknown_preset"), "reuse": false});
+        assert_eq!(
+            desktop_entry(
+                asked("org.gnome.Nautilus"),
+                Some(&"org.gnome.Nautilus".to_owned())
+            ),
+            json!({"desktop_entry": "org.gnome.Nautilus", "reuse": false})
+        );
+        assert_eq!(
+            desktop_entry(asked("my secret"), None),
+            json!({"preset": {"category": "unknown_preset", "bytes": 9}, "reuse": false})
+        );
     }
 
     #[test]

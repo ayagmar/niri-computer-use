@@ -23,7 +23,7 @@ use crate::niri;
 use crate::niri::Socket;
 use crate::niri::waiter::{View, Waited, Waiter};
 use crate::observe::{self, Metadata, Screenshot};
-use crate::policy::{self, Loaded, Preset};
+use crate::policy::{self, Launchable, Loaded};
 use crate::settle;
 
 pub(crate) mod compositor;
@@ -432,7 +432,7 @@ pub(crate) async fn close_window(
     Ok(conclude(ended, waiter.view(), Observed::Pending, vec![id]))
 }
 
-/// What `launch` does with `reuse` given the windows that already match the preset.
+/// What `launch` does with `reuse` given the windows that already match what it starts.
 #[derive(Debug, PartialEq, Eq)]
 enum Reuse {
     Spawn,
@@ -448,15 +448,15 @@ const fn reuse(existing: &[u64]) -> Reuse {
     }
 }
 
-/// Starts the preset's fixed command through niri, or with `reuse` focuses its one existing
-/// window, and reports the windows that match its `app_id`.
+/// Starts a preset's or desktop entry's fixed command through niri, or with `reuse`
+/// focuses its one existing window, and reports the windows that match its `app_id`s.
 pub(crate) async fn launch(
     niri: Niri<'_>,
-    preset: &Preset,
+    target: &Launchable,
     reuse_existing: bool,
 ) -> Result<Outcome, CallError> {
     let mut waiter = niri::waiter(niri.events).await?;
-    let app_id = preset.app_id.as_str();
+    let app_id = target.app_ids.as_slice();
     if reuse_existing {
         let existing = matching(waiter.view(), app_id, &BTreeSet::new());
         match reuse(&existing) {
@@ -470,7 +470,7 @@ pub(crate) async fn launch(
     let before: BTreeSet<u64> = waiter.view().windows().keys().copied().collect();
     let focused = waiter.view().focused_window();
     let action = Action::Spawn {
-        command: preset.command(),
+        command: target.command.clone(),
     };
     if let Some(lost) = send(niri, action).await? {
         return Ok(lost);
@@ -587,13 +587,13 @@ fn closed(view: &View, id: u64) -> Option<Observed> {
     (!view.windows().contains_key(&id)).then_some(Observed::Closed)
 }
 
-/// A window that wasn't open `before` has `app_id`: `One`. Focus moving to an older window
-/// with `app_id` is the app answering the launch with the window it had, as single-instance
+/// A window that wasn't open `before` has one of `app_id`: `One`. Focus moving to an older
+/// window with one is the app answering the launch with the window it had, as single-instance
 /// apps do: `Focused`. A new window may take focus before it sets its `app_id`, so only
 /// focus on an older window of another app interrupts.
 fn launched(
     view: &View,
-    app_id: &str,
+    app_id: &[String],
     before: &BTreeSet<u64>,
     focused: Option<u64>,
 ) -> Option<Observed> {
@@ -601,7 +601,7 @@ fn launched(
         return Some(Observed::One);
     }
     let now = view.windows().get(&view.focused_window()?)?;
-    if Some(now.id) != focused && now.app_id.as_deref() == Some(app_id) {
+    if Some(now.id) != focused && has_app_id(now, app_id) {
         return Some(Observed::Focused);
     }
     interrupted(view, focused, |window| !before.contains(&window.id))
@@ -617,17 +617,24 @@ fn interrupted(
     (Some(focused.id) != before && !expected(focused)).then_some(Observed::Interrupted)
 }
 
-/// The windows with `app_id` that aren't in `except`, by id.
-fn matching(view: &View, app_id: &str, except: &BTreeSet<u64>) -> Vec<u64> {
+/// The windows with one of `app_id` that aren't in `except`, by id.
+fn matching(view: &View, app_id: &[String], except: &BTreeSet<u64>) -> Vec<u64> {
     let mut ids: Vec<u64> = view
         .windows()
         .values()
-        .filter(|window| window.app_id.as_deref() == Some(app_id))
+        .filter(|window| has_app_id(window, app_id))
         .map(|window| window.id)
         .filter(|id| !except.contains(id))
         .collect();
     ids.sort_unstable();
     ids
+}
+
+fn has_app_id(window: &Window, app_ids: &[String]) -> bool {
+    window
+        .app_id
+        .as_ref()
+        .is_some_and(|app_id| app_ids.contains(app_id))
 }
 
 /// `app_denied` when window `id` belongs to an app on the policy's deny list. Closing is
@@ -777,6 +784,7 @@ mod tests {
 
     #[test]
     fn a_launch_counts_only_new_windows_with_the_app_id() {
+        let foot = ["foot".to_owned()];
         let before = BTreeSet::from([1, 2]);
         let current = view(vec![
             window(1, Some("foot"), 1, false),
@@ -785,9 +793,9 @@ mod tests {
             window(5, Some("foot"), 1, false),
             window(6, None, 1, false),
         ]);
-        assert_eq!(matching(&current, "foot", &before), [5, 9]);
+        assert_eq!(matching(&current, &foot, &before), [5, 9]);
         assert_eq!(
-            launched(&current, "foot", &before, Some(2)),
+            launched(&current, &foot, &before, Some(2)),
             Some(Observed::One)
         );
         // A new window without its app_id yet may take focus; an old one interrupts.
@@ -796,13 +804,13 @@ mod tests {
             window(2, Some("x"), 1, false),
             window(6, None, 1, true),
         ]);
-        assert_eq!(launched(&pending, "foot", &before, Some(2)), None);
+        assert_eq!(launched(&pending, &foot, &before, Some(2)), None);
         let stolen = view(vec![
             window(1, Some("x"), 1, true),
             window(2, Some("y"), 1, false),
         ]);
         assert_eq!(
-            launched(&stolen, "foot", &before, Some(2)),
+            launched(&stolen, &foot, &before, Some(2)),
             Some(Observed::Interrupted)
         );
         // A single-instance app focuses the window it already had.
@@ -811,14 +819,18 @@ mod tests {
             window(2, Some("x"), 1, false),
         ]);
         assert_eq!(
-            launched(&answered, "foot", &before, Some(2)),
+            launched(&answered, &foot, &before, Some(2)),
             Some(Observed::Focused)
         );
-        assert_eq!(launched(&answered, "foot", &before, Some(1)), None);
+        assert_eq!(launched(&answered, &foot, &before, Some(1)), None);
+        // A desktop entry's windows may have its id or its StartupWMClass.
+        let entry = ["org.example.Foot".to_owned(), "foot".to_owned()];
+        assert_eq!(matching(&current, &entry, &before), [5, 9]);
     }
 
     #[tokio::test(start_paused = true)]
     async fn a_late_app_id_and_focus_passing_through_an_intruder_are_seen() {
+        let foot = ["foot".to_owned()];
         let before = BTreeSet::from([1]);
         let (mut launch, opened) = waiter(view(vec![window(1, Some("x"), 1, true)]), 0);
         for (seq, window) in [
@@ -836,7 +848,7 @@ mod tests {
         let seen = launch
             .until(WAIT, |view| {
                 checks += 1;
-                launched(view, "foot", &before, Some(1))
+                launched(view, &foot, &before, Some(1))
             })
             .await;
         assert_eq!((seen, checks), (Waited::Done(Observed::One), 3));

@@ -126,6 +126,10 @@ pub(crate) struct Policy {
     /// window's app isn't on the accessibility bus; unset, it may.
     #[serde(default)]
     pub(crate) turn_on_accessibility: Option<bool>,
+    /// Lets `launch` also start an installed desktop entry by its id, under the preset
+    /// rules. Off unless the user turns it on.
+    #[serde(default)]
+    pub(crate) launch_desktop_entries: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -142,7 +146,21 @@ pub(crate) struct Preset {
     pub(crate) env: BTreeMap<String, String>,
 }
 
+/// What `launch` starts: a fixed command, and the `app_id`s its windows may have.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Launchable {
+    pub(crate) command: Vec<String>,
+    pub(crate) app_ids: Vec<String>,
+}
+
 impl Preset {
+    pub(crate) fn launchable(&self) -> Launchable {
+        Launchable {
+            command: self.command(),
+            app_ids: vec![self.app_id.clone()],
+        }
+    }
+
     /// What niri spawns. niri's `Spawn` takes no environment, so variables go through
     /// `env`, which niri finds on its `PATH`.
     pub(crate) fn command(&self) -> Vec<String> {
@@ -182,6 +200,8 @@ pub(crate) struct PolicyStatus {
     denied_app_ids: usize,
     /// Whether the server may turn the session's accessibility on.
     turn_on_accessibility: bool,
+    /// Whether `launch` also takes an installed desktop entry's id.
+    launch_desktop_entries: bool,
     /// Where `screenshot`'s `save_path` writes, as written; null when saving is off.
     capture_dir: Option<String>,
     /// Whether the file chose `capture_dir`, an empty one included, or the default
@@ -284,6 +304,15 @@ impl Loaded {
         }
     }
 
+    /// Whether the file turns `launch_desktop_entries` on. A missing or invalid file
+    /// doesn't.
+    pub(crate) const fn launch_desktop_entries(&self) -> bool {
+        match self {
+            Self::Valid(policy) => policy.launch_desktop_entries,
+            Self::Missing | Self::Invalid(_) => false,
+        }
+    }
+
     /// Whether the file turns `confirm_lease` on. A missing or invalid file doesn't.
     pub(crate) const fn confirm_lease(&self) -> bool {
         match self {
@@ -331,6 +360,7 @@ impl Loaded {
             }),
             denied_app_ids: policy.map_or(0, |policy| policy.deny_input_app_ids.len()),
             turn_on_accessibility: off_bus(self, false, false) == OffBus::Listen,
+            launch_desktop_entries: self.launch_desktop_entries(),
             capture_dir: self.capture_dir().ok().map(|(dir, _)| dir.to_owned()),
             capture_dir_source: match (self, self.capture_dir()) {
                 (_, Ok((_, source))) => Some(source),
@@ -476,7 +506,8 @@ fn check(preset: &Preset, unrestricted: bool) -> Result<(), String> {
 
 /// Why the preset rules refuse to start `argv`, as the rest of a sentence about it: a
 /// program that runs any command it is given, `flatpak` with a `--command` that is one or
-/// a terminal, or a terminal with arguments. They hold for presets without `unrestricted`.
+/// a terminal, or a terminal with arguments. They hold for presets without `unrestricted`
+/// and for desktop entries always.
 pub(crate) fn refuse_command(argv: &[String]) -> Option<String> {
     let base = base_name(argv.first()?);
     if runs_anything(&base) {
@@ -978,6 +1009,16 @@ pub(crate) fn refuse_secret_field(role: &str) -> Option<ToolError> {
             "the element is a password field; element actions never act on one, and nothing was sent",
         )
     })
+}
+
+/// `app_denied` when desktop entry `id` would start an app on the deny list: one of
+/// `app_ids`, the entry's id and its `StartupWMClass`, is on it. An app whose windows have
+/// another `app_id` isn't caught here; input to its windows still is.
+pub(crate) fn refuse_entry(policy: &Loaded, id: &str, app_ids: &[String]) -> Option<ToolError> {
+    let whose = format!("desktop entry {id:?}");
+    app_ids
+        .iter()
+        .find_map(|app_id| denied(policy, app_id, &whose))
 }
 
 fn denied(policy: &Loaded, app_id: &str, whose: &str) -> Option<ToolError> {

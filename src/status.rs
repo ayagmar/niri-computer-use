@@ -20,7 +20,7 @@ use crate::policy::{
     ToolsStatus,
 };
 use crate::runner::{self, Place};
-use crate::{Env, a11y, discover};
+use crate::{Env, a11y, apps, discover};
 
 /// Programs the server runs for the session asking, found on its `PATH` or not.
 const SESSION_BINARIES: [&str; 2] = ["grim", "notify-send"];
@@ -56,6 +56,9 @@ pub(crate) struct Status {
     accessibility_switch: Option<a11y::SwitchReport>,
     audit: AuditStatus,
     policy: PolicyStatus,
+    /// The installed desktop entries `launch` would start; null while
+    /// `policy.launch_desktop_entries` is off.
+    desktop_entries: Option<apps::Listing>,
     /// Whether gated actions are allowed, and whether the policy file or the environment
     /// allowed them.
     unrestricted: SwitchStatus,
@@ -89,6 +92,8 @@ pub(crate) struct Sources<'a> {
     pub(crate) shared: &'a Shared,
     /// Where the session's own programs are found.
     pub(crate) place: Place<'a>,
+    /// Where the session's desktop entries are.
+    pub(crate) apps: &'a apps::Search,
     /// Decided once at startup for the server, whose tool list depends on it.
     pub(crate) accessibility: &'a a11y::Presence,
     /// The engine's switch; none for the `status` subcommand.
@@ -176,6 +181,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         tools,
         shared,
         place,
+        apps,
         accessibility,
         accessibility_switch,
     } = sources;
@@ -187,11 +193,12 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
             None
         }
     };
-    let (version, outputs, noctalia, logind) = tokio::join!(
+    let (version, outputs, noctalia, logind, desktop_entries) = tokio::join!(
         niri::version(socket),
         niri::outputs(socket),
         noctalia,
-        control::logind(socket, &env.desktop)
+        control::logind(socket, &env.desktop),
+        apps::listing(policy, apps, place)
     );
     let noctalia_status = noctalia.as_ref().and_then(|reply| reply.as_ref().ok());
     let lock = control::lock(logind, noctalia_status);
@@ -230,6 +237,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         accessibility_switch,
         audit: audit.status(),
         policy: policy.status(),
+        desktop_entries,
         unrestricted: unrestricted.status(),
         confirm_lease: confirm_lease.status(),
         tools: tools.status(),
@@ -276,6 +284,7 @@ mod tests {
             tools: &settings.tools,
             shared: &settings.shared,
             place: crate::test_support::no_programs(),
+            apps: &settings.apps,
             accessibility: &a11y::detect(None).await,
             accessibility_switch: None,
         };
@@ -322,11 +331,12 @@ mod tests {
                 "accessibility_switch": null,
                 "audit": {"path": null, "last_error": "neither XDG_STATE_HOME nor HOME is set"},
                 "policy": {
-                    "state": "missing", "presets": 0, "preset_names": [], "denied_app_ids": 0, "turn_on_accessibility": true,
+                    "state": "missing", "presets": 0, "preset_names": [], "denied_app_ids": 0, "turn_on_accessibility": true, "launch_desktop_entries": false,
                     "capture_dir": "~/Pictures/niri-computer-use",
                     "capture_dir_source": "default",
                     "error": null
                 },
+                "desktop_entries": null,
                 "unrestricted": {"enabled": false, "source": null, "error": null},
                 "confirm_lease": {"enabled": false, "source": null, "error": null},
                 "tools": {"profile": "full", "source": null, "error": null},

@@ -46,6 +46,8 @@ No arguments. The readiness report, also printed by `niri-computer-use status`:
 | `policy.state` | `loaded`, `missing` (valid: no presets, no denied apps) or `invalid` |
 | `policy.presets`, `policy.denied_app_ids`, `policy.error` | how many presets and denied apps the policy file has, and why it is invalid |
 | `policy.preset_names` | the preset names `launch` takes |
+| `policy.launch_desktop_entries` | whether `launch` also takes an installed app's desktop entry id |
+| `desktop_entries.count`, `desktop_entries.ids`, `desktop_entries.error` | with `launch_desktop_entries`, how many desktop entries `launch` would start, the first 64 ids in order, and why they couldn't be read; the whole field is null while the key is off |
 | `policy.turn_on_accessibility` | whether the server may turn the session's accessibility on ([`turn_on_accessibility`](../../concepts/configuration/#turn_on_accessibility)) |
 | `policy.capture_dir`, `policy.capture_dir_source` | where `screenshot` saves, as written (`~/Pictures/niri-computer-use` by default), or null when saving is off; and `policy` or `default` for where that came from |
 | `unrestricted.enabled`, `unrestricted.source`, `unrestricted.error` | whether gated `niri_action`s and unrestricted presets are allowed, whether the policy file, `NIRI_COMPUTER_USE_UNRESTRICTED` or both allowed them, and why the variable was ignored |

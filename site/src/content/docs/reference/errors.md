@@ -91,9 +91,15 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 ### `unknown_preset`
 
-**Cause:** `launch` named a preset the policy file doesn't have. The `detail` lists the names it has.
+**Cause:** `launch` named a preset the policy file doesn't have and, with [`launch_desktop_entries`](../../concepts/configuration/#launch_desktop_entries) on, no installed desktop entry has that id either. The `detail` lists the preset names, and with the key on, up to five entries whose id or name contains the name, such as `org.gnome.Nautilus (Files)` for `files`.
 
 **What to do:** use one of those names, or add a [preset](../../concepts/configuration/#preset) and restart the agent's session.
+
+### `entry_refused`
+
+**Cause:** `launch` named an installed desktop entry it won't start. The `detail` names the entry and why: it is hidden or `NoDisplay`, isn't an application, is for another desktop, has a `TryExec` that isn't installed, runs in a terminal, has no `Exec` line, is malformed or written for a shell, or starts a program the preset rules refuse, such as `sh` or `env`. See [`launch_desktop_entries`](../../concepts/configuration/#launch_desktop_entries).
+
+**What to do:** tell the user. A [preset](../../concepts/configuration/#preset) with the app's command starts it, if the rules allow that command.
 
 ### `ref_invalid`
 

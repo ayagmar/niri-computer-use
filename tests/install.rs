@@ -412,6 +412,16 @@ mod script {
         assert!(stdout.contains("Registered in Claude Code."), "{stdout}");
         assert!(stdout.contains("Registered in Codex."), "{stdout}");
         assert!(!stdout.contains("claude mcp add"), "{stdout}");
+        // It suggests the policy key and leaves the user's config alone.
+        let policy = release.home().join(".config/niri-computer-use/policy.toml");
+        assert!(
+            stdout.contains(&format!(
+                "add this line to {}:\n       launch_desktop_entries = true",
+                policy.display()
+            )),
+            "{stdout}"
+        );
+        assert!(!policy.parent().unwrap().exists());
         assert!(!stdout.contains("pi mcp add"), "{stdout}");
     }
 

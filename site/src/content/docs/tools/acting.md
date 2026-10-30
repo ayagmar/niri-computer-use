@@ -83,14 +83,16 @@ For a workspace, `observed` is `focused` once the workspace has focus, on whiche
 
 | Argument | Value |
 |---|---|
-| `preset` (required) | a preset name from the policy file, listed in `status` as `policy.preset_names` |
-| `reuse` | default false; with true, focus the preset's existing window instead of starting another |
+| `preset` (required) | a preset name from the policy file, listed in `status` as `policy.preset_names`, or, with [`launch_desktop_entries`](../../concepts/configuration/#launch_desktop_entries) on, an installed app's desktop entry id, listed in `status.desktop_entries.ids` |
+| `reuse` | default false; with true, focus the app's existing window instead of starting another |
 
-niri starts the preset's fixed `argv`; the app keeps running after the server exits. `observed` counts the windows with the preset's `app_id` that weren't open before, including one that sets its `app_id` after it appears. Once the first appears the server keeps counting for half a second, then reports `one` or `ambiguous`, with the ids in `windows`. With no such window in five seconds it reports `none`. Focus moving to a new window, before it has its `app_id`, isn't an interruption. A single-instance app hands a second start to its running process, which focuses the window it already has: `observed` is then `focused`, with that window in `windows`.
+niri starts the preset's fixed `argv`, or the entry's `Exec` line as an argv, with no shell and no files passed; the app keeps running after the server exits. A preset wins over an entry with the same name, and the entry is read when `launch` names it. An entry that is hidden, for another desktop, run in a terminal or refused by the preset rules fails with `entry_refused`, and a name neither has fails with `unknown_preset`, whose `detail` names entries whose id or name contains it.
+
+`observed` counts the windows with the preset's `app_id`, or the entry's id or `StartupWMClass`, that weren't open before, including one that sets its `app_id` after it appears. Once the first appears the server keeps counting for half a second, then reports `one` or `ambiguous`, with the ids in `windows`. With no such window in five seconds it reports `none`. Focus moving to a new window, before it has its `app_id`, isn't an interruption. A single-instance app hands a second start to its running process, which focuses the window it already has: `observed` is then `focused`, with that window in `windows`.
 
 With `reuse`: one existing matching window is focused, and `observed` is `focused` with its id in `windows`; several give `ambiguous` with their ids and `accepted: false`, and nothing is started; none starts the preset as usual.
 
-With no preset for the app and [`unrestricted`](../../concepts/configuration/#unrestricted) on, the skill tells agents to start it with `niri_action`'s `Spawn` and the program's argv, never a shell or `SpawnSh`. `Spawn` reports only `sent`, so they then find the window with `wait_for` or `desktop_state`, without assuming its `app_id` is the program's name, and don't start it again after an uncertain result or a timeout. With `unrestricted` off they ask you for a preset.
+With no preset or desktop entry for the app and [`unrestricted`](../../concepts/configuration/#unrestricted) on, the skill tells agents to start it with `niri_action`'s `Spawn` and the program's argv, never a shell or `SpawnSh`. `Spawn` reports only `sent`, so they then find the window with `wait_for` or `desktop_state`, without assuming its `app_id` is the program's name, and don't start it again after an uncertain result or a timeout. With `unrestricted` off they ask you for a preset, or to turn on `launch_desktop_entries`.
 
 ## `close_window`
 

@@ -17,11 +17,12 @@ The server reads `~/.config/niri-computer-use/policy.toml`, or `$XDG_CONFIG_HOME
 | `presets`, `preset_names` | how many presets there are, and the names `launch` takes |
 | `denied_app_ids` | how many apps are on the deny list |
 | `turn_on_accessibility` | whether the server may turn the session's accessibility on: false when the file sets it to `false` or is invalid |
+| `launch_desktop_entries` | whether `launch` also takes an installed app's desktop entry id |
 | `capture_dir` | where `save_path` writes, as the file writes it or `~/Pictures/niri-computer-use` by default, or null when saving is off |
 | `capture_dir_source` | `policy` when the file sets `capture_dir`, `""` included, `default` when it doesn't or there is no file, null while the file is invalid |
 | `error` | why the file is invalid |
 
-`status` also shows `unrestricted` and `confirm_lease`, each with `enabled`, `source` (`policy`, `env`, `both`, or null while off) and `error`, which explains a `NIRI_COMPUTER_USE_UNRESTRICTED` or `NIRI_COMPUTER_USE_CONFIRM_LEASE` value other than `1`. Its `tools` shows the [tool profile](#tools): `profile`, `source` (`policy`, `env`, `both`, or null for `full`) and `error`, which explains a `NIRI_COMPUTER_USE_TOOLS` value that names no profile.
+`status.desktop_entries` lists the [desktop entries](#launch_desktop_entries) `launch` would start, and is null while `launch_desktop_entries` is off. `status` also shows `unrestricted` and `confirm_lease`, each with `enabled`, `source` (`policy`, `env`, `both`, or null while off) and `error`, which explains a `NIRI_COMPUTER_USE_UNRESTRICTED` or `NIRI_COMPUTER_USE_CONFIRM_LEASE` value other than `1`. Its `tools` shows the [tool profile](#tools): `profile`, `source` (`policy`, `env`, `both`, or null for `full`) and `error`, which explains a `NIRI_COMPUTER_USE_TOOLS` value that names no profile.
 
 An invalid file doesn't stop the server, but `acquire_desktop` and every action refuse with `read_only` until you fix it and restart. A file with an unknown key is invalid too.
 
@@ -30,6 +31,9 @@ An invalid file doesn't stop the server, but `acquire_desktop` and every action 
 ```toml
 # Input tools refuse while one of these apps has keyboard focus.
 deny_input_app_ids = ["org.keepassxc.KeePassXC", "org.gnome.Settings"]
+
+# launch also starts installed apps by their desktop entry id, such as org.gnome.Nautilus.
+launch_desktop_entries = true
 
 # Where screenshot's save_path writes PNG files. Without it, ~/Pictures/niri-computer-use;
 # "" turns saving off.
@@ -54,7 +58,7 @@ app_id = "org.gnome.Nautilus"
 With this file, `status` reports:
 
 ```json
-{"state":"loaded","presets":3,"preset_names":["firefox","terminal","files"],"denied_app_ids":2,"capture_dir":"~/Pictures/agent-shots","capture_dir_source":"policy","error":null}
+{"state":"loaded","presets":3,"preset_names":["firefox","terminal","files"],"denied_app_ids":2,"launch_desktop_entries":true,"capture_dir":"~/Pictures/agent-shots","capture_dir_source":"policy","error":null}
 ```
 
 ## Keys
@@ -107,7 +111,7 @@ The notification needs `notify-send` (libnotify) on the client's `PATH` and a no
 
 ### `shared`
 
-`true`, `false` or `"required"`, default `true`. With `true`, the server serves its client through the one shared engine of its niri instance, starting the engine if none runs, instead of on its own. Every client then shares one crash guardian, one niri event stream and one accessibility connection, while its policy, `unrestricted`, `HOME` and `PATH` stay its own, read from its own environment as before. Its `grim` runs in its own working directory, as a standalone server's would, even after that directory is renamed or removed, so relative entries on its `PATH` work as they do in its shell.
+`true`, `false` or `"required"`, default `true`. With `true`, the server serves its client through the one shared engine of its niri instance, starting the engine if none runs, instead of on its own. Every client then shares one crash guardian, one niri event stream and one accessibility connection, while its policy, `unrestricted`, `HOME`, `PATH` and the directories its desktop entries are in stay its own, read from its own environment as before. Its `grim` runs in its own working directory, as a standalone server's would, even after that directory is renamed or removed, so relative entries on its `PATH` work as they do in its shell.
 
 With `false`, each server serves its own client, with a guardian, event stream and accessibility connection of its own.
 
@@ -130,6 +134,38 @@ The server decides before it reads anything from its client. If no engine answer
 `clipboard_read` isn't in `observe` because it needs the lease, which `observe` can't take.
 
 `NIRI_COMPUTER_USE_TOOLS` in the server's environment names a profile too, so one MCP client can list fewer tools than another. The narrower of the file's profile and the variable's wins: either can take tools away and neither can add them back. A value other than `observe`, `act` or `full` lists only `observe`'s tools and shows up as `status.tools.error`.
+
+### `launch_desktop_entries`
+
+`true` or `false`, default `false`. With `true`, `launch` also takes the desktop entry id of an installed app, such as `org.gnome.Nautilus` or `firefox`: the name of its `.desktop` file without the extension. A [preset](#preset) with the same name wins. The server reads the entry each time `launch` names it, so an app installed or changed since the server started is found, and niri starts the entry's `Exec` line as an argv, as it does a preset's `argv`: no shell runs it, and no files or URLs are passed. While the key is off, no entry file is read.
+
+`status.desktop_entries` has `count`, how many entries `launch` would start, and `ids`, the first 64 of their ids in order. For an id `launch` doesn't find, `unknown_preset`'s `detail` names up to five entries whose id or `Name` contains it, ignoring case, so `files` finds `org.gnome.Nautilus (Files)`.
+
+The server looks where an app menu in the client's session would, in this order, and the first directory that has the id wins:
+
+1. `$XDG_DATA_HOME/applications`, or `~/.local/share/applications` when it is unset
+2. `applications` in each directory of `$XDG_DATA_DIRS`, or `/usr/local/share` and `/usr/share` when it is unset
+
+An entry in a subdirectory has its path as its id, with `/` as `-`: `kde4/okular.desktop` is `kde4-okular`. A directory that is missing or can't be read is skipped. Flatpak apps are found when `XDG_DATA_DIRS` names flatpak's `exports/share` directories, as a session with flatpak installed sets it; a client that starts its server without `XDG_DATA_DIRS` sees only `/usr/local/share` and `/usr/share`.
+
+`launch` refuses an entry with [`entry_refused`](../../reference/errors/#entry_refused) when it:
+
+- has `Hidden=true`, which is how you hide a system entry by copying it into `~/.local/share/applications`, or `NoDisplay=true`
+- isn't `Type=Application`
+- isn't shown on this desktop by its `OnlyShowIn` or `NotShowIn`, read against `$XDG_CURRENT_DESKTOP`, or `niri` when it is unset
+- has a `TryExec` that isn't on the client's `PATH`
+- has `Terminal=true`. It needs a terminal, and a terminal started with a command is what the preset rules refuse
+- has `DBusActivatable=true` and no `Exec` line. With an `Exec` line, that line is started, as other launchers do
+- is malformed, or has an `Exec` line written for a shell: an unquoted `|`, `;`, `>`, `$`, `~`, `'` or another character only a shell reads, an unescaped `$` or `` ` `` in quotes, or a field code the spec doesn't define
+- starts a program the [preset rules](#preset) refuse. They apply even with `unrestricted` on, and `env` is one of those programs, so `Exec=env NAME=value app` doesn't start. A preset with `env` does, under `unrestricted`
+
+In the `Exec` line, `%f`, `%F`, `%u` and `%U` are dropped, `%i` becomes `--icon` and the entry's `Icon`, `%c` its `Name`, `%k` the file's path and `%%` a `%`; the deprecated codes are dropped too.
+
+An entry whose id or `StartupWMClass` is on [`deny_input_app_ids`](#deny_input_app_ids) is refused with `app_denied`. An app whose windows have another `app_id` can't be caught before it starts; once its window has focus, input to it is refused as for any window.
+
+`launch` watches for windows whose `app_id` is the entry's id or its `StartupWMClass`. An app whose windows have neither still starts, but `launch` reports `observed: none` after five seconds; a preset with the right `app_id` fixes that. `desktop_state` shows each window's `app_id`.
+
+This sits between presets and [`unrestricted`](#unrestricted). The agent can start only installed apps, each with the command its entry fixes, but it can start any of them, a terminal without arguments included, as a preset may. Anything that can write to `~/.local/share/applications` can add an entry.
 
 ### `[[preset]]`
 
@@ -166,11 +202,13 @@ The server reads these once, at startup. When `XDG_RUNTIME_DIR`, `NIRI_SOCKET` o
 | `XDG_RUNTIME_DIR` | finding niri's socket, the display and the session bus |
 | `WAYLAND_DISPLAY` | everything that reaches the display: input, screenshots, pasting, `clipboard_read`, and finding Noctalia's socket |
 | `DBUS_SESSION_BUS_ADDRESS` | finding the accessibility bus for `elements`; without it, `$XDG_RUNTIME_DIR/bus` |
-| `PATH` | `grim` and, with [`confirm_lease`](#confirm_lease), `notify-send` for this client's calls |
+| `PATH` | `grim`, with [`confirm_lease`](#confirm_lease) `notify-send`, and a desktop entry's `TryExec`, for this client's calls |
 | `NIRI_COMPUTER_USE_DESKTOP_PATH` | where to look for `loginctl` and `noctalia`, as a `PATH`-style list of absolute directories; unset or empty looks in `/usr/local/bin:/usr/bin:/bin:/run/current-system/sw/bin`. Only absolute directories count, each once, and a trailing slash makes no difference. In [shared](#shared) mode, a client that sets other directories than the engine's, or the same ones in another order, is served standalone |
 | `XDG_CONFIG_HOME`, else `HOME` | the policy file |
 | `XDG_STATE_HOME`, else `HOME` | the audit log |
 | `HOME` | a `capture_dir` that starts with `~/`, and the default one |
+| `XDG_DATA_HOME`, `XDG_DATA_DIRS`, else `HOME` | where [desktop entries](#launch_desktop_entries) are, with `launch_desktop_entries` |
+| `XDG_CURRENT_DESKTOP` | an entry's `OnlyShowIn` and `NotShowIn`; `niri` when unset |
 | `NIRI_COMPUTER_USE_UNRESTRICTED` | `1` turns on [`unrestricted`](#unrestricted) for this server; unset or empty leaves the policy file to decide |
 | `NIRI_COMPUTER_USE_CONFIRM_LEASE` | `1` turns on [`confirm_lease`](#confirm_lease) for this server; unset or empty leaves the policy file to decide |
 | `NIRI_COMPUTER_USE_TOOLS` | `observe`, `act` or `full`: the [tool profile](#tools) for this server; unset or empty leaves the policy file to decide |
