@@ -2,11 +2,12 @@
 //! Chromium text area. A Chromium-based browser, found by `find`, opens
 //! `fixtures/chromium.html` in app mode on the nested niri, with a profile, a home and
 //! caches under `TEST_DIR`. The page puts the text area's exact value in its title, which
-//! niri reports, so nothing here needs accessibility. Text the project says arrives
-//! exactly must arrive exactly; text it says is lost is reported as received, so a run
-//! shows both the loss and the day a fix lands.
+//! niri reports, so nothing here needs accessibility. Then `forms` does the same in form
+//! fields. Text the project says arrives exactly must arrive exactly; text it says is lost
+//! is reported as received, so a run shows both the loss and the day a fix lands.
 
 pub(crate) mod a11y;
+mod forms;
 
 use std::ffi::OsString;
 use std::fs;
@@ -199,10 +200,11 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str, browser: &str) -> Res
     mcp::ready(session, &mut client, "chromium-ready", READY)?;
     structured(&client.call(session, "acquire_desktop", json!({}))?)?;
     let mut process = start(session, browser)?;
-    let page = Page::open(session, &mut process)?;
-    let differed = cases(session, &mut client, &page)?;
-    structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
+    let page = Page::open(session, &mut process, "chromium")?;
+    let mut differed = cases(session, &mut client, &page)?;
     process.terminate(TERM_GRACE)?;
+    differed.extend(forms::run(session, &mut client, browser)?);
+    structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     client.stop()?;
     noctalia.stop()?;
     if differed.is_empty() {
@@ -310,8 +312,9 @@ struct Page {
 
 impl Page {
     /// Waits for the page's title, then for niri's focus on its window. A browser that
-    /// exits first fails the wait at once, with its exit status and where its log is.
-    fn open(session: &mut Session<'_>, browser: &mut Process) -> Result<Self> {
+    /// exits first fails the wait at once, with its exit status and where its log is,
+    /// the artifact `<name>.log`.
+    fn open(session: &mut Session<'_>, browser: &mut Process, name: &str) -> Result<Self> {
         let window = session.wait_until(
             "chromium-window",
             "the fixture page's window",
@@ -343,7 +346,7 @@ impl Page {
         Ok(Self {
             id: window.id,
             app_id,
-            log: session.artifact("chromium.log"),
+            log: session.artifact(&format!("{name}.log")),
         })
     }
 
@@ -371,10 +374,13 @@ impl Page {
 
     /// The page's keydowns logged since `offset`.
     fn keydowns(&self, offset: usize) -> Result<Vec<(String, String)>> {
+        Ok(keydowns(&self.read_log(offset)?))
+    }
+
+    /// The browser's log since `offset`.
+    fn read_log(&self, offset: usize) -> Result<String> {
         let log = fs::read(&self.log).context(format!("read {}", self.log.display()))?;
-        Ok(keydowns(&String::from_utf8_lossy(
-            log.get(offset..).unwrap_or_default(),
-        )))
+        Ok(String::from_utf8_lossy(log.get(offset..).unwrap_or_default()).into_owned())
     }
 }
 

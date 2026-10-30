@@ -1,0 +1,109 @@
+<!doctype html>
+<!--
+  The Chromium forms fixture: one field, picked by the query `?field=<name>`, whose exact
+  value goes into the window title after every change, encoded as fixtures/chromium.html
+  does. The fields:
+
+  - number: a plain <input type=number>;
+  - controlled: a number input driven the way React drives a controlled one: each input
+    event dispatches to a reducer, then a synchronous render spends RENDER_MS busy and
+    writes the state's value back into the field when it differs;
+  - masked: a text input as controlled, behind the check @react-input/core 2.0.2
+    (packages/core/src/Input.ts) puts in front of every masked field, such as
+    @react-input/number-format's. From focus on, a chain of setTimeout(0) calls stands in
+    for its selection tracking, and an input event that comes before the chain has run
+    since the previous one is undone, as its "The input selection has not been updated."
+
+  Each input the mask undoes goes to the console as `ncu-undone`, which
+  `--enable-logging=stderr` copies into the browser's log.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>ncu-chromium:</title>
+<style>
+  html, body { margin: 0; width: 100%; height: 100%; }
+  input { font: 16px monospace; width: 100%; box-sizing: border-box; }
+</style>
+</head>
+<body>
+<script>
+  const RENDER_MS = 8;
+  const name = new URLSearchParams(location.search).get("field");
+  const publish = (value) => {
+    let units = "";
+    for (let i = 0; i < value.length; i++) {
+      units += value.charCodeAt(i).toString(16).padStart(4, "0");
+    }
+    document.title = "ncu-chromium:" + units;
+  };
+  const busy = (ms) => {
+    const until = performance.now() + ms;
+    while (performance.now() < until) {}
+  };
+
+  // A reducer and a render, as small as React's controlled-input round trip.
+  let state = "";
+  const reduce = (state, action) => (action.type === "change" ? action.value : state);
+  const field = document.createElement("input");
+  field.type = name === "masked" ? "text" : "number";
+  field.spellcheck = false;
+  field.autocomplete = "off";
+  const render = () => {
+    busy(RENDER_MS);
+    if (field.value !== state) {
+      field.value = state;
+    }
+    publish(state);
+  };
+  const changed = () => {
+    state = reduce(state, { type: "change", value: field.value });
+    render();
+  };
+
+  // @react-input/core's check, cut down to its timer chain. It listens on the element, so
+  // it runs before React, which listens at the root.
+  const mask = () => {
+    const timeout = { id: -1, cachedId: -1 };
+    let tracked = field.value;
+    const tick = () => {
+      timeout.id = window.setTimeout(tick);
+    };
+    field.addEventListener("focus", () => {
+      timeout.id = window.setTimeout(tick);
+    });
+    field.addEventListener("blur", () => {
+      window.clearTimeout(timeout.id);
+      timeout.id = -1;
+      timeout.cachedId = -1;
+    });
+    field.addEventListener("input", (event) => {
+      if (timeout.cachedId === timeout.id) {
+        console.log("ncu-undone " + JSON.stringify({ value: field.value }));
+        field.value = tracked;
+        event.stopImmediatePropagation();
+        return;
+      }
+      timeout.cachedId = timeout.id;
+      tracked = field.value;
+    });
+  };
+
+  if (name === "number") {
+    field.addEventListener("input", () => publish(field.value));
+  } else if (name === "controlled") {
+    field.addEventListener("input", changed);
+  } else if (name === "masked") {
+    mask();
+    field.addEventListener("input", changed);
+  }
+  if (["number", "controlled", "masked"].includes(name)) {
+    document.body.append(field);
+    field.focus();
+    publish(field.value);
+  } else {
+    document.title = "ncu-forms: unknown field " + name;
+  }
+</script>
+</body>
+</html>
