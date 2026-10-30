@@ -524,7 +524,8 @@ pub(crate) fn refuse_command(argv: &[String]) -> Option<String> {
     None
 }
 
-fn base_name(program: &str) -> String {
+/// The file name of `program`, as the rules compare it.
+pub(crate) fn base_name(program: &str) -> String {
     Path::new(program)
         .file_name()
         .map_or_else(String::new, |base| base.to_string_lossy().into_owned())
@@ -600,6 +601,16 @@ fn refuse_flatpak_command(command: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// The app id a `flatpak run` argv starts, such as `org.mozilla.firefox` for
+/// `org.mozilla.firefox/x86_64/stable`, for the deny list and to find its windows.
+pub(crate) fn flatpak_app(argv: &[String]) -> Option<String> {
+    if base_name(argv.first()?) != "flatpak" {
+        return None;
+    }
+    let app = flatpak_run(argv).ok()?;
+    app.split('/').next().map(str::to_owned)
 }
 
 /// With `env`, the program goes after the assignments `env` reads, so it can't look like
@@ -1578,6 +1589,26 @@ app_id = "foot"
         ] {
             assert_eq!(refuse_command(&argv(args)), None, "{args:?}");
         }
+    }
+
+    #[test]
+    fn the_flatpak_app_is_named_for_the_deny_list() {
+        let argv =
+            |args: &[&str]| -> Vec<String> { args.iter().map(|&arg| arg.to_owned()).collect() };
+        assert_eq!(
+            flatpak_app(&argv(&[
+                "/usr/bin/flatpak",
+                "run",
+                "--branch=stable",
+                "org.keepassxc.KeePassXC//stable"
+            ])),
+            Some("org.keepassxc.KeePassXC".to_owned())
+        );
+        assert_eq!(flatpak_app(&argv(&["keepassxc"])), None);
+        assert_eq!(
+            flatpak_app(&argv(&["flatpak", "run", "--filesystem=host", "org.x.Y"])),
+            None
+        );
     }
 
     #[test]

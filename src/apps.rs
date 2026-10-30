@@ -23,8 +23,8 @@ use crate::session::Settings;
 const DEADLINE: Duration = Duration::from_secs(2);
 /// How deep under an `applications` directory entries are looked for.
 const MAX_DEPTH: usize = 3;
-/// The most files and directories one search looks at.
-const MAX_FILES: usize = 8192;
+/// The most files and directories looked at under each `applications` directory.
+const MAX_FILES: usize = 4096;
 /// How many ids `status` lists.
 const IDS_SHOWN: usize = 64;
 /// How many close matches an unknown id's refusal names.
@@ -224,7 +224,10 @@ fn startable<'a>(
 }
 
 /// The entry `id` as `launch` starts it, unless the preset rules refuse its command
-/// (`entry_refused`) or the deny list has its id or `StartupWMClass` (`app_denied`).
+/// (`entry_refused`) or the deny list has a name of the app it starts (`app_denied`): the
+/// entry's id, its `StartupWMClass`, the flatpak app it runs, or its program's base name.
+/// Its windows are looked for by all but the last, which other apps can share, as Electron
+/// apps share `electron`.
 fn launchable(policy: &Loaded, id: &str, start: entry::Startable) -> Result<Launchable, ToolError> {
     if let Some(why) = policy::refuse_command(&start.argv) {
         return Err(ToolError::new(
@@ -233,8 +236,17 @@ fn launchable(policy: &Loaded, id: &str, start: entry::Startable) -> Result<Laun
         ));
     }
     let mut app_ids = vec![id.to_owned()];
-    app_ids.extend(start.wm_class.filter(|class| class != id));
-    if let Some(denied) = policy::refuse_entry(policy, id, &app_ids) {
+    for name in [start.wm_class, policy::flatpak_app(&start.argv)]
+        .into_iter()
+        .flatten()
+    {
+        if !app_ids.contains(&name) {
+            app_ids.push(name);
+        }
+    }
+    let program = start.argv.first().map(|program| policy::base_name(program));
+    let names: Vec<String> = app_ids.iter().cloned().chain(program).collect();
+    if let Some(denied) = policy::refuse_entry(policy, id, &names) {
         return Err(denied);
     }
     Ok(Launchable {
@@ -314,14 +326,15 @@ fn check(file: &Located, search: &Search, place: Place<'_>) -> Checked {
 /// first directory's. A file in a subdirectory has the id of its path with `/` as `-`, as
 /// `kde4/okular.desktop` is `kde4-okular`; when two files in one directory have one id, the
 /// shallower wins, then the first by name. A directory that is missing or can't be read is
-/// skipped.
+/// skipped, and each is looked at for at most `MAX_FILES` names, so one full of files
+/// can't hide the others'.
 fn index(applications: &[String]) -> BTreeMap<String, Located> {
     let mut found = BTreeMap::new();
-    let mut budget = MAX_FILES;
     for dir in applications {
         let dir = Path::new(dir);
         let data_dir = dir.parent().unwrap_or(dir).to_owned();
         let mut here = BTreeMap::new();
+        let mut budget = MAX_FILES;
         walk(dir, "", 0, &mut here, &mut budget);
         for (id, (_, path)) in here {
             found.entry(id).or_insert_with(|| Located {
@@ -345,15 +358,20 @@ fn walk(
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
-    let mut names: Vec<String> = entries
-        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
-        .collect();
-    names.sort_unstable();
-    for name in names {
+    let mut names: Vec<String> = Vec::new();
+    for entry in entries {
         let Some(left) = budget.checked_sub(1) else {
-            return;
+            break;
         };
         *budget = left;
+        names.extend(
+            entry
+                .ok()
+                .and_then(|entry| entry.file_name().into_string().ok()),
+        );
+    }
+    names.sort_unstable();
+    for name in names {
         let path = dir.join(&name);
         let Ok(metadata) = std::fs::metadata(&path) else {
             continue;
@@ -393,16 +411,27 @@ impl Owned {
     }
 }
 
-/// Runs `work`, which reads files, off the async runtime, and gives up on it after
-/// `DEADLINE`, as on a hung network mount.
+/// Runs `work`, which reads files, on a thread of its own, and gives up on it after
+/// `DEADLINE`, as on a hung network mount. The thread is detached: one still stuck in a read
+/// doesn't keep the runtime, and so the server, from ending, as a blocking task would.
 async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, ToolError> {
-    match tokio::time::timeout(DEADLINE, tokio::task::spawn_blocking(work)).await {
+    let (answer, answered) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("desktop-entries".to_owned())
+        .spawn(move || answer.send(work()).is_ok())
+        .map_err(|error| {
+            ToolError::new(
+                ErrorName::UpstreamError,
+                format!("start a thread to read the desktop entries: {error}"),
+            )
+        })?;
+    match tokio::time::timeout(DEADLINE, answered).await {
         Ok(Ok(value)) => Ok(value),
-        Ok(Err(error)) => Err(ToolError::new(
+        Ok(Err(_)) => Err(ToolError::new(
             ErrorName::UpstreamError,
-            format!("reading the desktop entries failed: {error}"),
+            "reading the desktop entries failed: the thread ended without an answer",
         )),
         Err(_) => Err(ToolError::new(
             ErrorName::DeadlineExceeded,
@@ -639,9 +668,20 @@ mod tests {
             "vault.desktop",
             &app("vault", "StartupWMClass=org.keepassxc.KeePassXC\n"),
         );
-        let policy = format!("{ON}deny_input_app_ids = [\"org.keepassxc.KeePassXC\"]\n");
+        // A wrapper named for neither, which starts the program by its path, or the flatpak.
+        tree.write("one", "wrapper.desktop", &app("/usr/bin/keepassxc", ""));
+        tree.write(
+            "one",
+            "locker.desktop",
+            &app(
+                "flatpak run --command=keepassxc org.keepassxc.KeePassXC/x86_64/stable",
+                "",
+            ),
+        );
+        let policy =
+            format!("{ON}deny_input_app_ids = [\"org.keepassxc.KeePassXC\", \"keepassxc\"]\n");
         let settings = tree.settings(&policy);
-        for id in ["org.keepassxc.KeePassXC", "vault"] {
+        for id in ["org.keepassxc.KeePassXC", "vault", "wrapper", "locker"] {
             let (resolved, _) = launch(&settings, id).await;
             assert_eq!(refused(&resolved).0, ErrorName::AppDenied, "{id}");
         }
@@ -750,6 +790,26 @@ mod tests {
             error: None,
         };
         assert_eq!(status, Some(expected));
+    }
+
+    #[test]
+    fn a_read_stuck_past_its_deadline_does_not_hold_the_runtime_open() {
+        let (release, stuck) = std::sync::mpsc::channel::<()>();
+        let (ended, done) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .unwrap();
+            let work = blocking(move || stuck.recv().is_ok());
+            let gave_up = runtime
+                .block_on(async { tokio::time::timeout(Duration::from_millis(50), work).await });
+            drop(runtime);
+            ended.send(gave_up.is_err()).unwrap();
+        });
+        let outcome = done.recv_timeout(Duration::from_secs(10));
+        drop(release);
+        assert_eq!(outcome, Ok(true));
     }
 
     #[tokio::test]

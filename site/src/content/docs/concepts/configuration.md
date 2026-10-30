@@ -164,9 +164,9 @@ An entry in a subdirectory has its path as its id, with `/` as `-`: `kde4/okular
 
 In the `Exec` line, `%f`, `%F`, `%u` and `%U` are dropped, `%i` becomes `--icon` and the entry's `Icon`, `%c` its `Name`, `%k` the file's path and `%%` a `%`; the deprecated codes are dropped too.
 
-An entry whose id or `StartupWMClass` is on [`deny_input_app_ids`](#deny_input_app_ids) is refused with `app_denied`. An app whose windows have another `app_id` can't be caught before it starts; once its window has focus, input to it is refused as for any window.
+An entry is refused with `app_denied` when [`deny_input_app_ids`](#deny_input_app_ids) has its id, its `StartupWMClass`, the flatpak app its `Exec` line runs, such as `org.keepassxc.KeePassXC` in `flatpak run org.keepassxc.KeePassXC`, or the base name of its program, such as `keepassxc` in `/usr/bin/keepassxc`. An app whose windows have another `app_id` can't be caught before it starts; once its window has focus, input to it is refused as for any window.
 
-`launch` watches for windows whose `app_id` is the entry's id or its `StartupWMClass`. An app whose windows have neither still starts, but `launch` reports `observed: none` after five seconds; a preset with the right `app_id` fixes that. `desktop_state` shows each window's `app_id`.
+`launch` watches for windows whose `app_id` is the entry's id, its `StartupWMClass` or the flatpak app it runs. An app whose windows have none of these still starts, but `launch` reports `observed: none` after five seconds; a preset with the right `app_id` fixes that. `desktop_state` shows each window's `app_id`.
 
 This sits between presets and [`unrestricted`](#unrestricted). The agent can start only apps installed for the whole system, each with the command its entry fixes, but it can start any of them, a terminal without arguments included, as a preset may. A program running as you can't add an entry, since entries you can write are refused.
 
