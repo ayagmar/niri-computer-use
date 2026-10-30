@@ -41,8 +41,9 @@ pub(crate) struct Search {
     /// `$XDG_CURRENT_DESKTOP`'s names, or `niri` when it is unset, for `OnlyShowIn` and
     /// `NotShowIn`.
     desktops: Vec<String>,
-    /// Who an entry file and its directories must belong to: root. Never sent in a hello;
-    /// only tests change it, since they can't make files of root's.
+    /// Who, besides root, an entry file and its directories may belong to: root again in a
+    /// session. Never sent in a hello; only tests change it, since they can't make files of
+    /// root's.
     #[serde(skip)]
     owner: u32,
 }
@@ -173,11 +174,10 @@ struct Checked {
     writable: bool,
 }
 
-/// An entry file found under `data_dir`, the directory its `applications` is in.
+/// An entry file found in an `applications` directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Located {
     path: PathBuf,
-    data_dir: PathBuf,
 }
 
 /// What looking for one id found: its entry, or every entry, for close matches.
@@ -289,7 +289,7 @@ fn check(file: &Located, search: &Search, place: Place<'_>) -> Checked {
         start: Err(format!("at {} {why}", path.display())),
         writable,
     };
-    let text = match read::read(path, &file.data_dir, search.owner) {
+    let text = match read::read(path, search.owner) {
         Ok(text) => text,
         Err(read::Unread::Writable(why)) => {
             return refused(
@@ -332,15 +332,11 @@ fn index(applications: &[String]) -> BTreeMap<String, Located> {
     let mut found = BTreeMap::new();
     for dir in applications {
         let dir = Path::new(dir);
-        let data_dir = dir.parent().unwrap_or(dir).to_owned();
         let mut here = BTreeMap::new();
         let mut budget = MAX_FILES;
         walk(dir, "", 0, &mut here, &mut budget);
         for (id, (_, path)) in here {
-            found.entry(id).or_insert_with(|| Located {
-                path,
-                data_dir: data_dir.clone(),
-            });
+            found.entry(id).or_insert_with(|| Located { path });
         }
     }
     found
