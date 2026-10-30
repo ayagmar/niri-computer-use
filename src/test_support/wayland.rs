@@ -86,6 +86,9 @@ pub(crate) struct Seen {
     /// Every motion, press and wheel turn of virtual pointers, with the output each landed
     /// through.
     pub(crate) aimed: Vec<Aimed>,
+    /// The virtual pointer requests niri handled, counted as `outputs_at_pointer_request`
+    /// counts them.
+    pub(crate) pointer_requests: usize,
     /// The keymap clients hold, serialized: the compositor's until another is sent.
     pub(crate) active: String,
     /// The compositor's keymap, serialized.
@@ -122,6 +125,12 @@ pub(crate) struct Aimed {
     /// input (`Compositor::outputs`), or none if the global the pointer was bound through
     /// was gone by then, so niri mapped the input through the box around the other outputs.
     pub(crate) generation: Option<u32>,
+    /// Whether the pointer's client had made a round trip since niri's last output change,
+    /// and so could have seen it, before it sent this. wayland-server answers
+    /// `wl_display.sync` itself, out of the fake's sight, so the fake counts what the gate
+    /// does right after one: once the pointer has sent a request since the change, the
+    /// next niri IPC connection comes from a gate that looks only after a `sync`.
+    pub(crate) synced_since_change: bool,
     pub(crate) input: Pointed,
 }
 
@@ -476,6 +485,7 @@ async fn serve(
                 state.admit(&display.handle(), stream);
             }
             accepted = niri_listener.accept() => {
+                state.synced_since_change |= state.pointed_since_change;
                 let group = state.group;
                 let focused = focused.lock().unwrap_or_else(PoisonError::into_inner).clone();
                 let outputs = outputs.lock().unwrap_or_else(PoisonError::into_inner).clone();
@@ -714,6 +724,10 @@ struct State {
     /// The virtual pointer requests handled so far, and what changes before which.
     pointer_requests: usize,
     at_pointer_request: Option<(usize, OutputEvent)>,
+    /// Whether a virtual pointer sent a request since the last output change, and whether
+    /// a niri IPC connection came after that (`Aimed::synced_since_change`).
+    pointed_since_change: bool,
+    synced_since_change: bool,
 }
 
 impl State {
@@ -737,6 +751,8 @@ impl State {
             bound_outputs: Vec::new(),
             pointer_requests: 0,
             at_pointer_request: None,
+            pointed_since_change: false,
+            synced_since_change: false,
         }
     }
 
@@ -833,6 +849,8 @@ impl State {
     /// Makes `event`'s change to niri's outputs, as niri does: IPC and globals at once,
     /// and each changed output's state sent again to its `wl_output`s.
     fn change_outputs(&mut self, handle: &DisplayHandle, event: OutputEvent) {
+        self.pointed_since_change = false;
+        self.synced_since_change = false;
         let outputs = match event {
             // What IPC reports stays as it was; only pointers bound before see a change.
             OutputEvent::Replug(name) => {
@@ -886,6 +904,7 @@ impl State {
     fn pointer_request(&mut self, handle: &DisplayHandle) {
         self.pointer_requests += 1;
         let now = self.pointer_requests;
+        self.seen().pointer_requests = now;
         if let Some((_, event)) = self.at_pointer_request.take_if(|(at, _)| *at == now) {
             self.change_outputs(handle, event);
         }
@@ -900,6 +919,7 @@ impl State {
         self.seen().aimed.push(Aimed {
             output: id.map(|id| id.name.clone()),
             generation,
+            synced_since_change: self.synced_since_change,
             input,
         });
     }
@@ -1248,6 +1268,7 @@ impl Dispatch<ZwlrVirtualPointerV1, Option<OutputId>> for State {
     ) {
         state.pointer_request(handle);
         let output = output.as_ref();
+        state.pointed_since_change = true;
         match request {
             zwlr_virtual_pointer_v1::Request::Button {
                 button,

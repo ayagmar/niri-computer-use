@@ -1687,6 +1687,7 @@ mod tests {
         let on = |input| Aimed {
             output: Some("HDMI-A-1".to_owned()),
             generation: Some(0),
+            synced_since_change: false,
             input,
         };
         assert_eq!(
@@ -1819,12 +1820,29 @@ mod tests {
         AtPointerRequest(usize),
     }
 
-    fn any_when() -> impl Strategy<Value = When> {
-        prop_oneof![
-            Just(When::BeforeTheCall),
-            Just(When::WhileConnecting),
-            (1..=30_usize).prop_map(When::AtPointerRequest),
-        ]
+    /// The virtual pointer requests `gesture` makes when nothing stops it: one creating
+    /// the pointer, two for each motion, press and release (a drag makes `DRAG_STEPS + 1`
+    /// motions), and three for each wheel turn.
+    /// The test checks the change it schedules at one of them happened.
+    fn requests(gesture: &Gesture<Spot>) -> usize {
+        1 + match gesture {
+            Gesture::Move(_) => 2,
+            Gesture::Click { count, .. } => 2 + 4 * usize::from(*count),
+            Gesture::Drag { .. } => 2 * (usize::try_from(DRAG_STEPS).unwrap() + 1 + 2),
+            Gesture::Scroll { .. } => 2 + 3,
+        }
+    }
+
+    /// A gesture, and when an output changes as it goes: mostly at one of its requests.
+    fn any_gesture_and_when() -> impl Strategy<Value = (Gesture<Spot>, When)> {
+        any_gesture().prop_flat_map(|gesture| {
+            let when = prop_oneof![
+                1 => Just(When::BeforeTheCall),
+                1 => Just(When::WhileConnecting),
+                4 => (1..=requests(&gesture)).prop_map(When::AtPointerRequest),
+            ];
+            (Just(gesture), when)
+        })
     }
 
     /// One gesture on a desk of two outputs, while niri makes `change` to output `name`
@@ -1869,7 +1887,15 @@ mod tests {
                 && when == When::BeforeTheCall
                 && !matches!(change, Change::Replug),
         };
-        expected.hold(&result, &niri.seen());
+        let seen = niri.seen();
+        if let When::AtPointerRequest(request) = when {
+            assert!(
+                seen.pointer_requests >= request,
+                "the change never came: {seen:?}"
+            );
+        }
+        expected.hold(&result, &seen);
+        drop(seen);
         std::fs::remove_dir_all(&bench.dir).unwrap();
     }
 
@@ -1893,8 +1919,9 @@ mod tests {
     impl Expected {
         /// Asserts what any gesture must have done, held modifiers and all: it may be
         /// refused, stopped or sent, but it leaves nothing pressed, refuses only with
-        /// nothing sent, and is never reported sent after niri handled any of it on an
-        /// output no longer as captured. Then what `self` adds.
+        /// nothing sent, sends nothing more to an output no longer as captured once a round
+        /// trip could have shown the change, and is never reported sent after niri handled
+        /// any of it on such an output. Then what `self` adds.
         fn hold(&self, result: &Result<Outcome, CallError>, seen: &wayland::Seen) {
             let observed = result.as_ref().map(|outcome| outcome.observed);
             assert_eq!(seen.held_buttons(), Vec::<u32>::new(), "{result:?}");
@@ -1902,6 +1929,10 @@ mod tests {
             let bound = |aimed: &Aimed| aimed.output.as_deref() == Some(BOUND);
             assert!(seen.aimed.iter().all(bound), "{:?}", seen.aimed);
             let as_captured = seen.aimed.iter().all(|aimed| aimed.generation == Some(0));
+            let sent_once_seen =
+                |aimed: &&Aimed| aimed.generation != Some(0) && aimed.synced_since_change;
+            let late: Vec<&Aimed> = seen.aimed.iter().filter(sent_once_seen).collect();
+            assert!(late.is_empty(), "{late:?}: {result:?}");
             match observed {
                 Err(_) => assert!(seen.aimed.is_empty() && seen.keys.is_empty(), "{result:?}"),
                 Ok(Observed::Sent) => assert!(as_captured, "{:?}: {result:?}", seen.aimed),
@@ -1916,15 +1947,28 @@ mod tests {
         }
     }
 
+    // A same-name replug shows only on Wayland: niri's IPC answer stays as it was, so only
+    // the pointer's own connection can stop the drag's later motions, which niri would map
+    // over the box around the other outputs.
+    #[tokio::test]
+    async fn a_drag_stops_once_niri_replugs_its_output() {
+        let drag = Gesture::Drag {
+            from: Spot::Pixel(ImagePx { x: 100, y: 100 }),
+            to: Spot::Pixel(ImagePx { x: 900, y: 500 }),
+            button: Button::Left,
+        };
+        let replug = (BOUND, Change::Replug);
+        gesture_while_an_output_changes(drag, &[], replug, When::AtPointerRequest(8)).await;
+    }
+
     proptest! {
         #![proptest_config(crate::test_support::properties(40))]
 
         #[test]
         fn an_output_change_never_leaves_input_reported_sent_or_held(
-            gesture in any_gesture(),
+            (gesture, when) in any_gesture_and_when(),
             held in any::<bool>(),
             change in any_change(),
-            when in any_when(),
         ) {
             let keys = if held { vec!["ctrl".to_owned()] } else { Vec::new() };
             tokio::runtime::Builder::new_current_thread()

@@ -2039,12 +2039,16 @@ Each action's commit is the one its tag names in the action's repository (`git l
 - A workspace switch or overview change on any output still stops a gesture in flight, as before. With two monitors, a switch on the other one can stop a drag for no reason. This is kept because it's safe and rare while the lease is held.
 - No two-monitor desk check was done; the owner has one monitor. This ships because `make nested-multi` passed: real niri, two outputs at scales 1 and 1.5, one with a negative origin, mapping within 0.0031 px, and 40 of 40 clicks counted (`docs/results/multi-output.md`). The mapping doesn't depend on the backend. `scripts/real-pointer-check.py --output NAME` is the desk check for when a second screen is attached.
 - `make nested-multi` runs niri v26.04 with `harness/niri-test/headless-outputs.patch`, because niri's headless backend has no command-line switch and `winit` has one output. The patch lives in the repo. `scripts/niri-build.sh` builds it under `~/.cache/niri-computer-use/niri-matrix`, apart from unpatched builds. The run is local and opt-in, not in CI: a cold niri build takes minutes. An upstream option for headless outputs would remove the patch; none was requested.
-- The unit tests run a fake niri whose outputs can be unplugged, turned off, replugged under the same name, rescaled, moved or rotated, or gain another output. A property test draws a gesture, a moment (before the call, while the pointer connects, or at any of the pointer's requests) and one of those events. It checks:
-  - every motion niri took was on the bound output;
+- The unit tests run a fake niri whose outputs can be unplugged, turned off, replugged under the same name, rescaled, moved or rotated, or gain another output. A property test draws a gesture, a moment (before the call, while the pointer connects, or at one of the requests the gesture makes) and one of those events. It checks:
+  - every motion went through a pointer bound to the screenshot's output;
+  - none went out to an output no longer as captured once a round trip could have shown the change;
   - nothing stays held and the marker is gone;
   - an error sent nothing;
   - `sent` means niri saw no change;
   - a change to another output never stops the gesture.
+
+  Only a drag waits between its steps, and only a same-name replug passes the IPC check, so a fixed test also replugs the output in the middle of a drag.
+
 ## 2026-10-30: argument mistakes that say what to send
 
 In two weeks of use, 57 calls failed on their arguments, mostly from Claude Code guessing names before it loaded a tool's schema, and 46 of them never reached the audit log.
