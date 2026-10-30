@@ -22,7 +22,7 @@ These are the user's decisions. Don't call the refused action again and don't tr
 | `app_denied` | The user's policy denies input to the focused app, or `elements`, element actions or closing for the window named. The pointer tools check only the focused app, not the window under the pointer: never aim at a denied app's window that doesn't have focus. |
 | `text_not_settable` | `set_element_text` was aimed at an editable field with no `EditableText` interface, as Chromium's text fields are. Nothing was set. A password field gets `secret_field` instead. Focus the field with `activate_element`, then send the text with `type_text`, `expect` naming its window; to replace what it holds, press `ctrl+a` with `key` first. |
 | `secret_field` | `activate_element` or `set_element_text` was aimed at a field the toolkit marks as a password field (role `password_text`), including Qt's fields that hide their text. Nothing was sent; ask the user to type it themselves. |
-| `untested_output_config` | The pointer only runs on one monitor at transform `Normal` (or in a nested niri). |
+| `untested_output_config` | The screenshot's monitor is rotated; the pointer runs only on monitors at transform `Normal` (or in a nested niri). |
 | `unrestricted_required` | `niri_action` was given a gated action (`Spawn`, `SpawnSh`, `Quit`, `LoadConfigFile`, niri's screenshot actions, monitor power, casts and a few more). It needs `unrestricted = true` in the user's policy file; tell the user. |
 | `refused` | The keyboard cannot safely send the requested input: for example a control character or a key the layout lacks. Tell the user; do not bypass the tools. |
 

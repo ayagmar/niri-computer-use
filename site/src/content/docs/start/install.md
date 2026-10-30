@@ -13,7 +13,7 @@ sidebar:
 - libxkbcommon, which the keyboard code links against. To build, its headers too (`libxkbcommon-dev` on Debian and Ubuntu, `libxkbcommon` on Arch).
 - At run time: `grim` for screenshots and `loginctl` from systemd for the lock state.
 - Optional: [Noctalia](../../concepts/noctalia/) 5.2 for its panels and lock state, and an accessibility bus (at-spi2-core) for [`elements`](../../tools/elements/).
-- One monitor, for the pointer tools. `pointer_move`, `click`, `drag` and `scroll` run only with one enabled output at transform `Normal`; with a second monitor or a rotated one they refuse with [`untested_output_config`](../../reference/troubleshooting/#the-pointer-tools-fail-with-untested_output_config). The other tools, the keyboard and screenshots among them, work with any monitors.
+- A monitor at transform `Normal`, for the pointer tools. `pointer_move`, `click`, `drag` and `scroll` act on the monitor of the screenshot they aim through, whatever other monitors there are; on a rotated monitor they refuse with [`untested_output_config`](../../reference/troubleshooting/#the-pointer-tools-fail-with-untested_output_config). The other tools, the keyboard and screenshots among them, work with any monitors.
 
 ## Two ways to install
 
@@ -148,7 +148,7 @@ It prints the readiness report as JSON. Look at these fields:
 | `niri.compat` | `ok`; `read_only` means this build doesn't support your niri |
 | `niri.error` | `null`; a `detail` of `NIRI_SOCKET is not set` means the server found no running niri of yours |
 | `lock.state` | `unlocked`; `unknown` refuses the lease, see [Troubleshooting](../../reference/troubleshooting/#the-lease-is-refused-with-screen_locked-while-the-screen-is-unlocked) |
-| `outputs.pointer_supported` | `true` for the pointer tools |
+| `outputs.pointer_supported` | `true` for the pointer tools; `outputs.pointer_outputs` lists the monitors they run on |
 | `binaries` | `grim` `true`; `notify-send` matters only with [`confirm_lease`](../../concepts/configuration/#confirm_lease) |
 | `desktop_programs.loginctl` | a path such as `/usr/bin/loginctl` |
 | `desktop_programs.noctalia` | with Noctalia installed, a path such as `/usr/bin/noctalia`; `null` when it is installed elsewhere, such as a Nix user profile or `~/.local/bin`: set [`NIRI_COMPUTER_USE_DESKTOP_PATH`](../../concepts/configuration/#environment) to its directories, the same for every client |

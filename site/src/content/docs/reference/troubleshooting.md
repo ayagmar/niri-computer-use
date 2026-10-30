@@ -1,6 +1,6 @@
 ---
 title: Troubleshooting
-description: "Fixes for common problems: the lease refused while unlocked, pointer tools refused on a second monitor, a server that finds no niri, and more."
+description: "Fixes for common problems: the lease refused while unlocked, pointer tools refused on a rotated monitor, a server that finds no niri, and more."
 sidebar:
   order: 3
 ---
@@ -75,7 +75,7 @@ The app didn't answer one call over the accessibility bus within a second, or th
 
 ## The pointer tools fail with `untested_output_config`
 
-They run only with one enabled output: a monitor at transform `Normal`, or a nested niri's window. A second monitor or a rotated one refuses them. Focus, launch, close, the keyboard tools and screenshots still work.
+They run on monitors at transform `Normal`, and in nested niri's window when it is the only output. The screenshot they aimed through was of a rotated monitor, or of nested niri's window next to another output. Aim through a screenshot of another monitor, or turn that one back to `Normal`. `status` lists the monitors they run on in `outputs.pointer_outputs`. Focus, launch, close, the keyboard tools and screenshots still work on any monitor.
 
 ## A click fails with `ref_invalid` `out_of_bounds`
 

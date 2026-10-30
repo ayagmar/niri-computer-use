@@ -387,6 +387,25 @@ With `UPGRADE_FROM=current`, the supervisor packs the build as in step 1 and ins
 
 Releases up to 0.1.5 don't hand over, so the runs from their tags keep checking that N is served standalone beside the old engine.
 
+## Nested multi-output checks
+
+`make nested-multi` runs the pointer tools on two outputs. niri's `winit` backend has one output and its headless backend has no command-line switch, so the target builds niri v26.04 from source with `harness/niri-test/headless-outputs.patch`. The patch makes niri start its headless backend when `NIRI_TEST_HEADLESS_OUTPUTS` is set, with one output per `WxH` size it lists, named `headless-1`, `headless-2` and so on. It needs what `make niri-matrix` needs to build niri, and what `make nested-input` needs except cage:
+
+```sh
+make nested-multi
+```
+
+`scripts/niri-build.sh` applies the patch when `NIRI_PATCH` names it, and keeps that build apart from the unpatched one, under `bin/<commit>-<first 12 hex digits of the patch's SHA-256>/niri`, so the first run takes a niri build and later runs reuse it. The run is local and opt-in; CI doesn't run it.
+
+The nested niri draws nowhere, so no cage starts and `--visible` is refused. `WAYLAND_DISPLAY` still names cage's socket path with nothing at it, so a niri built without the patch fails to connect there and exits. Before anything else, the supervisor requires every output to be `headless-<n>` made by `niri`, model `headless`; C2's single-output check is skipped. With the nested Noctalia as the lock source and one server holding the lease, it:
+
+1. requires niri's outputs to be `headless-1`, 1280x720 at scale 1 at (0, 0), and `headless-2`, 1920x1080 at scale 1.5 at (-1280, 100), so one output's origin is negative;
+2. requires `status`'s `outputs.pointer_outputs` to list both;
+3. moves `wev` to each output with `MoveWindowToMonitor` and runs C4's five points through `pointer_move`, from a screenshot of that output at its own scale and one lowered to 700 pixels wide, each within ±0.05 px of the pixel's centre;
+4. moves the GTK 4 fixture to each output and clicks its button 20 times there from a screenshot of that output; each click must count once.
+
+It shows that niri maps the pointer through the bound output at mixed scales and a negative origin. It doesn't plug or unplug an output mid-gesture: the unit tests against the fake niri cover that. The results are in `docs/results/multi-output.md`.
+
 ## Nested Chromium checks
 
 `make nested-chromium` types and pastes text through the server into a Chromium text area and compares what arrived with what was sent. It runs in the headless nested niri, with Noctalia as the lock source, and has a 240-second deadline. It needs a Chromium-based browser: `NCU_CHROMIUM=<path>` picks one, which must then be an executable file, and otherwise it takes the first of `chromium`, `chromium-browser`, `google-chrome-stable`, `google-chrome`, `brave` and `helium-browser` on `PATH`. The path is used as found, links unresolved, since some launchers pick what to run from their own name. A browser under `/snap` is refused, because a snap keeps its data in `~/snap` whatever `HOME` is. With neither, the run logs that it is skipped and exits 0, so it needs nothing in CI.
@@ -484,7 +503,7 @@ The README links `errand.gif`, `errand.png` and `errand.mp4` in `site/public/dem
 python3 -I scripts/real-pointer-check.py target/debug/niri-computer-use /tmp/ncu-m4-real-1
 ```
 
-It opens `wev` on the focused workspace, floats it at 400x300 at (200, 200) through niri IPC, and with the server's `pointer_move` moves the pointer to five points on `wev`'s surface, from a screenshot of DP-1 at its own scale and one 1280 pixels wide. It sends no click, key or scroll. Each motion must land within ±0.05 px of the pixel's centre; `run.log` in the directory you name says where each one did. It expects one monitor named DP-1 at transform `Normal`.
+It opens `wev` on the focused workspace and floats it at 400x300 through niri IPC. Then, for each output named with `--output` (DP-1 if none is), it moves `wev` to that output at (200, 200) and with the server's `pointer_move` moves the pointer to five points on `wev`'s surface, from a screenshot of that output at its own scale and one 1280 pixels wide. It sends no click, key or scroll. Each motion must land within ±0.05 px of the pixel's centre; `run.log` in the directory you name says where each one did. Each output must be at transform `Normal`; with a laptop and an external monitor, add `--output` once for each.
 
 ## Supervised sitting
 
