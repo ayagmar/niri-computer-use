@@ -93,6 +93,9 @@ pub(crate) struct Sources<'a> {
     pub(crate) event_stream: Option<StreamState>,
     /// Whether niri's last config load failed, when niri has said.
     pub(crate) config_failed: Option<bool>,
+    /// Whether to read niri's config for `stop_key`. An action's checks don't need it, and
+    /// a config file on a stuck filesystem would hold each of them up.
+    pub(crate) read_stop_key: bool,
     /// Why the last `notify_on_lease` notification couldn't be sent; none for the
     /// `status` subcommand.
     pub(crate) lease_notice_error: Option<String>,
@@ -185,6 +188,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         engine,
         event_stream,
         config_failed,
+        read_stop_key,
         lease_notice_error,
         audit,
         lease,
@@ -210,7 +214,7 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
         niri::outputs(socket),
         noctalia,
         control::logind(socket, &env.desktop),
-        stop_key::check(socket, config_failed)
+        stop_key_of(socket, config_failed, read_stop_key)
     );
     let noctalia_status = noctalia.as_ref().and_then(|reply| reply.as_ref().ok());
     let lock = control::lock(logind, noctalia_status);
@@ -262,6 +266,19 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
 
 /// Whether Noctalia is there from its status reply, none when it isn't installed, and why
 /// it counts as not running.
+/// What `stop_key` says, reading niri's config only when `read` says.
+async fn stop_key_of(
+    socket: &niri::Socket,
+    config_failed: Option<bool>,
+    read: bool,
+) -> stop_key::Checked {
+    if read {
+        stop_key::check(socket, config_failed).await
+    } else {
+        stop_key::Checked::unread()
+    }
+}
+
 fn presence(
     noctalia: Option<Result<serde_json::Map<String, serde_json::Value>, ToolError>>,
 ) -> (Presence, Option<ToolError>) {
@@ -299,6 +316,7 @@ mod tests {
             engine: None,
             event_stream: None,
             config_failed: None,
+            read_stop_key: true,
             lease_notice_error: None,
             audit: &audit,
             lease: status_without_desk(&Env::default()),
@@ -369,6 +387,38 @@ mod tests {
                 "binaries": {"grim": false, "notify-send": false},
                 "desktop_programs": {"search": "", "loginctl": null, "noctalia": null}
             })
+        );
+    }
+
+    /// An action's checks don't wait on niri's config, and don't call a key unbound because
+    /// they skipped it.
+    #[tokio::test]
+    async fn a_report_for_an_action_leaves_the_stop_key_unread() {
+        let audit = Audit::new(None);
+        let session = crate::test_support::session(1);
+        let settings = session.settings();
+        let sources = Sources {
+            engine: None,
+            event_stream: None,
+            config_failed: Some(false),
+            read_stop_key: false,
+            lease_notice_error: None,
+            audit: &audit,
+            lease: status_without_desk(&Env::default()),
+            policy: &settings.policy,
+            unrestricted: &settings.unrestricted,
+            confirm_lease: &settings.confirm_lease,
+            tools: &settings.tools,
+            shared: &settings.shared,
+            place: crate::test_support::no_programs(),
+            accessibility: &a11y::detect(None).await,
+            accessibility_switch: None,
+        };
+        let status = collect(&Env::default(), sources).await;
+        assert_eq!(status.stop_key, StopKey::Unknown);
+        assert_eq!(
+            status.stop_key_detail,
+            "niri's config wasn't read for this report"
         );
     }
 }

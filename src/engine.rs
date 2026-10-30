@@ -354,6 +354,12 @@ impl Engine {
 
     /// The readiness report, as `status` returns it to `session`.
     pub(crate) async fn status(&self, session: &Session) -> status::Status {
+        self.report(session, true).await
+    }
+
+    /// The readiness report for `session`, with niri's config read for the stop key when
+    /// `read_stop_key` says.
+    async fn report(&self, session: &Session, read_stop_key: bool) -> status::Status {
         let settings = session.settings();
         let event_stream = self
             .events
@@ -373,6 +379,7 @@ impl Engine {
             engine: Some(engine),
             event_stream: Some(event_stream),
             config_failed: self.config_failed(),
+            read_stop_key,
             lease_notice_error: self.notices.last_error(),
             audit: &self.audit,
             lease: self.desk.status(session),
@@ -941,7 +948,7 @@ impl Engine {
 
     /// Why `session` may not take the lease or act now, from the readiness report.
     async fn refusal(&self, session: &Session) -> Option<ToolError> {
-        let report = self.status(session).await;
+        let report = self.report(session, false).await;
         if let Some(refused) = policy::refuse_control(report.facts(&session.settings().policy)) {
             return Some(refused);
         }

@@ -46,6 +46,11 @@ pub(crate) struct Checked {
 }
 
 impl Checked {
+    /// The answer when niri's config wasn't read.
+    pub(crate) fn unread() -> Self {
+        Self::unknown("niri's config wasn't read for this report")
+    }
+
     fn unknown(detail: impl Into<String>) -> Self {
         Self {
             state: StopKey::Unknown,
