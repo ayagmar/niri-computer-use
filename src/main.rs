@@ -19,6 +19,7 @@ mod image_header;
 mod input;
 mod niri;
 mod noctalia;
+mod notice;
 mod observe;
 mod policy;
 mod ppm;
@@ -28,6 +29,7 @@ mod save;
 mod session;
 mod settle;
 mod status;
+mod stop_key;
 #[cfg(test)]
 mod test_support;
 mod tools;
@@ -40,7 +42,7 @@ use std::process::ExitCode;
 
 use crate::control::runtime::RuntimeDir;
 
-const USAGE: &str = "usage: niri-computer-use serve | status | stop | resume | recover | watch | engine | guard <server-pid> | paste-keeper | --version";
+const USAGE: &str = "usage: niri-computer-use serve | status [--check] | stop | resume | recover | watch | engine | guard <server-pid> | paste-keeper | --version";
 
 /// What the server reads from its environment, once at startup. An empty variable
 /// counts as unset.
@@ -187,8 +189,9 @@ impl Env {
 enum Command {
     /// Serve MCP over stdin and stdout.
     Serve,
-    /// Print the readiness report.
-    Status,
+    /// Print the readiness report, as JSON or, with `--check`, as one line per
+    /// prerequisite.
+    Status { check: bool },
     /// Set the stop flag for this niri instance.
     Stop,
     /// Clear the stop flag.
@@ -231,30 +234,11 @@ async fn main() -> ExitCode {
     }
     let given = session::Given::read(|name| std::env::var_os(name));
     runner::pass_on(env.session_vars());
+    if let Some(Command::Status { check }) = command {
+        return status(&env, given, check).await;
+    }
     let result = match command {
         Some(Command::Serve) => serve(env, given).await,
-        Some(Command::Status) => {
-            let audit = audit::Audit::new(env.state_dir.clone());
-            let settings = session::Settings::new(given);
-            let accessibility = a11y::detect(env.session_bus.as_deref()).await;
-            let sources = status::Sources {
-                engine: None,
-                event_stream: None,
-                audit: &audit,
-                lease: control::desk::status_without_desk(&env),
-                policy: &settings.policy,
-                unrestricted: &settings.unrestricted,
-                confirm_lease: &settings.confirm_lease,
-                tools: &settings.tools,
-                shared: &settings.shared,
-                place: settings.place(),
-                apps: &settings.apps,
-                accessibility: &accessibility,
-                accessibility_switch: None,
-            };
-            cli::print_json(&status::collect(&env, sources).await)
-                .map_err(|error| format!("print status: {error}"))
-        }
         Some(Command::Stop) => RuntimeDir::of(&env).and_then(|runtime| {
             runtime.stop().map_err(|error| {
                 format!("set the stop flag in {}: {error}", runtime.path().display())
@@ -266,7 +250,7 @@ async fn main() -> ExitCode {
         Some(Command::Engine(start)) => engine::host::run(env, start.unscoped).await,
         Some(Command::Guard(server)) => control::guard::run(&env, server).await,
         Some(Command::PasteKeeper) => input::keeper::run(&env).await,
-        Some(Command::Version) | None => Err(USAGE.to_owned()),
+        Some(Command::Version | Command::Status { .. }) | None => Err(USAGE.to_owned()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -277,16 +261,55 @@ async fn main() -> ExitCode {
     }
 }
 
+/// The `status` subcommand: the report as JSON, or with `check` as text that fails while
+/// anything blocks the server.
+async fn status(env: &Env, given: session::Given, check: bool) -> ExitCode {
+    let audit = audit::Audit::new(env.state_dir.clone());
+    let settings = session::Settings::new(given);
+    let accessibility = a11y::detect(env.session_bus.as_deref()).await;
+    let sources = status::Sources {
+        engine: None,
+        event_stream: None,
+        config_failed: niri::config_failed(&env.niri_socket).await.ok(),
+        stop_key: Some(&stop_key::Reader::default()),
+        lease_notice_error: None,
+        audit: &audit,
+        lease: control::desk::status_without_desk(env),
+        policy: &settings.policy,
+        unrestricted: &settings.unrestricted,
+        confirm_lease: &settings.confirm_lease,
+        tools: &settings.tools,
+        shared: &settings.shared,
+        place: settings.place(),
+        apps: &settings.apps,
+        accessibility: &accessibility,
+        accessibility_switch: None,
+    };
+    let report = status::collect(env, sources).await;
+    if check {
+        let verdict = status::check::verdict(&report, &stop_key::own_program());
+        cli::say(&verdict.text);
+        return if verdict.blockers == 0 {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
+    match cli::print_json(&report) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            cli::print_error(&format!("print status: {error}"));
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn command(args: &[OsString]) -> Option<Command> {
     match args {
-        [only] if only == "serve" => Some(Command::Serve),
-        [only] if only == "status" => Some(Command::Status),
-        [only] if only == "stop" => Some(Command::Stop),
-        [only] if only == "resume" => Some(Command::Resume),
-        [only] if only == "recover" => Some(Command::Recover),
-        [only] if only == "watch" => Some(Command::Watch),
-        [only] if only == "paste-keeper" => Some(Command::PasteKeeper),
-        [only] if only == "engine" => Some(Command::Engine(engine::host::Start::default())),
+        [only] => single(only.to_str()?),
+        [status, flag] if status == "status" && flag == "--check" => {
+            Some(Command::Status { check: true })
+        }
         [engine, flag] if engine == "engine" && flag == engine::host::RUNTIME_DIR_DISCOVERED => {
             Some(Command::Engine(engine::host::Start {
                 runtime_dir_discovered: true,
@@ -299,10 +322,25 @@ fn command(args: &[OsString]) -> Option<Command> {
                 runtime_dir_discovered: false,
             }))
         }
-        [only] if only == "--version" => Some(Command::Version),
         [guard, server] if guard == "guard" => server.to_str()?.parse().ok().map(Command::Guard),
         _ => None,
     }
+}
+
+/// A subcommand given alone.
+fn single(arg: &str) -> Option<Command> {
+    Some(match arg {
+        "serve" => Command::Serve,
+        "status" => Command::Status { check: false },
+        "stop" => Command::Stop,
+        "resume" => Command::Resume,
+        "recover" => Command::Recover,
+        "watch" => Command::Watch,
+        "paste-keeper" => Command::PasteKeeper,
+        "engine" => Command::Engine(engine::host::Start::default()),
+        "--version" => Command::Version,
+        _ => return None,
+    })
 }
 
 /// Serves the client on stdin and stdout: through the shared engine in shared mode, unless
@@ -505,7 +543,14 @@ mod tests {
     fn takes_exactly_one_known_subcommand() {
         let args = |list: &[&str]| list.iter().map(OsString::from).collect::<Vec<_>>();
         assert_eq!(command(&args(&["serve"])), Some(Command::Serve));
-        assert_eq!(command(&args(&["status"])), Some(Command::Status));
+        assert_eq!(
+            command(&args(&["status"])),
+            Some(Command::Status { check: false })
+        );
+        assert_eq!(
+            command(&args(&["status", "--check"])),
+            Some(Command::Status { check: true })
+        );
         assert_eq!(command(&args(&["stop"])), Some(Command::Stop));
         assert_eq!(command(&args(&["resume"])), Some(Command::Resume));
         assert_eq!(command(&args(&["watch"])), Some(Command::Watch));

@@ -13,11 +13,13 @@ Looking needs nothing: any connected agent can call `status`, `desktop_state`, `
 
 With [`confirm_lease`](../configuration/#confirm_lease) on, `acquire_desktop` also waits for you to choose Allow on a notification before the lease is granted, whatever the agent's client approves on its own. The notification gives the name the client calls itself and the process it started. Nothing checks that name, so the server shows at most 64 characters of it, with anything but ASCII letters, digits, spaces and `._-+@` replaced by `_`; the same name is in the audit log and the lease holder's `label`. It holds against an agent that acts through this server, not one that can run commands in a shell of its own: that agent could put a `notify-send` that answers Allow on the client's `PATH`, or press Allow through the notification server's D-Bus interface.
 
+Unless you turn [`notify_on_lease`](../configuration/#notify_on_lease) off, an agent taking the lease also puts a notification on the desktop that names it, at most once per agent every five minutes, so you see that an agent drives even without the Noctalia plugin. The plugin sends its own, so the server skips it while the plugin is enabled.
+
 `acquire_desktop` notes the window you were on. `release_desktop` with `restore_focus: true` puts keyboard focus back there. The lease is also given up when the agent's session ends, because its client closed the connection or its server exited, and when you press the stop key.
 
 ## Stop and resume
 
-Bind `niri-computer-use stop` to a key in your niri config (see [First session](../../start/first-session/#bind-the-stop-key)). Pressing it:
+Bind `niri-computer-use stop` to a key in your niri config (see [First session](../../start/first-session/#bind-the-stop-key)). `status.stop_key` says whether the server found that bind, and while it is `not_found`, `acquire_desktop` tells the agent so. The Noctalia plugin's Stop does the same as the key. Pressing it:
 
 - cancels the action that is running, which ends with `stopped`. A niri action, an element action or a Noctalia command whose request had already gone out, `key` or `type_text` once a stroke had, and the pointer tools once their first motion or held modifier had, end as `uncertain` instead, since they may have taken effect, with `accepted: true` if niri, the app or Noctalia had answered or a stroke was typed and `null` if not. A paste ends with `stopped` either way, and a key it had already sent may have taken effect
 - takes the lease back from the agent, once a screenshot or readiness check under way has finished
@@ -47,6 +49,8 @@ The server acts only on a screen it knows is unlocked. It asks logind for niri's
 
 logind only knows the lock state when niri runs as `niri --session`. Without that and without Noctalia, the state is `unknown` and the server won't act.
 
+Looking stops too while the screen is locked. `screenshot`, `elements` and `wait_for` are refused with `screen_locked`, `elements` and `wait_for` also when the screen locked while they ran, and `desktop_state` leaves window titles out. niri already draws only the lock screen into screenshots then; accessible names and window titles come from the apps and niri's IPC, which the lock screen doesn't stop. Here an `unknown` state doesn't refuse: actions already refuse then, and refusing looks as well would leave nothing working for a session without `niri --session` or Noctalia.
+
 ## Refusals
 
 Before each action the server checks, in this order: the stop flag (`stopped`), the input-dirty marker (`recovery_required`), the lease (`lease_required`), whether niri answers (its own error), niri's version and event stream and the policy file (`read_only`), and the lock state (`screen_locked`). The tools then check their own arguments:
@@ -70,7 +74,7 @@ Each call that reaches a tool is appended to `~/.local/state/niri-computer-use/a
 
 ## What isn't a boundary
 
-- Screenshots, window titles and accessible names reach any connected agent without a lease, even while the screen is locked. Connect only agents you trust with what is on your screen.
+- Screenshots, window titles and accessible names reach any connected agent without a lease. Connect only agents you trust with what is on your screen. While the screen is known to be locked (`status.lock.state` is `locked`), they don't; with another locker and neither logind's hint nor Noctalia, the state is `unknown` and they still do. See [The lock gate](#the-lock-gate).
 - `clipboard_read` needs the lease and returns only what was copied while it was held; what you copied before is withheld as `copied_before_lease`. A copy you make yourself while an agent holds the lease is readable. A copy its owner marks as a secret, such as a password from KeePassXC, is withheld with `reason: "secret"`; a password manager that doesn't mark its copies gets no such protection.
 - The deny list follows keyboard focus, and a click lands wherever the pointer is: it can hit a denied window while an allowed app has focus.
 - Only `activate_element` and `set_element_text` look for password fields, and only for fields the toolkit marks as such ([`secret_field`](../../reference/errors/#secret_field)). Typing, pasting and clicking into a password field aren't refused.

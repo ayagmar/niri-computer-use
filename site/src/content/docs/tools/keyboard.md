@@ -47,6 +47,8 @@ Characters outside the Basic Multilingual Plane, emoji among them, arrive in Chr
 
 Chromium drops a key whose keycode it has no DOM code for, so the native backend puts symbols your layout lacks on keycodes Chromium knows. Typed into Vesktop (Discord) on a US layout, each of these arrived exactly: `ab é ab ß ab → ab`; `a αβγδεζηθικλμν ok`, 14 missing symbols in one keymap; `αβγδεζηθικλμνξοπρστυφχψω ok ←↑→↓ done`, 28 in two parts; `café naïve façade Ærø`; and `Привет, мир`. So in Chromium and Electron apps only characters outside the Basic Multilingual Plane need `via: "paste"`, with one exception: Chromium reports a symbol typed on F13 to F24, the third and later missing symbols of a keymap on a US layout, as that F key too, so a shortcut the app has on F13 to F24, such as a Discord push-to-talk key or a VS Code keybinding, can run while the symbol is typed. If you have such a shortcut, have agents paste text with more than two distinct symbols your layout lacks.
 
+Some web form fields that reformat what you type, such as amounts, phone numbers or dates with separators, can keep only the first typed character. Fields built on `@react-input/number-format` or `@react-input/mask` undo an input that arrives before one of the page's timers has run, and Chromium can hold that timer back until the page draws its next frame, while typed keys arrive within a millisecond or two of each other. `type_text` still reports `sent`, because the keys did reach the page. A paste is one input, which such a field takes, so the skill tells agents to paste into these fields with `via: "paste"` and check the result.
+
 ### `key`
 
 | Argument | Value |

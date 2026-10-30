@@ -200,9 +200,7 @@ cat <<EOF
 Installed ${installed_version} to ${binary} and its skill to ${skill}.
 
 Next:
-  1. Check it from a shell inside your niri session; niri.compat should be "ok":
-       "${binary}" status
-  2. Register it in your agent:
+  1. Register it in your agent:
 EOF
 printf '%s' "${registered}"
 if [ -n "${todo}" ]; then
@@ -210,19 +208,25 @@ if [ -n "${todo}" ]; then
 fi
 cat <<EOF
      Other clients: https://ayagmar.github.io/niri-computer-use/start/clients/
-  3. Bind the stop key inside the binds block of your niri config:
+  2. Bind the stop key inside the binds block of your niri config:
        Mod+Shift+Escape allow-inhibiting=false allow-when-locked=true hotkey-overlay-title="Stop the AI agent (niri-computer-use)" { spawn "${binary}" "stop"; }
   4. To let the agent start apps installed for the whole system by their desktop entry
      id, such as org.gnome.Nautilus, add this line to ${policy}:
        launch_desktop_entries = true
 EOF
+check=3
 if [ "${linked_plugin}" = yes ]; then
 	cat <<EOF
-  5. See which agent drives your desktop in Noctalia's bar: enable the plugin, then add
+  3. See which agent drives your desktop in Noctalia's bar: enable the plugin, then add
      its widget to a bar and its glow to the desktop in Noctalia's settings:
        noctalia msg plugins enable ayagmar/niri-computer-use
 EOF
+	check=4
 fi
+cat <<EOF
+  ${check}. Check it from a shell inside your niri session; every line should be a ✓:
+       "${binary}" status --check
+EOF
 
 # Servers started before this install keep running the build it replaced. The shared
 # engine of that build serves them until the last one exits or, when it is newer than

@@ -109,6 +109,14 @@ The notification needs `notify-send` (libnotify) on the client's `PATH` and a no
 
 `NIRI_COMPUTER_USE_CONFIRM_LEASE=1` in one client's server settings turns it on for that client only. As with `unrestricted`, either source turns it on and nothing in the environment turns off a file's `true`. Any other value of the variable, such as `true`, shows up as `status.confirm_lease.error` and, unlike `unrestricted`, turns the prompt on: a typo shouldn't drop a safeguard you meant to add.
 
+### `notify_on_lease`
+
+`true` or `false`, default `true`. With `true`, an agent's `acquire_desktop` that takes the lease puts a notification on the desktop, titled "An agent is using your desktop", that names the client, the project it works in (the last part of its agent's working directory) and its process. Calling `acquire_desktop` again while holding the lease sends nothing. Each agent, by its client name and process, gets at most one every five minutes, so an agent that takes and gives back the lease over and over doesn't flood the desktop; another agent gets its own.
+
+The server skips the notification when [`confirm_lease`](#confirm_lease) is on, since you just chose Allow, and while the [Noctalia plugin](../noctalia/) is enabled, which sends its own when an agent takes the desktop; it asks Noctalia's `plugins list` for that, waiting at most 300 ms. It sends the notification with `notify-send` (libnotify) from the client's `PATH` once `acquire_desktop` has returned, and gives it at most two seconds. A missing `notify-send`, a notification server that doesn't answer or a failed send never refuses the lease: `status.lease_notice_error` keeps the last failure, and `status --check` reports it.
+
+`false` turns it off. A missing or invalid policy file leaves it on.
+
 ### `shared`
 
 `true`, `false` or `"required"`, default `true`. With `true`, the server serves its client through the one shared engine of its niri instance, starting the engine if none runs, instead of on its own. Every client then shares one crash guardian, one niri event stream and one accessibility connection, while its policy, `unrestricted`, `HOME`, `PATH` and the directories its desktop entries are in stay its own, read from its own environment as before. Its `grim` runs in its own working directory, as a standalone server's would, even after that directory is renamed or removed, so relative entries on its `PATH` work as they do in its shell.

@@ -65,6 +65,18 @@ pub(crate) fn has_arg(proc_root: &Path, pid: u32, flag: &str) -> std::io::Result
         .any(|arg| arg == flag.as_bytes()))
 }
 
+/// The arguments `pid` was started with, after the program name, from
+/// `/proc/<pid>/cmdline`.
+pub(crate) fn args(proc_root: &Path, pid: u32) -> std::io::Result<Vec<String>> {
+    let cmdline = std::fs::read(proc_root.join(pid.to_string()).join("cmdline"))?;
+    Ok(cmdline
+        .split(|&byte| byte == 0)
+        .skip(1)
+        .filter(|arg| !arg.is_empty())
+        .map(|arg| String::from_utf8_lossy(arg).into_owned())
+        .collect())
+}
+
 /// The process's name from `/proc/<pid>/comm`.
 pub(crate) fn comm(proc_root: &Path, pid: u32) -> Option<String> {
     let comm = std::fs::read_to_string(proc_root.join(pid.to_string()).join("comm")).ok()?;

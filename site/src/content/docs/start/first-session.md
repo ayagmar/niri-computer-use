@@ -25,6 +25,14 @@ The key cancels the running action, takes the lease back and refuses further act
 
 After `cargo install` it's `~/.cargo/bin/niri-computer-use resume`.
 
+Then check everything at once, with the same full path:
+
+```sh
+~/.local/bin/niri-computer-use status --check
+```
+
+Each line is a prerequisite with `✓` or `✗` and, under each `✗`, how to fix it. The stop key line turns `✓` once niri has loaded your bind and the program it names is there; it says `can't tell` when niri refused the config, the server couldn't read it, or the bind runs the program in a form the server doesn't read, such as through `systemd-run`. The command exits 1 while something blocks the server.
+
 See [Safety](../../concepts/safety/#stop-and-resume) for what a stop does and doesn't undo.
 
 ## Look first
