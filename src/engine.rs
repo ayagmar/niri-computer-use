@@ -122,6 +122,10 @@ pub(crate) struct Desktop {
     /// Only when Noctalia is installed.
     #[serde(skip_serializing_if = "Option::is_none")]
     shell: Option<Shell>,
+    /// Why every window's `title` is null: the screen is locked, and the lock screen hides
+    /// them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    titles_hidden: Option<String>,
 }
 
 /// Noctalia's status as it gave it, or why it gave none.
@@ -560,7 +564,8 @@ impl Engine {
             // Boxed, because a saved capture makes a large future.
             Box::pin(self.capture_saving(session, request, save)).await
         };
-        self.desk.observe(session, capture).await
+        // Boxed, because the capture and the lock reads around it make a large future.
+        Box::pin(self.unlocked(self.desk.observe(session, capture))).await
     }
 
     /// The layout rectangle `zoom` names and the output to capture it from: the ref must be
@@ -591,14 +596,14 @@ impl Engine {
         let lease = self.desk.ref_lease(session);
         let remember = |element| lease.and_then(|lease| self.desk.remember_element(lease, element));
         // Boxed, because the walk's calls make a large future.
-        Box::pin(elements::list(
+        let listed = Box::pin(elements::list(
             &self.env.niri_socket,
             a11y,
             &session.settings().policy,
             ask,
             remember,
-        ))
-        .await
+        ));
+        self.unlocked(listed).await
     }
 
     /// What `elements` lists for `element` now, for one check of `wait_for`'s element
@@ -655,18 +660,27 @@ impl Engine {
                 None
             }
         };
-        let (state, outputs, shell) = tokio::join!(
+        let (state, outputs, shell, logind) = tokio::join!(
             niri::desktop(self.events.as_ref()),
             niri::outputs(&self.env.niri_socket),
-            shell
+            shell,
+            control::logind(&self.env.niri_socket, &self.env.desktop)
         );
+        let noctalia = shell.as_ref().and_then(|status| status.as_ref().ok());
+        let lock = control::lock(logind, noctalia);
+        let mut state = state?;
+        let titles_hidden = policy::refuse_observe(lock.state()).map(|refused| refused.detail);
+        if titles_hidden.is_some() {
+            state.hide_titles();
+        }
         Ok(Desktop {
-            state: state?,
+            state,
             outputs: outputs?.into_values().map(Into::into).collect(),
             shell: shell.map(|status| match status {
                 Ok(status) => Shell::Status(status),
                 Err(error) => Shell::Unavailable(error),
             }),
+            titles_hidden,
         })
     }
 
@@ -734,8 +748,21 @@ impl Engine {
 
     /// Waits for `until`, then with `screenshot` adds one taken once the screen stopped
     /// changing. Each capture serializes with actions, without holding the mutex between
-    /// samples or while waiting for a window condition.
+    /// samples or while waiting for a window condition. Every condition reads what the
+    /// screen shows, so the wait is refused while the screen is locked.
     pub(crate) async fn wait(
+        &self,
+        session: &Session,
+        until: &wait::Until,
+        limit: std::time::Duration,
+        screenshot: bool,
+    ) -> Result<(wait::Report, Option<observe::Screenshot>), CallError> {
+        // Boxed, because the wait's checks and captures make a large future.
+        let waited = Box::pin(self.waited(session, until, limit, screenshot));
+        self.unlocked(waited).await
+    }
+
+    async fn waited(
         &self,
         session: &Session,
         until: &wait::Until,
@@ -893,6 +920,23 @@ impl Engine {
             env: &self.env,
             noctalia: self.noctalia_installed(),
         }
+    }
+
+    /// Runs `work`, which returns what the screen shows, unless the screen is locked when
+    /// it starts or once it is done: then `screen_locked`, and what it read is dropped.
+    async fn unlocked<T>(
+        &self,
+        work: impl Future<Output = Result<T, CallError>>,
+    ) -> Result<T, CallError> {
+        self.refuse_locked().await?;
+        let done = work.await;
+        self.refuse_locked().await?;
+        done
+    }
+
+    async fn refuse_locked(&self) -> Result<(), ToolError> {
+        let lock = self.lock_sources().read().await;
+        policy::refuse_observe(lock.state()).map_or(Ok(()), Err)
     }
 
     /// Why `session` may not take the lease or act now, from the readiness report.

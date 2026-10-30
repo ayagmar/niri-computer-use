@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-These tools change nothing, and all but `clipboard_read` need no lease. Any connected agent can call the others, even while the screen is locked, so they can show it what is on your screen. Screenshots have [their own page](../screenshots/), and accessible elements [theirs](../elements/).
+These tools change nothing, and all but `clipboard_read` need no lease. Any connected agent can call the others, so they can show it what is on your screen. While the screen is locked, `screenshot`, `elements` and `wait_for` are refused with `screen_locked`, and `desktop_state` leaves out window titles. Screenshots have [their own page](../screenshots/), and accessible elements [theirs](../elements/).
 
 ## `status`
 
@@ -70,6 +70,7 @@ No arguments. One snapshot of niri's event stream:
 - `keyboard_layouts`: the layout names and the current index
 - `outputs`, by connector name, such as `DP-1`: each output's `name`, `make` and `model`, and under `logical` its position and size in layout coordinates, its scale and its transform. A disabled output has `logical: null`. niri's mode lists and hardware details are left out.
 - `shell`, only when Noctalia is installed: Noctalia's own status, `barVisible`, `panelOpen`, `activePanelId` and `locked`, or `{"error": "noctalia_unavailable", "detail": ...}` when Noctalia isn't answering. Its absence or error doesn't fail the call.
+- `titles_hidden`, only while the screen is locked: why every window's `title` is null. The lock screen hides titles, so the server does too; the rest of each window stays. An `unknown` lock state keeps them.
 
 Right after the server starts or reconnects, it waits up to two seconds for niri's initial state. The outputs come from a separate niri request and Noctalia's status from its socket, both asked at the same time as the snapshot, each with a two-second deadline.
 
@@ -97,7 +98,7 @@ Waits for a window, an element or the screen instead of taking screenshots or li
 | `timeout_ms` | 100 to 30000; default 10000 |
 | `screenshot` | with true, the result comes with a screenshot of the focused output: for `screen_stable` its last capture, otherwise one taken as for an action's `screenshot: true` once the wait ended |
 
-Read-only, and needs no lease. The window conditions follow niri's event stream; a condition that is already true ends the wait at once. `screen_stable` first waits for a running action of this server to end, then captures the focused output every 100 ms until two captures in a row are the same image. Two captures can't match before the second one starts, about 150 ms in, and large images take longer, so a short `timeout_ms` can end in `timeout` on a still screen. Stable means two images matched, not that an app is ready. A `title` condition on a window that doesn't exist, an empty `contains`, or a `window` without `app_id` and `title` is an argument mistake.
+Read-only, and needs no lease. While the screen is locked it is refused with `screen_locked`, whatever the condition, and so is a wait during which the screen locked: every condition reads what the lock screen hides. The window conditions follow niri's event stream; a condition that is already true ends the wait at once. `screen_stable` first waits for a running action of this server to end, then captures the focused output every 100 ms until two captures in a row are the same image. Two captures can't match before the second one starts, about 150 ms in, and large images take longer, so a short `timeout_ms` can end in `timeout` on a still screen. Stable means two images matched, not that an app is ready. A `title` condition on a window that doesn't exist, an empty `contains`, or a `window` without `app_id` and `title` is an argument mistake.
 
 An `element` condition walks the window's accessible tree as [`elements`](../elements/) does with `interactive_only: false`, so it matches showing elements with a name or an action, or every showing element of `role`. `role` and `name_contains` work as they do there; `state` is one state the element must have, by its name in `states` in a listing with `format: "json"`, such as `sensitive`, `checked`, `focused` or `busy`, or `disabled`, which matches an element without `sensitive`, as a compact line prints it. A compact line leaves out `enabled`, `focusable`, `sensitive`, `showing` and `visible`, so look for those in the JSON listing. To wait until a button shown `[disabled]` can be pressed, wait for `state: "sensitive"`; `disabled` with `absent: true` is also met when the button goes away. It needs at least one of the three. With `absent: true`, the wait ends when no element matches, such as when a spinner or a `Loading…` label goes away.
 

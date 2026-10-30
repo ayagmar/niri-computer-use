@@ -49,6 +49,8 @@ The server acts only on a screen it knows is unlocked. It asks logind for niri's
 
 logind only knows the lock state when niri runs as `niri --session`. Without that and without Noctalia, the state is `unknown` and the server won't act.
 
+Looking stops too while the screen is locked. `screenshot`, `elements` and `wait_for` are refused with `screen_locked`, also when the screen locked while they ran, and `desktop_state` leaves window titles out. niri already draws only the lock screen into screenshots then; accessible names and window titles come from the apps and niri's IPC, which the lock screen doesn't stop. Here an `unknown` state doesn't refuse: actions already refuse then, and refusing looks as well would leave nothing working for a session without `niri --session` or Noctalia.
+
 ## Refusals
 
 Before each action the server checks, in this order: the stop flag (`stopped`), the input-dirty marker (`recovery_required`), the lease (`lease_required`), whether niri answers (its own error), niri's version and event stream and the policy file (`read_only`), and the lock state (`screen_locked`). The tools then check their own arguments:
@@ -72,7 +74,7 @@ Each call that reaches a tool is appended to `~/.local/state/niri-computer-use/a
 
 ## What isn't a boundary
 
-- Screenshots, window titles and accessible names reach any connected agent without a lease, even while the screen is locked. Connect only agents you trust with what is on your screen.
+- Screenshots, window titles and accessible names reach any connected agent without a lease. Connect only agents you trust with what is on your screen. While the screen is locked, they don't: see [The lock gate](#the-lock-gate).
 - `clipboard_read` needs the lease and returns only what was copied while it was held; what you copied before is withheld as `copied_before_lease`. A copy you make yourself while an agent holds the lease is readable. A copy its owner marks as a secret, such as a password from KeePassXC, is withheld with `reason: "secret"`; a password manager that doesn't mark its copies gets no such protection.
 - The deny list follows keyboard focus, and a click lands wherever the pointer is: it can hit a denied window while an allowed app has focus.
 - Only `activate_element` and `set_element_text` look for password fields, and only for fields the toolkit marks as such ([`secret_field`](../../reference/errors/#secret_field)). Typing, pasting and clicking into a password field aren't refused.

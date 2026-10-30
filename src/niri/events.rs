@@ -490,6 +490,15 @@ impl EventStream {
     }
 }
 
+impl DesktopState {
+    /// Drops every window's title, which the lock screen hides.
+    pub(crate) fn hide_titles(&mut self) {
+        for window in &mut self.windows {
+            window.title = None;
+        }
+    }
+}
+
 fn snapshot(state: &EventStreamState) -> DesktopState {
     let mut windows: Vec<Window> = state.windows.windows.values().cloned().collect();
     windows.sort_by_key(|window| window.id);

@@ -932,6 +932,21 @@ pub(crate) fn refuse_lock(lock: LockState) -> Option<ToolError> {
     }
 }
 
+/// `screen_locked` while the screen is known to be locked, for a tool that returns what
+/// the screen shows: an image, accessible names or window titles, which the lock screen
+/// hides. An unknown lock state doesn't refuse it: actions already refuse then, and
+/// refusing looks too would leave a session without logind's hint or Noctalia nothing at
+/// all (see `docs/decisions.md`).
+pub(crate) fn refuse_observe(lock: LockState) -> Option<ToolError> {
+    match lock {
+        LockState::Locked => Some(ToolError::new(
+            ErrorName::ScreenLocked,
+            "the screen is locked, and the lock screen hides what this would return",
+        )),
+        LockState::Unlocked | LockState::Unknown => None,
+    }
+}
+
 /// `app_denied` when the window with keyboard focus belongs to an app the policy file
 /// denies input to (plan §9). Its `app_id` is the client's own claim, and a click can land
 /// on another window, so this is a guardrail, not a boundary.

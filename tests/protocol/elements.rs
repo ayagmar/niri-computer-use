@@ -4180,3 +4180,37 @@ async fn moved_before_it_went_out(tool: &str, tag: &str, event: &Value) {
     assert_eq!(clicked["isError"], false, "{tag} {tool}: {clicked}");
     assert_eq!(desk.fixture.clipboard.pointed().len(), 3, "{tag} {tool}");
 }
+
+/// While the screen is locked, nothing that returns what the lock screen hides answers:
+/// screenshots, accessible names and waits are refused with `screen_locked`, and
+/// `desktop_state` keeps the windows without their titles. Unlocked again, they answer.
+#[tokio::test]
+async fn a_locked_screen_gives_away_nothing_it_hides() {
+    let mut desk = Desk::start("elements-locked").await;
+    desk.noctalia.set(LOCKED);
+    let hidden = [
+        ("screenshot", json!({"target": "focused_output"})),
+        ("elements", json!({"window_id": WINDOW})),
+        (
+            "wait_for",
+            json!({"until": {"window": {"app_id": "org.ncu.Mock"}}, "timeout_ms": 100}),
+        ),
+    ];
+    for (tool, arguments) in &hidden {
+        let (name, detail) = tool_error(&desk.server.call(tool, arguments.clone()).await);
+        assert_eq!(name, "screen_locked", "{tool}: {detail}");
+    }
+    let state = desk.server.structured("desktop_state").await;
+    assert_eq!(state["windows"][0]["id"], WINDOW);
+    assert_eq!(state["windows"][0]["title"], Value::Null, "{state}");
+    assert!(state["titles_hidden"].is_string(), "{state}");
+
+    desk.noctalia.set(UNLOCKED);
+    for (tool, arguments) in hidden {
+        let result = desk.server.call(tool, arguments).await;
+        assert_eq!(result["isError"], false, "{tool}: {result}");
+    }
+    let unlocked = desk.server.structured("desktop_state").await;
+    assert_eq!(unlocked["windows"][0]["title"], "Mock");
+    assert_eq!(unlocked.get("titles_hidden"), None, "{unlocked}");
+}
