@@ -139,7 +139,9 @@ The server decides before it reads anything from its client. If no engine answer
 
 `true` or `false`, default `false`. With `true`, `launch` also takes the desktop entry id of an installed app, such as `org.gnome.Nautilus` or `firefox`: the name of its `.desktop` file without the extension. A [preset](#preset) with the same name wins. The server reads the entry each time `launch` names it, so an app installed or changed since the server started is found, and niri starts the entry's `Exec` line as an argv, as it does a preset's `argv`: no shell runs it, and no files or URLs are passed. While the key is off, no entry file is read.
 
-`status.desktop_entries` has `count`, how many entries `launch` would start, and `ids`, the first 64 of their ids in order. For an id `launch` doesn't find, `unknown_preset`'s `detail` names up to five entries whose id or `Name` contains it, ignoring case, so `files` finds `org.gnome.Nautilus (Files)`.
+The server reads an entry only from a file root owns that neither its group nor anyone else may write, in directories that are the same from the file up to the data directory it was found in, such as `/usr/share`, or up to `/` for a file a symlink leads out of it. That takes the apps installed for the whole system, in `/usr/share`, `/usr/local/share` and flatpak's `/var/lib/flatpak/exports/share`, and refuses entries in `~/.local/share/applications` and `~/.local/share/flatpak/exports`: you, and any program you run, can write those, and an entry's `Exec` line is a command. A user-writable entry needs a preset, so an app installed with `flatpak install --user`, or an entry you copied into `~/.local/share/applications` to change it, starts only through a [preset](#preset).
+
+`status.desktop_entries` has `count`, how many entries `launch` would start, `ids`, the first 64 of their ids in order, and `user_writable`, how many entries `launch` refuses because you can write them. For an id `launch` doesn't find, `unknown_preset`'s `detail` names up to five entries whose id or `Name` contains it, ignoring case, so `files` finds `org.gnome.Nautilus (Files)`.
 
 The server looks where an app menu in the client's session would, in this order, and the first directory that has the id wins:
 
@@ -150,7 +152,8 @@ An entry in a subdirectory has its path as its id, with `/` as `-`: `kde4/okular
 
 `launch` refuses an entry with [`entry_refused`](../../reference/errors/#entry_refused) when it:
 
-- has `Hidden=true`, which is how you hide a system entry by copying it into `~/.local/share/applications`, or `NoDisplay=true`
+- is in a file or directory you can write, as above
+- has `Hidden=true` or `NoDisplay=true`
 - isn't `Type=Application`
 - isn't shown on this desktop by its `OnlyShowIn` or `NotShowIn`, read against `$XDG_CURRENT_DESKTOP`, or `niri` when it is unset
 - has a `TryExec` that isn't on the client's `PATH`
@@ -165,7 +168,7 @@ An entry whose id or `StartupWMClass` is on [`deny_input_app_ids`](#deny_input_a
 
 `launch` watches for windows whose `app_id` is the entry's id or its `StartupWMClass`. An app whose windows have neither still starts, but `launch` reports `observed: none` after five seconds; a preset with the right `app_id` fixes that. `desktop_state` shows each window's `app_id`.
 
-This sits between presets and [`unrestricted`](#unrestricted). The agent can start only installed apps, each with the command its entry fixes, but it can start any of them, a terminal without arguments included, as a preset may. Anything that can write to `~/.local/share/applications` can add an entry.
+This sits between presets and [`unrestricted`](#unrestricted). The agent can start only apps installed for the whole system, each with the command its entry fixes, but it can start any of them, a terminal without arguments included, as a preset may. A program running as you can't add an entry, since entries you can write are refused.
 
 ### `[[preset]]`
 

@@ -53,6 +53,6 @@ By default the agent can focus, close and type into windows you open, but not st
 launch_desktop_entries = true
 ```
 
-The server then starts an app's own `Exec` line, the command its menu entry runs, without a shell, under the same rules as presets. See [`launch_desktop_entries`](../../concepts/configuration/#launch_desktop_entries) for what it refuses.
+The server then starts an app's own `Exec` line, the command its menu entry runs, without a shell, under the same rules as presets. It takes only apps installed for the whole system, such as those under `/usr/share`; an app installed in your home directory, as `flatpak install --user` does, needs a preset. See [`launch_desktop_entries`](../../concepts/configuration/#launch_desktop_entries) for what it refuses.
 
 To allow only a few apps, list them as [presets](../../concepts/configuration/#preset) instead. [`unrestricted`](../../concepts/configuration/#unrestricted), or `NIRI_COMPUTER_USE_UNRESTRICTED=1` in a client's server settings, goes further: that client's agent can then start any program through `niri_action`'s `Spawn`.

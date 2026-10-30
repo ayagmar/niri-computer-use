@@ -1,12 +1,13 @@
 //! Installed desktop entries, which `launch` starts by id when the policy file sets
 //! `launch_desktop_entries = true`: where they are, from the client's XDG variables, and
-//! finding and reading them within a deadline. Reading one file is in `entry`.
+//! finding and reading them within a deadline. Only entries the user can't write are
+//! read (`read`); parsing one is in `entry`.
 
 mod entry;
+mod read;
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -24,8 +25,6 @@ const DEADLINE: Duration = Duration::from_secs(2);
 const MAX_DEPTH: usize = 3;
 /// The most files and directories one search looks at.
 const MAX_FILES: usize = 8192;
-/// The longest entry file read; real ones are a few KiB.
-const MAX_BYTES: u64 = 64 * 1024;
 /// How many ids `status` lists.
 const IDS_SHOWN: usize = 64;
 /// How many close matches an unknown id's refusal names.
@@ -42,6 +41,10 @@ pub(crate) struct Search {
     /// `$XDG_CURRENT_DESKTOP`'s names, or `niri` when it is unset, for `OnlyShowIn` and
     /// `NotShowIn`.
     desktops: Vec<String>,
+    /// Who an entry file and its directories must belong to: root. Never sent in a hello;
+    /// only tests change it, since they can't make files of root's.
+    #[serde(skip)]
+    owner: u32,
 }
 
 impl Search {
@@ -78,6 +81,7 @@ impl Search {
         Self {
             applications,
             desktops,
+            owner: 0,
         }
     }
 }
@@ -125,6 +129,9 @@ pub(crate) async fn resolve(
 pub(crate) struct Listing {
     count: usize,
     ids: Vec<String>,
+    /// How many entries take precedence but are in a file or directory the user can write,
+    /// which `launch` refuses: a user-writable entry needs a preset.
+    user_writable: usize,
     /// Why they couldn't be listed.
     error: Option<String>,
 }
@@ -143,6 +150,7 @@ pub(crate) async fn listing(policy: &Loaded, search: &Search, place: Place<'_>) 
             return Some(Listing {
                 count: 0,
                 ids: Vec::new(),
+                user_writable: 0,
                 error: Some(error.detail),
             });
         }
@@ -151,15 +159,25 @@ pub(crate) async fn listing(policy: &Loaded, search: &Search, place: Place<'_>) 
     Some(Listing {
         count: ids.len(),
         ids: ids.into_iter().take(IDS_SHOWN).collect(),
+        user_writable: all.values().filter(|checked| checked.writable).count(),
         error: None,
     })
 }
 
-/// An entry file as `launch` would read it: its `Name`, and its command or why it has none.
+/// An entry file as `launch` would read it: its `Name`, and its command or why it has none,
+/// and whether that is because the user can write it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Checked {
     name: String,
     start: Result<entry::Startable, String>,
+    writable: bool,
+}
+
+/// An entry file found under `data_dir`, the directory its `applications` is in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Located {
+    path: PathBuf,
+    data_dir: PathBuf,
 }
 
 /// What looking for one id found: its entry, or every entry, for close matches.
@@ -172,23 +190,23 @@ enum Lookup {
 fn look_up(search: &Search, place: Place<'_>, id: &str) -> Lookup {
     let files = index(&search.applications);
     files.get(id).map_or_else(
-        || Lookup::Missing(checked(&files, &search.desktops, place)),
-        |path| Lookup::Found(check(path, &search.desktops, place).start),
+        || Lookup::Missing(checked(&files, search, place)),
+        |file| Lookup::Found(check(file, search, place).start),
     )
 }
 
 fn every(search: &Search, place: Place<'_>) -> BTreeMap<String, Checked> {
-    checked(&index(&search.applications), &search.desktops, place)
+    checked(&index(&search.applications), search, place)
 }
 
 fn checked(
-    files: &BTreeMap<String, PathBuf>,
-    desktops: &[String],
+    files: &BTreeMap<String, Located>,
+    search: &Search,
     place: Place<'_>,
 ) -> BTreeMap<String, Checked> {
     files
         .iter()
-        .map(|(id, path)| (id.clone(), check(path, desktops, place)))
+        .map(|(id, file)| (id.clone(), check(file, search, place)))
         .collect()
 }
 
@@ -250,19 +268,32 @@ fn not_found(
     )
 }
 
-/// Reads and checks the entry file at `path`, looking for its `TryExec` in `place`.
-fn check(path: &Path, desktops: &[String], place: Place<'_>) -> Checked {
-    let entry = match read(path)
-        .and_then(|text| entry::parse(&text).map_err(|why| format!("is invalid: {why}")))
-    {
-        Ok(entry) => entry,
-        Err(why) => {
-            return Checked {
-                name: String::new(),
-                start: Err(format!("at {} {why}", path.display())),
-            };
-        }
+/// Reads and checks the entry `file`, if the user can't write it, looking for its
+/// `TryExec` in `place`.
+fn check(file: &Located, search: &Search, place: Place<'_>) -> Checked {
+    let path = &file.path;
+    let refused = |why: String, writable| Checked {
+        name: String::new(),
+        start: Err(format!("at {} {why}", path.display())),
+        writable,
     };
+    let text = match read::read(path, &file.data_dir, search.owner) {
+        Ok(text) => text,
+        Err(read::Unread::Writable(why)) => {
+            return refused(
+                format!(
+                    "is one the user can write ({why}), and a user-writable entry needs a preset"
+                ),
+                true,
+            );
+        }
+        Err(read::Unread::Failed(why)) => return refused(why, false),
+    };
+    let entry = match entry::parse(&text) {
+        Ok(entry) => entry,
+        Err(why) => return refused(format!("is invalid: {why}"), false),
+    };
+    let desktops = &search.desktops;
     let start =
         entry::startable(&entry, desktops, &path.to_string_lossy()).and_then(|start| match &start
             .try_exec
@@ -275,19 +306,8 @@ fn check(path: &Path, desktops: &[String], place: Place<'_>) -> Checked {
     Checked {
         name: entry.name.unwrap_or_default(),
         start,
+        writable: false,
     }
-}
-
-fn read(path: &Path) -> Result<String, String> {
-    let file = std::fs::File::open(path).map_err(|error| format!("can't be read: {error}"))?;
-    let mut text = String::new();
-    file.take(MAX_BYTES + 1)
-        .read_to_string(&mut text)
-        .map_err(|error| format!("can't be read: {error}"))?;
-    if text.len() as u64 > MAX_BYTES {
-        return Err(format!("is over {MAX_BYTES} bytes"));
-    }
-    Ok(text)
 }
 
 /// The entry files under `applications`, by id, each the one that takes precedence: the
@@ -295,14 +315,19 @@ fn read(path: &Path) -> Result<String, String> {
 /// `kde4/okular.desktop` is `kde4-okular`; when two files in one directory have one id, the
 /// shallower wins, then the first by name. A directory that is missing or can't be read is
 /// skipped.
-fn index(applications: &[String]) -> BTreeMap<String, PathBuf> {
+fn index(applications: &[String]) -> BTreeMap<String, Located> {
     let mut found = BTreeMap::new();
     let mut budget = MAX_FILES;
     for dir in applications {
+        let dir = Path::new(dir);
+        let data_dir = dir.parent().unwrap_or(dir).to_owned();
         let mut here = BTreeMap::new();
-        walk(Path::new(dir), "", 0, &mut here, &mut budget);
+        walk(dir, "", 0, &mut here, &mut budget);
         for (id, (_, path)) in here {
-            found.entry(id).or_insert(path);
+            found.entry(id).or_insert_with(|| Located {
+                path,
+                data_dir: data_dir.clone(),
+            });
         }
     }
     found
@@ -414,15 +439,31 @@ mod tests {
             self.root.join(which).join("applications")
         }
 
+        /// Writes an entry file only its owner may write, in directories only it may write,
+        /// as a package manager installs one.
         fn write(&self, which: &str, file: &str, text: &str) -> PathBuf {
             let path = self.applications(which).join(file);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, text).unwrap();
+            let mode = |mode| std::fs::Permissions::from_mode(mode);
+            std::fs::set_permissions(&path, mode(0o644)).unwrap();
+            let dirs = path.ancestors().skip(1);
+            for dir in dirs.take_while(|dir| dir.starts_with(&self.root)) {
+                std::fs::set_permissions(dir, mode(0o755)).unwrap();
+            }
             path
         }
 
-        /// A session whose policy file is `policy` and whose XDG variables name this tree.
+        /// A session whose policy file is `policy` and whose XDG variables name this tree,
+        /// which trusts files the test's user owns, as a real one trusts root's.
         fn settings(&self, policy: &str) -> Settings {
+            let mut settings = self.untrusted(policy);
+            settings.apps.owner = rustix::process::geteuid().as_raw();
+            settings
+        }
+
+        /// A session as `settings` gives, which trusts only root's files, as a real one does.
+        fn untrusted(&self, policy: &str) -> Settings {
             let dirs = |name: &str| self.root.join(name).into_os_string();
             let mut data_dirs = dirs("one");
             data_dirs.push(":");
@@ -671,6 +712,41 @@ mod tests {
         let expected = Listing {
             count: 1,
             ids: vec!["org.gnome.Nautilus".to_owned()],
+            user_writable: 0,
+            error: None,
+        };
+        assert_eq!(status, Some(expected));
+    }
+
+    #[tokio::test]
+    async fn an_entry_the_user_can_write_needs_a_preset() {
+        let tree = Tree::new("user-writable");
+        let path = tree.write("home", "evil.desktop", &app("touch pwned", ""));
+        tree.write("one", "files.desktop", &app("files", ""));
+        let settings = tree.untrusted(ON);
+        for id in ["evil", "files"] {
+            let (resolved, _) = launch(&settings, id).await;
+            assert_eq!(refused(&resolved).0, ErrorName::EntryRefused, "{id}");
+            assert!(
+                refused(&resolved)
+                    .1
+                    .contains("a user-writable entry needs a preset"),
+                "{resolved:?}"
+            );
+        }
+        assert!(
+            launch(&settings, "evil")
+                .await
+                .0
+                .unwrap_err()
+                .detail
+                .contains(&path.display().to_string())
+        );
+        let status = listing(&settings.policy, &settings.apps, settings.place()).await;
+        let expected = Listing {
+            count: 0,
+            ids: Vec::new(),
+            user_writable: 2,
             error: None,
         };
         assert_eq!(status, Some(expected));

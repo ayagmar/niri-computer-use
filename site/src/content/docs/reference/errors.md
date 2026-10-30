@@ -97,7 +97,7 @@ With `may_have_sent: true`, part of a `key` or `type_text` call went out before 
 
 ### `entry_refused`
 
-**Cause:** `launch` named an installed desktop entry it won't start. The `detail` names the entry and why: it is hidden or `NoDisplay`, isn't an application, is for another desktop, has a `TryExec` that isn't installed, runs in a terminal, has no `Exec` line, is malformed or written for a shell, or starts a program the preset rules refuse, such as `sh` or `env`. See [`launch_desktop_entries`](../../concepts/configuration/#launch_desktop_entries).
+**Cause:** `launch` named an installed desktop entry it won't start. The `detail` names the entry and why: it is in a file or directory the user can write, such as under `~/.local/share`, and a user-writable entry needs a preset; it is hidden or `NoDisplay`, isn't an application, is for another desktop, has a `TryExec` that isn't installed, runs in a terminal, has no `Exec` line, is malformed or written for a shell, or starts a program the preset rules refuse, such as `sh` or `env`. See [`launch_desktop_entries`](../../concepts/configuration/#launch_desktop_entries).
 
 **What to do:** tell the user. A [preset](../../concepts/configuration/#preset) with the app's command starts it, if the rules allow that command.
 

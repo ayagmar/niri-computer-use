@@ -6,8 +6,8 @@
 //! `pending` with its screenshot, and `interrupted` when the harness moves focus during a
 //! launch's wait. `niri_action` fullscreens and restores a window, floats it and sets its
 //! width, refuses `Spawn`, a second server whose policy turns on `unrestricted` spawns a
-//! fixture with it, and a third whose policy turns on `launch_desktop_entries` launches a
-//! fixture from a desktop entry. Each action's `changes` is checked to tell what it did, or
+//! fixture with it, and a third whose policy turns on `launch_desktop_entries` refuses a
+//! desktop entry the user can write. Each action's `changes` is checked to tell what it did, or
 //! logged where only a look can. Everything the run creates lives under `TEST_DIR`.
 
 use std::fs;
@@ -509,46 +509,30 @@ fn unrestricted(session: &mut Session<'_>, server: &str) -> Result<()> {
     client.stop()
 }
 
-/// The desktop entries in the nested data home: one that starts a fixture whose `app_id`
-/// is its `StartupWMClass`, through a quoted `Exec` line with `%U`, and `%%` in the marker
-/// file it writes, and one with `Terminal=true`.
-fn write_entries(session: &Session<'_>) -> Result<()> {
+/// An entry in the nested data home that starts the harness's fixture window. The user
+/// owns it, as root owns none of the files a nested run can write.
+fn write_entry(session: &Session<'_>) -> Result<()> {
     let harness = std::env::current_exe().context("find the harness binary")?;
     let apps = session.test_dir().data().join("applications");
     fs::create_dir_all(&apps).context(format!("create {}", apps.display()))?;
-    let test_dir = session.test_dir().root();
     let exec = format!(
-        "\"{}\" window \"{}\" entry-window --started \"{}\" %U",
+        "\"{}\" window \"{}\" entry-window %U",
         harness.display(),
-        test_dir.display(),
-        test_dir.join("entry-started-100%%").display()
+        session.test_dir().root().display(),
     );
-    let entries = [
-        (
-            "org.example.Entry",
-            format!("Name=Entry\nExec={exec}\nStartupWMClass=entry-window\n"),
-        ),
-        (
-            "org.example.Console",
-            "Name=Console\nExec=htop\nTerminal=true\n".to_owned(),
-        ),
-    ];
-    for (id, keys) in entries {
-        let path = apps.join(format!("{id}.desktop"));
-        let text = format!("[Desktop Entry]\nType=Application\n{keys}");
-        fs::write(&path, &text).context(format!("write {}", path.display()))?;
-        fs::write(session.artifact(&format!("{id}.desktop")), text).context("copy an entry")?;
-    }
-    Ok(())
+    let path = apps.join("org.example.Entry.desktop");
+    let text = format!("[Desktop Entry]\nType=Application\nName=Entry\nExec={exec}\n");
+    fs::write(&path, &text).context(format!("write {}", path.display()))?;
+    fs::write(session.artifact("org.example.Entry.desktop"), text).context("copy the entry")
 }
 
 /// A server whose policy turns on `launch_desktop_entries`, with `XDG_DATA_DIRS` naming an
-/// empty directory so it never reads the host's entries: `status` lists the one entry
-/// that would start, `launch` starts it and sees its window, and the terminal one is
-/// refused with `entry_refused`.
+/// empty directory so it never reads the host's entries: the entry in the data home is one
+/// the user can write, so `status` counts it as `user_writable` and lists none, and
+/// `launch` refuses it with `entry_refused`.
 fn desktop_entries(session: &mut Session<'_>, server: &str) -> Result<()> {
     write_file(session, "launch_desktop_entries = true\n")?;
-    write_entries(session)?;
+    write_entry(session)?;
     let system = session.test_dir().root().join("system-data");
     fs::create_dir_all(&system).context(format!("create {}", system.display()))?;
     let mut dirs = std::ffi::OsString::from("XDG_DATA_DIRS=");
@@ -558,41 +542,25 @@ fn desktop_entries(session: &mut Session<'_>, server: &str) -> Result<()> {
         Client::start_command(session, "env", &args, "harness-m3-entries", SERVER_DEADLINE)?;
     ready(session, &mut client)?;
     let status = structured(&client.call(session, "status", json!({}))?)?;
+    let listed = field(&status, "/desktop_entries");
     expect(
-        *field(&status, "/desktop_entries/ids") == json!(["org.example.Entry"]),
-        "status lists the startable desktop entry",
-        &field(&status, "/desktop_entries").to_string(),
+        *listed == json!({"count": 0, "ids": [], "user_writable": 1, "error": null}),
+        "status lists no entry and counts the user-writable one",
+        &listed.to_string(),
     )?;
     structured(&client.call(session, "acquire_desktop", json!({}))?)?;
-    let launched = act(
-        session,
-        &mut client,
-        "launch",
-        json!({"preset": "org.example.Entry"}),
-    )?;
-    expect_outcome(&launched, "one", "launch a desktop entry")?;
-    let marker = session.test_dir().root().join("entry-started-100%");
+    let refused = client.call(session, "launch", json!({"preset": "org.example.Entry"}))?;
+    let detail = field(&refused, "/structuredContent/detail")
+        .as_str()
+        .unwrap_or_default();
     expect(
-        marker.exists(),
-        "the entry's Exec line reaching the fixture as an argv",
-        &marker.display().to_string(),
-    )?;
-    let id = field(&launched, "/windows/0").clone();
-    let closed = act(
-        session,
-        &mut client,
-        "close_window",
-        json!({"window_id": id}),
-    )?;
-    expect_outcome(&closed, "closed", "close the entry's window")?;
-    let refused = client.call(session, "launch", json!({"preset": "org.example.Console"}))?;
-    expect(
-        field(&refused, "/structuredContent/error") == "entry_refused",
-        "a Terminal=true entry is refused",
+        field(&refused, "/structuredContent/error") == "entry_refused"
+            && detail.contains("a user-writable entry needs a preset"),
+        "an entry the user can write is refused",
         &refused.to_string(),
     )?;
     session.log(&format!(
-        "M3: launch of a desktop entry: {launched}, refused: {refused}"
+        "M3: launch of a user-writable desktop entry: {refused}"
     ))?;
     structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
     client.stop()

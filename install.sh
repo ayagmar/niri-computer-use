@@ -212,8 +212,8 @@ cat <<EOF
      Other clients: https://ayagmar.github.io/niri-computer-use/start/clients/
   3. Bind the stop key inside the binds block of your niri config:
        Mod+Shift+Escape allow-inhibiting=false allow-when-locked=true hotkey-overlay-title="Stop the AI agent (niri-computer-use)" { spawn "${binary}" "stop"; }
-  4. To let the agent start your installed apps by their desktop entry id, such as
-     org.gnome.Nautilus, add this line to ${policy}:
+  4. To let the agent start apps installed for the whole system by their desktop entry
+     id, such as org.gnome.Nautilus, add this line to ${policy}:
        launch_desktop_entries = true
 EOF
 if [ "${linked_plugin}" = yes ]; then
