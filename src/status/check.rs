@@ -46,7 +46,6 @@ struct View {
     lease_notice_error: Option<String>,
     tools: SettingView,
     shared: SettingView,
-    engine: Option<EngineView>,
     binaries: BTreeMap<String, bool>,
 }
 
@@ -96,11 +95,6 @@ struct PolicyView {
 #[derive(Debug, Deserialize)]
 struct SettingView {
     error: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct EngineView {
-    fallback: Option<String>,
 }
 
 /// One prerequisite.
@@ -341,7 +335,8 @@ fn notice(view: &View) -> Option<Line> {
     ))
 }
 
-/// The variables refused, and why a client in shared mode is served standalone.
+/// The variables refused. The shared engine isn't checked: it runs only while clients
+/// are connected, so from the `status` subcommand there is usually none to ask.
 fn settings(view: &View) -> Vec<Line> {
     let refused = [
         ("unrestricted", &view.unrestricted),
@@ -349,7 +344,7 @@ fn settings(view: &View) -> Vec<Line> {
         ("tools", &view.tools),
         ("shared", &view.shared),
     ];
-    let mut lines: Vec<Line> = refused
+    refused
         .into_iter()
         .filter_map(|(name, setting)| {
             let error = setting.error.as_ref()?;
@@ -358,18 +353,7 @@ fn settings(view: &View) -> Vec<Line> {
                 "correct the variable in the agent's server settings",
             ))
         })
-        .collect();
-    if let Some(fallback) = view
-        .engine
-        .as_ref()
-        .and_then(|engine| engine.fallback.as_ref())
-    {
-        lines.push(Line::limit(
-            format!("shared engine: not used ({fallback})"),
-            "see `engine.fallback` in `niri-computer-use status`",
-        ));
-    }
-    lines
+        .collect()
 }
 
 fn render(lines: &[Line]) -> Verdict {
@@ -574,7 +558,7 @@ Not ready: 1 blocker."
 
     #[test]
     fn a_missing_feature_is_marked_optional_and_blocks_nothing() {
-        let cases: [(Changes<'_>, &str); 7] = [
+        let cases: [(Changes<'_>, &str); 6] = [
             (
                 &[
                     ("/outputs/pointer_supported", json!(false)),
@@ -602,13 +586,6 @@ Not ready: 1 blocker."
                     json!("NIRI_COMPUTER_USE_UNRESTRICTED must be 1; it stays off"),
                 )],
                 "✗ unrestricted: NIRI_COMPUTER_USE_UNRESTRICTED must be 1; it stays off (optional)",
-            ),
-            (
-                &[(
-                    "/engine",
-                    json!({"fallback": "the engine refused this build"}),
-                )],
-                "✗ shared engine: not used (the engine refused this build) (optional)",
             ),
             (
                 &[("/binaries/notify-send", json!(false))],
