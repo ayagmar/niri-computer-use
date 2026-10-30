@@ -1,0 +1,32 @@
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -174,16 +174,28 @@
+     // Increase the buffer size so that it's harder to crash a frozen client with a 1000 Hz mouse.
+     set_default_max_buffer_size(&display, 1024 * 1024);
+ 
++    // TEST PATCH (niri-computer-use harness): NIRI_TEST_HEADLESS_OUTPUTS="1280x720,1920x1080"
++    // selects the test-only headless backend with those outputs, headless-1, headless-2...
++    let headless_outputs = env::var("NIRI_TEST_HEADLESS_OUTPUTS").ok();
+     let mut state = State::new(
+         config,
+         event_loop.handle(),
+         event_loop.get_signal(),
+         display,
+-        false,
++        headless_outputs.is_some(),
+         true,
+         cli.session,
+     )
+     .unwrap();
++    if let Some(spec) = headless_outputs {
++        state.backend.headless().add_renderer().expect("headless renderer");
++        for (i, size) in spec.split(',').enumerate() {
++            let (w, h) = size.split_once('x').expect("NIRI_TEST_HEADLESS_OUTPUTS: WxH,WxH");
++            let size = (w.parse().expect("width"), h.parse().expect("height"));
++            let n = u8::try_from(i + 1).expect("at most 255 outputs");
++            state.backend.headless().add_output(&mut state.niri, n, size);
++        }
++    }
+ 
+     // Set WAYLAND_DISPLAY for children.
+     let socket_name = state.niri.socket_name.as_deref().unwrap();
