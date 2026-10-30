@@ -242,6 +242,7 @@ fn inspect(proc_root: &Path, pid: u32, system: &Path) -> Checked {
     };
     let spawner = Spawner {
         home: started.home.as_deref().map(Path::new),
+        child_home: started.home.as_deref(),
         path: started.path.as_deref(),
         cwd: started.cwd.as_deref(),
     };
@@ -259,7 +260,8 @@ struct Started {
     niri_config: Option<String>,
     xdg_config_home: Option<String>,
     home: Option<String>,
-    /// Where `spawn` looks for a bare program name.
+    /// Where `spawn` looks for a bare program name, unless niri's config sets another.
+    /// Empty, it means niri's directory.
     path: Option<String>,
     cwd: Option<PathBuf>,
 }
@@ -275,7 +277,7 @@ impl Started {
             niri_config: var("NIRI_CONFIG")?,
             xdg_config_home: var("XDG_CONFIG_HOME")?,
             home: var("HOME")?,
-            path: var("PATH")?,
+            path: procs::environ_var(proc_root, pid, "PATH")?,
             cwd: std::fs::read_link(proc_root.join(pid.to_string()).join("cwd")).ok(),
         })
     }
@@ -363,12 +365,34 @@ impl Disk for Host {
     }
 }
 
-/// A bind in effect, or one a later bind for its key replaced.
-#[derive(Debug, PartialEq, Eq)]
-struct Bind {
+/// A bind as a file writes it.
+#[derive(Debug)]
+struct Written {
     /// The key as niri compares keys (`binds::key`).
     key: String,
     /// The key as the config writes it.
+    shown: String,
+    file: PathBuf,
+    action: Option<kdl::Node>,
+}
+
+impl Written {
+    /// The bind, with what its action runs as niri would start it.
+    fn read(self, spawner: Spawner<'_>, disk: &impl Executable) -> Bind {
+        let runs = self
+            .action
+            .map_or(Runs::Other, |action| binds::runs(&action, spawner, disk));
+        Bind {
+            shown: self.shown,
+            file: self.file,
+            runs,
+        }
+    }
+}
+
+/// A bind in effect, or one a later bind for its key replaced.
+#[derive(Debug, PartialEq, Eq)]
+struct Bind {
     shown: String,
     file: PathBuf,
     runs: Runs,
@@ -462,31 +486,114 @@ impl Scan {
 }
 
 /// Reads `main` and what it includes from `disk`, with `spawner` saying how niri finds a
-/// program. An error is anything niri would refuse the config for, or a file not read.
+/// program before its config's `environment` changes it. An error is anything niri would
+/// refuse the config for, or a file not read.
 fn scan(main: &Path, spawner: Spawner<'_>, disk: &mut impl Disk) -> Result<Scan, String> {
     let text = disk
         .read(main)
         .map_err(|error| format!("read {}: {error}", main.display()))?;
     let mut walk = Walk {
-        spawner,
+        home: spawner.home,
         disk,
         stack: vec![main.to_path_buf()],
-        scan: Scan {
-            binds: Vec::new(),
-            replaced: None,
-            files: 1,
-        },
+        binds: Vec::new(),
+        replaced: Vec::new(),
+        files: 1,
+        environment: Environment::default(),
     };
     walk.file(main, &text)?;
-    Ok(walk.scan)
+    let Walk {
+        binds,
+        replaced,
+        files,
+        environment,
+        ..
+    } = walk;
+    let spawner = environment.apply(spawner);
+    let disk = &*disk;
+    Ok(Scan {
+        binds: binds
+            .into_iter()
+            .map(|bind| bind.read(spawner, disk))
+            .collect(),
+        replaced: replaced
+            .into_iter()
+            .map(|(bind, by)| (bind.read(spawner, disk), by))
+            .find(|(bind, _)| matches!(bind.runs, Runs::Stop(_))),
+        files,
+    })
+}
+
+/// What the config's `environment` sections, the last one winning, do to the variables
+/// that say where a program is. niri gives them to every program it starts.
+#[derive(Debug, Default)]
+struct Environment {
+    path: Setting,
+    home: Setting,
+}
+
+#[derive(Debug, Default)]
+enum Setting {
+    #[default]
+    Kept,
+    Set(String),
+    /// `null`, which removes the variable.
+    Unset,
+}
+
+impl Setting {
+    fn apply<'a>(&'a self, inherited: Option<&'a str>) -> Option<&'a str> {
+        match self {
+            Self::Kept => inherited,
+            Self::Set(value) => Some(value),
+            Self::Unset => None,
+        }
+    }
+}
+
+impl Environment {
+    /// Takes in one `environment` section. The reader keeps no types, so the string
+    /// `"null"` reads as `null` too.
+    fn section(&mut self, section: &kdl::Node) {
+        for variable in &section.children {
+            let setting = match variable.args.first().map(String::as_str) {
+                None | Some("null") => Setting::Unset,
+                Some(value) => Setting::Set(value.to_owned()),
+            };
+            match variable.name.as_str() {
+                "PATH" => self.path = setting,
+                "HOME" => self.home = setting,
+                _ => {}
+            }
+        }
+    }
+
+    /// `spawner` as the programs niri starts see it. niri's own `HOME`, which `spawn`
+    /// expands `~` with, stays.
+    fn apply<'a>(&'a self, spawner: Spawner<'a>) -> Spawner<'a> {
+        Spawner {
+            path: self.path.apply(spawner.path),
+            child_home: self
+                .home
+                .apply(spawner.child_home)
+                .filter(|home| !home.is_empty()),
+            ..spawner
+        }
+    }
 }
 
 struct Walk<'a, D> {
-    spawner: Spawner<'a>,
+    /// niri's `HOME`, for `~/` in an include.
+    home: Option<&'a Path>,
     disk: &'a mut D,
     /// The file being read and those that include it, outermost first.
     stack: Vec<PathBuf>,
-    scan: Scan,
+    /// The binds in effect so far, in document order.
+    binds: Vec<Written>,
+    /// Binds a later bind for the same key replaced, each with the file that replaced it.
+    replaced: Vec<(Written, PathBuf)>,
+    files: usize,
+    environment: Environment,
 }
 
 impl<D: Disk> Walk<'_, D> {
@@ -496,6 +603,7 @@ impl<D: Disk> Walk<'_, D> {
             match node.name.as_str() {
                 "include" => self.include(path, node)?,
                 "binds" => self.binds(path, node)?,
+                "environment" => self.environment.section(node),
                 _ => {}
             }
         }
@@ -506,34 +614,27 @@ impl<D: Disk> Walk<'_, D> {
     /// bound twice in one section is refused, and the section's binds replace earlier ones
     /// for the same keys.
     fn binds(&mut self, path: &Path, section: &kdl::Node) -> Result<(), String> {
-        let mut binds: Vec<Bind> = Vec::new();
+        let mut binds: Vec<Written> = Vec::new();
         for bind in &section.children {
             let key =
                 binds::key(&bind.name).map_err(|error| format!("{}: {error}", path.display()))?;
             if binds.iter().any(|earlier| earlier.key == key) {
                 return Err(format!("{}: {} is bound twice", path.display(), bind.name));
             }
-            let runs = bind.children.first().map_or(Runs::Other, |action| {
-                binds::runs(action, self.spawner, &*self.disk)
-            });
-            binds.push(Bind {
+            binds.push(Written {
                 key,
                 shown: bind.name.clone(),
                 file: path.to_path_buf(),
-                runs,
+                action: bind.children.first().cloned(),
             });
         }
-        let (replaced, kept): (Vec<Bind>, Vec<Bind>) = std::mem::take(&mut self.scan.binds)
+        let (replaced, kept): (Vec<Written>, Vec<Written>) = std::mem::take(&mut self.binds)
             .into_iter()
             .partition(|earlier| binds.iter().any(|bind| bind.key == earlier.key));
-        if self.scan.replaced.is_none() {
-            self.scan.replaced = replaced
-                .into_iter()
-                .find(|bind| matches!(bind.runs, Runs::Stop(_)))
-                .map(|bind| (bind, path.to_path_buf()));
-        }
-        self.scan.binds = kept;
-        self.scan.binds.extend(binds);
+        self.replaced
+            .extend(replaced.into_iter().map(|bind| (bind, path.to_path_buf())));
+        self.binds = kept;
+        self.binds.extend(binds);
         Ok(())
     }
 
@@ -564,7 +665,7 @@ impl<D: Disk> Walk<'_, D> {
             }
             Err(error) => return Err(format!("read {}: {error}", path.display())),
         };
-        self.scan.files += 1;
+        self.files += 1;
         self.stack.push(path.clone());
         let read = self.file(&path, &text);
         self.stack.pop();
@@ -576,7 +677,6 @@ impl<D: Disk> Walk<'_, D> {
     fn resolve(&self, from: &Path, target: &str) -> Result<PathBuf, String> {
         if let Some(rest) = target.strip_prefix("~/") {
             let home = self
-                .spawner
                 .home
                 .ok_or_else(|| format!("{}: niri has no HOME for {target}", from.display()))?;
             return Ok(home.join(rest));
@@ -635,6 +735,7 @@ mod tests {
         );
         let spawner = Spawner {
             home: Some(Path::new("/home/u")),
+            child_home: Some("/home/u"),
             path: Some("/usr/bin:/home/u/.local/bin"),
             cwd: None,
         };
@@ -830,6 +931,40 @@ include "~/extra/more.kdl"
         assert_eq!(state(&twice), StopKey::Unknown);
     }
 
+    // niri gives every program it starts the variables of its config's `environment`
+    // sections, the last one winning wherever it stands, so `PATH` there decides where a
+    // bare name is and `HOME` there where a shell finds `~`. `spawn` expands `~` itself,
+    // with niri's own `HOME`.
+    #[test]
+    fn the_configs_environment_decides_where_a_program_is_found() {
+        let bare = r#"Mod+Shift+Escape { spawn "niri-computer-use" "stop"; }"#;
+        let shell = r#"Mod+Shift+Escape { spawn-sh "~/.local/bin/niri-computer-use stop"; }"#;
+        let tilde = r#"Mod+Shift+Escape { spawn "~/.local/bin/niri-computer-use" "stop"; }"#;
+        for (bind, variables, expected) in [
+            (bare, r#"PATH "/usr/bin""#, StopKey::Unknown),
+            (bare, "PATH null", StopKey::Unknown),
+            (bare, r#"PATH """#, StopKey::Unknown),
+            (bare, r#"path "/x"; EDITOR "vi""#, StopKey::Bound),
+            (shell, r#"HOME "/elsewhere""#, StopKey::NotFound),
+            (shell, "HOME null", StopKey::Unknown),
+            (tilde, r#"HOME "/elsewhere""#, StopKey::Bound),
+        ] {
+            // After the bind: niri applies the merged config's environment to every spawn.
+            let main = format!("binds {{ {bind} }}\nenvironment {{ {variables}; }}");
+            assert_eq!(state(&main), expected, "{bind} with {variables}");
+        }
+        let narrow = r#"environment { PATH "/usr/bin"; }"#;
+        let wide = r#"environment { PATH "/usr/bin:/home/u/.local/bin"; }"#;
+        let with_include = |main: String| {
+            let included = [("/c/config.kdl", main.as_str()), ("/c/env.kdl", narrow)];
+            scanned("/c/config.kdl", &included).state
+        };
+        let narrowed_last = format!("{wide}\nbinds {{ {bare} }}\ninclude \"env.kdl\"");
+        assert_eq!(with_include(narrowed_last), StopKey::Unknown);
+        let widened_last = format!("include \"env.kdl\"\nbinds {{ {bare} }}\n{wide}");
+        assert_eq!(with_include(widened_last), StopKey::Bound);
+    }
+
     #[test]
     fn a_stop_bind_whose_program_isnt_there_is_said_so() {
         let stale = state_of(
@@ -934,7 +1069,7 @@ include "~/extra/more.kdl"
         std::fs::write(process.join("environ"), format!("HOME={}\0", dir.display())).unwrap();
         let no_path = inspect(&proc_root, 40, &system);
         assert_eq!(no_path.state, StopKey::Unknown);
-        assert!(no_path.detail.contains("niri has no PATH"), "{no_path:?}");
+        assert!(no_path.detail.contains("with no PATH"), "{no_path:?}");
         let unreadable = inspect(&proc_root, 41, &system);
         assert_eq!(unreadable.state, StopKey::Unknown);
         assert!(unreadable.detail.contains("PID 41"), "{unreadable:?}");

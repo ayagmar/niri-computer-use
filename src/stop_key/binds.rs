@@ -2,8 +2,9 @@
 //! compares keys (`impl FromStr for Key` in v26.04 `niri-config/src/binds.rs`), and whether
 //! its action starts `niri-computer-use stop` with a program that is there. The program is
 //! found as niri's spawn finds it (`spawn_sync` in `src/utils/spawning.rs`): `~` at the
-//! start under niri's `HOME`, a relative path from niri's directory, a bare name on niri's
-//! `PATH`.
+//! start under niri's own `HOME`, a relative path from niri's directory, a bare name on the
+//! `PATH` niri gives the programs it starts, which its config's `environment` can change.
+//! A shell niri starts expands `~` and `$HOME` with the `HOME` niri gives it.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -13,8 +14,12 @@ use super::{PROGRAM, kdl};
 /// What the scan knows of niri's process to find the program a bind starts.
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct Spawner<'a> {
+    /// niri's own `HOME`, where `spawn` finds a program written with `~`.
     pub(super) home: Option<&'a Path>,
-    /// niri's `PATH`, which `spawn` and `sh` search for a bare name.
+    /// The `HOME` of the programs niri starts, where a shell finds `~` and `$HOME`.
+    pub(super) child_home: Option<&'a str>,
+    /// The `PATH` of the programs niri starts, which `spawn` and `sh` search for a bare
+    /// name.
     pub(super) path: Option<&'a str>,
     pub(super) cwd: Option<&'a Path>,
 }
@@ -65,7 +70,7 @@ pub(super) fn key(name: &str) -> Result<String, String> {
 pub(super) fn runs(action: &kdl::Node, spawner: Spawner<'_>, disk: &impl Executable) -> Runs {
     let read = match (action.name.as_str(), action.args.as_slice()) {
         ("spawn", [program, command]) if names_program(program) => Some(if command == "stop" {
-            found(program, spawner, disk)
+            found(program, spawner.home, spawner, disk)
         } else {
             Runs::Other
         }),
@@ -104,8 +109,8 @@ fn is_shell(program: &str) -> bool {
 
 /// What a shell command line runs: the stop when one of its commands is exactly the
 /// program and `stop`; something else when every command that names the program is it
-/// and one other word, such as `resume`; else it can't be read. `$HOME` at the
-/// start of the program is niri's `HOME`, as the shell niri starts would have it.
+/// and one other word, such as `resume`; else it can't be read. `~` and `$HOME` at the
+/// start of the program are the shell's `HOME`.
 fn shell_runs(line: &str, spawner: Spawner<'_>, disk: &impl Executable) -> Runs {
     let commands: Vec<Vec<&str>> = line
         .split(|c: char| ";&|()\n".contains(c))
@@ -122,7 +127,7 @@ fn shell_runs(line: &str, spawner: Spawner<'_>, disk: &impl Executable) -> Runs 
             .iter()
             .find_map(|home| program.strip_prefix(home))
             .map_or_else(|| program.to_owned(), |rest| format!("~/{rest}"));
-        return found(&program, spawner, disk);
+        return found(&program, spawner.child_home.map(Path::new), spawner, disk);
     }
     let read = commands.iter().all(|command| match command.as_slice() {
         [program, _] if names_program(program) => true,
@@ -131,14 +136,14 @@ fn shell_runs(line: &str, spawner: Spawner<'_>, disk: &impl Executable) -> Runs 
     if read { Runs::Other } else { Runs::Unread }
 }
 
-/// Where the program `word` names is, as niri would start it.
-fn found(word: &str, spawner: Spawner<'_>, disk: &impl Executable) -> Runs {
+/// Where the program `word` names is, as niri would start it, with `~` under `home`.
+fn found(word: &str, home: Option<&Path>, spawner: Spawner<'_>, disk: &impl Executable) -> Runs {
     if word.contains('$') {
         return Runs::Unsure(format!("`{word}` names it through a shell variable"));
     }
     let path = if let Some(rest) = word.strip_prefix("~/") {
-        let Some(home) = spawner.home else {
-            return Runs::Unsure(format!("niri has no HOME for `{word}`"));
+        let Some(home) = home else {
+            return Runs::Unsure(format!("there is no HOME to find `{word}` under"));
         };
         home.join(rest)
     } else if word.contains('/') {
@@ -152,7 +157,7 @@ fn found(word: &str, spawner: Spawner<'_>, disk: &impl Executable) -> Runs {
             }
         }
     } else {
-        return on_path(word, spawner.path, disk);
+        return on_path(word, spawner, disk);
     };
     match disk.executable(&path) {
         Ok(true) => Runs::Stop(path),
@@ -161,16 +166,24 @@ fn found(word: &str, spawner: Spawner<'_>, disk: &impl Executable) -> Runs {
     }
 }
 
-/// The first executable `name` in the directories of niri's `PATH`.
-fn on_path(name: &str, path: Option<&str>, disk: &impl Executable) -> Runs {
-    let Some(path) = path else {
-        return Runs::Unsure(format!("niri has no PATH to find `{name}` on"));
+/// The first executable `name` in the directories on `PATH`, as `execvp` searches them: an
+/// empty or relative one is taken from niri's directory.
+fn on_path(name: &str, spawner: Spawner<'_>, disk: &impl Executable) -> Runs {
+    let Some(path) = spawner.path else {
+        return Runs::Unsure(format!(
+            "niri starts programs with no PATH to find `{name}` on"
+        ));
     };
-    for dir in path
-        .split(':')
-        .map(Path::new)
-        .filter(|dir| dir.is_absolute())
-    {
+    for dir in path.split(':') {
+        let dir = match (Path::new(dir).is_absolute(), spawner.cwd) {
+            (true, _) => PathBuf::from(dir),
+            (false, Some(cwd)) => cwd.join(dir),
+            (false, None) => {
+                return Runs::Unsure(format!(
+                    "PATH holds `{dir}`, relative to niri's directory, which can't be read"
+                ));
+            }
+        };
         let candidate = dir.join(name);
         match disk.executable(&candidate) {
             Ok(true) => return Runs::Stop(candidate),
@@ -181,7 +194,7 @@ fn on_path(name: &str, path: Option<&str>, disk: &impl Executable) -> Runs {
         }
     }
     Runs::Unsure(format!(
-        "`{name}` is in none of the directories on niri's PATH"
+        "`{name}` is in none of the directories on the PATH niri starts programs with"
     ))
 }
 
@@ -211,6 +224,7 @@ mod tests {
     fn spawner() -> Spawner<'static> {
         Spawner {
             home: Some(Path::new("/home/u")),
+            child_home: Some("/home/u"),
             path: Some("/usr/bin:relative:/home/u/.local/bin"),
             cwd: Some(Path::new("/home/u")),
         }
@@ -297,6 +311,29 @@ mod tests {
             let said = run(name, &args);
             assert!(matches!(said, Runs::Unsure(_)), "{args:?}: {said:?}");
         }
+    }
+
+    // `execvp` takes an empty or relative directory on `PATH` from the directory it runs
+    // in, which is niri's.
+    #[test]
+    fn a_relative_or_empty_path_entry_is_niris_directory() {
+        let stop = action("spawn", &["niri-computer-use", "stop"]);
+        let at = |path, cwd| {
+            let spawner = Spawner {
+                path: Some(path),
+                cwd,
+                ..spawner()
+            };
+            runs(&stop, spawner, &installed(&[INSTALLED]))
+        };
+        let found = Runs::Stop(PathBuf::from(INSTALLED));
+        assert_eq!(at("", Some(Path::new("/home/u/.local/bin"))), found);
+        assert_eq!(at("/usr/bin:.local/bin", Some(Path::new("/home/u"))), found);
+        let unreadable = at("/usr/bin::/home/u/.local/bin", None);
+        assert!(
+            matches!(&unreadable, Runs::Unsure(why) if why.contains("niri's directory")),
+            "{unreadable:?}"
+        );
     }
 
     #[test]
