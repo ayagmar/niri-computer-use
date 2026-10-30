@@ -5,15 +5,14 @@
 //! session that made it.
 
 use std::ffi::OsString;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
 
 use crate::client::{CLIENT, Server, WAIT, report, run, tool_error};
-use crate::fixture::{Fixture, eventually, exited, file_at, jpeg, kill, parent, png};
-use crate::shared::{
-    Desktop, engine, engines, guardians, hold_engine_lock, holds_alone, sessions, shared,
-};
+use crate::fixture::{Fixture, copy_file, eventually, exited, file_at, jpeg, kill, parent, png};
+use crate::shared::{Desktop, engine, engines, guardians, hold_engine_lock, sessions, shared};
 
 /// The audit log's name for `client`'s session.
 fn label(client: &Server) -> String {
@@ -283,16 +282,34 @@ async fn served_once(fixture: &Fixture) -> i32 {
 /// file, so another build to the hello.
 fn copy_of_the_binary(fixture: &Fixture, name: &str) -> std::path::PathBuf {
     let copy = fixture.path(name);
-    std::fs::copy(env!("CARGO_BIN_EXE_niri-computer-use"), &copy).unwrap();
+    copy_file(Path::new(env!("CARGO_BIN_EXE_niri-computer-use")), &copy);
     copy
 }
 
-/// `cargo install` replaces the binary's file while an engine runs from it. A client
-/// started from the new file is served standalone, sharing the lease, and says why; the
-/// old engine's clients keep working and their `status` says the file was replaced; once
-/// they leave, the old engine exits, and the next client starts an engine of the new build.
+/// The file an engine runs from, replaced by another copy of the binary, as `cargo install`
+/// or the install script does, even for the same release.
+fn replace(fixture: &Fixture, installed: &Path) {
+    let update = copy_of_the_binary(fixture, "update");
+    std::fs::rename(&update, installed).unwrap();
+}
+
+/// The first call of a client whose engine handed over gets `engine_lost`, and the next
+/// one is told to restart the client, since the engine of the installed build refuses it.
+async fn lost_then_told_to_restart(client: &mut Server) {
+    let (lost, why) = tool_error(&client.call("status", json!({})).await);
+    assert_eq!(lost, "engine_lost", "{why}");
+    let (error, detail) = tool_error(&client.call("status", json!({})).await);
+    assert_eq!(error, "engine_unavailable", "{detail}");
+    assert!(detail.contains("restart this MCP client"), "{detail}");
+}
+
+/// `cargo install` replaces the binary's file while an engine runs from it, and its
+/// clients are idle. The first client started from the new file is served by a new
+/// engine of the installed build: the old one exits for it. Its clients get
+/// `engine_lost` once and are then told to restart. Before, the new client was served
+/// standalone until every old client had left.
 #[tokio::test]
-async fn after_the_binary_is_replaced_new_clients_wait_out_the_old_engine_standalone() {
+async fn after_the_binary_is_replaced_an_idle_engine_hands_over() {
     let fixture = shared("many-upgrade");
     let mut desktop = Desktop::new(&fixture);
     let installed = copy_of_the_binary(&fixture, "installed");
@@ -304,42 +321,208 @@ async fn after_the_binary_is_replaced_new_clients_wait_out_the_old_engine_standa
     let old_engine = engine(&fixture).await;
     let before = old[0].structured("status").await;
     assert_eq!(before["engine"]["replaced"], false, "{before}");
-    let update = copy_of_the_binary(&fixture, "update");
-    std::fs::rename(&update, &installed).unwrap();
+    replace(&fixture, &installed);
     let after = old[0].structured("status").await;
     assert_eq!(after["engine"]["replaced"], true, "{after}");
     let mut upgraded = Server::start_from(&fixture, &installed).await;
     let _own_stream = desktop.stream().await;
     let served = upgraded.structured("status").await["engine"].clone();
+    assert_eq!(served["mode"], "shared", "{served}");
+    assert!(served["fallback"].is_null(), "{served}");
+    assert_eq!(served["replaced"], false, "{served}");
+    assert_ne!(served["pid"], old_engine);
+    assert!(
+        eventually(WAIT, || exited(old_engine)).await,
+        "the old engine stayed"
+    );
+    for client in &mut old {
+        lost_then_told_to_restart(client).await;
+    }
+    assert_eq!(
+        engines(&fixture).len(),
+        1,
+        "a stale client started an engine"
+    );
+    upgraded.structured("acquire_desktop").await;
+}
+
+/// An engine whose file was replaced keeps its build while a client of it holds the
+/// lease, so no lease is cut. A client of the installed build that requires the shared
+/// engine gets `engine_unavailable` saying so meanwhile, and its first call after the
+/// lease is given up is served by an engine of its own build, without a restart.
+#[tokio::test]
+async fn a_held_lease_keeps_a_replaced_engine_until_it_is_given_up() {
+    let mut fixture = shared("many-upgrade-held");
+    let mut desktop = Desktop::new(&fixture);
+    let installed = copy_of_the_binary(&fixture, "installed");
+    let mut holder = Server::start_from(&fixture, &installed).await;
+    let _engine_stream = desktop.stream().await;
+    let old_engine = engine(&fixture).await;
+    holder.structured("acquire_desktop").await;
+    replace(&fixture, &installed);
+    let mut beside = Server::start_from(&fixture, &installed).await;
+    let _beside_stream = desktop.stream().await;
+    let served = beside.structured("status").await["engine"].clone();
     assert_eq!(served["mode"], "standalone", "{served}");
     let fallback = served["fallback"].as_str().unwrap();
-    assert!(fallback.contains("(engine_version)"), "{fallback}");
-    // The old engine is the stale one, and says so; the client's server adds nothing.
     assert!(
-        fallback.contains("which another build has since replaced; it keeps that build")
-            && fallback.contains("restart the MCP clients the engine serves")
-            && !fallback.contains("0.1.1 or older"),
+        fallback.contains("holds or is taking the desktop")
+            && fallback.contains(&format!("PID {old_engine}")),
         "{fallback}"
     );
+    fixture.set("NIRI_COMPUTER_USE_SHARED", "required");
+    let mut required = Server::start_from(&fixture, &installed).await;
+    let (error, detail) = tool_error(&required.call("status", json!({})).await);
+    assert_eq!(error, "engine_unavailable", "{detail}");
     assert!(
-        fallback.contains(&format!("PID {old_engine}")),
-        "{fallback}"
+        detail.contains("holds or is taking the desktop"),
+        "{detail}"
     );
-    holds_alone(&mut upgraded, &mut old[0]).await;
-    holds_alone(&mut old[1], &mut upgraded).await;
-    for client in old {
-        client.stop().await;
+    // The holder still acts, alone.
+    let (name, _) = tool_error(&beside.call("acquire_desktop", json!({})).await);
+    assert_eq!(name, "lease_held");
+    assert!(!exited(old_engine));
+    let release = json!({"restore_focus": false});
+    let released = holder.structured_with("release_desktop", release).await;
+    assert_eq!(released["released"], true);
+    let reached = required.structured("status").await["engine"].clone();
+    assert_eq!(reached["mode"], "shared", "{reached}");
+    assert_ne!(reached["pid"], old_engine);
+    assert!(
+        eventually(WAIT, || exited(old_engine)).await,
+        "the old engine stayed"
+    );
+    lost_then_told_to_restart(&mut holder).await;
+}
+
+/// A client whose server's file an install replaced, finding no engine, starts none: one
+/// of its old build would refuse the clients of the installed build, and could take the
+/// lease from under them. It is told to restart instead.
+#[tokio::test]
+async fn a_client_an_install_replaced_starts_no_engine() {
+    let fixture = shared("many-upgrade-stale");
+    let _niri = crate::niri::Niri::start(&fixture);
+    let installed = copy_of_the_binary(&fixture, "installed");
+    let mut old = Server::start_from(&fixture, &installed).await;
+    let old_engine = engine(&fixture).await;
+    replace(&fixture, &installed);
+    kill(u32::try_from(old_engine).unwrap());
+    assert!(eventually(WAIT, || exited(old_engine)).await);
+    let (lost, why) = tool_error(&old.call("status", json!({})).await);
+    assert_eq!(lost, "engine_lost", "{why}");
+    for _ in 0..2 {
+        let (error, detail) = tool_error(&old.call("status", json!({})).await);
+        assert_eq!(error, "engine_unavailable", "{detail}");
+        assert!(
+            detail.contains("so it starts none: restart this MCP client"),
+            "{detail}"
+        );
     }
+    assert!(engines(&fixture).is_empty(), "{:?}", engines(&fixture));
+}
+
+/// Two clients of the installed build start at once beside an engine an install
+/// replaced: it exits once, and both share one new engine.
+#[tokio::test]
+async fn clients_of_the_installed_build_starting_at_once_share_one_new_engine() {
+    let fixture = shared("many-upgrade-race");
+    let _niri = crate::niri::Niri::start(&fixture);
+    let installed = copy_of_the_binary(&fixture, "installed");
+    let _old = Server::start_from(&fixture, &installed).await;
+    let old_engine = engine(&fixture).await;
+    replace(&fixture, &installed);
+    let mut new = [
+        Server::spawn_from(&fixture, &installed),
+        Server::spawn_from(&fixture, &installed),
+    ];
+    for client in &mut new {
+        let response = client.initialize("2025-11-25").await;
+        assert!(response.get("result").is_some(), "{response}");
+    }
+    let [first, second] = &mut new;
+    let first = first.structured("status").await["engine"].clone();
+    let second = second.structured("status").await["engine"].clone();
+    assert_eq!(first["mode"], "shared", "{first}");
+    assert_eq!(first["pid"], second["pid"], "{first} {second}");
+    assert_ne!(first["pid"], old_engine);
+    assert!(eventually(WAIT, || exited(old_engine)).await);
+}
+
+/// A file removed when dropped, however the test ends.
+struct Removed(std::path::PathBuf);
+
+impl Drop for Removed {
+    fn drop(&mut self) {
+        std::fs::remove_file(&self.0).ok();
+    }
+}
+
+/// A copy of the binary in the directory of this test's own binary, so that a hard link
+/// to the test binary can be renamed over it, removed once dropped.
+fn copy_beside_the_test_binary(name: &str) -> Removed {
+    let test = std::env::current_exe().unwrap();
+    let copy = test.with_file_name(format!("{name}-{}", std::process::id()));
+    copy_file(Path::new(env!("CARGO_BIN_EXE_niri-computer-use")), &copy);
+    Removed(copy)
+}
+
+/// Sends `hello` to the engine's socket from this process, and reads the answer unless
+/// `read` is false: then the socket is closed at once.
+async fn say_hello(fixture: &Fixture, hello: &serde_json::Value, read: bool) -> Option<String> {
+    use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
+    let socket = fixture.runtime_dir().join("engine.sock");
+    let mut stream = tokio::net::UnixStream::connect(socket).await.unwrap();
+    let line = [serde_json::to_vec(hello).unwrap(), b"\n".to_vec()].concat();
+    stream.write_all(&line).await.unwrap();
+    if !read {
+        return None;
+    }
+    let mut answer = String::new();
+    tokio::io::BufReader::new(stream)
+        .read_line(&mut answer)
+        .await
+        .unwrap();
+    Some(answer)
+}
+
+/// The engine's file is replaced by this test's own binary, which this process runs, so
+/// its hellos come from the installed build. One without `hands_over`, as a bridge of
+/// 0.1.5 or older sends, ends nothing, since such a bridge would never start the new
+/// engine. One with it ends the engine even when the bridge closes its socket without
+/// reading the answer, and a later client is served by a new engine.
+#[tokio::test]
+async fn only_a_bridge_that_hands_over_ends_a_replaced_engine_whether_or_not_it_reads() {
+    let fixture = shared("many-upgrade-raw");
+    let _niri = crate::niri::Niri::start(&fixture);
+    let copy = copy_beside_the_test_binary("ncu-hand-over");
+    let installed = copy.0.clone();
+    let _old = Server::start_from(&fixture, &installed).await;
+    let old_engine = engine(&fixture).await;
+    let link = installed.with_extension("test");
+    std::fs::hard_link(std::env::current_exe().unwrap(), &link).unwrap();
+    std::fs::rename(&link, &installed).unwrap();
+    let older = json!({"hello": 999});
+    let answer = say_hello(&fixture, &older, true).await.unwrap();
     assert!(
-        eventually(Duration::from_secs(4), || exited(old_engine)).await,
-        "the old engine stayed after its last client left"
+        answer.contains("engine_version") && !answer.contains("exiting"),
+        "{answer}"
     );
-    let mut next = Server::start_from(&fixture, &installed).await;
-    let engine_status = next.structured("status").await["engine"].clone();
-    assert_eq!(engine_status["mode"], "shared", "{engine_status}");
-    assert_eq!(engine_status["replaced"], false, "{engine_status}");
-    assert_ne!(engine_status["pid"], old_engine);
-    assert_eq!(upgraded.call("status", json!({})).await["isError"], false);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        !exited(old_engine),
+        "a bridge that can't hand over ended the engine"
+    );
+    let capable = json!({"hello": 999, "hands_over": true});
+    say_hello(&fixture, &capable, false).await;
+    assert!(
+        eventually(WAIT, || exited(old_engine)).await,
+        "the engine stayed once its answer went unread"
+    );
+    drop(copy);
+    let mut next = Server::start(&fixture).await;
+    let served = next.structured("status").await["engine"].clone();
+    assert_eq!(served["mode"], "shared", "{served}");
+    assert_ne!(served["pid"], old_engine);
 }
 
 /// Two installs of different builds, as by `cargo install` and the install script, each

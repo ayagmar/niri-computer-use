@@ -224,8 +224,9 @@ if [ "${linked_plugin}" = yes ]; then
 EOF
 fi
 
-# Servers started before this install keep running the build it replaced, and the
-# shared engine of that build serves them until the last one exits.
+# Servers started before this install keep running the build it replaced. The shared
+# engine of that build serves them until the last one exits or, when it is newer than
+# 0.1.5, until it hands over to a client of the installed build.
 old=""
 for exe in /proc/[0-9]*/exe; do
 	running=$(readlink "${exe}" 2>/dev/null) || continue
@@ -242,7 +243,8 @@ if [ -n "${old}" ]; then
 	cat <<EOF
 
 These servers still run the build this install replaced. Restart their agents, or
-reconnect the MCP server (/mcp in Claude Code), to use ${installed_version}:
+reconnect the MCP server (/mcp in Claude Code), to use ${installed_version}. Until then
+one may get engine_lost once, and then errors saying to restart it:
 EOF
 	printf '%s' "${old}"
 fi

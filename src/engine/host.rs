@@ -1,8 +1,8 @@
 //! The engine's host: one engine per niri instance, which serves each client's session
 //! over its own connection to `<runtime dir>/engine.sock`. `engine.lock` decides which
 //! engine that is. The engine listens before anything slow starts, so connections queue
-//! meanwhile, and exits once it has been idle for `IDLE_GRACE`, or at once when the stop
-//! watcher ends.
+//! meanwhile, and exits once it has been idle for `IDLE_GRACE`, at once when the stop
+//! watcher ends, or when it hands over to the build an install put in its file.
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
@@ -24,7 +24,7 @@ use crate::session::{Dir, Incoming, Session, Settings};
 use crate::status::Mode;
 use crate::{Env, cli, control, tools};
 
-const LOCK: &str = "engine.lock";
+pub(crate) const LOCK: &str = "engine.lock";
 pub(crate) const SOCKET: &str = "engine.sock";
 pub(crate) const LOG: &str = "engine.log";
 /// How long a new engine waits for an old one, in its idle exit, to let go of the lock.
@@ -138,8 +138,8 @@ where
     served
 }
 
-/// Accepts connections until the engine has been idle for `IDLE_GRACE`, or the stop
-/// watcher ends.
+/// Accepts connections until the engine has been idle for `IDLE_GRACE`, the stop watcher
+/// ends, or the engine hands over.
 async fn accept(
     listener: &UnixListener,
     engine: &Arc<Engine>,
@@ -149,12 +149,14 @@ async fn accept(
     let mut idle_since = Some(Instant::now());
     let mut check = tokio::time::interval(IDLE_CHECK);
     let watcher_ended = engine.watcher_ended();
-    tokio::pin!(watcher_ended);
-    loop {
+    let exiting = engine.exiting();
+    tokio::pin!(watcher_ended, exiting);
+    let served = loop {
         tokio::select! {
-            () = &mut watcher_ended => return Err(
+            () = &mut watcher_ended => break Err(
                 "the stop watcher ended, because the runtime directory was removed or replaced; the engine exits".to_owned(),
             ),
+            () = &mut exiting => break Ok(()),
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => {
                     let busy = connections.len() >= MAX_CONNECTIONS;
@@ -170,11 +172,13 @@ async fn accept(
                 if !connections.is_empty() || !engine.settled() {
                     idle_since = None;
                 } else if idle_since.get_or_insert_with(Instant::now).elapsed() >= IDLE_GRACE {
-                    return Ok(());
+                    break Ok(());
                 }
             }
         }
-    }
+    };
+    engine.cut_off();
+    served
 }
 
 /// One client's connection: the hello, then its session.
@@ -205,6 +209,10 @@ async fn connection(engine: Arc<Engine>, own: Arc<Own>, stream: UnixStream, busy
     };
     let hello = match taken {
         Ok(hello) => hello,
+        Err((Refusal::EngineVersion, _)) if own.hands_over(&line, hello::Exe::of_process(pid)) => {
+            hand_over(&engine, &own, &mut output).await;
+            return;
+        }
         Err((error, detail)) => {
             reply(&mut output, &Reply::refused(error, detail))
                 .await
@@ -238,6 +246,23 @@ async fn connection(engine: Arc<Engine>, own: Arc<Own>, stream: UnixStream, busy
     if let Err(error) = serve_session(&engine, session, input, output).await {
         cli::print_error(&error);
     }
+}
+
+/// Answers a bridge of the build an install put in this engine's file: when the desk
+/// closes, that the engine exits, which it does once the answer is written or has failed;
+/// otherwise that it keeps its build while a client holds the desktop.
+async fn hand_over(engine: &Engine, own: &Own, output: &mut (impl AsyncWrite + Unpin)) {
+    let Some(closing) = engine.close().await else {
+        reply(
+            output,
+            &Reply::refused(Refusal::EngineVersion, own.held_back()),
+        )
+        .await
+        .ok();
+        return;
+    };
+    reply(output, &Reply::exiting(own.exiting())).await.ok();
+    drop(closing);
 }
 
 /// The hello line, if one ends within `hello::MAX_LINE` bytes.

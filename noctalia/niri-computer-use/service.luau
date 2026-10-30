@@ -54,6 +54,9 @@ local function notifyChange(change)
     noctalia.notifyError(tr("notify.stuck"), tr("notify.stuck_body"))
   elseif kind == "outdated" then
     noctalia.notify(tr("notify.outdated", { n = change.count }), tr("notify.outdated_body"))
+  elseif kind == "restart" then
+    local call = change.call
+    noctalia.notify(tr("notify.restart", { client = call.client }), tr("notify.restart_body", { error = call.error }))
   elseif kind == "failed" and setting("notify_errors", false) then
     local call = change.call
     noctalia.notify(tr("notify.failed", { client = call.client, error = call.error }), call.text)

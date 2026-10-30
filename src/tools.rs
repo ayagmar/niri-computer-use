@@ -1891,7 +1891,8 @@ impl Server {
         result.map(shown)
     }
 
-    /// Writes a finished call to the audit log.
+    /// Writes a finished call to the audit log, unless the engine cut its connection: its
+    /// bridge then logs it, as `engine_lost`, and the client cancelled nothing.
     fn log(
         &self,
         context: &RequestContext<RoleServer>,
@@ -1899,6 +1900,9 @@ impl Server {
         args: Value,
         result: &Result<CallToolResult, ErrorData>,
     ) {
+        if self.engine.has_cut_off() {
+            return;
+        }
         let session = self.label(context).to_string();
         let instance = self.engine.env().instance();
         let caller = Caller {

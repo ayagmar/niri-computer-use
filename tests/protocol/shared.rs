@@ -315,6 +315,51 @@ async fn a_lost_engine_answers_every_request_in_flight_to_a_client_that_reads() 
     assert_ne!(server.serving_pid().await, first);
 }
 
+/// The tools of the calls `server`'s bridge answered itself with `error`, in order, as the
+/// audit log names them, each with no arguments.
+fn audited_by_bridge(fixture: &Fixture, server: &Server, error: &str) -> Vec<String> {
+    let session = format!("{CLIENT}/{}", server.pid);
+    fixture
+        .audit_lines()
+        .into_iter()
+        .filter(|line| line["session"] == session.as_str() && line["error"] == error)
+        .map(|line| {
+            assert_eq!(line["args"], json!({}), "{line}");
+            line["tool"].as_str().unwrap().to_owned()
+        })
+        .collect()
+}
+
+/// The engine never sees, or never finishes, the calls a bridge answers with
+/// `engine_lost`, so the bridge logs them: one in flight when the engine ends, and one
+/// made after the engine ended with nothing in flight. A call of a tool the client's
+/// profile doesn't list isn't named, as no engine names one.
+#[tokio::test]
+async fn the_calls_a_bridge_answers_with_engine_lost_are_audited() {
+    let fixture = shared("shared-lost-audited");
+    let _niri = Niri::start(&fixture);
+    let mut server = Server::start(&fixture).await;
+    let first = server.serving_pid().await;
+    signal(first, rustix::process::Signal::STOP);
+    let in_flight = server.start_call("status", json!({})).await;
+    let unknown = server.start_call("no_such_tool", json!({})).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    kill(first);
+    for id in [in_flight, unknown] {
+        let (error, _) = tool_error(&server.response(id).await["result"]);
+        assert_eq!(error, "engine_lost");
+    }
+    let second = server.serving_pid().await;
+    kill(second);
+    assert!(eventually(WAIT, || exited(i32::try_from(second).unwrap())).await);
+    let (error, _) = tool_error(&server.call("desktop_state", json!({})).await);
+    assert_eq!(error, "engine_lost");
+    assert_eq!(
+        audited_by_bridge(&fixture, &server, "engine_lost"),
+        ["status", "desktop_state"]
+    );
+}
+
 #[tokio::test]
 async fn after_the_runtime_directory_goes_the_next_call_reaches_a_new_engine() {
     let fixture = shared("shared-gone");
@@ -484,6 +529,10 @@ async fn without_an_engine_in_time_a_client_that_requires_one_gets_no_standalone
         socket.display()
     );
     every_call_unavailable(&mut server, &reason).await;
+    assert_eq!(
+        audited_by_bridge(&fixture, &server, "engine_unavailable"),
+        ["status", "desktop_state", "acquire_desktop", "screenshot"]
+    );
     let (_, _, stderr) = server.stop().await;
     assert!(
         stderr.contains("the shared engine is required, so every call fails with engine_unavailable until one is reached: no shared engine answered"),
@@ -617,6 +666,10 @@ async fn a_wrong_variable_keeps_the_files_requirement() {
     let mut typo = Server::start(&fixture).await;
     every_call_unavailable(&mut typo, "NIRI_COMPUTER_USE_SHARED is \"yes\"").await;
     assert_eq!(engines(&fixture), Vec::<i32>::new());
+    assert_eq!(
+        audited_by_bridge(&fixture, &typo, "engine_unavailable"),
+        ["status", "desktop_state", "acquire_desktop", "screenshot"]
+    );
     fixture.unset("NIRI_COMPUTER_USE_SHARED");
     let mut server = Server::start(&fixture).await;
     let status = server.structured("status").await;

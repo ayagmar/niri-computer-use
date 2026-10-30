@@ -41,6 +41,13 @@ impl Exe {
         Self::of(Path::new("/proc/self/exe"))
     }
 
+    /// The build process `pid` runs, if its link can be read.
+    pub(crate) fn of_process(pid: u32) -> Option<Self> {
+        (pid != 0)
+            .then(|| Self::of(&PathBuf::from(format!("/proc/{pid}/exe"))).ok())
+            .flatten()
+    }
+
     /// The build in the file at `path`.
     fn of(path: &Path) -> Result<Self, String> {
         let meta =
@@ -131,6 +138,19 @@ pub(crate) fn restart(engine: &Build, client: &Build) -> String {
     }
 }
 
+/// Why this process, a client's server, starts no engine, when an install has replaced
+/// its file: the engine would run the replaced build, which the clients of the installed
+/// build can't use, and restarting the client is what serves it.
+pub(crate) fn stale_bridge() -> Option<String> {
+    let own = Build::current();
+    own.stale().then(|| {
+        format!(
+            "no shared engine runs, and this client's server runs niri-computer-use {RELEASE}{}, so it starts none: restart this MCP client, so that its server runs the build now installed",
+            own.whence()
+        )
+    })
+}
+
 /// What a client's server adds to an `engine_version` refusal by an engine of 0.1.1 or
 /// older, which says only that it runs another build, from what the engine process,
 /// PID `pid` or 0 if unknown, and this one run.
@@ -159,6 +179,11 @@ pub(crate) struct Hello {
     /// engines of 0.1.1 and older ignore it.
     #[serde(default)]
     release: Option<String>,
+    /// The bridge tries again when a refusing engine says it exits (`Reply::Refused`'s
+    /// `exiting`), so an engine an install replaced may hand over to it. Bridges of 0.1.5
+    /// and older send none, and engines of 0.1.5 and older ignore it.
+    #[serde(default)]
+    hands_over: bool,
     exe: Exe,
     niri_socket: PathBuf,
     wayland_socket: Option<PathBuf>,
@@ -212,6 +237,7 @@ impl Hello {
         Ok(Self {
             version: VERSION,
             release: Some(RELEASE.to_owned()),
+            hands_over: true,
             exe,
             niri_socket: niri_socket.to_path_buf(),
             wayland_socket: wayland_socket.map(Path::to_path_buf),
@@ -256,6 +282,11 @@ pub(crate) enum Reply {
         /// ignore it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         release: Option<String>,
+        /// The engine exits now, handing over to the build the bridge runs, so the bridge
+        /// starts an engine once it has. Engines of 0.1.5 and older send none, and bridges
+        /// of 0.1.5 and older ignore it.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        exiting: bool,
     },
 }
 
@@ -266,6 +297,17 @@ impl Reply {
             error,
             detail,
             release: Some(RELEASE.to_owned()),
+            exiting: false,
+        }
+    }
+
+    /// This engine's refusal of a bridge it hands over to, as it exits.
+    pub(crate) fn exiting(detail: String) -> Self {
+        Self::Refused {
+            error: Refusal::EngineVersion,
+            detail,
+            release: Some(RELEASE.to_owned()),
+            exiting: true,
         }
     }
 }
@@ -358,13 +400,7 @@ impl Own {
     /// a bridge for as long as it runs, which is until its last client leaves, so retrying
     /// doesn't help: restarting or reconfiguring a client does.
     fn another_build(&self, theirs: &str, peer: &Build) -> String {
-        let own = Build {
-            replaced: self
-                .file
-                .as_deref()
-                .is_none_or(|file| Exe::of(file).ok() != Some(self.exe)),
-            exe: self.file.clone(),
-        };
+        let own = self.build();
         format!(
             "this engine, PID {}, runs niri-computer-use {RELEASE}{}; it keeps that build until its last client leaves, and this client's server runs another build{theirs}{}: {}. Until then the engine refuses this client, whatever it retries",
             self.pid,
@@ -373,6 +409,57 @@ impl Own {
             restart(&own, peer)
         )
     }
+
+    /// The file this engine was started from, and whether it still holds this build.
+    fn build(&self) -> Build {
+        Build {
+            replaced: self.installed() != Some(self.exe),
+            exe: self.file.clone(),
+        }
+    }
+
+    /// The build now in the file this engine was started from.
+    fn installed(&self) -> Option<Exe> {
+        self.file.as_deref().and_then(|file| Exe::of(file).ok())
+    }
+
+    /// Whether this engine hands over to the bridge that sent `line`, refused as another
+    /// build, from a process running `peer`: see `handover`.
+    pub(crate) fn hands_over(&self, line: &[u8], peer: Option<Exe>) -> bool {
+        let capable = serde_json::from_slice::<serde_json::Value>(line)
+            .ok()
+            .and_then(|hello| hello.get("hands_over")?.as_bool())
+            == Some(true);
+        handover(capable, self.exe, self.installed(), peer)
+    }
+
+    /// What a bridge this engine hands over to is told as it exits.
+    pub(crate) fn exiting(&self) -> String {
+        format!(
+            "this engine, PID {}, runs niri-computer-use {RELEASE}{}, and this client's server runs the build now installed there; no client holds the desktop, so the engine exits and this client's server starts an engine of the installed build",
+            self.pid,
+            self.build().whence()
+        )
+    }
+
+    /// What a bridge this engine would hand over to is told while a client holds the
+    /// desktop, takes it, or input cleanup is pending.
+    pub(crate) fn held_back(&self) -> String {
+        format!(
+            "this engine, PID {}, runs niri-computer-use {RELEASE}{}, and this client's server runs the build now installed there; a client of the engine holds or is taking the desktop, or its input is still being released, so the engine keeps its build until that is over and a client of the installed build connects again, or until the clients it serves restart",
+            self.pid,
+            self.build().whence()
+        )
+    }
+}
+
+/// Whether an engine running `own` hands over to a bridge running `peer`: the engine's
+/// file now holds `installed`, another build, the bridge runs that build, and it is
+/// `capable`, saying it tries again once a refusing engine exits. A bridge of another
+/// build again, such as one of a release installed alongside, or one that would not start
+/// the new engine, ends nothing.
+fn handover(capable: bool, own: Exe, installed: Option<Exe>, peer: Option<Exe>) -> bool {
+    capable && installed.is_some_and(|installed| installed != own && Some(installed) == peer)
 }
 
 #[cfg(test)]
@@ -401,6 +488,7 @@ mod tests {
         Hello {
             version: VERSION,
             release: Some(RELEASE.to_owned()),
+            hands_over: true,
             exe,
             niri_socket: PathBuf::from(niri),
             wayland_socket: display.map(PathBuf::from),
@@ -629,6 +717,74 @@ mod tests {
             "{detail}"
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// An engine hands over only to a bridge that runs the build now in the engine's own
+    /// file, another than the engine's, and says it tries again once the engine exits.
+    #[test]
+    fn an_engine_hands_over_only_to_a_capable_bridge_of_the_installed_build() {
+        let own = own().exe;
+        let installed = Exe { size: 9, ..own };
+        let other = Exe { size: 10, ..own };
+        let rows = [
+            (true, Some(installed), Some(installed), true),
+            // 0.1.5 and older send no `hands_over`: they wouldn't start the new engine.
+            (false, Some(installed), Some(installed), false),
+            // The engine's file still holds its build: the bridge is the stale one.
+            (true, Some(own), Some(installed), false),
+            (true, Some(own), Some(own), false),
+            // A third build, such as another install's.
+            (true, Some(installed), Some(other), false),
+            // A bridge or file that can't be read.
+            (true, Some(installed), None, false),
+            (true, None, Some(installed), false),
+        ];
+        for (capable, now, peer, expected) in rows {
+            assert_eq!(
+                handover(capable, own, now, peer),
+                expected,
+                "capable {capable}, installed {now:?}, peer {peer:?}"
+            );
+        }
+    }
+
+    /// The capability comes from the hello line itself, so a hello of another version
+    /// still carries it, and one without it, as 0.1.5's, hands over nothing.
+    #[test]
+    fn the_hand_over_capability_is_read_from_the_line() {
+        let (own, dir) = installed_engine("hello-hands-over");
+        let file = own.file.clone().unwrap();
+        std::fs::remove_file(&file).unwrap();
+        std::fs::write(&file, "the installed build, replacing it").unwrap();
+        let installed = Exe::of(&file).unwrap();
+        let mut sent = serde_json::to_value(hello(installed, NIRI, DISPLAY)).unwrap();
+        let line = |hello: &serde_json::Value| serde_json::to_vec(hello).unwrap();
+        assert!(own.hands_over(&line(&sent), Some(installed)));
+        sent["hello"] = (VERSION + 1).into();
+        assert!(own.hands_over(&line(&sent), Some(installed)));
+        sent.as_object_mut().unwrap().remove("hands_over");
+        assert!(!own.hands_over(&line(&sent), Some(installed)));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Bridges of 0.1.5 and older read a refusal without `exiting`, and an engine of 0.1.5
+    /// and older sends none: an exiting refusal parses there, and a plain one here.
+    #[test]
+    fn exiting_is_optional_both_ways() {
+        let plain =
+            serde_json::to_value(Reply::refused(Refusal::EngineBusy, "busy".into())).unwrap();
+        assert!(plain["refused"].get("exiting").is_none(), "{plain}");
+        let older = serde_json::json!({"refused": {"error": "engine_version", "detail": "d"}});
+        assert!(matches!(
+            serde_json::from_value::<Reply>(older).unwrap(),
+            Reply::Refused {
+                exiting: false,
+                release: None,
+                ..
+            }
+        ));
+        let exiting = serde_json::to_value(Reply::exiting("bye".into())).unwrap();
+        assert_eq!(exiting["refused"]["exiting"], true, "{exiting}");
     }
 
     #[test]
