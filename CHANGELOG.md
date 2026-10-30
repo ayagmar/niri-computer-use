@@ -3,10 +3,30 @@
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
-- Typed text puts a symbol on a spare key when the layout has it only on a key Chromium drops. US maps have `€` only on `<I443>` (evdev 435), so `€` typed into Chromium and Electron apps arrived as nothing. A symbol also on a normal key types there, so US `$` uses Shift+4 instead of `<I442>`, which Chromium dropped too.
-- After an update, or a reinstall of the same release, the shared engine of the replaced build hands over: the first client of the installed build to connect while no agent holds the desktop ends it and is served by an engine of the new build, instead of running standalone, or failing with `engine_unavailable` when it requires the shared engine, until every old agent restarts. While an old agent holds the desktop, the old engine keeps it until it is given up. Old agents get one `engine_lost`, then `engine_unavailable` saying to restart them, and no longer start an engine of their replaced build. Engines of 0.1.5 and older don't hand over, so updating from them still needs the old agents restarted.
+
+### Added
+
+- The Chromium and Electron section of the elements page, and the troubleshooting page, say how to start those apps with accessibility on, so `elements` works on them.
+- A bug report template that asks for the niri version, `status` output, the agent and model, and the error name and `detail`.
+
+### Changed
+
+- The skill and the server's instructions tell agents to load the tool schemas before the first call in Claude Code, that `submitted: true` means Enter went out and a late-drawn message is not a reason to send it again, to take a screenshot before typing after `ctrl+t` or a closed file picker, to hand the desktop back on a `focus_mismatch` that names their own terminal, and to tell you once that restarting a Chromium or Electron app enables element tools.
+- The README opens its Safety section with a six-row table and no longer shows a harness run as its example. The home page says the audit log records every call that reaches a tool.
+- crates.io links the project site as `homepage` and `documentation`.
+- A tool given a field it doesn't take now fails naming that field and the ones it expects, such as ``unknown field `direction`, expected one of `keys`, `screenshot_ref`, …`` for `scroll`. It used to drop the field and fail on another one, or act without it. Every tool's schema says so with `additionalProperties: false`.
+- `close_window` takes the window as `window_id`, like every other tool. `id` still works.
+- `wait_for` also takes `until: {"screen_stable": {}}`. JSON sent inside a string, such as `"\"screen_stable\""`, fails with the forms that work.
+- Calls refused for their arguments before the tool runs are written to the audit log as `invalid_arguments`, with the names of the fields they were given and never their values.
+- The `noctalia` tool's description says that every call needs the lease, even `["--help"]` and `["plugins", "list"]`.
 - Calls the server answers itself with `engine_lost` or `engine_unavailable` are written to the audit log, so `watch` and the Noctalia plugin show them. They were never logged, since the shared engine never saw them.
 - The Noctalia plugin notifies once per agent session when the agent's calls fail with `engine_lost` or `engine_unavailable`, naming the agent and saying to restart it. Later such failures of that session don't notify, and they never count as failed actions.
+
+### Fixed
+
+- Typed text puts a symbol on a spare key when the layout has it only on a key Chromium drops. US maps have `€` only on `<I443>` (evdev 435), so `€` typed into Chromium and Electron apps arrived as nothing. A symbol also on a normal key types there, so US `$` uses Shift+4 instead of `<I442>`, which Chromium dropped too.
+- The Safety page said the pointer tools don't check whether windows moved since the screenshot. They have refused such a screenshot with `layout_changed` since 0.1.2.
+- After an update, or a reinstall of the same release, the shared engine of the replaced build hands over: the first client of the installed build to connect while no agent holds the desktop ends it and is served by an engine of the new build, instead of running standalone, or failing with `engine_unavailable` when it requires the shared engine, until every old agent restarts. While an old agent holds the desktop, the old engine keeps it until it is given up. Old agents get one `engine_lost`, then `engine_unavailable` saying to restart them, and no longer start an engine of their replaced build. Engines of 0.1.5 and older don't hand over, so updating from them still needs the old agents restarted.
 
 ## 0.1.5 - 2026-10-18
 

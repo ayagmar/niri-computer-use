@@ -283,6 +283,26 @@ pub(crate) fn invalid_action(action: &Map<String, Value>) -> Value {
     })
 }
 
+/// A call rmcp refused before its tool ran, for the log: the names of the fields it was
+/// given, each as it is when the tool takes a field of that name and otherwise as
+/// `unknown_field` and its length, since it is the agent's text; never their values. Only
+/// the first [`REFUSED_FIELDS`] are named and the rest counted, so a call with thousands of
+/// keys can't write a line that pushes earlier calls out of the kept logs.
+pub(crate) fn refused(given: &[String], takes: impl Fn(&str) -> bool) -> Value {
+    let fields: Vec<Value> = given
+        .iter()
+        .take(REFUSED_FIELDS)
+        .map(|field| known(field, takes(field), "unknown_field"))
+        .collect();
+    match given.len().saturating_sub(REFUSED_FIELDS) {
+        0 => json!({ "fields": fields }),
+        more => json!({ "fields": fields, "more": more }),
+    }
+}
+
+/// How many of a refused call's field names its log line holds.
+const REFUSED_FIELDS: usize = 32;
+
 /// A string becomes `{"bytes": n}` and a list of strings `{"count": n, "bytes": [...]}`.
 fn lengths(value: &Value) -> Value {
     match value {
@@ -500,6 +520,20 @@ mod tests {
 
     use super::*;
     use crate::error::{ErrorName, ToolError};
+
+    /// A refused call with thousands of keys names only the first ones and counts the rest.
+    #[test]
+    fn a_refused_call_names_at_most_its_first_fields() {
+        let given: Vec<String> = (0..40_000).map(|n| format!("k{n}")).collect();
+        let logged = refused(&given, |field| field == "k0");
+        assert_eq!(
+            logged["fields"].as_array().map(Vec::len),
+            Some(REFUSED_FIELDS)
+        );
+        assert_eq!(logged["fields"][0], "k0");
+        assert_eq!(logged["more"], 40_000 - REFUSED_FIELDS);
+        assert!(refused(&given[..2], |_| true).get("more").is_none());
+    }
 
     fn record<'a>(tool: &'a str, args: &'a Value, error: Option<String>) -> Record<'a> {
         Record {

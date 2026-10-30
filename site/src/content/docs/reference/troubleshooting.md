@@ -51,6 +51,16 @@ If `shell_panel` fails, or `desktop_state`'s `shell` is, `noctalia_unavailable`,
 
 The server found no accessibility bus when it started; `status` shows why under `accessibility.reason`. The server uses `DBUS_SESSION_BUS_ADDRESS`, or else the user bus at `$XDG_RUNTIME_DIR/bus`. Check that at-spi2-core is installed, then restart the agent's session.
 
+## `elements` fails with `not_accessible` on a browser or Electron app
+
+Chromium, Electron and CEF apps, such as a Chromium-based browser, VS Code or a Discord client, check the session's accessibility once, when they start. One that started while it was off stays off the bus, even though the server turns accessibility on afterward. Restart the app. To have it on for every app you start, run:
+
+```sh
+gsettings set org.gnome.desktop.interface toolkit-accessibility true
+```
+
+and restart the app. For a single app, start it with `--force-renderer-accessibility`. The agent can still work on screenshots meanwhile, but not by element name. [Chromium and Electron apps](../../tools/elements/#chromium-and-electron-apps) explains what the server's `turn_on_accessibility` does and doesn't do.
+
 ## `elements` lists elements without a `layout_box`
 
 With `unmappable: frame_size_mismatch`, the app draws its own title bar and its coordinates can't be matched to niri's window. GTK 3, Qt, Chromium and Electron apps do this; with server-side decorations, `prefer-no-csd` in niri's config, GTK 3, Qt and Chromium work. Aim at screenshot pixels for that window, or use `activate_element` and `set_element_text`, which don't need a box; Chromium's text fields refuse `set_element_text`, so focus them with `activate_element` and use `type_text`. A click on such an element is refused with `element_unmappable` rather than land in the wrong place.
