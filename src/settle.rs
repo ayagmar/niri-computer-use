@@ -5,11 +5,12 @@
 //! the result returns.
 //!
 //! Samples are raw pixels (`ppm`), compared pixel by pixel. The screen counts as still once
-//! a sample is the same as the one before, or the two samples after one each changed at
-//! most `QUIET` of the output's pixels from it: a clock, a CPU graph, a spinner or a caret
-//! is that small, and a popup, a page load or a dialog animating in is larger. Measuring
-//! from one sample lets a slow drift add up where steps between samples would each pass. Where grim gives no raw pixels,
-//! the samples are the JPEGs the result returns, compared by their bytes, as before.
+//! a sample is the same as the first of its run, or the two samples after that first one
+//! each changed at most `QUIET` of the output's pixels from it: a clock, a CPU graph, a
+//! spinner or a caret is that small, and a popup, a page load or a dialog animating in is
+//! larger. Measuring from the run's first sample lets a slow drift add up where steps
+//! between samples would each pass. Where grim gives no raw pixels, the samples are the
+//! JPEGs the result returns, compared by their bytes, as before.
 
 use std::time::Duration;
 
@@ -172,8 +173,8 @@ fn fraction(changed: u64, of: u64) -> f64 {
 
 /// Samples until they stop changing, then the screenshot the result returns: the last
 /// sample when it is a JPEG, or else the one `whole` captures, after the wait. Its
-/// metadata says whether the samples stopped changing, what part of the pixels changed
-/// between the last two, and, for refs, since when the screen was still.
+/// metadata says whether the samples stopped changing, what part of the pixels the last
+/// sample changed from the first of its still run, and, for refs, since when the screen was still.
 pub(crate) async fn screenshot<F, G>(
     sample: impl FnMut() -> F,
     whole: impl FnOnce() -> G,
