@@ -471,27 +471,61 @@ fn check(preset: &Preset, unrestricted: bool) -> Result<(), String> {
             "preset {name:?} has env, which needs unrestricted = true"
         ));
     }
-    let base = Path::new(program)
+    refuse_command(&preset.argv).map_or(Ok(()), |why| Err(format!("preset {name:?} {why}")))
+}
+
+/// Why the preset rules refuse to start `argv`, as the rest of a sentence about it: a
+/// program that runs any command it is given, `flatpak` with a `--command` that is one or
+/// a terminal, or a terminal with arguments. They hold for presets without `unrestricted`.
+pub(crate) fn refuse_command(argv: &[String]) -> Option<String> {
+    let base = base_name(argv.first()?);
+    if runs_anything(&base) {
+        return Some(format!("starts {base}, which runs any command it is given"));
+    }
+    if base == "flatpak"
+        && let Some(command) = flatpak_command(argv)
+    {
+        let inner = base_name(command);
+        if inner.is_empty() || runs_anything(&inner) || TERMINALS.contains(&inner.as_str()) {
+            return Some(format!(
+                "starts flatpak with --command={command}, which runs any command it is given"
+            ));
+        }
+    }
+    if TERMINALS.contains(&base.as_str()) && argv.len() > 1 {
+        return Some(format!(
+            "starts the terminal {base} with arguments, which it can run as a command"
+        ));
+    }
+    None
+}
+
+fn base_name(program: &str) -> String {
+    Path::new(program)
         .file_name()
-        .map_or_else(String::new, |base| base.to_string_lossy().into_owned());
-    // `python3.13` is `python3`, and `perl5.40` is `perl`.
+        .map_or_else(String::new, |base| base.to_string_lossy().into_owned())
+}
+
+/// Whether `base` is on `COMMAND_RUNNERS`, as written or without a version: `python3.13`
+/// is `python3`, and `perl5.40` is `perl`.
+fn runs_anything(base: &str) -> bool {
     let unversioned = base.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
-    if COMMAND_RUNNERS.contains(&base.as_str()) || COMMAND_RUNNERS.contains(&unversioned) {
-        return Err(format!(
-            "preset {name:?} starts {base}, which runs any command it is given"
-        ));
+    COMMAND_RUNNERS.contains(&base) || COMMAND_RUNNERS.contains(&unversioned)
+}
+
+/// The program a `flatpak` argv names with `--command=<program>` or `--command <program>`,
+/// anywhere in it; empty when `--command` ends it.
+fn flatpak_command(argv: &[String]) -> Option<&str> {
+    let mut rest = argv.iter().skip(1);
+    while let Some(arg) = rest.next() {
+        if let Some(command) = arg.strip_prefix("--command=") {
+            return Some(command);
+        }
+        if arg == "--command" {
+            return Some(rest.next().map_or("", String::as_str));
+        }
     }
-    if base == "flatpak" && preset.argv.iter().any(|arg| arg.starts_with("--command")) {
-        return Err(format!(
-            "preset {name:?} starts flatpak with --command, which runs any command"
-        ));
-    }
-    if TERMINALS.contains(&base.as_str()) && preset.argv.len() > 1 {
-        return Err(format!(
-            "preset {name:?} starts the terminal {base} with arguments, which it can run as a command"
-        ));
-    }
-    Ok(())
+    None
 }
 
 /// With `env`, the program goes after the assignments `env` reads, so it can't look like
@@ -1336,6 +1370,9 @@ app_id = "foot"
         // An app that only looks versioned, and a flatpak app, are fine.
         let fine = "[[preset]]\nname = \"a\"\nargv = [\"gimp-2.10\"]\napp_id = \"gimp\"\n\n[[preset]]\nname = \"b\"\nargv = [\"flatpak\", \"run\", \"org.mozilla.firefox\"]\napp_id = \"firefox\"\n";
         assert_eq!(parse(fine, false).unwrap().presets.len(), 2);
+        // flatpak's own exports name the app's command, which is fine unless it runs others.
+        let exported = "[[preset]]\nname = \"c\"\nargv = [\"flatpak\", \"run\", \"--command=firefox\", \"org.mozilla.firefox\"]\napp_id = \"firefox\"\n";
+        assert!(parse(exported, false).is_ok());
     }
 
     #[test]
@@ -1356,9 +1393,22 @@ app_id = "foot"
         assert!(preset(r#"["/usr/bin/perl5.40"]"#).contains("perl5.40"));
         assert!(preset(r#"["busybox", "sh"]"#).contains("busybox"));
         assert!(preset(r#"["uwsm", "app", "--", "firefox"]"#).contains("uwsm"));
-        assert!(preset(r#"["flatpak", "run", "--command=sh", "org.x.Y"]"#).contains("--command"));
         assert!(preset("[]").contains("empty argv"));
         assert!(preset(r#"[""]"#).contains("empty argv"));
+    }
+
+    #[test]
+    fn refuses_flatpak_with_a_command_that_runs_others() {
+        for argv in [
+            ["flatpak", "run", "--command=sh", "org.x.Y"].as_slice(),
+            &["flatpak", "run", "--command", "sh", "org.x.Y"],
+            &["flatpak", "run", "--command=/usr/bin/foot", "org.x.Y"],
+            &["flatpak", "run", "org.x.Y", "--command"],
+        ] {
+            let argv: Vec<String> = argv.iter().map(|&arg| arg.to_owned()).collect();
+            let refused = refuse_command(&argv).unwrap_or_default();
+            assert!(refused.contains("flatpak with --command"), "{argv:?}");
+        }
     }
 
     #[test]
