@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/ayagmar/niri-computer-use/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ayagmar/niri-computer-use/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/ayagmar/niri-computer-use)](https://github.com/ayagmar/niri-computer-use/releases/latest) [![crates.io](https://img.shields.io/crates/v/niri-computer-use)](https://crates.io/crates/niri-computer-use) [![Crate size](https://img.shields.io/crates/size/niri-computer-use)](https://crates.io/crates/niri-computer-use) [![MSRV](https://img.shields.io/crates/msrv/niri-computer-use)](https://crates.io/crates/niri-computer-use) [![niri 26.04](https://img.shields.io/badge/niri-26.04-f2a33a)](https://github.com/niri-wm/niri) [![Docs](https://img.shields.io/badge/docs-site-informational)](https://ayagmar.github.io/niri-computer-use/) [![License: MIT](https://img.shields.io/crates/l/niri-computer-use)](https://github.com/ayagmar/niri-computer-use/blob/main/LICENSE)
 
-Let Claude Code, Codex, Pi or any MCP agent see and drive your [niri](https://github.com/niri-wm/niri) desktop: windows, screenshots, buttons by name, keys and clicks, with a stop key you hold.
+Let Claude Code, Codex, Pi or any MCP agent see and drive your [niri](https://github.com/niri-wm/niri) desktop: windows, screenshots, buttons by name, keys and clicks, with a stop key the agent can't press.
 
 <picture>
   <source media="(prefers-reduced-motion: reduce)" srcset="https://ayagmar.github.io/niri-computer-use/demo/errand.png">
@@ -82,57 +82,36 @@ The key cancels the running action and takes the lease back; `~/.local/bin/niri-
 
 ## Example
 
-Here is one run with every call and a full result. It is run `1791814792-1684005` of the following command, with the model `claude-sonnet-5-5` through Claude Code 2.1.296 and the server at `8faae79`, in a headless nested niri:
-
-```sh
-make nested-eval SCENARIO=errand SKILL=skills/niri-computer-use MODEL=sonnet
-```
-
-The prompt:
-
-> Open my notes app, then type exactly `Meeting moved to 3pm` into the wev window and press Enter once to send it, then close the notes window you opened, and leave me on the window I was on.
-
-The agent's eight calls:
+These are the eleven calls Claude Code made in the recording above, with long arguments cut:
 
 ```text
 status
 desktop_state
 acquire_desktop
-launch            {"preset": "notes"}
-focus             {"window_id": 2}
-type_text         {"text": "Meeting moved to 3pm", "expect": {"window_id": 2}, "submit": true, "screenshot": true}
-close_window      {"id": 4}
+focus             {"window_id": 11, …}
+click             {"x": 979, "y": 88, …}
+key               {"keys": ["shift+Right", "ctrl+alt+n"], …}
+click             {"x": 1061, "y": 88, "button": "right", …}
+click             {"x": 1130, "y": 100, …}
+key               {"keys": ["ctrl+a"], …}
+type_text         {"text": "release-0.1", "submit": true, …}
 release_desktop   {"restore_focus": true}
 ```
 
-What `launch` answered:
-
-```json
-{
-  "accepted": true,
-  "observed": "one",
-  "windows": [4],
-  "focused_window": 4,
-  "changes": {
-    "focus": {"from": 3, "to": 4},
-    "opened": [{"app_id": "notes", "id": 4, "title": "harness window", "workspace_id": 1}]
-  }
-}
-```
-
-`accepted` says niri took the request, `observed` what niri saw afterwards, and `changes` what niri saw change. The grader passed all nine of its checks, among them one launch, exactly the 20 characters before a single Enter, the notes window closed, and focus back on the user's window. The calls with their results and the grading are in [docs/results/readme-example.md](https://github.com/ayagmar/niri-computer-use/blob/main/docs/results/readme-example.md).
+Each action returns `accepted` (niri took the request), `observed` (what niri saw afterwards) and `changes` (what niri saw change). [docs/results/readme-example.md](https://github.com/ayagmar/niri-computer-use/blob/main/docs/results/readme-example.md) has a graded test run with every call and its full result.
 
 ## Safety
 
-- One agent at a time holds the lease, and only the lease holder acts. Looking needs no lease.
-- With `confirm_lease` on, you allow each lease on a desktop notification before the agent gets it, even when its client approves tool calls without asking you. It is off by default.
-- The stop key cancels the running action and takes the lease back. An agent can't press it.
-- An action starts only after a read of the lock state at most 250 ms old says unlocked. Locked or unknown refuses it.
-- Before typing, the server checks that the window the agent names in `expect` has focus, unless it passes `"none"`. Text goes out one key at a time, with focus checked again before each key, and the lock state read again once its last read is over 250 ms old. Pointer and keyboard input is refused while an app on your deny list has focus, and element actions on its windows.
-- Element actions refuse fields the toolkit marks as password fields. Apps start only from presets you write; `unrestricted` lifts that and allows niri's gated actions such as `Spawn`.
-- Calls that reach a tool go to an audit log, without the text typed, the clipboard, window titles or images. It is moved aside at 10 MiB and the three latest old logs are kept, so it stays under about 40 MiB.
+| | |
+|---|---|
+| Lease | One agent at a time acts. |
+| Stop key | Cancels the action and takes the lease back. The agent can't press it. |
+| Lock | Nothing acts while the screen is locked. |
+| Focus | Typing checks focus, unless told not to. |
+| Deny list | No input while a denied app has focus. |
+| Audit log | Every call that reaches a tool, without typed text. |
 
-What isn't protected: any connected agent sees your screen and window titles, a click can land on a denied window that doesn't have focus, typing and clicking don't check for password fields, a lock that comes after the last read isn't caught, and an agent that can run shell commands can answer the `confirm_lease` notification itself. A click or a key can do anything you could do. Read [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/#what-isnt-a-boundary) before letting an agent act, and [SECURITY.md](https://github.com/ayagmar/niri-computer-use/blob/main/SECURITY.md) to report a problem.
+This is not a sandbox: agents see your screen, and with the lease they can do anything you can. [Safety](https://ayagmar.github.io/niri-computer-use/concepts/safety/#what-isnt-a-boundary) has how each guard works and what isn't protected. Read it before letting an agent act. Report a problem as [SECURITY.md](https://github.com/ayagmar/niri-computer-use/blob/main/SECURITY.md) says.
 
 ## Limits
 
